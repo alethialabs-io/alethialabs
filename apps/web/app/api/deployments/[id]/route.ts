@@ -3,8 +3,9 @@ import { NextResponse } from "next/server";
 
 export async function PUT(
 	req: Request,
-	{ params }: { params: { id: string } }
+	{ params }: { params: Promise<{ id: string }> }
 ) {
+	const { id } = await params;
 	try {
 		const supabase = await createClient();
 		const {
@@ -26,7 +27,7 @@ export async function PUT(
 		const { data: existingDeployment, error: fetchError } = await supabase
 			.from("deployments")
 			.select("started_at")
-			.eq("id", params.id)
+			.eq("id", id)
 			.single();
 
 		if (fetchError) {
@@ -54,7 +55,7 @@ export async function PUT(
 		const { data, error } = await supabase
 			.from("deployments")
 			.update(updateData)
-			.eq("id", params.id)
+			.eq("id", id)
 			.select()
 			.single();
 

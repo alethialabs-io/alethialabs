@@ -134,6 +134,7 @@ export interface ProcessedConfigData {
 	// Network settings (processed)
 	vpc_cidr?: string;
 	create_vpc?: boolean;
+	create_rds?: boolean;
 	allowed_cidr_block?: string[];
 	redis_allowed_cidr_blocks?: string[];
 	vpc_private_subnet_ids?: string[];
@@ -198,6 +199,7 @@ export interface DatabaseConfiguration {
 	enable_gitops_destination: boolean;
 	gitops_app_template?: string;
 	gitops_destinations_repo?: string;
+	gitops_infra_destination_repo?: string;
 	gitops_app_token?: string;
 	create_vpc: boolean;
 	vpc_cidr?: string;

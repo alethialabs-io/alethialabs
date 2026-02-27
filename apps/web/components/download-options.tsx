@@ -18,7 +18,7 @@ import {
 	Loader2,
 	Package,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface DownloadOptionsProps {
 	configurationData?: FormData | ConfigurationFormData;
@@ -27,9 +27,24 @@ interface DownloadOptionsProps {
 export function DownloadOptions({ configurationData }: DownloadOptionsProps) {
 	const [downloadedItems, setDownloadedItems] = useState<string[]>([]);
 	const [loadingItems, setLoadingItems] = useState<string[]>([]);
+	const [fetchedConfig, setFetchedConfig] = useState<ConfigurationFormData | null>(null);
+
+	useEffect(() => {
+		if (!configurationData) {
+			fetch("/api/configurations?limit=1")
+				.then((res) => res.json())
+				.then((data) => {
+					if (data.configurations && data.configurations.length > 0) {
+						setFetchedConfig(data.configurations[0]);
+					}
+				})
+				.catch((err) => console.error("Failed to fetch latest configuration:", err));
+		}
+	}, [configurationData]);
 
 	const handleDownload = async (itemType: string, filename: string) => {
-		if (!configurationData) {
+		const dataToUse = configurationData || fetchedConfig;
+		if (!dataToUse) {
 			alert(
 				"No configuration data available. Please complete the configuration form first."
 			);
@@ -65,12 +80,14 @@ export function DownloadOptions({ configurationData }: DownloadOptionsProps) {
 
 			// Convert configuration data to FormData if it's not already
 			let formData: FormData;
-			if (configurationData instanceof FormData) {
-				formData = configurationData;
+			if (dataToUse instanceof FormData) {
+				formData = dataToUse;
 			} else {
 				formData = new FormData();
-				Object.entries(configurationData).forEach(([key, value]) => {
-					formData.append(key, String(value));
+				Object.entries(dataToUse).forEach(([key, value]) => {
+					if (value !== null && value !== undefined) {
+						formData.append(key, String(value));
+					}
 				});
 			}
 

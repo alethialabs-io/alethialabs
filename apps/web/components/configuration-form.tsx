@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { ClusterSelector } from "@/components/cluster-selector";
 import { ContainerPlatformSelector } from "@/components/container-platform-selector";
 import { RepositorySelector } from "@/components/repository-selector";
 import { Button } from "@/components/ui/button";
@@ -32,9 +33,20 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { publicConfigurationsInsertSchema } from "@/lib/validations/database.schemas";
-import { PublicConfigurationsInsert } from "@/lib/validations/db.schemas";
+import {
+	PublicClustersRow,
+	PublicConfigurationsInsert,
+} from "@/lib/validations/db.schemas";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AlertCircle, ArrowRight, Cloud, Database, Shield } from "lucide-react";
+import {
+	AlertCircle,
+	ArrowRight,
+	CheckCircle2,
+	Cloud,
+	Database,
+	Server,
+	Shield,
+} from "lucide-react";
 import { SubmitHandler, useForm } from "react-hook-form";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -42,10 +54,14 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 export function ConfigurationForm() {
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [selectedCluster, setSelectedCluster] =
+		useState<PublicClustersRow | null>(null);
 
 	const form = useForm<PublicConfigurationsInsert>({
-		resolver: zodResolver(publicConfigurationsInsertSchema),
+		resolver: zodResolver(publicConfigurationsInsertSchema) as any,
 		defaultValues: {
+			container_platform: "",
+			user_id: "",
 			project_name: "",
 			aws_account_id: "",
 			environment_stage: "development",
@@ -62,13 +78,11 @@ export function ConfigurationForm() {
 			dns_domain_name: "",
 			db_min_capacity: 2,
 			db_max_capacity: 16,
-			eks_cluster_admins: `users:
-  - username: admin
-    groups:
-      - system:masters
-  - username: developer
-    groups:
-      - developers`,
+			eks_cluster_admins: `eks_cluster_admins:
+  - username: "mihail.vukadinoff@itgix.com"
+    path: /
+  - username: "hristiyan.tonev@itgix.com"
+    path: /`,
 			ses_queues_topics: `queues:
   - name: email-processing
     visibility_timeout: 300
@@ -85,8 +99,23 @@ topics:
 		},
 	});
 
+	// Handle Cluster Selection
+	const handleClusterSelect = (cluster: PublicClustersRow) => {
+		setSelectedCluster(cluster);
+		form.setValue("cluster_id", cluster.id);
+
+		const metadata = cluster.metadata as any;
+		if (metadata?.region) {
+			form.setValue("aws_region", metadata.region);
+		}
+		if (metadata?.vpc_cidr) {
+			form.setValue("vpc_cidr", metadata.vpc_cidr);
+			form.setValue("create_vpc", false);
+		}
+	};
+
 	const onSubmit: SubmitHandler<PublicConfigurationsInsert> = async (
-		data
+		data,
 	) => {
 		setIsLoading(true);
 		setError(null);
@@ -103,7 +132,7 @@ topics:
 			if (!response.ok) {
 				const errorData = await response.json();
 				throw new Error(
-					errorData.message || "Failed to create configuration"
+					errorData.message || "Failed to create configuration",
 				);
 			}
 
@@ -115,19 +144,43 @@ topics:
 			setError(
 				error instanceof Error
 					? error.message
-					: "An unexpected error occurred"
+					: "An unexpected error occurred",
 			);
 		} finally {
 			setIsLoading(false);
 		}
 	};
+
 	useEffect(() => {
 		console.log(form.formState.errors, form.formState.isValid);
 	}, [form.formState.errors]);
+
 	return (
 		<Form {...form}>
 			<form onSubmit={form.handleSubmit(onSubmit)}>
 				<div className="space-y-8">
+					{/* Cluster Selection (The "Context") */}
+					<div className="space-y-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
+						<div className="flex items-center gap-2">
+							<Server className="w-5 h-5 text-indigo-600" />
+							<h3 className="font-serif text-lg font-semibold">
+								Target Environment
+							</h3>
+						</div>
+						<p className="text-sm text-slate-500">
+							Select the Kubernetes cluster where this
+							configuration will be deployed.
+						</p>
+						<ClusterSelector onSelect={handleClusterSelect} />
+
+						{selectedCluster && (
+							<div className="text-xs text-green-600 flex items-center gap-1 mt-2">
+								<CheckCircle2 className="w-3 h-3" />
+								Linked to {selectedCluster.name}
+							</div>
+						)}
+					</div>
+
 					{/* Project Configuration */}
 					<div className="space-y-6">
 						<div className="flex items-center gap-2 mb-4">
@@ -166,27 +219,14 @@ topics:
 										<FormLabel htmlFor="environment_stage">
 											Environment Stage *
 										</FormLabel>
-										<Select
-											onValueChange={field.onChange}
-											defaultValue={field.value}
-										>
-											<FormControl>
-												<SelectTrigger>
-													<SelectValue />
-												</SelectTrigger>
-											</FormControl>
-											<SelectContent>
-												<SelectItem value="development">
-													Development
-												</SelectItem>
-												<SelectItem value="staging">
-													Staging
-												</SelectItem>
-												<SelectItem value="production">
-													Production
-												</SelectItem>
-											</SelectContent>
-										</Select>
+										<FormControl>
+											<Input
+												id="environment_stage"
+												placeholder="e.g. development, staging, production"
+												required
+												{...field}
+											/>
+										</FormControl>
 										<FormMessage />
 									</FormItem>
 								)}
@@ -206,6 +246,7 @@ topics:
 												pattern="[0-9]{12}"
 												required
 												{...field}
+												value={field.value ?? ""}
 											/>
 										</FormControl>
 										<FormMessage />
@@ -222,7 +263,7 @@ topics:
 										</FormLabel>
 										<Select
 											onValueChange={field.onChange}
-											defaultValue={field.value}
+											defaultValue={field.value ?? ""}
 										>
 											<FormControl>
 												<SelectTrigger>
@@ -230,6 +271,27 @@ topics:
 												</SelectTrigger>
 											</FormControl>
 											<SelectContent>
+												<SelectItem value="1.11.4">
+													1.11.4
+												</SelectItem>
+												<SelectItem value="1.10.5">
+													1.10.5
+												</SelectItem>
+												<SelectItem value="1.9.8">
+													1.9.8
+												</SelectItem>
+												<SelectItem value="1.8.5">
+													1.8.5
+												</SelectItem>
+												<SelectItem value="1.7.5">
+													1.7.5
+												</SelectItem>
+												<SelectItem value="1.6.6">
+													1.6.6
+												</SelectItem>
+												<SelectItem value="1.5.7">
+													1.5.7
+												</SelectItem>
 												<SelectItem value="1.5.0">
 													1.5.0
 												</SelectItem>
@@ -254,30 +316,83 @@ topics:
 											<FormLabel htmlFor="aws_region">
 												AWS Region *
 											</FormLabel>
-											<Select
-												onValueChange={field.onChange}
-												defaultValue={field.value}
-											>
-												<FormControl>
-													<SelectTrigger>
-														<SelectValue />
-													</SelectTrigger>
-												</FormControl>
-												<SelectContent>
-													<SelectItem value="us-east-1">
-														US East (N. Virginia)
-													</SelectItem>
-													<SelectItem value="us-west-2">
-														US West (Oregon)
-													</SelectItem>
-													<SelectItem value="eu-west-1">
-														Europe (Ireland)
-													</SelectItem>
-													<SelectItem value="ap-southeast-1">
-														Asia Pacific (Singapore)
-													</SelectItem>
-												</SelectContent>
-											</Select>
+											{selectedCluster ? (
+												<div className="p-2 bg-slate-100 rounded border text-sm text-slate-700">
+													{field.value} (Locked to
+													Cluster)
+												</div>
+											) : (
+												<Select
+													onValueChange={
+														field.onChange
+													}
+													defaultValue={
+														field.value ?? ""
+													}
+												>
+													<FormControl>
+														<SelectTrigger>
+															<SelectValue />
+														</SelectTrigger>
+													</FormControl>
+													<SelectContent>
+														<SelectItem value="us-east-1">
+															US East (N.
+															Virginia)
+														</SelectItem>
+														<SelectItem value="us-east-2">
+															US East (Ohio)
+														</SelectItem>
+														<SelectItem value="us-west-1">
+															US West (N.
+															California)
+														</SelectItem>
+														<SelectItem value="us-west-2">
+															US West (Oregon)
+														</SelectItem>
+														<SelectItem value="ca-central-1">
+															Canada (Central)
+														</SelectItem>
+														<SelectItem value="eu-west-1">
+															Europe (Ireland)
+														</SelectItem>
+														<SelectItem value="eu-west-2">
+															Europe (London)
+														</SelectItem>
+														<SelectItem value="eu-west-3">
+															Europe (Paris)
+														</SelectItem>
+														<SelectItem value="eu-central-1">
+															Europe (Frankfurt)
+														</SelectItem>
+														<SelectItem value="eu-north-1">
+															Europe (Stockholm)
+														</SelectItem>
+														<SelectItem value="ap-south-1">
+															Asia Pacific
+															(Mumbai)
+														</SelectItem>
+														<SelectItem value="ap-northeast-1">
+															Asia Pacific (Tokyo)
+														</SelectItem>
+														<SelectItem value="ap-northeast-2">
+															Asia Pacific (Seoul)
+														</SelectItem>
+														<SelectItem value="ap-southeast-1">
+															Asia Pacific
+															(Singapore)
+														</SelectItem>
+														<SelectItem value="ap-southeast-2">
+															Asia Pacific
+															(Sydney)
+														</SelectItem>
+														<SelectItem value="sa-east-1">
+															South America (São
+															Paulo)
+														</SelectItem>
+													</SelectContent>
+												</Select>
+											)}
 											<FormMessage />
 										</FormItem>
 									)}
@@ -675,8 +790,9 @@ topics:
 											<Input
 												id="db_min_capacity"
 												type="number"
-												min="1"
+												min="0.5"
 												max="128"
+												step="0.5"
 												{...field}
 												onChange={(e) =>
 													field.onChange(
@@ -704,8 +820,9 @@ topics:
 											<Input
 												id="db_max_capacity"
 												type="number"
-												min="1"
+												min="0.5"
 												max="128"
+												step="0.5"
 												{...field}
 												onChange={(e) =>
 													field.onChange(

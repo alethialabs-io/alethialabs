@@ -68,7 +68,7 @@ export type Database = {
           name?: string
           provider: Database["public"]["Enums"]["cloud_provider"]
           updated_at?: string | null
-          user_id: string
+          user_id?: string
         }
         Update: {
           created_at?: string | null
@@ -82,12 +82,47 @@ export type Database = {
         }
         Relationships: []
       }
+      clusters: {
+        Row: {
+          agent_token_hash: string | null
+          created_at: string | null
+          id: string
+          last_heartbeat: string | null
+          metadata: Json | null
+          name: string
+          status: Database["public"]["Enums"]["cluster_status"] | null
+          user_id: string
+        }
+        Insert: {
+          agent_token_hash?: string | null
+          created_at?: string | null
+          id?: string
+          last_heartbeat?: string | null
+          metadata?: Json | null
+          name: string
+          status?: Database["public"]["Enums"]["cluster_status"] | null
+          user_id: string
+        }
+        Update: {
+          agent_token_hash?: string | null
+          created_at?: string | null
+          id?: string
+          last_heartbeat?: string | null
+          metadata?: Json | null
+          name?: string
+          status?: Database["public"]["Enums"]["cluster_status"] | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       configurations: {
         Row: {
-          aws_account_id: string
-          aws_region: string
+          aws_account_id: string | null
+          aws_region: string | null
           cloud_identity_id: string | null
+          cluster_id: string | null
           container_platform: string
+          create_rds: boolean | null
           create_vpc: boolean | null
           created_at: string | null
           db_max_capacity: number | null
@@ -109,6 +144,7 @@ export type Database = {
           gitops_app_token: string | null
           gitops_argocd_token: string | null
           gitops_destinations_repo: string | null
+          gitops_infra_destination_repo: string | null
           gitops_repository: string | null
           id: string
           last_downloaded_at: string | null
@@ -122,10 +158,12 @@ export type Database = {
           vpc_cidr: string | null
         }
         Insert: {
-          aws_account_id: string
-          aws_region: string
+          aws_account_id?: string | null
+          aws_region?: string | null
           cloud_identity_id?: string | null
+          cluster_id?: string | null
           container_platform: string
+          create_rds?: boolean | null
           create_vpc?: boolean | null
           created_at?: string | null
           db_max_capacity?: number | null
@@ -147,6 +185,7 @@ export type Database = {
           gitops_app_token?: string | null
           gitops_argocd_token?: string | null
           gitops_destinations_repo?: string | null
+          gitops_infra_destination_repo?: string | null
           gitops_repository?: string | null
           id?: string
           last_downloaded_at?: string | null
@@ -160,10 +199,12 @@ export type Database = {
           vpc_cidr?: string | null
         }
         Update: {
-          aws_account_id?: string
-          aws_region?: string
+          aws_account_id?: string | null
+          aws_region?: string | null
           cloud_identity_id?: string | null
+          cluster_id?: string | null
           container_platform?: string
+          create_rds?: boolean | null
           create_vpc?: boolean | null
           created_at?: string | null
           db_max_capacity?: number | null
@@ -185,6 +226,7 @@ export type Database = {
           gitops_app_token?: string | null
           gitops_argocd_token?: string | null
           gitops_destinations_repo?: string | null
+          gitops_infra_destination_repo?: string | null
           gitops_repository?: string | null
           id?: string
           last_downloaded_at?: string | null
@@ -203,6 +245,13 @@ export type Database = {
             columns: ["cloud_identity_id"]
             isOneToOne: false
             referencedRelation: "cloud_identities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "configurations_cluster_id_fkey"
+            columns: ["cluster_id"]
+            isOneToOne: false
+            referencedRelation: "clusters"
             referencedColumns: ["id"]
           },
         ]
@@ -412,15 +461,172 @@ export type Database = {
         }
         Relationships: []
       }
+      provider_tokens: {
+        Row: {
+          access_token: string
+          created_at: string | null
+          expires_at: string | null
+          id: string
+          provider: Database["public"]["Enums"]["git_provider"]
+          refresh_token: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          access_token: string
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string
+          provider: Database["public"]["Enums"]["git_provider"]
+          refresh_token?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Update: {
+          access_token?: string
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string
+          provider?: Database["public"]["Enums"]["git_provider"]
+          refresh_token?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      provision_logs: {
+        Row: {
+          created_at: string | null
+          id: number
+          log_chunk: string
+          provision_id: string
+          stream_type: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: number
+          log_chunk: string
+          provision_id: string
+          stream_type?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: number
+          log_chunk?: string
+          provision_id?: string
+          stream_type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provision_logs_provision_id_fkey"
+            columns: ["provision_id"]
+            isOneToOne: false
+            referencedRelation: "provisions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      provisions: {
+        Row: {
+          cluster_id: string
+          completed_at: string | null
+          config_snapshot: Json
+          configuration_hash: string | null
+          created_at: string | null
+          error_message: string | null
+          execution_metadata: Json | null
+          id: string
+          started_at: string | null
+          status: string | null
+        }
+        Insert: {
+          cluster_id: string
+          completed_at?: string | null
+          config_snapshot: Json
+          configuration_hash?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          execution_metadata?: Json | null
+          id?: string
+          started_at?: string | null
+          status?: string | null
+        }
+        Update: {
+          cluster_id?: string
+          completed_at?: string | null
+          config_snapshot?: Json
+          configuration_hash?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          execution_metadata?: Json | null
+          id?: string
+          started_at?: string | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provisions_cluster_id_fkey"
+            columns: ["cluster_id"]
+            isOneToOne: false
+            referencedRelation: "clusters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      agent_heartbeat: {
+        Args: { p_cluster_id: string; p_token_hash: string }
+        Returns: undefined
+      }
+      fetch_next_provision: {
+        Args: { p_cluster_id: string; p_token_hash: string }
+        Returns: {
+          cluster_id: string
+          completed_at: string | null
+          config_snapshot: Json
+          configuration_hash: string | null
+          created_at: string | null
+          error_message: string | null
+          execution_metadata: Json | null
+          id: string
+          started_at: string | null
+          status: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "provisions"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      insert_provision_log: {
+        Args: {
+          p_cluster_id: string
+          p_log_chunk: string
+          p_provision_id: string
+          p_stream_type: string
+          p_token_hash: string
+        }
+        Returns: undefined
+      }
+      update_provision_status: {
+        Args: {
+          p_cluster_id: string
+          p_error_message?: string
+          p_provision_id: string
+          p_status: string
+          p_token_hash: string
+        }
+        Returns: undefined
+      }
     }
     Enums: {
       cloud_provider: "aws" | "azure" | "gcp"
+      cluster_status: "PENDING" | "ONLINE" | "OFFLINE"
       deployment_resource_status:
         | "creating"
         | "created"
@@ -437,6 +643,7 @@ export type Database = {
         | "failed"
         | "cancelled"
         | "destroying"
+      git_provider: "github" | "bitbucket" | "gitlab"
       iac_tool: "pulumi" | "terraform"
       logs_level: "debug" | "info" | "warn" | "error" | "critical"
     }
@@ -567,6 +774,7 @@ export const Constants = {
   public: {
     Enums: {
       cloud_provider: ["aws", "azure", "gcp"],
+      cluster_status: ["PENDING", "ONLINE", "OFFLINE"],
       deployment_resource_status: [
         "creating",
         "created",
@@ -585,6 +793,7 @@ export const Constants = {
         "cancelled",
         "destroying",
       ],
+      git_provider: ["github", "bitbucket", "gitlab"],
       iac_tool: ["pulumi", "terraform"],
       logs_level: ["debug", "info", "warn", "error", "critical"],
     },

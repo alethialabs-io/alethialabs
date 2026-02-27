@@ -1,0 +1,10 @@
+{
+  "title": "Grape (CLI)",
+  "root": true,
+  "pages": [
+    "index",
+    "configuration",
+    "deployment",
+    "authentication"
+  ]
+}

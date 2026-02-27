@@ -47,7 +47,7 @@ export default function CompletionPage() {
 								variant="outline"
 								className="border-gray-300 text-gray-600 hover:bg-gray-50 bg-transparent"
 								onClick={() =>
-									(window.location.href = "/configure")
+									(window.location.href = "/dashboard/configure")
 								}
 							>
 								<ArrowLeft className="w-4 h-4 mr-2" />
