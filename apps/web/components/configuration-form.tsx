@@ -70,7 +70,9 @@ export function ConfigurationForm() {
 			enable_gitops_destination: false,
 			gitops_app_template: "",
 			gitops_destinations_repo: "",
+			gitops_infra_destination_repo: "",
 			gitops_app_token: "",
+			create_rds: true,
 			create_vpc: true,
 			vpc_cidr: "10.0.0.0/16",
 			enable_dns: false,
@@ -560,8 +562,28 @@ topics:
 												<FormItem className="space-y-2">
 													<FormControl>
 														<RepositorySelector
-															label="Destination Repository"
-															placeholder="Select destination repository"
+															label="App Destination Repository"
+															placeholder="Select app destination repository"
+															{...field}
+															value={
+																field.value ??
+																undefined
+															}
+														/>
+													</FormControl>
+													<FormMessage />
+												</FormItem>
+											)}
+										/>
+										<FormField
+											control={form.control}
+											name="gitops_infra_destination_repo"
+											render={({ field }) => (
+												<FormItem className="space-y-2">
+													<FormControl>
+														<RepositorySelector
+															label="Infra Destination Repository"
+															placeholder="Select infra destination repository"
 															{...field}
 															value={
 																field.value ??
@@ -770,13 +792,31 @@ topics:
 
 					{/* Database Configuration */}
 					<div className="space-y-6">
-						<div className="flex items-center gap-2 mb-4">
-							<Database className="w-5 h-5 text-blue-600" />
-							<h3 className="font-serif text-lg font-semibold">
-								Database Configuration
-							</h3>
+						<div className="flex items-center justify-between mb-4">
+							<div className="flex items-center gap-2">
+								<Database className="w-5 h-5 text-blue-600" />
+								<h3 className="font-serif text-lg font-semibold">
+									Database Configuration
+								</h3>
+							</div>
+							<FormField
+								control={form.control}
+								name="create_rds"
+								render={({ field }) => (
+									<FormItem className="flex items-center gap-2 space-y-0">
+										<FormLabel>Enable Database</FormLabel>
+										<FormControl>
+											<Switch
+												checked={field.value ?? undefined}
+												onCheckedChange={field.onChange}
+											/>
+										</FormControl>
+									</FormItem>
+								)}
+							/>
 						</div>
 
+						{form.watch("create_rds") && (
 						<div className="grid md:grid-cols-2 gap-4">
 							<FormField
 								control={form.control}
@@ -839,6 +879,7 @@ topics:
 								)}
 							/>
 						</div>
+						)}
 					</div>
 
 					<Separator />
