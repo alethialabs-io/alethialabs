@@ -1,0 +1,80 @@
+web:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/bobikenobi12/bb-thesis-2026-web
+    pullPolicy: IfNotPresent
+    tag: ""
+  service:
+    type: ClusterIP
+    port: 3000
+  resources: {}
+
+docs:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/bobikenobi12/bb-thesis-2026-docs
+    pullPolicy: IfNotPresent
+    tag: ""
+  service:
+    type: ClusterIP
+    port: 3001
+  resources: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: portal.local
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            serviceName: web
+        - path: /docs
+          pathType: Prefix
+          backend:
+            serviceName: docs
+  tls: []
+
+secrets:
+  # Choose standard kubernetes secret or ExternalSecrets operator
+  provider: kubernetes # 'kubernetes' or 'externalSecrets'
+  
+  # For Kubernetes Secrets
+  data:
+    NEXT_PUBLIC_SUPABASE_URL: ""
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: ""
+    SERVICE_ROLE_SECRET: ""
+    CLI_JWT_SECRET: ""
+    DOCS_URL: "http://docs:3001"
+
+  # For ExternalSecrets
+  externalSecret:
+    secretStoreRef:
+      name: aws-secrets-manager
+      kind: ClusterSecretStore
+    target:
+      name: portal-secrets
+    data:
+      - secretKey: NEXT_PUBLIC_SUPABASE_URL
+        remoteRef:
+          key: portal/secrets
+          property: NEXT_PUBLIC_SUPABASE_URL
+      - secretKey: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        remoteRef:
+          key: portal/secrets
+          property: NEXT_PUBLIC_SUPABASE_ANON_KEY
+      - secretKey: SERVICE_ROLE_SECRET
+        remoteRef:
+          key: portal/secrets
+          property: SERVICE_ROLE_SECRET
+      - secretKey: CLI_JWT_SECRET
+        remoteRef:
+          key: portal/secrets
+          property: CLI_JWT_SECRET
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""

@@ -4,6 +4,7 @@ import type { NextConfig } from "next";
 const DOCS_URL = process.env.DOCS_URL || "https://localhost:3001";
 
 const nextConfig: NextConfig = {
+	output: "standalone",
 	async rewrites() {
 		return [
 			{
