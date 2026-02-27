@@ -3,8 +3,9 @@ import { NextResponse } from "next/server";
 
 export async function GET(
 	req: Request,
-	{ params }: { params: { id: string } }
+	{ params }: { params: Promise<{ id: string }> }
 ) {
+	const { id } = await params;
 	try {
 		const supabase = await createClient();
 		const {
@@ -18,7 +19,7 @@ export async function GET(
 		const { data, error } = await supabase
 			.from("deployment_logs")
 			.select("*")
-			.eq("deployment_id", params.id)
+			.eq("deployment_id", id)
 			.order("created_at", { ascending: true });
 
 		if (error) {
@@ -42,8 +43,9 @@ export async function GET(
 
 export async function POST(
 	req: Request,
-	{ params }: { params: { id: string } }
+	{ params }: { params: Promise<{ id: string }> }
 ) {
+	const { id } = await params;
 	try {
 		const supabase = await createClient();
 		const {
@@ -63,7 +65,7 @@ export async function POST(
 		}
 
 		const { data, error } = await supabase.from("deployment_logs").insert({
-			deployment_id: params.id,
+			deployment_id: id,
 			message,
 			level,
 			step,

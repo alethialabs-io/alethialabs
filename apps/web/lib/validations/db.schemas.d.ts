@@ -144,3 +144,27 @@ export type PublicProvisionsUpdate = z.infer<
 export type PublicProvisionsRelationships = z.infer<
   typeof generated.publicProvisionsRelationshipsSchema
 >;
+export type PublicAgentHeartbeatArgs = z.infer<
+  typeof generated.publicAgentHeartbeatArgsSchema
+>;
+export type PublicAgentHeartbeatReturns = z.infer<
+  typeof generated.publicAgentHeartbeatReturnsSchema
+>;
+export type PublicFetchNextProvisionArgs = z.infer<
+  typeof generated.publicFetchNextProvisionArgsSchema
+>;
+export type PublicFetchNextProvisionReturns = z.infer<
+  typeof generated.publicFetchNextProvisionReturnsSchema
+>;
+export type PublicInsertProvisionLogArgs = z.infer<
+  typeof generated.publicInsertProvisionLogArgsSchema
+>;
+export type PublicInsertProvisionLogReturns = z.infer<
+  typeof generated.publicInsertProvisionLogReturnsSchema
+>;
+export type PublicUpdateProvisionStatusArgs = z.infer<
+  typeof generated.publicUpdateProvisionStatusArgsSchema
+>;
+export type PublicUpdateProvisionStatusReturns = z.infer<
+  typeof generated.publicUpdateProvisionStatusReturnsSchema
+>;

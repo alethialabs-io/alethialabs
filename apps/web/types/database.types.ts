@@ -122,6 +122,7 @@ export type Database = {
           cloud_identity_id: string | null
           cluster_id: string | null
           container_platform: string
+          create_rds: boolean | null
           create_vpc: boolean | null
           created_at: string | null
           db_max_capacity: number | null
@@ -143,6 +144,7 @@ export type Database = {
           gitops_app_token: string | null
           gitops_argocd_token: string | null
           gitops_destinations_repo: string | null
+          gitops_infra_destination_repo: string | null
           gitops_repository: string | null
           id: string
           last_downloaded_at: string | null
@@ -161,6 +163,7 @@ export type Database = {
           cloud_identity_id?: string | null
           cluster_id?: string | null
           container_platform: string
+          create_rds?: boolean | null
           create_vpc?: boolean | null
           created_at?: string | null
           db_max_capacity?: number | null
@@ -182,6 +185,7 @@ export type Database = {
           gitops_app_token?: string | null
           gitops_argocd_token?: string | null
           gitops_destinations_repo?: string | null
+          gitops_infra_destination_repo?: string | null
           gitops_repository?: string | null
           id?: string
           last_downloaded_at?: string | null
@@ -200,6 +204,7 @@ export type Database = {
           cloud_identity_id?: string | null
           cluster_id?: string | null
           container_platform?: string
+          create_rds?: boolean | null
           create_vpc?: boolean | null
           created_at?: string | null
           db_max_capacity?: number | null
@@ -221,6 +226,7 @@ export type Database = {
           gitops_app_token?: string | null
           gitops_argocd_token?: string | null
           gitops_destinations_repo?: string | null
+          gitops_infra_destination_repo?: string | null
           gitops_repository?: string | null
           id?: string
           last_downloaded_at?: string | null
@@ -572,7 +578,51 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      agent_heartbeat: {
+        Args: { p_cluster_id: string; p_token_hash: string }
+        Returns: undefined
+      }
+      fetch_next_provision: {
+        Args: { p_cluster_id: string; p_token_hash: string }
+        Returns: {
+          cluster_id: string
+          completed_at: string | null
+          config_snapshot: Json
+          configuration_hash: string | null
+          created_at: string | null
+          error_message: string | null
+          execution_metadata: Json | null
+          id: string
+          started_at: string | null
+          status: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "provisions"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      insert_provision_log: {
+        Args: {
+          p_cluster_id: string
+          p_log_chunk: string
+          p_provision_id: string
+          p_stream_type: string
+          p_token_hash: string
+        }
+        Returns: undefined
+      }
+      update_provision_status: {
+        Args: {
+          p_cluster_id: string
+          p_error_message?: string
+          p_provision_id: string
+          p_status: string
+          p_token_hash: string
+        }
+        Returns: undefined
+      }
     }
     Enums: {
       cloud_provider: "aws" | "azure" | "gcp"

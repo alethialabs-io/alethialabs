@@ -3,8 +3,9 @@ import { NextResponse } from "next/server";
 
 export async function GET(
 	req: Request,
-	{ params }: { params: { id: string } }
+	{ params }: { params: Promise<{ id: string }> }
 ) {
+	const { id } = await params;
 	try {
 		const supabase = await createClient();
 		const {
@@ -18,7 +19,7 @@ export async function GET(
 		const { data, error } = await supabase
 			.from("deployments")
 			.select("*")
-			.eq("configuration_id", params.id)
+			.eq("configuration_id", id)
 			.order("created_at", { ascending: false });
 
 		if (error) {

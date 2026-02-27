@@ -179,6 +179,7 @@ export const publicConfigurationsRowSchema = z.object({
   cloud_identity_id: z.string().nullable(),
   cluster_id: z.string().nullable(),
   container_platform: z.string(),
+  create_rds: z.boolean().nullable(),
   create_vpc: z.boolean().nullable(),
   created_at: z.string().nullable(),
   db_max_capacity: z.number().nullable(),
@@ -200,6 +201,7 @@ export const publicConfigurationsRowSchema = z.object({
   gitops_app_token: z.string().nullable(),
   gitops_argocd_token: z.string().nullable(),
   gitops_destinations_repo: z.string().nullable(),
+  gitops_infra_destination_repo: z.string().nullable(),
   gitops_repository: z.string().nullable(),
   id: z.string(),
   last_downloaded_at: z.string().nullable(),
@@ -219,6 +221,7 @@ export const publicConfigurationsInsertSchema = z.object({
   cloud_identity_id: z.string().optional().nullable(),
   cluster_id: z.string().optional().nullable(),
   container_platform: z.string(),
+  create_rds: z.boolean().optional().nullable(),
   create_vpc: z.boolean().optional().nullable(),
   created_at: z.string().optional().nullable(),
   db_max_capacity: z.number().optional().nullable(),
@@ -240,6 +243,7 @@ export const publicConfigurationsInsertSchema = z.object({
   gitops_app_token: z.string().optional().nullable(),
   gitops_argocd_token: z.string().optional().nullable(),
   gitops_destinations_repo: z.string().optional().nullable(),
+  gitops_infra_destination_repo: z.string().optional().nullable(),
   gitops_repository: z.string().optional().nullable(),
   id: z.string().optional(),
   last_downloaded_at: z.string().optional().nullable(),
@@ -259,6 +263,7 @@ export const publicConfigurationsUpdateSchema = z.object({
   cloud_identity_id: z.string().optional().nullable(),
   cluster_id: z.string().optional().nullable(),
   container_platform: z.string().optional(),
+  create_rds: z.boolean().optional().nullable(),
   create_vpc: z.boolean().optional().nullable(),
   created_at: z.string().optional().nullable(),
   db_max_capacity: z.number().optional().nullable(),
@@ -280,6 +285,7 @@ export const publicConfigurationsUpdateSchema = z.object({
   gitops_app_token: z.string().optional().nullable(),
   gitops_argocd_token: z.string().optional().nullable(),
   gitops_destinations_repo: z.string().optional().nullable(),
+  gitops_infra_destination_repo: z.string().optional().nullable(),
   gitops_repository: z.string().optional().nullable(),
   id: z.string().optional(),
   last_downloaded_at: z.string().optional().nullable(),
@@ -636,3 +642,50 @@ export const publicProvisionsRelationshipsSchema = z.tuple([
     referencedColumns: z.tuple([z.literal("id")]),
   }),
 ]);
+
+export const publicAgentHeartbeatArgsSchema = z.object({
+  p_cluster_id: z.string(),
+  p_token_hash: z.string(),
+});
+
+export const publicAgentHeartbeatReturnsSchema = z.undefined();
+
+export const publicFetchNextProvisionArgsSchema = z.object({
+  p_cluster_id: z.string(),
+  p_token_hash: z.string(),
+});
+
+export const publicFetchNextProvisionReturnsSchema = z.array(
+  z.object({
+    cluster_id: z.string(),
+    completed_at: z.string().nullable(),
+    config_snapshot: jsonSchema,
+    configuration_hash: z.string().nullable(),
+    created_at: z.string().nullable(),
+    error_message: z.string().nullable(),
+    execution_metadata: jsonSchema.nullable(),
+    id: z.string(),
+    started_at: z.string().nullable(),
+    status: z.string().nullable(),
+  }),
+);
+
+export const publicInsertProvisionLogArgsSchema = z.object({
+  p_cluster_id: z.string(),
+  p_log_chunk: z.string(),
+  p_provision_id: z.string(),
+  p_stream_type: z.string(),
+  p_token_hash: z.string(),
+});
+
+export const publicInsertProvisionLogReturnsSchema = z.undefined();
+
+export const publicUpdateProvisionStatusArgsSchema = z.object({
+  p_cluster_id: z.string(),
+  p_error_message: z.string().optional(),
+  p_provision_id: z.string(),
+  p_status: z.string(),
+  p_token_hash: z.string(),
+});
+
+export const publicUpdateProvisionStatusReturnsSchema = z.undefined();

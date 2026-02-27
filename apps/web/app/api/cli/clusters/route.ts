@@ -119,3 +119,60 @@ export async function GET(req: Request) {
 		);
 	}
 }
+
+export async function DELETE(req: Request) {
+	// 1. Authenticate CLI User
+	const { payload, error } = await verifyCliToken(req);
+	if (error) {
+		return error;
+	}
+
+	const userId = payload?.sub;
+	if (!userId) {
+		return NextResponse.json(
+			{ error: "Invalid token payload" },
+			{ status: 401 },
+		);
+	}
+
+	try {
+		const { searchParams } = new URL(req.url);
+		const id = searchParams.get("id");
+		const name = searchParams.get("name");
+
+		if (!id && !name) {
+			return NextResponse.json(
+				{ error: "Either cluster ID or name is required" },
+				{ status: 400 },
+			);
+		}
+
+		const supabase = await createServiceRoleClient();
+
+		let query = supabase.from("clusters").delete().eq("user_id", userId);
+
+		if (id) {
+			query = query.eq("id", id);
+		} else if (name) {
+			query = query.eq("name", name);
+		}
+
+		const { error: dbError } = await query;
+
+		if (dbError) {
+			console.error("Database error deleting cluster:", dbError);
+			return NextResponse.json(
+				{ error: "Failed to delete cluster" },
+				{ status: 500 },
+			);
+		}
+
+		return NextResponse.json({ success: true });
+	} catch (err: any) {
+		console.error("Error deleting cluster:", err);
+		return NextResponse.json(
+			{ error: "Internal Server Error" },
+			{ status: 500 },
+		);
+	}
+}

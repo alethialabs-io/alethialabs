@@ -13,10 +13,11 @@ import {
 } from "@/components/ui/card";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { PublicClustersRow } from "@/lib/validations/database.schemas.d";
+import { PublicClustersRow } from "@/lib/validations/db.schemas";
 import { formatDistanceToNow } from "date-fns";
 import { ArrowRight, Server, Activity, Clock, Globe, Shield, Terminal } from "lucide-react";
 import Link from "next/link";
+import { LogViewer } from "./log-viewer";
 
 interface ClusterListProps {
 	initialClusters: PublicClustersRow[];
@@ -25,6 +26,8 @@ interface ClusterListProps {
 
 export function ClusterList({ initialClusters, userId }: ClusterListProps) {
 	const [clusters, setClusters] = useState<PublicClustersRow[]>(initialClusters);
+	const [selectedCluster, setSelectedCluster] = useState<PublicClustersRow | null>(null);
+	const [isLogViewerOpen, setIsLogViewerOpen] = useState(false);
 	const supabase = createClient();
 
 	useEffect(() => {
@@ -193,13 +196,33 @@ export function ClusterList({ initialClusters, userId }: ClusterListProps) {
 							<p className="text-[10px] text-slate-400 font-medium italic">
 								VPC: {metadata?.vpc_id || "Provisioned"}
 							</p>
-							<Button size="sm" variant="secondary" className="font-bold">
-								Details
-							</Button>
+							<div className="flex gap-2">
+								<Button 
+									size="sm" 
+									variant="outline" 
+									className="font-bold border-slate-200"
+									onClick={() => {
+										setSelectedCluster(cluster);
+										setIsLogViewerOpen(true);
+									}}
+								>
+									<Terminal className="h-3.5 w-3.5 mr-2" />
+									Logs
+								</Button>
+								<Button size="sm" variant="secondary" className="font-bold">
+									Details
+								</Button>
+							</div>
 						</CardFooter>
 					</Card>
 				);
 			})}
+			<LogViewer 
+				clusterId={selectedCluster?.id || null} 
+				clusterName={selectedCluster?.name}
+				open={isLogViewerOpen} 
+				onOpenChange={setIsLogViewerOpen} 
+			/>
 		</div>
 	);
 }

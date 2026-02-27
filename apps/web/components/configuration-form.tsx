@@ -58,7 +58,7 @@ export function ConfigurationForm() {
 		useState<PublicClustersRow | null>(null);
 
 	const form = useForm<PublicConfigurationsInsert>({
-		resolver: zodResolver(publicConfigurationsInsertSchema),
+		resolver: zodResolver(publicConfigurationsInsertSchema) as any,
 		defaultValues: {
 			container_platform: "",
 			user_id: "",
@@ -78,13 +78,11 @@ export function ConfigurationForm() {
 			dns_domain_name: "",
 			db_min_capacity: 2,
 			db_max_capacity: 16,
-			eks_cluster_admins: `users:
-  - username: admin
-    groups:
-      - system:masters
-  - username: developer
-    groups:
-      - developers`,
+			eks_cluster_admins: `eks_cluster_admins:
+  - username: "mihail.vukadinoff@itgix.com"
+    path: /
+  - username: "hristiyan.tonev@itgix.com"
+    path: /`,
 			ses_queues_topics: `queues:
   - name: email-processing
     visibility_timeout: 300
@@ -221,27 +219,14 @@ topics:
 										<FormLabel htmlFor="environment_stage">
 											Environment Stage *
 										</FormLabel>
-										<Select
-											onValueChange={field.onChange}
-											defaultValue={field.value}
-										>
-											<FormControl>
-												<SelectTrigger>
-													<SelectValue />
-												</SelectTrigger>
-											</FormControl>
-											<SelectContent>
-												<SelectItem value="development">
-													Development
-												</SelectItem>
-												<SelectItem value="staging">
-													Staging
-												</SelectItem>
-												<SelectItem value="production">
-													Production
-												</SelectItem>
-											</SelectContent>
-										</Select>
+										<FormControl>
+											<Input
+												id="environment_stage"
+												placeholder="e.g. development, staging, production"
+												required
+												{...field}
+											/>
+										</FormControl>
 										<FormMessage />
 									</FormItem>
 								)}
@@ -261,6 +246,7 @@ topics:
 												pattern="[0-9]{12}"
 												required
 												{...field}
+												value={field.value ?? ""}
 											/>
 										</FormControl>
 										<FormMessage />
@@ -277,7 +263,7 @@ topics:
 										</FormLabel>
 										<Select
 											onValueChange={field.onChange}
-											defaultValue={field.value}
+											defaultValue={field.value ?? ""}
 										>
 											<FormControl>
 												<SelectTrigger>
@@ -285,6 +271,27 @@ topics:
 												</SelectTrigger>
 											</FormControl>
 											<SelectContent>
+												<SelectItem value="1.11.4">
+													1.11.4
+												</SelectItem>
+												<SelectItem value="1.10.5">
+													1.10.5
+												</SelectItem>
+												<SelectItem value="1.9.8">
+													1.9.8
+												</SelectItem>
+												<SelectItem value="1.8.5">
+													1.8.5
+												</SelectItem>
+												<SelectItem value="1.7.5">
+													1.7.5
+												</SelectItem>
+												<SelectItem value="1.6.6">
+													1.6.6
+												</SelectItem>
+												<SelectItem value="1.5.7">
+													1.5.7
+												</SelectItem>
 												<SelectItem value="1.5.0">
 													1.5.0
 												</SelectItem>
@@ -319,7 +326,9 @@ topics:
 													onValueChange={
 														field.onChange
 													}
-													defaultValue={field.value}
+													defaultValue={
+														field.value ?? ""
+													}
 												>
 													<FormControl>
 														<SelectTrigger>
@@ -331,15 +340,55 @@ topics:
 															US East (N.
 															Virginia)
 														</SelectItem>
+														<SelectItem value="us-east-2">
+															US East (Ohio)
+														</SelectItem>
+														<SelectItem value="us-west-1">
+															US West (N.
+															California)
+														</SelectItem>
 														<SelectItem value="us-west-2">
 															US West (Oregon)
+														</SelectItem>
+														<SelectItem value="ca-central-1">
+															Canada (Central)
 														</SelectItem>
 														<SelectItem value="eu-west-1">
 															Europe (Ireland)
 														</SelectItem>
+														<SelectItem value="eu-west-2">
+															Europe (London)
+														</SelectItem>
+														<SelectItem value="eu-west-3">
+															Europe (Paris)
+														</SelectItem>
+														<SelectItem value="eu-central-1">
+															Europe (Frankfurt)
+														</SelectItem>
+														<SelectItem value="eu-north-1">
+															Europe (Stockholm)
+														</SelectItem>
+														<SelectItem value="ap-south-1">
+															Asia Pacific
+															(Mumbai)
+														</SelectItem>
+														<SelectItem value="ap-northeast-1">
+															Asia Pacific (Tokyo)
+														</SelectItem>
+														<SelectItem value="ap-northeast-2">
+															Asia Pacific (Seoul)
+														</SelectItem>
 														<SelectItem value="ap-southeast-1">
 															Asia Pacific
 															(Singapore)
+														</SelectItem>
+														<SelectItem value="ap-southeast-2">
+															Asia Pacific
+															(Sydney)
+														</SelectItem>
+														<SelectItem value="sa-east-1">
+															South America (São
+															Paulo)
 														</SelectItem>
 													</SelectContent>
 												</Select>
@@ -741,8 +790,9 @@ topics:
 											<Input
 												id="db_min_capacity"
 												type="number"
-												min="1"
+												min="0.5"
 												max="128"
+												step="0.5"
 												{...field}
 												onChange={(e) =>
 													field.onChange(
@@ -770,8 +820,9 @@ topics:
 											<Input
 												id="db_max_capacity"
 												type="number"
-												min="1"
+												min="0.5"
 												max="128"
+												step="0.5"
 												{...field}
 												onChange={(e) =>
 													field.onChange(
