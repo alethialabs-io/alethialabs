@@ -12,7 +12,7 @@ import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 import { PublicConfigurationsRow } from "@/lib/validations/db.schemas";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowRight, Bot, Briefcase, Clock, FileText } from "lucide-react";
+import { ArrowRight, Bot, Briefcase, Clock, FileText, Settings } from "lucide-react";
 import Link from "next/link";
 
 export default async function ConfigurationsPage({
@@ -34,14 +34,13 @@ export default async function ConfigurationsPage({
 	const { hightlight: highlightedConfig } = await searchParams;
 
 	return (
-		<div className="max-w-7xl mx-auto">
-			<div className="mb-8">
-				<h1 className="font-sans text-3xl font-bold text-foreground mb-2">
-					Your Configurations
+		<div className="space-y-8 w-full max-w-[1200px]">
+			<div className="space-y-1.5">
+				<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
+					Configurations
 				</h1>
-				<p className="text-muted-foreground">
-					View, manage, and download your infrastructure
-					configurations.
+				<p className="text-muted-foreground text-sm">
+					View, manage, and download your infrastructure configurations.
 				</p>
 			</div>
 
@@ -51,41 +50,41 @@ export default async function ConfigurationsPage({
 						<Card
 							key={config.id}
 							className={cn(
-								"flex flex-col justify-between transition-all hover:scale-105 hover:shadow-xl dark:hover:shadow-cyan-500/20",
+								"flex flex-col justify-between transition-colors shadow-sm border-border/40 hover:border-border",
 								highlightedConfig === config.id &&
-									"border-cyan-400 shadow-lg shadow-cyan-500/30 dark:shadow-cyan-500/50",
+									"border-foreground ring-1 ring-foreground shadow-md"
 							)}
 						>
-							<CardHeader>
-								<div className="flex items-center gap-4 mb-2">
-									<div className="p-2 bg-muted rounded-md">
-										<Bot className="h-6 w-6 text-cyan-600" />
+							<CardHeader className="pb-4">
+								<div className="flex items-center gap-3 mb-2">
+									<div className="p-2 border border-border/50 bg-muted/20 rounded-md">
+										<Settings className="h-4 w-4 text-foreground" />
 									</div>
-									<CardTitle className="font-sans text-xl truncate">
+									<CardTitle className="text-base font-medium truncate">
 										{config.project_name}
 									</CardTitle>
 								</div>
-								<CardDescription className="line-clamp-2 h-10">
+								<CardDescription className="line-clamp-2 h-10 text-xs">
 									{config.description ||
 										`A configuration for the ${config.environment_stage} environment.`}
 								</CardDescription>
 							</CardHeader>
-							<CardContent className="space-y-4">
-								<div className="flex items-center justify-between text-sm">
+							<CardContent className="space-y-4 pb-4">
+								<div className="flex items-center justify-between text-[13px]">
 									<div className="flex items-center gap-2 text-muted-foreground">
-										<Briefcase className="h-4 w-4" />
+										<Briefcase className="h-3.5 w-3.5" />
 										<span>Platform</span>
 									</div>
-									<Badge variant="outline">
+									<Badge variant="secondary" className="font-normal px-2 py-0 h-5 text-[11px]">
 										{config.container_platform}
 									</Badge>
 								</div>
-								<div className="flex items-center justify-between text-sm">
+								<div className="flex items-center justify-between text-[13px]">
 									<div className="flex items-center gap-2 text-muted-foreground">
-										<Clock className="h-4 w-4" />
+										<Clock className="h-3.5 w-3.5" />
 										<span>Last Updated</span>
 									</div>
-									<span className="font-medium">
+									<span className="font-medium text-foreground">
 										{formatDistanceToNow(
 											new Date(config.updated_at!),
 											{
@@ -95,32 +94,32 @@ export default async function ConfigurationsPage({
 									</span>
 								</div>
 							</CardContent>
-							<CardFooter className="flex justify-end gap-2">
-								<Button variant="outline">View Details</Button>
+							<CardFooter className="flex justify-end gap-2 pt-4 border-t border-border/20 bg-muted/5">
+								<Button variant="ghost" size="sm" className="h-8 text-xs font-medium">View Details</Button>
 								<Link
 									href={`/api/download/config?id=${config.id}`}
 								>
-									<Button>Download</Button>
+									<Button size="sm" variant="outline" className="h-8 text-xs font-medium">Download</Button>
 								</Link>
 							</CardFooter>
 						</Card>
 					))}
 				</div>
 			) : (
-				<Card>
-					<CardContent className="text-center py-12">
-						<FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-						<h3 className="font-sans text-lg font-semibold mb-2">
+				<Card className="border-border/40 shadow-sm bg-muted/10">
+					<CardContent className="flex flex-col items-center justify-center py-16 text-center">
+						<FileText className="h-12 w-12 text-muted-foreground mb-4 opacity-30" />
+						<h3 className="text-sm font-medium text-foreground mb-1">
 							No configurations saved yet
 						</h3>
-						<p className="text-muted-foreground mb-4">
+						<p className="text-xs text-muted-foreground mb-6 max-w-sm">
 							Create your first configuration to see it here.
-							You&rsquo;ll be able to view, edit, and reuse them.
+							You'll be able to view, edit, and reuse them.
 						</p>
 						<Link href="/dashboard/configure">
-							<Button className="bg-linear-to-r from-cyan-600 to-purple-600 hover:from-cyan-700 hover:to-purple-700">
+							<Button size="sm" className="h-8 text-xs font-medium">
 								Create Configuration
-								<ArrowRight className="ml-2 h-4 w-4" />
+								<ArrowRight className="ml-2 h-3.5 w-3.5" />
 							</Button>
 						</Link>
 					</CardContent>

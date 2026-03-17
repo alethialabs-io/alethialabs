@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { PublicGitProvider } from "@/lib/validations/db.schemas";
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import * as fs from 'fs';
 import * as path from 'path';
@@ -7,9 +8,14 @@ import * as path from 'path';
 export async function GET(request: Request) {
 	const { searchParams, origin } = new URL(request.url);
 	const code = searchParams.get("code");
-	// if "next" is in param, use it as the redirect target
-	const next = searchParams.get("next") ?? "/dashboard/profile";
-	// Capture the provider from params if passed (critical for linking flows)
+	
+	const cookieStore = await cookies();
+	const nextCookie = cookieStore.get("auth_return_to")?.value;
+	
+	// if "next" is in param, use it as the redirect target, fallback to cookie
+	const next = searchParams.get("next") ?? nextCookie ?? "/dashboard/profile";
+	
+	// capture the provider from params if passed (critical for linking flows)
 	const providerParam = searchParams.get("provider");
 
 	if (code) {
@@ -18,6 +24,11 @@ export async function GET(request: Request) {
 			await supabase.auth.exchangeCodeForSession(code);
 
 		if (!error && data?.session) {
+			// Clear the return-to cookie if it was used
+			if (nextCookie) {
+				cookieStore.delete("auth_return_to");
+			}
+
 			const { session } = data;
 			// Capture provider token
 			const providerToken = session.provider_token;

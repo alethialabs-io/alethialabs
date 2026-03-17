@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
 
-// const PRIVATE_ROUTES = ["/dashboard"];
+const PRIVATE_ROUTES = ["/dashboard", "/cli"];
 
 export async function updateSession(request: NextRequest) {
 	let supabaseResponse = NextResponse.next({
@@ -37,30 +37,39 @@ export async function updateSession(request: NextRequest) {
 
 	// IMPORTANT: DO NOT REMOVE auth.getUser()
 
-	await supabase.auth.getUser();
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
 
-	// const currentPath = request.nextUrl.pathname;
+	const currentPath = request.nextUrl.pathname;
 
-	// const isAuthRoute = currentPath.startsWith("/auth");
+	const isAuthRoute = currentPath.startsWith("/auth");
 
-	// const isPrivateRoute = PRIVATE_ROUTES.some((route) =>
-	// 	currentPath.startsWith(route)
-	// );
+	const isPrivateRoute = PRIVATE_ROUTES.some((route) =>
+		currentPath.startsWith(route)
+	);
 
-	// if (!user && !isAuthRoute && isPrivateRoute) {
-	// 	// no user, potentially respond by redirecting the user to the login page
-	// 	const url = request.nextUrl.clone();
-	// 	url.pathname = "/auth/signin";
-	// 	return NextResponse.redirect(url);
-	// }
+	if (!user && !isAuthRoute && isPrivateRoute) {
+		// no user, potentially respond by redirecting the user to the login page
+		const url = request.nextUrl.clone();
+		url.pathname = "/auth/signin";
+		
+		// Preserve the exact path (including query params like ?device_code) for post-login redirect
+		const nextUrl = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+		if (nextUrl !== "/") {
+			url.searchParams.set("next", nextUrl);
+		}
+		
+		return NextResponse.redirect(url);
+	}
 
 	// now we need to disable viewing of /auth routes if the user is logged in
-	// if (user && isAuthRoute) {
-	// 	// user is logged in, redirect to the dashboard
-	// 	const url = request.nextUrl.clone();
-	// 	url.pathname = "/dashboard";
-	// 	return NextResponse.redirect(url);
-	// }
+	if (user && isAuthRoute) {
+		// user is logged in, redirect to the dashboard
+		const url = request.nextUrl.clone();
+		url.pathname = "/dashboard";
+		return NextResponse.redirect(url);
+	}
 
 	// IMPORTANT: You *must* return the supabaseResponse object as it is.
 	// If you're creating a new response object with NextResponse.next() make sure to:
@@ -77,3 +86,4 @@ export async function updateSession(request: NextRequest) {
 
 	return supabaseResponse;
 }
+

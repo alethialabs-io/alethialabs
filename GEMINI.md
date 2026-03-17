@@ -49,3 +49,9 @@ Technical terms must be shortened after their first introduction. The file `glos
 ## 5. Agent Workflow Rules
 *   **Feature Planning:** Always save progress for each feature in an `.md` file inside `spec/features/` with checkable task lists.
 *   **Code Proposal:** NEVER start proposing code without giving the full rundown of the plan beforehand and explicitly asking for approval.
+
+---
+
+## 6. UI/UX Design Guidelines
+*   **Aesthetic:** Stick to a Vercel-like UI. It should be highly modern, sophisticated, and definitely not flashy.
+*   **Colors & Theming:** Use basic shadcn UI colors and theming. Avoid excessive gradients or overly bright, saturated colors. Keep it minimalist and monochrome/neutral where possible, prioritizing crisp typography and whitespace to let the content stand out.

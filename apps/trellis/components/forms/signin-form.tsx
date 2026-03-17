@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Boxes, GitBranch, Github, Mail } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 type AuthProvider = "github" | "gitlab" | "bitbucket" | "google";
@@ -22,6 +22,8 @@ export function SignInForm() {
 	const [emailSent, setEmailSent] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const router = useRouter();
+	const searchParams = useSearchParams();
+	const next = searchParams.get("next");
 
 	const handleMagicLinkLogin = async (e: React.FormEvent) => {
 		e.preventDefault();
@@ -29,12 +31,7 @@ export function SignInForm() {
 		setError(null);
 
 		try {
-			const result = await signInWithMagicLink(email);
-
-			if (result.success) {
-				setEmailSent(true);
-			}
-
+			await signInWithMagicLink(email, next);
 			setEmailSent(true);
 		} catch (err) {
 			setError(
@@ -50,7 +47,7 @@ export function SignInForm() {
 		setError(null);
 
 		try {
-			await signInWithOAuth(provider);
+			await signInWithOAuth(provider, next);
 		} catch (err) {
 			setError(
 				err instanceof Error
@@ -63,20 +60,20 @@ export function SignInForm() {
 
 	if (emailSent) {
 		return (
-			<div className="text-center space-y-4">
-				<div className="w-16 h-16 bg-cyan-100 rounded-full flex items-center justify-center mx-auto">
-					<Mail className="w-8 h-8 text-cyan-600" />
+			<div className="text-center space-y-6">
+				<div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto border border-border">
+					<Mail className="w-5 h-5 text-foreground" />
 				</div>
-				<div>
-					<h3 className="text-xl font-semibold text-slate-900 mb-2">
+				<div className="space-y-2">
+					<h3 className="text-lg font-medium text-foreground tracking-tight">
 						Check your email
 					</h3>
-					<p className="text-slate-600">
-						We&rsquo;ve sent a magic link to{" "}
-						<strong>{email}</strong>
+					<p className="text-sm text-muted-foreground">
+						We sent a magic link to{" "}
+						<span className="font-medium text-foreground">{email}</span>
 					</p>
-					<p className="text-sm text-slate-500 mt-2">
-						Click the link in the email to sign in to your account
+					<p className="text-xs text-muted-foreground pt-2">
+						Click the link in the email to sign in automatically.
 					</p>
 				</div>
 				<Button
@@ -85,9 +82,9 @@ export function SignInForm() {
 						setEmailSent(false);
 						setEmail("");
 					}}
-					className="mt-4"
+					className="w-full"
 				>
-					Use a different email
+					Back to login
 				</Button>
 			</div>
 		);
@@ -96,99 +93,94 @@ export function SignInForm() {
 	return (
 		<div className="space-y-6">
 			{error && (
-				<div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg text-sm">
+				<div className="bg-destructive/10 border border-destructive/20 text-destructive px-4 py-3 rounded-md text-sm">
 					{error}
 				</div>
 			)}
 
-			{/* OAuth Providers */}
-			<div className="space-y-3">
-				<Button
-					onClick={() => handleOAuthLogin("google")}
-					disabled={isLoading}
-					variant="outline"
-					className="w-full h-12 text-base font-medium hover:bg-slate-50 transition-colors"
-				>
-					<Mail className="w-5 h-5 mr-3" />
-					Continue with Google
-				</Button>
+			<form onSubmit={handleMagicLinkLogin} className="space-y-4">
+				<div className="space-y-2">
+					<Label htmlFor="email" className="sr-only">Email</Label>
+					<Input
+						id="email"
+						type="email"
+						placeholder="name@example.com"
+						value={email}
+						onChange={(e) => setEmail(e.target.value)}
+						required
+						disabled={isLoading}
+						className="h-10 transition-colors focus-visible:ring-1"
+					/>
+				</div>
 
 				<Button
-					onClick={() => handleOAuthLogin("github")}
-					disabled={isLoading}
-					variant="outline"
-					className="w-full h-12 text-base font-medium hover:bg-slate-50 transition-colors"
+					type="submit"
+					disabled={isLoading || !email}
+					className="w-full h-10 font-medium"
 				>
-					<Github className="w-5 h-5 mr-3" />
-					Continue with GitHub
+					{isLoading ? "Sending link..." : "Continue with Email"}
 				</Button>
-
-				<Button
-					onClick={() => handleOAuthLogin("gitlab")}
-					disabled={isLoading}
-					variant="outline"
-					className="w-full h-12 text-base font-medium hover:bg-slate-50 transition-colors"
-				>
-					<GitBranch className="w-5 h-5 mr-3" />
-					Continue with GitLab
-				</Button>
-
-				<Button
-					onClick={() => handleOAuthLogin("bitbucket")}
-					disabled={isLoading}
-					variant="outline"
-					className="w-full h-12 text-base font-medium hover:bg-slate-50 transition-colors"
-				>
-					<Boxes className="w-5 h-5 mr-3" />
-					Continue with Bitbucket
-				</Button>
-			</div>
+			</form>
 
 			<div className="relative">
 				<div className="absolute inset-0 flex items-center">
 					<Separator className="w-full" />
 				</div>
 				<div className="relative flex justify-center text-xs uppercase">
-					<span className="bg-white px-2 text-slate-500">
-						Or continue with email
+					<span className="bg-card px-2 text-muted-foreground">
+						Or continue with
 					</span>
 				</div>
 			</div>
 
-			{/* Magic Link Email Form */}
-			<form onSubmit={handleMagicLinkLogin} className="space-y-4">
-				<div className="space-y-2">
-					<Label htmlFor="email">Email address</Label>
-					<Input
-						id="email"
-						type="email"
-						placeholder="name@company.com"
-						value={email}
-						onChange={(e) => setEmail(e.target.value)}
-						required
-						className="h-12"
-						disabled={isLoading}
-					/>
-					<p className="text-xs text-slate-500">
-						We&rsquo;ll send you a magic link to sign in
-					</p>
-				</div>
+			<div className="space-y-3">
+				<Button
+					onClick={() => handleOAuthLogin("google")}
+					disabled={isLoading}
+					variant="outline"
+					className="w-full h-10 font-normal hover:bg-muted/50 transition-colors"
+				>
+					<Mail className="w-4 h-4 mr-2" />
+					Google
+				</Button>
 
 				<Button
-					type="submit"
-					disabled={isLoading || !email}
-					className="w-full h-12 text-base font-medium bg-cyan-600 hover:bg-cyan-700 text-white"
+					onClick={() => handleOAuthLogin("github")}
+					disabled={isLoading}
+					variant="outline"
+					className="w-full h-10 font-normal hover:bg-muted/50 transition-colors"
 				>
-					{isLoading ? "Sending..." : "Send magic link"}
+					<Github className="w-4 h-4 mr-2" />
+					GitHub
 				</Button>
-			</form>
 
-			<div className="text-center">
-				<p className="text-sm text-slate-600">
-					New to ItGix?{" "}
+				<Button
+					onClick={() => handleOAuthLogin("gitlab")}
+					disabled={isLoading}
+					variant="outline"
+					className="w-full h-10 font-normal hover:bg-muted/50 transition-colors"
+				>
+					<GitBranch className="w-4 h-4 mr-2" />
+					GitLab
+				</Button>
+
+				<Button
+					onClick={() => handleOAuthLogin("bitbucket")}
+					disabled={isLoading}
+					variant="outline"
+					className="w-full h-10 font-normal hover:bg-muted/50 transition-colors"
+				>
+					<Boxes className="w-4 h-4 mr-2" />
+					Bitbucket
+				</Button>
+			</div>
+
+			<div className="text-center pt-2">
+				<p className="text-sm text-muted-foreground">
+					Don&apos;t have an account?{" "}
 					<button
 						type="button"
-						className="text-cyan-600 hover:text-cyan-700 font-medium"
+						className="text-foreground hover:underline font-medium underline-offset-4 transition-colors"
 						onClick={() => router.push("/contact")}
 					>
 						Contact sales

@@ -11,8 +11,11 @@ export default async function AwsOnboardingPage() {
 	} catch (error) {
 		console.error("Failed to init AWS setup:", error);
 		return (
-			<div className="p-8 text-center text-red-500">
-				Failed to initialize onboarding. Please try refreshing.
+			<div className="flex items-center justify-center min-h-[400px] w-full">
+				<div className="p-8 text-center text-destructive bg-destructive/5 border border-destructive/20 rounded-md max-w-md animate-in fade-in zoom-in-95 duration-300">
+					<h3 className="text-sm font-semibold mb-2">Initialization Failed</h3>
+					<p className="text-xs opacity-80">Failed to initialize AWS onboarding. Please try refreshing the page.</p>
+				</div>
 			</div>
 		);
 	}
@@ -31,15 +34,18 @@ export default async function AwsOnboardingPage() {
 	}
 
 	return (
-		<div className="container max-w-4xl mx-auto py-12 px-4 relative">
-			<div className="absolute top-8 right-8">
+		<div className="flex flex-col items-center justify-center min-h-[calc(100vh-10rem)] w-full py-8 px-4 sm:px-6 lg:px-8 relative">
+			{/* Improved Skip Button Positioning */}
+			<div className="absolute top-0 right-4 sm:right-6 lg:right-8 pt-4">
 				<SkipButton />
 			</div>
 
-			<AwsConnection
-				externalId={setupData.externalId}
-				onComplete={handleComplete}
-			/>
+			<div className="w-full flex justify-center animate-in fade-in slide-in-from-bottom-4 duration-700 delay-150">
+				<AwsConnection
+					externalId={setupData.externalId}
+					onComplete={handleComplete}
+				/>
+			</div>
 		</div>
 	);
 }

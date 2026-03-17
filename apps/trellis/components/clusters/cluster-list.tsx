@@ -66,40 +66,39 @@ export function ClusterList({ initialClusters, userId }: ClusterListProps) {
 	const getStatusColor = (status: string) => {
 		switch (status) {
 			case "ONLINE":
-				return "bg-emerald-500/10 text-emerald-700 border-emerald-200 dark:border-emerald-500/20 dark:text-emerald-400";
+				return "bg-emerald-50 text-emerald-700 border-emerald-200";
 			case "OFFLINE":
-				return "bg-rose-500/10 text-rose-700 border-rose-200 dark:border-rose-500/20 dark:text-rose-400";
+				return "bg-destructive/10 text-destructive border-destructive/20";
 			default:
-				return "bg-amber-500/10 text-amber-700 border-amber-200 dark:border-amber-500/20 dark:text-amber-400";
+				return "bg-muted text-muted-foreground border-border/50";
 		}
 	};
 
 	if (!clusters || clusters.length === 0) {
 		return (
-			<Card className="border-dashed border-2 border-slate-200 bg-slate-50/50 shadow-none">
-				<CardContent className="text-center py-20">
-					<div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
-						<Server className="h-10 w-10 text-slate-400" />
+			<Card className="border-border/40 shadow-sm bg-muted/10">
+				<CardContent className="flex flex-col items-center justify-center py-20 text-center">
+					<div className="w-16 h-16 bg-background border border-border/50 rounded-xl flex items-center justify-center mx-auto mb-6 shadow-sm">
+						<Server className="h-8 w-8 text-muted-foreground opacity-50" />
 					</div>
-					<h3 className="text-2xl font-bold text-slate-900 mb-2">
+					<h3 className="text-xl font-semibold text-foreground mb-2 tracking-tight">
 						No Clusters Connected
 					</h3>
-					<p className="text-slate-500 mb-8 max-w-md mx-auto text-lg">
+					<p className="text-muted-foreground mb-8 max-w-md mx-auto text-sm leading-relaxed">
 						Start by bootstrapping your first environment using the Grape CLI. It only takes a few minutes.
 					</p>
 					
-					<div className="relative max-w-md mx-auto mb-10 group">
-						<div className="absolute -inset-1 bg-gradient-to-r from-cyan-500 to-purple-600 rounded-xl blur-sm opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
-						<div className="relative bg-slate-900 text-cyan-400 p-5 rounded-xl font-mono text-sm shadow-2xl flex items-center justify-between">
-							<span>$ grape bootstrap</span>
-							<Terminal className="h-4 w-4 text-slate-500" />
+					<div className="relative max-w-md mx-auto mb-10 w-full sm:w-[400px]">
+						<div className="bg-foreground text-background p-4 rounded-lg font-mono text-sm shadow-md flex items-center justify-between">
+							<span className="opacity-90">$ grape bootstrap</span>
+							<Terminal className="h-4 w-4 opacity-50" />
 						</div>
 					</div>
 
 					<Link href="https://docs.itgix.com/setup/cli" target="_blank">
-						<Button className="h-12 px-8 bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-700 hover:to-cyan-600 text-white font-bold rounded-xl shadow-lg shadow-cyan-500/20 transition-all hover:scale-105">
+						<Button className="h-10 px-6 font-medium text-sm">
 							Get Started with CLI
-							<ArrowRight className="ml-2 h-5 w-5" />
+							<ArrowRight className="ml-2 h-4 w-4" />
 						</Button>
 					</Link>
 				</CardContent>
@@ -114,74 +113,72 @@ export function ClusterList({ initialClusters, userId }: ClusterListProps) {
 				return (
 					<Card
 						key={cluster.id}
-						className="group relative overflow-hidden border-slate-200 bg-white/50 backdrop-blur-sm transition-all hover:shadow-2xl hover:shadow-cyan-500/10 hover:-translate-y-1"
+						className="group flex flex-col justify-between overflow-hidden border-border/40 bg-background shadow-sm hover:border-border transition-colors"
 					>
-						<div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-cyan-500 to-purple-600 opacity-0 group-hover:opacity-100 transition-opacity" />
-						
-						<CardHeader>
-							<div className="flex items-center justify-between mb-4">
-								<div className="p-2.5 bg-slate-100 rounded-xl group-hover:bg-cyan-50 transition-colors">
-									<Server className="h-6 w-6 text-slate-600 group-hover:text-cyan-600" />
+						<CardHeader className="pb-4">
+							<div className="flex items-center justify-between mb-3">
+								<div className="p-2 border border-border/50 bg-muted/20 rounded-md">
+									<Server className="h-4 w-4 text-foreground" />
 								</div>
 								<Badge
 									variant="outline"
 									className={cn(
-										"font-semibold px-3 py-1 rounded-full text-xs tracking-wider uppercase border",
+										"font-medium px-2 py-0.5 rounded-full text-[10px] tracking-wider uppercase border",
 										getStatusColor(cluster.status || 'PENDING')
 									)}
 								>
 									<span className={cn(
-										"w-1.5 h-1.5 rounded-full mr-2 animate-pulse",
-										cluster.status === 'ONLINE' ? 'bg-emerald-500' : 
-										cluster.status === 'OFFLINE' ? 'bg-rose-500' : 'bg-amber-500'
+										"w-1.5 h-1.5 rounded-full mr-1.5",
+										cluster.status === 'ONLINE' ? 'bg-emerald-500 animate-pulse' : 
+										cluster.status === 'OFFLINE' ? 'bg-destructive' : 'bg-muted-foreground'
 									)} />
 									{cluster.status}
 								</Badge>
 							</div>
-							<CardTitle className="font-sans text-2xl font-bold text-slate-900 truncate">
+							<CardTitle className="text-base font-semibold text-foreground truncate">
 								{cluster.name}
 							</CardTitle>
-							<CardDescription className="font-mono text-xs text-slate-400">
+							<CardDescription className="font-mono text-[11px] text-muted-foreground truncate">
 								{cluster.id}
 							</CardDescription>
 						</CardHeader>
 
-						<CardContent className="space-y-5">
+						<CardContent className="space-y-5 pb-4">
 							<div className="grid grid-cols-2 gap-4">
-								<div className="space-y-1">
-									<p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Region</p>
-									<div className="flex items-center gap-2 text-slate-700">
-										<Globe className="h-3.5 w-3.5 text-slate-400" />
-										<span className="text-sm font-semibold">{metadata?.region || "N/A"}</span>
+								<div className="space-y-1.5">
+									<p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Region</p>
+									<div className="flex items-center gap-2 text-foreground">
+										<Globe className="h-3.5 w-3.5 text-muted-foreground" />
+										<span className="text-sm font-medium">{metadata?.region || "N/A"}</span>
 									</div>
 								</div>
-								<div className="space-y-1">
-									<p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Network</p>
-									<div className="flex items-center gap-2 text-slate-700">
-										<Shield className="h-3.5 w-3.5 text-slate-400" />
-										<span className="text-sm font-semibold">{metadata?.vpc_cidr || "N/A"}</span>
+								<div className="space-y-1.5">
+									<p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Network</p>
+									<div className="flex items-center gap-2 text-foreground">
+										<Shield className="h-3.5 w-3.5 text-muted-foreground" />
+										<span className="text-sm font-medium">{metadata?.vpc_cidr || "N/A"}</span>
 									</div>
 								</div>
 							</div>
 
-							<div className="pt-4 border-t border-slate-50 space-y-3">
+							<div className="pt-4 border-t border-border/40 space-y-3">
 								<div className="flex items-center justify-between text-sm">
-									<div className="flex items-center gap-2 text-slate-500">
-										<Activity className="h-4 w-4" />
-										<span>Pulse</span>
+									<div className="flex items-center gap-2 text-muted-foreground">
+										<Activity className="h-3.5 w-3.5" />
+										<span className="text-[13px]">Pulse</span>
 									</div>
-									<span className="font-medium text-slate-700">
+									<span className="font-medium text-[13px] text-foreground">
 										{cluster.last_heartbeat
 											? formatDistanceToNow(new Date(cluster.last_heartbeat), { addSuffix: true })
 											: "No signal yet"}
 									</span>
 								</div>
 								<div className="flex items-center justify-between text-sm">
-									<div className="flex items-center gap-2 text-slate-500">
-										<Clock className="h-4 w-4" />
-										<span>Bootstrapped</span>
+									<div className="flex items-center gap-2 text-muted-foreground">
+										<Clock className="h-3.5 w-3.5" />
+										<span className="text-[13px]">Bootstrapped</span>
 									</div>
-									<span className="font-medium text-slate-700 text-xs">
+									<span className="font-medium text-[13px] text-foreground">
 										{cluster.created_at ? new Date(cluster.created_at).toLocaleDateString(undefined, { 
 											year: 'numeric', 
 											month: 'short', 
@@ -192,24 +189,24 @@ export function ClusterList({ initialClusters, userId }: ClusterListProps) {
 							</div>
 						</CardContent>
 
-						<CardFooter className="bg-slate-50/50 p-4 flex justify-between items-center">
-							<p className="text-[10px] text-slate-400 font-medium italic">
-								VPC: {metadata?.vpc_id || "Provisioned"}
+						<CardFooter className="bg-muted/10 border-t border-border/20 p-4 flex justify-between items-center">
+							<p className="text-[11px] text-muted-foreground truncate max-w-[120px]" title={metadata?.vpc_id || "Provisioned"}>
+								{metadata?.vpc_id || "Provisioned"}
 							</p>
 							<div className="flex gap-2">
 								<Button 
 									size="sm" 
 									variant="outline" 
-									className="font-bold border-slate-200"
+									className="h-8 text-xs font-medium border-border/50"
 									onClick={() => {
 										setSelectedCluster(cluster);
 										setIsLogViewerOpen(true);
 									}}
 								>
-									<Terminal className="h-3.5 w-3.5 mr-2" />
+									<Terminal className="h-3.5 w-3.5 mr-1.5 opacity-70" />
 									Logs
 								</Button>
-								<Button size="sm" variant="secondary" className="font-bold">
+								<Button size="sm" variant="secondary" className="h-8 text-xs font-medium">
 									Details
 								</Button>
 							</div>

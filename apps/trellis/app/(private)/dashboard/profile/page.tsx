@@ -24,7 +24,7 @@ export default function ProfilePage() {
 
 	useEffect(() => {
 		const getUser = async () => {
-			const supabase = await createClient();
+			const supabase = createClient();
 			const {
 				data: { user },
 			} = await supabase.auth.getUser();
@@ -37,7 +37,7 @@ export default function ProfilePage() {
 
 	if (loading) {
 		return (
-			<div className="max-w-4xl mx-auto">
+			<div className="max-w-[1000px] w-full space-y-8">
 				<div className="animate-pulse space-y-4">
 					<div className="h-8 bg-muted rounded w-1/4"></div>
 					<div className="h-64 bg-muted rounded"></div>
@@ -47,63 +47,46 @@ export default function ProfilePage() {
 	}
 
 	const getProviderBadge = (provider: string) => {
-		const providers: Record<string, { label: string; color: string }> = {
-			google: {
-				label: "Google",
-				color: "bg-red-100 text-red-800 border-red-200",
-			},
-			github: {
-				label: "GitHub",
-				color: "bg-gray-100 text-gray-800 border-gray-200",
-			},
-			gitlab: {
-				label: "GitLab",
-				color: "bg-orange-100 text-orange-800 border-orange-200",
-			},
-			bitbucket: {
-				label: "Bitbucket",
-				color: "bg-blue-100 text-blue-800 border-blue-200",
-			},
-			email: {
-				label: "Email",
-				color: "bg-cyan-100 text-cyan-800 border-cyan-200",
-			},
+		const providers: Record<string, { label: string }> = {
+			google: { label: "Google" },
+			github: { label: "GitHub" },
+			gitlab: { label: "GitLab" },
+			bitbucket: { label: "Bitbucket" },
+			email: { label: "Email" },
 		};
-		const providerInfo = providers[provider] || {
-			label: provider,
-			color: "bg-gray-100 text-gray-800",
-		};
+		const providerInfo = providers[provider] || { label: provider };
+		
 		return (
-			<Badge variant="secondary" className={providerInfo.color}>
+			<Badge variant="secondary" className="font-normal text-[11px] px-2 py-0.5 h-5 bg-muted/50 text-muted-foreground border-border/50">
 				{providerInfo.label}
 			</Badge>
 		);
 	};
 
 	return (
-		<div className="max-w-4xl mx-auto">
-			<div className="mb-8">
-				<h1 className="font-sans text-3xl font-bold text-foreground mb-2">
+		<div className="space-y-8 w-full max-w-[1000px]">
+			<div className="space-y-1.5">
+				<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
 					Profile Settings
 				</h1>
-				<p className="text-muted-foreground">
-					Manage your account information and preferences
+				<p className="text-muted-foreground text-sm">
+					Manage your account information and preferences.
 				</p>
 			</div>
 
 			{/* Profile Overview */}
-			<Card className="mb-6">
-				<CardHeader>
-					<CardTitle className="font-sans text-xl">
+			<Card className="shadow-sm border-border/40">
+				<CardHeader className="border-b border-border/40 pb-4 bg-muted/5">
+					<CardTitle className="text-base font-medium">
 						Account Information
 					</CardTitle>
-					<CardDescription>
-						Your personal details and authentication method
+					<CardDescription className="text-xs">
+						Your personal details and authentication method.
 					</CardDescription>
 				</CardHeader>
-				<CardContent>
-					<div className="flex items-start gap-6">
-						<Avatar className="h-24 w-24">
+				<CardContent className="pt-6">
+					<div className="flex flex-col sm:flex-row items-start gap-8">
+						<Avatar className="h-20 w-20 sm:h-24 sm:w-24 border border-border/50 shadow-sm">
 							<AvatarImage
 								src={
 									user?.user_metadata?.avatar_url ||
@@ -111,35 +94,35 @@ export default function ProfilePage() {
 								}
 								alt="User avatar"
 							/>
-							<AvatarFallback className="text-2xl">
+							<AvatarFallback className="text-2xl bg-muted text-muted-foreground">
 								{user?.email?.charAt(0).toUpperCase() || "U"}
 							</AvatarFallback>
 						</Avatar>
-						<div className="flex-1 space-y-4">
-							<div>
-								<Label className="text-sm text-muted-foreground flex items-center gap-2 mb-2">
-									<User className="h-4 w-4" />
+						<div className="flex-1 grid gap-6 sm:grid-cols-2 w-full">
+							<div className="space-y-1.5">
+								<Label className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium flex items-center gap-1.5">
+									<User className="h-3 w-3" />
 									Full Name
 								</Label>
-								<p className="font-medium">
+								<p className="text-sm font-medium text-foreground">
 									{user?.user_metadata?.full_name ||
 										user?.user_metadata?.name ||
 										"Not set"}
 								</p>
 							</div>
-							<div>
-								<Label className="text-sm text-muted-foreground flex items-center gap-2 mb-2">
-									<Mail className="h-4 w-4" />
+							<div className="space-y-1.5">
+								<Label className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium flex items-center gap-1.5">
+									<Mail className="h-3 w-3" />
 									Email Address
 								</Label>
-								<p className="font-medium">
+								<p className="text-sm font-medium text-foreground">
 									{user?.email || "No email"}
 								</p>
 							</div>
-							<div>
-								<Label className="text-sm text-muted-foreground flex items-center gap-2 mb-2">
-									<Shield className="h-4 w-4" />
-									Authentication Provider
+							<div className="space-y-1.5">
+								<Label className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium flex items-center gap-1.5">
+									<Shield className="h-3 w-3" />
+									Authentication
 								</Label>
 								<div className="flex gap-2 flex-wrap">
 									{user?.identities &&
@@ -161,12 +144,12 @@ export default function ProfilePage() {
 									)}
 								</div>
 							</div>
-							<div>
-								<Label className="text-sm text-muted-foreground flex items-center gap-2 mb-2">
-									<Calendar className="h-4 w-4" />
+							<div className="space-y-1.5">
+								<Label className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium flex items-center gap-1.5">
+									<Calendar className="h-3 w-3" />
 									Member Since
 								</Label>
-								<p className="font-medium">
+								<p className="text-sm font-medium text-foreground">
 									{user?.created_at
 										? new Date(
 												user.created_at,
@@ -188,22 +171,23 @@ export default function ProfilePage() {
 			</div>
 
 			{/* Account Details */}
-			<Card className="mb-6">
-				<CardHeader>
-					<CardTitle className="font-sans text-xl">
+			<Card className="shadow-sm border-border/40">
+				<CardHeader className="border-b border-border/40 pb-4 bg-muted/5">
+					<CardTitle className="text-base font-medium">
 						Profile Details
 					</CardTitle>
-					<CardDescription>
-						Update your profile information
+					<CardDescription className="text-xs">
+						Update your profile information.
 					</CardDescription>
 				</CardHeader>
-				<CardContent className="space-y-4">
-					<div className="grid gap-4">
+				<CardContent className="space-y-5 pt-6">
+					<div className="grid gap-5 sm:max-w-md">
 						<div className="space-y-2">
-							<Label htmlFor="name">Display Name</Label>
+							<Label htmlFor="name" className="text-xs">Display Name</Label>
 							<Input
 								id="name"
 								placeholder="Enter your name"
+								className="h-9 text-sm"
 								defaultValue={
 									user?.user_metadata?.full_name ||
 									user?.user_metadata?.name ||
@@ -212,48 +196,48 @@ export default function ProfilePage() {
 							/>
 						</div>
 						<div className="space-y-2">
-							<Label htmlFor="email">Email</Label>
+							<Label htmlFor="email" className="text-xs">Email</Label>
 							<Input
 								id="email"
 								type="email"
 								value={user?.email || ""}
 								disabled
-								className="bg-muted"
+								className="h-9 text-sm bg-muted/50 text-muted-foreground"
 							/>
-							<p className="text-sm text-muted-foreground">
-								Email cannot be changed after registration
+							<p className="text-[11px] text-muted-foreground">
+								Email cannot be changed after registration.
 							</p>
 						</div>
 					</div>
-					<Button className="bg-linear-to-r from-cyan-600 to-purple-600 hover:from-cyan-700 hover:to-purple-700">
+					<Button className="h-9 text-xs font-medium">
 						Save Changes
 					</Button>
 				</CardContent>
 			</Card>
 
 			{/* Account Security */}
-			<Card className="border-2 border-red-200">
-				<CardHeader>
-					<CardTitle className="font-sans text-xl text-red-600">
+			<Card className="shadow-sm border-destructive/20">
+				<CardHeader className="border-b border-destructive/10 pb-4 bg-destructive/5">
+					<CardTitle className="text-base font-medium text-destructive">
 						Danger Zone
 					</CardTitle>
-					<CardDescription>
-						Irreversible account actions
+					<CardDescription className="text-xs text-destructive/80">
+						Irreversible account actions.
 					</CardDescription>
 				</CardHeader>
-				<CardContent>
-					<div className="space-y-4">
-						<div>
-							<h4 className="font-medium mb-2">Delete Account</h4>
-							<p className="text-sm text-muted-foreground mb-4">
+				<CardContent className="pt-6">
+					<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+						<div className="space-y-1">
+							<h4 className="text-sm font-medium text-foreground">Delete Account</h4>
+							<p className="text-xs text-muted-foreground max-w-lg">
 								Once you delete your account, there is no going
 								back. All your configurations and data will be
 								permanently deleted.
 							</p>
-							<Button variant="destructive">
-								Delete Account
-							</Button>
 						</div>
+						<Button variant="destructive" size="sm" className="h-9 text-xs font-medium shrink-0">
+							Delete Account
+						</Button>
 					</div>
 				</CardContent>
 			</Card>

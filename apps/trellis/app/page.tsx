@@ -20,7 +20,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { createClient } from "@/lib/supabase/client";
 import { User as IUser } from "@supabase/supabase-js";
 import {
-	ArrowRight,
 	Cloud,
 	Database,
 	GitBranch,
@@ -41,7 +40,7 @@ export default function HomePage() {
 
 	useEffect(() => {
 		const getUser = async () => {
-			const supabase = await createClient();
+			const supabase = createClient();
 			const {
 				data: { user },
 			} = await supabase.auth.getUser();
@@ -51,7 +50,7 @@ export default function HomePage() {
 	}, []);
 
 	const handleLogout = async () => {
-		const supabase = await createClient();
+		const supabase = createClient();
 		await supabase.auth.signOut();
 		setUser(null);
 		router.refresh();
@@ -63,56 +62,50 @@ export default function HomePage() {
 	};
 
 	return (
-		<div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/20">
+		<div className="min-h-screen bg-background text-foreground selection:bg-primary selection:text-primary-foreground">
 			{/* Header */}
-			<header className="border-b bg-background/80 backdrop-blur-sm sticky top-0 z-50">
-				<div className="container mx-auto px-4 py-4 flex items-center justify-between">
-					<div className="flex items-center space-x-2">
-						{/* <div className="w-8 h-8 bg-gradient-to-br from-cyan-500 to-purple-600 rounded-lg flex items-center justify-center">
-							<span className="text-white font-bold text-sm">
-								IG
-							</span>
-						</div> */}
+			<header className="border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
+				<div className="container mx-auto px-4 h-14 flex items-center justify-between">
+					<div className="flex items-center space-x-3">
 						<img
 							src="/itgix-favicon-32x32.png"
 							alt="ItGix Logo"
-							className="w-8 h-8"
+							className="w-6 h-6 grayscale"
 						/>
-						<span className="font-sans font-semibold text-xl">
-							ItGix Grape
+						<span className="font-semibold text-sm tracking-tight">
+							Trellis
 						</span>
 					</div>
 					
 					{user ? (
 						<div className="flex items-center gap-4">
 							<Link href="/dashboard/configurations">
-								<Button variant="outline" className="font-sans">
-									Go to Configurations
-									<ArrowRight className="ml-2 h-4 w-4" />
+								<Button variant="ghost" size="sm" className="text-sm">
+									Configurations
 								</Button>
 							</Link>
 							<DropdownMenu>
 								<DropdownMenuTrigger asChild>
 									<Button
 										variant="ghost"
-										className="relative h-10 w-10 rounded-full"
+										className="relative h-8 w-8 rounded-full"
 									>
-										<Avatar className="h-10 w-10 border-2 border-cyan-200">
+										<Avatar className="h-8 w-8">
 											<AvatarImage
 												src="/generic-user-avatar.png"
 												alt="User"
 											/>
-											<AvatarFallback className="bg-gradient-to-br from-cyan-600 to-purple-600 text-white">
+											<AvatarFallback className="bg-muted text-muted-foreground text-xs">
 												{getUserInitials()}
 											</AvatarFallback>
 										</Avatar>
 									</Button>
 								</DropdownMenuTrigger>
 								<DropdownMenuContent className="w-56" align="end">
-									<DropdownMenuLabel>
+									<DropdownMenuLabel className="font-normal">
 										<div className="flex flex-col space-y-1">
-											<p className="text-sm font-medium">My Account</p>
-											<p className="text-xs text-muted-foreground truncate">
+											<p className="text-sm font-medium leading-none">Account</p>
+											<p className="text-xs text-muted-foreground leading-none">
 												{user.email}
 											</p>
 										</div>
@@ -127,13 +120,13 @@ export default function HomePage() {
 									<DropdownMenuItem asChild>
 										<Link href="/dashboard/profile" className="cursor-pointer">
 											<User className="mr-2 h-4 w-4" />
-											Profile Settings
+											Profile
 										</Link>
 									</DropdownMenuItem>
 									<DropdownMenuSeparator />
 									<DropdownMenuItem
 										onClick={handleLogout}
-										className="cursor-pointer text-red-600"
+										className="cursor-pointer text-destructive focus:text-destructive"
 									>
 										<LogOut className="mr-2 h-4 w-4" />
 										Sign out
@@ -142,54 +135,61 @@ export default function HomePage() {
 							</DropdownMenu>
 						</div>
 					) : (
-						<Link href="/auth/signin">
-							<Button
-								variant="outline"
-								className="font-sans bg-transparent"
-							>
-								Sign In
-								<ArrowRight className="ml-2 h-4 w-4" />
-							</Button>
-						</Link>
+						<div className="flex items-center gap-2">
+							<Link href="/auth/signin">
+								<Button
+									variant="ghost"
+									size="sm"
+									className="text-sm"
+								>
+									Log in
+								</Button>
+							</Link>
+							<Link href="/auth/signin">
+								<Button
+									size="sm"
+									className="text-sm"
+								>
+									Sign Up
+								</Button>
+							</Link>
+						</div>
 					)}
 				</div>
 			</header>
 
 			{/* Hero Section */}
-			<section className="container mx-auto px-4 py-20">
-				<div className="max-w-4xl mx-auto text-center">
-					<Badge variant="secondary" className="mb-6 font-sans">
+			<section className="container mx-auto px-4 pt-32 pb-24 md:pt-48 md:pb-32">
+				<div className="max-w-[64rem] mx-auto text-center flex flex-col items-center">
+					<Badge variant="outline" className="mb-8 rounded-full px-3 py-1 text-xs tracking-tight bg-muted/50 border-border/50">
 						Enterprise Application Development Platform
 					</Badge>
-					<h1 className="font-sans font-bold text-5xl md:text-6xl text-foreground mb-6 leading-tight">
-						Deploy AWS Infrastructure
-						<span className="bg-gradient-to-r from-cyan-500 to-purple-600 bg-clip-text text-transparent block">
-							In Minutes, Not Hours
-						</span>
+					<h1 className="font-bold text-4xl sm:text-5xl md:text-6xl lg:text-7xl tracking-tighter text-foreground mb-6 leading-tight max-w-[54rem]">
+						Deploy AWS Infrastructure <br className="hidden sm:inline" />
+						<span className="text-muted-foreground">In Minutes.</span>
 					</h1>
-					<p className="text-muted-foreground text-xl mb-8 max-w-2xl mx-auto leading-relaxed">
+					<p className="text-muted-foreground text-lg sm:text-xl mb-10 max-w-[42rem] mx-auto leading-normal">
 						Streamline your cloud deployment workflow with our
 						intelligent configuration platform. Generate
 						production-ready Terraform, Kubernetes, and ArgoCD
 						configurations with enterprise-grade security.
 					</p>
-					<div className="flex flex-col sm:flex-row gap-4 justify-center">
+					<div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto justify-center">
 						<Link href={user ? "/dashboard" : "/auth/signin"}>
 							<Button
 								size="lg"
-								className="font-sans text-lg px-8 py-6"
+								className="h-12 px-8 text-base w-full sm:w-auto"
 							>
-								{user ? "Go to Dashboard" : "Get Started Free"}
-								<ArrowRight className="ml-2 h-5 w-5" />
+								{user ? "Go to Dashboard" : "Start Deploying"}
 							</Button>
 						</Link>
 						<Link href="/installation">
 							<Button
 								variant="outline"
 								size="lg"
-								className="font-sans text-lg px-8 py-6 bg-transparent"
+								className="h-12 px-8 text-base w-full sm:w-auto"
 							>
-								View Documentation
+								Documentation
 							</Button>
 						</Link>
 					</div>
@@ -197,155 +197,127 @@ export default function HomePage() {
 			</section>
 
 			{/* Features Grid */}
-			<section className="container mx-auto px-4 py-20">
-				<div className="text-center mb-16">
-					<h2 className="font-sans font-bold text-3xl md:text-4xl text-foreground mb-4">
-						Everything You Need for Cloud Deployment
-					</h2>
-					<p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-						From infrastructure provisioning to application
-						deployment, our platform handles the complexity so you
-						can focus on building great products.
-					</p>
-				</div>
+			<section className="border-t border-border/40 bg-muted/20">
+				<div className="container mx-auto px-4 py-24 md:py-32">
+					<div className="text-center mb-16 max-w-[42rem] mx-auto">
+						<h2 className="font-bold text-3xl md:text-4xl tracking-tighter text-foreground mb-4">
+							Everything you need for deployment
+						</h2>
+						<p className="text-muted-foreground text-lg leading-normal">
+							From infrastructure provisioning to application
+							deployment, our platform handles the complexity so you
+							can focus on building great products.
+						</p>
+					</div>
 
-				<div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
-					<Card className="border-0 bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-all duration-300">
-						<CardHeader>
-							<div className="w-12 h-12 bg-gradient-to-br from-cyan-500 to-cyan-600 rounded-lg flex items-center justify-center mb-4">
-								<Cloud className="h-6 w-6 text-white" />
-							</div>
-							<CardTitle className="font-sans text-xl">
-								AWS Infrastructure
-							</CardTitle>
-							<CardDescription className="font-sans">
-								Automated VPC, EKS, RDS, and CloudFront
-								configuration with best practices built-in.
-							</CardDescription>
-						</CardHeader>
-					</Card>
+					<div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-[64rem] mx-auto">
+						<Card className="bg-background shadow-sm border-border/50 transition-colors hover:border-border">
+							<CardHeader>
+								<Cloud className="h-5 w-5 mb-4 text-foreground" />
+								<CardTitle className="text-lg">AWS Infrastructure</CardTitle>
+								<CardDescription className="text-sm leading-relaxed">
+									Automated VPC, EKS, RDS, and CloudFront
+									configuration with best practices built-in.
+								</CardDescription>
+							</CardHeader>
+						</Card>
 
-					<Card className="border-0 bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-all duration-300">
-						<CardHeader>
-							<div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg flex items-center justify-center mb-4">
-								<GitBranch className="h-6 w-6 text-white" />
-							</div>
-							<CardTitle className="font-sans text-xl">
-								GitOps Integration
-							</CardTitle>
-							<CardDescription className="font-sans">
-								Seamless ArgoCD setup with automated repository
-								management and deployment pipelines.
-							</CardDescription>
-						</CardHeader>
-					</Card>
+						<Card className="bg-background shadow-sm border-border/50 transition-colors hover:border-border">
+							<CardHeader>
+								<GitBranch className="h-5 w-5 mb-4 text-foreground" />
+								<CardTitle className="text-lg">GitOps Integration</CardTitle>
+								<CardDescription className="text-sm leading-relaxed">
+									Seamless ArgoCD setup with automated repository
+									management and deployment pipelines.
+								</CardDescription>
+							</CardHeader>
+						</Card>
 
-					<Card className="border-0 bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-all duration-300">
-						<CardHeader>
-							<div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg flex items-center justify-center mb-4">
-								<Settings className="h-6 w-6 text-white" />
-							</div>
-							<CardTitle className="font-sans text-xl">
-								Smart Configuration
-							</CardTitle>
-							<CardDescription className="font-sans">
-								Intelligent form-based configuration that
-								generates production-ready Terraform code.
-							</CardDescription>
-						</CardHeader>
-					</Card>
+						<Card className="bg-background shadow-sm border-border/50 transition-colors hover:border-border">
+							<CardHeader>
+								<Settings className="h-5 w-5 mb-4 text-foreground" />
+								<CardTitle className="text-lg">Smart Configuration</CardTitle>
+								<CardDescription className="text-sm leading-relaxed">
+									Intelligent form-based configuration that
+									generates production-ready Terraform code.
+								</CardDescription>
+							</CardHeader>
+						</Card>
 
-					<Card className="border-0 bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-all duration-300">
-						<CardHeader>
-							<div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg flex items-center justify-center mb-4">
-								<Shield className="h-6 w-6 text-white" />
-							</div>
-							<CardTitle className="font-sans text-xl">
-								Enterprise Security
-							</CardTitle>
-							<CardDescription className="font-sans">
-								Built-in security best practices, IAM policies,
-								and compliance-ready configurations.
-							</CardDescription>
-						</CardHeader>
-					</Card>
+						<Card className="bg-background shadow-sm border-border/50 transition-colors hover:border-border">
+							<CardHeader>
+								<Shield className="h-5 w-5 mb-4 text-foreground" />
+								<CardTitle className="text-lg">Enterprise Security</CardTitle>
+								<CardDescription className="text-sm leading-relaxed">
+									Built-in security best practices, IAM policies,
+									and compliance-ready configurations.
+								</CardDescription>
+							</CardHeader>
+						</Card>
 
-					<Card className="border-0 bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-all duration-300">
-						<CardHeader>
-							<div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center mb-4">
-								<Database className="h-6 w-6 text-white" />
-							</div>
-							<CardTitle className="font-sans text-xl">
-								Database Management
-							</CardTitle>
-							<CardDescription className="font-sans">
-								Automated RDS setup with scaling, backups, and
-								monitoring configurations.
-							</CardDescription>
-						</CardHeader>
-					</Card>
+						<Card className="bg-background shadow-sm border-border/50 transition-colors hover:border-border">
+							<CardHeader>
+								<Database className="h-5 w-5 mb-4 text-foreground" />
+								<CardTitle className="text-lg">Database Management</CardTitle>
+								<CardDescription className="text-sm leading-relaxed">
+									Automated RDS setup with scaling, backups, and
+									monitoring configurations.
+								</CardDescription>
+							</CardHeader>
+						</Card>
 
-					<Card className="border-0 bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-all duration-300">
-						<CardHeader>
-							<div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-lg flex items-center justify-center mb-4">
-								<Zap className="h-6 w-6 text-white" />
-							</div>
-							<CardTitle className="font-sans text-xl">
-								Auto-Scaling
-							</CardTitle>
-							<CardDescription className="font-sans">
-								Karpenter integration for intelligent Kubernetes
-								node scaling and cost optimization.
-							</CardDescription>
-						</CardHeader>
-					</Card>
+						<Card className="bg-background shadow-sm border-border/50 transition-colors hover:border-border">
+							<CardHeader>
+								<Zap className="h-5 w-5 mb-4 text-foreground" />
+								<CardTitle className="text-lg">Auto-Scaling</CardTitle>
+								<CardDescription className="text-sm leading-relaxed">
+									Karpenter integration for intelligent Kubernetes
+									node scaling and cost optimization.
+								</CardDescription>
+							</CardHeader>
+						</Card>
+					</div>
 				</div>
 			</section>
 
 			{/* CTA Section */}
-			<section className="container mx-auto px-4 py-20">
-				<div className="max-w-4xl mx-auto text-center">
-					<div className="bg-gradient-to-r from-cyan-500/10 to-purple-600/10 rounded-2xl p-12 border border-cyan-500/20">
-						<h2 className="font-sans font-bold text-3xl md:text-4xl text-foreground mb-4">
-							Ready to Transform Your Deployment Process?
-						</h2>
-						<p className="text-muted-foreground text-lg mb-8 max-w-2xl mx-auto">
-							Join enterprise teams who have reduced their
-							infrastructure deployment time by 90% with our
-							intelligent configuration platform.
-						</p>
-						<Link href="/auth/signin">
-							<Button
-								size="lg"
-								className="font-sans text-lg px-8 py-6"
-							>
-								Start Building Now
-								<ArrowRight className="ml-2 h-5 w-5" />
-							</Button>
-						</Link>
-					</div>
+			<section className="container mx-auto px-4 py-24 md:py-32">
+				<div className="max-w-[42rem] mx-auto text-center">
+					<h2 className="font-bold text-3xl md:text-4xl tracking-tighter text-foreground mb-4">
+						Ready to transform your workflow?
+					</h2>
+					<p className="text-muted-foreground text-lg mb-8 leading-normal">
+						Join enterprise teams who have reduced their
+						infrastructure deployment time by 90% with our
+						intelligent configuration platform.
+					</p>
+					<Link href="/auth/signin">
+						<Button
+							size="lg"
+							className="h-12 px-8 text-base"
+						>
+							Start Building Now
+						</Button>
+					</Link>
 				</div>
 			</section>
 
 			{/* Footer */}
-			<footer className="border-t bg-muted/30">
-				<div className="container mx-auto px-4 py-8">
-					<div className="flex flex-col md:flex-row items-center justify-between">
-						<div className="flex items-center space-x-2 mb-4 md:mb-0">
-							<img
-								src="/itgix-favicon-32x32.png"
-								alt="ItGix Logo"
-								className="w-6 h-6"
-							/>
-							<span className="font-sans font-semibold">
-								ItGix Grape
-							</span>
-						</div>
-						<p className="text-muted-foreground text-sm font-sans">
-							© 2024 ItGix. Enterprise Application Development
-							Platform.
-						</p>
+			<footer className="border-t border-border/40 py-8">
+				<div className="container mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-4">
+					<div className="flex items-center space-x-3">
+						<img
+							src="/itgix-favicon-32x32.png"
+							alt="ItGix Logo"
+							className="w-5 h-5 grayscale opacity-70"
+						/>
+						<span className="font-medium text-sm text-muted-foreground tracking-tight">
+							Trellis
+						</span>
 					</div>
+					<p className="text-muted-foreground text-sm">
+						© {new Date().getFullYear()} ItGix. All rights reserved.
+					</p>
 				</div>
 			</footer>
 		</div>

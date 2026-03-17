@@ -17,20 +17,20 @@ export default async function ClustersPage() {
 		.order("created_at", { ascending: false });
 
 	return (
-		<div className="max-w-7xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-			<div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-				<div>
-					<h1 className="font-sans text-4xl font-extrabold tracking-tight text-slate-900 mb-2">
+		<div className="space-y-8 w-full max-w-[1400px]">
+			<div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+				<div className="space-y-1.5">
+					<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
 						Connected Clusters
 					</h1>
-					<p className="text-slate-500 text-lg">
+					<p className="text-muted-foreground text-sm">
 						Manage your Kubernetes environments and Tendril agents.
 					</p>
 				</div>
-				<div className="flex gap-3">
+				<div className="flex gap-3 shrink-0">
 					<Link href="https://docs.itgix.com/setup/cli" target="_blank">
-						<Button variant="outline" className="h-11 px-6">
-							<Terminal className="mr-2 h-4 w-4" />
+						<Button variant="outline" size="sm" className="h-9 text-xs font-medium border-border/50">
+							<Terminal className="mr-2 h-3.5 w-3.5" />
 							CLI Documentation
 						</Button>
 					</Link>

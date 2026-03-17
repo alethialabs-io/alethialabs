@@ -2,7 +2,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 type AuthProvider = "github" | "gitlab" | "bitbucket" | "google";
@@ -11,9 +11,17 @@ type AuthProvider = "github" | "gitlab" | "bitbucket" | "google";
  * Initiates an OAuth sign-in flow with a given provider.
  * It uses the server-side Supabase client.
  * @param provider The OAuth provider (e.g., 'github', 'google').
+ * @param next Optional redirect path after successful sign-in.
  */
-export async function signInWithOAuth(provider: AuthProvider) {
+export async function signInWithOAuth(provider: AuthProvider, next?: string | null) {
 	const origin = (await headers()).get("origin");
+	let callbackUrl = `${origin}/api/auth/callback`;
+	
+	if (next) {
+		callbackUrl = `${callbackUrl}?next=${encodeURIComponent(next)}`;
+		const cookieStore = await cookies();
+		cookieStore.set("auth_return_to", next, { maxAge: 60 * 10, path: "/" });
+	}
 
 	try {
 		const supabase = await createClient();
@@ -21,7 +29,7 @@ export async function signInWithOAuth(provider: AuthProvider) {
 		const { data, error } = await supabase.auth.signInWithOAuth({
 			provider,
 			options: {
-				redirectTo: `${origin}/dashboard`,
+				redirectTo: callbackUrl,
 			},
 		});
 
@@ -49,18 +57,25 @@ export async function signInWithOAuth(provider: AuthProvider) {
 /**
  * Initiates a magic link login for a given email.
  * @param email The user's email address.
+ * @param next Optional redirect path after successful sign-in.
  */
-export async function signInWithMagicLink(email: string) {
+export async function signInWithMagicLink(email: string, next?: string | null) {
+	const origin = (await headers()).get("origin");
+	let callbackUrl = `${origin}/api/auth/callback`;
+	
+	if (next) {
+		callbackUrl = `${callbackUrl}?next=${encodeURIComponent(next)}`;
+		const cookieStore = await cookies();
+		cookieStore.set("auth_return_to", next, { maxAge: 60 * 10, path: "/" });
+	}
+
 	try {
 		const supabase = await createClient();
 
 		const { error } = await supabase.auth.signInWithOtp({
 			email,
 			options: {
-				// Optionally, you can add a redirect URL for after the email link is clicked
-				// emailRedirectTo: `${headers().get(
-				// 	"origin"
-				// )}/auth/callback?next=/dashboard`,
+				emailRedirectTo: callbackUrl,
 			},
 		});
 
@@ -76,3 +91,5 @@ export async function signInWithMagicLink(email: string) {
 		throw err;
 	}
 }
+
+

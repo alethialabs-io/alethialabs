@@ -26,7 +26,7 @@ export function LinkedAccounts() {
 
 	const fetchLinkedAccounts = async () => {
 		try {
-			const supabase = await createClient();
+			const supabase = createClient();
 			const {
 				data: { user },
 			} = await supabase.auth.getUser();
@@ -72,7 +72,7 @@ export function LinkedAccounts() {
 
 	const handleLinkAccount = async (provider: PublicGitProvider) => {
 		try {
-			const supabase = await createClient();
+			const supabase = createClient();
 
             // Verify session is valid before linking
             const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -98,34 +98,21 @@ export function LinkedAccounts() {
 		}
 	};
 
-	const getProviderColor = (provider: string) => {
-		switch (provider) {
-			case "github":
-				return "bg-gray-100 text-gray-800 border-gray-200";
-			case "gitlab":
-				return "bg-orange-100 text-orange-800 border-orange-200";
-			case "bitbucket":
-				return "bg-blue-100 text-blue-800 border-blue-200";
-			default:
-				return "bg-gray-100 text-gray-800 border-gray-200";
-		}
-	};
-
 	if (loading) {
 		return (
-			<Card>
-				<CardHeader>
-					<CardTitle className="font-sans text-xl">
+			<Card className="shadow-sm border-border/40">
+				<CardHeader className="border-b border-border/40 pb-4 bg-muted/5">
+					<CardTitle className="text-base font-medium">
 						Linked Accounts
 					</CardTitle>
-					<CardDescription>
-						Connect your Git providers to access repositories
+					<CardDescription className="text-xs">
+						Connect your Git providers to access repositories.
 					</CardDescription>
 				</CardHeader>
-				<CardContent>
+				<CardContent className="pt-6">
 					<div className="animate-pulse space-y-3">
-						<div className="h-16 bg-muted rounded"></div>
-						<div className="h-16 bg-muted rounded"></div>
+						<div className="h-16 bg-muted/50 rounded-md border border-border/50"></div>
+						<div className="h-16 bg-muted/50 rounded-md border border-border/50"></div>
 					</div>
 				</CardContent>
 			</Card>
@@ -133,48 +120,44 @@ export function LinkedAccounts() {
 	}
 
 	return (
-		<Card>
-			<CardHeader>
-				<CardTitle className="font-sans text-xl">
+		<Card className="shadow-sm border-border/40">
+			<CardHeader className="border-b border-border/40 pb-4 bg-muted/5">
+				<CardTitle className="text-base font-medium">
 					Linked Accounts
 				</CardTitle>
-				<CardDescription>
-					Connect your Git providers to access repositories
+				<CardDescription className="text-xs">
+					Connect your Git providers to access repositories.
 				</CardDescription>
 			</CardHeader>
-			<CardContent className="space-y-4">
+			<CardContent className="space-y-4 pt-6">
 				{linkedAccounts.map((account) => (
 					<div
 						key={account.provider}
-						className="flex items-center justify-between p-4 border rounded-lg"
+						className="flex items-center justify-between p-4 border border-border/50 rounded-md bg-background hover:bg-muted/10 transition-colors"
 					>
 						<div className="flex items-center gap-4">
-							<div
-								className={`p-2 rounded-lg ${getProviderColor(
-									account.provider
-								)}`}
-							>
+							<div className="p-2.5 rounded-md border border-border/50 bg-background shadow-sm flex items-center justify-center grayscale opacity-80">
 								<GitProviderIcon provider={account.provider} size={20} />
 							</div>
 							<div>
-								<div className="flex items-center gap-2">
-									<p className="font-medium capitalize">
+								<div className="flex items-center gap-2 mb-1">
+									<p className="font-medium text-sm text-foreground capitalize leading-none">
 										{account.provider}
 									</p>
 									<Badge
-										variant="secondary"
-										className="bg-green-100 text-green-800 border-green-200"
+										variant="outline"
+										className="font-normal text-[10px] uppercase px-2 py-0 h-4.5 border-emerald-200/50 bg-emerald-50/50 text-emerald-600"
 									>
 										Connected
 									</Badge>
 								</div>
-								<p className="text-sm text-muted-foreground">
+								<p className="text-xs text-muted-foreground leading-none">
 									@{account.username}
 								</p>
 							</div>
 						</div>
-						<Button variant="outline" size="sm" disabled>
-							<Unlink className="w-4 h-4 mr-2" />
+						<Button variant="outline" size="sm" disabled className="h-8 text-xs font-medium border-border/50">
+							<Unlink className="w-3.5 h-3.5 mr-1.5 opacity-70" />
 							Disconnect
 						</Button>
 					</div>
@@ -182,14 +165,14 @@ export function LinkedAccounts() {
 
 				{/* Show available providers to link */}
 				{!linkedAccounts.some((a) => a.provider === "github") && (
-					<div className="flex items-center justify-between p-4 border border-dashed rounded-lg">
+					<div className="flex items-center justify-between p-4 border border-dashed border-border/60 rounded-md bg-muted/5">
 						<div className="flex items-center gap-4">
-							<div className="p-2 rounded-lg bg-gray-100">
+							<div className="p-2.5 rounded-md border border-border/50 bg-background flex items-center justify-center grayscale opacity-50">
 								<GitProviderIcon provider="github" size={20} />
 							</div>
 							<div>
-								<p className="font-medium">GitHub</p>
-								<p className="text-sm text-muted-foreground">
+								<p className="font-medium text-sm text-foreground mb-1 leading-none">GitHub</p>
+								<p className="text-xs text-muted-foreground leading-none">
 									Not connected
 								</p>
 							</div>
@@ -198,22 +181,23 @@ export function LinkedAccounts() {
 							variant="outline"
 							size="sm"
 							onClick={() => handleLinkAccount("github")}
+							className="h-8 text-xs font-medium border-border/50 bg-background"
 						>
-							<LinkIcon className="w-4 h-4 mr-2" />
+							<LinkIcon className="w-3.5 h-3.5 mr-1.5 opacity-70" />
 							Connect
 						</Button>
 					</div>
 				)}
 
 				{!linkedAccounts.some((a) => a.provider === "gitlab") && (
-					<div className="flex items-center justify-between p-4 border border-dashed rounded-lg">
+					<div className="flex items-center justify-between p-4 border border-dashed border-border/60 rounded-md bg-muted/5">
 						<div className="flex items-center gap-4">
-							<div className="p-2 rounded-lg bg-orange-100">
+							<div className="p-2.5 rounded-md border border-border/50 bg-background flex items-center justify-center grayscale opacity-50">
 								<GitProviderIcon provider="gitlab" size={20} />
 							</div>
 							<div>
-								<p className="font-medium">GitLab</p>
-								<p className="text-sm text-muted-foreground">
+								<p className="font-medium text-sm text-foreground mb-1 leading-none">GitLab</p>
+								<p className="text-xs text-muted-foreground leading-none">
 									Not connected
 								</p>
 							</div>
@@ -222,22 +206,23 @@ export function LinkedAccounts() {
 							variant="outline"
 							size="sm"
 							onClick={() => handleLinkAccount("gitlab")}
+							className="h-8 text-xs font-medium border-border/50 bg-background"
 						>
-							<LinkIcon className="w-4 h-4 mr-2" />
+							<LinkIcon className="w-3.5 h-3.5 mr-1.5 opacity-70" />
 							Connect
 						</Button>
 					</div>
 				)}
 
 				{!linkedAccounts.some((a) => a.provider === "bitbucket") && (
-					<div className="flex items-center justify-between p-4 border border-dashed rounded-lg">
+					<div className="flex items-center justify-between p-4 border border-dashed border-border/60 rounded-md bg-muted/5">
 						<div className="flex items-center gap-4">
-							<div className="p-2 rounded-lg bg-blue-100">
+							<div className="p-2.5 rounded-md border border-border/50 bg-background flex items-center justify-center grayscale opacity-50">
 								<GitProviderIcon provider="bitbucket" size={20} />
 							</div>
 							<div>
-								<p className="font-medium">Bitbucket</p>
-								<p className="text-sm text-muted-foreground">
+								<p className="font-medium text-sm text-foreground mb-1 leading-none">Bitbucket</p>
+								<p className="text-xs text-muted-foreground leading-none">
 									Not connected
 								</p>
 							</div>
@@ -246,8 +231,9 @@ export function LinkedAccounts() {
 							variant="outline"
 							size="sm"
 							onClick={() => handleLinkAccount("bitbucket")}
+							className="h-8 text-xs font-medium border-border/50 bg-background"
 						>
-							<LinkIcon className="w-4 h-4 mr-2" />
+							<LinkIcon className="w-3.5 h-3.5 mr-1.5 opacity-70" />
 							Connect
 						</Button>
 					</div>
