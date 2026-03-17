@@ -18,20 +18,12 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { zodResolver } from "@hookform/resolvers/zod";
-import {
-	AlertCircle,
-	CheckCircle2,
-	CloudIcon,
-	Copy,
-	ExternalLink,
-	Loader2,
-	ShieldCheck,
-	Terminal,
-} from "lucide-react";
+import { AlertCircle, CheckCircle2, CloudIcon, Copy, ExternalLink, Loader2, ShieldCheck, Terminal } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import * as z from "zod";
+import { env } from "next-runtime-env";
 
 // Zod schema for Role ARN validation
 const awsRoleSchema = z.object({
@@ -70,7 +62,7 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 	);
 
 	const grapeAwsAccountId =
-		process.env.NEXT_PUBLIC_GRAPE_AWS_ACCOUNT_ID || "123456789012"; // Fallback for dev
+		env("NEXT_PUBLIC_GRAPE_AWS_ACCOUNT_ID") || "123456789012"; // Fallback for dev
 
 	// CloudFormation Console Link (Generic)
 	const cfnUrl =

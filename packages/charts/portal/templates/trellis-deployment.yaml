@@ -1,27 +1,27 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "portal.fullname" . }}-web
+  name: {{ include "portal.fullname" . }}-trellis
   labels:
     {{- include "portal.labels" . | nindent 4 }}
-    app.kubernetes.io/component: web
+    app.kubernetes.io/component: trellis
 spec:
-  replicas: {{ .Values.web.replicaCount }}
+  replicas: {{ .Values.trellis.replicaCount }}
   selector:
     matchLabels:
       {{- include "portal.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: web
+      app.kubernetes.io/component: trellis
   template:
     metadata:
       labels:
         {{- include "portal.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: web
+        app.kubernetes.io/component: trellis
     spec:
       serviceAccountName: {{ include "portal.serviceAccountName" . }}
       containers:
-        - name: web
-          image: "{{ .Values.web.image.repository }}:{{ .Values.web.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.web.image.pullPolicy }}
+        - name: trellis
+          image: "{{ .Values.trellis.image.repository }}:{{ .Values.trellis.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.trellis.image.pullPolicy }}
           ports:
             - name: http
               containerPort: 3000
@@ -29,6 +29,10 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "portal.fullname" . }}-secrets
+          {{- with .Values.trellis.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /
@@ -38,4 +42,4 @@ spec:
               path: /
               port: http
           resources:
-            {{- toYaml .Values.web.resources | nindent 12 }}
+            {{- toYaml .Values.trellis.resources | nindent 12 }}

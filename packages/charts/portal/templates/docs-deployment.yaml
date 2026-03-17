@@ -29,6 +29,10 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "portal.fullname" . }}-secrets
+          {{- with .Values.docs.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /

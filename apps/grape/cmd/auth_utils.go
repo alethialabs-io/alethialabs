@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
+	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/imroc/req/v3"
 )
@@ -26,60 +28,96 @@ func getAuthToken() (string, error) {
 		return "", fmt.Errorf("error getting credentials path: %w", err)
 	}
 
+	needsLogin := false
+
 	if _, err := os.Stat(credsPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("you are not logged in. Please run `grape login`")
-	}
-
-	file, err := os.ReadFile(credsPath)
-	if err != nil {
-		return "", fmt.Errorf("error reading credentials file: %w", err)
-	}
-
-	var creds types.ExchangeResponse
-	if err := json.Unmarshal(file, &creds); err != nil {
-		return "", fmt.Errorf("error parsing credentials file: %w", err)
-	}
-
-	if creds.AccessToken == "" {
-		return "", fmt.Errorf("invalid credentials file. Please run `grape login` again")
-	}
-
-	// Check expiration
-	claims := jwt.MapClaims{}
-	_, _, err = jwt.NewParser().ParseUnverified(creds.AccessToken, claims)
-	if err != nil {
-		return "", fmt.Errorf("error parsing token: %w", err)
-	}
-
-	var exp int64
-	switch v := claims["exp"].(type) {
-	case float64:
-		exp = int64(v)
-	case json.Number:
-		exp, _ = v.Int64()
-	}
-
-	// If expired (or expiring in < 1 minute), try to refresh
-	if time.Unix(exp, 0).Before(time.Now().Add(1 * time.Minute)) {
-		if creds.RefreshToken == "" {
-			return "", fmt.Errorf("token expired and no refresh token found. Please run `grape login` again")
-		}
-		
-		fmt.Println("Access token expired, refreshing...")
-		newAccessToken, err := refreshAccessToken(creds.RefreshToken)
+		needsLogin = true
+	} else {
+		file, err := os.ReadFile(credsPath)
 		if err != nil {
-			return "", fmt.Errorf("failed to refresh token: %w. Please run `grape login` again", err)
+			return "", fmt.Errorf("error reading credentials file: %w", err)
 		}
 
-		creds.AccessToken = newAccessToken
-		if err := saveCredentials(credsPath, creds); err != nil {
-			return "", fmt.Errorf("failed to save new credentials: %w", err)
+		var creds types.ExchangeResponse
+		if err := json.Unmarshal(file, &creds); err != nil {
+			needsLogin = true
+		} else if creds.AccessToken == "" {
+			needsLogin = true
+		} else {
+			// Check expiration
+			claims := jwt.MapClaims{}
+			_, _, err = jwt.NewParser().ParseUnverified(creds.AccessToken, claims)
+			if err != nil {
+				needsLogin = true
+			} else {
+				var exp int64
+				switch v := claims["exp"].(type) {
+				case float64:
+					exp = int64(v)
+				case json.Number:
+					exp, _ = v.Int64()
+				}
+
+				// If expired (or expiring in < 1 minute), try to refresh
+				if time.Unix(exp, 0).Before(time.Now().Add(1 * time.Minute)) {
+					if creds.RefreshToken == "" {
+						needsLogin = true
+					} else {
+						fmt.Println("Access token expired, refreshing...")
+						newAccessToken, err := refreshAccessToken(creds.RefreshToken)
+						if err != nil {
+							needsLogin = true
+						} else {
+							creds.AccessToken = newAccessToken
+							if err := saveCredentials(credsPath, creds); err != nil {
+								return "", fmt.Errorf("failed to save new credentials: %w", err)
+							}
+							return newAccessToken, nil
+						}
+					}
+				} else {
+					return creds.AccessToken, nil
+				}
+			}
 		}
-		
-		return newAccessToken, nil
 	}
 
-	return creds.AccessToken, nil
+	if needsLogin {
+		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+		fmt.Println(errorStyle.Render("✗ You are not logged in or your session has expired."))
+		fmt.Println()
+
+		var confirmLogin bool
+		err := huh.NewConfirm().
+			Title("Would you like to log in now?").
+			Affirmative("Yes").
+			Negative("No").
+			Value(&confirmLogin).
+			Run()
+
+		if err != nil || !confirmLogin {
+			return "", fmt.Errorf("authentication required. Please run `grape login`")
+		}
+
+		if err := performLoginFlow(); err != nil {
+			return "", err
+		}
+
+		// Read credentials again after successful login
+		file, err := os.ReadFile(credsPath)
+		if err != nil {
+			return "", fmt.Errorf("error reading credentials file after login: %w", err)
+		}
+
+		var creds types.ExchangeResponse
+		if err := json.Unmarshal(file, &creds); err != nil {
+			return "", fmt.Errorf("error parsing credentials file after login: %w", err)
+		}
+
+		return creds.AccessToken, nil
+	}
+
+	return "", fmt.Errorf("unexpected authentication state")
 }
 
 func refreshAccessToken(refreshToken string) (string, error) {

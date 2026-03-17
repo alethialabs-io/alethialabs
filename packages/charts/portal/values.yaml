@@ -1,13 +1,14 @@
-web:
+trellis:
   replicaCount: 1
   image:
-    repository: ghcr.io/bobikenobi12/bb-thesis-2026-web
+    repository: ghcr.io/bobikenobi12/trellis
     pullPolicy: IfNotPresent
     tag: ""
   service:
     type: ClusterIP
     port: 3000
   resources: {}
+  env: []
 
 docs:
   replicaCount: 1
@@ -19,6 +20,7 @@ docs:
     type: ClusterIP
     port: 3001
   resources: {}
+  env: []
 
 ingress:
   enabled: false
@@ -30,7 +32,7 @@ ingress:
         - path: /
           pathType: Prefix
           backend:
-            serviceName: web
+            serviceName: trellis
         - path: /docs
           pathType: Prefix
           backend:
