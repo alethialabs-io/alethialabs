@@ -7,10 +7,11 @@ project_name: grape
 
 before:
   hooks:
-    - go mod tidy
+    - 'sh -c "cd apps/grape && go mod tidy"'
 
 builds:
   - id: grape
+    dir: apps/grape
     main: ./
     binary: grape
     env:
@@ -24,9 +25,7 @@ builds:
       - arm64
 
 archives:
-  - format: tar.gz
-    # this name template makes the OS and Arch compatible with the results of uname.
-    name_template: >-
+  - name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
@@ -38,7 +37,7 @@ checksum:
   name_template: 'checksums.txt'
 
 snapshot:
-  name_template: "{{ incpatch .Version }}-next"
+  version_template: "{{ incpatch .Version }}-next"
 
 changelog:
   sort: asc
