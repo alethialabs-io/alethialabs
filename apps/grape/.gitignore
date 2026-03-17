@@ -1,0 +1,14 @@
+/bin/
+/tmp/
+/temp/
+/cli
+/grape
+/git/client_*
+/git/template_*
+credentials.json
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.plan.out
+tfplan
