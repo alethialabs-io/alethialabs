@@ -41,3 +41,11 @@ yarn-error.log*
 next-env.d.ts
 
 certificates
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.plan.out
+tfplan
