@@ -7,7 +7,7 @@ The ADP ItGix Platform is a comprehensive solution encompassing a CLI (`grape`),
 The Grape CLI is available via Homebrew for macOS and Linux. You can tap the repository and install it using:
 
 ```bash
-brew tap bobikenobi12/bb-thesis-2026
+brew tap bobikenobi12/bb-thesis-2026 https://github.com/bobikenobi12/bb-thesis-2026
 brew install grape
 ```
 
