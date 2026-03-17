@@ -1,14 +1,17 @@
-# Turborepo starter
+# ADP ItGix Platform
 
-This Turborepo starter is maintained by the Turborepo core team.
+The ADP ItGix Platform is a comprehensive solution encompassing a CLI (`grape`), a Web Control Plane (`trellis`), and remote execution agents (`tendril`).
 
-## Using this example
+## Installing the Grape CLI
 
-Run the following command:
+The Grape CLI is available via Homebrew for macOS and Linux.
 
-```sh
-npx create-turbo@latest
+```bash
+brew install bobikenobi12/bb-thesis-2026/grape
 ```
+
+*Note: If the repository is private, ensure your local Git environment is authenticated with GitHub.*
+
 
 ## What's inside?
 
@@ -16,11 +19,13 @@ This Turborepo includes the following packages/apps:
 
 ### Apps and Packages
 
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
+- `apps/trellis`: the Web Control Plane (Next.js)
+- `apps/grape`: the Command Line Interface (Go)
+- `apps/tendril`: the Remote Execution Agent (Go)
+- `apps/docs`: the Documentation Platform (Next.js/Fumadocs)
+- `packages/ui`: a stub React component library shared by the web applications
+- `packages/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
+- `packages/typescript-config`: `tsconfig.json`s used throughout the monorepo
 
 Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
 
@@ -52,12 +57,20 @@ You can build a specific package by using a [filter](https://turborepo.com/docs/
 
 ```
 # With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build --filter=docs
+turbo build --filter=trellis
+# or
+turbo build --filter=grape
 
 # Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build --filter=docs
-yarn exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
+npx turbo build --filter=trellis
+# or
+turbo build --filter=grape
+yarn exec turbo build --filter=trellis
+# or
+turbo build --filter=grape
+pnpm exec turbo build --filter=trellis
+# or
+turbo build --filter=grape
 ```
 
 ### Develop
@@ -80,12 +93,20 @@ You can develop a specific package by using a [filter](https://turborepo.com/doc
 
 ```
 # With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev --filter=web
+turbo dev --filter=trellis
+# or
+turbo dev --filter=grape
 
 # Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev --filter=web
-yarn exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
+npx turbo dev --filter=trellis
+# or
+turbo dev --filter=grape
+yarn exec turbo dev --filter=trellis
+# or
+turbo dev --filter=grape
+pnpm exec turbo dev --filter=trellis
+# or
+turbo dev --filter=grape
 ```
 
 ### Remote Caching
