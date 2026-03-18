@@ -1,27 +1,27 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "portal.fullname" . }}-docs
+  name: {{ include "portal.fullname" . }}-vintner
   labels:
     {{- include "portal.labels" . | nindent 4 }}
-    app.kubernetes.io/component: docs
+    app.kubernetes.io/component: vintner
 spec:
-  replicas: {{ .Values.docs.replicaCount }}
+  replicas: {{ .Values.vintner.replicaCount }}
   selector:
     matchLabels:
       {{- include "portal.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: docs
+      app.kubernetes.io/component: vintner
   template:
     metadata:
       labels:
         {{- include "portal.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: docs
+        app.kubernetes.io/component: vintner
     spec:
       serviceAccountName: {{ include "portal.serviceAccountName" . }}
       containers:
-        - name: docs
-          image: "{{ .Values.docs.image.repository }}:{{ .Values.docs.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.docs.image.pullPolicy }}
+        - name: vintner
+          image: "{{ .Values.vintner.image.repository }}:{{ .Values.vintner.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.vintner.image.pullPolicy }}
           ports:
             - name: http
               containerPort: 3001
@@ -29,7 +29,7 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "portal.fullname" . }}-secrets
-          {{- with .Values.docs.env }}
+          {{- with .Values.vintner.env }}
           env:
             {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -42,4 +42,4 @@ spec:
               path: /
               port: http
           resources:
-            {{- toYaml .Values.docs.resources | nindent 12 }}
+            {{- toYaml .Values.vintner.resources | nindent 12 }}

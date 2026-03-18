@@ -5,7 +5,7 @@ import Image from "next/image";
 export const linkItems: LinkItemType[] = [
 	{
 		text: "Documentation",
-		url: "/docs",
+		url: "/",
 		active: "nested-url",
 	},
 ];
