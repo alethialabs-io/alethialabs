@@ -373,7 +373,7 @@ export default function DashboardLayout({
 							</div>
 						}
 					>
-						<div>{children}</div>
+						{children}
 					</Suspense>
 				</main>
 			</div>
