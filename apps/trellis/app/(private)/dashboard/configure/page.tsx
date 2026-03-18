@@ -12,7 +12,7 @@ import { Settings } from "lucide-react";
 
 export default function ConfigurePage() {
 	return (
-		<div className="w-full space-y-8 overflow-y-hidden">
+		<div className="w-full space-y-8">
 			<div className="space-y-4">
 				<div className="flex items-center gap-3">
 					<div className="p-2 border border-border bg-muted/30 rounded-lg">
