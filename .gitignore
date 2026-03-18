@@ -28,8 +28,10 @@ build
 dist
 
 # Go CLI
-/apps/cli/cli
-/apps/cli/tmp
+/apps/grape/grape
+/apps/grape/tmp
+/apps/grape/bin
+
 
 
 # Debug

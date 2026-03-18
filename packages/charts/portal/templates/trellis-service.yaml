@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "portal.fullname" . }}-trellis
+  labels:
+    {{- include "portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trellis
+spec:
+  type: {{ .Values.trellis.service.type }}
+  ports:
+    - port: {{ .Values.trellis.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "portal.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: trellis

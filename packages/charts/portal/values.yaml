@@ -1,24 +1,26 @@
-web:
+trellis:
   replicaCount: 1
   image:
-    repository: ghcr.io/bobikenobi12/bb-thesis-2026-web
+    repository: ghcr.io/bobikenobi12/trellis
     pullPolicy: IfNotPresent
     tag: ""
   service:
     type: ClusterIP
     port: 3000
   resources: {}
+  env: []
 
-docs:
+vintner:
   replicaCount: 1
   image:
-    repository: ghcr.io/bobikenobi12/bb-thesis-2026-docs
+    repository: ghcr.io/bobikenobi12/vintner
     pullPolicy: IfNotPresent
     tag: ""
   service:
     type: ClusterIP
     port: 3001
   resources: {}
+  env: []
 
 ingress:
   enabled: false
@@ -30,11 +32,11 @@ ingress:
         - path: /
           pathType: Prefix
           backend:
-            serviceName: web
+            serviceName: trellis
         - path: /docs
           pathType: Prefix
           backend:
-            serviceName: docs
+            serviceName: vintner
   tls: []
 
 secrets:
@@ -47,7 +49,7 @@ secrets:
     NEXT_PUBLIC_SUPABASE_ANON_KEY: ""
     SERVICE_ROLE_SECRET: ""
     CLI_JWT_SECRET: ""
-    DOCS_URL: "http://docs:3001"
+    VINTNER_URL: "http://vintner:3001"
 
   # For ExternalSecrets
   externalSecret:

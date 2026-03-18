@@ -1,0 +1,47 @@
+FROM node:20-alpine AS alpine
+
+# Setup pnpm
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
+
+FROM alpine AS builder
+RUN apk update
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+RUN pnpm install -g turbo
+COPY . .
+RUN turbo prune vintner --docker
+
+FROM alpine AS installer
+RUN apk update
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+
+# First install the dependencies
+COPY --from=builder /app/out/json/ .
+RUN pnpm install --frozen-lockfile
+
+# Build the project
+COPY --from=builder /app/out/full/ .
+RUN pnpm turbo run build --filter=vintner
+
+FROM alpine AS runner
+WORKDIR /app
+
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+USER nextjs
+
+COPY --from=installer /app/apps/vintner/next.config.mjs .
+COPY --from=installer /app/apps/vintner/package.json .
+
+COPY --from=installer --chown=nextjs:nodejs /app/apps/vintner/.next/standalone ./
+COPY --from=installer --chown=nextjs:nodejs /app/apps/vintner/.next/static ./apps/vintner/.next/static
+COPY --from=installer --chown=nextjs:nodejs /app/apps/vintner/public ./apps/vintner/public
+
+EXPOSE 3001
+ENV PORT=3001
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "apps/vintner/server.js"]

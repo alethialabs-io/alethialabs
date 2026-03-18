@@ -10,11 +10,48 @@ import (
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/google/uuid"
 	"github.com/imroc/req/v3"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )
+
+// --- Preferences for UI ---
+
+type cliPreferences struct {
+	HideLoginWarning bool `json:"hide_login_warning"`
+}
+
+func getPreferencesPath() (string, error) {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(configDir, "grape", "preferences.json"), nil
+}
+
+func loadPreferences() cliPreferences {
+	var prefs cliPreferences
+	path, err := getPreferencesPath()
+	if err == nil {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			json.Unmarshal(data, &prefs)
+		}
+	}
+	return prefs
+}
+
+func savePreferences(prefs cliPreferences) {
+	path, err := getPreferencesPath()
+	if err == nil {
+		os.MkdirAll(filepath.Dir(path), 0755)
+		data, _ := json.MarshalIndent(prefs, "", "  ")
+		os.WriteFile(path, data, 0644)
+	}
+}
 
 // --- Bubble Tea Model ---
 
@@ -71,10 +108,12 @@ func (m model) View() string {
 		return fmt.Sprintf("%s Waiting for authentication in the browser...", m.spinner.View())
 	}
 	if m.done {
-		return fmt.Sprintf("✓ Welcome, %s! You are now authenticated.\n", m.userEmail)
+		successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+		return successStyle.Render(fmt.Sprintf("✓ Welcome, %s! You are now authenticated.\n", m.userEmail))
 	}
 	if m.err != nil {
-		return fmt.Sprintf("✗ Error: %v\n", m.err)
+		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+		return errorStyle.Render(fmt.Sprintf("✗ Error: %v\n", m.err))
 	}
 	return ""
 }
@@ -142,6 +181,61 @@ func saveTokens(tokens *types.ExchangeResponse) {
 	}
 }
 
+// --- Login Flow Implementation ---
+
+func performLoginFlow() error {
+	prefs := loadPreferences()
+
+	if !prefs.HideLoginWarning {
+		infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Border(lipgloss.RoundedBorder()).Padding(1, 2).BorderForeground(lipgloss.Color("63"))
+		linkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Underline(true)
+
+		msg := fmt.Sprintf("To use the Grape CLI, you must have an account on the ADP ItGix Platform.\nIf you don't have one, register at:\n%s", linkStyle.Render("https://adp.prod.itgix.eu/auth/signin"))
+		fmt.Println(infoStyle.Render(msg))
+		fmt.Println()
+
+		var hideWarning bool
+		err := huh.NewConfirm().
+			Title("Do you want to hide this message in the future?").
+			Value(&hideWarning).
+			Run()
+
+		if err == nil && hideWarning {
+			prefs.HideLoginWarning = true
+			savePreferences(prefs)
+		}
+		fmt.Println()
+	}
+
+	deviceCode := uuid.New().String()
+	webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
+	if webOrigin == "" {
+		webOrigin = "https://localhost:3000"
+	}
+	loginURL := fmt.Sprintf("%s/cli/login?device_code=%s", webOrigin, deviceCode)
+	exchangeURL := fmt.Sprintf("%s/api/auth/cli/exchange", webOrigin)
+
+	accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
+	fmt.Println(accentStyle.Render("Please open the following URL in your browser to log in:"))
+	fmt.Println(loginURL)
+
+	if err := browser.OpenURL(loginURL); err != nil {
+		fmt.Printf("\nCould not open browser automatically. Please open the link manually.\n")
+	}
+
+	p := tea.NewProgram(initialModel())
+	go func() {
+		// This is a bit of a hack to ensure the Bubble Tea UI has time to render before polling starts
+		time.Sleep(100 * time.Millisecond)
+		p.Send(pollForToken(deviceCode, exchangeURL)())
+	}()
+
+	if _, err := p.Run(); err != nil {
+		return fmt.Errorf("an error occurred during login: %w", err)
+	}
+	return nil
+}
+
 // --- Cobra Command ---
 
 var forceLogin bool
@@ -152,44 +246,26 @@ var loginCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		// 1. Check if already authenticated (unless forced)
 		if !forceLogin {
-			if _, err := getAuthToken(); err == nil {
+			if _, err := getAuthTokenInternal(false); err == nil {
 				// We need to fetch the email for display purposes since getAuthToken returns only the token
 				credsPath, _ := getCredentialsPath()
 				file, _ := os.ReadFile(credsPath)
 				var creds types.ExchangeResponse
 				json.Unmarshal(file, &creds)
 				
-				fmt.Printf("You are already logged in as: %s\n", creds.UserEmail)
-				fmt.Println("Use --force to log in again.")
+				infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+				accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
+				
+				fmt.Println(infoStyle.Render(fmt.Sprintf("You are already logged in as: %s", accentStyle.Render(creds.UserEmail))))
+				fmt.Println(infoStyle.Render("Use --force to log in again."))
 				return
 			}
 		}
 
 		// 2. Proceed with login flow
-		deviceCode := uuid.New().String()
-		webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
-		if webOrigin == "" {
-			webOrigin = "https://localhost:3000"
-		}
-		loginURL := fmt.Sprintf("%s/cli/login?device_code=%s", webOrigin, deviceCode)
-		exchangeURL := fmt.Sprintf("%s/api/auth/cli/exchange", webOrigin)
-
-		fmt.Println("Please open the following URL in your browser to log in:")
-		fmt.Println(loginURL)
-
-		if err := browser.OpenURL(loginURL); err != nil {
-			fmt.Printf("\nCould not open browser automatically. Please open the link manually.\n")
-		}
-
-		p := tea.NewProgram(initialModel())
-		go func() {
-			// This is a bit of a hack to ensure the Bubble Tea UI has time to render before polling starts
-			time.Sleep(100 * time.Millisecond)
-			p.Send(pollForToken(deviceCode, exchangeURL)())
-		}()
-
-		if _, err := p.Run(); err != nil {
-			fmt.Printf("An error occurred: %v\n", err)
+		if err := performLoginFlow(); err != nil {
+			errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+			fmt.Println(errorStyle.Render(err.Error()))
 			os.Exit(1)
 		}
 	},
