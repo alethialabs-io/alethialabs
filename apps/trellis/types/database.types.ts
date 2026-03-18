@@ -582,6 +582,7 @@ export type Database = {
         Args: { p_cluster_id: string; p_token_hash: string }
         Returns: undefined
       }
+      custom_access_token_hook: { Args: { event: Json }; Returns: Json }
       fetch_next_provision: {
         Args: { p_cluster_id: string; p_token_hash: string }
         Returns: {
@@ -602,6 +603,23 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      get_configuration_stats: {
+        Args: never
+        Returns: {
+          archived_configs: number
+          completed_configs: number
+          draft_configs: number
+          ecs_configs: number
+          eks_configs: number
+          failed_configs: number
+          has_rds_configs: number
+          has_vpc_configs: number
+          pending_configs: number
+          recent_configs: number
+          this_month_configs: number
+          total_configs: number
+        }[]
       }
       insert_provision_log: {
         Args: {

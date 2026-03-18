@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useState } from "react";
 
 import { ClusterSelector } from "@/components/cluster-selector";
@@ -40,7 +38,6 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
 	AlertCircle,
-	ArrowRight,
 	CheckCircle2,
 	Cloud,
 	Database,
@@ -48,8 +45,9 @@ import {
 	Server,
 	Shield,
 } from "lucide-react";
-import { SubmitHandler, useForm } from "react-hook-form";
+import { Resolver, SubmitHandler, useForm } from "react-hook-form";
 
+import { createConfiguration } from "@/app/server/actions/configurations";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 export function ConfigurationForm() {
@@ -59,10 +57,11 @@ export function ConfigurationForm() {
 		useState<PublicClustersRow | null>(null);
 
 	const form = useForm<PublicConfigurationsInsert>({
-		resolver: zodResolver(publicConfigurationsInsertSchema) as any,
+		resolver: zodResolver(
+			publicConfigurationsInsertSchema,
+		) as Resolver<PublicConfigurationsInsert>,
 		defaultValues: {
 			container_platform: "",
-			user_id: "",
 			project_name: "",
 			aws_account_id: "",
 			environment_stage: "development",
@@ -81,6 +80,8 @@ export function ConfigurationForm() {
 			dns_domain_name: "",
 			db_min_capacity: 2,
 			db_max_capacity: 16,
+			created_at: new Date().toISOString(),
+
 			eks_cluster_admins: `eks_cluster_admins:
   - username: "mihail.vukadinoff@itgix.com"
     path: /
@@ -106,8 +107,12 @@ topics:
 	const handleClusterSelect = (cluster: PublicClustersRow) => {
 		setSelectedCluster(cluster);
 		form.setValue("cluster_id", cluster.id);
+		form.setValue("user_id", cluster.user_id); // Ensure user_id is set
 
-		const metadata = cluster.metadata as any;
+		const metadata = cluster.metadata as {
+			region?: string;
+			vpc_cidr?: string;
+		} | null;
 		if (metadata?.region) {
 			form.setValue("aws_region", metadata.region);
 		}
@@ -124,24 +129,9 @@ topics:
 		setError(null);
 
 		try {
-			const response = await fetch("/api/configurations", {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-				},
-				body: JSON.stringify(data),
-			});
+			const { configuration } = await createConfiguration(data);
 
-			if (!response.ok) {
-				const errorData = await response.json();
-				throw new Error(
-					errorData.message || "Failed to create configuration",
-				);
-			}
-
-			const result = await response.json();
-			console.log("Configuration created:", result);
-			window.location.href = "/dashboard/completion";
+			window.location.href = `/dashboard/configurations?config_id=${configuration.id}`;
 		} catch (error) {
 			console.error("Error creating configuration:", error);
 			setError(
@@ -163,10 +153,12 @@ topics:
 			<form onSubmit={form.handleSubmit(onSubmit)}>
 				<div className="space-y-8">
 					{/* Cluster Selection (The "Context") */}
-					<div className="space-y-3 p-4 bg-muted/10 rounded-md border border-border/40">
-						<div className="flex items-center gap-2">
-							<Server className="w-4.5 h-4.5 text-muted-foreground" />
-							<h3 className="font-medium text-sm text-foreground tracking-tight">
+					<div className="space-y-4 p-5 bg-card rounded-lg border border-border shadow-sm">
+						<div className="flex items-center gap-2.5 mb-1">
+							<div className="p-1.5 bg-muted rounded-md border border-border/50">
+								<Server className="w-4 h-4 text-foreground" />
+							</div>
+							<h3 className="font-semibold text-sm text-foreground tracking-tight">
 								Target Environment
 							</h3>
 						</div>
@@ -177,8 +169,8 @@ topics:
 						<ClusterSelector onSelect={handleClusterSelect} />
 
 						{selectedCluster && (
-							<div className="text-[11px] font-medium text-emerald-600 flex items-center gap-1.5 mt-2 bg-emerald-50 w-fit px-2 py-1 rounded border border-emerald-200/50">
-								<CheckCircle2 className="w-3.5 h-3.5" />
+							<div className="text-[11px] font-medium text-foreground flex items-center gap-1.5 mt-2 bg-muted/50 w-fit px-2.5 py-1.5 rounded-md border border-border">
+								<CheckCircle2 className="w-3.5 h-3.5 text-muted-foreground" />
 								Linked to {selectedCluster.name}
 							</div>
 						)}
@@ -186,9 +178,11 @@ topics:
 
 					{/* Project Configuration */}
 					<div className="space-y-5">
-						<div className="flex items-center gap-2 mb-2">
-							<Cloud className="w-4.5 h-4.5 text-muted-foreground" />
-							<h3 className="font-medium text-sm text-foreground tracking-tight">
+						<div className="flex items-center gap-2.5 mb-3">
+							<div className="p-1.5 bg-muted rounded-md border border-border/50">
+								<Cloud className="w-4 h-4 text-foreground" />
+							</div>
+							<h3 className="font-semibold text-sm text-foreground tracking-tight">
 								Project Configuration
 							</h3>
 						</div>
@@ -199,7 +193,10 @@ topics:
 								name="project_name"
 								render={({ field }) => (
 									<FormItem className="space-y-1.5">
-										<FormLabel htmlFor="project_name" className="text-xs">
+										<FormLabel
+											htmlFor="project_name"
+											className="text-xs"
+										>
 											Project Name *
 										</FormLabel>
 										<FormControl>
@@ -220,7 +217,10 @@ topics:
 								name="environment_stage"
 								render={({ field }) => (
 									<FormItem className="space-y-1.5">
-										<FormLabel htmlFor="environment_stage" className="text-xs">
+										<FormLabel
+											htmlFor="environment_stage"
+											className="text-xs"
+										>
 											Environment Stage *
 										</FormLabel>
 										<FormControl>
@@ -241,7 +241,10 @@ topics:
 								name="aws_account_id"
 								render={({ field }) => (
 									<FormItem className="space-y-1.5">
-										<FormLabel htmlFor="aws_account_id" className="text-xs">
+										<FormLabel
+											htmlFor="aws_account_id"
+											className="text-xs"
+										>
 											AWS Account ID *
 										</FormLabel>
 										<FormControl>
@@ -264,12 +267,15 @@ topics:
 								name="terraform_version"
 								render={({ field }) => (
 									<FormItem className="space-y-1.5">
-										<FormLabel htmlFor="terraform_version" className="text-xs">
+										<FormLabel
+											htmlFor="terraform_version"
+											className="text-xs"
+										>
 											Terraform Version *
 										</FormLabel>
 										<Select
 											onValueChange={field.onChange}
-											defaultValue={field.value ?? ""}
+											value={field.value ?? ""}
 										>
 											<FormControl>
 												<SelectTrigger className="h-9 text-sm border-border/50">
@@ -319,21 +325,23 @@ topics:
 									name="aws_region"
 									render={({ field }) => (
 										<FormItem className="space-y-1.5">
-											<FormLabel htmlFor="aws_region" className="text-xs">
+											<FormLabel
+												htmlFor="aws_region"
+												className="text-xs"
+											>
 												AWS Region *
 											</FormLabel>
 											{selectedCluster ? (
 												<div className="p-2 h-9 flex items-center bg-muted/30 rounded-md border border-border/50 text-sm text-muted-foreground">
-													{field.value} (Locked to Cluster)
+													{field.value} (Locked to
+													Cluster)
 												</div>
 											) : (
 												<Select
 													onValueChange={
 														field.onChange
 													}
-													defaultValue={
-														field.value ?? ""
-													}
+													value={field.value ?? ""}
 												>
 													<FormControl>
 														<SelectTrigger className="h-9 text-sm border-border/50">
@@ -342,13 +350,15 @@ topics:
 													</FormControl>
 													<SelectContent>
 														<SelectItem value="us-east-1">
-															US East (N. Virginia)
+															US East (N.
+															Virginia)
 														</SelectItem>
 														<SelectItem value="us-east-2">
 															US East (Ohio)
 														</SelectItem>
 														<SelectItem value="us-west-1">
-															US West (N. California)
+															US West (N.
+															California)
 														</SelectItem>
 														<SelectItem value="us-west-2">
 															US West (Oregon)
@@ -372,7 +382,8 @@ topics:
 															Europe (Stockholm)
 														</SelectItem>
 														<SelectItem value="ap-south-1">
-															Asia Pacific (Mumbai)
+															Asia Pacific
+															(Mumbai)
 														</SelectItem>
 														<SelectItem value="ap-northeast-1">
 															Asia Pacific (Tokyo)
@@ -381,13 +392,16 @@ topics:
 															Asia Pacific (Seoul)
 														</SelectItem>
 														<SelectItem value="ap-southeast-1">
-															Asia Pacific (Singapore)
+															Asia Pacific
+															(Singapore)
 														</SelectItem>
 														<SelectItem value="ap-southeast-2">
-															Asia Pacific (Sydney)
+															Asia Pacific
+															(Sydney)
 														</SelectItem>
 														<SelectItem value="sa-east-1">
-															South America (São Paulo)
+															South America (São
+															Paulo)
 														</SelectItem>
 													</SelectContent>
 												</Select>
@@ -400,13 +414,15 @@ topics:
 						</div>
 					</div>
 
-					<Separator className="bg-border/40" />
+					<Separator className="bg-border/60" />
 
 					{/* Container Platform Selection */}
 					<div className="space-y-5">
-						<div className="flex items-center gap-2 mb-2">
-							<Shield className="w-4.5 h-4.5 text-muted-foreground" />
-							<h3 className="font-medium text-sm text-foreground tracking-tight">
+						<div className="flex items-center gap-2.5 mb-3">
+							<div className="p-1.5 bg-muted rounded-md border border-border/50">
+								<Shield className="w-4 h-4 text-foreground" />
+							</div>
+							<h3 className="font-semibold text-sm text-foreground tracking-tight">
 								Container Platform
 							</h3>
 						</div>
@@ -420,13 +436,15 @@ topics:
 						/>
 					</div>
 
-					<Separator className="bg-border/40" />
+					<Separator className="bg-border/60" />
 
 					{/* Repository Configuration */}
 					<div className="space-y-5">
-						<div className="flex items-center gap-2 mb-2">
-							<Shield className="w-4.5 h-4.5 text-muted-foreground" />
-							<h3 className="font-medium text-sm text-foreground tracking-tight">
+						<div className="flex items-center gap-2.5 mb-3">
+							<div className="p-1.5 bg-muted rounded-md border border-border/50">
+								<Shield className="w-4 h-4 text-foreground" />
+							</div>
+							<h3 className="font-semibold text-sm text-foreground tracking-tight">
 								Repository Configuration
 							</h3>
 						</div>
@@ -442,8 +460,8 @@ topics:
 												label="Environment Repository"
 												placeholder="Select environment repository"
 												required
-												{...field}
 												value={field.value ?? undefined}
+												onChange={field.onChange}
 											/>
 										</FormControl>
 										<FormMessage className="text-xs" />
@@ -460,8 +478,8 @@ topics:
 												label="GitOps Repository"
 												placeholder="Select GitOps repository"
 												required
-												{...field}
 												value={field.value ?? undefined}
+												onChange={field.onChange}
 											/>
 										</FormControl>
 										<FormMessage className="text-xs" />
@@ -473,7 +491,10 @@ topics:
 								name="gitops_argocd_token"
 								render={({ field }) => (
 									<FormItem className="space-y-1.5 md:col-span-2">
-										<FormLabel htmlFor="gitops_token" className="text-xs">
+										<FormLabel
+											htmlFor="gitops_token"
+											className="text-xs"
+										>
 											GitOps ArgoCD Access Token *
 										</FormLabel>
 										<FormControl>
@@ -484,7 +505,7 @@ topics:
 												required
 												className="h-9 text-sm border-border/50"
 												{...field}
-												value={field.value ?? undefined}
+												value={field.value ?? ""}
 											/>
 										</FormControl>
 										<FormMessage className="text-xs" />
@@ -514,8 +535,7 @@ topics:
 												<FormControl>
 													<Switch
 														checked={
-															field.value ??
-															undefined
+															field.value ?? false
 														}
 														onCheckedChange={
 															field.onChange
@@ -535,7 +555,10 @@ topics:
 											name="gitops_app_template"
 											render={({ field }) => (
 												<FormItem className="space-y-1.5">
-													<FormLabel htmlFor="application_template" className="text-xs">
+													<FormLabel
+														htmlFor="application_template"
+														className="text-xs"
+													>
 														Application Template
 													</FormLabel>
 													<FormControl>
@@ -546,7 +569,7 @@ topics:
 															{...field}
 															value={
 																field.value ??
-																undefined
+																""
 															}
 														/>
 													</FormControl>
@@ -563,10 +586,12 @@ topics:
 														<RepositorySelector
 															label="App Destination Repository"
 															placeholder="Select app destination repository"
-															{...field}
 															value={
 																field.value ??
 																undefined
+															}
+															onChange={
+																field.onChange
 															}
 														/>
 													</FormControl>
@@ -583,10 +608,12 @@ topics:
 														<RepositorySelector
 															label="Infra Destination Repository"
 															placeholder="Select infra destination repository"
-															{...field}
 															value={
 																field.value ??
 																undefined
+															}
+															onChange={
+																field.onChange
 															}
 														/>
 													</FormControl>
@@ -599,7 +626,10 @@ topics:
 											name="gitops_app_token"
 											render={({ field }) => (
 												<FormItem className="space-y-1.5 md:col-span-2">
-													<FormLabel htmlFor="gitops_application_token" className="text-xs">
+													<FormLabel
+														htmlFor="gitops_application_token"
+														className="text-xs"
+													>
 														ArgoCD Application Token
 													</FormLabel>
 													<FormControl>
@@ -611,7 +641,7 @@ topics:
 															{...field}
 															value={
 																field.value ??
-																undefined
+																""
 															}
 														/>
 													</FormControl>
@@ -625,23 +655,25 @@ topics:
 						</Card>
 					</div>
 
-					<Separator className="bg-border/40" />
+					<Separator className="bg-border/60" />
 
 					{/* Network Configuration */}
 					<div className="space-y-5">
-						<div className="flex items-center gap-2 mb-2">
-							<Shield className="w-4.5 h-4.5 text-muted-foreground" />
-							<h3 className="font-medium text-sm text-foreground tracking-tight">
+						<div className="flex items-center gap-2.5 mb-3">
+							<div className="p-1.5 bg-muted rounded-md border border-border/50">
+								<Shield className="w-4 h-4 text-foreground" />
+							</div>
+							<h3 className="font-semibold text-sm text-foreground tracking-tight">
 								Network Configuration
 							</h3>
 						</div>
 
 						{/* VPC Configuration */}
-						<Card className="border-border/40 shadow-sm">
+						<Card className="border-border/60 shadow-sm">
 							<CardHeader className="pb-4 bg-muted/5 border-b border-border/40">
 								<div className="flex items-center justify-between">
 									<div className="space-y-1">
-										<CardTitle className="text-sm font-medium">
+										<CardTitle className="text-sm font-semibold">
 											Create VPC
 										</CardTitle>
 										<CardDescription className="text-xs">
@@ -657,8 +689,7 @@ topics:
 												<FormControl>
 													<Switch
 														checked={
-															field.value ??
-															undefined
+															field.value ?? false
 														}
 														onCheckedChange={
 															field.onChange
@@ -677,7 +708,10 @@ topics:
 										name="vpc_cidr"
 										render={({ field }) => (
 											<FormItem className="space-y-1.5">
-												<FormLabel htmlFor="vpc_cidr" className="text-xs">
+												<FormLabel
+													htmlFor="vpc_cidr"
+													className="text-xs"
+												>
 													VPC CIDR Block
 												</FormLabel>
 												<FormControl>
@@ -687,8 +721,7 @@ topics:
 														className="h-9 text-sm border-border/50 max-w-md"
 														{...field}
 														value={
-															field.value ??
-															undefined
+															field.value ?? ""
 														}
 													/>
 												</FormControl>
@@ -701,11 +734,11 @@ topics:
 						</Card>
 
 						{/* DNS Configuration */}
-						<Card className="border-border/40 shadow-sm">
+						<Card className="border-border/60 shadow-sm">
 							<CardHeader className="pb-4 bg-muted/5 border-b border-border/40">
 								<div className="flex items-center justify-between">
 									<div className="space-y-1">
-										<CardTitle className="text-sm font-medium">
+										<CardTitle className="text-sm font-semibold">
 											DNS Configuration
 										</CardTitle>
 										<CardDescription className="text-xs">
@@ -721,8 +754,7 @@ topics:
 												<FormControl>
 													<Switch
 														checked={
-															field.value ??
-															undefined
+															field.value ?? false
 														}
 														onCheckedChange={
 															field.onChange
@@ -742,7 +774,10 @@ topics:
 											name="dns_hosted_zone"
 											render={({ field }) => (
 												<FormItem className="space-y-1.5">
-													<FormLabel htmlFor="dns_hosted_zone" className="text-xs">
+													<FormLabel
+														htmlFor="dns_hosted_zone"
+														className="text-xs"
+													>
 														DNS Hosted Zone
 													</FormLabel>
 													<FormControl>
@@ -753,7 +788,7 @@ topics:
 															{...field}
 															value={
 																field.value ??
-																undefined
+																""
 															}
 														/>
 													</FormControl>
@@ -766,7 +801,10 @@ topics:
 											name="dns_domain_name"
 											render={({ field }) => (
 												<FormItem className="space-y-1.5">
-													<FormLabel htmlFor="dns_domain_name" className="text-xs">
+													<FormLabel
+														htmlFor="dns_domain_name"
+														className="text-xs"
+													>
 														DNS Domain Name
 													</FormLabel>
 													<FormControl>
@@ -777,7 +815,7 @@ topics:
 															{...field}
 															value={
 																field.value ??
-																undefined
+																""
 															}
 														/>
 													</FormControl>
@@ -791,14 +829,16 @@ topics:
 						</Card>
 					</div>
 
-					<Separator className="bg-border/40" />
+					<Separator className="bg-border/60" />
 
 					{/* Database Configuration */}
 					<div className="space-y-5">
-						<div className="flex items-center justify-between mb-2">
-							<div className="flex items-center gap-2">
-								<Database className="w-4.5 h-4.5 text-muted-foreground" />
-								<h3 className="font-medium text-sm text-foreground tracking-tight">
+						<div className="flex items-center justify-between mb-3">
+							<div className="flex items-center gap-2.5">
+								<div className="p-1.5 bg-muted rounded-md border border-border/50">
+									<Database className="w-4 h-4 text-foreground" />
+								</div>
+								<h3 className="font-semibold text-sm text-foreground tracking-tight">
 									Database Configuration
 								</h3>
 							</div>
@@ -807,10 +847,12 @@ topics:
 								name="create_rds"
 								render={({ field }) => (
 									<FormItem className="flex items-center gap-2 space-y-0">
-										<FormLabel className="text-xs">Enable Database</FormLabel>
+										<FormLabel className="text-xs">
+											Enable Database
+										</FormLabel>
 										<FormControl>
 											<Switch
-												checked={field.value ?? undefined}
+												checked={field.value ?? false}
 												onCheckedChange={field.onChange}
 											/>
 										</FormControl>
@@ -820,78 +862,88 @@ topics:
 						</div>
 
 						{form.watch("create_rds") && (
-						<div className="grid md:grid-cols-2 gap-5">
-							<FormField
-								control={form.control}
-								name="db_min_capacity"
-								render={({ field }) => (
-									<FormItem className="space-y-1.5">
-										<FormLabel htmlFor="db_min_capacity" className="text-xs">
-											Minimum Capacity
-										</FormLabel>
-										<FormControl>
-											<Input
-												id="db_min_capacity"
-												type="number"
-												min="0.5"
-												max="128"
-												step="0.5"
-												className="h-9 text-sm border-border/50"
-												{...field}
-												onChange={(e) =>
-													field.onChange(
-														e.target.value === ""
-															? null
-															: +e.target.value,
-													)
-												}
-												value={field.value ?? ""}
-											/>
-										</FormControl>
-										<FormMessage className="text-xs" />
-									</FormItem>
-								)}
-							/>
-							<FormField
-								control={form.control}
-								name="db_max_capacity"
-								render={({ field }) => (
-									<FormItem className="space-y-1.5">
-										<FormLabel htmlFor="db_max_capacity" className="text-xs">
-											Maximum Capacity
-										</FormLabel>
-										<FormControl>
-											<Input
-												id="db_max_capacity"
-												type="number"
-												min="0.5"
-												max="128"
-												step="0.5"
-												className="h-9 text-sm border-border/50"
-												{...field}
-												onChange={(e) =>
-													field.onChange(
-														e.target.value === ""
-															? null
-															: +e.target.value,
-													)
-												}
-												value={field.value ?? ""}
-											/>
-										</FormControl>
-										<FormMessage className="text-xs" />
-									</FormItem>
-								)}
-							/>
-						</div>
+							<div className="grid md:grid-cols-2 gap-5">
+								<FormField
+									control={form.control}
+									name="db_min_capacity"
+									render={({ field }) => (
+										<FormItem className="space-y-1.5">
+											<FormLabel
+												htmlFor="db_min_capacity"
+												className="text-xs"
+											>
+												Minimum Capacity
+											</FormLabel>
+											<FormControl>
+												<Input
+													id="db_min_capacity"
+													type="number"
+													min="0.5"
+													max="128"
+													step="0.5"
+													className="h-9 text-sm border-border/50"
+													{...field}
+													onChange={(e) =>
+														field.onChange(
+															e.target.value ===
+																""
+																? null
+																: +e.target
+																		.value,
+														)
+													}
+													value={field.value ?? ""}
+												/>
+											</FormControl>
+											<FormMessage className="text-xs" />
+										</FormItem>
+									)}
+								/>
+								<FormField
+									control={form.control}
+									name="db_max_capacity"
+									render={({ field }) => (
+										<FormItem className="space-y-1.5">
+											<FormLabel
+												htmlFor="db_max_capacity"
+												className="text-xs"
+											>
+												Maximum Capacity
+											</FormLabel>
+											<FormControl>
+												<Input
+													id="db_max_capacity"
+													type="number"
+													min="0.5"
+													max="128"
+													step="0.5"
+													className="h-9 text-sm border-border/50"
+													{...field}
+													onChange={(e) =>
+														field.onChange(
+															e.target.value ===
+																""
+																? null
+																: +e.target
+																		.value,
+														)
+													}
+													value={field.value ?? ""}
+												/>
+											</FormControl>
+											<FormMessage className="text-xs" />
+										</FormItem>
+									)}
+								/>
+							</div>
 						)}
 					</div>
 
-					<Separator className="bg-border/40" />
+					<Separator className="bg-border/60" />
 
 					{/* Advanced Configuration */}
 					<div className="space-y-5">
-						<h3 className="font-medium text-sm text-foreground tracking-tight mb-2">
+						<h3 className="font-semibold text-sm text-foreground tracking-tight mb-3">
 							Advanced Configuration
 						</h3>
 
@@ -901,16 +953,19 @@ topics:
 								name="eks_cluster_admins"
 								render={({ field }) => (
 									<FormItem className="space-y-1.5">
-										<FormLabel htmlFor="eks_cluster_admins" className="text-xs">
+										<FormLabel
+											htmlFor="eks_cluster_admins"
+											className="text-xs"
+										>
 											EKS Authentication Users (YAML)
 										</FormLabel>
 										<FormControl>
 											<Textarea
 												id="eks_cluster_admins"
 												rows={8}
-												className="font-mono text-xs border-border/50 bg-muted/10 p-4"
+												className="font-mono text-xs border-border/50 bg-muted/30 p-4 rounded-md"
 												{...field}
-												value={field.value ?? undefined}
+												value={field.value ?? ""}
 											/>
 										</FormControl>
 										<FormMessage className="text-xs" />
@@ -922,16 +977,19 @@ topics:
 								name="ses_queues_topics"
 								render={({ field }) => (
 									<FormItem className="space-y-1.5">
-										<FormLabel htmlFor="ses_queues_topics" className="text-xs">
+										<FormLabel
+											htmlFor="ses_queues_topics"
+											className="text-xs"
+										>
 											SES Queues and Topics (YAML)
 										</FormLabel>
 										<FormControl>
 											<Textarea
 												id="ses_queues_topics"
 												rows={10}
-												className="font-mono text-xs border-border/50 bg-muted/10 p-4"
+												className="font-mono text-xs border-border/50 bg-muted/30 p-4 rounded-md"
 												{...field}
-												value={field.value ?? undefined}
+												value={field.value ?? ""}
 											/>
 										</FormControl>
 										<FormMessage className="text-xs" />
@@ -942,9 +1000,9 @@ topics:
 
 						{/* Additional Options */}
 						<div className="space-y-3">
-							<div className="flex items-center justify-between p-4 border border-border/50 rounded-md bg-background">
+							<div className="flex items-center justify-between p-4 border border-border/60 rounded-lg bg-card shadow-sm">
 								<div>
-									<h4 className="text-sm font-medium">
+									<h4 className="text-sm font-semibold">
 										CloudFront WAF
 									</h4>
 									<p className="text-[11px] text-muted-foreground mt-0.5">
@@ -960,7 +1018,7 @@ topics:
 											<FormControl>
 												<Switch
 													checked={
-														field.value ?? undefined
+														field.value ?? false
 													}
 													onCheckedChange={
 														field.onChange
@@ -972,9 +1030,9 @@ topics:
 								/>
 							</div>
 
-							<div className="flex items-center justify-between p-4 border border-border/50 rounded-md bg-background">
+							<div className="flex items-center justify-between p-4 border border-border/60 rounded-lg bg-card shadow-sm">
 								<div>
-									<h4 className="text-sm font-medium">
+									<h4 className="text-sm font-semibold">
 										Elastic Redis
 									</h4>
 									<p className="text-[11px] text-muted-foreground mt-0.5">
@@ -989,7 +1047,7 @@ topics:
 											<FormControl>
 												<Switch
 													checked={
-														field.value ?? undefined
+														field.value ?? false
 													}
 													onCheckedChange={
 														field.onChange
@@ -1007,7 +1065,10 @@ topics:
 									name="redis_allowed_cidr_blocks"
 									render={({ field }) => (
 										<FormItem className="ml-4 space-y-1.5 pt-2">
-											<FormLabel htmlFor="redis_allowed_cidr_blocks" className="text-xs">
+											<FormLabel
+												htmlFor="redis_allowed_cidr_blocks"
+												className="text-xs"
+											>
 												Allowed CIDR Blocks
 											</FormLabel>
 											<FormControl>
@@ -1017,7 +1078,7 @@ topics:
 													className="h-9 text-sm border-border/50 max-w-md"
 													{...field}
 													value={
-														field.value ?? undefined
+														field.value ?? ""
 													}
 												/>
 											</FormControl>
@@ -1027,9 +1088,9 @@ topics:
 								/>
 							)}
 
-							<div className="flex items-center justify-between p-4 border border-border/50 rounded-md bg-background">
+							<div className="flex items-center justify-between p-4 border border-border/60 rounded-lg bg-card shadow-sm">
 								<div>
-									<h4 className="text-sm font-medium">
+									<h4 className="text-sm font-semibold">
 										Karpenter Auto-Scaling
 									</h4>
 									<p className="text-[11px] text-muted-foreground mt-0.5">
@@ -1045,7 +1106,7 @@ topics:
 											<FormControl>
 												<Switch
 													checked={
-														field.value ?? undefined
+														field.value ?? false
 													}
 													onCheckedChange={
 														field.onChange
@@ -1062,10 +1123,17 @@ topics:
 					<Separator className="bg-border/40" />
 
 					{error && (
-						<Alert variant="destructive" className="border-destructive/20 bg-destructive/5 text-destructive">
+						<Alert
+							variant="destructive"
+							className="border-destructive/20 bg-destructive/5 text-destructive"
+						>
 							<AlertCircle className="h-4 w-4" />
-							<AlertTitle className="text-sm font-medium">Error</AlertTitle>
-							<AlertDescription className="text-xs">{error}</AlertDescription>
+							<AlertTitle className="text-sm font-medium">
+								Error
+							</AlertTitle>
+							<AlertDescription className="text-xs">
+								{error}
+							</AlertDescription>
 						</Alert>
 					)}
 
@@ -1075,7 +1143,9 @@ topics:
 							disabled={isLoading}
 							className="h-10 px-8 text-sm font-medium"
 						>
-							{isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+							{isLoading && (
+								<Loader2 className="w-4 h-4 mr-2 animate-spin" />
+							)}
 							{isLoading
 								? "Generating Configuration..."
 								: "Generate Configuration"}

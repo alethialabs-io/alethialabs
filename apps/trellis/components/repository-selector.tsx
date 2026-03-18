@@ -1,7 +1,5 @@
 "use client";
 
-import { getLinkedProviders } from "@/app/(private)/dashboard/actions";
-import { PublicGitProvider } from "@/lib/validations/db.schemas";
 import { GitProviderIcon } from "@/components/git-provider-icon";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,7 +11,10 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { createClient } from "@/lib/supabase/client";
-import type { Repository } from "@/types/configuration";
+import { PublicGitProvider } from "@/lib/validations/db.schemas";
+
+import { Repository } from "@/app/server/actions/git/types";
+import { getLinkedProviders } from "@/app/server/actions/identities";
 import { AlertCircle, Plus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -36,8 +37,11 @@ export function RepositorySelector({
 	const [loading, setLoading] = useState(false);
 	const [fetchingRepos, setFetchingRepos] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [linkedProviders, setLinkedProviders] = useState<PublicGitProvider[]>([]);
-	const [selectedProvider, setSelectedProvider] = useState<PublicGitProvider | null>(null);
+	const [linkedProviders, setLinkedProviders] = useState<PublicGitProvider[]>(
+		[],
+	);
+	const [selectedProvider, setSelectedProvider] =
+		useState<PublicGitProvider | null>(null);
 	const [showLinkOptions, setShowLinkOptions] = useState(false);
 
 	const loadInitialData = useCallback(async () => {
@@ -45,21 +49,26 @@ export function RepositorySelector({
 		setError(null);
 		try {
 			const providers = await getLinkedProviders();
-			setLinkedProviders(providers as PublicGitProvider[]);
+			setLinkedProviders(providers);
 
 			if (providers.length > 0) {
 				// Try to guess provider from current value if it exists
 				let initialProvider = providers[0];
 				if (value) {
-					if (value.includes("github.com")) initialProvider = "github";
-					else if (value.includes("gitlab.com")) initialProvider = "gitlab";
-					else if (value.includes("bitbucket.org")) initialProvider = "bitbucket";
+					if (value.includes("github.com"))
+						initialProvider = "github";
+					else if (value.includes("gitlab.com"))
+						initialProvider = "gitlab";
+					else if (value.includes("bitbucket.org"))
+						initialProvider = "bitbucket";
 				}
 
 				// Only set if the guessed/first provider is actually in the linked list
 				if (providers.includes(initialProvider)) {
 					setSelectedProvider(initialProvider as PublicGitProvider);
-					await fetchRepositories(initialProvider as PublicGitProvider);
+					await fetchRepositories(
+						initialProvider as PublicGitProvider,
+					);
 				} else {
 					setSelectedProvider(providers[0] as PublicGitProvider);
 					await fetchRepositories(providers[0] as PublicGitProvider);
@@ -91,7 +100,11 @@ export function RepositorySelector({
 			setRepositories(data.repositories || []);
 		} catch (err) {
 			console.error(`Error fetching ${providerName} repositories:`, err);
-			setError(err instanceof Error ? err.message : "Failed to fetch repositories");
+			setError(
+				err instanceof Error
+					? err.message
+					: "Failed to fetch repositories",
+			);
 			setRepositories([]);
 		} finally {
 			setFetchingRepos(false);
@@ -107,16 +120,19 @@ export function RepositorySelector({
 	const handleLinkAccount = async (providerName: PublicGitProvider) => {
 		try {
 			const supabase = await createClient();
-			
-            // Verify session is valid before linking
-            const { data: { user }, error: userError } = await supabase.auth.getUser();
-            
-            if (userError || !user) {
-                console.error("Session invalid, signing out:", userError);
-                await supabase.auth.signOut();
-                window.location.href = "/auth/signin"; // Redirect to login
-                return;
-            }
+
+			// Verify session is valid before linking
+			const {
+				data: { user },
+				error: userError,
+			} = await supabase.auth.getUser();
+
+			if (userError || !user) {
+				console.error("Session invalid, signing out:", userError);
+				await supabase.auth.signOut();
+				window.location.href = "/auth/signin"; // Redirect to login
+				return;
+			}
 
 			const { error } = await supabase.auth.linkIdentity({
 				provider: providerName,
@@ -129,7 +145,9 @@ export function RepositorySelector({
 			if (error) throw error;
 		} catch (err) {
 			console.error(`Error linking ${providerName}:`, err);
-			setError(`Failed to link ${providerName} account. Please try signing out and back in.`);
+			setError(
+				`Failed to link ${providerName} account. Please try signing out and back in.`,
+			);
 		}
 	};
 
@@ -153,14 +171,35 @@ export function RepositorySelector({
 					Link an account to select repositories automatically
 				</p>
 				<div className="flex flex-wrap gap-2">
-					<Button type="button" variant="outline" size="sm" onClick={() => handleLinkAccount("github")}>
-						<GitProviderIcon provider="github" className="mr-2" /> Link GitHub
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						onClick={() => handleLinkAccount("github")}
+					>
+						<GitProviderIcon provider="github" className="mr-2" />{" "}
+						Link GitHub
 					</Button>
-					<Button type="button" variant="outline" size="sm" onClick={() => handleLinkAccount("gitlab")}>
-						<GitProviderIcon provider="gitlab" className="mr-2" /> Link GitLab
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						onClick={() => handleLinkAccount("gitlab")}
+					>
+						<GitProviderIcon provider="gitlab" className="mr-2" />{" "}
+						Link GitLab
 					</Button>
-					<Button type="button" variant="outline" size="sm" onClick={() => handleLinkAccount("bitbucket")}>
-						<GitProviderIcon provider="bitbucket" className="mr-2" /> Link Bitbucket
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						onClick={() => handleLinkAccount("bitbucket")}
+					>
+						<GitProviderIcon
+							provider="bitbucket"
+							className="mr-2"
+						/>{" "}
+						Link Bitbucket
 					</Button>
 				</div>
 			</div>
@@ -179,11 +218,16 @@ export function RepositorySelector({
 						type="button"
 						variant="ghost"
 						size="sm"
-						onClick={() => selectedProvider && fetchRepositories(selectedProvider)}
+						onClick={() =>
+							selectedProvider &&
+							fetchRepositories(selectedProvider)
+						}
 						disabled={fetchingRepos || !selectedProvider}
 						title="Refresh repositories"
 					>
-						<RefreshCw className={`w-4 h-4 ${fetchingRepos ? "animate-spin" : ""}`} />
+						<RefreshCw
+							className={`w-4 h-4 ${fetchingRepos ? "animate-spin" : ""}`}
+						/>
 					</Button>
 				</div>
 			</div>
@@ -200,11 +244,17 @@ export function RepositorySelector({
 				<div className="md:col-span-1">
 					<Select
 						value={selectedProvider || ""}
-						onValueChange={(val) => handleProviderChange(val as PublicGitProvider)}
+						onValueChange={(val) =>
+							handleProviderChange(val as PublicGitProvider)
+						}
 					>
 						<SelectTrigger>
 							<div className="flex items-center gap-2">
-								{selectedProvider && <GitProviderIcon provider={selectedProvider} />}
+								{selectedProvider && (
+									<GitProviderIcon
+										provider={selectedProvider}
+									/>
+								)}
 								<SelectValue placeholder="Platform" />
 							</div>
 						</SelectTrigger>
@@ -226,7 +276,8 @@ export function RepositorySelector({
 									setShowLinkOptions(!showLinkOptions);
 								}}
 							>
-								<Plus className="w-3 h-3 mr-2" /> Link another account
+								<Plus className="w-3 h-3 mr-2" /> Link another
+								account
 							</Button>
 						</SelectContent>
 					</Select>
@@ -240,7 +291,9 @@ export function RepositorySelector({
 						disabled={fetchingRepos || repositories.length === 0}
 					>
 						<SelectTrigger>
-							<SelectValue placeholder={placeholder || "Select repository"} />
+							<SelectValue
+								placeholder={placeholder || "Select repository"}
+							/>
 						</SelectTrigger>
 						<SelectContent>
 							{repositories.map((repo) => (
@@ -264,30 +317,65 @@ export function RepositorySelector({
 
 			{showLinkOptions && (
 				<div className="flex flex-wrap gap-2 p-2 border rounded-md bg-muted/20 animate-in fade-in slide-in-from-top-1">
-					<p className="text-[10px] uppercase font-bold text-muted-foreground w-full mb-1">Link Platform</p>
+					<p className="text-[10px] uppercase font-bold text-muted-foreground w-full mb-1">
+						Link Platform
+					</p>
 					{!linkedProviders.includes("github") && (
-						<Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleLinkAccount("github")}>
-							<GitProviderIcon provider="github" className="mr-1" /> GitHub
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							className="h-7 text-xs"
+							onClick={() => handleLinkAccount("github")}
+						>
+							<GitProviderIcon
+								provider="github"
+								className="mr-1"
+							/>{" "}
+							GitHub
 						</Button>
 					)}
 					{!linkedProviders.includes("gitlab") && (
-						<Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleLinkAccount("gitlab")}>
-							<GitProviderIcon provider="gitlab" className="mr-1" /> GitLab
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							className="h-7 text-xs"
+							onClick={() => handleLinkAccount("gitlab")}
+						>
+							<GitProviderIcon
+								provider="gitlab"
+								className="mr-1"
+							/>{" "}
+							GitLab
 						</Button>
 					)}
 					{!linkedProviders.includes("bitbucket") && (
-						<Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleLinkAccount("bitbucket")}>
-							<GitProviderIcon provider="bitbucket" className="mr-1" /> Bitbucket
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							className="h-7 text-xs"
+							onClick={() => handleLinkAccount("bitbucket")}
+						>
+							<GitProviderIcon
+								provider="bitbucket"
+								className="mr-1"
+							/>{" "}
+							Bitbucket
 						</Button>
 					)}
 				</div>
 			)}
 
-			{repositories.length === 0 && !fetchingRepos && !error && selectedProvider && (
-				<p className="text-xs text-muted-foreground italic px-1">
-					No repositories found for this account.
-				</p>
-			)}
+			{repositories.length === 0 &&
+				!fetchingRepos &&
+				!error &&
+				selectedProvider && (
+					<p className="text-xs text-muted-foreground italic px-1">
+						No repositories found for this account.
+					</p>
+				)}
 		</div>
 	);
 }

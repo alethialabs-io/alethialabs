@@ -150,11 +150,23 @@ export type PublicAgentHeartbeatArgs = z.infer<
 export type PublicAgentHeartbeatReturns = z.infer<
   typeof generated.publicAgentHeartbeatReturnsSchema
 >;
+export type PublicCustomAccessTokenHookArgs = z.infer<
+  typeof generated.publicCustomAccessTokenHookArgsSchema
+>;
+export type PublicCustomAccessTokenHookReturns = z.infer<
+  typeof generated.publicCustomAccessTokenHookReturnsSchema
+>;
 export type PublicFetchNextProvisionArgs = z.infer<
   typeof generated.publicFetchNextProvisionArgsSchema
 >;
 export type PublicFetchNextProvisionReturns = z.infer<
   typeof generated.publicFetchNextProvisionReturnsSchema
+>;
+export type PublicGetConfigurationStatsArgs = z.infer<
+  typeof generated.publicGetConfigurationStatsArgsSchema
+>;
+export type PublicGetConfigurationStatsReturns = z.infer<
+  typeof generated.publicGetConfigurationStatsReturnsSchema
 >;
 export type PublicInsertProvisionLogArgs = z.infer<
   typeof generated.publicInsertProvisionLogArgsSchema

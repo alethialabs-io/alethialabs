@@ -1,5 +1,9 @@
 "use client";
 
+import {
+	getConfigurations,
+	GetConfigurationsData,
+} from "@/app/server/actions/configurations";
 import { Badge } from "@/components/ui/badge";
 import {
 	Card,
@@ -9,24 +13,22 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { DatabaseConfiguration } from "@/types/configuration";
+import { cn } from "@/lib/utils";
 import { Calendar, Clock, Download, Folder } from "lucide-react";
 import { useEffect, useState } from "react";
-import { cn } from "@/lib/utils";
 
 export default function HistoryPage() {
-	const [configurations, setConfigurations] = useState<
-		DatabaseConfiguration[]
-	>([]);
+	const [configurations, setConfigurations] = useState<GetConfigurationsData>(
+		[],
+	);
 	const [loading, setLoading] = useState(true);
 
 	useEffect(() => {
 		const fetchConfigurations = async () => {
 			try {
-				const res = await fetch("/api/configurations");
-				if (res.ok) {
-					const data = await res.json();
-					setConfigurations(data.configurations || []);
+				const data = await getConfigurations();
+				if (data?.configurations) {
+					setConfigurations(data.configurations);
 				}
 			} catch (error) {
 				console.error("[v0] Error fetching configurations:", error);
@@ -48,17 +50,17 @@ export default function HistoryPage() {
 		});
 	};
 
-	const groupByDate = (configs: DatabaseConfiguration[]) => {
-		const groups: Record<string, DatabaseConfiguration[]> = {};
+	const groupByDate = (configs: GetConfigurationsData) => {
+		const groups: Record<string, GetConfigurationsData> = {};
 
 		configs.forEach((config) => {
-			const date = new Date(config.created_at).toLocaleDateString(
+			const date = new Date(config.created_at || "").toLocaleDateString(
 				"en-US",
 				{
 					month: "long",
 					day: "numeric",
 					year: "numeric",
-				}
+				},
 			);
 
 			if (!groups[date]) {
@@ -73,7 +75,7 @@ export default function HistoryPage() {
 	const groupedConfigs = groupByDate(configurations);
 
 	return (
-		<div className="space-y-8 w-full max-w-[1000px]">
+		<div className="space-y-8 w-full">
 			<div className="space-y-1.5">
 				<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
 					Deployment History
@@ -115,15 +117,18 @@ export default function HistoryPage() {
 							No history yet
 						</h3>
 						<p className="text-xs text-muted-foreground max-w-sm">
-							Your deployment history will appear here once
-							you create and deploy configurations.
+							Your deployment history will appear here once you
+							create and deploy configurations.
 						</p>
 					</CardContent>
 				</Card>
 			) : (
 				<div className="space-y-6">
 					{Object.entries(groupedConfigs).map(([date, configs]) => (
-						<Card key={date} className="border-border/40 shadow-sm overflow-hidden">
+						<Card
+							key={date}
+							className="border-border/40 shadow-sm overflow-hidden"
+						>
 							<CardHeader className="bg-muted/20 border-b border-border/40 py-3 px-4 sm:px-6">
 								<div className="flex items-center justify-between">
 									<CardTitle className="text-sm font-medium flex items-center gap-2 text-foreground">
@@ -131,7 +136,8 @@ export default function HistoryPage() {
 										{date}
 									</CardTitle>
 									<CardDescription className="text-xs">
-										{configs.length} configuration{configs.length !== 1 && 's'}
+										{configs.length} configuration
+										{configs.length !== 1 && "s"}
 									</CardDescription>
 								</div>
 							</CardHeader>
@@ -142,26 +148,38 @@ export default function HistoryPage() {
 											key={config.id}
 											className="flex items-start gap-4 p-4 sm:p-6 hover:bg-muted/30 transition-colors group"
 										>
-											<div className="h-10 w-10 rounded-md border border-border/50 bg-background flex items-center justify-center flex-shrink-0 group-hover:border-border transition-colors">
+											<div className="h-10 w-10 rounded-md border border-border/50 bg-background flex items-center justify-center shrink-0 group-hover:border-border transition-colors">
 												<Folder className="h-4.5 w-4.5 text-muted-foreground" />
 											</div>
 											<div className="flex-1 min-w-0">
 												<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-1.5">
 													<div>
 														<h4 className="text-sm font-medium text-foreground group-hover:underline">
-															{config.name}
+															{config.id.substring(
+																0,
+																8,
+															)}
 														</h4>
 														<p className="text-[11px] text-muted-foreground mt-0.5 truncate">
-															{config.project_name} • {config.environment_stage} • {config.aws_region}
+															{
+																config.project_name
+															}{" "}
+															•{" "}
+															{
+																config.environment_stage
+															}{" "}
+															•{" "}
+															{config.aws_region}
 														</p>
 													</div>
 													<Badge
 														variant="outline"
 														className={cn(
 															"font-medium text-[10px] uppercase px-2.5 py-0.5 h-5 border-border/50 w-fit",
-															config.status === "completed"
+															config.status ===
+																"completed"
 																? "text-foreground bg-foreground/5 border-foreground/10"
-																: "text-muted-foreground bg-muted/30"
+																: "text-muted-foreground bg-muted/30",
 														)}
 													>
 														{config.status}
@@ -170,14 +188,24 @@ export default function HistoryPage() {
 												<div className="flex items-center gap-4 text-[11px] text-muted-foreground mt-2">
 													<span className="flex items-center gap-1.5">
 														<Clock className="h-3 w-3 opacity-70" />
-														{formatDate(config.created_at)}
+														{formatDate(
+															config.created_at ||
+																"",
+														)}
 													</span>
-													{config.download_count > 0 && (
-														<span className="flex items-center gap-1.5">
-															<Download className="h-3 w-3 opacity-70" />
-															Downloaded {config.download_count} time{config.download_count !== 1 && 's'}
-														</span>
-													)}
+													{config.download_count ||
+														(0 > 0 && (
+															<span className="flex items-center gap-1.5">
+																<Download className="h-3 w-3 opacity-70" />
+																Downloaded{" "}
+																{
+																	config.download_count
+																}{" "}
+																time
+																{config.download_count !==
+																	1 && "s"}
+															</span>
+														))}
 												</div>
 											</div>
 										</div>

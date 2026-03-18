@@ -1,6 +1,6 @@
 "use client";
 
-import { hasCloudIdentity } from "@/app/(private)/dashboard/actions";
+import { hasCloudIdentity } from "@/app/server/actions/identities";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 

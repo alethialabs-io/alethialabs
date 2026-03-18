@@ -246,7 +246,7 @@ var loginCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		// 1. Check if already authenticated (unless forced)
 		if !forceLogin {
-			if _, err := getAuthToken(); err == nil {
+			if _, err := getAuthTokenInternal(false); err == nil {
 				// We need to fetch the email for display purposes since getAuthToken returns only the token
 				credsPath, _ := getCredentialsPath()
 				file, _ := os.ReadFile(credsPath)

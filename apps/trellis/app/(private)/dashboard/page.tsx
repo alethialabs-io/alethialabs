@@ -11,10 +11,14 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import type {
-	ConfigurationStats,
-	DatabaseConfiguration,
-} from "@/types/configuration";
+
+import {
+	getConfigurations,
+	GetConfigurationsData,
+	getConfigurationStats,
+	GetConfigurationStatsData,
+} from "@/app/server/actions/configurations";
+import { hasCloudIdentity } from "@/app/server/actions/identities";
 import {
 	ArrowRight,
 	Calendar,
@@ -30,11 +34,10 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { hasCloudIdentity } from "./actions";
 
 export default function DashboardPage() {
-	const [stats, setStats] = useState<ConfigurationStats | null>(null);
-	const [recentConfigs, setRecentConfigs] = useState<DatabaseConfiguration[]>(
+	const [stats, setStats] = useState<GetConfigurationStatsData | null>(null);
+	const [recentConfigs, setRecentConfigs] = useState<GetConfigurationsData>(
 		[],
 	);
 	const [loading, setLoading] = useState(true);
@@ -58,18 +61,12 @@ export default function DashboardPage() {
 				}
 
 				// Fetch stats
-				const statsRes = await fetch("/api/configurations/stats");
-				if (statsRes.ok) {
-					const statsData = await statsRes.json();
-					setStats(statsData.stats);
-				}
+				const statsRes = await getConfigurationStats();
+				setStats(statsRes.stats);
 
 				// Fetch recent configurations
-				const configsRes = await fetch("/api/configurations?limit=5");
-				if (configsRes.ok) {
-					const configsData = await configsRes.json();
-					setRecentConfigs(configsData.configurations || []);
-				}
+				const configsRes = await getConfigurations({ limit: 5 });
+				setRecentConfigs(configsRes.configurations || []);
 			} catch (error) {
 				console.error("[v0] Error fetching dashboard data:", error);
 			} finally {
@@ -115,7 +112,7 @@ export default function DashboardPage() {
 							<Skeleton className="h-8 w-16" />
 						) : (
 							<div className="text-3xl font-bold tracking-tight">
-								{stats?.total || 0}
+								{stats?.total_configs || 0}
 							</div>
 						)}
 					</CardContent>
@@ -133,7 +130,7 @@ export default function DashboardPage() {
 							<Skeleton className="h-8 w-16" />
 						) : (
 							<div className="text-3xl font-bold tracking-tight">
-								{stats?.completed || 0}
+								{stats?.completed_configs || 0}
 							</div>
 						)}
 					</CardContent>
@@ -151,7 +148,7 @@ export default function DashboardPage() {
 							<Skeleton className="h-8 w-16" />
 						) : (
 							<div className="text-3xl font-bold tracking-tight">
-								{stats?.draft || 0}
+								{stats?.draft_configs || 0}
 							</div>
 						)}
 					</CardContent>
@@ -169,7 +166,7 @@ export default function DashboardPage() {
 							<Skeleton className="h-8 w-16" />
 						) : (
 							<div className="text-3xl font-bold tracking-tight">
-								{stats?.recentCount || 0}
+								{stats?.recent_configs || 0}
 							</div>
 						)}
 					</CardContent>
@@ -209,8 +206,8 @@ export default function DashboardPage() {
 										<div className="flex items-center gap-4">
 											<Skeleton className="h-9 w-9 rounded-md" />
 											<div className="space-y-2">
-												<Skeleton className="h-4 w-[150px]" />
-												<Skeleton className="h-3 w-[100px]" />
+												<Skeleton className="h-4 w-37.5" />
+												<Skeleton className="h-3 w-25" />
 											</div>
 										</div>
 										<Skeleton className="h-5 w-16 rounded-full" />
@@ -242,7 +239,7 @@ export default function DashboardPage() {
 								{recentConfigs.map((config) => (
 									<Link
 										key={config.id}
-										href={`/dashboard/configurations/${config.id}`}
+										href={`/dashboard/configurations?config_id=${config.id}`}
 										className="flex items-center justify-between group p-4 hover:bg-muted/30 transition-colors"
 									>
 										<div className="flex items-center gap-4">
@@ -251,13 +248,13 @@ export default function DashboardPage() {
 											</div>
 											<div className="space-y-1.5 min-w-0">
 												<p className="text-sm font-medium leading-none text-foreground group-hover:underline truncate">
-													{config.name}
+													{config.id.substring(0, 8)}
 												</p>
 												<p className="text-[11px] text-muted-foreground truncate">
 													{config.project_name} •{" "}
 													{config.environment_stage} •{" "}
 													{formatDate(
-														config.created_at,
+														config.created_at || "",
 													)}
 												</p>
 											</div>

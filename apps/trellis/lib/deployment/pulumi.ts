@@ -1,11 +1,12 @@
-import type { ProcessedConfigData } from "@/types/configuration";
-import type { LogLevel } from "@/types/deployment";
+import { GetConfigurationsData } from "@/app/server/actions/configurations";
+
+export type LogLevel = "info" | "warn" | "error" | "debug";
 
 import * as yaml from "yaml";
 
 export interface TerraformConfig {
 	deploymentId: string;
-	configuration: ProcessedConfigData;
+	configuration: GetConfigurationsData[number];
 	workingDir: string;
 	version: string;
 	awsRegion: string;
@@ -18,7 +19,7 @@ export class TerraformEngine {
 	private logCallback: (
 		level: LogLevel,
 		message: string,
-		step?: string
+		step?: string,
 	) => Promise<void>;
 
 	constructor(
@@ -26,8 +27,8 @@ export class TerraformEngine {
 		logCallback: (
 			level: LogLevel,
 			message: string,
-			step?: string
-		) => Promise<void>
+			step?: string,
+		) => Promise<void>,
 	) {
 		this.config = config;
 		this.logCallback = logCallback;
@@ -40,7 +41,7 @@ export class TerraformEngine {
 		const tfvars = this.generateTfVars();
 		await this.log(
 			"debug",
-			`Generated tfvars with ${Object.keys(tfvars).length} variables`
+			`Generated tfvars with ${Object.keys(tfvars).length} variables`,
 		);
 
 		// Generate backend.tfvars
@@ -76,8 +77,11 @@ export class TerraformEngine {
 		}
 
 		// Add allowed CIDR blocks
-		if (config.allowed_cidr_block && config.allowed_cidr_block.length > 0) {
-			tfvars.allowed_cidr_blocks = config.allowed_cidr_block;
+		if (
+			config.redis_allowed_cidr_blocks &&
+			config.redis_allowed_cidr_blocks.length > 0
+		) {
+			tfvars.redis_allowed_cidr_blocks = config.redis_allowed_cidr_blocks;
 		}
 
 		// DNS configuration
@@ -88,11 +92,11 @@ export class TerraformEngine {
 		}
 
 		// Database configuration
-		if (config.min_capacity) {
-			tfvars.db_min_capacity = config.min_capacity;
+		if (config.db_min_capacity) {
+			tfvars.db_min_capacity = config.db_min_capacity;
 		}
-		if (config.max_capacity) {
-			tfvars.db_max_capacity = config.max_capacity;
+		if (config.db_max_capacity) {
+			tfvars.db_max_capacity = config.db_max_capacity;
 		}
 
 		// EKS configuration
@@ -121,20 +125,20 @@ export class TerraformEngine {
 		}
 
 		// GitOps configuration
-		if (config.gitops_repo) {
-			tfvars.gitops_repo = config.gitops_repo;
+		if (config.gitops_repository && config.gitops_app_template) {
+			tfvars.gitops_repo = config.gitops_repository;
 			tfvars.gitops_argocd_token = config.gitops_argocd_token;
 		}
 
-		// S3 buckets
-		if (config.s3_create && config.bucket_configuration) {
-			tfvars.s3_buckets = config.bucket_configuration;
-		}
+		// // S3 buckets
+		// if (config.s3 && config.bucket_configuration) {
+		// 	tfvars.s3_buckets = config.bucket_configuration;
+		// }
 
 		// Custom secrets
-		if (config.custom_secrets) {
-			tfvars.custom_secrets = config.custom_secrets;
-		}
+		// if (config.custom_secrets && Object.keys(config.custom_secrets).length > 0) {
+		// 	tfvars.custom_secrets = config.custom_secrets;
+		// }
 
 		return tfvars;
 	}
@@ -246,21 +250,21 @@ Changes to Outputs:
 		// For now, we'll just log that we would save them
 		await this.log(
 			"debug",
-			`Would save tfvars: ${JSON.stringify(files.tfvars, null, 2)}`
+			`Would save tfvars: ${JSON.stringify(files.tfvars, null, 2)}`,
 		);
 		await this.log(
 			"debug",
 			`Would save backend config: ${JSON.stringify(
 				files.backendConfig,
 				null,
-				2
-			)}`
+				2,
+			)}`,
 		);
 	}
 
 	private async simulateCommand(
 		command: string,
-		duration: number
+		duration: number,
 	): Promise<void> {
 		// Simulate command execution time
 		await new Promise((resolve) => setTimeout(resolve, duration));
@@ -269,15 +273,15 @@ Changes to Outputs:
 	private async log(
 		level: LogLevel,
 		message: string,
-		step?: string
+		step?: string,
 	): Promise<void> {
 		await this.logCallback(level, message, step);
 	}
 }
 
 export async function generateInfraFacts(
-	config: ProcessedConfigData,
-	outputs: Record<string, unknown>
+	config: GetConfigurationsData[number],
+	outputs: Record<string, unknown>,
 ): Promise<string> {
 	const infraFacts = {
 		project: {
@@ -299,7 +303,7 @@ export async function generateInfraFacts(
 			? {
 					hosted_zone: config.dns_hosted_zone,
 					domain_name: config.dns_domain_name,
-			  }
+				}
 			: null,
 		argocd: {
 			url: outputs.argocd_url,

@@ -23,6 +23,10 @@ func getCredentialsPath() (string, error) {
 }
 
 func getAuthToken() (string, error) {
+	return getAuthTokenInternal(true)
+}
+
+func getAuthTokenInternal(promptLogin bool) (string, error) {
 	credsPath, err := getCredentialsPath()
 	if err != nil {
 		return "", fmt.Errorf("error getting credentials path: %w", err)
@@ -83,6 +87,10 @@ func getAuthToken() (string, error) {
 	}
 
 	if needsLogin {
+		if !promptLogin {
+			return "", fmt.Errorf("authentication required. Please run `grape login`")
+		}
+
 		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
 		fmt.Println(errorStyle.Render("✗ You are not logged in or your session has expired."))
 		fmt.Println()

@@ -650,6 +650,12 @@ export const publicAgentHeartbeatArgsSchema = z.object({
 
 export const publicAgentHeartbeatReturnsSchema = z.undefined();
 
+export const publicCustomAccessTokenHookArgsSchema = z.object({
+  event: jsonSchema,
+});
+
+export const publicCustomAccessTokenHookReturnsSchema = jsonSchema;
+
 export const publicFetchNextProvisionArgsSchema = z.object({
   p_cluster_id: z.string(),
   p_token_hash: z.string(),
@@ -667,6 +673,25 @@ export const publicFetchNextProvisionReturnsSchema = z.array(
     id: z.string(),
     started_at: z.string().nullable(),
     status: z.string().nullable(),
+  }),
+);
+
+export const publicGetConfigurationStatsArgsSchema = z.never();
+
+export const publicGetConfigurationStatsReturnsSchema = z.array(
+  z.object({
+    archived_configs: z.number(),
+    completed_configs: z.number(),
+    draft_configs: z.number(),
+    ecs_configs: z.number(),
+    eks_configs: z.number(),
+    failed_configs: z.number(),
+    has_rds_configs: z.number(),
+    has_vpc_configs: z.number(),
+    pending_configs: z.number(),
+    recent_configs: z.number(),
+    this_month_configs: z.number(),
+    total_configs: z.number(),
   }),
 );
 

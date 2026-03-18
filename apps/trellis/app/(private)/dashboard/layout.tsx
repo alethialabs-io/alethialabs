@@ -1,7 +1,6 @@
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -135,7 +134,9 @@ export default function DashboardLayout({
 						>
 							<Bell className="h-4 w-4" />
 							<span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-foreground" />
-							<span className="sr-only">Toggle notifications</span>
+							<span className="sr-only">
+								Toggle notifications
+							</span>
 						</Button>
 
 						{/* User Menu */}
@@ -169,13 +170,19 @@ export default function DashboardLayout({
 								</DropdownMenuLabel>
 								<DropdownMenuSeparator />
 								<DropdownMenuItem asChild>
-									<Link href="/dashboard/profile" className="cursor-pointer">
+									<Link
+										href="/dashboard/profile"
+										className="cursor-pointer"
+									>
 										<User className="mr-2 h-4 w-4 text-muted-foreground" />
 										Profile Settings
 									</Link>
 								</DropdownMenuItem>
 								<DropdownMenuItem asChild>
-									<Link href="/dashboard/configure" className="cursor-pointer">
+									<Link
+										href="/dashboard/configure"
+										className="cursor-pointer"
+									>
 										<Settings className="mr-2 h-4 w-4 text-muted-foreground" />
 										New Configuration
 									</Link>
@@ -204,7 +211,9 @@ export default function DashboardLayout({
 							return (
 								<Link key={item.name} href={item.href}>
 									<Button
-										variant={isActive ? "secondary" : "ghost"}
+										variant={
+											isActive ? "secondary" : "ghost"
+										}
 										className={cn(
 											"w-full justify-start gap-3 h-9 px-3 text-sm font-medium transition-colors",
 											isActive
@@ -212,7 +221,14 @@ export default function DashboardLayout({
 												: "text-muted-foreground hover:text-foreground hover:bg-muted/40",
 										)}
 									>
-										<item.icon className={cn("h-4 w-4", isActive ? "text-foreground" : "text-muted-foreground")} />
+										<item.icon
+											className={cn(
+												"h-4 w-4",
+												isActive
+													? "text-foreground"
+													: "text-muted-foreground",
+											)}
+										/>
 										<span>{item.name}</span>
 									</Button>
 								</Link>
@@ -234,7 +250,8 @@ export default function DashboardLayout({
 								</Avatar>
 								<div className="flex-1 min-w-0">
 									<p className="text-sm font-medium text-foreground truncate">
-										{user?.user_metadata?.full_name || "User"}
+										{user?.user_metadata?.full_name ||
+											"User"}
 									</p>
 									<p className="text-xs text-muted-foreground truncate">
 										{user?.email}
@@ -259,7 +276,11 @@ export default function DashboardLayout({
 								<span className="font-semibold text-sm tracking-tight text-foreground">
 									Navigation
 								</span>
-								<Button variant="ghost" size="icon" onClick={() => setSidebarOpen(false)}>
+								<Button
+									variant="ghost"
+									size="icon"
+									onClick={() => setSidebarOpen(false)}
+								>
 									<X className="h-5 w-5 text-muted-foreground" />
 								</Button>
 							</div>
@@ -270,10 +291,16 @@ export default function DashboardLayout({
 										<Link
 											key={item.name}
 											href={item.href}
-											onClick={() => setSidebarOpen(false)}
+											onClick={() =>
+												setSidebarOpen(false)
+											}
 										>
 											<Button
-												variant={isActive ? "secondary" : "ghost"}
+												variant={
+													isActive
+														? "secondary"
+														: "ghost"
+												}
 												className={cn(
 													"w-full justify-start gap-3 h-10 px-3 text-sm font-medium",
 													isActive
@@ -281,7 +308,14 @@ export default function DashboardLayout({
 														: "text-muted-foreground hover:text-foreground",
 												)}
 											>
-												<item.icon className={cn("h-4 w-4", isActive ? "text-foreground" : "text-muted-foreground")} />
+												<item.icon
+													className={cn(
+														"h-4 w-4",
+														isActive
+															? "text-foreground"
+															: "text-muted-foreground",
+													)}
+												/>
 												<span>{item.name}</span>
 											</Button>
 										</Link>
@@ -306,7 +340,11 @@ export default function DashboardLayout({
 										AWS Account Disconnected
 									</h3>
 									<p className="text-muted-foreground mt-1 mb-3 text-sm max-w-3xl">
-										You haven't connected your AWS account yet. You can still create configurations, but you won't be able to provision any infrastructure until you connect.
+										You haven't connected your AWS account
+										yet. You can still create
+										configurations, but you won't be able to
+										provision any infrastructure until you
+										connect.
 									</p>
 									<Link href="/onboarding/aws">
 										<Button
@@ -328,14 +366,14 @@ export default function DashboardLayout({
 							</div>
 						</div>
 					)}
-					<Suspense fallback={
-						<div className="flex items-center justify-center h-full min-h-[50vh]">
-							<div className="w-6 h-6 border-2 border-foreground border-t-transparent rounded-full animate-spin"></div>
-						</div>
-					}>
-						<div className="mx-auto max-w-[1400px]">
-							{children}
-						</div>
+					<Suspense
+						fallback={
+							<div className="flex items-center justify-center h-full min-h-[50vh]">
+								<div className="w-6 h-6 border-2 border-foreground border-t-transparent rounded-full animate-spin"></div>
+							</div>
+						}
+					>
+						<div>{children}</div>
 					</Suspense>
 				</main>
 			</div>

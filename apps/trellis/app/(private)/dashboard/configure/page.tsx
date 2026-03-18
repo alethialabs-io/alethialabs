@@ -1,3 +1,4 @@
+"use client";
 import { ConfigurationForm } from "@/components/configuration-form";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -11,32 +12,32 @@ import { Settings } from "lucide-react";
 
 export default function ConfigurePage() {
 	return (
-		<div className="max-w-4xl mx-auto">
-			<div className="mb-8">
-				<div className="flex items-center gap-3 mb-4">
-					<div className="p-2 bg-linear-to-r from-cyan-600 to-purple-600 rounded-lg">
-						<Settings className="w-6 h-6 text-white" />
+		<div className="w-full space-y-8 overflow-y-hidden">
+			<div className="space-y-4">
+				<div className="flex items-center gap-3">
+					<div className="p-2 border border-border bg-muted/30 rounded-lg">
+						<Settings className="w-5 h-5 text-foreground" />
 					</div>
 					<div>
-						<h1 className="font-sans text-3xl font-bold text-foreground">
+						<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
 							Platform Configuration
 						</h1>
-						<p className="text-muted-foreground">
+						<p className="text-muted-foreground text-sm">
 							Configure your AWS and Kubernetes environment
 						</p>
 					</div>
 				</div>
 				<Badge
 					variant="secondary"
-					className="bg-cyan-100 text-cyan-800 border-cyan-200"
+					className="bg-muted text-muted-foreground border-transparent font-medium"
 				>
 					Step 1 of 2: Environment Setup
 				</Badge>
 			</div>
 
-			<Card className="shadow-lg border-0 bg-card/80 backdrop-blur-sm">
-				<CardHeader>
-					<CardTitle className="font-sans text-xl">
+			<Card className="shadow-sm border border-border">
+				<CardHeader className="bg-muted/5 border-b border-border/40 pb-5">
+					<CardTitle className="text-xl font-semibold">
 						Environment Configuration
 					</CardTitle>
 					<CardDescription>
@@ -45,7 +46,7 @@ export default function ConfigurePage() {
 						pipelines.
 					</CardDescription>
 				</CardHeader>
-				<CardContent>
+				<CardContent className="pt-8">
 					<ConfigurationForm />
 				</CardContent>
 			</Card>
