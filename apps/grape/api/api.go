@@ -23,7 +23,7 @@ type Client struct {
 func NewClient(authToken string) *Client {
 	webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
 	if webOrigin == "" {
-		webOrigin = "https://localhost:3000" // Default to localhost for development
+		webOrigin = "https://adp.prod.itgix.eu" // Default to localhost for development
 	}
 	return &Client{
 		baseURL:    fmt.Sprintf("%s/api", webOrigin),

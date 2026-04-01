@@ -210,7 +210,7 @@ func performLoginFlow() error {
 	deviceCode := uuid.New().String()
 	webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
 	if webOrigin == "" {
-		webOrigin = "https://localhost:3000"
+		webOrigin = "https://adp.prod.itgix.eu"
 	}
 	loginURL := fmt.Sprintf("%s/cli/login?device_code=%s", webOrigin, deviceCode)
 	exchangeURL := fmt.Sprintf("%s/api/auth/cli/exchange", webOrigin)
