@@ -11,6 +11,11 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "@/components/ui/popover";
 import { useAwsOnboarding } from "@/hooks/use-aws-onboarding";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -23,6 +28,7 @@ import {
 	History,
 	LayoutDashboard,
 	LogOut,
+	Map,
 	Menu,
 	Plus,
 	Search,
@@ -66,9 +72,10 @@ export default function DashboardLayout({
 
 	const navigation = [
 		{ name: "Overview", href: "/dashboard", icon: LayoutDashboard },
-		{ name: "New Configuration", href: "/dashboard/configure", icon: Plus },
+		{ name: "Vineyards", href: "/dashboard/vineyards", icon: Map },
+		{ name: "Grow a Vine", href: "/dashboard/configure", icon: Plus },
 		{
-			name: "My Configurations",
+			name: "My Vines",
 			href: "/dashboard/configurations",
 			icon: Folder,
 		},
@@ -127,17 +134,68 @@ export default function DashboardLayout({
 						</div>
 
 						{/* Notifications */}
-						<Button
-							variant="ghost"
-							size="icon"
-							className="relative h-9 w-9 text-muted-foreground hover:text-foreground"
-						>
-							<Bell className="h-4 w-4" />
-							<span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-foreground" />
-							<span className="sr-only">
-								Toggle notifications
-							</span>
-						</Button>
+						<Popover>
+							<PopoverTrigger asChild>
+								<Button
+									variant="ghost"
+									size="icon"
+									className="relative h-9 w-9 text-muted-foreground hover:text-foreground"
+								>
+									<Bell className="h-4 w-4" />
+									{showAwsAlert && (
+										<span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-destructive" />
+									)}
+									<span className="sr-only">
+										Toggle notifications
+									</span>
+								</Button>
+							</PopoverTrigger>
+							<PopoverContent className="w-80 p-0" align="end">
+								<div className="flex flex-col gap-1 border-b border-border/40 p-4">
+									<p className="text-sm font-semibold text-foreground">
+										Notifications
+									</p>
+									<p className="text-xs text-muted-foreground">
+										{showAwsAlert
+											? "You have 1 unread message."
+											: "You have no new messages."}
+									</p>
+								</div>
+								<div className="max-h-[300px] overflow-y-auto">
+									{showAwsAlert ? (
+										<div className="p-4 flex gap-4 hover:bg-muted/50 transition-colors">
+											<div className="mt-0.5 p-1.5 bg-destructive/10 rounded-md shrink-0 h-fit">
+												<AlertTriangle className="h-4 w-4 text-destructive" />
+											</div>
+											<div className="flex-1 space-y-1">
+												<p className="text-sm font-medium leading-none text-destructive">
+													AWS Account Disconnected
+												</p>
+												<p className="text-xs text-muted-foreground leading-relaxed mt-1.5 mb-2">
+													You haven't connected your AWS account yet. You can still create configurations, but you won't be able to provision any infrastructure until you connect.
+												</p>
+												<div className="pt-1">
+													<Link href="/onboarding/aws">
+														<Button
+															variant="outline"
+															size="sm"
+															className="border-destructive/30 hover:bg-destructive/10 text-destructive text-xs h-7 px-3 w-full"
+														>
+															Connect AWS Account
+															<ArrowRight className="ml-1.5 h-3 w-3" />
+														</Button>
+													</Link>
+												</div>
+											</div>
+										</div>
+									) : (
+										<div className="p-8 text-center text-sm text-muted-foreground">
+											You're all caught up!
+										</div>
+									)}
+								</div>
+							</PopoverContent>
+						</Popover>
 
 						{/* User Menu */}
 						<DropdownMenu>
@@ -328,44 +386,6 @@ export default function DashboardLayout({
 
 				{/* Main Content Area - Expands to fill remaining space */}
 				<main className="flex-1 overflow-y-auto bg-background p-4 sm:p-6 lg:p-8 xl:p-10">
-					{/* Sophisticated Alert for Missing AWS Connection */}
-					{showAwsAlert && (
-						<div className="mb-8 rounded-lg border border-destructive/20 bg-destructive/5 p-4 shadow-sm relative">
-							<div className="flex items-start gap-4">
-								<div className="p-2 bg-destructive/10 rounded-md">
-									<AlertTriangle className="h-5 w-5 text-destructive" />
-								</div>
-								<div className="flex-1">
-									<h3 className="text-destructive font-medium text-sm">
-										AWS Account Disconnected
-									</h3>
-									<p className="text-muted-foreground mt-1 mb-3 text-sm max-w-3xl">
-										You haven't connected your AWS account
-										yet. You can still create
-										configurations, but you won't be able to
-										provision any infrastructure until you
-										connect.
-									</p>
-									<Link href="/onboarding/aws">
-										<Button
-											size="sm"
-											variant="outline"
-											className="border-destructive/30 hover:bg-destructive/10 text-destructive text-xs h-8"
-										>
-											Connect AWS Account
-											<ArrowRight className="w-3 h-3 ml-2" />
-										</Button>
-									</Link>
-								</div>
-								<button
-									onClick={() => setShowAwsAlert(false)}
-									className="text-muted-foreground hover:text-foreground p-1 transition-colors"
-								>
-									<X className="h-4 w-4" />
-								</button>
-							</div>
-						</div>
-					)}
 					<Suspense
 						fallback={
 							<div className="flex items-center justify-center h-full min-h-[50vh]">
