@@ -258,3 +258,100 @@ export async function createRepository(
 		return { error: "Failed to create repository" };
 	}
 }
+
+
+export async function fetchRepositoriesByProvider(provider: "github" | "gitlab" | "bitbucket"): Promise<{
+	repositories: Repository[];
+	error?: string;
+}> {
+	try {
+		const token = await getProviderToken(provider);
+		if (!token) return { repositories: [], error: `No token found for ${provider}` };
+
+		const allRepos: Repository[] = [];
+
+		if (provider === "github") {
+			const res = await fetch(
+				"https://api.github.com/user/repos?per_page=100&sort=updated",
+				{
+					headers: {
+						Authorization: `Bearer ${token}`,
+						Accept: "application/vnd.github.v3+json",
+					},
+				},
+			);
+			if (res.ok) {
+				const repos = await res.json();
+				allRepos.push(
+					...repos.map((repo: GitHubRepo) => ({
+						id: repo.id.toString(),
+						name: repo.name,
+						full_name: repo.full_name,
+						url: repo.html_url,
+						private: repo.private,
+						default_branch: repo.default_branch,
+						provider: "github" as const,
+					})),
+				);
+			} else {
+                return { repositories: [], error: `Failed to fetch GitHub repos: ${await res.text()}` };
+            }
+		} else if (provider === "gitlab") {
+			const res = await fetch(
+				"https://gitlab.itgix.com/api/v4/projects?membership=true&per_page=100&order_by=updated_at",
+				{
+					headers: {
+						Authorization: `Bearer ${token}`,
+					},
+				},
+			);
+			if (res.ok) {
+				const repos = await res.json();
+				allRepos.push(
+					...repos.map((repo: GitLabRepo) => ({
+						id: repo.id.toString(),
+						name: repo.name,
+						full_name: repo.path_with_namespace,
+						url: repo.web_url,
+						private: repo.visibility !== "public",
+						default_branch: repo.default_branch || "main",
+						provider: "gitlab" as const,
+					})),
+				);
+			} else {
+                return { repositories: [], error: `Failed to fetch GitLab repos: ${await res.text()}` };
+            }
+		} else if (provider === "bitbucket") {
+			const res = await fetch(
+				"https://api.bitbucket.org/2.0/repositories?role=member&pagelen=100",
+				{
+					headers: {
+						Authorization: `Bearer ${token}`,
+						Accept: "application/json",
+					},
+				},
+			);
+			if (res.ok) {
+				const data = await res.json();
+				allRepos.push(
+					...(data.values || []).map((repo: BitbucketRepo) => ({
+						id: repo.uuid,
+						name: repo.name,
+						full_name: repo.full_name,
+						url: repo.links.html.href,
+						private: repo.is_private,
+						default_branch: repo.mainbranch?.name || "main",
+						provider: "bitbucket" as const,
+					})),
+				);
+			} else {
+                return { repositories: [], error: `Failed to fetch Bitbucket repos: ${await res.text()}` };
+            }
+		}
+
+		return { repositories: allRepos };
+	} catch (error: any) {
+		console.error(`Error fetching ${provider} repositories:`, error);
+		return { repositories: [], error: error.message || "Failed to fetch repositories" };
+	}
+}

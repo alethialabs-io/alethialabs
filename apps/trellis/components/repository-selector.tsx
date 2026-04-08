@@ -15,6 +15,7 @@ import { PublicGitProvider } from "@/lib/validations/db.schemas";
 
 import { Repository } from "@/app/server/actions/git/types";
 import { getLinkedProviders } from "@/app/server/actions/identities";
+import { fetchRepositoriesByProvider } from "@/app/server/actions/git/repositories";
 import { AlertCircle, Plus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -90,11 +91,9 @@ export function RepositorySelector({
 		setFetchingRepos(true);
 		setError(null);
 		try {
-			const response = await fetch(`/api/repositories/${providerName}`);
-			const data = await response.json();
-
-			if (!response.ok) {
-				throw new Error(data.error || "Failed to fetch repositories");
+			const data = await fetchRepositoriesByProvider(providerName);
+			if (data.error) {
+				throw new Error(data.error);
 			}
 
 			setRepositories(data.repositories || []);
