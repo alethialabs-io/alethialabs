@@ -47,6 +47,7 @@ export function RepositorySelector({
 		useState<PublicGitProvider | null>(null);
 	const [showLinkOptions, setShowLinkOptions] = useState(false);
 	const [isManual, setIsManual] = useState(false);
+	const [initialValue] = useState(value);
 
 	const loadInitialData = useCallback(async () => {
 		setLoading(true);
@@ -56,14 +57,14 @@ export function RepositorySelector({
 			setLinkedProviders(providers);
 
 			if (providers.length > 0) {
-				// Try to guess provider from current value if it exists
+				// Try to guess provider from initial value if it exists
 				let initialProvider = providers[0];
-				if (value) {
-					if (value.includes("github.com"))
+				if (initialValue) {
+					if (initialValue.includes("github.com"))
 						initialProvider = "github";
-					else if (value.includes("gitlab.com"))
+					else if (initialValue.includes("gitlab.com"))
 						initialProvider = "gitlab";
-					else if (value.includes("bitbucket.org"))
+					else if (initialValue.includes("bitbucket.org"))
 						initialProvider = "bitbucket";
 				}
 
@@ -84,7 +85,7 @@ export function RepositorySelector({
 		} finally {
 			setLoading(false);
 		}
-	}, [value]);
+	}, [initialValue]); // Only depend on initialValue so it doesn't run on every keystroke
 
 	useEffect(() => {
 		loadInitialData();
