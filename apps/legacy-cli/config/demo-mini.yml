@@ -1,0 +1,64 @@
+---
+# ITgix platform mandatory variables
+project_name: "diplom"
+environment: "min"
+region: "eu-central-1"
+aws_account_id: "787587782604"
+terraform_ver: "1.7.0"
+# Source repository for the environment template
+env_template_repo: "git@github.com:itgix/adp-tf-envtempl-standard.git"
+env_template_repo_branch: "v1.2.4"
+# Destination git repository for the environment that will be bootstrapped from template
+env_git_repo: "git@github.com:bobikenobi12/demo-adp-project-tf.git"
+#
+# Source for the K8s ervices in Argo
+gitops_template_repo: "git@github.com:itgix/adp-k8s-templ-argoinfrasvcs.git"
+gitops_template_repo_branch: "v1.2.3"
+# gitops destination repo - where argocd will be pointed to, should be a http/s as this is the protocol Argo expects
+gitops_destination_repo: "git@github.com:bobikenobi12/argo-infra.git"
+# Same as the gitops repo but for applications
+#applications_template_repo: "git@github.com:itgix/adp-k8s-templ-argoappsdemo.git"
+#applications_destination_repo: "https://gitlab.itgix.com/rnd/app-platform/demo-environments/demo-client2-argoapps"
+#applications_argo_access_token: "glpat-yourtoken-here"
+# Terraform optional customizations
+# VPC module
+#provision_vpc: true
+vpc_cidr: "10.56.0.0/16"
+vpc_single_nat_gateway: true
+# DNS
+dns_hosted_zone: "Z015674539OZ0Y1O3FL18"
+dns_main_domain: "education.itgix.eu"
+# EKS Cluster 
+eks_cluster_version: "1.33"
+addons_versions:
+   coredns: "v1.12.4-eksbuild.1"
+   kube_proxy: "v1.33.3-eksbuild.10"
+   vpc_cni: "v1.20.4-eksbuild.1"
+   ebs_csi: "v1.51.1-eksbuild.1"
+# Database related variables
+create_rds: false
+rds_scaling_config:
+    min_capacity: 0.5
+# EKS related variable
+# EKS config map users when IAM users are used.
+eks_cluster_admins:
+    - username: "borislav.v.borisov.2021@elsys-bg.org"
+      path: "/"
+# SQS variables
+provision_sqs: false
+# WAF variables
+application_waf_enabled: false
+cloudfront_waf_enabled: false
+# elasticache redis
+create_elasticache_redis: false
+redis_allowed_cidr_blocks:
+    - "10.56.0.0/16"
+# Auto-scaling
+enable_karpenter: true
+# ECR
+provision_ecr: false
+# Fluent:
+enable_fluent_bit: true
+allow_long_names: false
+external_dns_enabled: true
+

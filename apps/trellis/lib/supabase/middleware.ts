@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { env } from "next-runtime-env";
 import { type NextRequest, NextResponse } from "next/server";
 
 const PRIVATE_ROUTES = ["/dashboard", "/cli"];
@@ -9,8 +10,8 @@ export async function updateSession(request: NextRequest) {
 	});
 
 	const supabase = createServerClient(
-		process.env.NEXT_PUBLIC_SUPABASE_URL!,
-		process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+		env("NEXT_PUBLIC_SUPABASE_URL")!,
+		env("NEXT_PUBLIC_SUPABASE_ANON_KEY")!,
 		{
 			cookies: {
 				getAll() {
@@ -18,17 +19,17 @@ export async function updateSession(request: NextRequest) {
 				},
 				setAll(cookiesToSet) {
 					cookiesToSet.forEach(({ name, value }) =>
-						request.cookies.set(name, value)
+						request.cookies.set(name, value),
 					);
 					supabaseResponse = NextResponse.next({
 						request,
 					});
 					cookiesToSet.forEach(({ name, value, options }) =>
-						supabaseResponse.cookies.set(name, value, options)
+						supabaseResponse.cookies.set(name, value, options),
 					);
 				},
 			},
-		}
+		},
 	);
 
 	// Do not run code between createServerClient and
@@ -46,20 +47,20 @@ export async function updateSession(request: NextRequest) {
 	const isAuthRoute = currentPath.startsWith("/auth");
 
 	const isPrivateRoute = PRIVATE_ROUTES.some((route) =>
-		currentPath.startsWith(route)
+		currentPath.startsWith(route),
 	);
 
 	if (!user && !isAuthRoute && isPrivateRoute) {
 		// no user, potentially respond by redirecting the user to the login page
 		const url = request.nextUrl.clone();
 		url.pathname = "/auth/signin";
-		
+
 		// Preserve the exact path (including query params like ?device_code) for post-login redirect
 		const nextUrl = `${request.nextUrl.pathname}${request.nextUrl.search}`;
 		if (nextUrl !== "/") {
 			url.searchParams.set("next", nextUrl);
 		}
-		
+
 		return NextResponse.redirect(url);
 	}
 
@@ -86,4 +87,3 @@ export async function updateSession(request: NextRequest) {
 
 	return supabaseResponse;
 }
-

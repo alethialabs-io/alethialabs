@@ -1,4 +1,5 @@
 import * as jose from "jose";
+import { env } from "next-runtime-env";
 
 export async function verifyCliToken(req: Request) {
 	const authHeader = req.headers.get("Authorization");
@@ -6,14 +7,14 @@ export async function verifyCliToken(req: Request) {
 		return {
 			error: new Response(
 				JSON.stringify({ error: "Unauthorized: Missing token" }),
-				{ status: 401 }
+				{ status: 401 },
 			),
 			payload: null,
 		};
 	}
 
 	const token = authHeader.substring(7);
-	const jwtSecret = process.env.CLI_JWT_SECRET;
+	const jwtSecret = env("CLI_JWT_SECRET");
 	if (!jwtSecret) {
 		console.error("CLI_JWT_SECRET is not set.");
 		return {
@@ -21,7 +22,7 @@ export async function verifyCliToken(req: Request) {
 				JSON.stringify({
 					error: "Internal server configuration error",
 				}),
-				{ status: 500 }
+				{ status: 500 },
 			),
 			payload: null,
 		};
@@ -37,8 +38,10 @@ export async function verifyCliToken(req: Request) {
 		if (payload.type !== "access") {
 			return {
 				error: new Response(
-					JSON.stringify({ error: "Unauthorized: Invalid token type" }),
-					{ status: 401 }
+					JSON.stringify({
+						error: "Unauthorized: Invalid token type",
+					}),
+					{ status: 401 },
 				),
 				payload: null,
 			};
@@ -49,7 +52,7 @@ export async function verifyCliToken(req: Request) {
 		return {
 			error: new Response(
 				JSON.stringify({ error: "Unauthorized: Invalid token" }),
-				{ status: 401 }
+				{ status: 401 },
 			),
 			payload: null,
 		};
