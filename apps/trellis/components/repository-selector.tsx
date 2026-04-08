@@ -1,5 +1,7 @@
 "use client";
 
+import { Input } from "@/components/ui/input";
+
 import { GitProviderIcon } from "@/components/git-provider-icon";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,9 +15,9 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { PublicGitProvider } from "@/lib/validations/db.schemas";
 
+import { fetchRepositoriesByProvider } from "@/app/server/actions/git/repositories";
 import { Repository } from "@/app/server/actions/git/types";
 import { getLinkedProviders } from "@/app/server/actions/identities";
-import { fetchRepositoriesByProvider } from "@/app/server/actions/git/repositories";
 import { AlertCircle, Plus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -44,6 +46,7 @@ export function RepositorySelector({
 	const [selectedProvider, setSelectedProvider] =
 		useState<PublicGitProvider | null>(null);
 	const [showLinkOptions, setShowLinkOptions] = useState(false);
+	const [isManual, setIsManual] = useState(false);
 
 	const loadInitialData = useCallback(async () => {
 		setLoading(true);
@@ -159,7 +162,7 @@ export function RepositorySelector({
 		);
 	}
 
-	if (linkedProviders.length === 0) {
+	if (linkedProviders.length === 0 && !isManual) {
 		return (
 			<div className="space-y-3 border rounded-lg p-4 bg-muted/30">
 				<div className="flex items-center gap-2 text-sm font-medium">
@@ -167,7 +170,8 @@ export function RepositorySelector({
 					<span>No Git accounts linked</span>
 				</div>
 				<p className="text-sm text-muted-foreground">
-					Link an account to select repositories automatically
+					Link an account to select repositories automatically, or
+					enter the URL manually.
 				</p>
 				<div className="flex flex-wrap gap-2">
 					<Button
@@ -200,7 +204,51 @@ export function RepositorySelector({
 						/>{" "}
 						Link Bitbucket
 					</Button>
+					<div className="w-full mt-2">
+						<Button
+							type="button"
+							variant="link"
+							size="sm"
+							className="text-xs px-0 text-muted-foreground hover:text-foreground"
+							onClick={() => setIsManual(true)}
+						>
+							Or enter repository URL manually
+						</Button>
+					</div>
 				</div>
+			</div>
+		);
+	}
+
+	if (isManual) {
+		return (
+			<div className="space-y-3">
+				<div className="flex items-center justify-between">
+					<label className="text-sm font-medium">
+						{label}
+						{required && (
+							<span className="text-red-500 ml-1">*</span>
+						)}
+					</label>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						onClick={() => setIsManual(false)}
+						className="text-xs text-muted-foreground h-auto py-1"
+					>
+						Use provider select
+					</Button>
+				</div>
+				<Input
+					value={value || ""}
+					onChange={(e) => onChange(e.target.value)}
+					placeholder="https://github.com/organization/repository"
+					className="font-mono text-sm"
+				/>
+				<p className="text-xs text-muted-foreground">
+					Enter the full HTTP URL to your Git repository.
+				</p>
 			</div>
 		);
 	}
@@ -213,6 +261,15 @@ export function RepositorySelector({
 					{required && <span className="text-red-500 ml-1">*</span>}
 				</label>
 				<div className="flex items-center gap-2">
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						onClick={() => setIsManual(true)}
+						className="text-xs text-muted-foreground h-auto py-1 mr-2"
+					>
+						Enter URL manually
+					</Button>
 					<Button
 						type="button"
 						variant="ghost"
