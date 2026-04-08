@@ -1,10 +1,22 @@
 "use client";
 
-import { Input } from "@/components/ui/input";
-
 import { GitProviderIcon } from "@/components/git-provider-icon";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+	Command,
+	CommandEmpty,
+	CommandGroup,
+	CommandInput,
+	CommandItem,
+	CommandList,
+} from "@/components/ui/command";
+import { Input } from "@/components/ui/input";
+import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "@/components/ui/popover";
 import {
 	Select,
 	SelectContent,
@@ -13,6 +25,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 import { PublicGitProvider } from "@/lib/validations/db.schemas";
 
 import { fetchRepositoriesByProvider } from "@/app/server/actions/git/repositories";
@@ -48,6 +61,7 @@ export function RepositorySelector({
 	const [showLinkOptions, setShowLinkOptions] = useState(false);
 	const [isManual, setIsManual] = useState(false);
 	const [initialValue] = useState(value);
+	const [open, setOpen] = useState(false);
 
 	const loadInitialData = useCallback(async () => {
 		setLoading(true);
@@ -296,80 +310,113 @@ export function RepositorySelector({
 				</Alert>
 			)}
 
-			<div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-				{/* Provider Selection */}
-				<div className="md:col-span-1">
-					<Select
-						value={selectedProvider || ""}
-						onValueChange={(val) =>
-							handleProviderChange(val as PublicGitProvider)
-						}
-					>
-						<SelectTrigger>
-							<div className="flex items-center gap-2">
-								{selectedProvider && (
-									<GitProviderIcon
-										provider={selectedProvider}
-									/>
-								)}
-								<SelectValue placeholder="Platform" />
-							</div>
-						</SelectTrigger>
-						<SelectContent>
-							{linkedProviders.map((p) => (
-								<SelectItem key={p} value={p}>
-									<div className="flex items-center gap-2">
-										<GitProviderIcon provider={p} />
-										<span className="capitalize">{p}</span>
-									</div>
-								</SelectItem>
-							))}
-							<div className="border-t my-1" />
-							<Button
-								variant="ghost"
-								className="w-full justify-start text-xs h-8 px-2 font-normal"
-								onClick={(e) => {
-									e.stopPropagation();
-									setShowLinkOptions(!showLinkOptions);
-								}}
-							>
-								<Plus className="w-3 h-3 mr-2" /> Link another
-								account
-							</Button>
-						</SelectContent>
-					</Select>
-				</div>
-
-				{/* Repository Selection */}
-				<div className="md:col-span-2">
-					<Select
-						value={value}
-						onValueChange={onChange}
-						disabled={fetchingRepos || repositories.length === 0}
-					>
-						<SelectTrigger>
-							<SelectValue
-								placeholder={placeholder || "Select repository"}
+			<div className="flex w-full items-center gap-0 rounded-md border border-input bg-transparent shadow-sm overflow-hidden focus-within:ring-1 focus-within:ring-ring">
+				{/* Provider Selection (Icon Only) */}
+				<Select
+					value={selectedProvider || ""}
+					onValueChange={(val) =>
+						handleProviderChange(val as PublicGitProvider)
+					}
+				>
+					<SelectTrigger className="w-[50px] shrink-0 rounded-none border-0 border-r bg-muted/20 focus:ring-0 focus:ring-offset-0 justify-center px-0">
+						{selectedProvider ? (
+							<GitProviderIcon
+								provider={selectedProvider}
+								size={18}
 							/>
-						</SelectTrigger>
-						<SelectContent>
-							{repositories.map((repo) => (
-								<SelectItem key={repo.id} value={repo.url}>
-									<div className="flex items-center gap-2">
-										<span className="font-mono text-sm truncate max-w-[200px]">
-											{repo.full_name}
+						) : (
+							<SelectValue />
+						)}
+					</SelectTrigger>
+					<SelectContent>
+						{linkedProviders.map((p) => (
+							<SelectItem key={p} value={p}>
+								<div className="flex items-center gap-2">
+									<GitProviderIcon provider={p} />
+									<span className="capitalize">{p}</span>
+								</div>
+							</SelectItem>
+						))}
+						<div className="border-t my-1" />
+						<Button
+							variant="ghost"
+							className="w-full justify-start text-xs h-8 px-2 font-normal"
+							onClick={(e) => {
+								e.stopPropagation();
+								setShowLinkOptions(!showLinkOptions);
+							}}
+						>
+							<Plus className="w-3 h-3 mr-2" /> Link another
+						</Button>
+					</SelectContent>
+				</Select>
+
+				{/* Repository Selection with Combobox */}
+				<Popover open={open} onOpenChange={setOpen}>
+					<PopoverTrigger asChild>
+						<Button
+							variant="ghost"
+							role="combobox"
+							aria-expanded={open}
+							className={cn(
+								"flex-1 justify-start rounded-none border-0 hover:bg-transparent font-normal px-3",
+								!value && "text-muted-foreground",
+								fetchingRepos && "opacity-50"
+							)}
+							disabled={fetchingRepos || repositories.length === 0}
+						>
+							{value ? (
+								<div className="flex items-center gap-2 w-full truncate text-left">
+									<span className="font-mono text-sm truncate max-w-[calc(100%-40px)]">
+										{repositories.find((r) => r.url === value)?.full_name || value}
+									</span>
+									{repositories.find((r) => r.url === value)?.private && (
+										<span className="text-[10px] bg-yellow-100 text-yellow-800 px-1 py-0 rounded shrink-0">
+											Private
 										</span>
-										{repo.private && (
-											<span className="text-[10px] bg-yellow-100 text-yellow-800 px-1 py-0 rounded">
-												Private
-											</span>
-										)}
-									</div>
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				</div>
+									)}
+								</div>
+							) : fetchingRepos ? (
+								"Fetching repositories..."
+							) : repositories.length === 0 ? (
+								"No repositories found"
+							) : (
+								placeholder || "Select repository..."
+							)}
+						</Button>
+					</PopoverTrigger>
+					<PopoverContent className="w-[400px] p-0" align="start">
+						<Command>
+							<CommandInput placeholder="Search repositories..." />
+							<CommandList>
+								<CommandEmpty>No repository found.</CommandEmpty>
+								<CommandGroup>
+									{repositories.map((repo) => (
+										<CommandItem
+											key={repo.id}
+											value={repo.full_name}
+											onSelect={() => {
+												onChange(repo.url);
+												setOpen(false);
+											}}
+										>
+											<div className="flex w-full items-center justify-between">
+												<span className="font-mono text-sm truncate">
+													{repo.full_name}
+												</span>
+												{repo.private && (
+													<span className="text-[10px] bg-yellow-100 text-yellow-800 px-1 py-0 rounded shrink-0 ml-2">
+														Private
+													</span>
+												)}
+											</div>
+										</CommandItem>
+									))}
+								</CommandGroup>
+							</CommandList>
+						</Command>
+					</PopoverContent>
+				</Popover>
 			</div>
 
 			{showLinkOptions && (
