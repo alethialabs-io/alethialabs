@@ -1,5 +1,6 @@
 import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
 import * as jose from "jose";
+import { env } from "next-runtime-env";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
@@ -28,7 +29,7 @@ export async function POST(req: Request) {
 			{
 				status: 404,
 				headers: { "Content-Type": "application/json" },
-			}
+			},
 		);
 	}
 
@@ -36,7 +37,7 @@ export async function POST(req: Request) {
 	await supabase.from("cli_logins").delete().eq("device_code", device_code);
 
 	// 2. Ensure the JWT secret is set
-	const jwtSecret = process.env.CLI_JWT_SECRET;
+	const jwtSecret = env("CLI_JWT_SECRET");
 	if (!jwtSecret) {
 		console.error("CLI_JWT_SECRET is not set in environment variables.");
 		return new Response(
@@ -44,7 +45,7 @@ export async function POST(req: Request) {
 			{
 				status: 500,
 				headers: { "Content-Type": "application/json" },
-			}
+			},
 		);
 	}
 
