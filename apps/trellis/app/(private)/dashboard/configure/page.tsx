@@ -1,5 +1,6 @@
 "use client";
 import { ConfigurationForm } from "@/components/configuration-form";
+import { ThemedInfoPopover } from "@/components/themed-info-popover";
 import { Badge } from "@/components/ui/badge";
 import {
 	Card,
@@ -8,22 +9,22 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
-import { Settings } from "lucide-react";
 
 export default function ConfigurePage() {
 	return (
 		<div className="w-full space-y-8">
 			<div className="space-y-4">
 				<div className="flex items-center gap-3">
-					<div className="p-2 border border-border bg-muted/30 rounded-lg">
-						<Settings className="w-5 h-5 text-foreground" />
-					</div>
 					<div>
-						<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
-							Platform Configuration
-						</h1>
+						<div className="flex items-center gap-2">
+							<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
+								Grow a Vine
+							</h1>
+							<ThemedInfoPopover type="vine" />
+						</div>
 						<p className="text-muted-foreground text-sm">
-							Configure your AWS and Kubernetes environment
+							Plant and nurture your AWS and Kubernetes
+							environment
 						</p>
 					</div>
 				</div>
@@ -31,19 +32,18 @@ export default function ConfigurePage() {
 					variant="secondary"
 					className="bg-muted text-muted-foreground border-transparent font-medium"
 				>
-					Step 1 of 2: Environment Setup
+					Step 1 of 2: Vine Preparation
 				</Badge>
 			</div>
 
 			<Card className="shadow-sm border border-border">
 				<CardHeader className="bg-muted/5 border-b border-border/40 pb-5">
 					<CardTitle className="text-xl font-semibold">
-						Environment Configuration
+						Vine Configuration
 					</CardTitle>
 					<CardDescription>
-						Set up your development platform with AWS
-						infrastructure, Kubernetes clusters, and deployment
-						pipelines.
+						Configure your infrastructure vine with AWS resources,
+						Kubernetes settings, and harvest pipelines.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="pt-8">

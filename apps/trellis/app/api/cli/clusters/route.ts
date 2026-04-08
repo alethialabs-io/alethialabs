@@ -20,7 +20,7 @@ export async function POST(req: Request) {
 
 	try {
 		// 2. Parse Request
-		const { name, vpc_id, vpc_cidr, region } = await req.json();
+		const { name, vpc_id, vpc_cidr, region, vineyard_id } = await req.json();
 		if (!name) {
 			return NextResponse.json(
 				{ error: "Cluster name is required" },
@@ -48,6 +48,7 @@ export async function POST(req: Request) {
 			.insert({
 				name: name,
 				user_id: userId,
+				vineyard_id: vineyard_id || null,
 				status: "PENDING",
 				agent_token_hash: tokenHash,
 				metadata: metadata,

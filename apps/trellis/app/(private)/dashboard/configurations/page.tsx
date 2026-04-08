@@ -1,6 +1,7 @@
 import { getConfigurations } from "@/app/server/actions/configurations";
 import { ConfigurationDownloadButtons } from "@/components/configuration-download-buttons";
 import { ConfigurationSheetWrapper } from "@/components/configuration-sheet-wrapper";
+import { ThemedInfoPopover } from "@/components/themed-info-popover";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -21,12 +22,14 @@ export default async function ConfigurationsPage({
 	return (
 		<div className="space-y-8 w-full">
 			<div className="space-y-1.5">
-				<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
-					Configurations
-				</h1>
+				<div className="flex items-center gap-2">
+					<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
+						Vines
+					</h1>
+					<ThemedInfoPopover type="vine" />
+				</div>
 				<p className="text-muted-foreground text-sm">
-					View, manage, and download your infrastructure
-					configurations.
+					View, manage, and harvest your infrastructure vines.
 				</p>
 			</div>
 
@@ -117,19 +120,19 @@ export default async function ConfigurationsPage({
 				<div className="border border-dashed border-border/60 rounded-xl bg-muted/5 flex flex-col items-center justify-center py-20 text-center">
 					<FileText className="h-10 w-10 text-muted-foreground mb-4 opacity-40" />
 					<h3 className="text-base font-medium text-foreground mb-1">
-						No configurations saved yet
+						No vines planted yet
 					</h3>
 					<p className="text-sm text-muted-foreground mb-6 max-w-sm leading-relaxed">
-						Create your first infrastructure configuration to see it
-						here. You'll be able to quickly view, edit, and reuse it
-						across projects.
+						Plant your first infrastructure vine to see it here.
+						You'll be able to quickly view, edit, and harvest it
+						across your vineyards.
 					</p>
 					<Link href="/dashboard/configure">
 						<Button
 							size="sm"
 							className="h-9 text-sm font-medium shadow-sm"
 						>
-							Create Configuration
+							Grow a Vine
 							<ArrowRight className="ml-2 h-4 w-4" />
 						</Button>
 					</Link>
