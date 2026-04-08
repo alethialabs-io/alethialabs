@@ -1,7 +1,9 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+
+import { deleteProviderToken } from "@/app/server/actions/identities";
 import { GitProviderIcon } from "@/components/git-provider-icon";
-import { PublicGitProvider } from "@/lib/validations/db.schemas";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,13 +14,17 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { createClient } from "@/lib/supabase/client";
+import { PublicGitProvider } from "@/lib/validations/db.schemas";
 import type { LinkedAccount } from "@/types/configuration";
 import { LinkIcon, Unlink } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 export function LinkedAccounts() {
 	const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
 	const [loading, setLoading] = useState(true);
+	const [totalIdentities, setTotalIdentities] = useState(0);
+	const router = useRouter();
 
 	useEffect(() => {
 		fetchLinkedAccounts();
@@ -34,9 +40,12 @@ export function LinkedAccounts() {
 			if (!user) return;
 
 			const identities = user.identities || [];
+			setTotalIdentities(identities.length);
 			const accounts: LinkedAccount[] = identities
 				.filter((identity) =>
-					["github", "gitlab", "bitbucket"].includes(identity.provider)
+					["github", "gitlab", "bitbucket"].includes(
+						identity.provider,
+					),
 				)
 				.map((identity) => ({
 					provider: identity.provider as PublicGitProvider,
@@ -47,13 +56,14 @@ export function LinkedAccounts() {
 						"Unknown",
 					avatar_url: identity.identity_data?.avatar_url,
 					linked_at: identity.created_at || "",
-					has_token: true, // Assumed true if linked
+					has_token: true,
+					identity: identity,
 				}));
 
 			// Remove duplicates, keep most recent if any
 			const uniqueAccounts = accounts.reduce((acc, current) => {
 				const x = acc.find(
-					(item) => item.provider === current.provider
+					(item) => item.provider === current.provider,
 				);
 				if (!x) {
 					return acc.concat([current]);
@@ -70,20 +80,55 @@ export function LinkedAccounts() {
 		}
 	};
 
+	const handleUnlinkAccount = async (account: LinkedAccount) => {
+		if (!account.identity) {
+			toast.error("Cannot unlink: Identity details missing");
+			return;
+		}
+
+		try {
+			const supabase = createClient();
+			const { error } = await supabase.auth.unlinkIdentity(
+				account.identity,
+			);
+			if (error) {
+				console.error("Error unlinking from Supabase:", error);
+				toast.error(`Failed to unlink ${account.provider}`);
+				return;
+			}
+
+			const res = await deleteProviderToken(account.provider);
+			if (res.error) {
+				console.error("Error deleting provider token:", res.error);
+				// Even if deleting the token fails, the identity is unlinked
+			}
+
+			toast.success(`Successfully unlinked ${account.provider}`);
+			await fetchLinkedAccounts();
+			router.refresh();
+		} catch (err) {
+			console.error("Unexpected error unlinking account:", err);
+			toast.error(`Failed to unlink ${account.provider}`);
+		}
+	};
+
 	const handleLinkAccount = async (provider: PublicGitProvider) => {
 		try {
 			const supabase = createClient();
 
-            // Verify session is valid before linking
-            const { data: { user }, error: userError } = await supabase.auth.getUser();
-            
-            if (userError || !user) {
-                console.error("Session invalid, signing out:", userError);
-                await supabase.auth.signOut();
-                window.location.href = "/auth/signin"; // Redirect to login
-                return;
-            }
-			
+			// Verify session is valid before linking
+			const {
+				data: { user },
+				error: userError,
+			} = await supabase.auth.getUser();
+
+			if (userError || !user) {
+				console.error("Session invalid, signing out:", userError);
+				await supabase.auth.signOut();
+				window.location.href = "/auth/signin"; // Redirect to login
+				return;
+			}
+
 			const { error } = await supabase.auth.linkIdentity({
 				provider,
 				options: {
@@ -137,7 +182,10 @@ export function LinkedAccounts() {
 					>
 						<div className="flex items-center gap-4">
 							<div className="p-2.5 rounded-md border border-border/50 bg-background shadow-sm flex items-center justify-center grayscale opacity-80">
-								<GitProviderIcon provider={account.provider} size={20} />
+								<GitProviderIcon
+									provider={account.provider}
+									size={20}
+								/>
 							</div>
 							<div>
 								<div className="flex items-center gap-2 mb-1">
@@ -156,7 +204,13 @@ export function LinkedAccounts() {
 								</p>
 							</div>
 						</div>
-						<Button variant="outline" size="sm" disabled className="h-8 text-xs font-medium border-border/50">
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={totalIdentities <= 1}
+							onClick={() => handleUnlinkAccount(account)}
+							className="h-8 text-xs font-medium border-border/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
+						>
 							<Unlink className="w-3.5 h-3.5 mr-1.5 opacity-70" />
 							Disconnect
 						</Button>
@@ -171,7 +225,9 @@ export function LinkedAccounts() {
 								<GitProviderIcon provider="github" size={20} />
 							</div>
 							<div>
-								<p className="font-medium text-sm text-foreground mb-1 leading-none">GitHub</p>
+								<p className="font-medium text-sm text-foreground mb-1 leading-none">
+									GitHub
+								</p>
 								<p className="text-xs text-muted-foreground leading-none">
 									Not connected
 								</p>
@@ -196,7 +252,9 @@ export function LinkedAccounts() {
 								<GitProviderIcon provider="gitlab" size={20} />
 							</div>
 							<div>
-								<p className="font-medium text-sm text-foreground mb-1 leading-none">GitLab</p>
+								<p className="font-medium text-sm text-foreground mb-1 leading-none">
+									GitLab
+								</p>
 								<p className="text-xs text-muted-foreground leading-none">
 									Not connected
 								</p>
@@ -218,10 +276,15 @@ export function LinkedAccounts() {
 					<div className="flex items-center justify-between p-4 border border-dashed border-border/60 rounded-md bg-muted/5">
 						<div className="flex items-center gap-4">
 							<div className="p-2.5 rounded-md border border-border/50 bg-background flex items-center justify-center grayscale opacity-50">
-								<GitProviderIcon provider="bitbucket" size={20} />
+								<GitProviderIcon
+									provider="bitbucket"
+									size={20}
+								/>
 							</div>
 							<div>
-								<p className="font-medium text-sm text-foreground mb-1 leading-none">Bitbucket</p>
+								<p className="font-medium text-sm text-foreground mb-1 leading-none">
+									Bitbucket
+								</p>
 								<p className="text-xs text-muted-foreground leading-none">
 									Not connected
 								</p>

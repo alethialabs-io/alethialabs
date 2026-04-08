@@ -23,13 +23,16 @@ import { Input } from "@/components/ui/input";
 import {
 	Select,
 	SelectContent,
+	SelectGroup,
 	SelectItem,
+	SelectLabel,
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { VineyardSelector } from "@/components/vineyard-selector";
 import { publicConfigurationsInsertSchema } from "@/lib/validations/database.schemas";
 import {
 	PublicClustersRow,
@@ -49,8 +52,10 @@ import { Resolver, SubmitHandler, useForm } from "react-hook-form";
 
 import { createConfiguration } from "@/app/server/actions/configurations";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useRouter } from "next/navigation";
 
 export function ConfigurationForm() {
+	const router = useRouter();
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [selectedCluster, setSelectedCluster] =
@@ -61,8 +66,10 @@ export function ConfigurationForm() {
 			publicConfigurationsInsertSchema,
 		) as Resolver<PublicConfigurationsInsert>,
 		defaultValues: {
+			user_id: "",
 			container_platform: "",
 			project_name: "",
+			vineyard_id: "",
 			aws_account_id: "",
 			environment_stage: "development",
 			terraform_version: "1.5.0",
@@ -131,7 +138,15 @@ topics:
 		try {
 			const { configuration } = await createConfiguration(data);
 
-			window.location.href = `/dashboard/configurations?config_id=${configuration.id}`;
+			if (configuration.vineyard_id) {
+				router.push(
+					`/dashboard/vineyards/${configuration.vineyard_id}?config_id=${configuration.id}`,
+				);
+			} else {
+				router.push(
+					`/dashboard/configurations?config_id=${configuration.id}`,
+				);
+			}
 		} catch (error) {
 			console.error("Error creating configuration:", error);
 			setError(
@@ -139,7 +154,6 @@ topics:
 					? error.message
 					: "An unexpected error occurred",
 			);
-		} finally {
 			setIsLoading(false);
 		}
 	};
@@ -190,6 +204,24 @@ topics:
 						<div className="grid md:grid-cols-2 gap-5">
 							<FormField
 								control={form.control}
+								name="vineyard_id"
+								render={({ field }) => (
+									<FormItem className="space-y-1.5 md:col-span-2">
+										<FormLabel className="text-xs">
+											Vineyard Workspace *
+										</FormLabel>
+										<FormControl>
+											<VineyardSelector
+												value={field.value ?? undefined}
+												onChange={field.onChange}
+											/>
+										</FormControl>
+										<FormMessage className="text-xs" />
+									</FormItem>
+								)}
+							/>
+							<FormField
+								control={form.control}
 								name="project_name"
 								render={({ field }) => (
 									<FormItem className="space-y-1.5">
@@ -197,12 +229,12 @@ topics:
 											htmlFor="project_name"
 											className="text-xs"
 										>
-											Project Name *
+											Vine (Configuration) Name *
 										</FormLabel>
 										<FormControl>
 											<Input
 												id="project_name"
-												placeholder="my-awesome-project"
+												placeholder="my-awesome-vine"
 												required
 												className="h-9 text-sm border-border/50"
 												{...field}
@@ -349,60 +381,99 @@ topics:
 														</SelectTrigger>
 													</FormControl>
 													<SelectContent>
-														<SelectItem value="us-east-1">
-															US East (N.
-															Virginia)
-														</SelectItem>
-														<SelectItem value="us-east-2">
-															US East (Ohio)
-														</SelectItem>
-														<SelectItem value="us-west-1">
-															US West (N.
-															California)
-														</SelectItem>
-														<SelectItem value="us-west-2">
-															US West (Oregon)
-														</SelectItem>
-														<SelectItem value="ca-central-1">
-															Canada (Central)
-														</SelectItem>
-														<SelectItem value="eu-west-1">
-															Europe (Ireland)
-														</SelectItem>
-														<SelectItem value="eu-west-2">
-															Europe (London)
-														</SelectItem>
-														<SelectItem value="eu-west-3">
-															Europe (Paris)
-														</SelectItem>
-														<SelectItem value="eu-central-1">
-															Europe (Frankfurt)
-														</SelectItem>
-														<SelectItem value="eu-north-1">
-															Europe (Stockholm)
-														</SelectItem>
-														<SelectItem value="ap-south-1">
-															Asia Pacific
-															(Mumbai)
-														</SelectItem>
-														<SelectItem value="ap-northeast-1">
-															Asia Pacific (Tokyo)
-														</SelectItem>
-														<SelectItem value="ap-northeast-2">
-															Asia Pacific (Seoul)
-														</SelectItem>
-														<SelectItem value="ap-southeast-1">
-															Asia Pacific
-															(Singapore)
-														</SelectItem>
-														<SelectItem value="ap-southeast-2">
-															Asia Pacific
-															(Sydney)
-														</SelectItem>
-														<SelectItem value="sa-east-1">
-															South America (São
-															Paulo)
-														</SelectItem>
+														<SelectGroup>
+															<SelectLabel>
+																US East
+															</SelectLabel>
+															<SelectItem value="us-east-1">
+																N. Virginia
+																(us-east-1)
+															</SelectItem>
+															<SelectItem value="us-east-2">
+																Ohio (us-east-2)
+															</SelectItem>
+														</SelectGroup>
+														<SelectGroup>
+															<SelectLabel>
+																US West
+															</SelectLabel>
+															<SelectItem value="us-west-1">
+																N. California
+																(us-west-1)
+															</SelectItem>
+															<SelectItem value="us-west-2">
+																Oregon
+																(us-west-2)
+															</SelectItem>
+														</SelectGroup>
+														<SelectGroup>
+															<SelectLabel>
+																Canada
+															</SelectLabel>
+															<SelectItem value="ca-central-1">
+																Central
+																(ca-central-1)
+															</SelectItem>
+														</SelectGroup>
+														<SelectGroup>
+															<SelectLabel>
+																Europe
+															</SelectLabel>
+															<SelectItem value="eu-central-1">
+																Frankfurt
+																(eu-central-1)
+															</SelectItem>
+															<SelectItem value="eu-west-1">
+																Ireland
+																(eu-west-1)
+															</SelectItem>
+															<SelectItem value="eu-west-2">
+																London
+																(eu-west-2)
+															</SelectItem>
+															<SelectItem value="eu-west-3">
+																Paris
+																(eu-west-3)
+															</SelectItem>
+															<SelectItem value="eu-north-1">
+																Stockholm
+																(eu-north-1)
+															</SelectItem>
+														</SelectGroup>
+														<SelectGroup>
+															<SelectLabel>
+																Asia Pacific
+															</SelectLabel>
+															<SelectItem value="ap-south-1">
+																Mumbai
+																(ap-south-1)
+															</SelectItem>
+															<SelectItem value="ap-northeast-1">
+																Tokyo
+																(ap-northeast-1)
+															</SelectItem>
+															<SelectItem value="ap-northeast-2">
+																Seoul
+																(ap-northeast-2)
+															</SelectItem>
+															<SelectItem value="ap-southeast-1">
+																Singapore
+																(ap-southeast-1)
+															</SelectItem>
+															<SelectItem value="ap-southeast-2">
+																Sydney
+																(ap-southeast-2)
+															</SelectItem>
+														</SelectGroup>
+														<SelectGroup>
+															<SelectLabel>
+																South America
+															</SelectLabel>
+															<SelectItem value="sa-east-1">
+																São Paulo
+																(sa-east-1)
+															</SelectItem>
+														</SelectGroup>
 													</SelectContent>
 												</Select>
 											)}
@@ -1077,9 +1148,7 @@ topics:
 													placeholder="10.0.0.0/16,172.16.0.0/12"
 													className="h-9 text-sm border-border/50 max-w-md"
 													{...field}
-													value={
-														field.value ?? ""
-													}
+													value={field.value ?? ""}
 												/>
 											</FormControl>
 											<FormMessage className="text-xs" />

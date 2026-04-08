@@ -248,28 +248,115 @@ export async function getConfigurationStats() {
 	}
 }
 
-function nestDict(data: Record<string, unknown>): Record<string, unknown> {
-	const nested: Record<string, unknown> = {};
+function formatInstallerConfig(configData: Record<string, any>): Record<string, any> {
+        let redisAllowedCidr: string[] = [];
+        if (Array.isArray(configData.redis_allowed_cidr_blocks)) {
+                redisAllowedCidr = configData.redis_allowed_cidr_blocks;
+        } else if (typeof configData.redis_allowed_cidr_blocks === "string") {
+                redisAllowedCidr = configData.redis_allowed_cidr_blocks.split(',').map((s: string) => s.trim()).filter(Boolean);
+        }
 
-	for (const [key, value] of Object.entries(data)) {
-		if (value === undefined || value === null || value === "") continue;
+        let eksAdmins = configData.eks_cluster_admins || [];
+        if (eksAdmins && !Array.isArray(eksAdmins) && eksAdmins.eks_cluster_admins) {
+                eksAdmins = eksAdmins.eks_cluster_admins;
+        }
 
-		const keys = key.split("_");
-		let current: Record<string, unknown> = nested;
+        const result: Record<string, any> = {
+                project_name: configData.project_name || "adpminidemo",
+                environment: configData.environment_stage || "dev",
+                region: configData.aws_region || "eu-west-1",
+                aws_account_id: configData.aws_account_id || "791296381042",
+                terraform_ver: configData.terraform_version || "1.11.4",
 
-		for (let i = 0; i < keys.length - 1; i++) {
-			if (!current[keys[i]]) {
-				current[keys[i]] = {};
-			}
-			current = current[keys[i]] as Record<string, unknown>;
-		}
+                env_template_repo: configData.environment_repository || "git@github.com:itgix/adp-tf-envtempl-standard.git",
+                env_template_repo_branch: "v1.2.8",
+                env_git_repo: "git@gitlab.itgix.com:rnd/app-platform/demo-environments/demo-ai-tf-test.git",
 
-		current[keys[keys.length - 1]] = value;
-	}
+                gitops_template_repo: configData.gitops_repository || "git@github.com:itgix/adp-k8s-templ-argoinfrasvcs.git",
+                gitops_template_repo_branch: "main",
+                gitops_destination_repo: configData.gitops_destinations_repo || "https://gitlab.itgix.com/rnd/app-platform/demo-environments/demo-aiargoinfra-test.git",
+                gitops_argo_access_token: configData.gitops_argocd_token || "glpat-yourtoken-here",
 
-	return nested;
+                applications_template_repo: configData.gitops_app_template || "git@github.com:itgix/adp-k8s-templ-argoappsdemo.git",
+                applications_destination_repo: configData.gitops_infra_destination_repo || "https://gitlab.itgix.com/rnd/app-platform/demo-environments/demo-argocd-services-client.git",
+                applications_argo_access_token: configData.gitops_app_token || "glpat-yourtoken-here",
+
+                provision_vpc: configData.create_vpc ?? true,
+                vpc_cidr: configData.vpc_cidr || "10.56.0.0/16",
+                vpc_single_nat_gateway: true,
+
+                dns_hosted_zone: configData.dns_hosted_zone || "Z0656101RR1KENJQ3ZYF",
+                dns_main_domain: configData.dns_domain_name || "adplab.itgix.eu",
+                acm_certificate_enable: configData.enable_dns ?? true,
+
+                create_rds: configData.create_rds ?? false,
+                rds_scaling_config: {
+                        min_capacity: configData.db_min_capacity ?? 0.5
+                },
+
+                eks_cluster_admins: eksAdmins,
+
+                eks_access_entries: {
+                        eks_auth: {
+                                principal_arn: "arn:aws:iam::791296381042:role/aws-reserved/sso.amazonaws.com/eu-central-1/AWSReservedSSO_AdministratorAccess_83a1eb1593056871",
+                                type: "STANDARD",
+                                user_name: "eks-admin",
+                                policy_associations: {
+                                        admin: {
+                                                policy_arn: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy",
+                                                access_scope: {
+                                                        type: "cluster"
+                                                }
+                                        }
+                                }
+                        }
+                },
+
+                provision_sqs: false,
+                application_waf_enabled: false,
+                cloudfront_waf_enabled: configData.enable_cloudfront_waf ?? false,
+
+                create_elasticache_redis: configData.enable_redis ?? false,
+                redis_allowed_cidr_blocks: redisAllowedCidr.length > 0 ? redisAllowedCidr : ["10.56.0.0/16"],
+
+                enable_karpenter: configData.enable_karpenter ?? true,
+                provision_ecr: false,
+
+                enable_fluent_bit: true,
+                allow_long_names: true,
+
+                enable_devlake: true,
+                backstage_enabled: true,
+
+                enable_kyverno: false,
+                enable_kyverno_policies: false,
+                enable_policy_reporter: false,
+
+                custom_secrets: [
+                        { secret_name: "backstage-secret-github-client-id", manual: true, value: "Ov23liNX1INet3zdEv9Y" },
+                        { secret_name: "backstage-secret-github-client-secret", manual: true, value: "339b35fdfa7d2075a9c1917fc9eeedef3f79454e" },
+                        { secret_name: "backstage-secret-github-token", manual: true, value: "github_pat_yourtokenhere" },
+                        { secret_name: "backstage-secret-gitlab-token", manual: true, value: "glpat-yourtoken-here" },
+                        { secret_name: "backstage-secret-auth-secret", manual: true, value: "dummy" },
+                        { secret_name: "backstage-postgres-password", length: 32, special: true, override_special: "$_+" },
+                        { secret_name: "devlake-encryption-secret", length: 16, special: true, override_special: "$_+" }
+                ],
+
+                enable_prometheus_stack: true,
+                enable_tempo: true,
+                enable_loki: true,
+
+                eks_ng_min_size: 3,
+                eks_ng_desired_size: 3,
+                eks_ng_max_size: 4
+        };
+
+        if (configData.ses_queues_topics) {
+                result.ses_queues_topics = configData.ses_queues_topics;
+        }
+
+        return result;
 }
-
 // Helper to recursively read directory
 function addFilesToZip(dirPath: string, zip: JSZip, basePath: string) {
 	if (!fs.existsSync(dirPath)) return;
@@ -357,11 +444,14 @@ export async function downloadConfigurationYaml(id: string) {
 		}
 
 		// Convert and nest the data
-		const nestedData = nestDict(configData);
+		const nestedData = formatInstallerConfig(configData);
 
 		// Generate YAML
 		let yamlContent = yaml.dump(nestedData, {
 			noRefs: true,
+			lineWidth: -1,
+			forceQuotes: true,
+			quotingType: '"',
 		});
 
 		yamlContent = yamlContent.replace(/null/g, "").replace(/None/g, "");
@@ -440,11 +530,14 @@ export async function downloadConfigurationZip(id: string) {
 		}
 
 		// Convert and nest the data
-		const nestedData = nestDict(configData);
+		const nestedData = formatInstallerConfig(configData);
 
 		// Generate YAML
 		let yamlContent = yaml.dump(nestedData, {
 			noRefs: true,
+			lineWidth: -1,
+			forceQuotes: true,
+			quotingType: '"',
 		});
 
 		yamlContent = yamlContent.replace(/null/g, "").replace(/None/g, "");

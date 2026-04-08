@@ -14,6 +14,8 @@ import {
 import { PublicConfigurationsRow } from "@/lib/validations/db.schemas";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { ThemedInfoPopover } from "@/components/themed-info-popover";
+
 interface ConfigurationSheetWrapperProps {
 	configurations: PublicConfigurationsRow[];
 }
@@ -46,11 +48,14 @@ export function ConfigurationSheetWrapper({
 		<Sheet open={open} onOpenChange={handleOpenChange}>
 			<SheetContent className="w-[95vw] sm:max-w-6xl overflow-hidden p-0 flex flex-col">
 				<SheetHeader className="px-6 py-6 border-b border-border/40 bg-muted/5">
-					<SheetTitle className="font-serif text-2xl">
-						Configuration Details
-					</SheetTitle>
+					<div className="flex items-center gap-2">
+						<SheetTitle className="font-serif text-2xl">
+							Vine Details
+						</SheetTitle>
+						<ThemedInfoPopover type="vine" />
+					</div>
 					<SheetDescription>
-						Review your setup, download deployment files, and follow
+						Review your vine setup, download harvest files, and follow
 						the installation guide.
 					</SheetDescription>
 				</SheetHeader>

@@ -39,6 +39,7 @@ export async function GET(request: Request) {
 			if (provider && ['github', 'gitlab', 'bitbucket'].includes(provider) && providerToken) {
 				try {
 					await saveProviderToken(
+						session.user.id,
 						provider as PublicGitProvider,
 						providerToken,
 						refreshToken || undefined

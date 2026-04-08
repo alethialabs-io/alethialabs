@@ -31,7 +31,23 @@ export async function getLinkedProviders() {
 			return [];
 		}
 
-		return data?.map((p) => p.provider) || [];
+		const providers = new Set<string>(data?.map((p) => p.provider) || []);
+
+		// Fallback: add the active user provider if it's a git provider
+		const {
+			data: { user },
+		} = await supabase.auth.getUser();
+		if (user) {
+			const activeProvider = user.app_metadata?.provider;
+			if (
+				activeProvider &&
+				["github", "gitlab", "bitbucket"].includes(activeProvider)
+			) {
+				providers.add(activeProvider);
+			}
+		}
+
+		return Array.from(providers) as PublicGitProvider[];
 	} catch (error) {
 		console.error("Unexpected error fetching linked providers:", error);
 		return [];
@@ -39,6 +55,7 @@ export async function getLinkedProviders() {
 }
 
 export async function saveProviderToken(
+	userId: string,
 	provider: PublicGitProvider,
 	accessToken: string,
 	refreshToken?: string,
@@ -48,6 +65,7 @@ export async function saveProviderToken(
 
 		const { error } = await supabase.from("provider_tokens").upsert(
 			{
+				user_id: userId,
 				provider,
 				access_token: accessToken,
 				refresh_token: refreshToken,
@@ -75,12 +93,62 @@ export async function getProviderToken(
 ): Promise<string | null> {
 	const supabase = await createClient();
 
-	// 2. Check database
+	// 1. Check database
 	const { data } = await supabase
 		.from("provider_tokens")
 		.select("access_token")
 		.eq("provider", provider)
 		.single();
 
-	return data?.access_token || null;
+	if (data?.access_token) {
+		return data.access_token;
+	}
+
+	// 2. Fallback: Check active session
+	const {
+		data: { session },
+	} = await supabase.auth.getSession();
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
+
+	if (session?.provider_token && user) {
+		const activeProvider = user.app_metadata?.provider;
+		if (activeProvider === provider) {
+			return session.provider_token;
+		}
+	}
+
+	return null;
+}
+
+export async function deleteProviderToken(
+	provider: "github" | "gitlab" | "bitbucket",
+) {
+	try {
+		const supabase = await createClient();
+		const {
+			data: { user },
+		} = await supabase.auth.getUser();
+
+		if (!user) {
+			return { error: "User not authenticated" };
+		}
+
+		const { error } = await supabase
+			.from("provider_tokens")
+			.delete()
+			.eq("user_id", user.id)
+			.eq("provider", provider);
+
+		if (error) {
+			console.error("Error deleting provider token:", error);
+			return { error: "Failed to delete provider token" };
+		}
+
+		return { success: true };
+	} catch (error) {
+		console.error("Unexpected error deleting provider token:", error);
+		return { error: "Unexpected error occurred" };
+	}
 }

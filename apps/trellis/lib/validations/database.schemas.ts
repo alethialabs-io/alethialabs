@@ -210,8 +210,11 @@ export const publicConfigurationsRowSchema = z.object({
   ses_queues_topics: z.string().nullable(),
   status: z.string().nullable(),
   terraform_version: z.string(),
+  ui_position_x: z.number().nullable(),
+  ui_position_y: z.number().nullable(),
   updated_at: z.string().nullable(),
   user_id: z.string(),
+  vineyard_id: z.string().nullable(),
   vpc_cidr: z.string().nullable(),
 });
 
@@ -252,8 +255,11 @@ export const publicConfigurationsInsertSchema = z.object({
   ses_queues_topics: z.string().optional().nullable(),
   status: z.string().optional().nullable(),
   terraform_version: z.string(),
+  ui_position_x: z.number().optional().nullable(),
+  ui_position_y: z.number().optional().nullable(),
   updated_at: z.string().optional().nullable(),
-  user_id: z.string(),
+  user_id: z.string().optional(),
+  vineyard_id: z.string().optional().nullable(),
   vpc_cidr: z.string().optional().nullable(),
 });
 
@@ -294,8 +300,11 @@ export const publicConfigurationsUpdateSchema = z.object({
   ses_queues_topics: z.string().optional().nullable(),
   status: z.string().optional().nullable(),
   terraform_version: z.string().optional(),
+  ui_position_x: z.number().optional().nullable(),
+  ui_position_y: z.number().optional().nullable(),
   updated_at: z.string().optional().nullable(),
   user_id: z.string().optional(),
+  vineyard_id: z.string().optional().nullable(),
   vpc_cidr: z.string().optional().nullable(),
 });
 
@@ -312,6 +321,13 @@ export const publicConfigurationsRelationshipsSchema = z.tuple([
     columns: z.tuple([z.literal("cluster_id")]),
     isOneToOne: z.literal(false),
     referencedRelation: z.literal("clusters"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+  z.object({
+    foreignKeyName: z.literal("configurations_vineyard_id_fkey"),
+    columns: z.tuple([z.literal("vineyard_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("vineyards"),
     referencedColumns: z.tuple([z.literal("id")]),
   }),
 ]);
@@ -503,6 +519,58 @@ export const publicDeploymentsRelationshipsSchema = z.tuple([
   }),
 ]);
 
+export const publicHarvestsRowSchema = z.object({
+  completed_at: z.string().nullable(),
+  configuration_id: z.string(),
+  created_at: z.string().nullable(),
+  error_message: z.string().nullable(),
+  id: z.string(),
+  logs: z.string().nullable(),
+  status: z.string(),
+  ui_position_x: z.number().nullable(),
+  ui_position_y: z.number().nullable(),
+  updated_at: z.string().nullable(),
+  user_id: z.string(),
+});
+
+export const publicHarvestsInsertSchema = z.object({
+  completed_at: z.string().optional().nullable(),
+  configuration_id: z.string(),
+  created_at: z.string().optional().nullable(),
+  error_message: z.string().optional().nullable(),
+  id: z.string().optional(),
+  logs: z.string().optional().nullable(),
+  status: z.string().optional(),
+  ui_position_x: z.number().optional().nullable(),
+  ui_position_y: z.number().optional().nullable(),
+  updated_at: z.string().optional().nullable(),
+  user_id: z.string(),
+});
+
+export const publicHarvestsUpdateSchema = z.object({
+  completed_at: z.string().optional().nullable(),
+  configuration_id: z.string().optional(),
+  created_at: z.string().optional().nullable(),
+  error_message: z.string().optional().nullable(),
+  id: z.string().optional(),
+  logs: z.string().optional().nullable(),
+  status: z.string().optional(),
+  ui_position_x: z.number().optional().nullable(),
+  ui_position_y: z.number().optional().nullable(),
+  updated_at: z.string().optional().nullable(),
+  user_id: z.string().optional(),
+});
+
+export const publicHarvestsRelationshipsSchema = z.tuple([
+  z.object({
+    foreignKeyName: z.literal("harvests_configuration_id_fkey"),
+    columns: z.tuple([z.literal("configuration_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("configurations"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+]);
+
 export const publicProfilesRowSchema = z.object({
   avatar_url: z.string().nullable(),
   created_at: z.string(),
@@ -643,18 +711,39 @@ export const publicProvisionsRelationshipsSchema = z.tuple([
   }),
 ]);
 
+export const publicVineyardsRowSchema = z.object({
+  created_at: z.string().nullable(),
+  description: z.string().nullable(),
+  id: z.string(),
+  name: z.string(),
+  updated_at: z.string().nullable(),
+  user_id: z.string(),
+});
+
+export const publicVineyardsInsertSchema = z.object({
+  created_at: z.string().optional().nullable(),
+  description: z.string().optional().nullable(),
+  id: z.string().optional(),
+  name: z.string(),
+  updated_at: z.string().optional().nullable(),
+  user_id: z.string(),
+});
+
+export const publicVineyardsUpdateSchema = z.object({
+  created_at: z.string().optional().nullable(),
+  description: z.string().optional().nullable(),
+  id: z.string().optional(),
+  name: z.string().optional(),
+  updated_at: z.string().optional().nullable(),
+  user_id: z.string().optional(),
+});
+
 export const publicAgentHeartbeatArgsSchema = z.object({
   p_cluster_id: z.string(),
   p_token_hash: z.string(),
 });
 
 export const publicAgentHeartbeatReturnsSchema = z.undefined();
-
-export const publicCustomAccessTokenHookArgsSchema = z.object({
-  event: jsonSchema,
-});
-
-export const publicCustomAccessTokenHookReturnsSchema = jsonSchema;
 
 export const publicFetchNextProvisionArgsSchema = z.object({
   p_cluster_id: z.string(),
