@@ -449,6 +449,9 @@ export async function downloadConfigurationYaml(id: string) {
 		// Generate YAML
 		let yamlContent = yaml.dump(nestedData, {
 			noRefs: true,
+			lineWidth: -1,
+			forceQuotes: true,
+			quotingType: '"',
 		});
 
 		yamlContent = yamlContent.replace(/null/g, "").replace(/None/g, "");
@@ -532,6 +535,9 @@ export async function downloadConfigurationZip(id: string) {
 		// Generate YAML
 		let yamlContent = yaml.dump(nestedData, {
 			noRefs: true,
+			lineWidth: -1,
+			forceQuotes: true,
+			quotingType: '"',
 		});
 
 		yamlContent = yamlContent.replace(/null/g, "").replace(/None/g, "");
