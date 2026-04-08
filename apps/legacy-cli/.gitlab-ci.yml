@@ -1,0 +1,104 @@
+# You can override the included template(s) by including variable overrides
+# SAST customization: https://docs.gitlab.com/ee/user/application_security/sast/#customizing-the-sast-settings
+# Secret Detection customization: https://docs.gitlab.com/ee/user/application_security/secret_detection/#customizing-settings
+# Dependency Scanning customization: https://docs.gitlab.com/ee/user/application_security/dependency_scanning/#customizing-the-dependency-scanning-settings
+# Container Scanning customization: https://docs.gitlab.com/ee/user/application_security/container_scanning/#customizing-the-container-scanning-settings
+# Note that environment variables can be set in several places
+# See https://docs.gitlab.com/ee/ci/variables/#cicd-variable-precedence
+
+#workflow:
+#  rules:
+#    - when: never
+
+#image: python:3.11
+
+stages:
+#- dependency
+- build
+#- test
+#- deploy
+#- review
+#- dast
+#- staging
+#- canary
+#- production
+#- incremental rollout 10%
+#- incremental rollout 25%
+#- incremental rollout 50%
+#- incremental rollout 100%
+#- performance
+#- cleanup
+
+#.develop:
+#  rules:
+#    - if: $CI_COMMIT_BRANCH == "develop" || ($CI_PIPELINE_SOURCE == 'merge_request_event' && ( $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "develop" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main" ))
+#
+#dependency_check:
+#  extends: .develop
+#  stage: dependency
+#  before_script:
+#    - python3 -m venv venv
+#    - source ./venv/bin/activate
+#    - pip3 install --upgrade pip
+#  script:
+#    - pip3 install -r requirements.txt
+#  after_script:
+#    - deactivate
+#
+#build:
+#  extends: .develop
+#  stage: build
+#  before_script:
+#    - echo "test"
+#  script:
+#    - echo "test"
+#  after_script:
+#    - echo "test"
+#
+#test:
+#  extends: .develop
+#  stage: test
+#  script:
+#    - ./index.py
+#
+
+# include:
+# - template: Auto-DevOps.gitlab-ci.yml
+
+
+variables:
+  DOCKER_IMAGE: "my-docker-image" # Replace with your Docker image name
+  DOCKER_REGISTRY: "registry.gitlab.com" # Replace with your registry if different
+  DOCKER_TAG: "$CI_COMMIT_SHORT_SHA" # Tagging the image with the short commit hash
+
+docker_build:
+  stage: build
+  tags:
+    - ci-shared
+  services:
+    - name: docker:25.0.4-dind
+      command:
+        - "--insecure-registry=docker-registry-proxy:5000"
+        - "--registry-mirror=http://docker-registry-proxy.gitlab-runner.svc.cluster.local:5000"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "feature/docker-build" # Only run on this branch
+      when: always
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_HOST: tcp://docker:2375
+  before_script:
+    - apk add --no-cache curl jq
+    - echo "Authenticating with AWS ECR"
+    - aws --version || curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+    - unzip awscliv2.zip
+    - ./aws/install
+    - export AWS_REGION="us-east-1"
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" #| docker login $CI_REGISTRY_IMAGE -u $CI_REGISTRY_USER --password-stdin
+    - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/f3k1j9c5/idp-installer
+    #- docker build --no-cache . \
+    #  -t public.ecr.aws/f3k1j9c5/idp-installer:${CI_COMMIT_SHORT_SHA} \
+    #  -t public.ecr.aws/f3k1j9c5/idp-installer:${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA} \
+    #  -t public.ecr.aws/f3k1j9c5/idp-installer:latest
+    #- docker push -a public.ecr.aws/f3k1j9c5/idp-installer
+

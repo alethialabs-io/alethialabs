@@ -1,0 +1,5 @@
+./idpinstall.py --awsprofile default --config-file ./config/demo-mini.yml --create-state-bucket-only
+./idpinstall.py --awsprofile default --config-file ./config/demo-mini.yml --dry-run
+
+./idpinstall.py --awsprofile default --config-file ./config/demo-mini.yml
+

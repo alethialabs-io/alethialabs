@@ -1,0 +1,11 @@
+venv/
+.venv/
+git/**
+modules/__pycache__/
+docs/
+temp/
+bin/
+.idea/
+__pycache__/
+logs/
+config/idp-client-configs/
