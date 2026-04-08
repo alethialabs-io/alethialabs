@@ -153,8 +153,11 @@ export type Database = {
           ses_queues_topics: string | null
           status: string | null
           terraform_version: string
+          ui_position_x: number | null
+          ui_position_y: number | null
           updated_at: string | null
           user_id: string
+          vineyard_id: string | null
           vpc_cidr: string | null
         }
         Insert: {
@@ -194,8 +197,11 @@ export type Database = {
           ses_queues_topics?: string | null
           status?: string | null
           terraform_version: string
+          ui_position_x?: number | null
+          ui_position_y?: number | null
           updated_at?: string | null
-          user_id: string
+          user_id?: string
+          vineyard_id?: string | null
           vpc_cidr?: string | null
         }
         Update: {
@@ -235,8 +241,11 @@ export type Database = {
           ses_queues_topics?: string | null
           status?: string | null
           terraform_version?: string
+          ui_position_x?: number | null
+          ui_position_y?: number | null
           updated_at?: string | null
           user_id?: string
+          vineyard_id?: string | null
           vpc_cidr?: string | null
         }
         Relationships: [
@@ -252,6 +261,13 @@ export type Database = {
             columns: ["cluster_id"]
             isOneToOne: false
             referencedRelation: "clusters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "configurations_vineyard_id_fkey"
+            columns: ["vineyard_id"]
+            isOneToOne: false
+            referencedRelation: "vineyards"
             referencedColumns: ["id"]
           },
         ]
@@ -437,6 +453,56 @@ export type Database = {
           },
         ]
       }
+      harvests: {
+        Row: {
+          completed_at: string | null
+          configuration_id: string
+          created_at: string | null
+          error_message: string | null
+          id: string
+          logs: string | null
+          status: string
+          ui_position_x: number | null
+          ui_position_y: number | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          configuration_id: string
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          logs?: string | null
+          status?: string
+          ui_position_x?: number | null
+          ui_position_y?: number | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          configuration_id?: string
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          logs?: string | null
+          status?: string
+          ui_position_x?: number | null
+          ui_position_y?: number | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "harvests_configuration_id_fkey"
+            columns: ["configuration_id"]
+            isOneToOne: false
+            referencedRelation: "configurations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -573,6 +639,33 @@ export type Database = {
           },
         ]
       }
+      vineyards: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          id: string
+          name: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          name: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          name?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -582,7 +675,6 @@ export type Database = {
         Args: { p_cluster_id: string; p_token_hash: string }
         Returns: undefined
       }
-      custom_access_token_hook: { Args: { event: Json }; Returns: Json }
       fetch_next_provision: {
         Args: { p_cluster_id: string; p_token_hash: string }
         Returns: {

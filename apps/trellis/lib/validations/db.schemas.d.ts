@@ -102,6 +102,18 @@ export type PublicDeploymentsUpdate = z.infer<
 export type PublicDeploymentsRelationships = z.infer<
   typeof generated.publicDeploymentsRelationshipsSchema
 >;
+export type PublicHarvestsRow = z.infer<
+  typeof generated.publicHarvestsRowSchema
+>;
+export type PublicHarvestsInsert = z.infer<
+  typeof generated.publicHarvestsInsertSchema
+>;
+export type PublicHarvestsUpdate = z.infer<
+  typeof generated.publicHarvestsUpdateSchema
+>;
+export type PublicHarvestsRelationships = z.infer<
+  typeof generated.publicHarvestsRelationshipsSchema
+>;
 export type PublicProfilesRow = z.infer<
   typeof generated.publicProfilesRowSchema
 >;
@@ -144,17 +156,20 @@ export type PublicProvisionsUpdate = z.infer<
 export type PublicProvisionsRelationships = z.infer<
   typeof generated.publicProvisionsRelationshipsSchema
 >;
+export type PublicVineyardsRow = z.infer<
+  typeof generated.publicVineyardsRowSchema
+>;
+export type PublicVineyardsInsert = z.infer<
+  typeof generated.publicVineyardsInsertSchema
+>;
+export type PublicVineyardsUpdate = z.infer<
+  typeof generated.publicVineyardsUpdateSchema
+>;
 export type PublicAgentHeartbeatArgs = z.infer<
   typeof generated.publicAgentHeartbeatArgsSchema
 >;
 export type PublicAgentHeartbeatReturns = z.infer<
   typeof generated.publicAgentHeartbeatReturnsSchema
->;
-export type PublicCustomAccessTokenHookArgs = z.infer<
-  typeof generated.publicCustomAccessTokenHookArgsSchema
->;
-export type PublicCustomAccessTokenHookReturns = z.infer<
-  typeof generated.publicCustomAccessTokenHookReturnsSchema
 >;
 export type PublicFetchNextProvisionArgs = z.infer<
   typeof generated.publicFetchNextProvisionArgsSchema
