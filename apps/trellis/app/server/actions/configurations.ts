@@ -275,11 +275,13 @@ function formatInstallerConfig(configData: Record<string, any>): Record<string, 
                 gitops_template_repo: configData.gitops_repository || "git@github.com:itgix/adp-k8s-templ-argoinfrasvcs.git",
                 gitops_template_repo_branch: "main",
                 gitops_destination_repo: configData.gitops_destinations_repo || "https://gitlab.itgix.com/rnd/app-platform/demo-environments/demo-aiargoinfra-test.git",
-                gitops_argo_access_token: configData.gitops_argocd_token || "glpat-yourtoken-here",
+                ...(configData.gitops_argocd_token ? { gitops_argo_access_token: configData.gitops_argocd_token } : {}),
 
-                applications_template_repo: configData.gitops_app_template || "git@github.com:itgix/adp-k8s-templ-argoappsdemo.git",
-                applications_destination_repo: configData.gitops_infra_destination_repo || "https://gitlab.itgix.com/rnd/app-platform/demo-environments/demo-argocd-services-client.git",
-                applications_argo_access_token: configData.gitops_app_token || "glpat-yourtoken-here",
+                ...(configData.enable_gitops_destination ? {
+                        applications_template_repo: configData.gitops_app_template || "git@github.com:itgix/adp-k8s-templ-argoappsdemo.git",
+                        applications_destination_repo: configData.gitops_infra_destination_repo || "https://gitlab.itgix.com/rnd/app-platform/demo-environments/demo-argocd-services-client.git",
+                        ...(configData.gitops_app_token ? { applications_argo_access_token: configData.gitops_app_token } : {})
+                } : {}),
 
                 provision_vpc: configData.create_vpc ?? true,
                 vpc_cidr: configData.vpc_cidr || "10.56.0.0/16",
@@ -296,21 +298,7 @@ function formatInstallerConfig(configData: Record<string, any>): Record<string, 
 
                 eks_cluster_admins: eksAdmins,
 
-                eks_access_entries: {
-                        eks_auth: {
-                                principal_arn: "arn:aws:iam::791296381042:role/aws-reserved/sso.amazonaws.com/eu-central-1/AWSReservedSSO_AdministratorAccess_83a1eb1593056871",
-                                type: "STANDARD",
-                                user_name: "eks-admin",
-                                policy_associations: {
-                                        admin: {
-                                                policy_arn: "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy",
-                                                access_scope: {
-                                                        type: "cluster"
-                                                }
-                                        }
-                                }
-                        }
-                },
+                eks_access_entries: {},
 
                 provision_sqs: false,
                 application_waf_enabled: false,
@@ -333,13 +321,7 @@ function formatInstallerConfig(configData: Record<string, any>): Record<string, 
                 enable_policy_reporter: false,
 
                 custom_secrets: [
-                        { secret_name: "backstage-secret-github-client-id", manual: true, value: "Ov23liNX1INet3zdEv9Y" },
-                        { secret_name: "backstage-secret-github-client-secret", manual: true, value: "339b35fdfa7d2075a9c1917fc9eeedef3f79454e" },
-                        { secret_name: "backstage-secret-github-token", manual: true, value: "github_pat_yourtokenhere" },
-                        { secret_name: "backstage-secret-gitlab-token", manual: true, value: "glpat-yourtoken-here" },
-                        { secret_name: "backstage-secret-auth-secret", manual: true, value: "dummy" },
-                        { secret_name: "backstage-postgres-password", length: 32, special: true, override_special: "$_+" },
-                        { secret_name: "devlake-encryption-secret", length: 16, special: true, override_special: "$_+" }
+                        { secret_name: "postgres-password", length: 32, special: true, override_special: "$_+" },
                 ],
 
                 enable_prometheus_stack: true,
