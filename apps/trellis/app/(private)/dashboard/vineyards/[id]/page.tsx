@@ -20,7 +20,7 @@ export default async function VineyardDetailsPage({
 		}
 
 		return (
-			<div className="flex flex-col h-full w-full relative">
+			<div className="flex flex-col min-h-[calc(100vh-8rem)] h-[800px] w-full relative rounded-xl border border-border shadow-sm overflow-hidden">
 				{/* Top bar over the canvas */}
 				<div className="absolute top-4 left-4 z-10 flex flex-col gap-4 bg-background/80 backdrop-blur-md p-4 rounded-xl border border-border/50 shadow-sm pointer-events-auto">
 					<div className="flex items-center gap-3">

@@ -155,7 +155,7 @@ export function RepositorySelector({
 				provider: providerName,
 				options: {
 					redirectTo: `${window.location.origin}/api/auth/callback?next=/dashboard/configure&provider=${providerName}`,
-					scopes: providerName === "github" ? "repo" : undefined,
+					scopes: providerName === "github" ? "repo" : providerName === "gitlab" ? "api read_api" : undefined,
 				},
 			});
 
