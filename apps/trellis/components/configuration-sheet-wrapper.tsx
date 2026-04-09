@@ -70,7 +70,7 @@ export function ConfigurationSheetWrapper({
 						</div>
 					) : (
 						<div className="text-sm text-muted-foreground text-center py-10">
-							Configuration not found.
+							Vine not found.
 						</div>
 					)}
 				</ScrollArea>

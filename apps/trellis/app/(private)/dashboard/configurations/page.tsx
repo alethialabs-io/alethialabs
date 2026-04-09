@@ -132,7 +132,7 @@ export default async function ConfigurationsPage({
 							size="sm"
 							className="h-9 text-sm font-medium shadow-sm"
 						>
-							Grow a Vine
+							Plant a Vine
 							<ArrowRight className="ml-2 h-4 w-4" />
 						</Button>
 					</Link>

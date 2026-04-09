@@ -73,9 +73,9 @@ export default function DashboardLayout({
 	const navigation = [
 		{ name: "Overview", href: "/dashboard", icon: LayoutDashboard },
 		{ name: "Vineyards", href: "/dashboard/vineyards", icon: Map },
-		{ name: "Grow a Vine", href: "/dashboard/configure", icon: Plus },
+		{ name: "Plant a Vine", href: "/dashboard/configure", icon: Plus },
 		{
-			name: "My Vines",
+			name: "Vines",
 			href: "/dashboard/configurations",
 			icon: Folder,
 		},
@@ -242,7 +242,7 @@ export default function DashboardLayout({
 										className="cursor-pointer"
 									>
 										<Settings className="mr-2 h-4 w-4 text-muted-foreground" />
-										New Configuration
+										Plant a Vine
 									</Link>
 								</DropdownMenuItem>
 								<DropdownMenuSeparator />

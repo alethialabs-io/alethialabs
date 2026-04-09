@@ -197,7 +197,7 @@ topics:
 								<Cloud className="w-4 h-4 text-foreground" />
 							</div>
 							<h3 className="font-semibold text-sm text-foreground tracking-tight">
-								Project Configuration
+								Vine Details
 							</h3>
 						</div>
 
@@ -1246,8 +1246,8 @@ topics:
 								<Loader2 className="w-4 h-4 mr-2 animate-spin" />
 							)}
 							{isLoading
-								? "Generating Configuration..."
-								: "Generate Configuration"}
+								? "Planting Vine..."
+								: "Plant Vine"}
 						</Button>
 					</div>
 				</div>

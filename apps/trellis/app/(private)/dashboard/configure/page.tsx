@@ -18,7 +18,7 @@ export default function ConfigurePage() {
 					<div>
 						<div className="flex items-center gap-2">
 							<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
-								Grow a Vine
+								Plant a Vine
 							</h1>
 							<ThemedInfoPopover type="vine" />
 						</div>

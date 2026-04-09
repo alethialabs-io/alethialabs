@@ -37,7 +37,7 @@ export function VineNode({ data }: VineNodeProps) {
 
 				<div className="text-xs text-muted-foreground line-clamp-2 min-h-8">
 					{config.description ||
-						`Configuration tailored for ${config.container_platform}`}
+						`Vine setting tailored for ${config.container_platform}`}
 				</div>
 
 				<div className="flex items-center gap-1.5 mt-1 pt-3 border-t border-border/40">
