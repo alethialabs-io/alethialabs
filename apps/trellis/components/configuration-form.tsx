@@ -197,7 +197,7 @@ topics:
 								<Cloud className="w-4 h-4 text-foreground" />
 							</div>
 							<h3 className="font-semibold text-sm text-foreground tracking-tight">
-								Project Configuration
+								Vine Details
 							</h3>
 						</div>
 
@@ -521,42 +521,72 @@ topics:
 						</div>
 
 						<div className="grid md:grid-cols-2 gap-5">
-							<FormField
-								control={form.control}
-								name="environment_repository"
-								render={({ field }) => (
-									<FormItem className="space-y-1.5">
-										<FormControl>
-											<RepositorySelector
-												label="Environment Repository"
-												placeholder="Select environment repository"
-												required
-												value={field.value ?? undefined}
-												onChange={field.onChange}
-											/>
-										</FormControl>
-										<FormMessage className="text-xs" />
-									</FormItem>
-								)}
-							/>
-							<FormField
-								control={form.control}
-								name="gitops_repository"
-								render={({ field }) => (
-									<FormItem className="space-y-1.5">
-										<FormControl>
-											<RepositorySelector
-												label="GitOps Repository"
-												placeholder="Select GitOps repository"
-												required
-												value={field.value ?? undefined}
-												onChange={field.onChange}
-											/>
-										</FormControl>
-										<FormMessage className="text-xs" />
-									</FormItem>
-								)}
-							/>
+							{form.watch("container_platform") === "custom" ? (
+								<>
+									<FormField
+										control={form.control}
+										name="environment_repository"
+										render={({ field }) => (
+											<FormItem className="space-y-1.5">
+												<FormControl>
+													<RepositorySelector
+														label="Environment Repository"
+														placeholder="Select environment repository"
+														required
+														value={field.value ?? undefined}
+														onChange={field.onChange}
+													/>
+												</FormControl>
+												<FormMessage className="text-xs" />
+											</FormItem>
+										)}
+									/>
+									<FormField
+										control={form.control}
+										name="gitops_repository"
+										render={({ field }) => (
+											<FormItem className="space-y-1.5">
+												<FormControl>
+													<RepositorySelector
+														label="GitOps Repository"
+														placeholder="Select GitOps repository"
+														required
+														value={field.value ?? undefined}
+														onChange={field.onChange}
+													/>
+												</FormControl>
+												<FormMessage className="text-xs" />
+											</FormItem>
+										)}
+									/>
+								</>
+							) : (
+								<div className="md:col-span-2 grid md:grid-cols-2 gap-5 p-4 rounded-lg bg-muted/20 border border-border/50">
+									<div className="space-y-1.5">
+										<label className="text-xs font-medium text-muted-foreground">
+											Environment Repository (Preset)
+										</label>
+										<div className="h-9 flex items-center px-3 text-sm bg-muted/50 border border-border/40 rounded-md text-foreground truncate" title="git@github.com:itgix/adp-tf-envtempl-standard.git">
+											git@github.com:itgix/adp-tf-envtempl-standard.git
+										</div>
+									</div>
+									<div className="space-y-1.5">
+										<label className="text-xs font-medium text-muted-foreground">
+											GitOps Repository (Preset)
+										</label>
+										<div className="h-9 flex items-center px-3 text-sm bg-muted/50 border border-border/40 rounded-md text-foreground truncate" title={form.watch("container_platform") === "ai-workloads" ? "git@github.com:itgix/adp-k8s-aitempl-argoinfra.git" : "git@github.com:itgix/adp-k8s-templ-argoinfrasvcs.git"}>
+											{form.watch("container_platform") === "ai-workloads" 
+												? "git@github.com:itgix/adp-k8s-aitempl-argoinfra.git" 
+												: "git@github.com:itgix/adp-k8s-templ-argoinfrasvcs.git"}
+										</div>
+									</div>
+									<div className="md:col-span-2 text-xs text-muted-foreground flex items-center gap-1.5">
+										<CheckCircle2 className="w-3.5 h-3.5 text-primary" />
+										Template repositories are automatically configured for your selected platform.
+									</div>
+								</div>
+							)}
+
 							<FormField
 								control={form.control}
 								name="gitops_argocd_token"
@@ -1216,8 +1246,8 @@ topics:
 								<Loader2 className="w-4 h-4 mr-2 animate-spin" />
 							)}
 							{isLoading
-								? "Generating Configuration..."
-								: "Generate Configuration"}
+								? "Planting Vine..."
+								: "Plant Vine"}
 						</Button>
 					</div>
 				</div>
