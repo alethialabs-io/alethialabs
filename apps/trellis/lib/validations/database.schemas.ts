@@ -70,6 +70,83 @@ export const jsonSchema: z.ZodSchema<Json> = z.lazy(() =>
     .nullable(),
 );
 
+export const publicBootstrapJobsRowSchema = z.object({
+  completed_at: z.string().nullable(),
+  created_at: z.string().nullable(),
+  error_message: z.string().nullable(),
+  id: z.string(),
+  status: z.string(),
+  updated_at: z.string().nullable(),
+  user_id: z.string(),
+  vineyard_id: z.string(),
+});
+
+export const publicBootstrapJobsInsertSchema = z.object({
+  completed_at: z.string().optional().nullable(),
+  created_at: z.string().optional().nullable(),
+  error_message: z.string().optional().nullable(),
+  id: z.string().optional(),
+  status: z.string().optional(),
+  updated_at: z.string().optional().nullable(),
+  user_id: z.string(),
+  vineyard_id: z.string(),
+});
+
+export const publicBootstrapJobsUpdateSchema = z.object({
+  completed_at: z.string().optional().nullable(),
+  created_at: z.string().optional().nullable(),
+  error_message: z.string().optional().nullable(),
+  id: z.string().optional(),
+  status: z.string().optional(),
+  updated_at: z.string().optional().nullable(),
+  user_id: z.string().optional(),
+  vineyard_id: z.string().optional(),
+});
+
+export const publicBootstrapJobsRelationshipsSchema = z.tuple([
+  z.object({
+    foreignKeyName: z.literal("bootstrap_jobs_vineyard_id_fkey"),
+    columns: z.tuple([z.literal("vineyard_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("vineyards"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+]);
+
+export const publicBootstrapLogsRowSchema = z.object({
+  created_at: z.string().nullable(),
+  id: z.number(),
+  job_id: z.string(),
+  log_chunk: z.string(),
+  stream_type: z.string(),
+});
+
+export const publicBootstrapLogsInsertSchema = z.object({
+  created_at: z.string().optional().nullable(),
+  id: z.number().optional(),
+  job_id: z.string(),
+  log_chunk: z.string(),
+  stream_type: z.string().optional(),
+});
+
+export const publicBootstrapLogsUpdateSchema = z.object({
+  created_at: z.string().optional().nullable(),
+  id: z.number().optional(),
+  job_id: z.string().optional(),
+  log_chunk: z.string().optional(),
+  stream_type: z.string().optional(),
+});
+
+export const publicBootstrapLogsRelationshipsSchema = z.tuple([
+  z.object({
+    foreignKeyName: z.literal("bootstrap_logs_job_id_fkey"),
+    columns: z.tuple([z.literal("job_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("bootstrap_jobs"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+]);
+
 export const publicCliLoginsRowSchema = z.object({
   created_at: z.string().nullable(),
   device_code: z.string(),

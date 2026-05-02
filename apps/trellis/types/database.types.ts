@@ -14,6 +14,79 @@ export type Database = {
   }
   public: {
     Tables: {
+      bootstrap_jobs: {
+        Row: {
+          completed_at: string | null
+          created_at: string | null
+          error_message: string | null
+          id: string
+          status: string
+          updated_at: string | null
+          user_id: string
+          vineyard_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          status?: string
+          updated_at?: string | null
+          user_id: string
+          vineyard_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          status?: string
+          updated_at?: string | null
+          user_id?: string
+          vineyard_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bootstrap_jobs_vineyard_id_fkey"
+            columns: ["vineyard_id"]
+            isOneToOne: false
+            referencedRelation: "vineyards"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bootstrap_logs: {
+        Row: {
+          created_at: string | null
+          id: number
+          job_id: string
+          log_chunk: string
+          stream_type: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: number
+          job_id: string
+          log_chunk: string
+          stream_type?: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: number
+          job_id?: string
+          log_chunk?: string
+          stream_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bootstrap_logs_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "bootstrap_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cli_logins: {
         Row: {
           created_at: string | null

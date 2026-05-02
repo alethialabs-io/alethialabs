@@ -261,6 +261,25 @@ function formatInstallerConfig(configData: Record<string, any>): Record<string, 
                 eksAdmins = eksAdmins.eks_cluster_admins;
         }
 
+        const isAI = configData.container_platform === "ai-workloads";
+        const isStandard = configData.container_platform === "standard";
+
+        let envRepo = configData.environment_repository || "git@github.com:itgix/adp-tf-envtempl-standard.git";
+        let envBranch = "v1.2.7";
+        let gitopsRepo = configData.gitops_repository || "git@github.com:itgix/adp-k8s-templ-argoinfrasvcs.git";
+        let gitopsBranch = "main";
+
+        if (isAI) {
+                envBranch = "v1.2.3-ai";
+                gitopsRepo = configData.gitops_repository || "git@github.com:itgix/adp-k8s-aitempl-argoinfra.git";
+        } else if (!isStandard) {
+                envRepo = configData.environment_repository;
+                gitopsRepo = configData.gitops_repository;
+                // If it's custom, we might want to allow them to specify branches, 
+                // but we default to main or whatever they put in if we had a field for it
+                envBranch = "main";
+        }
+
         const result: Record<string, any> = {
                 project_name: configData.project_name || "adpminidemo",
                 environment: configData.environment_stage || "dev",
@@ -268,12 +287,12 @@ function formatInstallerConfig(configData: Record<string, any>): Record<string, 
                 aws_account_id: configData.aws_account_id || "791296381042",
                 terraform_ver: configData.terraform_version || "1.11.4",
 
-                env_template_repo: configData.environment_repository || "git@github.com:itgix/adp-tf-envtempl-standard.git",
-                env_template_repo_branch: "v1.2.8",
+                env_template_repo: envRepo,
+                env_template_repo_branch: envBranch,
                 env_git_repo: "git@gitlab.itgix.com:rnd/app-platform/demo-environments/demo-ai-tf-test.git",
 
-                gitops_template_repo: configData.gitops_repository || "git@github.com:itgix/adp-k8s-templ-argoinfrasvcs.git",
-                gitops_template_repo_branch: "main",
+                gitops_template_repo: gitopsRepo,
+                gitops_template_repo_branch: gitopsBranch,
                 gitops_destination_repo: configData.gitops_destinations_repo || "https://gitlab.itgix.com/rnd/app-platform/demo-environments/demo-aiargoinfra-test.git",
                 ...(configData.gitops_argocd_token ? { gitops_argo_access_token: configData.gitops_argocd_token } : {}),
 

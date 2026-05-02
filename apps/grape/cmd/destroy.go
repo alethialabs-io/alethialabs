@@ -8,32 +8,65 @@ import (
 
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/api"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/terraform"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
 	"github.com/charmbracelet/huh"
+	"github.com/imroc/req/v3"
 	"github.com/spf13/cobra"
 )
 
 var (
-	cleanupWorkspace bool
+	destroyVineyardID string
+	cleanupWorkspace  bool
 )
 
 var destroyCmd = &cobra.Command{
 	Use:   "destroy",
 	Short: "Destroy a bootstrapped environment",
-	Long:  `Destroy removes all resources associated with a specific project and environment.`,
+	Long:  `Destroy removes all resources associated with a specific vineyard and environment.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			log.Fatalf("Authentication failed: %v", err)
 		}
 
-		// Interactive Mode if project name is missing
-		if projectName == "" {
+		var vineyardName string
+		apiClient := api.NewClient(token)
+
+		// Interactive Mode if vineyard ID is missing
+		if destroyVineyardID == "" {
+			fmt.Println("🔍 Fetching your Vineyards...")
+			var vResult struct {
+				Vineyards []types.Vineyard `json:"vineyards"`
+			}
+			webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
+			if webOrigin == "" {
+				webOrigin = "https://adp.prod.itgix.eu"
+			}
+			reqClient := req.C()
+			_, err := reqClient.R().
+				SetBearerAuthToken(token).
+				SetSuccessResult(&vResult).
+				Get(fmt.Sprintf("%s/api/cli/vineyards", webOrigin))
+
+			var vineyardOptions []huh.Option[string]
+			if err == nil && len(vResult.Vineyards) > 0 {
+				for _, v := range vResult.Vineyards {
+					vineyardOptions = append(vineyardOptions, huh.NewOption(v.Name, v.ID))
+				}
+			}
+
+			if len(vineyardOptions) == 0 {
+				fmt.Println("❌ No Vineyards found.")
+				return
+			}
+
 			form := huh.NewForm(
 				huh.NewGroup(
-					huh.NewInput().
-						Title("Project Name").
-						Description("Enter the name of the project to destroy").
-						Value(&projectName),
+					huh.NewSelect[string]().
+						Title("Vineyard Workspace").
+						Description("Select the Vineyard to destroy").
+						Options(vineyardOptions...).
+						Value(&destroyVineyardID),
 					huh.NewSelect[string]().
 						Title("Environment").
 						Options(
@@ -44,10 +77,17 @@ var destroyCmd = &cobra.Command{
 				),
 			)
 
-			err := form.Run()
+			err = form.Run()
 			if err != nil {
 				fmt.Println("Cancelled.")
 				return
+			}
+
+			for _, v := range vResult.Vineyards {
+				if v.ID == destroyVineyardID {
+					vineyardName = v.Name
+					break
+				}
 			}
 		}
 
@@ -56,7 +96,7 @@ var destroyCmd = &cobra.Command{
 		confirmForm := huh.NewForm(
 			huh.NewGroup(
 				huh.NewConfirm().
-					Title(fmt.Sprintf("Are you sure you want to destroy %s-%s?", projectName, environment)).
+					Title(fmt.Sprintf("Are you sure you want to destroy %s-%s?", destroyVineyardID, environment)).
 					Description("This action will remove all cloud resources and unregister the cluster from Trellis. It cannot be undone.").
 					Value(&confirm),
 			),
@@ -71,18 +111,22 @@ var destroyCmd = &cobra.Command{
 			log.Fatalf("Failed to get home directory: %v", err)
 		}
 
-		workDir := filepath.Join(home, ".grape", "workspaces", fmt.Sprintf("%s-%s", projectName, environment))
+		workspaceName := fmt.Sprintf("%s-%s", vineyardName, environment)
+		if vineyardName == "" {
+			workspaceName = fmt.Sprintf("%s-%s", destroyVineyardID, environment)
+		}
+
+		workDir := filepath.Join(home, ".grape", "workspaces", workspaceName)
 		if _, err := os.Stat(workDir); os.IsNotExist(err) {
 			log.Fatalf("Workspace directory not found: %s", workDir)
 		}
 
-		fmt.Printf("🔥 Destroying environment %s-%s...\n", projectName, environment)
+		fmt.Printf("🔥 Destroying environment %s...\n", workspaceName)
 
 		// 1. Unregister Cluster from Trellis
 		fmt.Println("   🔐 Unregistering cluster from Trellis...")
-		client := api.NewClient(token)
-		clusterName := fmt.Sprintf("%s-%s-cluster", projectName, environment)
-		if err := client.UnregisterCluster("", clusterName); err != nil {
+		clusterName := fmt.Sprintf("%s-cluster", workspaceName)
+		if err := apiClient.UnregisterCluster("", clusterName); err != nil {
 			fmt.Printf("      ⚠️ Warning: Failed to unregister cluster from Trellis: %v\n", err)
 			fmt.Println("      Continuing with resource destruction...")
 		} else {
@@ -118,7 +162,7 @@ var destroyCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(destroyCmd)
-	destroyCmd.Flags().StringVarP(&projectName, "project-name", "p", "", "Name of the project")
+	destroyCmd.Flags().StringVarP(&destroyVineyardID, "vineyard-id", "v", "", "ID of the Vineyard")
 	destroyCmd.Flags().StringVarP(&environment, "environment", "e", "dev", "Environment name (e.g., dev, prod)")
 	destroyCmd.Flags().BoolVar(&cleanupWorkspace, "cleanup", true, "Remove workspace directory after destruction")
 }

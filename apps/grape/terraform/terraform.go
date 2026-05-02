@@ -44,21 +44,21 @@ func (t *TF_CLI) Init(dir string, backendConfig string, updateInfra bool) error 
 	}
 
 	cmd := fmt.Sprintf("%s init -reconfigure %s%s", t.binaryPath, backendConfig, upgradeFlag)
-	return utils.ExecuteCommand(cmd, dir, []string{})
+	return utils.ExecuteCommand(cmd, dir, []string{}, nil, nil)
 }
 
 // Plan runs the terraform plan command.
 func (t *TF_CLI) Plan(dir string, varFile string, planOutputFile string) error {
 	fmt.Println("Running Terraform plan...")
 	cmd := fmt.Sprintf("%s plan -var-file=%s -out=%s", t.binaryPath, varFile, planOutputFile)
-	return utils.ExecuteCommand(cmd, dir, []string{})
+	return utils.ExecuteCommand(cmd, dir, []string{}, nil, nil)
 }
 
 // Apply runs the terraform apply command with a plan file.
 func (t *TF_CLI) Apply(dir string, planFile string) error {
 	fmt.Println("Applying Terraform plan...")
 	cmd := fmt.Sprintf("%s apply -auto-approve %s", t.binaryPath, planFile)
-	return utils.ExecuteCommand(cmd, dir, []string{})
+	return utils.ExecuteCommand(cmd, dir, []string{}, nil, nil)
 }
 
 // Destroy runs the terraform destroy command.
@@ -68,7 +68,7 @@ func (t *TF_CLI) Destroy(dir string, varFile string) error {
 	if varFile != "" {
 		cmd += fmt.Sprintf(" -var-file=%s", varFile)
 	}
-	return utils.ExecuteCommand(cmd, dir, []string{})
+	return utils.ExecuteCommand(cmd, dir, []string{}, nil, nil)
 }
 
 // Output retrieves Terraform outputs.

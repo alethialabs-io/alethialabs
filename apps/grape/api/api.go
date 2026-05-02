@@ -389,13 +389,14 @@ type ClusterRegistrationResponse struct {
 }
 
 // RegisterCluster registers a new cluster.
-func (c *Client) RegisterCluster(name, vpcID, vpcCidr, region string) (*ClusterRegistrationResponse, error) {
+func (c *Client) RegisterCluster(name, vpcID, vpcCidr, region, vineyardID string) (*ClusterRegistrationResponse, error) {
 	endpoint := fmt.Sprintf("%s/cli/clusters", c.baseURL)
 	payload := map[string]string{
-		"name":     name,
-		"vpc_id":   vpcID,
-		"vpc_cidr": vpcCidr,
-		"region":   region,
+		"name":        name,
+		"vpc_id":      vpcID,
+		"vpc_cidr":    vpcCidr,
+		"region":      region,
+		"vineyard_id": vineyardID,
 	}
 
 	body, err := json.Marshal(payload)
@@ -500,4 +501,134 @@ func (c *Client) SendLog(deploymentID string, log LogEntry) error {
 
 	return nil
 }
+
+// BootstrapJob represents the structure of a bootstrap job for the API.
+type BootstrapJob struct {
+	ID           string    `json:"id"`
+	VineyardID   string    `json:"vineyard_id"`
+	Status       string    `json:"status"`
+	ErrorMessage *string   `json:"error_message,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// CreateBootstrapJob creates a new bootstrap job record.
+func (c *Client) CreateBootstrapJob(vineyardID string) (*BootstrapJob, error) {
+	endpoint := fmt.Sprintf("%s/cli/bootstrap-jobs", c.baseURL)
+	payload := map[string]string{
+		"vineyard_id": vineyardID,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		var errorResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
+			return nil, fmt.Errorf("failed to create bootstrap job: status code %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("failed to create bootstrap job: %s", errorResp.Error)
+	}
+
+	var successResp struct {
+		Job *BootstrapJob `json:"job"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&successResp); err != nil {
+		return nil, fmt.Errorf("failed to decode successful response: %w", err)
+	}
+
+	return successResp.Job, nil
+}
+
+// UpdateBootstrapJobStatus updates the status of a bootstrap job.
+func (c *Client) UpdateBootstrapJobStatus(jobID, status, errorMessage string) error {
+	endpoint := fmt.Sprintf("%s/cli/bootstrap-jobs/%s", c.baseURL, jobID)
+	payload := map[string]string{
+		"status": status,
+	}
+	if errorMessage != "" {
+		payload["error_message"] = errorMessage
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	req, err := http.NewRequest("PUT", endpoint, bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errorResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
+			return fmt.Errorf("failed to update bootstrap job status: status code %d", resp.StatusCode)
+		}
+		return fmt.Errorf("failed to update bootstrap job status: %s", errorResp.Error)
+	}
+
+	return nil
+}
+
+// SendBootstrapLog sends a log chunk for a bootstrap job to the server.
+func (c *Client) SendBootstrapLog(jobID string, logChunk string, streamType string) error {
+	endpoint := fmt.Sprintf("%s/cli/bootstrap-jobs/%s/logs", c.baseURL, jobID)
+	
+	payload := map[string]string{
+		"log_chunk":   logChunk,
+		"stream_type": streamType,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal log entry: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send bootstrap log: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to send bootstrap log: status code %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
 

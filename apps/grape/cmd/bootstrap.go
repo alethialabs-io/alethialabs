@@ -11,16 +11,17 @@ import (
 
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/api"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/aws"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/helm"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/internal/assets"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/terraform"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/utils"
 	"github.com/charmbracelet/huh"
+	"github.com/imroc/req/v3"
 	"github.com/spf13/cobra"
 )
 
 var (
-	projectName string
+	vineyardID  string
 	environment string
 	region      string
 	vpcCidr     string
@@ -39,10 +40,42 @@ It provisions the necessary base infrastructure (VPC, EKS) and installs the Tend
 		}
 
 		ctx := context.Background()
+		apiClient := api.NewClient(token)
 
-		// Interactive Mode if project name is missing
-		if projectName == "" {
-			// Fetch existing VPCs to offer as choices
+		var vineyardName string
+
+		// Interactive Mode if vineyard is missing
+		if vineyardID == "" {
+			// Fetch existing Vineyards
+			fmt.Println("🔍 Fetching your Vineyards...")
+			var vResult struct {
+				Vineyards []types.Vineyard `json:"vineyards"`
+			}
+			webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
+			if webOrigin == "" {
+				webOrigin = "https://adp.prod.itgix.eu"
+			}
+			reqClient := req.C()
+			_, err := reqClient.R().
+				SetBearerAuthToken(token).
+				SetSuccessResult(&vResult).
+				Get(fmt.Sprintf("%s/api/cli/vineyards", webOrigin))
+
+			var vineyardOptions []huh.Option[string]
+			if err == nil && len(vResult.Vineyards) > 0 {
+				for _, v := range vResult.Vineyards {
+					vineyardOptions = append(vineyardOptions, huh.NewOption(v.Name, v.ID))
+				}
+			} else if err != nil {
+				fmt.Printf("Warning: Failed to fetch vineyards: %v\n", err)
+			}
+
+			if len(vineyardOptions) == 0 {
+				fmt.Println("❌ No Vineyards found. Please create one first via Trellis or `grape vineyard create`.")
+				return
+			}
+
+			// Fetch existing VPCs
 			fmt.Println("🔍 Fetching existing VPCs from your AWS account...")
 			ec2Client, err := aws.NewEC2Client(ctx, region)
 			var vpcOptions []huh.Option[string]
@@ -61,18 +94,13 @@ It provisions the necessary base infrastructure (VPC, EKS) and installs the Tend
 
 			form := huh.NewForm(
 				huh.NewGroup(
-					huh.NewInput().
-						Title("Project Name").
-						Description("Enter a unique name for your project").
-						Value(&projectName).
-						Validate(func(str string) error {
-							if len(str) < 3 {
-								return fmt.Errorf("project name must be at least 3 characters")
-							}
-							return nil
-						}),
 					huh.NewSelect[string]().
-						Title("Environment").
+						Title("Vineyard Workspace").
+						Description("Select the Vineyard this cluster belongs to").
+						Options(vineyardOptions...).
+						Value(&vineyardID),
+					huh.NewSelect[string]().
+						Title("Environment Stage").
 						Options(
 							huh.NewOption("Development", "dev"),
 							huh.NewOption("Staging", "staging"),
@@ -115,6 +143,14 @@ It provisions the necessary base infrastructure (VPC, EKS) and installs the Tend
 				fmt.Println("Cancelled.")
 				return
 			}
+
+			// Get Vineyard name for tagging
+			for _, v := range vResult.Vineyards {
+				if v.ID == vineyardID {
+					vineyardName = v.Name
+					break
+				}
+			}
 		}
 
 		if vpcCidr == "" {
@@ -122,25 +158,47 @@ It provisions the necessary base infrastructure (VPC, EKS) and installs the Tend
 		}
 
 		fmt.Println("🚀 Bootstrapping Trellis Environment...")
-		fmt.Printf("   Project: %s, Env: %s, Region: %s\n", projectName, environment, region)
+		fmt.Printf("   Vineyard ID: %s, Env: %s, Region: %s\n", vineyardID, environment, region)
 		if selectedVpc == "new" {
 			fmt.Printf("   VPC: Creating New (%s)\n", vpcCidr)
 		} else {
 			fmt.Printf("   VPC: Using Existing (%s)\n", selectedVpc)
 		}
+
+		// 1. Prepare Workspace
+		home, err := os.UserHomeDir()
+		if err != nil {
+			log.Fatalf("Failed to get home directory: %v", err)
+		}
+
+		workspaceName := fmt.Sprintf("%s-%s", vineyardName, environment)
+		if vineyardName == "" {
+			workspaceName = fmt.Sprintf("%s-%s", vineyardID, environment)
+		}
+
+		// Initialize Remote Logger via API
+		fmt.Println("   📝 Initializing Bootstrap Job...")
+		job, err := apiClient.CreateBootstrapJob(vineyardID)
+		if err != nil {
+			log.Fatalf("Failed to initialize bootstrap job: %v", err)
+		}
 		
-		        // 1. Prepare Workspace
-		        home, err := os.UserHomeDir()
-		        if err != nil {
-		            log.Fatalf("Failed to get home directory: %v", err)
-		        }
-		        
-		        workDir := filepath.Join(home, ".grape", "workspaces", fmt.Sprintf("%s-%s", projectName, environment))
-		        if err := os.MkdirAll(workDir, 0755); err != nil {
-		            log.Fatalf("Failed to create workspace directory: %v", err)
-		        }
-		
-		        fmt.Printf("   📂 Workspace: %s\n", workDir)
+		remoteLogger := utils.NewRemoteLogger(apiClient, job.ID)
+		defer func() {
+			if r := recover(); r != nil {
+				apiClient.UpdateBootstrapJobStatus(job.ID, "FAILED", fmt.Sprintf("panic: %v", r))
+			} else {
+				apiClient.UpdateBootstrapJobStatus(job.ID, "SUCCESS", "")
+			}
+			remoteLogger.Close()
+		}()
+
+		workDir := filepath.Join(home, ".grape", "workspaces", workspaceName)
+		if err := os.MkdirAll(workDir, 0755); err != nil {
+			log.Fatalf("Failed to create workspace directory: %v", err)
+		}
+
+		fmt.Fprintf(remoteLogger, "   📂 Workspace: %s\n", workDir)
 		// 2. Extract Embedded Terraform Assets
 		err = extractAssets(workDir)
 		if err != nil {
@@ -159,13 +217,13 @@ It provisions the necessary base infrastructure (VPC, EKS) and installs the Tend
 		}
 
 		// 5. Create tfvars
-		if err := createTfvars(workDir); err != nil {
+		if err := createTfvars(workDir, workspaceName); err != nil {
 			log.Fatalf("Failed to create tfvars: %v", err)
 		}
 
 		// 6. Terraform Apply
-		fmt.Println("   ⚡ Provisioning Seed Infrastructure (this may take 15-20 mins)...")
-		
+		fmt.Fprintln(remoteLogger, "   ⚡ Provisioning Seed Infrastructure (this may take 15-20 mins)...")
+
 		planFile := filepath.Join(workDir, "tfplan")
 		if err := tf.Plan(workDir, "terraform.tfvars", planFile); err != nil {
 			log.Fatalf("Terraform plan failed: %v", err)
@@ -181,168 +239,151 @@ It provisions the necessary base infrastructure (VPC, EKS) and installs the Tend
 			log.Fatalf("Failed to get outputs: %v", err)
 		}
 
-		fmt.Println("   ✅ Infrastructure Provisioned Successfully!")
+		fmt.Fprintln(remoteLogger, "   ✅ Infrastructure Provisioned Successfully!")
 		clusterName := fmt.Sprintf("%v", outputs["cluster_name"])
-		fmt.Printf("      Cluster: %s\n", clusterName)
-		fmt.Printf("      Endpoint: %v\n", outputs["cluster_endpoint"])
+		fmt.Fprintf(remoteLogger, "      Cluster: %s\n", clusterName)
+		fmt.Fprintf(remoteLogger, "      Endpoint: %v\n", outputs["cluster_endpoint"])
 
-		        // 8. Agent Registration
-				fmt.Println("   🔐 Registering Agent with Trellis...")
-				client := api.NewClient(token)
-				
-				finalVpcID := ""
-				if selectedVpc != "new" {
-					finalVpcID = selectedVpc
-				}
-				
-				regResp, err := client.RegisterCluster(clusterName, finalVpcID, vpcCidr, region)
-				if err != nil {
-					log.Fatalf("Failed to register cluster: %v", err)
-				}
-		
-				fmt.Printf("      Cluster ID: %s\n", regResp.ClusterID)
-				
-				// 9. Configure kubectl
-				fmt.Println("   🔌 Configuring kubectl context...")
-				updateKubeconfigCmd := fmt.Sprintf("aws eks update-kubeconfig --region %s --name %s", region, clusterName)
-				if err := utils.ExecuteCommand(updateKubeconfigCmd, workDir, nil); err != nil {
-					log.Fatalf("Failed to update kubeconfig: %v", err)
-				}
-		
-				// 10. Install Tendril Agent via Helm
-				fmt.Println("   📦 Installing Tendril Agent...")
-				
-				// Create values.yaml
-				valuesContent := fmt.Sprintf(`config:
-  clusterId: %q
-  apiToken: %q
-  supabaseUrl: %q
-  supabaseKey: %q
-  grapeApiOrigin: %q
-`, regResp.ClusterID, regResp.AgentToken, os.Getenv("NEXT_PUBLIC_SUPABASE_URL"), os.Getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY"), os.Getenv("GRAPE_WEB_ORIGIN"))
-				
-				valuesPath := filepath.Join(workDir, "tendril-values.yaml")
-				if err := os.WriteFile(valuesPath, []byte(valuesContent), 0644); err != nil {
-					log.Fatalf("Failed to write helm values: %v", err)
-				}
-		
-				chartPath := filepath.Join(workDir, "helm/tendril")
-				helmClient := helm.NewHelmCLI(false)
-				
-				// We need a dummy logger or real one for HelmCLI
-				// Using a simple struct satisfying the interface would work, or just nil if it checks
-				// Looking at HelmCLI code, it calls logger.Info directly.
-				// I will create a simple logger adapter.
-				logger := utils.NewLogger(nil, "bootstrap") // nil client means no API logging, just stdout
-		
-				if err := helmClient.UpgradeInstall("tendril", chartPath, "tendril-system", valuesPath, nil, "", logger); err != nil {
-					log.Fatalf("Failed to install Tendril Agent: %v", err)
-				}
-		
-				fmt.Println("   ✅ Tendril Agent Installed!")
-				fmt.Println("   waiting for agent to come online...")
-				// TODO: Poll for status
-			},
+		// 8. Agent Registration
+		fmt.Fprintln(remoteLogger, "   🔐 Registering Cluster with Trellis...")
+
+		finalVpcID := ""
+		if selectedVpc != "new" {
+			finalVpcID = selectedVpc
 		}
-		
-		func init() {
-			rootCmd.AddCommand(bootstrapCmd)
-		
-			bootstrapCmd.Flags().StringVarP(&projectName, "project-name", "p", "", "Name of the project")
-			bootstrapCmd.Flags().StringVarP(&environment, "environment", "e", "dev", "Environment name (e.g., dev, prod)")
-			bootstrapCmd.Flags().StringVarP(&region, "region", "r", "eu-central-1", "AWS Region")
-			bootstrapCmd.Flags().StringVar(&vpcCidr, "vpc-cidr", "10.0.0.0/16", "CIDR block for the new VPC")
+
+		regResp, err := apiClient.RegisterCluster(clusterName, finalVpcID, vpcCidr, region, vineyardID)
+		if err != nil {
+			log.Fatalf("Failed to register cluster: %v", err)
 		}
-		
-		func extractAssets(destDir string) error {
-			fsys := assets.Assets
-		
-			// Map of source directory in embed -> destination directory relative to workspace
-			dirs := map[string]string{
-				"terraform/seed": ".",
-				"helm/tendril":   "helm/tendril",
+
+		fmt.Fprintf(remoteLogger, "      Cluster ID: %s\n", regResp.ClusterID)
+
+		// 9. Configure kubectl
+		fmt.Fprintln(remoteLogger, "   🔌 Configuring kubectl context...")
+		updateKubeconfigCmd := fmt.Sprintf("aws eks update-kubeconfig --region %s --name %s", region, clusterName)
+		if err := utils.ExecuteCommand(updateKubeconfigCmd, workDir, nil, remoteLogger, remoteLogger); err != nil {
+			log.Fatalf("Failed to update kubeconfig: %v", err)
+		}
+
+		// 10. Install ArgoCD via Helm
+		fmt.Fprintln(remoteLogger, "   📦 Installing ArgoCD...")
+
+		// Add ArgoCD Helm repository
+		addRepoCmd := "helm repo add argo https://argoproj.github.io/argo-helm && helm repo update"
+		if err := utils.ExecuteCommand(addRepoCmd, workDir, nil, remoteLogger, remoteLogger); err != nil {
+			log.Fatalf("Failed to add ArgoCD helm repo: %v", err)
+		}
+
+		// Install ArgoCD
+		installArgoCmd := "helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version 7.1.3"
+		if err := utils.ExecuteCommand(installArgoCmd, workDir, nil, remoteLogger, remoteLogger); err != nil {
+			log.Fatalf("Failed to install ArgoCD: %v", err)
+		}
+
+		fmt.Fprintln(remoteLogger, "   ✅ ArgoCD Installed successfully!")
+		fmt.Fprintln(remoteLogger, "   Bootstrap completed. Cluster is ready for GitOps configurations.")
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(bootstrapCmd)
+
+	bootstrapCmd.Flags().StringVarP(&vineyardID, "vineyard-id", "v", "", "ID of the Vineyard workspace")
+	bootstrapCmd.Flags().StringVarP(&environment, "environment", "e", "dev", "Environment name (e.g., dev, prod)")
+	bootstrapCmd.Flags().StringVarP(&region, "region", "r", "eu-central-1", "AWS Region")
+	bootstrapCmd.Flags().StringVar(&vpcCidr, "vpc-cidr", "10.0.0.0/16", "CIDR block for the new VPC")
+}
+
+func extractAssets(destDir string) error {
+	fsys := assets.Assets
+
+	// Map of source directory in embed -> destination directory relative to workspace
+	dirs := map[string]string{
+		"terraform/seed": ".",
+		"helm/tendril":   "helm/tendril",
+	}
+
+	for srcRoot, destRel := range dirs {
+		err := fs.WalkDir(fsys, srcRoot, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
 			}
-		
-			for srcRoot, destRel := range dirs {
-				err := fs.WalkDir(fsys, srcRoot, func(path string, d fs.DirEntry, err error) error {
-					if err != nil {
-						return err
-					}
-		
-					// Get path relative to the source root
-					relPath, err := filepath.Rel(srcRoot, path)
-					if err != nil {
-						return err
-					}
-		
-					if relPath == "." {
-						return nil
-					}
-		
-					// Construct destination path
-					finalDest := filepath.Join(destDir, destRel, relPath)
-		
-					if d.IsDir() {
-						return os.MkdirAll(finalDest, 0755)
-					}
-		
-					data, err := fsys.ReadFile(path)
-					if err != nil {
-						return err
-					}
-					
-					// Ensure parent directory exists
-					if err := os.MkdirAll(filepath.Dir(finalDest), 0755); err != nil {
-						return err
-					}
-		
-					return os.WriteFile(finalDest, data, 0644)
-				})
-				if err != nil {
-					return err
-				}
+
+			// Get path relative to the source root
+			relPath, err := filepath.Rel(srcRoot, path)
+			if err != nil {
+				return err
 			}
-			return nil
-		}		
-		func createTfvars(dir string) error {
-			tfvarsPath := filepath.Join(dir, "terraform.tfvars")
-		
-			tmplContent := `project_name = "{{.ProjectName}}"
+
+			if relPath == "." {
+				return nil
+			}
+
+			// Construct destination path
+			finalDest := filepath.Join(destDir, destRel, relPath)
+
+			if d.IsDir() {
+				return os.MkdirAll(finalDest, 0755)
+			}
+
+			data, err := fsys.ReadFile(path)
+			if err != nil {
+				return err
+			}
+
+			// Ensure parent directory exists
+			if err := os.MkdirAll(filepath.Dir(finalDest), 0755); err != nil {
+				return err
+			}
+
+			return os.WriteFile(finalDest, data, 0644)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func createTfvars(dir, name string) error {
+	tfvarsPath := filepath.Join(dir, "terraform.tfvars")
+
+	tmplContent := `project_name = "{{.ProjectName}}"
 environment  = "{{.Environment}}"
 region       = "{{.Region}}"
 vpc_cidr     = "{{.VpcCidr}}"
 vpc_id       = "{{.VpcId}}"
 `
-			tmpl, err := template.New("tfvars").Parse(tmplContent)
-			if err != nil {
-				return err
-			}
-		
-			f, err := os.Create(tfvarsPath)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-		
-			vpcID := ""
-			if selectedVpc != "new" {
-				vpcID = selectedVpc
-			}
-		
-			data := struct {
-				ProjectName string
-				Environment string
-				Region      string
-				VpcCidr     string
-				VpcId       string
-			}{
-				ProjectName: projectName,
-				Environment: environment,
-				Region:      region,
-				VpcCidr:     vpcCidr,
-				VpcId:       vpcID,
-			}
-		
-			return tmpl.Execute(f, data)
-		}
-		
+	tmpl, err := template.New("tfvars").Parse(tmplContent)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.Create(tfvarsPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	vpcID := ""
+	if selectedVpc != "new" {
+		vpcID = selectedVpc
+	}
+
+	data := struct {
+		ProjectName string
+		Environment string
+		Region      string
+		VpcCidr     string
+		VpcId       string
+	}{
+		ProjectName: name,
+		Environment: environment,
+		Region:      region,
+		VpcCidr:     vpcCidr,
+		VpcId:       vpcID,
+	}
+
+	return tmpl.Execute(f, data)
+}

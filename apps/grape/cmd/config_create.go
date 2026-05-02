@@ -11,12 +11,13 @@ import (
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/utils/ui"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
+	"github.com/imroc/req/v3"
 	"github.com/spf13/cobra"
 )
 
 var createConfigCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create a new infrastructure configuration",
+	Short: "Grow a new infrastructure vine (configuration)",
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -39,12 +40,47 @@ var createConfigCmd = &cobra.Command{
 			ApplicationsTemplateRepoBranch: "main",
 		}
 
-		steps := []string{"Project Basics", "Platform", "Repositories", "Network & Advanced", "Database", "Review"}
+		steps := []string{"Vineyard & Basics", "Platform", "Repositories", "Network & Advanced", "Database", "Review"}
 
-		// --- Form: Basics ---
+		// --- Form: Vineyard Selection ---
 		ui.PrintStepper(steps, 0)
+		
+		var vResult struct {
+			Vineyards []types.Vineyard `json:"vineyards"`
+		}
+		webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
+		if webOrigin == "" {
+			webOrigin = "https://adp.prod.itgix.eu"
+		}
+		reqClient := req.C()
+		
+		err = spinner.New().
+			Title("Fetching your vineyards...").
+			Action(func() {
+				_, err = reqClient.R().
+					SetBearerAuthToken(token).
+					SetSuccessResult(&vResult).
+					Get(fmt.Sprintf("%s/api/cli/vineyards", webOrigin))
+			}).Run()
+
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			return
+		}
+
+		if len(vResult.Vineyards) == 0 {
+			fmt.Println("❌ No Vineyards found. Please create one first via `grape vineyard create`.")
+			return
+		}
+
+		vOptions := make([]huh.Option[string], len(vResult.Vineyards))
+		for i, v := range vResult.Vineyards {
+			vOptions[i] = huh.NewOption(v.Name, v.ID)
+		}
+
 		var (
-			projectName      string
+			vineyardID       string
+			vineName         string
 			envStage         string
 			awsAccountID     string
 			awsRegion        string
@@ -53,13 +89,18 @@ var createConfigCmd = &cobra.Command{
 
 		formBasics := huh.NewForm(
 			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Vineyard Workspace").
+					Description("Select the Vineyard where this vine will grow").
+					Options(vOptions...).
+					Value(&vineyardID),
 				huh.NewInput().
-					Title("Project Name").
-					Description("Enter a unique name for your project").
-					Value(&projectName).
+					Title("Vine Name").
+					Description("Enter a unique name for this infrastructure vine").
+					Value(&vineName).
 					Validate(func(str string) error {
 						if len(str) < 3 {
-							return fmt.Errorf("project name must be at least 3 characters")
+							return fmt.Errorf("vine name must be at least 3 characters")
 						}
 						return nil
 					}),
@@ -111,7 +152,8 @@ var createConfigCmd = &cobra.Command{
 			return
 		}
 
-		config.ProjectName = projectName
+		config.VineyardID = &vineyardID
+		config.ProjectName = vineName
 		config.EnvironmentStage = envStage
 		config.AwsAccountID = awsAccountID
 		config.AwsRegion = awsRegion
@@ -173,14 +215,12 @@ var createConfigCmd = &cobra.Command{
 
 		if err != nil {
 			fmt.Printf("Warning: Error fetching repositories: %v. You can enter URL manually.\n", err)
-			// Don't return, allow manual entry if fetching fails
 		}
 
 		repoOptions := make([]huh.Option[string], 0, len(repos))
 		for _, r := range repos {
 			repoOptions = append(repoOptions, huh.NewOption(r.FullName, r.URL))
 		}
-		// Always allow manual entry or if list is empty
 		repoOptions = append(repoOptions, huh.NewOption("Manual Entry", "manual"))
 
 		var (
@@ -236,10 +276,7 @@ var createConfigCmd = &cobra.Command{
 					Description("Required if Applications Repository is selected").
 					EchoMode(huh.EchoModePassword).
 					Value(&appToken),
-			).WithHideFunc(func() bool { return appRepoURL != "manual" }), // Logic is tricky here with multiple hides. 
-			// huh evaluates visibility dynamically. If appRepoURL is "manual", the input shows. 
-			// If appRepoURL is "None", input hides? No, if "None" we don't want token.
-			// Let's simplify: if appRepoURL is "None" or empty, skip token.
+			).WithHideFunc(func() bool { return appRepoURL != "manual" && appRepoURL != "" }),
 		)
 
 		err = formRepos.Run()
@@ -251,11 +288,10 @@ var createConfigCmd = &cobra.Command{
 		if gitopsRepoURL == "manual" { gitopsRepoURL = manualGitops }
 		if appRepoURL == "manual" { appRepoURL = manualApp }
 
-		// Map to config
-		config.EnvironmentRepository = &envRepoURL // For DB
-		config.EnvGitRepo = envRepoURL             // For CLI/Installer
-		config.GitopsRepository = &gitopsRepoURL   // For DB
-		config.GitopsDestinationRepo = gitopsRepoURL // For CLI/Installer
+		config.EnvironmentRepository = &envRepoURL
+		config.EnvGitRepo = envRepoURL
+		config.GitopsRepository = &gitopsRepoURL
+		config.GitopsDestinationRepo = gitopsRepoURL
 		config.GitopsDestinationsRepo = &gitopsRepoURL
 		config.GitopsArgocdToken = &gitopsToken
 
@@ -289,7 +325,7 @@ var createConfigCmd = &cobra.Command{
 					Title("VPC CIDR").
 					Value(&vpcCIDR).
 					Validate(func(str string) error {
-						if str == "" { return nil } // if not creating VPC, might be ignored
+						if str == "" { return nil }
 						if !strings.Contains(str, "/") { return fmt.Errorf("invalid CIDR format") }
 						return nil
 					}),
@@ -322,7 +358,6 @@ var createConfigCmd = &cobra.Command{
 			).Title("Advanced"),
 		)
 
-		// Set defaults before run
 		vpcCIDR = "10.0.0.0/16"
 		redisCIDR = "10.0.0.0/16"
 		enableKarpenter = true
@@ -375,7 +410,7 @@ var createConfigCmd = &cobra.Command{
 		
 		var confirm bool
 		err = huh.NewConfirm().
-			Title("Create this configuration?").
+			Title("Plant this infrastructure vine?").
 			Value(&confirm).
 			Run()
 		
@@ -391,22 +426,22 @@ var createConfigCmd = &cobra.Command{
 		}
 
 		err = spinner.New().
-			Title("Creating configuration...").
+			Title("Planting vine...").
 			Action(actionCreate).
 			Run()
 
 		if err != nil {
-			fmt.Printf("\nError creating configuration: %v\n", err)
+			fmt.Printf("\nError planting vine: %v\n", err)
 			os.Exit(1)
 		}
 
 		if createdConfig == nil {
-			fmt.Println("\nError: Configuration created but no response received.")
+			fmt.Println("\nError: Vine planted but no response received.")
 			os.Exit(1)
 		}
 
-		fmt.Printf("\n✓ Configuration created successfully! (ID: %s)\n", createdConfig.ID)
-		fmt.Printf("\nTo deploy this project, run:\n  grape deploy %s\n", createdConfig.ProjectName)
+		fmt.Printf("\n✓ Vine planted successfully! (ID: %s)\n", createdConfig.ID)
+		fmt.Printf("\nTo harvest this vine, run:\n  grape harvest --vine-id %s --cluster-id <id>\n", createdConfig.ID)
 	},
 }
 
