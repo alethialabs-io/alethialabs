@@ -190,6 +190,8 @@ export type Database = {
       }
       configurations: {
         Row: {
+          applications_destination_repo: string | null
+          applications_template_repo: string | null
           aws_account_id: string | null
           aws_region: string | null
           cloud_identity_id: string | null
@@ -210,12 +212,14 @@ export type Database = {
           enable_gitops_destination: boolean | null
           enable_karpenter: boolean | null
           enable_redis: boolean | null
+          env_git_repo: string | null
           environment_repository: string | null
           environment_stage: string
           full_config: Json | null
           gitops_app_template: string | null
           gitops_app_token: string | null
           gitops_argocd_token: string | null
+          gitops_destination_repo: string | null
           gitops_destinations_repo: string | null
           gitops_infra_destination_repo: string | null
           gitops_repository: string | null
@@ -234,6 +238,8 @@ export type Database = {
           vpc_cidr: string | null
         }
         Insert: {
+          applications_destination_repo?: string | null
+          applications_template_repo?: string | null
           aws_account_id?: string | null
           aws_region?: string | null
           cloud_identity_id?: string | null
@@ -254,12 +260,14 @@ export type Database = {
           enable_gitops_destination?: boolean | null
           enable_karpenter?: boolean | null
           enable_redis?: boolean | null
+          env_git_repo?: string | null
           environment_repository?: string | null
           environment_stage: string
           full_config?: Json | null
           gitops_app_template?: string | null
           gitops_app_token?: string | null
           gitops_argocd_token?: string | null
+          gitops_destination_repo?: string | null
           gitops_destinations_repo?: string | null
           gitops_infra_destination_repo?: string | null
           gitops_repository?: string | null
@@ -278,6 +286,8 @@ export type Database = {
           vpc_cidr?: string | null
         }
         Update: {
+          applications_destination_repo?: string | null
+          applications_template_repo?: string | null
           aws_account_id?: string | null
           aws_region?: string | null
           cloud_identity_id?: string | null
@@ -298,12 +308,14 @@ export type Database = {
           enable_gitops_destination?: boolean | null
           enable_karpenter?: boolean | null
           enable_redis?: boolean | null
+          env_git_repo?: string | null
           environment_repository?: string | null
           environment_stage?: string
           full_config?: Json | null
           gitops_app_template?: string | null
           gitops_app_token?: string | null
           gitops_argocd_token?: string | null
+          gitops_destination_repo?: string | null
           gitops_destinations_repo?: string | null
           gitops_infra_destination_repo?: string | null
           gitops_repository?: string | null

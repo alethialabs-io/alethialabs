@@ -53,6 +53,8 @@ export function RepositorySelector({
 	const [loading, setLoading] = useState(false);
 	const [fetchingRepos, setFetchingRepos] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [authRecoveryProvider, setAuthRecoveryProvider] =
+		useState<PublicGitProvider | null>(null);
 	const [linkedProviders, setLinkedProviders] = useState<PublicGitProvider[]>(
 		[],
 	);
@@ -108,9 +110,21 @@ export function RepositorySelector({
 	const fetchRepositories = async (providerName: PublicGitProvider) => {
 		setFetchingRepos(true);
 		setError(null);
+		setAuthRecoveryProvider(null);
+		let recoveryProvider: PublicGitProvider | null = null;
 		try {
 			const data = await fetchRepositoriesByProvider(providerName);
 			if (data.error) {
+				if (
+					data.authErrorCode &&
+					data.authProvider &&
+					(data.authErrorCode === "token_expired" ||
+						data.authErrorCode === "unauthorized" ||
+						data.authErrorCode === "missing_token")
+				) {
+					setAuthRecoveryProvider(data.authProvider);
+					recoveryProvider = data.authProvider;
+				}
 				throw new Error(data.error);
 			}
 
@@ -118,9 +132,11 @@ export function RepositorySelector({
 		} catch (err) {
 			console.error(`Error fetching ${providerName} repositories:`, err);
 			setError(
-				err instanceof Error
-					? err.message
-					: "Failed to fetch repositories",
+				recoveryProvider
+					? `Authentication with ${recoveryProvider} failed or expired. Relink your account and try again.`
+					: err instanceof Error
+						? err.message
+						: "Failed to fetch repositories",
 			);
 			setRepositories([]);
 		} finally {
@@ -306,7 +322,33 @@ export function RepositorySelector({
 			{error && (
 				<Alert variant="destructive" className="py-2">
 					<AlertCircle className="h-4 w-4" />
-					<AlertDescription>{error}</AlertDescription>
+					<AlertDescription>
+						<div className="space-y-2">
+							<p>{error}</p>
+							{authRecoveryProvider && (
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									className="h-7 text-xs"
+									onClick={() =>
+										handleLinkAccount(authRecoveryProvider)
+									}
+								>
+									<GitProviderIcon
+										provider={authRecoveryProvider}
+										className="mr-1"
+									/>
+									Relink{" "}
+									{authRecoveryProvider === "gitlab"
+										? "GitLab"
+										: authRecoveryProvider === "bitbucket"
+											? "Bitbucket"
+											: "GitHub"}
+								</Button>
+							)}
+						</div>
+					</AlertDescription>
 				</Alert>
 			)}
 

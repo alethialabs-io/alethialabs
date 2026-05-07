@@ -2,7 +2,13 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { getProviderToken } from "../identities";
-import { BitbucketRepo, GitHubRepo, GitLabRepo, Repository } from "./types";
+import {
+	BitbucketRepo,
+	FetchRepositoriesResult,
+	GitHubRepo,
+	GitLabRepo,
+	Repository,
+} from "./types";
 
 export async function fetchAllRepositories(): Promise<{
 	repositories: Repository[];
@@ -260,13 +266,19 @@ export async function createRepository(
 }
 
 
-export async function fetchRepositoriesByProvider(provider: "github" | "gitlab" | "bitbucket"): Promise<{
-	repositories: Repository[];
-	error?: string;
-}> {
+export async function fetchRepositoriesByProvider(
+	provider: "github" | "gitlab" | "bitbucket",
+): Promise<FetchRepositoriesResult> {
 	try {
 		const token = await getProviderToken(provider);
-		if (!token) return { repositories: [], error: `No token found for ${provider}` };
+		if (!token) {
+			return {
+				repositories: [],
+				error: `No token found for ${provider}`,
+				authErrorCode: "missing_token",
+				authProvider: provider,
+			};
+		}
 
 		const allRepos: Repository[] = [];
 
@@ -294,8 +306,13 @@ export async function fetchRepositoriesByProvider(provider: "github" | "gitlab" 
 					})),
 				);
 			} else {
-                return { repositories: [], error: `Failed to fetch GitHub repos: ${await res.text()}` };
-            }
+				return {
+					repositories: [],
+					error: `Failed to fetch GitHub repos: ${await res.text()}`,
+					authErrorCode: res.status === 401 ? "unauthorized" : undefined,
+					authProvider: res.status === 401 ? provider : undefined,
+				};
+			}
 		} else if (provider === "gitlab") {
 			const res = await fetch(
 				"https://gitlab.itgix.com/api/v4/projects?membership=true&per_page=100&order_by=updated_at",
@@ -319,8 +336,13 @@ export async function fetchRepositoriesByProvider(provider: "github" | "gitlab" 
 					})),
 				);
 			} else {
-                return { repositories: [], error: `Failed to fetch GitLab repos: ${await res.text()}` };
-            }
+				return {
+					repositories: [],
+					error: `Failed to fetch GitLab repos: ${await res.text()}`,
+					authErrorCode: res.status === 401 ? "unauthorized" : undefined,
+					authProvider: res.status === 401 ? provider : undefined,
+				};
+			}
 		} else if (provider === "bitbucket") {
 			const res = await fetch(
 				"https://api.bitbucket.org/2.0/repositories?role=member&pagelen=100",
@@ -345,8 +367,21 @@ export async function fetchRepositoriesByProvider(provider: "github" | "gitlab" 
 					})),
 				);
 			} else {
-                return { repositories: [], error: `Failed to fetch Bitbucket repos: ${await res.text()}` };
-            }
+				const errorBody = await res.text();
+				const isExpired =
+					res.status === 401 &&
+					errorBody.includes("OAuth2 access token expired");
+				return {
+					repositories: [],
+					error: `Failed to fetch Bitbucket repos: ${errorBody}`,
+					authErrorCode: isExpired
+						? "token_expired"
+						: res.status === 401
+							? "unauthorized"
+							: undefined,
+					authProvider: res.status === 401 ? provider : undefined,
+				};
+			}
 		}
 
 		return { repositories: allRepos };

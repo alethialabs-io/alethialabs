@@ -42,3 +42,15 @@ export interface Repository {
 	default_branch: string;
 	provider: "github" | "gitlab" | "bitbucket";
 }
+
+export type RepositoryAuthErrorCode =
+	| "token_expired"
+	| "unauthorized"
+	| "missing_token";
+
+export interface FetchRepositoriesResult {
+	repositories: Repository[];
+	error?: string;
+	authErrorCode?: RepositoryAuthErrorCode;
+	authProvider?: "github" | "gitlab" | "bitbucket";
+}

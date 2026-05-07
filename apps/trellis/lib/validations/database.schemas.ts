@@ -251,6 +251,8 @@ export const publicClustersUpdateSchema = z.object({
 });
 
 export const publicConfigurationsRowSchema = z.object({
+  applications_destination_repo: z.string().nullable(),
+  applications_template_repo: z.string().nullable(),
   aws_account_id: z.string().nullable(),
   aws_region: z.string().nullable(),
   cloud_identity_id: z.string().nullable(),
@@ -271,12 +273,14 @@ export const publicConfigurationsRowSchema = z.object({
   enable_gitops_destination: z.boolean().nullable(),
   enable_karpenter: z.boolean().nullable(),
   enable_redis: z.boolean().nullable(),
+  env_git_repo: z.string().nullable(),
   environment_repository: z.string().nullable(),
   environment_stage: z.string(),
   full_config: jsonSchema.nullable(),
   gitops_app_template: z.string().nullable(),
   gitops_app_token: z.string().nullable(),
   gitops_argocd_token: z.string().nullable(),
+  gitops_destination_repo: z.string().nullable(),
   gitops_destinations_repo: z.string().nullable(),
   gitops_infra_destination_repo: z.string().nullable(),
   gitops_repository: z.string().nullable(),
@@ -296,6 +300,8 @@ export const publicConfigurationsRowSchema = z.object({
 });
 
 export const publicConfigurationsInsertSchema = z.object({
+  applications_destination_repo: z.string().optional().nullable(),
+  applications_template_repo: z.string().optional().nullable(),
   aws_account_id: z.string().optional().nullable(),
   aws_region: z.string().optional().nullable(),
   cloud_identity_id: z.string().optional().nullable(),
@@ -316,12 +322,14 @@ export const publicConfigurationsInsertSchema = z.object({
   enable_gitops_destination: z.boolean().optional().nullable(),
   enable_karpenter: z.boolean().optional().nullable(),
   enable_redis: z.boolean().optional().nullable(),
+  env_git_repo: z.string().optional().nullable(),
   environment_repository: z.string().optional().nullable(),
   environment_stage: z.string(),
   full_config: jsonSchema.optional().nullable(),
   gitops_app_template: z.string().optional().nullable(),
   gitops_app_token: z.string().optional().nullable(),
   gitops_argocd_token: z.string().optional().nullable(),
+  gitops_destination_repo: z.string().optional().nullable(),
   gitops_destinations_repo: z.string().optional().nullable(),
   gitops_infra_destination_repo: z.string().optional().nullable(),
   gitops_repository: z.string().optional().nullable(),
@@ -341,6 +349,8 @@ export const publicConfigurationsInsertSchema = z.object({
 });
 
 export const publicConfigurationsUpdateSchema = z.object({
+  applications_destination_repo: z.string().optional().nullable(),
+  applications_template_repo: z.string().optional().nullable(),
   aws_account_id: z.string().optional().nullable(),
   aws_region: z.string().optional().nullable(),
   cloud_identity_id: z.string().optional().nullable(),
@@ -361,12 +371,14 @@ export const publicConfigurationsUpdateSchema = z.object({
   enable_gitops_destination: z.boolean().optional().nullable(),
   enable_karpenter: z.boolean().optional().nullable(),
   enable_redis: z.boolean().optional().nullable(),
+  env_git_repo: z.string().optional().nullable(),
   environment_repository: z.string().optional().nullable(),
   environment_stage: z.string().optional(),
   full_config: jsonSchema.optional().nullable(),
   gitops_app_template: z.string().optional().nullable(),
   gitops_app_token: z.string().optional().nullable(),
   gitops_argocd_token: z.string().optional().nullable(),
+  gitops_destination_repo: z.string().optional().nullable(),
   gitops_destinations_repo: z.string().optional().nullable(),
   gitops_infra_destination_repo: z.string().optional().nullable(),
   gitops_repository: z.string().optional().nullable(),

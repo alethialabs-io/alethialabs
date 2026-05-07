@@ -261,24 +261,20 @@ function formatInstallerConfig(configData: Record<string, any>): Record<string, 
                 eksAdmins = eksAdmins.eks_cluster_admins;
         }
 
-        const isAI = configData.container_platform === "ai-workloads";
-        const isStandard = configData.container_platform === "standard";
+	const isAI = configData.container_platform === "ai-workloads";
+	const isStandard = configData.container_platform === "standard";
 
-        let envRepo = configData.environment_repository || "git@github.com:itgix/adp-tf-envtempl-standard.git";
-        let envBranch = "v1.2.7";
-        let gitopsRepo = configData.gitops_repository || "git@github.com:itgix/adp-k8s-templ-argoinfrasvcs.git";
-        let gitopsBranch = "main";
+	let envRepo = "git@github.com:itgix/adp-tf-envtempl-standard.git";
+	let envBranch = "v1.2.7";
+	let gitopsRepo = "git@github.com:itgix/adp-k8s-templ-argoinfrasvcs.git";
+	let gitopsBranch = "main";
 
-        if (isAI) {
-                envBranch = "v1.2.3-ai";
-                gitopsRepo = configData.gitops_repository || "git@github.com:itgix/adp-k8s-aitempl-argoinfra.git";
-        } else if (!isStandard) {
-                envRepo = configData.environment_repository;
-                gitopsRepo = configData.gitops_repository;
-                // If it's custom, we might want to allow them to specify branches, 
-                // but we default to main or whatever they put in if we had a field for it
-                envBranch = "main";
-        }
+	if (isAI) {
+		envBranch = "v1.2.3-ai";
+		gitopsRepo = "git@github.com:itgix/adp-k8s-aitempl-argoinfra.git";
+	} else if (!isStandard) {
+		envBranch = "main";
+	}
 
         const result: Record<string, any> = {
                 project_name: configData.project_name || "adpminidemo",
@@ -289,18 +285,26 @@ function formatInstallerConfig(configData: Record<string, any>): Record<string, 
 
                 env_template_repo: envRepo,
                 env_template_repo_branch: envBranch,
-                env_git_repo: "git@gitlab.itgix.com:rnd/app-platform/demo-environments/demo-ai-tf-test.git",
+		env_git_repo:
+			configData.env_git_repo ||
+			"git@gitlab.itgix.com:rnd/app-platform/demo-environments/demo-ai-tf-test.git",
 
                 gitops_template_repo: gitopsRepo,
                 gitops_template_repo_branch: gitopsBranch,
-                gitops_destination_repo: configData.gitops_destinations_repo || "https://gitlab.itgix.com/rnd/app-platform/demo-environments/demo-aiargoinfra-test.git",
-                ...(configData.gitops_argocd_token ? { gitops_argo_access_token: configData.gitops_argocd_token } : {}),
+		gitops_destination_repo:
+			configData.gitops_destination_repo ||
+			"https://gitlab.itgix.com/rnd/app-platform/demo-environments/demo-aiargoinfra-test.git",
+		...(configData.gitops_argocd_token ? { gitops_argo_access_token: configData.gitops_argocd_token } : {}),
 
-                ...(configData.enable_gitops_destination ? {
-                        applications_template_repo: configData.gitops_app_template || "git@github.com:itgix/adp-k8s-templ-argoappsdemo.git",
-                        applications_destination_repo: configData.gitops_infra_destination_repo || "https://gitlab.itgix.com/rnd/app-platform/demo-environments/demo-argocd-services-client.git",
-                        ...(configData.gitops_app_token ? { applications_argo_access_token: configData.gitops_app_token } : {})
-                } : {}),
+		...(configData.enable_gitops_destination ? {
+			applications_template_repo:
+				configData.applications_template_repo ||
+				"git@github.com:itgix/adp-k8s-templ-argoappsdemo.git",
+			applications_destination_repo:
+				configData.applications_destination_repo ||
+				"https://gitlab.itgix.com/rnd/app-platform/demo-environments/demo-argocd-services-client.git",
+			...(configData.gitops_app_token ? { applications_argo_access_token: configData.gitops_app_token } : {})
+		} : {}),
 
                 provision_vpc: configData.create_vpc ?? true,
                 vpc_cidr: configData.vpc_cidr || "10.56.0.0/16",
