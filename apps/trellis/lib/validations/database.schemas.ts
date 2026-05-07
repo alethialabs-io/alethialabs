@@ -70,6 +70,83 @@ export const jsonSchema: z.ZodSchema<Json> = z.lazy(() =>
     .nullable(),
 );
 
+export const publicBootstrapJobsRowSchema = z.object({
+  completed_at: z.string().nullable(),
+  created_at: z.string().nullable(),
+  error_message: z.string().nullable(),
+  id: z.string(),
+  status: z.string(),
+  updated_at: z.string().nullable(),
+  user_id: z.string(),
+  vineyard_id: z.string(),
+});
+
+export const publicBootstrapJobsInsertSchema = z.object({
+  completed_at: z.string().optional().nullable(),
+  created_at: z.string().optional().nullable(),
+  error_message: z.string().optional().nullable(),
+  id: z.string().optional(),
+  status: z.string().optional(),
+  updated_at: z.string().optional().nullable(),
+  user_id: z.string(),
+  vineyard_id: z.string(),
+});
+
+export const publicBootstrapJobsUpdateSchema = z.object({
+  completed_at: z.string().optional().nullable(),
+  created_at: z.string().optional().nullable(),
+  error_message: z.string().optional().nullable(),
+  id: z.string().optional(),
+  status: z.string().optional(),
+  updated_at: z.string().optional().nullable(),
+  user_id: z.string().optional(),
+  vineyard_id: z.string().optional(),
+});
+
+export const publicBootstrapJobsRelationshipsSchema = z.tuple([
+  z.object({
+    foreignKeyName: z.literal("bootstrap_jobs_vineyard_id_fkey"),
+    columns: z.tuple([z.literal("vineyard_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("vineyards"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+]);
+
+export const publicBootstrapLogsRowSchema = z.object({
+  created_at: z.string().nullable(),
+  id: z.number(),
+  job_id: z.string(),
+  log_chunk: z.string(),
+  stream_type: z.string(),
+});
+
+export const publicBootstrapLogsInsertSchema = z.object({
+  created_at: z.string().optional().nullable(),
+  id: z.number().optional(),
+  job_id: z.string(),
+  log_chunk: z.string(),
+  stream_type: z.string().optional(),
+});
+
+export const publicBootstrapLogsUpdateSchema = z.object({
+  created_at: z.string().optional().nullable(),
+  id: z.number().optional(),
+  job_id: z.string().optional(),
+  log_chunk: z.string().optional(),
+  stream_type: z.string().optional(),
+});
+
+export const publicBootstrapLogsRelationshipsSchema = z.tuple([
+  z.object({
+    foreignKeyName: z.literal("bootstrap_logs_job_id_fkey"),
+    columns: z.tuple([z.literal("job_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("bootstrap_jobs"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+]);
+
 export const publicCliLoginsRowSchema = z.object({
   created_at: z.string().nullable(),
   device_code: z.string(),
@@ -174,6 +251,8 @@ export const publicClustersUpdateSchema = z.object({
 });
 
 export const publicConfigurationsRowSchema = z.object({
+  applications_destination_repo: z.string().nullable(),
+  applications_template_repo: z.string().nullable(),
   aws_account_id: z.string().nullable(),
   aws_region: z.string().nullable(),
   cloud_identity_id: z.string().nullable(),
@@ -194,12 +273,14 @@ export const publicConfigurationsRowSchema = z.object({
   enable_gitops_destination: z.boolean().nullable(),
   enable_karpenter: z.boolean().nullable(),
   enable_redis: z.boolean().nullable(),
+  env_git_repo: z.string().nullable(),
   environment_repository: z.string().nullable(),
   environment_stage: z.string(),
   full_config: jsonSchema.nullable(),
   gitops_app_template: z.string().nullable(),
   gitops_app_token: z.string().nullable(),
   gitops_argocd_token: z.string().nullable(),
+  gitops_destination_repo: z.string().nullable(),
   gitops_destinations_repo: z.string().nullable(),
   gitops_infra_destination_repo: z.string().nullable(),
   gitops_repository: z.string().nullable(),
@@ -219,6 +300,8 @@ export const publicConfigurationsRowSchema = z.object({
 });
 
 export const publicConfigurationsInsertSchema = z.object({
+  applications_destination_repo: z.string().optional().nullable(),
+  applications_template_repo: z.string().optional().nullable(),
   aws_account_id: z.string().optional().nullable(),
   aws_region: z.string().optional().nullable(),
   cloud_identity_id: z.string().optional().nullable(),
@@ -239,12 +322,14 @@ export const publicConfigurationsInsertSchema = z.object({
   enable_gitops_destination: z.boolean().optional().nullable(),
   enable_karpenter: z.boolean().optional().nullable(),
   enable_redis: z.boolean().optional().nullable(),
+  env_git_repo: z.string().optional().nullable(),
   environment_repository: z.string().optional().nullable(),
   environment_stage: z.string(),
   full_config: jsonSchema.optional().nullable(),
   gitops_app_template: z.string().optional().nullable(),
   gitops_app_token: z.string().optional().nullable(),
   gitops_argocd_token: z.string().optional().nullable(),
+  gitops_destination_repo: z.string().optional().nullable(),
   gitops_destinations_repo: z.string().optional().nullable(),
   gitops_infra_destination_repo: z.string().optional().nullable(),
   gitops_repository: z.string().optional().nullable(),
@@ -264,6 +349,8 @@ export const publicConfigurationsInsertSchema = z.object({
 });
 
 export const publicConfigurationsUpdateSchema = z.object({
+  applications_destination_repo: z.string().optional().nullable(),
+  applications_template_repo: z.string().optional().nullable(),
   aws_account_id: z.string().optional().nullable(),
   aws_region: z.string().optional().nullable(),
   cloud_identity_id: z.string().optional().nullable(),
@@ -284,12 +371,14 @@ export const publicConfigurationsUpdateSchema = z.object({
   enable_gitops_destination: z.boolean().optional().nullable(),
   enable_karpenter: z.boolean().optional().nullable(),
   enable_redis: z.boolean().optional().nullable(),
+  env_git_repo: z.string().optional().nullable(),
   environment_repository: z.string().optional().nullable(),
   environment_stage: z.string().optional(),
   full_config: jsonSchema.optional().nullable(),
   gitops_app_template: z.string().optional().nullable(),
   gitops_app_token: z.string().optional().nullable(),
   gitops_argocd_token: z.string().optional().nullable(),
+  gitops_destination_repo: z.string().optional().nullable(),
   gitops_destinations_repo: z.string().optional().nullable(),
   gitops_infra_destination_repo: z.string().optional().nullable(),
   gitops_repository: z.string().optional().nullable(),

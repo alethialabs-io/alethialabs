@@ -552,7 +552,11 @@ func (g *GIT) BootstrapArgo(config *types.Configuration, argoTemplateRepo *GIT, 
 
 	// ArgoCD custom values
 	argocdHelmChartValuesPath := filepath.Join(g.LocalPath, "helm", "argo-cd", "values", config.EnvironmentStage, config.AwsRegion, "values.yaml")
-	argocdUIDNS := fmt.Sprintf("%s-%s-argocd-%s.%s", config.ProjectName, config.AwsRegion, config.EnvironmentStage, config.DnsDomainName)
+	dnsDomainName := ""
+	if config.DnsDomainName != nil {
+		dnsDomainName = *config.DnsDomainName
+	}
+	argocdUIDNS := fmt.Sprintf("%s-%s-argocd-%s.%s", config.ProjectName, config.AwsRegion, config.EnvironmentStage, dnsDomainName)
 	argocdValuesData := map[string]interface{}{
 		"server": map[string]interface{}{
 			"ingress": map[string]interface{}{

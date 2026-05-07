@@ -6,6 +6,7 @@ type ConfigurationSummary struct {
 	ID string `json:"id"`
 	// Name             string    `json:"name"`
 	ProjectName       string    `json:"project_name"`
+	VineyardID        *string   `json:"vineyard_id"`
 	EnvironmentStage  string    `json:"environment_stage"`
 	ContainerPlatform string    `json:"container_platform"`
 	CreatedAt         time.Time `json:"created_at"`
@@ -54,11 +55,25 @@ type Configuration struct {
 	LastDownloadedAt        *string   `json:"last_downloaded_at"`
 	// Name                    string    `json:"name"`
 	ProjectName            string    `json:"project_name"`
+	VineyardID             *string   `json:"vineyard_id"`
 	RedisAllowedCidrBlocks *string   `json:"redis_allowed_cidr_blocks"`
 	SesQueuesTopics        *string   `json:"ses_queues_topics"`
 	Status                 *string   `json:"status"`
 	TerraformVersion       string    `json:"terraform_version"`
+	UiPositionX            *float64  `json:"ui_position_x"`
+	UiPositionY            *float64  `json:"ui_position_y"`
 	UpdatedAt              time.Time `json:"updated_at"`
 	UserID                 string    `json:"user_id"`
 	VpcCidr                *string   `json:"vpc_cidr"`
+}
+
+type Harvest struct {
+	ID                string     `json:"id"`
+	ClusterID         string     `json:"cluster_id"`
+	ConfigurationID   string     `json:"configuration_id"`
+	Status            string     `json:"status"`
+	CreatedAt         time.Time  `json:"created_at"`
+	StartedAt         *time.Time `json:"started_at,omitempty"`
+	CompletedAt       *time.Time `json:"completed_at,omitempty"`
+	ErrorMessage      *string    `json:"error_message,omitempty"`
 }

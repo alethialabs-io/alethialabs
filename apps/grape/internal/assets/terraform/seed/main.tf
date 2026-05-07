@@ -109,6 +109,33 @@ module "eks" {
   tags        = local.tags
 }
 
+# 3. Tendril Agent IAM Role (IRSA)
+module "tendril_role" {
+  source    = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version   = "~> 5.0"
+
+  role_name = "${local.name}-tendril-role"
+
+  oidc_providers = {
+    main = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["tendril-system:tendril"]
+    }
+  }
+
+  # For the prototype, we grant AdministratorAccess so Tendril can provision any resource
+  # In production, this should be scoped down to the specific resources managed by Trellis
+  role_policy_arns = {
+    admin = "arn:aws:iam::aws:policy/AdministratorAccess"
+  }
+
+  tags = local.tags
+}
+
+output "tendril_role_arn" {
+  value = module.tendril_role.iam_role_arn
+}
+
 output "cluster_endpoint" {
   value = module.eks.cluster_endpoint
 }

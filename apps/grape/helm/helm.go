@@ -47,10 +47,10 @@ func (h *HelmCLI) UpgradeInstall(releaseName, chartDir, namespace, valuesFile st
 
 		if h.DryRun {
 			logger.Info("Performing server-side dry-run...", "helm")
-			err := utils.ExecuteCommand(serverDryRunCmd, ".", envList)
+			err := utils.ExecuteCommand(serverDryRunCmd, ".", envList, nil, nil)
 			if err != nil {
 				logger.Warn("Server-side dry-run failed. Falling back to helm template rendering...", "helm")
-				err = utils.ExecuteCommand(templateCmd, ".", envList)
+				err = utils.ExecuteCommand(templateCmd, ".", envList, nil, nil)
 				if err != nil {
 					lastErr = fmt.Errorf("helm template rendering failed: %w", err)
 					continue // Retry loop doesn't make much sense for template rendering but keeping structure
@@ -63,7 +63,7 @@ func (h *HelmCLI) UpgradeInstall(releaseName, chartDir, namespace, valuesFile st
 			}
 		} else {
 			logger.Info("Performing server-side dry-run before actual execution...", "helm")
-			err := utils.ExecuteCommand(serverDryRunCmd, ".", envList)
+			err := utils.ExecuteCommand(serverDryRunCmd, ".", envList, nil, nil)
 			if err != nil {
 				lastErr = fmt.Errorf("server-side dry-run failed: %w", err)
 				logger.Warn(fmt.Sprintf("Dry-run failed: %v", err), "helm")
@@ -71,7 +71,7 @@ func (h *HelmCLI) UpgradeInstall(releaseName, chartDir, namespace, valuesFile st
 			}
 			logger.Info("Server-side dry-run succeeded. Proceeding with actual command.", "helm")
 
-			err = utils.ExecuteCommand(cmd, ".", envList)
+			err = utils.ExecuteCommand(cmd, ".", envList, nil, nil)
 			if err != nil {
 				lastErr = fmt.Errorf("helm upgrade install failed: %w", err)
 				logger.Warn(fmt.Sprintf("Install failed: %v", err), "helm")

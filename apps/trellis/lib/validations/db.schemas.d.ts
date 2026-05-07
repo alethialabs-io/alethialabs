@@ -24,6 +24,30 @@ export type PublicGitProvider = z.infer<
 export type PublicIacTool = z.infer<typeof generated.publicIacToolSchema>;
 export type PublicLogsLevel = z.infer<typeof generated.publicLogsLevelSchema>;
 export type Json = z.infer<typeof generated.jsonSchema>;
+export type PublicBootstrapJobsRow = z.infer<
+  typeof generated.publicBootstrapJobsRowSchema
+>;
+export type PublicBootstrapJobsInsert = z.infer<
+  typeof generated.publicBootstrapJobsInsertSchema
+>;
+export type PublicBootstrapJobsUpdate = z.infer<
+  typeof generated.publicBootstrapJobsUpdateSchema
+>;
+export type PublicBootstrapJobsRelationships = z.infer<
+  typeof generated.publicBootstrapJobsRelationshipsSchema
+>;
+export type PublicBootstrapLogsRow = z.infer<
+  typeof generated.publicBootstrapLogsRowSchema
+>;
+export type PublicBootstrapLogsInsert = z.infer<
+  typeof generated.publicBootstrapLogsInsertSchema
+>;
+export type PublicBootstrapLogsUpdate = z.infer<
+  typeof generated.publicBootstrapLogsUpdateSchema
+>;
+export type PublicBootstrapLogsRelationships = z.infer<
+  typeof generated.publicBootstrapLogsRelationshipsSchema
+>;
 export type PublicCliLoginsRow = z.infer<
   typeof generated.publicCliLoginsRowSchema
 >;

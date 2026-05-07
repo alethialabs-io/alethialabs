@@ -75,9 +75,10 @@ export function ConfigurationForm() {
 			terraform_version: "1.5.0",
 			aws_region: "us-east-1",
 			enable_gitops_destination: false,
-			gitops_app_template: "",
-			gitops_destinations_repo: "",
-			gitops_infra_destination_repo: "",
+			env_git_repo: "",
+			gitops_destination_repo: "",
+			applications_template_repo: "",
+			applications_destination_repo: "",
 			gitops_app_token: "",
 			create_rds: true,
 			create_vpc: true,
@@ -134,6 +135,18 @@ topics:
 	) => {
 		setIsLoading(true);
 		setError(null);
+		if (
+			!data.env_git_repo ||
+			!data.gitops_destination_repo ||
+			!data.applications_template_repo ||
+			!data.applications_destination_repo
+		) {
+			setError(
+				"Please fill all required repository fields: env_git_repo, gitops_destination_repo, applications_template_repo, applications_destination_repo.",
+			);
+			setIsLoading(false);
+			return;
+		}
 
 		try {
 			const { configuration } = await createConfiguration(data);
@@ -521,50 +534,47 @@ topics:
 						</div>
 
 						<div className="grid md:grid-cols-2 gap-5">
-							{form.watch("container_platform") === "custom" ? (
-								<>
-									<FormField
-										control={form.control}
-										name="environment_repository"
-										render={({ field }) => (
-											<FormItem className="space-y-1.5">
-												<FormControl>
-													<RepositorySelector
-														label="Environment Repository"
-														placeholder="Select environment repository"
-														required
-														value={field.value ?? undefined}
-														onChange={field.onChange}
-													/>
-												</FormControl>
-												<FormMessage className="text-xs" />
-											</FormItem>
-										)}
-									/>
-									<FormField
-										control={form.control}
-										name="gitops_repository"
-										render={({ field }) => (
-											<FormItem className="space-y-1.5">
-												<FormControl>
-													<RepositorySelector
-														label="GitOps Repository"
-														placeholder="Select GitOps repository"
-														required
-														value={field.value ?? undefined}
-														onChange={field.onChange}
-													/>
-												</FormControl>
-												<FormMessage className="text-xs" />
-											</FormItem>
-										)}
-									/>
-								</>
-							) : (
+							<FormField
+								control={form.control}
+								name="env_git_repo"
+								render={({ field }) => (
+									<FormItem className="space-y-1.5">
+										<FormControl>
+											<RepositorySelector
+												label="Environment Git Repository"
+												placeholder="Select environment repository"
+												required
+												value={field.value ?? undefined}
+												onChange={field.onChange}
+											/>
+										</FormControl>
+										<FormMessage className="text-xs" />
+									</FormItem>
+								)}
+							/>
+							<FormField
+								control={form.control}
+								name="gitops_destination_repo"
+								render={({ field }) => (
+									<FormItem className="space-y-1.5">
+										<FormControl>
+											<RepositorySelector
+												label="GitOps Destination Repository"
+												placeholder="Select GitOps destination repository"
+												required
+												value={field.value ?? undefined}
+												onChange={field.onChange}
+											/>
+										</FormControl>
+										<FormMessage className="text-xs" />
+									</FormItem>
+								)}
+							/>
+							{form.watch("container_platform") !== "custom" && (
 								<div className="md:col-span-2 grid md:grid-cols-2 gap-5 p-4 rounded-lg bg-muted/20 border border-border/50">
 									<div className="space-y-1.5">
 										<label className="text-xs font-medium text-muted-foreground">
-											Environment Repository (Preset)
+											Environment Template Repository (Preset)
 										</label>
 										<div className="h-9 flex items-center px-3 text-sm bg-muted/50 border border-border/40 rounded-md text-foreground truncate" title="git@github.com:itgix/adp-tf-envtempl-standard.git">
 											git@github.com:itgix/adp-tf-envtempl-standard.git
@@ -572,7 +582,7 @@ topics:
 									</div>
 									<div className="space-y-1.5">
 										<label className="text-xs font-medium text-muted-foreground">
-											GitOps Repository (Preset)
+											GitOps Template Repository (Preset)
 										</label>
 										<div className="h-9 flex items-center px-3 text-sm bg-muted/50 border border-border/40 rounded-md text-foreground truncate" title={form.watch("container_platform") === "ai-workloads" ? "git@github.com:itgix/adp-k8s-aitempl-argoinfra.git" : "git@github.com:itgix/adp-k8s-templ-argoinfrasvcs.git"}>
 											{form.watch("container_platform") === "ai-workloads" 
@@ -582,10 +592,47 @@ topics:
 									</div>
 									<div className="md:col-span-2 text-xs text-muted-foreground flex items-center gap-1.5">
 										<CheckCircle2 className="w-3.5 h-3.5 text-primary" />
-										Template repositories are automatically configured for your selected platform.
+										Template repositories and branches are automatically configured for your selected platform.
 									</div>
 								</div>
 							)}
+
+							<FormField
+								control={form.control}
+								name="applications_template_repo"
+								render={({ field }) => (
+									<FormItem className="space-y-1.5">
+										<FormControl>
+											<RepositorySelector
+												label="Applications Template Repository"
+												placeholder="Select applications template repository"
+												required
+												value={field.value ?? undefined}
+												onChange={field.onChange}
+											/>
+										</FormControl>
+										<FormMessage className="text-xs" />
+									</FormItem>
+								)}
+							/>
+							<FormField
+								control={form.control}
+								name="applications_destination_repo"
+								render={({ field }) => (
+									<FormItem className="space-y-1.5">
+										<FormControl>
+											<RepositorySelector
+												label="Applications Destination Repository"
+												placeholder="Select applications destination repository"
+												required
+												value={field.value ?? undefined}
+												onChange={field.onChange}
+											/>
+										</FormControl>
+										<FormMessage className="text-xs" />
+									</FormItem>
+								)}
+							/>
 
 							<FormField
 								control={form.control}
@@ -651,77 +698,6 @@ topics:
 							{form.watch("enable_gitops_destination") && (
 								<CardContent className="space-y-5 pt-6">
 									<div className="grid md:grid-cols-2 gap-5">
-										<FormField
-											control={form.control}
-											name="gitops_app_template"
-											render={({ field }) => (
-												<FormItem className="space-y-1.5">
-													<FormLabel
-														htmlFor="application_template"
-														className="text-xs"
-													>
-														Application Template
-													</FormLabel>
-													<FormControl>
-														<Input
-															id="application_template"
-															placeholder="helm-chart-template"
-															className="h-9 text-sm border-border/50"
-															{...field}
-															value={
-																field.value ??
-																""
-															}
-														/>
-													</FormControl>
-													<FormMessage className="text-xs" />
-												</FormItem>
-											)}
-										/>
-										<FormField
-											control={form.control}
-											name="gitops_destinations_repo"
-											render={({ field }) => (
-												<FormItem className="space-y-1.5">
-													<FormControl>
-														<RepositorySelector
-															label="App Destination Repository"
-															placeholder="Select app destination repository"
-															value={
-																field.value ??
-																undefined
-															}
-															onChange={
-																field.onChange
-															}
-														/>
-													</FormControl>
-													<FormMessage className="text-xs" />
-												</FormItem>
-											)}
-										/>
-										<FormField
-											control={form.control}
-											name="gitops_infra_destination_repo"
-											render={({ field }) => (
-												<FormItem className="space-y-1.5">
-													<FormControl>
-														<RepositorySelector
-															label="Infra Destination Repository"
-															placeholder="Select infra destination repository"
-															value={
-																field.value ??
-																undefined
-															}
-															onChange={
-																field.onChange
-															}
-														/>
-													</FormControl>
-													<FormMessage className="text-xs" />
-												</FormItem>
-											)}
-										/>
 										<FormField
 											control={form.control}
 											name="gitops_app_token"

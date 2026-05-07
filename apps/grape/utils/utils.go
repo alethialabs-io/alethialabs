@@ -1,13 +1,11 @@
 package utils
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/api"
 )
@@ -50,45 +48,28 @@ func (l *Logger) Error(message, step string) {
 	}
 }
 
-func ExecuteCommand(command string, dir string, env []string) error {
+func ExecuteCommand(command string, dir string, env []string, outWriter, errWriter io.Writer) error {
 	cmd := exec.Command("bash", "-c", command)
 	cmd.Dir = dir
 	cmd.Env = os.Environ() // Start with current environment
 	cmd.Env = append(cmd.Env, env...) // Add custom environment variables
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("error creating stdout pipe: %w", err)
+	if outWriter == nil {
+		outWriter = os.Stdout
 	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("error creating stderr pipe: %w", err)
+	if errWriter == nil {
+		errWriter = os.Stderr
 	}
+
+	cmd.Stdout = outWriter
+	cmd.Stderr = errWriter
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("error starting command: %w", err)
 	}
 
-	var stdoutBuf, stderrBuf bytes.Buffer
-	stdoutPipe := io.TeeReader(stdout, &stdoutBuf)
-	stderrPipe := io.TeeReader(stderr, &stderrBuf)
-
-	go func() {
-		scanner := bufio.NewScanner(stdoutPipe)
-		for scanner.Scan() {
-			fmt.Println(scanner.Text())
-		}
-	}()
-
-	go func() {
-		scanner := bufio.NewScanner(stderrPipe)
-		for scanner.Scan() {
-			fmt.Println(scanner.Text())
-		}
-	}()
-
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("command returned non-zero exit code: %w, stderr: %s", err, strings.TrimSpace(stderrBuf.String()))
+		return fmt.Errorf("command returned non-zero exit code: %w", err)
 	}
 
 	return nil

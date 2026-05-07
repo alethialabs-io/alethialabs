@@ -35,7 +35,7 @@ var (
 
 var deployCmd = &cobra.Command{
 	Use:   "deploy [project_name]",
-	Short: "Deploy a project's infrastructure",
+	Short: "[LEGACY] Deploy a project's infrastructure locally",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		projectName := args[0]

@@ -170,7 +170,7 @@ func (i *InfracostCLI) RunInfracost(terraformPlanFile string, env []string) erro
 
 	// Run Infracost breakdown command
 	breakdownCmd := fmt.Sprintf("%s breakdown --path %s --format json --out-file %s", i.binaryPath, terraformPlanFile, breakdownJSONPath)
-	err := utils.ExecuteCommand(breakdownCmd, ".", env) // Run in current dir
+	err := utils.ExecuteCommand(breakdownCmd, ".", env, nil, nil) // Run in current dir
 	if err != nil {
 		fmt.Printf("Warning: Failed to run Infracost breakdown: %v\n", err)
 		return nil // Don't exit, just warn and continue
@@ -178,7 +178,7 @@ func (i *InfracostCLI) RunInfracost(terraformPlanFile string, env []string) erro
 
 	// Convert JSON breakdown to a table format
 	outputCmd := fmt.Sprintf("%s output --format table --path %s --out-file %s", i.binaryPath, breakdownJSONPath, breakdownTablePath)
-	err = utils.ExecuteCommand(outputCmd, ".", env) // Run in current dir
+	err = utils.ExecuteCommand(outputCmd, ".", env, nil, nil) // Run in current dir
 	if err != nil {
 		fmt.Printf("Warning: Failed to convert Infracost JSON to table format: %v\n", err)
 		return nil // Don't exit, just warn and continue
