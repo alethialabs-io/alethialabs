@@ -20,19 +20,46 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { createClient } from "@/lib/supabase/client";
 import { User as IUser } from "@supabase/supabase-js";
 import {
+	ArrowRight,
+	Check,
 	Cloud,
-	Database,
+	Copy,
 	GitBranch,
-	Settings,
-	Shield,
-	Zap,
-	User,
-	LogOut,
 	LayoutDashboard,
+	LogOut,
+	Lock,
+	Terminal,
+	User,
+	Workflow,
+	Zap,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+
+function CopyButton({ text }: { text: string }) {
+	const [copied, setCopied] = useState(false);
+
+	const handleCopy = useCallback(() => {
+		navigator.clipboard.writeText(text);
+		setCopied(true);
+		setTimeout(() => setCopied(false), 2000);
+	}, [text]);
+
+	return (
+		<button
+			onClick={handleCopy}
+			className="text-muted-foreground hover:text-foreground transition-colors"
+			aria-label="Copy to clipboard"
+		>
+			{copied ? (
+				<Check className="h-4 w-4 text-green-500" />
+			) : (
+				<Copy className="h-4 w-4" />
+			)}
+		</button>
+	);
+}
 
 export default function HomePage() {
 	const [user, setUser] = useState<IUser | null>(null);
@@ -76,10 +103,10 @@ export default function HomePage() {
 							Trellis
 						</span>
 					</div>
-					
+
 					{user ? (
 						<div className="flex items-center gap-4">
-							<Link href="/dashboard/configurations">
+							<Link href="/dashboard/vines">
 								<Button variant="ghost" size="sm" className="text-sm">
 									Configurations
 								</Button>
@@ -137,19 +164,12 @@ export default function HomePage() {
 					) : (
 						<div className="flex items-center gap-2">
 							<Link href="/auth/signin">
-								<Button
-									variant="ghost"
-									size="sm"
-									className="text-sm"
-								>
+								<Button variant="ghost" size="sm" className="text-sm">
 									Log in
 								</Button>
 							</Link>
 							<Link href="/auth/signin">
-								<Button
-									size="sm"
-									className="text-sm"
-								>
+								<Button size="sm" className="text-sm">
 									Sign Up
 								</Button>
 							</Link>
@@ -158,29 +178,35 @@ export default function HomePage() {
 				</div>
 			</header>
 
-			{/* Hero Section */}
-			<section className="container mx-auto px-4 pt-32 pb-24 md:pt-48 md:pb-32">
+			{/* Hero */}
+			<section className="container mx-auto px-4 pt-28 pb-20 md:pt-40 md:pb-28">
 				<div className="max-w-[64rem] mx-auto text-center flex flex-col items-center">
-					<Badge variant="outline" className="mb-8 rounded-full px-3 py-1 text-xs tracking-tight bg-muted/50 border-border/50">
-						Enterprise Application Development Platform
+					<Badge
+						variant="outline"
+						className="mb-8 rounded-full px-3 py-1 text-xs tracking-tight bg-muted/50 border-border/50"
+					>
+						Open Source Infrastructure Platform
 					</Badge>
-					<h1 className="font-bold text-4xl sm:text-5xl md:text-6xl lg:text-7xl tracking-tighter text-foreground mb-6 leading-tight max-w-[54rem]">
-						Deploy AWS Infrastructure <br className="hidden sm:inline" />
-						<span className="text-muted-foreground">In Minutes.</span>
+					<h1 className="font-bold text-4xl sm:text-5xl md:text-6xl lg:text-7xl tracking-tighter text-foreground mb-6 leading-[1.1] max-w-[54rem]">
+						Configure in the browser.
+						<br />
+						<span className="text-muted-foreground">
+							Deploy from the terminal.
+						</span>
 					</h1>
-					<p className="text-muted-foreground text-lg sm:text-xl mb-10 max-w-[42rem] mx-auto leading-normal">
-						Streamline your cloud deployment workflow with our
-						intelligent configuration platform. Generate
-						production-ready Terraform, Kubernetes, and ArgoCD
-						configurations with enterprise-grade security.
+					<p className="text-muted-foreground text-lg sm:text-xl mb-10 max-w-[40rem] mx-auto leading-relaxed">
+						Trellis is a web control plane for AWS infrastructure.
+						Design your stack visually, then provision it with the
+						Grape CLI — Terraform, EKS, and ArgoCD, handled for you.
 					</p>
-					<div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto justify-center">
+					<div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto justify-center mb-12">
 						<Link href={user ? "/dashboard" : "/auth/signin"}>
 							<Button
 								size="lg"
 								className="h-12 px-8 text-base w-full sm:w-auto"
 							>
-								{user ? "Go to Dashboard" : "Start Deploying"}
+								{user ? "Go to Dashboard" : "Get Started"}
+								<ArrowRight className="ml-2 h-4 w-4" />
 							</Button>
 						</Link>
 						<Link href="/installation">
@@ -193,86 +219,206 @@ export default function HomePage() {
 							</Button>
 						</Link>
 					</div>
+
+					{/* Terminal snippet */}
+					<div className="w-full max-w-[32rem] rounded-lg border border-border/60 bg-neutral-950 text-left overflow-hidden shadow-xl">
+						<div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-white/10">
+							<div className="h-2.5 w-2.5 rounded-full bg-white/20" />
+							<div className="h-2.5 w-2.5 rounded-full bg-white/20" />
+							<div className="h-2.5 w-2.5 rounded-full bg-white/20" />
+							<span className="ml-2 text-xs text-white/40 font-mono">
+								terminal
+							</span>
+						</div>
+						<div className="p-4 font-mono text-sm space-y-2">
+							<div className="flex items-center justify-between gap-4">
+								<p>
+									<span className="text-white/40">$ </span>
+									<span className="text-white/90">brew install grape</span>
+								</p>
+								<CopyButton text="brew install grape" />
+							</div>
+							<div className="flex items-center justify-between gap-4">
+								<p>
+									<span className="text-white/40">$ </span>
+									<span className="text-white/90">grape login</span>
+								</p>
+								<CopyButton text="grape login" />
+							</div>
+							<div className="flex items-center justify-between gap-4">
+								<p>
+									<span className="text-white/40">$ </span>
+									<span className="text-white/90">grape bootstrap</span>
+								</p>
+								<CopyButton text="grape bootstrap" />
+							</div>
+							<p className="text-green-400/80 pt-1">
+								&#10003; EKS cluster provisioned. ArgoCD installed. Ready
+								to deploy.
+							</p>
+						</div>
+					</div>
 				</div>
 			</section>
 
-			{/* Features Grid */}
+			{/* How it works */}
 			<section className="border-t border-border/40 bg-muted/20">
 				<div className="container mx-auto px-4 py-24 md:py-32">
 					<div className="text-center mb-16 max-w-[42rem] mx-auto">
 						<h2 className="font-bold text-3xl md:text-4xl tracking-tighter text-foreground mb-4">
-							Everything you need for deployment
+							Three steps. Zero drift.
 						</h2>
-						<p className="text-muted-foreground text-lg leading-normal">
-							From infrastructure provisioning to application
-							deployment, our platform handles the complexity so you
-							can focus on building great products.
+						<p className="text-muted-foreground text-lg leading-relaxed">
+							Trellis and Grape work together — one configures, the
+							other executes. Git is the source of truth.
+						</p>
+					</div>
+
+					<div className="grid md:grid-cols-3 gap-8 max-w-[60rem] mx-auto">
+						<div className="relative flex flex-col items-start">
+							<span className="text-5xl font-bold text-muted-foreground/20 mb-4 tracking-tighter">
+								01
+							</span>
+							<h3 className="text-lg font-semibold text-foreground mb-2">
+								Design in Trellis
+							</h3>
+							<p className="text-muted-foreground text-sm leading-relaxed">
+								Pick your AWS region, choose your infrastructure
+								modules — VPC, EKS, RDS, CloudFront, WAF — and
+								configure everything through a guided wizard. No
+								HCL required.
+							</p>
+						</div>
+
+						<div className="relative flex flex-col items-start">
+							<span className="text-5xl font-bold text-muted-foreground/20 mb-4 tracking-tighter">
+								02
+							</span>
+							<h3 className="text-lg font-semibold text-foreground mb-2">
+								Bootstrap with Grape
+							</h3>
+							<p className="text-muted-foreground text-sm leading-relaxed">
+								One command provisions your EKS cluster, installs
+								ArgoCD, and wires up GitOps. Infrastructure stays
+								in your AWS account — Trellis never touches your
+								credentials.
+							</p>
+						</div>
+
+						<div className="relative flex flex-col items-start">
+							<span className="text-5xl font-bold text-muted-foreground/20 mb-4 tracking-tighter">
+								03
+							</span>
+							<h3 className="text-lg font-semibold text-foreground mb-2">
+								Ship with GitOps
+							</h3>
+							<p className="text-muted-foreground text-sm leading-relaxed">
+								ArgoCD watches your infrastructure repo and
+								reconciles changes automatically. Push a config
+								change, and your cluster converges — no manual
+								applies, no drift.
+							</p>
+						</div>
+					</div>
+				</div>
+			</section>
+
+			{/* Features */}
+			<section className="border-t border-border/40">
+				<div className="container mx-auto px-4 py-24 md:py-32">
+					<div className="text-center mb-16 max-w-[42rem] mx-auto">
+						<h2 className="font-bold text-3xl md:text-4xl tracking-tighter text-foreground mb-4">
+							Built for real infrastructure
+						</h2>
+						<p className="text-muted-foreground text-lg leading-relaxed">
+							Not another YAML abstraction. Trellis generates
+							production Terraform and Helm — you own every line.
 						</p>
 					</div>
 
 					<div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-[64rem] mx-auto">
 						<Card className="bg-background shadow-sm border-border/50 transition-colors hover:border-border">
 							<CardHeader>
-								<Cloud className="h-5 w-5 mb-4 text-foreground" />
-								<CardTitle className="text-lg">AWS Infrastructure</CardTitle>
+								<Cloud className="h-5 w-5 mb-3 text-foreground" />
+								<CardTitle className="text-base">
+									Full AWS Stack
+								</CardTitle>
 								<CardDescription className="text-sm leading-relaxed">
-									Automated VPC, EKS, RDS, and CloudFront
-									configuration with best practices built-in.
+									VPC, EKS, RDS, ElastiCache, CloudFront, and
+									WAF — configured with production best
+									practices out of the box.
 								</CardDescription>
 							</CardHeader>
 						</Card>
 
 						<Card className="bg-background shadow-sm border-border/50 transition-colors hover:border-border">
 							<CardHeader>
-								<GitBranch className="h-5 w-5 mb-4 text-foreground" />
-								<CardTitle className="text-lg">GitOps Integration</CardTitle>
+								<GitBranch className="h-5 w-5 mb-3 text-foreground" />
+								<CardTitle className="text-base">
+									GitOps-First
+								</CardTitle>
 								<CardDescription className="text-sm leading-relaxed">
-									Seamless ArgoCD setup with automated repository
-									management and deployment pipelines.
+									ArgoCD installed and configured automatically.
+									Git becomes your audit trail and single source
+									of truth.
 								</CardDescription>
 							</CardHeader>
 						</Card>
 
 						<Card className="bg-background shadow-sm border-border/50 transition-colors hover:border-border">
 							<CardHeader>
-								<Settings className="h-5 w-5 mb-4 text-foreground" />
-								<CardTitle className="text-lg">Smart Configuration</CardTitle>
+								<Lock className="h-5 w-5 mb-3 text-foreground" />
+								<CardTitle className="text-base">
+									Bring Your Own Cloud
+								</CardTitle>
 								<CardDescription className="text-sm leading-relaxed">
-									Intelligent form-based configuration that
-									generates production-ready Terraform code.
+									Cross-account IAM roles with external IDs. No
+									static keys stored, no vendor lock-in.
+									Infrastructure stays in your account.
 								</CardDescription>
 							</CardHeader>
 						</Card>
 
 						<Card className="bg-background shadow-sm border-border/50 transition-colors hover:border-border">
 							<CardHeader>
-								<Shield className="h-5 w-5 mb-4 text-foreground" />
-								<CardTitle className="text-lg">Enterprise Security</CardTitle>
+								<Terminal className="h-5 w-5 mb-3 text-foreground" />
+								<CardTitle className="text-base">
+									CLI + Web, Unified
+								</CardTitle>
 								<CardDescription className="text-sm leading-relaxed">
-									Built-in security best practices, IAM policies,
-									and compliance-ready configurations.
+									Configure visually in Trellis, execute locally
+									with Grape. Same state, two interfaces —
+									operators and developers both covered.
 								</CardDescription>
 							</CardHeader>
 						</Card>
 
 						<Card className="bg-background shadow-sm border-border/50 transition-colors hover:border-border">
 							<CardHeader>
-								<Database className="h-5 w-5 mb-4 text-foreground" />
-								<CardTitle className="text-lg">Database Management</CardTitle>
+								<Zap className="h-5 w-5 mb-3 text-foreground" />
+								<CardTitle className="text-base">
+									One-Command Bootstrap
+								</CardTitle>
 								<CardDescription className="text-sm leading-relaxed">
-									Automated RDS setup with scaling, backups, and
-									monitoring configurations.
+									<code className="text-xs bg-muted px-1 py-0.5 rounded">
+										grape bootstrap
+									</code>{" "}
+									provisions EKS, installs ArgoCD, and streams
+									logs back to Trellis in real time.
 								</CardDescription>
 							</CardHeader>
 						</Card>
 
 						<Card className="bg-background shadow-sm border-border/50 transition-colors hover:border-border">
 							<CardHeader>
-								<Zap className="h-5 w-5 mb-4 text-foreground" />
-								<CardTitle className="text-lg">Auto-Scaling</CardTitle>
+								<Workflow className="h-5 w-5 mb-3 text-foreground" />
+								<CardTitle className="text-base">
+									Safe Teardown
+								</CardTitle>
 								<CardDescription className="text-sm leading-relaxed">
-									Karpenter integration for intelligent Kubernetes
-									node scaling and cost optimization.
+									Disables ArgoCD self-healing, drains load
+									balancers, and destroys cleanly. No orphaned
+									resources, no surprise bills.
 								</CardDescription>
 							</CardHeader>
 						</Card>
@@ -280,25 +426,47 @@ export default function HomePage() {
 				</div>
 			</section>
 
-			{/* CTA Section */}
-			<section className="container mx-auto px-4 py-24 md:py-32">
-				<div className="max-w-[42rem] mx-auto text-center">
-					<h2 className="font-bold text-3xl md:text-4xl tracking-tighter text-foreground mb-4">
-						Ready to transform your workflow?
-					</h2>
-					<p className="text-muted-foreground text-lg mb-8 leading-normal">
-						Join enterprise teams who have reduced their
-						infrastructure deployment time by 90% with our
-						intelligent configuration platform.
-					</p>
-					<Link href="/auth/signin">
-						<Button
-							size="lg"
-							className="h-12 px-8 text-base"
-						>
-							Start Building Now
-						</Button>
-					</Link>
+			{/* Install CTA */}
+			<section className="border-t border-border/40 bg-muted/20">
+				<div className="container mx-auto px-4 py-24 md:py-32">
+					<div className="max-w-[48rem] mx-auto text-center">
+						<h2 className="font-bold text-3xl md:text-4xl tracking-tighter text-foreground mb-4">
+							Install Grape. Start building.
+						</h2>
+						<p className="text-muted-foreground text-lg mb-10 leading-relaxed max-w-[36rem] mx-auto">
+							A single binary with zero runtime dependencies.
+							Available via Homebrew.
+						</p>
+
+						<div className="flex items-center justify-center gap-3 rounded-lg border border-border/60 bg-neutral-950 px-5 py-3.5 max-w-md mx-auto mb-10">
+							<code className="font-mono text-sm text-white/90 flex-1 text-left">
+								<span className="text-white/40">$ </span>
+								brew install grape
+							</code>
+							<CopyButton text="brew install grape" />
+						</div>
+
+						<div className="flex flex-col sm:flex-row gap-3 justify-center">
+							<Link href={user ? "/dashboard" : "/auth/signin"}>
+								<Button
+									size="lg"
+									className="h-12 px-8 text-base w-full sm:w-auto"
+								>
+									Open Trellis
+									<ArrowRight className="ml-2 h-4 w-4" />
+								</Button>
+							</Link>
+							<Link href="/installation">
+								<Button
+									variant="outline"
+									size="lg"
+									className="h-12 px-8 text-base w-full sm:w-auto"
+								>
+									Read the Docs
+								</Button>
+							</Link>
+						</div>
+					</div>
 				</div>
 			</section>
 
@@ -316,7 +484,33 @@ export default function HomePage() {
 						</span>
 					</div>
 					<p className="text-muted-foreground text-sm">
-						© {new Date().getFullYear()} ItGix. All rights reserved.
+						Open source, developed by{" "}
+						<a
+							href="https://borislav.tovr.eu"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="text-foreground hover:underline"
+						>
+							Borislav Borisov
+						</a>
+						{" · "}
+						<a
+							href="https://github.com/bobikenobi12"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="text-foreground hover:underline"
+						>
+							GitHub
+						</a>
+						{" · "}
+						<a
+							href="https://www.linkedin.com/in/bborisov1/"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="text-foreground hover:underline"
+						>
+							LinkedIn
+						</a>
 					</p>
 				</div>
 			</footer>
