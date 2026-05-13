@@ -20,6 +20,7 @@ import { useAwsOnboarding } from "@/hooks/use-aws-onboarding";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { User as IUser } from "@supabase/supabase-js";
+import { SidebarVineyards } from "@/components/sidebar-vineyards";
 import {
 	AlertTriangle,
 	ArrowRight,
@@ -28,7 +29,6 @@ import {
 	History,
 	LayoutDashboard,
 	LogOut,
-	Map,
 	Menu,
 	Plus,
 	Search,
@@ -72,13 +72,8 @@ export default function DashboardLayout({
 
 	const navigation = [
 		{ name: "Overview", href: "/dashboard", icon: LayoutDashboard },
-		{ name: "Vineyards", href: "/dashboard/vineyards", icon: Map },
 		{ name: "Plant a Vine", href: "/dashboard/configure", icon: Plus },
-		{
-			name: "Vines",
-			href: "/dashboard/configurations",
-			icon: Folder,
-		},
+		{ name: "Vines", href: "/dashboard/vines", icon: Folder },
 		{ name: "Clusters", href: "/dashboard/clusters", icon: Server },
 		{ name: "History", href: "/dashboard/history", icon: History },
 	];
@@ -263,7 +258,7 @@ export default function DashboardLayout({
 			<div className="flex flex-1 overflow-hidden">
 				{/* Desktop Sidebar - Fixed Width */}
 				<aside className="hidden lg:flex w-64 xl:w-72 shrink-0 flex-col overflow-y-auto border-r border-border/40 bg-background/50">
-					<nav className="flex-1 space-y-1 p-4 lg:p-6">
+					<nav className="flex-1 space-y-1 p-4 lg:p-6 overflow-y-auto">
 						{navigation.map((item) => {
 							const isActive = pathname === item.href;
 							return (
@@ -292,6 +287,10 @@ export default function DashboardLayout({
 								</Link>
 							);
 						})}
+
+						<Suspense fallback={null}>
+							<SidebarVineyards />
+						</Suspense>
 					</nav>
 
 					<div className="p-4 lg:p-6 mt-auto">
@@ -379,6 +378,10 @@ export default function DashboardLayout({
 										</Link>
 									);
 								})}
+
+								<Suspense fallback={null}>
+									<SidebarVineyards />
+								</Suspense>
 							</nav>
 						</aside>
 					</div>

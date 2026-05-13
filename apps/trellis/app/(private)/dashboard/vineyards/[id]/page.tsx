@@ -21,7 +21,7 @@ export default async function VineyardDetailsPage({
 		}
 
 		return (
-			<div className="flex flex-col gap-6 max-w-[1200px] mx-auto w-full">
+			<div className="flex flex-col gap-6 w-full">
 				<div className="flex flex-col min-h-[600px] h-[600px] w-full relative rounded-xl border border-border shadow-sm overflow-hidden">
 					{/* Top bar over the canvas */}
 					<div className="absolute top-4 left-4 z-10 flex flex-col gap-4 bg-background/80 backdrop-blur-md p-4 rounded-xl border border-border/50 shadow-sm pointer-events-auto">

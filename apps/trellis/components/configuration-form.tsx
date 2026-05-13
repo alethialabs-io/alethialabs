@@ -157,7 +157,7 @@ topics:
 				);
 			} else {
 				router.push(
-					`/dashboard/configurations?config_id=${configuration.id}`,
+					`/dashboard/vines?config_id=${configuration.id}`,
 				);
 			}
 		} catch (error) {
