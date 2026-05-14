@@ -23,8 +23,6 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import * as z from "zod";
-import { env } from "next-runtime-env";
-
 // Zod schema for Role ARN validation
 const awsRoleSchema = z.object({
 	roleArn: z.string().superRefine((val, ctx) => {
@@ -60,9 +58,6 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 	const [method, setMethod] = useState<"cloudformation" | "terraform">(
 		"cloudformation",
 	);
-
-	const grapeAwsAccountId =
-		env("NEXT_PUBLIC_GRAPE_AWS_ACCOUNT_ID") || "123456789012"; // Fallback for dev
 
 	// CloudFormation Console Link (Generic)
 	const cfnUrl =
@@ -105,67 +100,65 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 	};
 
 	return (
-		<div className="max-w-[800px] mx-auto space-y-8 w-full animate-in fade-in slide-in-from-bottom-4 duration-700">
-			<div className="space-y-1.5">
-				<h2 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
-					Connect your AWS Account
-				</h2>
-				<p className="text-muted-foreground text-sm">
-					Grape needs a cross-account role to provision and manage
-					your infrastructure securely.
-				</p>
-			</div>
-
-			<div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+		<div className="max-w-[800px] mx-auto space-y-6 w-full">
+			<div className="flex flex-col gap-4">
 				{/* Method Selection */}
-				<div className="md:col-span-1 space-y-4">
+				<div className="flex gap-3">
 					<button
 						onClick={() => setMethod("cloudformation")}
-						className={`w-full p-4 rounded-lg border text-left transition-all duration-200 ${
+						className={`flex-1 p-3 rounded-lg border text-left transition-all duration-200 ${
 							method === "cloudformation"
 								? "border-foreground bg-muted/20"
 								: "border-border/50 bg-background hover:border-border/80 hover:bg-muted/10"
 						}`}
 						type="button"
 					>
-						<div
-							className={`p-2 rounded-md w-fit mb-3 border ${method === "cloudformation" ? "bg-foreground text-background border-foreground" : "bg-background text-muted-foreground border-border/50"}`}
-						>
-							<CloudIcon className="w-4 h-4" />
-						</div>
-						<div className="font-medium text-sm text-foreground">
-							CloudFormation
-						</div>
-						<div className="text-xs text-muted-foreground mt-1">
-							Recommended for quick setup via AWS Console.
+						<div className="flex items-center gap-2.5">
+							<div
+								className={`p-1.5 rounded-md border ${method === "cloudformation" ? "bg-foreground text-background border-foreground" : "bg-background text-muted-foreground border-border/50"}`}
+							>
+								<CloudIcon className="w-3.5 h-3.5" />
+							</div>
+							<div>
+								<div className="font-medium text-sm text-foreground">
+									CloudFormation
+								</div>
+								<div className="text-[11px] text-muted-foreground">
+									Quick setup via AWS Console
+								</div>
+							</div>
 						</div>
 					</button>
 
 					<button
 						onClick={() => setMethod("terraform")}
-						className={`w-full p-4 rounded-lg border text-left transition-all duration-200 ${
+						className={`flex-1 p-3 rounded-lg border text-left transition-all duration-200 ${
 							method === "terraform"
 								? "border-foreground bg-muted/20"
 								: "border-border/50 bg-background hover:border-border/80 hover:bg-muted/10"
 						}`}
 						type="button"
 					>
-						<div
-							className={`p-2 rounded-md w-fit mb-3 border ${method === "terraform" ? "bg-foreground text-background border-foreground" : "bg-background text-muted-foreground border-border/50"}`}
-						>
-							<Terminal className="w-4 h-4" />
-						</div>
-						<div className="font-medium text-sm text-foreground">
-							Terraform / IaC
-						</div>
-						<div className="text-xs text-muted-foreground mt-1">
-							Best for teams using Infrastructure as Code.
+						<div className="flex items-center gap-2.5">
+							<div
+								className={`p-1.5 rounded-md border ${method === "terraform" ? "bg-foreground text-background border-foreground" : "bg-background text-muted-foreground border-border/50"}`}
+							>
+								<Terminal className="w-3.5 h-3.5" />
+							</div>
+							<div>
+								<div className="font-medium text-sm text-foreground">
+									Terraform / IaC
+								</div>
+								<div className="text-[11px] text-muted-foreground">
+									Infrastructure as Code
+								</div>
+							</div>
 						</div>
 					</button>
 				</div>
 
 				{/* Instructions */}
-				<Card className="md:col-span-2 border-border/40 shadow-sm bg-background">
+				<Card className="border-border/40 shadow-sm bg-background">
 					<CardHeader className="border-b border-border/40 pb-4 bg-muted/5">
 						<CardTitle className="text-base font-medium flex items-center gap-2">
 							<ShieldCheck className="w-4.5 h-4.5 text-muted-foreground" />

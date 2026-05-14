@@ -25,6 +25,7 @@ import {
 	AlertTriangle,
 	ArrowRight,
 	Bell,
+	Cloud,
 	Folder,
 	History,
 	LayoutDashboard,
@@ -76,6 +77,7 @@ export default function DashboardLayout({
 		{ name: "Vines", href: "/dashboard/vines", icon: Folder },
 		{ name: "Clusters", href: "/dashboard/clusters", icon: Server },
 		{ name: "History", href: "/dashboard/history", icon: History },
+		{ name: "Providers", href: "/dashboard/providers", icon: Cloud },
 	];
 
 	const getUserInitials = () => {
@@ -170,7 +172,7 @@ export default function DashboardLayout({
 													You haven't connected your AWS account yet. You can still create configurations, but you won't be able to provision any infrastructure until you connect.
 												</p>
 												<div className="pt-1">
-													<Link href="/onboarding/aws">
+													<Link href="/dashboard/providers">
 														<Button
 															variant="outline"
 															size="sm"
