@@ -130,11 +130,12 @@ export function DownloadOptions({ configurationData }: DownloadOptionsProps) {
 		},
 		{
 			id: "terraform",
-			title: "Terraform Package",
-			description: "Complete infrastructure deployment package",
-			filename: "idp-installer-v1.0.0.zip",
+			title: "Installer Package",
+			description:
+				"IDP installer (v1.2.6) bundled with your configuration",
+			filename: "idp-installer-v1.2.6.zip",
 			icon: <Archive className="w-5 h-5 text-muted-foreground" />,
-			size: "~150-200 KB",
+			size: "~1-2 MB",
 		},
 		{
 			id: "docker",
@@ -261,8 +262,9 @@ export function DownloadOptions({ configurationData }: DownloadOptionsProps) {
 									necessary permissions
 								</li>
 								<li>
-									• The ZIP package includes installation
-									scripts and documentation
+									• The installer ZIP includes your
+									configuration pre-loaded in the config
+									directory
 								</li>
 							</ul>
 						</div>
