@@ -1,19 +1,17 @@
 "use client";
 
 import { hasCloudIdentity } from "@/app/server/actions/identities";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 export function useAwsOnboarding() {
 	const [showAwsAlert, setShowAwsAlert] = useState(false);
 	const [isLoading, setIsLoading] = useState(true);
-	const router = useRouter();
 	const pathname = usePathname();
 
 	useEffect(() => {
 		const checkStatus = async () => {
-			// Don't check if we are already on the onboarding page
-			if (pathname?.includes("/onboarding/aws")) {
+			if (pathname?.includes("/dashboard/providers")) {
 				setIsLoading(false);
 				return;
 			}
@@ -21,18 +19,9 @@ export function useAwsOnboarding() {
 			try {
 				const hasIdentity = await hasCloudIdentity();
 
-				console.log("hasIdentity", hasIdentity);
 				if (!hasIdentity) {
-					const skipped = localStorage.getItem(
-						"aws_onboarding_skipped",
-					);
-					if (!skipped) {
-						router.push("/onboarding/aws");
-					} else {
-						setShowAwsAlert(true);
-					}
+					setShowAwsAlert(true);
 				} else {
-					// Ensure alert is hidden if they connect later
 					setShowAwsAlert(false);
 				}
 			} catch (error) {
@@ -43,7 +32,7 @@ export function useAwsOnboarding() {
 		};
 
 		checkStatus();
-	}, [router, pathname]);
+	}, [pathname]);
 
 	return { showAwsAlert, setShowAwsAlert, isLoading };
 }
