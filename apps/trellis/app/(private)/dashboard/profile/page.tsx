@@ -1,6 +1,5 @@
 "use client";
 
-import { LinkedAccounts } from "@/components/linked-accounts";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -165,10 +164,6 @@ export default function ProfilePage() {
 					</div>
 				</CardContent>
 			</Card>
-
-			<div className="mb-6">
-				<LinkedAccounts />
-			</div>
 
 			{/* Account Details */}
 			<Card className="shadow-sm border-border/40">

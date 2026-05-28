@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
-export default function ProvidersPage() {
+export default function GitPage() {
 	redirect("/dashboard/integrations");
 }

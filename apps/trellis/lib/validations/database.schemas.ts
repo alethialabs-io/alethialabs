@@ -50,6 +50,24 @@ export const publicIacToolSchema = z.union([
   z.literal("terraform"),
 ]);
 
+export const publicIntegrationAuthMethodSchema = z.union([
+  z.literal("oauth"),
+  z.literal("iam_role"),
+  z.literal("service_account"),
+  z.literal("service_principal"),
+  z.literal("ram_role"),
+]);
+
+export const publicIntegrationCategorySchema = z.union([
+  z.literal("git"),
+  z.literal("cloud"),
+]);
+
+export const publicIntegrationStatusSchema = z.union([
+  z.literal("active"),
+  z.literal("coming_soon"),
+]);
+
 export const publicLogsLevelSchema = z.union([
   z.literal("debug"),
   z.literal("info"),
@@ -186,7 +204,11 @@ export const publicCliLoginsRelationshipsSchema = z.tuple([
 
 export const publicCloudIdentitiesRowSchema = z.object({
   created_at: z.string().nullable(),
-  credentials: jsonSchema,
+  credentials: z.object({
+    role_arn: z.string().optional().nullable(),
+    external_id: z.string().optional().nullable(),
+    account_id: z.string().optional().nullable(),
+  }),
   id: z.string(),
   is_verified: z.boolean().nullable(),
   name: z.string(),
@@ -197,7 +219,13 @@ export const publicCloudIdentitiesRowSchema = z.object({
 
 export const publicCloudIdentitiesInsertSchema = z.object({
   created_at: z.string().optional().nullable(),
-  credentials: jsonSchema.optional(),
+  credentials: z
+    .object({
+      role_arn: z.string().optional().nullable(),
+      external_id: z.string().optional().nullable(),
+      account_id: z.string().optional().nullable(),
+    })
+    .optional(),
   id: z.string().optional(),
   is_verified: z.boolean().optional().nullable(),
   name: z.string().optional(),
@@ -208,7 +236,13 @@ export const publicCloudIdentitiesInsertSchema = z.object({
 
 export const publicCloudIdentitiesUpdateSchema = z.object({
   created_at: z.string().optional().nullable(),
-  credentials: jsonSchema.optional(),
+  credentials: z
+    .object({
+      role_arn: z.string().optional().nullable(),
+      external_id: z.string().optional().nullable(),
+      account_id: z.string().optional().nullable(),
+    })
+    .optional(),
   id: z.string().optional(),
   is_verified: z.boolean().optional().nullable(),
   name: z.string().optional(),
@@ -222,7 +256,15 @@ export const publicClustersRowSchema = z.object({
   created_at: z.string().nullable(),
   id: z.string(),
   last_heartbeat: z.string().nullable(),
-  metadata: jsonSchema.nullable(),
+  metadata: z
+    .record(z.string(), z.any())
+    .and(
+      z.object({
+        region: z.string().optional().nullable(),
+        vpc_cidr: z.string().optional().nullable(),
+      }),
+    )
+    .nullable(),
   name: z.string(),
   status: publicClusterStatusSchema.nullable(),
   user_id: z.string(),
@@ -233,7 +275,16 @@ export const publicClustersInsertSchema = z.object({
   created_at: z.string().optional().nullable(),
   id: z.string().optional(),
   last_heartbeat: z.string().optional().nullable(),
-  metadata: jsonSchema.optional().nullable(),
+  metadata: z
+    .record(z.string(), z.any())
+    .and(
+      z.object({
+        region: z.string().optional().nullable(),
+        vpc_cidr: z.string().optional().nullable(),
+      }),
+    )
+    .optional()
+    .nullable(),
   name: z.string(),
   status: publicClusterStatusSchema.optional().nullable(),
   user_id: z.string(),
@@ -244,7 +295,16 @@ export const publicClustersUpdateSchema = z.object({
   created_at: z.string().optional().nullable(),
   id: z.string().optional(),
   last_heartbeat: z.string().optional().nullable(),
-  metadata: jsonSchema.optional().nullable(),
+  metadata: z
+    .record(z.string(), z.any())
+    .and(
+      z.object({
+        region: z.string().optional().nullable(),
+        vpc_cidr: z.string().optional().nullable(),
+      }),
+    )
+    .optional()
+    .nullable(),
   name: z.string().optional(),
   status: publicClusterStatusSchema.optional().nullable(),
   user_id: z.string().optional(),
@@ -659,6 +719,60 @@ export const publicHarvestsRelationshipsSchema = z.tuple([
     referencedColumns: z.tuple([z.literal("id")]),
   }),
 ]);
+
+export const publicIntegrationsRowSchema = z.object({
+  auth_method: publicIntegrationAuthMethodSchema,
+  category: publicIntegrationCategorySchema,
+  created_at: z.string().nullable(),
+  description: z.string(),
+  docs_url: z.string().nullable(),
+  icon_url: z.string(),
+  id: z.string(),
+  name: z.string(),
+  organization: z.string(),
+  privacy_url: z.string().nullable(),
+  slug: z.string(),
+  sort_order: z.number(),
+  status: publicIntegrationStatusSchema,
+  support_url: z.string().nullable(),
+  updated_at: z.string().nullable(),
+});
+
+export const publicIntegrationsInsertSchema = z.object({
+  auth_method: publicIntegrationAuthMethodSchema,
+  category: publicIntegrationCategorySchema,
+  created_at: z.string().optional().nullable(),
+  description: z.string(),
+  docs_url: z.string().optional().nullable(),
+  icon_url: z.string(),
+  id: z.string().optional(),
+  name: z.string(),
+  organization: z.string(),
+  privacy_url: z.string().optional().nullable(),
+  slug: z.string(),
+  sort_order: z.number().optional(),
+  status: publicIntegrationStatusSchema.optional(),
+  support_url: z.string().optional().nullable(),
+  updated_at: z.string().optional().nullable(),
+});
+
+export const publicIntegrationsUpdateSchema = z.object({
+  auth_method: publicIntegrationAuthMethodSchema.optional(),
+  category: publicIntegrationCategorySchema.optional(),
+  created_at: z.string().optional().nullable(),
+  description: z.string().optional(),
+  docs_url: z.string().optional().nullable(),
+  icon_url: z.string().optional(),
+  id: z.string().optional(),
+  name: z.string().optional(),
+  organization: z.string().optional(),
+  privacy_url: z.string().optional().nullable(),
+  slug: z.string().optional(),
+  sort_order: z.number().optional(),
+  status: publicIntegrationStatusSchema.optional(),
+  support_url: z.string().optional().nullable(),
+  updated_at: z.string().optional().nullable(),
+});
 
 export const publicJobLogsRowSchema = z.object({
   created_at: z.string().nullable(),

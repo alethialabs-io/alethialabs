@@ -133,7 +133,7 @@ export function LinkedAccounts() {
 			const { error } = await supabase.auth.linkIdentity({
 				provider,
 				options: {
-					redirectTo: `${env("NEXT_PUBLIC_APP_URL") || window.location.origin}/api/auth/callback?next=/dashboard/profile&provider=${provider}`,
+					redirectTo: `${env("NEXT_PUBLIC_APP_URL") || window.location.origin}/api/auth/callback?next=/dashboard/git&provider=${provider}`,
 					scopes: provider === "github" ? "repo" : provider === "gitlab" ? "read_api read_user read_repository read_registry openid profile email" : undefined,
 				},
 			});

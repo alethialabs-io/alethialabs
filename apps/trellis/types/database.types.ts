@@ -125,7 +125,7 @@ export type Database = {
       cloud_identities: {
         Row: {
           created_at: string | null
-          credentials: Json
+          credentials: { role_arn?: string | null; external_id?: string | null; account_id?: string | null; }
           id: string
           is_verified: boolean | null
           name: string
@@ -135,7 +135,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string | null
-          credentials?: Json
+          credentials?: { role_arn?: string | null; external_id?: string | null; account_id?: string | null; }
           id?: string
           is_verified?: boolean | null
           name?: string
@@ -145,7 +145,7 @@ export type Database = {
         }
         Update: {
           created_at?: string | null
-          credentials?: Json
+          credentials?: { role_arn?: string | null; external_id?: string | null; account_id?: string | null; }
           id?: string
           is_verified?: boolean | null
           name?: string
@@ -161,7 +161,7 @@ export type Database = {
           created_at: string | null
           id: string
           last_heartbeat: string | null
-          metadata: Json | null
+          metadata: { region?: string | null; vpc_cidr?: string | null; [key: string]: any; } | null
           name: string
           status: Database["public"]["Enums"]["cluster_status"] | null
           user_id: string
@@ -171,7 +171,7 @@ export type Database = {
           created_at?: string | null
           id?: string
           last_heartbeat?: string | null
-          metadata?: Json | null
+          metadata?: { region?: string | null; vpc_cidr?: string | null; [key: string]: any; } | null
           name: string
           status?: Database["public"]["Enums"]["cluster_status"] | null
           user_id: string
@@ -181,7 +181,7 @@ export type Database = {
           created_at?: string | null
           id?: string
           last_heartbeat?: string | null
-          metadata?: Json | null
+          metadata?: { region?: string | null; vpc_cidr?: string | null; [key: string]: any; } | null
           name?: string
           status?: Database["public"]["Enums"]["cluster_status"] | null
           user_id?: string
@@ -587,6 +587,60 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      integrations: {
+        Row: {
+          auth_method: Database["public"]["Enums"]["integration_auth_method"]
+          category: Database["public"]["Enums"]["integration_category"]
+          created_at: string | null
+          description: string
+          docs_url: string | null
+          icon_url: string
+          id: string
+          name: string
+          organization: string
+          privacy_url: string | null
+          slug: string
+          sort_order: number
+          status: Database["public"]["Enums"]["integration_status"]
+          support_url: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          auth_method: Database["public"]["Enums"]["integration_auth_method"]
+          category: Database["public"]["Enums"]["integration_category"]
+          created_at?: string | null
+          description: string
+          docs_url?: string | null
+          icon_url: string
+          id?: string
+          name: string
+          organization: string
+          privacy_url?: string | null
+          slug: string
+          sort_order?: number
+          status?: Database["public"]["Enums"]["integration_status"]
+          support_url?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          auth_method?: Database["public"]["Enums"]["integration_auth_method"]
+          category?: Database["public"]["Enums"]["integration_category"]
+          created_at?: string | null
+          description?: string
+          docs_url?: string | null
+          icon_url?: string
+          id?: string
+          name?: string
+          organization?: string
+          privacy_url?: string | null
+          slug?: string
+          sort_order?: number
+          status?: Database["public"]["Enums"]["integration_status"]
+          support_url?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
       }
       job_logs: {
         Row: {
@@ -1070,6 +1124,14 @@ export type Database = {
         | "destroying"
       git_provider: "github" | "bitbucket" | "gitlab"
       iac_tool: "pulumi" | "terraform"
+      integration_auth_method:
+        | "oauth"
+        | "iam_role"
+        | "service_account"
+        | "service_principal"
+        | "ram_role"
+      integration_category: "git" | "cloud"
+      integration_status: "active" | "coming_soon"
       logs_level: "debug" | "info" | "warn" | "error" | "critical"
     }
     CompositeTypes: {
@@ -1220,6 +1282,15 @@ export const Constants = {
       ],
       git_provider: ["github", "bitbucket", "gitlab"],
       iac_tool: ["pulumi", "terraform"],
+      integration_auth_method: [
+        "oauth",
+        "iam_role",
+        "service_account",
+        "service_principal",
+        "ram_role",
+      ],
+      integration_category: ["git", "cloud"],
+      integration_status: ["active", "coming_soon"],
       logs_level: ["debug", "info", "warn", "error", "critical"],
     },
   },
