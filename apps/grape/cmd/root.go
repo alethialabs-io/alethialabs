@@ -11,7 +11,7 @@ import (
 var rootCmd = &cobra.Command{
 	Use:   "grape",
 	Short: "grape is a CLI for managing your infrastructure",
-	Long: `The ADP ItGix Platform is a comprehensive solution encompassing a CLI (grape), a Web Control Plane (trellis), and remote execution agents (tendril).
+	Long: `The ADP ItGix Platform is a comprehensive solution encompassing a CLI (grape), a Web Control Plane (trellis), and an ArgoCD-based GitOps runtime.
 It helps you automate, manage, and scale your cloud infrastructure easily.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		logo := `

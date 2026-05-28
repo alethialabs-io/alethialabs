@@ -18,8 +18,11 @@ func NewHelmCLI(dryRun bool) *HelmCLI {
 	}
 }
 
-func (h *HelmCLI) UpgradeInstall(releaseName, chartDir, namespace, valuesFile string, env map[string]string, setJSON string, logger *utils.Logger) error {
-	cmd := fmt.Sprintf("helm upgrade --install --create-namespace %s %s -n %s -f %s", releaseName, chartDir, namespace, valuesFile)
+func (h *HelmCLI) UpgradeInstall(releaseName, chartDir, namespace string, valuesFiles []string, env map[string]string, setJSON string, logger *utils.Logger) error {
+	cmd := fmt.Sprintf("helm upgrade --install --create-namespace %s %s -n %s", releaseName, chartDir, namespace)
+	for _, vf := range valuesFiles {
+		cmd += fmt.Sprintf(" -f %s", vf)
+	}
 
 	if setJSON != "" {
 		cmd += fmt.Sprintf(" --set-json '%s'", setJSON)

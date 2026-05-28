@@ -660,6 +660,40 @@ export const publicHarvestsRelationshipsSchema = z.tuple([
   }),
 ]);
 
+export const publicJobLogsRowSchema = z.object({
+  created_at: z.string().nullable(),
+  id: z.number(),
+  job_id: z.string(),
+  log_chunk: z.string(),
+  stream_type: z.string().nullable(),
+});
+
+export const publicJobLogsInsertSchema = z.object({
+  created_at: z.string().optional().nullable(),
+  id: z.number().optional(),
+  job_id: z.string(),
+  log_chunk: z.string(),
+  stream_type: z.string().optional().nullable(),
+});
+
+export const publicJobLogsUpdateSchema = z.object({
+  created_at: z.string().optional().nullable(),
+  id: z.number().optional(),
+  job_id: z.string().optional(),
+  log_chunk: z.string().optional(),
+  stream_type: z.string().optional().nullable(),
+});
+
+export const publicJobLogsRelationshipsSchema = z.tuple([
+  z.object({
+    foreignKeyName: z.literal("job_logs_job_id_fkey"),
+    columns: z.tuple([z.literal("job_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("provision_jobs"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+]);
+
 export const publicProfilesRowSchema = z.object({
   avatar_url: z.string().nullable(),
   created_at: z.string(),
@@ -716,6 +750,100 @@ export const publicProviderTokensUpdateSchema = z.object({
   updated_at: z.string().optional().nullable(),
   user_id: z.string().optional(),
 });
+
+export const publicProvisionJobsRowSchema = z.object({
+  claimed_at: z.string().nullable(),
+  cloud_identity_id: z.string().nullable(),
+  cluster_id: z.string().nullable(),
+  completed_at: z.string().nullable(),
+  config_snapshot: jsonSchema,
+  configuration_hash: z.string().nullable(),
+  configuration_id: z.string().nullable(),
+  created_at: z.string().nullable(),
+  error_message: z.string().nullable(),
+  execution_metadata: jsonSchema.nullable(),
+  id: z.string(),
+  job_type: z.string(),
+  started_at: z.string().nullable(),
+  status: z.string(),
+  updated_at: z.string().nullable(),
+  user_id: z.string(),
+  vineyard_id: z.string(),
+  worker_id: z.string().nullable(),
+});
+
+export const publicProvisionJobsInsertSchema = z.object({
+  claimed_at: z.string().optional().nullable(),
+  cloud_identity_id: z.string().optional().nullable(),
+  cluster_id: z.string().optional().nullable(),
+  completed_at: z.string().optional().nullable(),
+  config_snapshot: jsonSchema.optional(),
+  configuration_hash: z.string().optional().nullable(),
+  configuration_id: z.string().optional().nullable(),
+  created_at: z.string().optional().nullable(),
+  error_message: z.string().optional().nullable(),
+  execution_metadata: jsonSchema.optional().nullable(),
+  id: z.string().optional(),
+  job_type: z.string(),
+  started_at: z.string().optional().nullable(),
+  status: z.string().optional(),
+  updated_at: z.string().optional().nullable(),
+  user_id: z.string().optional(),
+  vineyard_id: z.string(),
+  worker_id: z.string().optional().nullable(),
+});
+
+export const publicProvisionJobsUpdateSchema = z.object({
+  claimed_at: z.string().optional().nullable(),
+  cloud_identity_id: z.string().optional().nullable(),
+  cluster_id: z.string().optional().nullable(),
+  completed_at: z.string().optional().nullable(),
+  config_snapshot: jsonSchema.optional(),
+  configuration_hash: z.string().optional().nullable(),
+  configuration_id: z.string().optional().nullable(),
+  created_at: z.string().optional().nullable(),
+  error_message: z.string().optional().nullable(),
+  execution_metadata: jsonSchema.optional().nullable(),
+  id: z.string().optional(),
+  job_type: z.string().optional(),
+  started_at: z.string().optional().nullable(),
+  status: z.string().optional(),
+  updated_at: z.string().optional().nullable(),
+  user_id: z.string().optional(),
+  vineyard_id: z.string().optional(),
+  worker_id: z.string().optional().nullable(),
+});
+
+export const publicProvisionJobsRelationshipsSchema = z.tuple([
+  z.object({
+    foreignKeyName: z.literal("provision_jobs_cloud_identity_id_fkey"),
+    columns: z.tuple([z.literal("cloud_identity_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("cloud_identities"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+  z.object({
+    foreignKeyName: z.literal("provision_jobs_cluster_id_fkey"),
+    columns: z.tuple([z.literal("cluster_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("clusters"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+  z.object({
+    foreignKeyName: z.literal("provision_jobs_configuration_id_fkey"),
+    columns: z.tuple([z.literal("configuration_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("configurations"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+  z.object({
+    foreignKeyName: z.literal("provision_jobs_vineyard_id_fkey"),
+    columns: z.tuple([z.literal("vineyard_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("vineyards"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+]);
 
 export const publicProvisionLogsRowSchema = z.object({
   created_at: z.string().nullable(),
@@ -827,12 +955,90 @@ export const publicVineyardsUpdateSchema = z.object({
   user_id: z.string().optional(),
 });
 
+export const publicWorkersRowSchema = z.object({
+  cloud_identity_id: z.string().nullable(),
+  created_at: z.string().nullable(),
+  id: z.string(),
+  last_heartbeat: z.string().nullable(),
+  metadata: jsonSchema.nullable(),
+  mode: z.string(),
+  name: z.string(),
+  status: z.string().nullable(),
+  token_hash: z.string(),
+  user_id: z.string(),
+});
+
+export const publicWorkersInsertSchema = z.object({
+  cloud_identity_id: z.string().optional().nullable(),
+  created_at: z.string().optional().nullable(),
+  id: z.string().optional(),
+  last_heartbeat: z.string().optional().nullable(),
+  metadata: jsonSchema.optional().nullable(),
+  mode: z.string(),
+  name: z.string(),
+  status: z.string().optional().nullable(),
+  token_hash: z.string(),
+  user_id: z.string().optional(),
+});
+
+export const publicWorkersUpdateSchema = z.object({
+  cloud_identity_id: z.string().optional().nullable(),
+  created_at: z.string().optional().nullable(),
+  id: z.string().optional(),
+  last_heartbeat: z.string().optional().nullable(),
+  metadata: jsonSchema.optional().nullable(),
+  mode: z.string().optional(),
+  name: z.string().optional(),
+  status: z.string().optional().nullable(),
+  token_hash: z.string().optional(),
+  user_id: z.string().optional(),
+});
+
+export const publicWorkersRelationshipsSchema = z.tuple([
+  z.object({
+    foreignKeyName: z.literal("workers_cloud_identity_id_fkey"),
+    columns: z.tuple([z.literal("cloud_identity_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("cloud_identities"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+]);
+
 export const publicAgentHeartbeatArgsSchema = z.object({
   p_cluster_id: z.string(),
   p_token_hash: z.string(),
 });
 
 export const publicAgentHeartbeatReturnsSchema = z.undefined();
+
+export const publicClaimNextJobArgsSchema = z.object({
+  p_cloud_identity_id: z.string().optional(),
+  p_worker_id: z.string(),
+  p_worker_token_hash: z.string(),
+});
+
+export const publicClaimNextJobReturnsSchema = z.array(
+  z.object({
+    claimed_at: z.string().nullable(),
+    cloud_identity_id: z.string().nullable(),
+    cluster_id: z.string().nullable(),
+    completed_at: z.string().nullable(),
+    config_snapshot: jsonSchema,
+    configuration_hash: z.string().nullable(),
+    configuration_id: z.string().nullable(),
+    created_at: z.string().nullable(),
+    error_message: z.string().nullable(),
+    execution_metadata: jsonSchema.nullable(),
+    id: z.string(),
+    job_type: z.string(),
+    started_at: z.string().nullable(),
+    status: z.string(),
+    updated_at: z.string().nullable(),
+    user_id: z.string(),
+    vineyard_id: z.string(),
+    worker_id: z.string().nullable(),
+  }),
+);
 
 export const publicFetchNextProvisionArgsSchema = z.object({
   p_cluster_id: z.string(),
@@ -873,6 +1079,16 @@ export const publicGetConfigurationStatsReturnsSchema = z.array(
   }),
 );
 
+export const publicInsertJobLogArgsSchema = z.object({
+  p_job_id: z.string(),
+  p_log_chunk: z.string(),
+  p_stream_type: z.string().optional(),
+  p_worker_id: z.string(),
+  p_worker_token_hash: z.string(),
+});
+
+export const publicInsertJobLogReturnsSchema = z.undefined();
+
 export const publicInsertProvisionLogArgsSchema = z.object({
   p_cluster_id: z.string(),
   p_log_chunk: z.string(),
@@ -883,6 +1099,21 @@ export const publicInsertProvisionLogArgsSchema = z.object({
 
 export const publicInsertProvisionLogReturnsSchema = z.undefined();
 
+export const publicRecoverStaleJobsArgsSchema = z.never();
+
+export const publicRecoverStaleJobsReturnsSchema = z.number();
+
+export const publicUpdateJobStatusArgsSchema = z.object({
+  p_error_message: z.string().optional(),
+  p_execution_metadata: jsonSchema.optional(),
+  p_job_id: z.string(),
+  p_status: z.string(),
+  p_worker_id: z.string(),
+  p_worker_token_hash: z.string(),
+});
+
+export const publicUpdateJobStatusReturnsSchema = z.undefined();
+
 export const publicUpdateProvisionStatusArgsSchema = z.object({
   p_cluster_id: z.string(),
   p_error_message: z.string().optional(),
@@ -892,3 +1123,10 @@ export const publicUpdateProvisionStatusArgsSchema = z.object({
 });
 
 export const publicUpdateProvisionStatusReturnsSchema = z.undefined();
+
+export const publicWorkerHeartbeatArgsSchema = z.object({
+  p_worker_id: z.string(),
+  p_worker_token_hash: z.string(),
+});
+
+export const publicWorkerHeartbeatReturnsSchema = z.undefined();

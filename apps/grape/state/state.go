@@ -1,75 +1,44 @@
 package state
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/utils"
 	"gopkg.in/yaml.v3"
 )
 
-type State struct {
-	SensitiveVars []string
+var sensitiveFields = map[string]bool{
+	"applications_argo_access_token": true,
+	"gitops_argo_access_token":       true,
 }
+
+type State struct{}
 
 func NewState() *State {
-	return &State{
-		SensitiveVars: []string{"applications_argo_access_token", "gitops_argo_access_token"},
-	}
+	return &State{}
 }
 
-func (s *State) SaveInfraFacts(config *types.Configuration, outputs map[string]interface{}, dryRun bool, logger *utils.Logger) error {
+func (s *State) SaveInfraFacts(rawConfig map[string]interface{}, outputs map[string]interface{}, dryRun bool, logger *utils.Logger) error {
 	logger.Info("Saving infra-facts.yaml", "state")
 	toYAML := make(map[string]interface{})
 
-	// Include variables from the config
-	v := reflect.ValueOf(*config)
-	t := v.Type()
-
-	for i := 0; i < v.NumField(); i++ {
-		// Use the json tag as key if available
-		key := t.Field(i).Tag.Get("json")
-		if key == "" {
-			key = t.Field(i).Name
-		}
-
-		// Filter sensitive vars
-		isSensitive := false
-		for _, sv := range s.SensitiveVars {
-			if key == sv {
-				isSensitive = true
-				break
-			}
-		}
-
-		if isSensitive {
+	for k, v := range rawConfig {
+		if sensitiveFields[k] {
 			continue
 		}
-
-		val := v.Field(i).Interface()
-		switch val.(type) {
+		switch v.(type) {
 		case float64, string, int, bool:
-			toYAML[key] = val
+			toYAML[k] = v
 		}
 	}
 
-	// Include terraform outputs
-	if outputs != nil && len(outputs) > 0 {
+	if len(outputs) > 0 {
 		logger.Info("Including terraform outputs.", "state")
 		for key, output := range outputs {
-			// Terraform outputs usually come as a map with "value" key
-			if m, ok := output.(map[string]interface{}); ok {
-				if val, ok := m["value"]; ok {
-					toYAML[key] = val
-				} else {
-					toYAML[key] = output
-				}
-			} else {
-				toYAML[key] = output
-			}
+			toYAML[key] = output
 		}
 	} else {
 		if dryRun {
@@ -100,4 +69,15 @@ func (s *State) SaveInfraFacts(config *types.Configuration, outputs map[string]i
 
 	logger.Info(fmt.Sprintf("Saved infra-facts.yaml to %s", outputPath), "state")
 	return nil
+}
+
+func RawConfigFromFullConfig(fullConfig *string) (map[string]interface{}, error) {
+	if fullConfig == nil || *fullConfig == "" {
+		return nil, fmt.Errorf("no raw config available")
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(*fullConfig), &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse full config: %w", err)
+	}
+	return raw, nil
 }

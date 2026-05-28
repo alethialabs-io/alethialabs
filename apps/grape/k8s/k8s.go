@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	grapeaws "github.com/bobikenobi12/bb-thesis-2026/apps/grape/aws"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/utils"
 	"gopkg.in/yaml.v3"
 )
@@ -20,17 +20,15 @@ type K8sCLI struct {
 	eksClient *eks.Client
 }
 
-func NewK8sCLI(profile, region string, dryRun bool) (*K8sCLI, error) {
-	cfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithRegion(region),
-	)
+func NewK8sCLI(opts grapeaws.AWSOptions, dryRun bool) (*K8sCLI, error) {
+	cfg, err := grapeaws.LoadConfig(context.Background(), opts)
 	if err != nil {
 		return nil, fmt.Errorf("unable to load SDK config: %w", err)
 	}
 
 	return &K8sCLI{
-		Profile:   profile,
-		Region:    region,
+		Profile:   opts.Profile,
+		Region:    opts.Region,
 		DryRun:    dryRun,
 		eksClient: eks.NewFromConfig(cfg),
 	}, nil

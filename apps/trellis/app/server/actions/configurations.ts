@@ -145,6 +145,26 @@ export async function createConfiguration(body: PublicConfigurationsInsert) {
 		}
 
 		const configuration: CreateConfigurationData = data;
+
+		if (data.cloud_identity_id && data.vineyard_id) {
+			const configSnapshot = { ...data };
+			const { error: jobError } = await supabase
+				.from("provision_jobs")
+				.insert({
+					user_id: user.id,
+					vineyard_id: data.vineyard_id,
+					cloud_identity_id: data.cloud_identity_id,
+					job_type: "DEPLOY",
+					configuration_id: data.id,
+					config_snapshot: configSnapshot,
+					status: "QUEUED",
+				});
+
+			if (jobError) {
+				console.error("Failed to auto-queue provision job:", jobError);
+			}
+		}
+
 		return { configuration };
 	} catch (error) {
 		console.error("Unexpected error:", error);

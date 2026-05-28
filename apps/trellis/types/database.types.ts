@@ -588,6 +588,38 @@ export type Database = {
           },
         ]
       }
+      job_logs: {
+        Row: {
+          created_at: string | null
+          id: number
+          job_id: string
+          log_chunk: string
+          stream_type: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: number
+          job_id: string
+          log_chunk: string
+          stream_type?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: number
+          job_id?: string
+          log_chunk?: string
+          stream_type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "job_logs_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "provision_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -644,6 +676,98 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      provision_jobs: {
+        Row: {
+          claimed_at: string | null
+          cloud_identity_id: string | null
+          cluster_id: string | null
+          completed_at: string | null
+          config_snapshot: Json
+          configuration_hash: string | null
+          configuration_id: string | null
+          created_at: string | null
+          error_message: string | null
+          execution_metadata: Json | null
+          id: string
+          job_type: string
+          started_at: string | null
+          status: string
+          updated_at: string | null
+          user_id: string
+          vineyard_id: string
+          worker_id: string | null
+        }
+        Insert: {
+          claimed_at?: string | null
+          cloud_identity_id?: string | null
+          cluster_id?: string | null
+          completed_at?: string | null
+          config_snapshot?: Json
+          configuration_hash?: string | null
+          configuration_id?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          execution_metadata?: Json | null
+          id?: string
+          job_type: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string | null
+          user_id?: string
+          vineyard_id: string
+          worker_id?: string | null
+        }
+        Update: {
+          claimed_at?: string | null
+          cloud_identity_id?: string | null
+          cluster_id?: string | null
+          completed_at?: string | null
+          config_snapshot?: Json
+          configuration_hash?: string | null
+          configuration_id?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          execution_metadata?: Json | null
+          id?: string
+          job_type?: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string | null
+          user_id?: string
+          vineyard_id?: string
+          worker_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provision_jobs_cloud_identity_id_fkey"
+            columns: ["cloud_identity_id"]
+            isOneToOne: false
+            referencedRelation: "cloud_identities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "provision_jobs_cluster_id_fkey"
+            columns: ["cluster_id"]
+            isOneToOne: false
+            referencedRelation: "clusters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "provision_jobs_configuration_id_fkey"
+            columns: ["configuration_id"]
+            isOneToOne: false
+            referencedRelation: "configurations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "provision_jobs_vineyard_id_fkey"
+            columns: ["vineyard_id"]
+            isOneToOne: false
+            referencedRelation: "vineyards"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       provision_logs: {
         Row: {
@@ -751,6 +875,53 @@ export type Database = {
         }
         Relationships: []
       }
+      workers: {
+        Row: {
+          cloud_identity_id: string | null
+          created_at: string | null
+          id: string
+          last_heartbeat: string | null
+          metadata: Json | null
+          mode: string
+          name: string
+          status: string | null
+          token_hash: string
+          user_id: string
+        }
+        Insert: {
+          cloud_identity_id?: string | null
+          created_at?: string | null
+          id?: string
+          last_heartbeat?: string | null
+          metadata?: Json | null
+          mode: string
+          name: string
+          status?: string | null
+          token_hash: string
+          user_id?: string
+        }
+        Update: {
+          cloud_identity_id?: string | null
+          created_at?: string | null
+          id?: string
+          last_heartbeat?: string | null
+          metadata?: Json | null
+          mode?: string
+          name?: string
+          status?: string | null
+          token_hash?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workers_cloud_identity_id_fkey"
+            columns: ["cloud_identity_id"]
+            isOneToOne: false
+            referencedRelation: "cloud_identities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -759,6 +930,39 @@ export type Database = {
       agent_heartbeat: {
         Args: { p_cluster_id: string; p_token_hash: string }
         Returns: undefined
+      }
+      claim_next_job: {
+        Args: {
+          p_cloud_identity_id?: string
+          p_worker_id: string
+          p_worker_token_hash: string
+        }
+        Returns: {
+          claimed_at: string | null
+          cloud_identity_id: string | null
+          cluster_id: string | null
+          completed_at: string | null
+          config_snapshot: Json
+          configuration_hash: string | null
+          configuration_id: string | null
+          created_at: string | null
+          error_message: string | null
+          execution_metadata: Json | null
+          id: string
+          job_type: string
+          started_at: string | null
+          status: string
+          updated_at: string | null
+          user_id: string
+          vineyard_id: string
+          worker_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "provision_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       fetch_next_provision: {
         Args: { p_cluster_id: string; p_token_hash: string }
@@ -798,6 +1002,16 @@ export type Database = {
           total_configs: number
         }[]
       }
+      insert_job_log: {
+        Args: {
+          p_job_id: string
+          p_log_chunk: string
+          p_stream_type?: string
+          p_worker_id: string
+          p_worker_token_hash: string
+        }
+        Returns: undefined
+      }
       insert_provision_log: {
         Args: {
           p_cluster_id: string
@@ -805,6 +1019,18 @@ export type Database = {
           p_provision_id: string
           p_stream_type: string
           p_token_hash: string
+        }
+        Returns: undefined
+      }
+      recover_stale_jobs: { Args: never; Returns: number }
+      update_job_status: {
+        Args: {
+          p_error_message?: string
+          p_execution_metadata?: Json
+          p_job_id: string
+          p_status: string
+          p_worker_id: string
+          p_worker_token_hash: string
         }
         Returns: undefined
       }
@@ -816,6 +1042,10 @@ export type Database = {
           p_status: string
           p_token_hash: string
         }
+        Returns: undefined
+      }
+      worker_heartbeat: {
+        Args: { p_worker_id: string; p_worker_token_hash: string }
         Returns: undefined
       }
     }

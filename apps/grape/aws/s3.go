@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
@@ -14,8 +14,8 @@ type S3Client struct {
 	*s3.Client
 }
 
-func NewS3Client(ctx context.Context, region string) (*S3Client, error) {
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
+func NewS3Client(ctx context.Context, opts AWSOptions) (*S3Client, error) {
+	cfg, err := LoadConfig(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
@@ -50,6 +50,10 @@ func (c *S3Client) CreateS3BucketIfNotExists(ctx context.Context, bucketName str
 				return fmt.Errorf("failed to create bucket '%s': %w", bucketName, err)
 			}
 
+			if err := c.hardenBucket(ctx, bucketName); err != nil {
+				fmt.Printf("Warning: bucket '%s' created but some security settings failed: %v\n", bucketName, err)
+			}
+
 			fmt.Printf("Bucket '%s' created successfully.\n", bucketName)
 			return nil
 		}
@@ -59,5 +63,59 @@ func (c *S3Client) CreateS3BucketIfNotExists(ctx context.Context, bucketName str
 
 	// Bucket already exists
 	fmt.Printf("Bucket '%s' already exists.\n", bucketName)
+	return nil
+}
+
+func (c *S3Client) hardenBucket(ctx context.Context, bucketName string) error {
+	_, err := c.PutPublicAccessBlock(ctx, &s3.PutPublicAccessBlockInput{
+		Bucket: &bucketName,
+		PublicAccessBlockConfiguration: &types.PublicAccessBlockConfiguration{
+			BlockPublicAcls:       aws.Bool(true),
+			BlockPublicPolicy:     aws.Bool(true),
+			IgnorePublicAcls:      aws.Bool(true),
+			RestrictPublicBuckets: aws.Bool(true),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set public access block: %w", err)
+	}
+
+	_, err = c.PutBucketEncryption(ctx, &s3.PutBucketEncryptionInput{
+		Bucket: &bucketName,
+		ServerSideEncryptionConfiguration: &types.ServerSideEncryptionConfiguration{
+			Rules: []types.ServerSideEncryptionRule{{
+				ApplyServerSideEncryptionByDefault: &types.ServerSideEncryptionByDefault{
+					SSEAlgorithm: types.ServerSideEncryptionAes256,
+				},
+				BucketKeyEnabled: aws.Bool(true),
+			}},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to enable encryption: %w", err)
+	}
+
+	_, err = c.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{
+		Bucket: &bucketName,
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to enable versioning: %w", err)
+	}
+
+	_, err = c.PutBucketOwnershipControls(ctx, &s3.PutBucketOwnershipControlsInput{
+		Bucket: &bucketName,
+		OwnershipControls: &types.OwnershipControls{
+			Rules: []types.OwnershipControlsRule{{
+				ObjectOwnership: types.ObjectOwnershipBucketOwnerEnforced,
+			}},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set ownership controls: %w", err)
+	}
+
 	return nil
 }

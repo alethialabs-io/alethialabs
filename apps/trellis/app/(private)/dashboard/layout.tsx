@@ -27,6 +27,7 @@ import {
 	Bell,
 	Cloud,
 	Folder,
+	GitBranch,
 	History,
 	LayoutDashboard,
 	LogOut,
@@ -36,6 +37,7 @@ import {
 	Server,
 	Settings,
 	User,
+	Workflow,
 	X,
 } from "lucide-react";
 import Link from "next/link";
@@ -78,6 +80,8 @@ export default function DashboardLayout({
 		{ name: "Clusters", href: "/dashboard/clusters", icon: Server },
 		{ name: "History", href: "/dashboard/history", icon: History },
 		{ name: "Providers", href: "/dashboard/providers", icon: Cloud },
+		{ name: "Workers", href: "/dashboard/workers", icon: Workflow },
+		{ name: "Git", href: "/dashboard/git", icon: GitBranch },
 	];
 
 	const getUserInitials = () => {

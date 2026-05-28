@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -17,6 +18,12 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"gopkg.in/yaml.v3"
+)
+
+var (
+	ErrRepoNotFound = errors.New("repository not found")
+	ErrRepoEmpty    = errors.New("remote repository is empty")
+	ErrAuthFailed   = errors.New("authentication failed")
 )
 
 // GIT represents a Git repository wrapper.
@@ -140,6 +147,15 @@ func (g *GIT) Clone(branch string, force bool) error {
 
 		repo, err := gogit.PlainClone(g.LocalPath, false, cloneOptions)
 		if err != nil {
+			if errors.Is(err, transport.ErrRepositoryNotFound) {
+				return fmt.Errorf("%w: %s", ErrRepoNotFound, g.RepoURL)
+			}
+			if errors.Is(err, transport.ErrEmptyRemoteRepository) {
+				return fmt.Errorf("%w: %s", ErrRepoEmpty, g.RepoURL)
+			}
+			if errors.Is(err, transport.ErrAuthorizationFailed) || errors.Is(err, transport.ErrAuthenticationRequired) {
+				return fmt.Errorf("%w: %s", ErrAuthFailed, g.RepoURL)
+			}
 			return fmt.Errorf("failed to clone repository '%s': %w", g.RepoURL, err)
 		}
 		g.Repo = repo

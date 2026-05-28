@@ -1,13 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/api"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/terraform"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/provisioner"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
 	"github.com/charmbracelet/huh"
 	"github.com/imroc/req/v3"
@@ -32,9 +32,8 @@ var destroyCmd = &cobra.Command{
 		var vineyardName string
 		apiClient := api.NewClient(token)
 
-		// Interactive Mode if vineyard ID is missing
 		if destroyVineyardID == "" {
-			fmt.Println("🔍 Fetching your Vineyards...")
+			fmt.Println("Fetching your Vineyards...")
 			var vResult struct {
 				Vineyards []types.Vineyard `json:"vineyards"`
 			}
@@ -56,7 +55,7 @@ var destroyCmd = &cobra.Command{
 			}
 
 			if len(vineyardOptions) == 0 {
-				fmt.Println("❌ No Vineyards found.")
+				fmt.Println("No Vineyards found.")
 				return
 			}
 
@@ -91,7 +90,6 @@ var destroyCmd = &cobra.Command{
 			}
 		}
 
-		// Confirm destruction
 		var confirm bool
 		confirmForm := huh.NewForm(
 			huh.NewGroup(
@@ -106,57 +104,20 @@ var destroyCmd = &cobra.Command{
 			return
 		}
 
-		home, err := os.UserHomeDir()
+		err = provisioner.RunDestroy(context.Background(), provisioner.DestroyParams{
+			VineyardID:       destroyVineyardID,
+			VineyardName:     vineyardName,
+			Environment:      environment,
+			Region:           region,
+			CleanupWorkspace: cleanupWorkspace,
+			Stdout:           os.Stdout,
+			Stderr:           os.Stderr,
+			ApiClient:        apiClient,
+		})
+
 		if err != nil {
-			log.Fatalf("Failed to get home directory: %v", err)
+			log.Fatalf("Destroy failed: %v", err)
 		}
-
-		workspaceName := fmt.Sprintf("%s-%s", vineyardName, environment)
-		if vineyardName == "" {
-			workspaceName = fmt.Sprintf("%s-%s", destroyVineyardID, environment)
-		}
-
-		workDir := filepath.Join(home, ".grape", "workspaces", workspaceName)
-		if _, err := os.Stat(workDir); os.IsNotExist(err) {
-			log.Fatalf("Workspace directory not found: %s", workDir)
-		}
-
-		fmt.Printf("🔥 Destroying environment %s...\n", workspaceName)
-
-		// 1. Unregister Cluster from Trellis
-		fmt.Println("   🔐 Unregistering cluster from Trellis...")
-		clusterName := fmt.Sprintf("%s-cluster", workspaceName)
-		if err := apiClient.UnregisterCluster("", clusterName); err != nil {
-			fmt.Printf("      ⚠️ Warning: Failed to unregister cluster from Trellis: %v\n", err)
-			fmt.Println("      Continuing with resource destruction...")
-		} else {
-			fmt.Println("      Cluster unregistered successfully.")
-		}
-
-		// 2. Initialize Terraform
-		tf, err := terraform.NewTF_CLI("1.7.4")
-		if err != nil {
-			log.Fatalf("Failed to initialize Terraform CLI: %v", err)
-		}
-
-		// 3. Run Destroy
-		// We assume terraform.tfvars already exists in the workspace from bootstrap
-		fmt.Println("   ⚡ Destroying Cloud Resources (this may take 10-15 mins)...")
-		if err := tf.Destroy(workDir, "terraform.tfvars"); err != nil {
-			log.Fatalf("Terraform destroy failed: %v", err)
-		}
-
-		// 4. Cleanup workspace directory
-		if cleanupWorkspace {
-			fmt.Println("   🧹 Cleaning up workspace directory...")
-			if err := os.RemoveAll(workDir); err != nil {
-				fmt.Printf("      ⚠️ Warning: Failed to remove workspace directory: %v\n", err)
-			} else {
-				fmt.Println("      Workspace directory removed.")
-			}
-		}
-
-		fmt.Println("✅ Environment destroyed successfully!")
 	},
 }
 

@@ -14,8 +14,9 @@ import { Loader2, Play, RefreshCw, Terminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 interface LogViewerProps {
-	clusterId: string | null;
+	clusterId?: string | null;
 	clusterName?: string;
+	jobId?: string | null;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }
@@ -30,6 +31,7 @@ interface LogEntry {
 export function LogViewer({
 	clusterId,
 	clusterName,
+	jobId: externalJobId,
 	open,
 	onOpenChange,
 }: LogViewerProps) {
@@ -41,34 +43,40 @@ export function LogViewer({
 	const supabase = createClient();
 	const bottomRef = useRef<HTMLDivElement>(null);
 
-	// Fetch latest provision and logs when opened
+	// Fetch latest provision/job and logs when opened
 	useEffect(() => {
-		if (open && clusterId) {
+		if (open && externalJobId) {
+			setProvisionId(externalJobId);
+			fetchLogsForJob(externalJobId);
+		} else if (open && clusterId) {
 			fetchLatestHarvest();
 		} else {
 			setLogs([]);
 			setProvisionId(null);
 		}
-	}, [open, clusterId]);
+	}, [open, clusterId, externalJobId]);
 
-	// Subscribe to new logs when we have a provisionId
+	// Subscribe to new logs when we have a provisionId/jobId
 	useEffect(() => {
 		if (!provisionId) return;
 
+		const useJobLogs = !!externalJobId;
+		const table = useJobLogs ? "job_logs" : "provision_logs";
+		const filterCol = useJobLogs ? "job_id" : "provision_id";
+
 		const channel = supabase
-			.channel(`provision_logs:${provisionId}`)
+			.channel(`${table}:${provisionId}`)
 			.on(
 				"postgres_changes",
 				{
 					event: "INSERT",
 					schema: "public",
-					table: "provision_logs",
-					filter: `provision_id=eq.${provisionId}`,
+					table,
+					filter: `${filterCol}=eq.${provisionId}`,
 				},
 				(payload) => {
 					const newLog = payload.new as LogEntry;
 					setLogs((prev) => [...prev, newLog]);
-					// Auto-scroll to bottom
 					setTimeout(() => {
 						bottomRef.current?.scrollIntoView({
 							behavior: "smooth",
@@ -81,7 +89,25 @@ export function LogViewer({
 		return () => {
 			supabase.removeChannel(channel);
 		};
-	}, [provisionId, supabase]);
+	}, [provisionId, externalJobId, supabase]);
+
+	const fetchLogsForJob = async (jId: string) => {
+		setIsLoading(true);
+		try {
+			const { data: existingLogs, error: logsError } = await supabase
+				.from("job_logs")
+				.select("*")
+				.eq("job_id", jId)
+				.order("id", { ascending: true });
+
+			if (logsError) throw logsError;
+			setLogs(existingLogs as LogEntry[]);
+		} catch (error) {
+			console.error("Error fetching job logs:", error);
+		} finally {
+			setIsLoading(false);
+		}
+	};
 
 	const fetchLatestHarvest = async () => {
 		if (!clusterId) return;

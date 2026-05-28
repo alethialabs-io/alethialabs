@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 )
 
@@ -12,8 +11,8 @@ type EC2Client struct {
 	*ec2.Client
 }
 
-func NewEC2Client(ctx context.Context, region string) (*EC2Client, error) {
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
+func NewEC2Client(ctx context.Context, opts AWSOptions) (*EC2Client, error) {
+	cfg, err := LoadConfig(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}

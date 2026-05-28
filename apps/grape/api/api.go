@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -59,6 +60,12 @@ type LogEntry struct {
 	Message string `json:"message"`
 	Level   string `json:"level"`
 	Step    string `json:"step,omitempty"`
+}
+
+type ConfigurationExport struct {
+	Content  string `json:"content"`
+	Filename string `json:"filename"`
+	Format   string `json:"format"`
 }
 
 // CreateRepository creates a new repository.
@@ -205,6 +212,47 @@ func (c *Client) GetConfiguration(projectName string) (*types.Configuration, err
 	}
 
 	return successResp.Configuration, nil
+}
+
+func (c *Client) ExportConfiguration(projectName, format string) (*ConfigurationExport, error) {
+	if format == "" {
+		format = "legacy-yaml"
+	}
+
+	endpoint := fmt.Sprintf(
+		"%s/cli/configurations/by-project-name/%s/export?format=%s",
+		c.baseURL,
+		url.PathEscape(projectName),
+		url.QueryEscape(format),
+	)
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errorResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
+			return nil, fmt.Errorf("failed to export configuration: status code %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("failed to export configuration: %s", errorResp.Error)
+	}
+
+	var export ConfigurationExport
+	if err := json.NewDecoder(resp.Body).Decode(&export); err != nil {
+		return nil, fmt.Errorf("failed to decode export response: %w", err)
+	}
+
+	return &export, nil
 }
 
 // CreateConfiguration creates a new configuration.
@@ -438,12 +486,12 @@ func (c *Client) RegisterCluster(name, vpcID, vpcCidr, region, vineyardID string
 // UnregisterCluster deletes a cluster by name or ID.
 func (c *Client) UnregisterCluster(id, name string) error {
 	endpoint := fmt.Sprintf("%s/cli/clusters", c.baseURL)
-	
+
 	req, err := http.NewRequest("DELETE", endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	q := req.URL.Query()
 	if id != "" {
 		q.Add("id", id)
@@ -452,7 +500,7 @@ func (c *Client) UnregisterCluster(id, name string) error {
 		q.Add("name", name)
 	}
 	req.URL.RawQuery = q.Encode()
-	
+
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
 
 	resp, err := c.httpClient.Do(req)
@@ -597,10 +645,78 @@ func (c *Client) UpdateBootstrapJobStatus(jobID, status, errorMessage string) er
 	return nil
 }
 
+// ProvisionJob represents a queued provisioning job.
+type ProvisionJob struct {
+	ID              string `json:"id"`
+	JobType         string `json:"job_type"`
+	VineyardID      string `json:"vineyard_id"`
+	ConfigurationID string `json:"configuration_id,omitempty"`
+	ClusterID       string `json:"cluster_id,omitempty"`
+	Status          string `json:"status"`
+}
+
+// QueueJob creates a new provisioning job on the broker queue.
+func (c *Client) QueueJob(jobType, vineyardID, configurationID, clusterID, cloudIdentityID string, configSnapshot map[string]interface{}) (*ProvisionJob, error) {
+	endpoint := fmt.Sprintf("%s/jobs", c.baseURL)
+	payload := map[string]interface{}{
+		"job_type":    jobType,
+		"vineyard_id": vineyardID,
+	}
+	if configurationID != "" {
+		payload["configuration_id"] = configurationID
+	}
+	if clusterID != "" {
+		payload["cluster_id"] = clusterID
+	}
+	if cloudIdentityID != "" {
+		payload["cloud_identity_id"] = cloudIdentityID
+	}
+	if configSnapshot != nil {
+		payload["config_snapshot"] = configSnapshot
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		var errorResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
+			return nil, fmt.Errorf("failed to queue job: status code %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("failed to queue job: %s", errorResp.Error)
+	}
+
+	var successResp struct {
+		Job *ProvisionJob `json:"job"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&successResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return successResp.Job, nil
+}
+
 // SendBootstrapLog sends a log chunk for a bootstrap job to the server.
 func (c *Client) SendBootstrapLog(jobID string, logChunk string, streamType string) error {
 	endpoint := fmt.Sprintf("%s/cli/bootstrap-jobs/%s/logs", c.baseURL, jobID)
-	
+
 	payload := map[string]string{
 		"log_chunk":   logChunk,
 		"stream_type": streamType,
@@ -630,5 +746,3 @@ func (c *Client) SendBootstrapLog(jobID string, logChunk string, streamType stri
 
 	return nil
 }
-
-

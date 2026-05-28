@@ -6,6 +6,7 @@ Organized by product surface. The goal is to make the Grape/Trellis platform tra
 
 | Folder | Purpose |
 | --- | --- |
+| `worker-provisioning/` | **Active** — MVP design: cloud-hosted worker, AWS connection, job queue, E2E test plan. |
 | `architecture/` | Platform architecture: ArgoCD pivot, bootstrap logging, GitOps wiring, and the system overview. |
 | `grape-legacy-migration/` | Canonical plan for porting `apps/legacy-cli` into `apps/grape` and tightening the Trellis integration. |
 | `cli/` | Grape CLI implementation plans: dependency checks, local provisioning, teardown, release, UX. |

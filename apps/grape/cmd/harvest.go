@@ -41,7 +41,7 @@ var harvestCmd = &cobra.Command{
 			var vResult struct {
 				Vineyards []types.Vineyard `json:"vineyards"`
 			}
-			
+
 			spinner.New().
 				Title("Fetching vineyards...").
 				Action(func() {
@@ -70,7 +70,9 @@ var harvestCmd = &cobra.Command{
 				),
 			).Run()
 
-			if err != nil { return }
+			if err != nil {
+				return
+			}
 
 			// 2. Fetch Vines and Clusters for this Vineyard
 			var configsResult struct {
@@ -88,8 +90,8 @@ var harvestCmd = &cobra.Command{
 						SetBearerAuthToken(token).
 						SetSuccessResult(&configsResult).
 						Get(fmt.Sprintf("%s/api/cli/configurations", webOrigin))
-					
-					// Clusters (Tendrils)
+
+					// Bootstrapped clusters
 					_, _ = reqClient.R().
 						SetBearerAuthToken(token).
 						SetSuccessResult(&clustersResult).
@@ -117,7 +119,7 @@ var harvestCmd = &cobra.Command{
 			}
 
 			if len(clusterOptions) == 0 {
-				fmt.Println("No clusters (Tendrils) found. Bootstrap one first.")
+				fmt.Println("No bootstrapped clusters found. Bootstrap one first.")
 				return
 			}
 
@@ -134,31 +136,21 @@ var harvestCmd = &cobra.Command{
 				),
 			).Run()
 
-			if err != nil { return }
+			if err != nil {
+				return
+			}
 		}
 
-		// Trigger Harvest
-		var hResult struct {
-			Harvest types.Harvest `json:"harvest"`
-		}
-		var errMsg struct {
-			Error string `json:"error"`
-		}
+		// Queue provisioning job via the broker
+		apiClient := api.NewClient(token)
 
+		var job *api.ProvisionJob
 		action := func() {
-			_, err = reqClient.R().
-				SetBearerAuthToken(token).
-				SetBody(map[string]string{
-					"vine_id":    harvestVineID,
-					"cluster_id": harvestClusterID,
-				}).
-				SetSuccessResult(&hResult).
-				SetErrorResult(&errMsg).
-				Post(fmt.Sprintf("%s/api/cli/harvests", webOrigin))
+			job, err = apiClient.QueueJob("DEPLOY", harvestVineyardID, harvestVineID, harvestClusterID, "", nil)
 		}
 
 		err = spinner.New().
-			Title("Queuing harvest...").
+			Title("Queuing provisioning job...").
 			Action(action).
 			Run()
 
@@ -167,9 +159,14 @@ var harvestCmd = &cobra.Command{
 			return
 		}
 
+		if job == nil {
+			fmt.Println("Error: no job returned")
+			return
+		}
+
 		successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-		fmt.Printf("\n%s Successfully queued harvest (ID: %s)\n", successStyle.Render("✓"), hResult.Harvest.ID)
-		fmt.Println("Tendril agent will pick this up shortly. Monitor progress in Trellis.")
+		fmt.Printf("\n%s Successfully queued job (ID: %s)\n", successStyle.Render("✓"), job.ID)
+		fmt.Println("A worker will pick up this job. Monitor progress in Trellis.")
 	},
 }
 

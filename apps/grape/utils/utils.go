@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/api"
 )
@@ -48,10 +49,29 @@ func (l *Logger) Error(message, step string) {
 	}
 }
 
+func CheckDependencies(commands ...string) error {
+	var missing []string
+
+	for _, command := range commands {
+		if _, err := exec.LookPath(command); err != nil {
+			missing = append(missing, command)
+		}
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"missing required command(s): %s\nInstall the missing tools and make sure they are available in your PATH before retrying",
+		strings.Join(missing, ", "),
+	)
+}
+
 func ExecuteCommand(command string, dir string, env []string, outWriter, errWriter io.Writer) error {
 	cmd := exec.Command("bash", "-c", command)
 	cmd.Dir = dir
-	cmd.Env = os.Environ() // Start with current environment
+	cmd.Env = os.Environ()            // Start with current environment
 	cmd.Env = append(cmd.Env, env...) // Add custom environment variables
 
 	if outWriter == nil {
@@ -78,7 +98,7 @@ func ExecuteCommand(command string, dir string, env []string, outWriter, errWrit
 func ExecuteCommandWithOutput(command string, dir string, env []string) (string, error) {
 	cmd := exec.Command("bash", "-c", command)
 	cmd.Dir = dir
-	cmd.Env = os.Environ() // Start with current environment
+	cmd.Env = os.Environ()            // Start with current environment
 	cmd.Env = append(cmd.Env, env...) // Add custom environment variables
 
 	var stdoutBuf, stderrBuf bytes.Buffer

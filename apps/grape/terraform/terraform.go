@@ -1,253 +1,251 @@
 package terraform
 
 import (
-	"archive/zip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"text/template"
 
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/utils"
+	"github.com/hashicorp/go-version"
+	"github.com/hashicorp/hc-install/product"
+	"github.com/hashicorp/hc-install/releases"
+	"github.com/hashicorp/terraform-exec/tfexec"
+	tfjson "github.com/hashicorp/terraform-json"
 )
 
-// TF_CLI represents the Terraform CLI wrapper.
-type TF_CLI struct {
-	Version    string
-	binaryPath string
+type TerraformCLI struct {
+	tf      *tfexec.Terraform
+	version string
 }
 
-// NewTF_CLI creates a new Terraform CLI wrapper.
-func NewTF_CLI(version string) (*TF_CLI, error) {
-	cli := &TF_CLI{
-		Version: version,
-	}
-	err := cli.ensureBinary()
+func NewTerraformCLI(ctx context.Context, tfVersion, workDir string, stdout, stderr io.Writer) (*TerraformCLI, error) {
+	execPath, err := ensureBinary(ctx, tfVersion)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to ensure terraform binary: %w", err)
 	}
-	return cli, nil
+
+	tf, err := tfexec.NewTerraform(workDir, execPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize terraform: %w", err)
+	}
+
+	if stdout != nil {
+		tf.SetStdout(stdout)
+	} else {
+		tf.SetStdout(os.Stdout)
+	}
+	if stderr != nil {
+		tf.SetStderr(stderr)
+	} else {
+		tf.SetStderr(os.Stderr)
+	}
+
+	return &TerraformCLI{tf: tf, version: tfVersion}, nil
 }
 
-// Init runs the terraform init command.
-func (t *TF_CLI) Init(dir string, backendConfig string, updateInfra bool) error {
+func (t *TerraformCLI) Init(ctx context.Context, backendConfig map[string]string, upgrade bool) error {
 	fmt.Println("Initializing Terraform...")
-	upgradeFlag := ""
-	if updateInfra {
-		upgradeFlag = " -upgrade"
+	opts := []tfexec.InitOption{tfexec.Reconfigure(true)}
+	for k, v := range backendConfig {
+		opts = append(opts, tfexec.BackendConfig(k+"="+v))
 	}
-
-	cmd := fmt.Sprintf("%s init -reconfigure %s%s", t.binaryPath, backendConfig, upgradeFlag)
-	return utils.ExecuteCommand(cmd, dir, []string{}, nil, nil)
+	if upgrade {
+		opts = append(opts, tfexec.Upgrade(true))
+	}
+	return t.tf.Init(ctx, opts...)
 }
 
-// Plan runs the terraform plan command.
-func (t *TF_CLI) Plan(dir string, varFile string, planOutputFile string) error {
+func (t *TerraformCLI) Plan(ctx context.Context, varFile, planOutFile string) (bool, error) {
 	fmt.Println("Running Terraform plan...")
-	cmd := fmt.Sprintf("%s plan -var-file=%s -out=%s", t.binaryPath, varFile, planOutputFile)
-	return utils.ExecuteCommand(cmd, dir, []string{}, nil, nil)
-}
-
-// Apply runs the terraform apply command with a plan file.
-func (t *TF_CLI) Apply(dir string, planFile string) error {
-	fmt.Println("Applying Terraform plan...")
-	cmd := fmt.Sprintf("%s apply -auto-approve %s", t.binaryPath, planFile)
-	return utils.ExecuteCommand(cmd, dir, []string{}, nil, nil)
-}
-
-// Destroy runs the terraform destroy command.
-func (t *TF_CLI) Destroy(dir string, varFile string) error {
-	fmt.Println("Running Terraform destroy...")
-	cmd := fmt.Sprintf("%s destroy -auto-approve", t.binaryPath)
-	if varFile != "" {
-		cmd += fmt.Sprintf(" -var-file=%s", varFile)
+	opts := []tfexec.PlanOption{
+		tfexec.Out(planOutFile),
 	}
-	return utils.ExecuteCommand(cmd, dir, []string{}, nil, nil)
+	if varFile != "" {
+		opts = append(opts, tfexec.VarFile(varFile))
+	}
+	return t.tf.Plan(ctx, opts...)
 }
 
-// Output retrieves Terraform outputs.
-func (t *TF_CLI) Output(dir string, outputName string) (map[string]interface{}, error) {
+func (t *TerraformCLI) Apply(ctx context.Context, planFile string) error {
+	fmt.Println("Applying Terraform plan...")
+	return t.tf.Apply(ctx, tfexec.DirOrPlan(planFile))
+}
+
+func (t *TerraformCLI) Destroy(ctx context.Context, varFile string) error {
+	fmt.Println("Running Terraform destroy...")
+	var opts []tfexec.DestroyOption
+	if varFile != "" {
+		opts = append(opts, tfexec.VarFile(varFile))
+	}
+	return t.tf.Destroy(ctx, opts...)
+}
+
+func (t *TerraformCLI) Output(ctx context.Context) (map[string]interface{}, error) {
 	fmt.Println("Getting Terraform outputs...")
-	cmd := fmt.Sprintf("%s output -json", t.binaryPath)
-	rawOutput, err := utils.ExecuteCommandWithOutput(cmd, dir, []string{})
+	outputMap, err := t.tf.Output(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get terraform output: %w", err)
 	}
 
-	var rawOutputs map[string]struct {
-		Value interface{} `json:"value"`
-	}
-	if err := json.Unmarshal([]byte(rawOutput), &rawOutputs); err != nil {
-		return nil, fmt.Errorf("failed to parse terraform output: %w", err)
-	}
-
 	outputs := make(map[string]interface{})
-	for k, v := range rawOutputs {
-		outputs[k] = v.Value
-	}
-
-	if outputName != "" {
-		if val, ok := outputs[outputName]; ok {
-			return map[string]interface{}{outputName: val}, nil
+	for k, v := range outputMap {
+		var val interface{}
+		if err := json.Unmarshal(v.Value, &val); err != nil {
+			outputs[k] = string(v.Value)
+		} else {
+			outputs[k] = val
 		}
-		return nil, fmt.Errorf("output '%s' not found", outputName)
 	}
-
 	return outputs, nil
 }
 
-// GenerateBackendConfig creates a backend config string.
-func (t *TF_CLI) GenerateBackendConfig(config *types.Configuration) (string, error) {
-	bucketName := fmt.Sprintf("%s-%s-%s-idp-state", config.ProjectName, config.EnvironmentStage, config.AwsRegion)
-	key := fmt.Sprintf("%s-%s-%s-terraform.tfstate", config.ProjectName, config.EnvironmentStage, config.AwsRegion)
-
-	backendConfigArgs := []string{
-		fmt.Sprintf("-backend-config=\"bucket=%s\"", bucketName),
-		fmt.Sprintf("-backend-config=\"key=%s\"", key),
-		fmt.Sprintf("-backend-config=\"region=%s\"", config.AwsRegion),
-	}
-
-	return strings.Join(backendConfigArgs, " "), nil
+func (t *TerraformCLI) ShowPlanJSON(ctx context.Context, planFile string) (*tfjson.Plan, error) {
+	fmt.Println("Generating plan JSON...")
+	return t.tf.ShowPlanFile(ctx, planFile)
 }
 
-// OverrideTfvars creates the terraform.tfvars file.
-func (t *TF_CLI) OverrideTfvars(dir string, config *types.Configuration) (string, error) {
-	tfvarsPath := filepath.Join(dir, "terraform.tfvars")
+func GenerateBackendConfig(config *types.Configuration) map[string]string {
+	return map[string]string{
+		"bucket": fmt.Sprintf("%s-%s-%s-idp-state", config.ProjectName, config.EnvironmentStage, config.AwsRegion),
+		"key":    fmt.Sprintf("%s-%s-%s-terraform.tfstate", config.ProjectName, config.EnvironmentStage, config.AwsRegion),
+		"region": config.AwsRegion,
+	}
+}
 
-	tmpl, err := template.New("tfvars").Parse(`
-project_name = "{{.ProjectName}}"
-region = "{{.AwsRegion}}"
-environment = "{{.EnvironmentStage}}"
-aws_account_id = "{{.AwsAccountID}}"
-`)
+func OverrideTfvars(dir string, config *types.Configuration) (string, error) {
+	tfvarsPath := filepath.Join(dir, "terraform.tfvars.json")
+
+	tfvars, err := configurationToTfvars(config)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse tfvars template: %w", err)
+		return "", err
 	}
 
-	f, err := os.Create(tfvarsPath)
+	tfvarsData, err := json.MarshalIndent(tfvars, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to create tfvars file: %w", err)
+		return "", fmt.Errorf("failed to encode tfvars: %w", err)
 	}
-	defer f.Close()
 
-	err = tmpl.Execute(f, config)
-	if err != nil {
-		return "", fmt.Errorf("failed to execute tfvars template: %w", err)
+	if err := os.WriteFile(tfvarsPath, append(tfvarsData, '\n'), 0644); err != nil {
+		return "", fmt.Errorf("failed to write tfvars file: %w", err)
 	}
 
 	return tfvarsPath, nil
 }
 
-func (t *TF_CLI) ensureBinary() error {
-	// 1. Check if terraform is in the system PATH
-	if path, err := exec.LookPath("terraform"); err == nil {
-		// Found system terraform.
-		t.binaryPath = path
-		return nil
+func configurationToTfvars(config *types.Configuration) (map[string]interface{}, error) {
+	if config == nil {
+		return nil, fmt.Errorf("configuration cannot be nil")
 	}
 
-	// 2. Fallback: Managed version in ~/.grape/bin
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
+	if config.FullConfig != nil && strings.TrimSpace(*config.FullConfig) != "" {
+		var tfvars map[string]interface{}
+		if err := json.Unmarshal([]byte(*config.FullConfig), &tfvars); err != nil {
+			return nil, fmt.Errorf("failed to parse raw configuration for tfvars: %w", err)
+		}
+		return tfvars, nil
 	}
 
-	binDir := filepath.Join(home, ".grape", "bin")
-	t.binaryPath = filepath.Join(binDir, fmt.Sprintf("terraform_%s", t.Version))
-	
-	if _, err := os.Stat(t.binaryPath); err == nil {
-		return nil
+	tfvars := map[string]interface{}{
+		"project_name":   config.ProjectName,
+		"region":         config.AwsRegion,
+		"environment":    config.EnvironmentStage,
+		"aws_account_id": config.AwsAccountID,
+		"terraform_ver":  config.TerraformVersion,
 	}
 
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		return fmt.Errorf("failed to create managed bin directory: %w", err)
+	setIfBoolPtr(tfvars, "provision_vpc", config.CreateVpc)
+	setIfStringPtr(tfvars, "vpc_cidr", config.VpcCidr)
+	setIfStringPtr(tfvars, "dns_hosted_zone", config.DnsHostedZone)
+	setIfStringPtr(tfvars, "dns_main_domain", config.DnsDomainName)
+	setIfNotEmpty(tfvars, "env_template_repo", config.EnvTemplateRepo)
+	setIfNotEmpty(tfvars, "env_template_repo_branch", config.EnvTemplateRepoBranch)
+	setIfNotEmpty(tfvars, "env_git_repo", config.EnvGitRepo)
+	setIfNotEmpty(tfvars, "gitops_template_repo", config.GitopsTemplateRepo)
+	setIfNotEmpty(tfvars, "gitops_template_repo_branch", config.GitopsTemplateRepoBranch)
+	setIfNotEmpty(tfvars, "gitops_destination_repo", config.GitopsDestinationRepo)
+	setIfNotEmpty(tfvars, "applications_template_repo", config.ApplicationsTemplateRepo)
+	setIfNotEmpty(tfvars, "applications_template_repo_branch", config.ApplicationsTemplateRepoBranch)
+	setIfNotEmpty(tfvars, "applications_destination_repo", config.ApplicationsDestinationRepo)
+	setIfStringPtr(tfvars, "gitops_argo_access_token", config.GitopsArgocdToken)
+	setIfStringPtr(tfvars, "applications_argo_access_token", config.GitopsAppToken)
+	setIfBoolPtr(tfvars, "acm_certificate_enable", config.EnableDns)
+	setIfBoolPtr(tfvars, "create_elasticache_redis", config.EnableRedis)
+	setIfBoolPtr(tfvars, "enable_karpenter", config.EnableKarpenter)
+	setIfBoolPtr(tfvars, "cloudfront_waf_enabled", config.EnableCloudfrontWaf)
+	if config.DbMinCapacity != nil {
+		tfvars["create_rds"] = true
+		tfvars["rds_scaling_config"] = map[string]interface{}{"min_capacity": *config.DbMinCapacity}
+	}
+	if config.RedisAllowedCidrBlocks != nil && *config.RedisAllowedCidrBlocks != "" {
+		tfvars["redis_allowed_cidr_blocks"] = strings.Split(*config.RedisAllowedCidrBlocks, ",")
 	}
 
-	return t.download(binDir)
+	return tfvars, nil
 }
 
-func (t *TF_CLI) download(binDir string) error {
-	arch := runtime.GOARCH
-	goos := runtime.GOOS
+func setIfNotEmpty(values map[string]interface{}, key, value string) {
+	if value != "" {
+		values[key] = value
+	}
+}
 
-	url := fmt.Sprintf("https://releases.hashicorp.com/terraform/%s/terraform_%s_%s_%s.zip", t.Version, t.Version, goos, arch)
-	fmt.Printf("Downloading Terraform v%s for %s/%s...\n", t.Version, goos, arch)
+func setIfStringPtr(values map[string]interface{}, key string, value *string) {
+	if value != nil && *value != "" {
+		values[key] = *value
+	}
+}
 
-	resp, err := http.Get(url)
+func setIfBoolPtr(values map[string]interface{}, key string, value *bool) {
+	if value != nil {
+		values[key] = *value
+	}
+}
+
+func ensureBinary(ctx context.Context, tfVersion string) (string, error) {
+	if path, err := exec.LookPath("terraform"); err == nil {
+		return path, nil
+	}
+
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("failed to download terraform: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download terraform: status code %d", resp.StatusCode)
+		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	zipPath := filepath.Join(binDir, fmt.Sprintf("terraform_%s.zip", t.Version))
-	out, err := os.Create(zipPath)
+	installDir := filepath.Join(home, ".grape", "bin")
+	cachedPath := filepath.Join(installDir, fmt.Sprintf("terraform_%s", tfVersion))
+	if _, err := os.Stat(cachedPath); err == nil {
+		return cachedPath, nil
+	}
+
+	if err := os.MkdirAll(installDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create install directory: %w", err)
+	}
+
+	v, err := version.NewVersion(tfVersion)
 	if err != nil {
-		return fmt.Errorf("failed to create zip file: %w", err)
+		return "", fmt.Errorf("invalid terraform version '%s': %w", tfVersion, err)
 	}
-	defer out.Close()
 
-	_, err = io.Copy(out, resp.Body)
+	fmt.Printf("Downloading Terraform v%s...\n", tfVersion)
+	installer := &releases.ExactVersion{
+		Product:    product.Terraform,
+		Version:    v,
+		InstallDir: installDir,
+	}
+	execPath, err := installer.Install(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to write zip file: %w", err)
+		return "", fmt.Errorf("failed to install terraform v%s: %w", tfVersion, err)
 	}
 
-	// Unzip
-	r, err := zip.OpenReader(zipPath)
-	if err != nil {
-		return fmt.Errorf("failed to open zip file: %w", err)
-	}
-	defer r.Close()
-
-	for _, f := range r.File {
-		if f.Name == "terraform" {
-			rc, err := f.Open()
-			if err != nil {
-				return fmt.Errorf("failed to open terraform binary in zip: %w", err)
-			}
-			defer rc.Close()
-
-			// Create a temporary file
-			tmpFile, err := os.CreateTemp(binDir, "terraform-")
-			if err != nil {
-				return fmt.Errorf("failed to create temporary file for terraform binary: %w", err)
-			}
-
-			_, err = io.Copy(tmpFile, rc)
-			if err != nil {
-				tmpFile.Close()
-				return fmt.Errorf("failed to write terraform binary: %w", err)
-			}
-			tmpFile.Close()
-
-			// Rename the temporary file to the final destination
-			if err := os.Rename(tmpFile.Name(), t.binaryPath); err != nil {
-				return fmt.Errorf("failed to rename terraform binary: %w", err)
-			}
-
-			break
-		}
-	}
-
-	// Make executable
-	if err := os.Chmod(t.binaryPath, 0755); err != nil {
-		return fmt.Errorf("failed to make terraform binary executable: %w", err)
-	}
-
-	// Clean up zip file
-	if err := os.Remove(zipPath); err != nil {
-		fmt.Printf("Warning: failed to remove zip file %s: %v\n", zipPath, err)
+	if err := os.Rename(execPath, cachedPath); err != nil {
+		return execPath, nil
 	}
 
 	fmt.Println("Terraform downloaded successfully.")
-	return nil
+	return cachedPath, nil
 }
