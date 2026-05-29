@@ -74,7 +74,7 @@ export default function DashboardLayout({
 	const navigation = [
 		{ name: "Overview", href: "/dashboard", icon: LayoutDashboard },
 		{ name: "Vineyards", href: "/dashboard/vineyards", icon: Grape },
-		{ name: "Plant a Vine", href: "/dashboard/configure", icon: Plus },
+		{ name: "Plant a Vine", href: "/dashboard/plant", icon: Plus },
 		{ name: "Jobs", href: "/dashboard/jobs", icon: ClipboardList },
 		{ name: "Integrations", href: "/dashboard/integrations", icon: Blocks },
 		{ name: "Workers", href: "/dashboard/workers", icon: Workflow },

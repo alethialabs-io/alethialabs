@@ -1,0 +1,143 @@
+"use client";
+
+import type { CacheEntry } from "./plant-vine-form";
+import { Button } from "@/components/ui/button";
+import {
+	Card,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Cpu, Plus, Trash2 } from "lucide-react";
+
+interface Props {
+	caches: CacheEntry[];
+	onCachesChange: (v: CacheEntry[]) => void;
+}
+
+export function SectionCaches({ caches, onCachesChange }: Props) {
+	const addCache = () => {
+		onCachesChange([
+			...caches,
+			{
+				name: caches.length === 0 ? "primary" : `cache-${caches.length + 1}`,
+				engine: "redis",
+				node_type: "cache.t3.medium",
+				num_cache_nodes: 1,
+				multi_az: false,
+			},
+		]);
+	};
+
+	const removeCache = (index: number) => {
+		onCachesChange(caches.filter((_, i) => i !== index));
+	};
+
+	const updateCache = (index: number, field: keyof CacheEntry, value: any) => {
+		const updated = [...caches];
+		updated[index] = { ...updated[index], [field]: value };
+		onCachesChange(updated);
+	};
+
+	return (
+		<Card>
+			<CardHeader>
+				<div className="flex items-center justify-between">
+					<div className="flex items-center gap-2">
+						<Cpu className="h-4 w-4 text-muted-foreground" />
+						<CardTitle className="text-base">Caches</CardTitle>
+					</div>
+					<Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={addCache}>
+						<Plus className="h-3.5 w-3.5 mr-1.5" />
+						Add Cache
+					</Button>
+				</div>
+				<CardDescription className="text-xs">
+					ElastiCache Redis or Valkey instances for your applications.
+				</CardDescription>
+			</CardHeader>
+			<CardContent className="space-y-4">
+				{caches.length === 0 ? (
+					<div className="text-center py-8 text-muted-foreground">
+						<Cpu className="h-8 w-8 mx-auto mb-2 opacity-20" />
+						<p className="text-sm">No caches configured.</p>
+						<p className="text-[11px] mt-1">Click "Add Cache" to include a Redis or Valkey cluster.</p>
+					</div>
+				) : (
+					caches.map((cache, i) => (
+						<div key={i} className="p-4 border border-border/50 rounded-lg space-y-3">
+							<div className="flex items-center justify-between">
+								<span className="text-sm font-medium">{cache.name || "Unnamed"}</span>
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon"
+									className="h-7 w-7 text-muted-foreground hover:text-destructive"
+									onClick={() => removeCache(i)}
+								>
+									<Trash2 className="h-3.5 w-3.5" />
+								</Button>
+							</div>
+
+							<div className="grid md:grid-cols-3 gap-3">
+								<div className="space-y-1">
+									<Label className="text-[11px]">Name</Label>
+									<Input
+										value={cache.name}
+										onChange={(e) => updateCache(i, "name", e.target.value)}
+										className="h-8 text-xs"
+									/>
+								</div>
+								<div className="space-y-1">
+									<Label className="text-[11px]">Engine</Label>
+									<Select value={cache.engine} onValueChange={(v) => updateCache(i, "engine", v)}>
+										<SelectTrigger className="h-8 text-xs">
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="redis">Redis</SelectItem>
+											<SelectItem value="valkey">Valkey</SelectItem>
+										</SelectContent>
+									</Select>
+								</div>
+								<div className="space-y-1">
+									<Label className="text-[11px]">Node Type</Label>
+									<Select value={cache.node_type} onValueChange={(v) => updateCache(i, "node_type", v)}>
+										<SelectTrigger className="h-8 text-xs">
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="cache.t3.micro">t3.micro (~$12/mo)</SelectItem>
+											<SelectItem value="cache.t3.small">t3.small (~$18/mo)</SelectItem>
+											<SelectItem value="cache.t3.medium">t3.medium (~$25/mo)</SelectItem>
+											<SelectItem value="cache.r6g.large">r6g.large (~$108/mo)</SelectItem>
+										</SelectContent>
+									</Select>
+								</div>
+							</div>
+
+							<div className="flex items-center justify-between p-2 bg-muted/20 rounded">
+								<span className="text-[11px] text-muted-foreground">Multi-AZ Failover</span>
+								<Switch
+									checked={cache.multi_az}
+									onCheckedChange={(v) => updateCache(i, "multi_az", v)}
+								/>
+							</div>
+						</div>
+					))
+				)}
+			</CardContent>
+		</Card>
+	);
+}
