@@ -140,6 +140,17 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			})
 			fmt.Fprintln(stdoutLogger, "AWS resources cached successfully.")
 		}
+	case "FETCH_RESOURCES":
+		fmt.Fprintln(stdoutLogger, "Fetching AWS resources...")
+		resources, fetchErr := w.fetchAwsResources(ctx, stdoutLogger)
+		if fetchErr != nil {
+			execErr = fmt.Errorf("failed to fetch AWS resources: %w", fetchErr)
+		} else {
+			w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+				"cached_resources": resources,
+			})
+			fmt.Fprintln(stdoutLogger, "AWS resources fetched successfully.")
+		}
 	case "BOOTSTRAP":
 		execErr = w.executeBootstrap(ctx, job, stdoutLogger, stderrLogger)
 	case "DEPLOY":

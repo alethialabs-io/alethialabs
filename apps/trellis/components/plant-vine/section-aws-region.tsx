@@ -1,7 +1,16 @@
 "use client";
 
-import type { CachedAwsResources } from "@/app/server/actions/aws/resources";
+import {
+	getCachedAwsResources,
+	type CachedAwsResources,
+} from "@/app/server/actions/aws/resources";
+import {
+	refreshAwsResources,
+	persistCachedResources,
+} from "@/app/(private)/dashboard/providers/actions";
+import { getJobStatus } from "@/app/server/actions/jobs";
 import { CloudIdentitySelector } from "@/components/configuration/cloud-identity-selector";
+import { Button } from "@/components/ui/button";
 import {
 	Card,
 	CardContent,
@@ -19,7 +28,9 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Cloud } from "lucide-react";
+import { Cloud, Loader2, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 const STATIC_REGIONS = [
 	{ group: "Europe", regions: [
@@ -36,10 +47,6 @@ const STATIC_REGIONS = [
 		{ value: "us-west-1", label: "N. California" },
 		{ value: "us-west-2", label: "Oregon" },
 	]},
-	{ group: "Asia Pacific", regions: [
-		{ value: "ap-southeast-1", label: "Singapore" },
-		{ value: "ap-northeast-1", label: "Tokyo" },
-	]},
 ];
 
 interface Props {
@@ -49,6 +56,7 @@ interface Props {
 	region: string;
 	onRegionChange: (v: string) => void;
 	awsResources: CachedAwsResources | null;
+	onAwsResourcesChange?: (resources: CachedAwsResources | null) => void;
 }
 
 export function SectionAwsRegion({
@@ -58,18 +66,91 @@ export function SectionAwsRegion({
 	region,
 	onRegionChange,
 	awsResources,
+	onAwsResourcesChange,
 }: Props) {
+	const [isRefreshing, setIsRefreshing] = useState(false);
+	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
 	const cachedRegions = awsResources?.regions as string[] | undefined;
+	const cachedAt = awsResources?.cached_at;
+
+	const stopPolling = useCallback(() => {
+		if (pollRef.current) {
+			clearInterval(pollRef.current);
+			pollRef.current = null;
+		}
+	}, []);
+
+	useEffect(() => () => stopPolling(), [stopPolling]);
+
+	const handleRefresh = async () => {
+		if (!cloudIdentityId) return;
+		setIsRefreshing(true);
+
+		try {
+			const { jobId } = await refreshAwsResources(cloudIdentityId);
+
+			pollRef.current = setInterval(async () => {
+				try {
+					const result = await getJobStatus(jobId);
+					if (!result) return;
+
+					if (result.status === "SUCCESS") {
+						stopPolling();
+						await persistCachedResources(cloudIdentityId, jobId);
+						const fresh = await getCachedAwsResources(cloudIdentityId);
+						onAwsResourcesChange?.(fresh);
+						setIsRefreshing(false);
+						toast.success("AWS resources refreshed");
+					} else if (result.status === "FAILED") {
+						stopPolling();
+						setIsRefreshing(false);
+						toast.error(result.error_message || "Failed to fetch AWS resources");
+					}
+				} catch {
+					stopPolling();
+					setIsRefreshing(false);
+				}
+			}, 2000);
+		} catch (err: any) {
+			setIsRefreshing(false);
+			toast.error(err.message || "Failed to refresh");
+		}
+	};
 
 	return (
 		<Card>
 			<CardHeader>
-				<div className="flex items-center gap-2">
-					<Cloud className="h-4 w-4 text-muted-foreground" />
-					<CardTitle className="text-base">AWS Account & Region</CardTitle>
+				<div className="flex items-center justify-between">
+					<div className="flex items-center gap-2">
+						<Cloud className="h-4 w-4 text-muted-foreground" />
+						<CardTitle className="text-base">AWS Account & Region</CardTitle>
+					</div>
+					{cloudIdentityId && (
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							className="h-8 text-xs"
+							onClick={handleRefresh}
+							disabled={isRefreshing}
+						>
+							{isRefreshing ? (
+								<Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+							) : (
+								<RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+							)}
+							{isRefreshing ? "Fetching..." : "Refresh"}
+						</Button>
+					)}
 				</div>
 				<CardDescription className="text-xs">
 					Select the AWS account and region for this infrastructure.
+					{cachedAt && (
+						<span className="text-muted-foreground/60 ml-1">
+							Last refreshed: {new Date(cachedAt).toLocaleTimeString()}
+						</span>
+					)}
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
@@ -112,6 +193,11 @@ export function SectionAwsRegion({
 							)}
 						</SelectContent>
 					</Select>
+					{!cachedRegions && cloudIdentityId && (
+						<p className="text-[10px] text-muted-foreground">
+							Showing default regions. Click "Refresh" to load your account's enabled regions.
+						</p>
+					)}
 				</div>
 			</CardContent>
 		</Card>

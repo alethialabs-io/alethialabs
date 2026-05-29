@@ -37,19 +37,19 @@ export async function getAwsConnectionStatus(): Promise<AwsConnectionStatus> {
 export async function getAwsExternalId() {
 	const supabase = await createClient();
 
-	const { data: existingIdentity } = await supabase
+	// UNIQUE constraint on (user_id, provider) guarantees at most one row
+	const { data: existing } = await supabase
 		.from("cloud_identities")
 		.select("*")
 		.eq("provider", "aws")
-		.eq("is_verified", false)
 		.maybeSingle();
 
-	if (existingIdentity) {
-		const credentials = existingIdentity.credentials as Record<string, any>;
-		if (credentials.external_id) {
+	if (existing) {
+		const credentials = existing.credentials as Record<string, any>;
+		if (credentials?.external_id) {
 			return {
 				externalId: credentials.external_id as string,
-				identityId: existingIdentity.id,
+				identityId: existing.id,
 			};
 		}
 	}
@@ -60,9 +60,7 @@ export async function getAwsExternalId() {
 		.insert({
 			provider: "aws",
 			name: "AWS Connection (Pending)",
-			credentials: {
-				external_id: newExternalId,
-			},
+			credentials: { external_id: newExternalId },
 			is_verified: false,
 		})
 		.select()
@@ -76,6 +74,54 @@ export async function getAwsExternalId() {
 		externalId: newExternalId,
 		identityId: newIdentity.id,
 	};
+}
+
+export async function refreshAwsResources(cloudIdentityId: string) {
+	const supabase = await createClient();
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
+
+	if (!user) throw new Error("Unauthorized");
+
+	const { data: job, error } = await supabase
+		.from("provision_jobs")
+		.insert({
+			user_id: user.id,
+			job_type: "FETCH_RESOURCES",
+			cloud_identity_id: cloudIdentityId,
+			config_snapshot: {},
+			status: "QUEUED",
+		})
+		.select("id")
+		.single();
+
+	if (error) throw new Error("Failed to queue resource fetch: " + error.message);
+
+	return { jobId: job.id };
+}
+
+export async function persistCachedResources(cloudIdentityId: string, jobId: string) {
+	const supabase = await createClient();
+
+	const { data: job } = await supabase
+		.from("provision_jobs")
+		.select("execution_metadata")
+		.eq("id", jobId)
+		.single();
+
+	const metadata = job?.execution_metadata as Record<string, any> | null;
+	if (!metadata?.cached_resources) return { success: false };
+
+	await supabase
+		.from("cloud_identities")
+		.update({
+			cached_resources: metadata.cached_resources,
+			cached_at: new Date().toISOString(),
+		})
+		.eq("id", cloudIdentityId);
+
+	return { success: true };
 }
 
 export async function saveAwsIdentity(identityId: string, roleArn: string) {

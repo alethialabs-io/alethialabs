@@ -66,6 +66,7 @@ export function PlantVineForm({
 	const router = useRouter();
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [awsResources, setAwsResources] = useState(initialAwsResources);
 
 	// Vine core
 	const [projectName, setProjectName] = useState("");
@@ -227,7 +228,8 @@ export function PlantVineForm({
 					}}
 					region={region}
 					onRegionChange={setRegion}
-					awsResources={initialAwsResources}
+					awsResources={awsResources}
+					onAwsResourcesChange={setAwsResources}
 				/>
 
 				<SectionVpc
@@ -240,7 +242,7 @@ export function PlantVineForm({
 					singleNatGateway={singleNatGateway}
 					onSingleNatGatewayChange={setSingleNatGateway}
 					region={region}
-					awsResources={initialAwsResources}
+					awsResources={awsResources}
 				/>
 
 				<SectionEks
@@ -297,7 +299,7 @@ export function PlantVineForm({
 					onCloudfrontWafChange={setCloudfrontWaf}
 					applicationWaf={applicationWaf}
 					onApplicationWafChange={setApplicationWaf}
-					awsResources={initialAwsResources}
+					awsResources={awsResources}
 				/>
 
 				<SectionMessaging
