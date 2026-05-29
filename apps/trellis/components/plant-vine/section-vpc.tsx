@@ -30,6 +30,44 @@ interface VpcInfo {
 
 const CIDR_REGEX = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
 
+function parseCidr(cidr: string) {
+	if (!CIDR_REGEX.test(cidr)) return null;
+
+	const [ip, prefixStr] = cidr.split("/");
+	const prefix = parseInt(prefixStr);
+	if (prefix < 0 || prefix > 32) return null;
+
+	const parts = ip.split(".").map(Number);
+	if (parts.some((p) => p < 0 || p > 255)) return null;
+
+	const totalAddresses = Math.pow(2, 32 - prefix);
+	const usableHosts = Math.max(totalAddresses - 5, 0); // AWS reserves 5
+
+	const ipNum =
+		(parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3];
+	const mask = ~((1 << (32 - prefix)) - 1) >>> 0;
+	const networkStart = (ipNum & mask) >>> 0;
+	const networkEnd = (networkStart + totalAddresses - 1) >>> 0;
+
+	const toIp = (n: number) =>
+		`${(n >>> 24) & 255}.${(n >>> 16) & 255}.${(n >>> 8) & 255}.${n & 255}`;
+
+	let sizeLabel: string;
+	if (totalAddresses >= 65536) sizeLabel = "Large";
+	else if (totalAddresses >= 4096) sizeLabel = "Medium";
+	else if (totalAddresses >= 256) sizeLabel = "Small";
+	else sizeLabel = "Very small";
+
+	return {
+		totalAddresses,
+		usableHosts,
+		prefix,
+		rangeStart: toIp(networkStart),
+		rangeEnd: toIp(networkEnd),
+		sizeLabel,
+	};
+}
+
 interface Props {
 	provisionVpc: boolean;
 	onProvisionVpcChange: (v: boolean) => void;
@@ -125,8 +163,33 @@ export function SectionVpc({
 								onChange={(e) => onVpcCidrChange(e.target.value)}
 								className={`h-9 text-sm font-mono ${cidrError ? "border-destructive" : ""}`}
 							/>
-							{cidrError && (
+							{cidrError ? (
 								<p className="text-[11px] text-destructive">{cidrError}</p>
+							) : (
+								(() => {
+									const info = parseCidr(vpcCidr);
+									if (!info) return null;
+									return (
+										<div className="text-[11px] text-muted-foreground space-y-0.5 p-2 bg-muted/20 rounded border border-border/30">
+											<div className="flex justify-between">
+												<span>Addresses</span>
+												<span className="font-mono">{info.totalAddresses.toLocaleString()}</span>
+											</div>
+											<div className="flex justify-between">
+												<span>Usable IPs (AWS reserves 5)</span>
+												<span className="font-mono">{info.usableHosts.toLocaleString()}</span>
+											</div>
+											<div className="flex justify-between">
+												<span>Range</span>
+												<span className="font-mono">{info.rangeStart} — {info.rangeEnd}</span>
+											</div>
+											<div className="flex justify-between">
+												<span>Size</span>
+												<span className="font-medium">/{info.prefix} ({info.sizeLabel})</span>
+											</div>
+										</div>
+									);
+								})()
 							)}
 						</div>
 						<div className="space-y-1.5">
