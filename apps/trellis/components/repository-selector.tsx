@@ -319,182 +319,175 @@ export function RepositorySelector({
 	}
 
 	return (
-		<div className="space-y-2">
-			<div className="flex items-center justify-between min-h-[20px]">
-				{label ? (
+		<div className="space-y-1.5">
+			{label && (
+				<div className="flex items-center justify-between">
 					<label className="text-sm font-medium">
 						{label}
 						{required && <span className="text-red-500 ml-1">*</span>}
 					</label>
-				) : <div />}
-				<div className="flex items-center gap-1">
+				</div>
+			)}
+
+			<div className="flex items-center gap-1.5">
+				<div className={cn(
+					"flex flex-1 items-center gap-0 rounded-md border bg-transparent shadow-sm overflow-hidden focus-within:ring-1 focus-within:ring-ring",
+					error ? "border-destructive/50" : "border-input"
+				)}>
+					{/* Provider Selection (Icon Only) */}
+					<Select
+						value={selectedProvider || ""}
+						onValueChange={(val) =>
+							handleProviderChange(val as PublicGitProvider)
+						}
+					>
+						<SelectTrigger className="w-[50px] shrink-0 rounded-none border-0 border-r bg-muted/20 focus:ring-0 focus:ring-offset-0 justify-center px-0">
+							{selectedProvider ? (
+								<GitProviderIcon
+									provider={selectedProvider}
+									size={18}
+								/>
+							) : (
+								<SelectValue />
+							)}
+						</SelectTrigger>
+						<SelectContent>
+							{linkedProviders.map((p) => (
+								<SelectItem key={p} value={p}>
+									<div className="flex items-center gap-2">
+										<GitProviderIcon provider={p} />
+										<span className="capitalize">{p}</span>
+									</div>
+								</SelectItem>
+							))}
+							<div className="border-t my-1" />
+							<Button
+								variant="ghost"
+								className="w-full justify-start text-xs h-8 px-2 font-normal"
+								onClick={(e) => {
+									e.stopPropagation();
+									setShowLinkOptions(!showLinkOptions);
+								}}
+							>
+								<Plus className="w-3 h-3 mr-2" /> Link another
+							</Button>
+						</SelectContent>
+					</Select>
+
+					{/* Repository Selection with Combobox or Error State */}
+					{error ? (
+						<div className="flex-1 flex items-center gap-2 px-3 min-h-9">
+							<AlertCircle className="w-3.5 h-3.5 shrink-0 text-destructive" />
+							<span className="text-sm text-destructive truncate">
+								{authRecoveryProvider
+									? "Session expired — relink to continue"
+									: error}
+							</span>
+						</div>
+					) : (
+						<Popover open={open} onOpenChange={setOpen}>
+							<PopoverTrigger asChild>
+								<Button
+									variant="ghost"
+									role="combobox"
+									aria-expanded={open}
+									className={cn(
+										"flex-1 justify-start rounded-none border-0 hover:bg-transparent font-normal px-3",
+										!value && "text-muted-foreground",
+										fetchingRepos && "opacity-50"
+									)}
+									disabled={fetchingRepos || repositories.length === 0}
+								>
+									{value ? (
+										<div className="flex items-center gap-2 w-full truncate text-left">
+											<span className="font-mono text-sm truncate max-w-[calc(100%-40px)]">
+												{repositories.find((r) => r.url === value)?.full_name || value}
+											</span>
+											{repositories.find((r) => r.url === value)?.private && (
+												<span className="text-[10px] bg-yellow-100 text-yellow-800 px-1 py-0 rounded shrink-0">
+													Private
+												</span>
+											)}
+										</div>
+									) : fetchingRepos ? (
+										"Fetching repositories..."
+									) : repositories.length === 0 ? (
+										"No repositories found"
+									) : (
+										placeholder || "Select repository..."
+									)}
+								</Button>
+							</PopoverTrigger>
+							<PopoverContent className="w-[400px] p-0" align="start">
+								<Command>
+									<CommandInput placeholder="Search repositories..." />
+									<CommandList>
+										<CommandEmpty>No repository found.</CommandEmpty>
+										<CommandGroup>
+											{repositories.map((repo) => (
+												<CommandItem
+													key={repo.id}
+													value={repo.full_name}
+													onSelect={() => {
+														onChange(repo.url);
+														setOpen(false);
+													}}
+												>
+													<div className="flex w-full items-center justify-between">
+														<span className="font-mono text-sm truncate">
+															{repo.full_name}
+														</span>
+														{repo.private && (
+															<span className="text-[10px] bg-yellow-100 text-yellow-800 px-1 py-0 rounded shrink-0 ml-2">
+																Private
+															</span>
+														)}
+													</div>
+												</CommandItem>
+											))}
+										</CommandGroup>
+									</CommandList>
+								</Command>
+							</PopoverContent>
+						</Popover>
+					)}
+				</div>
+
+				{/* Action buttons (refresh/relink/manual) */}
+				{authRecoveryProvider ? (
 					<Button
 						type="button"
 						variant="ghost"
-						size="sm"
-						onClick={() => setIsManual(true)}
-						className="text-[11px] text-muted-foreground h-auto py-0.5 px-1.5"
+						size="icon"
+						onClick={() => handleLinkAccount(authRecoveryProvider)}
+						className="h-9 w-9 shrink-0 text-destructive hover:text-destructive"
+						title="Relink account"
 					>
-						Enter URL manually
+						<GitProviderIcon provider={authRecoveryProvider} size={14} />
 					</Button>
-					{authRecoveryProvider ? (
-						<Button
-							type="button"
-							variant="ghost"
-							size="sm"
-							onClick={() =>
-								handleLinkAccount(authRecoveryProvider)
-							}
-							className="text-xs text-destructive hover:text-destructive h-auto py-1"
-						>
-							<GitProviderIcon
-								provider={authRecoveryProvider}
-								className="mr-1"
-								size={14}
-							/>
-							Relink
-						</Button>
-					) : (
-						<Button
-							type="button"
-							variant="ghost"
-							size="sm"
-							onClick={() =>
-								selectedProvider &&
-								fetchRepositories(selectedProvider)
-							}
-							disabled={fetchingRepos || !selectedProvider}
-							title="Refresh repositories"
-						>
-							<RefreshCw
-								className={`w-4 h-4 ${fetchingRepos ? "animate-spin" : ""}`}
-							/>
-						</Button>
-					)}
-				</div>
-			</div>
-
-			<div className={cn(
-				"flex w-full items-center gap-0 rounded-md border bg-transparent shadow-sm overflow-hidden focus-within:ring-1 focus-within:ring-ring",
-				error ? "border-destructive/50" : "border-input"
-			)}>
-				{/* Provider Selection (Icon Only) */}
-				<Select
-					value={selectedProvider || ""}
-					onValueChange={(val) =>
-						handleProviderChange(val as PublicGitProvider)
-					}
-				>
-					<SelectTrigger className="w-[50px] shrink-0 rounded-none border-0 border-r bg-muted/20 focus:ring-0 focus:ring-offset-0 justify-center px-0">
-						{selectedProvider ? (
-							<GitProviderIcon
-								provider={selectedProvider}
-								size={18}
-							/>
-						) : (
-							<SelectValue />
-						)}
-					</SelectTrigger>
-					<SelectContent>
-						{linkedProviders.map((p) => (
-							<SelectItem key={p} value={p}>
-								<div className="flex items-center gap-2">
-									<GitProviderIcon provider={p} />
-									<span className="capitalize">{p}</span>
-								</div>
-							</SelectItem>
-						))}
-						<div className="border-t my-1" />
-						<Button
-							variant="ghost"
-							className="w-full justify-start text-xs h-8 px-2 font-normal"
-							onClick={(e) => {
-								e.stopPropagation();
-								setShowLinkOptions(!showLinkOptions);
-							}}
-						>
-							<Plus className="w-3 h-3 mr-2" /> Link another
-						</Button>
-					</SelectContent>
-				</Select>
-
-				{/* Repository Selection with Combobox or Error State */}
-				{error ? (
-					<div className="flex-1 flex items-center gap-2 px-3 min-h-9">
-						<AlertCircle className="w-3.5 h-3.5 shrink-0 text-destructive" />
-						<span className="text-sm text-destructive truncate">
-							{authRecoveryProvider
-								? "Session expired — relink to continue"
-								: error}
-						</span>
-					</div>
 				) : (
-					<Popover open={open} onOpenChange={setOpen}>
-						<PopoverTrigger asChild>
-							<Button
-								variant="ghost"
-								role="combobox"
-								aria-expanded={open}
-								className={cn(
-									"flex-1 justify-start rounded-none border-0 hover:bg-transparent font-normal px-3",
-									!value && "text-muted-foreground",
-									fetchingRepos && "opacity-50"
-								)}
-								disabled={fetchingRepos || repositories.length === 0}
-							>
-								{value ? (
-									<div className="flex items-center gap-2 w-full truncate text-left">
-										<span className="font-mono text-sm truncate max-w-[calc(100%-40px)]">
-											{repositories.find((r) => r.url === value)?.full_name || value}
-										</span>
-										{repositories.find((r) => r.url === value)?.private && (
-											<span className="text-[10px] bg-yellow-100 text-yellow-800 px-1 py-0 rounded shrink-0">
-												Private
-											</span>
-										)}
-									</div>
-								) : fetchingRepos ? (
-									"Fetching repositories..."
-								) : repositories.length === 0 ? (
-									"No repositories found"
-								) : (
-									placeholder || "Select repository..."
-								)}
-							</Button>
-						</PopoverTrigger>
-						<PopoverContent className="w-[400px] p-0" align="start">
-							<Command>
-								<CommandInput placeholder="Search repositories..." />
-								<CommandList>
-									<CommandEmpty>No repository found.</CommandEmpty>
-									<CommandGroup>
-										{repositories.map((repo) => (
-											<CommandItem
-												key={repo.id}
-												value={repo.full_name}
-												onSelect={() => {
-													onChange(repo.url);
-													setOpen(false);
-												}}
-											>
-												<div className="flex w-full items-center justify-between">
-													<span className="font-mono text-sm truncate">
-														{repo.full_name}
-													</span>
-													{repo.private && (
-														<span className="text-[10px] bg-yellow-100 text-yellow-800 px-1 py-0 rounded shrink-0 ml-2">
-															Private
-														</span>
-													)}
-												</div>
-											</CommandItem>
-										))}
-									</CommandGroup>
-								</CommandList>
-							</Command>
-						</PopoverContent>
-					</Popover>
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						onClick={() => selectedProvider && fetchRepositories(selectedProvider)}
+						disabled={fetchingRepos || !selectedProvider}
+						className="h-9 w-9 shrink-0"
+						title="Refresh repositories"
+					>
+						<RefreshCw className={`w-3.5 h-3.5 ${fetchingRepos ? "animate-spin" : ""}`} />
+					</Button>
 				)}
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					onClick={() => setIsManual(true)}
+					className="h-9 w-9 shrink-0 text-muted-foreground"
+					title="Enter URL manually"
+				>
+					<Plus className="w-3.5 h-3.5" />
+				</Button>
 			</div>
 
 			{showLinkOptions && (
