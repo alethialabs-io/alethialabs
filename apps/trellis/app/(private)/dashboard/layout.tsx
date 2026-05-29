@@ -26,14 +26,13 @@ import {
 	ArrowRight,
 	Bell,
 	Blocks,
-	Folder,
-	History,
+	ClipboardList,
+	Grape,
 	LayoutDashboard,
 	LogOut,
 	Menu,
 	Plus,
 	Search,
-	Server,
 	Settings,
 	User,
 	Workflow,
@@ -74,10 +73,9 @@ export default function DashboardLayout({
 
 	const navigation = [
 		{ name: "Overview", href: "/dashboard", icon: LayoutDashboard },
+		{ name: "Vineyards", href: "/dashboard/vineyards", icon: Grape },
 		{ name: "Plant a Vine", href: "/dashboard/configure", icon: Plus },
-		{ name: "Vines", href: "/dashboard/vines", icon: Folder },
-		{ name: "Clusters", href: "/dashboard/clusters", icon: Server },
-		{ name: "History", href: "/dashboard/history", icon: History },
+		{ name: "Jobs", href: "/dashboard/jobs", icon: ClipboardList },
 		{ name: "Integrations", href: "/dashboard/integrations", icon: Blocks },
 		{ name: "Workers", href: "/dashboard/workers", icon: Workflow },
 	];
@@ -264,7 +262,9 @@ export default function DashboardLayout({
 				<aside className="hidden lg:flex w-64 xl:w-72 shrink-0 flex-col overflow-y-auto border-r border-border/40 bg-background/50">
 					<nav className="flex-1 space-y-1 p-4 lg:p-6 overflow-y-auto">
 						{navigation.map((item) => {
-							const isActive = pathname === item.href;
+							const isActive = item.href === "/dashboard"
+								? pathname === "/dashboard"
+								: pathname.startsWith(item.href);
 							return (
 								<Link key={item.name} href={item.href}>
 									<Button
@@ -347,7 +347,9 @@ export default function DashboardLayout({
 							</div>
 							<nav className="flex-1 overflow-y-auto p-4 space-y-1">
 								{navigation.map((item) => {
-									const isActive = pathname === item.href;
+									const isActive = item.href === "/dashboard"
+								? pathname === "/dashboard"
+								: pathname.startsWith(item.href);
 									return (
 										<Link
 											key={item.name}

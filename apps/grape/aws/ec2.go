@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
 type EC2Client struct {
@@ -18,6 +19,53 @@ func NewEC2Client(ctx context.Context, opts AWSOptions) (*EC2Client, error) {
 	}
 	return &EC2Client{Client: ec2.NewFromConfig(cfg)}, nil
 }
+
+type SubnetInfo struct {
+	ID               string
+	CIDR             string
+	AvailabilityZone string
+	VpcID            string
+}
+
+func (c *EC2Client) ListRegions(ctx context.Context) ([]string, error) {
+	output, err := c.DescribeRegions(ctx, &ec2.DescribeRegionsInput{
+		AllRegions: boolPtr(false),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe regions: %w", err)
+	}
+
+	var regions []string
+	for _, r := range output.Regions {
+		regions = append(regions, *r.RegionName)
+	}
+	return regions, nil
+}
+
+func (c *EC2Client) ListSubnets(ctx context.Context, vpcID string) ([]SubnetInfo, error) {
+	output, err := c.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{
+		Filters: []ec2types.Filter{
+			{Name: strPtr("vpc-id"), Values: []string{vpcID}},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe subnets: %w", err)
+	}
+
+	var subnets []SubnetInfo
+	for _, s := range output.Subnets {
+		subnets = append(subnets, SubnetInfo{
+			ID:               *s.SubnetId,
+			CIDR:             *s.CidrBlock,
+			AvailabilityZone: *s.AvailabilityZone,
+			VpcID:            *s.VpcId,
+		})
+	}
+	return subnets, nil
+}
+
+func strPtr(s string) *string  { return &s }
+func boolPtr(b bool) *bool     { return &b }
 
 type VPCInfo struct {
 	ID        string

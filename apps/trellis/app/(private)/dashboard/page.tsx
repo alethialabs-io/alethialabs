@@ -1,13 +1,9 @@
 "use client";
 
-import {
-	getConfigurations,
-	GetConfigurationsData,
-	getConfigurationStats,
-	GetConfigurationStatsData,
-} from "@/app/server/actions/configurations";
 import { hasCloudIdentity } from "@/app/server/actions/identities";
 import { getVineyards, GetVineyardsData } from "@/app/server/actions/vineyards";
+import { getVines } from "@/app/server/actions/vines";
+import type { PublicVinesRow } from "@/lib/validations/db.schemas";
 import { DataTable } from "@/components/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +15,6 @@ import {
 	ArrowRight,
 	CheckCircle2,
 	Clock,
-	FileText,
 	Map,
 	Plus,
 	TrendingUp,
@@ -29,10 +24,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 export default function DashboardPage() {
-	const [stats, setStats] = useState<GetConfigurationStatsData | null>(null);
-	const [recentConfigs, setRecentConfigs] = useState<GetConfigurationsData>(
-		[],
-	);
+	const [recentVines, setRecentVines] = useState<PublicVinesRow[]>([]);
 	const [vineyards, setVineyards] = useState<GetVineyardsData>([]);
 	const [loading, setLoading] = useState(true);
 	const router = useRouter();
@@ -49,14 +41,12 @@ export default function DashboardPage() {
 					}
 				}
 
-				const [statsRes, configsRes, vineyardsRes] = await Promise.all([
-					getConfigurationStats(),
-					getConfigurations({ limit: 5 }),
+				const [vinesRes, vineyardsRes] = await Promise.all([
+					getVines(),
 					getVineyards(),
 				]);
 
-				setStats(statsRes.stats);
-				setRecentConfigs(configsRes.configurations || []);
+				setRecentVines((vinesRes.vines || []).slice(0, 5));
 				setVineyards(vineyardsRes.vineyards || []);
 			} catch (error) {
 				console.error("Error fetching dashboard data:", error);
@@ -91,27 +81,27 @@ export default function DashboardPage() {
 			<div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
 				<StatCard
 					label="Total Vines"
-					value={stats?.total_configs}
+					value={recentVines.length}
 					loading={loading}
 					icon={<TrendingUp className="h-3.5 w-3.5" />}
 				/>
 				<StatCard
-					label="Completed"
-					value={stats?.completed_configs}
+					label="Active"
+					value={recentVines.filter((v) => v.status === "ACTIVE").length}
 					loading={loading}
 					icon={<CheckCircle2 className="h-3.5 w-3.5" />}
 				/>
 				<StatCard
-					label="Drafts"
-					value={stats?.draft_configs}
+					label="Vineyards"
+					value={vineyards.length}
 					loading={loading}
-					icon={<Clock className="h-3.5 w-3.5" />}
+					icon={<Map className="h-3.5 w-3.5" />}
 				/>
 				<StatCard
-					label="This Month"
-					value={stats?.this_month_configs}
+					label="Draft"
+					value={recentVines.filter((v) => v.status === "DRAFT").length}
 					loading={loading}
-					icon={<FileText className="h-3.5 w-3.5" />}
+					icon={<Clock className="h-3.5 w-3.5" />}
 				/>
 			</div>
 
@@ -146,9 +136,9 @@ export default function DashboardPage() {
 							))}
 						</div>
 					</div>
-				) : recentConfigs.length === 0 ? (
+				) : recentVines.length === 0 ? (
 					<div className="border border-dashed border-border/60 rounded-lg bg-muted/5 flex flex-col items-center justify-center py-12 text-center">
-						<FileText className="h-8 w-8 text-muted-foreground mb-3 opacity-30" />
+						<TrendingUp className="h-8 w-8 text-muted-foreground mb-3 opacity-30" />
 						<p className="text-sm text-muted-foreground mb-4">
 							No vines planted yet.
 						</p>
@@ -162,11 +152,14 @@ export default function DashboardPage() {
 				) : (
 					<DataTable
 						columns={vinesColumns}
-						data={recentConfigs}
+						data={recentVines}
 						onRowClick={(row) =>
-							router.push(`/dashboard/vines?config_id=${row.id}`, {
-								scroll: false,
-							})
+							router.push(
+								row.vineyard_id
+									? `/dashboard/vineyards/${row.vineyard_id}`
+									: `/dashboard/vineyards`,
+								{ scroll: false },
+							)
 						}
 					/>
 				)}

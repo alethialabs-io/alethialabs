@@ -104,7 +104,7 @@ export async function saveAwsIdentity(identityId: string, roleArn: string) {
 				role_arn: roleArn,
 				account_id: awsAccountId,
 			},
-			is_verified: true, // Mark as ready
+			is_verified: false,
 			updated_at: new Date().toISOString(),
 		})
 		.eq("id", identityId);
@@ -113,5 +113,21 @@ export async function saveAwsIdentity(identityId: string, roleArn: string) {
 		throw new Error("Failed to save connection details");
 	}
 
-	return { success: true };
+	const { data: job, error: jobError } = await supabase
+		.from("provision_jobs")
+		.insert({
+			user_id: user.id,
+			job_type: "CONNECTION_TEST",
+			cloud_identity_id: identityId,
+			config_snapshot: { role_arn: roleArn, account_id: awsAccountId },
+			status: "QUEUED",
+		})
+		.select("id")
+		.single();
+
+	if (jobError) {
+		throw new Error("Failed to queue connection test: " + jobError.message);
+	}
+
+	return { jobId: job.id, identityId };
 }

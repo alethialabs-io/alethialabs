@@ -26,7 +26,7 @@ import {
 import { useEffect, useState } from "react";
 
 interface DownloadOptionsProps {
-	configurationData?: GetConfigurationsData[0];
+	configurationData?: { id: string; project_name: string; [key: string]: unknown };
 }
 
 export function DownloadOptions({ configurationData }: DownloadOptionsProps) {

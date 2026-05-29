@@ -20,17 +20,9 @@ export default async function AwsOnboardingPage() {
 		);
 	}
 
-	// 2. Define the submit handler (Server Action Wrapper)
 	async function handleComplete(roleArn: string) {
 		"use server";
-
-		try {
-			await saveAwsIdentity(setupData.identityId, roleArn);
-		} catch (error) {
-			throw error;
-		}
-
-		redirect("/dashboard");
+		return saveAwsIdentity(setupData.identityId, roleArn);
 	}
 
 	return (

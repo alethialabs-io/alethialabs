@@ -99,6 +99,7 @@ export function VineyardEstateMap({ vineyard }: VineyardEstateMapProps) {
 			{/* Render the details sheet for when a node is clicked */}
 			<ConfigurationSheetWrapper
 				configurations={vineyard.configurations || []}
+				awsConnected={true}
 			/>
 		</div>
 	);

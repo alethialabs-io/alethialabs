@@ -6,17 +6,47 @@
 
 import { z } from "zod";
 import * as generated from "./database.schemas";
+export type PublicAuditAction = z.infer<
+  typeof generated.publicAuditActionSchema
+>;
+export type PublicCacheEngine = z.infer<
+  typeof generated.publicCacheEngineSchema
+>;
 export type PublicCloudProvider = z.infer<
   typeof generated.publicCloudProviderSchema
 >;
 export type PublicClusterStatus = z.infer<
   typeof generated.publicClusterStatusSchema
 >;
+export type PublicComponentStatus = z.infer<
+  typeof generated.publicComponentStatusSchema
+>;
 export type PublicDeploymentResourceStatus = z.infer<
   typeof generated.publicDeploymentResourceStatusSchema
 >;
 export type PublicDeploymentStatus = z.infer<
   typeof generated.publicDeploymentStatusSchema
+>;
+export type PublicDynamodbBillingMode = z.infer<
+  typeof generated.publicDynamodbBillingModeSchema
+>;
+export type PublicDynamodbKeyType = z.infer<
+  typeof generated.publicDynamodbKeyTypeSchema
+>;
+export type PublicDynamodbTableType = z.infer<
+  typeof generated.publicDynamodbTableTypeSchema
+>;
+export type PublicEcrTagMutability = z.infer<
+  typeof generated.publicEcrTagMutabilitySchema
+>;
+export type PublicEnvironmentStage = z.infer<
+  typeof generated.publicEnvironmentStageSchema
+>;
+export type PublicGitCredentialMethod = z.infer<
+  typeof generated.publicGitCredentialMethodSchema
+>;
+export type PublicGitCredentialPurpose = z.infer<
+  typeof generated.publicGitCredentialPurposeSchema
 >;
 export type PublicGitProvider = z.infer<
   typeof generated.publicGitProviderSchema
@@ -32,6 +62,7 @@ export type PublicIntegrationStatus = z.infer<
   typeof generated.publicIntegrationStatusSchema
 >;
 export type PublicLogsLevel = z.infer<typeof generated.publicLogsLevelSchema>;
+export type PublicVineStatus = z.infer<typeof generated.publicVineStatusSchema>;
 export type Json = z.infer<typeof generated.jsonSchema>;
 export type PublicBootstrapJobsRow = z.infer<
   typeof generated.publicBootstrapJobsRowSchema
@@ -135,6 +166,15 @@ export type PublicDeploymentsUpdate = z.infer<
 export type PublicDeploymentsRelationships = z.infer<
   typeof generated.publicDeploymentsRelationshipsSchema
 >;
+export type PublicEksAdminsRow = z.infer<
+  typeof generated.publicEksAdminsRowSchema
+>;
+export type PublicEksAdminsInsert = z.infer<
+  typeof generated.publicEksAdminsInsertSchema
+>;
+export type PublicEksAdminsUpdate = z.infer<
+  typeof generated.publicEksAdminsUpdateSchema
+>;
 export type PublicHarvestsRow = z.infer<
   typeof generated.publicHarvestsRowSchema
 >;
@@ -220,6 +260,166 @@ export type PublicProvisionsUpdate = z.infer<
 export type PublicProvisionsRelationships = z.infer<
   typeof generated.publicProvisionsRelationshipsSchema
 >;
+export type PublicVineAuditLogRow = z.infer<
+  typeof generated.publicVineAuditLogRowSchema
+>;
+export type PublicVineAuditLogInsert = z.infer<
+  typeof generated.publicVineAuditLogInsertSchema
+>;
+export type PublicVineAuditLogUpdate = z.infer<
+  typeof generated.publicVineAuditLogUpdateSchema
+>;
+export type PublicVineAuditLogRelationships = z.infer<
+  typeof generated.publicVineAuditLogRelationshipsSchema
+>;
+export type PublicVineCachesRow = z.infer<
+  typeof generated.publicVineCachesRowSchema
+>;
+export type PublicVineCachesInsert = z.infer<
+  typeof generated.publicVineCachesInsertSchema
+>;
+export type PublicVineCachesUpdate = z.infer<
+  typeof generated.publicVineCachesUpdateSchema
+>;
+export type PublicVineCachesRelationships = z.infer<
+  typeof generated.publicVineCachesRelationshipsSchema
+>;
+export type PublicVineDatabasesRow = z.infer<
+  typeof generated.publicVineDatabasesRowSchema
+>;
+export type PublicVineDatabasesInsert = z.infer<
+  typeof generated.publicVineDatabasesInsertSchema
+>;
+export type PublicVineDatabasesUpdate = z.infer<
+  typeof generated.publicVineDatabasesUpdateSchema
+>;
+export type PublicVineDatabasesRelationships = z.infer<
+  typeof generated.publicVineDatabasesRelationshipsSchema
+>;
+export type PublicVineDnsRow = z.infer<typeof generated.publicVineDnsRowSchema>;
+export type PublicVineDnsInsert = z.infer<
+  typeof generated.publicVineDnsInsertSchema
+>;
+export type PublicVineDnsUpdate = z.infer<
+  typeof generated.publicVineDnsUpdateSchema
+>;
+export type PublicVineDnsRelationships = z.infer<
+  typeof generated.publicVineDnsRelationshipsSchema
+>;
+export type PublicVineDynamodbTablesRow = z.infer<
+  typeof generated.publicVineDynamodbTablesRowSchema
+>;
+export type PublicVineDynamodbTablesInsert = z.infer<
+  typeof generated.publicVineDynamodbTablesInsertSchema
+>;
+export type PublicVineDynamodbTablesUpdate = z.infer<
+  typeof generated.publicVineDynamodbTablesUpdateSchema
+>;
+export type PublicVineDynamodbTablesRelationships = z.infer<
+  typeof generated.publicVineDynamodbTablesRelationshipsSchema
+>;
+export type PublicVineEcrReposRow = z.infer<
+  typeof generated.publicVineEcrReposRowSchema
+>;
+export type PublicVineEcrReposInsert = z.infer<
+  typeof generated.publicVineEcrReposInsertSchema
+>;
+export type PublicVineEcrReposUpdate = z.infer<
+  typeof generated.publicVineEcrReposUpdateSchema
+>;
+export type PublicVineEcrReposRelationships = z.infer<
+  typeof generated.publicVineEcrReposRelationshipsSchema
+>;
+export type PublicVineEksRow = z.infer<typeof generated.publicVineEksRowSchema>;
+export type PublicVineEksInsert = z.infer<
+  typeof generated.publicVineEksInsertSchema
+>;
+export type PublicVineEksUpdate = z.infer<
+  typeof generated.publicVineEksUpdateSchema
+>;
+export type PublicVineEksRelationships = z.infer<
+  typeof generated.publicVineEksRelationshipsSchema
+>;
+export type PublicVineGitCredentialsRow = z.infer<
+  typeof generated.publicVineGitCredentialsRowSchema
+>;
+export type PublicVineGitCredentialsInsert = z.infer<
+  typeof generated.publicVineGitCredentialsInsertSchema
+>;
+export type PublicVineGitCredentialsUpdate = z.infer<
+  typeof generated.publicVineGitCredentialsUpdateSchema
+>;
+export type PublicVineGitCredentialsRelationships = z.infer<
+  typeof generated.publicVineGitCredentialsRelationshipsSchema
+>;
+export type PublicVineQueuesRow = z.infer<
+  typeof generated.publicVineQueuesRowSchema
+>;
+export type PublicVineQueuesInsert = z.infer<
+  typeof generated.publicVineQueuesInsertSchema
+>;
+export type PublicVineQueuesUpdate = z.infer<
+  typeof generated.publicVineQueuesUpdateSchema
+>;
+export type PublicVineQueuesRelationships = z.infer<
+  typeof generated.publicVineQueuesRelationshipsSchema
+>;
+export type PublicVineRepositoriesRow = z.infer<
+  typeof generated.publicVineRepositoriesRowSchema
+>;
+export type PublicVineRepositoriesInsert = z.infer<
+  typeof generated.publicVineRepositoriesInsertSchema
+>;
+export type PublicVineRepositoriesUpdate = z.infer<
+  typeof generated.publicVineRepositoriesUpdateSchema
+>;
+export type PublicVineRepositoriesRelationships = z.infer<
+  typeof generated.publicVineRepositoriesRelationshipsSchema
+>;
+export type PublicVineSecretsRow = z.infer<
+  typeof generated.publicVineSecretsRowSchema
+>;
+export type PublicVineSecretsInsert = z.infer<
+  typeof generated.publicVineSecretsInsertSchema
+>;
+export type PublicVineSecretsUpdate = z.infer<
+  typeof generated.publicVineSecretsUpdateSchema
+>;
+export type PublicVineSecretsRelationships = z.infer<
+  typeof generated.publicVineSecretsRelationshipsSchema
+>;
+export type PublicVineTopicsRow = z.infer<
+  typeof generated.publicVineTopicsRowSchema
+>;
+export type PublicVineTopicsInsert = z.infer<
+  typeof generated.publicVineTopicsInsertSchema
+>;
+export type PublicVineTopicsUpdate = z.infer<
+  typeof generated.publicVineTopicsUpdateSchema
+>;
+export type PublicVineTopicsRelationships = z.infer<
+  typeof generated.publicVineTopicsRelationshipsSchema
+>;
+export type PublicVineVpcRow = z.infer<typeof generated.publicVineVpcRowSchema>;
+export type PublicVineVpcInsert = z.infer<
+  typeof generated.publicVineVpcInsertSchema
+>;
+export type PublicVineVpcUpdate = z.infer<
+  typeof generated.publicVineVpcUpdateSchema
+>;
+export type PublicVineVpcRelationships = z.infer<
+  typeof generated.publicVineVpcRelationshipsSchema
+>;
+export type PublicVinesRow = z.infer<typeof generated.publicVinesRowSchema>;
+export type PublicVinesInsert = z.infer<
+  typeof generated.publicVinesInsertSchema
+>;
+export type PublicVinesUpdate = z.infer<
+  typeof generated.publicVinesUpdateSchema
+>;
+export type PublicVinesRelationships = z.infer<
+  typeof generated.publicVinesRelationshipsSchema
+>;
 export type PublicVineyardsRow = z.infer<
   typeof generated.publicVineyardsRowSchema
 >;
@@ -238,6 +438,12 @@ export type PublicWorkersUpdate = z.infer<
 >;
 export type PublicWorkersRelationships = z.infer<
   typeof generated.publicWorkersRelationshipsSchema
+>;
+export type PublicVineFullRow = z.infer<
+  typeof generated.publicVineFullRowSchema
+>;
+export type PublicVineFullRelationships = z.infer<
+  typeof generated.publicVineFullRelationshipsSchema
 >;
 export type PublicAgentHeartbeatArgs = z.infer<
   typeof generated.publicAgentHeartbeatArgsSchema

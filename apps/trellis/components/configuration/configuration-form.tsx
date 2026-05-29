@@ -108,7 +108,7 @@ export function NewConfigurationForm() {
 				vine: {
 					project_name: data.project_name,
 					environment_stage: (data.environment_stage || "development") as any,
-					aws_region: data.aws_region,
+					aws_region: data.aws_region || "eu-west-1",
 					aws_account_id: data.aws_account_id || null,
 					vineyard_id: data.vineyard_id || null,
 					cloud_identity_id: data.cloud_identity_id || null,
