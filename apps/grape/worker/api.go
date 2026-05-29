@@ -63,6 +63,8 @@ func (c *WorkerAPIClient) setWorkerHeaders(req *http.Request) {
 	req.Header.Set("X-Worker-ID", c.workerID)
 	req.Header.Set("X-Worker-Token", c.workerToken)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "grape-worker/1.0")
+	req.Header.Set("ngrok-skip-browser-warning", "true")
 }
 
 func (c *WorkerAPIClient) Heartbeat() error {

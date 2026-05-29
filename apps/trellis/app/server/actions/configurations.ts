@@ -374,3 +374,54 @@ export async function downloadConfigurationZip(id: string) {
 		throw new Error("Failed to generate installer package");
 	}
 }
+
+export async function provisionConfiguration(configurationId: string) {
+	const supabase = await createClient();
+
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
+
+	if (!user) throw new Error("Unauthorized");
+
+	const { data: identity } = await supabase
+		.from("cloud_identities")
+		.select("id")
+		.eq("provider", "aws")
+		.eq("is_verified", true)
+		.maybeSingle();
+
+	if (!identity) {
+		throw new Error("No verified AWS account connected. Go to Integrations to connect.");
+	}
+
+	const { data: config, error: configError } = await supabase
+		.from("configurations")
+		.select("*")
+		.eq("id", configurationId)
+		.single();
+
+	if (configError || !config) {
+		throw new Error("Configuration not found");
+	}
+
+	const { data: job, error: jobError } = await supabase
+		.from("provision_jobs")
+		.insert({
+			user_id: user.id,
+			vineyard_id: config.vineyard_id,
+			cloud_identity_id: identity.id,
+			job_type: "DEPLOY",
+			configuration_id: config.id,
+			config_snapshot: { ...config },
+			status: "QUEUED",
+		})
+		.select("id")
+		.single();
+
+	if (jobError) {
+		throw new Error("Failed to queue provision job: " + jobError.message);
+	}
+
+	return { jobId: job.id };
+}

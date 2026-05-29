@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	grapeAws "github.com/bobikenobi12/bb-thesis-2026/apps/grape/aws"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/provisioner"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
 )
@@ -128,6 +129,17 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 
 	var execErr error
 	switch job.JobType {
+	case "CONNECTION_TEST":
+		fmt.Fprintln(stdoutLogger, "Connection test passed — role assumption succeeded.")
+		resources, fetchErr := w.fetchAwsResources(ctx, stdoutLogger)
+		if fetchErr != nil {
+			fmt.Fprintf(stderrLogger, "Warning: failed to cache AWS resources: %v\n", fetchErr)
+		} else {
+			w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+				"cached_resources": resources,
+			})
+			fmt.Fprintln(stdoutLogger, "AWS resources cached successfully.")
+		}
 	case "BOOTSTRAP":
 		execErr = w.executeBootstrap(ctx, job, stdoutLogger, stderrLogger)
 	case "DEPLOY":
@@ -139,6 +151,8 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	}
 
 	if execErr != nil {
+		fmt.Fprintf(stderrLogger, "Error: %v\n", execErr)
+		stderrLogger.Close()
 		w.api.UpdateJobStatus(job.ID, "FAILED", execErr.Error(), nil)
 		return execErr
 	}
@@ -146,6 +160,67 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	w.api.UpdateJobStatus(job.ID, "SUCCESS", "", nil)
 	fmt.Printf("Job %s completed successfully\n", job.ID)
 	return nil
+}
+
+func (w *Worker) fetchAwsResources(ctx context.Context, logger *JobLogger) (map[string]any, error) {
+	fmt.Fprintln(logger, "Fetching enabled regions...")
+	ec2Client, err := grapeAws.NewEC2Client(ctx, grapeAws.AWSOptions{Region: "us-east-1"})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create EC2 client: %w", err)
+	}
+
+	regions, err := ec2Client.ListRegions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list regions: %w", err)
+	}
+	fmt.Fprintf(logger, "Found %d enabled regions\n", len(regions))
+
+	vpcs := make(map[string]any)
+	subnets := make(map[string]any)
+
+	for _, region := range regions {
+		regionalClient, err := grapeAws.NewEC2Client(ctx, grapeAws.AWSOptions{Region: region})
+		if err != nil {
+			continue
+		}
+
+		regionVPCs, err := regionalClient.ListVPCs(ctx)
+		if err != nil {
+			continue
+		}
+
+		if len(regionVPCs) > 0 {
+			vpcs[region] = regionVPCs
+			regionSubnets := make(map[string]any)
+			for _, vpc := range regionVPCs {
+				vpcSubnets, err := regionalClient.ListSubnets(ctx, vpc.ID)
+				if err != nil {
+					continue
+				}
+				if len(vpcSubnets) > 0 {
+					regionSubnets[vpc.ID] = vpcSubnets
+				}
+			}
+			if len(regionSubnets) > 0 {
+				subnets[region] = regionSubnets
+			}
+		}
+	}
+
+	fmt.Fprintln(logger, "Fetching Route53 hosted zones...")
+	r53Client, err := grapeAws.NewRoute53Client(ctx, grapeAws.AWSOptions{Region: "us-east-1"})
+	var hostedZones []grapeAws.HostedZoneInfo
+	if err == nil {
+		hostedZones, _ = r53Client.ListHostedZones(ctx)
+	}
+	fmt.Fprintf(logger, "Found %d hosted zones\n", len(hostedZones))
+
+	return map[string]any{
+		"regions":      regions,
+		"vpcs":         vpcs,
+		"subnets":      subnets,
+		"hosted_zones": hostedZones,
+	}, nil
 }
 
 func (w *Worker) executeBootstrap(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {

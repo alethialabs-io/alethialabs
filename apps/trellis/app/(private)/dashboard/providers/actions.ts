@@ -120,13 +120,51 @@ export async function saveAwsIdentity(identityId: string, roleArn: string) {
 				role_arn: roleArn,
 				account_id: awsAccountId,
 			},
-			is_verified: true,
+			is_verified: false,
 			updated_at: new Date().toISOString(),
 		})
 		.eq("id", identityId);
 
 	if (updateError) {
 		throw new Error("Failed to save connection details");
+	}
+
+	const { data: job, error: jobError } = await supabase
+		.from("provision_jobs")
+		.insert({
+			user_id: user.id,
+			job_type: "CONNECTION_TEST",
+			cloud_identity_id: identityId,
+			config_snapshot: { role_arn: roleArn, account_id: awsAccountId },
+			status: "QUEUED",
+		})
+		.select("id")
+		.single();
+
+	if (jobError) {
+		throw new Error("Failed to queue connection test: " + jobError.message);
+	}
+
+	return { jobId: job.id, identityId };
+}
+
+export async function verifyAwsIdentity(identityId: string) {
+	const supabase = await createClient();
+	const {
+		data: { user },
+		error: authError,
+	} = await supabase.auth.getUser();
+
+	if (authError || !user) throw new Error("Unauthorized");
+
+	const { error } = await supabase
+		.from("cloud_identities")
+		.update({ is_verified: true, updated_at: new Date().toISOString() })
+		.eq("id", identityId)
+		.eq("user_id", user.id);
+
+	if (error) {
+		throw new Error("Failed to verify identity");
 	}
 
 	return { success: true };

@@ -19,8 +19,8 @@ type Configuration struct {
 	ContainerPlatform       string    `json:"container_platform"`
 	CreateVpc               *bool     `json:"create_vpc"`
 	CreatedAt               time.Time `json:"created_at"`
-	DbMaxCapacity           *int      `json:"db_max_capacity"`
-	DbMinCapacity           *int      `json:"db_min_capacity"`
+	DbMaxCapacity           *float64  `json:"db_max_capacity"`
+	DbMinCapacity           *float64  `json:"db_min_capacity"`
 	Description             *string   `json:"description"`
 	DnsDomainName           *string   `json:"dns_domain_name"`
 	DnsHostedZone           *string   `json:"dns_hosted_zone"`

@@ -1,10 +1,14 @@
 import { getConfigurations } from "@/app/server/actions/configurations";
+import { getAwsConnectionStatus } from "@/app/(private)/dashboard/providers/actions";
 import { ConfigurationSheetWrapper } from "@/components/configuration-sheet-wrapper";
 import { ThemedInfoPopover } from "@/components/themed-info-popover";
 import { VinesTableClient } from "@/components/vines/table-client";
 
 export default async function VinesPage() {
-	const { configurations } = await getConfigurations();
+	const [{ configurations }, awsStatus] = await Promise.all([
+		getConfigurations(),
+		getAwsConnectionStatus(),
+	]);
 
 	return (
 		<div className="space-y-8 w-full">
@@ -22,7 +26,7 @@ export default async function VinesPage() {
 
 			<VinesTableClient configurations={configurations || []} />
 
-			<ConfigurationSheetWrapper configurations={configurations || []} />
+			<ConfigurationSheetWrapper configurations={configurations || []} awsConnected={awsStatus.connected} />
 		</div>
 	);
 }

@@ -183,10 +183,9 @@ export function IntegrationsPage({
 
 	const handleAwsConnect = async (roleArn: string) => {
 		if (!awsSetup) throw new Error("AWS setup not initialized");
-		await saveAwsIdentity(awsSetup.identityId, roleArn);
-		setAwsSheetOpen(false);
+		const result = await saveAwsIdentity(awsSetup.identityId, roleArn);
 		localStorage.removeItem("aws_onboarding_skipped");
-		router.refresh();
+		return result;
 	};
 
 	const openDetail = (integration: IntegrationWithConnection) => {

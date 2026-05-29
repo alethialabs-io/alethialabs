@@ -399,10 +399,12 @@ var createConfigCmd = &cobra.Command{
 			return
 		}
 
-		min, _ := strconv.Atoi(dbMin)
-		max, _ := strconv.Atoi(dbMax)
-		config.DbMinCapacity = &min
-		config.DbMaxCapacity = &max
+		minInt, _ := strconv.Atoi(dbMin)
+		maxInt, _ := strconv.Atoi(dbMax)
+		minCap := float64(minInt)
+		maxCap := float64(maxInt)
+		config.DbMinCapacity = &minCap
+		config.DbMaxCapacity = &maxCap
 
 		// --- Summary & Submit ---
 		ui.PrintStepper(steps, 5)

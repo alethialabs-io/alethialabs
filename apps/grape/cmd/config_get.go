@@ -109,10 +109,14 @@ func printConfiguration(config types.Configuration) {
 		}
 		return kv(key, valStr)
 	}
-	kvInt := func(key string, value *int) string {
+	kvNum := func(key string, value *float64) string {
 		valStr := "N/A"
 		if value != nil {
-			valStr = fmt.Sprintf("%d", *value)
+			if *value == float64(int(*value)) {
+				valStr = fmt.Sprintf("%d", int(*value))
+			} else {
+				valStr = fmt.Sprintf("%.1f", *value)
+			}
 		}
 		return kv(key, valStr)
 	}
@@ -163,9 +167,9 @@ func printConfiguration(config types.Configuration) {
 	// Database Section
 	doc.WriteString(subHeaderStyle.Render("Database Configuration"))
 	doc.WriteString("\n")
-	doc.WriteString(kvInt("Min Capacity:", config.DbMinCapacity))
+	doc.WriteString(kvNum("Min Capacity:", config.DbMinCapacity))
 	doc.WriteString("\n")
-	doc.WriteString(kvInt("Max Capacity:", config.DbMaxCapacity))
+	doc.WriteString(kvNum("Max Capacity:", config.DbMaxCapacity))
 	doc.WriteString("\n\n")
 
 	// Security Section

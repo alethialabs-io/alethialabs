@@ -132,7 +132,7 @@ func InstallerConfigToConfiguration(installer *types.InstallerConfig) (*types.Co
 		config.GitopsAppToken = &installer.ApplicationsArgoAccessToken
 	}
 	if installer.CreateRDS != nil && *installer.CreateRDS {
-		minCapacity := 1
+		minCapacity := 1.0
 		config.DbMinCapacity = &minCapacity
 	}
 	if len(installer.RedisAllowedCidrBlocks) > 0 {

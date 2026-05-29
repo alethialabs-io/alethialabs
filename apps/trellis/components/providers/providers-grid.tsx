@@ -94,10 +94,8 @@ export function ProvidersGrid({ awsStatus, awsSetup }: ProvidersGridProps) {
 
 	const handleAwsConnect = async (roleArn: string) => {
 		if (!awsSetup) throw new Error("AWS setup not initialized");
-		await saveAwsIdentity(awsSetup.identityId, roleArn);
-		setSheetOpen(false);
-		localStorage.removeItem("aws_onboarding_skipped");
-		router.refresh();
+		const result = await saveAwsIdentity(awsSetup.identityId, roleArn);
+		return result;
 	};
 
 	const handleDisconnect = async () => {
