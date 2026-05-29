@@ -2,10 +2,11 @@
 
 import { createVine, type CreateVineInput } from "@/app/server/actions/vines";
 import type { CachedAwsResources } from "@/app/server/actions/aws/resources";
+import { getRegionPrices, type RegionPrices } from "@/app/server/actions/pricing";
 import { Button } from "@/components/ui/button";
 import { Loader2, Rocket } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { SectionProjectBasics } from "./section-project-basics";
@@ -67,6 +68,8 @@ export function PlantVineForm({
 	const [error, setError] = useState<string | null>(null);
 	const [submitted, setSubmitted] = useState(false);
 	const [awsResources, setAwsResources] = useState(initialAwsResources);
+	const [prices, setPrices] = useState<RegionPrices | null>(null);
+	const [loadingPrices, setLoadingPrices] = useState(false);
 
 	// Vine core
 	const [projectName, setProjectName] = useState("");
@@ -109,6 +112,16 @@ export function PlantVineForm({
 	const [envDestinationRepo, setEnvDestinationRepo] = useState<string | null>(null);
 	const [gitopsDestinationRepo, setGitopsDestinationRepo] = useState<string | null>(null);
 	const [appsDestinationRepo, setAppsDestinationRepo] = useState<string | null>(null);
+
+	// Fetch prices when region changes
+	useEffect(() => {
+		if (!region) return;
+		setLoadingPrices(true);
+		getRegionPrices(region)
+			.then(setPrices)
+			.catch(() => setPrices(null))
+			.finally(() => setLoadingPrices(false));
+	}, [region]);
 
 	// 1:N components
 	const [databases, setDatabases] = useState<DatabaseEntry[]>([]);
@@ -353,6 +366,8 @@ export function PlantVineForm({
 					instanceTypes={instanceTypes}
 					nodeDesiredSize={nodeDesiredSize}
 					singleNatGateway={singleNatGateway}
+					prices={prices}
+					loadingPrices={loadingPrices}
 				/>
 			</div>
 		</form>
