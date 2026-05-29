@@ -22,8 +22,26 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { HelpTooltip } from "./help-tooltip";
-import { Plus, Server, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+	Command,
+	CommandEmpty,
+	CommandGroup,
+	CommandInput,
+	CommandItem,
+	CommandList,
+} from "@/components/ui/command";
+import {
+	getEksAdmins,
+	createEksAdmin,
+	type EksAdminOption,
+} from "@/app/server/actions/eks-admins";
+import { ChevronsUpDown, Plus, Server, Trash2, X } from "lucide-react";
+import { useEffect, useState } from "react";
 
 interface EksAdmin {
 	username: string;
@@ -85,7 +103,13 @@ export function SectionEks({
 	nodeDesiredSize,
 	onNodeDesiredSizeChange,
 }: Props) {
-	const [newAdminEmail, setNewAdminEmail] = useState("");
+	const [savedAdmins, setSavedAdmins] = useState<EksAdminOption[]>([]);
+	const [comboOpen, setComboOpen] = useState(false);
+	const [comboSearch, setComboSearch] = useState("");
+
+	useEffect(() => {
+		getEksAdmins().then(setSavedAdmins);
+	}, []);
 
 	const nodeSizeError =
 		nodeMinSize > nodeDesiredSize || nodeDesiredSize > nodeMaxSize
@@ -94,18 +118,32 @@ export function SectionEks({
 
 	const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-	const addAdmin = () => {
-		if (!newAdminEmail.trim() || !emailRegex.test(newAdminEmail.trim())) return;
+	const addAdminByEmail = async (email: string) => {
+		const trimmed = email.trim().toLowerCase();
+		if (!trimmed || !emailRegex.test(trimmed)) return;
+		if (clusterAdmins.some((a) => a.username === trimmed)) return;
+
 		onClusterAdminsChange([
 			...clusterAdmins,
-			{ username: newAdminEmail.trim(), groups: ["system:masters"] },
+			{ username: trimmed, groups: ["system:masters"] },
 		]);
-		setNewAdminEmail("");
+
+		const saved = await createEksAdmin(trimmed);
+		if (saved && !savedAdmins.some((a) => a.email === trimmed)) {
+			setSavedAdmins((prev) => [...prev, saved]);
+		}
+
+		setComboSearch("");
+		setComboOpen(false);
 	};
 
 	const removeAdmin = (index: number) => {
 		onClusterAdminsChange(clusterAdmins.filter((_, i) => i !== index));
 	};
+
+	const availableAdmins = savedAdmins.filter(
+		(a) => !clusterAdmins.some((ca) => ca.username === a.email),
+	);
 
 	const addInstanceType = (type: string) => {
 		if (!type || instanceTypes.includes(type)) return;
@@ -276,24 +314,74 @@ export function SectionEks({
 							))}
 						</div>
 					)}
-					<div className="flex gap-2">
-						<Input
-							placeholder="user@example.com"
-							value={newAdminEmail}
-							onChange={(e) => setNewAdminEmail(e.target.value)}
-							className="h-8 text-xs"
-							onKeyDown={(e) => {
-								if (e.key === "Enter") {
-									e.preventDefault();
-									addAdmin();
-								}
-							}}
-						/>
-						<Button type="button" variant="outline" size="sm" className="h-8 text-xs shrink-0" onClick={addAdmin}>
-							<Plus className="h-3 w-3 mr-1" />
-							Add
-						</Button>
-					</div>
+					<Popover open={comboOpen} onOpenChange={setComboOpen}>
+						<PopoverTrigger asChild>
+							<Button
+								type="button"
+								variant="outline"
+								role="combobox"
+								aria-expanded={comboOpen}
+								className="h-8 text-xs justify-between w-full font-normal text-muted-foreground"
+							>
+								Search or add admin...
+								<ChevronsUpDown className="ml-2 h-3 w-3 shrink-0 opacity-50" />
+							</Button>
+						</PopoverTrigger>
+						<PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+							<Command>
+								<CommandInput
+									placeholder="Type email..."
+									value={comboSearch}
+									onValueChange={setComboSearch}
+									className="text-xs"
+								/>
+								<CommandList>
+									<CommandEmpty className="py-2 px-3">
+										{comboSearch && emailRegex.test(comboSearch.trim()) ? (
+											<button
+												type="button"
+												onClick={() => addAdminByEmail(comboSearch)}
+												className="flex items-center gap-1.5 text-xs text-foreground w-full"
+											>
+												<Plus className="h-3 w-3" />
+												Add "{comboSearch.trim()}"
+											</button>
+										) : (
+											<span className="text-xs text-muted-foreground">
+												{comboSearch ? "Enter a valid email" : "No saved admins yet"}
+											</span>
+										)}
+									</CommandEmpty>
+									{availableAdmins.length > 0 && (
+										<CommandGroup heading="Saved admins">
+											{availableAdmins.map((admin) => (
+												<CommandItem
+													key={admin.id}
+													value={admin.email}
+													onSelect={() => addAdminByEmail(admin.email)}
+													className="text-xs"
+												>
+													{admin.email}
+												</CommandItem>
+											))}
+										</CommandGroup>
+									)}
+									{comboSearch && emailRegex.test(comboSearch.trim()) && !savedAdmins.some((a) => a.email === comboSearch.trim().toLowerCase()) && (
+										<CommandGroup heading="New">
+											<CommandItem
+												value={`add-${comboSearch}`}
+												onSelect={() => addAdminByEmail(comboSearch)}
+												className="text-xs"
+											>
+												<Plus className="h-3 w-3 mr-1.5" />
+												Add "{comboSearch.trim()}"
+											</CommandItem>
+										</CommandGroup>
+									)}
+								</CommandList>
+							</Command>
+						</PopoverContent>
+					</Popover>
 				</div>
 			</CardContent>
 		</Card>
