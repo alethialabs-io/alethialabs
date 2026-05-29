@@ -31,6 +31,7 @@ import { env } from "next-runtime-env";
 import { fetchRepositoriesByProvider } from "@/app/server/actions/git/repositories";
 import { Repository } from "@/app/server/actions/git/types";
 import { getLinkedProviders } from "@/app/server/actions/identities";
+import { useRepositoryContext } from "@/components/configuration/repository-context";
 import { AlertCircle, Plus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -49,6 +50,7 @@ export function RepositorySelector({
 	placeholder,
 	required,
 }: RepositorySelectorProps) {
+	const sharedCtx = useRepositoryContext();
 	const [repositories, setRepositories] = useState<Repository[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [fetchingRepos, setFetchingRepos] = useState(false);
@@ -65,7 +67,41 @@ export function RepositorySelector({
 	const [initialValue] = useState(value);
 	const [open, setOpen] = useState(false);
 
+	// When shared context exists, use its data instead of fetching independently
+	useEffect(() => {
+		if (!sharedCtx) return;
+		setLinkedProviders(sharedCtx.linkedProviders);
+		setLoading(sharedCtx.loadingProviders);
+
+		if (sharedCtx.linkedProviders.length > 0 && !selectedProvider) {
+			let provider = sharedCtx.linkedProviders[0];
+			if (initialValue) {
+				if (initialValue.includes("github.com")) provider = "github";
+				else if (initialValue.includes("gitlab.com")) provider = "gitlab";
+				else if (initialValue.includes("bitbucket.org")) provider = "bitbucket";
+			}
+			if (sharedCtx.linkedProviders.includes(provider)) {
+				setSelectedProvider(provider);
+			} else {
+				setSelectedProvider(sharedCtx.linkedProviders[0]);
+			}
+		}
+	}, [sharedCtx?.linkedProviders, sharedCtx?.loadingProviders]);
+
+	useEffect(() => {
+		if (!sharedCtx || !selectedProvider) return;
+		const repos = sharedCtx.reposByProvider[selectedProvider];
+		if (repos) {
+			setRepositories(repos);
+			setFetchingRepos(false);
+		} else {
+			setFetchingRepos(sharedCtx.loadingRepos);
+			sharedCtx.fetchRepos(selectedProvider);
+		}
+	}, [sharedCtx?.reposByProvider, selectedProvider, sharedCtx?.loadingRepos]);
+
 	const loadInitialData = useCallback(async () => {
+		if (sharedCtx) return; // Skip — using shared context
 		setLoading(true);
 		setError(null);
 		try {
@@ -73,7 +109,6 @@ export function RepositorySelector({
 			setLinkedProviders(providers);
 
 			if (providers.length > 0) {
-				// Try to guess provider from initial value if it exists
 				let initialProvider = providers[0];
 				if (initialValue) {
 					if (initialValue.includes("github.com"))
@@ -84,7 +119,6 @@ export function RepositorySelector({
 						initialProvider = "bitbucket";
 				}
 
-				// Only set if the guessed/first provider is actually in the linked list
 				if (providers.includes(initialProvider)) {
 					setSelectedProvider(initialProvider as PublicGitProvider);
 					await fetchRepositories(
@@ -101,11 +135,11 @@ export function RepositorySelector({
 		} finally {
 			setLoading(false);
 		}
-	}, [initialValue]); // Only depend on initialValue so it doesn't run on every keystroke
+	}, [initialValue, sharedCtx]);
 
 	useEffect(() => {
-		loadInitialData();
-	}, [loadInitialData]);
+		if (!sharedCtx) loadInitialData();
+	}, [loadInitialData, sharedCtx]);
 
 	const fetchRepositories = async (providerName: PublicGitProvider) => {
 		setFetchingRepos(true);

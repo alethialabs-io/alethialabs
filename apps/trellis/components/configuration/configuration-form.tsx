@@ -23,6 +23,7 @@ import { SectionRepositories } from "./section-repositories";
 import { SectionDatabase } from "./section-database";
 import { SectionAdvanced } from "./section-advanced";
 import { CostPreview } from "./cost-preview";
+import { RepositoryProvider } from "./repository-context";
 
 export type ConfigFormValues = PublicConfigurationsInsert & {
 	argocd_git_provider?: string;
@@ -171,6 +172,7 @@ export function NewConfigurationForm() {
 	const formValues = form.watch();
 
 	return (
+		<RepositoryProvider>
 		<Form {...form}>
 			<form
 				onSubmit={form.handleSubmit(onSubmit)}
@@ -224,5 +226,6 @@ export function NewConfigurationForm() {
 				</div>
 			</form>
 		</Form>
+		</RepositoryProvider>
 	);
 }

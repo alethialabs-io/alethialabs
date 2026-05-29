@@ -82,13 +82,13 @@ export function SectionAdvanced({
 	if (awsResources && region) {
 		const regionVpcs = awsResources.vpcs?.[region] ?? [];
 		for (const vpc of regionVpcs) {
-			if (!knownCidrs.includes(vpc.cidr)) knownCidrs.push(vpc.cidr);
+			if (!knownCidrs.includes(vpc.CIDR)) knownCidrs.push(vpc.CIDR);
 		}
 		const regionSubnets = awsResources.subnets?.[region] ?? {};
 		for (const vpcSubnets of Object.values(regionSubnets)) {
 			for (const subnet of vpcSubnets) {
-				if (!knownCidrs.includes(subnet.cidr))
-					knownCidrs.push(subnet.cidr);
+				if (!knownCidrs.includes(subnet.CIDR))
+					knownCidrs.push(subnet.CIDR);
 			}
 		}
 	}

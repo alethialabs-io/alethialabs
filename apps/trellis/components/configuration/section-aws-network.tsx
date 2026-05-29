@@ -177,11 +177,11 @@ export function SectionAwsNetwork({
 								}
 								onValueChange={(id) => {
 									const vpc = regionVpcs.find(
-										(v) => v.id === id,
+										(v) => v.ID === id,
 									);
 									form.setValue("selected_vpc_id", id);
 									if (vpc)
-										form.setValue("vpc_cidr", vpc.cidr);
+										form.setValue("vpc_cidr", vpc.CIDR);
 								}}
 							>
 								<SelectTrigger className="h-9 text-sm">
@@ -189,18 +189,18 @@ export function SectionAwsNetwork({
 								</SelectTrigger>
 								<SelectContent>
 									{regionVpcs.map((vpc) => (
-										<SelectItem key={vpc.id} value={vpc.id}>
+										<SelectItem key={vpc.ID} value={vpc.ID}>
 											<div className="flex items-center gap-2">
 												<Network className="h-3 w-3 text-muted-foreground" />
 												<span className="font-mono text-xs">
-													{vpc.cidr}
+													{vpc.CIDR}
 												</span>
-												{vpc.name && (
+												{vpc.Name && (
 													<span className="text-xs text-muted-foreground">
-														{vpc.name}
+														{vpc.Name}
 													</span>
 												)}
-												{vpc.isDefault && (
+												{vpc.IsDefault && (
 													<Badge
 														variant="secondary"
 														className="text-[9px] py-0 px-1"
@@ -259,12 +259,12 @@ export function SectionAwsNetwork({
 												field.onChange(zoneId);
 												const zone =
 													hostedZones.find(
-														(z) => z.id === zoneId,
+														(z) => z.ID === zoneId,
 													);
 												if (zone) {
 													form.setValue(
 														"dns_domain_name",
-														zone.name,
+														zone.Name,
 													);
 												}
 											}}
@@ -276,18 +276,18 @@ export function SectionAwsNetwork({
 											</FormControl>
 											<SelectContent>
 												{hostedZones
-													.filter((z) => !z.isPrivate)
+													.filter((z) => !z.IsPrivate)
 													.map((zone) => (
 														<SelectItem
-															key={zone.id}
-															value={zone.id}
+															key={zone.ID}
+															value={zone.ID}
 														>
 															<div className="flex items-center gap-2">
 																<span>
-																	{zone.name}
+																	{zone.Name}
 																</span>
 																<span className="text-xs text-muted-foreground font-mono">
-																	{zone.id}
+																	{zone.ID}
 																</span>
 															</div>
 														</SelectItem>
