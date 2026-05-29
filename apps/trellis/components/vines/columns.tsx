@@ -5,22 +5,15 @@ import { formatDistanceToNow } from "date-fns"
 import { ArrowRight } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
-import type { PublicConfigurationsRow } from "@/lib/validations/db.schemas"
+import type { PublicVinesRow } from "@/lib/validations/db.schemas"
 
-const featureFlags = [
-  { key: "create_vpc", label: "VPC" },
-  { key: "create_rds", label: "RDS" },
-  { key: "enable_redis", label: "Redis" },
-  { key: "enable_karpenter", label: "Karpenter" },
-] as const
-
-export const vinesColumns: ColumnDef<PublicConfigurationsRow>[] = [
+export const vinesColumns: ColumnDef<PublicVinesRow>[] = [
   {
     accessorKey: "project_name",
     header: "Project",
     enableSorting: true,
     cell: ({ row }) => (
-      <span className="text-sm font-medium">
+      <span className="font-medium text-foreground text-sm">
         {row.getValue("project_name")}
       </span>
     ),
@@ -30,28 +23,18 @@ export const vinesColumns: ColumnDef<PublicConfigurationsRow>[] = [
     header: "Environment",
     enableSorting: true,
     cell: ({ row }) => (
-      <Badge variant="outline" className="text-xs uppercase">
+      <Badge variant="outline" className="text-[11px] font-normal capitalize">
         {row.getValue("environment_stage")}
-      </Badge>
-    ),
-  },
-  {
-    accessorKey: "container_platform",
-    header: "Platform",
-    enableSorting: false,
-    cell: ({ row }) => (
-      <Badge variant="secondary" className="text-xs">
-        {row.getValue("container_platform")}
       </Badge>
     ),
   },
   {
     accessorKey: "aws_region",
     header: "Region",
-    enableSorting: false,
+    enableSorting: true,
     cell: ({ row }) => (
-      <span className="text-sm text-muted-foreground">
-        {row.getValue("aws_region") ?? "—"}
+      <span className="text-xs text-muted-foreground font-mono">
+        {row.getValue("aws_region")}
       </span>
     ),
   },
@@ -60,57 +43,37 @@ export const vinesColumns: ColumnDef<PublicConfigurationsRow>[] = [
     header: "Status",
     enableSorting: true,
     cell: ({ row }) => {
-      const status = row.getValue("status") as string | null
-
-      if (status === "completed") {
-        return (
-          <Badge
-            variant="outline"
-            className="border-emerald-200 bg-emerald-50 text-emerald-700"
-          >
-            {status}
-          </Badge>
-        )
-      }
-
-      if (status === "draft") {
-        return (
-          <Badge
-            variant="outline"
-            className="bg-muted/30 text-muted-foreground"
-          >
-            {status}
-          </Badge>
-        )
-      }
-
+      const status = row.getValue("status") as string
+      const variant =
+        status === "ACTIVE"
+          ? "default"
+          : status === "FAILED"
+            ? "destructive"
+            : "secondary"
+      const className =
+        status === "ACTIVE"
+          ? "bg-emerald-600 text-white"
+          : ""
       return (
-        <Badge
-          variant="outline"
-          className="bg-foreground/5 text-foreground"
-        >
-          {status ?? "—"}
+        <Badge variant={variant} className={`text-[11px] font-normal ${className}`}>
+          {status}
         </Badge>
       )
     },
   },
   {
-    id: "features",
-    header: "Features",
-    enableSorting: false,
-    cell: ({ row }) => (
-      <div className="flex items-center gap-1.5">
-        {featureFlags.map(({ key, label }) => (
-          <span
-            key={key}
-            title={label}
-            className={`h-2 w-2 rounded-full ${
-              row.original[key] ? "bg-foreground" : "bg-muted-foreground/20"
-            }`}
-          />
-        ))}
-      </div>
-    ),
+    accessorKey: "estimated_monthly_cost",
+    header: "Est. Cost",
+    enableSorting: true,
+    cell: ({ row }) => {
+      const cost = row.getValue("estimated_monthly_cost") as number | null
+      if (!cost) return <span className="text-xs text-muted-foreground">—</span>
+      return (
+        <span className="text-xs text-muted-foreground font-mono">
+          ${cost.toFixed(0)}/mo
+        </span>
+      )
+    },
   },
   {
     accessorKey: "updated_at",
@@ -118,7 +81,7 @@ export const vinesColumns: ColumnDef<PublicConfigurationsRow>[] = [
     enableSorting: true,
     cell: ({ row }) => {
       const updatedAt = row.getValue("updated_at") as string | null
-      if (!updatedAt) return <span className="text-xs text-muted-foreground">{"—"}</span>
+      if (!updatedAt) return <span className="text-xs text-muted-foreground">—</span>
 
       return (
         <span className="text-xs text-muted-foreground">

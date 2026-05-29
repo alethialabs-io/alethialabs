@@ -15,14 +15,14 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
-import { PublicConfigurationsRow } from "@/lib/validations/db.schemas";
+import { PublicVinesRow } from "@/lib/validations/db.schemas";
 import { Loader2, Rocket } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
 interface ConfigurationSheetWrapperProps {
-	configurations: PublicConfigurationsRow[];
+	configurations: PublicVinesRow[];
 	awsConnected: boolean;
 }
 

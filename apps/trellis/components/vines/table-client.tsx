@@ -3,14 +3,14 @@
 import { DataTable } from "@/components/data-table";
 import { vinesColumns } from "@/components/vines/columns";
 import { Button } from "@/components/ui/button";
-import { PublicConfigurationsRow } from "@/lib/validations/db.schemas";
+import { PublicVinesRow } from "@/lib/validations/db.schemas";
 import { ArrowRight, FileText } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback } from "react";
 
 interface VinesTableClientProps {
-	configurations: PublicConfigurationsRow[];
+	configurations: PublicVinesRow[];
 }
 
 export function VinesTableClient({ configurations }: VinesTableClientProps) {
@@ -19,7 +19,7 @@ export function VinesTableClient({ configurations }: VinesTableClientProps) {
 	const selectedConfigId = searchParams.get("config_id");
 
 	const handleRowClick = useCallback(
-		(row: PublicConfigurationsRow) => {
+		(row: PublicVinesRow) => {
 			router.push(`?config_id=${row.id}`, { scroll: false });
 		},
 		[router],
