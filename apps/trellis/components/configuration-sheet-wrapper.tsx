@@ -1,6 +1,6 @@
 "use client";
 
-import { provisionConfiguration } from "@/app/server/actions/configurations";
+import { provisionVine } from "@/app/server/actions/vines";
 import { CompletionSummary } from "@/components/completion-summary";
 import { LogViewer } from "@/components/clusters/log-viewer";
 import { DownloadOptions } from "@/components/download-options";
@@ -61,7 +61,7 @@ export function ConfigurationSheetWrapper({
 		if (!configuration) return;
 		setIsProvisioning(true);
 		try {
-			const { jobId } = await provisionConfiguration(configuration.id);
+			const { jobId } = await provisionVine(configuration.id);
 			setActiveJobId(jobId);
 			setLogViewerOpen(true);
 			toast.success("Provisioning job queued!");
