@@ -198,15 +198,43 @@ export async function disconnectAwsIdentity(identityId: string) {
 
 	if (authError || !user) throw new Error("Unauthorized");
 
+	const { data: identity } = await supabase
+		.from("cloud_identities")
+		.select("credentials")
+		.eq("id", identityId)
+		.eq("user_id", user.id)
+		.single();
+
+	if (!identity) throw new Error("Identity not found");
+
+	const currentCredentials = identity.credentials as Record<string, any>;
+
 	const { error } = await supabase
 		.from("cloud_identities")
-		.delete()
+		.update({
+			name: "AWS Connection (Pending)",
+			is_verified: false,
+			credentials: { external_id: currentCredentials?.external_id },
+			cached_resources: null,
+			cached_at: null,
+			updated_at: new Date().toISOString(),
+		})
 		.eq("id", identityId)
 		.eq("user_id", user.id);
 
 	if (error) {
 		throw new Error("Failed to disconnect AWS account");
 	}
+
+	await supabase
+		.from("configurations")
+		.update({ cloud_identity_id: null })
+		.eq("cloud_identity_id", identityId);
+
+	await supabase
+		.from("vines")
+		.update({ cloud_identity_id: null })
+		.eq("cloud_identity_id", identityId);
 
 	return { success: true };
 }
