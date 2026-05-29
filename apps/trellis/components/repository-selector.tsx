@@ -287,20 +287,20 @@ export function RepositorySelector({
 
 	if (isManual) {
 		return (
-			<div className="space-y-3">
-				<div className="flex items-center justify-between">
-					<label className="text-sm font-medium">
-						{label}
-						{required && (
-							<span className="text-red-500 ml-1">*</span>
-						)}
-					</label>
+			<div className="space-y-2">
+				<div className="flex items-center justify-between min-h-[20px]">
+					{label ? (
+						<label className="text-sm font-medium">
+							{label}
+							{required && <span className="text-red-500 ml-1">*</span>}
+						</label>
+					) : <div />}
 					<Button
 						type="button"
 						variant="ghost"
 						size="sm"
 						onClick={() => setIsManual(false)}
-						className="text-xs text-muted-foreground h-auto py-1"
+						className="text-[11px] text-muted-foreground h-auto py-0.5 px-1.5"
 					>
 						Use provider select
 					</Button>
@@ -319,19 +319,21 @@ export function RepositorySelector({
 	}
 
 	return (
-		<div className="space-y-3">
-			<div className="flex items-center justify-between">
-				<label className="text-sm font-medium">
-					{label}
-					{required && <span className="text-red-500 ml-1">*</span>}
-				</label>
-				<div className="flex items-center gap-2">
+		<div className="space-y-2">
+			<div className="flex items-center justify-between min-h-[20px]">
+				{label ? (
+					<label className="text-sm font-medium">
+						{label}
+						{required && <span className="text-red-500 ml-1">*</span>}
+					</label>
+				) : <div />}
+				<div className="flex items-center gap-1">
 					<Button
 						type="button"
 						variant="ghost"
 						size="sm"
 						onClick={() => setIsManual(true)}
-						className="text-xs text-muted-foreground h-auto py-1 mr-2"
+						className="text-[11px] text-muted-foreground h-auto py-0.5 px-1.5"
 					>
 						Enter URL manually
 					</Button>
