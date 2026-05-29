@@ -238,7 +238,10 @@ export function IntegrationsPage({
 			/>
 
 			{/* AWS Connection Sheet */}
-			<Sheet open={awsSheetOpen} onOpenChange={setAwsSheetOpen}>
+			<Sheet open={awsSheetOpen} onOpenChange={(open) => {
+				setAwsSheetOpen(open);
+				if (!open) router.refresh();
+			}}>
 				<SheetContent
 					side="right"
 					className="w-full sm:max-w-2xl overflow-y-auto p-0"

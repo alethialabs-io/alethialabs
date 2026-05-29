@@ -219,7 +219,10 @@ export function ProvidersGrid({ awsStatus, awsSetup }: ProvidersGridProps) {
 				})}
 			</div>
 
-			<Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+			<Sheet open={sheetOpen} onOpenChange={(open) => {
+			setSheetOpen(open);
+			if (!open) router.refresh();
+		}}>
 				<SheetContent
 					side="right"
 					className="w-full sm:max-w-2xl overflow-y-auto p-0"
