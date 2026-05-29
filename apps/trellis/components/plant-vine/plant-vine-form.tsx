@@ -2,9 +2,8 @@
 
 import { createVine, type CreateVineInput } from "@/app/server/actions/vines";
 import type { CachedAwsResources } from "@/app/server/actions/aws/resources";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, Loader2, Rocket } from "lucide-react";
+import { Loader2, Rocket } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -66,6 +65,7 @@ export function PlantVineForm({
 	const router = useRouter();
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [submitted, setSubmitted] = useState(false);
 	const [awsResources, setAwsResources] = useState(initialAwsResources);
 
 	// Vine core
@@ -116,37 +116,27 @@ export function PlantVineForm({
 	const [queues, setQueues] = useState<QueueEntry[]>([]);
 	const [topics, setTopics] = useState<TopicEntry[]>([]);
 
-	const scrollToSection = (sectionId: string) => {
-		const el = document.getElementById(sectionId);
-		if (el) {
-			el.scrollIntoView({ behavior: "smooth", block: "center" });
-			const firstInput = el.querySelector("input, select, button[role='combobox']") as HTMLElement;
-			if (firstInput) setTimeout(() => firstInput.focus(), 400);
-		}
-	};
-
-	const setValidationError = (message: string, sectionId: string) => {
-		setError(message);
-		setIsLoading(false);
-		scrollToSection(sectionId);
-	};
-
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
-		setIsLoading(true);
+		setSubmitted(true);
 		setError(null);
 
-		if (!projectName.trim()) {
-			return setValidationError("Project name is required.", "section-project-basics");
+		if (!projectName.trim() || !cloudIdentityId || !region) {
+			setIsLoading(false);
+			// Scroll to first errored section
+			const sectionId = !projectName.trim()
+				? "section-project-basics"
+				: !cloudIdentityId
+					? "section-aws-region"
+					: "section-aws-region";
+			setTimeout(() => {
+				const el = document.getElementById(sectionId);
+				if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+			}, 50);
+			return;
 		}
 
-		if (!cloudIdentityId) {
-			return setValidationError("Please connect an AWS account first.", "section-aws-region");
-		}
-
-		if (!region) {
-			return setValidationError("Please select an AWS region.", "section-aws-region");
-		}
+		setIsLoading(true);
 
 		try {
 			const gitopsTemplate =
@@ -228,6 +218,7 @@ export function PlantVineForm({
 						onEnvironmentChange={setEnvironment}
 						vineyardId={vineyardId}
 						onVineyardIdChange={setVineyardId}
+						submitted={submitted}
 					/>
 				</div>
 
@@ -241,6 +232,7 @@ export function PlantVineForm({
 					}}
 					region={region}
 					onRegionChange={setRegion}
+					submitted={submitted}
 					awsResources={awsResources}
 					onAwsResourcesChange={setAwsResources}
 				/>
