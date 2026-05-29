@@ -210,6 +210,14 @@ export function PlantVineForm({
 	return (
 		<form onSubmit={handleSubmit} className="flex gap-6">
 			<div className="flex-1 space-y-6 min-w-0">
+				{error && (
+					<Alert variant="destructive" className="sticky top-16 z-30">
+						<AlertCircle className="h-4 w-4" />
+						<AlertTitle>Error</AlertTitle>
+						<AlertDescription>{error}</AlertDescription>
+					</Alert>
+				)}
+
 				<SectionProjectBasics
 					projectName={projectName}
 					onProjectNameChange={setProjectName}
@@ -309,13 +317,6 @@ export function PlantVineForm({
 					onTopicsChange={setTopics}
 				/>
 
-				{error && (
-					<Alert variant="destructive">
-						<AlertCircle className="h-4 w-4" />
-						<AlertTitle>Error</AlertTitle>
-						<AlertDescription>{error}</AlertDescription>
-					</Alert>
-				)}
 
 				<div className="flex justify-end pt-4 pb-8">
 					<Button

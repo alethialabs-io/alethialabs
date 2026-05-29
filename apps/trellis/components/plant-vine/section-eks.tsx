@@ -21,6 +21,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { HelpTooltip } from "./help-tooltip";
 import { Plus, Server, Trash2, X } from "lucide-react";
 import { useState } from "react";
 
@@ -86,8 +87,15 @@ export function SectionEks({
 }: Props) {
 	const [newAdminEmail, setNewAdminEmail] = useState("");
 
+	const nodeSizeError =
+		nodeMinSize > nodeDesiredSize || nodeDesiredSize > nodeMaxSize
+			? "Must be: min ≤ desired ≤ max"
+			: null;
+
+	const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 	const addAdmin = () => {
-		if (!newAdminEmail.trim()) return;
+		if (!newAdminEmail.trim() || !emailRegex.test(newAdminEmail.trim())) return;
 		onClusterAdminsChange([
 			...clusterAdmins,
 			{ username: newAdminEmail.trim(), groups: ["system:masters"] },
@@ -160,7 +168,7 @@ export function SectionEks({
 								max={100}
 								value={nodeMinSize}
 								onChange={(e) => onNodeMinSizeChange(parseInt(e.target.value) || 2)}
-								className="h-8 text-xs"
+								className={`h-8 text-xs ${nodeSizeError ? "border-destructive" : ""}`}
 							/>
 						</div>
 						<div className="space-y-1">
@@ -171,7 +179,7 @@ export function SectionEks({
 								max={100}
 								value={nodeDesiredSize}
 								onChange={(e) => onNodeDesiredSizeChange(parseInt(e.target.value) || 2)}
-								className="h-8 text-xs"
+								className={`h-8 text-xs ${nodeSizeError ? "border-destructive" : ""}`}
 							/>
 						</div>
 						<div className="space-y-1">
@@ -182,15 +190,22 @@ export function SectionEks({
 								max={100}
 								value={nodeMaxSize}
 								onChange={(e) => onNodeMaxSizeChange(parseInt(e.target.value) || 5)}
-								className="h-8 text-xs"
+								className={`h-8 text-xs ${nodeSizeError ? "border-destructive" : ""}`}
 							/>
 						</div>
+						{nodeSizeError && (
+							<p className="text-[11px] text-destructive col-span-3">{nodeSizeError}</p>
+						)}
 					</div>
 				</div>
 
 				{/* Instance Types */}
 				<div className="space-y-2">
-					<Label className="text-xs font-medium">Instance Types</Label>
+					<div className="flex items-center gap-1.5">
+						<Label className="text-xs font-medium">Instance Types</Label>
+						<HelpTooltip topic="instance-types" />
+						<span className="text-[10px] text-muted-foreground">({instanceTypes.length}/5)</span>
+					</div>
 					<div className="flex flex-wrap gap-1.5 min-h-[32px]">
 						{instanceTypes.map((type) => (
 							<Badge key={type} variant="secondary" className="text-[11px] gap-1 pr-1">
@@ -205,7 +220,7 @@ export function SectionEks({
 							</Badge>
 						))}
 					</div>
-					<Select value="" onValueChange={addInstanceType}>
+					<Select value="" onValueChange={addInstanceType} disabled={instanceTypes.length >= 5}>
 						<SelectTrigger className="h-8 text-xs w-48">
 							<SelectValue placeholder="Add instance type" />
 						</SelectTrigger>
@@ -221,18 +236,24 @@ export function SectionEks({
 
 				{/* Karpenter */}
 				<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-					<div>
-						<p className="text-sm font-medium">Karpenter Auto-Scaling</p>
-						<p className="text-[11px] text-muted-foreground">
-							Dynamic node provisioning based on workload demand.
-						</p>
+					<div className="flex items-center gap-1.5">
+						<div>
+							<p className="text-sm font-medium">Karpenter Auto-Scaling</p>
+							<p className="text-[11px] text-muted-foreground">
+								Dynamic node provisioning based on workload demand.
+							</p>
+						</div>
+						<HelpTooltip topic="karpenter" />
 					</div>
 					<Switch checked={enableKarpenter} onCheckedChange={onEnableKarpenterChange} />
 				</div>
 
 				{/* Cluster Admins */}
 				<div className="space-y-2">
-					<Label className="text-xs font-medium">Cluster Admins</Label>
+					<div className="flex items-center gap-1.5">
+						<Label className="text-xs font-medium">Cluster Admins</Label>
+						<HelpTooltip topic="cluster-admins" />
+					</div>
 					<p className="text-[11px] text-muted-foreground">
 						IAM users with system:masters access to the EKS cluster.
 					</p>

@@ -1,85 +1,95 @@
-"use client"
+"use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { CheckCircle, Cpu, Zap, Settings } from "lucide-react"
+import { Badge } from "@/components/ui/badge";
+import { CheckCircle2, Cpu, Settings, Zap } from "lucide-react";
 
 interface ContainerPlatformSelectorProps {
-  selected: string
-  onSelect: (platform: string) => void
+	selected: string;
+	onSelect: (platform: string) => void;
 }
 
-export function ContainerPlatformSelector({ selected, onSelect }: ContainerPlatformSelectorProps) {
-  const platforms = [
-    {
-      id: "standard",
-      title: "Standard",
-      description: "General purpose workloads with balanced compute and memory",
-      icon: <Cpu className="w-6 h-6" />,
-      features: ["General workloads", "Balanced resources", "Cost optimized", "Quick setup"],
-      color: "border-blue-200 bg-blue-50",
-      iconColor: "bg-blue-600",
-      recommended: false,
-    },
-    {
-      id: "ai-workloads",
-      title: "AI Workloads Ready",
-      description: "Optimized for machine learning and AI applications",
-      icon: <Zap className="w-6 h-6" />,
-      features: ["GPU support", "ML frameworks", "High memory", "Specialized instances"],
-      color: "border-purple-200 bg-purple-50",
-      iconColor: "bg-purple-600",
-      recommended: true,
-    },
-    {
-      id: "custom",
-      title: "Custom Template",
-      description: "Fully customizable configuration for specific requirements",
-      icon: <Settings className="w-6 h-6" />,
-      features: ["Full customization", "Advanced options", "Expert mode", "Flexible scaling"],
-      color: "border-green-200 bg-green-50",
-      iconColor: "bg-green-600",
-      recommended: false,
-    },
-  ]
+const platforms = [
+	{
+		id: "standard",
+		title: "Standard",
+		description: "General purpose workloads with balanced compute and memory.",
+		icon: Cpu,
+		features: ["General workloads", "Balanced resources", "Cost optimized"],
+	},
+	{
+		id: "ai-workloads",
+		title: "AI Workloads",
+		description: "Optimized for machine learning and AI applications.",
+		icon: Zap,
+		features: ["GPU support", "ML frameworks", "High memory"],
+		recommended: true,
+	},
+	{
+		id: "custom",
+		title: "Custom",
+		description: "Fully customizable. You choose all template repositories.",
+		icon: Settings,
+		features: ["Full control", "Custom templates", "Expert mode"],
+	},
+];
 
-  return (
-    <div className="grid md:grid-cols-3 gap-4">
-      {platforms.map((platform) => (
-        <Card
-          key={platform.id}
-          className={`cursor-pointer transition-all duration-300 hover:shadow-lg ${
-            selected === platform.id ? "ring-2 ring-cyan-500 border-cyan-500" : `border-2 ${platform.color}`
-          }`}
-          onClick={() => onSelect(platform.id)}
-        >
-          <CardHeader className="text-center">
-            {platform.recommended && (
-              <Badge className="mb-2 bg-gradient-to-r from-cyan-600 to-purple-600 text-white">Recommended</Badge>
-            )}
-            <div className={`mx-auto mb-3 p-3 ${platform.iconColor} rounded-xl w-fit`}>
-              <div className="text-white">{platform.icon}</div>
-            </div>
-            <CardTitle className="font-serif text-lg">{platform.title}</CardTitle>
-            <CardDescription className="text-sm">{platform.description}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-2">
-              {platform.features.map((feature, index) => (
-                <li key={index} className="flex items-center gap-2 text-sm">
-                  <CheckCircle className="w-4 h-4 text-green-600" />
-                  {feature}
-                </li>
-              ))}
-            </ul>
-            {selected === platform.id && (
-              <div className="mt-4 p-2 bg-cyan-100 rounded-lg text-center">
-                <span className="text-sm font-medium text-cyan-800">Selected</span>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  )
+export function ContainerPlatformSelector({
+	selected,
+	onSelect,
+}: ContainerPlatformSelectorProps) {
+	return (
+		<div className="grid md:grid-cols-3 gap-3">
+			{platforms.map((platform) => {
+				const isSelected = selected === platform.id;
+				const Icon = platform.icon;
+
+				return (
+					<button
+						key={platform.id}
+						type="button"
+						onClick={() => onSelect(platform.id)}
+						className={`relative p-4 rounded-lg border text-left transition-all ${
+							isSelected
+								? "border-foreground bg-muted/30"
+								: "border-border/50 hover:border-border hover:bg-muted/10"
+						}`}
+					>
+						{platform.recommended && (
+							<Badge
+								variant="secondary"
+								className="absolute top-2 right-2 text-[10px]"
+							>
+								Recommended
+							</Badge>
+						)}
+
+						<div className="flex items-center gap-2.5 mb-2">
+							<div className={`p-1.5 rounded-md border ${isSelected ? "bg-foreground text-background border-foreground" : "bg-muted border-border/50 text-muted-foreground"}`}>
+								<Icon className="w-3.5 h-3.5" />
+							</div>
+							<span className="text-sm font-medium text-foreground">
+								{platform.title}
+							</span>
+						</div>
+
+						<p className="text-[11px] text-muted-foreground mb-3 leading-relaxed">
+							{platform.description}
+						</p>
+
+						<ul className="space-y-1">
+							{platform.features.map((feature) => (
+								<li
+									key={feature}
+									className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+								>
+									<CheckCircle2 className={`w-3 h-3 shrink-0 ${isSelected ? "text-foreground" : "text-muted-foreground/40"}`} />
+									{feature}
+								</li>
+							))}
+						</ul>
+					</button>
+				);
+			})}
+		</div>
+	);
 }
