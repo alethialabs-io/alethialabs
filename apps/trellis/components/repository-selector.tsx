@@ -478,16 +478,6 @@ export function RepositorySelector({
 						<RefreshCw className={`w-3.5 h-3.5 ${fetchingRepos ? "animate-spin" : ""}`} />
 					</Button>
 				)}
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					onClick={() => setIsManual(true)}
-					className="h-9 w-9 shrink-0 text-muted-foreground"
-					title="Enter URL manually"
-				>
-					<Plus className="w-3.5 h-3.5" />
-				</Button>
 			</div>
 
 			{showLinkOptions && (
