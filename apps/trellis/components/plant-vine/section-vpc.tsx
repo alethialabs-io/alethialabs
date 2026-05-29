@@ -92,7 +92,12 @@ export function SectionVpc({
 						} ${vpcsForRegion.length === 0 ? "opacity-50 cursor-not-allowed" : ""}`}
 					>
 						Use Existing VPC
-						{vpcsForRegion.length === 0 && region && (
+						{!region && (
+							<span className="block text-[10px] text-muted-foreground/60 mt-0.5">
+								Select a region first
+							</span>
+						)}
+						{region && vpcsForRegion.length === 0 && (
 							<span className="block text-[10px] text-muted-foreground/60 mt-0.5">
 								No VPCs found in {region}
 							</span>

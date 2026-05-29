@@ -45,7 +45,7 @@ const STATIC_REGIONS = [
 interface Props {
 	awsConnected: boolean;
 	cloudIdentityId: string | null;
-	onCloudIdentityChange: (id: string | null) => void;
+	onCloudIdentityChange: (id: string | null, accountId?: string) => void;
 	region: string;
 	onRegionChange: (v: string) => void;
 	awsResources: CachedAwsResources | null;
@@ -79,7 +79,7 @@ export function SectionAwsRegion({
 					</Label>
 					<CloudIdentitySelector
 						value={cloudIdentityId}
-						onChange={(id) => onCloudIdentityChange(id)}
+						onChange={(id, accountId) => onCloudIdentityChange(id, accountId)}
 					/>
 				</div>
 

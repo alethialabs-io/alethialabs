@@ -90,7 +90,7 @@ export function SectionCaches({ caches, onCachesChange }: Props) {
 								</Button>
 							</div>
 
-							<div className="grid md:grid-cols-3 gap-3">
+							<div className="grid md:grid-cols-4 gap-3">
 								<div className="space-y-1">
 									<Label className="text-[11px]">Name</Label>
 									<Input
@@ -124,6 +124,17 @@ export function SectionCaches({ caches, onCachesChange }: Props) {
 											<SelectItem value="cache.r6g.large">r6g.large (~$108/mo)</SelectItem>
 										</SelectContent>
 									</Select>
+								</div>
+								<div className="space-y-1">
+									<Label className="text-[11px]">Nodes</Label>
+									<Input
+										type="number"
+										min={1}
+										max={6}
+										value={cache.num_cache_nodes}
+										onChange={(e) => updateCache(i, "num_cache_nodes", parseInt(e.target.value) || 1)}
+										className="h-8 text-xs"
+									/>
 								</div>
 							</div>
 

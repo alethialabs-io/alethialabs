@@ -77,6 +77,7 @@ export function PlantVineForm({
 	const [cloudIdentityId, setCloudIdentityId] = useState<string | null>(
 		awsIdentityId || null,
 	);
+	const [accountId, setAccountId] = useState<string | null>(awsAccountId || null);
 
 	// VPC
 	const [provisionVpc, setProvisionVpc] = useState(true);
@@ -89,6 +90,11 @@ export function PlantVineForm({
 	const [terraformVersion, setTerraformVersion] = useState("1.11.4");
 	const [enableKarpenter, setEnableKarpenter] = useState(true);
 	const [platform, setPlatform] = useState("standard");
+	const [clusterAdmins, setClusterAdmins] = useState<Array<{ username: string; groups: string[] }>>([]);
+	const [instanceTypes, setInstanceTypes] = useState<string[]>(["t3.medium"]);
+	const [nodeMinSize, setNodeMinSize] = useState(2);
+	const [nodeMaxSize, setNodeMaxSize] = useState(5);
+	const [nodeDesiredSize, setNodeDesiredSize] = useState(2);
 
 	// DNS
 	const [enableDns, setEnableDns] = useState(false);
@@ -104,9 +110,7 @@ export function PlantVineForm({
 	const [appsDestinationRepo, setAppsDestinationRepo] = useState<string | null>(null);
 
 	// 1:N components
-	const [databases, setDatabases] = useState<DatabaseEntry[]>([
-		{ name: "primary", engine: "aurora-postgresql", min_capacity: 0.5, max_capacity: 4, port: 5432, iam_auth: false },
-	]);
+	const [databases, setDatabases] = useState<DatabaseEntry[]>([]);
 	const [caches, setCaches] = useState<CacheEntry[]>([]);
 	const [queues, setQueues] = useState<QueueEntry[]>([]);
 	const [topics, setTopics] = useState<TopicEntry[]>([]);
@@ -145,7 +149,7 @@ export function PlantVineForm({
 					project_name: projectName.trim(),
 					environment_stage: environment as any,
 					aws_region: region,
-					aws_account_id: awsAccountId || null,
+					aws_account_id: accountId || awsAccountId || null,
 					vineyard_id: vineyardId,
 					cloud_identity_id: cloudIdentityId,
 					terraform_version: terraformVersion,
@@ -159,6 +163,11 @@ export function PlantVineForm({
 				eks: {
 					cluster_version: clusterVersion,
 					enable_karpenter: enableKarpenter,
+					cluster_admins: clusterAdmins,
+					instance_types: instanceTypes,
+					node_min_size: nodeMinSize,
+					node_max_size: nodeMaxSize,
+					node_desired_size: nodeDesiredSize,
 				},
 				dns: {
 					enabled: enableDns,
@@ -212,7 +221,10 @@ export function PlantVineForm({
 				<SectionAwsRegion
 					awsConnected={awsConnected}
 					cloudIdentityId={cloudIdentityId}
-					onCloudIdentityChange={setCloudIdentityId}
+					onCloudIdentityChange={(id, acctId) => {
+						setCloudIdentityId(id);
+						if (acctId) setAccountId(acctId);
+					}}
 					region={region}
 					onRegionChange={setRegion}
 					awsResources={initialAwsResources}
@@ -240,6 +252,16 @@ export function PlantVineForm({
 					onEnableKarpenterChange={setEnableKarpenter}
 					platform={platform}
 					onPlatformChange={setPlatform}
+					clusterAdmins={clusterAdmins}
+					onClusterAdminsChange={setClusterAdmins}
+					instanceTypes={instanceTypes}
+					onInstanceTypesChange={setInstanceTypes}
+					nodeMinSize={nodeMinSize}
+					onNodeMinSizeChange={setNodeMinSize}
+					nodeMaxSize={nodeMaxSize}
+					onNodeMaxSizeChange={setNodeMaxSize}
+					nodeDesiredSize={nodeDesiredSize}
+					onNodeDesiredSizeChange={setNodeDesiredSize}
 				/>
 
 				<SectionRepositories

@@ -18,6 +18,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Database, Plus, Trash2 } from "lucide-react";
 
 interface Props {
@@ -145,6 +146,14 @@ export function SectionDatabases({ databases, onDatabasesChange }: Props) {
 										className="h-8 text-xs"
 									/>
 								</div>
+							</div>
+
+							<div className="flex items-center justify-between p-2 bg-muted/20 rounded">
+								<span className="text-[11px] text-muted-foreground">IAM Authentication</span>
+								<Switch
+									checked={db.iam_auth}
+									onCheckedChange={(v) => updateDatabase(i, "iam_auth", v)}
+								/>
 							</div>
 						</div>
 					))
