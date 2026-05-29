@@ -116,27 +116,36 @@ export function PlantVineForm({
 	const [queues, setQueues] = useState<QueueEntry[]>([]);
 	const [topics, setTopics] = useState<TopicEntry[]>([]);
 
+	const scrollToSection = (sectionId: string) => {
+		const el = document.getElementById(sectionId);
+		if (el) {
+			el.scrollIntoView({ behavior: "smooth", block: "center" });
+			const firstInput = el.querySelector("input, select, button[role='combobox']") as HTMLElement;
+			if (firstInput) setTimeout(() => firstInput.focus(), 400);
+		}
+	};
+
+	const setValidationError = (message: string, sectionId: string) => {
+		setError(message);
+		setIsLoading(false);
+		scrollToSection(sectionId);
+	};
+
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
 		setIsLoading(true);
 		setError(null);
 
 		if (!projectName.trim()) {
-			setError("Project name is required.");
-			setIsLoading(false);
-			return;
+			return setValidationError("Project name is required.", "section-project-basics");
 		}
 
 		if (!cloudIdentityId) {
-			setError("Please connect an AWS account first.");
-			setIsLoading(false);
-			return;
+			return setValidationError("Please connect an AWS account first.", "section-aws-region");
 		}
 
 		if (!region) {
-			setError("Please select an AWS region.");
-			setIsLoading(false);
-			return;
+			return setValidationError("Please select an AWS region.", "section-aws-region");
 		}
 
 		try {
@@ -210,23 +219,19 @@ export function PlantVineForm({
 	return (
 		<form onSubmit={handleSubmit} className="flex gap-6">
 			<div className="flex-1 space-y-6 min-w-0">
-				{error && (
-					<Alert variant="destructive" className="sticky top-16 z-30">
-						<AlertCircle className="h-4 w-4" />
-						<AlertTitle>Error</AlertTitle>
-						<AlertDescription>{error}</AlertDescription>
-					</Alert>
-				)}
+	
+				<div id="section-project-basics">
+					<SectionProjectBasics
+						projectName={projectName}
+						onProjectNameChange={setProjectName}
+						environment={environment}
+						onEnvironmentChange={setEnvironment}
+						vineyardId={vineyardId}
+						onVineyardIdChange={setVineyardId}
+					/>
+				</div>
 
-				<SectionProjectBasics
-					projectName={projectName}
-					onProjectNameChange={setProjectName}
-					environment={environment}
-					onEnvironmentChange={setEnvironment}
-					vineyardId={vineyardId}
-					onVineyardIdChange={setVineyardId}
-				/>
-
+				<div id="section-aws-region">
 				<SectionAwsRegion
 					awsConnected={awsConnected}
 					cloudIdentityId={cloudIdentityId}
@@ -239,6 +244,7 @@ export function PlantVineForm({
 					awsResources={awsResources}
 					onAwsResourcesChange={setAwsResources}
 				/>
+				</div>
 
 				<SectionVpc
 					provisionVpc={provisionVpc}
@@ -318,7 +324,10 @@ export function PlantVineForm({
 				/>
 
 
-				<div className="flex justify-end pt-4 pb-8">
+				<div className="flex items-center justify-end gap-4 pt-4 pb-8">
+					{error && (
+						<p className="text-sm text-destructive">{error}</p>
+					)}
 					<Button
 						type="submit"
 						disabled={isLoading || !awsConnected}
