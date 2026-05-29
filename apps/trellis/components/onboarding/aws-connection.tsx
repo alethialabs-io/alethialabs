@@ -89,7 +89,7 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 
 					if (result.status === "SUCCESS") {
 						stopPolling();
-						await verifyAwsIdentity(identityId);
+						await verifyAwsIdentity(identityId, jobId);
 						setVerifyState({ phase: "success" });
 						toast.success("AWS connection verified!");
 					} else if (result.status === "FAILED") {

@@ -4,9 +4,9 @@ import { createClient } from "@/lib/supabase/server";
 
 export type CachedAwsResources = {
 	regions: string[];
-	vpcs: Record<string, Array<{ id: string; cidr: string; name: string; isDefault: boolean }>>;
-	subnets: Record<string, Record<string, Array<{ id: string; cidr: string; az: string }>>>;
-	hosted_zones: Array<{ id: string; name: string; recordCount: number; isPrivate: boolean }>;
+	vpcs: Record<string, Array<{ ID: string; CIDR: string; Name: string; IsDefault: boolean }>>;
+	subnets: Record<string, Record<string, Array<{ ID: string; CIDR: string; AvailabilityZone: string; VpcID: string }>>>;
+	hosted_zones: Array<{ ID: string; Name: string; RecordCount: number; IsPrivate: boolean }>;
 	cached_at: string | null;
 };
 
@@ -29,6 +29,6 @@ export async function getCachedAwsResources(
 		vpcs: (resources.vpcs as CachedAwsResources["vpcs"]) ?? {},
 		subnets: (resources.subnets as CachedAwsResources["subnets"]) ?? {},
 		hosted_zones: (resources.hosted_zones as CachedAwsResources["hosted_zones"]) ?? [],
-		cached_at: data.cached_at,
+		cached_at: data.cached_at ?? null,
 	};
 }

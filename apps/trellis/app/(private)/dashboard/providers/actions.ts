@@ -148,7 +148,7 @@ export async function saveAwsIdentity(identityId: string, roleArn: string) {
 	return { jobId: job.id, identityId };
 }
 
-export async function verifyAwsIdentity(identityId: string) {
+export async function verifyAwsIdentity(identityId: string, jobId?: string) {
 	const supabase = await createClient();
 	const {
 		data: { user },
@@ -157,9 +157,28 @@ export async function verifyAwsIdentity(identityId: string) {
 
 	if (authError || !user) throw new Error("Unauthorized");
 
+	const updateData: Record<string, any> = {
+		is_verified: true,
+		updated_at: new Date().toISOString(),
+	};
+
+	if (jobId) {
+		const { data: job } = await supabase
+			.from("provision_jobs")
+			.select("execution_metadata")
+			.eq("id", jobId)
+			.single();
+
+		const metadata = job?.execution_metadata as Record<string, any> | null;
+		if (metadata?.cached_resources) {
+			updateData.cached_resources = metadata.cached_resources;
+			updateData.cached_at = new Date().toISOString();
+		}
+	}
+
 	const { error } = await supabase
 		.from("cloud_identities")
-		.update({ is_verified: true, updated_at: new Date().toISOString() })
+		.update(updateData)
 		.eq("id", identityId)
 		.eq("user_id", user.id);
 

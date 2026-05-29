@@ -21,7 +21,7 @@ import { Switch } from "@/components/ui/switch";
 import { Globe, Shield } from "lucide-react";
 
 interface HostedZone {
-	Id: string;
+	ID: string;
 	Name: string;
 	IsPrivate: boolean;
 }
@@ -63,7 +63,7 @@ export function SectionDns({
 
 	const handleZoneChange = (zoneId: string) => {
 		onHostedZoneIdChange(zoneId);
-		const zone = hostedZones.find((z) => z.Id === zoneId);
+		const zone = hostedZones.find((z) => z.ID === zoneId);
 		if (zone) {
 			onDomainNameChange(zone.Name.replace(/\.$/, ""));
 		}
@@ -98,10 +98,10 @@ export function SectionDns({
 									</SelectTrigger>
 									<SelectContent>
 										{hostedZones.map((zone) => (
-											<SelectItem key={zone.Id} value={zone.Id}>
+											<SelectItem key={zone.ID} value={zone.ID}>
 												{zone.Name.replace(/\.$/, "")}
 												<span className="text-muted-foreground ml-2 text-[11px]">
-													{zone.Id}
+													{zone.ID}
 												</span>
 											</SelectItem>
 										))}
