@@ -339,7 +339,7 @@ export function PlantVineForm({
 				</div>
 			</div>
 
-			<div className="hidden xl:block w-72 shrink-0">
+			<div className="hidden lg:block w-72 shrink-0">
 				<CostSidebar
 					databases={databases}
 					caches={caches}
@@ -348,6 +348,9 @@ export function PlantVineForm({
 					applicationWaf={applicationWaf}
 					enableKarpenter={enableKarpenter}
 					region={region}
+					instanceTypes={instanceTypes}
+					nodeDesiredSize={nodeDesiredSize}
+					singleNatGateway={singleNatGateway}
 				/>
 			</div>
 		</form>

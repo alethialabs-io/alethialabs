@@ -1,8 +1,5 @@
 import { getCachedAwsResources } from "@/app/server/actions/aws/resources";
-import {
-	getAwsConnectionStatus,
-	getAwsExternalId,
-} from "@/app/(private)/dashboard/providers/actions";
+import { getAwsConnectionStatus } from "@/app/(private)/dashboard/providers/actions";
 import { PlantVineForm } from "@/components/plant-vine/plant-vine-form";
 
 export default async function PlantPage() {

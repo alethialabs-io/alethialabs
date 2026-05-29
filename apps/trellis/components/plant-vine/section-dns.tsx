@@ -18,6 +18,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { HelpTooltip } from "./help-tooltip";
 import { Globe, Shield } from "lucide-react";
 
 interface HostedZone {
@@ -80,14 +81,17 @@ export function SectionDns({
 					<Switch checked={enabled} onCheckedChange={onEnabledChange} />
 				</div>
 				<CardDescription className="text-xs">
-					Configure Route53 DNS, ACM certificates, and WAF protection.
+					Configure Route53 DNS, TLS certificates, and web application firewall.
 				</CardDescription>
 			</CardHeader>
 			{enabled && (
 				<CardContent className="space-y-4">
 					<div className="grid md:grid-cols-2 gap-4">
 						<div className="space-y-1.5">
-							<Label className="text-xs">Hosted Zone</Label>
+							<div className="flex items-center gap-1.5">
+								<Label className="text-xs">Hosted Zone</Label>
+								<HelpTooltip topic="hosted-zone" />
+							</div>
 							{hostedZones.length > 0 ? (
 								<Select
 									value={hostedZoneId || ""}
@@ -115,6 +119,11 @@ export function SectionDns({
 									className="h-9 text-sm font-mono"
 								/>
 							)}
+							{!hostedZones.length && (
+								<p className="text-xs text-muted-foreground">
+									Click "Refresh" in the AWS section to load your hosted zones.
+								</p>
+							)}
 						</div>
 						<div className="space-y-1.5">
 							<Label className="text-xs">Domain Name</Label>
@@ -123,11 +132,10 @@ export function SectionDns({
 								value={domainName || ""}
 								onChange={(e) => onDomainNameChange(e.target.value || null)}
 								className="h-9 text-sm"
-								disabled={hostedZones.length > 0 && !!hostedZoneId}
 							/>
 							{hostedZones.length > 0 && hostedZoneId && (
-								<p className="text-[10px] text-muted-foreground">
-									Auto-filled from hosted zone selection.
+								<p className="text-xs text-muted-foreground">
+									Auto-filled from zone. You can edit it.
 								</p>
 							)}
 						</div>
@@ -135,33 +143,36 @@ export function SectionDns({
 
 					<div className="space-y-2">
 						<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-							<div>
-								<p className="text-sm font-medium">ACM Certificate</p>
-								<p className="text-[11px] text-muted-foreground">
-									Auto-generate and validate a TLS certificate.
-								</p>
+							<div className="flex items-center gap-1.5">
+								<div>
+									<p className="text-sm font-medium">ACM Certificate</p>
+									<p className="text-[11px] text-muted-foreground">Free with AWS services</p>
+								</div>
+								<HelpTooltip topic="acm-certificate" />
 							</div>
 							<Switch checked={acmCertificate} onCheckedChange={onAcmCertificateChange} />
 						</div>
 
 						<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-							<div className="flex items-center gap-2">
+							<div className="flex items-center gap-1.5">
 								<Shield className="h-3.5 w-3.5 text-muted-foreground" />
 								<div>
 									<p className="text-sm font-medium">CloudFront WAF</p>
 									<p className="text-[11px] text-muted-foreground">~$5/mo per web ACL</p>
 								</div>
+								<HelpTooltip topic="cloudfront-waf" />
 							</div>
 							<Switch checked={cloudfrontWaf} onCheckedChange={onCloudfrontWafChange} />
 						</div>
 
 						<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-							<div className="flex items-center gap-2">
+							<div className="flex items-center gap-1.5">
 								<Shield className="h-3.5 w-3.5 text-muted-foreground" />
 								<div>
 									<p className="text-sm font-medium">Application WAF</p>
 									<p className="text-[11px] text-muted-foreground">~$5/mo per web ACL</p>
 								</div>
+								<HelpTooltip topic="application-waf" />
 							</div>
 							<Switch checked={applicationWaf} onCheckedChange={onApplicationWafChange} />
 						</div>
