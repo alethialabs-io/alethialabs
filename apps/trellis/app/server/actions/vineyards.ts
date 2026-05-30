@@ -58,7 +58,7 @@ export async function getVineyardById(id: string) {
 
 		const { data, error } = await supabase
 			.from("vineyards")
-			.select("*, configurations(*, harvests(*))")
+			.select("*")
 			.eq("id", id)
 			.single();
 
