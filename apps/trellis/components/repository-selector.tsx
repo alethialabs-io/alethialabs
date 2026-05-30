@@ -31,7 +31,7 @@ import { env } from "next-runtime-env";
 import { fetchRepositoriesByProvider } from "@/app/server/actions/git/repositories";
 import { Repository } from "@/app/server/actions/git/types";
 import { getLinkedProviders } from "@/app/server/actions/identities";
-import { useRepositoryContext } from "@/components/configuration/repository-context";
+import { useRepositoryContext } from "@/components/plant-vine/repository-context";
 import { AlertCircle, Plus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 

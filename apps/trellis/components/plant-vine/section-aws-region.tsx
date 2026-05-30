@@ -9,7 +9,7 @@ import {
 	persistCachedResources,
 } from "@/app/(private)/dashboard/providers/actions";
 import { getJobStatus } from "@/app/server/actions/jobs";
-import { CloudIdentitySelector } from "@/components/configuration/cloud-identity-selector";
+import { CloudIdentitySelector } from "./cloud-identity-selector";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
