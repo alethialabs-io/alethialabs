@@ -10,6 +10,7 @@ export async function hasCloudIdentity() {
 		const { count } = await supabase
 			.from("cloud_identities")
 			.select("*", { count: "exact", head: true })
+			.eq("provider", "aws")
 			.eq("is_verified", true);
 		return (count || 0) > 0;
 	} catch (error) {

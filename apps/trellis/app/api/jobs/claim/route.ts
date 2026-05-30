@@ -56,6 +56,12 @@ export async function POST(req: Request) {
 					role_arn: identity.credentials.role_arn ?? "",
 					external_id: identity.credentials.external_id ?? "",
 					account_id: identity.credentials.account_id ?? "",
+					project_id: identity.credentials.project_id ?? "",
+					service_account_email:
+						identity.credentials.service_account_email ?? "",
+					wif_config: identity.credentials.wif_config
+						? JSON.stringify(identity.credentials.wif_config)
+						: "",
 				};
 			}
 		}

@@ -37,10 +37,13 @@ type Job struct {
 }
 
 type CloudIdentity struct {
-	Provider   string `json:"provider"`
-	RoleArn    string `json:"role_arn"`
-	ExternalID string `json:"external_id"`
-	AccountID  string `json:"account_id"`
+	Provider            string `json:"provider"`
+	RoleArn             string `json:"role_arn"`
+	ExternalID          string `json:"external_id"`
+	AccountID           string `json:"account_id"`
+	ProjectID           string `json:"project_id"`
+	ServiceAccountEmail string `json:"service_account_email"`
+	WifConfig           string `json:"wif_config"`
 }
 
 type ClaimResponse struct {

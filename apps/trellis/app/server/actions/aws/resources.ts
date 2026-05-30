@@ -16,6 +16,7 @@ export async function getCachedAwsResources(
 		.from("cloud_identities")
 		.select("cached_resources, cached_at")
 		.eq("id", cloudIdentityId)
+		.eq("provider", "aws")
 		.single();
 
 	if (error || !data?.cached_resources) return null;

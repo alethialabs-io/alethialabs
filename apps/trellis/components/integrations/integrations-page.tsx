@@ -6,7 +6,12 @@ import {
 	disconnectAwsIdentity,
 	saveAwsIdentity,
 } from "@/app/(private)/dashboard/providers/actions";
+import {
+	disconnectGcpIdentity,
+	saveGcpIdentity,
+} from "@/app/(private)/dashboard/providers/gcp-actions";
 import { AwsConnection } from "@/components/onboarding/aws-connection";
+import { GcpConnection } from "@/components/onboarding/gcp-connection";
 import { IntegrationDetailSheet } from "@/components/integrations/integration-detail-sheet";
 import { IntegrationsList } from "@/components/integrations/integrations-list";
 import {
@@ -42,11 +47,13 @@ import { toast } from "sonner";
 interface IntegrationsPageProps {
 	integrations: IntegrationWithConnection[];
 	awsSetup: { externalId: string; identityId: string } | null;
+	gcpSetup: { identityId: string } | null;
 }
 
 export function IntegrationsPage({
 	integrations,
 	awsSetup,
+	gcpSetup,
 }: IntegrationsPageProps) {
 	const router = useRouter();
 	const [selectedCategory, setSelectedCategory] =
@@ -56,6 +63,7 @@ export function IntegrationsPage({
 		useState<IntegrationWithConnection | null>(null);
 	const [detailOpen, setDetailOpen] = useState(false);
 	const [awsSheetOpen, setAwsSheetOpen] = useState(false);
+	const [gcpSheetOpen, setGcpSheetOpen] = useState(false);
 	const [disconnectTarget, setDisconnectTarget] =
 		useState<IntegrationWithConnection | null>(null);
 	const [isDisconnecting, setIsDisconnecting] = useState(false);
@@ -125,6 +133,8 @@ export function IntegrationsPage({
 			}
 		} else if (integration.slug === "aws") {
 			setAwsSheetOpen(true);
+		} else if (integration.slug === "gcp") {
+			setGcpSheetOpen(true);
 		}
 		setDetailOpen(false);
 	};
@@ -167,6 +177,12 @@ export function IntegrationsPage({
 				if (!cloudIdentityId) throw new Error("Missing identity ID");
 				await disconnectAwsIdentity(cloudIdentityId);
 				toast.success("AWS account disconnected.");
+			} else if (disconnectTarget.slug === "gcp") {
+				const cloudIdentityId =
+					disconnectTarget.connection_details?.cloud_identity_id;
+				if (!cloudIdentityId) throw new Error("Missing identity ID");
+				await disconnectGcpIdentity(cloudIdentityId);
+				toast.success("GCP project disconnected.");
 			}
 
 			setDisconnectTarget(null);
@@ -186,6 +202,11 @@ export function IntegrationsPage({
 		const result = await saveAwsIdentity(awsSetup.identityId, roleArn);
 		localStorage.removeItem("aws_onboarding_skipped");
 		return result;
+	};
+
+	const handleGcpConnect = async (wifConfigJson: string) => {
+		if (!gcpSetup) throw new Error("GCP setup not initialized");
+		return await saveGcpIdentity(gcpSetup.identityId, wifConfigJson);
 	};
 
 	const openDetail = (integration: IntegrationWithConnection) => {
@@ -264,6 +285,32 @@ export function IntegrationsPage({
 				</SheetContent>
 			</Sheet>
 
+			{/* GCP Connection Sheet */}
+			<Sheet open={gcpSheetOpen} onOpenChange={(open) => {
+				setGcpSheetOpen(open);
+				if (!open) router.refresh();
+			}}>
+				<SheetContent
+					side="right"
+					className="w-full sm:max-w-2xl overflow-y-auto p-0"
+				>
+					<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
+						<SheetTitle>Connect GCP Project</SheetTitle>
+						<SheetDescription>
+							Set up Workload Identity Federation to allow Grape to
+							provision infrastructure in your GCP project.
+						</SheetDescription>
+					</SheetHeader>
+					<div className="px-6 py-6">
+						{gcpSetup && (
+							<GcpConnection
+								onComplete={handleGcpConnect}
+							/>
+						)}
+					</div>
+				</SheetContent>
+			</Sheet>
+
 			{/* Disconnect Confirmation */}
 			<AlertDialog
 				open={!!disconnectTarget}
@@ -275,9 +322,13 @@ export function IntegrationsPage({
 							Disconnect {disconnectTarget?.name}?
 						</AlertDialogTitle>
 						<AlertDialogDescription>
-							{disconnectTarget?.category === "cloud"
-								? "This will remove the stored IAM role ARN. You won't be able to provision new infrastructure until you reconnect. Existing resources are not affected."
-								: `This will unlink your ${disconnectTarget?.name} account. You won't be able to access repositories from this provider until you reconnect.`}
+							{disconnectTarget?.slug === "aws"
+								? "This will remove the stored IAM role ARN. You won't be able to provision new AWS infrastructure until you reconnect. Existing resources are not affected."
+								: disconnectTarget?.slug === "gcp"
+									? "This will remove the Workload Identity Federation configuration. You won't be able to provision new GCP infrastructure until you reconnect. Existing resources are not affected."
+									: disconnectTarget?.category === "cloud"
+										? "This will remove the stored credentials. You won't be able to provision new infrastructure until you reconnect. Existing resources are not affected."
+										: `This will unlink your ${disconnectTarget?.name} account. You won't be able to access repositories from this provider until you reconnect.`}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>

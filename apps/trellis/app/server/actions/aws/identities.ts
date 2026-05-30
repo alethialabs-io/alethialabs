@@ -17,6 +17,7 @@ export async function getVerifiedCloudIdentities(): Promise<
 	const { data, error } = await supabase
 		.from("cloud_identities")
 		.select("id, name, provider, credentials")
+		.eq("provider", "aws")
 		.eq("is_verified", true);
 
 	if (error || !data) return [];

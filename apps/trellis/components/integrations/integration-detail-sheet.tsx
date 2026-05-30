@@ -179,6 +179,35 @@ export function IntegrationDetailSheet({
 										</span>
 									</div>
 								)}
+							{isConnected &&
+								integration.connection_details?.project_id && (
+									<div className="flex justify-between items-start">
+										<span className="text-xs text-muted-foreground">
+											GCP Project
+										</span>
+										<span className="text-xs font-mono text-foreground">
+											{
+												integration.connection_details
+													.project_id
+											}
+										</span>
+									</div>
+								)}
+							{isConnected &&
+								integration.connection_details
+									?.service_account_email && (
+									<div className="flex justify-between items-start">
+										<span className="text-xs text-muted-foreground">
+											Service Account
+										</span>
+										<span className="text-xs font-mono text-foreground text-right max-w-[200px] truncate">
+											{
+												integration.connection_details
+													.service_account_email
+											}
+										</span>
+									</div>
+								)}
 						</div>
 					</div>
 

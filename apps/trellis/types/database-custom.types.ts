@@ -4,9 +4,15 @@ import type { Database as DatabaseGenerated } from "./database.types";
 // ── Typed JSONB interfaces ─────────────────────────────────────────
 
 export interface CloudCredentials {
+	// AWS
 	role_arn?: string | null;
 	external_id?: string | null;
 	account_id?: string | null;
+	// GCP (WIF)
+	project_id?: string | null;
+	project_number?: string | null;
+	service_account_email?: string | null;
+	wif_config?: Record<string, unknown> | null;
 }
 
 export interface VpcInfo {
@@ -35,6 +41,32 @@ export interface CachedResources {
 	vpcs: Record<string, VpcInfo[]>;
 	subnets: Record<string, Record<string, SubnetInfo[]>>;
 	hosted_zones: HostedZoneInfo[];
+}
+
+export interface GcpNetworkInfo {
+	name: string;
+	selfLink: string;
+	autoCreateSubnetworks: boolean;
+}
+
+export interface GcpSubnetInfo {
+	name: string;
+	region: string;
+	ipCidrRange: string;
+	network: string;
+}
+
+export interface GcpManagedZoneInfo {
+	name: string;
+	dnsName: string;
+	visibility: string;
+}
+
+export interface GcpCachedResources {
+	regions: string[];
+	networks: GcpNetworkInfo[];
+	subnets: Record<string, GcpSubnetInfo[]>;
+	managed_zones: GcpManagedZoneInfo[];
 }
 
 export interface ClusterMetadata {

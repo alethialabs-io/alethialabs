@@ -14,6 +14,8 @@ export type IntegrationConnectionDetails = {
 	identity_id?: string;
 	account_id?: string;
 	role_arn?: string;
+	project_id?: string;
+	service_account_email?: string;
 	cloud_identity_id?: string;
 };
 
@@ -91,6 +93,8 @@ export async function getIntegrationsWithStatus(): Promise<
 				connection_details = {
 					account_id: creds?.account_id ?? undefined,
 					role_arn: creds?.role_arn ?? undefined,
+					project_id: creds?.project_id ?? undefined,
+					service_account_email: creds?.service_account_email ?? undefined,
 					cloud_identity_id: cloudIdentity.id,
 				};
 			}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	grapeAws "github.com/bobikenobi12/bb-thesis-2026/apps/grape/aws"
+	grapeGcp "github.com/bobikenobi12/bb-thesis-2026/apps/grape/gcp"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/provisioner"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
 )
@@ -116,43 +117,93 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	}
 
 	if w.config.Mode == "cloud-hosted" && claim.CloudIdentity != nil {
-		fmt.Fprintf(stdoutLogger, "Assuming role %s into account %s...\n", claim.CloudIdentity.RoleArn, claim.CloudIdentity.AccountID)
-		sessionName := fmt.Sprintf("grape-worker-%s", job.ID[:8])
-		if err := AssumeRole(ctx, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID, sessionName); err != nil {
-			errMsg := fmt.Sprintf("Failed to assume role: %v", err)
-			fmt.Fprintln(stderrLogger, errMsg)
-			w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
-			return err
+		switch claim.CloudIdentity.Provider {
+		case "aws":
+			fmt.Fprintf(stdoutLogger, "Assuming role %s into account %s...\n", claim.CloudIdentity.RoleArn, claim.CloudIdentity.AccountID)
+			sessionName := fmt.Sprintf("grape-worker-%s", job.ID[:8])
+			if err := AssumeRole(ctx, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID, sessionName); err != nil {
+				errMsg := fmt.Sprintf("Failed to assume role: %v", err)
+				fmt.Fprintln(stderrLogger, errMsg)
+				w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+				return err
+			}
+			defer ClearAssumedCredentials()
+		case "gcp":
+			fmt.Fprintf(stdoutLogger, "Activating WIF for project %s (SA: %s)...\n", claim.CloudIdentity.ProjectID, claim.CloudIdentity.ServiceAccountEmail)
+			cleanup, err := ActivateGcpWIF(claim.CloudIdentity.WifConfig)
+			if err != nil {
+				errMsg := fmt.Sprintf("Failed to activate GCP WIF: %v", err)
+				fmt.Fprintln(stderrLogger, errMsg)
+				w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+				return err
+			}
+			defer cleanup()
 		}
-		defer ClearAssumedCredentials()
+	}
+
+	provider := ""
+	if claim.CloudIdentity != nil {
+		provider = claim.CloudIdentity.Provider
 	}
 
 	var execErr error
 	switch job.JobType {
 	case "CONNECTION_TEST":
-		fmt.Fprintln(stdoutLogger, "Connection test passed — role assumption succeeded.")
-		resources, fetchErr := w.fetchAwsResources(ctx, stdoutLogger)
-		if fetchErr != nil {
-			fmt.Fprintf(stderrLogger, "Warning: failed to cache AWS resources: %v\n", fetchErr)
+		if provider == "gcp" {
+			fmt.Fprintln(stdoutLogger, "Connection test passed — WIF authentication succeeded.")
+			resources, fetchErr := w.fetchGcpResources(ctx, claim.CloudIdentity.ProjectID, stdoutLogger)
+			if fetchErr != nil {
+				fmt.Fprintf(stderrLogger, "Warning: failed to cache GCP resources: %v\n", fetchErr)
+			} else {
+				w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+					"cached_resources": resources,
+				})
+				fmt.Fprintln(stdoutLogger, "GCP resources cached successfully.")
+			}
 		} else {
-			w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
-				"cached_resources": resources,
-			})
-			fmt.Fprintln(stdoutLogger, "AWS resources cached successfully.")
+			fmt.Fprintln(stdoutLogger, "Connection test passed — role assumption succeeded.")
+			resources, fetchErr := w.fetchAwsResources(ctx, stdoutLogger)
+			if fetchErr != nil {
+				fmt.Fprintf(stderrLogger, "Warning: failed to cache AWS resources: %v\n", fetchErr)
+			} else {
+				w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+					"cached_resources": resources,
+				})
+				fmt.Fprintln(stdoutLogger, "AWS resources cached successfully.")
+			}
 		}
 	case "FETCH_RESOURCES":
-		fmt.Fprintln(stdoutLogger, "Fetching AWS resources...")
-		resources, fetchErr := w.fetchAwsResources(ctx, stdoutLogger)
-		if fetchErr != nil {
-			execErr = fmt.Errorf("failed to fetch AWS resources: %w", fetchErr)
+		if provider == "gcp" {
+			fmt.Fprintln(stdoutLogger, "Fetching GCP resources...")
+			projectID := ""
+			if claim.CloudIdentity != nil {
+				projectID = claim.CloudIdentity.ProjectID
+			}
+			resources, fetchErr := w.fetchGcpResources(ctx, projectID, stdoutLogger)
+			if fetchErr != nil {
+				execErr = fmt.Errorf("failed to fetch GCP resources: %w", fetchErr)
+			} else {
+				w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+					"cached_resources": resources,
+				})
+				fmt.Fprintln(stdoutLogger, "GCP resources fetched successfully.")
+			}
 		} else {
-			w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
-				"cached_resources": resources,
-			})
-			fmt.Fprintln(stdoutLogger, "AWS resources fetched successfully.")
+			fmt.Fprintln(stdoutLogger, "Fetching AWS resources...")
+			resources, fetchErr := w.fetchAwsResources(ctx, stdoutLogger)
+			if fetchErr != nil {
+				execErr = fmt.Errorf("failed to fetch AWS resources: %w", fetchErr)
+			} else {
+				w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+					"cached_resources": resources,
+				})
+				fmt.Fprintln(stdoutLogger, "AWS resources fetched successfully.")
+			}
 		}
 	case "BOOTSTRAP":
 		execErr = w.executeBootstrap(ctx, job, stdoutLogger, stderrLogger)
+	case "PLAN":
+		execErr = w.executePlan(ctx, job, stdoutLogger, stderrLogger)
 	case "DEPLOY":
 		execErr = w.executeDeploy(ctx, job, stdoutLogger, stderrLogger)
 	case "DESTROY":
@@ -234,6 +285,53 @@ func (w *Worker) fetchAwsResources(ctx context.Context, logger *JobLogger) (map[
 	}, nil
 }
 
+func (w *Worker) fetchGcpResources(ctx context.Context, projectID string, logger *JobLogger) (map[string]any, error) {
+	fmt.Fprintln(logger, "Fetching GCP compute regions...")
+	computeClient, err := grapeGcp.NewComputeClient(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create compute client: %w", err)
+	}
+
+	regions, err := computeClient.ListRegions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list regions: %w", err)
+	}
+	fmt.Fprintf(logger, "Found %d active regions\n", len(regions))
+
+	fmt.Fprintln(logger, "Fetching VPC networks...")
+	networks, err := computeClient.ListNetworks(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list networks: %w", err)
+	}
+	fmt.Fprintf(logger, "Found %d networks\n", len(networks))
+
+	subnets := make(map[string]any)
+	for _, region := range regions {
+		regionSubnets, err := computeClient.ListSubnetworks(ctx, region)
+		if err != nil {
+			continue
+		}
+		if len(regionSubnets) > 0 {
+			subnets[region] = regionSubnets
+		}
+	}
+
+	fmt.Fprintln(logger, "Fetching Cloud DNS managed zones...")
+	dnsClient, err := grapeGcp.NewDNSClient(ctx, projectID)
+	var managedZones []grapeGcp.ManagedZoneInfo
+	if err == nil {
+		managedZones, _ = dnsClient.ListManagedZones(ctx)
+	}
+	fmt.Fprintf(logger, "Found %d managed zones\n", len(managedZones))
+
+	return map[string]any{
+		"regions":       regions,
+		"networks":      networks,
+		"subnets":       subnets,
+		"managed_zones": managedZones,
+	}, nil
+}
+
 func (w *Worker) executeBootstrap(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
 	snapshot := job.ConfigSnapshot
 
@@ -283,6 +381,53 @@ func (w *Worker) executeDeploy(ctx context.Context, job *Job, stdout, stderr *Jo
 	}
 
 	return provisioner.RunDeploy(ctx, params)
+}
+
+func (w *Worker) executePlan(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
+	config, err := snapshotToConfiguration(job.ConfigSnapshot)
+	if err != nil {
+		return fmt.Errorf("failed to parse config snapshot: %w", err)
+	}
+
+	infracostKey := os.Getenv("INFRACOST_API_KEY")
+
+	params := provisioner.DeployParams{
+		Config:         config,
+		DryRun:         true,
+		InfracostToken: infracostKey,
+		Stdout:         stdout,
+		Stderr:         stderr,
+	}
+
+	if err := provisioner.RunDeploy(ctx, params); err != nil {
+		return err
+	}
+
+	metadata := map[string]any{}
+
+	planBytes, err := os.ReadFile("temp/terraform.plan.json")
+	if err == nil {
+		var planData map[string]any
+		if json.Unmarshal(planBytes, &planData) == nil {
+			if rc, ok := planData["resource_changes"]; ok {
+				metadata["plan_result"] = map[string]any{"resource_changes": rc}
+			}
+		}
+	}
+
+	costBytes, err := os.ReadFile("temp/infracost_breakdown.json")
+	if err == nil {
+		var costData map[string]any
+		if json.Unmarshal(costBytes, &costData) == nil {
+			metadata["cost_breakdown"] = costData
+		}
+	}
+
+	if len(metadata) > 0 {
+		w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
+	}
+
+	return nil
 }
 
 func (w *Worker) executeDestroy(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {

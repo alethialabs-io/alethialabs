@@ -3,18 +3,30 @@ import {
 	getAwsConnectionStatus,
 	getAwsExternalId,
 } from "@/app/(private)/dashboard/providers/actions";
+import {
+	getGcpConnectionStatus,
+	initGcpIdentity,
+} from "@/app/(private)/dashboard/providers/gcp-actions";
 import { IntegrationsPage } from "@/components/integrations/integrations-page";
 
 export default async function IntegrationsRoute() {
-	const [integrations, awsStatus] = await Promise.all([
+	const [integrations, awsStatus, gcpStatus] = await Promise.all([
 		getIntegrationsWithStatus(),
 		getAwsConnectionStatus(),
+		getGcpConnectionStatus(),
 	]);
 
 	let awsSetup: { externalId: string; identityId: string } | null = null;
 	if (!awsStatus.connected) {
 		try {
 			awsSetup = await getAwsExternalId();
+		} catch {}
+	}
+
+	let gcpSetup: { identityId: string } | null = null;
+	if (!gcpStatus.connected) {
+		try {
+			gcpSetup = await initGcpIdentity();
 		} catch {}
 	}
 
@@ -33,6 +45,7 @@ export default async function IntegrationsRoute() {
 			<IntegrationsPage
 				integrations={integrations}
 				awsSetup={awsSetup}
+				gcpSetup={gcpSetup}
 			/>
 		</div>
 	);
