@@ -53,9 +53,9 @@ export function PlantVineForm({
 				environment_stage: "development",
 				aws_region: "",
 				aws_account_id: awsAccountId || null,
-				cloud_identity_id: awsIdentityId || null,
+				cloud_identity_id: awsIdentityId || "",
 				terraform_version: "1.11.4",
-				vineyard_id: null,
+				vineyard_id: "",
 			},
 			vpc: {
 				provision_vpc: true,

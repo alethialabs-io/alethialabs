@@ -22,12 +22,19 @@ const componentAutoFields = {
 	estimated_monthly_cost: true,
 } as const;
 
-const vineSchema = publicVinesInsertSchema.omit({
-	...autoFields,
-	user_id: true,
-	status: true,
-	estimated_monthly_cost: true,
-});
+const vineSchema = publicVinesInsertSchema
+	.omit({
+		...autoFields,
+		user_id: true,
+		status: true,
+		estimated_monthly_cost: true,
+	})
+	.extend({
+		project_name: z.string().min(1, "Vine name is required").max(25).regex(/^[a-z0-9][a-z0-9-]*$/, "Lowercase, numbers, hyphens only"),
+		vineyard_id: z.string().min(1, "Vineyard is required"),
+		aws_region: z.string().min(1, "Region is required"),
+		cloud_identity_id: z.string().min(1, "AWS account is required"),
+	});
 
 const vpcSchema = publicVineVpcInsertSchema.omit(componentAutoFields);
 

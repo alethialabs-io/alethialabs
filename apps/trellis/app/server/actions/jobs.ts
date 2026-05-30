@@ -23,9 +23,7 @@ export async function getJobs() {
 
 	const { data, error } = await supabase
 		.from("provision_jobs")
-		.select(
-			"id, job_type, status, vine_id, worker_id, cloud_identity_id, created_at, started_at, completed_at, error_message, config_snapshot, execution_metadata",
-		)
+		.select("*")
 		.order("created_at", { ascending: false });
 
 	if (error) throw new Error("Failed to fetch jobs: " + error.message);

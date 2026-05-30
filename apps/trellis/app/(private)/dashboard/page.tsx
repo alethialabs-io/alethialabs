@@ -1,17 +1,12 @@
 import { getJobs } from "@/app/server/actions/jobs";
 import { getIntegrationsWithStatus } from "@/app/server/actions/integrations";
 import { getVineyards } from "@/app/server/actions/vineyards";
+import { getVines } from "@/app/server/actions/vines";
 import { createClient } from "@/lib/supabase/server";
+import { DataTable } from "@/components/data-table";
+import { jobColumns, JOB_TYPES, STATUS_STYLES } from "@/components/jobs/columns";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
-import { JOB_TYPES, STATUS_STYLES } from "@/components/jobs/columns";
 import {
 	ArrowRight,
 	Blocks,
@@ -20,44 +15,46 @@ import {
 	Grape,
 	Map,
 	Plus,
+	Server,
 	Workflow,
 	XCircle,
 } from "lucide-react";
 import Link from "next/link";
-import { formatDistanceToNow } from "date-fns";
 
 export default async function DashboardPage() {
 	const supabase = await createClient();
 
-	const [jobs, integrations, { vineyards }, workersResult] =
+	const [jobs, integrations, { vineyards }, { vines }, workersResult] =
 		await Promise.all([
 			getJobs(),
 			getIntegrationsWithStatus(),
 			getVineyards(),
+			getVines(),
 			supabase
 				.from("workers")
-				.select("id, name, mode, status, last_heartbeat, created_at")
+				.select("id, name, mode, status, last_heartbeat")
 				.order("created_at", { ascending: false }),
 		]);
 
 	const recentJobs = jobs.slice(0, 5);
 	const workers = workersResult.data ?? [];
 	const onlineWorkers = workers.filter((w) => w.status === "ONLINE").length;
-	const offlineWorkers = workers.length - onlineWorkers;
+	const activeVines = vines.filter((v) => v.status === "ACTIVE").length;
 
 	const connectedIntegrations = integrations.filter((i) => i.connected);
-	const availableIntegrations = integrations.filter(
+	const disconnectedIntegrations = integrations.filter(
 		(i) => !i.connected && i.status !== "coming_soon",
 	);
 
 	return (
-		<div className="space-y-6 w-full">
+		<div className="space-y-8 w-full">
+			{/* Header */}
 			<div className="flex items-center justify-between">
-				<div className="space-y-1">
+				<div>
 					<h1 className="text-2xl font-semibold tracking-tight text-foreground">
 						Overview
 					</h1>
-					<p className="text-muted-foreground text-sm">
+					<p className="text-sm text-muted-foreground mt-1">
 						Your infrastructure at a glance.
 					</p>
 				</div>
@@ -69,271 +66,176 @@ export default async function DashboardPage() {
 				</Link>
 			</div>
 
-			<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-				{/* Recent Jobs */}
-				<Card>
-					<CardHeader className="pb-3">
-						<div className="flex items-center justify-between">
-							<div className="flex items-center gap-2">
-								<ClipboardList className="h-4 w-4 text-muted-foreground" />
-								<CardTitle className="text-sm">
-									Recent Jobs
-								</CardTitle>
-							</div>
-							<Link href="/dashboard/jobs">
-								<Button
-									variant="ghost"
-									size="sm"
-									className="h-6 text-[10px] text-muted-foreground"
-								>
-									View all
-									<ArrowRight className="ml-1 h-3 w-3" />
-								</Button>
-							</Link>
+			{/* Stats Strip */}
+			<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+				<StatChip icon={<Grape className="h-3.5 w-3.5" />} value={vines.length} label="Vines" />
+				<StatChip icon={<CheckCircle2 className="h-3.5 w-3.5" />} value={activeVines} label="Active" />
+				<StatChip icon={<Workflow className="h-3.5 w-3.5" />} value={onlineWorkers} label={`Worker${onlineWorkers !== 1 ? "s" : ""} Online`} />
+				<StatChip icon={<ClipboardList className="h-3.5 w-3.5" />} value={jobs.length} label="Total Jobs" />
+			</div>
+
+			{/* Integrations */}
+			<section>
+				<SectionHeader title="Integrations" href="/dashboard/integrations" linkText="Manage" />
+				<div className="flex flex-wrap gap-2 mt-3">
+					{connectedIntegrations.map((i) => (
+						<div
+							key={i.slug}
+							className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-border/40 bg-background text-xs"
+						>
+							<span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />
+							<span className="font-medium">{i.name}</span>
+							<span className="text-muted-foreground">
+								{i.connection_details?.username
+									? `@${i.connection_details.username}`
+									: i.connection_details?.account_id ?? ""}
+							</span>
 						</div>
-					</CardHeader>
-					<CardContent>
-						{recentJobs.length === 0 ? (
-							<p className="text-xs text-muted-foreground py-4 text-center">
+					))}
+					{disconnectedIntegrations.map((i) => (
+						<Link
+							key={i.slug}
+							href="/dashboard/integrations"
+							className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-dashed border-border/50 text-xs text-muted-foreground hover:border-border hover:text-foreground transition-colors"
+						>
+							<span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30 shrink-0" />
+							<span>{i.name}</span>
+							<span className="text-[10px]">Connect</span>
+						</Link>
+					))}
+					{connectedIntegrations.length === 0 && disconnectedIntegrations.length === 0 && (
+						<p className="text-xs text-muted-foreground">No integrations available.</p>
+					)}
+				</div>
+			</section>
+
+			{/* Recent Jobs */}
+			<section>
+				<SectionHeader title="Recent Jobs" href="/dashboard/jobs" linkText="View all" />
+				<div className="mt-3">
+					{recentJobs.length === 0 ? (
+						<div className="flex flex-col items-center justify-center py-10 text-center border border-dashed border-border/50 rounded-lg">
+							<ClipboardList className="h-6 w-6 text-muted-foreground/30 mb-2" />
+							<p className="text-xs text-muted-foreground">
 								No jobs yet. Plant a vine to get started.
 							</p>
-						) : (
-							<div className="space-y-1">
-								{recentJobs.map((job) => {
-									const info = JOB_TYPES[job.job_type];
-									const Icon = info?.icon;
-									return (
-										<div
-											key={job.id}
-											className="flex items-center gap-3 py-1.5 px-1"
-										>
-											{Icon && (
-												<Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-											)}
-											<span className="text-xs font-medium flex-1 truncate">
-												{info?.label ?? job.job_type}
-											</span>
-											<Badge
-												variant="outline"
-												className={`text-[9px] py-0 px-1.5 ${STATUS_STYLES[job.status] ?? ""}`}
-											>
-												{job.status}
-											</Badge>
-											<span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
-												{job.created_at
-													? formatDistanceToNow(
-															new Date(
-																job.created_at,
-															),
-															{ addSuffix: true },
-														)
-													: "—"}
-											</span>
-										</div>
-									);
-								})}
-							</div>
-						)}
-					</CardContent>
-				</Card>
+						</div>
+					) : (
+						<DataTable
+							columns={jobColumns}
+							data={recentJobs}
+							pageSize={5}
+						/>
+					)}
+				</div>
+			</section>
 
-				{/* Integrations */}
-				<Card>
-					<CardHeader className="pb-3">
-						<div className="flex items-center justify-between">
-							<div className="flex items-center gap-2">
-								<Blocks className="h-4 w-4 text-muted-foreground" />
-								<CardTitle className="text-sm">
-									Integrations
-								</CardTitle>
-							</div>
-							<Link href="/dashboard/integrations">
-								<Button
-									variant="ghost"
-									size="sm"
-									className="h-6 text-[10px] text-muted-foreground"
-								>
-									Manage
-									<ArrowRight className="ml-1 h-3 w-3" />
-								</Button>
-							</Link>
-						</div>
-					</CardHeader>
-					<CardContent>
-						<div className="space-y-1.5">
-							{connectedIntegrations.map((i) => (
-								<div
-									key={i.slug}
-									className="flex items-center gap-2.5 py-1"
-								>
-									<CheckCircle2 className="h-3 w-3 text-emerald-500 shrink-0" />
-									<span className="text-xs font-medium">
-										{i.name}
-									</span>
-									<span className="text-[10px] text-muted-foreground truncate">
-										{i.connection_details?.username
-											? `@${i.connection_details.username}`
-											: i.connection_details?.account_id
-												? i.connection_details.account_id
-												: ""}
-									</span>
-								</div>
-							))}
-							{availableIntegrations.map((i) => (
-								<div
-									key={i.slug}
-									className="flex items-center gap-2.5 py-1"
-								>
-									<XCircle className="h-3 w-3 text-muted-foreground/40 shrink-0" />
-									<span className="text-xs text-muted-foreground">
-										{i.name}
-									</span>
-									<Link
-										href="/dashboard/integrations"
-										className="text-[10px] text-foreground hover:underline ml-auto"
-									>
-										Connect
-									</Link>
-								</div>
-							))}
-							{connectedIntegrations.length === 0 &&
-								availableIntegrations.length === 0 && (
-									<p className="text-xs text-muted-foreground py-2 text-center">
-										No integrations available.
-									</p>
-								)}
-						</div>
-					</CardContent>
-				</Card>
+			{/* Vineyards */}
+			<section>
+				<SectionHeader
+					title={`Vineyards${vineyards.length > 0 ? ` (${vineyards.length})` : ""}`}
+					href="/dashboard/vineyards"
+					linkText="View all"
+				/>
+				<div className="mt-3">
+					{vineyards.length === 0 ? (
+						<p className="text-xs text-muted-foreground py-2">
+							No vineyards yet — created automatically when you plant a vine.
+						</p>
+					) : (
+						<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+							{vineyards.slice(0, 3).map((v) => {
+								const vineCount = v.vines?.length ?? 0;
+								const active = (v.vines ?? []).filter(
+									(vine) => vine.status === "ACTIVE",
+								).length;
 
-				{/* Workers */}
-				<Card>
-					<CardHeader className="pb-3">
-						<div className="flex items-center justify-between">
-							<div className="flex items-center gap-2">
-								<Workflow className="h-4 w-4 text-muted-foreground" />
-								<CardTitle className="text-sm">
-									Workers
-								</CardTitle>
-								{workers.length > 0 && (
-									<span className="text-[10px] text-muted-foreground">
-										{onlineWorkers} online
-										{offlineWorkers > 0 &&
-											` · ${offlineWorkers} offline`}
-									</span>
-								)}
-							</div>
-							<Link href="/dashboard/workers">
-								<Button
-									variant="ghost"
-									size="sm"
-									className="h-6 text-[10px] text-muted-foreground"
-								>
-									{workers.length === 0
-										? "Register"
-										: "Manage"}
-									<ArrowRight className="ml-1 h-3 w-3" />
-								</Button>
-							</Link>
-						</div>
-					</CardHeader>
-					<CardContent>
-						{workers.length === 0 ? (
-							<p className="text-xs text-muted-foreground py-4 text-center">
-								No workers registered. Register one to start
-								provisioning.
-							</p>
-						) : (
-							<div className="space-y-1.5">
-								{workers.map((w) => (
-									<div
-										key={w.id}
-										className="flex items-center gap-2.5 py-1"
-									>
-										<div
-											className={`h-2 w-2 rounded-full shrink-0 ${w.status === "ONLINE" ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
-										/>
-										<span className="text-xs font-medium truncate">
-											{w.name}
-										</span>
-										<Badge
-											variant="outline"
-											className="text-[9px] py-0 px-1.5"
-										>
-											{w.mode}
-										</Badge>
-										{w.last_heartbeat && (
-											<span className="text-[10px] text-muted-foreground ml-auto tabular-nums">
-												{formatDistanceToNow(
-													new Date(w.last_heartbeat),
-													{ addSuffix: true },
-												)}
-											</span>
-										)}
-									</div>
-								))}
-							</div>
-						)}
-					</CardContent>
-				</Card>
-
-				{/* Vineyards */}
-				<Card>
-					<CardHeader className="pb-3">
-						<div className="flex items-center justify-between">
-							<div className="flex items-center gap-2">
-								<Grape className="h-4 w-4 text-muted-foreground" />
-								<CardTitle className="text-sm">
-									Vineyards
-								</CardTitle>
-								{vineyards.length > 0 && (
-									<span className="text-[10px] text-muted-foreground">
-										{vineyards.length} total
-									</span>
-								)}
-							</div>
-							<Link href="/dashboard/vineyards">
-								<Button
-									variant="ghost"
-									size="sm"
-									className="h-6 text-[10px] text-muted-foreground"
-								>
-									View all
-									<ArrowRight className="ml-1 h-3 w-3" />
-								</Button>
-							</Link>
-						</div>
-					</CardHeader>
-					<CardContent>
-						{vineyards.length === 0 ? (
-							<p className="text-xs text-muted-foreground py-4 text-center">
-								No vineyards yet — created automatically when
-								you plant a vine.
-							</p>
-						) : (
-							<div className="space-y-1.5">
-								{vineyards.slice(0, 3).map((v) => (
+								return (
 									<Link
 										key={v.id}
 										href={`/dashboard/vineyards/${v.id}`}
-										className="flex items-center gap-2.5 py-1.5 px-1 rounded hover:bg-muted/30 transition-colors"
 									>
-										<Map className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-										<span className="text-xs font-medium truncate flex-1">
-											{v.name}
-										</span>
-										<span className="text-[10px] text-muted-foreground tabular-nums">
-											{v.vines?.length ?? 0} vine
-											{(v.vines?.length ?? 0) !== 1
-												? "s"
-												: ""}
-										</span>
+										<div className="group p-4 rounded-lg border border-border/50 bg-background hover:bg-muted/30 hover:border-border transition-colors">
+											<div className="flex items-start justify-between mb-2">
+												<div className="p-1.5 bg-muted/50 rounded-md border border-border/50">
+													<Map className="h-3.5 w-3.5 text-muted-foreground" />
+												</div>
+												{active > 0 && (
+													<Badge
+														variant="outline"
+														className="text-[9px] py-0 text-emerald-600 border-emerald-200 bg-emerald-50"
+													>
+														{active} active
+													</Badge>
+												)}
+											</div>
+											<p className="text-sm font-medium text-foreground group-hover:text-foreground truncate">
+												{v.name}
+											</p>
+											<p className="text-[11px] text-muted-foreground mt-0.5">
+												{vineCount} vine{vineCount !== 1 ? "s" : ""}
+											</p>
+										</div>
 									</Link>
-								))}
-							</div>
-						)}
-					</CardContent>
-				</Card>
+								);
+							})}
+						</div>
+					)}
+				</div>
+			</section>
+		</div>
+	);
+}
+
+function SectionHeader({
+	title,
+	href,
+	linkText,
+}: {
+	title: string;
+	href: string;
+	linkText: string;
+}) {
+	return (
+		<div className="flex items-center justify-between">
+			<h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+				{title}
+			</h2>
+			<Link href={href}>
+				<Button
+					variant="ghost"
+					size="sm"
+					className="h-6 text-[10px] text-muted-foreground hover:text-foreground"
+				>
+					{linkText}
+					<ArrowRight className="ml-1 h-3 w-3" />
+				</Button>
+			</Link>
+		</div>
+	);
+}
+
+function StatChip({
+	icon,
+	value,
+	label,
+}: {
+	icon: React.ReactNode;
+	value: number;
+	label: string;
+}) {
+	return (
+		<div className="flex items-center gap-3 rounded-lg border border-border/40 px-3 py-2.5">
+			<div className="flex h-7 w-7 items-center justify-center rounded-md bg-muted/50 text-muted-foreground shrink-0">
+				{icon}
+			</div>
+			<div>
+				<p className="text-lg font-semibold tracking-tight leading-none">
+					{value}
+				</p>
+				<p className="text-[10px] text-muted-foreground mt-0.5">
+					{label}
+				</p>
 			</div>
 		</div>
 	);

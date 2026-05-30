@@ -9,28 +9,17 @@ import {
 	Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-	FormControl, FormField, FormItem,
+	FormControl, FormField, FormItem, FormMessage,
 } from "@/components/ui/form";
 import { VineyardSelector } from "@/components/vineyard-selector";
 import { HelpTooltip } from "./help-tooltip";
-import { useVineStore } from "./use-vine-store";
 import { Grape } from "lucide-react";
 import { useFormContext } from "react-hook-form";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
 
-const PROJECT_NAME_REGEX = /^[a-z0-9][a-z0-9-]*$/;
-
 export function SectionProjectBasics() {
-	const { control, watch } = useFormContext<VineFormData>();
+	const { control, watch, formState } = useFormContext<VineFormData>();
 	const projectName = watch("vine.project_name");
-	const submitted = useVineStore((s) => s.submitted);
-
-	const nameError =
-		projectName && projectName.length > 0 && !PROJECT_NAME_REGEX.test(projectName)
-			? "Lowercase letters, numbers, and hyphens only."
-			: submitted && (!projectName || !projectName.trim())
-				? "Vine name is required."
-				: null;
 
 	return (
 		<Card>
@@ -46,7 +35,7 @@ export function SectionProjectBasics() {
 			<CardContent className="space-y-4">
 				<div className="space-y-1.5">
 					<div className="flex items-center gap-1.5">
-						<Label className="text-xs">Vineyard Workspace (optional)</Label>
+						<Label className="text-xs">Vineyard Workspace <span className="text-destructive">*</span></Label>
 						<HelpTooltip topic="vineyard" />
 					</div>
 					<FormField
@@ -57,9 +46,10 @@ export function SectionProjectBasics() {
 								<FormControl>
 									<VineyardSelector
 										value={field.value ?? undefined}
-										onChange={(v) => field.onChange(v || null)}
+										onChange={(v) => field.onChange(v || "")}
 									/>
 								</FormControl>
+								<FormMessage className="text-[11px]" />
 							</FormItem>
 						)}
 					/>
@@ -81,17 +71,11 @@ export function SectionProjectBasics() {
 											maxLength={25}
 											{...field}
 											onChange={(e) => field.onChange(e.target.value.toLowerCase())}
-											className={`h-9 text-sm font-mono ${nameError ? "border-destructive" : ""}`}
+											className="h-9 text-sm font-mono"
 										/>
 									</FormControl>
 									<div className="flex items-center justify-between">
-										{nameError ? (
-											<p className="text-[11px] text-destructive">{nameError}</p>
-										) : (
-											<p className="text-[11px] text-muted-foreground">
-												Lowercase, numbers, hyphens. Used in AWS resource names.
-											</p>
-										)}
+										<FormMessage className="text-[11px]" />
 										{field.value && field.value.length > 0 && (
 											<p className="text-[11px] text-muted-foreground tabular-nums">
 												{field.value.length}/25
