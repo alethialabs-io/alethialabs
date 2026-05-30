@@ -32,21 +32,74 @@ import { Cloud, Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-const STATIC_REGIONS = [
-	{ group: "Europe", regions: [
-		{ value: "eu-west-1", label: "Ireland" },
-		{ value: "eu-central-1", label: "Frankfurt" },
-		{ value: "eu-west-2", label: "London" },
-		{ value: "eu-north-1", label: "Stockholm" },
-	]},
-	{ group: "US East", regions: [
-		{ value: "us-east-1", label: "N. Virginia" },
-		{ value: "us-east-2", label: "Ohio" },
-	]},
-	{ group: "US West", regions: [
-		{ value: "us-west-1", label: "N. California" },
-		{ value: "us-west-2", label: "Oregon" },
-	]},
+const REGION_LABELS: Record<string, string> = {
+	"us-east-1": "N. Virginia",
+	"us-east-2": "Ohio",
+	"us-west-1": "N. California",
+	"us-west-2": "Oregon",
+	"ca-central-1": "Central",
+	"eu-central-1": "Frankfurt",
+	"eu-west-1": "Ireland",
+	"eu-west-2": "London",
+	"eu-west-3": "Paris",
+	"eu-north-1": "Stockholm",
+	"eu-south-1": "Milan",
+	"ap-south-1": "Mumbai",
+	"ap-northeast-1": "Tokyo",
+	"ap-northeast-2": "Seoul",
+	"ap-northeast-3": "Osaka",
+	"ap-southeast-1": "Singapore",
+	"ap-southeast-2": "Sydney",
+	"sa-east-1": "São Paulo",
+	"af-south-1": "Cape Town",
+	"me-south-1": "Bahrain",
+	"me-central-1": "UAE",
+	"ap-east-1": "Hong Kong",
+	"ap-south-2": "Hyderabad",
+	"ap-southeast-3": "Jakarta",
+	"eu-south-2": "Spain",
+	"eu-central-2": "Zurich",
+	"il-central-1": "Tel Aviv",
+	"ca-west-1": "Calgary",
+};
+
+const REGION_GROUPS: Record<string, string> = {
+	"us-east": "United States",
+	"us-west": "United States",
+	"ca-": "Canada",
+	"eu-": "Europe",
+	"ap-": "Asia Pacific",
+	"sa-": "South America",
+	"af-": "Africa",
+	"me-": "Middle East",
+	"il-": "Israel",
+};
+
+function getRegionGroup(code: string): string {
+	for (const [prefix, group] of Object.entries(REGION_GROUPS)) {
+		if (code.startsWith(prefix)) return group;
+	}
+	return "Other";
+}
+
+function groupRegions(codes: string[]): Array<{ group: string; regions: Array<{ value: string; label: string }> }> {
+	const grouped = new Map<string, Array<{ value: string; label: string }>>();
+	for (const code of codes) {
+		const group = getRegionGroup(code);
+		const label = REGION_LABELS[code] || code;
+		if (!grouped.has(group)) grouped.set(group, []);
+		grouped.get(group)!.push({ value: code, label });
+	}
+	return Array.from(grouped.entries()).map(([group, regions]) => ({
+		group,
+		regions: regions.sort((a, b) => a.label.localeCompare(b.label)),
+	}));
+}
+
+const DEFAULT_REGIONS = [
+	"us-east-1", "us-east-2", "us-west-1", "us-west-2",
+	"eu-west-1", "eu-central-1", "eu-west-2", "eu-north-1",
+	"ap-southeast-1", "ap-northeast-1",
 ];
 
 interface Props {
@@ -57,6 +110,7 @@ interface Props {
 	onRegionChange: (v: string) => void;
 	awsResources: CachedAwsResources | null;
 	onAwsResourcesChange?: (resources: CachedAwsResources | null) => void;
+	submitted?: boolean;
 }
 
 export function SectionAwsRegion({
@@ -67,12 +121,16 @@ export function SectionAwsRegion({
 	onRegionChange,
 	awsResources,
 	onAwsResourcesChange,
+	submitted,
 }: Props) {
 	const [isRefreshing, setIsRefreshing] = useState(false);
 	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-	const cachedRegions = awsResources?.regions as string[] | undefined;
+	const cachedRegionCodes = awsResources?.regions as string[] | undefined;
 	const cachedAt = awsResources?.cached_at;
+	const regionGroups = groupRegions(
+		cachedRegionCodes && cachedRegionCodes.length > 0 ? cachedRegionCodes : DEFAULT_REGIONS,
+	);
 
 	const stopPolling = useCallback(() => {
 		if (pollRef.current) {
@@ -162,6 +220,9 @@ export function SectionAwsRegion({
 						value={cloudIdentityId}
 						onChange={(id, accountId) => onCloudIdentityChange(id, accountId)}
 					/>
+					{submitted && !cloudIdentityId && (
+						<p className="text-[11px] text-destructive">AWS account is required.</p>
+					)}
 				</div>
 
 				<div className="space-y-1.5">
@@ -173,28 +234,23 @@ export function SectionAwsRegion({
 							<SelectValue placeholder="Select a region" />
 						</SelectTrigger>
 						<SelectContent>
-							{cachedRegions && cachedRegions.length > 0 ? (
-								cachedRegions.map((r) => (
-									<SelectItem key={r} value={r}>
-										{r}
-									</SelectItem>
-								))
-							) : (
-								STATIC_REGIONS.map((group) => (
-									<SelectGroup key={group.group}>
-										<SelectLabel>{group.group}</SelectLabel>
-										{group.regions.map((r) => (
-											<SelectItem key={r.value} value={r.value}>
-												{r.label} ({r.value})
-											</SelectItem>
-										))}
-									</SelectGroup>
-								))
-							)}
+							{regionGroups.map((group) => (
+								<SelectGroup key={group.group}>
+									<SelectLabel>{group.group}</SelectLabel>
+									{group.regions.map((r) => (
+										<SelectItem key={r.value} value={r.value}>
+											{r.label} ({r.value})
+										</SelectItem>
+									))}
+								</SelectGroup>
+							))}
 						</SelectContent>
 					</Select>
-					{!cachedRegions && cloudIdentityId && (
-						<p className="text-[10px] text-muted-foreground">
+					{submitted && !region && (
+						<p className="text-[11px] text-destructive">Region is required.</p>
+					)}
+					{!cachedRegionCodes && cloudIdentityId && !submitted && (
+						<p className="text-xs text-muted-foreground">
 							Showing default regions. Click "Refresh" to load your account's enabled regions.
 						</p>
 					)}
