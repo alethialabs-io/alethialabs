@@ -1,5 +1,7 @@
 "use server";
 
+import type { AwsPricingResponse } from "@/types/aws-pricing.types";
+
 export type RegionPrices = {
 	eksControlPlane: number;
 	natGateway: number;
@@ -25,18 +27,20 @@ const CACHE_NODE_TYPES = [
 	"cache.t3.micro", "cache.t3.small", "cache.t3.medium", "cache.r6g.large",
 ];
 
-async function fetchAwsPricingJson(service: string, region: string): Promise<any> {
+async function fetchAwsPricingJson(service: string, region: string): Promise<AwsPricingResponse> {
 	const url = `https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/${service}/current/${region}/index.json`;
 	const res = await fetch(url, { next: { revalidate: 86400 } });
 	if (!res.ok) throw new Error(`Failed to fetch ${service} pricing`);
 	return res.json();
 }
 
-function getOnDemandPrice(data: any, sku: string): number | null {
+function getOnDemandPrice(data: AwsPricingResponse, sku: string): number | null {
 	const terms = data.terms?.OnDemand?.[sku];
 	if (!terms) return null;
-	const term = Object.values(terms)[0] as any;
-	const dim = Object.values(term.priceDimensions)[0] as any;
+	const term = Object.values(terms)[0];
+	if (!term) return null;
+	const dim = Object.values(term.priceDimensions)[0];
+	if (!dim) return null;
 	const usd = parseFloat(dim.pricePerUnit.USD);
 	return isNaN(usd) ? null : usd;
 }
@@ -57,7 +61,7 @@ export async function getRegionPrices(region: string): Promise<RegionPrices> {
 
 		// EC2 instance prices
 		const ec2Prices: Record<string, number> = {};
-		for (const [sku, product] of Object.entries(ec2Data.products as Record<string, any>)) {
+		for (const [sku, product] of Object.entries(ec2Data.products)) {
 			const a = product.attributes;
 			if (
 				EC2_INSTANCE_TYPES.includes(a.instanceType) &&
@@ -75,7 +79,7 @@ export async function getRegionPrices(region: string): Promise<RegionPrices> {
 
 		// NAT Gateway
 		let natGateway = 0.048;
-		for (const [sku, product] of Object.entries(ec2Data.products as Record<string, any>)) {
+		for (const [sku, product] of Object.entries(ec2Data.products)) {
 			if ((product.attributes.usagetype || "").includes("NatGateway-Hours")) {
 				const price = getOnDemandPrice(ec2Data, sku);
 				if (price !== null) { natGateway = price; break; }
@@ -84,7 +88,7 @@ export async function getRegionPrices(region: string): Promise<RegionPrices> {
 
 		// EKS Control Plane
 		let eksControlPlane = 0.10;
-		for (const [sku, product] of Object.entries(eksData.products as Record<string, any>)) {
+		for (const [sku, product] of Object.entries(eksData.products)) {
 			if ((product.attributes.usagetype || "").includes("EKS-Hours:perCluster")) {
 				const price = getOnDemandPrice(eksData, sku);
 				if (price !== null) { eksControlPlane = price; break; }
@@ -93,7 +97,7 @@ export async function getRegionPrices(region: string): Promise<RegionPrices> {
 
 		// Aurora Serverless v2 ACU
 		let auroraACU = 0.14;
-		for (const [sku, product] of Object.entries(rdsData.products as Record<string, any>)) {
+		for (const [sku, product] of Object.entries(rdsData.products)) {
 			const a = product.attributes;
 			if (
 				(a.usagetype || "").includes("Aurora:ServerlessV2Usage") &&
@@ -106,7 +110,7 @@ export async function getRegionPrices(region: string): Promise<RegionPrices> {
 
 		// ElastiCache Redis prices (take lowest on-demand per node type)
 		const cachePrices: Record<string, number> = {};
-		for (const [sku, product] of Object.entries(cacheData.products as Record<string, any>)) {
+		for (const [sku, product] of Object.entries(cacheData.products)) {
 			const a = product.attributes;
 			const nodeType = a.cacheNodeType || a.instanceType || "";
 			if (CACHE_NODE_TYPES.includes(nodeType) && a.cacheEngine === "Redis") {

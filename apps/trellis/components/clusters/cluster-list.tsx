@@ -109,7 +109,7 @@ export function ClusterList({ initialClusters, userId }: ClusterListProps) {
 	return (
 		<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
 			{clusters.map((cluster: PublicClustersRow) => {
-				const metadata = cluster.metadata as any;
+				const metadata = cluster.metadata;
 				return (
 					<Card
 						key={cluster.id}

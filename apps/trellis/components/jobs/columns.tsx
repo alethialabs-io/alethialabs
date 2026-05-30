@@ -1,30 +1,16 @@
 "use client";
 
-import type { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import {
-	Plug,
-	RefreshCw,
-	Rocket,
-	Trash2,
-	Upload,
-} from "lucide-react";
+	PublicProvisionJobsRow,
+	PublicProvisionJobType,
+} from "@/lib/validations/db.schemas";
+import type { ColumnDef } from "@tanstack/react-table";
 import { formatDistanceToNow } from "date-fns";
-
-type JobRow = {
-	id: string;
-	job_type: string;
-	status: string;
-	vine_id: string | null;
-	worker_id: string | null;
-	created_at: string | null;
-	completed_at: string | null;
-	started_at: string | null;
-	error_message: string | null;
-};
+import { Plug, RefreshCw, Rocket, Trash2, Upload } from "lucide-react";
 
 const JOB_TYPES: Record<
-	string,
+	PublicProvisionJobType,
 	{ label: string; icon: typeof Rocket; description: string }
 > = {
 	BOOTSTRAP: {
@@ -57,28 +43,24 @@ const JOB_TYPES: Record<
 const STATUS_STYLES: Record<string, string> = {
 	SUCCESS:
 		"text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950",
-	FAILED:
-		"text-destructive border-destructive/30 bg-destructive/10",
+	FAILED: "text-destructive border-destructive/30 bg-destructive/10",
 	PROCESSING:
 		"text-blue-600 border-blue-200 bg-blue-50 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950",
 	CLAIMED:
 		"text-amber-600 border-amber-200 bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950",
-	QUEUED:
-		"text-muted-foreground border-border bg-muted/50",
-	CANCELLED:
-		"text-muted-foreground border-border bg-muted/30",
+	QUEUED: "text-muted-foreground border-border bg-muted/50",
+	CANCELLED: "text-muted-foreground border-border bg-muted/30",
 };
 
 export { JOB_TYPES, STATUS_STYLES };
-export type { JobRow };
 
-export const jobColumns: ColumnDef<JobRow>[] = [
+export const jobColumns: ColumnDef<PublicProvisionJobsRow>[] = [
 	{
 		accessorKey: "job_type",
 		header: "Type",
 		enableSorting: true,
 		cell: ({ row }) => {
-			const type = row.getValue("job_type") as string;
+			const type = row.getValue<PublicProvisionJobType>("job_type");
 			const info = JOB_TYPES[type];
 			if (!info) return <span className="text-xs">{type}</span>;
 			const Icon = info.icon;
@@ -145,7 +127,8 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 		enableSorting: true,
 		cell: ({ row }) => {
 			const date = row.getValue("created_at") as string | null;
-			if (!date) return <span className="text-xs text-muted-foreground">—</span>;
+			if (!date)
+				return <span className="text-xs text-muted-foreground">—</span>;
 			return (
 				<span className="text-xs text-muted-foreground">
 					{formatDistanceToNow(new Date(date), { addSuffix: true })}
@@ -170,11 +153,12 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 			const status = row.original.status;
 
 			if (!created)
-				return (
-					<span className="text-xs text-muted-foreground">—</span>
-				);
+				return <span className="text-xs text-muted-foreground">—</span>;
 
-			if (!completed && (status === "PROCESSING" || status === "CLAIMED")) {
+			if (
+				!completed &&
+				(status === "PROCESSING" || status === "CLAIMED")
+			) {
 				return (
 					<span className="text-xs text-blue-500 animate-pulse">
 						Running...
@@ -183,14 +167,13 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 			}
 
 			if (!completed)
-				return (
-					<span className="text-xs text-muted-foreground">—</span>
-				);
+				return <span className="text-xs text-muted-foreground">—</span>;
 
 			const ms =
 				new Date(completed).getTime() - new Date(created).getTime();
 			const seconds = Math.floor(ms / 1000);
-			if (seconds < 60) return <span className="text-xs">{seconds}s</span>;
+			if (seconds < 60)
+				return <span className="text-xs">{seconds}s</span>;
 			const minutes = Math.floor(seconds / 60);
 			const remainingSeconds = seconds % 60;
 			return (

@@ -11,26 +11,14 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
-import { JOB_TYPES, STATUS_STYLES } from "./columns";
+import { PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
 import { Loader2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { JOB_TYPES, STATUS_STYLES } from "./columns";
 
 interface JobDetailSheetProps {
-	job: {
-		id: string;
-		job_type: string;
-		status: string;
-		vine_id: string | null;
-		worker_id: string | null;
-		cloud_identity_id: string | null;
-		created_at: string | null;
-		started_at: string | null;
-		completed_at: string | null;
-		error_message: string | null;
-		config_snapshot: Record<string, unknown> | null;
-		execution_metadata: Record<string, unknown> | null;
-	} | null;
+	job: PublicProvisionJobsRow | null;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	onRerun?: () => void;
@@ -202,7 +190,7 @@ export function JobDetailSheet({
 								<h3 className="text-xs font-semibold uppercase tracking-wider text-destructive">
 									Error
 								</h3>
-								<pre className="text-xs text-destructive bg-destructive/5 border border-destructive/20 rounded-md p-3 whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+								<pre className="text-xs text-destructive bg-destructive/5 border border-destructive/20 rounded-md p-3 whitespace-pre-wrap wrap-break-word max-h-48 overflow-y-auto">
 									{job.error_message}
 								</pre>
 							</div>
@@ -211,16 +199,14 @@ export function JobDetailSheet({
 
 					{/* Config Snapshot */}
 					{job.config_snapshot &&
-						Object.keys(
-							job.config_snapshot as Record<string, unknown>,
-						).length > 0 && (
+						Object.keys(job.config_snapshot).length > 0 && (
 							<>
 								<Separator />
 								<div className="space-y-2">
 									<h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
 										Config Snapshot
 									</h3>
-									<pre className="text-[11px] text-muted-foreground bg-muted/30 border rounded-md p-3 whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono">
+									<pre className="text-[11px] text-muted-foreground bg-muted/30 border rounded-md p-3 whitespace-pre-wrap wrap-break-word max-h-64 overflow-y-auto font-mono">
 										{JSON.stringify(
 											job.config_snapshot,
 											null,
@@ -233,16 +219,14 @@ export function JobDetailSheet({
 
 					{/* Execution Metadata */}
 					{job.execution_metadata &&
-						Object.keys(
-							job.execution_metadata as Record<string, unknown>,
-						).length > 0 && (
+						Object.keys(job.execution_metadata).length > 0 && (
 							<>
 								<Separator />
 								<div className="space-y-2">
 									<h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
 										Execution Metadata
 									</h3>
-									<pre className="text-[11px] text-muted-foreground bg-muted/30 border rounded-md p-3 whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono">
+									<pre className="text-[11px] text-muted-foreground bg-muted/30 border rounded-md p-3 whitespace-pre-wrap wrap-break-word max-h-64 overflow-y-auto font-mono">
 										{JSON.stringify(
 											job.execution_metadata,
 											null,

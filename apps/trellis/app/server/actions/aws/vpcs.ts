@@ -52,10 +52,9 @@ export async function getVpcListResult(
 	if (error || !job) throw new Error("Job not found");
 
 	if (job.status === "SUCCESS") {
-		const metadata = job.execution_metadata as Record<string, unknown>;
 		return {
 			status: "SUCCESS",
-			vpcs: (metadata?.vpcs as VpcInfo[]) ?? [],
+			vpcs: (job.execution_metadata?.vpcs as VpcInfo[]) ?? [],
 		};
 	}
 

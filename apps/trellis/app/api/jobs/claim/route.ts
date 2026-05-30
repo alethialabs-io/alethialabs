@@ -51,12 +51,11 @@ export async function POST(req: Request) {
 				.single();
 
 			if (identity) {
-				const creds = identity.credentials as Record<string, any>;
 				cloud_identity = {
 					provider: identity.provider,
-					role_arn: creds.role_arn,
-					external_id: creds.external_id,
-					account_id: creds.account_id,
+					role_arn: identity.credentials.role_arn ?? "",
+					external_id: identity.credentials.external_id ?? "",
+					account_id: identity.credentials.account_id ?? "",
 				};
 			}
 		}

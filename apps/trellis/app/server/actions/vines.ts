@@ -2,16 +2,15 @@
 
 import { createClient } from "@/lib/supabase/server";
 import type {
-	PublicVinesInsert,
-	PublicVinesRow,
-	PublicVineVpcInsert,
-	PublicVineEksInsert,
-	PublicVineDnsInsert,
-	PublicVineRepositoriesInsert,
-	PublicVineDatabasesInsert,
 	PublicVineCachesInsert,
+	PublicVineDatabasesInsert,
+	PublicVineDnsInsert,
+	PublicVineEksInsert,
 	PublicVineQueuesInsert,
+	PublicVineRepositoriesInsert,
+	PublicVinesInsert,
 	PublicVineTopicsInsert,
+	PublicVineVpcInsert,
 } from "@/lib/validations/db.schemas";
 
 // ============================================================
@@ -19,15 +18,82 @@ import type {
 // ============================================================
 
 export interface CreateVineInput {
-	vine: Omit<PublicVinesInsert, "user_id" | "status" | "created_at" | "updated_at">;
-	vpc: Omit<PublicVineVpcInsert, "vine_id" | "status" | "status_message" | "estimated_monthly_cost" | "created_at" | "updated_at">;
-	eks: Omit<PublicVineEksInsert, "vine_id" | "status" | "status_message" | "estimated_monthly_cost" | "cluster_name" | "cluster_endpoint" | "created_at" | "updated_at">;
-	dns: Omit<PublicVineDnsInsert, "vine_id" | "status" | "status_message" | "estimated_monthly_cost" | "created_at" | "updated_at">;
-	repositories: Omit<PublicVineRepositoriesInsert, "vine_id" | "created_at" | "updated_at">;
-	databases?: Omit<PublicVineDatabasesInsert, "vine_id" | "status" | "status_message" | "estimated_monthly_cost" | "endpoint" | "reader_endpoint" | "created_at" | "updated_at">[];
-	caches?: Omit<PublicVineCachesInsert, "vine_id" | "status" | "status_message" | "estimated_monthly_cost" | "endpoint" | "created_at" | "updated_at">[];
-	queues?: Omit<PublicVineQueuesInsert, "vine_id" | "status" | "status_message" | "estimated_monthly_cost" | "created_at" | "updated_at">[];
-	topics?: Omit<PublicVineTopicsInsert, "vine_id" | "status" | "status_message" | "estimated_monthly_cost" | "created_at" | "updated_at">[];
+	vine: Omit<
+		PublicVinesInsert,
+		"user_id" | "status" | "created_at" | "updated_at"
+	>;
+	vpc: Omit<
+		PublicVineVpcInsert,
+		| "vine_id"
+		| "status"
+		| "status_message"
+		| "estimated_monthly_cost"
+		| "created_at"
+		| "updated_at"
+	>;
+	eks: Omit<
+		PublicVineEksInsert,
+		| "vine_id"
+		| "status"
+		| "status_message"
+		| "estimated_monthly_cost"
+		| "cluster_name"
+		| "cluster_endpoint"
+		| "created_at"
+		| "updated_at"
+	>;
+	dns: Omit<
+		PublicVineDnsInsert,
+		| "vine_id"
+		| "status"
+		| "status_message"
+		| "estimated_monthly_cost"
+		| "created_at"
+		| "updated_at"
+	>;
+	repositories: Omit<
+		PublicVineRepositoriesInsert,
+		"vine_id" | "created_at" | "updated_at"
+	>;
+	databases?: Omit<
+		PublicVineDatabasesInsert,
+		| "vine_id"
+		| "status"
+		| "status_message"
+		| "estimated_monthly_cost"
+		| "endpoint"
+		| "reader_endpoint"
+		| "created_at"
+		| "updated_at"
+	>[];
+	caches?: Omit<
+		PublicVineCachesInsert,
+		| "vine_id"
+		| "status"
+		| "status_message"
+		| "estimated_monthly_cost"
+		| "endpoint"
+		| "created_at"
+		| "updated_at"
+	>[];
+	queues?: Omit<
+		PublicVineQueuesInsert,
+		| "vine_id"
+		| "status"
+		| "status_message"
+		| "estimated_monthly_cost"
+		| "created_at"
+		| "updated_at"
+	>[];
+	topics?: Omit<
+		PublicVineTopicsInsert,
+		| "vine_id"
+		| "status"
+		| "status_message"
+		| "estimated_monthly_cost"
+		| "created_at"
+		| "updated_at"
+	>[];
 }
 
 // ============================================================
@@ -50,7 +116,9 @@ export async function createVine(data: CreateVineInput) {
 		.single();
 
 	if (vineError || !vine) {
-		throw new Error("Failed to create vine: " + (vineError?.message || "unknown"));
+		throw new Error(
+			"Failed to create vine: " + (vineError?.message || "unknown"),
+		);
 	}
 
 	// 2. Insert singleton components
@@ -58,49 +126,63 @@ export async function createVine(data: CreateVineInput) {
 		supabase.from("vine_vpc").insert({ vine_id: vine.id, ...data.vpc }),
 		supabase.from("vine_eks").insert({ vine_id: vine.id, ...data.eks }),
 		supabase.from("vine_dns").insert({ vine_id: vine.id, ...data.dns }),
-		supabase.from("vine_repositories").insert({ vine_id: vine.id, ...data.repositories }),
+		supabase
+			.from("vine_repositories")
+			.insert({ vine_id: vine.id, ...data.repositories }),
 	]);
 
-	const singletonErrors = [vpcRes.error, eksRes.error, dnsRes.error, reposRes.error].filter(Boolean);
+	const singletonErrors = [
+		vpcRes.error,
+		eksRes.error,
+		dnsRes.error,
+		reposRes.error,
+	].filter(Boolean);
 	if (singletonErrors.length > 0) {
 		await supabase.from("vines").delete().eq("id", vine.id);
-		throw new Error("Failed to create components: " + singletonErrors.map((e) => e!.message).join(", "));
+		throw new Error(
+			"Failed to create components: " +
+				singletonErrors.map((e) => e!.message).join(", "),
+		);
 	}
 
 	// 3. Insert multi-instance components
 	if (data.databases && data.databases.length > 0) {
-		const { error } = await supabase.from("vine_databases").insert(
-			data.databases.map((db) => ({ vine_id: vine.id, ...db })),
-		);
-		if (error) throw new Error("Failed to create databases: " + error.message);
+		const { error } = await supabase
+			.from("vine_databases")
+			.insert(data.databases.map((db) => ({ vine_id: vine.id, ...db })));
+		if (error)
+			throw new Error("Failed to create databases: " + error.message);
 	}
 
 	if (data.caches && data.caches.length > 0) {
-		const { error } = await supabase.from("vine_caches").insert(
-			data.caches.map((c) => ({ vine_id: vine.id, ...c })),
-		);
+		const { error } = await supabase
+			.from("vine_caches")
+			.insert(data.caches.map((c) => ({ vine_id: vine.id, ...c })));
 		if (error) throw new Error("Failed to create caches: " + error.message);
 	}
 
 	if (data.queues && data.queues.length > 0) {
-		const { error } = await supabase.from("vine_queues").insert(
-			data.queues.map((q) => ({ vine_id: vine.id, ...q })),
-		);
+		const { error } = await supabase
+			.from("vine_queues")
+			.insert(data.queues.map((q) => ({ vine_id: vine.id, ...q })));
 		if (error) throw new Error("Failed to create queues: " + error.message);
 	}
 
 	if (data.topics && data.topics.length > 0) {
-		const { error } = await supabase.from("vine_topics").insert(
-			data.topics.map((t) => ({ vine_id: vine.id, ...t })),
-		);
+		const { error } = await supabase
+			.from("vine_topics")
+			.insert(data.topics.map((t) => ({ vine_id: vine.id, ...t })));
 		if (error) throw new Error("Failed to create topics: " + error.message);
 	}
 
 	// 4. Audit log
 	await supabase.from("vine_audit_log").insert({
 		vine_id: vine.id,
-		action: "CREATED" as any,
-		changes: { project_name: data.vine.project_name, environment: data.vine.environment_stage },
+		action: "CREATED",
+		changes: {
+			project_name: data.vine.project_name,
+			environment: data.vine.environment_stage,
+		},
 	});
 
 	return { vine };
@@ -128,14 +210,46 @@ export async function getVine(vineId: string) {
 	const [vine, vpc, eks, dns, repos, databases, caches, queues, topics] =
 		await Promise.all([
 			supabase.from("vines").select("*").eq("id", vineId).single(),
-			supabase.from("vine_vpc").select("*").eq("vine_id", vineId).maybeSingle(),
-			supabase.from("vine_eks").select("*").eq("vine_id", vineId).maybeSingle(),
-			supabase.from("vine_dns").select("*").eq("vine_id", vineId).maybeSingle(),
-			supabase.from("vine_repositories").select("*").eq("vine_id", vineId).maybeSingle(),
-			supabase.from("vine_databases").select("*").eq("vine_id", vineId).order("created_at"),
-			supabase.from("vine_caches").select("*").eq("vine_id", vineId).order("created_at"),
-			supabase.from("vine_queues").select("*").eq("vine_id", vineId).order("created_at"),
-			supabase.from("vine_topics").select("*").eq("vine_id", vineId).order("created_at"),
+			supabase
+				.from("vine_vpc")
+				.select("*")
+				.eq("vine_id", vineId)
+				.maybeSingle(),
+			supabase
+				.from("vine_eks")
+				.select("*")
+				.eq("vine_id", vineId)
+				.maybeSingle(),
+			supabase
+				.from("vine_dns")
+				.select("*")
+				.eq("vine_id", vineId)
+				.maybeSingle(),
+			supabase
+				.from("vine_repositories")
+				.select("*")
+				.eq("vine_id", vineId)
+				.maybeSingle(),
+			supabase
+				.from("vine_databases")
+				.select("*")
+				.eq("vine_id", vineId)
+				.order("created_at"),
+			supabase
+				.from("vine_caches")
+				.select("*")
+				.eq("vine_id", vineId)
+				.order("created_at"),
+			supabase
+				.from("vine_queues")
+				.select("*")
+				.eq("vine_id", vineId)
+				.order("created_at"),
+			supabase
+				.from("vine_topics")
+				.select("*")
+				.eq("vine_id", vineId)
+				.order("created_at"),
 		]);
 
 	if (vine.error || !vine.data) throw new Error("Vine not found");
@@ -185,20 +299,39 @@ export async function provisionVine(vineId: string) {
 		.maybeSingle();
 
 	if (!identity) {
-		throw new Error("No verified AWS account connected. Go to Integrations to connect.");
+		throw new Error(
+			"No verified AWS account connected. Go to Integrations to connect.",
+		);
 	}
 
 	// Get all components for the snapshot
-	const [vpc, eks, dns, repos, databases, caches, queues, topics] = await Promise.all([
-		supabase.from("vine_vpc").select("*").eq("vine_id", vineId).maybeSingle(),
-		supabase.from("vine_eks").select("*").eq("vine_id", vineId).maybeSingle(),
-		supabase.from("vine_dns").select("*").eq("vine_id", vineId).maybeSingle(),
-		supabase.from("vine_repositories").select("*").eq("vine_id", vineId).maybeSingle(),
-		supabase.from("vine_databases").select("*").eq("vine_id", vineId),
-		supabase.from("vine_caches").select("*").eq("vine_id", vineId),
-		supabase.from("vine_queues").select("*").eq("vine_id", vineId),
-		supabase.from("vine_topics").select("*").eq("vine_id", vineId),
-	]);
+	const [vpc, eks, dns, repos, databases, caches, queues, topics] =
+		await Promise.all([
+			supabase
+				.from("vine_vpc")
+				.select("*")
+				.eq("vine_id", vineId)
+				.maybeSingle(),
+			supabase
+				.from("vine_eks")
+				.select("*")
+				.eq("vine_id", vineId)
+				.maybeSingle(),
+			supabase
+				.from("vine_dns")
+				.select("*")
+				.eq("vine_id", vineId)
+				.maybeSingle(),
+			supabase
+				.from("vine_repositories")
+				.select("*")
+				.eq("vine_id", vineId)
+				.maybeSingle(),
+			supabase.from("vine_databases").select("*").eq("vine_id", vineId),
+			supabase.from("vine_caches").select("*").eq("vine_id", vineId),
+			supabase.from("vine_queues").select("*").eq("vine_id", vineId),
+			supabase.from("vine_topics").select("*").eq("vine_id", vineId),
+		]);
 
 	const configSnapshot = {
 		...vine,
@@ -243,7 +376,8 @@ export async function provisionVine(vineId: string) {
 		.select("id")
 		.single();
 
-	if (jobError) throw new Error("Failed to queue provision job: " + jobError.message);
+	if (jobError)
+		throw new Error("Failed to queue provision job: " + jobError.message);
 
 	// Update vine status
 	await supabase.from("vines").update({ status: "QUEUED" }).eq("id", vineId);
@@ -251,7 +385,7 @@ export async function provisionVine(vineId: string) {
 	// Audit
 	await supabase.from("vine_audit_log").insert({
 		vine_id: vineId,
-		action: "PROVISIONED" as any,
+		action: "PROVISIONED",
 		changes: { job_id: job.id },
 	});
 

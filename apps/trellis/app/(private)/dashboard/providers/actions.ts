@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import type { CachedResources } from "@/types/database-custom.types";
 import { randomUUID } from "crypto";
 
 export type AwsConnectionStatus = {
@@ -22,11 +23,10 @@ export async function getAwsConnectionStatus(): Promise<AwsConnectionStatus> {
 		.maybeSingle();
 
 	if (identity) {
-		const credentials = identity.credentials as Record<string, any>;
 		return {
 			connected: true,
-			accountId: credentials.account_id,
-			roleArn: credentials.role_arn,
+			accountId: identity.credentials.account_id ?? undefined,
+			roleArn: identity.credentials.role_arn ?? undefined,
 			identityId: identity.id,
 		};
 	}
@@ -45,7 +45,7 @@ export async function getAwsExternalId() {
 		.maybeSingle();
 
 	if (existing) {
-		const credentials = existing.credentials as Record<string, any>;
+		const credentials = existing.credentials;
 		if (credentials?.external_id) {
 			return {
 				externalId: credentials.external_id as string,
@@ -110,13 +110,14 @@ export async function persistCachedResources(cloudIdentityId: string, jobId: str
 		.eq("id", jobId)
 		.single();
 
-	const metadata = job?.execution_metadata as Record<string, any> | null;
+	const metadata = job?.execution_metadata;
 	if (!metadata?.cached_resources) return { success: false };
 
+	const resources = metadata.cached_resources as CachedResources;
 	await supabase
 		.from("cloud_identities")
 		.update({
-			cached_resources: metadata.cached_resources,
+			cached_resources: resources,
 			cached_at: new Date().toISOString(),
 		})
 		.eq("id", cloudIdentityId);
@@ -155,7 +156,7 @@ export async function saveAwsIdentity(identityId: string, roleArn: string) {
 		throw new Error("Connection session not found");
 	}
 
-	const currentCredentials = identity.credentials as Record<string, any>;
+	const currentCredentials = identity.credentials;
 
 	const { error: updateError } = await supabase
 		.from("cloud_identities")
@@ -215,9 +216,9 @@ export async function verifyAwsIdentity(identityId: string, jobId?: string) {
 			.eq("id", jobId)
 			.single();
 
-		const metadata = job?.execution_metadata as Record<string, any> | null;
+		const metadata = job?.execution_metadata;
 		if (metadata?.cached_resources) {
-			updateData.cached_resources = metadata.cached_resources;
+			updateData.cached_resources = metadata.cached_resources as CachedResources;
 			updateData.cached_at = new Date().toISOString();
 		}
 	}
@@ -253,7 +254,7 @@ export async function disconnectAwsIdentity(identityId: string) {
 
 	if (!identity) throw new Error("Identity not found");
 
-	const currentCredentials = identity.credentials as Record<string, any>;
+	const currentCredentials = identity.credentials;
 
 	const { error } = await supabase
 		.from("cloud_identities")

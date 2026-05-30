@@ -21,10 +21,9 @@ export async function getAwsExternalId() {
 
 	if (existingIdentity) {
 		// Return existing External ID from the JSON blob
-		const credentials = existingIdentity.credentials as Record<string, any>;
-		if (credentials.external_id) {
+		if (existingIdentity.credentials.external_id) {
 			return {
-				externalId: credentials.external_id as string,
+				externalId: existingIdentity.credentials.external_id,
 				identityId: existingIdentity.id,
 			};
 		}
@@ -92,7 +91,7 @@ export async function saveAwsIdentity(identityId: string, roleArn: string) {
 		throw new Error("Connection session not found");
 	}
 
-	const currentCredentials = identity.credentials as Record<string, any>;
+	const currentCredentials = identity.credentials;
 
 	// 3. Update the Identity
 	const { error: updateError } = await supabase

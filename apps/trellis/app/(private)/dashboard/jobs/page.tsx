@@ -2,8 +2,9 @@
 
 import { getJobs } from "@/app/server/actions/jobs";
 import { DataTable } from "@/components/data-table";
-import { jobColumns, type JobRow } from "@/components/jobs/columns";
+import { jobColumns } from "@/components/jobs/columns";
 import { JobDetailSheet } from "@/components/jobs/job-detail-sheet";
+import type { PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ClipboardList, Search } from "lucide-react";
@@ -13,18 +14,18 @@ const STATUS_FILTERS = ["All", "QUEUED", "PROCESSING", "SUCCESS", "FAILED"] as c
 const TYPE_FILTERS = ["All", "DEPLOY", "BOOTSTRAP", "DESTROY", "CONNECTION_TEST", "FETCH_RESOURCES"] as const;
 
 export default function JobsPage() {
-	const [jobs, setJobs] = useState<JobRow[]>([]);
+	const [jobs, setJobs] = useState<PublicProvisionJobsRow[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [statusFilter, setStatusFilter] = useState<string>("All");
 	const [typeFilter, setTypeFilter] = useState<string>("All");
 	const [search, setSearch] = useState("");
-	const [selectedJob, setSelectedJob] = useState<JobRow | null>(null);
+	const [selectedJob, setSelectedJob] = useState<PublicProvisionJobsRow | null>(null);
 	const [detailOpen, setDetailOpen] = useState(false);
 
 	const fetchJobs = async () => {
 		try {
 			const data = await getJobs();
-			setJobs(data as JobRow[]);
+			setJobs(data as PublicProvisionJobsRow[]);
 		} catch (err) {
 			console.error("Failed to fetch jobs:", err);
 		} finally {
@@ -56,7 +57,7 @@ export default function JobsPage() {
 		return result;
 	}, [jobs, statusFilter, typeFilter, search]);
 
-	const handleRowClick = (job: JobRow) => {
+	const handleRowClick = (job: PublicProvisionJobsRow) => {
 		setSelectedJob(job);
 		setDetailOpen(true);
 	};
@@ -170,7 +171,7 @@ export default function JobsPage() {
 			)}
 
 			<JobDetailSheet
-				job={selectedJob as any}
+				job={selectedJob}
 				open={detailOpen}
 				onOpenChange={setDetailOpen}
 				onRerun={fetchJobs}

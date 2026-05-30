@@ -1,12 +1,9 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import type { CachedResources } from "@/types/database-custom.types";
 
-export type CachedAwsResources = {
-	regions: string[];
-	vpcs: Record<string, Array<{ ID: string; CIDR: string; Name: string; IsDefault: boolean }>>;
-	subnets: Record<string, Record<string, Array<{ ID: string; CIDR: string; AvailabilityZone: string; VpcID: string }>>>;
-	hosted_zones: Array<{ ID: string; Name: string; RecordCount: number; IsPrivate: boolean }>;
+export type CachedAwsResources = CachedResources & {
 	cached_at: string | null;
 };
 
@@ -23,12 +20,11 @@ export async function getCachedAwsResources(
 
 	if (error || !data?.cached_resources) return null;
 
-	const resources = data.cached_resources as Record<string, unknown>;
 	return {
-		regions: (resources.regions as string[]) ?? [],
-		vpcs: (resources.vpcs as CachedAwsResources["vpcs"]) ?? {},
-		subnets: (resources.subnets as CachedAwsResources["subnets"]) ?? {},
-		hosted_zones: (resources.hosted_zones as CachedAwsResources["hosted_zones"]) ?? [],
+		regions: data.cached_resources.regions ?? [],
+		vpcs: data.cached_resources.vpcs ?? {},
+		subnets: data.cached_resources.subnets ?? {},
+		hosted_zones: data.cached_resources.hosted_zones ?? [],
 		cached_at: data.cached_at ?? null,
 	};
 }
