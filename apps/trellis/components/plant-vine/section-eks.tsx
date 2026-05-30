@@ -4,154 +4,67 @@ import { ContainerPlatformSelector } from "./container-platform-selector";
 import { EksVersionSelector } from "./eks-version-selector";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
-import {
-	Popover,
-	PopoverContent,
-	PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-	Command,
-	CommandEmpty,
-	CommandGroup,
-	CommandInput,
-	CommandItem,
-	CommandList,
-} from "@/components/ui/command";
-import {
-	getEksAdmins,
-	createEksAdmin,
-	type EksAdminOption,
-} from "@/app/server/actions/eks-admins";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { getEksAdmins, createEksAdmin, type EksAdminOption } from "@/app/server/actions/eks-admins";
 import { ChevronsUpDown, Plus, Server, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
-
-interface EksAdmin {
-	username: string;
-	groups: string[];
-}
+import { useFormContext } from "react-hook-form";
+import type { VineFormData } from "@/lib/validations/vine-form.schema";
 
 const INSTANCE_TYPE_OPTIONS = [
-	"t3.medium",
-	"t3.large",
-	"t3.xlarge",
-	"m5a.large",
-	"m5a.xlarge",
-	"m5a.2xlarge",
-	"m5a.4xlarge",
-	"c5.large",
-	"c5.xlarge",
-	"r5.large",
-	"r5.xlarge",
+	"t3.medium", "t3.large", "t3.xlarge", "m5a.large", "m5a.xlarge",
+	"m5a.2xlarge", "m5a.4xlarge", "c5.large", "c5.xlarge", "r5.large", "r5.xlarge",
+	"g4dn.xlarge", "p3.2xlarge",
 ];
 
-interface Props {
-	clusterVersion: string;
-	onClusterVersionChange: (v: string) => void;
-	terraformVersion: string;
-	onTerraformVersionChange: (v: string) => void;
-	enableKarpenter: boolean;
-	onEnableKarpenterChange: (v: boolean) => void;
-	platform: string;
-	onPlatformChange: (v: string) => void;
-	clusterAdmins: EksAdmin[];
-	onClusterAdminsChange: (v: EksAdmin[]) => void;
-	instanceTypes: string[];
-	onInstanceTypesChange: (v: string[]) => void;
-	nodeMinSize: number;
-	onNodeMinSizeChange: (v: number) => void;
-	nodeMaxSize: number;
-	onNodeMaxSizeChange: (v: number) => void;
-	nodeDesiredSize: number;
-	onNodeDesiredSizeChange: (v: number) => void;
-}
-
-export function SectionEks({
-	clusterVersion,
-	onClusterVersionChange,
-	terraformVersion,
-	onTerraformVersionChange,
-	enableKarpenter,
-	onEnableKarpenterChange,
-	platform,
-	onPlatformChange,
-	clusterAdmins,
-	onClusterAdminsChange,
-	instanceTypes,
-	onInstanceTypesChange,
-	nodeMinSize,
-	onNodeMinSizeChange,
-	nodeMaxSize,
-	onNodeMaxSizeChange,
-	nodeDesiredSize,
-	onNodeDesiredSizeChange,
-}: Props) {
+export function SectionEks() {
+	const { control, watch, setValue } = useFormContext<VineFormData>();
 	const [savedAdmins, setSavedAdmins] = useState<EksAdminOption[]>([]);
 	const [comboOpen, setComboOpen] = useState(false);
 	const [comboSearch, setComboSearch] = useState("");
 
-	useEffect(() => {
-		getEksAdmins().then(setSavedAdmins);
-	}, []);
+	useEffect(() => { getEksAdmins().then(setSavedAdmins); }, []);
 
-	const nodeSizeError =
-		nodeMinSize > nodeDesiredSize || nodeDesiredSize > nodeMaxSize
-			? "Must be: min ≤ desired ≤ max"
-			: null;
+	const clusterAdmins = watch("eks.cluster_admins") || [];
+	const instanceTypes = watch("eks.instance_types") || [];
+	const nodeMinSize = watch("eks.node_min_size") ?? 2;
+	const nodeMaxSize = watch("eks.node_max_size") ?? 5;
+	const nodeDesiredSize = watch("eks.node_desired_size") ?? 2;
 
+	const nodeSizeError = nodeMinSize > nodeDesiredSize || nodeDesiredSize > nodeMaxSize ? "Must be: min ≤ desired ≤ max" : null;
 	const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 	const addAdminByEmail = async (email: string) => {
 		const trimmed = email.trim().toLowerCase();
 		if (!trimmed || !emailRegex.test(trimmed)) return;
-		if (clusterAdmins.some((a) => a.username === trimmed)) return;
-
-		onClusterAdminsChange([
-			...clusterAdmins,
-			{ username: trimmed, groups: ["system:masters"] },
-		]);
-
+		if (clusterAdmins.some((a: any) => a.username === trimmed)) return;
+		setValue("eks.cluster_admins", [...clusterAdmins, { username: trimmed, groups: ["system:masters"] }]);
 		const saved = await createEksAdmin(trimmed);
-		if (saved && !savedAdmins.some((a) => a.email === trimmed)) {
-			setSavedAdmins((prev) => [...prev, saved]);
-		}
-
-		setComboSearch("");
-		setComboOpen(false);
+		if (saved && !savedAdmins.some((a) => a.email === trimmed)) setSavedAdmins((prev) => [...prev, saved]);
+		setComboSearch(""); setComboOpen(false);
 	};
 
 	const removeAdmin = (index: number) => {
-		onClusterAdminsChange(clusterAdmins.filter((_, i) => i !== index));
+		setValue("eks.cluster_admins", clusterAdmins.filter((_: any, i: number) => i !== index));
 	};
 
-	const availableAdmins = savedAdmins.filter(
-		(a) => !clusterAdmins.some((ca) => ca.username === a.email),
-	);
+	const availableAdmins = savedAdmins.filter((a) => !clusterAdmins.some((ca: any) => ca.username === a.email));
 
 	const addInstanceType = (type: string) => {
-		if (!type || instanceTypes.includes(type)) return;
-		onInstanceTypesChange([...instanceTypes, type]);
+		if (!type || instanceTypes.includes(type) || instanceTypes.length >= 5) return;
+		setValue("eks.instance_types", [...instanceTypes, type]);
 	};
 
 	const removeInstanceType = (type: string) => {
-		onInstanceTypesChange(instanceTypes.filter((t) => t !== type));
+		setValue("eks.instance_types", instanceTypes.filter((t: string) => t !== type));
 	};
 
 	return (
@@ -161,36 +74,32 @@ export function SectionEks({
 					<Server className="h-4 w-4 text-muted-foreground" />
 					<CardTitle className="text-base">Platform & EKS</CardTitle>
 				</div>
-				<CardDescription className="text-xs">
-					Kubernetes cluster configuration, node groups, and auto-scaling.
-				</CardDescription>
+				<CardDescription className="text-xs">Kubernetes cluster, node groups, and auto-scaling.</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-5">
-				<ContainerPlatformSelector
-					selected={platform}
-					onSelect={onPlatformChange}
-				/>
+				<ContainerPlatformSelector selected={watch("vine.container_platform" as any) || "standard"} onSelect={(v) => setValue("vine.container_platform" as any, v)} />
 
 				<div className="grid md:grid-cols-2 gap-4">
 					<div className="space-y-1.5">
 						<Label className="text-xs">EKS Version</Label>
-						<EksVersionSelector
-							value={clusterVersion}
-							onChange={onClusterVersionChange}
-						/>
+						<FormField control={control} name="eks.cluster_version" render={({ field }) => (
+							<FormItem><EksVersionSelector value={field.value || "1.32"} onChange={field.onChange} /></FormItem>
+						)} />
 					</div>
 					<div className="space-y-1.5">
 						<Label className="text-xs">Terraform Version</Label>
-						<Select value={terraformVersion} onValueChange={onTerraformVersionChange}>
-							<SelectTrigger className="h-9 text-sm">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="1.11.4">1.11.4 (Latest)</SelectItem>
-								<SelectItem value="1.10.5">1.10.5</SelectItem>
-								<SelectItem value="1.9.8">1.9.8</SelectItem>
-							</SelectContent>
-						</Select>
+						<FormField control={control} name="vine.terraform_version" render={({ field }) => (
+							<FormItem>
+								<Select value={field.value || "1.11.4"} onValueChange={field.onChange}>
+									<FormControl><SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger></FormControl>
+									<SelectContent>
+										<SelectItem value="1.11.4">1.11.4 (Latest)</SelectItem>
+										<SelectItem value="1.10.5">1.10.5</SelectItem>
+										<SelectItem value="1.9.8">1.9.8</SelectItem>
+									</SelectContent>
+								</Select>
+							</FormItem>
+						)} />
 					</div>
 				</div>
 
@@ -198,42 +107,19 @@ export function SectionEks({
 				<div className="space-y-3">
 					<Label className="text-xs font-medium">Node Group</Label>
 					<div className="grid md:grid-cols-3 gap-3">
-						<div className="space-y-1">
-							<Label className="text-[11px] text-muted-foreground">Min Nodes</Label>
-							<Input
-								type="number"
-								min={1}
-								max={100}
-								value={nodeMinSize}
-								onChange={(e) => onNodeMinSizeChange(parseInt(e.target.value) || 2)}
-								className={`h-8 text-xs ${nodeSizeError ? "border-destructive" : ""}`}
-							/>
-						</div>
-						<div className="space-y-1">
-							<Label className="text-[11px] text-muted-foreground">Desired Nodes</Label>
-							<Input
-								type="number"
-								min={1}
-								max={100}
-								value={nodeDesiredSize}
-								onChange={(e) => onNodeDesiredSizeChange(parseInt(e.target.value) || 2)}
-								className={`h-8 text-xs ${nodeSizeError ? "border-destructive" : ""}`}
-							/>
-						</div>
-						<div className="space-y-1">
-							<Label className="text-[11px] text-muted-foreground">Max Nodes</Label>
-							<Input
-								type="number"
-								min={1}
-								max={100}
-								value={nodeMaxSize}
-								onChange={(e) => onNodeMaxSizeChange(parseInt(e.target.value) || 5)}
-								className={`h-8 text-xs ${nodeSizeError ? "border-destructive" : ""}`}
-							/>
-						</div>
-						{nodeSizeError && (
-							<p className="text-[11px] text-destructive col-span-3">{nodeSizeError}</p>
-						)}
+						{(["node_min_size", "node_desired_size", "node_max_size"] as const).map((name) => (
+							<FormField key={name} control={control} name={`eks.${name}`} render={({ field }) => (
+								<FormItem className="space-y-1">
+									<Label className="text-[11px] text-muted-foreground">{name === "node_min_size" ? "Min" : name === "node_desired_size" ? "Desired" : "Max"} Nodes</Label>
+									<FormControl>
+										<Input type="number" min={1} max={100} {...field} value={field.value ?? 2}
+											onChange={(e) => field.onChange(parseInt(e.target.value) || 2)}
+											className={`h-8 text-xs ${nodeSizeError ? "border-destructive" : ""}`} />
+									</FormControl>
+								</FormItem>
+							)} />
+						))}
+						{nodeSizeError && <p className="text-[11px] text-destructive col-span-3">{nodeSizeError}</p>}
 					</div>
 				</div>
 
@@ -245,46 +131,33 @@ export function SectionEks({
 						<span className="text-[10px] text-muted-foreground">({instanceTypes.length}/5)</span>
 					</div>
 					<div className="flex flex-wrap gap-1.5 min-h-[32px]">
-						{instanceTypes.map((type) => (
+						{instanceTypes.map((type: string) => (
 							<Badge key={type} variant="secondary" className="text-[11px] gap-1 pr-1">
 								{type}
-								<button
-									type="button"
-									onClick={() => removeInstanceType(type)}
-									className="ml-0.5 hover:bg-muted rounded-full p-0.5"
-								>
-									<X className="h-2.5 w-2.5" />
-								</button>
+								<button type="button" onClick={() => removeInstanceType(type)} className="ml-0.5 hover:bg-muted rounded-full p-0.5"><X className="h-2.5 w-2.5" /></button>
 							</Badge>
 						))}
 					</div>
 					<Select value="" onValueChange={addInstanceType} disabled={instanceTypes.length >= 5}>
-						<SelectTrigger className="h-8 text-xs w-48">
-							<SelectValue placeholder="Add instance type" />
-						</SelectTrigger>
+						<SelectTrigger className="h-8 text-xs w-48"><SelectValue placeholder="Add instance type" /></SelectTrigger>
 						<SelectContent>
 							{INSTANCE_TYPE_OPTIONS.filter((t) => !instanceTypes.includes(t)).map((type) => (
-								<SelectItem key={type} value={type} className="text-xs">
-									{type}
-								</SelectItem>
+								<SelectItem key={type} value={type} className="text-xs">{type}</SelectItem>
 							))}
 						</SelectContent>
 					</Select>
 				</div>
 
 				{/* Karpenter */}
-				<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-					<div className="flex items-center gap-1.5">
-						<div>
-							<p className="text-sm font-medium">Karpenter Auto-Scaling</p>
-							<p className="text-[11px] text-muted-foreground">
-								Dynamic node provisioning based on workload demand.
-							</p>
+				<FormField control={control} name="eks.enable_karpenter" render={({ field }) => (
+					<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
+						<div className="flex items-center gap-1.5">
+							<div><p className="text-sm font-medium">Karpenter Auto-Scaling</p><p className="text-[11px] text-muted-foreground">Dynamic node provisioning.</p></div>
+							<HelpTooltip topic="karpenter" />
 						</div>
-						<HelpTooltip topic="karpenter" />
+						<Switch checked={field.value ?? true} onCheckedChange={field.onChange} />
 					</div>
-					<Switch checked={enableKarpenter} onCheckedChange={onEnableKarpenterChange} />
-				</div>
+				)} />
 
 				{/* Cluster Admins */}
 				<div className="space-y-2">
@@ -292,22 +165,13 @@ export function SectionEks({
 						<Label className="text-xs font-medium">Cluster Admins</Label>
 						<HelpTooltip topic="cluster-admins" />
 					</div>
-					<p className="text-[11px] text-muted-foreground">
-						IAM users with system:masters access to the EKS cluster.
-					</p>
 					{clusterAdmins.length > 0 && (
 						<div className="space-y-1.5">
-							{clusterAdmins.map((admin, i) => (
+							{clusterAdmins.map((admin: any, i: number) => (
 								<div key={i} className="flex items-center gap-2 p-2 border border-border/40 rounded-md bg-muted/10">
 									<span className="text-xs font-mono flex-1">{admin.username}</span>
 									<Badge variant="outline" className="text-[10px]">system:masters</Badge>
-									<Button
-										type="button"
-										variant="ghost"
-										size="icon"
-										className="h-6 w-6 text-muted-foreground hover:text-destructive"
-										onClick={() => removeAdmin(i)}
-									>
+									<Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => removeAdmin(i)}>
 										<Trash2 className="h-3 w-3" />
 									</Button>
 								</div>
@@ -316,65 +180,35 @@ export function SectionEks({
 					)}
 					<Popover open={comboOpen} onOpenChange={setComboOpen}>
 						<PopoverTrigger asChild>
-							<Button
-								type="button"
-								variant="outline"
-								role="combobox"
-								aria-expanded={comboOpen}
-								className="h-8 text-xs justify-between w-full font-normal text-muted-foreground"
-							>
+							<Button type="button" variant="outline" role="combobox" aria-expanded={comboOpen} className="h-8 text-xs justify-between w-full font-normal text-muted-foreground">
 								Search or add admin...
 								<ChevronsUpDown className="ml-2 h-3 w-3 shrink-0 opacity-50" />
 							</Button>
 						</PopoverTrigger>
 						<PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
 							<Command>
-								<CommandInput
-									placeholder="Type email..."
-									value={comboSearch}
-									onValueChange={setComboSearch}
-									className="text-xs"
-								/>
+								<CommandInput placeholder="Type email..." value={comboSearch} onValueChange={setComboSearch} className="text-xs" />
 								<CommandList>
 									<CommandEmpty className="py-2 px-3">
 										{comboSearch && emailRegex.test(comboSearch.trim()) ? (
-											<button
-												type="button"
-												onClick={() => addAdminByEmail(comboSearch)}
-												className="flex items-center gap-1.5 text-xs text-foreground w-full"
-											>
-												<Plus className="h-3 w-3" />
-												Add "{comboSearch.trim()}"
+											<button type="button" onClick={() => addAdminByEmail(comboSearch)} className="flex items-center gap-1.5 text-xs text-foreground w-full">
+												<Plus className="h-3 w-3" />Add "{comboSearch.trim()}"
 											</button>
 										) : (
-											<span className="text-xs text-muted-foreground">
-												{comboSearch ? "Enter a valid email" : "No saved admins yet"}
-											</span>
+											<span className="text-xs text-muted-foreground">{comboSearch ? "Enter a valid email" : "No saved admins"}</span>
 										)}
 									</CommandEmpty>
 									{availableAdmins.length > 0 && (
 										<CommandGroup heading="Saved admins">
 											{availableAdmins.map((admin) => (
-												<CommandItem
-													key={admin.id}
-													value={admin.email}
-													onSelect={() => addAdminByEmail(admin.email)}
-													className="text-xs"
-												>
-													{admin.email}
-												</CommandItem>
+												<CommandItem key={admin.id} value={admin.email} onSelect={() => addAdminByEmail(admin.email)} className="text-xs">{admin.email}</CommandItem>
 											))}
 										</CommandGroup>
 									)}
 									{comboSearch && emailRegex.test(comboSearch.trim()) && !savedAdmins.some((a) => a.email === comboSearch.trim().toLowerCase()) && (
 										<CommandGroup heading="New">
-											<CommandItem
-												value={`add-${comboSearch}`}
-												onSelect={() => addAdminByEmail(comboSearch)}
-												className="text-xs"
-											>
-												<Plus className="h-3 w-3 mr-1.5" />
-												Add "{comboSearch.trim()}"
+											<CommandItem value={`add-${comboSearch}`} onSelect={() => addAdminByEmail(comboSearch)} className="text-xs">
+												<Plus className="h-3 w-3 mr-1.5" />Add "{comboSearch.trim()}"
 											</CommandItem>
 										</CommandGroup>
 									)}
