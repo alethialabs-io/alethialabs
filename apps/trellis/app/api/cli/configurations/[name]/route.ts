@@ -7,50 +7,33 @@ export async function GET(
 	{ params }: { params: Promise<{ name: string }> },
 ) {
 	const { payload, error: authError } = await verifyCliToken(req);
-	if (authError) {
-		return authError;
-	}
+	if (authError) return authError;
 
 	const userId = payload.sub;
 	if (!userId) {
-		return new Response(
-			JSON.stringify({ error: "Invalid token payload" }),
-			{
-				status: 400,
-			},
-		);
+		return NextResponse.json({ error: "Invalid token payload" }, { status: 400 });
 	}
 
 	const { name: projectName } = await params;
 	if (!projectName) {
-		return new Response(
-			JSON.stringify({ error: "Project name is required" }),
-			{ status: 400 },
-		);
+		return NextResponse.json({ error: "Project name is required" }, { status: 400 });
 	}
 
 	const supabase = await createServiceRoleClient();
 	const { data: configuration, error } = await supabase
-		.from("configurations")
+		.from("vine_full")
 		.select("*")
 		.eq("user_id", userId)
 		.eq("project_name", projectName)
 		.maybeSingle();
 
 	if (error) {
-		return new Response(JSON.stringify({ error: error.message }), {
-			status: 500,
-		});
+		return NextResponse.json({ error: error.message }, { status: 500 });
 	}
 
 	if (!configuration) {
-		return new Response(
-			JSON.stringify({ error: "Configuration not found" }),
-			{
-				status: 404,
-			},
-		);
+		return NextResponse.json({ error: "Configuration not found" }, { status: 404 });
 	}
 
-	return NextResponse.json({ configuration: { ...configuration } });
+	return NextResponse.json({ configuration });
 }

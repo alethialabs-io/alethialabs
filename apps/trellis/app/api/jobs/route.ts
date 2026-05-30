@@ -63,7 +63,7 @@ export async function POST(req: Request) {
 
 		if (job_type === "DEPLOY" && configuration_id) {
 			const { data: config, error: configError } = await supabase
-				.from("configurations")
+				.from("vine_full")
 				.select("*")
 				.eq("id", configuration_id)
 				.eq("user_id", userId)

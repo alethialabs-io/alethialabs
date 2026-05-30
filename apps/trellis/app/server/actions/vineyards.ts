@@ -9,7 +9,7 @@ import { QueryData, SupabaseClient } from "@supabase/supabase-js";
 const getQueryTypes = (supabase: SupabaseClient<Database>) => {
 	const getVineyardsQuery = supabase
 		.from("vineyards")
-		.select("*, configurations(*)");
+		.select("*, vines(*)");
 
 	const createVineyardQuery = supabase
 		.from("vineyards")
@@ -36,7 +36,7 @@ export async function getVineyards() {
 
 		const { data, error } = await supabase
 			.from("vineyards")
-			.select("*, configurations(*)")
+			.select("*, vines(*)")
 			.order("created_at", { ascending: false });
 
 		if (error) {

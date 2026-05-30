@@ -272,10 +272,6 @@ export async function disconnectAwsIdentity(identityId: string) {
 		throw new Error("Failed to disconnect AWS account");
 	}
 
-	await supabase
-		.from("configurations")
-		.update({ cloud_identity_id: null })
-		.eq("cloud_identity_id", identityId);
 
 	await supabase
 		.from("vines")
