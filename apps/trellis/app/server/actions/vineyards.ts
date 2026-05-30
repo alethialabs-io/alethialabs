@@ -1,152 +1,87 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { PublicVineyardsInsert, PublicVineyardsUpdate } from "@/lib/validations/db.schemas";
-import { Database } from "@/types/database.types";
-import { QueryData, SupabaseClient } from "@supabase/supabase-js";
+import type {
+	PublicVineyardsInsert,
+	PublicVineyardsRow,
+	PublicVineyardsUpdate,
+	PublicVinesRow,
+} from "@/lib/validations/db.schemas";
 
-// Helper function to extract types
-const getQueryTypes = (supabase: SupabaseClient<Database>) => {
-	const getVineyardsQuery = supabase
-		.from("vineyards")
-		.select("*, vines(*)");
-
-	const createVineyardQuery = supabase
-		.from("vineyards")
-		.insert({} as any)
-		.select()
-		.single();
-
-	return {
-		getVineyardsQuery,
-		createVineyardQuery,
-	};
+export type VineyardWithVines = PublicVineyardsRow & {
+	vines: PublicVinesRow[];
 };
 
-export type GetVineyardsData = QueryData<
-	ReturnType<typeof getQueryTypes>["getVineyardsQuery"]
->;
-export type CreateVineyardData = QueryData<
-	ReturnType<typeof getQueryTypes>["createVineyardQuery"]
->;
+export type GetVineyardsData = VineyardWithVines[];
 
 export async function getVineyards() {
-	try {
-		const supabase = await createClient();
+	const supabase = await createClient();
 
-		const { data, error } = await supabase
-			.from("vineyards")
-			.select("*, vines(*)")
-			.order("created_at", { ascending: false });
+	const { data, error } = await supabase
+		.from("vineyards")
+		.select("*, vines(*)")
+		.order("created_at", { ascending: false });
 
-		if (error) {
-			console.error("Error fetching vineyards:", error);
-			throw new Error(error.message);
-		}
+	if (error) throw new Error(error.message);
 
-		const vineyards: GetVineyardsData = data;
-		return { vineyards };
-	} catch (error) {
-		console.error("Unexpected error:", error);
-		throw error;
-	}
+	return { vineyards: (data ?? []) as GetVineyardsData };
 }
 
 export async function getVineyardById(id: string) {
-	try {
-		const supabase = await createClient();
+	const supabase = await createClient();
 
-		const { data, error } = await supabase
-			.from("vineyards")
-			.select("*")
-			.eq("id", id)
-			.single();
+	const { data, error } = await supabase
+		.from("vineyards")
+		.select("*")
+		.eq("id", id)
+		.single();
 
-		if (error) {
-			throw new Error(error.message);
-		}
+	if (error) throw new Error(error.message);
 
-		return { vineyard: data };
-	} catch (error) {
-		console.error("Unexpected error:", error);
-		throw error;
-	}
+	return { vineyard: data };
 }
 
-export async function createVineyard(body: Omit<PublicVineyardsInsert, "user_id">) {
-	try {
-		const supabase = await createClient();
+export async function createVineyard(
+	body: Omit<PublicVineyardsInsert, "user_id">,
+) {
+	const supabase = await createClient();
 
-		const {
-			data: { user },
-		} = await supabase.auth.getUser();
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
+	if (!user) throw new Error("Unauthorized");
 
-		if (!user) {
-			throw new Error("Unauthorized");
-		}
+	const { data, error } = await supabase
+		.from("vineyards")
+		.insert({ ...body, user_id: user.id })
+		.select()
+		.single();
 
-		const payload = {
-			...body,
-			user_id: user.id,
-		};
+	if (error) throw new Error(error.message);
 
-		const { data, error } = await supabase
-			.from("vineyards")
-			.insert(payload)
-			.select()
-			.single();
-
-		if (error) {
-			console.error("Error creating vineyard:", error);
-			throw new Error(error.message);
-		}
-
-		const vineyard: CreateVineyardData = data;
-		return { vineyard };
-	} catch (error) {
-		console.error("Unexpected error:", error);
-		throw error;
-	}
+	return { vineyard: data };
 }
 
 export async function updateVineyard(id: string, body: PublicVineyardsUpdate) {
-	try {
-		const supabase = await createClient();
+	const supabase = await createClient();
 
-		const { data, error } = await supabase
-			.from("vineyards")
-			.update(body)
-			.eq("id", id)
-			.select()
-			.single();
+	const { data, error } = await supabase
+		.from("vineyards")
+		.update(body)
+		.eq("id", id)
+		.select()
+		.single();
 
-		if (error) {
-			throw new Error(error.message);
-		}
+	if (error) throw new Error(error.message);
 
-		return { vineyard: data };
-	} catch (error) {
-		console.error("Unexpected error:", error);
-		throw error;
-	}
+	return { vineyard: data };
 }
 
 export async function deleteVineyard(id: string) {
-	try {
-		const supabase = await createClient();
+	const supabase = await createClient();
 
-		const { error } = await supabase
-			.from("vineyards")
-			.delete()
-			.eq("id", id);
+	const { error } = await supabase.from("vineyards").delete().eq("id", id);
+	if (error) throw new Error(error.message);
 
-		if (error) {
-			throw new Error(error.message);
-		}
-
-		return { success: true };
-	} catch (error) {
-		console.error("Unexpected error:", error);
-		throw error;
-	}
+	return { success: true };
 }

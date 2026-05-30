@@ -203,7 +203,7 @@ export default function DashboardPage() {
 									</p>
 									<div className="flex items-center gap-2 mt-0.5">
 										<span className="text-xs text-muted-foreground">
-											{v.configurations?.length || 0} vines
+											{v.vines?.length || 0} vines
 										</span>
 										{v.updated_at && (
 											<>

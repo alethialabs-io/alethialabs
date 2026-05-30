@@ -1,6 +1,6 @@
 "use client";
 
-import { ContainerPlatformSelector } from "@/components/container-platform-selector";
+import { ContainerPlatformSelector } from "./container-platform-selector";
 import { EksVersionSelector } from "./eks-version-selector";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

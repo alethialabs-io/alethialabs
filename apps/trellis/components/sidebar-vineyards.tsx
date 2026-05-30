@@ -47,7 +47,7 @@ export function SidebarVineyards() {
 			) : (
 				<div className="space-y-0.5">
 					{vineyards.map((vineyard) => {
-						const configs = vineyard.configurations ?? [];
+						const configs = vineyard.vines ?? [];
 						const isActive = pathname.startsWith(
 							`/dashboard/vineyards/${vineyard.id}`,
 						);

@@ -49,9 +49,9 @@ export default async function VineyardsPage() {
 			) : (
 				<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 					{vineyards.map((vineyard) => {
-						const configs = vineyard.configurations ?? [];
+						const configs = vineyard.vines ?? [];
 						const completed = configs.filter(
-							(c) => c.status === "completed",
+							(c) => c.status === "ACTIVE",
 						).length;
 						const total = configs.length;
 
