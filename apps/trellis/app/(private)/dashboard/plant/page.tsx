@@ -1,16 +1,8 @@
-import { getCachedAwsResources } from "@/app/server/actions/aws/resources";
-import { getAwsConnectionStatus } from "@/app/(private)/dashboard/providers/actions";
+import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
 import { PlantVineForm } from "@/components/plant-vine/plant-vine-form";
 
 export default async function PlantPage() {
-	const awsStatus = await getAwsConnectionStatus();
-
-	let awsResources = null;
-	if (awsStatus.connected && awsStatus.identityId) {
-		try {
-			awsResources = await getCachedAwsResources(awsStatus.identityId);
-		} catch {}
-	}
+	const identities = await getVerifiedCloudIdentities();
 
 	return (
 		<div className="w-full space-y-6">
@@ -24,11 +16,7 @@ export default async function PlantPage() {
 				</p>
 			</div>
 
-			<PlantVineForm
-				cloudConnected={awsStatus.connected}
-				cloudIdentityId={awsStatus.identityId}
-				initialResources={awsResources}
-			/>
+			<PlantVineForm cloudIdentities={identities} />
 		</div>
 	);
 }

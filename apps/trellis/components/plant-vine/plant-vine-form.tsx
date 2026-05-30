@@ -1,8 +1,10 @@
 "use client";
 
 import { createVine, type CreateVineInput } from "@/app/server/actions/vines";
-import type { CachedAwsResources } from "@/app/server/actions/aws/resources";
+import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { vineFormSchema, type VineFormData } from "@/lib/validations/vine-form.schema";
+import { CloudProviderProvider } from "@/lib/cloud-providers";
+import { DEFAULT_INSTANCE_TYPE, DEFAULT_K8S_VERSION } from "@/lib/cloud-providers";
 import { useVineStore } from "./use-vine-store";
 import { Button } from "@/components/ui/button";
 import { Loader2, Rocket } from "lucide-react";
@@ -26,22 +28,13 @@ import { SectionSecrets } from "./section-secrets";
 import { CostSidebar } from "./cost-sidebar";
 
 interface PlantVineFormProps {
-	cloudConnected: boolean;
-	cloudIdentityId?: string;
-	initialResources: CachedAwsResources | null;
+	cloudIdentities: CloudIdentityOption[];
 }
 
-export function PlantVineForm({
-	cloudConnected,
-	cloudIdentityId,
-	initialResources,
-}: PlantVineFormProps) {
+export function PlantVineForm({ cloudIdentities }: PlantVineFormProps) {
 	const router = useRouter();
 	const store = useVineStore();
-
-	useEffect(() => {
-		store.set({ cloudConnected: cloudConnected, awsResources: initialResources });
-	}, []);
+	const hasIdentities = cloudIdentities.length > 0;
 
 	const form = useForm<VineFormData>({
 		resolver: zodResolver(vineFormSchema) as any,
@@ -50,7 +43,7 @@ export function PlantVineForm({
 				project_name: "",
 				environment_stage: "development",
 				region: "",
-				cloud_identity_id: cloudIdentityId || "",
+				cloud_identity_id: "",
 				terraform_version: "1.11.4",
 				vineyard_id: "",
 			},
@@ -60,9 +53,9 @@ export function PlantVineForm({
 				single_nat_gateway: true,
 			},
 			cluster: {
-				cluster_version: "1.32",
+				cluster_version: DEFAULT_K8S_VERSION.aws,
 				provider_config: { enable_karpenter: true },
-				instance_types: ["t3.medium"],
+				instance_types: [DEFAULT_INSTANCE_TYPE.aws],
 				node_min_size: 2,
 				node_max_size: 5,
 				node_desired_size: 2,
@@ -115,6 +108,7 @@ export function PlantVineForm({
 	};
 
 	return (
+		<CloudProviderProvider>
 		<FormProvider {...form}>
 			<form onSubmit={form.handleSubmit(onSubmit, onError)} className="flex gap-6">
 				<div className="flex-1 space-y-6 min-w-0">
@@ -136,7 +130,7 @@ export function PlantVineForm({
 						)}
 						<Button
 							type="submit"
-							disabled={store.isLoading || !cloudConnected}
+							disabled={store.isLoading || !hasIdentities}
 							className="min-w-[160px]"
 						>
 							{store.isLoading ? (
@@ -159,5 +153,6 @@ export function PlantVineForm({
 				</div>
 			</form>
 		</FormProvider>
+		</CloudProviderProvider>
 	);
 }

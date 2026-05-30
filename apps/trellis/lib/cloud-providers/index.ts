@@ -15,3 +15,10 @@ export { MESSAGING } from "./messaging";
 export { NOSQL } from "./nosql";
 export { NETWORK } from "./network";
 export { convertVineConfig, type ConversionWarning, type ConversionSeverity } from "./convert";
+export {
+	CloudProviderProvider,
+	useCloudProvider,
+	useProviderSlug,
+	useProviderMeta,
+	type AnyCachedResources,
+} from "./use-cloud-provider";
