@@ -31,12 +31,12 @@ const JOB_TYPES: Record<
 	CONNECTION_TEST: {
 		label: "Connection Test",
 		icon: Plug,
-		description: "Verify AWS account access",
+		description: "Verify cloud account access",
 	},
 	FETCH_RESOURCES: {
 		label: "Fetch Resources",
 		icon: RefreshCw,
-		description: "Cache AWS regions, VPCs, zones",
+		description: "Cache cloud regions, networks, zones",
 	},
 };
 
