@@ -1,6 +1,5 @@
 import { getVineyardById } from "@/app/server/actions/vineyards";
 import { VineyardEstateMap } from "@/components/vineyard-estate-map";
-import { BootstrapLogsViewer } from "@/components/bootstrap-logs-viewer";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
@@ -47,9 +46,6 @@ export default async function VineyardDetailsPage({
 					</div>
 				</div>
 
-				<div className="w-full mb-10">
-					<BootstrapLogsViewer vineyardId={id} />
-				</div>
 			</div>
 		);
 	} catch (error) {
