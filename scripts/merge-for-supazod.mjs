@@ -96,5 +96,67 @@ content = replaceJsonField(
 	clusterMetadataType,
 );
 
+// ── cloud_identities.cached_resources ───────────────────────────────
+const cachedResourcesType = `{
+  regions: string[];
+  vpcs: Record<string, Array<{ ID: string; CIDR: string; Name: string; IsDefault: boolean }>>;
+  subnets: Record<string, Record<string, Array<{ ID: string; CIDR: string; VpcID: string; AvailabilityZone: string }>>>;
+  hosted_zones: Array<{ ID: string; Name: string; RecordCount: number; IsPrivate: boolean }>;
+}`;
+content = replaceJsonField(
+	content,
+	"cloud_identities",
+	"cached_resources",
+	cachedResourcesType,
+);
+
+// ── provision_jobs.config_snapshot ──────────────────────────────────
+content = replaceJsonField(
+	content,
+	"provision_jobs",
+	"config_snapshot",
+	"Record<string, unknown>",
+);
+
+// ── provision_jobs.execution_metadata ──────────────────────────────
+content = replaceJsonField(
+	content,
+	"provision_jobs",
+	"execution_metadata",
+	"Record<string, unknown>",
+);
+
+// ── vine_audit_log.changes ─────────────────────────────────────────
+content = replaceJsonField(
+	content,
+	"vine_audit_log",
+	"changes",
+	"Record<string, unknown>",
+);
+
+// ── vine_eks.cluster_admins ────────────────────────────────────────
+content = replaceJsonField(
+	content,
+	"vine_eks",
+	"cluster_admins",
+	"Array<{ username: string; groups: string[] }>",
+);
+
+// ── vine_topics.subscriptions ──────────────────────────────────────
+content = replaceJsonField(
+	content,
+	"vine_topics",
+	"subscriptions",
+	"Array<{ protocol: string; endpoint: string }>",
+);
+
+// ── workers.metadata ───────────────────────────────────────────────
+content = replaceJsonField(
+	content,
+	"workers",
+	"metadata",
+	"Record<string, unknown>",
+);
+
 fs.writeFileSync(outPath, content);
 console.log(`\n✓ Wrote ${outPath}`);
