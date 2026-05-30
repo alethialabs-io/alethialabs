@@ -52,7 +52,8 @@
 		"supazod": "^4.1.0",
 		"tailwind-merge": "^3.3.1",
 		"yaml": "^2.8.1",
-		"zod": "^4.1.13"
+		"zod": "^4.1.13",
+		"zustand": "^5.0.14"
 	},
 	"devDependencies": {
 		"@eslint/eslintrc": "^3",
@@ -70,6 +71,7 @@
 		"jsdom": "^25.0.1",
 		"tailwindcss": "^4.1.11",
 		"tw-animate-css": "^1.3.6",
+		"type-fest": "^5.6.0",
 		"typescript": "^5",
 		"vite": "^6",
 		"vitest": "^2.1.9"
