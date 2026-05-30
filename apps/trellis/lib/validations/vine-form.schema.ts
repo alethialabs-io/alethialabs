@@ -55,25 +55,34 @@ const databaseItemSchema = publicVineDatabasesInsertSchema.omit({
 	...componentAutoFields,
 	endpoint: true,
 	reader_endpoint: true,
-});
+}).extend({ name: z.string().min(1, "Database name is required") });
 
 const cacheItemSchema = publicVineCachesInsertSchema.omit({
 	...componentAutoFields,
 	endpoint: true,
-});
+}).extend({ name: z.string().min(1, "Cache name is required") });
 
-const queueItemSchema = publicVineQueuesInsertSchema.omit(componentAutoFields);
+const queueItemSchema = publicVineQueuesInsertSchema
+	.omit(componentAutoFields)
+	.extend({ name: z.string().min(1, "Queue name is required") });
 
-const topicItemSchema = publicVineTopicsInsertSchema.omit(componentAutoFields);
+const topicItemSchema = publicVineTopicsInsertSchema
+	.omit(componentAutoFields)
+	.extend({ name: z.string().min(1, "Topic name is required") });
 
-const dynamodbItemSchema = publicVineDynamodbTablesInsertSchema.omit(componentAutoFields);
+const dynamodbItemSchema = publicVineDynamodbTablesInsertSchema
+	.omit(componentAutoFields)
+	.extend({
+		name: z.string().min(1, "Table name is required"),
+		hash_key: z.string().min(1, "Hash key is required"),
+	});
 
 const secretItemSchema = publicVineSecretsInsertSchema.omit({
 	...autoFields,
 	vine_id: true,
 	status: true,
 	status_message: true,
-});
+}).extend({ name: z.string().min(1, "Secret name is required") });
 
 export const vineFormSchema = z.object({
 	vine: vineSchema,
