@@ -2,6 +2,12 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { getValidProviderToken } from "./identities";
+import {
+	convertVineConfig,
+	type CloudProviderSlug,
+	type ConversionWarning,
+} from "@/lib/cloud-providers";
+import type { VineFormData } from "@/lib/validations/vine-form.schema";
 import type {
 	PublicVineCachesInsert,
 	PublicVineDatabasesInsert,
@@ -481,4 +487,153 @@ export async function deleteVine(vineId: string) {
 	if (error) throw new Error("Failed to delete vine: " + error.message);
 
 	return { success: true };
+}
+
+// ============================================================
+// Duplicate for another provider
+// ============================================================
+
+/** Duplicates a vine config for a different cloud provider, mapping all provider-specific values. */
+export async function duplicateVineForProvider(
+	sourceVineId: string,
+	targetCloudIdentityId: string,
+	targetRegion: string,
+): Promise<{ newVineId: string; warnings: ConversionWarning[] }> {
+	const supabase = await createClient();
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
+	if (!user) throw new Error("Unauthorized");
+
+	const source = await getVine(sourceVineId);
+
+	const { data: sourceIdentity } = await supabase
+		.from("cloud_identities")
+		.select("provider")
+		.eq("id", source.vine.cloud_identity_id!)
+		.single();
+
+	const { data: targetIdentity } = await supabase
+		.from("cloud_identities")
+		.select("provider")
+		.eq("id", targetCloudIdentityId)
+		.eq("user_id", user.id)
+		.single();
+
+	if (!sourceIdentity || !targetIdentity) {
+		throw new Error("Cloud identity not found");
+	}
+
+	const sourceProvider = sourceIdentity.provider as CloudProviderSlug;
+	const targetProvider = targetIdentity.provider as CloudProviderSlug;
+
+	const formData: VineFormData = {
+		vine: {
+			project_name: source.vine.project_name,
+			environment_stage: source.vine.environment_stage,
+			region: source.vine.region,
+			cloud_identity_id: targetCloudIdentityId,
+			terraform_version: source.vine.terraform_version,
+			vineyard_id: source.vine.vineyard_id ?? "",
+		},
+		network: source.components.network
+			? {
+					provision_network: source.components.network.provision_network,
+					cidr_block: source.components.network.cidr_block ?? "10.0.0.0/16",
+					single_nat_gateway: source.components.network.single_nat_gateway ?? true,
+				}
+			: { provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true },
+		cluster: source.components.cluster
+			? {
+					cluster_version: source.components.cluster.cluster_version ?? "1.31",
+					instance_types: source.components.cluster.instance_types ?? [],
+					node_min_size: source.components.cluster.node_min_size ?? 2,
+					node_max_size: source.components.cluster.node_max_size ?? 5,
+					node_desired_size: source.components.cluster.node_desired_size ?? 2,
+					cluster_admins: source.components.cluster.cluster_admins ?? [],
+					provider_config: source.components.cluster.provider_config ?? {},
+				}
+			: { cluster_version: "1.31", instance_types: [], node_min_size: 2, node_max_size: 5, node_desired_size: 2, cluster_admins: [], provider_config: {} },
+		dns: source.components.dns
+			? {
+					enabled: source.components.dns.enabled,
+					zone_id: source.components.dns.zone_id ?? undefined,
+					domain_name: source.components.dns.domain_name ?? undefined,
+					managed_certificate: source.components.dns.managed_certificate ?? false,
+					waf_enabled: source.components.dns.waf_enabled ?? false,
+					provider_config: source.components.dns.provider_config ?? {},
+				}
+			: { enabled: false },
+		repositories: source.components.repositories
+			? {
+					env_template_repo: source.components.repositories.env_template_repo,
+					env_template_branch: source.components.repositories.env_template_branch ?? undefined,
+					env_destination_repo: source.components.repositories.env_destination_repo ?? undefined,
+					gitops_template_repo: source.components.repositories.gitops_template_repo,
+					gitops_template_branch: source.components.repositories.gitops_template_branch ?? undefined,
+					gitops_destination_repo: source.components.repositories.gitops_destination_repo ?? undefined,
+					apps_template_repo: source.components.repositories.apps_template_repo ?? undefined,
+					apps_template_branch: source.components.repositories.apps_template_branch ?? undefined,
+					apps_destination_repo: source.components.repositories.apps_destination_repo ?? undefined,
+				}
+			: {},
+		databases: source.components.databases.map((db) => ({
+			name: db.name,
+			engine: db.engine ?? undefined,
+			engine_version: db.engine_version ?? undefined,
+			min_capacity: db.min_capacity ?? undefined,
+			max_capacity: db.max_capacity ?? undefined,
+			port: db.port ?? undefined,
+			backup_retention_days: db.backup_retention_days ?? undefined,
+			iam_auth: db.iam_auth ?? undefined,
+		})),
+		caches: source.components.caches.map((c) => ({
+			name: c.name,
+			engine: c.engine ?? undefined,
+			node_type: c.node_type ?? undefined,
+			num_cache_nodes: c.num_cache_nodes ?? undefined,
+			multi_az: c.multi_az ?? undefined,
+		})),
+		queues: source.components.queues.map((q) => ({
+			name: q.name,
+			fifo: q.fifo ?? undefined,
+			visibility_timeout: q.visibility_timeout ?? undefined,
+			message_retention: q.message_retention ?? undefined,
+			delay_seconds: q.delay_seconds ?? undefined,
+		})),
+		topics: source.components.topics.map((t) => ({
+			name: t.name,
+			subscriptions: t.subscriptions ?? undefined,
+		})),
+		nosql_tables: source.components.nosql_tables.map((t) => ({
+			name: t.name,
+			hash_key: t.hash_key,
+			hash_key_type: t.hash_key_type ?? undefined,
+			range_key: t.range_key ?? undefined,
+			range_key_type: t.range_key_type ?? undefined,
+			table_type: t.table_type ?? undefined,
+			billing_mode: t.billing_mode ?? undefined,
+			point_in_time_recovery: t.point_in_time_recovery ?? undefined,
+		})),
+		secrets: source.components.secrets.map((s) => ({
+			name: s.name,
+			generate: s.generate ?? undefined,
+			length: s.length ?? undefined,
+			special_chars: s.special_chars ?? undefined,
+		})),
+	} as VineFormData;
+
+	const { data: converted, warnings } = convertVineConfig(
+		formData,
+		sourceProvider,
+		targetProvider,
+	);
+
+	converted.vine.region = targetRegion;
+	converted.vine.cloud_identity_id = targetCloudIdentityId;
+
+	const input = converted as unknown as CreateVineInput;
+	const { vine } = await createVine(input);
+
+	return { newVineId: vine.id, warnings };
 }
