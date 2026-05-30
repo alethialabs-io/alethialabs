@@ -113,7 +113,7 @@ export function PlantVineForm({ cloudIdentities }: PlantVineFormProps) {
 			<form onSubmit={form.handleSubmit(onSubmit, onError)} className="flex gap-6">
 				<div className="flex-1 space-y-6 min-w-0">
 					<SectionProjectBasics />
-					<SectionCloudRegion />
+					<SectionCloudRegion identities={cloudIdentities} />
 					<SectionNetwork />
 					<SectionCluster />
 					<SectionRepositories />

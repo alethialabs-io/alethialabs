@@ -64,7 +64,11 @@ const DEFAULT_REGIONS = [
 	"ap-southeast-1", "ap-northeast-1",
 ];
 
-export function SectionCloudRegion() {
+interface SectionCloudRegionProps {
+	identities: import("@/app/server/actions/aws/identities").CloudIdentityOption[];
+}
+
+export function SectionCloudRegion({ identities }: SectionCloudRegionProps) {
 	const { control, setValue } = useFormContext<VineFormData>();
 	const { awsResources, submitted } = useVineStore();
 	const store = useVineStore();
@@ -113,13 +117,14 @@ export function SectionCloudRegion() {
 			</CardHeader>
 			<CardContent className="space-y-4">
 				<div className="space-y-1.5">
-					<Label className="text-xs">AWS Account <span className="text-destructive">*</span></Label>
+					<Label className="text-xs">Cloud Account <span className="text-destructive">*</span></Label>
 					<FormField control={control} name="vine.cloud_identity_id" render={({ field }) => (
 						<FormItem>
 							<FormControl>
 								<CloudIdentitySelector
+									identities={identities}
 									value={field.value}
-									onChange={(id, accountId) => {
+									onChange={(id, provider) => {
 										field.onChange(id);
 									}}
 								/>

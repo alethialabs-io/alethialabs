@@ -40,7 +40,7 @@ export async function getVerifiedCloudIdentities(): Promise<
 
 /** Fetches verified cloud identities for a specific provider. */
 export async function getVerifiedCloudIdentitiesByProvider(
-	provider: string,
+	provider: "aws" | "gcp" | "azure",
 ): Promise<CloudIdentityOption[]> {
 	const supabase = await createClient();
 

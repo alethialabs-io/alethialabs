@@ -6,7 +6,7 @@ import { renderWithForm } from "./test-utils";
 describe("SectionNetwork", () => {
 	it("renders section title", () => {
 		renderWithForm(<SectionNetwork />);
-		expect(screen.getAllByText("VPC & Networking").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("Network").length).toBeGreaterThan(0);
 	});
 
 	it("shows create new and use existing toggles", () => {

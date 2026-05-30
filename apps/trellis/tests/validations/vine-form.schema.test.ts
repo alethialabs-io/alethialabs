@@ -6,12 +6,12 @@ const validVine = {
 		project_name: "my-project",
 		vineyard_id: "550e8400-e29b-41d4-a716-446655440000",
 		environment_stage: "development" as const,
-		aws_region: "eu-west-1",
+		region: "eu-west-1",
 		cloud_identity_id: "660e8400-e29b-41d4-a716-446655440000",
 		terraform_version: "1.11.4",
 	},
-	vpc: { provision_vpc: true, vpc_cidr: "10.0.0.0/16", single_nat_gateway: true },
-	eks: { cluster_version: "1.32", enable_karpenter: true, instance_types: ["t3.medium"], node_min_size: 2, node_max_size: 5, node_desired_size: 2 },
+	network: { provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true },
+	cluster: { cluster_version: "1.32", provider_config: { enable_karpenter: true }, instance_types: ["t3.medium"], node_min_size: 2, node_max_size: 5, node_desired_size: 2 },
 	dns: { enabled: false },
 	repositories: {},
 	databases: [],
@@ -68,8 +68,8 @@ describe("vineFormSchema", () => {
 			expect(result.success).toBe(false);
 		});
 
-		it("rejects empty aws_region", () => {
-			const data = { ...validVine, vine: { ...validVine.vine, aws_region: "" } };
+		it("rejects empty region", () => {
+			const data = { ...validVine, vine: { ...validVine.vine, region: "" } };
 			const result = vineFormSchema.safeParse(data);
 			expect(result.success).toBe(false);
 		});
@@ -94,7 +94,7 @@ describe("vineFormSchema", () => {
 		});
 
 		it("defaults arrays to [] when omitted", () => {
-			const data = { vine: validVine.vine, vpc: validVine.vpc, eks: validVine.eks, dns: validVine.dns, repositories: validVine.repositories };
+			const data = { vine: validVine.vine, network: validVine.network, cluster: validVine.cluster, dns: validVine.dns, repositories: validVine.repositories };
 			const result = vineFormSchema.safeParse(data);
 			expect(result.success).toBe(true);
 			if (result.success) {
@@ -134,7 +134,7 @@ describe("vineFormSchema", () => {
 			expect(result.success).toBe(true);
 		});
 
-		it("accepts valid dynamodb table", () => {
+		it("accepts valid nosql table", () => {
 			const data = {
 				...validVine,
 				nosql_tables: [{ name: "users", hash_key: "id", hash_key_type: "S", table_type: "standard", billing_mode: "PAY_PER_REQUEST" }],
@@ -143,7 +143,7 @@ describe("vineFormSchema", () => {
 			expect(result.success).toBe(true);
 		});
 
-		it("rejects dynamodb table without hash_key", () => {
+		it("rejects nosql table without hash_key", () => {
 			const data = {
 				...validVine,
 				nosql_tables: [{ name: "users" }],

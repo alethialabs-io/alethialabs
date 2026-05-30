@@ -3,20 +3,21 @@ import { render } from "@testing-library/react";
 import { FormProvider, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { vineFormSchema, type VineFormData } from "@/lib/validations/vine-form.schema";
+import { CloudProviderProvider } from "@/lib/cloud-providers";
 
 const DEFAULT_VALUES: VineFormData = {
 	vine: {
 		project_name: "",
 		environment_stage: "development",
-		aws_region: "",
+		region: "",
 		cloud_identity_id: "",
 		vineyard_id: "",
 		terraform_version: "1.11.4",
 	},
-	vpc: { provision_vpc: true, vpc_cidr: "10.0.0.0/16", single_nat_gateway: true },
-	eks: {
+	network: { provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true },
+	cluster: {
 		cluster_version: "1.32",
-		enable_karpenter: true,
+		provider_config: { enable_karpenter: true },
 		instance_types: ["t3.medium"],
 		node_min_size: 2,
 		node_max_size: 5,
@@ -29,9 +30,9 @@ const DEFAULT_VALUES: VineFormData = {
 	caches: [],
 	queues: [],
 	topics: [],
-	dynamodb_tables: [],
+	nosql_tables: [],
 	secrets: [],
-} as any;
+} as VineFormData;
 
 function FormWrapper({
 	children,
@@ -46,7 +47,11 @@ function FormWrapper({
 		mode: "onChange",
 	});
 
-	return <FormProvider {...form}>{children}</FormProvider>;
+	return (
+		<CloudProviderProvider>
+			<FormProvider {...form}>{children}</FormProvider>
+		</CloudProviderProvider>
+	);
 }
 
 export function renderWithForm(

@@ -3,7 +3,6 @@
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers/registry";
 import { useCloudProvider } from "@/lib/cloud-providers/use-cloud-provider";
-import { getCachedResources } from "@/app/server/actions/aws/resources";
 import {
 	Select,
 	SelectContent,
