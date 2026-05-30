@@ -62,32 +62,11 @@ export type PublicIntegrationStatus = z.infer<
   typeof generated.publicIntegrationStatusSchema
 >;
 export type PublicLogsLevel = z.infer<typeof generated.publicLogsLevelSchema>;
+export type PublicProvisionJobType = z.infer<
+  typeof generated.publicProvisionJobTypeSchema
+>;
 export type PublicVineStatus = z.infer<typeof generated.publicVineStatusSchema>;
 export type Json = z.infer<typeof generated.jsonSchema>;
-export type PublicBootstrapJobsRow = z.infer<
-  typeof generated.publicBootstrapJobsRowSchema
->;
-export type PublicBootstrapJobsInsert = z.infer<
-  typeof generated.publicBootstrapJobsInsertSchema
->;
-export type PublicBootstrapJobsUpdate = z.infer<
-  typeof generated.publicBootstrapJobsUpdateSchema
->;
-export type PublicBootstrapJobsRelationships = z.infer<
-  typeof generated.publicBootstrapJobsRelationshipsSchema
->;
-export type PublicBootstrapLogsRow = z.infer<
-  typeof generated.publicBootstrapLogsRowSchema
->;
-export type PublicBootstrapLogsInsert = z.infer<
-  typeof generated.publicBootstrapLogsInsertSchema
->;
-export type PublicBootstrapLogsUpdate = z.infer<
-  typeof generated.publicBootstrapLogsUpdateSchema
->;
-export type PublicBootstrapLogsRelationships = z.infer<
-  typeof generated.publicBootstrapLogsRelationshipsSchema
->;
 export type PublicCliLoginsRow = z.infer<
   typeof generated.publicCliLoginsRowSchema
 >;
@@ -118,54 +97,6 @@ export type PublicClustersInsert = z.infer<
 export type PublicClustersUpdate = z.infer<
   typeof generated.publicClustersUpdateSchema
 >;
-export type PublicConfigurationsRow = z.infer<
-  typeof generated.publicConfigurationsRowSchema
->;
-export type PublicConfigurationsInsert = z.infer<
-  typeof generated.publicConfigurationsInsertSchema
->;
-export type PublicConfigurationsUpdate = z.infer<
-  typeof generated.publicConfigurationsUpdateSchema
->;
-export type PublicConfigurationsRelationships = z.infer<
-  typeof generated.publicConfigurationsRelationshipsSchema
->;
-export type PublicDeploymentLogsRow = z.infer<
-  typeof generated.publicDeploymentLogsRowSchema
->;
-export type PublicDeploymentLogsInsert = z.infer<
-  typeof generated.publicDeploymentLogsInsertSchema
->;
-export type PublicDeploymentLogsUpdate = z.infer<
-  typeof generated.publicDeploymentLogsUpdateSchema
->;
-export type PublicDeploymentLogsRelationships = z.infer<
-  typeof generated.publicDeploymentLogsRelationshipsSchema
->;
-export type PublicDeploymentResourcesRow = z.infer<
-  typeof generated.publicDeploymentResourcesRowSchema
->;
-export type PublicDeploymentResourcesInsert = z.infer<
-  typeof generated.publicDeploymentResourcesInsertSchema
->;
-export type PublicDeploymentResourcesUpdate = z.infer<
-  typeof generated.publicDeploymentResourcesUpdateSchema
->;
-export type PublicDeploymentResourcesRelationships = z.infer<
-  typeof generated.publicDeploymentResourcesRelationshipsSchema
->;
-export type PublicDeploymentsRow = z.infer<
-  typeof generated.publicDeploymentsRowSchema
->;
-export type PublicDeploymentsInsert = z.infer<
-  typeof generated.publicDeploymentsInsertSchema
->;
-export type PublicDeploymentsUpdate = z.infer<
-  typeof generated.publicDeploymentsUpdateSchema
->;
-export type PublicDeploymentsRelationships = z.infer<
-  typeof generated.publicDeploymentsRelationshipsSchema
->;
 export type PublicEksAdminsRow = z.infer<
   typeof generated.publicEksAdminsRowSchema
 >;
@@ -174,18 +105,6 @@ export type PublicEksAdminsInsert = z.infer<
 >;
 export type PublicEksAdminsUpdate = z.infer<
   typeof generated.publicEksAdminsUpdateSchema
->;
-export type PublicHarvestsRow = z.infer<
-  typeof generated.publicHarvestsRowSchema
->;
-export type PublicHarvestsInsert = z.infer<
-  typeof generated.publicHarvestsInsertSchema
->;
-export type PublicHarvestsUpdate = z.infer<
-  typeof generated.publicHarvestsUpdateSchema
->;
-export type PublicHarvestsRelationships = z.infer<
-  typeof generated.publicHarvestsRelationshipsSchema
 >;
 export type PublicIntegrationsRow = z.infer<
   typeof generated.publicIntegrationsRowSchema
@@ -235,30 +154,6 @@ export type PublicProvisionJobsUpdate = z.infer<
 >;
 export type PublicProvisionJobsRelationships = z.infer<
   typeof generated.publicProvisionJobsRelationshipsSchema
->;
-export type PublicProvisionLogsRow = z.infer<
-  typeof generated.publicProvisionLogsRowSchema
->;
-export type PublicProvisionLogsInsert = z.infer<
-  typeof generated.publicProvisionLogsInsertSchema
->;
-export type PublicProvisionLogsUpdate = z.infer<
-  typeof generated.publicProvisionLogsUpdateSchema
->;
-export type PublicProvisionLogsRelationships = z.infer<
-  typeof generated.publicProvisionLogsRelationshipsSchema
->;
-export type PublicProvisionsRow = z.infer<
-  typeof generated.publicProvisionsRowSchema
->;
-export type PublicProvisionsInsert = z.infer<
-  typeof generated.publicProvisionsInsertSchema
->;
-export type PublicProvisionsUpdate = z.infer<
-  typeof generated.publicProvisionsUpdateSchema
->;
-export type PublicProvisionsRelationships = z.infer<
-  typeof generated.publicProvisionsRelationshipsSchema
 >;
 export type PublicVineAuditLogRow = z.infer<
   typeof generated.publicVineAuditLogRowSchema
@@ -445,41 +340,17 @@ export type PublicVineFullRow = z.infer<
 export type PublicVineFullRelationships = z.infer<
   typeof generated.publicVineFullRelationshipsSchema
 >;
-export type PublicAgentHeartbeatArgs = z.infer<
-  typeof generated.publicAgentHeartbeatArgsSchema
->;
-export type PublicAgentHeartbeatReturns = z.infer<
-  typeof generated.publicAgentHeartbeatReturnsSchema
->;
 export type PublicClaimNextJobArgs = z.infer<
   typeof generated.publicClaimNextJobArgsSchema
 >;
 export type PublicClaimNextJobReturns = z.infer<
   typeof generated.publicClaimNextJobReturnsSchema
 >;
-export type PublicFetchNextProvisionArgs = z.infer<
-  typeof generated.publicFetchNextProvisionArgsSchema
->;
-export type PublicFetchNextProvisionReturns = z.infer<
-  typeof generated.publicFetchNextProvisionReturnsSchema
->;
-export type PublicGetConfigurationStatsArgs = z.infer<
-  typeof generated.publicGetConfigurationStatsArgsSchema
->;
-export type PublicGetConfigurationStatsReturns = z.infer<
-  typeof generated.publicGetConfigurationStatsReturnsSchema
->;
 export type PublicInsertJobLogArgs = z.infer<
   typeof generated.publicInsertJobLogArgsSchema
 >;
 export type PublicInsertJobLogReturns = z.infer<
   typeof generated.publicInsertJobLogReturnsSchema
->;
-export type PublicInsertProvisionLogArgs = z.infer<
-  typeof generated.publicInsertProvisionLogArgsSchema
->;
-export type PublicInsertProvisionLogReturns = z.infer<
-  typeof generated.publicInsertProvisionLogReturnsSchema
 >;
 export type PublicRecoverStaleJobsArgs = z.infer<
   typeof generated.publicRecoverStaleJobsArgsSchema
@@ -492,12 +363,6 @@ export type PublicUpdateJobStatusArgs = z.infer<
 >;
 export type PublicUpdateJobStatusReturns = z.infer<
   typeof generated.publicUpdateJobStatusReturnsSchema
->;
-export type PublicUpdateProvisionStatusArgs = z.infer<
-  typeof generated.publicUpdateProvisionStatusArgsSchema
->;
-export type PublicUpdateProvisionStatusReturns = z.infer<
-  typeof generated.publicUpdateProvisionStatusReturnsSchema
 >;
 export type PublicWorkerHeartbeatArgs = z.infer<
   typeof generated.publicWorkerHeartbeatArgsSchema

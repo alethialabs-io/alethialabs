@@ -142,6 +142,14 @@ export const publicLogsLevelSchema = z.union([
   z.literal("critical"),
 ]);
 
+export const publicProvisionJobTypeSchema = z.union([
+  z.literal("BOOTSTRAP"),
+  z.literal("DEPLOY"),
+  z.literal("DESTROY"),
+  z.literal("CONNECTION_TEST"),
+  z.literal("FETCH_RESOURCES"),
+]);
+
 export const publicVineStatusSchema = z.union([
   z.literal("DRAFT"),
   z.literal("QUEUED"),
@@ -163,83 +171,6 @@ export const jsonSchema: z.ZodSchema<Json> = z.lazy(() =>
     ])
     .nullable(),
 );
-
-export const publicBootstrapJobsRowSchema = z.object({
-  completed_at: z.string().nullable(),
-  created_at: z.string().nullable(),
-  error_message: z.string().nullable(),
-  id: z.string(),
-  status: z.string(),
-  updated_at: z.string().nullable(),
-  user_id: z.string(),
-  vineyard_id: z.string(),
-});
-
-export const publicBootstrapJobsInsertSchema = z.object({
-  completed_at: z.string().optional().nullable(),
-  created_at: z.string().optional().nullable(),
-  error_message: z.string().optional().nullable(),
-  id: z.string().optional(),
-  status: z.string().optional(),
-  updated_at: z.string().optional().nullable(),
-  user_id: z.string(),
-  vineyard_id: z.string(),
-});
-
-export const publicBootstrapJobsUpdateSchema = z.object({
-  completed_at: z.string().optional().nullable(),
-  created_at: z.string().optional().nullable(),
-  error_message: z.string().optional().nullable(),
-  id: z.string().optional(),
-  status: z.string().optional(),
-  updated_at: z.string().optional().nullable(),
-  user_id: z.string().optional(),
-  vineyard_id: z.string().optional(),
-});
-
-export const publicBootstrapJobsRelationshipsSchema = z.tuple([
-  z.object({
-    foreignKeyName: z.literal("bootstrap_jobs_vineyard_id_fkey"),
-    columns: z.tuple([z.literal("vineyard_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("vineyards"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-]);
-
-export const publicBootstrapLogsRowSchema = z.object({
-  created_at: z.string().nullable(),
-  id: z.number(),
-  job_id: z.string(),
-  log_chunk: z.string(),
-  stream_type: z.string(),
-});
-
-export const publicBootstrapLogsInsertSchema = z.object({
-  created_at: z.string().optional().nullable(),
-  id: z.number().optional(),
-  job_id: z.string(),
-  log_chunk: z.string(),
-  stream_type: z.string().optional(),
-});
-
-export const publicBootstrapLogsUpdateSchema = z.object({
-  created_at: z.string().optional().nullable(),
-  id: z.number().optional(),
-  job_id: z.string().optional(),
-  log_chunk: z.string().optional(),
-  stream_type: z.string().optional(),
-});
-
-export const publicBootstrapLogsRelationshipsSchema = z.tuple([
-  z.object({
-    foreignKeyName: z.literal("bootstrap_logs_job_id_fkey"),
-    columns: z.tuple([z.literal("job_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("bootstrap_jobs"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-]);
 
 export const publicCliLoginsRowSchema = z.object({
   created_at: z.string().nullable(),
@@ -280,7 +211,44 @@ export const publicCliLoginsRelationshipsSchema = z.tuple([
 
 export const publicCloudIdentitiesRowSchema = z.object({
   cached_at: z.string().nullable(),
-  cached_resources: jsonSchema.nullable(),
+  cached_resources: z
+    .object({
+      regions: z.array(z.string()),
+      vpcs: z.record(
+        z.string(),
+        z.array(
+          z.object({
+            ID: z.string(),
+            CIDR: z.string(),
+            Name: z.string(),
+            IsDefault: z.boolean(),
+          }),
+        ),
+      ),
+      subnets: z.record(
+        z.string(),
+        z.record(
+          z.string(),
+          z.array(
+            z.object({
+              ID: z.string(),
+              CIDR: z.string(),
+              VpcID: z.string(),
+              AvailabilityZone: z.string(),
+            }),
+          ),
+        ),
+      ),
+      hosted_zones: z.array(
+        z.object({
+          ID: z.string(),
+          Name: z.string(),
+          RecordCount: z.number(),
+          IsPrivate: z.boolean(),
+        }),
+      ),
+    })
+    .nullable(),
   created_at: z.string().nullable(),
   credentials: z.object({
     role_arn: z.string().optional().nullable(),
@@ -297,7 +265,45 @@ export const publicCloudIdentitiesRowSchema = z.object({
 
 export const publicCloudIdentitiesInsertSchema = z.object({
   cached_at: z.string().optional().nullable(),
-  cached_resources: jsonSchema.optional().nullable(),
+  cached_resources: z
+    .object({
+      regions: z.array(z.string()),
+      vpcs: z.record(
+        z.string(),
+        z.array(
+          z.object({
+            ID: z.string(),
+            CIDR: z.string(),
+            Name: z.string(),
+            IsDefault: z.boolean(),
+          }),
+        ),
+      ),
+      subnets: z.record(
+        z.string(),
+        z.record(
+          z.string(),
+          z.array(
+            z.object({
+              ID: z.string(),
+              CIDR: z.string(),
+              VpcID: z.string(),
+              AvailabilityZone: z.string(),
+            }),
+          ),
+        ),
+      ),
+      hosted_zones: z.array(
+        z.object({
+          ID: z.string(),
+          Name: z.string(),
+          RecordCount: z.number(),
+          IsPrivate: z.boolean(),
+        }),
+      ),
+    })
+    .optional()
+    .nullable(),
   created_at: z.string().optional().nullable(),
   credentials: z
     .object({
@@ -316,7 +322,45 @@ export const publicCloudIdentitiesInsertSchema = z.object({
 
 export const publicCloudIdentitiesUpdateSchema = z.object({
   cached_at: z.string().optional().nullable(),
-  cached_resources: jsonSchema.optional().nullable(),
+  cached_resources: z
+    .object({
+      regions: z.array(z.string()),
+      vpcs: z.record(
+        z.string(),
+        z.array(
+          z.object({
+            ID: z.string(),
+            CIDR: z.string(),
+            Name: z.string(),
+            IsDefault: z.boolean(),
+          }),
+        ),
+      ),
+      subnets: z.record(
+        z.string(),
+        z.record(
+          z.string(),
+          z.array(
+            z.object({
+              ID: z.string(),
+              CIDR: z.string(),
+              VpcID: z.string(),
+              AvailabilityZone: z.string(),
+            }),
+          ),
+        ),
+      ),
+      hosted_zones: z.array(
+        z.object({
+          ID: z.string(),
+          Name: z.string(),
+          RecordCount: z.number(),
+          IsPrivate: z.boolean(),
+        }),
+      ),
+    })
+    .optional()
+    .nullable(),
   created_at: z.string().optional().nullable(),
   credentials: z
     .object({
@@ -392,364 +436,6 @@ export const publicClustersUpdateSchema = z.object({
   user_id: z.string().optional(),
 });
 
-export const publicConfigurationsRowSchema = z.object({
-  applications_destination_repo: z.string().nullable(),
-  applications_template_repo: z.string().nullable(),
-  aws_account_id: z.string().nullable(),
-  aws_region: z.string().nullable(),
-  cloud_identity_id: z.string().nullable(),
-  cluster_id: z.string().nullable(),
-  container_platform: z.string(),
-  create_rds: z.boolean().nullable(),
-  create_vpc: z.boolean().nullable(),
-  created_at: z.string().nullable(),
-  db_max_capacity: z.number().nullable(),
-  db_min_capacity: z.number().nullable(),
-  description: z.string().nullable(),
-  dns_domain_name: z.string().nullable(),
-  dns_hosted_zone: z.string().nullable(),
-  download_count: z.number().nullable(),
-  eks_cluster_admins: z.string().nullable(),
-  enable_cloudfront_waf: z.boolean().nullable(),
-  enable_dns: z.boolean().nullable(),
-  enable_gitops_destination: z.boolean().nullable(),
-  enable_karpenter: z.boolean().nullable(),
-  enable_redis: z.boolean().nullable(),
-  env_git_repo: z.string().nullable(),
-  environment_repository: z.string().nullable(),
-  environment_stage: z.string(),
-  full_config: jsonSchema.nullable(),
-  gitops_app_template: z.string().nullable(),
-  gitops_app_token: z.string().nullable(),
-  gitops_argocd_token: z.string().nullable(),
-  gitops_destination_repo: z.string().nullable(),
-  gitops_destinations_repo: z.string().nullable(),
-  gitops_infra_destination_repo: z.string().nullable(),
-  gitops_repository: z.string().nullable(),
-  id: z.string(),
-  last_downloaded_at: z.string().nullable(),
-  project_name: z.string(),
-  redis_allowed_cidr_blocks: z.string().nullable(),
-  ses_queues_topics: z.string().nullable(),
-  status: z.string().nullable(),
-  terraform_version: z.string(),
-  ui_position_x: z.number().nullable(),
-  ui_position_y: z.number().nullable(),
-  updated_at: z.string().nullable(),
-  user_id: z.string(),
-  vineyard_id: z.string().nullable(),
-  vpc_cidr: z.string().nullable(),
-});
-
-export const publicConfigurationsInsertSchema = z.object({
-  applications_destination_repo: z.string().optional().nullable(),
-  applications_template_repo: z.string().optional().nullable(),
-  aws_account_id: z.string().optional().nullable(),
-  aws_region: z.string().optional().nullable(),
-  cloud_identity_id: z.string().optional().nullable(),
-  cluster_id: z.string().optional().nullable(),
-  container_platform: z.string(),
-  create_rds: z.boolean().optional().nullable(),
-  create_vpc: z.boolean().optional().nullable(),
-  created_at: z.string().optional().nullable(),
-  db_max_capacity: z.number().optional().nullable(),
-  db_min_capacity: z.number().optional().nullable(),
-  description: z.string().optional().nullable(),
-  dns_domain_name: z.string().optional().nullable(),
-  dns_hosted_zone: z.string().optional().nullable(),
-  download_count: z.number().optional().nullable(),
-  eks_cluster_admins: z.string().optional().nullable(),
-  enable_cloudfront_waf: z.boolean().optional().nullable(),
-  enable_dns: z.boolean().optional().nullable(),
-  enable_gitops_destination: z.boolean().optional().nullable(),
-  enable_karpenter: z.boolean().optional().nullable(),
-  enable_redis: z.boolean().optional().nullable(),
-  env_git_repo: z.string().optional().nullable(),
-  environment_repository: z.string().optional().nullable(),
-  environment_stage: z.string(),
-  full_config: jsonSchema.optional().nullable(),
-  gitops_app_template: z.string().optional().nullable(),
-  gitops_app_token: z.string().optional().nullable(),
-  gitops_argocd_token: z.string().optional().nullable(),
-  gitops_destination_repo: z.string().optional().nullable(),
-  gitops_destinations_repo: z.string().optional().nullable(),
-  gitops_infra_destination_repo: z.string().optional().nullable(),
-  gitops_repository: z.string().optional().nullable(),
-  id: z.string().optional(),
-  last_downloaded_at: z.string().optional().nullable(),
-  project_name: z.string(),
-  redis_allowed_cidr_blocks: z.string().optional().nullable(),
-  ses_queues_topics: z.string().optional().nullable(),
-  status: z.string().optional().nullable(),
-  terraform_version: z.string(),
-  ui_position_x: z.number().optional().nullable(),
-  ui_position_y: z.number().optional().nullable(),
-  updated_at: z.string().optional().nullable(),
-  user_id: z.string().optional(),
-  vineyard_id: z.string().optional().nullable(),
-  vpc_cidr: z.string().optional().nullable(),
-});
-
-export const publicConfigurationsUpdateSchema = z.object({
-  applications_destination_repo: z.string().optional().nullable(),
-  applications_template_repo: z.string().optional().nullable(),
-  aws_account_id: z.string().optional().nullable(),
-  aws_region: z.string().optional().nullable(),
-  cloud_identity_id: z.string().optional().nullable(),
-  cluster_id: z.string().optional().nullable(),
-  container_platform: z.string().optional(),
-  create_rds: z.boolean().optional().nullable(),
-  create_vpc: z.boolean().optional().nullable(),
-  created_at: z.string().optional().nullable(),
-  db_max_capacity: z.number().optional().nullable(),
-  db_min_capacity: z.number().optional().nullable(),
-  description: z.string().optional().nullable(),
-  dns_domain_name: z.string().optional().nullable(),
-  dns_hosted_zone: z.string().optional().nullable(),
-  download_count: z.number().optional().nullable(),
-  eks_cluster_admins: z.string().optional().nullable(),
-  enable_cloudfront_waf: z.boolean().optional().nullable(),
-  enable_dns: z.boolean().optional().nullable(),
-  enable_gitops_destination: z.boolean().optional().nullable(),
-  enable_karpenter: z.boolean().optional().nullable(),
-  enable_redis: z.boolean().optional().nullable(),
-  env_git_repo: z.string().optional().nullable(),
-  environment_repository: z.string().optional().nullable(),
-  environment_stage: z.string().optional(),
-  full_config: jsonSchema.optional().nullable(),
-  gitops_app_template: z.string().optional().nullable(),
-  gitops_app_token: z.string().optional().nullable(),
-  gitops_argocd_token: z.string().optional().nullable(),
-  gitops_destination_repo: z.string().optional().nullable(),
-  gitops_destinations_repo: z.string().optional().nullable(),
-  gitops_infra_destination_repo: z.string().optional().nullable(),
-  gitops_repository: z.string().optional().nullable(),
-  id: z.string().optional(),
-  last_downloaded_at: z.string().optional().nullable(),
-  project_name: z.string().optional(),
-  redis_allowed_cidr_blocks: z.string().optional().nullable(),
-  ses_queues_topics: z.string().optional().nullable(),
-  status: z.string().optional().nullable(),
-  terraform_version: z.string().optional(),
-  ui_position_x: z.number().optional().nullable(),
-  ui_position_y: z.number().optional().nullable(),
-  updated_at: z.string().optional().nullable(),
-  user_id: z.string().optional(),
-  vineyard_id: z.string().optional().nullable(),
-  vpc_cidr: z.string().optional().nullable(),
-});
-
-export const publicConfigurationsRelationshipsSchema = z.tuple([
-  z.object({
-    foreignKeyName: z.literal("configurations_cloud_identity_id_fkey"),
-    columns: z.tuple([z.literal("cloud_identity_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("cloud_identities"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-  z.object({
-    foreignKeyName: z.literal("configurations_cluster_id_fkey"),
-    columns: z.tuple([z.literal("cluster_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("clusters"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-  z.object({
-    foreignKeyName: z.literal("configurations_vineyard_id_fkey"),
-    columns: z.tuple([z.literal("vineyard_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("vineyards"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-]);
-
-export const publicDeploymentLogsRowSchema = z.object({
-  created_at: z.string().nullable(),
-  deployment_id: z.string(),
-  id: z.string(),
-  level: publicLogsLevelSchema,
-  message: z.string(),
-  step: z.string().nullable(),
-});
-
-export const publicDeploymentLogsInsertSchema = z.object({
-  created_at: z.string().optional().nullable(),
-  deployment_id: z.string(),
-  id: z.string().optional(),
-  level: publicLogsLevelSchema,
-  message: z.string(),
-  step: z.string().optional().nullable(),
-});
-
-export const publicDeploymentLogsUpdateSchema = z.object({
-  created_at: z.string().optional().nullable(),
-  deployment_id: z.string().optional(),
-  id: z.string().optional(),
-  level: publicLogsLevelSchema.optional(),
-  message: z.string().optional(),
-  step: z.string().optional().nullable(),
-});
-
-export const publicDeploymentLogsRelationshipsSchema = z.tuple([
-  z.object({
-    foreignKeyName: z.literal("deployment_logs_deployment_id_fkey"),
-    columns: z.tuple([z.literal("deployment_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("deployments"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-]);
-
-export const publicDeploymentResourcesRowSchema = z.object({
-  aws_arn: z.string().nullable(),
-  created_at: z.string().nullable(),
-  deployment_id: z.string(),
-  id: z.string(),
-  properties: jsonSchema.nullable(),
-  resource_id: z.string().nullable(),
-  resource_name: z.string(),
-  resource_type: z.string(),
-  status: publicDeploymentResourceStatusSchema,
-  updated_at: z.string().nullable(),
-});
-
-export const publicDeploymentResourcesInsertSchema = z.object({
-  aws_arn: z.string().optional().nullable(),
-  created_at: z.string().optional().nullable(),
-  deployment_id: z.string(),
-  id: z.string().optional(),
-  properties: jsonSchema.optional().nullable(),
-  resource_id: z.string().optional().nullable(),
-  resource_name: z.string(),
-  resource_type: z.string(),
-  status: publicDeploymentResourceStatusSchema.optional(),
-  updated_at: z.string().optional().nullable(),
-});
-
-export const publicDeploymentResourcesUpdateSchema = z.object({
-  aws_arn: z.string().optional().nullable(),
-  created_at: z.string().optional().nullable(),
-  deployment_id: z.string().optional(),
-  id: z.string().optional(),
-  properties: jsonSchema.optional().nullable(),
-  resource_id: z.string().optional().nullable(),
-  resource_name: z.string().optional(),
-  resource_type: z.string().optional(),
-  status: publicDeploymentResourceStatusSchema.optional(),
-  updated_at: z.string().optional().nullable(),
-});
-
-export const publicDeploymentResourcesRelationshipsSchema = z.tuple([
-  z.object({
-    foreignKeyName: z.literal("deployment_resources_deployment_id_fkey"),
-    columns: z.tuple([z.literal("deployment_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("deployments"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-]);
-
-export const publicDeploymentsRowSchema = z.object({
-  aws_region: z.string().nullable(),
-  completed_at: z.string().nullable(),
-  completed_steps: z.number().nullable(),
-  configuration_id: z.string().nullable(),
-  created_at: z.string().nullable(),
-  current_step: z.string().nullable(),
-  description: z.string().nullable(),
-  duration_seconds: z.number().nullable(),
-  error_message: z.string().nullable(),
-  iac_tool: publicIacToolSchema,
-  id: z.string(),
-  lock_id: z.string().nullable(),
-  logs: z.string().nullable(),
-  name: z.string(),
-  outputs: jsonSchema.nullable(),
-  profile_id: z.string(),
-  progress_percentage: z.number().nullable(),
-  pulumi_version: z.string().nullable(),
-  started_at: z.string().nullable(),
-  state_bucket: z.string().nullable(),
-  state_key: z.string().nullable(),
-  status: publicDeploymentStatusSchema,
-  terraform_version: z.string().nullable(),
-  total_steps: z.number().nullable(),
-  updated_at: z.string().nullable(),
-});
-
-export const publicDeploymentsInsertSchema = z.object({
-  aws_region: z.string().optional().nullable(),
-  completed_at: z.string().optional().nullable(),
-  completed_steps: z.number().optional().nullable(),
-  configuration_id: z.string().optional().nullable(),
-  created_at: z.string().optional().nullable(),
-  current_step: z.string().optional().nullable(),
-  description: z.string().optional().nullable(),
-  duration_seconds: z.number().optional().nullable(),
-  error_message: z.string().optional().nullable(),
-  iac_tool: publicIacToolSchema,
-  id: z.string().optional(),
-  lock_id: z.string().optional().nullable(),
-  logs: z.string().optional().nullable(),
-  name: z.string(),
-  outputs: jsonSchema.optional().nullable(),
-  profile_id: z.string(),
-  progress_percentage: z.number().optional().nullable(),
-  pulumi_version: z.string().optional().nullable(),
-  started_at: z.string().optional().nullable(),
-  state_bucket: z.string().optional().nullable(),
-  state_key: z.string().optional().nullable(),
-  status: publicDeploymentStatusSchema.optional(),
-  terraform_version: z.string().optional().nullable(),
-  total_steps: z.number().optional().nullable(),
-  updated_at: z.string().optional().nullable(),
-});
-
-export const publicDeploymentsUpdateSchema = z.object({
-  aws_region: z.string().optional().nullable(),
-  completed_at: z.string().optional().nullable(),
-  completed_steps: z.number().optional().nullable(),
-  configuration_id: z.string().optional().nullable(),
-  created_at: z.string().optional().nullable(),
-  current_step: z.string().optional().nullable(),
-  description: z.string().optional().nullable(),
-  duration_seconds: z.number().optional().nullable(),
-  error_message: z.string().optional().nullable(),
-  iac_tool: publicIacToolSchema.optional(),
-  id: z.string().optional(),
-  lock_id: z.string().optional().nullable(),
-  logs: z.string().optional().nullable(),
-  name: z.string().optional(),
-  outputs: jsonSchema.optional().nullable(),
-  profile_id: z.string().optional(),
-  progress_percentage: z.number().optional().nullable(),
-  pulumi_version: z.string().optional().nullable(),
-  started_at: z.string().optional().nullable(),
-  state_bucket: z.string().optional().nullable(),
-  state_key: z.string().optional().nullable(),
-  status: publicDeploymentStatusSchema.optional(),
-  terraform_version: z.string().optional().nullable(),
-  total_steps: z.number().optional().nullable(),
-  updated_at: z.string().optional().nullable(),
-});
-
-export const publicDeploymentsRelationshipsSchema = z.tuple([
-  z.object({
-    foreignKeyName: z.literal("deployments_configuration_id_fkey"),
-    columns: z.tuple([z.literal("configuration_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("configurations"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-  z.object({
-    foreignKeyName: z.literal("deployments_profile_id_fkey"),
-    columns: z.tuple([z.literal("profile_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("profiles"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-]);
-
 export const publicEksAdminsRowSchema = z.object({
   created_at: z.string().nullable(),
   email: z.string(),
@@ -770,58 +456,6 @@ export const publicEksAdminsUpdateSchema = z.object({
   id: z.string().optional(),
   user_id: z.string().optional(),
 });
-
-export const publicHarvestsRowSchema = z.object({
-  completed_at: z.string().nullable(),
-  configuration_id: z.string(),
-  created_at: z.string().nullable(),
-  error_message: z.string().nullable(),
-  id: z.string(),
-  logs: z.string().nullable(),
-  status: z.string(),
-  ui_position_x: z.number().nullable(),
-  ui_position_y: z.number().nullable(),
-  updated_at: z.string().nullable(),
-  user_id: z.string(),
-});
-
-export const publicHarvestsInsertSchema = z.object({
-  completed_at: z.string().optional().nullable(),
-  configuration_id: z.string(),
-  created_at: z.string().optional().nullable(),
-  error_message: z.string().optional().nullable(),
-  id: z.string().optional(),
-  logs: z.string().optional().nullable(),
-  status: z.string().optional(),
-  ui_position_x: z.number().optional().nullable(),
-  ui_position_y: z.number().optional().nullable(),
-  updated_at: z.string().optional().nullable(),
-  user_id: z.string(),
-});
-
-export const publicHarvestsUpdateSchema = z.object({
-  completed_at: z.string().optional().nullable(),
-  configuration_id: z.string().optional(),
-  created_at: z.string().optional().nullable(),
-  error_message: z.string().optional().nullable(),
-  id: z.string().optional(),
-  logs: z.string().optional().nullable(),
-  status: z.string().optional(),
-  ui_position_x: z.number().optional().nullable(),
-  ui_position_y: z.number().optional().nullable(),
-  updated_at: z.string().optional().nullable(),
-  user_id: z.string().optional(),
-});
-
-export const publicHarvestsRelationshipsSchema = z.tuple([
-  z.object({
-    foreignKeyName: z.literal("harvests_configuration_id_fkey"),
-    columns: z.tuple([z.literal("configuration_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("configurations"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-]);
 
 export const publicIntegrationsRowSchema = z.object({
   auth_method: publicIntegrationAuthMethodSchema,
@@ -973,14 +607,13 @@ export const publicProvisionJobsRowSchema = z.object({
   cloud_identity_id: z.string().nullable(),
   cluster_id: z.string().nullable(),
   completed_at: z.string().nullable(),
-  config_snapshot: jsonSchema,
+  config_snapshot: z.record(z.string(), z.unknown()),
   configuration_hash: z.string().nullable(),
-  configuration_id: z.string().nullable(),
   created_at: z.string().nullable(),
   error_message: z.string().nullable(),
-  execution_metadata: jsonSchema.nullable(),
+  execution_metadata: z.record(z.string(), z.unknown()).nullable(),
   id: z.string(),
-  job_type: z.string(),
+  job_type: publicProvisionJobTypeSchema,
   started_at: z.string().nullable(),
   status: z.string(),
   updated_at: z.string().nullable(),
@@ -995,14 +628,13 @@ export const publicProvisionJobsInsertSchema = z.object({
   cloud_identity_id: z.string().optional().nullable(),
   cluster_id: z.string().optional().nullable(),
   completed_at: z.string().optional().nullable(),
-  config_snapshot: jsonSchema.optional(),
+  config_snapshot: z.record(z.string(), z.unknown()).optional(),
   configuration_hash: z.string().optional().nullable(),
-  configuration_id: z.string().optional().nullable(),
   created_at: z.string().optional().nullable(),
   error_message: z.string().optional().nullable(),
-  execution_metadata: jsonSchema.optional().nullable(),
+  execution_metadata: z.record(z.string(), z.unknown()).optional().nullable(),
   id: z.string().optional(),
-  job_type: z.string(),
+  job_type: publicProvisionJobTypeSchema,
   started_at: z.string().optional().nullable(),
   status: z.string().optional(),
   updated_at: z.string().optional().nullable(),
@@ -1017,14 +649,13 @@ export const publicProvisionJobsUpdateSchema = z.object({
   cloud_identity_id: z.string().optional().nullable(),
   cluster_id: z.string().optional().nullable(),
   completed_at: z.string().optional().nullable(),
-  config_snapshot: jsonSchema.optional(),
+  config_snapshot: z.record(z.string(), z.unknown()).optional(),
   configuration_hash: z.string().optional().nullable(),
-  configuration_id: z.string().optional().nullable(),
   created_at: z.string().optional().nullable(),
   error_message: z.string().optional().nullable(),
-  execution_metadata: jsonSchema.optional().nullable(),
+  execution_metadata: z.record(z.string(), z.unknown()).optional().nullable(),
   id: z.string().optional(),
-  job_type: z.string().optional(),
+  job_type: publicProvisionJobTypeSchema.optional(),
   started_at: z.string().optional().nullable(),
   status: z.string().optional(),
   updated_at: z.string().optional().nullable(),
@@ -1050,13 +681,6 @@ export const publicProvisionJobsRelationshipsSchema = z.tuple([
     referencedColumns: z.tuple([z.literal("id")]),
   }),
   z.object({
-    foreignKeyName: z.literal("provision_jobs_configuration_id_fkey"),
-    columns: z.tuple([z.literal("configuration_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("configurations"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-  z.object({
     foreignKeyName: z.literal("provision_jobs_vine_id_fkey"),
     columns: z.tuple([z.literal("vine_id")]),
     isOneToOne: z.literal(false),
@@ -1079,92 +703,17 @@ export const publicProvisionJobsRelationshipsSchema = z.tuple([
   }),
 ]);
 
-export const publicProvisionLogsRowSchema = z.object({
-  created_at: z.string().nullable(),
-  id: z.number(),
-  log_chunk: z.string(),
-  provision_id: z.string(),
-  stream_type: z.string().nullable(),
-});
-
-export const publicProvisionLogsInsertSchema = z.object({
-  created_at: z.string().optional().nullable(),
-  id: z.number().optional(),
-  log_chunk: z.string(),
-  provision_id: z.string(),
-  stream_type: z.string().optional().nullable(),
-});
-
-export const publicProvisionLogsUpdateSchema = z.object({
-  created_at: z.string().optional().nullable(),
-  id: z.number().optional(),
-  log_chunk: z.string().optional(),
-  provision_id: z.string().optional(),
-  stream_type: z.string().optional().nullable(),
-});
-
-export const publicProvisionLogsRelationshipsSchema = z.tuple([
-  z.object({
-    foreignKeyName: z.literal("provision_logs_provision_id_fkey"),
-    columns: z.tuple([z.literal("provision_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("provisions"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-]);
-
-export const publicProvisionsRowSchema = z.object({
-  cluster_id: z.string(),
-  completed_at: z.string().nullable(),
-  config_snapshot: jsonSchema,
-  configuration_hash: z.string().nullable(),
-  created_at: z.string().nullable(),
-  error_message: z.string().nullable(),
-  execution_metadata: jsonSchema.nullable(),
-  id: z.string(),
-  started_at: z.string().nullable(),
-  status: z.string().nullable(),
-});
-
-export const publicProvisionsInsertSchema = z.object({
-  cluster_id: z.string(),
-  completed_at: z.string().optional().nullable(),
-  config_snapshot: jsonSchema,
-  configuration_hash: z.string().optional().nullable(),
-  created_at: z.string().optional().nullable(),
-  error_message: z.string().optional().nullable(),
-  execution_metadata: jsonSchema.optional().nullable(),
-  id: z.string().optional(),
-  started_at: z.string().optional().nullable(),
-  status: z.string().optional().nullable(),
-});
-
-export const publicProvisionsUpdateSchema = z.object({
-  cluster_id: z.string().optional(),
-  completed_at: z.string().optional().nullable(),
-  config_snapshot: jsonSchema.optional(),
-  configuration_hash: z.string().optional().nullable(),
-  created_at: z.string().optional().nullable(),
-  error_message: z.string().optional().nullable(),
-  execution_metadata: jsonSchema.optional().nullable(),
-  id: z.string().optional(),
-  started_at: z.string().optional().nullable(),
-  status: z.string().optional().nullable(),
-});
-
-export const publicProvisionsRelationshipsSchema = z.tuple([
-  z.object({
-    foreignKeyName: z.literal("provisions_cluster_id_fkey"),
-    columns: z.tuple([z.literal("cluster_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("clusters"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-]);
-
 export const publicVineAuditLogRowSchema = z.object({
   action: publicAuditActionSchema,
-  changes: jsonSchema.nullable(),
+  changes: z
+    .record(
+      z.string(),
+      z.object({
+        old: z.unknown().optional(),
+        new: z.unknown().optional(),
+      }),
+    )
+    .nullable(),
   component_id: z.string().nullable(),
   component_type: z.string().nullable(),
   created_at: z.string(),
@@ -1175,7 +724,16 @@ export const publicVineAuditLogRowSchema = z.object({
 
 export const publicVineAuditLogInsertSchema = z.object({
   action: publicAuditActionSchema,
-  changes: jsonSchema.optional().nullable(),
+  changes: z
+    .record(
+      z.string(),
+      z.object({
+        old: z.unknown().optional(),
+        new: z.unknown().optional(),
+      }),
+    )
+    .optional()
+    .nullable(),
   component_id: z.string().optional().nullable(),
   component_type: z.string().optional().nullable(),
   created_at: z.string().optional(),
@@ -1186,7 +744,16 @@ export const publicVineAuditLogInsertSchema = z.object({
 
 export const publicVineAuditLogUpdateSchema = z.object({
   action: publicAuditActionSchema.optional(),
-  changes: jsonSchema.optional().nullable(),
+  changes: z
+    .record(
+      z.string(),
+      z.object({
+        old: z.unknown().optional(),
+        new: z.unknown().optional(),
+      }),
+    )
+    .optional()
+    .nullable(),
   component_id: z.string().optional().nullable(),
   component_type: z.string().optional().nullable(),
   created_at: z.string().optional(),
@@ -1553,7 +1120,14 @@ export const publicVineEcrReposRelationshipsSchema = z.tuple([
 ]);
 
 export const publicVineEksRowSchema = z.object({
-  cluster_admins: jsonSchema.nullable(),
+  cluster_admins: z
+    .array(
+      z.object({
+        username: z.string(),
+        groups: z.array(z.string()),
+      }),
+    )
+    .nullable(),
   cluster_endpoint: z.string().nullable(),
   cluster_name: z.string().nullable(),
   cluster_version: z.string().nullable(),
@@ -1572,7 +1146,15 @@ export const publicVineEksRowSchema = z.object({
 });
 
 export const publicVineEksInsertSchema = z.object({
-  cluster_admins: jsonSchema.optional().nullable(),
+  cluster_admins: z
+    .array(
+      z.object({
+        username: z.string(),
+        groups: z.array(z.string()),
+      }),
+    )
+    .optional()
+    .nullable(),
   cluster_endpoint: z.string().optional().nullable(),
   cluster_name: z.string().optional().nullable(),
   cluster_version: z.string().optional().nullable(),
@@ -1591,7 +1173,15 @@ export const publicVineEksInsertSchema = z.object({
 });
 
 export const publicVineEksUpdateSchema = z.object({
-  cluster_admins: jsonSchema.optional().nullable(),
+  cluster_admins: z
+    .array(
+      z.object({
+        username: z.string(),
+        groups: z.array(z.string()),
+      }),
+    )
+    .optional()
+    .nullable(),
   cluster_endpoint: z.string().optional().nullable(),
   cluster_name: z.string().optional().nullable(),
   cluster_version: z.string().optional().nullable(),
@@ -1863,7 +1453,14 @@ export const publicVineTopicsRowSchema = z.object({
   name: z.string(),
   status: publicComponentStatusSchema,
   status_message: z.string().nullable(),
-  subscriptions: jsonSchema.nullable(),
+  subscriptions: z
+    .array(
+      z.object({
+        protocol: z.string(),
+        endpoint: z.string(),
+      }),
+    )
+    .nullable(),
   updated_at: z.string(),
   vine_id: z.string(),
 });
@@ -1875,7 +1472,15 @@ export const publicVineTopicsInsertSchema = z.object({
   name: z.string(),
   status: publicComponentStatusSchema.optional(),
   status_message: z.string().optional().nullable(),
-  subscriptions: jsonSchema.optional().nullable(),
+  subscriptions: z
+    .array(
+      z.object({
+        protocol: z.string(),
+        endpoint: z.string(),
+      }),
+    )
+    .optional()
+    .nullable(),
   updated_at: z.string().optional(),
   vine_id: z.string(),
 });
@@ -1887,7 +1492,15 @@ export const publicVineTopicsUpdateSchema = z.object({
   name: z.string().optional(),
   status: publicComponentStatusSchema.optional(),
   status_message: z.string().optional().nullable(),
-  subscriptions: jsonSchema.optional().nullable(),
+  subscriptions: z
+    .array(
+      z.object({
+        protocol: z.string(),
+        endpoint: z.string(),
+      }),
+    )
+    .optional()
+    .nullable(),
   updated_at: z.string().optional(),
   vine_id: z.string().optional(),
 });
@@ -2068,7 +1681,7 @@ export const publicWorkersRowSchema = z.object({
   created_at: z.string().nullable(),
   id: z.string(),
   last_heartbeat: z.string().nullable(),
-  metadata: jsonSchema.nullable(),
+  metadata: z.record(z.string(), z.unknown()).nullable(),
   mode: z.string(),
   name: z.string(),
   status: z.string().nullable(),
@@ -2081,7 +1694,7 @@ export const publicWorkersInsertSchema = z.object({
   created_at: z.string().optional().nullable(),
   id: z.string().optional(),
   last_heartbeat: z.string().optional().nullable(),
-  metadata: jsonSchema.optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional().nullable(),
   mode: z.string(),
   name: z.string(),
   status: z.string().optional().nullable(),
@@ -2094,7 +1707,7 @@ export const publicWorkersUpdateSchema = z.object({
   created_at: z.string().optional().nullable(),
   id: z.string().optional(),
   last_heartbeat: z.string().optional().nullable(),
-  metadata: jsonSchema.optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional().nullable(),
   mode: z.string().optional(),
   name: z.string().optional(),
   status: z.string().optional().nullable(),
@@ -2180,13 +1793,6 @@ export const publicVineFullRelationshipsSchema = z.tuple([
   }),
 ]);
 
-export const publicAgentHeartbeatArgsSchema = z.object({
-  p_cluster_id: z.string(),
-  p_token_hash: z.string(),
-});
-
-export const publicAgentHeartbeatReturnsSchema = z.undefined();
-
 export const publicClaimNextJobArgsSchema = z.object({
   p_cloud_identity_id: z.string().optional(),
   p_worker_id: z.string(),
@@ -2201,12 +1807,11 @@ export const publicClaimNextJobReturnsSchema = z.array(
     completed_at: z.string().nullable(),
     config_snapshot: jsonSchema,
     configuration_hash: z.string().nullable(),
-    configuration_id: z.string().nullable(),
     created_at: z.string().nullable(),
     error_message: z.string().nullable(),
     execution_metadata: jsonSchema.nullable(),
     id: z.string(),
-    job_type: z.string(),
+    job_type: publicProvisionJobTypeSchema,
     started_at: z.string().nullable(),
     status: z.string(),
     updated_at: z.string().nullable(),
@@ -2214,45 +1819,6 @@ export const publicClaimNextJobReturnsSchema = z.array(
     vine_id: z.string().nullable(),
     vineyard_id: z.string().nullable(),
     worker_id: z.string().nullable(),
-  }),
-);
-
-export const publicFetchNextProvisionArgsSchema = z.object({
-  p_cluster_id: z.string(),
-  p_token_hash: z.string(),
-});
-
-export const publicFetchNextProvisionReturnsSchema = z.array(
-  z.object({
-    cluster_id: z.string(),
-    completed_at: z.string().nullable(),
-    config_snapshot: jsonSchema,
-    configuration_hash: z.string().nullable(),
-    created_at: z.string().nullable(),
-    error_message: z.string().nullable(),
-    execution_metadata: jsonSchema.nullable(),
-    id: z.string(),
-    started_at: z.string().nullable(),
-    status: z.string().nullable(),
-  }),
-);
-
-export const publicGetConfigurationStatsArgsSchema = z.never();
-
-export const publicGetConfigurationStatsReturnsSchema = z.array(
-  z.object({
-    archived_configs: z.number(),
-    completed_configs: z.number(),
-    draft_configs: z.number(),
-    ecs_configs: z.number(),
-    eks_configs: z.number(),
-    failed_configs: z.number(),
-    has_rds_configs: z.number(),
-    has_vpc_configs: z.number(),
-    pending_configs: z.number(),
-    recent_configs: z.number(),
-    this_month_configs: z.number(),
-    total_configs: z.number(),
   }),
 );
 
@@ -2265,16 +1831,6 @@ export const publicInsertJobLogArgsSchema = z.object({
 });
 
 export const publicInsertJobLogReturnsSchema = z.undefined();
-
-export const publicInsertProvisionLogArgsSchema = z.object({
-  p_cluster_id: z.string(),
-  p_log_chunk: z.string(),
-  p_provision_id: z.string(),
-  p_stream_type: z.string(),
-  p_token_hash: z.string(),
-});
-
-export const publicInsertProvisionLogReturnsSchema = z.undefined();
 
 export const publicRecoverStaleJobsArgsSchema = z.never();
 
@@ -2290,16 +1846,6 @@ export const publicUpdateJobStatusArgsSchema = z.object({
 });
 
 export const publicUpdateJobStatusReturnsSchema = z.undefined();
-
-export const publicUpdateProvisionStatusArgsSchema = z.object({
-  p_cluster_id: z.string(),
-  p_error_message: z.string().optional(),
-  p_provision_id: z.string(),
-  p_status: z.string(),
-  p_token_hash: z.string(),
-});
-
-export const publicUpdateProvisionStatusReturnsSchema = z.undefined();
 
 export const publicWorkerHeartbeatArgsSchema = z.object({
   p_worker_id: z.string(),
