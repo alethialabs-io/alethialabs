@@ -282,8 +282,19 @@ export async function getVine(vineId: string) {
 
 	if (vine.error || !vine.data) throw new Error("Vine not found");
 
+	let cloudProvider: string = "aws";
+	if (vine.data.cloud_identity_id) {
+		const { data: ci } = await supabase
+			.from("cloud_identities")
+			.select("provider")
+			.eq("id", vine.data.cloud_identity_id)
+			.single();
+		if (ci) cloudProvider = ci.provider;
+	}
+
 	return {
 		vine: vine.data,
+		cloudProvider,
 		components: {
 			network: network.data,
 			cluster: cluster.data,
