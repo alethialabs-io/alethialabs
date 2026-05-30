@@ -1,55 +1,36 @@
 "use client";
 
 import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
+	Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
+	Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import {
+	FormControl, FormField, FormItem,
+} from "@/components/ui/form";
 import { VineyardSelector } from "@/components/vineyard-selector";
 import { HelpTooltip } from "./help-tooltip";
+import { useVineStore } from "./use-vine-store";
 import { Grape } from "lucide-react";
-
-interface Props {
-	projectName: string;
-	onProjectNameChange: (v: string) => void;
-	environment: string;
-	onEnvironmentChange: (v: string) => void;
-	vineyardId: string | null;
-	onVineyardIdChange: (v: string | null) => void;
-	submitted?: boolean;
-}
+import { useFormContext } from "react-hook-form";
+import type { VineFormData } from "@/lib/validations/vine-form.schema";
 
 const PROJECT_NAME_REGEX = /^[a-z0-9][a-z0-9-]*$/;
 
-export function SectionProjectBasics({
-	projectName,
-	onProjectNameChange,
-	environment,
-	onEnvironmentChange,
-	vineyardId,
-	onVineyardIdChange,
-	submitted,
-}: Props) {
-	const formatError =
-		projectName.length > 0 && !PROJECT_NAME_REGEX.test(projectName)
-			? "Lowercase letters, numbers, and hyphens only. Must start with a letter or number."
-			: null;
+export function SectionProjectBasics() {
+	const { control, watch } = useFormContext<VineFormData>();
+	const projectName = watch("vine.project_name");
+	const submitted = useVineStore((s) => s.submitted);
 
-	const requiredError =
-		submitted && !projectName.trim() ? "Vine name is required." : null;
-
-	const nameError = formatError || requiredError;
+	const nameError =
+		projectName && projectName.length > 0 && !PROJECT_NAME_REGEX.test(projectName)
+			? "Lowercase letters, numbers, and hyphens only."
+			: submitted && (!projectName || !projectName.trim())
+				? "Vine name is required."
+				: null;
 
 	return (
 		<Card>
@@ -68,9 +49,19 @@ export function SectionProjectBasics({
 						<Label className="text-xs">Vineyard Workspace (optional)</Label>
 						<HelpTooltip topic="vineyard" />
 					</div>
-					<VineyardSelector
-						value={vineyardId ?? undefined}
-						onChange={(v) => onVineyardIdChange(v || null)}
+					<FormField
+						control={control}
+						name="vine.vineyard_id"
+						render={({ field }) => (
+							<FormItem>
+								<FormControl>
+									<VineyardSelector
+										value={field.value ?? undefined}
+										onChange={(v) => field.onChange(v || null)}
+									/>
+								</FormControl>
+							</FormItem>
+						)}
 					/>
 				</div>
 
@@ -79,27 +70,37 @@ export function SectionProjectBasics({
 						<Label className="text-xs">
 							Vine Name <span className="text-destructive">*</span>
 						</Label>
-						<Input
-							placeholder="my-vine"
-							maxLength={25}
-							value={projectName}
-							onChange={(e) => onProjectNameChange(e.target.value.toLowerCase())}
-							className={`h-9 text-sm font-mono ${nameError ? "border-destructive" : ""}`}
+						<FormField
+							control={control}
+							name="vine.project_name"
+							render={({ field }) => (
+								<FormItem>
+									<FormControl>
+										<Input
+											placeholder="my-project"
+											maxLength={25}
+											{...field}
+											onChange={(e) => field.onChange(e.target.value.toLowerCase())}
+											className={`h-9 text-sm font-mono ${nameError ? "border-destructive" : ""}`}
+										/>
+									</FormControl>
+									<div className="flex items-center justify-between">
+										{nameError ? (
+											<p className="text-[11px] text-destructive">{nameError}</p>
+										) : (
+											<p className="text-[11px] text-muted-foreground">
+												Lowercase, numbers, hyphens. Used in AWS resource names.
+											</p>
+										)}
+										{field.value && field.value.length > 0 && (
+											<p className="text-[11px] text-muted-foreground tabular-nums">
+												{field.value.length}/25
+											</p>
+										)}
+									</div>
+								</FormItem>
+							)}
 						/>
-						<div className="flex items-center justify-between">
-							{nameError ? (
-								<p className="text-[11px] text-destructive">{nameError}</p>
-							) : (
-								<p className="text-[11px] text-muted-foreground">
-									Lowercase, numbers, hyphens. Used in AWS resource names.
-								</p>
-							)}
-							{projectName.length > 0 && (
-								<p className="text-[11px] text-muted-foreground tabular-nums">
-									{projectName.length}/25
-								</p>
-							)}
-						</div>
 					</div>
 
 					<div className="space-y-1.5">
@@ -109,16 +110,26 @@ export function SectionProjectBasics({
 							</Label>
 							<HelpTooltip topic="environment" />
 						</div>
-						<Select value={environment} onValueChange={onEnvironmentChange}>
-							<SelectTrigger className="h-9 text-sm">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="development">Development</SelectItem>
-								<SelectItem value="staging">Staging</SelectItem>
-								<SelectItem value="production">Production</SelectItem>
-							</SelectContent>
-						</Select>
+						<FormField
+							control={control}
+							name="vine.environment_stage"
+							render={({ field }) => (
+								<FormItem>
+									<Select value={field.value ?? "development"} onValueChange={field.onChange}>
+										<FormControl>
+											<SelectTrigger className="h-9 text-sm">
+												<SelectValue />
+											</SelectTrigger>
+										</FormControl>
+										<SelectContent>
+											<SelectItem value="development">Development</SelectItem>
+											<SelectItem value="staging">Staging</SelectItem>
+											<SelectItem value="production">Production</SelectItem>
+										</SelectContent>
+									</Select>
+								</FormItem>
+							)}
+						/>
 					</div>
 				</div>
 			</CardContent>
