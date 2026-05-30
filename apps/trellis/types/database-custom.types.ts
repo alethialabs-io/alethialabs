@@ -13,6 +13,10 @@ export interface CloudCredentials {
 	project_number?: string | null;
 	service_account_email?: string | null;
 	wif_config?: Record<string, unknown> | null;
+	// Azure (Federated Identity)
+	tenant_id?: string | null;
+	client_id?: string | null;
+	subscription_id?: string | null;
 }
 
 export interface VpcInfo {
@@ -67,6 +71,33 @@ export interface GcpCachedResources {
 	networks: GcpNetworkInfo[];
 	subnets: Record<string, GcpSubnetInfo[]>;
 	managed_zones: GcpManagedZoneInfo[];
+}
+
+export interface AzureVnetInfo {
+	name: string;
+	id: string;
+	location: string;
+	addressPrefixes: string[];
+}
+
+export interface AzureSubnetInfo {
+	name: string;
+	id: string;
+	addressPrefix: string;
+	vnetName: string;
+}
+
+export interface AzureDnsZoneInfo {
+	name: string;
+	id: string;
+	zoneType: string;
+}
+
+export interface AzureCachedResources {
+	locations: string[];
+	vnets: AzureVnetInfo[];
+	subnets: Record<string, AzureSubnetInfo[]>;
+	dns_zones: AzureDnsZoneInfo[];
 }
 
 export interface ClusterMetadata {

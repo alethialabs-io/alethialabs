@@ -138,6 +138,16 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 				return err
 			}
 			defer cleanup()
+		case "azure":
+			fmt.Fprintf(stdoutLogger, "Activating Azure federated identity for tenant %s (subscription: %s)...\n", claim.CloudIdentity.TenantID, claim.CloudIdentity.SubscriptionID)
+			cleanup, err := ActivateAzureFederated(claim.CloudIdentity.TenantID, claim.CloudIdentity.ClientID, claim.CloudIdentity.SubscriptionID)
+			if err != nil {
+				errMsg := fmt.Sprintf("Failed to activate Azure federated identity: %v", err)
+				fmt.Fprintln(stderrLogger, errMsg)
+				w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+				return err
+			}
+			defer cleanup()
 		}
 	}
 
@@ -149,7 +159,8 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	var execErr error
 	switch job.JobType {
 	case "CONNECTION_TEST":
-		if provider == "gcp" {
+		switch provider {
+		case "gcp":
 			fmt.Fprintln(stdoutLogger, "Connection test passed — WIF authentication succeeded.")
 			resources, fetchErr := w.fetchGcpResources(ctx, claim.CloudIdentity.ProjectID, stdoutLogger)
 			if fetchErr != nil {
@@ -160,7 +171,9 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 				})
 				fmt.Fprintln(stdoutLogger, "GCP resources cached successfully.")
 			}
-		} else {
+		case "azure":
+			fmt.Fprintln(stdoutLogger, "Connection test passed — Azure federated identity authenticated.")
+		default:
 			fmt.Fprintln(stdoutLogger, "Connection test passed — role assumption succeeded.")
 			resources, fetchErr := w.fetchAwsResources(ctx, stdoutLogger)
 			if fetchErr != nil {
@@ -173,7 +186,8 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			}
 		}
 	case "FETCH_RESOURCES":
-		if provider == "gcp" {
+		switch provider {
+		case "gcp":
 			fmt.Fprintln(stdoutLogger, "Fetching GCP resources...")
 			projectID := ""
 			if claim.CloudIdentity != nil {
@@ -188,7 +202,9 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 				})
 				fmt.Fprintln(stdoutLogger, "GCP resources fetched successfully.")
 			}
-		} else {
+		case "azure":
+			fmt.Fprintln(stdoutLogger, "Azure resource caching not yet implemented.")
+		default:
 			fmt.Fprintln(stdoutLogger, "Fetching AWS resources...")
 			resources, fetchErr := w.fetchAwsResources(ctx, stdoutLogger)
 			if fetchErr != nil {

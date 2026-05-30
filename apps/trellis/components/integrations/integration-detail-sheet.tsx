@@ -208,6 +208,30 @@ export function IntegrationDetailSheet({
 										</span>
 									</div>
 								)}
+							{isConnected &&
+								integration.connection_details
+									?.tenant_id && (
+									<div className="flex justify-between items-start">
+										<span className="text-xs text-muted-foreground">
+											Tenant
+										</span>
+										<span className="text-xs font-mono text-foreground">
+											{integration.connection_details.tenant_id.slice(0, 8)}...
+										</span>
+									</div>
+								)}
+							{isConnected &&
+								integration.connection_details
+									?.subscription_id && (
+									<div className="flex justify-between items-start">
+										<span className="text-xs text-muted-foreground">
+											Subscription
+										</span>
+										<span className="text-xs font-mono text-foreground">
+											{integration.connection_details.subscription_id.slice(0, 8)}...
+										</span>
+									</div>
+								)}
 						</div>
 					</div>
 

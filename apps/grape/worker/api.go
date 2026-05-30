@@ -44,6 +44,9 @@ type CloudIdentity struct {
 	ProjectID           string `json:"project_id"`
 	ServiceAccountEmail string `json:"service_account_email"`
 	WifConfig           string `json:"wif_config"`
+	TenantID            string `json:"tenant_id"`
+	ClientID            string `json:"client_id"`
+	SubscriptionID      string `json:"subscription_id"`
 }
 
 type ClaimResponse struct {

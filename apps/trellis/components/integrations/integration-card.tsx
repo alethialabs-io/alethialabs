@@ -109,6 +109,12 @@ export function IntegrationCard({
 						{integration.connection_details.project_id}
 					</p>
 				)}
+				{isConnected && integration.connection_details?.subscription_id && (
+					<p className="text-[11px] text-muted-foreground font-mono mt-1">
+						Subscription{" "}
+						{integration.connection_details.subscription_id.slice(0, 8)}...
+					</p>
+				)}
 			</div>
 
 			<div className="shrink-0 flex items-center gap-2">

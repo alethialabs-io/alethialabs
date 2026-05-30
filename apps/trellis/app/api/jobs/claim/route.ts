@@ -62,6 +62,10 @@ export async function POST(req: Request) {
 					wif_config: identity.credentials.wif_config
 						? JSON.stringify(identity.credentials.wif_config)
 						: "",
+					tenant_id: identity.credentials.tenant_id ?? "",
+					client_id: identity.credentials.client_id ?? "",
+					subscription_id:
+						identity.credentials.subscription_id ?? "",
 				};
 			}
 		}

@@ -10,8 +10,13 @@ import {
 	disconnectGcpIdentity,
 	saveGcpIdentity,
 } from "@/app/(private)/dashboard/providers/gcp-actions";
+import {
+	disconnectAzureIdentity,
+	saveAzureIdentity,
+} from "@/app/(private)/dashboard/providers/azure-actions";
 import { AwsConnection } from "@/components/onboarding/aws-connection";
 import { GcpConnection } from "@/components/onboarding/gcp-connection";
+import { AzureConnection } from "@/components/onboarding/azure-connection";
 import { IntegrationDetailSheet } from "@/components/integrations/integration-detail-sheet";
 import { IntegrationsList } from "@/components/integrations/integrations-list";
 import {
@@ -48,12 +53,14 @@ interface IntegrationsPageProps {
 	integrations: IntegrationWithConnection[];
 	awsSetup: { externalId: string; identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
+	azureSetup: { identityId: string } | null;
 }
 
 export function IntegrationsPage({
 	integrations,
 	awsSetup,
 	gcpSetup,
+	azureSetup,
 }: IntegrationsPageProps) {
 	const router = useRouter();
 	const [selectedCategory, setSelectedCategory] =
@@ -64,6 +71,7 @@ export function IntegrationsPage({
 	const [detailOpen, setDetailOpen] = useState(false);
 	const [awsSheetOpen, setAwsSheetOpen] = useState(false);
 	const [gcpSheetOpen, setGcpSheetOpen] = useState(false);
+	const [azureSheetOpen, setAzureSheetOpen] = useState(false);
 	const [disconnectTarget, setDisconnectTarget] =
 		useState<IntegrationWithConnection | null>(null);
 	const [isDisconnecting, setIsDisconnecting] = useState(false);
@@ -135,6 +143,8 @@ export function IntegrationsPage({
 			setAwsSheetOpen(true);
 		} else if (integration.slug === "gcp") {
 			setGcpSheetOpen(true);
+		} else if (integration.slug === "azure") {
+			setAzureSheetOpen(true);
 		}
 		setDetailOpen(false);
 	};
@@ -183,6 +193,12 @@ export function IntegrationsPage({
 				if (!cloudIdentityId) throw new Error("Missing identity ID");
 				await disconnectGcpIdentity(cloudIdentityId);
 				toast.success("GCP project disconnected.");
+			} else if (disconnectTarget.slug === "azure") {
+				const cloudIdentityId =
+					disconnectTarget.connection_details?.cloud_identity_id;
+				if (!cloudIdentityId) throw new Error("Missing identity ID");
+				await disconnectAzureIdentity(cloudIdentityId);
+				toast.success("Azure subscription disconnected.");
 			}
 
 			setDisconnectTarget(null);
@@ -207,6 +223,20 @@ export function IntegrationsPage({
 	const handleGcpConnect = async (wifConfigJson: string) => {
 		if (!gcpSetup) throw new Error("GCP setup not initialized");
 		return await saveGcpIdentity(gcpSetup.identityId, wifConfigJson);
+	};
+
+	const handleAzureConnect = async (
+		tenantId: string,
+		clientId: string,
+		subscriptionId: string,
+	) => {
+		if (!azureSetup) throw new Error("Azure setup not initialized");
+		return await saveAzureIdentity(
+			azureSetup.identityId,
+			tenantId,
+			clientId,
+			subscriptionId,
+		);
 	};
 
 	const openDetail = (integration: IntegrationWithConnection) => {
@@ -311,6 +341,32 @@ export function IntegrationsPage({
 				</SheetContent>
 			</Sheet>
 
+			{/* Azure Connection Sheet */}
+			<Sheet open={azureSheetOpen} onOpenChange={(open) => {
+				setAzureSheetOpen(open);
+				if (!open) router.refresh();
+			}}>
+				<SheetContent
+					side="right"
+					className="w-full sm:max-w-2xl overflow-y-auto p-0"
+				>
+					<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
+						<SheetTitle>Connect Azure Subscription</SheetTitle>
+						<SheetDescription>
+							Set up federated identity credentials to allow Grape to
+							provision infrastructure in your Azure subscription.
+						</SheetDescription>
+					</SheetHeader>
+					<div className="px-6 py-6">
+						{azureSetup && (
+							<AzureConnection
+								onComplete={handleAzureConnect}
+							/>
+						)}
+					</div>
+				</SheetContent>
+			</Sheet>
+
 			{/* Disconnect Confirmation */}
 			<AlertDialog
 				open={!!disconnectTarget}
@@ -326,9 +382,11 @@ export function IntegrationsPage({
 								? "This will remove the stored IAM role ARN. You won't be able to provision new AWS infrastructure until you reconnect. Existing resources are not affected."
 								: disconnectTarget?.slug === "gcp"
 									? "This will remove the Workload Identity Federation configuration. You won't be able to provision new GCP infrastructure until you reconnect. Existing resources are not affected."
-									: disconnectTarget?.category === "cloud"
-										? "This will remove the stored credentials. You won't be able to provision new infrastructure until you reconnect. Existing resources are not affected."
-										: `This will unlink your ${disconnectTarget?.name} account. You won't be able to access repositories from this provider until you reconnect.`}
+									: disconnectTarget?.slug === "azure"
+										? "This will remove the federated identity configuration. You won't be able to provision new Azure infrastructure until you reconnect. Existing resources are not affected."
+										: disconnectTarget?.category === "cloud"
+											? "This will remove the stored credentials. You won't be able to provision new infrastructure until you reconnect. Existing resources are not affected."
+											: `This will unlink your ${disconnectTarget?.name} account. You won't be able to access repositories from this provider until you reconnect.`}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
