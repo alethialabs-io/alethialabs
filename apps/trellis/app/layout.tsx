@@ -56,7 +56,7 @@ export default function RootLayout({
 				<PublicEnvScript />
 			</head>
 			<body
-				className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+				className={`${geistSans.variable} ${geistMono.variable} antialiased overflow-hidden h-full`}
 			>
 				{children}
 			</body>

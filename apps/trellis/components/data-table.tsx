@@ -2,15 +2,26 @@
 
 import {
   type ColumnDef,
+  type ColumnFiltersState,
   type SortingState,
   flexRender,
   getCoreRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table"
-import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react"
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react"
 import { useState } from "react"
 
+import { Button } from "@/components/ui/button"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -27,6 +38,8 @@ interface DataTableProps<TData extends { id?: string }, TValue> {
   onRowClick?: (row: TData) => void
   selectedRowId?: string
   className?: string
+  pageSize?: number
+  columnFilters?: ColumnFiltersState
 }
 
 export function DataTable<TData extends { id?: string }, TValue>({
@@ -35,89 +48,152 @@ export function DataTable<TData extends { id?: string }, TValue>({
   onRowClick,
   selectedRowId,
   className,
+  pageSize = 10,
+  columnFilters: externalFilters,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = useState<SortingState>([])
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(
+    externalFilters ?? [],
+  )
 
   const table = useReactTable({
     data,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
     onSortingChange: setSorting,
-    state: { sorting },
+    onColumnFiltersChange: setColumnFilters,
+    state: { sorting, columnFilters: externalFilters ?? columnFilters },
+    initialState: {
+      pagination: { pageSize },
+    },
   })
 
   return (
-    <div className={cn("rounded-md border", className)}>
-      <Table>
-        <TableHeader>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <TableRow key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <TableHead
-                  key={header.id}
-                  className={cn(
-                    header.column.getCanSort() &&
-                      "cursor-pointer select-none"
-                  )}
-                  onClick={header.column.getToggleSortingHandler()}
-                >
-                  {header.isPlaceholder ? null : (
-                    <div className="flex items-center gap-1">
-                      {flexRender(
-                        header.column.columnDef.header,
-                        header.getContext()
-                      )}
-                      {header.column.getCanSort() && (
-                        <span className="ml-1">
-                          {header.column.getIsSorted() === "asc" ? (
-                            <ArrowUp className="h-3.5 w-3.5" />
-                          ) : header.column.getIsSorted() === "desc" ? (
-                            <ArrowDown className="h-3.5 w-3.5" />
-                          ) : (
-                            <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground/50" />
-                          )}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </TableHead>
-              ))}
-            </TableRow>
-          ))}
-        </TableHeader>
-        <TableBody>
-          {table.getRowModel().rows?.length ? (
-            table.getRowModel().rows.map((row) => (
-              <TableRow
-                key={row.id}
-                data-state={
-                  (selectedRowId && row.original.id === selectedRowId) || row.getIsSelected()
-                    ? "selected"
-                    : undefined
-                }
-                className={cn(onRowClick && "cursor-pointer")}
-                onClick={() => onRowClick?.(row.original)}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id}>
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
+    <div className={cn("space-y-3", className)}>
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <TableRow key={headerGroup.id}>
+                {headerGroup.headers.map((header) => (
+                  <TableHead
+                    key={header.id}
+                    className={cn(
+                      header.column.getCanSort() &&
+                        "cursor-pointer select-none"
+                    )}
+                    onClick={header.column.getToggleSortingHandler()}
+                  >
+                    {header.isPlaceholder ? null : (
+                      <div className="flex items-center gap-1">
+                        {flexRender(
+                          header.column.columnDef.header,
+                          header.getContext()
+                        )}
+                        {header.column.getCanSort() && (
+                          <span className="ml-1">
+                            {header.column.getIsSorted() === "asc" ? (
+                              <ArrowUp className="h-3.5 w-3.5" />
+                            ) : header.column.getIsSorted() === "desc" ? (
+                              <ArrowDown className="h-3.5 w-3.5" />
+                            ) : (
+                              <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground/50" />
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </TableHead>
                 ))}
               </TableRow>
-            ))
-          ) : (
-            <TableRow>
-              <TableCell
-                colSpan={columns.length}
-                className="h-24 text-center text-muted-foreground"
+            ))}
+          </TableHeader>
+          <TableBody>
+            {table.getRowModel().rows?.length ? (
+              table.getRowModel().rows.map((row) => (
+                <TableRow
+                  key={row.id}
+                  data-state={
+                    (selectedRowId && row.original.id === selectedRowId) || row.getIsSelected()
+                      ? "selected"
+                      : undefined
+                  }
+                  className={cn(onRowClick && "cursor-pointer")}
+                  onClick={() => onRowClick?.(row.original)}
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell key={cell.id}>
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell
+                  colSpan={columns.length}
+                  className="h-24 text-center text-muted-foreground"
+                >
+                  No results.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {table.getPageCount() > 1 && (
+        <div className="flex items-center justify-between px-1">
+          <p className="text-xs text-muted-foreground">
+            {table.getFilteredRowModel().rows.length} total
+          </p>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <p className="text-xs text-muted-foreground">Rows</p>
+              <Select
+                value={String(table.getState().pagination.pageSize)}
+                onValueChange={(value) => table.setPageSize(Number(value))}
               >
-                No results.
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
+                <SelectTrigger className="h-7 w-16 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="20">20</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-xs text-muted-foreground tabular-nums">
+              Page {table.getState().pagination.pageIndex + 1} of{" "}
+              {table.getPageCount()}
+            </p>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => table.previousPage()}
+                disabled={!table.getCanPreviousPage()}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => table.nextPage()}
+                disabled={!table.getCanNextPage()}
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

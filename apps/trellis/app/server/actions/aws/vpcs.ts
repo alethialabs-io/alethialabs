@@ -26,7 +26,7 @@ export async function requestVpcList(
 		.insert({
 			user_id: user.id,
 			cloud_identity_id: cloudIdentityId,
-			job_type: "LIST_VPCS",
+			job_type: "FETCH_RESOURCES",
 			status: "QUEUED",
 			config_snapshot: { region },
 		})

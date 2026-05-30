@@ -27,6 +27,7 @@ interface Props {
 	onEnvironmentChange: (v: string) => void;
 	vineyardId: string | null;
 	onVineyardIdChange: (v: string | null) => void;
+	submitted?: boolean;
 }
 
 const PROJECT_NAME_REGEX = /^[a-z0-9][a-z0-9-]*$/;
@@ -38,11 +39,17 @@ export function SectionProjectBasics({
 	onEnvironmentChange,
 	vineyardId,
 	onVineyardIdChange,
+	submitted,
 }: Props) {
-	const nameError =
+	const formatError =
 		projectName.length > 0 && !PROJECT_NAME_REGEX.test(projectName)
 			? "Lowercase letters, numbers, and hyphens only. Must start with a letter or number."
 			: null;
+
+	const requiredError =
+		submitted && !projectName.trim() ? "Vine name is required." : null;
+
+	const nameError = formatError || requiredError;
 
 	return (
 		<Card>
@@ -70,10 +77,10 @@ export function SectionProjectBasics({
 				<div className="grid md:grid-cols-2 gap-4">
 					<div className="space-y-1.5">
 						<Label className="text-xs">
-							Project Name <span className="text-destructive">*</span>
+							Vine Name <span className="text-destructive">*</span>
 						</Label>
 						<Input
-							placeholder="my-project"
+							placeholder="my-vine"
 							maxLength={25}
 							value={projectName}
 							onChange={(e) => onProjectNameChange(e.target.value.toLowerCase())}

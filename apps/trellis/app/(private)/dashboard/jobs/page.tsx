@@ -1,39 +1,87 @@
-import { createClient } from "@/lib/supabase/server";
-import { Badge } from "@/components/ui/badge";
-import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "@/components/ui/table";
-import { ClipboardList } from "lucide-react";
+"use client";
 
-const STATUS_STYLES: Record<string, string> = {
-	SUCCESS:
-		"text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950",
-	FAILED:
-		"text-destructive border-destructive/30 bg-destructive/10",
-	PROCESSING:
-		"text-blue-600 border-blue-200 bg-blue-50 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950",
-	CLAIMED:
-		"text-amber-600 border-amber-200 bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950",
-	QUEUED:
-		"text-muted-foreground border-border bg-muted/50",
-};
+import { getJobs } from "@/app/server/actions/jobs";
+import { DataTable } from "@/components/data-table";
+import { jobColumns, type JobRow } from "@/components/jobs/columns";
+import { JobDetailSheet } from "@/components/jobs/job-detail-sheet";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ClipboardList, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
-export default async function JobsPage() {
-	const supabase = await createClient();
+const STATUS_FILTERS = ["All", "QUEUED", "PROCESSING", "SUCCESS", "FAILED"] as const;
+const TYPE_FILTERS = ["All", "DEPLOY", "BOOTSTRAP", "DESTROY", "CONNECTION_TEST", "FETCH_RESOURCES"] as const;
 
-	const { data: jobs } = await supabase
-		.from("provision_jobs")
-		.select("id, job_type, status, created_at, completed_at, worker_id, error_message")
-		.order("created_at", { ascending: false })
-		.limit(50);
+export default function JobsPage() {
+	const [jobs, setJobs] = useState<JobRow[]>([]);
+	const [loading, setLoading] = useState(true);
+	const [statusFilter, setStatusFilter] = useState<string>("All");
+	const [typeFilter, setTypeFilter] = useState<string>("All");
+	const [search, setSearch] = useState("");
+	const [selectedJob, setSelectedJob] = useState<JobRow | null>(null);
+	const [detailOpen, setDetailOpen] = useState(false);
+
+	const fetchJobs = async () => {
+		try {
+			const data = await getJobs();
+			setJobs(data as JobRow[]);
+		} catch (err) {
+			console.error("Failed to fetch jobs:", err);
+		} finally {
+			setLoading(false);
+		}
+	};
+
+	useEffect(() => {
+		fetchJobs();
+	}, []);
+
+	const filtered = useMemo(() => {
+		let result = jobs;
+		if (statusFilter !== "All") {
+			result = result.filter((j) => j.status === statusFilter);
+		}
+		if (typeFilter !== "All") {
+			result = result.filter((j) => j.job_type === typeFilter);
+		}
+		if (search.trim()) {
+			const q = search.toLowerCase();
+			result = result.filter(
+				(j) =>
+					j.id.toLowerCase().includes(q) ||
+					(j.worker_id && j.worker_id.toLowerCase().includes(q)) ||
+					(j.vine_id && j.vine_id.toLowerCase().includes(q)),
+			);
+		}
+		return result;
+	}, [jobs, statusFilter, typeFilter, search]);
+
+	const handleRowClick = (job: JobRow) => {
+		setSelectedJob(job);
+		setDetailOpen(true);
+	};
+
+	if (loading) {
+		return (
+			<div className="space-y-6">
+				<div>
+					<h1 className="text-2xl font-semibold tracking-tight text-foreground">
+						Jobs
+					</h1>
+					<p className="text-sm text-muted-foreground mt-1">
+						Provision job history and execution logs.
+					</p>
+				</div>
+				<div className="animate-pulse space-y-3">
+					<div className="h-9 bg-muted rounded w-full" />
+					<div className="h-64 bg-muted rounded" />
+				</div>
+			</div>
+		);
+	}
 
 	return (
-		<div className="space-y-8">
+		<div className="space-y-6">
 			<div>
 				<h1 className="text-2xl font-semibold tracking-tight text-foreground">
 					Jobs
@@ -43,7 +91,7 @@ export default async function JobsPage() {
 				</p>
 			</div>
 
-			{!jobs || jobs.length === 0 ? (
+			{jobs.length === 0 ? (
 				<div className="flex flex-col items-center justify-center py-16 text-center">
 					<div className="p-3 bg-muted/50 rounded-full mb-4">
 						<ClipboardList className="h-8 w-8 text-muted-foreground" />
@@ -52,65 +100,81 @@ export default async function JobsPage() {
 						No jobs yet
 					</h3>
 					<p className="text-xs text-muted-foreground max-w-sm">
-						Jobs are created when you provision a vine. Plant a
-						vine and trigger provisioning to see jobs here.
+						Jobs are created when you provision a vine or connect
+						an AWS account.
 					</p>
 				</div>
 			) : (
-				<div className="border border-border/50 rounded-lg overflow-hidden">
-					<Table>
-						<TableHeader>
-							<TableRow className="hover:bg-transparent">
-								<TableHead className="text-xs">Type</TableHead>
-								<TableHead className="text-xs">Status</TableHead>
-								<TableHead className="text-xs">Worker</TableHead>
-								<TableHead className="text-xs">Created</TableHead>
-								<TableHead className="text-xs">Completed</TableHead>
-								<TableHead className="text-xs">Error</TableHead>
-							</TableRow>
-						</TableHeader>
-						<TableBody>
-							{jobs.map((job) => (
-								<TableRow key={job.id}>
-									<TableCell className="text-xs font-mono">
-										{job.job_type}
-									</TableCell>
-									<TableCell>
-										<Badge
-											variant="outline"
-											className={`text-[10px] py-0 ${STATUS_STYLES[job.status ?? ""] ?? ""}`}
-										>
-											{job.status}
-										</Badge>
-									</TableCell>
-									<TableCell className="text-xs text-muted-foreground font-mono truncate max-w-[120px]">
-										{job.worker_id
-											? job.worker_id.slice(0, 8)
-											: "—"}
-									</TableCell>
-									<TableCell className="text-xs text-muted-foreground">
-										{job.created_at
-											? new Date(
-													job.created_at,
-												).toLocaleString()
-											: "—"}
-									</TableCell>
-									<TableCell className="text-xs text-muted-foreground">
-										{job.completed_at
-											? new Date(
-													job.completed_at,
-												).toLocaleString()
-											: "—"}
-									</TableCell>
-									<TableCell className="text-xs text-destructive truncate max-w-[200px]">
-										{job.error_message || "—"}
-									</TableCell>
-								</TableRow>
+				<>
+					{/* Filters */}
+					<div className="flex flex-col sm:flex-row gap-3">
+						{/* Status filter */}
+						<div className="flex gap-1">
+							{STATUS_FILTERS.map((s) => (
+								<Button
+									key={s}
+									variant={
+										statusFilter === s
+											? "secondary"
+											: "ghost"
+									}
+									size="sm"
+									className="h-7 text-xs px-2.5"
+									onClick={() => setStatusFilter(s)}
+								>
+									{s === "All" ? "All" : s.charAt(0) + s.slice(1).toLowerCase()}
+								</Button>
 							))}
-						</TableBody>
-					</Table>
-				</div>
+						</div>
+
+						{/* Search */}
+						<div className="relative flex-1 max-w-xs">
+							<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+							<Input
+								placeholder="Search by ID, worker, vine..."
+								value={search}
+								onChange={(e) => setSearch(e.target.value)}
+								className="h-7 text-xs pl-8 bg-muted/30 border-border/50"
+							/>
+						</div>
+
+						{/* Type filter */}
+						<div className="flex gap-1">
+							{TYPE_FILTERS.map((t) => (
+								<Button
+									key={t}
+									variant={
+										typeFilter === t
+											? "secondary"
+											: "ghost"
+									}
+									size="sm"
+									className="h-7 text-[10px] px-2"
+									onClick={() => setTypeFilter(t)}
+								>
+									{t === "All" ? "All Types" : t.replace("_", " ")}
+								</Button>
+							))}
+						</div>
+					</div>
+
+					{/* Table */}
+					<DataTable
+						columns={jobColumns}
+						data={filtered}
+						onRowClick={handleRowClick}
+						selectedRowId={selectedJob?.id}
+						pageSize={15}
+					/>
+				</>
 			)}
+
+			<JobDetailSheet
+				job={selectedJob as any}
+				open={detailOpen}
+				onOpenChange={setDetailOpen}
+				onRerun={fetchJobs}
+			/>
 		</div>
 	);
 }

@@ -1,0 +1,203 @@
+"use client";
+
+import type { ColumnDef } from "@tanstack/react-table";
+import { Badge } from "@/components/ui/badge";
+import {
+	Plug,
+	RefreshCw,
+	Rocket,
+	Trash2,
+	Upload,
+} from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
+
+type JobRow = {
+	id: string;
+	job_type: string;
+	status: string;
+	vine_id: string | null;
+	worker_id: string | null;
+	created_at: string | null;
+	completed_at: string | null;
+	started_at: string | null;
+	error_message: string | null;
+};
+
+const JOB_TYPES: Record<
+	string,
+	{ label: string; icon: typeof Rocket; description: string }
+> = {
+	BOOTSTRAP: {
+		label: "Bootstrap",
+		icon: Rocket,
+		description: "Initial EKS cluster setup",
+	},
+	DEPLOY: {
+		label: "Deploy",
+		icon: Upload,
+		description: "Provision infrastructure from config",
+	},
+	DESTROY: {
+		label: "Destroy",
+		icon: Trash2,
+		description: "Tear down infrastructure",
+	},
+	CONNECTION_TEST: {
+		label: "Connection Test",
+		icon: Plug,
+		description: "Verify AWS account access",
+	},
+	FETCH_RESOURCES: {
+		label: "Fetch Resources",
+		icon: RefreshCw,
+		description: "Cache AWS regions, VPCs, zones",
+	},
+};
+
+const STATUS_STYLES: Record<string, string> = {
+	SUCCESS:
+		"text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950",
+	FAILED:
+		"text-destructive border-destructive/30 bg-destructive/10",
+	PROCESSING:
+		"text-blue-600 border-blue-200 bg-blue-50 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950",
+	CLAIMED:
+		"text-amber-600 border-amber-200 bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950",
+	QUEUED:
+		"text-muted-foreground border-border bg-muted/50",
+	CANCELLED:
+		"text-muted-foreground border-border bg-muted/30",
+};
+
+export { JOB_TYPES, STATUS_STYLES };
+export type { JobRow };
+
+export const jobColumns: ColumnDef<JobRow>[] = [
+	{
+		accessorKey: "job_type",
+		header: "Type",
+		enableSorting: true,
+		cell: ({ row }) => {
+			const type = row.getValue("job_type") as string;
+			const info = JOB_TYPES[type];
+			if (!info) return <span className="text-xs">{type}</span>;
+			const Icon = info.icon;
+			return (
+				<div className="flex items-center gap-2">
+					<Icon className="h-3.5 w-3.5 text-muted-foreground" />
+					<div>
+						<span className="text-xs font-medium">
+							{info.label}
+						</span>
+						<p className="text-[10px] text-muted-foreground hidden sm:block">
+							{info.description}
+						</p>
+					</div>
+				</div>
+			);
+		},
+	},
+	{
+		accessorKey: "status",
+		header: "Status",
+		enableSorting: true,
+		cell: ({ row }) => {
+			const status = row.getValue("status") as string;
+			return (
+				<Badge
+					variant="outline"
+					className={`text-[10px] py-0 ${STATUS_STYLES[status] ?? ""}`}
+				>
+					{status}
+				</Badge>
+			);
+		},
+	},
+	{
+		accessorKey: "vine_id",
+		header: "Vine",
+		enableSorting: false,
+		cell: ({ row }) => {
+			const id = row.getValue("vine_id") as string | null;
+			return (
+				<span className="text-xs text-muted-foreground font-mono">
+					{id ? id.slice(0, 8) : "—"}
+				</span>
+			);
+		},
+	},
+	{
+		accessorKey: "worker_id",
+		header: "Worker",
+		enableSorting: false,
+		cell: ({ row }) => {
+			const id = row.getValue("worker_id") as string | null;
+			return (
+				<span className="text-xs text-muted-foreground font-mono">
+					{id ? id.slice(0, 8) : "—"}
+				</span>
+			);
+		},
+	},
+	{
+		accessorKey: "created_at",
+		header: "Created",
+		enableSorting: true,
+		cell: ({ row }) => {
+			const date = row.getValue("created_at") as string | null;
+			if (!date) return <span className="text-xs text-muted-foreground">—</span>;
+			return (
+				<span className="text-xs text-muted-foreground">
+					{formatDistanceToNow(new Date(date), { addSuffix: true })}
+				</span>
+			);
+		},
+	},
+	{
+		id: "duration",
+		header: "Duration",
+		enableSorting: true,
+		accessorFn: (row) => {
+			if (!row.created_at) return null;
+			const end = row.completed_at
+				? new Date(row.completed_at)
+				: new Date();
+			return end.getTime() - new Date(row.created_at).getTime();
+		},
+		cell: ({ row }) => {
+			const created = row.original.created_at;
+			const completed = row.original.completed_at;
+			const status = row.original.status;
+
+			if (!created)
+				return (
+					<span className="text-xs text-muted-foreground">—</span>
+				);
+
+			if (!completed && (status === "PROCESSING" || status === "CLAIMED")) {
+				return (
+					<span className="text-xs text-blue-500 animate-pulse">
+						Running...
+					</span>
+				);
+			}
+
+			if (!completed)
+				return (
+					<span className="text-xs text-muted-foreground">—</span>
+				);
+
+			const ms =
+				new Date(completed).getTime() - new Date(created).getTime();
+			const seconds = Math.floor(ms / 1000);
+			if (seconds < 60) return <span className="text-xs">{seconds}s</span>;
+			const minutes = Math.floor(seconds / 60);
+			const remainingSeconds = seconds % 60;
+			return (
+				<span className="text-xs">
+					{minutes}m {remainingSeconds}s
+				</span>
+			);
+		},
+	},
+];
