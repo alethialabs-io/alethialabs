@@ -78,8 +78,6 @@ export function LogViewer({
 			setLogs([]);
 			fetchLogsForJob(externalJobId);
 			startStatusPoll(externalJobId);
-		} else if (open && clusterId) {
-			fetchLatestHarvest();
 		} else {
 			setLogs([]);
 			setProvisionId(null);
@@ -94,9 +92,8 @@ export function LogViewer({
 	useEffect(() => {
 		if (!provisionId) return;
 
-		const useJobLogs = !!externalJobId;
-		const table = useJobLogs ? "job_logs" : "provision_logs";
-		const filterCol = useJobLogs ? "job_id" : "provision_id";
+		const table = "job_logs";
+		const filterCol = "job_id";
 
 		const channel = supabase
 			.channel(`${table}:${provisionId}`)
@@ -161,48 +158,10 @@ export function LogViewer({
 		}
 	};
 
-	const fetchLatestHarvest = async () => {
-		if (!clusterId) return;
-		setIsLoading(true);
-
-		try {
-			const { data: provisions, error } = await supabase
-				.from("provisions")
-				.select("id, status, created_at")
-				.eq("cluster_id", clusterId)
-				.order("created_at", { ascending: false })
-				.limit(1);
-
-			if (error) throw error;
-
-			if (provisions && provisions.length > 0) {
-				const latestProvision = provisions[0];
-				setProvisionId(latestProvision.id);
-
-				const { data: existingLogs, error: logsError } = await supabase
-					.from("provision_logs")
-					.select("*")
-					.eq("provision_id", latestProvision.id)
-					.order("id", { ascending: true });
-
-				if (logsError) throw logsError;
-				setLogs(existingLogs as LogEntry[]);
-			} else {
-				setProvisionId(null);
-				setLogs([]);
-			}
-		} catch (error) {
-			console.error("Error fetching logs:", error);
-		} finally {
-			setIsLoading(false);
-		}
-	};
 
 	const handleRefresh = () => {
 		if (externalJobId) {
 			fetchLogsForJob(externalJobId);
-		} else {
-			fetchLatestHarvest();
 		}
 	};
 
