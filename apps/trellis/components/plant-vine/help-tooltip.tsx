@@ -103,6 +103,31 @@ const HELP_CONTENT: Record<string, { title: string; description: string }> = {
 		description:
 			"A DNS zone that manages records for your domain. Select an existing zone from your AWS account. Grape uses it for DNS records but does not create new zones.",
 	},
+	dynamodb: {
+		title: "DynamoDB Table",
+		description:
+			"A fully managed NoSQL database. Great for key-value lookups, session storage, and event logs. Pay per request — no capacity planning needed.",
+	},
+	"hash-key": {
+		title: "Hash Key (Partition Key)",
+		description:
+			"The primary key for your table. Each item must have a unique hash key. Use something like 'id', 'userId', or 'orderId'.",
+	},
+	"range-key": {
+		title: "Range Key (Sort Key)",
+		description:
+			"Optional second part of a composite primary key. Enables range queries within a partition. Common patterns: timestamp, version, or category.",
+	},
+	"billing-mode": {
+		title: "Billing Mode",
+		description:
+			"On-demand: pay per read/write, no capacity planning. Best for unpredictable workloads. Provisioned: set read/write capacity units, cheaper for steady traffic.",
+	},
+	secrets: {
+		title: "AWS Secrets Manager",
+		description:
+			"Securely stores and rotates sensitive values like database passwords, API keys, and tokens. Your application retrieves them at runtime — no hardcoded credentials.",
+	},
 };
 
 interface Props {

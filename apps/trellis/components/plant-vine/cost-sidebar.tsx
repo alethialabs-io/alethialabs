@@ -32,6 +32,8 @@ export function CostSidebar() {
 	const caches = watch("caches") || [];
 	const cloudfrontWaf = watch("dns.cloudfront_waf") ?? false;
 	const applicationWaf = watch("dns.application_waf") ?? false;
+	const dynamodbTables = watch("dynamodb_tables") || [];
+	const secrets = watch("secrets") || [];
 
 	const items = useMemo(() => {
 		const p = prices;
@@ -63,8 +65,16 @@ export function CostSidebar() {
 		if (cloudfrontWaf) result.push({ label: "CloudFront WAF", cost: p?.wafWebACL ?? 5.0 });
 		if (applicationWaf) result.push({ label: "Application WAF", cost: p?.wafWebACL ?? 5.0 });
 
+		if (dynamodbTables.length > 0) {
+			result.push({ label: "DynamoDB", cost: 0, detail: `${dynamodbTables.length} table${dynamodbTables.length > 1 ? "s" : ""} (on-demand)` });
+		}
+
+		if (secrets.length > 0) {
+			result.push({ label: "Secrets Manager", cost: secrets.length * 0.40, detail: `${secrets.length} secret${secrets.length > 1 ? "s" : ""}` });
+		}
+
 		return result;
-	}, [databases, caches, cloudfrontWaf, applicationWaf, instanceTypes, nodeDesiredSize, singleNatGateway, prices]);
+	}, [databases, caches, cloudfrontWaf, applicationWaf, instanceTypes, nodeDesiredSize, singleNatGateway, prices, dynamodbTables, secrets]);
 
 	const total = items.reduce((sum, item) => sum + item.cost, 0);
 
