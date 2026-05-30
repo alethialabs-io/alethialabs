@@ -7,7 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
-import { useVineStore } from "./use-vine-store";
+import { useCloudProvider } from "@/lib/cloud-providers";
+import type { CachedResources } from "@/types/database-custom.types";
 import { Network } from "lucide-react";
 import { useFormContext } from "react-hook-form";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
@@ -40,11 +41,12 @@ function parseCidr(cidr: string) {
 
 export function SectionNetwork() {
 	const { control, watch } = useFormContext<VineFormData>();
-	const { awsResources } = useVineStore();
+	const { cachedResources, provider } = useCloudProvider();
 	const region = watch("vine.region");
 	const provisionVpc = watch("network.provision_network");
 	const vpcCidr = watch("network.cidr_block") || "";
 
+	const awsResources = provider === "aws" ? cachedResources as CachedResources | null : null;
 	const vpcsForRegion = (awsResources?.vpcs as Record<string, VpcInfo[]>)?.[region] || [];
 	const canUseExisting = !!region && vpcsForRegion.length > 0;
 	const cidrError = vpcCidr.length > 0 && !CIDR_REGEX.test(vpcCidr) ? "Invalid CIDR format." : null;

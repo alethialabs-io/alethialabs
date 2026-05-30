@@ -7,7 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
-import { useVineStore } from "./use-vine-store";
+import { useCloudProvider } from "@/lib/cloud-providers";
+import type { CachedResources } from "@/types/database-custom.types";
 import { Globe, Shield } from "lucide-react";
 import { useFormContext } from "react-hook-form";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
@@ -16,9 +17,10 @@ interface HostedZone { ID: string; Name: string; IsPrivate: boolean; }
 
 export function SectionDns() {
 	const { control, watch, setValue } = useFormContext<VineFormData>();
-	const { awsResources } = useVineStore();
+	const { cachedResources, provider } = useCloudProvider();
 	const enabled = watch("dns.enabled");
 
+	const awsResources = provider === "aws" ? cachedResources as CachedResources | null : null;
 	const hostedZones = ((awsResources?.hosted_zones as HostedZone[]) || []).filter((z) => !z.IsPrivate);
 
 	const handleZoneChange = (zoneId: string) => {
