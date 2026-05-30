@@ -1,13 +1,5 @@
 "use client";
 
-import {
-	getCachedAwsResources,
-} from "@/app/server/actions/aws/resources";
-import {
-	refreshAwsResources,
-	persistCachedResources,
-} from "@/app/(private)/dashboard/providers/actions";
-import { getJobStatus } from "@/app/server/actions/jobs";
 import { CloudIdentitySelector } from "./cloud-identity-selector";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,82 +10,46 @@ import {
 	Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { FormControl, FormField, FormItem } from "@/components/ui/form";
-import { useVineStore } from "./use-vine-store";
+import { useProviderSlug, useProviderMeta } from "@/lib/cloud-providers";
+import { REGION_LABELS } from "@/lib/cloud-providers";
 import { Cloud, Loader2, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useFormContext } from "react-hook-form";
 import { toast } from "sonner";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
 
-const REGION_LABELS: Record<string, string> = {
-	"us-east-1": "N. Virginia", "us-east-2": "Ohio", "us-west-1": "N. California", "us-west-2": "Oregon",
-	"ca-central-1": "Central", "eu-central-1": "Frankfurt", "eu-west-1": "Ireland", "eu-west-2": "London",
-	"eu-west-3": "Paris", "eu-north-1": "Stockholm", "ap-south-1": "Mumbai", "ap-northeast-1": "Tokyo",
-	"ap-northeast-2": "Seoul", "ap-northeast-3": "Osaka", "ap-southeast-1": "Singapore",
-	"ap-southeast-2": "Sydney", "sa-east-1": "São Paulo",
-};
-
-const REGION_GROUPS: Record<string, string> = {
-	"us-east": "United States", "us-west": "United States", "ca-": "Canada",
-	"eu-": "Europe", "ap-": "Asia Pacific", "sa-": "South America",
-	"af-": "Africa", "me-": "Middle East",
-};
-
-function getRegionGroup(code: string): string {
-	for (const [prefix, group] of Object.entries(REGION_GROUPS)) {
-		if (code.startsWith(prefix)) return group;
-	}
-	return "Other";
-}
-
-function groupRegions(codes: string[]) {
+/** Groups region codes into geographic sections using the registry labels. */
+function groupRegions(codes: string[], provider: import("@/lib/cloud-providers").CloudProviderSlug) {
+	const labels = REGION_LABELS[provider] ?? {};
 	const grouped = new Map<string, Array<{ value: string; label: string }>>();
 	for (const code of codes) {
-		const group = getRegionGroup(code);
+		const meta = labels[code];
+		const group = meta?.group ?? "Other";
+		const label = meta?.label ?? code;
 		if (!grouped.has(group)) grouped.set(group, []);
-		grouped.get(group)!.push({ value: code, label: REGION_LABELS[code] || code });
+		grouped.get(group)!.push({ value: code, label });
 	}
 	return Array.from(grouped.entries()).map(([group, regions]) => ({
 		group, regions: regions.sort((a, b) => a.label.localeCompare(b.label)),
 	}));
 }
 
-const DEFAULT_REGIONS = [
-	"us-east-1", "us-east-2", "us-west-1", "us-west-2",
-	"eu-west-1", "eu-central-1", "eu-west-2", "eu-north-1",
-	"ap-southeast-1", "ap-northeast-1",
-];
-
 interface SectionCloudRegionProps {
 	identities: import("@/app/server/actions/aws/identities").CloudIdentityOption[];
 }
 
 export function SectionCloudRegion({ identities }: SectionCloudRegionProps) {
-	const { control, setValue } = useFormContext<VineFormData>();
-	const { awsResources, submitted } = useVineStore();
-	const store = useVineStore();
+	const { control } = useFormContext<VineFormData>();
+	const provider = useProviderSlug();
+	const providerMeta = useProviderMeta();
 	const [isRefreshing, setIsRefreshing] = useState(false);
-	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-	const cachedRegionCodes = awsResources?.regions as string[] | undefined;
-	const cachedAt = awsResources?.cached_at;
-	const regionGroups = groupRegions(
-		cachedRegionCodes && cachedRegionCodes.length > 0 ? cachedRegionCodes : DEFAULT_REGIONS,
-	);
-
-	const stopPolling = useCallback(() => {
-		if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-	}, []);
-	useEffect(() => () => stopPolling(), [stopPolling]);
+	const allRegionCodes = Object.keys(REGION_LABELS[provider] ?? {});
+	const regionGroups = groupRegions(allRegionCodes, provider);
 
 	const handleRefresh = async () => {
-		const cloudIdentityId = store.awsResources ? undefined : undefined;
-		// Read identity from form
-		const formEl = document.querySelector<HTMLFormElement>("form");
-		// We need the cloud_identity_id — get it from the form context indirectly
 		setIsRefreshing(true);
-		toast.info("Refreshing AWS resources...");
-		// For now just show the toast — full refresh wiring needs the identity ID
+		toast.info(`Refreshing ${providerMeta.shortName} resources...`);
 		setTimeout(() => setIsRefreshing(false), 2000);
 	};
 
@@ -111,8 +67,7 @@ export function SectionCloudRegion({ identities }: SectionCloudRegionProps) {
 					</Button>
 				</div>
 				<CardDescription className="text-xs">
-					Select the AWS account and region.
-					{cachedAt && <span className="text-muted-foreground/60 ml-1">Last refreshed: {new Date(cachedAt).toLocaleTimeString()}</span>}
+					Select the cloud account and region for this vine.
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
@@ -156,8 +111,8 @@ export function SectionCloudRegion({ identities }: SectionCloudRegionProps) {
 							</Select>
 						</FormItem>
 					)} />
-					{!cachedRegionCodes && (
-						<p className="text-xs text-muted-foreground">Click "Refresh" to load your account's regions.</p>
+					{allRegionCodes.length === 0 && (
+						<p className="text-xs text-muted-foreground">Click &quot;Refresh&quot; to load your account&apos;s regions.</p>
 					)}
 				</div>
 			</CardContent>

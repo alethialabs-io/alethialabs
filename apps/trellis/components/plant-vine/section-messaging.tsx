@@ -1,4 +1,5 @@
 "use client";
+import { useProviderMeta, MESSAGING } from "@/lib/cloud-providers";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -41,7 +42,7 @@ export function SectionMessaging() {
 						</Button>
 					</div>
 				</div>
-				<CardDescription className="text-xs">SQS queues and SNS topics for event-driven architectures.</CardDescription>
+				<CardDescription className="text-xs">Message queues and topics for event-driven architectures.</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
 				{isEmpty ? (
@@ -53,7 +54,7 @@ export function SectionMessaging() {
 					<>
 						{queues.fields.length > 0 && (
 							<div className="space-y-2">
-								<Label className="text-xs text-muted-foreground">SQS Queues</Label>
+								<Label className="text-xs text-muted-foreground">Queues</Label>
 								{queues.fields.map((field, i) => (
 									<div key={field.id} className="p-3 border border-border/50 rounded-lg">
 										<div className="flex items-center gap-3">
@@ -93,7 +94,7 @@ export function SectionMessaging() {
 						)}
 						{topics.fields.length > 0 && (
 							<div className="space-y-2">
-								<Label className="text-xs text-muted-foreground">SNS Topics</Label>
+								<Label className="text-xs text-muted-foreground">Topics</Label>
 								{topics.fields.map((field, i) => (
 									<div key={field.id} className="flex items-center gap-3 p-3 border border-border/50 rounded-lg">
 										<FormField control={control} name={`topics.${i}.name`} render={({ field: f }) => (

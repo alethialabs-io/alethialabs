@@ -6,7 +6,7 @@ import { renderWithForm } from "./test-utils";
 describe("SectionNosql", () => {
 	it("renders empty state", () => {
 		renderWithForm(<SectionNosql />);
-		expect(screen.getAllByText("No DynamoDB tables configured.").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("No NoSQL tables configured.").length).toBeGreaterThan(0);
 	});
 
 	it("adds table on button click", () => {

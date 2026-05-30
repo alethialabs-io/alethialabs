@@ -13,25 +13,24 @@ import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { getEksAdmins, createEksAdmin, type EksAdminOption } from "@/app/server/actions/eks-admins";
+import { getClusterAdmins, createClusterAdmin, type ClusterAdminOption } from "@/app/server/actions/eks-admins";
+import { useProviderSlug, useProviderMeta, INSTANCE_TYPES, K8S_VERSIONS, AUTOSCALER } from "@/lib/cloud-providers";
 import { ChevronsUpDown, Plus, Server, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useFormContext } from "react-hook-form";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
 
-const INSTANCE_TYPE_OPTIONS = [
-	"t3.medium", "t3.large", "t3.xlarge", "m5a.large", "m5a.xlarge",
-	"m5a.2xlarge", "m5a.4xlarge", "c5.large", "c5.xlarge", "r5.large", "r5.xlarge",
-	"g4dn.xlarge", "p3.2xlarge",
-];
-
 export function SectionCluster() {
 	const { control, watch, setValue } = useFormContext<VineFormData>();
-	const [savedAdmins, setSavedAdmins] = useState<EksAdminOption[]>([]);
+	const provider = useProviderSlug();
+	const providerMeta = useProviderMeta();
+	const instanceTypeOptions = INSTANCE_TYPES[provider];
+	const autoscaler = AUTOSCALER[provider];
+	const [savedAdmins, setSavedAdmins] = useState<ClusterAdminOption[]>([]);
 	const [comboOpen, setComboOpen] = useState(false);
 	const [comboSearch, setComboSearch] = useState("");
 
-	useEffect(() => { getEksAdmins().then(setSavedAdmins); }, []);
+	useEffect(() => { getClusterAdmins().then(setSavedAdmins); }, []);
 
 	const clusterAdmins = watch("cluster.cluster_admins") || [];
 	const instanceTypes = watch("cluster.instance_types") || [];
@@ -47,7 +46,7 @@ export function SectionCluster() {
 		if (!trimmed || !emailRegex.test(trimmed)) return;
 		if (clusterAdmins.some((a: any) => a.username === trimmed)) return;
 		setValue("cluster.cluster_admins", [...clusterAdmins, { username: trimmed, groups: ["system:masters"] }]);
-		const saved = await createEksAdmin(trimmed);
+		const saved = await createClusterAdmin(trimmed);
 		if (saved && !savedAdmins.some((a) => a.email === trimmed)) setSavedAdmins((prev) => [...prev, saved]);
 		setComboSearch(""); setComboOpen(false);
 	};
@@ -81,7 +80,7 @@ export function SectionCluster() {
 
 				<div className="grid md:grid-cols-2 gap-4">
 					<div className="space-y-1.5">
-						<Label className="text-xs">EKS Version</Label>
+						<Label className="text-xs">{providerMeta.clusterService} Version</Label>
 						<FormField control={control} name="cluster.cluster_version" render={({ field }) => (
 							<FormItem><EksVersionSelector value={field.value || "1.32"} onChange={field.onChange} /></FormItem>
 						)} />
@@ -141,21 +140,22 @@ export function SectionCluster() {
 					<Select value="" onValueChange={addInstanceType} disabled={instanceTypes.length >= 5}>
 						<SelectTrigger className="h-8 text-xs w-48"><SelectValue placeholder="Add instance type" /></SelectTrigger>
 						<SelectContent>
-							{INSTANCE_TYPE_OPTIONS.filter((t) => !instanceTypes.includes(t)).map((type) => (
-								<SelectItem key={type} value={type} className="text-xs">{type}</SelectItem>
+							{instanceTypeOptions.filter((t) => !instanceTypes.includes(t.value)).map((type) => (
+								<SelectItem key={type.value} value={type.value} className="text-xs">
+									{type.label} <span className="text-muted-foreground ml-1">{type.cost}</span>
+								</SelectItem>
 							))}
 						</SelectContent>
 					</Select>
 				</div>
 
-				{/* Karpenter */}
-				<FormField control={control} name="cluster.provider_config.enable_karpenter" render={({ field }) => (
+				{/* Autoscaler */}
+				<FormField control={control} name={`cluster.provider_config.${autoscaler.providerConfigKey}` as any} render={({ field }) => (
 					<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
 						<div className="flex items-center gap-1.5">
-							<div><p className="text-sm font-medium">Karpenter Auto-Scaling</p><p className="text-[11px] text-muted-foreground">Dynamic node provisioning.</p></div>
-							<HelpTooltip topic="karpenter" />
+							<div><p className="text-sm font-medium">{autoscaler.label}</p><p className="text-[11px] text-muted-foreground">{autoscaler.description}</p></div>
 						</div>
-						<Switch checked={field.value ?? true} onCheckedChange={field.onChange} />
+						<Switch checked={!!field.value} onCheckedChange={field.onChange} />
 					</div>
 				)} />
 

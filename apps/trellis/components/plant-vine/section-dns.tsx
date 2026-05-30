@@ -86,7 +86,7 @@ export function SectionDns() {
 						<FormField control={control} name="dns.provider_config.acm_certificate" render={({ field }) => (
 							<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
 								<div className="flex items-center gap-1.5">
-									<div><p className="text-sm font-medium">ACM Certificate</p><p className="text-[11px] text-muted-foreground">Free with AWS services</p></div>
+									<div><p className="text-sm font-medium">Managed TLS Certificate</p><p className="text-[11px] text-muted-foreground">Automatic TLS provisioning</p></div>
 									<HelpTooltip topic="acm-certificate" />
 								</div>
 								<Switch checked={field.value ?? false} onCheckedChange={field.onChange} />
@@ -96,7 +96,7 @@ export function SectionDns() {
 							<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
 								<div className="flex items-center gap-1.5">
 									<Shield className="h-3.5 w-3.5 text-muted-foreground" />
-									<div><p className="text-sm font-medium">CloudFront WAF</p><p className="text-[11px] text-muted-foreground">~$5/mo</p></div>
+									<div><p className="text-sm font-medium">CDN WAF</p><p className="text-[11px] text-muted-foreground">~$5/mo</p></div>
 									<HelpTooltip topic="cloudfront-waf" />
 								</div>
 								<Switch checked={field.value ?? false} onCheckedChange={field.onChange} />

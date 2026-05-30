@@ -37,7 +37,7 @@ export function SectionDatabases() {
 						<Plus className="h-3.5 w-3.5 mr-1.5" />Add Database
 					</Button>
 				</div>
-				<CardDescription className="text-xs">Aurora Serverless v2. Add multiple databases for different services.</CardDescription>
+				<CardDescription className="text-xs">Managed databases. Add multiple instances for different services.</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
 				{fields.length === 0 ? (
@@ -68,8 +68,8 @@ export function SectionDatabases() {
 									<Select value={f.value || "aurora-postgresql"} onValueChange={f.onChange}>
 										<FormControl><SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger></FormControl>
 										<SelectContent>
-											<SelectItem value="aurora-postgresql">Aurora PostgreSQL</SelectItem>
-											<SelectItem value="aurora-mysql">Aurora MySQL</SelectItem>
+											<SelectItem value="aurora-postgresql">PostgreSQL</SelectItem>
+											<SelectItem value="aurora-mysql">MySQL</SelectItem>
 										</SelectContent>
 									</Select>
 								</FormItem>
