@@ -20,15 +20,14 @@ export default async function PlantPage() {
 				</h1>
 				<p className="text-muted-foreground text-sm">
 					Configure your infrastructure components. Each section maps
-					to a resource in your AWS account.
+					to a resource in your cloud account.
 				</p>
 			</div>
 
 			<PlantVineForm
-				awsConnected={awsStatus.connected}
-				awsIdentityId={awsStatus.identityId}
-				awsAccountId={awsStatus.accountId}
-				initialAwsResources={awsResources}
+				cloudConnected={awsStatus.connected}
+				cloudIdentityId={awsStatus.identityId}
+				initialResources={awsResources}
 			/>
 		</div>
 	);

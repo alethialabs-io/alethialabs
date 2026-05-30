@@ -134,12 +134,44 @@ content = replaceJsonField(
 	"Record<string, unknown>",
 );
 
-// ── vine_eks.cluster_admins ────────────────────────────────────────
+// ── vine_cluster.cluster_admins ────────────────────────────────────
 content = replaceJsonField(
 	content,
-	"vine_eks",
+	"vine_cluster",
 	"cluster_admins",
 	"Array<{ username: string; groups: string[] }>",
+);
+
+// ── vine_cluster.provider_config ──────────────────────────────────
+content = replaceJsonField(
+	content,
+	"vine_cluster",
+	"provider_config",
+	"{ enable_karpenter?: boolean; enable_autopilot?: boolean; }",
+);
+
+// ── vine_dns.provider_config ──────────────────────────────────────
+content = replaceJsonField(
+	content,
+	"vine_dns",
+	"provider_config",
+	"{ acm_certificate?: boolean; cloudfront_waf?: boolean; application_waf?: boolean; cloud_armor?: boolean; azure_waf?: boolean; }",
+);
+
+// ── vine_nosql_tables.provider_config ─────────────────────────────
+content = replaceJsonField(
+	content,
+	"vine_nosql_tables",
+	"provider_config",
+	"{ partition_key_path?: string; }",
+);
+
+// ── vine_container_registries.provider_config ─────────────────────
+content = replaceJsonField(
+	content,
+	"vine_container_registries",
+	"provider_config",
+	"{ vulnerability_scanning?: boolean; }",
 );
 
 // ── vine_topics.subscriptions ──────────────────────────────────────

@@ -64,7 +64,7 @@ const DEFAULT_REGIONS = [
 	"ap-southeast-1", "ap-northeast-1",
 ];
 
-export function SectionAwsRegion() {
+export function SectionCloudRegion() {
 	const { control, setValue } = useFormContext<VineFormData>();
 	const { awsResources, submitted } = useVineStore();
 	const store = useVineStore();
@@ -99,7 +99,7 @@ export function SectionAwsRegion() {
 				<div className="flex items-center justify-between">
 					<div className="flex items-center gap-2">
 						<Cloud className="h-4 w-4 text-muted-foreground" />
-						<CardTitle className="text-base">AWS Account & Region</CardTitle>
+						<CardTitle className="text-base">Cloud Account & Region</CardTitle>
 					</div>
 					<Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={handleRefresh} disabled={isRefreshing}>
 						{isRefreshing ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
@@ -121,7 +121,6 @@ export function SectionAwsRegion() {
 									value={field.value}
 									onChange={(id, accountId) => {
 										field.onChange(id);
-										if (accountId) setValue("vine.aws_account_id", accountId);
 									}}
 								/>
 							</FormControl>
@@ -131,7 +130,7 @@ export function SectionAwsRegion() {
 
 				<div className="space-y-1.5">
 					<Label className="text-xs">Region <span className="text-destructive">*</span></Label>
-					<FormField control={control} name="vine.aws_region" render={({ field }) => (
+					<FormField control={control} name="vine.region" render={({ field }) => (
 						<FormItem>
 							<Select value={field.value || ""} onValueChange={field.onChange}>
 								<FormControl>

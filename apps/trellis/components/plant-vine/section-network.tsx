@@ -38,12 +38,12 @@ function parseCidr(cidr: string) {
 	return { totalAddresses, usableHosts, prefix, rangeStart: toIp(networkStart), rangeEnd: toIp(networkEnd), sizeLabel };
 }
 
-export function SectionVpc() {
+export function SectionNetwork() {
 	const { control, watch } = useFormContext<VineFormData>();
 	const { awsResources } = useVineStore();
-	const region = watch("vine.aws_region");
-	const provisionVpc = watch("vpc.provision_vpc");
-	const vpcCidr = watch("vpc.vpc_cidr") || "";
+	const region = watch("vine.region");
+	const provisionVpc = watch("network.provision_network");
+	const vpcCidr = watch("network.cidr_block") || "";
 
 	const vpcsForRegion = (awsResources?.vpcs as Record<string, VpcInfo[]>)?.[region] || [];
 	const canUseExisting = !!region && vpcsForRegion.length > 0;
@@ -54,13 +54,13 @@ export function SectionVpc() {
 			<CardHeader>
 				<div className="flex items-center gap-2">
 					<Network className="h-4 w-4 text-muted-foreground" />
-					<CardTitle className="text-base">VPC & Networking</CardTitle>
+					<CardTitle className="text-base">Network</CardTitle>
 					<HelpTooltip topic="vpc" />
 				</div>
 				<CardDescription className="text-xs">Create a new VPC or use an existing one.</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
-				<FormField control={control} name="vpc.provision_vpc" render={({ field }) => (
+				<FormField control={control} name="network.provision_network" render={({ field }) => (
 					<FormItem>
 						<div className="flex gap-2">
 							<button type="button" onClick={() => field.onChange(true)}
@@ -84,7 +84,7 @@ export function SectionVpc() {
 								<Label className="text-xs">VPC CIDR Block</Label>
 								<HelpTooltip topic="cidr" />
 							</div>
-							<FormField control={control} name="vpc.vpc_cidr" render={({ field }) => (
+							<FormField control={control} name="network.cidr_block" render={({ field }) => (
 								<FormItem>
 									<FormControl>
 										<Input placeholder="10.0.0.0/16" {...field} value={field.value || ""} className={`h-9 text-sm font-mono ${cidrError ? "border-destructive" : ""}`} />
@@ -111,7 +111,7 @@ export function SectionVpc() {
 								<Label className="text-xs">NAT Gateway</Label>
 								<HelpTooltip topic="nat-gateway" />
 							</div>
-							<FormField control={control} name="vpc.single_nat_gateway" render={({ field }) => (
+							<FormField control={control} name="network.single_nat_gateway" render={({ field }) => (
 								<FormItem>
 									<Select value={field.value ? "single" : "ha"} onValueChange={(v) => field.onChange(v === "single")}>
 										<FormControl>
@@ -127,7 +127,7 @@ export function SectionVpc() {
 						</div>
 					</div>
 				) : (
-					<FormField control={control} name="vpc.vpc_id" render={({ field }) => (
+					<FormField control={control} name="network.network_id" render={({ field }) => (
 						<FormItem className="space-y-1.5">
 							<Label className="text-xs">Select VPC</Label>
 							<Select value={field.value || ""} onValueChange={field.onChange}>

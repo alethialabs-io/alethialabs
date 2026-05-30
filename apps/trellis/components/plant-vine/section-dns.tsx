@@ -22,7 +22,7 @@ export function SectionDns() {
 	const hostedZones = ((awsResources?.hosted_zones as HostedZone[]) || []).filter((z) => !z.IsPrivate);
 
 	const handleZoneChange = (zoneId: string) => {
-		setValue("dns.hosted_zone_id", zoneId);
+		setValue("dns.zone_id", zoneId);
 		const zone = hostedZones.find((z) => z.ID === zoneId);
 		if (zone) setValue("dns.domain_name", zone.Name.replace(/\.$/, ""));
 	};
@@ -50,7 +50,7 @@ export function SectionDns() {
 								<HelpTooltip topic="hosted-zone" />
 							</div>
 							{hostedZones.length > 0 ? (
-								<FormField control={control} name="dns.hosted_zone_id" render={({ field }) => (
+								<FormField control={control} name="dns.zone_id" render={({ field }) => (
 									<FormItem>
 										<Select value={field.value || ""} onValueChange={handleZoneChange}>
 											<FormControl><SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select a hosted zone" /></SelectTrigger></FormControl>
@@ -66,7 +66,7 @@ export function SectionDns() {
 									</FormItem>
 								)} />
 							) : (
-								<FormField control={control} name="dns.hosted_zone_id" render={({ field }) => (
+								<FormField control={control} name="dns.zone_id" render={({ field }) => (
 									<FormItem>
 										<FormControl><Input placeholder="Z1234567890ABC" {...field} value={field.value || ""} className="h-9 text-sm font-mono" /></FormControl>
 									</FormItem>
@@ -83,7 +83,7 @@ export function SectionDns() {
 						</div>
 					</div>
 					<div className="space-y-2">
-						<FormField control={control} name="dns.acm_certificate" render={({ field }) => (
+						<FormField control={control} name="dns.provider_config.acm_certificate" render={({ field }) => (
 							<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
 								<div className="flex items-center gap-1.5">
 									<div><p className="text-sm font-medium">ACM Certificate</p><p className="text-[11px] text-muted-foreground">Free with AWS services</p></div>
@@ -92,7 +92,7 @@ export function SectionDns() {
 								<Switch checked={field.value ?? false} onCheckedChange={field.onChange} />
 							</div>
 						)} />
-						<FormField control={control} name="dns.cloudfront_waf" render={({ field }) => (
+						<FormField control={control} name="dns.provider_config.cloudfront_waf" render={({ field }) => (
 							<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
 								<div className="flex items-center gap-1.5">
 									<Shield className="h-3.5 w-3.5 text-muted-foreground" />
@@ -102,7 +102,7 @@ export function SectionDns() {
 								<Switch checked={field.value ?? false} onCheckedChange={field.onChange} />
 							</div>
 						)} />
-						<FormField control={control} name="dns.application_waf" render={({ field }) => (
+						<FormField control={control} name="dns.provider_config.application_waf" render={({ field }) => (
 							<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
 								<div className="flex items-center gap-1.5">
 									<Shield className="h-3.5 w-3.5 text-muted-foreground" />

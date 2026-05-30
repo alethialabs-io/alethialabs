@@ -1,15 +1,15 @@
 import { z } from "zod";
 import {
 	publicVinesInsertSchema,
-	publicVineVpcInsertSchema,
-	publicVineEksInsertSchema,
+	publicVineNetworkInsertSchema,
+	publicVineClusterInsertSchema,
 	publicVineDnsInsertSchema,
 	publicVineRepositoriesInsertSchema,
 	publicVineDatabasesInsertSchema,
 	publicVineCachesInsertSchema,
 	publicVineQueuesInsertSchema,
 	publicVineTopicsInsertSchema,
-	publicVineDynamodbTablesInsertSchema,
+	publicVineNosqlTablesInsertSchema,
 	publicVineSecretsInsertSchema,
 } from "./database.schemas";
 
@@ -32,13 +32,13 @@ const vineSchema = publicVinesInsertSchema
 	.extend({
 		project_name: z.string().min(1, "Vine name is required").max(25).regex(/^[a-z0-9][a-z0-9-]*$/, "Lowercase, numbers, hyphens only"),
 		vineyard_id: z.string().min(1, "Vineyard is required"),
-		aws_region: z.string().min(1, "Region is required"),
-		cloud_identity_id: z.string().min(1, "AWS account is required"),
+		region: z.string().min(1, "Region is required"),
+		cloud_identity_id: z.string().min(1, "Cloud account is required"),
 	});
 
-const vpcSchema = publicVineVpcInsertSchema.omit(componentAutoFields);
+const networkSchema = publicVineNetworkInsertSchema.omit(componentAutoFields);
 
-const eksSchema = publicVineEksInsertSchema.omit({
+const clusterSchema = publicVineClusterInsertSchema.omit({
 	...componentAutoFields,
 	cluster_name: true,
 	cluster_endpoint: true,
@@ -70,7 +70,7 @@ const topicItemSchema = publicVineTopicsInsertSchema
 	.omit(componentAutoFields)
 	.extend({ name: z.string().min(1, "Topic name is required") });
 
-const dynamodbItemSchema = publicVineDynamodbTablesInsertSchema
+const nosqlItemSchema = publicVineNosqlTablesInsertSchema
 	.omit(componentAutoFields)
 	.extend({
 		name: z.string().min(1, "Table name is required"),
@@ -86,15 +86,15 @@ const secretItemSchema = publicVineSecretsInsertSchema.omit({
 
 export const vineFormSchema = z.object({
 	vine: vineSchema,
-	vpc: vpcSchema,
-	eks: eksSchema,
+	network: networkSchema,
+	cluster: clusterSchema,
 	dns: dnsSchema,
 	repositories: repositoriesSchema,
 	databases: z.array(databaseItemSchema).default([]),
 	caches: z.array(cacheItemSchema).default([]),
 	queues: z.array(queueItemSchema).default([]),
 	topics: z.array(topicItemSchema).default([]),
-	dynamodb_tables: z.array(dynamodbItemSchema).default([]),
+	nosql_tables: z.array(nosqlItemSchema).default([]),
 	secrets: z.array(secretItemSchema).default([]),
 });
 
@@ -105,6 +105,6 @@ export {
 	cacheItemSchema,
 	queueItemSchema,
 	topicItemSchema,
-	dynamodbItemSchema,
+	nosqlItemSchema,
 	secretItemSchema,
 };

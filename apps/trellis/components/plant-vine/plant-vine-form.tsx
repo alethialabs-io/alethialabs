@@ -13,36 +13,34 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 
 import { SectionProjectBasics } from "./section-project-basics";
-import { SectionAwsRegion } from "./section-aws-region";
-import { SectionVpc } from "./section-vpc";
-import { SectionEks } from "./section-eks";
+import { SectionCloudRegion } from "./section-cloud-region";
+import { SectionNetwork } from "./section-network";
+import { SectionCluster } from "./section-cluster";
 import { SectionRepositories } from "./section-repositories";
 import { SectionDatabases } from "./section-databases";
 import { SectionCaches } from "./section-caches";
 import { SectionDns } from "./section-dns";
 import { SectionMessaging } from "./section-messaging";
-import { SectionDynamodb } from "./section-dynamodb";
+import { SectionNosql } from "./section-nosql";
 import { SectionSecrets } from "./section-secrets";
 import { CostSidebar } from "./cost-sidebar";
 
 interface PlantVineFormProps {
-	awsConnected: boolean;
-	awsIdentityId?: string;
-	awsAccountId?: string;
-	initialAwsResources: CachedAwsResources | null;
+	cloudConnected: boolean;
+	cloudIdentityId?: string;
+	initialResources: CachedAwsResources | null;
 }
 
 export function PlantVineForm({
-	awsConnected,
-	awsIdentityId,
-	awsAccountId,
-	initialAwsResources,
+	cloudConnected,
+	cloudIdentityId,
+	initialResources,
 }: PlantVineFormProps) {
 	const router = useRouter();
 	const store = useVineStore();
 
 	useEffect(() => {
-		store.set({ awsConnected, awsResources: initialAwsResources });
+		store.set({ cloudConnected: cloudConnected, awsResources: initialResources });
 	}, []);
 
 	const form = useForm<VineFormData>({
@@ -51,20 +49,19 @@ export function PlantVineForm({
 			vine: {
 				project_name: "",
 				environment_stage: "development",
-				aws_region: "",
-				aws_account_id: awsAccountId || null,
-				cloud_identity_id: awsIdentityId || "",
+				region: "",
+				cloud_identity_id: cloudIdentityId || "",
 				terraform_version: "1.11.4",
 				vineyard_id: "",
 			},
-			vpc: {
-				provision_vpc: true,
-				vpc_cidr: "10.0.0.0/16",
+			network: {
+				provision_network: true,
+				cidr_block: "10.0.0.0/16",
 				single_nat_gateway: true,
 			},
-			eks: {
+			cluster: {
 				cluster_version: "1.32",
-				enable_karpenter: true,
+				provider_config: { enable_karpenter: true },
 				instance_types: ["t3.medium"],
 				node_min_size: 2,
 				node_max_size: 5,
@@ -73,22 +70,22 @@ export function PlantVineForm({
 			},
 			dns: {
 				enabled: false,
-				acm_certificate: false,
-				cloudfront_waf: false,
-				application_waf: false,
+				managed_certificate: false,
+				waf_enabled: false,
+				provider_config: {},
 			},
 			repositories: {},
 			databases: [],
 			caches: [],
 			queues: [],
 			topics: [],
-			dynamodb_tables: [],
+			nosql_tables: [],
 			secrets: [],
 		},
 		mode: "onChange",
 	});
 
-	const region = form.watch("vine.aws_region");
+	const region = form.watch("vine.region");
 	useEffect(() => {
 		if (region) store.fetchPrices(region);
 	}, [region]);
@@ -122,15 +119,15 @@ export function PlantVineForm({
 			<form onSubmit={form.handleSubmit(onSubmit, onError)} className="flex gap-6">
 				<div className="flex-1 space-y-6 min-w-0">
 					<SectionProjectBasics />
-					<SectionAwsRegion />
-					<SectionVpc />
-					<SectionEks />
+					<SectionCloudRegion />
+					<SectionNetwork />
+					<SectionCluster />
 					<SectionRepositories />
 					<SectionDatabases />
 					<SectionCaches />
 					<SectionDns />
 					<SectionMessaging />
-					<SectionDynamodb />
+					<SectionNosql />
 					<SectionSecrets />
 
 					<div className="flex items-center justify-end gap-4 pt-4 pb-8">
@@ -139,7 +136,7 @@ export function PlantVineForm({
 						)}
 						<Button
 							type="submit"
-							disabled={store.isLoading || !awsConnected}
+							disabled={store.isLoading || !cloudConnected}
 							className="min-w-[160px]"
 						>
 							{store.isLoading ? (

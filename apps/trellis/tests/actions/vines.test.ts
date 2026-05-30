@@ -8,15 +8,14 @@ function buildValidFormData(overrides?: Partial<VineFormData>): VineFormData {
 			project_name: "test-project",
 			vineyard_id: "550e8400-e29b-41d4-a716-446655440000",
 			environment_stage: "development",
-			aws_region: "eu-west-1",
+			region: "eu-west-1",
 			cloud_identity_id: "660e8400-e29b-41d4-a716-446655440000",
 			terraform_version: "1.11.4",
-			aws_account_id: "787587782604",
 		},
-		vpc: { provision_vpc: true, vpc_cidr: "10.0.0.0/16", single_nat_gateway: true },
-		eks: {
+		network: { provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true },
+		cluster: {
 			cluster_version: "1.32",
-			enable_karpenter: true,
+			provider_config: { enable_karpenter: true },
 			instance_types: ["t3.medium"],
 			node_min_size: 2,
 			node_max_size: 5,
@@ -32,7 +31,7 @@ function buildValidFormData(overrides?: Partial<VineFormData>): VineFormData {
 		caches: [],
 		queues: [],
 		topics: [],
-		dynamodb_tables: [],
+		nosql_tables: [],
 		secrets: [],
 		...overrides,
 	} as VineFormData;
@@ -80,7 +79,7 @@ describe("CreateVineInput shape validation", () => {
 
 	it("form data with dynamodb tables passes schema", () => {
 		const data = buildValidFormData({
-			dynamodb_tables: [
+			nosql_tables: [
 				{
 					name: "users",
 					hash_key: "id",
@@ -115,7 +114,7 @@ describe("CreateVineInput shape validation", () => {
 			caches: [{ name: "cache-1", engine: "redis", node_type: "cache.t3.medium", num_cache_nodes: 1 }],
 			queues: [{ name: "q-1", fifo: false, visibility_timeout: 30 }],
 			topics: [{ name: "t-1" }],
-			dynamodb_tables: [{ name: "ddb-1", hash_key: "id" }],
+			nosql_tables: [{ name: "ddb-1", hash_key: "id" }],
 			secrets: [{ name: "s-1", generate: true, length: 32 }],
 		});
 		const result = vineFormSchema.safeParse(data);
@@ -130,53 +129,51 @@ describe("CreateVineInput → server action mapping", () => {
 
 		expect(parsed.vine.project_name).toBe("test-project");
 		expect(parsed.vine.environment_stage).toBe("development");
-		expect(parsed.vine.aws_region).toBe("eu-west-1");
+		expect(parsed.vine.region).toBe("eu-west-1");
 		expect(parsed.vine.terraform_version).toBe("1.11.4");
 		expect(parsed.vine.vineyard_id).toBe("550e8400-e29b-41d4-a716-446655440000");
 		expect(parsed.vine.cloud_identity_id).toBe("660e8400-e29b-41d4-a716-446655440000");
 	});
 
-	it("vpc fields map to vine_vpc table insert", () => {
+	it("vpc fields map to vine_network table insert", () => {
 		const data = buildValidFormData();
 		const parsed = vineFormSchema.parse(data);
 
-		expect(parsed.vpc.provision_vpc).toBe(true);
-		expect(parsed.vpc.vpc_cidr).toBe("10.0.0.0/16");
-		expect(parsed.vpc.single_nat_gateway).toBe(true);
+		expect(parsed.network.provision_network).toBe(true);
+		expect(parsed.network.cidr_block).toBe("10.0.0.0/16");
+		expect(parsed.network.single_nat_gateway).toBe(true);
 	});
 
-	it("eks fields map to vine_eks table insert", () => {
+	it("eks fields map to vine_cluster table insert", () => {
 		const data = buildValidFormData();
 		const parsed = vineFormSchema.parse(data);
 
-		expect(parsed.eks.cluster_version).toBe("1.32");
-		expect(parsed.eks.enable_karpenter).toBe(true);
-		expect(parsed.eks.instance_types).toEqual(["t3.medium"]);
-		expect(parsed.eks.node_min_size).toBe(2);
-		expect(parsed.eks.node_desired_size).toBe(2);
-		expect(parsed.eks.node_max_size).toBe(5);
-		expect(parsed.eks.cluster_admins).toEqual([{ username: "admin@example.com", groups: ["system:masters"] }]);
+		expect(parsed.cluster.cluster_version).toBe("1.32");
+		expect(parsed.cluster.provider_config?.enable_karpenter).toBe(true);
+		expect(parsed.cluster.instance_types).toEqual(["t3.medium"]);
+		expect(parsed.cluster.node_min_size).toBe(2);
+		expect(parsed.cluster.node_desired_size).toBe(2);
+		expect(parsed.cluster.node_max_size).toBe(5);
+		expect(parsed.cluster.cluster_admins).toEqual([{ username: "admin@example.com", groups: ["system:masters"] }]);
 	});
 
 	it("dns fields map to vine_dns table insert", () => {
 		const data = buildValidFormData({
 			dns: {
 				enabled: true,
-				hosted_zone_id: "Z123",
+				zone_id: "Z123",
 				domain_name: "example.com",
-				acm_certificate: true,
-				cloudfront_waf: true,
-				application_waf: false,
+				provider_config: { acm_certificate: true, cloudfront_waf: true, application_waf: false },
 			} as any,
 		});
 		const parsed = vineFormSchema.parse(data);
 
 		expect(parsed.dns.enabled).toBe(true);
-		expect(parsed.dns.hosted_zone_id).toBe("Z123");
+		expect(parsed.dns.zone_id).toBe("Z123");
 		expect(parsed.dns.domain_name).toBe("example.com");
-		expect(parsed.dns.acm_certificate).toBe(true);
-		expect(parsed.dns.cloudfront_waf).toBe(true);
-		expect(parsed.dns.application_waf).toBe(false);
+		expect(parsed.dns.provider_config?.acm_certificate).toBe(true);
+		expect(parsed.dns.provider_config?.cloudfront_waf).toBe(true);
+		expect(parsed.dns.provider_config?.application_waf).toBe(false);
 	});
 
 	it("repositories fields map to vine_repositories table insert", () => {
@@ -206,16 +203,16 @@ describe("CreateVineInput → server action mapping", () => {
 		expect(parsed.vine).not.toHaveProperty("created_at");
 		expect(parsed.vine).not.toHaveProperty("updated_at");
 		expect(parsed.vine).not.toHaveProperty("estimated_monthly_cost");
-		expect(parsed.vpc).not.toHaveProperty("vine_id");
-		expect(parsed.vpc).not.toHaveProperty("status");
-		expect(parsed.eks).not.toHaveProperty("cluster_name");
-		expect(parsed.eks).not.toHaveProperty("cluster_endpoint");
+		expect(parsed.network).not.toHaveProperty("vine_id");
+		expect(parsed.network).not.toHaveProperty("status");
+		expect(parsed.cluster).not.toHaveProperty("cluster_name");
+		expect(parsed.cluster).not.toHaveProperty("cluster_endpoint");
 	});
 });
 
 describe("Validation edge cases", () => {
 	it("rejects when vine is missing entirely", () => {
-		const result = vineFormSchema.safeParse({ vpc: {}, eks: {}, dns: {}, repositories: {} });
+		const result = vineFormSchema.safeParse({ vpc: {}, cluster: {}, dns: {}, repositories: {} });
 		expect(result.success).toBe(false);
 	});
 
@@ -236,7 +233,7 @@ describe("Validation edge cases", () => {
 
 	it("rejects invalid dynamodb key type", () => {
 		const data = buildValidFormData({
-			dynamodb_tables: [{ name: "test", hash_key: "id", hash_key_type: "X" as any }],
+			nosql_tables: [{ name: "test", hash_key: "id", hash_key_type: "X" as any }],
 		});
 		const result = vineFormSchema.safeParse(data);
 		expect(result.success).toBe(false);
@@ -244,7 +241,7 @@ describe("Validation edge cases", () => {
 
 	it("rejects invalid dynamodb billing mode", () => {
 		const data = buildValidFormData({
-			dynamodb_tables: [{ name: "test", hash_key: "id", billing_mode: "INVALID" as any }],
+			nosql_tables: [{ name: "test", hash_key: "id", billing_mode: "INVALID" as any }],
 		});
 		const result = vineFormSchema.safeParse(data);
 		expect(result.success).toBe(false);

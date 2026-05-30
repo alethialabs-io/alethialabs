@@ -18,7 +18,7 @@ const validVine = {
 	caches: [],
 	queues: [],
 	topics: [],
-	dynamodb_tables: [],
+	nosql_tables: [],
 	secrets: [],
 };
 
@@ -88,7 +88,7 @@ describe("vineFormSchema", () => {
 		});
 
 		it("accepts valid vine with optional arrays empty", () => {
-			const data = { ...validVine, databases: [], caches: [], queues: [], topics: [], dynamodb_tables: [], secrets: [] };
+			const data = { ...validVine, databases: [], caches: [], queues: [], topics: [], nosql_tables: [], secrets: [] };
 			const result = vineFormSchema.safeParse(data);
 			expect(result.success).toBe(true);
 		});
@@ -102,7 +102,7 @@ describe("vineFormSchema", () => {
 				expect(result.data.caches).toEqual([]);
 				expect(result.data.queues).toEqual([]);
 				expect(result.data.topics).toEqual([]);
-				expect(result.data.dynamodb_tables).toEqual([]);
+				expect(result.data.nosql_tables).toEqual([]);
 				expect(result.data.secrets).toEqual([]);
 			}
 		});
@@ -128,16 +128,16 @@ describe("vineFormSchema", () => {
 		});
 	});
 
-	describe("dynamodb_tables array", () => {
+	describe("nosql_tables array", () => {
 		it("accepts empty array", () => {
-			const result = vineFormSchema.safeParse({ ...validVine, dynamodb_tables: [] });
+			const result = vineFormSchema.safeParse({ ...validVine, nosql_tables: [] });
 			expect(result.success).toBe(true);
 		});
 
 		it("accepts valid dynamodb table", () => {
 			const data = {
 				...validVine,
-				dynamodb_tables: [{ name: "users", hash_key: "id", hash_key_type: "S", table_type: "standard", billing_mode: "PAY_PER_REQUEST" }],
+				nosql_tables: [{ name: "users", hash_key: "id", hash_key_type: "S", table_type: "standard", billing_mode: "PAY_PER_REQUEST" }],
 			};
 			const result = vineFormSchema.safeParse(data);
 			expect(result.success).toBe(true);
@@ -146,7 +146,7 @@ describe("vineFormSchema", () => {
 		it("rejects dynamodb table without hash_key", () => {
 			const data = {
 				...validVine,
-				dynamodb_tables: [{ name: "users" }],
+				nosql_tables: [{ name: "users" }],
 			};
 			const result = vineFormSchema.safeParse(data);
 			expect(result.success).toBe(false);

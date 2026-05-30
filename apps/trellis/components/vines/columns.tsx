@@ -29,12 +29,12 @@ export const vinesColumns: ColumnDef<PublicVinesRow>[] = [
     ),
   },
   {
-    accessorKey: "aws_region",
+    accessorKey: "region",
     header: "Region",
     enableSorting: true,
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground font-mono">
-        {row.getValue("aws_region")}
+        {row.getValue("region")}
       </span>
     ),
   },

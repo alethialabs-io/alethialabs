@@ -25,7 +25,7 @@ const INSTANCE_TYPE_OPTIONS = [
 	"g4dn.xlarge", "p3.2xlarge",
 ];
 
-export function SectionEks() {
+export function SectionCluster() {
 	const { control, watch, setValue } = useFormContext<VineFormData>();
 	const [savedAdmins, setSavedAdmins] = useState<EksAdminOption[]>([]);
 	const [comboOpen, setComboOpen] = useState(false);
@@ -33,11 +33,11 @@ export function SectionEks() {
 
 	useEffect(() => { getEksAdmins().then(setSavedAdmins); }, []);
 
-	const clusterAdmins = watch("eks.cluster_admins") || [];
-	const instanceTypes = watch("eks.instance_types") || [];
-	const nodeMinSize = watch("eks.node_min_size") ?? 2;
-	const nodeMaxSize = watch("eks.node_max_size") ?? 5;
-	const nodeDesiredSize = watch("eks.node_desired_size") ?? 2;
+	const clusterAdmins = watch("cluster.cluster_admins") || [];
+	const instanceTypes = watch("cluster.instance_types") || [];
+	const nodeMinSize = watch("cluster.node_min_size") ?? 2;
+	const nodeMaxSize = watch("cluster.node_max_size") ?? 5;
+	const nodeDesiredSize = watch("cluster.node_desired_size") ?? 2;
 
 	const nodeSizeError = nodeMinSize > nodeDesiredSize || nodeDesiredSize > nodeMaxSize ? "Must be: min ≤ desired ≤ max" : null;
 	const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -46,25 +46,25 @@ export function SectionEks() {
 		const trimmed = email.trim().toLowerCase();
 		if (!trimmed || !emailRegex.test(trimmed)) return;
 		if (clusterAdmins.some((a: any) => a.username === trimmed)) return;
-		setValue("eks.cluster_admins", [...clusterAdmins, { username: trimmed, groups: ["system:masters"] }]);
+		setValue("cluster.cluster_admins", [...clusterAdmins, { username: trimmed, groups: ["system:masters"] }]);
 		const saved = await createEksAdmin(trimmed);
 		if (saved && !savedAdmins.some((a) => a.email === trimmed)) setSavedAdmins((prev) => [...prev, saved]);
 		setComboSearch(""); setComboOpen(false);
 	};
 
 	const removeAdmin = (index: number) => {
-		setValue("eks.cluster_admins", clusterAdmins.filter((_: any, i: number) => i !== index));
+		setValue("cluster.cluster_admins", clusterAdmins.filter((_: any, i: number) => i !== index));
 	};
 
 	const availableAdmins = savedAdmins.filter((a) => !clusterAdmins.some((ca: any) => ca.username === a.email));
 
 	const addInstanceType = (type: string) => {
 		if (!type || instanceTypes.includes(type) || instanceTypes.length >= 5) return;
-		setValue("eks.instance_types", [...instanceTypes, type]);
+		setValue("cluster.instance_types", [...instanceTypes, type]);
 	};
 
 	const removeInstanceType = (type: string) => {
-		setValue("eks.instance_types", instanceTypes.filter((t: string) => t !== type));
+		setValue("cluster.instance_types", instanceTypes.filter((t: string) => t !== type));
 	};
 
 	return (
@@ -72,7 +72,7 @@ export function SectionEks() {
 			<CardHeader>
 				<div className="flex items-center gap-2">
 					<Server className="h-4 w-4 text-muted-foreground" />
-					<CardTitle className="text-base">Platform & EKS</CardTitle>
+					<CardTitle className="text-base">Platform & Cluster</CardTitle>
 				</div>
 				<CardDescription className="text-xs">Kubernetes cluster, node groups, and auto-scaling.</CardDescription>
 			</CardHeader>
@@ -82,7 +82,7 @@ export function SectionEks() {
 				<div className="grid md:grid-cols-2 gap-4">
 					<div className="space-y-1.5">
 						<Label className="text-xs">EKS Version</Label>
-						<FormField control={control} name="eks.cluster_version" render={({ field }) => (
+						<FormField control={control} name="cluster.cluster_version" render={({ field }) => (
 							<FormItem><EksVersionSelector value={field.value || "1.32"} onChange={field.onChange} /></FormItem>
 						)} />
 					</div>
@@ -108,11 +108,11 @@ export function SectionEks() {
 					<Label className="text-xs font-medium">Node Group</Label>
 					<div className="grid md:grid-cols-3 gap-3">
 						{(["node_min_size", "node_desired_size", "node_max_size"] as const).map((name) => (
-							<FormField key={name} control={control} name={`eks.${name}`} render={({ field }) => (
+							<FormField key={name} control={control} name={`cluster.${name}` as const} render={({ field }) => (
 								<FormItem className="space-y-1">
 									<Label className="text-[11px] text-muted-foreground">{name === "node_min_size" ? "Min" : name === "node_desired_size" ? "Desired" : "Max"} Nodes</Label>
 									<FormControl>
-										<Input type="number" min={1} max={100} {...field} value={field.value ?? 2}
+										<Input type="number" min={1} max={100} {...field} value={Number(field.value) ?? 2}
 											onChange={(e) => field.onChange(parseInt(e.target.value) || 2)}
 											className={`h-8 text-xs ${nodeSizeError ? "border-destructive" : ""}`} />
 									</FormControl>
@@ -149,7 +149,7 @@ export function SectionEks() {
 				</div>
 
 				{/* Karpenter */}
-				<FormField control={control} name="eks.enable_karpenter" render={({ field }) => (
+				<FormField control={control} name="cluster.provider_config.enable_karpenter" render={({ field }) => (
 					<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
 						<div className="flex items-center gap-1.5">
 							<div><p className="text-sm font-medium">Karpenter Auto-Scaling</p><p className="text-[11px] text-muted-foreground">Dynamic node provisioning.</p></div>

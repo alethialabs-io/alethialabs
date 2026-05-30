@@ -106,9 +106,30 @@ export interface ClusterMetadata {
 	[key: string]: unknown;
 }
 
-export interface EksClusterAdmin {
+export interface ClusterAdmin {
 	username: string;
 	groups: string[];
+}
+
+export interface ClusterProviderConfig {
+	enable_karpenter?: boolean;
+	enable_autopilot?: boolean;
+}
+
+export interface DnsProviderConfig {
+	acm_certificate?: boolean;
+	cloudfront_waf?: boolean;
+	application_waf?: boolean;
+	cloud_armor?: boolean;
+	azure_waf?: boolean;
+}
+
+export interface NosqlProviderConfig {
+	partition_key_path?: string;
+}
+
+export interface RegistryProviderConfig {
+	vulnerability_scanning?: boolean;
 }
 
 export interface TopicSubscription {
@@ -169,10 +190,34 @@ export type Database = MergeDeep<
 					Insert: { changes?: AuditChanges | null };
 					Update: { changes?: AuditChanges | null };
 				};
-				vine_eks: {
-					Row: { cluster_admins: EksClusterAdmin[] | null };
-					Insert: { cluster_admins?: EksClusterAdmin[] | null };
-					Update: { cluster_admins?: EksClusterAdmin[] | null };
+				vine_cluster: {
+					Row: {
+						cluster_admins: ClusterAdmin[] | null;
+						provider_config: ClusterProviderConfig | null;
+					};
+					Insert: {
+						cluster_admins?: ClusterAdmin[] | null;
+						provider_config?: ClusterProviderConfig | null;
+					};
+					Update: {
+						cluster_admins?: ClusterAdmin[] | null;
+						provider_config?: ClusterProviderConfig | null;
+					};
+				};
+				vine_dns: {
+					Row: { provider_config: DnsProviderConfig | null };
+					Insert: { provider_config?: DnsProviderConfig | null };
+					Update: { provider_config?: DnsProviderConfig | null };
+				};
+				vine_nosql_tables: {
+					Row: { provider_config: NosqlProviderConfig | null };
+					Insert: { provider_config?: NosqlProviderConfig | null };
+					Update: { provider_config?: NosqlProviderConfig | null };
+				};
+				vine_container_registries: {
+					Row: { provider_config: RegistryProviderConfig | null };
+					Insert: { provider_config?: RegistryProviderConfig | null };
+					Update: { provider_config?: RegistryProviderConfig | null };
 				};
 				vine_topics: {
 					Row: { subscriptions: TopicSubscription[] | null };

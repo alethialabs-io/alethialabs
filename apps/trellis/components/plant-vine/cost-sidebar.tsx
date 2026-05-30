@@ -25,14 +25,14 @@ export function CostSidebar() {
 	const { watch } = useFormContext<VineFormData>();
 	const { prices, loadingPrices } = useVineStore();
 
-	const instanceTypes = watch("eks.instance_types") || [];
-	const nodeDesiredSize = watch("eks.node_desired_size") || 2;
-	const singleNatGateway = watch("vpc.single_nat_gateway") ?? true;
+	const instanceTypes = watch("cluster.instance_types") || [];
+	const nodeDesiredSize = watch("cluster.node_desired_size") || 2;
+	const singleNatGateway = watch("network.single_nat_gateway") ?? true;
 	const databases = watch("databases") || [];
 	const caches = watch("caches") || [];
-	const cloudfrontWaf = watch("dns.cloudfront_waf") ?? false;
-	const applicationWaf = watch("dns.application_waf") ?? false;
-	const dynamodbTables = watch("dynamodb_tables") || [];
+	const cloudfrontWaf = watch("dns.provider_config.cloudfront_waf") ?? false;
+	const applicationWaf = watch("dns.provider_config.application_waf") ?? false;
+	const nosqlTables = watch("nosql_tables") || [];
 	const secrets = watch("secrets") || [];
 
 	const items = useMemo(() => {
@@ -65,8 +65,8 @@ export function CostSidebar() {
 		if (cloudfrontWaf) result.push({ label: "CloudFront WAF", cost: p?.wafWebACL ?? 5.0 });
 		if (applicationWaf) result.push({ label: "Application WAF", cost: p?.wafWebACL ?? 5.0 });
 
-		if (dynamodbTables.length > 0) {
-			result.push({ label: "DynamoDB", cost: 0, detail: `${dynamodbTables.length} table${dynamodbTables.length > 1 ? "s" : ""} (on-demand)` });
+		if (nosqlTables.length > 0) {
+			result.push({ label: "NoSQL", cost: 0, detail: `${nosqlTables.length} table${nosqlTables.length > 1 ? "s" : ""} (on-demand)` });
 		}
 
 		if (secrets.length > 0) {
@@ -74,7 +74,7 @@ export function CostSidebar() {
 		}
 
 		return result;
-	}, [databases, caches, cloudfrontWaf, applicationWaf, instanceTypes, nodeDesiredSize, singleNatGateway, prices, dynamodbTables, secrets]);
+	}, [databases, caches, cloudfrontWaf, applicationWaf, instanceTypes, nodeDesiredSize, singleNatGateway, prices, nosqlTables, secrets]);
 
 	const total = items.reduce((sum, item) => sum + item.cost, 0);
 

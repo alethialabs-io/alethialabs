@@ -103,6 +103,27 @@ export type Database = {
         }
         Relationships: []
       }
+      cluster_admins: {
+        Row: {
+          created_at: string | null
+          email: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          email: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          email?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       clusters: {
         Row: {
           agent_token_hash: string | null
@@ -132,27 +153,6 @@ export type Database = {
           metadata?: { region?: string | null; vpc_cidr?: string | null; [key: string]: any; } | null
           name?: string
           status?: Database["public"]["Enums"]["cluster_status"] | null
-          user_id?: string
-        }
-        Relationships: []
-      }
-      eks_admins: {
-        Row: {
-          created_at: string | null
-          email: string
-          id: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string | null
-          email: string
-          id?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string | null
-          email?: string
-          id?: string
           user_id?: string
         }
         Relationships: []
@@ -313,6 +313,7 @@ export type Database = {
           execution_metadata: Record<string, unknown> | null
           id: string
           job_type: Database["public"]["Enums"]["provision_job_type"]
+          plan_job_id: string | null
           started_at: string | null
           status: string
           updated_at: string | null
@@ -333,6 +334,7 @@ export type Database = {
           execution_metadata?: Record<string, unknown> | null
           id?: string
           job_type: Database["public"]["Enums"]["provision_job_type"]
+          plan_job_id?: string | null
           started_at?: string | null
           status?: string
           updated_at?: string | null
@@ -353,6 +355,7 @@ export type Database = {
           execution_metadata?: Record<string, unknown> | null
           id?: string
           job_type?: Database["public"]["Enums"]["provision_job_type"]
+          plan_job_id?: string | null
           started_at?: string | null
           status?: string
           updated_at?: string | null
@@ -374,6 +377,13 @@ export type Database = {
             columns: ["cluster_id"]
             isOneToOne: false
             referencedRelation: "clusters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "provision_jobs_plan_job_id_fkey"
+            columns: ["plan_job_id"]
+            isOneToOne: false
+            referencedRelation: "provision_jobs"
             referencedColumns: ["id"]
           },
           {
@@ -402,7 +412,7 @@ export type Database = {
       vine_audit_log: {
         Row: {
           action: Database["public"]["Enums"]["audit_action"]
-          changes: Record<string, { old?: unknown; new?: unknown }> | null
+          changes: Record<string, unknown> | null
           component_id: string | null
           component_type: string | null
           created_at: string
@@ -412,7 +422,7 @@ export type Database = {
         }
         Insert: {
           action: Database["public"]["Enums"]["audit_action"]
-          changes?: Record<string, { old?: unknown; new?: unknown }> | null
+          changes?: Record<string, unknown> | null
           component_id?: string | null
           component_type?: string | null
           created_at?: string
@@ -422,7 +432,7 @@ export type Database = {
         }
         Update: {
           action?: Database["public"]["Enums"]["audit_action"]
-          changes?: Record<string, { old?: unknown; new?: unknown }> | null
+          changes?: Record<string, unknown> | null
           component_id?: string | null
           component_type?: string | null
           created_at?: string
@@ -513,6 +523,141 @@ export type Database = {
           },
         ]
       }
+      vine_cluster: {
+        Row: {
+          cluster_admins: Array<{ username: string; groups: string[] }> | null
+          cluster_endpoint: string | null
+          cluster_name: string | null
+          cluster_version: string | null
+          created_at: string
+          estimated_monthly_cost: number | null
+          id: string
+          instance_types: string[] | null
+          node_desired_size: number | null
+          node_max_size: number | null
+          node_min_size: number | null
+          provider_config: { enable_karpenter?: boolean; enable_autopilot?: boolean; } | null
+          status: Database["public"]["Enums"]["component_status"]
+          status_message: string | null
+          updated_at: string
+          vine_id: string
+        }
+        Insert: {
+          cluster_admins?: Array<{ username: string; groups: string[] }> | null
+          cluster_endpoint?: string | null
+          cluster_name?: string | null
+          cluster_version?: string | null
+          created_at?: string
+          estimated_monthly_cost?: number | null
+          id?: string
+          instance_types?: string[] | null
+          node_desired_size?: number | null
+          node_max_size?: number | null
+          node_min_size?: number | null
+          provider_config?: { enable_karpenter?: boolean; enable_autopilot?: boolean; } | null
+          status?: Database["public"]["Enums"]["component_status"]
+          status_message?: string | null
+          updated_at?: string
+          vine_id: string
+        }
+        Update: {
+          cluster_admins?: Array<{ username: string; groups: string[] }> | null
+          cluster_endpoint?: string | null
+          cluster_name?: string | null
+          cluster_version?: string | null
+          created_at?: string
+          estimated_monthly_cost?: number | null
+          id?: string
+          instance_types?: string[] | null
+          node_desired_size?: number | null
+          node_max_size?: number | null
+          node_min_size?: number | null
+          provider_config?: { enable_karpenter?: boolean; enable_autopilot?: boolean; } | null
+          status?: Database["public"]["Enums"]["component_status"]
+          status_message?: string | null
+          updated_at?: string
+          vine_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vine_eks_vine_id_fkey"
+            columns: ["vine_id"]
+            isOneToOne: true
+            referencedRelation: "vine_full"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vine_eks_vine_id_fkey"
+            columns: ["vine_id"]
+            isOneToOne: true
+            referencedRelation: "vines"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vine_container_registries: {
+        Row: {
+          created_at: string
+          id: string
+          image_tag_mutability:
+            | Database["public"]["Enums"]["registry_tag_mutability"]
+            | null
+          name: string
+          provider_config: { vulnerability_scanning?: boolean; } | null
+          repository_url: string | null
+          scan_on_push: boolean | null
+          status: Database["public"]["Enums"]["component_status"]
+          status_message: string | null
+          updated_at: string
+          vine_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          image_tag_mutability?:
+            | Database["public"]["Enums"]["registry_tag_mutability"]
+            | null
+          name: string
+          provider_config?: { vulnerability_scanning?: boolean; } | null
+          repository_url?: string | null
+          scan_on_push?: boolean | null
+          status?: Database["public"]["Enums"]["component_status"]
+          status_message?: string | null
+          updated_at?: string
+          vine_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          image_tag_mutability?:
+            | Database["public"]["Enums"]["registry_tag_mutability"]
+            | null
+          name?: string
+          provider_config?: { vulnerability_scanning?: boolean; } | null
+          repository_url?: string | null
+          scan_on_push?: boolean | null
+          status?: Database["public"]["Enums"]["component_status"]
+          status_message?: string | null
+          updated_at?: string
+          vine_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vine_ecr_repos_vine_id_fkey"
+            columns: ["vine_id"]
+            isOneToOne: false
+            referencedRelation: "vine_full"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vine_ecr_repos_vine_id_fkey"
+            columns: ["vine_id"]
+            isOneToOne: false
+            referencedRelation: "vines"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vine_databases: {
         Row: {
           backup_retention_days: number | null
@@ -590,49 +735,49 @@ export type Database = {
       }
       vine_dns: {
         Row: {
-          acm_certificate: boolean | null
-          application_waf: boolean | null
-          cloudfront_waf: boolean | null
           created_at: string
           domain_name: string | null
           enabled: boolean
           estimated_monthly_cost: number | null
-          hosted_zone_id: string | null
           id: string
+          managed_certificate: boolean | null
+          provider_config: { acm_certificate?: boolean; cloudfront_waf?: boolean; application_waf?: boolean; cloud_armor?: boolean; azure_waf?: boolean; } | null
           status: Database["public"]["Enums"]["component_status"]
           status_message: string | null
           updated_at: string
           vine_id: string
+          waf_enabled: boolean | null
+          zone_id: string | null
         }
         Insert: {
-          acm_certificate?: boolean | null
-          application_waf?: boolean | null
-          cloudfront_waf?: boolean | null
           created_at?: string
           domain_name?: string | null
           enabled?: boolean
           estimated_monthly_cost?: number | null
-          hosted_zone_id?: string | null
           id?: string
+          managed_certificate?: boolean | null
+          provider_config?: { acm_certificate?: boolean; cloudfront_waf?: boolean; application_waf?: boolean; cloud_armor?: boolean; azure_waf?: boolean; } | null
           status?: Database["public"]["Enums"]["component_status"]
           status_message?: string | null
           updated_at?: string
           vine_id: string
+          waf_enabled?: boolean | null
+          zone_id?: string | null
         }
         Update: {
-          acm_certificate?: boolean | null
-          application_waf?: boolean | null
-          cloudfront_waf?: boolean | null
           created_at?: string
           domain_name?: string | null
           enabled?: boolean
           estimated_monthly_cost?: number | null
-          hosted_zone_id?: string | null
           id?: string
+          managed_certificate?: boolean | null
+          provider_config?: { acm_certificate?: boolean; cloudfront_waf?: boolean; application_waf?: boolean; cloud_armor?: boolean; azure_waf?: boolean; } | null
           status?: Database["public"]["Enums"]["component_status"]
           status_message?: string | null
           updated_at?: string
           vine_id?: string
+          waf_enabled?: boolean | null
+          zone_id?: string | null
         }
         Relationships: [
           {
@@ -644,226 +789,6 @@ export type Database = {
           },
           {
             foreignKeyName: "vine_dns_vine_id_fkey"
-            columns: ["vine_id"]
-            isOneToOne: true
-            referencedRelation: "vines"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      vine_dynamodb_tables: {
-        Row: {
-          billing_mode:
-            | Database["public"]["Enums"]["dynamodb_billing_mode"]
-            | null
-          created_at: string
-          estimated_monthly_cost: number | null
-          global_replicas: string[] | null
-          hash_key: string
-          hash_key_type: Database["public"]["Enums"]["dynamodb_key_type"] | null
-          id: string
-          name: string
-          point_in_time_recovery: boolean | null
-          range_key: string | null
-          range_key_type:
-            | Database["public"]["Enums"]["dynamodb_key_type"]
-            | null
-          status: Database["public"]["Enums"]["component_status"]
-          status_message: string | null
-          table_type: Database["public"]["Enums"]["dynamodb_table_type"] | null
-          updated_at: string
-          vine_id: string
-        }
-        Insert: {
-          billing_mode?:
-            | Database["public"]["Enums"]["dynamodb_billing_mode"]
-            | null
-          created_at?: string
-          estimated_monthly_cost?: number | null
-          global_replicas?: string[] | null
-          hash_key: string
-          hash_key_type?:
-            | Database["public"]["Enums"]["dynamodb_key_type"]
-            | null
-          id?: string
-          name: string
-          point_in_time_recovery?: boolean | null
-          range_key?: string | null
-          range_key_type?:
-            | Database["public"]["Enums"]["dynamodb_key_type"]
-            | null
-          status?: Database["public"]["Enums"]["component_status"]
-          status_message?: string | null
-          table_type?: Database["public"]["Enums"]["dynamodb_table_type"] | null
-          updated_at?: string
-          vine_id: string
-        }
-        Update: {
-          billing_mode?:
-            | Database["public"]["Enums"]["dynamodb_billing_mode"]
-            | null
-          created_at?: string
-          estimated_monthly_cost?: number | null
-          global_replicas?: string[] | null
-          hash_key?: string
-          hash_key_type?:
-            | Database["public"]["Enums"]["dynamodb_key_type"]
-            | null
-          id?: string
-          name?: string
-          point_in_time_recovery?: boolean | null
-          range_key?: string | null
-          range_key_type?:
-            | Database["public"]["Enums"]["dynamodb_key_type"]
-            | null
-          status?: Database["public"]["Enums"]["component_status"]
-          status_message?: string | null
-          table_type?: Database["public"]["Enums"]["dynamodb_table_type"] | null
-          updated_at?: string
-          vine_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "vine_dynamodb_tables_vine_id_fkey"
-            columns: ["vine_id"]
-            isOneToOne: false
-            referencedRelation: "vine_full"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "vine_dynamodb_tables_vine_id_fkey"
-            columns: ["vine_id"]
-            isOneToOne: false
-            referencedRelation: "vines"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      vine_ecr_repos: {
-        Row: {
-          created_at: string
-          id: string
-          image_tag_mutability:
-            | Database["public"]["Enums"]["ecr_tag_mutability"]
-            | null
-          name: string
-          repository_url: string | null
-          scan_on_push: boolean | null
-          status: Database["public"]["Enums"]["component_status"]
-          status_message: string | null
-          updated_at: string
-          vine_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          image_tag_mutability?:
-            | Database["public"]["Enums"]["ecr_tag_mutability"]
-            | null
-          name: string
-          repository_url?: string | null
-          scan_on_push?: boolean | null
-          status?: Database["public"]["Enums"]["component_status"]
-          status_message?: string | null
-          updated_at?: string
-          vine_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          image_tag_mutability?:
-            | Database["public"]["Enums"]["ecr_tag_mutability"]
-            | null
-          name?: string
-          repository_url?: string | null
-          scan_on_push?: boolean | null
-          status?: Database["public"]["Enums"]["component_status"]
-          status_message?: string | null
-          updated_at?: string
-          vine_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "vine_ecr_repos_vine_id_fkey"
-            columns: ["vine_id"]
-            isOneToOne: false
-            referencedRelation: "vine_full"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "vine_ecr_repos_vine_id_fkey"
-            columns: ["vine_id"]
-            isOneToOne: false
-            referencedRelation: "vines"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      vine_eks: {
-        Row: {
-          cluster_admins: Array<{ username: string; groups: string[] }> | null
-          cluster_endpoint: string | null
-          cluster_name: string | null
-          cluster_version: string | null
-          created_at: string
-          enable_karpenter: boolean | null
-          estimated_monthly_cost: number | null
-          id: string
-          instance_types: string[] | null
-          node_desired_size: number | null
-          node_max_size: number | null
-          node_min_size: number | null
-          status: Database["public"]["Enums"]["component_status"]
-          status_message: string | null
-          updated_at: string
-          vine_id: string
-        }
-        Insert: {
-          cluster_admins?: Array<{ username: string; groups: string[] }> | null
-          cluster_endpoint?: string | null
-          cluster_name?: string | null
-          cluster_version?: string | null
-          created_at?: string
-          enable_karpenter?: boolean | null
-          estimated_monthly_cost?: number | null
-          id?: string
-          instance_types?: string[] | null
-          node_desired_size?: number | null
-          node_max_size?: number | null
-          node_min_size?: number | null
-          status?: Database["public"]["Enums"]["component_status"]
-          status_message?: string | null
-          updated_at?: string
-          vine_id: string
-        }
-        Update: {
-          cluster_admins?: Array<{ username: string; groups: string[] }> | null
-          cluster_endpoint?: string | null
-          cluster_name?: string | null
-          cluster_version?: string | null
-          created_at?: string
-          enable_karpenter?: boolean | null
-          estimated_monthly_cost?: number | null
-          id?: string
-          instance_types?: string[] | null
-          node_desired_size?: number | null
-          node_max_size?: number | null
-          node_min_size?: number | null
-          status?: Database["public"]["Enums"]["component_status"]
-          status_message?: string | null
-          updated_at?: string
-          vine_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "vine_eks_vine_id_fkey"
-            columns: ["vine_id"]
-            isOneToOne: true
-            referencedRelation: "vine_full"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "vine_eks_vine_id_fkey"
             columns: ["vine_id"]
             isOneToOne: true
             referencedRelation: "vines"
@@ -909,6 +834,145 @@ export type Database = {
           },
           {
             foreignKeyName: "vine_git_credentials_vine_id_fkey"
+            columns: ["vine_id"]
+            isOneToOne: false
+            referencedRelation: "vines"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vine_network: {
+        Row: {
+          allowed_cidr_blocks: string[] | null
+          cidr_block: string | null
+          created_at: string
+          estimated_monthly_cost: number | null
+          id: string
+          network_id: string | null
+          provision_network: boolean
+          single_nat_gateway: boolean | null
+          status: Database["public"]["Enums"]["component_status"]
+          status_message: string | null
+          updated_at: string
+          vine_id: string
+        }
+        Insert: {
+          allowed_cidr_blocks?: string[] | null
+          cidr_block?: string | null
+          created_at?: string
+          estimated_monthly_cost?: number | null
+          id?: string
+          network_id?: string | null
+          provision_network?: boolean
+          single_nat_gateway?: boolean | null
+          status?: Database["public"]["Enums"]["component_status"]
+          status_message?: string | null
+          updated_at?: string
+          vine_id: string
+        }
+        Update: {
+          allowed_cidr_blocks?: string[] | null
+          cidr_block?: string | null
+          created_at?: string
+          estimated_monthly_cost?: number | null
+          id?: string
+          network_id?: string | null
+          provision_network?: boolean
+          single_nat_gateway?: boolean | null
+          status?: Database["public"]["Enums"]["component_status"]
+          status_message?: string | null
+          updated_at?: string
+          vine_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vine_vpc_vine_id_fkey"
+            columns: ["vine_id"]
+            isOneToOne: true
+            referencedRelation: "vine_full"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vine_vpc_vine_id_fkey"
+            columns: ["vine_id"]
+            isOneToOne: true
+            referencedRelation: "vines"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vine_nosql_tables: {
+        Row: {
+          billing_mode: Database["public"]["Enums"]["nosql_billing_mode"] | null
+          created_at: string
+          estimated_monthly_cost: number | null
+          global_replicas: string[] | null
+          hash_key: string
+          hash_key_type: Database["public"]["Enums"]["nosql_key_type"] | null
+          id: string
+          name: string
+          point_in_time_recovery: boolean | null
+          provider_config: { partition_key_path?: string; } | null
+          range_key: string | null
+          range_key_type: Database["public"]["Enums"]["nosql_key_type"] | null
+          status: Database["public"]["Enums"]["component_status"]
+          status_message: string | null
+          table_type: Database["public"]["Enums"]["nosql_table_type"] | null
+          updated_at: string
+          vine_id: string
+        }
+        Insert: {
+          billing_mode?:
+            | Database["public"]["Enums"]["nosql_billing_mode"]
+            | null
+          created_at?: string
+          estimated_monthly_cost?: number | null
+          global_replicas?: string[] | null
+          hash_key: string
+          hash_key_type?: Database["public"]["Enums"]["nosql_key_type"] | null
+          id?: string
+          name: string
+          point_in_time_recovery?: boolean | null
+          provider_config?: { partition_key_path?: string; } | null
+          range_key?: string | null
+          range_key_type?: Database["public"]["Enums"]["nosql_key_type"] | null
+          status?: Database["public"]["Enums"]["component_status"]
+          status_message?: string | null
+          table_type?: Database["public"]["Enums"]["nosql_table_type"] | null
+          updated_at?: string
+          vine_id: string
+        }
+        Update: {
+          billing_mode?:
+            | Database["public"]["Enums"]["nosql_billing_mode"]
+            | null
+          created_at?: string
+          estimated_monthly_cost?: number | null
+          global_replicas?: string[] | null
+          hash_key?: string
+          hash_key_type?: Database["public"]["Enums"]["nosql_key_type"] | null
+          id?: string
+          name?: string
+          point_in_time_recovery?: boolean | null
+          provider_config?: { partition_key_path?: string; } | null
+          range_key?: string | null
+          range_key_type?: Database["public"]["Enums"]["nosql_key_type"] | null
+          status?: Database["public"]["Enums"]["component_status"]
+          status_message?: string | null
+          table_type?: Database["public"]["Enums"]["nosql_table_type"] | null
+          updated_at?: string
+          vine_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vine_dynamodb_tables_vine_id_fkey"
+            columns: ["vine_id"]
+            isOneToOne: false
+            referencedRelation: "vine_full"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vine_dynamodb_tables_vine_id_fkey"
             columns: ["vine_id"]
             isOneToOne: false
             referencedRelation: "vines"
@@ -1144,76 +1208,15 @@ export type Database = {
           },
         ]
       }
-      vine_vpc: {
-        Row: {
-          allowed_cidr_blocks: string[] | null
-          created_at: string
-          estimated_monthly_cost: number | null
-          id: string
-          provision_vpc: boolean
-          single_nat_gateway: boolean | null
-          status: Database["public"]["Enums"]["component_status"]
-          status_message: string | null
-          updated_at: string
-          vine_id: string
-          vpc_cidr: string | null
-          vpc_id: string | null
-        }
-        Insert: {
-          allowed_cidr_blocks?: string[] | null
-          created_at?: string
-          estimated_monthly_cost?: number | null
-          id?: string
-          provision_vpc?: boolean
-          single_nat_gateway?: boolean | null
-          status?: Database["public"]["Enums"]["component_status"]
-          status_message?: string | null
-          updated_at?: string
-          vine_id: string
-          vpc_cidr?: string | null
-          vpc_id?: string | null
-        }
-        Update: {
-          allowed_cidr_blocks?: string[] | null
-          created_at?: string
-          estimated_monthly_cost?: number | null
-          id?: string
-          provision_vpc?: boolean
-          single_nat_gateway?: boolean | null
-          status?: Database["public"]["Enums"]["component_status"]
-          status_message?: string | null
-          updated_at?: string
-          vine_id?: string
-          vpc_cidr?: string | null
-          vpc_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "vine_vpc_vine_id_fkey"
-            columns: ["vine_id"]
-            isOneToOne: true
-            referencedRelation: "vine_full"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "vine_vpc_vine_id_fkey"
-            columns: ["vine_id"]
-            isOneToOne: true
-            referencedRelation: "vines"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       vines: {
         Row: {
-          aws_account_id: string | null
-          aws_region: string
           cloud_identity_id: string | null
           created_at: string
           environment_stage: Database["public"]["Enums"]["environment_stage"]
           estimated_monthly_cost: number | null
           id: string
           project_name: string
+          region: string
           status: Database["public"]["Enums"]["vine_status"]
           terraform_version: string
           updated_at: string
@@ -1221,14 +1224,13 @@ export type Database = {
           vineyard_id: string | null
         }
         Insert: {
-          aws_account_id?: string | null
-          aws_region?: string
           cloud_identity_id?: string | null
           created_at?: string
           environment_stage?: Database["public"]["Enums"]["environment_stage"]
           estimated_monthly_cost?: number | null
           id?: string
           project_name: string
+          region?: string
           status?: Database["public"]["Enums"]["vine_status"]
           terraform_version?: string
           updated_at?: string
@@ -1236,14 +1238,13 @@ export type Database = {
           vineyard_id?: string | null
         }
         Update: {
-          aws_account_id?: string | null
-          aws_region?: string
           cloud_identity_id?: string | null
           created_at?: string
           environment_stage?: Database["public"]["Enums"]["environment_stage"]
           estimated_monthly_cost?: number | null
           id?: string
           project_name?: string
+          region?: string
           status?: Database["public"]["Enums"]["vine_status"]
           terraform_version?: string
           updated_at?: string
@@ -1353,10 +1354,12 @@ export type Database = {
           aws_account_id: string | null
           aws_region: string | null
           cloud_identity_id: string | null
+          cloud_provider: Database["public"]["Enums"]["cloud_provider"] | null
           cloudfront_waf_enabled: boolean | null
           cluster_admins: Json | null
           cluster_endpoint: string | null
           cluster_name: string | null
+          cluster_status: string | null
           cluster_version: string | null
           create_rds: boolean | null
           create_vpc: boolean | null
@@ -1380,10 +1383,12 @@ export type Database = {
           gitops_template_repo_branch: string | null
           id: string | null
           instance_types: string[] | null
+          network_status: string | null
           node_desired_size: number | null
           node_max_size: number | null
           node_min_size: number | null
           project_name: string | null
+          region: string | null
           selected_vpc_id: string | null
           single_nat_gateway: boolean | null
           status: string | null
@@ -1393,6 +1398,7 @@ export type Database = {
           vineyard_id: string | null
           vpc_cidr: string | null
           vpc_status: string | null
+          waf_enabled: boolean | null
         }
         Relationships: [
           {
@@ -1431,6 +1437,7 @@ export type Database = {
           execution_metadata: Json | null
           id: string
           job_type: Database["public"]["Enums"]["provision_job_type"]
+          plan_job_id: string | null
           started_at: string | null
           status: string
           updated_at: string | null
@@ -1511,10 +1518,6 @@ export type Database = {
         | "failed"
         | "cancelled"
         | "destroying"
-      dynamodb_billing_mode: "PAY_PER_REQUEST" | "PROVISIONED"
-      dynamodb_key_type: "S" | "N" | "B"
-      dynamodb_table_type: "standard" | "global"
-      ecr_tag_mutability: "MUTABLE" | "IMMUTABLE"
       environment_stage: "development" | "staging" | "production"
       git_credential_method: "oauth" | "pat" | "deploy_key"
       git_credential_purpose: "argocd" | "applications" | "infrastructure"
@@ -1529,12 +1532,17 @@ export type Database = {
       integration_category: "git" | "cloud"
       integration_status: "active" | "coming_soon"
       logs_level: "debug" | "info" | "warn" | "error" | "critical"
+      nosql_billing_mode: "PAY_PER_REQUEST" | "PROVISIONED"
+      nosql_key_type: "S" | "N" | "B"
+      nosql_table_type: "standard" | "global"
       provision_job_type:
         | "BOOTSTRAP"
         | "DEPLOY"
         | "DESTROY"
         | "CONNECTION_TEST"
         | "FETCH_RESOURCES"
+        | "PLAN"
+      registry_tag_mutability: "MUTABLE" | "IMMUTABLE"
       vine_status:
         | "DRAFT"
         | "QUEUED"
@@ -1711,10 +1719,6 @@ export const Constants = {
         "cancelled",
         "destroying",
       ],
-      dynamodb_billing_mode: ["PAY_PER_REQUEST", "PROVISIONED"],
-      dynamodb_key_type: ["S", "N", "B"],
-      dynamodb_table_type: ["standard", "global"],
-      ecr_tag_mutability: ["MUTABLE", "IMMUTABLE"],
       environment_stage: ["development", "staging", "production"],
       git_credential_method: ["oauth", "pat", "deploy_key"],
       git_credential_purpose: ["argocd", "applications", "infrastructure"],
@@ -1730,13 +1734,18 @@ export const Constants = {
       integration_category: ["git", "cloud"],
       integration_status: ["active", "coming_soon"],
       logs_level: ["debug", "info", "warn", "error", "critical"],
+      nosql_billing_mode: ["PAY_PER_REQUEST", "PROVISIONED"],
+      nosql_key_type: ["S", "N", "B"],
+      nosql_table_type: ["standard", "global"],
       provision_job_type: [
         "BOOTSTRAP",
         "DEPLOY",
         "DESTROY",
         "CONNECTION_TEST",
         "FETCH_RESOURCES",
+        "PLAN",
       ],
+      registry_tag_mutability: ["MUTABLE", "IMMUTABLE"],
       vine_status: [
         "DRAFT",
         "QUEUED",

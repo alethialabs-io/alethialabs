@@ -66,27 +66,6 @@ export const publicDeploymentStatusSchema = z.union([
   z.literal("destroying"),
 ]);
 
-export const publicDynamodbBillingModeSchema = z.union([
-  z.literal("PAY_PER_REQUEST"),
-  z.literal("PROVISIONED"),
-]);
-
-export const publicDynamodbKeyTypeSchema = z.union([
-  z.literal("S"),
-  z.literal("N"),
-  z.literal("B"),
-]);
-
-export const publicDynamodbTableTypeSchema = z.union([
-  z.literal("standard"),
-  z.literal("global"),
-]);
-
-export const publicEcrTagMutabilitySchema = z.union([
-  z.literal("MUTABLE"),
-  z.literal("IMMUTABLE"),
-]);
-
 export const publicEnvironmentStageSchema = z.union([
   z.literal("development"),
   z.literal("staging"),
@@ -142,12 +121,34 @@ export const publicLogsLevelSchema = z.union([
   z.literal("critical"),
 ]);
 
+export const publicNosqlBillingModeSchema = z.union([
+  z.literal("PAY_PER_REQUEST"),
+  z.literal("PROVISIONED"),
+]);
+
+export const publicNosqlKeyTypeSchema = z.union([
+  z.literal("S"),
+  z.literal("N"),
+  z.literal("B"),
+]);
+
+export const publicNosqlTableTypeSchema = z.union([
+  z.literal("standard"),
+  z.literal("global"),
+]);
+
 export const publicProvisionJobTypeSchema = z.union([
   z.literal("BOOTSTRAP"),
   z.literal("DEPLOY"),
   z.literal("DESTROY"),
   z.literal("CONNECTION_TEST"),
   z.literal("FETCH_RESOURCES"),
+  z.literal("PLAN"),
+]);
+
+export const publicRegistryTagMutabilitySchema = z.union([
+  z.literal("MUTABLE"),
+  z.literal("IMMUTABLE"),
 ]);
 
 export const publicVineStatusSchema = z.union([
@@ -377,6 +378,27 @@ export const publicCloudIdentitiesUpdateSchema = z.object({
   user_id: z.string().optional(),
 });
 
+export const publicClusterAdminsRowSchema = z.object({
+  created_at: z.string().nullable(),
+  email: z.string(),
+  id: z.string(),
+  user_id: z.string(),
+});
+
+export const publicClusterAdminsInsertSchema = z.object({
+  created_at: z.string().optional().nullable(),
+  email: z.string(),
+  id: z.string().optional(),
+  user_id: z.string(),
+});
+
+export const publicClusterAdminsUpdateSchema = z.object({
+  created_at: z.string().optional().nullable(),
+  email: z.string().optional(),
+  id: z.string().optional(),
+  user_id: z.string().optional(),
+});
+
 export const publicClustersRowSchema = z.object({
   agent_token_hash: z.string().nullable(),
   created_at: z.string().nullable(),
@@ -433,27 +455,6 @@ export const publicClustersUpdateSchema = z.object({
     .nullable(),
   name: z.string().optional(),
   status: publicClusterStatusSchema.optional().nullable(),
-  user_id: z.string().optional(),
-});
-
-export const publicEksAdminsRowSchema = z.object({
-  created_at: z.string().nullable(),
-  email: z.string(),
-  id: z.string(),
-  user_id: z.string(),
-});
-
-export const publicEksAdminsInsertSchema = z.object({
-  created_at: z.string().optional().nullable(),
-  email: z.string(),
-  id: z.string().optional(),
-  user_id: z.string(),
-});
-
-export const publicEksAdminsUpdateSchema = z.object({
-  created_at: z.string().optional().nullable(),
-  email: z.string().optional(),
-  id: z.string().optional(),
   user_id: z.string().optional(),
 });
 
@@ -614,6 +615,7 @@ export const publicProvisionJobsRowSchema = z.object({
   execution_metadata: z.record(z.string(), z.unknown()).nullable(),
   id: z.string(),
   job_type: publicProvisionJobTypeSchema,
+  plan_job_id: z.string().nullable(),
   started_at: z.string().nullable(),
   status: z.string(),
   updated_at: z.string().nullable(),
@@ -635,6 +637,7 @@ export const publicProvisionJobsInsertSchema = z.object({
   execution_metadata: z.record(z.string(), z.unknown()).optional().nullable(),
   id: z.string().optional(),
   job_type: publicProvisionJobTypeSchema,
+  plan_job_id: z.string().optional().nullable(),
   started_at: z.string().optional().nullable(),
   status: z.string().optional(),
   updated_at: z.string().optional().nullable(),
@@ -656,6 +659,7 @@ export const publicProvisionJobsUpdateSchema = z.object({
   execution_metadata: z.record(z.string(), z.unknown()).optional().nullable(),
   id: z.string().optional(),
   job_type: publicProvisionJobTypeSchema.optional(),
+  plan_job_id: z.string().optional().nullable(),
   started_at: z.string().optional().nullable(),
   status: z.string().optional(),
   updated_at: z.string().optional().nullable(),
@@ -678,6 +682,13 @@ export const publicProvisionJobsRelationshipsSchema = z.tuple([
     columns: z.tuple([z.literal("cluster_id")]),
     isOneToOne: z.literal(false),
     referencedRelation: z.literal("clusters"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+  z.object({
+    foreignKeyName: z.literal("provision_jobs_plan_job_id_fkey"),
+    columns: z.tuple([z.literal("plan_job_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("provision_jobs"),
     referencedColumns: z.tuple([z.literal("id")]),
   }),
   z.object({
@@ -705,15 +716,7 @@ export const publicProvisionJobsRelationshipsSchema = z.tuple([
 
 export const publicVineAuditLogRowSchema = z.object({
   action: publicAuditActionSchema,
-  changes: z
-    .record(
-      z.string(),
-      z.object({
-        old: z.unknown().optional(),
-        new: z.unknown().optional(),
-      }),
-    )
-    .nullable(),
+  changes: z.record(z.string(), z.unknown()).nullable(),
   component_id: z.string().nullable(),
   component_type: z.string().nullable(),
   created_at: z.string(),
@@ -724,16 +727,7 @@ export const publicVineAuditLogRowSchema = z.object({
 
 export const publicVineAuditLogInsertSchema = z.object({
   action: publicAuditActionSchema,
-  changes: z
-    .record(
-      z.string(),
-      z.object({
-        old: z.unknown().optional(),
-        new: z.unknown().optional(),
-      }),
-    )
-    .optional()
-    .nullable(),
+  changes: z.record(z.string(), z.unknown()).optional().nullable(),
   component_id: z.string().optional().nullable(),
   component_type: z.string().optional().nullable(),
   created_at: z.string().optional(),
@@ -744,16 +738,7 @@ export const publicVineAuditLogInsertSchema = z.object({
 
 export const publicVineAuditLogUpdateSchema = z.object({
   action: publicAuditActionSchema.optional(),
-  changes: z
-    .record(
-      z.string(),
-      z.object({
-        old: z.unknown().optional(),
-        new: z.unknown().optional(),
-      }),
-    )
-    .optional()
-    .nullable(),
+  changes: z.record(z.string(), z.unknown()).optional().nullable(),
   component_id: z.string().optional().nullable(),
   component_type: z.string().optional().nullable(),
   created_at: z.string().optional(),
@@ -847,6 +832,193 @@ export const publicVineCachesRelationshipsSchema = z.tuple([
   }),
 ]);
 
+export const publicVineClusterRowSchema = z.object({
+  cluster_admins: z
+    .array(
+      z.object({
+        username: z.string(),
+        groups: z.array(z.string()),
+      }),
+    )
+    .nullable(),
+  cluster_endpoint: z.string().nullable(),
+  cluster_name: z.string().nullable(),
+  cluster_version: z.string().nullable(),
+  created_at: z.string(),
+  estimated_monthly_cost: z.number().nullable(),
+  id: z.string(),
+  instance_types: z.array(z.string()).nullable(),
+  node_desired_size: z.number().nullable(),
+  node_max_size: z.number().nullable(),
+  node_min_size: z.number().nullable(),
+  provider_config: z
+    .object({
+      enable_karpenter: z.boolean().optional(),
+      enable_autopilot: z.boolean().optional(),
+    })
+    .nullable(),
+  status: publicComponentStatusSchema,
+  status_message: z.string().nullable(),
+  updated_at: z.string(),
+  vine_id: z.string(),
+});
+
+export const publicVineClusterInsertSchema = z.object({
+  cluster_admins: z
+    .array(
+      z.object({
+        username: z.string(),
+        groups: z.array(z.string()),
+      }),
+    )
+    .optional()
+    .nullable(),
+  cluster_endpoint: z.string().optional().nullable(),
+  cluster_name: z.string().optional().nullable(),
+  cluster_version: z.string().optional().nullable(),
+  created_at: z.string().optional(),
+  estimated_monthly_cost: z.number().optional().nullable(),
+  id: z.string().optional(),
+  instance_types: z.array(z.string()).optional().nullable(),
+  node_desired_size: z.number().optional().nullable(),
+  node_max_size: z.number().optional().nullable(),
+  node_min_size: z.number().optional().nullable(),
+  provider_config: z
+    .object({
+      enable_karpenter: z.boolean().optional(),
+      enable_autopilot: z.boolean().optional(),
+    })
+    .optional()
+    .nullable(),
+  status: publicComponentStatusSchema.optional(),
+  status_message: z.string().optional().nullable(),
+  updated_at: z.string().optional(),
+  vine_id: z.string(),
+});
+
+export const publicVineClusterUpdateSchema = z.object({
+  cluster_admins: z
+    .array(
+      z.object({
+        username: z.string(),
+        groups: z.array(z.string()),
+      }),
+    )
+    .optional()
+    .nullable(),
+  cluster_endpoint: z.string().optional().nullable(),
+  cluster_name: z.string().optional().nullable(),
+  cluster_version: z.string().optional().nullable(),
+  created_at: z.string().optional(),
+  estimated_monthly_cost: z.number().optional().nullable(),
+  id: z.string().optional(),
+  instance_types: z.array(z.string()).optional().nullable(),
+  node_desired_size: z.number().optional().nullable(),
+  node_max_size: z.number().optional().nullable(),
+  node_min_size: z.number().optional().nullable(),
+  provider_config: z
+    .object({
+      enable_karpenter: z.boolean().optional(),
+      enable_autopilot: z.boolean().optional(),
+    })
+    .optional()
+    .nullable(),
+  status: publicComponentStatusSchema.optional(),
+  status_message: z.string().optional().nullable(),
+  updated_at: z.string().optional(),
+  vine_id: z.string().optional(),
+});
+
+export const publicVineClusterRelationshipsSchema = z.tuple([
+  z.object({
+    foreignKeyName: z.literal("vine_eks_vine_id_fkey"),
+    columns: z.tuple([z.literal("vine_id")]),
+    isOneToOne: z.literal(true),
+    referencedRelation: z.literal("vine_full"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+  z.object({
+    foreignKeyName: z.literal("vine_eks_vine_id_fkey"),
+    columns: z.tuple([z.literal("vine_id")]),
+    isOneToOne: z.literal(true),
+    referencedRelation: z.literal("vines"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+]);
+
+export const publicVineContainerRegistriesRowSchema = z.object({
+  created_at: z.string(),
+  id: z.string(),
+  image_tag_mutability: publicRegistryTagMutabilitySchema.nullable(),
+  name: z.string(),
+  provider_config: z
+    .object({
+      vulnerability_scanning: z.boolean().optional(),
+    })
+    .nullable(),
+  repository_url: z.string().nullable(),
+  scan_on_push: z.boolean().nullable(),
+  status: publicComponentStatusSchema,
+  status_message: z.string().nullable(),
+  updated_at: z.string(),
+  vine_id: z.string(),
+});
+
+export const publicVineContainerRegistriesInsertSchema = z.object({
+  created_at: z.string().optional(),
+  id: z.string().optional(),
+  image_tag_mutability: publicRegistryTagMutabilitySchema.optional().nullable(),
+  name: z.string(),
+  provider_config: z
+    .object({
+      vulnerability_scanning: z.boolean().optional(),
+    })
+    .optional()
+    .nullable(),
+  repository_url: z.string().optional().nullable(),
+  scan_on_push: z.boolean().optional().nullable(),
+  status: publicComponentStatusSchema.optional(),
+  status_message: z.string().optional().nullable(),
+  updated_at: z.string().optional(),
+  vine_id: z.string(),
+});
+
+export const publicVineContainerRegistriesUpdateSchema = z.object({
+  created_at: z.string().optional(),
+  id: z.string().optional(),
+  image_tag_mutability: publicRegistryTagMutabilitySchema.optional().nullable(),
+  name: z.string().optional(),
+  provider_config: z
+    .object({
+      vulnerability_scanning: z.boolean().optional(),
+    })
+    .optional()
+    .nullable(),
+  repository_url: z.string().optional().nullable(),
+  scan_on_push: z.boolean().optional().nullable(),
+  status: publicComponentStatusSchema.optional(),
+  status_message: z.string().optional().nullable(),
+  updated_at: z.string().optional(),
+  vine_id: z.string().optional(),
+});
+
+export const publicVineContainerRegistriesRelationshipsSchema = z.tuple([
+  z.object({
+    foreignKeyName: z.literal("vine_ecr_repos_vine_id_fkey"),
+    columns: z.tuple([z.literal("vine_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("vine_full"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+  z.object({
+    foreignKeyName: z.literal("vine_ecr_repos_vine_id_fkey"),
+    columns: z.tuple([z.literal("vine_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("vines"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+]);
+
 export const publicVineDatabasesRowSchema = z.object({
   backup_retention_days: z.number().nullable(),
   created_at: z.string(),
@@ -925,51 +1097,77 @@ export const publicVineDatabasesRelationshipsSchema = z.tuple([
 ]);
 
 export const publicVineDnsRowSchema = z.object({
-  acm_certificate: z.boolean().nullable(),
-  application_waf: z.boolean().nullable(),
-  cloudfront_waf: z.boolean().nullable(),
   created_at: z.string(),
   domain_name: z.string().nullable(),
   enabled: z.boolean(),
   estimated_monthly_cost: z.number().nullable(),
-  hosted_zone_id: z.string().nullable(),
   id: z.string(),
+  managed_certificate: z.boolean().nullable(),
+  provider_config: z
+    .object({
+      acm_certificate: z.boolean().optional(),
+      cloudfront_waf: z.boolean().optional(),
+      application_waf: z.boolean().optional(),
+      cloud_armor: z.boolean().optional(),
+      azure_waf: z.boolean().optional(),
+    })
+    .nullable(),
   status: publicComponentStatusSchema,
   status_message: z.string().nullable(),
   updated_at: z.string(),
   vine_id: z.string(),
+  waf_enabled: z.boolean().nullable(),
+  zone_id: z.string().nullable(),
 });
 
 export const publicVineDnsInsertSchema = z.object({
-  acm_certificate: z.boolean().optional().nullable(),
-  application_waf: z.boolean().optional().nullable(),
-  cloudfront_waf: z.boolean().optional().nullable(),
   created_at: z.string().optional(),
   domain_name: z.string().optional().nullable(),
   enabled: z.boolean().optional(),
   estimated_monthly_cost: z.number().optional().nullable(),
-  hosted_zone_id: z.string().optional().nullable(),
   id: z.string().optional(),
+  managed_certificate: z.boolean().optional().nullable(),
+  provider_config: z
+    .object({
+      acm_certificate: z.boolean().optional(),
+      cloudfront_waf: z.boolean().optional(),
+      application_waf: z.boolean().optional(),
+      cloud_armor: z.boolean().optional(),
+      azure_waf: z.boolean().optional(),
+    })
+    .optional()
+    .nullable(),
   status: publicComponentStatusSchema.optional(),
   status_message: z.string().optional().nullable(),
   updated_at: z.string().optional(),
   vine_id: z.string(),
+  waf_enabled: z.boolean().optional().nullable(),
+  zone_id: z.string().optional().nullable(),
 });
 
 export const publicVineDnsUpdateSchema = z.object({
-  acm_certificate: z.boolean().optional().nullable(),
-  application_waf: z.boolean().optional().nullable(),
-  cloudfront_waf: z.boolean().optional().nullable(),
   created_at: z.string().optional(),
   domain_name: z.string().optional().nullable(),
   enabled: z.boolean().optional(),
   estimated_monthly_cost: z.number().optional().nullable(),
-  hosted_zone_id: z.string().optional().nullable(),
   id: z.string().optional(),
+  managed_certificate: z.boolean().optional().nullable(),
+  provider_config: z
+    .object({
+      acm_certificate: z.boolean().optional(),
+      cloudfront_waf: z.boolean().optional(),
+      application_waf: z.boolean().optional(),
+      cloud_armor: z.boolean().optional(),
+      azure_waf: z.boolean().optional(),
+    })
+    .optional()
+    .nullable(),
   status: publicComponentStatusSchema.optional(),
   status_message: z.string().optional().nullable(),
   updated_at: z.string().optional(),
   vine_id: z.string().optional(),
+  waf_enabled: z.boolean().optional().nullable(),
+  zone_id: z.string().optional().nullable(),
 });
 
 export const publicVineDnsRelationshipsSchema = z.tuple([
@@ -982,233 +1180,6 @@ export const publicVineDnsRelationshipsSchema = z.tuple([
   }),
   z.object({
     foreignKeyName: z.literal("vine_dns_vine_id_fkey"),
-    columns: z.tuple([z.literal("vine_id")]),
-    isOneToOne: z.literal(true),
-    referencedRelation: z.literal("vines"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-]);
-
-export const publicVineDynamodbTablesRowSchema = z.object({
-  billing_mode: publicDynamodbBillingModeSchema.nullable(),
-  created_at: z.string(),
-  estimated_monthly_cost: z.number().nullable(),
-  global_replicas: z.array(z.string()).nullable(),
-  hash_key: z.string(),
-  hash_key_type: publicDynamodbKeyTypeSchema.nullable(),
-  id: z.string(),
-  name: z.string(),
-  point_in_time_recovery: z.boolean().nullable(),
-  range_key: z.string().nullable(),
-  range_key_type: publicDynamodbKeyTypeSchema.nullable(),
-  status: publicComponentStatusSchema,
-  status_message: z.string().nullable(),
-  table_type: publicDynamodbTableTypeSchema.nullable(),
-  updated_at: z.string(),
-  vine_id: z.string(),
-});
-
-export const publicVineDynamodbTablesInsertSchema = z.object({
-  billing_mode: publicDynamodbBillingModeSchema.optional().nullable(),
-  created_at: z.string().optional(),
-  estimated_monthly_cost: z.number().optional().nullable(),
-  global_replicas: z.array(z.string()).optional().nullable(),
-  hash_key: z.string(),
-  hash_key_type: publicDynamodbKeyTypeSchema.optional().nullable(),
-  id: z.string().optional(),
-  name: z.string(),
-  point_in_time_recovery: z.boolean().optional().nullable(),
-  range_key: z.string().optional().nullable(),
-  range_key_type: publicDynamodbKeyTypeSchema.optional().nullable(),
-  status: publicComponentStatusSchema.optional(),
-  status_message: z.string().optional().nullable(),
-  table_type: publicDynamodbTableTypeSchema.optional().nullable(),
-  updated_at: z.string().optional(),
-  vine_id: z.string(),
-});
-
-export const publicVineDynamodbTablesUpdateSchema = z.object({
-  billing_mode: publicDynamodbBillingModeSchema.optional().nullable(),
-  created_at: z.string().optional(),
-  estimated_monthly_cost: z.number().optional().nullable(),
-  global_replicas: z.array(z.string()).optional().nullable(),
-  hash_key: z.string().optional(),
-  hash_key_type: publicDynamodbKeyTypeSchema.optional().nullable(),
-  id: z.string().optional(),
-  name: z.string().optional(),
-  point_in_time_recovery: z.boolean().optional().nullable(),
-  range_key: z.string().optional().nullable(),
-  range_key_type: publicDynamodbKeyTypeSchema.optional().nullable(),
-  status: publicComponentStatusSchema.optional(),
-  status_message: z.string().optional().nullable(),
-  table_type: publicDynamodbTableTypeSchema.optional().nullable(),
-  updated_at: z.string().optional(),
-  vine_id: z.string().optional(),
-});
-
-export const publicVineDynamodbTablesRelationshipsSchema = z.tuple([
-  z.object({
-    foreignKeyName: z.literal("vine_dynamodb_tables_vine_id_fkey"),
-    columns: z.tuple([z.literal("vine_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("vine_full"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-  z.object({
-    foreignKeyName: z.literal("vine_dynamodb_tables_vine_id_fkey"),
-    columns: z.tuple([z.literal("vine_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("vines"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-]);
-
-export const publicVineEcrReposRowSchema = z.object({
-  created_at: z.string(),
-  id: z.string(),
-  image_tag_mutability: publicEcrTagMutabilitySchema.nullable(),
-  name: z.string(),
-  repository_url: z.string().nullable(),
-  scan_on_push: z.boolean().nullable(),
-  status: publicComponentStatusSchema,
-  status_message: z.string().nullable(),
-  updated_at: z.string(),
-  vine_id: z.string(),
-});
-
-export const publicVineEcrReposInsertSchema = z.object({
-  created_at: z.string().optional(),
-  id: z.string().optional(),
-  image_tag_mutability: publicEcrTagMutabilitySchema.optional().nullable(),
-  name: z.string(),
-  repository_url: z.string().optional().nullable(),
-  scan_on_push: z.boolean().optional().nullable(),
-  status: publicComponentStatusSchema.optional(),
-  status_message: z.string().optional().nullable(),
-  updated_at: z.string().optional(),
-  vine_id: z.string(),
-});
-
-export const publicVineEcrReposUpdateSchema = z.object({
-  created_at: z.string().optional(),
-  id: z.string().optional(),
-  image_tag_mutability: publicEcrTagMutabilitySchema.optional().nullable(),
-  name: z.string().optional(),
-  repository_url: z.string().optional().nullable(),
-  scan_on_push: z.boolean().optional().nullable(),
-  status: publicComponentStatusSchema.optional(),
-  status_message: z.string().optional().nullable(),
-  updated_at: z.string().optional(),
-  vine_id: z.string().optional(),
-});
-
-export const publicVineEcrReposRelationshipsSchema = z.tuple([
-  z.object({
-    foreignKeyName: z.literal("vine_ecr_repos_vine_id_fkey"),
-    columns: z.tuple([z.literal("vine_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("vine_full"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-  z.object({
-    foreignKeyName: z.literal("vine_ecr_repos_vine_id_fkey"),
-    columns: z.tuple([z.literal("vine_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("vines"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-]);
-
-export const publicVineEksRowSchema = z.object({
-  cluster_admins: z
-    .array(
-      z.object({
-        username: z.string(),
-        groups: z.array(z.string()),
-      }),
-    )
-    .nullable(),
-  cluster_endpoint: z.string().nullable(),
-  cluster_name: z.string().nullable(),
-  cluster_version: z.string().nullable(),
-  created_at: z.string(),
-  enable_karpenter: z.boolean().nullable(),
-  estimated_monthly_cost: z.number().nullable(),
-  id: z.string(),
-  instance_types: z.array(z.string()).nullable(),
-  node_desired_size: z.number().nullable(),
-  node_max_size: z.number().nullable(),
-  node_min_size: z.number().nullable(),
-  status: publicComponentStatusSchema,
-  status_message: z.string().nullable(),
-  updated_at: z.string(),
-  vine_id: z.string(),
-});
-
-export const publicVineEksInsertSchema = z.object({
-  cluster_admins: z
-    .array(
-      z.object({
-        username: z.string(),
-        groups: z.array(z.string()),
-      }),
-    )
-    .optional()
-    .nullable(),
-  cluster_endpoint: z.string().optional().nullable(),
-  cluster_name: z.string().optional().nullable(),
-  cluster_version: z.string().optional().nullable(),
-  created_at: z.string().optional(),
-  enable_karpenter: z.boolean().optional().nullable(),
-  estimated_monthly_cost: z.number().optional().nullable(),
-  id: z.string().optional(),
-  instance_types: z.array(z.string()).optional().nullable(),
-  node_desired_size: z.number().optional().nullable(),
-  node_max_size: z.number().optional().nullable(),
-  node_min_size: z.number().optional().nullable(),
-  status: publicComponentStatusSchema.optional(),
-  status_message: z.string().optional().nullable(),
-  updated_at: z.string().optional(),
-  vine_id: z.string(),
-});
-
-export const publicVineEksUpdateSchema = z.object({
-  cluster_admins: z
-    .array(
-      z.object({
-        username: z.string(),
-        groups: z.array(z.string()),
-      }),
-    )
-    .optional()
-    .nullable(),
-  cluster_endpoint: z.string().optional().nullable(),
-  cluster_name: z.string().optional().nullable(),
-  cluster_version: z.string().optional().nullable(),
-  created_at: z.string().optional(),
-  enable_karpenter: z.boolean().optional().nullable(),
-  estimated_monthly_cost: z.number().optional().nullable(),
-  id: z.string().optional(),
-  instance_types: z.array(z.string()).optional().nullable(),
-  node_desired_size: z.number().optional().nullable(),
-  node_max_size: z.number().optional().nullable(),
-  node_min_size: z.number().optional().nullable(),
-  status: publicComponentStatusSchema.optional(),
-  status_message: z.string().optional().nullable(),
-  updated_at: z.string().optional(),
-  vine_id: z.string().optional(),
-});
-
-export const publicVineEksRelationshipsSchema = z.tuple([
-  z.object({
-    foreignKeyName: z.literal("vine_eks_vine_id_fkey"),
-    columns: z.tuple([z.literal("vine_id")]),
-    isOneToOne: z.literal(true),
-    referencedRelation: z.literal("vine_full"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-  z.object({
-    foreignKeyName: z.literal("vine_eks_vine_id_fkey"),
     columns: z.tuple([z.literal("vine_id")]),
     isOneToOne: z.literal(true),
     referencedRelation: z.literal("vines"),
@@ -1256,6 +1227,159 @@ export const publicVineGitCredentialsRelationshipsSchema = z.tuple([
   }),
   z.object({
     foreignKeyName: z.literal("vine_git_credentials_vine_id_fkey"),
+    columns: z.tuple([z.literal("vine_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("vines"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+]);
+
+export const publicVineNetworkRowSchema = z.object({
+  allowed_cidr_blocks: z.array(z.string()).nullable(),
+  cidr_block: z.string().nullable(),
+  created_at: z.string(),
+  estimated_monthly_cost: z.number().nullable(),
+  id: z.string(),
+  network_id: z.string().nullable(),
+  provision_network: z.boolean(),
+  single_nat_gateway: z.boolean().nullable(),
+  status: publicComponentStatusSchema,
+  status_message: z.string().nullable(),
+  updated_at: z.string(),
+  vine_id: z.string(),
+});
+
+export const publicVineNetworkInsertSchema = z.object({
+  allowed_cidr_blocks: z.array(z.string()).optional().nullable(),
+  cidr_block: z.string().optional().nullable(),
+  created_at: z.string().optional(),
+  estimated_monthly_cost: z.number().optional().nullable(),
+  id: z.string().optional(),
+  network_id: z.string().optional().nullable(),
+  provision_network: z.boolean().optional(),
+  single_nat_gateway: z.boolean().optional().nullable(),
+  status: publicComponentStatusSchema.optional(),
+  status_message: z.string().optional().nullable(),
+  updated_at: z.string().optional(),
+  vine_id: z.string(),
+});
+
+export const publicVineNetworkUpdateSchema = z.object({
+  allowed_cidr_blocks: z.array(z.string()).optional().nullable(),
+  cidr_block: z.string().optional().nullable(),
+  created_at: z.string().optional(),
+  estimated_monthly_cost: z.number().optional().nullable(),
+  id: z.string().optional(),
+  network_id: z.string().optional().nullable(),
+  provision_network: z.boolean().optional(),
+  single_nat_gateway: z.boolean().optional().nullable(),
+  status: publicComponentStatusSchema.optional(),
+  status_message: z.string().optional().nullable(),
+  updated_at: z.string().optional(),
+  vine_id: z.string().optional(),
+});
+
+export const publicVineNetworkRelationshipsSchema = z.tuple([
+  z.object({
+    foreignKeyName: z.literal("vine_vpc_vine_id_fkey"),
+    columns: z.tuple([z.literal("vine_id")]),
+    isOneToOne: z.literal(true),
+    referencedRelation: z.literal("vine_full"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+  z.object({
+    foreignKeyName: z.literal("vine_vpc_vine_id_fkey"),
+    columns: z.tuple([z.literal("vine_id")]),
+    isOneToOne: z.literal(true),
+    referencedRelation: z.literal("vines"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+]);
+
+export const publicVineNosqlTablesRowSchema = z.object({
+  billing_mode: publicNosqlBillingModeSchema.nullable(),
+  created_at: z.string(),
+  estimated_monthly_cost: z.number().nullable(),
+  global_replicas: z.array(z.string()).nullable(),
+  hash_key: z.string(),
+  hash_key_type: publicNosqlKeyTypeSchema.nullable(),
+  id: z.string(),
+  name: z.string(),
+  point_in_time_recovery: z.boolean().nullable(),
+  provider_config: z
+    .object({
+      partition_key_path: z.string().optional(),
+    })
+    .nullable(),
+  range_key: z.string().nullable(),
+  range_key_type: publicNosqlKeyTypeSchema.nullable(),
+  status: publicComponentStatusSchema,
+  status_message: z.string().nullable(),
+  table_type: publicNosqlTableTypeSchema.nullable(),
+  updated_at: z.string(),
+  vine_id: z.string(),
+});
+
+export const publicVineNosqlTablesInsertSchema = z.object({
+  billing_mode: publicNosqlBillingModeSchema.optional().nullable(),
+  created_at: z.string().optional(),
+  estimated_monthly_cost: z.number().optional().nullable(),
+  global_replicas: z.array(z.string()).optional().nullable(),
+  hash_key: z.string(),
+  hash_key_type: publicNosqlKeyTypeSchema.optional().nullable(),
+  id: z.string().optional(),
+  name: z.string(),
+  point_in_time_recovery: z.boolean().optional().nullable(),
+  provider_config: z
+    .object({
+      partition_key_path: z.string().optional(),
+    })
+    .optional()
+    .nullable(),
+  range_key: z.string().optional().nullable(),
+  range_key_type: publicNosqlKeyTypeSchema.optional().nullable(),
+  status: publicComponentStatusSchema.optional(),
+  status_message: z.string().optional().nullable(),
+  table_type: publicNosqlTableTypeSchema.optional().nullable(),
+  updated_at: z.string().optional(),
+  vine_id: z.string(),
+});
+
+export const publicVineNosqlTablesUpdateSchema = z.object({
+  billing_mode: publicNosqlBillingModeSchema.optional().nullable(),
+  created_at: z.string().optional(),
+  estimated_monthly_cost: z.number().optional().nullable(),
+  global_replicas: z.array(z.string()).optional().nullable(),
+  hash_key: z.string().optional(),
+  hash_key_type: publicNosqlKeyTypeSchema.optional().nullable(),
+  id: z.string().optional(),
+  name: z.string().optional(),
+  point_in_time_recovery: z.boolean().optional().nullable(),
+  provider_config: z
+    .object({
+      partition_key_path: z.string().optional(),
+    })
+    .optional()
+    .nullable(),
+  range_key: z.string().optional().nullable(),
+  range_key_type: publicNosqlKeyTypeSchema.optional().nullable(),
+  status: publicComponentStatusSchema.optional(),
+  status_message: z.string().optional().nullable(),
+  table_type: publicNosqlTableTypeSchema.optional().nullable(),
+  updated_at: z.string().optional(),
+  vine_id: z.string().optional(),
+});
+
+export const publicVineNosqlTablesRelationshipsSchema = z.tuple([
+  z.object({
+    foreignKeyName: z.literal("vine_dynamodb_tables_vine_id_fkey"),
+    columns: z.tuple([z.literal("vine_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("vine_full"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+  z.object({
+    foreignKeyName: z.literal("vine_dynamodb_tables_vine_id_fkey"),
     columns: z.tuple([z.literal("vine_id")]),
     isOneToOne: z.literal(false),
     referencedRelation: z.literal("vines"),
@@ -1522,77 +1646,14 @@ export const publicVineTopicsRelationshipsSchema = z.tuple([
   }),
 ]);
 
-export const publicVineVpcRowSchema = z.object({
-  allowed_cidr_blocks: z.array(z.string()).nullable(),
-  created_at: z.string(),
-  estimated_monthly_cost: z.number().nullable(),
-  id: z.string(),
-  provision_vpc: z.boolean(),
-  single_nat_gateway: z.boolean().nullable(),
-  status: publicComponentStatusSchema,
-  status_message: z.string().nullable(),
-  updated_at: z.string(),
-  vine_id: z.string(),
-  vpc_cidr: z.string().nullable(),
-  vpc_id: z.string().nullable(),
-});
-
-export const publicVineVpcInsertSchema = z.object({
-  allowed_cidr_blocks: z.array(z.string()).optional().nullable(),
-  created_at: z.string().optional(),
-  estimated_monthly_cost: z.number().optional().nullable(),
-  id: z.string().optional(),
-  provision_vpc: z.boolean().optional(),
-  single_nat_gateway: z.boolean().optional().nullable(),
-  status: publicComponentStatusSchema.optional(),
-  status_message: z.string().optional().nullable(),
-  updated_at: z.string().optional(),
-  vine_id: z.string(),
-  vpc_cidr: z.string().optional().nullable(),
-  vpc_id: z.string().optional().nullable(),
-});
-
-export const publicVineVpcUpdateSchema = z.object({
-  allowed_cidr_blocks: z.array(z.string()).optional().nullable(),
-  created_at: z.string().optional(),
-  estimated_monthly_cost: z.number().optional().nullable(),
-  id: z.string().optional(),
-  provision_vpc: z.boolean().optional(),
-  single_nat_gateway: z.boolean().optional().nullable(),
-  status: publicComponentStatusSchema.optional(),
-  status_message: z.string().optional().nullable(),
-  updated_at: z.string().optional(),
-  vine_id: z.string().optional(),
-  vpc_cidr: z.string().optional().nullable(),
-  vpc_id: z.string().optional().nullable(),
-});
-
-export const publicVineVpcRelationshipsSchema = z.tuple([
-  z.object({
-    foreignKeyName: z.literal("vine_vpc_vine_id_fkey"),
-    columns: z.tuple([z.literal("vine_id")]),
-    isOneToOne: z.literal(true),
-    referencedRelation: z.literal("vine_full"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-  z.object({
-    foreignKeyName: z.literal("vine_vpc_vine_id_fkey"),
-    columns: z.tuple([z.literal("vine_id")]),
-    isOneToOne: z.literal(true),
-    referencedRelation: z.literal("vines"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-]);
-
 export const publicVinesRowSchema = z.object({
-  aws_account_id: z.string().nullable(),
-  aws_region: z.string(),
   cloud_identity_id: z.string().nullable(),
   created_at: z.string(),
   environment_stage: publicEnvironmentStageSchema,
   estimated_monthly_cost: z.number().nullable(),
   id: z.string(),
   project_name: z.string(),
+  region: z.string(),
   status: publicVineStatusSchema,
   terraform_version: z.string(),
   updated_at: z.string(),
@@ -1601,14 +1662,13 @@ export const publicVinesRowSchema = z.object({
 });
 
 export const publicVinesInsertSchema = z.object({
-  aws_account_id: z.string().optional().nullable(),
-  aws_region: z.string().optional(),
   cloud_identity_id: z.string().optional().nullable(),
   created_at: z.string().optional(),
   environment_stage: publicEnvironmentStageSchema.optional(),
   estimated_monthly_cost: z.number().optional().nullable(),
   id: z.string().optional(),
   project_name: z.string(),
+  region: z.string().optional(),
   status: publicVineStatusSchema.optional(),
   terraform_version: z.string().optional(),
   updated_at: z.string().optional(),
@@ -1617,14 +1677,13 @@ export const publicVinesInsertSchema = z.object({
 });
 
 export const publicVinesUpdateSchema = z.object({
-  aws_account_id: z.string().optional().nullable(),
-  aws_region: z.string().optional(),
   cloud_identity_id: z.string().optional().nullable(),
   created_at: z.string().optional(),
   environment_stage: publicEnvironmentStageSchema.optional(),
   estimated_monthly_cost: z.number().optional().nullable(),
   id: z.string().optional(),
   project_name: z.string().optional(),
+  region: z.string().optional(),
   status: publicVineStatusSchema.optional(),
   terraform_version: z.string().optional(),
   updated_at: z.string().optional(),
@@ -1734,10 +1793,12 @@ export const publicVineFullRowSchema = z.object({
   aws_account_id: z.string().nullable(),
   aws_region: z.string().nullable(),
   cloud_identity_id: z.string().nullable(),
+  cloud_provider: publicCloudProviderSchema.nullable(),
   cloudfront_waf_enabled: z.boolean().nullable(),
   cluster_admins: jsonSchema.nullable(),
   cluster_endpoint: z.string().nullable(),
   cluster_name: z.string().nullable(),
+  cluster_status: z.string().nullable(),
   cluster_version: z.string().nullable(),
   create_rds: z.boolean().nullable(),
   create_vpc: z.boolean().nullable(),
@@ -1761,10 +1822,12 @@ export const publicVineFullRowSchema = z.object({
   gitops_template_repo_branch: z.string().nullable(),
   id: z.string().nullable(),
   instance_types: z.array(z.string()).nullable(),
+  network_status: z.string().nullable(),
   node_desired_size: z.number().nullable(),
   node_max_size: z.number().nullable(),
   node_min_size: z.number().nullable(),
   project_name: z.string().nullable(),
+  region: z.string().nullable(),
   selected_vpc_id: z.string().nullable(),
   single_nat_gateway: z.boolean().nullable(),
   status: z.string().nullable(),
@@ -1774,6 +1837,7 @@ export const publicVineFullRowSchema = z.object({
   vineyard_id: z.string().nullable(),
   vpc_cidr: z.string().nullable(),
   vpc_status: z.string().nullable(),
+  waf_enabled: z.boolean().nullable(),
 });
 
 export const publicVineFullRelationshipsSchema = z.tuple([
@@ -1812,6 +1876,7 @@ export const publicClaimNextJobReturnsSchema = z.array(
     execution_metadata: jsonSchema.nullable(),
     id: z.string(),
     job_type: publicProvisionJobTypeSchema,
+    plan_job_id: z.string().nullable(),
     started_at: z.string().nullable(),
     status: z.string(),
     updated_at: z.string().nullable(),

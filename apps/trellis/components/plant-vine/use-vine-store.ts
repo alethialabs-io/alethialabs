@@ -4,7 +4,7 @@ import type { RegionPrices } from "@/app/server/actions/pricing";
 import { getRegionPrices } from "@/app/server/actions/pricing";
 
 interface VineStore {
-	awsConnected: boolean;
+	cloudConnected: boolean;
 	awsResources: CachedAwsResources | null;
 	prices: RegionPrices | null;
 	loadingPrices: boolean;
@@ -18,7 +18,7 @@ interface VineStore {
 }
 
 export const useVineStore = create<VineStore>((set) => ({
-	awsConnected: false,
+	cloudConnected: false,
 	awsResources: null,
 	prices: null,
 	loadingPrices: false,
