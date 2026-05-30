@@ -77,12 +77,8 @@ var deployCmd = &cobra.Command{
 				os.Exit(1)
 			}
 
-			deployment, err := apiClient.CreateDeployment(config.ID, fmt.Sprintf("Deployment for %s", projectName), "terraform", config.TerraformVersion)
-			if err != nil {
-				fmt.Printf("Error creating deployment record: %v\n", err)
-				os.Exit(1)
-			}
-			deploymentID = deployment.ID
+			// Deployment tracking removed (legacy deployments table deprecated)
+			_ = deploymentID
 		}
 
 		err = provisioner.RunDeploy(context.Background(), provisioner.DeployParams{
