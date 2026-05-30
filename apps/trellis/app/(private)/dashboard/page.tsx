@@ -1,258 +1,339 @@
-"use client";
-
-import { hasCloudIdentity } from "@/app/server/actions/identities";
-import { getVineyards, GetVineyardsData } from "@/app/server/actions/vineyards";
-import { getVines } from "@/app/server/actions/vines";
-import type { PublicVinesRow } from "@/lib/validations/db.schemas";
-import { DataTable } from "@/components/data-table";
+import { getJobs } from "@/app/server/actions/jobs";
+import { getIntegrationsWithStatus } from "@/app/server/actions/integrations";
+import { getVineyards } from "@/app/server/actions/vineyards";
+import { createClient } from "@/lib/supabase/server";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { vinesColumns } from "@/components/vines/columns";
-import { cn } from "@/lib/utils";
-import { formatDistanceToNow } from "date-fns";
+import {
+	Card,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+} from "@/components/ui/card";
+import { JOB_TYPES, STATUS_STYLES } from "@/components/jobs/columns";
 import {
 	ArrowRight,
+	Blocks,
 	CheckCircle2,
-	Clock,
+	ClipboardList,
+	Grape,
 	Map,
 	Plus,
-	TrendingUp,
+	Workflow,
+	XCircle,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { formatDistanceToNow } from "date-fns";
 
-export default function DashboardPage() {
-	const [recentVines, setRecentVines] = useState<PublicVinesRow[]>([]);
-	const [vineyards, setVineyards] = useState<GetVineyardsData>([]);
-	const [loading, setLoading] = useState(true);
-	const router = useRouter();
+export default async function DashboardPage() {
+	const supabase = await createClient();
 
-	useEffect(() => {
-		const fetchData = async () => {
-			try {
-				const hasIdentity = await hasCloudIdentity();
-				if (!hasIdentity) {
-					const skipped = localStorage.getItem("aws_onboarding_skipped");
-					if (!skipped) {
-						router.push("/onboarding/aws");
-						return;
-					}
-				}
+	const [jobs, integrations, { vineyards }, workersResult] =
+		await Promise.all([
+			getJobs(),
+			getIntegrationsWithStatus(),
+			getVineyards(),
+			supabase
+				.from("workers")
+				.select("id, name, mode, status, last_heartbeat, created_at")
+				.order("created_at", { ascending: false }),
+		]);
 
-				const [vinesRes, vineyardsRes] = await Promise.all([
-					getVines(),
-					getVineyards(),
-				]);
+	const recentJobs = jobs.slice(0, 5);
+	const workers = workersResult.data ?? [];
+	const onlineWorkers = workers.filter((w) => w.status === "ONLINE").length;
+	const offlineWorkers = workers.length - onlineWorkers;
 
-				setRecentVines((vinesRes.vines || []).slice(0, 5));
-				setVineyards(vineyardsRes.vineyards || []);
-			} catch (error) {
-				console.error("Error fetching dashboard data:", error);
-			} finally {
-				setLoading(false);
-			}
-		};
-
-		fetchData();
-	}, [router]);
+	const connectedIntegrations = integrations.filter((i) => i.connected);
+	const availableIntegrations = integrations.filter(
+		(i) => !i.connected && i.status !== "coming_soon",
+	);
 
 	return (
-		<div className="space-y-8 w-full">
+		<div className="space-y-6 w-full">
 			<div className="flex items-center justify-between">
-				<div className="space-y-1.5">
-					<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
+				<div className="space-y-1">
+					<h1 className="text-2xl font-semibold tracking-tight text-foreground">
 						Overview
 					</h1>
 					<p className="text-muted-foreground text-sm">
 						Your infrastructure at a glance.
 					</p>
 				</div>
-				<Link href="/dashboard/configure">
-					<Button size="sm" className="h-9 text-sm font-medium">
-						<Plus className="mr-2 h-4 w-4" />
+				<Link href="/dashboard/plant">
+					<Button size="sm" className="h-8 text-xs">
+						<Plus className="mr-1.5 h-3.5 w-3.5" />
 						Plant a Vine
 					</Button>
 				</Link>
 			</div>
 
-			{/* Compact Stats Row */}
-			<div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-				<StatCard
-					label="Total Vines"
-					value={recentVines.length}
-					loading={loading}
-					icon={<TrendingUp className="h-3.5 w-3.5" />}
-				/>
-				<StatCard
-					label="Active"
-					value={recentVines.filter((v) => v.status === "ACTIVE").length}
-					loading={loading}
-					icon={<CheckCircle2 className="h-3.5 w-3.5" />}
-				/>
-				<StatCard
-					label="Vineyards"
-					value={vineyards.length}
-					loading={loading}
-					icon={<Map className="h-3.5 w-3.5" />}
-				/>
-				<StatCard
-					label="Draft"
-					value={recentVines.filter((v) => v.status === "DRAFT").length}
-					loading={loading}
-					icon={<Clock className="h-3.5 w-3.5" />}
-				/>
-			</div>
+			<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+				{/* Recent Jobs */}
+				<Card>
+					<CardHeader className="pb-3">
+						<div className="flex items-center justify-between">
+							<div className="flex items-center gap-2">
+								<ClipboardList className="h-4 w-4 text-muted-foreground" />
+								<CardTitle className="text-sm">
+									Recent Jobs
+								</CardTitle>
+							</div>
+							<Link href="/dashboard/jobs">
+								<Button
+									variant="ghost"
+									size="sm"
+									className="h-6 text-[10px] text-muted-foreground"
+								>
+									View all
+									<ArrowRight className="ml-1 h-3 w-3" />
+								</Button>
+							</Link>
+						</div>
+					</CardHeader>
+					<CardContent>
+						{recentJobs.length === 0 ? (
+							<p className="text-xs text-muted-foreground py-4 text-center">
+								No jobs yet. Plant a vine to get started.
+							</p>
+						) : (
+							<div className="space-y-1">
+								{recentJobs.map((job) => {
+									const info = JOB_TYPES[job.job_type];
+									const Icon = info?.icon;
+									return (
+										<div
+											key={job.id}
+											className="flex items-center gap-3 py-1.5 px-1"
+										>
+											{Icon && (
+												<Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+											)}
+											<span className="text-xs font-medium flex-1 truncate">
+												{info?.label ?? job.job_type}
+											</span>
+											<Badge
+												variant="outline"
+												className={`text-[9px] py-0 px-1.5 ${STATUS_STYLES[job.status] ?? ""}`}
+											>
+												{job.status}
+											</Badge>
+											<span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+												{job.created_at
+													? formatDistanceToNow(
+															new Date(
+																job.created_at,
+															),
+															{ addSuffix: true },
+														)
+													: "—"}
+											</span>
+										</div>
+									);
+								})}
+							</div>
+						)}
+					</CardContent>
+				</Card>
 
-			{/* Recent Vines Table */}
-			<section className="space-y-3">
-				<div className="flex items-center justify-between">
-					<h2 className="text-sm font-medium text-foreground">
-						Recent Vines
-					</h2>
-					<Link href="/dashboard/vines">
-						<Button
-							variant="ghost"
-							size="sm"
-							className="text-xs h-7 text-muted-foreground hover:text-foreground"
-						>
-							View All
-							<ArrowRight className="ml-1 h-3 w-3" />
-						</Button>
-					</Link>
-				</div>
-
-				{loading ? (
-					<div className="rounded-md border border-border/40">
-						<div className="divide-y divide-border/40">
-							{[1, 2, 3].map((i) => (
-								<div key={i} className="flex items-center gap-4 px-4 py-3">
-									<Skeleton className="h-4 w-32" />
-									<Skeleton className="h-4 w-16" />
-									<Skeleton className="h-4 w-16" />
-									<Skeleton className="h-4 w-20 ml-auto" />
+				{/* Integrations */}
+				<Card>
+					<CardHeader className="pb-3">
+						<div className="flex items-center justify-between">
+							<div className="flex items-center gap-2">
+								<Blocks className="h-4 w-4 text-muted-foreground" />
+								<CardTitle className="text-sm">
+									Integrations
+								</CardTitle>
+							</div>
+							<Link href="/dashboard/integrations">
+								<Button
+									variant="ghost"
+									size="sm"
+									className="h-6 text-[10px] text-muted-foreground"
+								>
+									Manage
+									<ArrowRight className="ml-1 h-3 w-3" />
+								</Button>
+							</Link>
+						</div>
+					</CardHeader>
+					<CardContent>
+						<div className="space-y-1.5">
+							{connectedIntegrations.map((i) => (
+								<div
+									key={i.slug}
+									className="flex items-center gap-2.5 py-1"
+								>
+									<CheckCircle2 className="h-3 w-3 text-emerald-500 shrink-0" />
+									<span className="text-xs font-medium">
+										{i.name}
+									</span>
+									<span className="text-[10px] text-muted-foreground truncate">
+										{i.connection_details?.username
+											? `@${i.connection_details.username}`
+											: i.connection_details?.account_id
+												? i.connection_details.account_id
+												: ""}
+									</span>
 								</div>
 							))}
-						</div>
-					</div>
-				) : recentVines.length === 0 ? (
-					<div className="border border-dashed border-border/60 rounded-lg bg-muted/5 flex flex-col items-center justify-center py-12 text-center">
-						<TrendingUp className="h-8 w-8 text-muted-foreground mb-3 opacity-30" />
-						<p className="text-sm text-muted-foreground mb-4">
-							No vines planted yet.
-						</p>
-						<Link href="/dashboard/configure">
-							<Button size="sm" variant="outline" className="h-8 text-xs">
-								<Plus className="mr-1.5 h-3.5 w-3.5" />
-								Plant your first vine
-							</Button>
-						</Link>
-					</div>
-				) : (
-					<DataTable
-						columns={vinesColumns}
-						data={recentVines}
-						onRowClick={(row) =>
-							router.push(
-								row.vineyard_id
-									? `/dashboard/vineyards/${row.vineyard_id}`
-									: `/dashboard/vineyards`,
-								{ scroll: false },
-							)
-						}
-					/>
-				)}
-			</section>
-
-			{/* Vineyards Summary */}
-			<section className="space-y-3">
-				<div className="flex items-center justify-between">
-					<h2 className="text-sm font-medium text-foreground">
-						Vineyards
-					</h2>
-					<span className="text-xs text-muted-foreground">
-						{loading ? "..." : `${vineyards.length} total`}
-					</span>
-				</div>
-
-				{loading ? (
-					<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-						{[1, 2].map((i) => (
-							<Skeleton key={i} className="h-20 w-full rounded-lg" />
-						))}
-					</div>
-				) : vineyards.length === 0 ? (
-					<p className="text-xs text-muted-foreground italic py-2">
-						No vineyards yet — they're created automatically when you plant a vine.
-					</p>
-				) : (
-					<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-						{vineyards.map((v) => (
-							<Link
-								key={v.id}
-								href={`/dashboard/vineyards/${v.id}`}
-								className="group flex items-start gap-3 rounded-lg border border-border/40 p-3 hover:border-border hover:bg-muted/30 transition-colors"
-							>
-								<div className="flex h-8 w-8 items-center justify-center rounded-md border border-border/50 bg-background shrink-0">
-									<Map className="h-3.5 w-3.5 text-muted-foreground" />
+							{availableIntegrations.map((i) => (
+								<div
+									key={i.slug}
+									className="flex items-center gap-2.5 py-1"
+								>
+									<XCircle className="h-3 w-3 text-muted-foreground/40 shrink-0" />
+									<span className="text-xs text-muted-foreground">
+										{i.name}
+									</span>
+									<Link
+										href="/dashboard/integrations"
+										className="text-[10px] text-foreground hover:underline ml-auto"
+									>
+										Connect
+									</Link>
 								</div>
-								<div className="flex-1 min-w-0">
-									<p className="text-sm font-medium text-foreground truncate group-hover:underline">
-										{v.name}
+							))}
+							{connectedIntegrations.length === 0 &&
+								availableIntegrations.length === 0 && (
+									<p className="text-xs text-muted-foreground py-2 text-center">
+										No integrations available.
 									</p>
-									<div className="flex items-center gap-2 mt-0.5">
-										<span className="text-xs text-muted-foreground">
-											{v.vines?.length || 0} vines
+								)}
+						</div>
+					</CardContent>
+				</Card>
+
+				{/* Workers */}
+				<Card>
+					<CardHeader className="pb-3">
+						<div className="flex items-center justify-between">
+							<div className="flex items-center gap-2">
+								<Workflow className="h-4 w-4 text-muted-foreground" />
+								<CardTitle className="text-sm">
+									Workers
+								</CardTitle>
+								{workers.length > 0 && (
+									<span className="text-[10px] text-muted-foreground">
+										{onlineWorkers} online
+										{offlineWorkers > 0 &&
+											` · ${offlineWorkers} offline`}
+									</span>
+								)}
+							</div>
+							<Link href="/dashboard/workers">
+								<Button
+									variant="ghost"
+									size="sm"
+									className="h-6 text-[10px] text-muted-foreground"
+								>
+									{workers.length === 0
+										? "Register"
+										: "Manage"}
+									<ArrowRight className="ml-1 h-3 w-3" />
+								</Button>
+							</Link>
+						</div>
+					</CardHeader>
+					<CardContent>
+						{workers.length === 0 ? (
+							<p className="text-xs text-muted-foreground py-4 text-center">
+								No workers registered. Register one to start
+								provisioning.
+							</p>
+						) : (
+							<div className="space-y-1.5">
+								{workers.map((w) => (
+									<div
+										key={w.id}
+										className="flex items-center gap-2.5 py-1"
+									>
+										<div
+											className={`h-2 w-2 rounded-full shrink-0 ${w.status === "ONLINE" ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
+										/>
+										<span className="text-xs font-medium truncate">
+											{w.name}
 										</span>
-										{v.updated_at && (
-											<>
-												<span className="text-muted-foreground/30">·</span>
-												<span className="text-xs text-muted-foreground">
-													{formatDistanceToNow(new Date(v.updated_at), {
-														addSuffix: true,
-													})}
-												</span>
-											</>
+										<Badge
+											variant="outline"
+											className="text-[9px] py-0 px-1.5"
+										>
+											{w.mode}
+										</Badge>
+										{w.last_heartbeat && (
+											<span className="text-[10px] text-muted-foreground ml-auto tabular-nums">
+												{formatDistanceToNow(
+													new Date(w.last_heartbeat),
+													{ addSuffix: true },
+												)}
+											</span>
 										)}
 									</div>
-								</div>
-							</Link>
-						))}
-					</div>
-				)}
-			</section>
-		</div>
-	);
-}
+								))}
+							</div>
+						)}
+					</CardContent>
+				</Card>
 
-function StatCard({
-	label,
-	value,
-	loading,
-	icon,
-}: {
-	label: string;
-	value: number | undefined | null;
-	loading: boolean;
-	icon: React.ReactNode;
-}) {
-	return (
-		<div className="flex items-center gap-3 rounded-lg border border-border/40 p-3">
-			<div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted/50 text-muted-foreground shrink-0">
-				{icon}
-			</div>
-			<div>
-				{loading ? (
-					<Skeleton className="h-6 w-8" />
-				) : (
-					<p className="text-xl font-semibold tracking-tight">
-						{value ?? 0}
-					</p>
-				)}
-				<p className="text-[11px] text-muted-foreground leading-none mt-0.5">
-					{label}
-				</p>
+				{/* Vineyards */}
+				<Card>
+					<CardHeader className="pb-3">
+						<div className="flex items-center justify-between">
+							<div className="flex items-center gap-2">
+								<Grape className="h-4 w-4 text-muted-foreground" />
+								<CardTitle className="text-sm">
+									Vineyards
+								</CardTitle>
+								{vineyards.length > 0 && (
+									<span className="text-[10px] text-muted-foreground">
+										{vineyards.length} total
+									</span>
+								)}
+							</div>
+							<Link href="/dashboard/vineyards">
+								<Button
+									variant="ghost"
+									size="sm"
+									className="h-6 text-[10px] text-muted-foreground"
+								>
+									View all
+									<ArrowRight className="ml-1 h-3 w-3" />
+								</Button>
+							</Link>
+						</div>
+					</CardHeader>
+					<CardContent>
+						{vineyards.length === 0 ? (
+							<p className="text-xs text-muted-foreground py-4 text-center">
+								No vineyards yet — created automatically when
+								you plant a vine.
+							</p>
+						) : (
+							<div className="space-y-1.5">
+								{vineyards.slice(0, 3).map((v) => (
+									<Link
+										key={v.id}
+										href={`/dashboard/vineyards/${v.id}`}
+										className="flex items-center gap-2.5 py-1.5 px-1 rounded hover:bg-muted/30 transition-colors"
+									>
+										<Map className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+										<span className="text-xs font-medium truncate flex-1">
+											{v.name}
+										</span>
+										<span className="text-[10px] text-muted-foreground tabular-nums">
+											{v.vines?.length ?? 0} vine
+											{(v.vines?.length ?? 0) !== 1
+												? "s"
+												: ""}
+										</span>
+									</Link>
+								))}
+							</div>
+						)}
+					</CardContent>
+				</Card>
 			</div>
 		</div>
 	);
