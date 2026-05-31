@@ -33,6 +33,27 @@ export function useJobNotifications() {
 		if (!userId) return;
 
 		const supabase = createClient();
+
+		const addOrUpdateNotification = (job: Record<string, unknown>) => {
+			if ((job.user_id as string) !== userId) return;
+			if (!INTERESTING_STATUSES.has(job.status as string)) return;
+
+			setNotifications((prev) => {
+				const notification: JobNotification = {
+					id: `${job.id}-${job.status}`,
+					jobId: job.id as string,
+					jobType: job.job_type as string,
+					status: job.status as string,
+					vineId: (job.vine_id as string) ?? null,
+					createdAt: new Date().toISOString(),
+					read: false,
+				};
+
+				const withoutOld = prev.filter((n) => n.jobId !== job.id);
+				return [notification, ...withoutOld].slice(0, MAX_NOTIFICATIONS);
+			});
+		};
+
 		const channel = supabase
 			.channel("job-notifications")
 			.on(
@@ -41,25 +62,8 @@ export function useJobNotifications() {
 					event: "INSERT",
 					schema: "public",
 					table: "provision_jobs",
-					filter: `user_id=eq.${userId}`,
 				},
-				(payload) => {
-					const job = payload.new as Record<string, unknown>;
-					if (!INTERESTING_STATUSES.has(job.status as string)) return;
-
-					setNotifications((prev) => {
-						const notification: JobNotification = {
-							id: `${job.id}-${job.status}`,
-							jobId: job.id as string,
-							jobType: job.job_type as string,
-							status: job.status as string,
-							vineId: (job.vine_id as string) ?? null,
-							createdAt: (job.created_at as string) ?? new Date().toISOString(),
-							read: false,
-						};
-						return [notification, ...prev].slice(0, MAX_NOTIFICATIONS);
-					});
-				},
+				(payload) => addOrUpdateNotification(payload.new as Record<string, unknown>),
 			)
 			.on(
 				"postgres_changes",
@@ -67,34 +71,8 @@ export function useJobNotifications() {
 					event: "UPDATE",
 					schema: "public",
 					table: "provision_jobs",
-					filter: `user_id=eq.${userId}`,
 				},
-				(payload) => {
-					const job = payload.new as Record<string, unknown>;
-					if (!INTERESTING_STATUSES.has(job.status as string)) return;
-
-					setNotifications((prev) => {
-						const existingIdx = prev.findIndex((n) => n.jobId === job.id);
-
-						const notification: JobNotification = {
-							id: `${job.id}-${job.status}`,
-							jobId: job.id as string,
-							jobType: job.job_type as string,
-							status: job.status as string,
-							vineId: (job.vine_id as string) ?? null,
-							createdAt: new Date().toISOString(),
-							read: false,
-						};
-
-						if (existingIdx >= 0) {
-							const updated = [...prev];
-							updated[existingIdx] = notification;
-							return [notification, ...updated.filter((_, i) => i !== existingIdx)].slice(0, MAX_NOTIFICATIONS);
-						}
-
-						return [notification, ...prev].slice(0, MAX_NOTIFICATIONS);
-					});
-				},
+				(payload) => addOrUpdateNotification(payload.new as Record<string, unknown>),
 			)
 			.subscribe();
 
