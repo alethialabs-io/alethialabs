@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import {
 	Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { FormControl, FormField, FormItem } from "@/components/ui/form";
+import { FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { useCloudProvider, useProviderSlug, useProviderMeta, REGION_LABELS } from "@/lib/cloud-providers";
 import type { AnyCachedResources, CloudProviderSlug } from "@/lib/cloud-providers";
 import { Loader2, RefreshCw } from "lucide-react";
@@ -116,9 +116,10 @@ export function ProviderRibbon({ identities }: ProviderRibbonProps) {
 							<CloudIdentitySelector
 								identities={identities}
 								value={field.value}
-								onChange={(id) => field.onChange(id)}
+								onChange={(id, _provider) => field.onChange(id)}
 							/>
 						</FormControl>
+						<FormMessage className="text-[11px]" />
 					</FormItem>
 				)} />
 			</div>
@@ -144,6 +145,7 @@ export function ProviderRibbon({ identities }: ProviderRibbonProps) {
 								))}
 							</SelectContent>
 						</Select>
+					<FormMessage className="text-[11px]" />
 					</FormItem>
 				)} />
 			</div>

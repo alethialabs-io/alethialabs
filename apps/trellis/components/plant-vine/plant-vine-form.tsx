@@ -11,6 +11,7 @@ import {
 	AUTOSCALER,
 } from "@/lib/cloud-providers";
 import { useVineStore } from "./use-vine-store";
+import { RepositoryProvider } from "./repository-context";
 import { ProviderRibbon } from "./provider-ribbon";
 import { VineFormTabs } from "./vine-form-tabs";
 import { CostSidebar } from "./cost-sidebar";
@@ -28,7 +29,9 @@ interface PlantVineFormProps {
 export function PlantVineForm({ cloudIdentities }: PlantVineFormProps) {
 	return (
 		<CloudProviderProvider>
-			<PlantVineFormInner cloudIdentities={cloudIdentities} />
+			<RepositoryProvider>
+				<PlantVineFormInner cloudIdentities={cloudIdentities} />
+			</RepositoryProvider>
 		</CloudProviderProvider>
 	);
 }
@@ -91,9 +94,28 @@ function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
 		if (provider !== prevProviderRef.current) {
 			prevProviderRef.current = provider;
 			const autoscalerKey = AUTOSCALER[provider].providerConfigKey;
+
+			// Region — invalid across providers
+			form.setValue("vine.region", "");
+
+			// Cluster — versions, types, autoscaler differ
 			form.setValue("cluster.cluster_version", DEFAULT_K8S_VERSION[provider]);
 			form.setValue("cluster.instance_types", [DEFAULT_INSTANCE_TYPE[provider]]);
 			form.setValue("cluster.provider_config", { [autoscalerKey]: true });
+
+			// Network — reset to create mode, clear stale IDs
+			form.setValue("network.provision_network", true);
+			form.setValue("network.network_id", "");
+			form.setValue("network.cidr_block", "10.0.0.0/16");
+
+			// DNS — zone IDs differ across providers
+			form.setValue("dns.zone_id", "");
+			form.setValue("dns.domain_name", "");
+			form.setValue("dns.provider_config", {});
+
+			// Services with provider-specific values (engines, node types)
+			form.setValue("databases", []);
+			form.setValue("caches", []);
 		}
 	}, [provider, form]);
 
