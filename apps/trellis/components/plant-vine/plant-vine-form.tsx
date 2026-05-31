@@ -9,34 +9,22 @@ import {
 	DEFAULT_INSTANCE_TYPE,
 	DEFAULT_K8S_VERSION,
 	AUTOSCALER,
-	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
 import { useVineStore } from "./use-vine-store";
-import { Button } from "@/components/ui/button";
-import { Loader2, Rocket } from "lucide-react";
+import { ProviderRibbon } from "./provider-ribbon";
+import { VineFormTabs } from "./vine-form-tabs";
+import { CostSidebar } from "./cost-sidebar";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 
-import { SectionProjectBasics } from "./section-project-basics";
-import { SectionCloudRegion } from "./section-cloud-region";
-import { SectionNetwork } from "./section-network";
-import { SectionCluster } from "./section-cluster";
-import { SectionRepositories } from "./section-repositories";
-import { SectionDatabases } from "./section-databases";
-import { SectionCaches } from "./section-caches";
-import { SectionDns } from "./section-dns";
-import { SectionMessaging } from "./section-messaging";
-import { SectionNosql } from "./section-nosql";
-import { SectionSecrets } from "./section-secrets";
-import { CostSidebar } from "./cost-sidebar";
-
 interface PlantVineFormProps {
 	cloudIdentities: CloudIdentityOption[];
 }
 
+/** Outer wrapper that provides the CloudProvider context. */
 export function PlantVineForm({ cloudIdentities }: PlantVineFormProps) {
 	return (
 		<CloudProviderProvider>
@@ -45,10 +33,10 @@ export function PlantVineForm({ cloudIdentities }: PlantVineFormProps) {
 	);
 }
 
+/** Inner form component with access to CloudProvider context. */
 function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
 	const router = useRouter();
 	const store = useVineStore();
-	const hasIdentities = cloudIdentities.length > 0;
 
 	const form = useForm<VineFormData>({
 		resolver: zodResolver(vineFormSchema) as any,
@@ -115,7 +103,6 @@ function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
 			const input = data as unknown as CreateVineInput;
 			const { vine } = await createVine(input);
 			toast.success("Vine planted successfully!");
-
 			if (vine.vineyard_id) {
 				router.push(`/dashboard/vineyards/${vine.vineyard_id}`);
 			} else {
@@ -135,46 +122,19 @@ function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
 
 	return (
 		<FormProvider {...form}>
-			<form onSubmit={form.handleSubmit(onSubmit, onError)} className="flex gap-6">
-				<div className="flex-1 space-y-6 min-w-0">
-					<SectionProjectBasics />
-					<SectionCloudRegion identities={cloudIdentities} />
-					<SectionNetwork />
-					<SectionCluster />
-					<SectionRepositories />
-					<SectionDatabases />
-					<SectionCaches />
-					<SectionDns />
-					<SectionMessaging />
-					<SectionNosql />
-					<SectionSecrets />
+			<form onSubmit={form.handleSubmit(onSubmit, onError)} className="space-y-6">
+				{/* Provider Ribbon — always visible */}
+				<ProviderRibbon identities={cloudIdentities} />
 
-					<div className="flex items-center justify-end gap-4 pt-4 pb-8">
-						{store.error && (
-							<p className="text-sm text-destructive">{store.error}</p>
-						)}
-						<Button
-							type="submit"
-							disabled={store.isLoading || !hasIdentities}
-							className="min-w-[160px]"
-						>
-							{store.isLoading ? (
-								<>
-									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-									Planting...
-								</>
-							) : (
-								<>
-									<Rocket className="mr-2 h-4 w-4" />
-									Plant Vine
-								</>
-							)}
-						</Button>
+				{/* Main content: tabs + cost sidebar */}
+				<div className="flex gap-6">
+					<div className="flex-1 min-w-0">
+						<VineFormTabs />
 					</div>
-				</div>
 
-				<div className="hidden lg:block w-72 shrink-0">
-					<CostSidebar />
+					<div className="hidden lg:block w-72 shrink-0">
+						<CostSidebar />
+					</div>
 				</div>
 			</form>
 		</FormProvider>
