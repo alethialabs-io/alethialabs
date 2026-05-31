@@ -53,10 +53,15 @@ export type Database = {
         Row: {
           cached_at: string | null
           cached_resources: {
-  regions: string[];
-  vpcs: Record<string, Array<{ ID: string; CIDR: string; Name: string; IsDefault: boolean }>>;
-  subnets: Record<string, Record<string, Array<{ ID: string; CIDR: string; VpcID: string; AvailabilityZone: string }>>>;
-  hosted_zones: Array<{ ID: string; Name: string; RecordCount: number; IsPrivate: boolean }>;
+  regions?: string[];
+  vpcs?: Record<string, Array<{ ID: string; CIDR: string; Name: string; IsDefault: boolean }>>;
+  subnets?: Record<string, Record<string, Array<{ ID: string; CIDR: string; VpcID: string; AvailabilityZone: string }>>> | Record<string, Array<{ name: string; region: string; ipCidrRange: string; network: string }>> | Record<string, Array<{ name: string; id: string; addressPrefix: string; vnetName: string }>>;
+  hosted_zones?: Array<{ ID: string; Name: string; RecordCount: number; IsPrivate: boolean }>;
+  networks?: Array<{ name: string; selfLink: string; autoCreateSubnetworks: boolean }>;
+  managed_zones?: Array<{ name: string; dnsName: string; visibility: string }>;
+  locations?: string[];
+  vnets?: Array<{ name: string; id: string; location: string; addressPrefixes: string[] }>;
+  dns_zones?: Array<{ name: string; id: string; zoneType: string }>;
 } | null
           created_at: string | null
           credentials: { role_arn?: string | null; external_id?: string | null; account_id?: string | null; }
@@ -70,10 +75,15 @@ export type Database = {
         Insert: {
           cached_at?: string | null
           cached_resources?: {
-  regions: string[];
-  vpcs: Record<string, Array<{ ID: string; CIDR: string; Name: string; IsDefault: boolean }>>;
-  subnets: Record<string, Record<string, Array<{ ID: string; CIDR: string; VpcID: string; AvailabilityZone: string }>>>;
-  hosted_zones: Array<{ ID: string; Name: string; RecordCount: number; IsPrivate: boolean }>;
+  regions?: string[];
+  vpcs?: Record<string, Array<{ ID: string; CIDR: string; Name: string; IsDefault: boolean }>>;
+  subnets?: Record<string, Record<string, Array<{ ID: string; CIDR: string; VpcID: string; AvailabilityZone: string }>>> | Record<string, Array<{ name: string; region: string; ipCidrRange: string; network: string }>> | Record<string, Array<{ name: string; id: string; addressPrefix: string; vnetName: string }>>;
+  hosted_zones?: Array<{ ID: string; Name: string; RecordCount: number; IsPrivate: boolean }>;
+  networks?: Array<{ name: string; selfLink: string; autoCreateSubnetworks: boolean }>;
+  managed_zones?: Array<{ name: string; dnsName: string; visibility: string }>;
+  locations?: string[];
+  vnets?: Array<{ name: string; id: string; location: string; addressPrefixes: string[] }>;
+  dns_zones?: Array<{ name: string; id: string; zoneType: string }>;
 } | null
           created_at?: string | null
           credentials?: { role_arn?: string | null; external_id?: string | null; account_id?: string | null; }
@@ -87,10 +97,15 @@ export type Database = {
         Update: {
           cached_at?: string | null
           cached_resources?: {
-  regions: string[];
-  vpcs: Record<string, Array<{ ID: string; CIDR: string; Name: string; IsDefault: boolean }>>;
-  subnets: Record<string, Record<string, Array<{ ID: string; CIDR: string; VpcID: string; AvailabilityZone: string }>>>;
-  hosted_zones: Array<{ ID: string; Name: string; RecordCount: number; IsPrivate: boolean }>;
+  regions?: string[];
+  vpcs?: Record<string, Array<{ ID: string; CIDR: string; Name: string; IsDefault: boolean }>>;
+  subnets?: Record<string, Record<string, Array<{ ID: string; CIDR: string; VpcID: string; AvailabilityZone: string }>>> | Record<string, Array<{ name: string; region: string; ipCidrRange: string; network: string }>> | Record<string, Array<{ name: string; id: string; addressPrefix: string; vnetName: string }>>;
+  hosted_zones?: Array<{ ID: string; Name: string; RecordCount: number; IsPrivate: boolean }>;
+  networks?: Array<{ name: string; selfLink: string; autoCreateSubnetworks: boolean }>;
+  managed_zones?: Array<{ name: string; dnsName: string; visibility: string }>;
+  locations?: string[];
+  vnets?: Array<{ name: string; id: string; location: string; addressPrefixes: string[] }>;
+  dns_zones?: Array<{ name: string; id: string; zoneType: string }>;
 } | null
           created_at?: string | null
           credentials?: { role_arn?: string | null; external_id?: string | null; account_id?: string | null; }
@@ -315,7 +330,7 @@ export type Database = {
           job_type: Database["public"]["Enums"]["provision_job_type"]
           plan_job_id: string | null
           started_at: string | null
-          status: string
+          status: Database["public"]["Enums"]["provision_job_status"]
           updated_at: string | null
           user_id: string
           vine_id: string | null
@@ -336,7 +351,7 @@ export type Database = {
           job_type: Database["public"]["Enums"]["provision_job_type"]
           plan_job_id?: string | null
           started_at?: string | null
-          status?: string
+          status?: Database["public"]["Enums"]["provision_job_status"]
           updated_at?: string | null
           user_id?: string
           vine_id?: string | null
@@ -357,7 +372,7 @@ export type Database = {
           job_type?: Database["public"]["Enums"]["provision_job_type"]
           plan_job_id?: string | null
           started_at?: string | null
-          status?: string
+          status?: Database["public"]["Enums"]["provision_job_status"]
           updated_at?: string | null
           user_id?: string
           vine_id?: string | null
@@ -1302,11 +1317,11 @@ export type Database = {
           id: string
           last_heartbeat: string | null
           metadata: Record<string, unknown> | null
-          mode: string
+          mode: Database["public"]["Enums"]["worker_mode"]
           name: string
-          status: string | null
+          status: Database["public"]["Enums"]["worker_status"] | null
           token_hash: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           cloud_identity_id?: string | null
@@ -1314,11 +1329,11 @@ export type Database = {
           id?: string
           last_heartbeat?: string | null
           metadata?: Record<string, unknown> | null
-          mode: string
+          mode: Database["public"]["Enums"]["worker_mode"]
           name: string
-          status?: string | null
+          status?: Database["public"]["Enums"]["worker_status"] | null
           token_hash: string
-          user_id?: string
+          user_id?: string | null
         }
         Update: {
           cloud_identity_id?: string | null
@@ -1326,11 +1341,11 @@ export type Database = {
           id?: string
           last_heartbeat?: string | null
           metadata?: Record<string, unknown> | null
-          mode?: string
+          mode?: Database["public"]["Enums"]["worker_mode"]
           name?: string
-          status?: string | null
+          status?: Database["public"]["Enums"]["worker_status"] | null
           token_hash?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -1439,7 +1454,7 @@ export type Database = {
           job_type: Database["public"]["Enums"]["provision_job_type"]
           plan_job_id: string | null
           started_at: string | null
-          status: string
+          status: Database["public"]["Enums"]["provision_job_status"]
           updated_at: string | null
           user_id: string
           vine_id: string | null
@@ -1535,6 +1550,13 @@ export type Database = {
       nosql_billing_mode: "PAY_PER_REQUEST" | "PROVISIONED"
       nosql_key_type: "S" | "N" | "B"
       nosql_table_type: "standard" | "global"
+      provision_job_status:
+        | "QUEUED"
+        | "CLAIMED"
+        | "PROCESSING"
+        | "SUCCESS"
+        | "FAILED"
+        | "CANCELLED"
       provision_job_type:
         | "BOOTSTRAP"
         | "DEPLOY"
@@ -1551,6 +1573,8 @@ export type Database = {
         | "FAILED"
         | "DESTROYING"
         | "DESTROYED"
+      worker_mode: "self-hosted" | "cloud-hosted"
+      worker_status: "ONLINE" | "OFFLINE" | "DRAINING"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1737,6 +1761,14 @@ export const Constants = {
       nosql_billing_mode: ["PAY_PER_REQUEST", "PROVISIONED"],
       nosql_key_type: ["S", "N", "B"],
       nosql_table_type: ["standard", "global"],
+      provision_job_status: [
+        "QUEUED",
+        "CLAIMED",
+        "PROCESSING",
+        "SUCCESS",
+        "FAILED",
+        "CANCELLED",
+      ],
       provision_job_type: [
         "BOOTSTRAP",
         "DEPLOY",
@@ -1755,6 +1787,8 @@ export const Constants = {
         "DESTROYING",
         "DESTROYED",
       ],
+      worker_mode: ["self-hosted", "cloud-hosted"],
+      worker_status: ["ONLINE", "OFFLINE", "DRAINING"],
     },
   },
 } as const

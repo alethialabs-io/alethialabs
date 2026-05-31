@@ -140,7 +140,7 @@ export async function GET(req: Request) {
 		.order("created_at", { ascending: false });
 
 	if (status) {
-		query = query.eq("status", status);
+		query = query.eq("status", status as any);
 	}
 
 	if (vineyardId) {

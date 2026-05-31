@@ -137,6 +137,15 @@ export const publicNosqlTableTypeSchema = z.union([
   z.literal("global"),
 ]);
 
+export const publicProvisionJobStatusSchema = z.union([
+  z.literal("QUEUED"),
+  z.literal("CLAIMED"),
+  z.literal("PROCESSING"),
+  z.literal("SUCCESS"),
+  z.literal("FAILED"),
+  z.literal("CANCELLED"),
+]);
+
 export const publicProvisionJobTypeSchema = z.union([
   z.literal("BOOTSTRAP"),
   z.literal("DEPLOY"),
@@ -159,6 +168,17 @@ export const publicVineStatusSchema = z.union([
   z.literal("FAILED"),
   z.literal("DESTROYING"),
   z.literal("DESTROYED"),
+]);
+
+export const publicWorkerModeSchema = z.union([
+  z.literal("self-hosted"),
+  z.literal("cloud-hosted"),
+]);
+
+export const publicWorkerStatusSchema = z.union([
+  z.literal("ONLINE"),
+  z.literal("OFFLINE"),
+  z.literal("DRAINING"),
 ]);
 
 export const jsonSchema: z.ZodSchema<Json> = z.lazy(() =>
@@ -214,40 +234,108 @@ export const publicCloudIdentitiesRowSchema = z.object({
   cached_at: z.string().nullable(),
   cached_resources: z
     .object({
-      regions: z.array(z.string()),
-      vpcs: z.record(
-        z.string(),
-        z.array(
-          z.object({
-            ID: z.string(),
-            CIDR: z.string(),
-            Name: z.string(),
-            IsDefault: z.boolean(),
-          }),
-        ),
-      ),
-      subnets: z.record(
-        z.string(),
-        z.record(
+      regions: z.array(z.string()).optional(),
+      vpcs: z
+        .record(
           z.string(),
           z.array(
             z.object({
               ID: z.string(),
               CIDR: z.string(),
-              VpcID: z.string(),
-              AvailabilityZone: z.string(),
+              Name: z.string(),
+              IsDefault: z.boolean(),
             }),
           ),
-        ),
-      ),
-      hosted_zones: z.array(
-        z.object({
-          ID: z.string(),
-          Name: z.string(),
-          RecordCount: z.number(),
-          IsPrivate: z.boolean(),
-        }),
-      ),
+        )
+        .optional(),
+      subnets: z
+        .union([
+          z.record(
+            z.string(),
+            z.record(
+              z.string(),
+              z.array(
+                z.object({
+                  ID: z.string(),
+                  CIDR: z.string(),
+                  VpcID: z.string(),
+                  AvailabilityZone: z.string(),
+                }),
+              ),
+            ),
+          ),
+          z.record(
+            z.string(),
+            z.array(
+              z.object({
+                name: z.string(),
+                region: z.string(),
+                ipCidrRange: z.string(),
+                network: z.string(),
+              }),
+            ),
+          ),
+          z.record(
+            z.string(),
+            z.array(
+              z.object({
+                name: z.string(),
+                id: z.string(),
+                addressPrefix: z.string(),
+                vnetName: z.string(),
+              }),
+            ),
+          ),
+        ])
+        .optional(),
+      hosted_zones: z
+        .array(
+          z.object({
+            ID: z.string(),
+            Name: z.string(),
+            RecordCount: z.number(),
+            IsPrivate: z.boolean(),
+          }),
+        )
+        .optional(),
+      networks: z
+        .array(
+          z.object({
+            name: z.string(),
+            selfLink: z.string(),
+            autoCreateSubnetworks: z.boolean(),
+          }),
+        )
+        .optional(),
+      managed_zones: z
+        .array(
+          z.object({
+            name: z.string(),
+            dnsName: z.string(),
+            visibility: z.string(),
+          }),
+        )
+        .optional(),
+      locations: z.array(z.string()).optional(),
+      vnets: z
+        .array(
+          z.object({
+            name: z.string(),
+            id: z.string(),
+            location: z.string(),
+            addressPrefixes: z.array(z.string()),
+          }),
+        )
+        .optional(),
+      dns_zones: z
+        .array(
+          z.object({
+            name: z.string(),
+            id: z.string(),
+            zoneType: z.string(),
+          }),
+        )
+        .optional(),
     })
     .nullable(),
   created_at: z.string().nullable(),
@@ -268,40 +356,108 @@ export const publicCloudIdentitiesInsertSchema = z.object({
   cached_at: z.string().optional().nullable(),
   cached_resources: z
     .object({
-      regions: z.array(z.string()),
-      vpcs: z.record(
-        z.string(),
-        z.array(
-          z.object({
-            ID: z.string(),
-            CIDR: z.string(),
-            Name: z.string(),
-            IsDefault: z.boolean(),
-          }),
-        ),
-      ),
-      subnets: z.record(
-        z.string(),
-        z.record(
+      regions: z.array(z.string()).optional(),
+      vpcs: z
+        .record(
           z.string(),
           z.array(
             z.object({
               ID: z.string(),
               CIDR: z.string(),
-              VpcID: z.string(),
-              AvailabilityZone: z.string(),
+              Name: z.string(),
+              IsDefault: z.boolean(),
             }),
           ),
-        ),
-      ),
-      hosted_zones: z.array(
-        z.object({
-          ID: z.string(),
-          Name: z.string(),
-          RecordCount: z.number(),
-          IsPrivate: z.boolean(),
-        }),
-      ),
+        )
+        .optional(),
+      subnets: z
+        .union([
+          z.record(
+            z.string(),
+            z.record(
+              z.string(),
+              z.array(
+                z.object({
+                  ID: z.string(),
+                  CIDR: z.string(),
+                  VpcID: z.string(),
+                  AvailabilityZone: z.string(),
+                }),
+              ),
+            ),
+          ),
+          z.record(
+            z.string(),
+            z.array(
+              z.object({
+                name: z.string(),
+                region: z.string(),
+                ipCidrRange: z.string(),
+                network: z.string(),
+              }),
+            ),
+          ),
+          z.record(
+            z.string(),
+            z.array(
+              z.object({
+                name: z.string(),
+                id: z.string(),
+                addressPrefix: z.string(),
+                vnetName: z.string(),
+              }),
+            ),
+          ),
+        ])
+        .optional(),
+      hosted_zones: z
+        .array(
+          z.object({
+            ID: z.string(),
+            Name: z.string(),
+            RecordCount: z.number(),
+            IsPrivate: z.boolean(),
+          }),
+        )
+        .optional(),
+      networks: z
+        .array(
+          z.object({
+            name: z.string(),
+            selfLink: z.string(),
+            autoCreateSubnetworks: z.boolean(),
+          }),
+        )
+        .optional(),
+      managed_zones: z
+        .array(
+          z.object({
+            name: z.string(),
+            dnsName: z.string(),
+            visibility: z.string(),
+          }),
+        )
+        .optional(),
+      locations: z.array(z.string()).optional(),
+      vnets: z
+        .array(
+          z.object({
+            name: z.string(),
+            id: z.string(),
+            location: z.string(),
+            addressPrefixes: z.array(z.string()),
+          }),
+        )
+        .optional(),
+      dns_zones: z
+        .array(
+          z.object({
+            name: z.string(),
+            id: z.string(),
+            zoneType: z.string(),
+          }),
+        )
+        .optional(),
     })
     .optional()
     .nullable(),
@@ -325,40 +481,108 @@ export const publicCloudIdentitiesUpdateSchema = z.object({
   cached_at: z.string().optional().nullable(),
   cached_resources: z
     .object({
-      regions: z.array(z.string()),
-      vpcs: z.record(
-        z.string(),
-        z.array(
-          z.object({
-            ID: z.string(),
-            CIDR: z.string(),
-            Name: z.string(),
-            IsDefault: z.boolean(),
-          }),
-        ),
-      ),
-      subnets: z.record(
-        z.string(),
-        z.record(
+      regions: z.array(z.string()).optional(),
+      vpcs: z
+        .record(
           z.string(),
           z.array(
             z.object({
               ID: z.string(),
               CIDR: z.string(),
-              VpcID: z.string(),
-              AvailabilityZone: z.string(),
+              Name: z.string(),
+              IsDefault: z.boolean(),
             }),
           ),
-        ),
-      ),
-      hosted_zones: z.array(
-        z.object({
-          ID: z.string(),
-          Name: z.string(),
-          RecordCount: z.number(),
-          IsPrivate: z.boolean(),
-        }),
-      ),
+        )
+        .optional(),
+      subnets: z
+        .union([
+          z.record(
+            z.string(),
+            z.record(
+              z.string(),
+              z.array(
+                z.object({
+                  ID: z.string(),
+                  CIDR: z.string(),
+                  VpcID: z.string(),
+                  AvailabilityZone: z.string(),
+                }),
+              ),
+            ),
+          ),
+          z.record(
+            z.string(),
+            z.array(
+              z.object({
+                name: z.string(),
+                region: z.string(),
+                ipCidrRange: z.string(),
+                network: z.string(),
+              }),
+            ),
+          ),
+          z.record(
+            z.string(),
+            z.array(
+              z.object({
+                name: z.string(),
+                id: z.string(),
+                addressPrefix: z.string(),
+                vnetName: z.string(),
+              }),
+            ),
+          ),
+        ])
+        .optional(),
+      hosted_zones: z
+        .array(
+          z.object({
+            ID: z.string(),
+            Name: z.string(),
+            RecordCount: z.number(),
+            IsPrivate: z.boolean(),
+          }),
+        )
+        .optional(),
+      networks: z
+        .array(
+          z.object({
+            name: z.string(),
+            selfLink: z.string(),
+            autoCreateSubnetworks: z.boolean(),
+          }),
+        )
+        .optional(),
+      managed_zones: z
+        .array(
+          z.object({
+            name: z.string(),
+            dnsName: z.string(),
+            visibility: z.string(),
+          }),
+        )
+        .optional(),
+      locations: z.array(z.string()).optional(),
+      vnets: z
+        .array(
+          z.object({
+            name: z.string(),
+            id: z.string(),
+            location: z.string(),
+            addressPrefixes: z.array(z.string()),
+          }),
+        )
+        .optional(),
+      dns_zones: z
+        .array(
+          z.object({
+            name: z.string(),
+            id: z.string(),
+            zoneType: z.string(),
+          }),
+        )
+        .optional(),
     })
     .optional()
     .nullable(),
@@ -617,7 +841,7 @@ export const publicProvisionJobsRowSchema = z.object({
   job_type: publicProvisionJobTypeSchema,
   plan_job_id: z.string().nullable(),
   started_at: z.string().nullable(),
-  status: z.string(),
+  status: publicProvisionJobStatusSchema,
   updated_at: z.string().nullable(),
   user_id: z.string(),
   vine_id: z.string().nullable(),
@@ -639,7 +863,7 @@ export const publicProvisionJobsInsertSchema = z.object({
   job_type: publicProvisionJobTypeSchema,
   plan_job_id: z.string().optional().nullable(),
   started_at: z.string().optional().nullable(),
-  status: z.string().optional(),
+  status: publicProvisionJobStatusSchema.optional(),
   updated_at: z.string().optional().nullable(),
   user_id: z.string().optional(),
   vine_id: z.string().optional().nullable(),
@@ -661,7 +885,7 @@ export const publicProvisionJobsUpdateSchema = z.object({
   job_type: publicProvisionJobTypeSchema.optional(),
   plan_job_id: z.string().optional().nullable(),
   started_at: z.string().optional().nullable(),
-  status: z.string().optional(),
+  status: publicProvisionJobStatusSchema.optional(),
   updated_at: z.string().optional().nullable(),
   user_id: z.string().optional(),
   vine_id: z.string().optional().nullable(),
@@ -1741,11 +1965,11 @@ export const publicWorkersRowSchema = z.object({
   id: z.string(),
   last_heartbeat: z.string().nullable(),
   metadata: z.record(z.string(), z.unknown()).nullable(),
-  mode: z.string(),
+  mode: publicWorkerModeSchema,
   name: z.string(),
-  status: z.string().nullable(),
+  status: publicWorkerStatusSchema.nullable(),
   token_hash: z.string(),
-  user_id: z.string(),
+  user_id: z.string().nullable(),
 });
 
 export const publicWorkersInsertSchema = z.object({
@@ -1754,11 +1978,11 @@ export const publicWorkersInsertSchema = z.object({
   id: z.string().optional(),
   last_heartbeat: z.string().optional().nullable(),
   metadata: z.record(z.string(), z.unknown()).optional().nullable(),
-  mode: z.string(),
+  mode: publicWorkerModeSchema,
   name: z.string(),
-  status: z.string().optional().nullable(),
+  status: publicWorkerStatusSchema.optional().nullable(),
   token_hash: z.string(),
-  user_id: z.string().optional(),
+  user_id: z.string().optional().nullable(),
 });
 
 export const publicWorkersUpdateSchema = z.object({
@@ -1767,11 +1991,11 @@ export const publicWorkersUpdateSchema = z.object({
   id: z.string().optional(),
   last_heartbeat: z.string().optional().nullable(),
   metadata: z.record(z.string(), z.unknown()).optional().nullable(),
-  mode: z.string().optional(),
+  mode: publicWorkerModeSchema.optional(),
   name: z.string().optional(),
-  status: z.string().optional().nullable(),
+  status: publicWorkerStatusSchema.optional().nullable(),
   token_hash: z.string().optional(),
-  user_id: z.string().optional(),
+  user_id: z.string().optional().nullable(),
 });
 
 export const publicWorkersRelationshipsSchema = z.tuple([
@@ -1878,7 +2102,7 @@ export const publicClaimNextJobReturnsSchema = z.array(
     job_type: publicProvisionJobTypeSchema,
     plan_job_id: z.string().nullable(),
     started_at: z.string().nullable(),
-    status: z.string(),
+    status: publicProvisionJobStatusSchema,
     updated_at: z.string().nullable(),
     user_id: z.string(),
     vine_id: z.string().nullable(),

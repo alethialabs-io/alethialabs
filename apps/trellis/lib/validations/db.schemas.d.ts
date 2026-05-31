@@ -59,6 +59,9 @@ export type PublicNosqlKeyType = z.infer<
 export type PublicNosqlTableType = z.infer<
   typeof generated.publicNosqlTableTypeSchema
 >;
+export type PublicProvisionJobStatus = z.infer<
+  typeof generated.publicProvisionJobStatusSchema
+>;
 export type PublicProvisionJobType = z.infer<
   typeof generated.publicProvisionJobTypeSchema
 >;
@@ -66,6 +69,10 @@ export type PublicRegistryTagMutability = z.infer<
   typeof generated.publicRegistryTagMutabilitySchema
 >;
 export type PublicVineStatus = z.infer<typeof generated.publicVineStatusSchema>;
+export type PublicWorkerMode = z.infer<typeof generated.publicWorkerModeSchema>;
+export type PublicWorkerStatus = z.infer<
+  typeof generated.publicWorkerStatusSchema
+>;
 export type Json = z.infer<typeof generated.jsonSchema>;
 export type PublicCliLoginsRow = z.infer<
   typeof generated.publicCliLoginsRowSchema

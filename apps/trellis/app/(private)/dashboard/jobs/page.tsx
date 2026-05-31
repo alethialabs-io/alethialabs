@@ -1,81 +1,70 @@
 "use client";
 
-import { getJobs } from "@/app/server/actions/jobs";
 import { DataTable } from "@/components/data-table";
 import { jobColumns } from "@/components/jobs/columns";
-import type { PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
 import { createClient } from "@/lib/supabase/client";
+import {
+	useJobsStore,
+	type PublicProvisionJobStatus,
+	type PublicProvisionJobType,
+} from "@/lib/stores/use-jobs-store";
+import type { PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ClipboardList, Search } from "lucide-react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo } from "react";
 
-const STATUS_FILTERS = ["All", "QUEUED", "PROCESSING", "SUCCESS", "FAILED"] as const;
-const TYPE_FILTERS = ["All", "DEPLOY", "PLAN", "BOOTSTRAP", "DESTROY", "CONNECTION_TEST", "FETCH_RESOURCES"] as const;
+const STATUS_FILTERS: (PublicProvisionJobStatus | "All")[] = [
+	"All", "QUEUED", "PROCESSING", "SUCCESS", "FAILED",
+];
+
+const TYPE_FILTERS: (PublicProvisionJobType | "All")[] = [
+	"All", "DEPLOY", "PLAN", "BOOTSTRAP", "DESTROY", "CONNECTION_TEST", "FETCH_RESOURCES",
+];
 
 export default function JobsPage() {
 	const router = useRouter();
-	const pathname = usePathname();
-	const searchParams = useSearchParams();
+	const store = useJobsStore();
 
-	const [jobs, setJobs] = useState<PublicProvisionJobsRow[]>([]);
-	const [loading, setLoading] = useState(true);
-
-	const statusFilter = searchParams.get("status") || "All";
-	const typeFilter = searchParams.get("type") || "All";
-	const search = searchParams.get("search") || "";
-	/** Updates URL search params without full navigation. */
-	const updateParams = useCallback(
-		(updates: Record<string, string | null>) => {
-			const params = new URLSearchParams(searchParams.toString());
-			for (const [key, value] of Object.entries(updates)) {
-				if (value === null || value === "" || value === "All") {
-					params.delete(key);
-				} else {
-					params.set(key, value);
-				}
-			}
-			router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-		},
-		[searchParams, pathname, router],
-	);
-
-	const fetchJobs = useCallback(async () => {
-		try {
-			const data = await getJobs();
-			setJobs(data as PublicProvisionJobsRow[]);
-		} catch (err) {
-			console.error("Failed to fetch jobs:", err);
-		} finally {
-			setLoading(false);
-		}
-	}, []);
+	const {
+		jobs,
+		isLoading,
+		statusFilter,
+		typeFilter,
+		searchQuery,
+		currentPage,
+		pageSize,
+		fetchJobs,
+		addOrUpdateJob,
+		setStatusFilter,
+		setTypeFilter,
+		setSearchQuery,
+		setCurrentPage,
+	} = store;
 
 	useEffect(() => {
 		fetchJobs();
 	}, [fetchJobs]);
 
-	// Realtime: refresh job list on INSERT/UPDATE
+	/** Realtime: update job list on INSERT/UPDATE. */
 	useEffect(() => {
 		const supabase = createClient();
-		let userId: string | null = null;
 
 		supabase.auth.getUser().then(({ data: { user } }) => {
 			if (!user) return;
-			userId = user.id;
 
 			const channel = supabase
 				.channel("jobs-page-realtime")
 				.on(
 					"postgres_changes",
-					{
-						event: "*",
-						schema: "public",
-						table: "provision_jobs",
-						filter: `user_id=eq.${userId}`,
+					{ event: "*", schema: "public", table: "provision_jobs" },
+					(payload) => {
+						const job = payload.new as PublicProvisionJobsRow;
+						if (job && job.user_id === user.id) {
+							addOrUpdateJob(job);
+						}
 					},
-					() => fetchJobs(),
 				)
 				.subscribe();
 
@@ -83,7 +72,7 @@ export default function JobsPage() {
 				supabase.removeChannel(channel);
 			};
 		});
-	}, [fetchJobs]);
+	}, [addOrUpdateJob]);
 
 	const filtered = useMemo(() => {
 		let result = jobs;
@@ -93,8 +82,8 @@ export default function JobsPage() {
 		if (typeFilter !== "All") {
 			result = result.filter((j) => j.job_type === typeFilter);
 		}
-		if (search.trim()) {
-			const q = search.toLowerCase();
+		if (searchQuery.trim()) {
+			const q = searchQuery.toLowerCase();
 			result = result.filter(
 				(j) =>
 					j.id.toLowerCase().includes(q) ||
@@ -103,22 +92,18 @@ export default function JobsPage() {
 			);
 		}
 		return result;
-	}, [jobs, statusFilter, typeFilter, search]);
+	}, [jobs, statusFilter, typeFilter, searchQuery]);
 
 	const handleRowClick = (job: PublicProvisionJobsRow) => {
 		router.push(`/dashboard/jobs/${job.id}`);
 	};
 
-	if (loading) {
+	if (isLoading && jobs.length === 0) {
 		return (
 			<div className="space-y-6">
 				<div>
-					<h1 className="text-2xl font-semibold tracking-tight text-foreground">
-						Jobs
-					</h1>
-					<p className="text-sm text-muted-foreground mt-1">
-						Provision job history and execution logs.
-					</p>
+					<h1 className="text-2xl font-semibold tracking-tight text-foreground">Jobs</h1>
+					<p className="text-sm text-muted-foreground mt-1">Provision job history and execution logs.</p>
 				</div>
 				<div className="animate-pulse space-y-3">
 					<div className="h-9 bg-muted rounded w-full" />
@@ -131,12 +116,8 @@ export default function JobsPage() {
 	return (
 		<div className="space-y-6">
 			<div>
-				<h1 className="text-2xl font-semibold tracking-tight text-foreground">
-					Jobs
-				</h1>
-				<p className="text-sm text-muted-foreground mt-1">
-					Provision job history and execution logs.
-				</p>
+				<h1 className="text-2xl font-semibold tracking-tight text-foreground">Jobs</h1>
+				<p className="text-sm text-muted-foreground mt-1">Provision job history and execution logs.</p>
 			</div>
 
 			{jobs.length === 0 ? (
@@ -144,17 +125,13 @@ export default function JobsPage() {
 					<div className="p-3 bg-muted/50 rounded-full mb-4">
 						<ClipboardList className="h-8 w-8 text-muted-foreground" />
 					</div>
-					<h3 className="text-sm font-medium text-foreground mb-1">
-						No jobs yet
-					</h3>
+					<h3 className="text-sm font-medium text-foreground mb-1">No jobs yet</h3>
 					<p className="text-xs text-muted-foreground max-w-sm">
-						Jobs are created when you provision a vine or connect
-						a cloud account.
+						Jobs are created when you provision a vine or connect a cloud account.
 					</p>
 				</div>
 			) : (
 				<>
-					{/* Filters */}
 					<div className="flex flex-col sm:flex-row gap-3">
 						<div className="flex gap-1 flex-wrap">
 							{STATUS_FILTERS.map((s) => (
@@ -163,7 +140,7 @@ export default function JobsPage() {
 									variant={statusFilter === s ? "secondary" : "ghost"}
 									size="sm"
 									className="h-7 text-xs px-2.5"
-									onClick={() => updateParams({ status: s })}
+									onClick={() => setStatusFilter(s)}
 								>
 									{s === "All" ? "All" : s.charAt(0) + s.slice(1).toLowerCase()}
 								</Button>
@@ -174,8 +151,8 @@ export default function JobsPage() {
 							<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
 							<Input
 								placeholder="Search by ID, worker, vine..."
-								value={search}
-								onChange={(e) => updateParams({ search: e.target.value })}
+								value={searchQuery}
+								onChange={(e) => setSearchQuery(e.target.value)}
 								className="h-7 text-xs pl-8 bg-muted/30 border-border/50"
 							/>
 						</div>
@@ -187,7 +164,7 @@ export default function JobsPage() {
 									variant={typeFilter === t ? "secondary" : "ghost"}
 									size="sm"
 									className="h-7 text-[10px] px-2"
-									onClick={() => updateParams({ type: t })}
+									onClick={() => setTypeFilter(t)}
 								>
 									{t === "All" ? "All Types" : t.replace("_", " ")}
 								</Button>
@@ -199,7 +176,9 @@ export default function JobsPage() {
 						columns={jobColumns}
 						data={filtered}
 						onRowClick={handleRowClick}
-						pageSize={15}
+						pageSize={pageSize}
+						pageIndex={currentPage}
+						onPageIndexChange={setCurrentPage}
 					/>
 				</>
 			)}

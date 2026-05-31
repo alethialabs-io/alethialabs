@@ -40,6 +40,10 @@ interface DataTableProps<TData extends { id?: string }, TValue> {
   className?: string
   pageSize?: number
   columnFilters?: ColumnFiltersState
+  /** External page index (0-based). When provided, pagination is controlled externally. */
+  pageIndex?: number
+  /** Callback when page changes. Required when pageIndex is provided. */
+  onPageIndexChange?: (index: number) => void
 }
 
 export function DataTable<TData extends { id?: string }, TValue>({
@@ -50,6 +54,8 @@ export function DataTable<TData extends { id?: string }, TValue>({
   className,
   pageSize = 10,
   columnFilters: externalFilters,
+  pageIndex: externalPageIndex,
+  onPageIndexChange,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(
@@ -65,7 +71,19 @@ export function DataTable<TData extends { id?: string }, TValue>({
     getFilteredRowModel: getFilteredRowModel(),
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
-    state: { sorting, columnFilters: externalFilters ?? columnFilters },
+    state: {
+      sorting,
+      columnFilters: externalFilters ?? columnFilters,
+      ...(externalPageIndex !== undefined && { pagination: { pageIndex: externalPageIndex, pageSize } }),
+    },
+    ...(onPageIndexChange && {
+      onPaginationChange: (updater: any) => {
+        const next = typeof updater === "function"
+          ? updater({ pageIndex: externalPageIndex ?? 0, pageSize })
+          : updater;
+        onPageIndexChange(next.pageIndex);
+      },
+    }),
     initialState: {
       pagination: { pageSize },
     },
