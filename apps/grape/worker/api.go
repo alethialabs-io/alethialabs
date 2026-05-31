@@ -23,6 +23,7 @@ type Job struct {
 	JobType           string                 `json:"job_type"`
 	ClusterID         *string                `json:"cluster_id"`
 	ConfigurationID   *string                `json:"configuration_id"`
+	PlanJobID         *string                `json:"plan_job_id"`
 	ConfigSnapshot    map[string]any         `json:"config_snapshot"`
 	ConfigurationHash *string                `json:"configuration_hash"`
 	Status            string                 `json:"status"`
@@ -178,4 +179,29 @@ func (c *WorkerAPIClient) SendLog(jobID, logChunk, streamType string) error {
 		return fmt.Errorf("send log returned status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func (c *WorkerAPIClient) GetJob(jobID string) (*Job, error) {
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/jobs/%s", c.baseURL, jobID), nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setWorkerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get job request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get job returned status %d", resp.StatusCode)
+	}
+
+	var job Job
+	if err := json.NewDecoder(resp.Body).Decode(&job); err != nil {
+		return nil, fmt.Errorf("failed to decode job response: %w", err)
+	}
+
+	return &job, nil
 }

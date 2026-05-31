@@ -8,16 +8,21 @@ import (
 	"time"
 )
 
+type LogSender interface {
+	SendLog(jobID, logChunk, streamType string) error
+}
+
 type JobLogger struct {
-	client     *WorkerAPIClient
+	client     LogSender
 	jobID      string
 	streamType string
 	buf        strings.Builder
 	mu         sync.Mutex
 	done       chan struct{}
+	closeOnce  sync.Once
 }
 
-func NewJobLogger(client *WorkerAPIClient, jobID, streamType string) *JobLogger {
+func NewJobLogger(client LogSender, jobID, streamType string) *JobLogger {
 	l := &JobLogger{
 		client:     client,
 		jobID:      jobID,
@@ -74,6 +79,8 @@ func (l *JobLogger) flushLoop() {
 }
 
 func (l *JobLogger) Close() {
-	close(l.done)
-	l.Flush()
+	l.closeOnce.Do(func() {
+		close(l.done)
+		l.Flush()
+	})
 }

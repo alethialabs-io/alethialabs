@@ -9,11 +9,11 @@ import (
 	"syscall"
 	"time"
 
-	grapeAws "github.com/bobikenobi12/bb-thesis-2026/apps/grape/aws"
-	grapeAzure "github.com/bobikenobi12/bb-thesis-2026/apps/grape/azure"
-	grapeGcp "github.com/bobikenobi12/bb-thesis-2026/apps/grape/gcp"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/provisioner"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
+	grapeAws "github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/cloud/aws"
+	grapeAzure "github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/cloud/azure"
+	grapeGcp "github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/cloud/gcp"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/provisioner"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/types"
 )
 
 type Config struct {
@@ -25,7 +25,7 @@ type Config struct {
 
 type Worker struct {
 	config Config
-	api    *WorkerAPIClient
+	api    JobAPI
 }
 
 func New(cfg Config) *Worker {
@@ -33,6 +33,10 @@ func New(cfg Config) *Worker {
 		config: cfg,
 		api:    NewWorkerAPIClient(cfg.TrellisURL, cfg.WorkerID, cfg.WorkerToken),
 	}
+}
+
+func NewWithAPI(cfg Config, api JobAPI) *Worker {
+	return &Worker{config: cfg, api: api}
 }
 
 func (w *Worker) Run(ctx context.Context) error {
@@ -242,9 +246,9 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	case "BOOTSTRAP":
 		execErr = w.executeBootstrap(ctx, job, stdoutLogger, stderrLogger)
 	case "PLAN":
-		execErr = w.executePlan(ctx, job, stdoutLogger, stderrLogger)
+		execErr = w.executePlan(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	case "DEPLOY":
-		execErr = w.executeDeploy(ctx, job, stdoutLogger, stderrLogger)
+		execErr = w.executeDeploy(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	case "DESTROY":
 		execErr = w.executeDestroy(ctx, job, stdoutLogger, stderrLogger)
 	default:
@@ -457,68 +461,122 @@ func resolveTemplatesDir() string {
 	return ""
 }
 
-func (w *Worker) executeDeploy(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
-	config, err := snapshotToConfiguration(job.ConfigSnapshot)
+func (w *Worker) executeDeploy(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
+	vc, err := snapshotToVineConfig(job.ConfigSnapshot)
 	if err != nil {
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
 	}
+	if provider == "" {
+		provider = vc.Provider
+	}
+	if provider == "" {
+		provider = "aws"
+	}
+	if identity != nil {
+		vc.CloudAccountID = identity.AccountID
+	}
+
+	if job.PlanJobID != nil && *job.PlanJobID != "" {
+		fmt.Fprintf(stdout, "Validating against plan job %s...\n", *job.PlanJobID)
+		planJob, err := w.api.GetJob(*job.PlanJobID)
+		if err != nil {
+			fmt.Fprintf(stderr, "Warning: could not fetch plan job for validation: %v\n", err)
+		} else if planJob != nil {
+			if planJob.Status != "SUCCESS" {
+				return fmt.Errorf("plan job %s has status %s, expected SUCCESS", *job.PlanJobID, planJob.Status)
+			}
+			if job.ConfigurationHash != nil && planJob.ConfigurationHash != nil &&
+				*job.ConfigurationHash != *planJob.ConfigurationHash {
+				return fmt.Errorf("configuration changed since plan was generated (plan hash: %s, current: %s)",
+					*planJob.ConfigurationHash, *job.ConfigurationHash)
+			}
+			fmt.Fprintln(stdout, "Plan validation passed.")
+		}
+	}
 
 	params := provisioner.DeployParams{
-		Config:         config,
+		VineConfig:     vc,
+		Provider:       provider,
 		TemplatesDir:   resolveTemplatesDir(),
-		GitAccessToken: getSnapshotString(job.ConfigSnapshot, "git_access_token"),
+		GitAccessToken: vc.GitAccessToken,
 		Stdout:         stdout,
 		Stderr:         stderr,
 	}
 
-	return provisioner.RunDeploy(ctx, params)
+	result, err := provisioner.RunDeployV2(ctx, params)
+	if err != nil {
+		return err
+	}
+
+	if result != nil && (result.ClusterName != "" || result.ClusterEndpoint != "") {
+		metadata := map[string]any{
+			"cluster_name":     result.ClusterName,
+			"cluster_endpoint": result.ClusterEndpoint,
+		}
+		w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
+	}
+
+	return nil
 }
 
-func (w *Worker) executePlan(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
-	config, err := snapshotToConfiguration(job.ConfigSnapshot)
+func (w *Worker) executePlan(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
+	vc, err := snapshotToVineConfig(job.ConfigSnapshot)
 	if err != nil {
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
+	}
+	if provider == "" {
+		provider = vc.Provider
+	}
+	if provider == "" {
+		provider = "aws"
+	}
+	if identity != nil {
+		vc.CloudAccountID = identity.AccountID
 	}
 
 	infracostKey := os.Getenv("INFRACOST_API_KEY")
 
 	params := provisioner.DeployParams{
-		Config:         config,
+		VineConfig:     vc,
+		Provider:       provider,
 		DryRun:         true,
 		TemplatesDir:   resolveTemplatesDir(),
 		InfracostToken: infracostKey,
-		GitAccessToken: getSnapshotString(job.ConfigSnapshot, "git_access_token"),
+		GitAccessToken: vc.GitAccessToken,
 		Stdout:         stdout,
 		Stderr:         stderr,
 	}
 
-	if err := provisioner.RunDeploy(ctx, params); err != nil {
+	w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+		"phase": "terraform_plan", "progress": "Running terraform plan...",
+	})
+
+	result, err := provisioner.RunDeployV2(ctx, params)
+	if err != nil {
 		return err
 	}
 
-	metadata := map[string]any{}
-
-	planBytes, err := os.ReadFile("temp/terraform.plan.json")
-	if err == nil {
-		var planData map[string]any
-		if json.Unmarshal(planBytes, &planData) == nil {
-			if rc, ok := planData["resource_changes"]; ok {
+	metadata := map[string]any{"plan_completed": true}
+	if result != nil {
+		if result.PlanJSON != nil {
+			if rc, ok := result.PlanJSON["resource_changes"]; ok {
 				metadata["plan_result"] = map[string]any{"resource_changes": rc}
+			} else {
+				fmt.Fprintln(stdout, "Warning: PlanJSON has no resource_changes key")
+				metadata["plan_result"] = result.PlanJSON
+			}
+		} else {
+			fmt.Fprintln(stdout, "Warning: PlanJSON is nil — terraform show may have failed")
+		}
+		if result.CostBreakdown != nil {
+			metadata["cost_breakdown"] = result.CostBreakdown
+			if result.CostBreakdown.Summary != nil {
+				metadata["cost_summary"] = result.CostBreakdown.Summary
 			}
 		}
 	}
 
-	costBytes, err := os.ReadFile("temp/infracost_breakdown.json")
-	if err == nil {
-		var costData map[string]any
-		if json.Unmarshal(costBytes, &costData) == nil {
-			metadata["cost_breakdown"] = costData
-		}
-	}
-
-	if len(metadata) > 0 {
-		w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
-	}
+	w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
 
 	return nil
 }
@@ -526,10 +584,15 @@ func (w *Worker) executePlan(ctx context.Context, job *Job, stdout, stderr *JobL
 func (w *Worker) executeDestroy(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
 	snapshot := job.ConfigSnapshot
 
+	region := getSnapshotString(snapshot, "region")
+	if region == "" {
+		region = getSnapshotString(snapshot, "aws_region")
+	}
+
 	params := provisioner.DestroyParams{
 		VineyardID:       job.VineyardID,
 		Environment:      getSnapshotString(snapshot, "environment_stage"),
-		Region:           getSnapshotString(snapshot, "aws_region"),
+		Region:           region,
 		CleanupWorkspace: true,
 		Stdout:           stdout,
 		Stderr:           stderr,
@@ -547,18 +610,26 @@ func getSnapshotString(snapshot map[string]any, key string) string {
 	return ""
 }
 
-func snapshotToConfiguration(snapshot map[string]any) (*types.Configuration, error) {
+func snapshotToVineConfig(snapshot map[string]any) (*types.VineConfig, error) {
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return nil, err
 	}
 
-	var config types.Configuration
-	if err := json.Unmarshal(data, &config); err != nil {
+	var vc types.VineConfig
+	if err := json.Unmarshal(data, &vc); err != nil {
 		return nil, err
 	}
 
-	return &config, nil
+	if vc.Region == "" {
+		if r, ok := snapshot["aws_region"]; ok {
+			if s, ok := r.(string); ok {
+				vc.Region = s
+			}
+		}
+	}
+
+	return &vc, nil
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) {
