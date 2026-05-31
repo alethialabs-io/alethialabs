@@ -1,45 +1,58 @@
 "use client";
 
-import { useProviderMeta, DB_CAPACITY } from "@/lib/cloud-providers";
-import { useProviderSlug } from "@/lib/cloud-providers";
+import { useProviderMeta, useProviderSlug, DB_CAPACITY } from "@/lib/cloud-providers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { useVineStore } from "./use-vine-store";
 import {
-	CheckCircle2,
+	Bell,
 	Cloud,
 	Database,
+	GitBranch,
 	Globe,
-	Key,
-	Layers,
 	Loader2,
+	Lock,
 	MessageSquare,
 	Network,
 	Rocket,
 	Server,
-	Table2,
+	Shield,
+	Table,
+	Zap,
+	type LucideIcon,
 } from "lucide-react";
 import { useFormContext } from "react-hook-form";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
 
-interface SummaryRowProps {
-	label: string;
-	value: string | number | null | undefined;
-	mono?: boolean;
-}
-
-function SummaryRow({ label, value, mono }: SummaryRowProps) {
+function SectionTitle({ icon: Icon, title }: { icon: LucideIcon; title: string }) {
 	return (
-		<div className="flex justify-between items-center text-xs py-1">
-			<span className="text-muted-foreground">{label}</span>
-			<span className={`text-foreground ${mono ? "font-mono" : ""}`}>{value ?? "—"}</span>
+		<div className="flex items-center gap-2 mb-3">
+			<Icon className="h-4 w-4 text-muted-foreground" />
+			<h4 className="font-medium text-xs text-muted-foreground uppercase tracking-wider">{title}</h4>
 		</div>
 	);
 }
 
-/** Review tab showing a summary of all configured components + submit button. */
+function Field({ label, value, mono }: { label: string; value: string | number | null | undefined; mono?: boolean }) {
+	return (
+		<div>
+			<p className="text-[11px] text-muted-foreground mb-0.5">{label}</p>
+			<p className={`text-sm font-medium ${mono ? "font-mono" : ""}`}>{value ?? "—"}</p>
+		</div>
+	);
+}
+
+function FeaturePill({ label, enabled }: { label: string; enabled: boolean }) {
+	return (
+		<Badge variant="outline" className={`text-[10px] ${enabled ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400" : "bg-muted/30 border-border/40 text-muted-foreground opacity-60"}`}>
+			{enabled ? "On" : "Off"} {label}
+		</Badge>
+	);
+}
+
+/** Review tab — mirrors the overview-tab display style for pre-creation review. */
 export function ReviewTab() {
 	const { watch } = useFormContext<VineFormData>();
 	const store = useVineStore();
@@ -51,6 +64,7 @@ export function ReviewTab() {
 	const network = watch("network");
 	const cluster = watch("cluster");
 	const dns = watch("dns");
+	const repositories = watch("repositories");
 	const databases = watch("databases") || [];
 	const caches = watch("caches") || [];
 	const queues = watch("queues") || [];
@@ -59,120 +73,250 @@ export function ReviewTab() {
 	const secrets = watch("secrets") || [];
 
 	const instanceTypes = (cluster.instance_types || []) as string[];
+	const providerConfig = cluster.provider_config || {};
 
 	return (
-		<div className="space-y-4">
-			<Card>
-				<CardHeader className="pb-3">
-					<CardTitle className="text-sm flex items-center gap-2">
-						<CheckCircle2 className="h-4 w-4 text-muted-foreground" />
-						Configuration Summary
-					</CardTitle>
+		<div className="space-y-5">
+			{/* Configuration Summary */}
+			<Card className="border border-border shadow-sm">
+				<CardHeader className="bg-muted/5 border-b border-border/40 pb-4">
+					<CardTitle className="text-lg font-semibold tracking-tight">Configuration Summary</CardTitle>
+					<CardDescription>
+						Review your infrastructure configuration before planting.
+					</CardDescription>
 				</CardHeader>
-				<CardContent className="space-y-4">
-					{/* Project */}
-					<div>
-						<div className="flex items-center gap-1.5 mb-2">
-							<Layers className="h-3.5 w-3.5 text-muted-foreground" />
-							<span className="text-xs font-medium">Project</span>
-						</div>
-						<SummaryRow label="Name" value={vine.project_name} mono />
-						<SummaryRow label="Environment" value={vine.environment_stage} />
-						<SummaryRow label="Region" value={vine.region} mono />
-						<SummaryRow label="Provider" value={meta.shortName} />
+				<CardContent className="pt-6 space-y-5">
+					{/* Basics */}
+					<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+						<Field label="Project Name" value={vine.project_name} mono />
+						<Field label="Environment" value={vine.environment_stage} />
+						<Field label="Region" value={vine.region} mono />
+						<Field label="Provider" value={meta.shortName} />
 					</div>
-
-					<Separator />
 
 					{/* Network */}
+					<Separator />
 					<div>
-						<div className="flex items-center gap-1.5 mb-2">
-							<Network className="h-3.5 w-3.5 text-muted-foreground" />
-							<span className="text-xs font-medium">{meta.networkName}</span>
+						<SectionTitle icon={Cloud} title={`${meta.networkName} & Networking`} />
+						<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+							<Field label="Mode" value={network.provision_network ? "Create New" : "Use Existing"} />
+							{network.provision_network && <Field label="CIDR Block" value={network.cidr_block} mono />}
+							{!network.provision_network && network.network_id && <Field label="Network ID" value={network.network_id} mono />}
+							<Field label="NAT" value={network.single_nat_gateway ? "Single" : "Per AZ"} />
 						</div>
-						<SummaryRow label="Mode" value={network.provision_network ? "Create New" : "Use Existing"} />
-						{network.provision_network && <SummaryRow label="CIDR" value={network.cidr_block} mono />}
-						<SummaryRow label="NAT" value={network.single_nat_gateway ? "Single" : "Per-AZ"} />
 					</div>
 
-					<Separator />
-
 					{/* Cluster */}
+					<Separator />
 					<div>
-						<div className="flex items-center gap-1.5 mb-2">
-							<Server className="h-3.5 w-3.5 text-muted-foreground" />
-							<span className="text-xs font-medium">{meta.clusterService} Cluster</span>
+						<SectionTitle icon={Server} title={`${meta.clusterService} Cluster`} />
+						<div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+							<Field label="Cluster Version" value={`v${cluster.cluster_version}`} mono />
+							<Field label="Min Nodes" value={cluster.node_min_size} />
+							<Field label="Desired Nodes" value={cluster.node_desired_size} />
+							<Field label="Max Nodes" value={cluster.node_max_size} />
 						</div>
-						<SummaryRow label="Version" value={cluster.cluster_version} mono />
-						<SummaryRow label="Nodes" value={`${cluster.node_min_size}-${cluster.node_max_size} (desired: ${cluster.node_desired_size})`} />
-						<div className="flex gap-1 mt-1 flex-wrap">
+						<div className="flex flex-wrap gap-1.5 mb-2">
 							{instanceTypes.map((t) => (
-								<Badge key={t} variant="outline" className="text-[10px] font-mono">{t}</Badge>
+								<Badge key={t} variant="outline" className="text-[10px] font-mono bg-muted/30">{t}</Badge>
 							))}
 						</div>
 					</div>
 
-					{/* Services */}
-					{(databases.length > 0 || caches.length > 0 || nosqlTables.length > 0 || queues.length > 0 || topics.length > 0) && (
+					{/* DNS */}
+					{dns.enabled && (
 						<>
 							<Separator />
 							<div>
-								<div className="flex items-center gap-1.5 mb-2">
-									<Database className="h-3.5 w-3.5 text-muted-foreground" />
-									<span className="text-xs font-medium">Services</span>
+								<SectionTitle icon={Globe} title="DNS & Security" />
+								<div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-3">
+									<Field label="Domain" value={dns.domain_name} mono />
+									<Field label="DNS Zone" value={dns.zone_id} mono />
 								</div>
-								{databases.map((db, i) => (
-									<SummaryRow key={i} label={`Database: ${db.name}`} value={`${db.engine} (${db.min_capacity}-${db.max_capacity} ${capacity.unit})`} />
-								))}
-								{caches.map((c, i) => (
-									<SummaryRow key={i} label={`Cache: ${c.name}`} value={`${c.engine} ${c.node_type}`} />
-								))}
-								{nosqlTables.map((t, i) => (
-									<SummaryRow key={i} label={`NoSQL: ${t.name}`} value={`${t.hash_key} (${t.billing_mode})`} />
-								))}
-								{queues.length > 0 && <SummaryRow label="Queues" value={`${queues.length} queue${queues.length > 1 ? "s" : ""}`} />}
-								{topics.length > 0 && <SummaryRow label="Topics" value={`${topics.length} topic${topics.length > 1 ? "s" : ""}`} />}
+								<div className="flex flex-wrap gap-2">
+									<FeaturePill label="Managed Certificate" enabled={!!dns.managed_certificate} />
+									<FeaturePill label="WAF" enabled={!!dns.waf_enabled} />
+								</div>
 							</div>
 						</>
 					)}
 
-					{/* Security */}
-					{(dns.enabled || secrets.length > 0) && (
+					{/* Repositories */}
+					{(repositories.env_destination_repo || repositories.gitops_destination_repo) && (
 						<>
 							<Separator />
 							<div>
-								<div className="flex items-center gap-1.5 mb-2">
-									<Globe className="h-3.5 w-3.5 text-muted-foreground" />
-									<span className="text-xs font-medium">Security</span>
+								<SectionTitle icon={GitBranch} title="Git Repositories" />
+								<div className="grid grid-cols-1 gap-2">
+									{repositories.env_destination_repo && (
+										<Field label="Infrastructure Repo" value={repositories.env_destination_repo} mono />
+									)}
+									{repositories.gitops_destination_repo && (
+										<Field label="GitOps Repo" value={repositories.gitops_destination_repo} mono />
+									)}
+									{repositories.apps_destination_repo && (
+										<Field label="Applications Repo" value={repositories.apps_destination_repo} mono />
+									)}
 								</div>
-								{dns.enabled && <SummaryRow label="DNS" value={dns.domain_name || "Enabled"} />}
-								{secrets.length > 0 && <SummaryRow label="Secrets" value={`${secrets.length} secret${secrets.length > 1 ? "s" : ""}`} />}
 							</div>
 						</>
 					)}
 				</CardContent>
 			</Card>
 
+			{/* Services & Components */}
+			{(databases.length > 0 || caches.length > 0 || queues.length > 0 || topics.length > 0 || nosqlTables.length > 0 || secrets.length > 0) && (
+				<Card className="border border-border shadow-sm">
+					<CardHeader className="bg-muted/5 border-b border-border/40 pb-4">
+						<CardTitle className="text-lg font-semibold tracking-tight">Services & Components</CardTitle>
+						<CardDescription>Additional infrastructure resources</CardDescription>
+					</CardHeader>
+					<CardContent className="pt-6 space-y-5">
+						{/* Databases */}
+						{databases.length > 0 && (
+							<div>
+								<SectionTitle icon={Database} title="Databases" />
+								<div className="space-y-3">
+									{databases.map((db, i) => (
+										<div key={i} className="p-3 rounded-md border bg-background">
+											<div className="flex items-center justify-between mb-2">
+												<span className="text-sm font-medium font-mono">{db.name || "Unnamed"}</span>
+												<Badge variant="outline" className="text-[10px] bg-muted/30">{db.engine}</Badge>
+											</div>
+											<div className="grid grid-cols-3 gap-3 text-xs">
+												<div><span className="text-muted-foreground">Min {capacity.unit}</span><p className="font-medium">{db.min_capacity}</p></div>
+												<div><span className="text-muted-foreground">Max {capacity.unit}</span><p className="font-medium">{db.max_capacity}</p></div>
+												<div><span className="text-muted-foreground">IAM Auth</span><p className="font-medium">{db.iam_auth ? "Yes" : "No"}</p></div>
+											</div>
+										</div>
+									))}
+								</div>
+							</div>
+						)}
+
+						{/* Caches */}
+						{caches.length > 0 && (
+							<>
+								{databases.length > 0 && <Separator />}
+								<div>
+									<SectionTitle icon={Zap} title="Caches" />
+									<div className="space-y-3">
+										{caches.map((c, i) => (
+											<div key={i} className="p-3 rounded-md border bg-background">
+												<div className="flex items-center justify-between mb-2">
+													<span className="text-sm font-medium font-mono">{c.name || "Unnamed"}</span>
+													<Badge variant="outline" className="text-[10px] bg-muted/30">{c.engine}</Badge>
+												</div>
+												<div className="grid grid-cols-3 gap-3 text-xs">
+													<div><span className="text-muted-foreground">Node Type</span><p className="font-medium font-mono">{c.node_type}</p></div>
+													<div><span className="text-muted-foreground">Nodes</span><p className="font-medium">{c.num_cache_nodes}</p></div>
+													<div><span className="text-muted-foreground">Multi-AZ</span><p className="font-medium">{c.multi_az ? "Yes" : "No"}</p></div>
+												</div>
+											</div>
+										))}
+									</div>
+								</div>
+							</>
+						)}
+
+						{/* Queues */}
+						{queues.length > 0 && (
+							<>
+								<Separator />
+								<div>
+									<SectionTitle icon={MessageSquare} title={`${meta.queueService} Queues`} />
+									<div className="space-y-2">
+										{queues.map((q, i) => (
+											<div key={i} className="flex items-center justify-between p-3 rounded-md border bg-background">
+												<span className="text-sm font-medium font-mono">{q.name || "Unnamed"}</span>
+												<div className="flex gap-2">
+													{q.fifo && <Badge variant="outline" className="text-[10px] bg-muted/30">FIFO</Badge>}
+													<span className="text-xs text-muted-foreground">{q.visibility_timeout}s timeout</span>
+												</div>
+											</div>
+										))}
+									</div>
+								</div>
+							</>
+						)}
+
+						{/* Topics */}
+						{topics.length > 0 && (
+							<>
+								<Separator />
+								<div>
+									<SectionTitle icon={Bell} title={`${meta.topicService} Topics`} />
+									<div className="space-y-2">
+										{topics.map((t, i) => (
+											<div key={i} className="flex items-center justify-between p-3 rounded-md border bg-background">
+												<span className="text-sm font-medium font-mono">{t.name || "Unnamed"}</span>
+											</div>
+										))}
+									</div>
+								</div>
+							</>
+						)}
+
+						{/* NoSQL */}
+						{nosqlTables.length > 0 && (
+							<>
+								<Separator />
+								<div>
+									<SectionTitle icon={Table} title={`${meta.nosqlService} Tables`} />
+									<div className="space-y-3">
+										{nosqlTables.map((d, i) => (
+											<div key={i} className="p-3 rounded-md border bg-background">
+												<div className="flex items-center justify-between mb-2">
+													<span className="text-sm font-medium font-mono">{d.name || "Unnamed"}</span>
+													<Badge variant="outline" className="text-[10px] bg-muted/30">
+														{d.billing_mode === "PROVISIONED" ? "Provisioned" : "On-Demand"}
+													</Badge>
+												</div>
+												<div className="grid grid-cols-3 gap-3 text-xs">
+													<div><span className="text-muted-foreground">Hash Key</span><p className="font-medium font-mono">{d.hash_key} ({d.hash_key_type})</p></div>
+													{d.range_key && <div><span className="text-muted-foreground">Range Key</span><p className="font-medium font-mono">{d.range_key}</p></div>}
+													<div><span className="text-muted-foreground">PITR</span><p className="font-medium">{d.point_in_time_recovery ? "Yes" : "No"}</p></div>
+												</div>
+											</div>
+										))}
+									</div>
+								</div>
+							</>
+						)}
+
+						{/* Secrets */}
+						{secrets.length > 0 && (
+							<>
+								<Separator />
+								<div>
+									<SectionTitle icon={Lock} title="Secrets" />
+									<div className="space-y-2">
+										{secrets.map((s, i) => (
+											<div key={i} className="flex items-center justify-between p-3 rounded-md border bg-background">
+												<span className="text-sm font-medium font-mono">{s.name || "Unnamed"}</span>
+												<div className="flex gap-2 items-center">
+													<span className="text-xs text-muted-foreground">{s.length} chars</span>
+													{s.special_chars && <Badge variant="outline" className="text-[10px] bg-muted/30">Special</Badge>}
+													{s.generate && <Badge variant="outline" className="text-[10px] bg-muted/30">Auto</Badge>}
+												</div>
+											</div>
+										))}
+									</div>
+								</div>
+							</>
+						)}
+					</CardContent>
+				</Card>
+			)}
+
 			{/* Submit */}
-			<div className="flex items-center justify-end gap-4">
-				{store.error && (
-					<p className="text-sm text-destructive">{store.error}</p>
-				)}
-				<Button
-					type="submit"
-					disabled={store.isLoading}
-					className="min-w-[160px]"
-				>
+			<div className="flex items-center justify-end gap-4 pb-8">
+				{store.error && <p className="text-sm text-destructive">{store.error}</p>}
+				<Button type="submit" disabled={store.isLoading} className="min-w-[160px]">
 					{store.isLoading ? (
-						<>
-							<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-							Planting...
-						</>
+						<><Loader2 className="mr-2 h-4 w-4 animate-spin" />Planting...</>
 					) : (
-						<>
-							<Rocket className="mr-2 h-4 w-4" />
-							Plant Vine
-						</>
+						<><Rocket className="mr-2 h-4 w-4" />Plant Vine</>
 					)}
 				</Button>
 			</div>
