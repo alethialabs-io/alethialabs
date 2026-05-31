@@ -1,5 +1,7 @@
 "use client";
 
+import { verifyGcpIdentity } from "@/app/(private)/dashboard/providers/gcp-actions";
+import { getJobStatus } from "@/app/server/actions/jobs";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -18,8 +20,6 @@ import {
 } from "@/components/ui/form";
 import { Textarea } from "@/components/ui/textarea";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { getJobStatus } from "@/app/server/actions/jobs";
-import { verifyGcpIdentity } from "@/app/(private)/dashboard/providers/gcp-actions";
 import {
 	AlertCircle,
 	CheckCircle2,
@@ -208,7 +208,7 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 	})();
 
 	return (
-		<div className="max-w-[800px] mx-auto space-y-6 w-full">
+		<div className="max-w-200 mx-auto space-y-6 w-full">
 			<div className="flex flex-col gap-4">
 				{/* Method Selection */}
 				<div className="flex gap-3">
@@ -395,8 +395,8 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 											Apply Terraform Module
 										</div>
 										<p className="text-xs text-muted-foreground mt-1 max-w-sm">
-											Set your project ID in the
-											Terraform variables and apply:
+											Set your project ID in the Terraform
+											variables and apply:
 										</p>
 										<div className="mt-3 p-3 bg-muted/30 border border-border/40 rounded-md font-mono text-[11px] text-foreground space-y-1 overflow-x-auto">
 											<div>
@@ -490,14 +490,14 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 												render={({ field }) => (
 													<FormItem>
 														<FormLabel className="text-xs font-medium text-foreground mb-2 block">
-															WIF Credential Config
-															JSON
+															WIF Credential
+															Config JSON
 														</FormLabel>
 														<div className="space-y-2">
 															<FormControl>
 																<Textarea
 																	placeholder='{"type": "external_account", "audience": "//iam.googleapis.com/projects/...", ...}'
-																	className="min-h-[120px] text-xs font-mono border-border/50 resize-y break-all whitespace-pre-wrap overflow-x-hidden w-full"
+																	className="min-h-30 text-xs font-mono border-border/50 resize-y break-all whitespace-pre-wrap overflow-x-hidden w-full"
 																	{...field}
 																/>
 															</FormControl>
@@ -524,8 +524,7 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 												type="submit"
 												className="w-full h-9 text-xs font-medium"
 											>
-												{verifyState.phase ===
-												"failed"
+												{verifyState.phase === "failed"
 													? "Retry"
 													: "Connect"}
 											</Button>

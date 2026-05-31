@@ -1,7 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { getProviderToken } from "../identities";
+import { getValidProviderToken } from "../identities";
 import {
 	BitbucketRepo,
 	FetchRepositoriesResult,
@@ -39,7 +39,7 @@ export async function fetchAllRepositories(): Promise<{
 		await Promise.all(
 			providers.map(async (provider) => {
 				try {
-					const token = await getProviderToken(provider);
+					const token = await getValidProviderToken(provider);
 					if (!token) return;
 
 					if (provider === "github") {
@@ -145,7 +145,7 @@ export async function createRepository(
 			return { error: "Unauthorized" };
 		}
 
-		const token = await getProviderToken(provider);
+		const token = await getValidProviderToken(provider);
 		if (!token) {
 			return {
 				error: `No ${provider} token found. Please link your ${provider} account.`,
@@ -270,7 +270,7 @@ export async function fetchRepositoriesByProvider(
 	provider: "github" | "gitlab" | "bitbucket",
 ): Promise<FetchRepositoriesResult> {
 	try {
-		const token = await getProviderToken(provider);
+		const token = await getValidProviderToken(provider);
 		if (!token) {
 			return {
 				repositories: [],

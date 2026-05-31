@@ -1,5 +1,7 @@
 "use client";
 
+import { verifyAwsIdentity } from "@/app/(private)/dashboard/providers/actions";
+import { getJobStatus } from "@/app/server/actions/jobs";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -18,9 +20,17 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { getJobStatus } from "@/app/server/actions/jobs";
-import { verifyAwsIdentity } from "@/app/(private)/dashboard/providers/actions";
-import { AlertCircle, CheckCircle2, CloudIcon, Copy, ExternalLink, Loader2, ShieldCheck, Terminal, XCircle } from "lucide-react";
+import {
+	AlertCircle,
+	CheckCircle2,
+	CloudIcon,
+	Copy,
+	ExternalLink,
+	Loader2,
+	ShieldCheck,
+	Terminal,
+	XCircle,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -51,7 +61,9 @@ const awsRoleSchema = z.object({
 type AwsRoleFormValues = z.infer<typeof awsRoleSchema>;
 
 interface AwsConnectionProps {
-	onComplete: (roleArn: string) => Promise<{ jobId: string; identityId: string }>;
+	onComplete: (
+		roleArn: string,
+	) => Promise<{ jobId: string; identityId: string }>;
 	externalId: string;
 }
 
@@ -65,7 +77,9 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 	const [method, setMethod] = useState<"cloudformation" | "terraform">(
 		"cloudformation",
 	);
-	const [verifyState, setVerifyState] = useState<VerifyState>({ phase: "idle" });
+	const [verifyState, setVerifyState] = useState<VerifyState>({
+		phase: "idle",
+	});
 	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
 	const stopPolling = useCallback(() => {
@@ -96,19 +110,25 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 						stopPolling();
 						setVerifyState({
 							phase: "failed",
-							error: result.error_message || "Connection test failed. Check the Role ARN and External ID.",
+							error:
+								result.error_message ||
+								"Connection test failed. Check the Role ARN and External ID.",
 						});
 					}
 				} catch {
 					stopPolling();
-					setVerifyState({ phase: "failed", error: "Failed to check verification status." });
+					setVerifyState({
+						phase: "failed",
+						error: "Failed to check verification status.",
+					});
 				}
 			}, 2000);
 		},
 		[stopPolling],
 	);
 
-	const templateUrl = "https://grape-onboarding-templates.s3.eu-west-1.amazonaws.com/grape-bootstrap.yaml";
+	const templateUrl =
+		"https://grape-onboarding-templates.s3.eu-west-1.amazonaws.com/grape-bootstrap.yaml";
 	const launchStackUrl = `https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateURL=${encodeURIComponent(templateUrl)}&stackName=GrapeConnect&param_ExternalId=${encodeURIComponent(externalId)}&param_GrapeAwsAccountId=787587782604`;
 
 	const form = useForm<AwsRoleFormValues>({
@@ -140,12 +160,15 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 			setVerifyState({ phase: "verifying", jobId, identityId });
 			startPolling(jobId, identityId);
 		} catch (error: any) {
-			setVerifyState({ phase: "failed", error: error.message || "Failed to save connection." });
+			setVerifyState({
+				phase: "failed",
+				error: error.message || "Failed to save connection.",
+			});
 		}
 	};
 
 	return (
-		<div className="max-w-[800px] mx-auto space-y-6 w-full">
+		<div className="max-w-200 mx-auto space-y-6 w-full">
 			<div className="flex flex-col gap-4">
 				{/* Method Selection */}
 				<div className="flex gap-3">
@@ -227,9 +250,11 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 												Launch Stack
 											</div>
 											<p className="text-xs text-muted-foreground mt-1 mb-3 max-w-sm">
-												Click below to open AWS CloudFormation with the
-												template and parameters pre-filled. Acknowledge
-												the IAM capabilities and create the stack.
+												Click below to open AWS
+												CloudFormation with the template
+												and parameters pre-filled.
+												Acknowledge the IAM capabilities
+												and create the stack.
 											</p>
 										</div>
 										<div className="flex gap-3">
@@ -259,7 +284,9 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 											</Button>
 										</div>
 										<div className="mt-4 p-3 bg-muted/30 border border-border/40 rounded-md text-[11px] text-muted-foreground flex items-center gap-2">
-											<strong className="text-foreground">External ID:</strong> 
+											<strong className="text-foreground">
+												External ID:
+											</strong>
 											<code className="bg-background px-1.5 py-0.5 border border-border/50 rounded text-foreground">
 												{externalId}
 											</code>
@@ -289,8 +316,14 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 										</div>
 										<p className="text-xs text-muted-foreground mt-1 max-w-sm">
 											Once the stack is created, go to the{" "}
-											<b className="text-foreground font-medium">Outputs</b> tab and copy the{" "}
-											<b className="text-foreground font-medium">RoleArn</b>.
+											<b className="text-foreground font-medium">
+												Outputs
+											</b>{" "}
+											tab and copy the{" "}
+											<b className="text-foreground font-medium">
+												RoleArn
+											</b>
+											.
 										</p>
 									</div>
 								</div>
@@ -342,7 +375,11 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 											<code className="bg-muted px-1 py-0.5 border border-border/50 rounded text-foreground">
 												terraform apply
 											</code>{" "}
-											and copy the output <b className="text-foreground font-medium">role_arn</b>.
+											and copy the output{" "}
+											<b className="text-foreground font-medium">
+												role_arn
+											</b>
+											.
 										</p>
 									</div>
 								</div>
@@ -354,9 +391,13 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 								<div className="flex items-center gap-3 p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-md">
 									<CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
 									<div>
-										<p className="text-sm font-medium text-foreground">Connection verified</p>
+										<p className="text-sm font-medium text-foreground">
+											Connection verified
+										</p>
 										<p className="text-xs text-muted-foreground mt-0.5">
-											Grape can assume the IAM role in your account. You're ready to provision infrastructure.
+											Grape can assume the IAM role in
+											your account. You're ready to
+											provision infrastructure.
 										</p>
 									</div>
 								</div>
@@ -364,9 +405,13 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 								<div className="flex items-center gap-3 p-4 bg-muted/30 border border-border/40 rounded-md">
 									<Loader2 className="w-5 h-5 animate-spin text-muted-foreground shrink-0" />
 									<div>
-										<p className="text-sm font-medium text-foreground">Verifying connection...</p>
+										<p className="text-sm font-medium text-foreground">
+											Verifying connection...
+										</p>
 										<p className="text-xs text-muted-foreground mt-0.5">
-											Testing role assumption into your AWS account. This takes a few seconds.
+											Testing role assumption into your
+											AWS account. This takes a few
+											seconds.
 										</p>
 									</div>
 								</div>
@@ -376,14 +421,20 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 										<div className="flex items-start gap-3 p-4 mb-4 bg-destructive/5 border border-destructive/20 rounded-md">
 											<XCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
 											<div>
-												<p className="text-sm font-medium text-destructive">Verification failed</p>
-												<p className="text-xs text-muted-foreground mt-0.5">{verifyState.error}</p>
+												<p className="text-sm font-medium text-destructive">
+													Verification failed
+												</p>
+												<p className="text-xs text-muted-foreground mt-0.5">
+													{verifyState.error}
+												</p>
 											</div>
 										</div>
 									)}
 									<Form {...form}>
 										<form
-											onSubmit={form.handleSubmit(onSubmit)}
+											onSubmit={form.handleSubmit(
+												onSubmit,
+											)}
 											className="space-y-4"
 										>
 											<FormField
@@ -403,7 +454,8 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 																		{...field}
 																	/>
 																</FormControl>
-																{!form.formState.errors
+																{!form.formState
+																	.errors
 																	.roleArn &&
 																	field.value &&
 																	field.value.startsWith(
@@ -413,11 +465,18 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 																	)}
 															</div>
 															<Button
-																disabled={!form.formState.isValid}
+																disabled={
+																	!form
+																		.formState
+																		.isValid
+																}
 																type="submit"
-																className="min-w-[100px] h-9 text-xs font-medium"
+																className="min-w-25 h-9 text-xs font-medium"
 															>
-																{verifyState.phase === "failed" ? "Retry" : "Connect"}
+																{verifyState.phase ===
+																"failed"
+																	? "Retry"
+																	: "Connect"}
 															</Button>
 														</div>
 														<FormMessage className="text-xs" />
@@ -430,8 +489,9 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 									<div className="mt-5 flex items-start gap-2.5 p-3 bg-muted/20 rounded-md border border-border/40 text-[11px] text-muted-foreground">
 										<AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
 										<p className="leading-relaxed">
-											Grape will verify it can assume this role using the
-											unique External ID. This prevents unauthorized
+											Grape will verify it can assume this
+											role using the unique External ID.
+											This prevents unauthorized
 											cross-account access.
 										</p>
 									</div>
