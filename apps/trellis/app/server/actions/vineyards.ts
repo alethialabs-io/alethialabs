@@ -8,37 +8,62 @@ import type {
 	PublicVinesRow,
 } from "@/lib/validations/db.schemas";
 
+export type VineWithProvider = PublicVinesRow & {
+	cloud_provider: string | null;
+};
+
 export type VineyardWithVines = PublicVineyardsRow & {
-	vines: PublicVinesRow[];
+	vines: VineWithProvider[];
 };
 
 export type GetVineyardsData = VineyardWithVines[];
 
+/** Maps raw vine + cloud_identities join into VineWithProvider. */
+function mapVinesWithProvider(raw: any[]): VineWithProvider[] {
+	return (raw ?? []).map((vine: any) => {
+		const provider = vine.cloud_identities?.provider ?? null;
+		const { cloud_identities: _, ...rest } = vine;
+		return { ...rest, cloud_provider: provider } as VineWithProvider;
+	});
+}
+
+/** Fetches all vineyards with nested vines and their cloud provider. */
 export async function getVineyards() {
 	const supabase = await createClient();
 
 	const { data, error } = await supabase
 		.from("vineyards")
-		.select("*, vines(*)")
+		.select("*, vines(*, cloud_identities(provider))")
 		.order("created_at", { ascending: false });
 
 	if (error) throw new Error(error.message);
 
-	return { vineyards: (data ?? []) as GetVineyardsData };
+	const vineyards: GetVineyardsData = (data ?? []).map((vy: any) => ({
+		...vy,
+		vines: mapVinesWithProvider(vy.vines),
+	}));
+
+	return { vineyards };
 }
 
+/** Fetches a single vineyard with nested vines and their cloud provider. */
 export async function getVineyardById(id: string) {
 	const supabase = await createClient();
 
 	const { data, error } = await supabase
 		.from("vineyards")
-		.select("*")
+		.select("*, vines(*, cloud_identities(provider))")
 		.eq("id", id)
 		.single();
 
 	if (error) throw new Error(error.message);
 
-	return { vineyard: data };
+	const vineyard: VineyardWithVines = {
+		...data,
+		vines: mapVinesWithProvider((data as any).vines),
+	};
+
+	return { vineyard };
 }
 
 export async function createVineyard(
