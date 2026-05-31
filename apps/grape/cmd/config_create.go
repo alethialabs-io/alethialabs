@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/api"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/utils/ui"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/api"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/types"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/utils/ui"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
 	"github.com/imroc/req/v3"

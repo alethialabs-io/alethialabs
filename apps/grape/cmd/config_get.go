@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/types"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/imroc/req/v3"
 	"github.com/pkg/browser"

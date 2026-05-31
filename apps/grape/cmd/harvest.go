@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/api"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/api"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/types"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
 	"github.com/charmbracelet/lipgloss"

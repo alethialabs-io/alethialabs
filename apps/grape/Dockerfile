@@ -29,5 +29,6 @@ RUN adduser -D -u 1000 grape
 USER grape
 WORKDIR /home/grape
 
+COPY --chown=grape:grape templates/ /home/grape/templates/
+
 ENTRYPOINT ["grape"]
-CMD ["worker", "start"]

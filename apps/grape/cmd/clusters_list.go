@@ -5,7 +5,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/api"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/api"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

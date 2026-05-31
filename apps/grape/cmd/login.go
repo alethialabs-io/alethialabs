@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/types"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
