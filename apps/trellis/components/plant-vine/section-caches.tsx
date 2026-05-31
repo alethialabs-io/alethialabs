@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
+import { useProviderSlug, CACHE_NODE_TYPES, DEFAULT_CACHE_NODE } from "@/lib/cloud-providers";
 import { Cpu, Plus, Trash2 } from "lucide-react";
 import { useFormContext, useFieldArray } from "react-hook-form";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
@@ -15,11 +16,13 @@ import type { VineFormData } from "@/lib/validations/vine-form.schema";
 export function SectionCaches() {
 	const { control } = useFormContext<VineFormData>();
 	const { fields, append, remove } = useFieldArray({ control, name: "caches" });
+	const provider = useProviderSlug();
+	const nodeTypes = CACHE_NODE_TYPES[provider];
 
 	const addCache = () => append({
 		name: fields.length === 0 ? "primary" : `cache-${fields.length + 1}`,
 		engine: "redis",
-		node_type: "cache.t3.medium",
+		node_type: DEFAULT_CACHE_NODE[provider],
 		num_cache_nodes: 1,
 		multi_az: false,
 	});
@@ -76,13 +79,14 @@ export function SectionCaches() {
 							<FormField control={control} name={`caches.${i}.node_type`} render={({ field: f }) => (
 								<FormItem className="space-y-1">
 									<Label className="text-[11px]">Node Type</Label>
-									<Select value={f.value || "cache.t3.medium"} onValueChange={f.onChange}>
+									<Select value={f.value || DEFAULT_CACHE_NODE[provider]} onValueChange={f.onChange}>
 										<FormControl><SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger></FormControl>
 										<SelectContent>
-											<SelectItem value="cache.t3.micro">t3.micro (~$12/mo each)</SelectItem>
-											<SelectItem value="cache.t3.small">t3.small (~$18/mo each)</SelectItem>
-											<SelectItem value="cache.t3.medium">t3.medium (~$25/mo each)</SelectItem>
-											<SelectItem value="cache.r6g.large">r6g.large (~$108/mo each)</SelectItem>
+											{nodeTypes.map((nt) => (
+												<SelectItem key={nt.value} value={nt.value} className="text-xs">
+													{nt.label} ({nt.cost})
+												</SelectItem>
+											))}
 										</SelectContent>
 									</Select>
 								</FormItem>

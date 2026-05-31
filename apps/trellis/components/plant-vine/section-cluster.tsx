@@ -1,7 +1,6 @@
 "use client";
 
 import { ContainerPlatformSelector } from "./container-platform-selector";
-import { EksVersionSelector } from "./eks-version-selector";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -82,7 +81,16 @@ export function SectionCluster() {
 					<div className="space-y-1.5">
 						<Label className="text-xs">{providerMeta.clusterService} Version</Label>
 						<FormField control={control} name="cluster.cluster_version" render={({ field }) => (
-							<FormItem><EksVersionSelector value={field.value || "1.32"} onChange={field.onChange} /></FormItem>
+							<FormItem>
+								<Select value={field.value || K8S_VERSIONS[provider][0]} onValueChange={field.onChange}>
+									<FormControl><SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger></FormControl>
+									<SelectContent>
+										{K8S_VERSIONS[provider].map((v) => (
+											<SelectItem key={v} value={v} className="text-xs">{v}</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</FormItem>
 						)} />
 					</div>
 					<div className="space-y-1.5">

@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
+import { useProviderSlug, DB_ENGINES, DB_CAPACITY } from "@/lib/cloud-providers";
 import { Database, Plus, Trash2 } from "lucide-react";
 import { useFormContext, useFieldArray } from "react-hook-form";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
@@ -15,12 +16,15 @@ import type { VineFormData } from "@/lib/validations/vine-form.schema";
 export function SectionDatabases() {
 	const { control } = useFormContext<VineFormData>();
 	const { fields, append, remove } = useFieldArray({ control, name: "databases" });
+	const provider = useProviderSlug();
+	const engines = DB_ENGINES[provider];
+	const capacity = DB_CAPACITY[provider];
 
 	const addDatabase = () => append({
 		name: fields.length === 0 ? "primary" : `db-${fields.length + 1}`,
-		engine: "aurora-postgresql",
-		min_capacity: 0.5,
-		max_capacity: 4,
+		engine: engines[0].value,
+		min_capacity: capacity.defaultMin,
+		max_capacity: capacity.defaultMax,
 		port: 5432,
 		iam_auth: false,
 	});
@@ -68,8 +72,9 @@ export function SectionDatabases() {
 									<Select value={f.value || "aurora-postgresql"} onValueChange={f.onChange}>
 										<FormControl><SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger></FormControl>
 										<SelectContent>
-											<SelectItem value="aurora-postgresql">PostgreSQL</SelectItem>
-											<SelectItem value="aurora-mysql">MySQL</SelectItem>
+											{engines.map((e) => (
+												<SelectItem key={e.value} value={e.value}>{e.label}</SelectItem>
+											))}
 										</SelectContent>
 									</Select>
 								</FormItem>
