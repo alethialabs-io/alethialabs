@@ -17,7 +17,8 @@ import {
 	PopoverTrigger,
 } from "@/components/ui/popover";
 import { useAwsOnboarding } from "@/hooks/use-aws-onboarding";
-import { useJobNotifications, type JobNotification } from "@/hooks/use-job-notifications";
+import { useJobNotifications } from "@/hooks/use-job-notifications";
+import { globalSearch, type SearchResult } from "@/app/server/actions/search";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { User as IUser } from "@supabase/supabase-js";
@@ -42,7 +43,7 @@ import {
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type React from "react";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 export default function DashboardLayout({
 	children,
@@ -55,6 +56,25 @@ export default function DashboardLayout({
 	const [user, setUser] = useState<IUser | null>(null);
 	const { showAwsAlert, setShowAwsAlert } = useAwsOnboarding();
 	const { notifications, unreadCount, markAsRead, markAllRead } = useJobNotifications();
+	const [searchQuery, setSearchQuery] = useState("");
+	const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+	const [searchOpen, setSearchOpen] = useState(false);
+	const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const handleSearch = useCallback((value: string) => {
+		setSearchQuery(value);
+		if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+		if (value.trim().length < 2) {
+			setSearchResults([]);
+			setSearchOpen(false);
+			return;
+		}
+		searchTimerRef.current = setTimeout(async () => {
+			const results = await globalSearch(value);
+			setSearchResults(results);
+			setSearchOpen(results.length > 0);
+		}, 300);
+	}, []);
 
 	useEffect(() => {
 		const getUser = async () => {
@@ -121,14 +141,43 @@ export default function DashboardLayout({
 					</div>
 
 					<div className="flex items-center gap-2 sm:gap-4">
-						{/* Search Bar - Hidden on small screens */}
+						{/* Search Bar */}
 						<div className="hidden md:flex items-center">
 							<div className="relative">
 								<Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
 								<Input
-									placeholder="Search..."
+									placeholder="Search vines, jobs..."
+									value={searchQuery}
+									onChange={(e) => handleSearch(e.target.value)}
+									onFocus={() => searchResults.length > 0 && setSearchOpen(true)}
+									onBlur={() => setTimeout(() => setSearchOpen(false), 200)}
 									className="w-64 bg-muted/30 border-border/50 pl-9 h-9 text-sm focus-visible:ring-1 focus-visible:ring-ring transition-colors"
 								/>
+								{searchOpen && (
+									<div className="absolute top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-lg z-50 max-h-80 overflow-y-auto">
+										{searchResults.map((r) => (
+											<Link
+												key={`${r.type}-${r.id}`}
+												href={r.href}
+												onClick={() => {
+													setSearchQuery("");
+													setSearchResults([]);
+													setSearchOpen(false);
+												}}
+											>
+												<div className="px-3 py-2 hover:bg-muted/50 transition-colors flex items-center gap-3">
+													<span className="text-[10px] uppercase tracking-wider text-muted-foreground w-14 shrink-0">
+														{r.type}
+													</span>
+													<div className="min-w-0">
+														<p className="text-sm font-medium truncate">{r.title}</p>
+														<p className="text-[11px] text-muted-foreground truncate">{r.subtitle}</p>
+													</div>
+												</div>
+											</Link>
+										))}
+									</div>
+								)}
 							</div>
 						</div>
 
