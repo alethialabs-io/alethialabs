@@ -43,6 +43,10 @@ resource "aws_ecs_task_definition" "worker" {
         {
           name      = "GRAPE_WORKER_TOKEN"
           valueFrom = aws_secretsmanager_secret.worker_token.arn
+        },
+        {
+          name      = "INFRACOST_API_KEY"
+          valueFrom = aws_secretsmanager_secret.infracost_key.arn
         }
       ]
 

@@ -49,6 +49,13 @@ variable "grape_version" {
   default = "latest"
 }
 
+variable "infracost_api_key" {
+  type        = string
+  sensitive   = true
+  description = "Infracost API key for cost estimation during plan jobs."
+  default     = ""
+}
+
 variable "vpc_id" {
   type        = string
   description = "VPC where the Fargate task will run."
