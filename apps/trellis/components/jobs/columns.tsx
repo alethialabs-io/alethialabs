@@ -55,12 +55,12 @@ const JOB_TYPES: Record<
 
 const STATUS_STYLES: Record<string, string> = {
 	SUCCESS:
-		"text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950",
-	FAILED: "text-destructive border-destructive/30 bg-destructive/10",
+		"!text-emerald-600 border-emerald-200 bg-emerald-50 dark:!text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950",
+	FAILED: "!text-destructive border-destructive/30 bg-destructive/10",
 	PROCESSING:
-		"text-blue-600 border-blue-200 bg-blue-50 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950",
+		"!text-blue-600 border-blue-200 bg-blue-50 dark:!text-blue-400 dark:border-blue-800 dark:bg-blue-950",
 	CLAIMED:
-		"text-amber-600 border-amber-200 bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950",
+		"!text-amber-600 border-amber-200 bg-amber-50 dark:!text-amber-400 dark:border-amber-800 dark:bg-amber-950",
 	QUEUED: "text-muted-foreground border-border bg-muted/50",
 	CANCELLED: "text-muted-foreground border-border bg-muted/30",
 };
