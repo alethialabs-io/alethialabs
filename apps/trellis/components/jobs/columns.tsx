@@ -7,12 +7,25 @@ import {
 } from "@/lib/validations/db.schemas";
 import type { ColumnDef } from "@tanstack/react-table";
 import { formatDistanceToNow } from "date-fns";
-import { Plug, RefreshCw, Rocket, Trash2, Upload } from "lucide-react";
+import { FileSearch, Plug, RefreshCw, Rocket, Trash2, Upload } from "lucide-react";
+import Link from "next/link";
+
+/** Extended job row with joined vine/worker names from getJobs(). */
+type JobRow = PublicProvisionJobsRow & {
+	vine_name?: string | null;
+	vine_vineyard_id?: string | null;
+	worker_name?: string | null;
+};
 
 const JOB_TYPES: Record<
 	PublicProvisionJobType,
 	{ label: string; icon: typeof Rocket; description: string }
 > = {
+	PLAN: {
+		label: "Plan",
+		icon: FileSearch,
+		description: "Dry-run infrastructure plan",
+	},
 	BOOTSTRAP: {
 		label: "Bootstrap",
 		icon: Rocket,
@@ -54,7 +67,7 @@ const STATUS_STYLES: Record<string, string> = {
 
 export { JOB_TYPES, STATUS_STYLES };
 
-export const jobColumns: ColumnDef<PublicProvisionJobsRow>[] = [
+export const jobColumns: ColumnDef<JobRow>[] = [
 	{
 		accessorKey: "job_type",
 		header: "Type",
@@ -100,11 +113,15 @@ export const jobColumns: ColumnDef<PublicProvisionJobsRow>[] = [
 		header: "Vine",
 		enableSorting: false,
 		cell: ({ row }) => {
-			const id = row.getValue("vine_id") as string | null;
+			const vineId = row.getValue("vine_id") as string | null;
+			const vineName = row.original.vine_name;
+			const vineyardId = row.original.vine_vineyard_id;
+			if (!vineId) return <span className="text-xs text-muted-foreground">—</span>;
+			const href = vineyardId ? `/dashboard/vineyards/${vineyardId}/vines/${vineId}` : "#";
 			return (
-				<span className="text-xs text-muted-foreground font-mono">
-					{id ? id.slice(0, 8) : "—"}
-				</span>
+				<Link href={href} onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-foreground hover:underline">
+					{vineName ?? vineId.slice(0, 8)}
+				</Link>
 			);
 		},
 	},
@@ -113,11 +130,13 @@ export const jobColumns: ColumnDef<PublicProvisionJobsRow>[] = [
 		header: "Worker",
 		enableSorting: false,
 		cell: ({ row }) => {
-			const id = row.getValue("worker_id") as string | null;
+			const workerId = row.getValue("worker_id") as string | null;
+			const workerName = row.original.worker_name;
+			if (!workerId) return <span className="text-xs text-muted-foreground">—</span>;
 			return (
-				<span className="text-xs text-muted-foreground font-mono">
-					{id ? id.slice(0, 8) : "—"}
-				</span>
+				<Link href="/dashboard/workers" onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-foreground hover:underline">
+					{workerName ?? workerId.slice(0, 8)}
+				</Link>
 			);
 		},
 	},

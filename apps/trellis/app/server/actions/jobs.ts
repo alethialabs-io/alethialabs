@@ -18,15 +18,50 @@ export async function getJobStatus(jobId: string) {
 	return data;
 }
 
+/** Fetches all jobs with vine project_name and worker name joined. */
 export async function getJobs() {
 	const supabase = await createClient();
 
 	const { data, error } = await supabase
 		.from("provision_jobs")
-		.select("*")
+		.select("*, vines(project_name, vineyard_id), workers(name)")
 		.order("created_at", { ascending: false });
 
 	if (error) throw new Error("Failed to fetch jobs: " + error.message);
+
+	return (data ?? []).map((job: any) => ({
+		...job,
+		vine_name: job.vines?.project_name ?? null,
+		vine_vineyard_id: job.vines?.vineyard_id ?? null,
+		worker_name: job.workers?.name ?? null,
+		vines: undefined,
+		workers: undefined,
+	}));
+}
+
+export async function getPlanResult(jobId: string) {
+	const supabase = await createClient();
+
+	const { data, error } = await supabase
+		.from("provision_jobs")
+		.select("status, error_message, execution_metadata")
+		.eq("id", jobId)
+		.single();
+
+	if (error) throw new Error("Failed to get plan result");
+	return data;
+}
+
+export async function getVineJobs(vineId: string) {
+	const supabase = await createClient();
+
+	const { data, error } = await supabase
+		.from("provision_jobs")
+		.select("*")
+		.eq("vine_id", vineId)
+		.order("created_at", { ascending: false });
+
+	if (error) throw new Error("Failed to fetch vine jobs: " + error.message);
 	return data ?? [];
 }
 
