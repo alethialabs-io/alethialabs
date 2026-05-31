@@ -3,13 +3,19 @@
 import { createVine, type CreateVineInput } from "@/app/server/actions/vines";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { vineFormSchema, type VineFormData } from "@/lib/validations/vine-form.schema";
-import { CloudProviderProvider } from "@/lib/cloud-providers";
-import { DEFAULT_INSTANCE_TYPE, DEFAULT_K8S_VERSION } from "@/lib/cloud-providers";
+import {
+	CloudProviderProvider,
+	useCloudProvider,
+	DEFAULT_INSTANCE_TYPE,
+	DEFAULT_K8S_VERSION,
+	AUTOSCALER,
+	type CloudProviderSlug,
+} from "@/lib/cloud-providers";
 import { useVineStore } from "./use-vine-store";
 import { Button } from "@/components/ui/button";
 import { Loader2, Rocket } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
@@ -32,6 +38,14 @@ interface PlantVineFormProps {
 }
 
 export function PlantVineForm({ cloudIdentities }: PlantVineFormProps) {
+	return (
+		<CloudProviderProvider>
+			<PlantVineFormInner cloudIdentities={cloudIdentities} />
+		</CloudProviderProvider>
+	);
+}
+
+function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
 	const router = useRouter();
 	const store = useVineStore();
 	const hasIdentities = cloudIdentities.length > 0;
@@ -83,6 +97,18 @@ export function PlantVineForm({ cloudIdentities }: PlantVineFormProps) {
 		if (region) store.fetchPrices(region);
 	}, [region]);
 
+	const { provider } = useCloudProvider();
+	const prevProviderRef = useRef(provider);
+	useEffect(() => {
+		if (provider !== prevProviderRef.current) {
+			prevProviderRef.current = provider;
+			const autoscalerKey = AUTOSCALER[provider].providerConfigKey;
+			form.setValue("cluster.cluster_version", DEFAULT_K8S_VERSION[provider]);
+			form.setValue("cluster.instance_types", [DEFAULT_INSTANCE_TYPE[provider]]);
+			form.setValue("cluster.provider_config", { [autoscalerKey]: true });
+		}
+	}, [provider, form]);
+
 	const onSubmit = async (data: VineFormData) => {
 		store.set({ isLoading: true, error: null });
 		try {
@@ -108,7 +134,6 @@ export function PlantVineForm({ cloudIdentities }: PlantVineFormProps) {
 	};
 
 	return (
-		<CloudProviderProvider>
 		<FormProvider {...form}>
 			<form onSubmit={form.handleSubmit(onSubmit, onError)} className="flex gap-6">
 				<div className="flex-1 space-y-6 min-w-0">
@@ -153,6 +178,5 @@ export function PlantVineForm({ cloudIdentities }: PlantVineFormProps) {
 				</div>
 			</form>
 		</FormProvider>
-		</CloudProviderProvider>
 	);
 }

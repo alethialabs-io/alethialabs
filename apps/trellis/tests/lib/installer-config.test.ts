@@ -9,8 +9,7 @@ describe("formatInstallerConfig", () => {
 	const base = {
 		project_name: "my-vine",
 		environment_stage: "production",
-		aws_region: "eu-west-1",
-		aws_account_id: "123456789012",
+		region: "eu-west-1",
 		terraform_version: "1.11.4",
 		container_platform: "standard",
 		create_vpc: true,
@@ -28,7 +27,6 @@ describe("formatInstallerConfig", () => {
 		expect(result.project_name).toBe("my-vine");
 		expect(result.environment).toBe("production");
 		expect(result.region).toBe("eu-west-1");
-		expect(result.aws_account_id).toBe("123456789012");
 		expect(result.terraform_ver).toBe("1.11.4");
 	});
 

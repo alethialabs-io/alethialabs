@@ -255,7 +255,7 @@ export function OverviewTab({ detail }: OverviewTabProps) {
 												}
 											/>
 											<FeaturePill
-												label="CloudFront WAF"
+												label="CDN WAF"
 												enabled={
 													!!components.dns
 														.provider_config?.cloudfront_waf
@@ -370,7 +370,7 @@ export function OverviewTab({ detail }: OverviewTabProps) {
 											<div className="grid grid-cols-3 gap-3 text-xs">
 												<div>
 													<span className="text-muted-foreground">
-														Min ACU
+														Min Capacity
 													</span>
 													<p className="font-medium">
 														{db.min_capacity}
@@ -378,7 +378,7 @@ export function OverviewTab({ detail }: OverviewTabProps) {
 												</div>
 												<div>
 													<span className="text-muted-foreground">
-														Max ACU
+														Max Capacity
 													</span>
 													<p className="font-medium">
 														{db.max_capacity}

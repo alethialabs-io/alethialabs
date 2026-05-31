@@ -34,7 +34,7 @@ const HELP_CONTENT: Record<string, { title: string; description: string }> = {
 			"Lets resources in private subnets access the internet (e.g. pulling Docker images). Single is cheaper. Per-AZ provides high availability if one zone fails.",
 	},
 	"eks-version": {
-		title: "EKS Version",
+		title: "Kubernetes Version",
 		description:
 			"The Kubernetes version for your cluster. Newer versions have more features and security patches. Extended support versions cost 6x more per hour.",
 	},
@@ -84,12 +84,12 @@ const HELP_CONTENT: Record<string, { title: string; description: string }> = {
 			"After a consumer reads a message, it becomes invisible to other consumers for this duration. If not deleted in time, the message reappears in the queue. Default: 30 seconds.",
 	},
 	"acm-certificate": {
-		title: "ACM Certificate",
+		title: "Managed TLS Certificate",
 		description:
 			"AWS Certificate Manager automatically provisions, validates, and renews an SSL/TLS certificate for your domain. Free when used with AWS services like ALB and CloudFront.",
 	},
 	"cloudfront-waf": {
-		title: "CloudFront WAF",
+		title: "CDN WAF",
 		description:
 			"Web Application Firewall at the CDN edge. Protects against DDoS attacks, bot traffic, and common web exploits before they reach your infrastructure. ~$5/mo base cost.",
 	},
@@ -99,7 +99,7 @@ const HELP_CONTENT: Record<string, { title: string; description: string }> = {
 			"Web Application Firewall at the application load balancer. Protects against SQL injection, cross-site scripting (XSS), and other application-layer attacks. ~$5/mo base cost.",
 	},
 	"hosted-zone": {
-		title: "Route53 Hosted Zone",
+		title: "DNS Zone",
 		description:
 			"A DNS zone that manages records for your domain. Select an existing zone from your AWS account. Grape uses it for DNS records but does not create new zones.",
 	},
