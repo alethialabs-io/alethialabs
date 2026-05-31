@@ -42,3 +42,6 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+terraform/.terraform/
+apps/trellis/playwright-report/
+apps/trellis/test-results/
