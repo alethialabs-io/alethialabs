@@ -32,9 +32,14 @@ export async function GET(request: Request) {
 			const refreshToken = session.provider_refresh_token;
 
 			let provider = providerParam;
+			if (!provider) {
+				provider = cookieStore.get("auth_linking_provider")?.value ?? null;
+			}
 			if (!provider && session.user.app_metadata?.provider) {
 				provider = session.user.app_metadata.provider;
 			}
+			// Clear the linking provider cookie
+			cookieStore.delete("auth_linking_provider");
 
 			// Capture and save the provider token since Supabase does not store it in the DB
 			if (
@@ -43,11 +48,20 @@ export async function GET(request: Request) {
 				providerToken
 			) {
 				try {
+					// GitHub tokens don't expire; GitLab/Bitbucket tokens expire in ~2 hours
+					let expiresAt: string | null = null;
+					if (provider === "gitlab" || provider === "bitbucket") {
+						expiresAt = new Date(
+							Date.now() + 7200 * 1000,
+						).toISOString();
+					}
+
 					await saveProviderToken(
 						session.user.id,
 						provider as PublicGitProvider,
 						providerToken,
 						refreshToken || undefined,
+						expiresAt,
 					);
 					console.log(
 						`[Auth Callback] Successfully saved token for ${provider}`,
@@ -60,12 +74,11 @@ export async function GET(request: Request) {
 				}
 			}
 
-			const forwardedHost = request.headers.get("x-forwarded-host"); // original origin before load balancer
-			const isLocalEnv = env("NODE_ENV") === "development";
+			const appUrl = env("NEXT_PUBLIC_APP_URL");
+			const forwardedHost = request.headers.get("x-forwarded-host");
 
-			if (isLocalEnv) {
-				// we can be sure that there is no load balancer in between, so no need to watch for X-Forwarded-Host
-				return NextResponse.redirect(`${origin}${next}`);
+			if (appUrl) {
+				return NextResponse.redirect(`${appUrl}${next}`);
 			} else if (forwardedHost) {
 				return NextResponse.redirect(`https://${forwardedHost}${next}`);
 			} else {

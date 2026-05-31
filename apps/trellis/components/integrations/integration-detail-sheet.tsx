@@ -13,11 +13,13 @@ import {
 	SheetTitle,
 } from "@/components/ui/sheet";
 import {
+	AlertTriangle,
 	BookOpen,
 	CheckCircle2,
 	ExternalLink,
 	HelpCircle,
 	Loader2,
+	RefreshCw,
 	Shield,
 	Unlink,
 } from "lucide-react";
@@ -53,6 +55,9 @@ export function IntegrationDetailSheet({
 	const isComingSoon = integration.status === "coming_soon";
 	const isConnected = integration.connected;
 	const isGit = integration.category === "git";
+	const needsReconnection =
+		integration.token_health === "expired" ||
+		integration.token_health === "refresh_failed";
 
 	return (
 		<Sheet open={open} onOpenChange={onOpenChange}>
@@ -92,7 +97,15 @@ export function IntegrationDetailSheet({
 				<div className="px-6 py-5 space-y-6">
 					{/* Status */}
 					<div className="flex items-center gap-2">
-						{isConnected ? (
+						{isConnected && needsReconnection ? (
+							<Badge
+								variant="outline"
+								className="text-amber-600 border-amber-200 bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950 text-xs"
+							>
+								<AlertTriangle className="w-3.5 h-3.5 mr-1.5" />
+								Needs Reconnection
+							</Badge>
+						) : isConnected ? (
 							<Badge
 								variant="outline"
 								className="text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950 text-xs"
@@ -300,8 +313,31 @@ export function IntegrationDetailSheet({
 
 					{/* Action */}
 					{!isComingSoon && (
-						<div>
-							{isConnected ? (
+						<div className="space-y-2">
+							{isConnected && needsReconnection ? (
+								<>
+									<Button
+										className="w-full bg-amber-600 hover:bg-amber-700 text-white"
+										disabled={isConnecting}
+										onClick={onConnect}
+									>
+										{isConnecting ? (
+											<Loader2 className="w-4 h-4 mr-2 animate-spin" />
+										) : (
+											<RefreshCw className="w-4 h-4 mr-2" />
+										)}
+										Reconnect {integration.name}
+									</Button>
+									<Button
+										variant="outline"
+										className="w-full text-destructive hover:text-destructive hover:bg-destructive/10 border-border/50"
+										onClick={onDisconnect}
+									>
+										<Unlink className="w-4 h-4 mr-2" />
+										Disconnect
+									</Button>
+								</>
+							) : isConnected ? (
 								<Button
 									variant="outline"
 									className="w-full text-destructive hover:text-destructive hover:bg-destructive/10 border-border/50"

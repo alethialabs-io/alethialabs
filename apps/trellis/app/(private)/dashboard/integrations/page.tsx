@@ -1,4 +1,5 @@
 import { getIntegrationsWithStatus } from "@/app/server/actions/integrations";
+import { getValidProviderToken } from "@/app/server/actions/identities";
 import {
 	getAwsConnectionStatus,
 	getAwsExternalId,
@@ -12,15 +13,30 @@ import {
 	initAzureIdentity,
 } from "@/app/(private)/dashboard/providers/azure-actions";
 import { IntegrationsPage } from "@/components/integrations/integrations-page";
+import type { PublicGitProvider } from "@/lib/validations/db.schemas";
 
 export default async function IntegrationsRoute() {
-	const [integrations, awsStatus, gcpStatus, azureStatus] =
+	let [integrations, awsStatus, gcpStatus, azureStatus] =
 		await Promise.all([
 			getIntegrationsWithStatus(),
 			getAwsConnectionStatus(),
 			getGcpConnectionStatus(),
 			getAzureConnectionStatus(),
 		]);
+
+	// Attempt auto-refresh for expired git tokens
+	const expiredGitIntegrations = integrations.filter(
+		(i) => i.category === "git" && i.token_health === "expired",
+	);
+	if (expiredGitIntegrations.length > 0) {
+		await Promise.all(
+			expiredGitIntegrations.map((i) =>
+				getValidProviderToken(i.slug as PublicGitProvider).catch(() => null),
+			),
+		);
+		// Re-fetch to reflect updated health
+		integrations = await getIntegrationsWithStatus();
+	}
 
 	let awsSetup: { externalId: string; identityId: string } | null = null;
 	if (!awsStatus.connected) {

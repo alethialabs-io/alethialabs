@@ -5,7 +5,7 @@ import { GitProviderIcon } from "@/components/integrations/git-provider-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Loader2, Unlink } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Unlink } from "lucide-react";
 import Image from "next/image";
 
 const AUTH_METHOD_LABELS: Record<string, string> = {
@@ -34,6 +34,9 @@ export function IntegrationCard({
 	const isComingSoon = integration.status === "coming_soon";
 	const isConnected = integration.connected;
 	const isGit = integration.category === "git";
+	const needsReconnection =
+		integration.token_health === "expired" ||
+		integration.token_health === "refresh_failed";
 
 	return (
 		<div
@@ -64,7 +67,16 @@ export function IntegrationCard({
 					<span className="text-sm font-medium text-foreground">
 						{integration.name}
 					</span>
-					{isConnected && (
+					{isConnected && needsReconnection && (
+						<Badge
+							variant="outline"
+							className="text-amber-600 border-amber-200 bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950 text-[10px] py-0"
+						>
+							<AlertTriangle className="w-3 h-3 mr-1" />
+							Needs Reconnection
+						</Badge>
+					)}
+					{isConnected && !needsReconnection && (
 						<Badge
 							variant="outline"
 							className="text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950 text-[10px] py-0"
@@ -118,7 +130,25 @@ export function IntegrationCard({
 			</div>
 
 			<div className="shrink-0 flex items-center gap-2">
-				{!isComingSoon && isConnected && (
+				{!isComingSoon && isConnected && needsReconnection && (
+					<Button
+						size="sm"
+						className="text-xs h-8 bg-amber-600 hover:bg-amber-700 text-white"
+						disabled={isConnecting}
+						onClick={(e) => {
+							e.stopPropagation();
+							onConnect();
+						}}
+					>
+						{isConnecting ? (
+							<Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+						) : (
+							<RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+						)}
+						Reconnect
+					</Button>
+				)}
+				{!isComingSoon && isConnected && !needsReconnection && (
 					<Button
 						variant="outline"
 						size="sm"

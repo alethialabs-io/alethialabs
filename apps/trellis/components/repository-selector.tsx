@@ -201,6 +201,9 @@ export function RepositorySelector({
 				return;
 			}
 
+			// Store provider in cookie so the callback knows which token to save
+			document.cookie = `auth_linking_provider=${providerName}; path=/; max-age=300; SameSite=Lax`;
+
 			const { error } = await supabase.auth.linkIdentity({
 				provider: providerName,
 				options: {

@@ -21,9 +21,12 @@ export type IntegrationConnectionDetails = {
 	cloud_identity_id?: string;
 };
 
+export type GitTokenHealth = "healthy" | "expired" | "refresh_failed";
+
 export type IntegrationWithConnection = PublicIntegrationsRow & {
 	connected: boolean;
 	connection_details: IntegrationConnectionDetails | null;
+	token_health?: GitTokenHealth;
 };
 
 export type { PublicIntegrationCategory, PublicIntegrationAuthMethod, PublicIntegrationStatus };
@@ -36,7 +39,7 @@ export async function getIntegrationsWithStatus(): Promise<
 	const [integrationsResult, tokensResult, cloudResult, userResult] =
 		await Promise.all([
 			supabase.from("integrations").select("*").order("sort_order"),
-			supabase.from("provider_tokens").select("provider"),
+			supabase.from("provider_tokens").select("provider, expires_at, refresh_token"),
 			supabase
 				.from("cloud_identities")
 				.select("id, provider, credentials, is_verified")
@@ -45,9 +48,18 @@ export async function getIntegrationsWithStatus(): Promise<
 		]);
 
 	const integrations = integrationsResult.data ?? [];
-	const tokens = new Set<string>(
-		(tokensResult.data ?? []).map((t) => t.provider),
-	);
+	const tokenRows = tokensResult.data ?? [];
+	const tokens = new Set<string>(tokenRows.map((t) => t.provider));
+	const tokenHealthMap = new Map<string, GitTokenHealth>();
+	for (const t of tokenRows) {
+		if (!t.expires_at || new Date(t.expires_at) > new Date()) {
+			tokenHealthMap.set(t.provider, "healthy");
+		} else if (t.refresh_token) {
+			tokenHealthMap.set(t.provider, "expired");
+		} else {
+			tokenHealthMap.set(t.provider, "refresh_failed");
+		}
+	}
 	const cloudIdentities = cloudResult.data ?? [];
 	const user = userResult.data?.user;
 
@@ -85,6 +97,12 @@ export async function getIntegrationsWithStatus(): Promise<
 					identity_id: identity.id,
 				};
 			}
+			return {
+				...integration,
+				connected,
+				connection_details,
+				token_health: connected ? tokenHealthMap.get(slug) : undefined,
+			};
 		} else if (integration.category === "cloud") {
 			const cloudIdentity = cloudIdentities.find(
 				(ci) => ci.provider === slug,

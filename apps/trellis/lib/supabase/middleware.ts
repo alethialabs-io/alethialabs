@@ -42,7 +42,25 @@ export async function updateSession(request: NextRequest) {
 		data: { user },
 	} = await supabase.auth.getUser();
 
+	// If an OAuth code landed on a non-callback path, redirect to the callback route
+	// so the provider token gets captured and saved to provider_tokens
+	const code = request.nextUrl.searchParams.get("code");
 	const currentPath = request.nextUrl.pathname;
+	if (code && currentPath !== "/api/auth/callback") {
+		const appUrl = env("NEXT_PUBLIC_APP_URL") || request.nextUrl.origin;
+		const url = new URL("/api/auth/callback", appUrl);
+		url.searchParams.set("code", code);
+		if (!request.nextUrl.searchParams.has("next")) {
+			url.searchParams.set("next", "/dashboard/integrations");
+		} else {
+			url.searchParams.set("next", request.nextUrl.searchParams.get("next")!);
+		}
+		const redirectResponse = NextResponse.redirect(url);
+		supabaseResponse.cookies.getAll().forEach((cookie) => {
+			redirectResponse.cookies.set(cookie.name, cookie.value);
+		});
+		return redirectResponse;
+	}
 
 	const isAuthRoute = currentPath.startsWith("/auth");
 

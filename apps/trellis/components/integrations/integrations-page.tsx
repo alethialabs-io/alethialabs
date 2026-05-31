@@ -120,6 +120,24 @@ export function IntegrationsPage({
 				}
 
 				const provider = integration.slug as PublicGitProvider;
+
+				// Unlink existing identity if still attached (e.g. after a disconnect that only deleted the token)
+				const existing = user.identities?.find(
+					(i) => i.provider === provider,
+				);
+				if (existing) {
+					const { error: unlinkError } =
+						await supabase.auth.unlinkIdentity(existing);
+					if (unlinkError) {
+						console.warn(
+							`Could not unlink existing ${provider} identity before re-linking: ${unlinkError.message}`,
+						);
+					}
+				}
+
+				// Store provider in cookie so the callback knows which token to save
+				document.cookie = `auth_linking_provider=${provider}; path=/; max-age=300; SameSite=Lax`;
+
 				const { error } = await supabase.auth.linkIdentity({
 					provider,
 					options: {
@@ -160,8 +178,14 @@ export function IntegrationsPage({
 
 		try {
 			if (disconnectTarget.category === "git") {
-				const supabase = createClient();
+				// Delete the token first — this is the critical operation
+				const result = await deleteProviderToken(
+					disconnectTarget.slug as PublicGitProvider,
+				);
+				if (result.error) throw new Error(result.error);
 
+				// Try to unlink the Supabase identity (non-critical — may fail if last identity)
+				const supabase = createClient();
 				const {
 					data: { user },
 				} = await supabase.auth.getUser();
@@ -172,12 +196,13 @@ export function IntegrationsPage({
 				if (identity) {
 					const { error } =
 						await supabase.auth.unlinkIdentity(identity);
-					if (error) throw error;
+					if (error) {
+						console.warn(
+							`Could not unlink ${disconnectTarget.slug} identity: ${error.message}`,
+						);
+					}
 				}
 
-				await deleteProviderToken(
-					disconnectTarget.slug as PublicGitProvider,
-				);
 				toast.success(
 					`Successfully disconnected ${disconnectTarget.name}`,
 				);
