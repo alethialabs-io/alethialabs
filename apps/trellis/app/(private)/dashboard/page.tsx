@@ -30,9 +30,7 @@ export default function DashboardPage() {
 	const [onlineWorkers, setOnlineWorkers] = useState(0);
 
 	useEffect(() => {
-		jobsStore.fetchJobs();
 		vineyardsStore.fetchVineyards();
-
 		getIntegrationsWithStatus().then(setIntegrations).catch(() => {});
 
 		const supabase = createClient();

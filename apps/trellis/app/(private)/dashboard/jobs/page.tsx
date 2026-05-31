@@ -2,7 +2,6 @@
 
 import { DataTable } from "@/components/data-table";
 import { jobColumns } from "@/components/jobs/columns";
-import { createClient } from "@/lib/supabase/client";
 import {
 	useJobsStore,
 	type PublicProvisionJobStatus,
@@ -13,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ClipboardList, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 
 const STATUS_FILTERS: (PublicProvisionJobStatus | "All")[] = [
 	"All", "QUEUED", "PROCESSING", "SUCCESS", "FAILED",
@@ -35,44 +34,12 @@ export default function JobsPage() {
 		searchQuery,
 		currentPage,
 		pageSize,
-		fetchJobs,
-		addOrUpdateJob,
 		setStatusFilter,
 		setTypeFilter,
 		setSearchQuery,
 		setCurrentPage,
 	} = store;
 
-	useEffect(() => {
-		fetchJobs();
-	}, [fetchJobs]);
-
-	/** Realtime: update job list on INSERT/UPDATE. */
-	useEffect(() => {
-		const supabase = createClient();
-
-		supabase.auth.getUser().then(({ data: { user } }) => {
-			if (!user) return;
-
-			const channel = supabase
-				.channel("jobs-page-realtime")
-				.on(
-					"postgres_changes",
-					{ event: "*", schema: "public", table: "provision_jobs" },
-					(payload) => {
-						const job = payload.new as PublicProvisionJobsRow;
-						if (job && job.user_id === user.id) {
-							addOrUpdateJob(job);
-						}
-					},
-				)
-				.subscribe();
-
-			return () => {
-				supabase.removeChannel(channel);
-			};
-		});
-	}, [addOrUpdateJob]);
 
 	const filtered = useMemo(() => {
 		let result = jobs;

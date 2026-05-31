@@ -10,31 +10,27 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
 } from "@/components/ui/popover";
-import { useAwsOnboarding } from "@/hooks/use-aws-onboarding";
 import { useJobNotifications } from "@/hooks/use-job-notifications";
-import { globalSearch, type SearchResult } from "@/app/server/actions/search";
+import { useJobsStore } from "@/lib/stores/use-jobs-store";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import type { PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
 import { User as IUser } from "@supabase/supabase-js";
 import { SidebarVineyards } from "@/components/sidebar-vineyards";
 import {
-	AlertTriangle,
-	ArrowRight,
 	Bell,
 	Blocks,
 	ClipboardList,
-	Grape,
 	LayoutDashboard,
 	LogOut,
 	Menu,
 	Plus,
-	Search,
+	Server,
 	Settings,
 	User,
 	Workflow,
@@ -43,7 +39,7 @@ import {
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type React from "react";
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 
 export default function DashboardLayout({
 	children,
@@ -54,37 +50,33 @@ export default function DashboardLayout({
 	const router = useRouter();
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [user, setUser] = useState<IUser | null>(null);
-	const { showAwsAlert, setShowAwsAlert } = useAwsOnboarding();
 	const { notifications, unreadCount, markAsRead, markAllRead } = useJobNotifications();
-	const [searchQuery, setSearchQuery] = useState("");
-	const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-	const [searchOpen, setSearchOpen] = useState(false);
-	const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-	const handleSearch = useCallback((value: string) => {
-		setSearchQuery(value);
-		if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-		if (value.trim().length < 2) {
-			setSearchResults([]);
-			setSearchOpen(false);
-			return;
-		}
-		searchTimerRef.current = setTimeout(async () => {
-			const results = await globalSearch(value);
-			setSearchResults(results);
-			setSearchOpen(results.length > 0);
-		}, 300);
-	}, []);
 
 	useEffect(() => {
-		const getUser = async () => {
-			const supabase = createClient();
-			const {
-				data: { user },
-			} = await supabase.auth.getUser();
-			setUser(user);
-		};
-		getUser();
+		const supabase = createClient();
+
+		supabase.auth.getUser().then(({ data: { user: u } }) => {
+			if (u) {
+				setUser(u);
+				useJobsStore.getState().fetchJobs();
+
+				const channel = supabase
+					.channel("jobs-realtime-global")
+					.on(
+						"postgres_changes",
+						{ event: "*", schema: "public", table: "provision_jobs" },
+						(payload) => {
+							const job = payload.new as PublicProvisionJobsRow;
+							if (job && job.user_id === u.id) {
+								useJobsStore.getState().addOrUpdateJob(job);
+							}
+						},
+					)
+					.subscribe();
+
+				return () => { supabase.removeChannel(channel); };
+			}
+		});
 	}, []);
 
 	const handleLogout = async () => {
@@ -96,6 +88,7 @@ export default function DashboardLayout({
 	const navigation = [
 		{ name: "Overview", href: "/dashboard", icon: LayoutDashboard },
 		{ name: "Plant a Vine", href: "/dashboard/plant", icon: Plus },
+		{ name: "Clusters", href: "/dashboard/clusters", icon: Server },
 		{ name: "Jobs", href: "/dashboard/jobs", icon: ClipboardList },
 		{ name: "Integrations", href: "/dashboard/integrations", icon: Blocks },
 		{ name: "Workers", href: "/dashboard/workers", icon: Workflow },
@@ -140,46 +133,6 @@ export default function DashboardLayout({
 					</div>
 
 					<div className="flex items-center gap-2 sm:gap-4">
-						{/* Search Bar */}
-						<div className="hidden md:flex items-center">
-							<div className="relative">
-								<Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-								<Input
-									placeholder="Search vines, jobs..."
-									value={searchQuery}
-									onChange={(e) => handleSearch(e.target.value)}
-									onFocus={() => searchResults.length > 0 && setSearchOpen(true)}
-									onBlur={() => setTimeout(() => setSearchOpen(false), 200)}
-									className="w-64 bg-muted/30 border-border/50 pl-9 h-9 text-sm focus-visible:ring-1 focus-visible:ring-ring transition-colors"
-								/>
-								{searchOpen && (
-									<div className="absolute top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-lg z-50 max-h-80 overflow-y-auto">
-										{searchResults.map((r) => (
-											<Link
-												key={`${r.type}-${r.id}`}
-												href={r.href}
-												onClick={() => {
-													setSearchQuery("");
-													setSearchResults([]);
-													setSearchOpen(false);
-												}}
-											>
-												<div className="px-3 py-2 hover:bg-muted/50 transition-colors flex items-center gap-3">
-													<span className="text-[10px] uppercase tracking-wider text-muted-foreground w-14 shrink-0">
-														{r.type}
-													</span>
-													<div className="min-w-0">
-														<p className="text-sm font-medium truncate">{r.title}</p>
-														<p className="text-[11px] text-muted-foreground truncate">{r.subtitle}</p>
-													</div>
-												</div>
-											</Link>
-										))}
-									</div>
-								)}
-							</div>
-						</div>
-
 						{/* Notifications */}
 						<Popover>
 							<PopoverTrigger asChild>
@@ -189,26 +142,18 @@ export default function DashboardLayout({
 									className="relative h-9 w-9 text-muted-foreground hover:text-foreground"
 								>
 									<Bell className="h-4 w-4" />
-									{(showAwsAlert || unreadCount > 0) && (
+									{unreadCount > 0 && (
 										<span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-destructive" />
 									)}
-									<span className="sr-only">
-										Toggle notifications
-									</span>
+									<span className="sr-only">Notifications</span>
 								</Button>
 							</PopoverTrigger>
 							<PopoverContent className="w-80 p-0" align="end">
-								<div className="flex items-center justify-between border-b border-border/40 p-4">
+								<div className="flex items-center justify-between border-b border-border/40 px-4 py-3">
 									<div>
-										<p className="text-sm font-semibold text-foreground">
-											Notifications
-										</p>
-										<p className="text-xs text-muted-foreground">
-											{unreadCount > 0
-												? `${unreadCount} unread`
-												: showAwsAlert
-													? "1 alert"
-													: "All caught up"}
+										<p className="text-sm font-semibold text-foreground">Notifications</p>
+										<p className="text-[11px] text-muted-foreground">
+											{unreadCount > 0 ? `${unreadCount} unread` : "All caught up"}
 										</p>
 									</div>
 									{unreadCount > 0 && (
@@ -220,40 +165,15 @@ export default function DashboardLayout({
 										</button>
 									)}
 								</div>
-								<div className="max-h-[400px] overflow-y-auto">
-									{showAwsAlert && (
-										<div className="p-4 flex gap-4 hover:bg-muted/50 transition-colors border-b border-border/20">
-											<div className="mt-0.5 p-1.5 bg-destructive/10 rounded-md shrink-0 h-fit">
-												<AlertTriangle className="h-4 w-4 text-destructive" />
-											</div>
-											<div className="flex-1 space-y-1">
-												<p className="text-sm font-medium leading-none text-destructive">
-													Cloud Account Required
-												</p>
-												<p className="text-xs text-muted-foreground leading-relaxed mt-1.5 mb-2">
-													Connect a cloud account to provision infrastructure.
-												</p>
-												<Link href="/dashboard/integrations">
-													<Button
-														variant="outline"
-														size="sm"
-														className="border-destructive/30 hover:bg-destructive/10 text-destructive text-xs h-7 px-3 w-full"
-													>
-														Connect Account
-														<ArrowRight className="ml-1.5 h-3 w-3" />
-													</Button>
-												</Link>
-											</div>
-										</div>
-									)}
+								<div className="max-h-[320px] overflow-y-auto">
 									{notifications.map((n) => (
 										<Link
 											key={n.id}
 											href={`/dashboard/jobs/${n.jobId}`}
 											onClick={() => markAsRead(n.id)}
 										>
-											<div className={`p-3 flex items-start gap-3 hover:bg-muted/50 transition-colors border-b border-border/20 ${!n.read ? "bg-muted/20" : ""}`}>
-												<div className={`mt-0.5 p-1 rounded-md shrink-0 ${n.status === "FAILED" ? "bg-destructive/10" : n.status === "SUCCESS" ? "bg-emerald-500/10" : "bg-blue-500/10"}`}>
+											<div className={`px-4 py-2.5 flex items-center gap-3 hover:bg-muted/50 transition-colors border-b border-border/20 ${!n.read ? "bg-muted/20" : ""}`}>
+												<div className={`p-1 rounded-md shrink-0 ${n.status === "FAILED" ? "bg-destructive/10" : n.status === "SUCCESS" ? "bg-emerald-500/10" : "bg-blue-500/10"}`}>
 													<ClipboardList className={`h-3.5 w-3.5 ${n.status === "FAILED" ? "text-destructive" : n.status === "SUCCESS" ? "text-emerald-500" : "text-blue-500"}`} />
 												</div>
 												<div className="flex-1 min-w-0">
@@ -265,12 +185,12 @@ export default function DashboardLayout({
 													</p>
 												</div>
 												{!n.read && (
-													<span className="mt-1.5 h-2 w-2 rounded-full bg-blue-500 shrink-0" />
+													<span className="h-2 w-2 rounded-full bg-blue-500 shrink-0" />
 												)}
 											</div>
 										</Link>
 									))}
-									{!showAwsAlert && notifications.length === 0 && (
+									{notifications.length === 0 && (
 										<div className="p-8 text-center text-sm text-muted-foreground">
 											You&apos;re all caught up!
 										</div>
