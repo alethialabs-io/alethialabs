@@ -6,6 +6,7 @@ import { getVine, deleteVine } from "@/app/server/actions/vines";
 import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
 import { usePlan } from "@/components/plan/use-plan";
 import { VineDetailTabs } from "@/components/vine-detail/vine-detail-tabs";
+import { WorkerSelectPopover } from "@/components/workers/worker-select-popover";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -86,13 +87,13 @@ export default function VineDetailPage() {
 	const providerSlug = (cloudProvider || "aws") as CloudProviderSlug;
 	const meta = getProvider(providerSlug);
 
-	const handlePlan = async () => {
-		await plan.generatePlan();
+	const handlePlan = async (workerId: string | null) => {
+		await plan.generatePlan(workerId);
 	};
 
-	const handleDeploy = async () => {
+	const handleDeploy = async (workerId: string | null) => {
 		if (plan.planJobId) {
-			await plan.applyPlan();
+			await plan.applyPlan(workerId);
 		} else {
 			toast.error("Generate a plan first before deploying.");
 		}
@@ -142,14 +143,26 @@ export default function VineDetailPage() {
 				</div>
 
 				<div className="flex items-center gap-2">
-					<Button variant="outline" size="sm" className="h-8 text-xs" onClick={handlePlan} disabled={plan.phase === "generating" || plan.phase === "applying"}>
-						{plan.phase === "generating" ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <FileText className="h-3.5 w-3.5 mr-1.5" />}
-						{plan.phase === "generating" ? "Planning..." : "Plan"}
-					</Button>
-					<Button size="sm" className="h-8 text-xs" onClick={handleDeploy} disabled={plan.phase !== "ready"}>
-						{plan.phase === "applying" ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5 mr-1.5" />}
-						{plan.phase === "applying" ? "Deploying..." : "Deploy"}
-					</Button>
+					<WorkerSelectPopover
+						trigger={
+							<Button variant="outline" size="sm" className="h-8 text-xs" disabled={plan.phase === "generating" || plan.phase === "applying"}>
+								{plan.phase === "generating" ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <FileText className="h-3.5 w-3.5 mr-1.5" />}
+								{plan.phase === "generating" ? "Planning..." : "Plan"}
+							</Button>
+						}
+						onConfirm={handlePlan}
+						disabled={plan.phase === "generating" || plan.phase === "applying"}
+					/>
+					<WorkerSelectPopover
+						trigger={
+							<Button size="sm" className="h-8 text-xs" disabled={plan.phase !== "ready"}>
+								{plan.phase === "applying" ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5 mr-1.5" />}
+								{plan.phase === "applying" ? "Deploying..." : "Deploy"}
+							</Button>
+						}
+						onConfirm={handleDeploy}
+						disabled={plan.phase !== "ready"}
+					/>
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
 							<Button variant="ghost" size="icon" className="h-8 w-8">
