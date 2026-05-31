@@ -1,7 +1,7 @@
 "use client";
 
 import type { IntegrationWithConnection } from "@/app/server/actions/integrations";
-import { GitProviderIcon } from "@/components/git-provider-icon";
+import { GitProviderIcon } from "@/components/integrations/git-provider-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";

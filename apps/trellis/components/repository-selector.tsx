@@ -1,6 +1,6 @@
 "use client";
 
-import { GitProviderIcon } from "@/components/git-provider-icon";
+import { GitProviderIcon } from "@/components/integrations/git-provider-icon";
 import { Button } from "@/components/ui/button";
 import {
 	Command,

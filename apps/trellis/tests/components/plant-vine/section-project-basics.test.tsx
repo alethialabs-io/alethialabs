@@ -3,7 +3,7 @@ import { screen, fireEvent } from "@testing-library/react";
 import { SectionProjectBasics } from "@/components/plant-vine/section-project-basics";
 import { renderWithForm } from "./test-utils";
 
-vi.mock("@/components/vineyard-selector", () => ({
+vi.mock("@/components/vineyards/vineyard-selector", () => ({
 	VineyardSelector: ({ value, onChange }: any) => (
 		<select data-testid="vineyard-selector" value={value || ""} onChange={(e) => onChange(e.target.value)}>
 			<option value="">Select vineyard</option>

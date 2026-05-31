@@ -11,7 +11,7 @@ import {
 import {
 	FormControl, FormField, FormItem, FormMessage,
 } from "@/components/ui/form";
-import { VineyardSelector } from "@/components/vineyard-selector";
+import { VineyardSelector } from "@/components/vineyards/vineyard-selector";
 import { HelpTooltip } from "./help-tooltip";
 import { Grape } from "lucide-react";
 import { useFormContext } from "react-hook-form";

@@ -12,10 +12,9 @@ import {
 	useEdgesState,
 	useNodesState,
 } from "@xyflow/react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useMemo } from "react";
-import { VineSheetWrapper } from "./vine-sheet-wrapper";
-import { VineNode } from "./nodes/vine-node";
+import { VineNode } from "./vine-node";
 
 interface VineyardEstateMapProps {
 	vineyard: any;
@@ -27,10 +26,8 @@ const nodeTypes: NodeTypes = {
 
 export function VineyardEstateMap({ vineyard }: VineyardEstateMapProps) {
 	const router = useRouter();
-	const pathname = usePathname();
-	const searchParams = useSearchParams();
+	const { id: vineyardId } = useParams<{ id: string }>();
 
-	// Create initial nodes from configurations
 	const initialNodes = useMemo(() => {
 		return (vineyard.vines || []).map(
 			(config: any, index: number) => ({
@@ -43,19 +40,12 @@ export function VineyardEstateMap({ vineyard }: VineyardEstateMapProps) {
 				data: {
 					config,
 					onClick: () => {
-						const newSearchParams = new URLSearchParams(
-							searchParams.toString(),
-						);
-						newSearchParams.set("config_id", config.id);
-						router.replace(
-							`${pathname}?${newSearchParams.toString()}`,
-							{ scroll: false },
-						);
+						router.push(`/dashboard/vineyards/${vineyardId}/vines/${config.id}`);
 					},
 				},
 			}),
 		);
-	}, [vineyard.vines, router, pathname, searchParams]);
+	}, [vineyard.vines, router, vineyardId]);
 
 	// Create initial edges (empty for now unless we add harvests/tendrils)
 	const initialEdges: Edge[] = [];
@@ -96,8 +86,6 @@ export function VineyardEstateMap({ vineyard }: VineyardEstateMapProps) {
 				/>
 			</ReactFlow>
 
-			{/* Render the details sheet for when a node is clicked */}
-			<VineSheetWrapper vines={vineyard.vines || []} />
 		</div>
 	);
 }

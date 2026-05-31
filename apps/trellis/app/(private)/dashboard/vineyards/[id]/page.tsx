@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { getVineyardById, type VineyardWithVines, type VineWithProvider } from "@/app/server/actions/vineyards";
 import { getProvider } from "@/lib/cloud-providers";
 import { DataTable } from "@/components/data-table";
-import { VineyardEstateMap } from "@/components/vineyard-estate-map";
+import { VineyardEstateMap } from "@/components/vineyards/vineyard-estate-map";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
