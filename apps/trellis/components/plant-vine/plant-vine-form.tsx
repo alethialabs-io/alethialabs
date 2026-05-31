@@ -13,7 +13,7 @@ import {
 import { useVineStore } from "./use-vine-store";
 import { RepositoryProvider } from "./repository-context";
 import { ProviderRibbon } from "./provider-ribbon";
-import { VineFormTabs } from "./vine-form-tabs";
+import { VineFormTabs, type VineFormTabsHandle } from "./vine-form-tabs";
 import { CostSidebar } from "./cost-sidebar";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
@@ -138,8 +138,24 @@ function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
 		}
 	};
 
-	const onError = () => {
+	const tabsRef = useRef<VineFormTabsHandle>(null);
+
+	/** Maps form field paths to the tab that contains them. */
+	const fieldToTab: Record<string, string> = {
+		vine: "core", network: "core", cluster: "core",
+		databases: "services", caches: "services", nosql_tables: "services", queues: "services", topics: "services",
+		dns: "security", secrets: "security",
+		repositories: "git",
+	};
+
+	const onError = (errors: Record<string, unknown>) => {
 		store.set({ submitted: true });
+
+		const firstErrorKey = Object.keys(errors)[0];
+		const tab = fieldToTab[firstErrorKey] ?? "core";
+		tabsRef.current?.setActiveTab(tab);
+
+		toast.error("Please fix the highlighted fields before planting.");
 	};
 
 	return (
@@ -151,7 +167,7 @@ function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
 				{/* Main content: tabs + cost sidebar */}
 				<div className="flex gap-6">
 					<div className="flex-1 min-w-0">
-						<VineFormTabs />
+						<VineFormTabs ref={tabsRef} />
 					</div>
 
 					<div className="hidden lg:block w-72 shrink-0">

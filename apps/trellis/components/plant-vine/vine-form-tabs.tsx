@@ -2,7 +2,7 @@
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Database, GitBranch, Layers, Shield, CheckCircle2 } from "lucide-react";
-import { useState } from "react";
+import { useImperativeHandle, forwardRef, useState } from "react";
 
 import { SectionProjectBasics } from "./section-project-basics";
 import { SectionNetwork } from "./section-network";
@@ -16,9 +16,15 @@ import { SectionSecrets } from "./section-secrets";
 import { SectionRepositories } from "./section-repositories";
 import { ReviewTab } from "./review-tab";
 
+export interface VineFormTabsHandle {
+	setActiveTab: (tab: string) => void;
+}
+
 /** Tabbed container for all vine form sections. */
-export function VineFormTabs() {
+export const VineFormTabs = forwardRef<VineFormTabsHandle>(function VineFormTabs(_props, ref) {
 	const [activeTab, setActiveTab] = useState("core");
+
+	useImperativeHandle(ref, () => ({ setActiveTab }), []);
 
 	return (
 		<Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -89,4 +95,4 @@ export function VineFormTabs() {
 			</div>
 		</Tabs>
 	);
-}
+});
