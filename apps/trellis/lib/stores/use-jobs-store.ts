@@ -45,7 +45,7 @@ export const useJobsStore = create<JobsStore>()(
 			typeFilter: "All",
 			searchQuery: "",
 			currentPage: 0,
-			pageSize: 15,
+			pageSize: 20,
 
 			fetchJobs: async (force = false) => {
 				const { lastFetchedAt, isLoading } = get();

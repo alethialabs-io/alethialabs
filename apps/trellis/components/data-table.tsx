@@ -15,6 +15,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from "luci
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Select,
   SelectContent,
@@ -52,7 +53,7 @@ export function DataTable<TData extends { id?: string }, TValue>({
   onRowClick,
   selectedRowId,
   className,
-  pageSize = 10,
+  pageSize = 20,
   columnFilters: externalFilters,
   pageIndex: externalPageIndex,
   onPageIndexChange,
@@ -92,6 +93,7 @@ export function DataTable<TData extends { id?: string }, TValue>({
   return (
     <div className={cn("space-y-3", className)}>
       <div className="rounded-md border">
+        <ScrollArea className="max-h-[600px]">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -161,6 +163,7 @@ export function DataTable<TData extends { id?: string }, TValue>({
             )}
           </TableBody>
         </Table>
+        </ScrollArea>
       </div>
 
       {table.getPageCount() > 1 && (
