@@ -8,12 +8,57 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
 import { useCloudProvider, NETWORK } from "@/lib/cloud-providers";
-import type { CachedResources } from "@/types/database-custom.types";
+import type {
+	CachedResources,
+	GcpCachedResources,
+	AzureCachedResources,
+} from "@/types/database-custom.types";
 import { Network } from "lucide-react";
 import { useFormContext } from "react-hook-form";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
 
 interface VpcInfo { ID: string; CIDR: string; Name: string; IsDefault: boolean; }
+
+interface NetworkOption { id: string; name: string; detail: string; }
+
+/** Extracts existing networks from cached resources based on provider. */
+function getExistingNetworks(
+	cached: CachedResources | GcpCachedResources | AzureCachedResources | null,
+	provider: string,
+	region: string,
+): NetworkOption[] {
+	if (!cached) return [];
+
+	if (provider === "aws") {
+		const res = cached as CachedResources;
+		const vpcs = res.vpcs?.[region] ?? [];
+		return vpcs.map((v) => ({
+			id: v.ID,
+			name: v.Name || v.ID,
+			detail: v.CIDR,
+		}));
+	}
+
+	if (provider === "gcp") {
+		const res = cached as GcpCachedResources;
+		return (res.networks ?? []).map((n) => ({
+			id: n.selfLink,
+			name: n.name,
+			detail: n.autoCreateSubnetworks ? "Auto-mode" : "Custom-mode",
+		}));
+	}
+
+	if (provider === "azure") {
+		const res = cached as AzureCachedResources;
+		return (res.vnets ?? []).filter((v) => v.location === region).map((v) => ({
+			id: v.id,
+			name: v.name,
+			detail: v.addressPrefixes.join(", "),
+		}));
+	}
+
+	return [];
+}
 
 const CIDR_REGEX = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
 
@@ -47,9 +92,8 @@ export function SectionNetwork() {
 	const provisionVpc = watch("network.provision_network");
 	const vpcCidr = watch("network.cidr_block") || "";
 
-	const awsResources = provider === "aws" ? cachedResources as CachedResources | null : null;
-	const vpcsForRegion = (awsResources?.vpcs as Record<string, VpcInfo[]>)?.[region] || [];
-	const canUseExisting = !!region && vpcsForRegion.length > 0;
+	const existingNetworks = getExistingNetworks(cachedResources, provider, region);
+	const canUseExisting = !!region && existingNetworks.length > 0;
 	const cidrError = vpcCidr.length > 0 && !CIDR_REGEX.test(vpcCidr) ? "Invalid CIDR format." : null;
 
 	return (
@@ -74,7 +118,7 @@ export function SectionNetwork() {
 								className={`flex-1 p-3 rounded-lg border text-left text-sm ${!field.value ? "border-foreground bg-muted/20 font-medium" : "border-border/50 text-muted-foreground hover:border-border"} disabled:opacity-50 disabled:cursor-not-allowed`}>
 								Use Existing VPC
 								{!region && <span className="block text-[11px] text-muted-foreground/60 mt-0.5">Select a region first</span>}
-								{region && vpcsForRegion.length === 0 && <span className="block text-[11px] text-muted-foreground/60 mt-0.5">No {net.networkLabel}s found in {region}</span>}
+								{region && existingNetworks.length === 0 && <span className="block text-[11px] text-muted-foreground/60 mt-0.5">No {net.networkLabel}s found in {region}</span>}
 							</button>
 						</div>
 					</FormItem>
@@ -138,13 +182,11 @@ export function SectionNetwork() {
 									<SelectTrigger className="h-9 text-sm"><SelectValue placeholder={`Choose a ${net.networkLabel}`} /></SelectTrigger>
 								</FormControl>
 								<SelectContent>
-									{vpcsForRegion.map((vpc: VpcInfo) => (
-										<SelectItem key={vpc.ID} value={vpc.ID}>
+									{existingNetworks.map((n) => (
+										<SelectItem key={n.id} value={n.id}>
 											<div className="flex items-center gap-2">
-												<span className="font-mono text-xs">{vpc.ID}</span>
-												<span className="text-muted-foreground text-xs">{vpc.CIDR}</span>
-												{vpc.Name && <span className="text-muted-foreground text-xs">{vpc.Name}</span>}
-												{vpc.IsDefault && <Badge variant="outline" className="text-[10px] ml-1">Default</Badge>}
+												<span className="font-mono text-xs">{n.name}</span>
+												<span className="text-muted-foreground text-xs">{n.detail}</span>
 											</div>
 										</SelectItem>
 									))}
