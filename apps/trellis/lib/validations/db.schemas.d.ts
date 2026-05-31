@@ -104,15 +104,6 @@ export type PublicClusterAdminsInsert = z.infer<
 export type PublicClusterAdminsUpdate = z.infer<
   typeof generated.publicClusterAdminsUpdateSchema
 >;
-export type PublicClustersRow = z.infer<
-  typeof generated.publicClustersRowSchema
->;
-export type PublicClustersInsert = z.infer<
-  typeof generated.publicClustersInsertSchema
->;
-export type PublicClustersUpdate = z.infer<
-  typeof generated.publicClustersUpdateSchema
->;
 export type PublicIntegrationsRow = z.infer<
   typeof generated.publicIntegrationsRowSchema
 >;
@@ -368,6 +359,12 @@ export type PublicRecoverStaleJobsArgs = z.infer<
 >;
 export type PublicRecoverStaleJobsReturns = z.infer<
   typeof generated.publicRecoverStaleJobsReturnsSchema
+>;
+export type PublicSetDefaultWorkerArgs = z.infer<
+  typeof generated.publicSetDefaultWorkerArgsSchema
+>;
+export type PublicSetDefaultWorkerReturns = z.infer<
+  typeof generated.publicSetDefaultWorkerReturnsSchema
 >;
 export type PublicUpdateJobStatusArgs = z.infer<
   typeof generated.publicUpdateJobStatusArgsSchema

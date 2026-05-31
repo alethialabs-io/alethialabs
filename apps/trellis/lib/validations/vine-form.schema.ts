@@ -36,7 +36,17 @@ const vineSchema = publicVinesInsertSchema
 		cloud_identity_id: z.string().min(1, "Cloud account is required"),
 	});
 
-const networkSchema = publicVineNetworkInsertSchema.omit(componentAutoFields);
+const networkSchema = publicVineNetworkInsertSchema
+	.omit(componentAutoFields)
+	.superRefine((data, ctx) => {
+		if (data.provision_network === false && !data.network_id) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Select a VPC when using an existing network",
+				path: ["network_id"],
+			});
+		}
+	});
 
 const clusterSchema = publicVineClusterInsertSchema.omit({
 	...componentAutoFields,

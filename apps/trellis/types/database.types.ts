@@ -139,39 +139,6 @@ export type Database = {
         }
         Relationships: []
       }
-      clusters: {
-        Row: {
-          agent_token_hash: string | null
-          created_at: string | null
-          id: string
-          last_heartbeat: string | null
-          metadata: { region?: string | null; vpc_cidr?: string | null; [key: string]: any; } | null
-          name: string
-          status: Database["public"]["Enums"]["cluster_status"] | null
-          user_id: string
-        }
-        Insert: {
-          agent_token_hash?: string | null
-          created_at?: string | null
-          id?: string
-          last_heartbeat?: string | null
-          metadata?: { region?: string | null; vpc_cidr?: string | null; [key: string]: any; } | null
-          name: string
-          status?: Database["public"]["Enums"]["cluster_status"] | null
-          user_id: string
-        }
-        Update: {
-          agent_token_hash?: string | null
-          created_at?: string | null
-          id?: string
-          last_heartbeat?: string | null
-          metadata?: { region?: string | null; vpc_cidr?: string | null; [key: string]: any; } | null
-          name?: string
-          status?: Database["public"]["Enums"]["cluster_status"] | null
-          user_id?: string
-        }
-        Relationships: []
-      }
       integrations: {
         Row: {
           auth_method: Database["public"]["Enums"]["integration_auth_method"]
@@ -317,9 +284,9 @@ export type Database = {
       }
       provision_jobs: {
         Row: {
+          assigned_worker_id: string | null
           claimed_at: string | null
           cloud_identity_id: string | null
-          cluster_id: string | null
           completed_at: string | null
           config_snapshot: Record<string, unknown>
           configuration_hash: string | null
@@ -338,9 +305,9 @@ export type Database = {
           worker_id: string | null
         }
         Insert: {
+          assigned_worker_id?: string | null
           claimed_at?: string | null
           cloud_identity_id?: string | null
-          cluster_id?: string | null
           completed_at?: string | null
           config_snapshot?: Record<string, unknown>
           configuration_hash?: string | null
@@ -359,9 +326,9 @@ export type Database = {
           worker_id?: string | null
         }
         Update: {
+          assigned_worker_id?: string | null
           claimed_at?: string | null
           cloud_identity_id?: string | null
-          cluster_id?: string | null
           completed_at?: string | null
           config_snapshot?: Record<string, unknown>
           configuration_hash?: string | null
@@ -381,17 +348,17 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "provision_jobs_assigned_worker_id_fkey"
+            columns: ["assigned_worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "provision_jobs_cloud_identity_id_fkey"
             columns: ["cloud_identity_id"]
             isOneToOne: false
             referencedRelation: "cloud_identities"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "provision_jobs_cluster_id_fkey"
-            columns: ["cluster_id"]
-            isOneToOne: false
-            referencedRelation: "clusters"
             referencedColumns: ["id"]
           },
           {
@@ -420,6 +387,13 @@ export type Database = {
             columns: ["vineyard_id"]
             isOneToOne: false
             referencedRelation: "vineyards"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "provision_jobs_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
             referencedColumns: ["id"]
           },
         ]
@@ -1315,6 +1289,7 @@ export type Database = {
           cloud_identity_id: string | null
           created_at: string | null
           id: string
+          is_default: boolean
           last_heartbeat: string | null
           metadata: Record<string, unknown> | null
           mode: Database["public"]["Enums"]["worker_mode"]
@@ -1327,6 +1302,7 @@ export type Database = {
           cloud_identity_id?: string | null
           created_at?: string | null
           id?: string
+          is_default?: boolean
           last_heartbeat?: string | null
           metadata?: Record<string, unknown> | null
           mode: Database["public"]["Enums"]["worker_mode"]
@@ -1339,6 +1315,7 @@ export type Database = {
           cloud_identity_id?: string | null
           created_at?: string | null
           id?: string
+          is_default?: boolean
           last_heartbeat?: string | null
           metadata?: Record<string, unknown> | null
           mode?: Database["public"]["Enums"]["worker_mode"]
@@ -1441,9 +1418,9 @@ export type Database = {
           p_worker_token_hash: string
         }
         Returns: {
+          assigned_worker_id: string | null
           claimed_at: string | null
           cloud_identity_id: string | null
-          cluster_id: string | null
           completed_at: string | null
           config_snapshot: Json
           configuration_hash: string | null
@@ -1479,6 +1456,7 @@ export type Database = {
         Returns: undefined
       }
       recover_stale_jobs: { Args: never; Returns: number }
+      set_default_worker: { Args: { p_worker_id?: string }; Returns: undefined }
       update_job_status: {
         Args: {
           p_error_message?: string

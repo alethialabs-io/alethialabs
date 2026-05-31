@@ -623,65 +623,6 @@ export const publicClusterAdminsUpdateSchema = z.object({
   user_id: z.string().optional(),
 });
 
-export const publicClustersRowSchema = z.object({
-  agent_token_hash: z.string().nullable(),
-  created_at: z.string().nullable(),
-  id: z.string(),
-  last_heartbeat: z.string().nullable(),
-  metadata: z
-    .record(z.string(), z.any())
-    .and(
-      z.object({
-        region: z.string().optional().nullable(),
-        vpc_cidr: z.string().optional().nullable(),
-      }),
-    )
-    .nullable(),
-  name: z.string(),
-  status: publicClusterStatusSchema.nullable(),
-  user_id: z.string(),
-});
-
-export const publicClustersInsertSchema = z.object({
-  agent_token_hash: z.string().optional().nullable(),
-  created_at: z.string().optional().nullable(),
-  id: z.string().optional(),
-  last_heartbeat: z.string().optional().nullable(),
-  metadata: z
-    .record(z.string(), z.any())
-    .and(
-      z.object({
-        region: z.string().optional().nullable(),
-        vpc_cidr: z.string().optional().nullable(),
-      }),
-    )
-    .optional()
-    .nullable(),
-  name: z.string(),
-  status: publicClusterStatusSchema.optional().nullable(),
-  user_id: z.string(),
-});
-
-export const publicClustersUpdateSchema = z.object({
-  agent_token_hash: z.string().optional().nullable(),
-  created_at: z.string().optional().nullable(),
-  id: z.string().optional(),
-  last_heartbeat: z.string().optional().nullable(),
-  metadata: z
-    .record(z.string(), z.any())
-    .and(
-      z.object({
-        region: z.string().optional().nullable(),
-        vpc_cidr: z.string().optional().nullable(),
-      }),
-    )
-    .optional()
-    .nullable(),
-  name: z.string().optional(),
-  status: publicClusterStatusSchema.optional().nullable(),
-  user_id: z.string().optional(),
-});
-
 export const publicIntegrationsRowSchema = z.object({
   auth_method: publicIntegrationAuthMethodSchema,
   category: publicIntegrationCategorySchema,
@@ -828,9 +769,9 @@ export const publicProviderTokensUpdateSchema = z.object({
 });
 
 export const publicProvisionJobsRowSchema = z.object({
+  assigned_worker_id: z.string().nullable(),
   claimed_at: z.string().nullable(),
   cloud_identity_id: z.string().nullable(),
-  cluster_id: z.string().nullable(),
   completed_at: z.string().nullable(),
   config_snapshot: z.record(z.string(), z.unknown()),
   configuration_hash: z.string().nullable(),
@@ -850,9 +791,9 @@ export const publicProvisionJobsRowSchema = z.object({
 });
 
 export const publicProvisionJobsInsertSchema = z.object({
+  assigned_worker_id: z.string().optional().nullable(),
   claimed_at: z.string().optional().nullable(),
   cloud_identity_id: z.string().optional().nullable(),
-  cluster_id: z.string().optional().nullable(),
   completed_at: z.string().optional().nullable(),
   config_snapshot: z.record(z.string(), z.unknown()).optional(),
   configuration_hash: z.string().optional().nullable(),
@@ -872,9 +813,9 @@ export const publicProvisionJobsInsertSchema = z.object({
 });
 
 export const publicProvisionJobsUpdateSchema = z.object({
+  assigned_worker_id: z.string().optional().nullable(),
   claimed_at: z.string().optional().nullable(),
   cloud_identity_id: z.string().optional().nullable(),
-  cluster_id: z.string().optional().nullable(),
   completed_at: z.string().optional().nullable(),
   config_snapshot: z.record(z.string(), z.unknown()).optional(),
   configuration_hash: z.string().optional().nullable(),
@@ -895,17 +836,17 @@ export const publicProvisionJobsUpdateSchema = z.object({
 
 export const publicProvisionJobsRelationshipsSchema = z.tuple([
   z.object({
+    foreignKeyName: z.literal("provision_jobs_assigned_worker_id_fkey"),
+    columns: z.tuple([z.literal("assigned_worker_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("workers"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+  z.object({
     foreignKeyName: z.literal("provision_jobs_cloud_identity_id_fkey"),
     columns: z.tuple([z.literal("cloud_identity_id")]),
     isOneToOne: z.literal(false),
     referencedRelation: z.literal("cloud_identities"),
-    referencedColumns: z.tuple([z.literal("id")]),
-  }),
-  z.object({
-    foreignKeyName: z.literal("provision_jobs_cluster_id_fkey"),
-    columns: z.tuple([z.literal("cluster_id")]),
-    isOneToOne: z.literal(false),
-    referencedRelation: z.literal("clusters"),
     referencedColumns: z.tuple([z.literal("id")]),
   }),
   z.object({
@@ -934,6 +875,13 @@ export const publicProvisionJobsRelationshipsSchema = z.tuple([
     columns: z.tuple([z.literal("vineyard_id")]),
     isOneToOne: z.literal(false),
     referencedRelation: z.literal("vineyards"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+  z.object({
+    foreignKeyName: z.literal("provision_jobs_worker_id_fkey"),
+    columns: z.tuple([z.literal("worker_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("workers"),
     referencedColumns: z.tuple([z.literal("id")]),
   }),
 ]);
@@ -1963,6 +1911,7 @@ export const publicWorkersRowSchema = z.object({
   cloud_identity_id: z.string().nullable(),
   created_at: z.string().nullable(),
   id: z.string(),
+  is_default: z.boolean(),
   last_heartbeat: z.string().nullable(),
   metadata: z.record(z.string(), z.unknown()).nullable(),
   mode: publicWorkerModeSchema,
@@ -1976,6 +1925,7 @@ export const publicWorkersInsertSchema = z.object({
   cloud_identity_id: z.string().optional().nullable(),
   created_at: z.string().optional().nullable(),
   id: z.string().optional(),
+  is_default: z.boolean().optional(),
   last_heartbeat: z.string().optional().nullable(),
   metadata: z.record(z.string(), z.unknown()).optional().nullable(),
   mode: publicWorkerModeSchema,
@@ -1989,6 +1939,7 @@ export const publicWorkersUpdateSchema = z.object({
   cloud_identity_id: z.string().optional().nullable(),
   created_at: z.string().optional().nullable(),
   id: z.string().optional(),
+  is_default: z.boolean().optional(),
   last_heartbeat: z.string().optional().nullable(),
   metadata: z.record(z.string(), z.unknown()).optional().nullable(),
   mode: publicWorkerModeSchema.optional(),
@@ -2089,9 +2040,9 @@ export const publicClaimNextJobArgsSchema = z.object({
 
 export const publicClaimNextJobReturnsSchema = z.array(
   z.object({
+    assigned_worker_id: z.string().nullable(),
     claimed_at: z.string().nullable(),
     cloud_identity_id: z.string().nullable(),
-    cluster_id: z.string().nullable(),
     completed_at: z.string().nullable(),
     config_snapshot: jsonSchema,
     configuration_hash: z.string().nullable(),
@@ -2124,6 +2075,12 @@ export const publicInsertJobLogReturnsSchema = z.undefined();
 export const publicRecoverStaleJobsArgsSchema = z.never();
 
 export const publicRecoverStaleJobsReturnsSchema = z.number();
+
+export const publicSetDefaultWorkerArgsSchema = z.object({
+  p_worker_id: z.string().optional(),
+});
+
+export const publicSetDefaultWorkerReturnsSchema = z.undefined();
 
 export const publicUpdateJobStatusArgsSchema = z.object({
   p_error_message: z.string().optional(),
