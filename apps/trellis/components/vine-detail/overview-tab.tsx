@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import type { getVine } from "@/app/server/actions/vines";
+import { getProvider, DB_CAPACITY, type CloudProviderSlug } from "@/lib/cloud-providers";
 import {
 	Bell,
 	Cloud,
@@ -92,6 +93,9 @@ function FeaturePill({
 
 export function OverviewTab({ detail }: OverviewTabProps) {
 	const { vine, components } = detail;
+	const providerSlug = (detail.cloudProvider || "aws") as CloudProviderSlug;
+	const meta = getProvider(providerSlug);
+	const capacity = DB_CAPACITY[providerSlug];
 
 	return (
 		<div className="space-y-5">
@@ -133,7 +137,7 @@ export function OverviewTab({ detail }: OverviewTabProps) {
 						<>
 							<Separator />
 							<div>
-								<SectionTitle icon={Cloud} title="VPC & Networking" />
+								<SectionTitle icon={Cloud} title={`${meta.networkName} & Networking`} />
 								<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
 									<Field
 										label="Mode"
@@ -175,7 +179,7 @@ export function OverviewTab({ detail }: OverviewTabProps) {
 						<>
 							<Separator />
 							<div>
-								<SectionTitle icon={Server} title="EKS Cluster" />
+								<SectionTitle icon={Server} title={`${meta.clusterService} Cluster`} />
 								<div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
 									<Field
 										label="Cluster Version"
@@ -238,7 +242,7 @@ export function OverviewTab({ detail }: OverviewTabProps) {
 												mono
 											/>
 											<Field
-												label="Hosted Zone"
+												label="DNS Zone"
 												value={
 													components.dns
 														.zone_id
@@ -248,7 +252,7 @@ export function OverviewTab({ detail }: OverviewTabProps) {
 										</div>
 										<div className="flex flex-wrap gap-2">
 											<FeaturePill
-												label="ACM Certificate"
+												label="Managed Certificate"
 												enabled={
 													!!components.dns
 														.provider_config?.acm_certificate
@@ -370,7 +374,7 @@ export function OverviewTab({ detail }: OverviewTabProps) {
 											<div className="grid grid-cols-3 gap-3 text-xs">
 												<div>
 													<span className="text-muted-foreground">
-														Min Capacity
+														Min {capacity.unit}
 													</span>
 													<p className="font-medium">
 														{db.min_capacity}
@@ -378,7 +382,7 @@ export function OverviewTab({ detail }: OverviewTabProps) {
 												</div>
 												<div>
 													<span className="text-muted-foreground">
-														Max Capacity
+														Max {capacity.unit}
 													</span>
 													<p className="font-medium">
 														{db.max_capacity}
@@ -468,7 +472,7 @@ export function OverviewTab({ detail }: OverviewTabProps) {
 								<div>
 									<SectionTitle
 										icon={MessageSquare}
-										title="SQS Queues"
+										title={`${meta.queueService} Queues`}
 									/>
 									<div className="space-y-2">
 										{components.queues.map((q: any) => (
@@ -505,7 +509,7 @@ export function OverviewTab({ detail }: OverviewTabProps) {
 							<>
 								<Separator />
 								<div>
-									<SectionTitle icon={Bell} title="SNS Topics" />
+									<SectionTitle icon={Bell} title={`${meta.topicService} Topics`} />
 									<div className="space-y-2">
 										{components.topics.map((t: any) => (
 											<div
@@ -529,7 +533,7 @@ export function OverviewTab({ detail }: OverviewTabProps) {
 								<div>
 									<SectionTitle
 										icon={Table}
-										title="DynamoDB Tables"
+										title={`${meta.nosqlService} Tables`}
 									/>
 									<div className="space-y-3">
 										{components.nosql_tables.map(
