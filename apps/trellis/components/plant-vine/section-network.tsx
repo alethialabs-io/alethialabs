@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
-import { useCloudProvider } from "@/lib/cloud-providers";
+import { useCloudProvider, NETWORK } from "@/lib/cloud-providers";
 import type { CachedResources } from "@/types/database-custom.types";
 import { Network } from "lucide-react";
 import { useFormContext } from "react-hook-form";
@@ -42,6 +42,7 @@ function parseCidr(cidr: string) {
 export function SectionNetwork() {
 	const { control, watch } = useFormContext<VineFormData>();
 	const { cachedResources, provider } = useCloudProvider();
+	const net = NETWORK[provider];
 	const region = watch("vine.region");
 	const provisionVpc = watch("network.provision_network");
 	const vpcCidr = watch("network.cidr_block") || "";
@@ -59,7 +60,7 @@ export function SectionNetwork() {
 					<CardTitle className="text-base">Network</CardTitle>
 					<HelpTooltip topic="vpc" />
 				</div>
-				<CardDescription className="text-xs">Create a new VPC or use an existing one.</CardDescription>
+				<CardDescription className="text-xs">Create a new network or use an existing one.</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
 				<FormField control={control} name="network.provision_network" render={({ field }) => (
@@ -73,7 +74,7 @@ export function SectionNetwork() {
 								className={`flex-1 p-3 rounded-lg border text-left text-sm ${!field.value ? "border-foreground bg-muted/20 font-medium" : "border-border/50 text-muted-foreground hover:border-border"} disabled:opacity-50 disabled:cursor-not-allowed`}>
 								Use Existing VPC
 								{!region && <span className="block text-[11px] text-muted-foreground/60 mt-0.5">Select a region first</span>}
-								{region && vpcsForRegion.length === 0 && <span className="block text-[11px] text-muted-foreground/60 mt-0.5">No VPCs found in {region}</span>}
+								{region && vpcsForRegion.length === 0 && <span className="block text-[11px] text-muted-foreground/60 mt-0.5">No {net.networkLabel}s found in {region}</span>}
 							</button>
 						</div>
 					</FormItem>
@@ -83,7 +84,7 @@ export function SectionNetwork() {
 					<div className="grid md:grid-cols-2 gap-4">
 						<div className="space-y-1.5">
 							<div className="flex items-center gap-1.5">
-								<Label className="text-xs">VPC CIDR Block</Label>
+								<Label className="text-xs">{net.cidrLabel}</Label>
 								<HelpTooltip topic="cidr" />
 							</div>
 							<FormField control={control} name="network.cidr_block" render={({ field }) => (
@@ -110,7 +111,7 @@ export function SectionNetwork() {
 						</div>
 						<div className="space-y-1.5">
 							<div className="flex items-center gap-1.5">
-								<Label className="text-xs">NAT Gateway</Label>
+								<Label className="text-xs">{net.natLabel}</Label>
 								<HelpTooltip topic="nat-gateway" />
 							</div>
 							<FormField control={control} name="network.single_nat_gateway" render={({ field }) => (
@@ -120,8 +121,8 @@ export function SectionNetwork() {
 											<SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
 										</FormControl>
 										<SelectContent>
-											<SelectItem value="single">Single (cost-effective)</SelectItem>
-											<SelectItem value="ha">Per-AZ (high availability)</SelectItem>
+											<SelectItem value="single">{net.natSingleLabel}</SelectItem>
+											<SelectItem value="ha">{net.natMultiLabel}</SelectItem>
 										</SelectContent>
 									</Select>
 								</FormItem>
@@ -131,10 +132,10 @@ export function SectionNetwork() {
 				) : (
 					<FormField control={control} name="network.network_id" render={({ field }) => (
 						<FormItem className="space-y-1.5">
-							<Label className="text-xs">Select VPC</Label>
+							<Label className="text-xs">Select {net.networkLabel}</Label>
 							<Select value={field.value || ""} onValueChange={field.onChange}>
 								<FormControl>
-									<SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Choose a VPC" /></SelectTrigger>
+									<SelectTrigger className="h-9 text-sm"><SelectValue placeholder={`Choose a ${net.networkLabel}`} /></SelectTrigger>
 								</FormControl>
 								<SelectContent>
 									{vpcsForRegion.map((vpc: VpcInfo) => (

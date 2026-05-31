@@ -1,6 +1,7 @@
 "use client";
 
 import { useVineStore } from "./use-vine-store";
+import { useProviderMeta } from "@/lib/cloud-providers";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DollarSign, Loader2 } from "lucide-react";
@@ -24,6 +25,7 @@ const FALLBACK_CACHE: Record<string, number> = {
 export function CostSidebar() {
 	const { watch } = useFormContext<VineFormData>();
 	const { prices, loadingPrices } = useVineStore();
+	const meta = useProviderMeta();
 
 	const instanceTypes = watch("cluster.instance_types") || [];
 	const nodeDesiredSize = watch("cluster.node_desired_size") || 2;
@@ -39,7 +41,7 @@ export function CostSidebar() {
 		const p = prices;
 		const result: Array<{ label: string; cost: number; detail?: string }> = [];
 
-		result.push({ label: "EKS Control Plane", cost: (p?.eksControlPlane ?? 0.10) * HOURS_PER_MONTH });
+		result.push({ label: `${meta.clusterService} Control Plane`, cost: (p?.eksControlPlane ?? 0.10) * HOURS_PER_MONTH });
 
 		const avgHr = instanceTypes.length > 0
 			? instanceTypes.reduce((sum: number, t: string) => sum + (p?.ec2[t] ?? FALLBACK_EC2[t] ?? 0.0456), 0) / instanceTypes.length
@@ -47,7 +49,7 @@ export function CostSidebar() {
 		const nodeLabel = instanceTypes.length > 0
 			? `${nodeDesiredSize}x ${instanceTypes[0]}${instanceTypes.length > 1 ? ` +${instanceTypes.length - 1}` : ""}`
 			: `${nodeDesiredSize} nodes`;
-		result.push({ label: "EKS Nodes", cost: avgHr * nodeDesiredSize * HOURS_PER_MONTH, detail: nodeLabel });
+		result.push({ label: `${meta.clusterService} Nodes`, cost: avgHr * nodeDesiredSize * HOURS_PER_MONTH, detail: nodeLabel });
 
 		const natCount = singleNatGateway ? 1 : 3;
 		result.push({ label: "NAT Gateway", cost: (p?.natGateway ?? 0.048) * HOURS_PER_MONTH * natCount, detail: singleNatGateway ? "single" : "per-AZ" });
@@ -62,7 +64,7 @@ export function CostSidebar() {
 			result.push({ label: `Cache: ${cache.name || "unnamed"}`, cost: cacheHr * (cache.num_cache_nodes ?? 1) * HOURS_PER_MONTH, detail: `${cache.num_cache_nodes ?? 1}x ${(cache.node_type || "cache.t3.medium").replace("cache.", "")}` });
 		}
 
-		if (cloudfrontWaf) result.push({ label: "CloudFront WAF", cost: p?.wafWebACL ?? 5.0 });
+		if (cloudfrontWaf) result.push({ label: "CDN WAF", cost: p?.wafWebACL ?? 5.0 });
 		if (applicationWaf) result.push({ label: "Application WAF", cost: p?.wafWebACL ?? 5.0 });
 
 		if (nosqlTables.length > 0) {
@@ -70,7 +72,7 @@ export function CostSidebar() {
 		}
 
 		if (secrets.length > 0) {
-			result.push({ label: "Secrets Manager", cost: secrets.length * 0.40, detail: `${secrets.length} secret${secrets.length > 1 ? "s" : ""}` });
+			result.push({ label: `${meta.secretsService}`, cost: secrets.length * 0.40, detail: `${secrets.length} secret${secrets.length > 1 ? "s" : ""}` });
 		}
 
 		return result;

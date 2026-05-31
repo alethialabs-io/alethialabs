@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
+import { useProviderMeta } from "@/lib/cloud-providers";
 import { KeyRound, Trash2 } from "lucide-react";
 import { useFormContext, useFieldArray } from "react-hook-form";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
@@ -21,6 +22,7 @@ const SECRET_PRESETS = [
 ];
 
 export function SectionSecrets() {
+	const meta = useProviderMeta();
 	const { control } = useFormContext<VineFormData>();
 	const { fields, append, remove } = useFieldArray({ control, name: "secrets" });
 
@@ -53,7 +55,7 @@ export function SectionSecrets() {
 						</SelectContent>
 					</Select>
 				</div>
-				<CardDescription className="text-xs">AWS Secrets Manager. Auto-generated passwords and tokens.</CardDescription>
+				<CardDescription className="text-xs">{meta.secretsService}. Auto-generated passwords and tokens.</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
 				{fields.length === 0 ? (
