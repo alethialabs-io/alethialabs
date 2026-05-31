@@ -2,8 +2,6 @@
 
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import {
 	Collapsible,
@@ -25,47 +23,6 @@ import {
 interface PlanTabProps {
 	plan: UsePlanReturn;
 	onApplied: (deployJobId: string) => void;
-}
-
-function GeneratingState({ logs }: { logs: UsePlanReturn["logs"] }) {
-	return (
-		<div className="space-y-4">
-			<div className="flex items-center gap-2 text-sm text-muted-foreground">
-				<Loader2 className="h-4 w-4 animate-spin" />
-				Generating infrastructure plan...
-			</div>
-
-			{logs.length > 0 && (
-				<div className="rounded-md border bg-muted/20 font-mono text-xs max-h-[300px] overflow-y-auto p-3">
-					{logs.map((log, i) => (
-						<div
-							key={log.id || i}
-							className="flex gap-3 px-2 py-0.5 hover:bg-muted/40 rounded transition-colors"
-						>
-							<span className="text-muted-foreground/40 select-none shrink-0 w-6 text-right">
-								{i + 1}
-							</span>
-							<span className="text-muted-foreground/60 select-none shrink-0 w-[75px]">
-								{new Date(log.created_at || Date.now()).toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-							</span>
-							<span className={log.stream_type === "STDERR" ? "text-destructive break-all leading-relaxed" : "text-foreground/80 break-all leading-relaxed"}>
-								{log.log_chunk}
-							</span>
-						</div>
-					))}
-				</div>
-			)}
-
-			{logs.length === 0 && (
-				<div className="space-y-2">
-					<Skeleton className="h-10 w-full" />
-					<Skeleton className="h-8 w-3/4" />
-					<Skeleton className="h-8 w-1/2" />
-					<Skeleton className="h-8 w-2/3" />
-				</div>
-			)}
-		</div>
-	);
 }
 
 function CategoryGroup({
@@ -135,7 +92,12 @@ export function PlanTab({ plan, onApplied }: PlanTabProps) {
 	}
 
 	if (phase === "generating") {
-		return <GeneratingState logs={logs} />;
+		return (
+			<div className="flex flex-col items-center justify-center py-16 gap-3">
+				<Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+				<p className="text-sm text-muted-foreground">Generating infrastructure plan...</p>
+			</div>
+		);
 	}
 
 	if (phase === "failed") {
@@ -145,23 +107,6 @@ export function PlanTab({ plan, onApplied }: PlanTabProps) {
 					<AlertCircle className="h-4 w-4" />
 					<AlertDescription>{error}</AlertDescription>
 				</Alert>
-				{logs.length > 0 && (
-					<div className="rounded-md border bg-muted/20 font-mono text-xs max-h-[200px] overflow-y-auto p-3">
-						{logs.map((log, i) => (
-							<div
-								key={log.id || i}
-								className="flex gap-3 px-2 py-0.5 hover:bg-muted/40 rounded transition-colors"
-							>
-								<span className="text-muted-foreground/40 select-none shrink-0 w-6 text-right">
-									{i + 1}
-								</span>
-								<span className={log.stream_type === "STDERR" ? "text-destructive break-all" : "text-foreground/80 break-all"}>
-									{log.log_chunk}
-								</span>
-							</div>
-						))}
-					</div>
-				)}
 				<Button
 					onClick={generatePlan}
 					variant="outline"

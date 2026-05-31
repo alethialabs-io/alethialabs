@@ -37,8 +37,8 @@ export interface UsePlanReturn {
 	costResult: CostSummary | null;
 	logs: LogEntry[];
 	error: string | null;
-	generatePlan: () => Promise<void>;
-	applyPlan: () => Promise<void>;
+	generatePlan: (workerId?: string | null) => Promise<void>;
+	applyPlan: (workerId?: string | null) => Promise<void>;
 }
 
 export function usePlan(vineId: string | null): UsePlanReturn {
@@ -126,7 +126,7 @@ export function usePlan(vineId: string | null): UsePlanReturn {
 		};
 	}, [vineId]);
 
-	const generatePlan = useCallback(async () => {
+	const generatePlan = useCallback(async (workerId?: string | null) => {
 		if (!vineId) return;
 		setPhase("generating");
 		setError(null);
@@ -135,7 +135,7 @@ export function usePlan(vineId: string | null): UsePlanReturn {
 		setCostResult(null);
 
 		try {
-			const { jobId } = await planVine(vineId);
+			const { jobId } = await planVine(vineId, workerId);
 			setPlanJobId(jobId);
 
 			const supabase = createClient();
@@ -214,13 +214,13 @@ export function usePlan(vineId: string | null): UsePlanReturn {
 		}
 	}, [vineId, cleanup]);
 
-	const applyPlan = useCallback(async () => {
+	const applyPlan = useCallback(async (workerId?: string | null) => {
 		if (!vineId || !planJobId) return;
 		setPhase("applying");
 		setError(null);
 
 		try {
-			const { jobId } = await provisionVine(vineId, planJobId);
+			const { jobId } = await provisionVine(vineId, planJobId, workerId);
 			setDeployJobId(jobId);
 
 			pollRef.current = setInterval(async () => {

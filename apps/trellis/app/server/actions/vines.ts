@@ -330,74 +330,114 @@ async function buildConfigSnapshot(vineId: string) {
 
 	if (vineError || !vine) throw new Error("Vine not found");
 
+	if (!vine.cloud_identity_id) {
+		throw new Error(
+			"No cloud account linked to this vine. Go to Integrations to connect.",
+		);
+	}
+
 	const { data: identity } = await supabase
 		.from("cloud_identities")
-		.select("id")
-		.eq("provider", "aws")
+		.select("id, provider")
+		.eq("id", vine.cloud_identity_id)
 		.eq("is_verified", true)
 		.maybeSingle();
 
 	if (!identity) {
 		throw new Error(
-			"No verified AWS account connected. Go to Integrations to connect.",
+			"Cloud account is not verified. Go to Integrations to verify.",
 		);
 	}
 
-	const [network, cluster, dns, repos, databases, caches, queues, topics] =
-		await Promise.all([
-			supabase
-				.from("vine_network")
-				.select("*")
-				.eq("vine_id", vineId)
-				.maybeSingle(),
-			supabase
-				.from("vine_cluster")
-				.select("*")
-				.eq("vine_id", vineId)
-				.maybeSingle(),
-			supabase
-				.from("vine_dns")
-				.select("*")
-				.eq("vine_id", vineId)
-				.maybeSingle(),
-			supabase
-				.from("vine_repositories")
-				.select("*")
-				.eq("vine_id", vineId)
-				.maybeSingle(),
-			supabase.from("vine_databases").select("*").eq("vine_id", vineId),
-			supabase.from("vine_caches").select("*").eq("vine_id", vineId),
-			supabase.from("vine_queues").select("*").eq("vine_id", vineId),
-			supabase.from("vine_topics").select("*").eq("vine_id", vineId),
-		]);
+	const [
+		network,
+		cluster,
+		dns,
+		repos,
+		databases,
+		caches,
+		queues,
+		topics,
+		nosqlTables,
+		secrets,
+	] = await Promise.all([
+		supabase
+			.from("vine_network")
+			.select("*")
+			.eq("vine_id", vineId)
+			.maybeSingle(),
+		supabase
+			.from("vine_cluster")
+			.select("*")
+			.eq("vine_id", vineId)
+			.maybeSingle(),
+		supabase
+			.from("vine_dns")
+			.select("*")
+			.eq("vine_id", vineId)
+			.maybeSingle(),
+		supabase
+			.from("vine_repositories")
+			.select("*")
+			.eq("vine_id", vineId)
+			.maybeSingle(),
+		supabase.from("vine_databases").select("*").eq("vine_id", vineId),
+		supabase.from("vine_caches").select("*").eq("vine_id", vineId),
+		supabase.from("vine_queues").select("*").eq("vine_id", vineId),
+		supabase.from("vine_topics").select("*").eq("vine_id", vineId),
+		supabase.from("vine_nosql_tables").select("*").eq("vine_id", vineId),
+		supabase.from("vine_secrets").select("*").eq("vine_id", vineId),
+	]);
 
-	const clusterConfig = cluster.data?.provider_config;
-	const dnsConfig = dns.data?.provider_config;
+	if (
+		network.data?.provision_network === false &&
+		!network.data?.network_id
+	) {
+		throw new Error(
+			"Cannot plan: no VPC selected. Edit the vine's network settings.",
+		);
+	}
 
 	const configSnapshot = {
 		...vine,
-		create_vpc: network.data?.provision_network ?? true,
-		vpc_cidr: network.data?.cidr_block ?? "10.0.0.0/16",
-		enable_karpenter: clusterConfig?.enable_karpenter ?? true,
-		cluster_version: cluster.data?.cluster_version,
-		enable_dns: dns.data?.enabled ?? false,
-		dns_main_domain: dns.data?.domain_name,
-		dns_hosted_zone: dns.data?.zone_id,
-		cloudfront_waf_enabled: dnsConfig?.cloudfront_waf ?? false,
-		acm_certificate_enable: dnsConfig?.acm_certificate ?? false,
-		env_template_repo: repos.data?.env_template_repo,
-		env_template_repo_branch: repos.data?.env_template_branch,
-		env_git_repo: repos.data?.env_destination_repo,
-		gitops_template_repo: repos.data?.gitops_template_repo,
-		gitops_template_repo_branch: repos.data?.gitops_template_branch,
-		gitops_destination_repo: repos.data?.gitops_destination_repo,
-		applications_template_repo: repos.data?.apps_template_repo,
-		applications_template_repo_branch: repos.data?.apps_template_branch,
-		applications_destination_repo: repos.data?.apps_destination_repo,
+		provider: identity.provider,
+
+		network: {
+			provision_network: network.data?.provision_network ?? true,
+			cidr_block: network.data?.cidr_block ?? "10.0.0.0/16",
+			network_id: network.data?.network_id,
+			single_nat_gateway: network.data?.single_nat_gateway ?? true,
+		},
+
+		cluster: {
+			cluster_version: cluster.data?.cluster_version,
+			instance_types: cluster.data?.instance_types ?? [],
+			node_min_size: cluster.data?.node_min_size ?? 2,
+			node_max_size: cluster.data?.node_max_size ?? 5,
+			node_desired_size: cluster.data?.node_desired_size ?? 2,
+			cluster_admins: cluster.data?.cluster_admins ?? [],
+			provider_config: cluster.data?.provider_config ?? {},
+		},
+
+		dns: {
+			enabled: dns.data?.enabled ?? false,
+			zone_id: dns.data?.zone_id,
+			domain_name: dns.data?.domain_name,
+			provider_config: dns.data?.provider_config ?? {},
+		},
+
+		repositories: {
+			env_destination_repo: repos.data?.env_destination_repo,
+			gitops_destination_repo: repos.data?.gitops_destination_repo,
+			apps_destination_repo: repos.data?.apps_destination_repo,
+		},
+
 		databases: databases.data || [],
 		caches: caches.data || [],
 		queues: queues.data || [],
 		topics: topics.data || [],
+		nosql_tables: nosqlTables.data || [],
+		secrets: secrets.data || [],
 	};
 
 	const repoUrl =
@@ -422,7 +462,7 @@ async function buildConfigSnapshot(vineId: string) {
 	};
 }
 
-export async function planVine(vineId: string) {
+export async function planVine(vineId: string, workerId?: string | null) {
 	const supabase = await createClient();
 	const { user, vine, identity, configSnapshot } =
 		await buildConfigSnapshot(vineId);
@@ -437,6 +477,7 @@ export async function planVine(vineId: string) {
 			job_type: "PLAN" as any,
 			config_snapshot: configSnapshot,
 			status: "QUEUED",
+			...(workerId ? { assigned_worker_id: workerId } : {}),
 		})
 		.select("id")
 		.single();
@@ -447,7 +488,7 @@ export async function planVine(vineId: string) {
 	return { jobId: job.id };
 }
 
-export async function provisionVine(vineId: string, planJobId?: string) {
+export async function provisionVine(vineId: string, planJobId?: string, workerId?: string | null) {
 	const supabase = await createClient();
 	const { user, vine, identity, configSnapshot } =
 		await buildConfigSnapshot(vineId);
@@ -463,6 +504,7 @@ export async function provisionVine(vineId: string, planJobId?: string) {
 			config_snapshot: configSnapshot,
 			status: "QUEUED",
 			...(planJobId ? { plan_job_id: planJobId } : {}),
+			...(workerId ? { assigned_worker_id: workerId } : {}),
 		} as any)
 		.select("id")
 		.single();
