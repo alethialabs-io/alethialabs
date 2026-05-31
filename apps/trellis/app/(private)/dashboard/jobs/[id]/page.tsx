@@ -303,10 +303,50 @@ export default function JobDetailPage() {
 				</div>
 			)}
 
-			{/* Collapsible Config/Metadata */}
-			{(Object.keys(job.config_snapshot || {}).length > 0 || (job.execution_metadata && Object.keys(job.execution_metadata).length > 0)) && (
-				<div className="border-t border-border/40 shrink-0">
-					{Object.keys(job.config_snapshot || {}).length > 0 && (
+			{/* Collapsible Details / Config / Metadata */}
+			<div className="border-t border-border/40 shrink-0">
+				<Collapsible>
+					<CollapsibleTrigger className="flex items-center gap-2 w-full px-6 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors">
+						<ChevronDown className="h-3 w-3" />
+						Job Details
+					</CollapsibleTrigger>
+					<CollapsibleContent className="px-6 pb-4">
+						<div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+							<div>
+								<p className="text-[11px] text-muted-foreground">Job ID</p>
+								<p className="font-mono truncate">{job.id}</p>
+							</div>
+							<div>
+								<p className="text-[11px] text-muted-foreground">Type</p>
+								<p>{info?.label ?? job.job_type}</p>
+							</div>
+							<div>
+								<p className="text-[11px] text-muted-foreground">Worker</p>
+								<p className="font-mono">{job.worker_id ?? "—"}</p>
+							</div>
+							<div>
+								<p className="text-[11px] text-muted-foreground">Created</p>
+								<p>{job.created_at ? new Date(job.created_at).toLocaleString() : "—"}</p>
+							</div>
+							<div>
+								<p className="text-[11px] text-muted-foreground">Started</p>
+								<p>{job.started_at ? new Date(job.started_at).toLocaleString() : "—"}</p>
+							</div>
+							<div>
+								<p className="text-[11px] text-muted-foreground">Completed</p>
+								<p>{job.completed_at ? new Date(job.completed_at).toLocaleString() : "—"}</p>
+							</div>
+							{job.vine_id && (
+								<div>
+									<p className="text-[11px] text-muted-foreground">Vine</p>
+									<p className="font-mono truncate">{job.vine_id}</p>
+								</div>
+							)}
+						</div>
+					</CollapsibleContent>
+				</Collapsible>
+
+				{Object.keys(job.config_snapshot || {}).length > 0 && (
 						<Collapsible>
 							<CollapsibleTrigger className="flex items-center gap-2 w-full px-6 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors">
 								<ChevronDown className="h-3 w-3" />
@@ -333,7 +373,6 @@ export default function JobDetailPage() {
 						</Collapsible>
 					)}
 				</div>
-			)}
 		</div>
 	);
 }
