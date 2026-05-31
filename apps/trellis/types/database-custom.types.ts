@@ -155,15 +155,27 @@ export type Database = MergeDeep<
 				cloud_identities: {
 					Row: {
 						credentials: CloudCredentials;
-						cached_resources: CachedResources | null;
+						cached_resources:
+							| CachedResources
+							| GcpCachedResources
+							| AzureCachedResources
+							| null;
 					};
 					Insert: {
 						credentials?: CloudCredentials;
-						cached_resources?: CachedResources | null;
+						cached_resources?:
+							| CachedResources
+							| GcpCachedResources
+							| AzureCachedResources
+							| null;
 					};
 					Update: {
 						credentials?: CloudCredentials;
-						cached_resources?: CachedResources | null;
+						cached_resources?:
+							| CachedResources
+							| GcpCachedResources
+							| AzureCachedResources
+							| null;
 					};
 				};
 				clusters: {

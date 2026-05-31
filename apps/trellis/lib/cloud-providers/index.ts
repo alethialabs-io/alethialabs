@@ -1,4 +1,4 @@
-export { type CloudProviderSlug, type CloudProviderMeta, PROVIDERS, getProvider } from "./registry";
+export { type CloudProviderSlug, type CloudProviderMeta, PROVIDERS, getProvider, CACHE_TTL_HOURS } from "./registry";
 export { REGION_LABELS, DEFAULT_REGION, REGION_MAP } from "./regions";
 export {
 	INSTANCE_TYPES,

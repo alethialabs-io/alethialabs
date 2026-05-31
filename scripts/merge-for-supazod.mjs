@@ -97,11 +97,17 @@ content = replaceJsonField(
 );
 
 // ── cloud_identities.cached_resources ───────────────────────────────
+// Union of AWS, GCP, and Azure cached resource shapes
 const cachedResourcesType = `{
-  regions: string[];
-  vpcs: Record<string, Array<{ ID: string; CIDR: string; Name: string; IsDefault: boolean }>>;
-  subnets: Record<string, Record<string, Array<{ ID: string; CIDR: string; VpcID: string; AvailabilityZone: string }>>>;
-  hosted_zones: Array<{ ID: string; Name: string; RecordCount: number; IsPrivate: boolean }>;
+  regions?: string[];
+  vpcs?: Record<string, Array<{ ID: string; CIDR: string; Name: string; IsDefault: boolean }>>;
+  subnets?: Record<string, Record<string, Array<{ ID: string; CIDR: string; VpcID: string; AvailabilityZone: string }>>> | Record<string, Array<{ name: string; region: string; ipCidrRange: string; network: string }>> | Record<string, Array<{ name: string; id: string; addressPrefix: string; vnetName: string }>>;
+  hosted_zones?: Array<{ ID: string; Name: string; RecordCount: number; IsPrivate: boolean }>;
+  networks?: Array<{ name: string; selfLink: string; autoCreateSubnetworks: boolean }>;
+  managed_zones?: Array<{ name: string; dnsName: string; visibility: string }>;
+  locations?: string[];
+  vnets?: Array<{ name: string; id: string; location: string; addressPrefixes: string[] }>;
+  dns_zones?: Array<{ name: string; id: string; zoneType: string }>;
 }`;
 content = replaceJsonField(
 	content,

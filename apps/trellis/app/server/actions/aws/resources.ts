@@ -23,11 +23,12 @@ export async function getCachedAwsResources(
 
 	if (error || !data?.cached_resources) return null;
 
+	const res = data.cached_resources as CachedResources;
 	return {
-		regions: data.cached_resources.regions ?? [],
-		vpcs: data.cached_resources.vpcs ?? {},
-		subnets: data.cached_resources.subnets ?? {},
-		hosted_zones: data.cached_resources.hosted_zones ?? [],
+		regions: res.regions ?? [],
+		vpcs: res.vpcs ?? {},
+		subnets: res.subnets ?? {},
+		hosted_zones: res.hosted_zones ?? [],
 		cached_at: data.cached_at ?? null,
 	};
 }
@@ -35,7 +36,11 @@ export async function getCachedAwsResources(
 /** Fetches cached resources for any cloud identity, regardless of provider. */
 export async function getCachedResources(
 	cloudIdentityId: string,
-): Promise<{ resources: AnyCachedResources | null; provider: string }> {
+): Promise<{
+	resources: AnyCachedResources | null;
+	provider: string;
+	cachedAt: string | null;
+}> {
 	const supabase = await createClient();
 
 	const { data, error } = await supabase
@@ -44,10 +49,11 @@ export async function getCachedResources(
 		.eq("id", cloudIdentityId)
 		.single();
 
-	if (error || !data) return { resources: null, provider: "aws" };
+	if (error || !data) return { resources: null, provider: "aws", cachedAt: null };
 
 	return {
 		resources: data.cached_resources ?? null,
 		provider: data.provider,
+		cachedAt: data.cached_at,
 	};
 }

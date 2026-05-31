@@ -40,10 +40,10 @@ export function CloudIdentitySelector({
 			onChangeRef.current(id, provider);
 			setLoading(true);
 			try {
-				const { resources } = await getCachedResources(id);
-				setIdentity(id, provider, resources);
+				const { resources, cachedAt } = await getCachedResources(id);
+				setIdentity(id, provider, resources, cachedAt);
 			} catch {
-				setIdentity(id, provider, null);
+				setIdentity(id, provider, null, null);
 			} finally {
 				setLoading(false);
 			}

@@ -1,8 +1,8 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from "react";
 import type { CloudProviderSlug } from "./registry";
-import { PROVIDERS } from "./registry";
+import { PROVIDERS, CACHE_TTL_HOURS } from "./registry";
 import type {
 	CachedResources,
 	GcpCachedResources,
@@ -22,8 +22,19 @@ interface CloudProviderState {
 	identityId: string | null;
 	/** Cached cloud resources loaded from the selected identity. */
 	cachedResources: AnyCachedResources | null;
-	/** Set the active cloud identity, deriving the provider from it. */
-	setIdentity: (identityId: string, provider: CloudProviderSlug, resources: AnyCachedResources | null) => void;
+	/** When the cached resources were last refreshed. */
+	cachedAt: string | null;
+	/** Whether cached resources are older than CACHE_TTL_HOURS. */
+	isStale: boolean;
+	/** Set the active cloud identity with its cached resources. */
+	setIdentity: (
+		identityId: string,
+		provider: CloudProviderSlug,
+		resources: AnyCachedResources | null,
+		cachedAt?: string | null,
+	) => void;
+	/** Update just the cached resources (after a refresh). */
+	updateResources: (resources: AnyCachedResources | null, cachedAt: string) => void;
 }
 
 const CloudProviderContext = createContext<CloudProviderState | null>(null);
@@ -39,18 +50,41 @@ export function CloudProviderProvider({
 	const [provider, setProvider] = useState<CloudProviderSlug>(defaultProvider);
 	const [identityId, setIdentityId] = useState<string | null>(null);
 	const [cachedResources, setCachedResources] = useState<AnyCachedResources | null>(null);
+	const [cachedAt, setCachedAt] = useState<string | null>(null);
+
+	const isStale = useMemo(() => {
+		if (!cachedAt) return true;
+		const age = Date.now() - new Date(cachedAt).getTime();
+		return age > CACHE_TTL_HOURS * 3600 * 1000;
+	}, [cachedAt]);
 
 	const setIdentity = useCallback(
-		(id: string, prov: CloudProviderSlug, resources: AnyCachedResources | null) => {
+		(
+			id: string,
+			prov: CloudProviderSlug,
+			resources: AnyCachedResources | null,
+			timestamp?: string | null,
+		) => {
 			setIdentityId(id);
 			setProvider(prov);
 			setCachedResources(resources);
+			setCachedAt(timestamp ?? null);
+		},
+		[],
+	);
+
+	const updateResources = useCallback(
+		(resources: AnyCachedResources | null, timestamp: string) => {
+			setCachedResources(resources);
+			setCachedAt(timestamp);
 		},
 		[],
 	);
 
 	return (
-		<CloudProviderContext.Provider value={{ provider, identityId, cachedResources, setIdentity }}>
+		<CloudProviderContext.Provider
+			value={{ provider, identityId, cachedResources, cachedAt, isStale, setIdentity, updateResources }}
+		>
 			{children}
 		</CloudProviderContext.Provider>
 	);

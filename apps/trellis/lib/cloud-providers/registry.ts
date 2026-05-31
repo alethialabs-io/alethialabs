@@ -75,6 +75,9 @@ export const PROVIDERS: Record<CloudProviderSlug, CloudProviderMeta> = {
 	},
 };
 
+/** How long cached cloud resources are considered fresh (hours). */
+export const CACHE_TTL_HOURS = 24;
+
 /** Returns provider metadata, defaulting to AWS if slug is unrecognized. */
 export function getProvider(slug: string): CloudProviderMeta {
 	return PROVIDERS[slug as CloudProviderSlug] ?? PROVIDERS.aws;
