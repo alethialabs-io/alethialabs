@@ -17,6 +17,7 @@ import {
 	PopoverTrigger,
 } from "@/components/ui/popover";
 import { useAwsOnboarding } from "@/hooks/use-aws-onboarding";
+import { useJobNotifications, type JobNotification } from "@/hooks/use-job-notifications";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { User as IUser } from "@supabase/supabase-js";
@@ -53,6 +54,7 @@ export default function DashboardLayout({
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [user, setUser] = useState<IUser | null>(null);
 	const { showAwsAlert, setShowAwsAlert } = useAwsOnboarding();
+	const { notifications, unreadCount, markAsRead, markAllRead } = useJobNotifications();
 
 	useEffect(() => {
 		const getUser = async () => {
@@ -139,7 +141,7 @@ export default function DashboardLayout({
 									className="relative h-9 w-9 text-muted-foreground hover:text-foreground"
 								>
 									<Bell className="h-4 w-4" />
-									{showAwsAlert && (
+									{(showAwsAlert || unreadCount > 0) && (
 										<span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-destructive" />
 									)}
 									<span className="sr-only">
@@ -148,46 +150,81 @@ export default function DashboardLayout({
 								</Button>
 							</PopoverTrigger>
 							<PopoverContent className="w-80 p-0" align="end">
-								<div className="flex flex-col gap-1 border-b border-border/40 p-4">
-									<p className="text-sm font-semibold text-foreground">
-										Notifications
-									</p>
-									<p className="text-xs text-muted-foreground">
-										{showAwsAlert
-											? "You have 1 unread message."
-											: "You have no new messages."}
-									</p>
+								<div className="flex items-center justify-between border-b border-border/40 p-4">
+									<div>
+										<p className="text-sm font-semibold text-foreground">
+											Notifications
+										</p>
+										<p className="text-xs text-muted-foreground">
+											{unreadCount > 0
+												? `${unreadCount} unread`
+												: showAwsAlert
+													? "1 alert"
+													: "All caught up"}
+										</p>
+									</div>
+									{unreadCount > 0 && (
+										<button
+											onClick={markAllRead}
+											className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+										>
+											Mark all read
+										</button>
+									)}
 								</div>
-								<div className="max-h-[300px] overflow-y-auto">
-									{showAwsAlert ? (
-										<div className="p-4 flex gap-4 hover:bg-muted/50 transition-colors">
+								<div className="max-h-[400px] overflow-y-auto">
+									{showAwsAlert && (
+										<div className="p-4 flex gap-4 hover:bg-muted/50 transition-colors border-b border-border/20">
 											<div className="mt-0.5 p-1.5 bg-destructive/10 rounded-md shrink-0 h-fit">
 												<AlertTriangle className="h-4 w-4 text-destructive" />
 											</div>
 											<div className="flex-1 space-y-1">
 												<p className="text-sm font-medium leading-none text-destructive">
-													AWS Account Disconnected
+													Cloud Account Required
 												</p>
 												<p className="text-xs text-muted-foreground leading-relaxed mt-1.5 mb-2">
-													You haven't connected your AWS account yet. You can still create configurations, but you won't be able to provision any infrastructure until you connect.
+													Connect a cloud account to provision infrastructure.
 												</p>
-												<div className="pt-1">
-													<Link href="/dashboard/integrations">
-														<Button
-															variant="outline"
-															size="sm"
-															className="border-destructive/30 hover:bg-destructive/10 text-destructive text-xs h-7 px-3 w-full"
-														>
-															Connect AWS Account
-															<ArrowRight className="ml-1.5 h-3 w-3" />
-														</Button>
-													</Link>
-												</div>
+												<Link href="/dashboard/integrations">
+													<Button
+														variant="outline"
+														size="sm"
+														className="border-destructive/30 hover:bg-destructive/10 text-destructive text-xs h-7 px-3 w-full"
+													>
+														Connect Account
+														<ArrowRight className="ml-1.5 h-3 w-3" />
+													</Button>
+												</Link>
 											</div>
 										</div>
-									) : (
+									)}
+									{notifications.map((n) => (
+										<Link
+											key={n.id}
+											href={`/dashboard/jobs?job_id=${n.jobId}`}
+											onClick={() => markAsRead(n.id)}
+										>
+											<div className={`p-3 flex items-start gap-3 hover:bg-muted/50 transition-colors border-b border-border/20 ${!n.read ? "bg-muted/20" : ""}`}>
+												<div className={`mt-0.5 p-1 rounded-md shrink-0 ${n.status === "FAILED" ? "bg-destructive/10" : n.status === "SUCCESS" ? "bg-emerald-500/10" : "bg-blue-500/10"}`}>
+													<ClipboardList className={`h-3.5 w-3.5 ${n.status === "FAILED" ? "text-destructive" : n.status === "SUCCESS" ? "text-emerald-500" : "text-blue-500"}`} />
+												</div>
+												<div className="flex-1 min-w-0">
+													<p className="text-xs font-medium text-foreground">
+														{n.jobType.replace("_", " ")} — {n.status.toLowerCase()}
+													</p>
+													<p className="text-[11px] text-muted-foreground mt-0.5">
+														{new Date(n.createdAt).toLocaleTimeString()}
+													</p>
+												</div>
+												{!n.read && (
+													<span className="mt-1.5 h-2 w-2 rounded-full bg-blue-500 shrink-0" />
+												)}
+											</div>
+										</Link>
+									))}
+									{!showAwsAlert && notifications.length === 0 && (
 										<div className="p-8 text-center text-sm text-muted-foreground">
-											You're all caught up!
+											You&apos;re all caught up!
 										</div>
 									)}
 								</div>
