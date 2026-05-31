@@ -1,6 +1,6 @@
 module "elasticache" {
 
-  source = "git::git@github.com:itgix/tf-module-redis.git?ref=v1.0.2"
+  source = "./modules/redis"
 
   count = var.create_elasticache_redis ? 1 : 0
 

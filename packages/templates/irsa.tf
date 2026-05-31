@@ -212,6 +212,7 @@ resource "aws_iam_policy" "irsa_karpenter" {
                 "iam:GetInstanceProfile",
                 "iam:DeleteInstanceProfile",
                 "iam:CreateInstanceProfile",
+                "iam:ListInstanceProfiles",
                 "iam:AddRoleToInstanceProfile"
             ],
             "Effect": "Allow",
@@ -254,9 +255,9 @@ module "irsa_ai_bedrock" {
   create_role                = true
   role_name                  = "ai-bedrock-${local.eks_name}"
   role_policy_arns = {
-    aws_managed_policy = "arn:aws:iam::aws:policy/AmazonBedrockFullAccess",
+    aws_managed_policy            = "arn:aws:iam::aws:policy/AmazonBedrockFullAccess",
     irsa_ai_bedrock_custom_policy = aws_iam_policy.irsa_ai_bedrock_custom.arn
-    irsa_ai_bedrock_s3_policy = aws_iam_policy.irsa_ai_bedrock_s3.arn
+    irsa_ai_bedrock_s3_policy     = aws_iam_policy.irsa_ai_bedrock_s3.arn
 
   }
   oidc_providers = {
@@ -270,7 +271,7 @@ resource "aws_iam_policy" "irsa_ai_bedrock_custom" {
 
   name_prefix = "irsa_ai_bedrock_custom"
   description = "Policy for ServiceAccounts allowing invoking bedrock model"
-     policy      = <<EOT
+  policy      = <<EOT
   {
     "Statement": [
         {
@@ -286,7 +287,7 @@ resource "aws_iam_policy" "irsa_ai_bedrock_custom" {
   }
  EOT
 }
-resource "aws_iam_policy" "irsa_ai_bedrock_s3"{
+resource "aws_iam_policy" "irsa_ai_bedrock_s3" {
 
   name_prefix = "irsa_ai_bedrock_s3"
   description = "Policy for ServiceAccounts allowing S3 bucket access"

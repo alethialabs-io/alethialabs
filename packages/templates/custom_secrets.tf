@@ -1,5 +1,5 @@
 module "custom_secrets_password_module" {
-  source = "git@github.com:itgix/tf-module-awssm-passgen.git?ref=v1.0.1"
+  source = "./modules/awssm-passgen"
 
   custom_secrets = var.custom_secrets
 

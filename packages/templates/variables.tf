@@ -345,50 +345,34 @@ variable "waf_default_action" {
   default     = "allow"
   description = "allow or block - default action of WAF when a request hasn't matched any rules"
 }
-variable "waf_geo_location_block_enforce" {
-  type        = string
-  default     = "block"
-  description = "allow or block - action to take on geo location list of countries"
+
+variable "waf_rate_limit_rules" {
+  description = "Rate-based rules passed through to the WAF module (same schema as tf-module-wafv2 rate_limit_rules)."
+  type        = list(any)
+  default     = []
 }
+
 variable "waf_webacl_cloudwatch_enabled" {}
 variable "waf_sampled_requests_enabled" {}
 variable "waf_logging_enabled" {}
-variable "waf_country_codes_match" {}
 variable "waf_log_retention_days" {}
 variable "aws_managed_waf_rule_groups" {
-  type = list(any)
-  default = [
-    {
-      name                    = "AWSManagedRulesAdminProtectionRuleSet"
-      priority                = 1
-      action                  = "none" # count (stop enforcing rule group) or none (let the rule group decide what action to take, i.e. enforcing)
-      rules_override_to_count = []
-    }
-  ]
+  type    = any
+  default = []
 }
 
 variable "custom_managed_waf_rule_groups" {
-  type = list(object({
-    name                    = string
-    priority                = number
-    action                  = string
-    rule_group_arn          = string
-    rules_override_to_count = list(string)
-  }))
+  type    = list(any)
   default = []
 }
 
-variable "custom_waf_rules" {
-  description = "List of custom WAF rules to include in the rule group"
-  type = list(object({
-    name                = string
-    priority            = number
-    action              = string # "allow", "block", or "count"
-    comparison_operator = string # e.g. "GT"
-    size                = number # e.g. 15728640 (15MB)
-    transform           = optional(string, "NONE")
-  }))
-  default = []
+variable "waf_custom_rules" {
+  description = <<-EOT
+    Custom WAF rules passed to tf-module-wafv2 (name, priority, action, statement map).
+    For rate limiting, use statement.rate_based_statement — there is no separate rate_limit_rules input.
+  EOT
+  type        = any
+  default     = []
 }
 
 

@@ -19,7 +19,7 @@ output "eks_irsa_external_dns_arn" {
 }
 
 output "rds_iam_auth_irsa_arn" {
-  value = module.rds_iam_auth[0].iam_role_arn
+  value = length(module.rds_iam_auth) > 0 ? module.rds_iam_auth[0].iam_role_arn : null
 }
 
 output "node_iam_role_name" {
@@ -43,15 +43,15 @@ output "az3" {
 }
 
 output "subnet1" {
-  value = var.provision_vpc ? module.common_vpc[0].private_subnets[0] : var.vpc_private_subnet_ids[0]
+  value = var.provision_vpc ? module.common_vpc[0].private_subnets[0] : try(var.vpc_private_subnet_ids[0], null)
 }
 
 output "subnet2" {
-  value = var.provision_vpc ? module.common_vpc[0].private_subnets[1] : var.vpc_private_subnet_ids[1]
+  value = var.provision_vpc ? module.common_vpc[0].private_subnets[1] : try(var.vpc_private_subnet_ids[1], null)
 }
 
 output "subnet3" {
-  value = var.provision_vpc ? module.common_vpc[0].private_subnets[2] : var.vpc_private_subnet_ids[2]
+  value = var.provision_vpc ? module.common_vpc[0].private_subnets[2] : try(var.vpc_private_subnet_ids[2], null)
 }
 
 ## RDS
@@ -124,7 +124,7 @@ output "redis_primary_endpoint_address" {
 }
 output "irsa_rds_role_arn" {
   description = "ARN of the IAM Role for access to rds database"
-  value       = var.create_elasticache_redis ? module.rds_iam_auth[0].iam_role_arn : null
+  value       = length(module.rds_iam_auth) > 0 ? module.rds_iam_auth[0].iam_role_arn : null
 }
 
 output "karpenter_queue_name" {
