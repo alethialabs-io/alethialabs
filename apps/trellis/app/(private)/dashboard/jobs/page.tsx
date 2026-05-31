@@ -179,6 +179,7 @@ export default function JobsPage() {
 						pageSize={pageSize}
 						pageIndex={currentPage}
 						onPageIndexChange={setCurrentPage}
+						scrollHeight="h-[70vh]"
 					/>
 				</>
 			)}
