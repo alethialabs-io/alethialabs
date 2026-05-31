@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getVine, planVine, provisionVine, deleteVine } from "@/app/server/actions/vines";
 import { getVineJobs } from "@/app/server/actions/jobs";
+import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
 import { getProvider, DB_CAPACITY, type CloudProviderSlug } from "@/lib/cloud-providers";
 import { JOB_TYPES, STATUS_STYLES as JOB_STATUS_STYLES } from "@/components/jobs/columns";
 import { Badge } from "@/components/ui/badge";
@@ -78,6 +79,7 @@ function Field({ label, value, mono }: { label: string; value: string | number |
 export default function VineDetailPage() {
 	const { id: vineyardId, vineId } = useParams<{ id: string; vineId: string }>();
 	const router = useRouter();
+	const { removeVine } = useVineyardsStore();
 	const [detail, setDetail] = useState<VineDetail | null>(null);
 	const [jobs, setJobs] = useState<PublicProvisionJobsRow[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -152,6 +154,7 @@ export default function VineDetailPage() {
 		if (!confirm("Delete this vine and all its components?")) return;
 		try {
 			await deleteVine(vineId);
+			removeVine(vineyardId, vineId);
 			toast.success("Vine deleted");
 			router.push(`/dashboard/vineyards/${vineyardId}`);
 		} catch (err) {

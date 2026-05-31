@@ -23,6 +23,10 @@ interface VineyardsStore {
 	toggleExpanded: (vineyardId: string) => void;
 	/** Expands a vineyard (adds to set, never collapses others). */
 	expandVineyard: (vineyardId: string) => void;
+	/** Removes a vine from the cached data (after deletion). */
+	removeVine: (vineyardId: string, vineId: string) => void;
+	/** Removes an entire vineyard from the cached data. */
+	removeVineyard: (vineyardId: string) => void;
 }
 
 export const useVineyardsStore = create<VineyardsStore>()(
@@ -75,6 +79,23 @@ export const useVineyardsStore = create<VineyardsStore>()(
 					if (state.expandedIds.includes(vineyardId)) return state;
 					return { expandedIds: [...state.expandedIds, vineyardId] };
 				});
+			},
+
+			removeVine: (vineyardId, vineId) => {
+				set((state) => ({
+					vineyards: state.vineyards.map((vy) =>
+						vy.id === vineyardId
+							? { ...vy, vines: vy.vines.filter((v) => v.id !== vineId) }
+							: vy,
+					),
+				}));
+			},
+
+			removeVineyard: (vineyardId) => {
+				set((state) => ({
+					vineyards: state.vineyards.filter((vy) => vy.id !== vineyardId),
+					expandedIds: state.expandedIds.filter((id) => id !== vineyardId),
+				}));
 			},
 		}),
 		{
