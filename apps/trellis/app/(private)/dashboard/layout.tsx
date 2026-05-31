@@ -250,7 +250,7 @@ export default function DashboardLayout({
 									{notifications.map((n) => (
 										<Link
 											key={n.id}
-											href={`/dashboard/jobs?job_id=${n.jobId}`}
+											href={`/dashboard/jobs/${n.jobId}`}
 											onClick={() => markAsRead(n.id)}
 										>
 											<div className={`p-3 flex items-start gap-3 hover:bg-muted/50 transition-colors border-b border-border/20 ${!n.read ? "bg-muted/20" : ""}`}>

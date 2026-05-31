@@ -3,7 +3,6 @@
 import { getJobs } from "@/app/server/actions/jobs";
 import { DataTable } from "@/components/data-table";
 import { jobColumns } from "@/components/jobs/columns";
-import { JobDetailSheet } from "@/components/jobs/job-detail-sheet";
 import type { PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -26,8 +25,6 @@ export default function JobsPage() {
 	const statusFilter = searchParams.get("status") || "All";
 	const typeFilter = searchParams.get("type") || "All";
 	const search = searchParams.get("search") || "";
-	const jobIdParam = searchParams.get("job_id");
-
 	/** Updates URL search params without full navigation. */
 	const updateParams = useCallback(
 		(updates: Record<string, string | null>) => {
@@ -108,20 +105,8 @@ export default function JobsPage() {
 		return result;
 	}, [jobs, statusFilter, typeFilter, search]);
 
-	// Auto-open job detail if job_id is in URL
-	const selectedJob = jobIdParam
-		? jobs.find((j) => j.id === jobIdParam) ?? null
-		: null;
-	const detailOpen = !!jobIdParam && !!selectedJob;
-
 	const handleRowClick = (job: PublicProvisionJobsRow) => {
-		updateParams({ job_id: job.id });
-	};
-
-	const handleDetailClose = (open: boolean) => {
-		if (!open) {
-			updateParams({ job_id: null });
-		}
+		router.push(`/dashboard/jobs/${job.id}`);
 	};
 
 	if (loading) {
@@ -214,18 +199,10 @@ export default function JobsPage() {
 						columns={jobColumns}
 						data={filtered}
 						onRowClick={handleRowClick}
-						selectedRowId={selectedJob?.id}
 						pageSize={15}
 					/>
 				</>
 			)}
-
-			<JobDetailSheet
-				job={selectedJob}
-				open={detailOpen}
-				onOpenChange={handleDetailClose}
-				onRerun={fetchJobs}
-			/>
 		</div>
 	);
 }
