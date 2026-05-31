@@ -1,13 +1,13 @@
 "use client";
 
-import { getVineyards, type GetVineyardsData } from "@/app/server/actions/vineyards";
+import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
 import { getProvider } from "@/lib/cloud-providers";
 import { cn } from "@/lib/utils";
 import { ChevronRight, Map, Plus } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 const STATUS_DOTS: Record<string, string> = {
 	ACTIVE: "bg-emerald-500",
@@ -22,35 +22,29 @@ const STATUS_DOTS: Record<string, string> = {
 /** Sidebar section showing vineyards as a collapsible tree with vine sub-items. */
 export function SidebarVineyards() {
 	const pathname = usePathname();
-	const [vineyards, setVineyards] = useState<GetVineyardsData>([]);
-	const [loading, setLoading] = useState(true);
-	const [expanded, setExpanded] = useState<Set<string>>(new Set());
+	const {
+		vineyards,
+		isLoading,
+		expandedIds,
+		fetchVineyards,
+		toggleExpanded,
+		expandVineyard,
+	} = useVineyardsStore();
 
 	useEffect(() => {
-		getVineyards()
-			.then(({ vineyards: data }) => {
-				setVineyards(data);
+		fetchVineyards();
+	}, [fetchVineyards]);
 
-				const autoExpand = new Set<string>();
-				for (const vy of data) {
-					if (pathname.startsWith(`/dashboard/vineyards/${vy.id}`)) {
-						autoExpand.add(vy.id);
-					}
-				}
-				if (autoExpand.size > 0) setExpanded(autoExpand);
-			})
-			.catch(() => {})
-			.finally(() => setLoading(false));
-	}, [pathname]);
+	/** Auto-expand the vineyard matching the current path (without collapsing others). */
+	useEffect(() => {
+		for (const vy of vineyards) {
+			if (pathname.startsWith(`/dashboard/vineyards/${vy.id}`)) {
+				expandVineyard(vy.id);
+			}
+		}
+	}, [pathname, vineyards, expandVineyard]);
 
-	const toggleExpand = (id: string) => {
-		setExpanded((prev) => {
-			const next = new Set(prev);
-			if (next.has(id)) next.delete(id);
-			else next.add(id);
-			return next;
-		});
-	};
+	const expandedSet = new Set(expandedIds);
 
 	return (
 		<section className="mt-4">
@@ -58,10 +52,10 @@ export function SidebarVineyards() {
 				Vineyards
 			</p>
 
-			{loading ? (
+			{isLoading && vineyards.length === 0 ? (
 				<div className="space-y-1.5 px-3">
-					<div className="h-7 w-full bg-muted rounded animate-pulse" />
-					<div className="h-7 w-full bg-muted rounded animate-pulse" />
+					<div className="h-8 w-full bg-muted rounded animate-pulse" />
+					<div className="h-8 w-full bg-muted rounded animate-pulse" />
 				</div>
 			) : vineyards.length === 0 ? (
 				<div className="px-3 space-y-2">
@@ -75,7 +69,7 @@ export function SidebarVineyards() {
 				<div className="space-y-0.5">
 					{vineyards.map((vineyard) => {
 						const vines = vineyard.vines ?? [];
-						const isExpanded = expanded.has(vineyard.id);
+						const isExpanded = expandedSet.has(vineyard.id);
 						const isVineyardActive = pathname === `/dashboard/vineyards/${vineyard.id}`;
 
 						return (
@@ -84,10 +78,10 @@ export function SidebarVineyards() {
 								<div className="flex items-center">
 									<button
 										type="button"
-										onClick={() => toggleExpand(vineyard.id)}
-										className="p-1 ml-1 text-muted-foreground hover:text-foreground transition-colors"
+										onClick={() => toggleExpanded(vineyard.id)}
+										className="p-1.5 ml-1 text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/40"
 									>
-										<ChevronRight className={cn("h-3 w-3 transition-transform", isExpanded && "rotate-90")} />
+										<ChevronRight className={cn("h-3.5 w-3.5 transition-transform", isExpanded && "rotate-90")} />
 									</button>
 									<Link
 										href={`/dashboard/vineyards/${vineyard.id}`}
@@ -110,7 +104,7 @@ export function SidebarVineyards() {
 
 								{/* Vine sub-items */}
 								{isExpanded && vines.length > 0 && (
-									<div className="ml-5 pl-3 border-l border-border/40 space-y-0.5 py-0.5">
+									<div className="ml-6 pl-3 border-l border-border/40 space-y-0.5 py-0.5">
 										{vines.map((vine) => {
 											const isVineActive = pathname === `/dashboard/vineyards/${vineyard.id}/vines/${vine.id}`;
 											const providerMeta = vine.cloud_provider ? getProvider(vine.cloud_provider) : null;
@@ -121,19 +115,19 @@ export function SidebarVineyards() {
 													href={`/dashboard/vineyards/${vineyard.id}/vines/${vine.id}`}
 												>
 													<div className={cn(
-														"flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
+														"flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
 														isVineActive
 															? "bg-muted/80 text-foreground"
 															: "text-muted-foreground hover:text-foreground hover:bg-muted/40",
 													)}>
-														<span className={cn("h-1.5 w-1.5 rounded-full shrink-0", STATUS_DOTS[vine.status] ?? "bg-muted-foreground/40")} />
+														<span className={cn("h-2 w-2 rounded-full shrink-0", STATUS_DOTS[vine.status] ?? "bg-muted-foreground/40")} />
 														<span className="truncate flex-1">{vine.project_name}</span>
 														{providerMeta && (
 															<Image
 																src={providerMeta.icon}
 																alt={providerMeta.shortName}
-																width={12}
-																height={12}
+																width={14}
+																height={14}
 																className="shrink-0 opacity-50"
 															/>
 														)}
