@@ -25,9 +25,9 @@ export async function POST(req: Request) {
 			);
 		}
 
-		if (mode !== "self-hosted" && mode !== "cloud-hosted") {
+		if (mode !== "self-hosted") {
 			return NextResponse.json(
-				{ error: "mode must be 'self-hosted' or 'cloud-hosted'" },
+				{ error: "Only self-hosted workers can be registered by users" },
 				{ status: 400 },
 			);
 		}

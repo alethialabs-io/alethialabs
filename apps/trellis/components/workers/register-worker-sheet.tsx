@@ -4,13 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
-import {
 	Sheet,
 	SheetContent,
 	SheetDescription,
@@ -74,9 +67,6 @@ export function RegisterWorkerSheet({
 }: RegisterWorkerSheetProps) {
 	const router = useRouter();
 	const [name, setName] = useState("");
-	const [mode, setMode] = useState<"self-hosted" | "cloud-hosted">(
-		"self-hosted",
-	);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [credentials, setCredentials] = useState<Credentials | null>(null);
 
@@ -86,7 +76,7 @@ export function RegisterWorkerSheet({
 
 		setIsSubmitting(true);
 		try {
-			const result = await registerWorker(name.trim(), mode);
+			const result = await registerWorker(name.trim(), "self-hosted");
 			setCredentials({
 				workerId: result.worker.id,
 				workerToken: result.worker_token,
@@ -104,7 +94,6 @@ export function RegisterWorkerSheet({
 	const handleClose = (open: boolean) => {
 		if (!open) {
 			setName("");
-			setMode("self-hosted");
 			setCredentials(null);
 		}
 		onOpenChange(open);
@@ -124,7 +113,7 @@ export function RegisterWorkerSheet({
 					<SheetDescription>
 						{credentials
 							? "Save these credentials — the token cannot be recovered."
-							: "Add a provisioning worker that polls for jobs."}
+							: "Register a self-hosted worker that runs in your own infrastructure."}
 					</SheetDescription>
 				</SheetHeader>
 
@@ -205,36 +194,10 @@ grape worker start`}
 								</p>
 							</div>
 
-							<div className="space-y-2">
-								<Label htmlFor="worker-mode" className="text-sm">
-									Mode
-								</Label>
-								<Select
-									value={mode}
-									onValueChange={(v) =>
-										setMode(
-											v as "self-hosted" | "cloud-hosted",
-										)
-									}
-								>
-									<SelectTrigger className="w-full h-9">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="self-hosted">
-											Self-hosted
-										</SelectItem>
-										<SelectItem value="cloud-hosted">
-											Cloud-hosted
-										</SelectItem>
-									</SelectContent>
-								</Select>
-								<p className="text-xs text-muted-foreground">
-									{mode === "self-hosted"
-										? "Worker runs in your AWS account with native permissions."
-										: "Worker assumes cross-account roles into customer accounts."}
-								</p>
-							</div>
+							<p className="text-xs text-muted-foreground">
+								The worker will run in your infrastructure with your
+								cloud permissions.
+							</p>
 
 							<Button
 								type="submit"

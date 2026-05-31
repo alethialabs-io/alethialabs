@@ -1,267 +1,163 @@
-import { Badge } from "@/components/ui/badge";
+"use client";
+
 import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
-import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "@/components/ui/table";
+	WorkerCard,
+} from "@/components/workers/worker-card";
 import { RegisterWorkerButton } from "@/components/workers/register-worker-button";
-import { createClient } from "@/lib/supabase/server";
-import {
-	Activity,
-	CheckCircle2,
-	Clock,
-	Server,
-	XCircle,
-} from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { useWorkersStore, type ActiveJob } from "@/lib/stores/use-workers-store";
+import type { PublicWorkersRow } from "@/lib/validations/db.schemas";
+import { Server, Shield } from "lucide-react";
+import { useEffect, useMemo } from "react";
 
-function statusBadge(status: string | null) {
-	switch (status) {
-		case "ONLINE":
-			return (
-				<Badge variant="default" className="bg-emerald-600 text-white">
-					<Activity className="mr-1 h-3 w-3" />
-					Online
-				</Badge>
-			);
-		case "DRAINING":
-			return (
-				<Badge variant="secondary">
-					<Clock className="mr-1 h-3 w-3" />
-					Draining
-				</Badge>
-			);
-		default:
-			return (
-				<Badge variant="outline" className="text-muted-foreground">
-					Offline
-				</Badge>
-			);
-	}
-}
-
-function jobStatusBadge(status: string) {
-	switch (status) {
-		case "SUCCESS":
-			return (
-				<Badge variant="default" className="bg-emerald-600 text-white">
-					<CheckCircle2 className="mr-1 h-3 w-3" />
-					Success
-				</Badge>
-			);
-		case "FAILED":
-			return (
-				<Badge variant="destructive">
-					<XCircle className="mr-1 h-3 w-3" />
-					Failed
-				</Badge>
-			);
-		case "PROCESSING":
-			return (
-				<Badge variant="secondary">
-					<Activity className="mr-1 h-3 w-3 animate-pulse" />
-					Processing
-				</Badge>
-			);
-		case "CLAIMED":
-			return (
-				<Badge variant="secondary">
-					<Clock className="mr-1 h-3 w-3" />
-					Claimed
-				</Badge>
-			);
-		case "QUEUED":
-			return (
-				<Badge variant="outline">
-					<Clock className="mr-1 h-3 w-3" />
-					Queued
-				</Badge>
-			);
-		default:
-			return <Badge variant="outline">{status}</Badge>;
-	}
-}
-
-function timeAgo(dateStr: string | null) {
-	if (!dateStr) return "Never";
-	const diff = Date.now() - new Date(dateStr).getTime();
-	const mins = Math.floor(diff / 60000);
-	if (mins < 1) return "Just now";
-	if (mins < 60) return `${mins}m ago`;
-	const hours = Math.floor(mins / 60);
-	if (hours < 24) return `${hours}h ago`;
-	return `${Math.floor(hours / 24)}d ago`;
-}
-
-export default async function WorkersPage() {
-	const supabase = await createClient();
+export default function WorkersPage() {
 	const {
-		data: { user },
-	} = await supabase.auth.getUser();
+		workers,
+		activeJobs,
+		isLoading,
+		fetchWorkers,
+		addOrUpdateWorker,
+		removeWorker,
+		addOrUpdateJob,
+	} = useWorkersStore();
 
-	const { data: workers } = await supabase
-		.from("workers")
-		.select("*")
-		.eq("user_id", user!.id)
-		.order("created_at", { ascending: false });
+	useEffect(() => {
+		fetchWorkers(true);
+	}, [fetchWorkers]);
 
-	const { data: recentJobs } = await supabase
-		.from("provision_jobs")
-		.select("*")
-		.eq("user_id", user!.id)
-		.order("created_at", { ascending: false })
-		.limit(20);
+	useEffect(() => {
+		const supabase = createClient();
 
-	return (
-		<div className="space-y-8 w-full">
-			<div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-				<div className="space-y-1.5">
-					<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
-						Workers & Jobs
+		const channel = supabase
+			.channel("workers-live")
+			.on(
+				"postgres_changes",
+				{ event: "*", schema: "public", table: "workers" },
+				(payload) => {
+					if (payload.eventType === "DELETE") {
+						removeWorker((payload.old as { id: string }).id);
+						return;
+					}
+					addOrUpdateWorker(payload.new as PublicWorkersRow);
+				},
+			)
+			.on(
+				"postgres_changes",
+				{ event: "*", schema: "public", table: "provision_jobs" },
+				(payload) => {
+					const job = payload.new as ActiveJob;
+					if (job) addOrUpdateJob(job);
+				},
+			)
+			.subscribe();
+
+		return () => {
+			supabase.removeChannel(channel);
+		};
+	}, [addOrUpdateWorker, removeWorker, addOrUpdateJob]);
+
+	const jobsByWorker = useMemo(() => {
+		const map = new Map<string, ActiveJob>();
+		for (const job of activeJobs) {
+			if (job.worker_id) map.set(job.worker_id, job);
+		}
+		return map;
+	}, [activeJobs]);
+
+	const hasSelfHosted = useMemo(
+		() => workers.some((w) => w.mode === "self-hosted"),
+		[workers],
+	);
+
+	if (isLoading) {
+		return (
+			<div className="space-y-6">
+				<div>
+					<h1 className="text-2xl font-semibold tracking-tight text-foreground">
+						Workers
 					</h1>
-					<p className="text-muted-foreground text-sm">
-						Manage provisioning workers and monitor job execution.
+					<p className="text-sm text-muted-foreground mt-1">
+						Live status of provisioning workers and their active
+						jobs.
 					</p>
 				</div>
-				<RegisterWorkerButton />
+				<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+					{[1, 2, 3].map((i) => (
+						<div
+							key={i}
+							className="h-32 rounded-lg bg-muted animate-pulse"
+						/>
+					))}
+				</div>
+			</div>
+		);
+	}
+
+	return (
+		<div className="space-y-8">
+			<div>
+				<h1 className="text-2xl font-semibold tracking-tight text-foreground">
+					Workers
+				</h1>
+				<p className="text-sm text-muted-foreground mt-1">
+					Live status of provisioning workers and their active jobs.
+				</p>
 			</div>
 
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-lg">
-						Registered Workers
-					</CardTitle>
-					<CardDescription>
-						Workers poll for queued jobs and execute provisioning
-						tasks.
-					</CardDescription>
-				</CardHeader>
-				<CardContent>
-					{!workers || workers.length === 0 ? (
-						<div className="text-center py-12 text-muted-foreground">
-							<Server className="mx-auto h-10 w-10 mb-3 opacity-30" />
-							<p className="text-sm">No workers registered yet.</p>
-							<p className="text-xs mt-1">
-								Click Register Worker above, or use{" "}
-								<code className="bg-muted px-1 py-0.5 rounded text-[11px]">
-									grape worker register
-								</code>{" "}
-								from the CLI.
-							</p>
-						</div>
-					) : (
-						<Table>
-							<TableHeader>
-								<TableRow>
-									<TableHead>Name</TableHead>
-									<TableHead>Mode</TableHead>
-									<TableHead>Status</TableHead>
-									<TableHead>Last Heartbeat</TableHead>
-									<TableHead>Created</TableHead>
-								</TableRow>
-							</TableHeader>
-							<TableBody>
-								{workers.map((w) => (
-									<TableRow key={w.id}>
-										<TableCell className="font-medium">
-											{w.name}
-										</TableCell>
-										<TableCell>
-											<Badge variant="outline">
-												{w.mode}
-											</Badge>
-										</TableCell>
-										<TableCell>
-											{statusBadge(w.status)}
-										</TableCell>
-										<TableCell className="text-muted-foreground text-sm">
-											{timeAgo(w.last_heartbeat)}
-										</TableCell>
-										<TableCell className="text-muted-foreground text-sm">
-											{new Date(
-												w.created_at!,
-											).toLocaleDateString()}
-										</TableCell>
-									</TableRow>
-								))}
-							</TableBody>
-						</Table>
-					)}
-				</CardContent>
-			</Card>
+			{workers.length === 0 ? (
+				<div className="flex flex-col items-center justify-center py-16 text-center">
+					<div className="p-3 bg-muted/50 rounded-full mb-4">
+						<Server className="h-8 w-8 text-muted-foreground" />
+					</div>
+					<h3 className="text-sm font-medium text-foreground mb-1">
+						No workers available
+					</h3>
+					<p className="text-xs text-muted-foreground max-w-sm mb-4">
+						Workers execute provisioning jobs for your
+						infrastructure. Cloud workers are managed by the
+						platform. You can also deploy your own.
+					</p>
+					<RegisterWorkerButton />
+				</div>
+			) : (
+				<>
+					<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+						{workers.map((w) => (
+							<WorkerCard
+								key={w.id}
+								worker={w}
+								activeJob={jobsByWorker.get(w.id) ?? null}
+							/>
+						))}
+					</div>
 
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-lg">Recent Jobs</CardTitle>
-					<CardDescription>
-						Provisioning jobs queued through the CLI or Trellis.
-					</CardDescription>
-				</CardHeader>
-				<CardContent>
-					{!recentJobs || recentJobs.length === 0 ? (
-						<div className="text-center py-12 text-muted-foreground">
-							<Activity className="mx-auto h-10 w-10 mb-3 opacity-30" />
-							<p className="text-sm">No jobs yet.</p>
-							<p className="text-xs mt-1">
-								Jobs appear here when you create a configuration
-								or run{" "}
-								<code className="bg-muted px-1 py-0.5 rounded text-[11px]">
-									grape harvest
-								</code>
-								.
-							</p>
+					{!hasSelfHosted ? (
+						<div className="rounded-lg border border-dashed border-border/60 p-6 flex items-start gap-4">
+							<div className="p-2 rounded-md bg-muted/50 shrink-0">
+								<Shield className="h-5 w-5 text-muted-foreground" />
+							</div>
+							<div className="flex-1 space-y-1.5">
+								<p className="text-sm font-medium">
+									Deploy your own worker
+								</p>
+								<p className="text-xs text-muted-foreground max-w-lg">
+									Run a self-hosted worker in your own
+									infrastructure for full control over
+									permissions and data locality. Your cloud
+									credentials never leave your account.
+								</p>
+								<div className="pt-1">
+									<RegisterWorkerButton />
+								</div>
+							</div>
 						</div>
 					) : (
-						<Table>
-							<TableHeader>
-								<TableRow>
-									<TableHead>Type</TableHead>
-									<TableHead>Status</TableHead>
-									<TableHead>Worker</TableHead>
-									<TableHead>Created</TableHead>
-									<TableHead>Completed</TableHead>
-								</TableRow>
-							</TableHeader>
-							<TableBody>
-								{recentJobs.map((job) => (
-									<TableRow key={job.id}>
-										<TableCell>
-											<Badge variant="outline">
-												{job.job_type}
-											</Badge>
-										</TableCell>
-										<TableCell>
-											{jobStatusBadge(job.status)}
-										</TableCell>
-										<TableCell className="text-muted-foreground text-sm font-mono">
-											{job.worker_id
-												? job.worker_id.slice(0, 8)
-												: "-"}
-										</TableCell>
-										<TableCell className="text-muted-foreground text-sm">
-											{timeAgo(job.created_at)}
-										</TableCell>
-										<TableCell className="text-muted-foreground text-sm">
-											{job.completed_at
-												? timeAgo(job.completed_at)
-												: "-"}
-										</TableCell>
-									</TableRow>
-								))}
-							</TableBody>
-						</Table>
+						<div className="flex justify-end">
+							<RegisterWorkerButton />
+						</div>
 					)}
-				</CardContent>
-			</Card>
+				</>
+			)}
 		</div>
 	);
 }
