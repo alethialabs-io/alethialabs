@@ -10,6 +10,7 @@ import (
 	"time"
 
 	grapeAws "github.com/bobikenobi12/bb-thesis-2026/apps/grape/aws"
+	grapeAzure "github.com/bobikenobi12/bb-thesis-2026/apps/grape/azure"
 	grapeGcp "github.com/bobikenobi12/bb-thesis-2026/apps/grape/gcp"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/provisioner"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
@@ -173,6 +174,15 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			}
 		case "azure":
 			fmt.Fprintln(stdoutLogger, "Connection test passed — Azure federated identity authenticated.")
+			resources, fetchErr := w.fetchAzureResources(ctx, claim.CloudIdentity.SubscriptionID, stdoutLogger)
+			if fetchErr != nil {
+				fmt.Fprintf(stderrLogger, "Warning: failed to cache Azure resources: %v\n", fetchErr)
+			} else {
+				w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+					"cached_resources": resources,
+				})
+				fmt.Fprintln(stdoutLogger, "Azure resources cached successfully.")
+			}
 		default:
 			fmt.Fprintln(stdoutLogger, "Connection test passed — role assumption succeeded.")
 			resources, fetchErr := w.fetchAwsResources(ctx, stdoutLogger)
@@ -203,7 +213,20 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 				fmt.Fprintln(stdoutLogger, "GCP resources fetched successfully.")
 			}
 		case "azure":
-			fmt.Fprintln(stdoutLogger, "Azure resource caching not yet implemented.")
+			fmt.Fprintln(stdoutLogger, "Fetching Azure resources...")
+			subscriptionID := ""
+			if claim.CloudIdentity != nil {
+				subscriptionID = claim.CloudIdentity.SubscriptionID
+			}
+			resources, fetchErr := w.fetchAzureResources(ctx, subscriptionID, stdoutLogger)
+			if fetchErr != nil {
+				execErr = fmt.Errorf("failed to fetch Azure resources: %w", fetchErr)
+			} else {
+				w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+					"cached_resources": resources,
+				})
+				fmt.Fprintln(stdoutLogger, "Azure resources fetched successfully.")
+			}
 		default:
 			fmt.Fprintln(stdoutLogger, "Fetching AWS resources...")
 			resources, fetchErr := w.fetchAwsResources(ctx, stdoutLogger)
@@ -348,6 +371,42 @@ func (w *Worker) fetchGcpResources(ctx context.Context, projectID string, logger
 	}, nil
 }
 
+func (w *Worker) fetchAzureResources(ctx context.Context, subscriptionID string, logger *JobLogger) (map[string]any, error) {
+	fmt.Fprintln(logger, "Fetching Azure locations...")
+	computeClient, err := grapeAzure.NewComputeClient(ctx, subscriptionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Azure compute client: %w", err)
+	}
+
+	locations, err := computeClient.ListLocations(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list locations: %w", err)
+	}
+	fmt.Fprintf(logger, "Found %d locations\n", len(locations))
+
+	fmt.Fprintln(logger, "Fetching VNets...")
+	vnets, err := computeClient.ListVnets(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list vnets: %w", err)
+	}
+	fmt.Fprintf(logger, "Found %d VNets\n", len(vnets))
+
+	fmt.Fprintln(logger, "Fetching Azure DNS zones...")
+	dnsClient, err := grapeAzure.NewDNSClient(ctx, subscriptionID)
+	var dnsZones []grapeAzure.DnsZoneInfo
+	if err == nil {
+		dnsZones, _ = dnsClient.ListDnsZones(ctx)
+	}
+	fmt.Fprintf(logger, "Found %d DNS zones\n", len(dnsZones))
+
+	return map[string]any{
+		"locations": locations,
+		"vnets":     vnets,
+		"subnets":   map[string]any{},
+		"dns_zones": dnsZones,
+	}, nil
+}
+
 func (w *Worker) executeBootstrap(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
 	snapshot := job.ConfigSnapshot
 
@@ -384,6 +443,20 @@ func (w *Worker) executeBootstrap(ctx context.Context, job *Job, stdout, stderr 
 	return nil
 }
 
+func resolveTemplatesDir() string {
+	candidates := []string{
+		"/home/grape/templates",
+		"templates",
+		"../../packages/templates",
+	}
+	for _, d := range candidates {
+		if info, err := os.Stat(d); err == nil && info.IsDir() {
+			return d
+		}
+	}
+	return ""
+}
+
 func (w *Worker) executeDeploy(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
 	config, err := snapshotToConfiguration(job.ConfigSnapshot)
 	if err != nil {
@@ -391,9 +464,11 @@ func (w *Worker) executeDeploy(ctx context.Context, job *Job, stdout, stderr *Jo
 	}
 
 	params := provisioner.DeployParams{
-		Config: config,
-		Stdout: stdout,
-		Stderr: stderr,
+		Config:         config,
+		TemplatesDir:   resolveTemplatesDir(),
+		GitAccessToken: getSnapshotString(job.ConfigSnapshot, "git_access_token"),
+		Stdout:         stdout,
+		Stderr:         stderr,
 	}
 
 	return provisioner.RunDeploy(ctx, params)
@@ -410,7 +485,9 @@ func (w *Worker) executePlan(ctx context.Context, job *Job, stdout, stderr *JobL
 	params := provisioner.DeployParams{
 		Config:         config,
 		DryRun:         true,
+		TemplatesDir:   resolveTemplatesDir(),
 		InfracostToken: infracostKey,
+		GitAccessToken: getSnapshotString(job.ConfigSnapshot, "git_access_token"),
 		Stdout:         stdout,
 		Stderr:         stderr,
 	}
