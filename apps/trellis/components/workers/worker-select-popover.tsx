@@ -1,6 +1,7 @@
 "use client";
 
 import { useWorkersStore } from "@/lib/stores/use-workers-store";
+import type { PublicWorkerStatus } from "@/lib/validations/db.schemas";
 import { Button } from "@/components/ui/button";
 import {
 	Popover,
@@ -17,7 +18,7 @@ interface WorkerSelectPopoverProps {
 	disabled?: boolean;
 }
 
-const STATUS_DOT: Record<string, string> = {
+const STATUS_DOT: Record<PublicWorkerStatus, string> = {
 	ONLINE: "bg-emerald-500",
 	OFFLINE: "bg-zinc-400",
 	DRAINING: "bg-amber-500",
@@ -36,7 +37,9 @@ export function WorkerSelectPopover({
 	useEffect(() => {
 		if (open) {
 			fetchWorkers();
-			const defaultWorker = workers.find((w) => (w as any).is_default);
+			const defaultWorker = workers.find(
+				(w) => w.is_default && w.status === "ONLINE",
+			);
 			setSelected(defaultWorker?.id ?? null);
 		}
 	}, [open, fetchWorkers, workers]);
@@ -83,17 +86,21 @@ export function WorkerSelectPopover({
 						</button>
 
 						{workers.map((w) => {
-							const status = (w.status as string) ?? "OFFLINE";
-							const isDefault = (w as any).is_default;
+							const status = w.status ?? "OFFLINE";
+							const isOnline = status === "ONLINE";
 							return (
 								<button
 									key={w.id}
 									type="button"
+									disabled={!isOnline}
 									className={cn(
-										"flex items-center gap-2 w-full px-3 py-2 text-left text-sm hover:bg-accent transition-colors",
+										"flex items-center gap-2 w-full px-3 py-2 text-left text-sm transition-colors",
+										isOnline
+											? "hover:bg-accent"
+											: "opacity-50 cursor-not-allowed",
 										selected === w.id && "bg-accent/50",
 									)}
-									onClick={() => setSelected(w.id)}
+									onClick={() => isOnline && setSelected(w.id)}
 								>
 									<div className="flex items-center justify-center h-4 w-4 shrink-0">
 										{selected === w.id && (
@@ -103,13 +110,13 @@ export function WorkerSelectPopover({
 									<Circle
 										className={cn(
 											"h-2 w-2 fill-current shrink-0",
-											STATUS_DOT[status] ?? STATUS_DOT.OFFLINE,
+											STATUS_DOT[status],
 										)}
 									/>
 									<span className="truncate flex-1">
 										{w.name}
 									</span>
-									{isDefault && (
+									{w.is_default && (
 										<span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">
 											Default
 										</span>
