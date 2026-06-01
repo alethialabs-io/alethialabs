@@ -56,7 +56,7 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 		}
 	}
 
-	tf, err := terraform.NewTerraformCLI(ctx, "1.7.4", workDir, out, out)
+	tf, err := terraform.NewTerraformCLI(ctx, "1.15.5", workDir, out, out)
 	if err != nil {
 		return fmt.Errorf("failed to initialize Terraform CLI: %w", err)
 	}

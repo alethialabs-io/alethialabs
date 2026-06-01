@@ -14,6 +14,11 @@ func main() {
 		TrellisURL:  envOrDefault("GRAPE_WEB_ORIGIN", "https://adp.prod.itgix.eu"),
 		WorkerID:    os.Getenv("GRAPE_WORKER_ID"),
 		WorkerToken: os.Getenv("GRAPE_WORKER_TOKEN"),
+
+		SupabaseS3Endpoint:  envOrDefault("SUPABASE_S3_ENDPOINT", ""),
+		SupabaseS3Region:    envOrDefault("SUPABASE_S3_REGION", ""),
+		SupabaseS3AccessKey: os.Getenv("SUPABASE_STORAGE_KEY_ID"),
+		SupabaseS3SecretKey: os.Getenv("SUPABASE_STORAGE_SECRET_KEY"),
 	}
 
 	if cfg.WorkerID == "" || cfg.WorkerToken == "" {

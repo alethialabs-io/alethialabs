@@ -28,7 +28,7 @@ var createConfigCmd = &cobra.Command{
 
 		// Defaults matching the web app/dummy config
 		config := types.Configuration{
-			TerraformVersion:               "1.5.0",
+			TerraformVersion:               "1.15.5",
 			AwsRegion:                      "us-east-1",
 			EnvironmentStage:               "development",
 			ContainerPlatform:              "standard",
