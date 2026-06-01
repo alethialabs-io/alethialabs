@@ -33,6 +33,7 @@ jobs:
         run: |
           cp -r packages/templates apps/grape/templates
           cp -r packages/templates-worker apps/grape/templates-worker
+          cp -r packages/templates-argocd apps/grape/templates-argocd
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -59,7 +60,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: apps/grape
-          file: apps/grape/Dockerfile
+          file: apps/grape/Dockerfile.worker
           push: true
           platforms: linux/amd64
           tags: |
