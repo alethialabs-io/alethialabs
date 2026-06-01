@@ -30,5 +30,6 @@ USER grape
 WORKDIR /home/grape
 
 COPY --chown=grape:grape templates/ /home/grape/templates/
+COPY --chown=grape:grape templates-worker/ /home/grape/templates-worker/
 
 ENTRYPOINT ["grape"]

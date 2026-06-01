@@ -30,7 +30,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Stage templates for Docker build
-        run: cp -r packages/templates apps/grape/templates
+        run: |
+          cp -r packages/templates apps/grape/templates
+          cp -r packages/templates-worker apps/grape/templates-worker
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
