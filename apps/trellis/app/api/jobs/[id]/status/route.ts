@@ -1,3 +1,4 @@
+import { finalizeDeploymentWithClient } from "@/app/server/actions/deployments";
 import { verifyWorkerToken } from "@/lib/workers/auth";
 import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
 import { NextResponse } from "next/server";
@@ -51,6 +52,12 @@ export async function PUT(
 			return NextResponse.json(
 				{ error: "Failed to update status: " + error.message },
 				{ status: 500 },
+			);
+		}
+
+		if (status === "SUCCESS") {
+			finalizeDeploymentWithClient(supabase, jobId).catch((err) =>
+				console.error("Finalize deployment error:", err),
 			);
 		}
 
