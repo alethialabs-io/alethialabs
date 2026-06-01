@@ -64,7 +64,6 @@ function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
 				node_min_size: 2,
 				node_max_size: 5,
 				node_desired_size: 2,
-				cluster_admins: [],
 			},
 			dns: {
 				enabled: false,
@@ -155,7 +154,14 @@ function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
 		const tab = fieldToTab[firstErrorKey] ?? "core";
 		tabsRef.current?.setActiveTab(tab);
 
-		toast.error("Please fix the highlighted fields before planting.");
+		const keys = Object.keys(errors);
+		const summary = Object.entries(errors).map(([k, v]) => {
+			const nested = v && typeof v === "object" ? Object.keys(v as object) : [];
+			const msg = (v as any)?.message || (nested.length ? nested.join(", ") : "unknown");
+			return `${k}: ${msg}`;
+		});
+		console.error("[PlantVine] Validation errors:", summary);
+		toast.error(`Please fix the highlighted fields before planting. (${keys.join(", ")})`);
 	};
 
 	return (

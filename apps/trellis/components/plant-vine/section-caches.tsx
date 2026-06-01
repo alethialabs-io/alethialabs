@@ -94,7 +94,7 @@ export function SectionCaches() {
 							<FormField control={control} name={`caches.${i}.num_cache_nodes`} render={({ field: f }) => (
 								<FormItem className="space-y-1">
 									<Label className="text-[11px]">Nodes</Label>
-									<FormControl><Input type="number" min={1} max={6} {...f} value={f.value ?? 1} onChange={(e) => f.onChange(parseInt(e.target.value) || 1)} className="h-8 text-xs" /></FormControl>
+									<FormControl><Input type="number" min={1} max={6} name={f.name} onBlur={f.onBlur} value={f.value ?? 1} onChange={(e) => f.onChange(parseInt(e.target.value) || 1)} className="h-8 text-xs" /></FormControl>
 								</FormItem>
 							)} />
 						</div>

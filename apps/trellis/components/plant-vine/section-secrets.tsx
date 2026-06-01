@@ -76,7 +76,7 @@ export function SectionSecrets() {
 							<FormField control={control} name={`secrets.${i}.length`} render={({ field: f }) => (
 								<FormItem className="space-y-1">
 									<Label className="text-[10px] text-muted-foreground">Length</Label>
-									<FormControl><Input type="number" min={8} max={128} {...f} value={f.value ?? 32} onChange={(e) => f.onChange(parseInt(e.target.value) || 32)} className="h-8 text-xs" /></FormControl>
+									<FormControl><Input type="number" min={8} max={128} name={f.name} onBlur={f.onBlur} value={f.value ?? 32} onChange={(e) => f.onChange(parseInt(e.target.value) || 32)} className="h-8 text-xs" /></FormControl>
 								</FormItem>
 							)} />
 							<FormField control={control} name={`secrets.${i}.special_chars`} render={({ field: f }) => (

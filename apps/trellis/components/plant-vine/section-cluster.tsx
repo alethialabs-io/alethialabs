@@ -2,7 +2,6 @@
 
 import { ContainerPlatformSelector } from "./container-platform-selector";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,12 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { getClusterAdmins, createClusterAdmin, type ClusterAdminOption } from "@/app/server/actions/eks-admins";
 import { useProviderSlug, useProviderMeta, INSTANCE_TYPES, K8S_VERSIONS, AUTOSCALER } from "@/lib/cloud-providers";
-import { ChevronsUpDown, Plus, Server, Trash2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Server, X } from "lucide-react";
 import { useFormContext } from "react-hook-form";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
 
@@ -25,36 +20,13 @@ export function SectionCluster() {
 	const providerMeta = useProviderMeta();
 	const instanceTypeOptions = INSTANCE_TYPES[provider];
 	const autoscaler = AUTOSCALER[provider];
-	const [savedAdmins, setSavedAdmins] = useState<ClusterAdminOption[]>([]);
-	const [comboOpen, setComboOpen] = useState(false);
-	const [comboSearch, setComboSearch] = useState("");
 
-	useEffect(() => { getClusterAdmins().then(setSavedAdmins); }, []);
-
-	const clusterAdmins = watch("cluster.cluster_admins") || [];
 	const instanceTypes = watch("cluster.instance_types") || [];
 	const nodeMinSize = watch("cluster.node_min_size") ?? 2;
 	const nodeMaxSize = watch("cluster.node_max_size") ?? 5;
 	const nodeDesiredSize = watch("cluster.node_desired_size") ?? 2;
 
 	const nodeSizeError = nodeMinSize > nodeDesiredSize || nodeDesiredSize > nodeMaxSize ? "Must be: min ≤ desired ≤ max" : null;
-	const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-	const addAdminByEmail = async (email: string) => {
-		const trimmed = email.trim().toLowerCase();
-		if (!trimmed || !emailRegex.test(trimmed)) return;
-		if (clusterAdmins.some((a: any) => a.username === trimmed)) return;
-		setValue("cluster.cluster_admins", [...clusterAdmins, { username: trimmed, groups: ["system:masters"] }]);
-		const saved = await createClusterAdmin(trimmed);
-		if (saved && !savedAdmins.some((a) => a.email === trimmed)) setSavedAdmins((prev) => [...prev, saved]);
-		setComboSearch(""); setComboOpen(false);
-	};
-
-	const removeAdmin = (index: number) => {
-		setValue("cluster.cluster_admins", clusterAdmins.filter((_: any, i: number) => i !== index));
-	};
-
-	const availableAdmins = savedAdmins.filter((a) => !clusterAdmins.some((ca: any) => ca.username === a.email));
 
 	const addInstanceType = (type: string) => {
 		if (!type || instanceTypes.includes(type) || instanceTypes.length >= 5) return;
@@ -119,7 +91,10 @@ export function SectionCluster() {
 								<FormItem className="space-y-1">
 									<Label className="text-[11px] text-muted-foreground">{name === "node_min_size" ? "Min" : name === "node_desired_size" ? "Desired" : "Max"} Nodes</Label>
 									<FormControl>
-										<Input type="number" min={1} max={100} {...field} value={Number(field.value) ?? 2}
+										<Input type="number" min={1} max={100}
+											name={field.name}
+											onBlur={field.onBlur}
+											value={field.value ?? 2}
 											onChange={(e) => field.onChange(parseInt(e.target.value) || 2)}
 											className={`h-8 text-xs ${nodeSizeError ? "border-destructive" : ""}`} />
 									</FormControl>
@@ -166,65 +141,6 @@ export function SectionCluster() {
 						<Switch checked={!!field.value} onCheckedChange={field.onChange} />
 					</div>
 				)} />
-
-				{/* Cluster Admins */}
-				<div className="space-y-2">
-					<div className="flex items-center gap-1.5">
-						<Label className="text-xs font-medium">Cluster Admins</Label>
-						<HelpTooltip topic="cluster-admins" />
-					</div>
-					{clusterAdmins.length > 0 && (
-						<div className="space-y-1.5">
-							{clusterAdmins.map((admin: any, i: number) => (
-								<div key={i} className="flex items-center gap-2 p-2 border border-border/40 rounded-md bg-muted/10">
-									<span className="text-xs font-mono flex-1">{admin.username}</span>
-									<Badge variant="outline" className="text-[10px]">system:masters</Badge>
-									<Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => removeAdmin(i)}>
-										<Trash2 className="h-3 w-3" />
-									</Button>
-								</div>
-							))}
-						</div>
-					)}
-					<Popover open={comboOpen} onOpenChange={setComboOpen}>
-						<PopoverTrigger asChild>
-							<Button type="button" variant="outline" role="combobox" aria-expanded={comboOpen} className="h-8 text-xs justify-between w-full font-normal text-muted-foreground">
-								Search or add admin...
-								<ChevronsUpDown className="ml-2 h-3 w-3 shrink-0 opacity-50" />
-							</Button>
-						</PopoverTrigger>
-						<PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-							<Command>
-								<CommandInput placeholder="Type email..." value={comboSearch} onValueChange={setComboSearch} className="text-xs" />
-								<CommandList>
-									<CommandEmpty className="py-2 px-3">
-										{comboSearch && emailRegex.test(comboSearch.trim()) ? (
-											<button type="button" onClick={() => addAdminByEmail(comboSearch)} className="flex items-center gap-1.5 text-xs text-foreground w-full">
-												<Plus className="h-3 w-3" />Add "{comboSearch.trim()}"
-											</button>
-										) : (
-											<span className="text-xs text-muted-foreground">{comboSearch ? "Enter a valid email" : "No saved admins"}</span>
-										)}
-									</CommandEmpty>
-									{availableAdmins.length > 0 && (
-										<CommandGroup heading="Saved admins">
-											{availableAdmins.map((admin) => (
-												<CommandItem key={admin.id} value={admin.email} onSelect={() => addAdminByEmail(admin.email)} className="text-xs">{admin.email}</CommandItem>
-											))}
-										</CommandGroup>
-									)}
-									{comboSearch && emailRegex.test(comboSearch.trim()) && !savedAdmins.some((a) => a.email === comboSearch.trim().toLowerCase()) && (
-										<CommandGroup heading="New">
-											<CommandItem value={`add-${comboSearch}`} onSelect={() => addAdminByEmail(comboSearch)} className="text-xs">
-												<Plus className="h-3 w-3 mr-1.5" />Add "{comboSearch.trim()}"
-											</CommandItem>
-										</CommandGroup>
-									)}
-								</CommandList>
-							</Command>
-						</PopoverContent>
-					</Popover>
-				</div>
 			</CardContent>
 		</Card>
 	);

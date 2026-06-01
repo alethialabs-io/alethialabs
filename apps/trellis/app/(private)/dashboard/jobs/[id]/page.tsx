@@ -262,7 +262,7 @@ export default function JobDetailPage() {
 						<div className="space-y-0 pb-10">
 							{logs.map((log, i) => (
 								<div
-									key={log.id || i}
+									key={`${log.id}-${i}`}
 									className="flex gap-4 group hover:bg-muted/40 px-2 py-0.5 rounded transition-colors"
 								>
 									<span className="text-muted-foreground/40 select-none shrink-0 w-8 text-right">{i + 1}</span>

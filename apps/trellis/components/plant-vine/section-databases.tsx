@@ -82,13 +82,13 @@ export function SectionDatabases() {
 							<FormField control={control} name={`databases.${i}.min_capacity`} render={({ field: f }) => (
 								<FormItem className="space-y-1">
 									<div className="flex items-center gap-1"><Label className="text-[11px]">Min {capacity.unit}</Label><HelpTooltip topic="acu" /></div>
-									<FormControl><Input type="number" min={0.5} max={128} step={0.5} {...f} value={f.value ?? 0.5} onChange={(e) => f.onChange(parseFloat(e.target.value) || 0.5)} className="h-8 text-xs" /></FormControl>
+									<FormControl><Input type="number" min={0.5} max={128} step={0.5} name={f.name} onBlur={f.onBlur} value={f.value ?? 0.5} onChange={(e) => f.onChange(parseFloat(e.target.value) || 0.5)} className="h-8 text-xs" /></FormControl>
 								</FormItem>
 							)} />
 							<FormField control={control} name={`databases.${i}.max_capacity`} render={({ field: f }) => (
 								<FormItem className="space-y-1">
 									<Label className="text-[11px]">Max {capacity.unit}</Label>
-									<FormControl><Input type="number" min={0.5} max={128} step={0.5} {...f} value={f.value ?? 4} onChange={(e) => f.onChange(parseFloat(e.target.value) || 4)} className="h-8 text-xs" /></FormControl>
+									<FormControl><Input type="number" min={0.5} max={128} step={0.5} name={f.name} onBlur={f.onBlur} value={f.value ?? 4} onChange={(e) => f.onChange(parseFloat(e.target.value) || 4)} className="h-8 text-xs" /></FormControl>
 								</FormItem>
 							)} />
 						</div>
