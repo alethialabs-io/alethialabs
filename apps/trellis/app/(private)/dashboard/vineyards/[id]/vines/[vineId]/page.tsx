@@ -19,7 +19,6 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-	ArrowLeft,
 	ArrowRightLeft,
 	FileText,
 	Loader2,
@@ -27,8 +26,9 @@ import {
 	Rocket,
 	Trash2,
 } from "lucide-react";
+import { BreadcrumbNav } from "@/components/breadcrumb-nav";
 import Image from "next/image";
-import Link from "next/link";
+
 import { toast } from "sonner";
 
 type VineDetail = Awaited<ReturnType<typeof getVine>>;
@@ -46,7 +46,7 @@ const VINE_STATUS_STYLES: Record<string, string> = {
 export default function VineDetailPage() {
 	const { id: vineyardId, vineId } = useParams<{ id: string; vineId: string }>();
 	const router = useRouter();
-	const { removeVine } = useVineyardsStore();
+	const { vineyards, removeVine } = useVineyardsStore();
 	const plan = usePlan(vineId);
 	const [detail, setDetail] = useState<VineDetail | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -73,15 +73,17 @@ export default function VineDetailPage() {
 	if (!detail) {
 		return (
 			<div className="space-y-4">
-				<Link href={`/dashboard/vineyards/${vineyardId}`}>
-					<Button variant="ghost" size="sm" className="text-xs">
-						<ArrowLeft className="h-3.5 w-3.5 mr-1.5" />Back
-					</Button>
-				</Link>
+				<BreadcrumbNav items={[
+					{ label: "Vineyards", href: "/dashboard/vineyards" },
+					{ label: "Vineyard", href: `/dashboard/vineyards/${vineyardId}` },
+					{ label: "Not found" },
+				]} />
 				<p className="text-muted-foreground text-sm">Vine not found.</p>
 			</div>
 		);
 	}
+
+	const vineyardName = vineyards.find((vy) => vy.id === vineyardId)?.name ?? "Vineyard";
 
 	const { vine, cloudProvider } = detail;
 	const providerSlug = (cloudProvider || "aws") as CloudProviderSlug;
@@ -117,28 +119,28 @@ export default function VineDetailPage() {
 
 	return (
 		<div className="space-y-6">
+			{/* Breadcrumb */}
+			<BreadcrumbNav items={[
+				{ label: "Vineyards", href: "/dashboard/vineyards" },
+				{ label: vineyardName, href: `/dashboard/vineyards/${vineyardId}` },
+				{ label: vine.project_name },
+			]} />
+
 			{/* Header */}
 			<div className="flex items-center justify-between">
-				<div className="flex items-center gap-4">
-					<Link href={`/dashboard/vineyards/${vineyardId}`}>
-						<Button variant="ghost" size="icon" className="h-8 w-8">
-							<ArrowLeft className="h-4 w-4" />
-						</Button>
-					</Link>
-					<div className="flex items-center gap-3">
-						<Image src={meta.icon} alt={meta.shortName} width={24} height={24} />
-						<div>
-							<div className="flex items-center gap-2">
-								<h1 className="text-lg font-semibold">{vine.project_name}</h1>
-								<Badge variant="outline" className={`text-[10px] ${VINE_STATUS_STYLES[vine.status] ?? ""}`}>
-									{vine.status}
-								</Badge>
-							</div>
-							<p className="text-xs text-muted-foreground">
-								{meta.shortName} · {vine.region} · {vine.environment_stage}
-								{vine.estimated_monthly_cost ? ` · ~$${Math.round(vine.estimated_monthly_cost)}/mo` : ""}
-							</p>
+				<div className="flex items-center gap-3">
+					<Image src={meta.icon} alt={meta.shortName} width={24} height={24} />
+					<div>
+						<div className="flex items-center gap-2">
+							<h1 className="text-lg font-semibold">{vine.project_name}</h1>
+							<Badge variant="outline" className={`text-[10px] ${VINE_STATUS_STYLES[vine.status] ?? ""}`}>
+								{vine.status}
+							</Badge>
 						</div>
+						<p className="text-xs text-muted-foreground">
+							{meta.shortName} · {vine.region} · {vine.environment_stage}
+							{vine.estimated_monthly_cost ? ` · ~$${Math.round(vine.estimated_monthly_cost)}/mo` : ""}
+						</p>
 					</div>
 				</div>
 
