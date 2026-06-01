@@ -135,3 +135,98 @@ export async function deployWorker(params: {
 
 	return { workerId: worker.id, jobId: job.id };
 }
+
+/** Queues a DESTROY_WORKER job for a self-hosted worker with cloud resources. */
+export async function destroyWorker(workerId: string) {
+	const supabase = await createClient();
+
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
+
+	if (!user) throw new Error("Unauthorized");
+
+	const { data: worker, error: workerError } = await supabase
+		.from("workers")
+		.select("id, name, user_id, cloud_identity_id, metadata")
+		.eq("id", workerId)
+		.single();
+
+	if (workerError || !worker)
+		throw new Error("Worker not found");
+
+	if (worker.user_id !== user.id)
+		throw new Error("Unauthorized");
+
+	if (!worker.cloud_identity_id)
+		throw new Error("Worker has no cloud identity — use removeWorker instead");
+
+	const deployConfig = worker.metadata?.deploy_config;
+
+	if (!deployConfig)
+		throw new Error("Worker has no deploy config in metadata — it may not have been deployed successfully");
+
+	const { data: identity } = await supabase
+		.from("cloud_identities")
+		.select("provider")
+		.eq("id", worker.cloud_identity_id)
+		.single();
+
+	const configSnapshot = {
+		worker_id: worker.id,
+		worker_token: "",
+		worker_name: worker.name,
+		region: deployConfig.region,
+		cloud_provider: identity?.provider ?? deployConfig.cloud_provider ?? "aws",
+		image_tag: deployConfig.image_tag ?? "latest",
+		trellis_url: deployConfig.trellis_url ?? process.env.NEXT_PUBLIC_APP_URL ?? "https://adp.prod.itgix.eu",
+		cpu: deployConfig.cpu ?? 512,
+		memory: deployConfig.memory ?? 1024,
+		image_repository: deployConfig.image_repository ?? "ghcr.io/bobikenobi12/grape-worker",
+	};
+
+	const { data: job, error: jobError } = await supabase
+		.from("provision_jobs")
+		.insert({
+			user_id: user.id,
+			cloud_identity_id: worker.cloud_identity_id,
+			job_type: "DESTROY_WORKER",
+			config_snapshot: configSnapshot,
+			status: "QUEUED",
+		})
+		.select("id")
+		.single();
+
+	if (jobError)
+		throw new Error("Failed to queue destroy job: " + jobError.message);
+
+	return { jobId: job.id };
+}
+
+/** Deletes a worker record directly (no cloud resources to tear down). */
+export async function removeWorker(workerId: string) {
+	const supabase = await createClient();
+
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
+
+	if (!user) throw new Error("Unauthorized");
+
+	const { data: worker } = await supabase
+		.from("workers")
+		.select("id, user_id")
+		.eq("id", workerId)
+		.single();
+
+	if (!worker) throw new Error("Worker not found");
+	if (worker.user_id !== user.id) throw new Error("Unauthorized");
+
+	const { error } = await supabase
+		.from("workers")
+		.delete()
+		.eq("id", workerId);
+
+	if (error)
+		throw new Error("Failed to remove worker: " + error.message);
+}

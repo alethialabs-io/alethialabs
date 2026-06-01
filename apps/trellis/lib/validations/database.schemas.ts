@@ -153,6 +153,7 @@ export const publicProvisionJobTypeSchema = z.union([
   z.literal("CONNECTION_TEST"),
   z.literal("FETCH_RESOURCES"),
   z.literal("PLAN"),
+  z.literal("DEPLOY_WORKER"),
 ]);
 
 export const publicRegistryTagMutabilitySchema = z.union([
@@ -602,27 +603,6 @@ export const publicCloudIdentitiesUpdateSchema = z.object({
   user_id: z.string().optional(),
 });
 
-export const publicClusterAdminsRowSchema = z.object({
-  created_at: z.string().nullable(),
-  email: z.string(),
-  id: z.string(),
-  user_id: z.string(),
-});
-
-export const publicClusterAdminsInsertSchema = z.object({
-  created_at: z.string().optional().nullable(),
-  email: z.string(),
-  id: z.string().optional(),
-  user_id: z.string(),
-});
-
-export const publicClusterAdminsUpdateSchema = z.object({
-  created_at: z.string().optional().nullable(),
-  email: z.string().optional(),
-  id: z.string().optional(),
-  user_id: z.string().optional(),
-});
-
 export const publicIntegrationsRowSchema = z.object({
   auth_method: publicIntegrationAuthMethodSchema,
   category: publicIntegrationCategorySchema,
@@ -1005,6 +985,8 @@ export const publicVineCachesRelationshipsSchema = z.tuple([
 ]);
 
 export const publicVineClusterRowSchema = z.object({
+  argocd_admin_password: z.string().nullable(),
+  argocd_url: z.string().nullable(),
   cluster_admins: z
     .array(
       z.object({
@@ -1013,6 +995,7 @@ export const publicVineClusterRowSchema = z.object({
       }),
     )
     .nullable(),
+  cluster_arn: z.string().nullable(),
   cluster_endpoint: z.string().nullable(),
   cluster_name: z.string().nullable(),
   cluster_version: z.string().nullable(),
@@ -1036,6 +1019,8 @@ export const publicVineClusterRowSchema = z.object({
 });
 
 export const publicVineClusterInsertSchema = z.object({
+  argocd_admin_password: z.string().optional().nullable(),
+  argocd_url: z.string().optional().nullable(),
   cluster_admins: z
     .array(
       z.object({
@@ -1045,6 +1030,7 @@ export const publicVineClusterInsertSchema = z.object({
     )
     .optional()
     .nullable(),
+  cluster_arn: z.string().optional().nullable(),
   cluster_endpoint: z.string().optional().nullable(),
   cluster_name: z.string().optional().nullable(),
   cluster_version: z.string().optional().nullable(),
@@ -1069,6 +1055,8 @@ export const publicVineClusterInsertSchema = z.object({
 });
 
 export const publicVineClusterUpdateSchema = z.object({
+  argocd_admin_password: z.string().optional().nullable(),
+  argocd_url: z.string().optional().nullable(),
   cluster_admins: z
     .array(
       z.object({
@@ -1078,6 +1066,7 @@ export const publicVineClusterUpdateSchema = z.object({
     )
     .optional()
     .nullable(),
+  cluster_arn: z.string().optional().nullable(),
   cluster_endpoint: z.string().optional().nullable(),
   cluster_name: z.string().optional().nullable(),
   cluster_version: z.string().optional().nullable(),
@@ -1193,13 +1182,18 @@ export const publicVineContainerRegistriesRelationshipsSchema = z.tuple([
 
 export const publicVineDatabasesRowSchema = z.object({
   backup_retention_days: z.number().nullable(),
+  cluster_arn: z.string().nullable(),
+  cluster_identifier: z.string().nullable(),
   created_at: z.string(),
+  credentials_kms_key_arn: z.string().nullable(),
   endpoint: z.string().nullable(),
   engine: z.string().nullable(),
   engine_version: z.string().nullable(),
   estimated_monthly_cost: z.number().nullable(),
+  extra_credentials_secret_arn: z.string().nullable(),
   iam_auth: z.boolean().nullable(),
   id: z.string(),
+  master_credentials_secret_arn: z.string().nullable(),
   max_capacity: z.number().nullable(),
   min_capacity: z.number().nullable(),
   name: z.string(),
@@ -1213,13 +1207,18 @@ export const publicVineDatabasesRowSchema = z.object({
 
 export const publicVineDatabasesInsertSchema = z.object({
   backup_retention_days: z.number().optional().nullable(),
+  cluster_arn: z.string().optional().nullable(),
+  cluster_identifier: z.string().optional().nullable(),
   created_at: z.string().optional(),
+  credentials_kms_key_arn: z.string().optional().nullable(),
   endpoint: z.string().optional().nullable(),
   engine: z.string().optional().nullable(),
   engine_version: z.string().optional().nullable(),
   estimated_monthly_cost: z.number().optional().nullable(),
+  extra_credentials_secret_arn: z.string().optional().nullable(),
   iam_auth: z.boolean().optional().nullable(),
   id: z.string().optional(),
+  master_credentials_secret_arn: z.string().optional().nullable(),
   max_capacity: z.number().optional().nullable(),
   min_capacity: z.number().optional().nullable(),
   name: z.string(),
@@ -1233,13 +1232,18 @@ export const publicVineDatabasesInsertSchema = z.object({
 
 export const publicVineDatabasesUpdateSchema = z.object({
   backup_retention_days: z.number().optional().nullable(),
+  cluster_arn: z.string().optional().nullable(),
+  cluster_identifier: z.string().optional().nullable(),
   created_at: z.string().optional(),
+  credentials_kms_key_arn: z.string().optional().nullable(),
   endpoint: z.string().optional().nullable(),
   engine: z.string().optional().nullable(),
   engine_version: z.string().optional().nullable(),
   estimated_monthly_cost: z.number().optional().nullable(),
+  extra_credentials_secret_arn: z.string().optional().nullable(),
   iam_auth: z.boolean().optional().nullable(),
   id: z.string().optional(),
+  master_credentials_secret_arn: z.string().optional().nullable(),
   max_capacity: z.number().optional().nullable(),
   min_capacity: z.number().optional().nullable(),
   name: z.string().optional(),

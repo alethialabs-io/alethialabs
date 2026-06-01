@@ -7,7 +7,7 @@ import {
 } from "@/lib/validations/db.schemas";
 import type { ColumnDef } from "@tanstack/react-table";
 import { formatDistanceToNow } from "date-fns";
-import { FileSearch, Plug, RefreshCw, Rocket, Trash2, Upload } from "lucide-react";
+import { Container, FileSearch, Plug, RefreshCw, Rocket, Trash2, Upload } from "lucide-react";
 import Link from "next/link";
 
 /** Extended job row with joined vine/worker names from getJobs(). */
@@ -51,7 +51,17 @@ const JOB_TYPES: Record<
 		icon: RefreshCw,
 		description: "Cache cloud regions, networks, zones",
 	},
-};
+	DEPLOY_WORKER: {
+		label: "Deploy Worker",
+		icon: Container,
+		description: "Deploy a self-hosted worker container",
+	},
+	DESTROY_WORKER: {
+		label: "Destroy Worker",
+		icon: Trash2,
+		description: "Tear down a self-hosted worker",
+	},
+} as Record<string, { label: string; icon: typeof Rocket; description: string }>;
 
 const STATUS_STYLES: Record<string, string> = {
 	SUCCESS:

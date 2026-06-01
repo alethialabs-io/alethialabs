@@ -40,11 +40,18 @@ export interface HostedZoneInfo {
 	IsPrivate: boolean;
 }
 
+export interface IAMUserInfo {
+	username: string;
+	arn: string;
+	path: string;
+}
+
 export interface CachedResources {
 	regions: string[];
 	vpcs: Record<string, VpcInfo[]>;
 	subnets: Record<string, Record<string, SubnetInfo[]>>;
 	hosted_zones: HostedZoneInfo[];
+	iam_users?: IAMUserInfo[];
 }
 
 export interface GcpNetworkInfo {
@@ -100,12 +107,6 @@ export interface AzureCachedResources {
 	dns_zones: AzureDnsZoneInfo[];
 }
 
-export interface ClusterMetadata {
-	region?: string | null;
-	vpc_cidr?: string | null;
-	[key: string]: unknown;
-}
-
 export interface ClusterAdmin {
 	username: string;
 	groups: string[];
@@ -141,8 +142,18 @@ export interface AuditChanges {
 	[key: string]: unknown;
 }
 
+export interface WorkerDeployConfig {
+	region: string;
+	cloud_provider: string;
+	image_tag: string;
+	trellis_url: string;
+	cpu: number;
+	memory: number;
+	image_repository: string;
+}
+
 export interface WorkerMetadata {
-	[key: string]: unknown;
+	deploy_config?: WorkerDeployConfig | null;
 }
 
 // ── MergeDeep override ─────────────────────────────────────────────
@@ -177,11 +188,6 @@ export type Database = MergeDeep<
 							| AzureCachedResources
 							| null;
 					};
-				};
-				clusters: {
-					Row: { metadata: ClusterMetadata | null };
-					Insert: { metadata?: ClusterMetadata | null };
-					Update: { metadata?: ClusterMetadata | null };
 				};
 				provision_jobs: {
 					Row: {

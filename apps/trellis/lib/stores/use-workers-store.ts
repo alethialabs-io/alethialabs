@@ -2,6 +2,9 @@ import { create } from "zustand";
 import { createClient } from "@/lib/supabase/client";
 import {
 	setDefaultWorker as setDefaultWorkerAction,
+	deployWorker as deployWorkerAction,
+	destroyWorker as destroyWorkerAction,
+	removeWorker as removeWorkerAction,
 } from "@/app/server/actions/workers";
 import type { PublicWorkersRow } from "@/lib/validations/db.schemas";
 
@@ -29,6 +32,9 @@ interface WorkersStore {
 	addOrUpdateJob: (job: ActiveJob) => void;
 	removeJob: (id: string) => void;
 	setDefaultWorker: (workerId: string | null) => Promise<void>;
+	deployWorker: (params: Parameters<typeof deployWorkerAction>[0]) => Promise<{ workerId: string; jobId: string }>;
+	destroyWorker: (workerId: string) => Promise<{ jobId: string }>;
+	deleteWorker: (workerId: string) => Promise<void>;
 }
 
 export const useWorkersStore = create<WorkersStore>()((set, get) => ({
@@ -125,5 +131,22 @@ export const useWorkersStore = create<WorkersStore>()((set, get) => ({
 				is_default: w.id === workerId,
 			} as PublicWorkersRow)),
 		}));
+	},
+
+	deployWorker: async (params) => {
+		const result = await deployWorkerAction(params);
+		get().fetchWorkers(true);
+		return result;
+	},
+
+	destroyWorker: async (workerId) => {
+		const result = await destroyWorkerAction(workerId);
+		get().fetchWorkers(true);
+		return result;
+	},
+
+	deleteWorker: async (workerId) => {
+		await removeWorkerAction(workerId);
+		get().fetchWorkers(true);
 	},
 }));
