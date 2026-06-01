@@ -10,16 +10,29 @@ import {
 	DEFAULT_K8S_VERSION,
 	AUTOSCALER,
 } from "@/lib/cloud-providers";
+import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useVineStore } from "./use-vine-store";
 import { RepositoryProvider } from "./repository-context";
 import { ProviderRibbon } from "./provider-ribbon";
-import { VineFormTabs, type VineFormTabsHandle } from "./vine-form-tabs";
 import { CostSidebar } from "./cost-sidebar";
+import { SectionProjectBasics } from "./section-project-basics";
+import { SectionNetwork } from "./section-network";
+import { SectionCluster } from "./section-cluster";
+import { SectionDatabases } from "./section-databases";
+import { SectionCaches } from "./section-caches";
+import { SectionNosql } from "./section-nosql";
+import { SectionMessaging } from "./section-messaging";
+import { SectionDns } from "./section-dns";
+import { SectionSecrets } from "./section-secrets";
+import { SectionRepositories } from "./section-repositories";
+import { ReviewTab } from "./review-tab";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
+import { CheckCircle2, ChevronsUpDown, Loader2, Rocket } from "lucide-react";
 
 interface PlantVineFormProps {
 	cloudIdentities: CloudIdentityOption[];
@@ -35,6 +48,20 @@ export function PlantVineForm({ cloudIdentities }: PlantVineFormProps) {
 		</CloudProviderProvider>
 	);
 }
+
+const fieldToSectionId: Record<string, string> = {
+	vine: "section-project-basics",
+	network: "section-network",
+	cluster: "section-cluster",
+	databases: "section-databases",
+	caches: "section-caches",
+	nosql_tables: "section-nosql",
+	queues: "section-messaging",
+	topics: "section-messaging",
+	dns: "section-dns",
+	secrets: "section-secrets",
+	repositories: "section-repositories",
+};
 
 /** Inner form component with access to CloudProvider context. */
 function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
@@ -94,25 +121,16 @@ function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
 			prevProviderRef.current = provider;
 			const autoscalerKey = AUTOSCALER[provider].providerConfigKey;
 
-			// Region — invalid across providers
 			form.setValue("vine.region", "");
-
-			// Cluster — versions, types, autoscaler differ
 			form.setValue("cluster.cluster_version", DEFAULT_K8S_VERSION[provider]);
 			form.setValue("cluster.instance_types", [DEFAULT_INSTANCE_TYPE[provider]]);
 			form.setValue("cluster.provider_config", { [autoscalerKey]: true });
-
-			// Network — reset to create mode, clear stale IDs
 			form.setValue("network.provision_network", true);
 			form.setValue("network.network_id", "");
 			form.setValue("network.cidr_block", "10.0.0.0/16");
-
-			// DNS — zone IDs differ across providers
 			form.setValue("dns.zone_id", "");
 			form.setValue("dns.domain_name", "");
 			form.setValue("dns.provider_config", {});
-
-			// Services with provider-specific values (engines, node types)
 			form.setValue("databases", []);
 			form.setValue("caches", []);
 		}
@@ -137,43 +155,85 @@ function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
 		}
 	};
 
-	const tabsRef = useRef<VineFormTabsHandle>(null);
-
-	/** Maps form field paths to the tab that contains them. */
-	const fieldToTab: Record<string, string> = {
-		vine: "core", network: "core", cluster: "core",
-		databases: "services", caches: "services", nosql_tables: "services", queues: "services", topics: "services",
-		dns: "security", secrets: "security",
-		repositories: "git",
-	};
-
 	const onError = (errors: Record<string, unknown>) => {
 		store.set({ submitted: true });
 
 		const firstErrorKey = Object.keys(errors)[0];
-		const tab = fieldToTab[firstErrorKey] ?? "core";
-		tabsRef.current?.setActiveTab(tab);
+		const sectionId = fieldToSectionId[firstErrorKey];
+		if (sectionId) {
+			document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+		}
 
 		const keys = Object.keys(errors);
-		const summary = Object.entries(errors).map(([k, v]) => {
-			const nested = v && typeof v === "object" ? Object.keys(v as object) : [];
-			const msg = (v as any)?.message || (nested.length ? nested.join(", ") : "unknown");
-			return `${k}: ${msg}`;
-		});
-		console.error("[PlantVine] Validation errors:", summary);
 		toast.error(`Please fix the highlighted fields before planting. (${keys.join(", ")})`);
 	};
 
 	return (
 		<FormProvider {...form}>
 			<form onSubmit={form.handleSubmit(onSubmit, onError)} className="space-y-6">
-				{/* Provider Ribbon — always visible */}
 				<ProviderRibbon identities={cloudIdentities} />
 
-				{/* Main content: tabs + cost sidebar */}
 				<div className="flex gap-6">
-					<div className="flex-1 min-w-0">
-						<VineFormTabs ref={tabsRef} />
+					<div className="flex-1 min-w-0 space-y-6">
+						<div id="section-project-basics" className="scroll-mt-20">
+							<SectionProjectBasics />
+						</div>
+						<div id="section-network" className="scroll-mt-20">
+							<SectionNetwork />
+						</div>
+						<div id="section-cluster" className="scroll-mt-20">
+							<SectionCluster />
+						</div>
+						<div id="section-databases" className="scroll-mt-20">
+							<SectionDatabases />
+						</div>
+						<div id="section-caches" className="scroll-mt-20">
+							<SectionCaches />
+						</div>
+						<div id="section-nosql" className="scroll-mt-20">
+							<SectionNosql />
+						</div>
+						<div id="section-messaging" className="scroll-mt-20">
+							<SectionMessaging />
+						</div>
+						<div id="section-dns" className="scroll-mt-20">
+							<SectionDns />
+						</div>
+						<div id="section-secrets" className="scroll-mt-20">
+							<SectionSecrets />
+						</div>
+						<div id="section-repositories" className="scroll-mt-20">
+							<SectionRepositories />
+						</div>
+
+						<Collapsible>
+							<CollapsibleTrigger asChild>
+								<button
+									type="button"
+									className="flex w-full items-center justify-between rounded-lg border border-border/40 bg-muted/5 px-4 py-3 text-sm font-medium hover:bg-muted/20 transition-colors"
+								>
+									<span className="flex items-center gap-2">
+										<CheckCircle2 className="h-4 w-4 text-muted-foreground" />
+										Review Configuration
+									</span>
+									<ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
+								</button>
+							</CollapsibleTrigger>
+							<CollapsibleContent className="pt-4">
+								<ReviewTab />
+							</CollapsibleContent>
+						</Collapsible>
+
+						<div className="flex items-center justify-end gap-4 pb-8">
+							{store.error && <p className="text-sm text-destructive">{store.error}</p>}
+							<Button type="submit" disabled={store.isLoading} className="min-w-[160px]">
+								{store.isLoading ? (
+									<><Loader2 className="mr-2 h-4 w-4 animate-spin" />Planting...</>
+								) : (
+									<><Rocket className="mr-2 h-4 w-4" />Plant Vine</>
+								)}
+							</Button>
+						</div>
 					</div>
 
 					<div className="hidden lg:block w-72 shrink-0">

@@ -2,21 +2,17 @@
 
 import { useProviderMeta, useProviderSlug, DB_CAPACITY } from "@/lib/cloud-providers";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { useVineStore } from "./use-vine-store";
 import {
 	Bell,
 	Cloud,
 	Database,
 	GitBranch,
 	Globe,
-	Loader2,
 	Lock,
 	MessageSquare,
 	Network,
-	Rocket,
 	Server,
 	Shield,
 	Table,
@@ -55,7 +51,6 @@ function FeaturePill({ label, enabled }: { label: string; enabled: boolean }) {
 /** Review tab — mirrors the overview-tab display style for pre-creation review. */
 export function ReviewTab() {
 	const { watch } = useFormContext<VineFormData>();
-	const store = useVineStore();
 	const meta = useProviderMeta();
 	const provider = useProviderSlug();
 	const capacity = DB_CAPACITY[provider];
@@ -142,21 +137,13 @@ export function ReviewTab() {
 					)}
 
 					{/* Repositories */}
-					{(repositories.env_destination_repo || repositories.gitops_destination_repo) && (
+					{repositories.apps_destination_repo && (
 						<>
 							<Separator />
 							<div>
-								<SectionTitle icon={GitBranch} title="Git Repositories" />
+								<SectionTitle icon={GitBranch} title="Application Repository" />
 								<div className="grid grid-cols-1 gap-2">
-									{repositories.env_destination_repo && (
-										<Field label="Infrastructure Repo" value={repositories.env_destination_repo} mono />
-									)}
-									{repositories.gitops_destination_repo && (
-										<Field label="GitOps Repo" value={repositories.gitops_destination_repo} mono />
-									)}
-									{repositories.apps_destination_repo && (
-										<Field label="Applications Repo" value={repositories.apps_destination_repo} mono />
-									)}
+									<Field label="App Deployment Repo" value={repositories.apps_destination_repo} mono />
 								</div>
 							</div>
 						</>
@@ -308,18 +295,6 @@ export function ReviewTab() {
 					</CardContent>
 				</Card>
 			)}
-
-			{/* Submit */}
-			<div className="flex items-center justify-end gap-4 pb-8">
-				{store.error && <p className="text-sm text-destructive">{store.error}</p>}
-				<Button type="submit" disabled={store.isLoading} className="min-w-[160px]">
-					{store.isLoading ? (
-						<><Loader2 className="mr-2 h-4 w-4 animate-spin" />Planting...</>
-					) : (
-						<><Rocket className="mr-2 h-4 w-4" />Plant Vine</>
-					)}
-				</Button>
-			</div>
 		</div>
 	);
 }
