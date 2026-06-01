@@ -3,7 +3,7 @@
 import {
 	WorkerCard,
 } from "@/components/workers/worker-card";
-import { RegisterWorkerButton } from "@/components/workers/register-worker-button";
+import { AddWorkerButton } from "@/components/workers/add-worker-button";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkersStore, type ActiveJob } from "@/lib/stores/use-workers-store";
 import type { PublicWorkersRow } from "@/lib/validations/db.schemas";
@@ -117,7 +117,7 @@ export default function WorkersPage() {
 						infrastructure. Cloud workers are managed by the
 						platform. You can also deploy your own.
 					</p>
-					<RegisterWorkerButton />
+					<AddWorkerButton />
 				</div>
 			) : (
 				<>
@@ -147,13 +147,13 @@ export default function WorkersPage() {
 									credentials never leave your account.
 								</p>
 								<div className="pt-1">
-									<RegisterWorkerButton />
+									<AddWorkerButton />
 								</div>
 							</div>
 						</div>
 					) : (
 						<div className="flex justify-end">
-							<RegisterWorkerButton />
+							<AddWorkerButton />
 						</div>
 					)}
 				</>
