@@ -6,6 +6,7 @@ import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
 import { createClient } from "@/lib/supabase/client";
 import { DataTable } from "@/components/data-table";
 import { jobColumns } from "@/components/jobs/columns";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,7 @@ export default function DashboardPage() {
 	const [onlineWorkers, setOnlineWorkers] = useState(0);
 
 	useEffect(() => {
+		jobsStore.fetchJobs();
 		vineyardsStore.fetchVineyards();
 		getIntegrationsWithStatus().then(setIntegrations).catch(() => {});
 
@@ -60,6 +62,67 @@ export default function DashboardPage() {
 	const handleJobClick = (job: PublicProvisionJobsRow) => {
 		router.push(`/dashboard/jobs/${job.id}`);
 	};
+
+	if (jobsStore.isLoading && vineyardsStore.isLoading) {
+		return (
+			<div className="space-y-8 w-full">
+				<div className="flex items-center justify-between">
+					<div className="space-y-1">
+						<Skeleton className="h-7 w-28" />
+						<Skeleton className="h-4 w-52" />
+					</div>
+					<Skeleton className="h-8 w-28 rounded-md" />
+				</div>
+
+				<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+					{[1, 2, 3, 4].map((i) => (
+						<div key={i} className="flex items-center gap-3 rounded-lg border border-border/40 px-3 py-2.5">
+							<Skeleton className="h-7 w-7 rounded-md" />
+							<div className="space-y-1">
+								<Skeleton className="h-5 w-8" />
+								<Skeleton className="h-2.5 w-14" />
+							</div>
+						</div>
+					))}
+				</div>
+
+				<div className="space-y-3">
+					<div className="flex items-center justify-between">
+						<Skeleton className="h-3 w-24" />
+						<Skeleton className="h-6 w-16" />
+					</div>
+					<div className="flex flex-wrap gap-2">
+						{[1, 2, 3, 4].map((i) => (
+							<Skeleton key={i} className="h-7 w-28 rounded-full" />
+						))}
+					</div>
+				</div>
+
+				<div className="space-y-3">
+					<div className="flex items-center justify-between">
+						<Skeleton className="h-3 w-24" />
+						<Skeleton className="h-6 w-16" />
+					</div>
+					<div className="rounded-lg border border-border/40">
+						<div className="flex gap-4 border-b border-border/40 p-3">
+							{[1, 2, 3, 4, 5].map((i) => (
+								<Skeleton key={i} className="h-3 w-20" />
+							))}
+						</div>
+						{[1, 2, 3, 4, 5].map((i) => (
+							<div key={i} className="flex gap-4 border-b border-border/20 p-3">
+								<Skeleton className="h-3 w-16" />
+								<Skeleton className="h-3 w-20" />
+								<Skeleton className="h-3 w-14 rounded-full" />
+								<Skeleton className="h-3 w-24" />
+								<Skeleton className="h-3 w-28" />
+							</div>
+						))}
+					</div>
+				</div>
+			</div>
+		);
+	}
 
 	return (
 		<div className="space-y-8 w-full">

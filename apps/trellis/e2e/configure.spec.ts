@@ -2,7 +2,7 @@ import { test, expect } from "./fixtures/auth";
 
 test.describe("Plant a Vine form", () => {
 	test.beforeEach(async ({ authedPage: page }) => {
-		await page.goto("/dashboard/configure");
+		await page.goto("/dashboard/plant");
 	});
 
 	test("loads with heading", async ({ authedPage: page }) => {

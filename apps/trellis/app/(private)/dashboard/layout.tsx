@@ -54,29 +54,31 @@ export default function DashboardLayout({
 
 	useEffect(() => {
 		const supabase = createClient();
+		let channel: ReturnType<typeof supabase.channel> | null = null;
 
 		supabase.auth.getUser().then(({ data: { user: u } }) => {
-			if (u) {
-				setUser(u);
-				useJobsStore.getState().fetchJobs();
+			if (!u) return;
+			setUser(u);
+			useJobsStore.getState().fetchJobs(true);
 
-				const channel = supabase
-					.channel("jobs-realtime-global")
-					.on(
-						"postgres_changes",
-						{ event: "*", schema: "public", table: "provision_jobs" },
-						(payload) => {
-							const job = payload.new as PublicProvisionJobsRow;
-							if (job && job.user_id === u.id) {
-								useJobsStore.getState().addOrUpdateJob(job);
-							}
-						},
-					)
-					.subscribe();
-
-				return () => { supabase.removeChannel(channel); };
-			}
+			channel = supabase
+				.channel("jobs-realtime-global")
+				.on(
+					"postgres_changes",
+					{ event: "*", schema: "public", table: "provision_jobs" },
+					(payload) => {
+						const job = payload.new as PublicProvisionJobsRow;
+						if (job && job.user_id === u.id) {
+							useJobsStore.getState().addOrUpdateJob(job);
+						}
+					},
+				)
+				.subscribe();
 		});
+
+		return () => {
+			if (channel) supabase.removeChannel(channel);
+		};
 	}, []);
 
 	const handleLogout = async () => {
@@ -240,7 +242,7 @@ export default function DashboardLayout({
 								</DropdownMenuItem>
 								<DropdownMenuItem asChild>
 									<Link
-										href="/dashboard/configure"
+										href="/dashboard/plant"
 										className="cursor-pointer"
 									>
 										<Settings className="mr-2 h-4 w-4 text-muted-foreground" />

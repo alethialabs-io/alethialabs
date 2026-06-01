@@ -2,6 +2,7 @@
 
 import { DataTable } from "@/components/data-table";
 import { jobColumns } from "@/components/jobs/columns";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
 	useJobsStore,
 	type PublicProvisionJobStatus,
@@ -12,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ClipboardList, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 const STATUS_FILTERS: (PublicProvisionJobStatus | "All")[] = [
 	"All", "QUEUED", "PROCESSING", "SUCCESS", "FAILED",
@@ -34,12 +35,16 @@ export default function JobsPage() {
 		searchQuery,
 		currentPage,
 		pageSize,
+		fetchJobs,
 		setStatusFilter,
 		setTypeFilter,
 		setSearchQuery,
 		setCurrentPage,
 	} = store;
 
+	useEffect(() => {
+		fetchJobs();
+	}, [fetchJobs]);
 
 	const filtered = useMemo(() => {
 		let result = jobs;
@@ -72,9 +77,31 @@ export default function JobsPage() {
 					<h1 className="text-2xl font-semibold tracking-tight text-foreground">Jobs</h1>
 					<p className="text-sm text-muted-foreground mt-1">Provision job history and execution logs.</p>
 				</div>
-				<div className="animate-pulse space-y-3">
-					<div className="h-9 bg-muted rounded w-full" />
-					<div className="h-64 bg-muted rounded" />
+				<div className="space-y-4">
+					<div className="flex flex-col sm:flex-row gap-3">
+						<div className="flex gap-1">
+							{[1, 2, 3, 4, 5].map((i) => (
+								<Skeleton key={i} className="h-7 w-16 rounded-md" />
+							))}
+						</div>
+						<Skeleton className="h-7 w-48 rounded-md" />
+					</div>
+					<div className="rounded-lg border border-border/40">
+						<div className="flex gap-4 border-b border-border/40 p-3">
+							{[1, 2, 3, 4, 5].map((i) => (
+								<Skeleton key={i} className="h-3 w-20" />
+							))}
+						</div>
+						{[1, 2, 3, 4, 5].map((i) => (
+							<div key={i} className="flex gap-4 border-b border-border/20 p-3">
+								<Skeleton className="h-3 w-16" />
+								<Skeleton className="h-3 w-20" />
+								<Skeleton className="h-3 w-14 rounded-full" />
+								<Skeleton className="h-3 w-24" />
+								<Skeleton className="h-3 w-28" />
+							</div>
+						))}
+					</div>
 				</div>
 			</div>
 		);

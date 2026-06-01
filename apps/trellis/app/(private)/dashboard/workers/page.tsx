@@ -4,6 +4,7 @@ import {
 	WorkerCard,
 } from "@/components/workers/worker-card";
 import { AddWorkerButton } from "@/components/workers/add-worker-button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkersStore, type ActiveJob } from "@/lib/stores/use-workers-store";
 import type { PublicWorkersRow } from "@/lib/validations/db.schemas";
@@ -83,10 +84,20 @@ export default function WorkersPage() {
 				</div>
 				<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
 					{[1, 2, 3].map((i) => (
-						<div
-							key={i}
-							className="h-32 rounded-lg bg-muted animate-pulse"
-						/>
+						<div key={i} className="rounded-lg border border-border/40 p-4 space-y-3">
+							<div className="flex items-center gap-2">
+								<Skeleton className="h-2.5 w-2.5 rounded-full" />
+								<Skeleton className="h-4 w-28" />
+							</div>
+							<div className="space-y-1.5">
+								<Skeleton className="h-3 w-40" />
+								<Skeleton className="h-3 w-24" />
+							</div>
+							<div className="flex gap-2 pt-1">
+								<Skeleton className="h-5 w-16 rounded-full" />
+								<Skeleton className="h-5 w-20 rounded-full" />
+							</div>
+						</div>
 					))}
 				</div>
 			</div>
