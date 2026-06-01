@@ -101,11 +101,16 @@ export const publicIntegrationAuthMethodSchema = z.union([
   z.literal("service_account"),
   z.literal("service_principal"),
   z.literal("ram_role"),
+  z.literal("api_key"),
 ]);
 
 export const publicIntegrationCategorySchema = z.union([
   z.literal("git"),
   z.literal("cloud"),
+  z.literal("observability"),
+  z.literal("registry"),
+  z.literal("dns"),
+  z.literal("secrets"),
 ]);
 
 export const publicIntegrationStatusSchema = z.union([
@@ -147,7 +152,7 @@ export const publicProvisionJobStatusSchema = z.union([
 ]);
 
 export const publicProvisionJobTypeSchema = z.union([
-  z.literal("BOOTSTRAP"),
+  z.literal("DESTROY_WORKER"),
   z.literal("DEPLOY"),
   z.literal("DESTROY"),
   z.literal("CONNECTION_TEST"),

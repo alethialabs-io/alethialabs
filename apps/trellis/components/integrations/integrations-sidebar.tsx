@@ -3,14 +3,16 @@
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { Blocks, Cloud, GitBranch } from "lucide-react";
+import type { Database } from "@/types/database.types";
+import { Activity, Blocks, Cloud, Container, GitBranch, Globe, KeyRound } from "lucide-react";
 
-export type CategoryFilter = "all" | "git" | "cloud";
+type IntegrationCategory = Database["public"]["Enums"]["integration_category"];
+export type CategoryFilter = "all" | IntegrationCategory;
 
 interface IntegrationsSidebarProps {
 	selected: CategoryFilter;
 	onSelect: (category: CategoryFilter) => void;
-	counts: { all: number; git: number; cloud: number };
+	counts: Record<CategoryFilter, number>;
 }
 
 const categories: {
@@ -28,6 +30,10 @@ const subcategories: {
 }[] = [
 	{ id: "git", label: "Git", icon: GitBranch },
 	{ id: "cloud", label: "Cloud", icon: Cloud },
+	{ id: "observability", label: "Observability", icon: Activity },
+	{ id: "registry", label: "Registries", icon: Container },
+	{ id: "dns", label: "DNS", icon: Globe },
+	{ id: "secrets", label: "Secrets", icon: KeyRound },
 ];
 
 export function IntegrationsSidebar({

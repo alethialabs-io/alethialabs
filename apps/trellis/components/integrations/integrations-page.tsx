@@ -77,14 +77,13 @@ export function IntegrationsPage({
 	const [isDisconnecting, setIsDisconnecting] = useState(false);
 	const [connectingSlug, setConnectingSlug] = useState<string | null>(null);
 
-	const counts = useMemo(
-		() => ({
-			all: integrations.length,
-			git: integrations.filter((i) => i.category === "git").length,
-			cloud: integrations.filter((i) => i.category === "cloud").length,
-		}),
-		[integrations],
-	);
+	const counts = useMemo(() => {
+		const result: Record<string, number> = { all: integrations.length };
+		for (const i of integrations) {
+			result[i.category] = (result[i.category] ?? 0) + 1;
+		}
+		return result as Record<CategoryFilter, number>;
+	}, [integrations]);
 
 	const filtered = useMemo(() => {
 		let result = integrations;

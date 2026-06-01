@@ -95,15 +95,6 @@ export type PublicCloudIdentitiesInsert = z.infer<
 export type PublicCloudIdentitiesUpdate = z.infer<
   typeof generated.publicCloudIdentitiesUpdateSchema
 >;
-export type PublicClusterAdminsRow = z.infer<
-  typeof generated.publicClusterAdminsRowSchema
->;
-export type PublicClusterAdminsInsert = z.infer<
-  typeof generated.publicClusterAdminsInsertSchema
->;
-export type PublicClusterAdminsUpdate = z.infer<
-  typeof generated.publicClusterAdminsUpdateSchema
->;
 export type PublicIntegrationsRow = z.infer<
   typeof generated.publicIntegrationsRowSchema
 >;

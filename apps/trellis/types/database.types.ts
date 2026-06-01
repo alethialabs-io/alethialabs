@@ -118,27 +118,6 @@ export type Database = {
         }
         Relationships: []
       }
-      cluster_admins: {
-        Row: {
-          created_at: string | null
-          email: string
-          id: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string | null
-          email: string
-          id?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string | null
-          email?: string
-          id?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
       integrations: {
         Row: {
           auth_method: Database["public"]["Enums"]["integration_auth_method"]
@@ -514,7 +493,10 @@ export type Database = {
       }
       vine_cluster: {
         Row: {
+          argocd_admin_password: string | null
+          argocd_url: string | null
           cluster_admins: Array<{ username: string; groups: string[] }> | null
+          cluster_arn: string | null
           cluster_endpoint: string | null
           cluster_name: string | null
           cluster_version: string | null
@@ -532,7 +514,10 @@ export type Database = {
           vine_id: string
         }
         Insert: {
+          argocd_admin_password?: string | null
+          argocd_url?: string | null
           cluster_admins?: Array<{ username: string; groups: string[] }> | null
+          cluster_arn?: string | null
           cluster_endpoint?: string | null
           cluster_name?: string | null
           cluster_version?: string | null
@@ -550,7 +535,10 @@ export type Database = {
           vine_id: string
         }
         Update: {
+          argocd_admin_password?: string | null
+          argocd_url?: string | null
           cluster_admins?: Array<{ username: string; groups: string[] }> | null
+          cluster_arn?: string | null
           cluster_endpoint?: string | null
           cluster_name?: string | null
           cluster_version?: string | null
@@ -650,13 +638,18 @@ export type Database = {
       vine_databases: {
         Row: {
           backup_retention_days: number | null
+          cluster_arn: string | null
+          cluster_identifier: string | null
           created_at: string
+          credentials_kms_key_arn: string | null
           endpoint: string | null
           engine: string | null
           engine_version: string | null
           estimated_monthly_cost: number | null
+          extra_credentials_secret_arn: string | null
           iam_auth: boolean | null
           id: string
+          master_credentials_secret_arn: string | null
           max_capacity: number | null
           min_capacity: number | null
           name: string
@@ -669,13 +662,18 @@ export type Database = {
         }
         Insert: {
           backup_retention_days?: number | null
+          cluster_arn?: string | null
+          cluster_identifier?: string | null
           created_at?: string
+          credentials_kms_key_arn?: string | null
           endpoint?: string | null
           engine?: string | null
           engine_version?: string | null
           estimated_monthly_cost?: number | null
+          extra_credentials_secret_arn?: string | null
           iam_auth?: boolean | null
           id?: string
+          master_credentials_secret_arn?: string | null
           max_capacity?: number | null
           min_capacity?: number | null
           name: string
@@ -688,13 +686,18 @@ export type Database = {
         }
         Update: {
           backup_retention_days?: number | null
+          cluster_arn?: string | null
+          cluster_identifier?: string | null
           created_at?: string
+          credentials_kms_key_arn?: string | null
           endpoint?: string | null
           engine?: string | null
           engine_version?: string | null
           estimated_monthly_cost?: number | null
+          extra_credentials_secret_arn?: string | null
           iam_auth?: boolean | null
           id?: string
+          master_credentials_secret_arn?: string | null
           max_capacity?: number | null
           min_capacity?: number | null
           name?: string
@@ -1522,7 +1525,14 @@ export type Database = {
         | "service_account"
         | "service_principal"
         | "ram_role"
-      integration_category: "git" | "cloud"
+        | "api_key"
+      integration_category:
+        | "git"
+        | "cloud"
+        | "observability"
+        | "registry"
+        | "dns"
+        | "secrets"
       integration_status: "active" | "coming_soon"
       logs_level: "debug" | "info" | "warn" | "error" | "critical"
       nosql_billing_mode: "PAY_PER_REQUEST" | "PROVISIONED"
@@ -1536,12 +1546,13 @@ export type Database = {
         | "FAILED"
         | "CANCELLED"
       provision_job_type:
-        | "BOOTSTRAP"
+        | "DESTROY_WORKER"
         | "DEPLOY"
         | "DESTROY"
         | "CONNECTION_TEST"
         | "FETCH_RESOURCES"
         | "PLAN"
+        | "DEPLOY_WORKER"
       registry_tag_mutability: "MUTABLE" | "IMMUTABLE"
       vine_status:
         | "DRAFT"
@@ -1732,8 +1743,16 @@ export const Constants = {
         "service_account",
         "service_principal",
         "ram_role",
+        "api_key",
       ],
-      integration_category: ["git", "cloud"],
+      integration_category: [
+        "git",
+        "cloud",
+        "observability",
+        "registry",
+        "dns",
+        "secrets",
+      ],
       integration_status: ["active", "coming_soon"],
       logs_level: ["debug", "info", "warn", "error", "critical"],
       nosql_billing_mode: ["PAY_PER_REQUEST", "PROVISIONED"],
@@ -1748,12 +1767,13 @@ export const Constants = {
         "CANCELLED",
       ],
       provision_job_type: [
-        "BOOTSTRAP",
+        "DESTROY_WORKER",
         "DEPLOY",
         "DESTROY",
         "CONNECTION_TEST",
         "FETCH_RESOURCES",
         "PLAN",
+        "DEPLOY_WORKER",
       ],
       registry_tag_mutability: ["MUTABLE", "IMMUTABLE"],
       vine_status: [
