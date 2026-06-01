@@ -8,7 +8,13 @@ import {
 	PopoverContent,
 	PopoverTrigger,
 } from "@/components/ui/popover";
-import { Check, Circle, Loader2, Server } from "lucide-react";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Check, Loader2, Server } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
@@ -111,12 +117,21 @@ export function WorkerSelectPopover({
 											<Check className="h-3.5 w-3.5" />
 										)}
 									</div>
-									<Circle
-										className={cn(
-											"h-2 w-2 fill-current shrink-0",
-											STATUS_DOT[status],
-										)}
-									/>
+									<TooltipProvider delayDuration={300}>
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<span className="relative flex h-2.5 w-2.5 shrink-0">
+													{isOnline && (
+														<span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${STATUS_DOT[status]}`} />
+													)}
+													<span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${STATUS_DOT[status]}`} />
+												</span>
+											</TooltipTrigger>
+											<TooltipContent side="top" className="text-xs">
+												{status}
+											</TooltipContent>
+										</Tooltip>
+									</TooltipProvider>
 									<span className="truncate flex-1">
 										{w.name}
 									</span>

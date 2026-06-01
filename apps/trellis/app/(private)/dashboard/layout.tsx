@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import type { PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
 import { User as IUser } from "@supabase/supabase-js";
 import { SidebarVineyards } from "@/components/sidebar-vineyards";
+import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
 import {
 	Bell,
 	Blocks,
@@ -119,19 +120,7 @@ export default function DashboardLayout({
 								<Menu className="h-5 w-5" />
 							)}
 						</Button>
-						<Link
-							href="/dashboard"
-							className="flex items-center gap-3 transition-opacity hover:opacity-80"
-						>
-							<img
-								src="/itgix-favicon-32x32.png"
-								alt="ItGix Logo"
-								className="w-6 h-6 grayscale"
-							/>
-							<h2 className="font-semibold text-sm tracking-tight text-foreground">
-								Trellis
-							</h2>
-						</Link>
+						<HeaderBreadcrumbs />
 					</div>
 
 					<div className="flex items-center gap-2 sm:gap-4">
@@ -187,7 +176,10 @@ export default function DashboardLayout({
 													</p>
 												</div>
 												{!n.read && (
-													<span className="h-2 w-2 rounded-full bg-blue-500 shrink-0" />
+													<span className={cn(
+														"h-2 w-2 rounded-full shrink-0",
+														n.status === "FAILED" ? "bg-destructive" : n.status === "SUCCESS" ? "bg-emerald-500" : "bg-blue-500",
+													)} />
 												)}
 											</div>
 										</Link>
