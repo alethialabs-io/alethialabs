@@ -26,11 +26,6 @@ const JOB_TYPES: Record<
 		icon: FileSearch,
 		description: "Dry-run infrastructure plan",
 	},
-	BOOTSTRAP: {
-		label: "Bootstrap",
-		icon: Rocket,
-		description: "Initial EKS cluster setup",
-	},
 	DEPLOY: {
 		label: "Deploy",
 		icon: Upload,

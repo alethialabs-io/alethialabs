@@ -20,7 +20,7 @@ const STATUS_FILTERS: (PublicProvisionJobStatus | "All")[] = [
 ];
 
 const TYPE_FILTERS: (PublicProvisionJobType | "All")[] = [
-	"All", "DEPLOY", "PLAN", "BOOTSTRAP", "DESTROY", "CONNECTION_TEST", "FETCH_RESOURCES",
+	"All", "DEPLOY", "PLAN", "DESTROY", "CONNECTION_TEST", "FETCH_RESOURCES", "DEPLOY_WORKER", "DESTROY_WORKER",
 ];
 
 export default function JobsPage() {
