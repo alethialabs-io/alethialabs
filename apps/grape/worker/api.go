@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -177,6 +179,106 @@ func (c *WorkerAPIClient) SendLog(jobID, logChunk, streamType string) error {
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("send log returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func (c *WorkerAPIClient) UploadPlanArtifact(jobID, filePath string) error {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read plan file: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/jobs/%s/plan-artifact", c.baseURL, jobID), bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	c.setWorkerHeaders(req)
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("upload plan artifact failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("upload plan artifact returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func (c *WorkerAPIClient) DownloadPlanArtifact(jobID, destPath string) error {
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/jobs/%s/plan-artifact", c.baseURL, jobID), nil)
+	if err != nil {
+		return err
+	}
+	c.setWorkerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("download plan artifact failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("plan artifact not found (expired or missing)")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download plan artifact returned status %d", resp.StatusCode)
+	}
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("failed to create dest file: %w", err)
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		return fmt.Errorf("failed to write plan artifact: %w", err)
+	}
+	return nil
+}
+
+func (c *WorkerAPIClient) UpdateWorkerMetadata(workerID string, metadata map[string]any) error {
+	body, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("PATCH", fmt.Sprintf("%s/workers/%s/metadata", c.baseURL, workerID), bytes.NewBuffer(body))
+	if err != nil {
+		return err
+	}
+	c.setWorkerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("update worker metadata failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("update worker metadata returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func (c *WorkerAPIClient) DeleteWorker(workerID string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/workers/%s", c.baseURL, workerID), nil)
+	if err != nil {
+		return err
+	}
+	c.setWorkerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete worker failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("delete worker returned status %d", resp.StatusCode)
 	}
 	return nil
 }

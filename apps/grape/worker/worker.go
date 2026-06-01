@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/cloud"
 	grapeAws "github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/cloud/aws"
 	grapeAzure "github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/cloud/azure"
 	grapeGcp "github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/cloud/gcp"
@@ -21,6 +24,11 @@ type Config struct {
 	TrellisURL  string
 	WorkerID    string
 	WorkerToken string
+
+	SupabaseS3Endpoint  string
+	SupabaseS3Region    string
+	SupabaseS3AccessKey string
+	SupabaseS3SecretKey string
 }
 
 type Worker struct {
@@ -39,16 +47,31 @@ func NewWithAPI(cfg Config, api JobAPI) *Worker {
 	return &Worker{config: cfg, api: api}
 }
 
+func (w *Worker) supabaseBackend() *cloud.SupabaseBackendConfig {
+	return cloud.SupabaseBackendFromConfig(
+		w.config.SupabaseS3Endpoint,
+		w.config.SupabaseS3Region,
+		w.config.SupabaseS3AccessKey,
+		w.config.SupabaseS3SecretKey,
+	)
+}
+
 func (w *Worker) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	var draining atomic.Bool
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
 		fmt.Println("\nReceived shutdown signal, finishing current job...")
-		cancel()
+		draining.Store(true)
+		time.AfterFunc(10*time.Minute, func() {
+			fmt.Println("Grace period expired, forcing shutdown...")
+			cancel()
+		})
 	}()
 
 	go w.heartbeatLoop(ctx)
@@ -56,7 +79,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	fmt.Printf("Worker started (id=%s, mode=%s)\n", w.config.WorkerID, w.config.Mode)
 	fmt.Printf("Polling %s for jobs...\n", w.config.TrellisURL)
 
-	return w.pollLoop(ctx)
+	return w.pollLoop(ctx, &draining)
 }
 
 func (w *Worker) heartbeatLoop(ctx context.Context) {
@@ -79,7 +102,7 @@ func (w *Worker) heartbeatLoop(ctx context.Context) {
 	}
 }
 
-func (w *Worker) pollLoop(ctx context.Context) error {
+func (w *Worker) pollLoop(ctx context.Context, draining *atomic.Bool) error {
 	pollInterval := 10 * time.Second
 
 	for {
@@ -87,6 +110,11 @@ func (w *Worker) pollLoop(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		default:
+		}
+
+		if draining.Load() {
+			fmt.Println("Draining: no more jobs will be claimed. Exiting.")
+			return nil
 		}
 
 		claim, err := w.api.ClaimJob()
@@ -251,6 +279,10 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 		execErr = w.executeDeploy(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	case "DESTROY":
 		execErr = w.executeDestroy(ctx, job, stdoutLogger, stderrLogger)
+	case "DEPLOY_WORKER":
+		execErr = w.executeDeployWorker(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
+	case "DESTROY_WORKER":
+		execErr = w.executeDestroyWorker(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}
@@ -320,11 +352,20 @@ func (w *Worker) fetchAwsResources(ctx context.Context, logger *JobLogger) (map[
 	}
 	fmt.Fprintf(logger, "Found %d hosted zones\n", len(hostedZones))
 
+	fmt.Fprintln(logger, "Fetching IAM users...")
+	iamClient, err := grapeAws.NewIAMClient(ctx, grapeAws.AWSOptions{Region: "us-east-1"})
+	var iamUsers []grapeAws.IAMUserInfo
+	if err == nil {
+		iamUsers, _ = iamClient.ListUsers(ctx)
+	}
+	fmt.Fprintf(logger, "Found %d IAM users\n", len(iamUsers))
+
 	return map[string]any{
 		"regions":      regions,
 		"vpcs":         vpcs,
 		"subnets":      subnets,
 		"hosted_zones": hostedZones,
+		"iam_users":    iamUsers,
 	}, nil
 }
 
@@ -495,12 +536,24 @@ func (w *Worker) executeDeploy(ctx context.Context, job *Job, provider string, i
 	}
 
 	params := provisioner.DeployParams{
-		VineConfig:     vc,
-		Provider:       provider,
-		TemplatesDir:   resolveTemplatesDir(),
-		GitAccessToken: vc.GitAccessToken,
-		Stdout:         stdout,
-		Stderr:         stderr,
+		VineConfig:      vc,
+		Provider:        provider,
+		TemplatesDir:    resolveTemplatesDir(),
+		GitAccessToken:  vc.GitAccessToken,
+		SupabaseBackend: w.supabaseBackend(),
+		Stdout:          stdout,
+		Stderr:          stderr,
+	}
+
+	if job.PlanJobID != nil && *job.PlanJobID != "" {
+		planFileDest := filepath.Join(os.TempDir(), fmt.Sprintf("plan-apply-%s.out", job.ID))
+		if dlErr := w.api.DownloadPlanArtifact(*job.PlanJobID, planFileDest); dlErr != nil {
+			fmt.Fprintf(stdout, "Warning: could not download plan artifact: %v (will re-plan)\n", dlErr)
+		} else {
+			fmt.Fprintln(stdout, "Using saved plan artifact from plan job.")
+			params.PlanFile = planFileDest
+			defer os.Remove(planFileDest)
+		}
 	}
 
 	result, err := provisioner.RunDeployV2(ctx, params)
@@ -508,12 +561,26 @@ func (w *Worker) executeDeploy(ctx context.Context, job *Job, provider string, i
 		return err
 	}
 
-	if result != nil && (result.ClusterName != "" || result.ClusterEndpoint != "") {
-		metadata := map[string]any{
-			"cluster_name":     result.ClusterName,
-			"cluster_endpoint": result.ClusterEndpoint,
+	if result != nil {
+		metadata := map[string]any{}
+		if result.ClusterName != "" {
+			metadata["cluster_name"] = result.ClusterName
 		}
-		w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
+		if result.ClusterEndpoint != "" {
+			metadata["cluster_endpoint"] = result.ClusterEndpoint
+		}
+		if result.ArgocdURL != "" {
+			metadata["argocd_url"] = result.ArgocdURL
+		}
+		if result.ArgocdAdminPassword != "" {
+			metadata["argocd_admin_password"] = result.ArgocdAdminPassword
+		}
+		if len(result.Outputs) > 0 {
+			metadata["outputs"] = result.Outputs
+		}
+		if len(metadata) > 0 {
+			w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
+		}
 	}
 
 	return nil
@@ -537,14 +604,15 @@ func (w *Worker) executePlan(ctx context.Context, job *Job, provider string, ide
 	infracostKey := os.Getenv("INFRACOST_API_KEY")
 
 	params := provisioner.DeployParams{
-		VineConfig:     vc,
-		Provider:       provider,
-		DryRun:         true,
-		TemplatesDir:   resolveTemplatesDir(),
-		InfracostToken: infracostKey,
-		GitAccessToken: vc.GitAccessToken,
-		Stdout:         stdout,
-		Stderr:         stderr,
+		VineConfig:      vc,
+		Provider:        provider,
+		DryRun:          true,
+		TemplatesDir:    resolveTemplatesDir(),
+		InfracostToken:  infracostKey,
+		GitAccessToken:  vc.GitAccessToken,
+		SupabaseBackend: w.supabaseBackend(),
+		Stdout:          stdout,
+		Stderr:          stderr,
 	}
 
 	w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
@@ -573,6 +641,19 @@ func (w *Worker) executePlan(ctx context.Context, job *Job, provider string, ide
 			if result.CostBreakdown.Summary != nil {
 				metadata["cost_summary"] = result.CostBreakdown.Summary
 			}
+		}
+	}
+
+	if result != nil && len(result.PlanFileBytes) > 0 {
+		tmpPlan := filepath.Join(os.TempDir(), fmt.Sprintf("plan-%s.out", job.ID))
+		if err := os.WriteFile(tmpPlan, result.PlanFileBytes, 0644); err == nil {
+			if uploadErr := w.api.UploadPlanArtifact(job.ID, tmpPlan); uploadErr != nil {
+				fmt.Fprintf(stderr, "Warning: failed to upload plan artifact: %v\n", uploadErr)
+			} else {
+				fmt.Fprintln(stdout, "Plan artifact uploaded to storage.")
+				metadata["plan_file_key"] = fmt.Sprintf("%s/terraform.plan.out", job.ID)
+			}
+			os.Remove(tmpPlan)
 		}
 	}
 

@@ -67,6 +67,22 @@ func (m *mockAPI) GetJob(jobID string) (*Job, error) {
 	return nil, fmt.Errorf("job not found: %s", jobID)
 }
 
+func (m *mockAPI) UploadPlanArtifact(jobID, filePath string) error {
+	return nil
+}
+
+func (m *mockAPI) DownloadPlanArtifact(jobID, destPath string) error {
+	return fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockAPI) UpdateWorkerMetadata(workerID string, metadata map[string]any) error {
+	return nil
+}
+
+func (m *mockAPI) DeleteWorker(workerID string) error {
+	return nil
+}
+
 func (m *mockAPI) getStatusUpdates() []statusUpdate {
 	m.mu.Lock()
 	defer m.mu.Unlock()
