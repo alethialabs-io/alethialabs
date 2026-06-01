@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import type { ActiveJob } from "@/lib/stores/use-workers-store";
 
 interface WorkerCardProps {
-	worker: PublicWorkersRow & { is_default?: boolean };
+	worker: PublicWorkersRow;
 	activeJob: ActiveJob | null;
 }
 
@@ -25,12 +25,11 @@ export function WorkerCard({ worker, activeJob }: WorkerCardProps) {
 	const router = useRouter();
 	const { setDefaultWorker } = useWorkersStore();
 	const [toggling, setToggling] = useState(false);
-	const isDefault = !!(worker as any).is_default;
-	const status = (worker.status as string) ?? "OFFLINE";
-	const mode = worker.mode as string;
-	const ModeIcon = mode === "cloud-hosted" ? Cloud : Server;
-	const modeLabel = mode === "cloud-hosted" ? "Cloud" : "Self-hosted";
-	const dotColor = STATUS_DOT_COLORS[status] ?? STATUS_DOT_COLORS.OFFLINE;
+	const isDefault = worker.is_default;
+	const status = worker.status ?? "OFFLINE";
+	const ModeIcon = worker.mode === "cloud-hosted" ? Cloud : Server;
+	const modeLabel = worker.mode === "cloud-hosted" ? "Cloud" : "Self-hosted";
+	const dotColor = STATUS_DOT_COLORS[status];
 	const isOnline = status === "ONLINE";
 
 	const handleToggleDefault = async (e: React.MouseEvent) => {
@@ -79,7 +78,7 @@ export function WorkerCard({ worker, activeJob }: WorkerCardProps) {
 				</div>
 				<Badge
 					variant="outline"
-					className={`text-[10px] py-0 ${WORKER_MODE_STYLES[mode] ?? ""}`}
+					className={`text-[10px] py-0 ${WORKER_MODE_STYLES[worker.mode]}`}
 				>
 					<ModeIcon className="mr-1 h-3 w-3" />
 					{modeLabel}
