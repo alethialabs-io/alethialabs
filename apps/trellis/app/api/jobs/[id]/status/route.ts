@@ -55,10 +55,24 @@ export async function PUT(
 			);
 		}
 
-		if (status === "SUCCESS") {
-			finalizeDeploymentWithClient(supabase, jobId).catch((err) =>
-				console.error("Finalize deployment error:", err),
-			);
+		if (status === "PROCESSING" || status === "SUCCESS" || status === "FAILED") {
+			const { data: job } = await supabase
+				.from("provision_jobs")
+				.select("job_type, vine_id")
+				.eq("id", jobId)
+				.single();
+
+			if (job?.job_type === "DEPLOY" && job.vine_id) {
+				if (status === "PROCESSING") {
+					await supabase.from("vines").update({ status: "PROVISIONING" }).eq("id", job.vine_id);
+				} else if (status === "FAILED") {
+					await supabase.from("vines").update({ status: "FAILED" }).eq("id", job.vine_id);
+				} else if (status === "SUCCESS") {
+					finalizeDeploymentWithClient(supabase, jobId).catch((err) =>
+						console.error("Finalize deployment error:", err),
+					);
+				}
+			}
 		}
 
 		return NextResponse.json({ success: true });
