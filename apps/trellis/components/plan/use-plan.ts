@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { planVine, provisionVine } from "@/app/server/actions/vines";
 import { getPlanResult, getVineJobs } from "@/app/server/actions/jobs";
-import { finalizeDeployment } from "@/app/server/actions/deployments";
 import {
 	parsePlanJSON,
 	type PlanSummary,
@@ -12,6 +11,7 @@ import {
 	parseCostBreakdown,
 	type CostSummary,
 } from "@/lib/plan/parse-cost";
+import { useJobsStore } from "@/lib/stores/use-jobs-store";
 import { createClient } from "@/lib/supabase/client";
 
 export type PlanPhase =
@@ -49,16 +49,13 @@ export function usePlan(vineId: string | null): UsePlanReturn {
 	const [costResult, setCostResult] = useState<CostSummary | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [error, setError] = useState<string | null>(null);
-	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const channelRef = useRef<ReturnType<
 		ReturnType<typeof createClient>["channel"]
 	> | null>(null);
 
-	const cleanup = useCallback(() => {
-		if (pollRef.current) {
-			clearInterval(pollRef.current);
-			pollRef.current = null;
-		}
+	const jobs = useJobsStore((state) => state.jobs);
+
+	const cleanupChannel = useCallback(() => {
 		if (channelRef.current) {
 			const supabase = createClient();
 			supabase.removeChannel(channelRef.current);
@@ -66,7 +63,7 @@ export function usePlan(vineId: string | null): UsePlanReturn {
 		}
 	}, []);
 
-	useEffect(() => cleanup, [cleanup]);
+	useEffect(() => cleanupChannel, [cleanupChannel]);
 
 	useEffect(() => {
 		if (!vineId) return;
@@ -74,8 +71,8 @@ export function usePlan(vineId: string | null): UsePlanReturn {
 
 		async function loadExistingPlan() {
 			try {
-				const jobs = await getVineJobs(vineId!);
-				const latestPlan = jobs
+				const vineJobs = await getVineJobs(vineId!);
+				const latestPlan = vineJobs
 					.filter(
 						(j) =>
 							j.job_type === "PLAN" && j.status === "SUCCESS",
@@ -126,6 +123,56 @@ export function usePlan(vineId: string | null): UsePlanReturn {
 		};
 	}, [vineId]);
 
+	useEffect(() => {
+		if (!planJobId || phase !== "generating") return;
+		const job = jobs.find((j) => j.id === planJobId);
+		if (!job) return;
+
+		if (job.status === "FAILED") {
+			cleanupChannel();
+			setPhase("failed");
+			setError(job.error_message || "Plan generation failed");
+			return;
+		}
+
+		if (job.status === "SUCCESS") {
+			cleanupChannel();
+			getPlanResult(planJobId).then((result) => {
+				const meta = result.execution_metadata as Record<string, unknown>;
+				if (meta?.plan_result) {
+					setPlanResult(
+						parsePlanJSON(meta.plan_result as Record<string, unknown>),
+					);
+				}
+				if (meta?.cost_breakdown) {
+					setCostResult(
+						parseCostBreakdown(meta.cost_breakdown as Record<string, unknown>),
+					);
+				}
+				setPhase("ready");
+			}).catch(() => {
+				setPhase("failed");
+				setError("Failed to load plan results");
+			});
+		}
+	}, [jobs, planJobId, phase, cleanupChannel]);
+
+	useEffect(() => {
+		if (!deployJobId || phase !== "applying") return;
+		const job = jobs.find((j) => j.id === deployJobId);
+		if (!job) return;
+
+		if (job.status === "FAILED") {
+			setPhase("failed");
+			setError(job.error_message || "Deployment failed");
+			return;
+		}
+
+		if (job.status === "SUCCESS") {
+			setPhase("applied");
+		}
+	}, [jobs, deployJobId, phase]);
+
 	const generatePlan = useCallback(async (workerId?: string | null) => {
 		if (!vineId) return;
 		setPhase("generating");
@@ -155,55 +202,6 @@ export function usePlan(vineId: string | null): UsePlanReturn {
 				)
 				.subscribe();
 			channelRef.current = channel;
-
-			pollRef.current = setInterval(async () => {
-				try {
-					const result = await getPlanResult(jobId);
-					if (
-						result.status === "SUCCESS" ||
-						result.status === "FAILED"
-					) {
-						cleanup();
-
-						if (result.status === "FAILED") {
-							setPhase("failed");
-							setError(
-								result.error_message ||
-									"Plan generation failed",
-							);
-							return;
-						}
-
-						const meta = result.execution_metadata as Record<
-							string,
-							unknown
-						>;
-						if (meta?.plan_result) {
-							setPlanResult(
-								parsePlanJSON(
-									meta.plan_result as Record<
-										string,
-										unknown
-									>,
-								),
-							);
-						}
-						if (meta?.cost_breakdown) {
-							setCostResult(
-								parseCostBreakdown(
-									meta.cost_breakdown as Record<
-										string,
-										unknown
-									>,
-								),
-							);
-						}
-						setPhase("ready");
-					}
-				} catch {
-					// polling error, keep trying
-				}
-			}, 3000);
 		} catch (err) {
 			setPhase("failed");
 			setError(
@@ -212,7 +210,7 @@ export function usePlan(vineId: string | null): UsePlanReturn {
 					: "Failed to start plan",
 			);
 		}
-	}, [vineId, cleanup]);
+	}, [vineId]);
 
 	const applyPlan = useCallback(async (workerId?: string | null) => {
 		if (!vineId || !planJobId) return;
@@ -222,26 +220,6 @@ export function usePlan(vineId: string | null): UsePlanReturn {
 		try {
 			const { jobId } = await provisionVine(vineId, planJobId, workerId);
 			setDeployJobId(jobId);
-
-			pollRef.current = setInterval(async () => {
-				try {
-					const result = await getPlanResult(jobId);
-					if (result.status === "SUCCESS" || result.status === "FAILED") {
-						cleanup();
-
-						if (result.status === "FAILED") {
-							setPhase("failed");
-							setError(result.error_message || "Deployment failed");
-							return;
-						}
-
-						await finalizeDeployment(jobId);
-						setPhase("applied");
-					}
-				} catch {
-					// polling error, keep trying
-				}
-			}, 5000);
 		} catch (err) {
 			setPhase("failed");
 			setError(
@@ -250,7 +228,7 @@ export function usePlan(vineId: string | null): UsePlanReturn {
 					: "Failed to start provisioning",
 			);
 		}
-	}, [vineId, planJobId, cleanup]);
+	}, [vineId, planJobId]);
 
 	return {
 		phase,
