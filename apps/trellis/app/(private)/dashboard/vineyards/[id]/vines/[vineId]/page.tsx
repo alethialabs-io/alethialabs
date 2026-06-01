@@ -88,16 +88,16 @@ export default function VineDetailPage() {
 		await plan.generatePlan(workerId);
 	};
 
-	const handleApply = async (workerId: string | null) => {
+	const handleApply = async (workerId: string | null, rePlan?: boolean) => {
+		if (rePlan) {
+			await plan.generatePlan(workerId);
+			return;
+		}
 		if (plan.planJobId) {
 			await plan.applyPlan(workerId);
 		} else {
 			toast.error("Generate a plan first.");
 		}
-	};
-
-	const handlePlanAndApply = async (workerId: string | null) => {
-		await plan.generatePlan(workerId);
 	};
 
 	const handleApplied = (deployJobId: string) => {
@@ -147,42 +147,17 @@ export default function VineDetailPage() {
 						onConfirm={handlePlan}
 						disabled={plan.phase === "generating" || plan.phase === "applying"}
 					/>
-					{plan.phase === "ready" ? (
-						<div className="flex items-center">
-							<WorkerSelectPopover
-								trigger={
-									<Button size="sm" className="h-8 text-xs rounded-r-none border-r-0">
-										<Rocket className="h-3.5 w-3.5 mr-1.5" />
-										Apply
-									</Button>
-								}
-								onConfirm={handleApply}
-							/>
-							<DropdownMenu>
-								<DropdownMenuTrigger asChild>
-									<Button size="sm" className="h-8 px-1.5 rounded-l-none">
-										<MoreHorizontal className="h-3.5 w-3.5" />
-									</Button>
-								</DropdownMenuTrigger>
-								<DropdownMenuContent align="end">
-									<WorkerSelectPopover
-										trigger={
-											<DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-												<FileText className="h-3.5 w-3.5 mr-2" />
-												Re-plan &amp; apply
-											</DropdownMenuItem>
-										}
-										onConfirm={handlePlanAndApply}
-									/>
-								</DropdownMenuContent>
-							</DropdownMenu>
-						</div>
-					) : (
-						<Button size="sm" className="h-8 text-xs" disabled={plan.phase === "applying" || plan.phase === "generating" || plan.phase === "idle"}>
-							{plan.phase === "applying" ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5 mr-1.5" />}
-							{plan.phase === "applying" ? "Applying..." : "Apply"}
-						</Button>
-					)}
+					<WorkerSelectPopover
+						trigger={
+							<Button size="sm" className="h-8 text-xs" disabled={plan.phase !== "ready" && plan.phase !== "failed"}>
+								{plan.phase === "applying" ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5 mr-1.5" />}
+								{plan.phase === "applying" ? "Applying..." : "Apply"}
+							</Button>
+						}
+						onConfirm={handleApply}
+						disabled={plan.phase !== "ready" && plan.phase !== "failed"}
+						showRePlan={plan.phase === "ready" || plan.phase === "failed"}
+					/>
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
 							<Button variant="ghost" size="icon" className="h-8 w-8">

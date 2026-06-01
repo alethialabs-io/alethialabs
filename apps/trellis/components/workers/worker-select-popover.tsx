@@ -14,8 +14,9 @@ import { cn } from "@/lib/utils";
 
 interface WorkerSelectPopoverProps {
 	trigger: React.ReactNode;
-	onConfirm: (workerId: string | null) => void;
+	onConfirm: (workerId: string | null, rePlan?: boolean) => void;
 	disabled?: boolean;
+	showRePlan?: boolean;
 }
 
 const STATUS_DOT: Record<PublicWorkerStatus, string> = {
@@ -29,10 +30,12 @@ export function WorkerSelectPopover({
 	trigger,
 	onConfirm,
 	disabled,
+	showRePlan,
 }: WorkerSelectPopoverProps) {
 	const { workers, isLoading, fetchWorkers } = useWorkersStore();
 	const [open, setOpen] = useState(false);
 	const [selected, setSelected] = useState<string | null>(null);
+	const [rePlan, setRePlan] = useState(false);
 
 	useEffect(() => {
 		if (open) {
@@ -46,7 +49,8 @@ export function WorkerSelectPopover({
 
 	const handleConfirm = () => {
 		setOpen(false);
-		onConfirm(selected);
+		onConfirm(selected, rePlan);
+		setRePlan(false);
 	};
 
 	return (
@@ -136,7 +140,18 @@ export function WorkerSelectPopover({
 					</div>
 				)}
 
-				<div className="border-t border-border/40 px-3 py-2">
+				<div className="border-t border-border/40 px-3 py-2 space-y-2">
+					{showRePlan && (
+						<label className="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={rePlan}
+								onChange={(e) => setRePlan(e.target.checked)}
+								className="h-3.5 w-3.5 rounded border-border accent-primary"
+							/>
+							<span className="text-xs text-muted-foreground">Re-plan before applying</span>
+						</label>
+					)}
 					<Button
 						size="sm"
 						className="w-full h-8 text-xs"
