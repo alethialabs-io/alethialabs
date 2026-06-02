@@ -137,6 +137,17 @@ export function convertVineConfig(
 		}
 	}
 
+	// --- Network ---
+	if (data.network.provision_network === false || data.network.network_id) {
+		data.network.provision_network = true;
+		data.network.network_id = undefined;
+		warnings.push({
+			severity: "warning",
+			component: "Network",
+			message: `Existing network cannot be reused across providers. Switched to provisioning a new ${target.networkName}.`,
+		});
+	}
+
 	// --- DNS / WAF ---
 	const sourceDnsConfig = data.dns.provider_config ?? {};
 	const hasWaf = Object.values(sourceDnsConfig).some((v) => v === true);
@@ -146,6 +157,15 @@ export function convertVineConfig(
 			severity: "info",
 			component: "DNS",
 			message: `WAF rules differ between providers. Review ${target.shortName} WAF configuration.`,
+		});
+	}
+	if (data.dns.zone_id) {
+		data.dns.zone_id = undefined;
+		data.dns.domain_name = undefined;
+		warnings.push({
+			severity: "warning",
+			component: "DNS",
+			message: `DNS zone cleared — select a ${target.dnsService} zone in the target account.`,
 		});
 	}
 

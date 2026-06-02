@@ -9,7 +9,7 @@ interface DbEngineOption {
 /** Database engine options per provider. */
 export const DB_ENGINES: Record<CloudProviderSlug, DbEngineOption[]> = {
 	aws: [
-		{ value: "aurora-postgresql", label: "Aurora PostgreSQL", defaultVersion: "14.5" },
+		{ value: "aurora-postgresql", label: "Aurora PostgreSQL", defaultVersion: "16.6" },
 		{ value: "aurora-mysql", label: "Aurora MySQL", defaultVersion: "8.0" },
 	],
 	gcp: [

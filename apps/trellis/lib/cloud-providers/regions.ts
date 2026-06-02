@@ -73,6 +73,23 @@ export const REGION_LABELS: Record<
 	},
 };
 
+/** Groups region codes into geographic sections using the registry labels. */
+export function groupRegions(codes: string[], provider: CloudProviderSlug) {
+	const labels = REGION_LABELS[provider] ?? {};
+	const grouped = new Map<string, Array<{ value: string; label: string }>>();
+	for (const code of codes) {
+		const meta = labels[code];
+		const group = meta?.group ?? "Other";
+		const label = meta?.label ?? code;
+		if (!grouped.has(group)) grouped.set(group, []);
+		grouped.get(group)!.push({ value: code, label });
+	}
+	return Array.from(grouped.entries()).map(([group, regions]) => ({
+		group,
+		regions: regions.sort((a, b) => a.label.localeCompare(b.label)),
+	}));
+}
+
 /** Default region per provider (used when no cached regions are available). */
 export const DEFAULT_REGION: Record<CloudProviderSlug, string> = {
 	aws: "eu-west-1",

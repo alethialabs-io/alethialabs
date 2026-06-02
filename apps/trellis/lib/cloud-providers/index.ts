@@ -1,5 +1,5 @@
 export { type CloudProviderSlug, type CloudProviderMeta, PROVIDERS, getProvider, CACHE_TTL_HOURS } from "./registry";
-export { REGION_LABELS, DEFAULT_REGION, REGION_MAP } from "./regions";
+export { REGION_LABELS, DEFAULT_REGION, REGION_MAP, groupRegions } from "./regions";
 export {
 	INSTANCE_TYPES,
 	K8S_VERSIONS,
@@ -16,9 +16,10 @@ export { NOSQL } from "./nosql";
 export { NETWORK } from "./network";
 export { convertVineConfig, type ConversionWarning, type ConversionSeverity } from "./convert";
 export {
-	CloudProviderProvider,
-	useCloudProvider,
+	useCloudProviderStore,
+	useCloudProviderStore as useCloudProvider,
 	useProviderSlug,
 	useProviderMeta,
+	CloudProviderProvider,
 	type AnyCachedResources,
-} from "./use-cloud-provider";
+} from "@/lib/stores/use-cloud-provider-store";
