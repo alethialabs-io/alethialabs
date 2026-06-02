@@ -9,10 +9,12 @@ import {
 	DEFAULT_INSTANCE_TYPE,
 	DEFAULT_K8S_VERSION,
 	AUTOSCALER,
+	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
+import { convertVineConfig, type ConversionWarning } from "@/lib/cloud-providers/convert";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { useVineStore } from "./use-vine-store";
+import { useVineStore } from "@/lib/stores/use-vine-store";
 import { RepositoryProvider } from "./repository-context";
 import { ProviderRibbon } from "./provider-ribbon";
 import { CostSidebar } from "./cost-sidebar";
@@ -28,22 +30,29 @@ import { SectionSecrets } from "./section-secrets";
 import { SectionRepositories } from "./section-repositories";
 import { ReviewTab } from "./review-tab";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
-import { CheckCircle2, ChevronsUpDown, Loader2, Rocket } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronsUpDown, Info, Loader2, Rocket } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+
+export interface SourceVineData {
+	formData: VineFormData;
+	provider: CloudProviderSlug;
+}
 
 interface PlantVineFormProps {
 	cloudIdentities: CloudIdentityOption[];
+	sourceVine?: SourceVineData;
 }
 
 /** Outer wrapper that provides the CloudProvider context. */
-export function PlantVineForm({ cloudIdentities }: PlantVineFormProps) {
+export function PlantVineForm({ cloudIdentities, sourceVine }: PlantVineFormProps) {
 	return (
 		<CloudProviderProvider>
 			<RepositoryProvider>
-				<PlantVineFormInner cloudIdentities={cloudIdentities} />
+				<PlantVineFormInner cloudIdentities={cloudIdentities} sourceVine={sourceVine} />
 			</RepositoryProvider>
 		</CloudProviderProvider>
 	);
@@ -64,48 +73,51 @@ const fieldToSectionId: Record<string, string> = {
 };
 
 /** Inner form component with access to CloudProvider context. */
-function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
+function PlantVineFormInner({ cloudIdentities, sourceVine }: PlantVineFormProps) {
 	const router = useRouter();
 	const store = useVineStore();
+	const [conversionWarnings, setConversionWarnings] = useState<ConversionWarning[]>([]);
+
+	const defaultFormValues: VineFormData = sourceVine?.formData ?? {
+		vine: {
+			project_name: "",
+			environment_stage: "development",
+			region: "",
+			cloud_identity_id: "",
+			terraform_version: "1.11.4",
+			vineyard_id: "",
+		},
+		network: {
+			provision_network: true,
+			cidr_block: "10.0.0.0/16",
+			single_nat_gateway: true,
+		},
+		cluster: {
+			cluster_version: DEFAULT_K8S_VERSION.aws,
+			provider_config: { enable_karpenter: true },
+			instance_types: [DEFAULT_INSTANCE_TYPE.aws],
+			node_min_size: 2,
+			node_max_size: 5,
+			node_desired_size: 2,
+		},
+		dns: {
+			enabled: false,
+			managed_certificate: false,
+			waf_enabled: false,
+			provider_config: {},
+		},
+		repositories: {},
+		databases: [],
+		caches: [],
+		queues: [],
+		topics: [],
+		nosql_tables: [],
+		secrets: [],
+	};
 
 	const form = useForm<VineFormData>({
 		resolver: zodResolver(vineFormSchema) as any,
-		defaultValues: {
-			vine: {
-				project_name: "",
-				environment_stage: "development",
-				region: "",
-				cloud_identity_id: "",
-				terraform_version: "1.11.4",
-				vineyard_id: "",
-			},
-			network: {
-				provision_network: true,
-				cidr_block: "10.0.0.0/16",
-				single_nat_gateway: true,
-			},
-			cluster: {
-				cluster_version: DEFAULT_K8S_VERSION.aws,
-				provider_config: { enable_karpenter: true },
-				instance_types: [DEFAULT_INSTANCE_TYPE.aws],
-				node_min_size: 2,
-				node_max_size: 5,
-				node_desired_size: 2,
-			},
-			dns: {
-				enabled: false,
-				managed_certificate: false,
-				waf_enabled: false,
-				provider_config: {},
-			},
-			repositories: {},
-			databases: [],
-			caches: [],
-			queues: [],
-			topics: [],
-			nosql_tables: [],
-			secrets: [],
-		},
+		defaultValues: defaultFormValues,
 		mode: "onChange",
 	});
 
@@ -135,6 +147,17 @@ function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
 			form.setValue("caches", []);
 		}
 	}, [provider, form]);
+
+	useEffect(() => {
+		if (!sourceVine || provider === sourceVine.provider) return;
+		const { data: converted, warnings } = convertVineConfig(
+			sourceVine.formData,
+			sourceVine.provider,
+			provider,
+		);
+		setConversionWarnings(warnings);
+		form.reset(converted);
+	}, [provider, sourceVine, form]);
 
 	const onSubmit = async (data: VineFormData) => {
 		store.set({ isLoading: true, error: null });
@@ -172,6 +195,33 @@ function PlantVineFormInner({ cloudIdentities }: PlantVineFormProps) {
 		<FormProvider {...form}>
 			<form onSubmit={form.handleSubmit(onSubmit, onError)} className="space-y-6">
 				<ProviderRibbon identities={cloudIdentities} />
+
+				{sourceVine && (
+					<Alert variant="default" className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950">
+						<Info className="h-4 w-4 text-blue-500" />
+						<AlertDescription className="text-sm">
+							Duplicating from <span className="font-medium">{sourceVine.formData.vine.project_name}</span>.
+							Select a cloud account to convert the configuration.
+						</AlertDescription>
+					</Alert>
+				)}
+
+				{conversionWarnings.length > 0 && (
+					<Alert variant="default" className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950">
+						<AlertTriangle className="h-4 w-4 text-amber-500" />
+						<AlertDescription>
+							<p className="text-sm font-medium mb-1">Conversion notes:</p>
+							<ul className="text-xs space-y-1">
+								{conversionWarnings.map((w, i) => (
+									<li key={i} className="flex items-start gap-1.5">
+										<span className="text-muted-foreground">[{w.component}]</span>
+										<span>{w.message}</span>
+									</li>
+								))}
+							</ul>
+						</AlertDescription>
+					</Alert>
+				)}
 
 				<div className="flex gap-6">
 					<div className="flex-1 min-w-0 space-y-6">

@@ -1,9 +1,8 @@
 "use client";
 
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
-import { getCachedResources } from "@/app/server/actions/aws/resources";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers/registry";
-import { useCloudProvider } from "@/lib/cloud-providers/use-cloud-provider";
+import { useCloudProviderStore } from "@/lib/stores/use-cloud-provider-store";
 import {
 	Select,
 	SelectContent,
@@ -15,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 interface CloudIdentitySelectorProps {
 	identities: CloudIdentityOption[];
@@ -29,24 +28,14 @@ export function CloudIdentitySelector({
 	value,
 	onChange,
 }: CloudIdentitySelectorProps) {
-	const { setIdentity } = useCloudProvider();
-	const [loading, setLoading] = useState(false);
+	const { setIdentity, isLoading: loading } = useCloudProviderStore();
 	const onChangeRef = useRef(onChange);
 	onChangeRef.current = onChange;
 
-	/** Fetches cached resources for an identity and updates the provider context. */
 	const selectIdentity = useCallback(
 		async (id: string, provider: CloudProviderSlug) => {
 			onChangeRef.current(id, provider);
-			setLoading(true);
-			try {
-				const { resources, cachedAt } = await getCachedResources(id);
-				setIdentity(id, provider, resources, cachedAt);
-			} catch {
-				setIdentity(id, provider, null, null);
-			} finally {
-				setLoading(false);
-			}
+			await setIdentity(id, provider);
 		},
 		[setIdentity],
 	);

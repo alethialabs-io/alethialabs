@@ -1,6 +1,6 @@
 "use client";
 
-import { useVineStore } from "./use-vine-store";
+import { useVineStore } from "@/lib/stores/use-vine-store";
 import { useProviderMeta } from "@/lib/cloud-providers";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";

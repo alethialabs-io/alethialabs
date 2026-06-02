@@ -12,7 +12,7 @@ import {
 	Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form";
-import { useCloudProvider, useProviderSlug, useProviderMeta, REGION_LABELS } from "@/lib/cloud-providers";
+import { useCloudProvider, useProviderSlug, useProviderMeta, REGION_LABELS, groupRegions } from "@/lib/cloud-providers";
 import type { AnyCachedResources, CloudProviderSlug } from "@/lib/cloud-providers";
 import { Loader2, RefreshCw } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -20,22 +20,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useFormContext } from "react-hook-form";
 import { toast } from "sonner";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
-
-/** Groups region codes into geographic sections using the registry labels. */
-function groupRegions(codes: string[], provider: CloudProviderSlug) {
-	const labels = REGION_LABELS[provider] ?? {};
-	const grouped = new Map<string, Array<{ value: string; label: string }>>();
-	for (const code of codes) {
-		const meta = labels[code];
-		const group = meta?.group ?? "Other";
-		const label = meta?.label ?? code;
-		if (!grouped.has(group)) grouped.set(group, []);
-		grouped.get(group)!.push({ value: code, label });
-	}
-	return Array.from(grouped.entries()).map(([group, regions]) => ({
-		group, regions: regions.sort((a, b) => a.label.localeCompare(b.label)),
-	}));
-}
 
 interface ProviderRibbonProps {
 	identities: CloudIdentityOption[];
