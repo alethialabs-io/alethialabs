@@ -20,14 +20,18 @@ export function SectionDatabases() {
 	const engines = DB_ENGINES[provider];
 	const capacity = DB_CAPACITY[provider];
 
-	const addDatabase = () => append({
-		name: fields.length === 0 ? "primary" : `db-${fields.length + 1}`,
-		engine: engines[0].value,
-		min_capacity: capacity.defaultMin,
-		max_capacity: capacity.defaultMax,
-		port: 5432,
-		iam_auth: false,
-	});
+	const addDatabase = () => {
+		const engine = engines[0];
+		append({
+			name: fields.length === 0 ? "primary" : `db-${fields.length + 1}`,
+			engine: engine.value,
+			engine_version: engine.defaultVersion,
+			min_capacity: capacity.defaultMin,
+			max_capacity: capacity.defaultMax,
+			port: 5432,
+			iam_auth: false,
+		});
+	};
 
 	return (
 		<Card>
