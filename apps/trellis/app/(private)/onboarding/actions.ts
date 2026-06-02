@@ -21,10 +21,9 @@ export async function getAwsExternalId() {
 
 	if (existingIdentity) {
 		// Return existing External ID from the JSON blob
-		const credentials = existingIdentity.credentials as Record<string, any>;
-		if (credentials.external_id) {
+		if (existingIdentity.credentials.external_id) {
 			return {
-				externalId: credentials.external_id as string,
+				externalId: existingIdentity.credentials.external_id,
 				identityId: existingIdentity.id,
 			};
 		}
@@ -92,7 +91,7 @@ export async function saveAwsIdentity(identityId: string, roleArn: string) {
 		throw new Error("Connection session not found");
 	}
 
-	const currentCredentials = identity.credentials as Record<string, any>;
+	const currentCredentials = identity.credentials;
 
 	// 3. Update the Identity
 	const { error: updateError } = await supabase
@@ -104,7 +103,7 @@ export async function saveAwsIdentity(identityId: string, roleArn: string) {
 				role_arn: roleArn,
 				account_id: awsAccountId,
 			},
-			is_verified: true, // Mark as ready
+			is_verified: false,
 			updated_at: new Date().toISOString(),
 		})
 		.eq("id", identityId);
@@ -113,5 +112,21 @@ export async function saveAwsIdentity(identityId: string, roleArn: string) {
 		throw new Error("Failed to save connection details");
 	}
 
-	return { success: true };
+	const { data: job, error: jobError } = await supabase
+		.from("provision_jobs")
+		.insert({
+			user_id: user.id,
+			job_type: "CONNECTION_TEST",
+			cloud_identity_id: identityId,
+			config_snapshot: { role_arn: roleArn, account_id: awsAccountId },
+			status: "QUEUED",
+		})
+		.select("id")
+		.single();
+
+	if (jobError) {
+		throw new Error("Failed to queue connection test: " + jobError.message);
+	}
+
+	return { jobId: job.id, identityId };
 }

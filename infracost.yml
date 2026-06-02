@@ -1,0 +1,22 @@
+version: 0.1
+
+projects:
+    # Platform infrastructure (enforced — this is what we deploy)
+    - path: infra/platform
+      name: infra-platform
+
+    # Vine templates (cost visibility only — applied by tendrils into user accounts)
+    - path: infra/templates/vine/aws
+      name: vine-template-aws
+    - path: infra/templates/vine/gcp
+      name: vine-template-gcp
+    - path: infra/templates/vine/azure
+      name: vine-template-azure
+
+    # Tendril self-hosted template
+    - path: infra/templates/tendril/aws
+      name: tendril-template-aws
+
+    # Seed template (embedded in grape-core)
+    - path: packages/grape-core/assets/terraform/seed
+      name: seed-template

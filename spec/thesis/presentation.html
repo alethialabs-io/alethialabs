@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Дипломна защита — Trellis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#ffffff;--fg:#0a0a0a;--muted:#6b7280;--muted2:#9ca3af;--muted-light:#e5e7eb;
+  --accent:#7c3aed;--accent-dim:rgba(124,58,237,.08);--accent-border:rgba(124,58,237,.2);
+  --green:#059669;--green-dim:rgba(5,150,105,.08);--green-border:rgba(5,150,105,.2);
+  --warn:#d97706;--warn-dim:rgba(217,119,6,.08);--warn-border:rgba(217,119,6,.2);
+  --danger:#dc2626;--danger-dim:rgba(220,38,38,.08);--danger-border:rgba(220,38,38,.2);
+  --blue:#2563eb;--blue-dim:rgba(37,99,235,.08);--blue-border:rgba(37,99,235,.2);
+  --card-bg:#ffffff;--card-border:#e5e7eb;
+}
+html,body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--fg);overflow:hidden;height:100%;width:100%;-webkit-font-smoothing:antialiased}
+
+#progress{position:fixed;top:0;left:0;height:3px;background:var(--accent);transition:width .4s cubic-bezier(.4,0,.2,1);z-index:100}
+#counter{position:fixed;bottom:28px;right:36px;font-size:13px;color:var(--muted2);z-index:100;font-variant-numeric:tabular-nums}
+#section-label{position:fixed;bottom:28px;left:36px;font-size:11px;color:var(--muted2);z-index:100;text-transform:uppercase;letter-spacing:.14em;font-weight:500}
+
+#deck{position:relative;width:100%;height:100%}
+.slide{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:60px 100px;opacity:0;pointer-events:none;transition:opacity .5s cubic-bezier(.4,0,.2,1),transform .5s cubic-bezier(.4,0,.2,1);transform:translateY(24px)}
+.slide.active{opacity:1;pointer-events:auto;transform:translateY(0)}
+.slide.prev{opacity:0;transform:translateY(-24px)}
+
+.slide-inner{max-width:1000px;width:100%}
+.slide-center{text-align:center;display:flex;flex-direction:column;align-items:center}
+
+h1{font-size:64px;font-weight:900;line-height:1.05;letter-spacing:-.045em;margin-bottom:16px}
+h2{font-size:40px;font-weight:700;line-height:1.1;letter-spacing:-.03em;margin-bottom:12px}
+h3{font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-.015em}
+.subtitle{font-size:18px;color:var(--muted);font-weight:400;line-height:1.6;max-width:640px}
+.subtitle-sm{font-size:15px;color:var(--muted);font-weight:400;line-height:1.6;max-width:640px}
+
+.tag{display:inline-block;font-size:11px;text-transform:uppercase;letter-spacing:.14em;font-weight:600;padding:5px 14px;border-radius:100px;margin-bottom:20px}
+.tag-accent{color:var(--accent);background:var(--accent-dim);border:1px solid var(--accent-border)}
+.tag-green{color:var(--green);background:var(--green-dim);border:1px solid var(--green-border)}
+.tag-danger{color:var(--danger);background:var(--danger-dim);border:1px solid var(--danger-border)}
+.tag-blue{color:var(--blue);background:var(--blue-dim);border:1px solid var(--blue-border)}
+.tag-warn{color:var(--warn);background:var(--warn-dim);border:1px solid var(--warn-border)}
+
+.badge{display:inline-block;font-size:12px;font-weight:600;padding:4px 12px;border-radius:100px;letter-spacing:.01em}
+.badge-accent{background:var(--accent-dim);color:var(--accent);border:1px solid var(--accent-border)}
+.badge-green{background:var(--green-dim);color:var(--green);border:1px solid var(--green-border)}
+.badge-blue{background:var(--blue-dim);color:var(--blue);border:1px solid var(--blue-border)}
+.badge-warn{background:var(--warn-dim);color:var(--warn);border:1px solid var(--warn-border)}
+.badge-muted{background:#f3f4f6;color:var(--muted);border:1px solid var(--muted-light)}
+
+.card{background:var(--card-bg);border:1px solid var(--card-border);border-radius:12px;padding:24px;text-align:left}
+.card h4{font-size:15px;font-weight:600;margin-bottom:6px;color:var(--fg)}
+.card p,.card li{font-size:14px;color:var(--muted);line-height:1.65}
+.card ul{list-style:none;padding:0}
+.card li{padding:3px 0}
+.card li::before{content:'';display:inline-block;width:5px;height:5px;background:var(--accent);border-radius:50%;margin-right:10px;vertical-align:middle}
+.card-sm{padding:18px}
+
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;width:100%}
+.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;width:100%}
+.grid-4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px;width:100%}
+
+.stat{text-align:center}
+.stat .num{font-size:52px;font-weight:900;letter-spacing:-.04em;line-height:1}
+.stat .label{font-size:12px;color:var(--muted);margin-top:8px;text-transform:uppercase;letter-spacing:.1em;font-weight:500}
+
+.flow{display:flex;align-items:center;gap:8px;margin:20px 0;flex-wrap:wrap;justify-content:center}
+.flow-step{background:#f9fafb;border:1px solid var(--card-border);border-radius:8px;padding:10px 18px;font-size:13px;font-weight:500;white-space:nowrap}
+.flow-arrow{color:var(--muted2);font-size:18px}
+
+.step-num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;font-size:13px;font-weight:700;flex-shrink:0}
+.step-num.green{background:var(--green)}
+
+.hl{color:var(--accent)}
+.hl-green{color:var(--green)}
+.hl-warn{color:var(--warn)}
+.hl-danger{color:var(--danger)}
+
+.big-text{font-size:72px;font-weight:900;letter-spacing:-.045em;line-height:1.1}
+.big-text span{display:block}
+.big-text .line-muted{color:var(--muted2)}
+
+.stagger > *{opacity:0;transform:translateY(16px);transition:opacity .45s,transform .45s}
+.slide.active .stagger > *{opacity:1;transform:translateY(0)}
+.slide.active .stagger > *:nth-child(1){transition-delay:.05s}
+.slide.active .stagger > *:nth-child(2){transition-delay:.15s}
+.slide.active .stagger > *:nth-child(3){transition-delay:.25s}
+.slide.active .stagger > *:nth-child(4){transition-delay:.35s}
+.slide.active .stagger > *:nth-child(5){transition-delay:.45s}
+.slide.active .stagger > *:nth-child(6){transition-delay:.55s}
+.slide.active .stagger > *:nth-child(7){transition-delay:.65s}
+
+.divider{width:48px;height:2px;background:var(--muted-light);margin:28px auto}
+
+.mt-8{margin-top:8px}.mt-12{margin-top:12px}.mt-16{margin-top:16px}.mt-20{margin-top:20px}.mt-24{margin-top:24px}.mt-32{margin-top:32px}
+.mb-4{margin-bottom:4px}.mb-8{margin-bottom:8px}.mb-12{margin-bottom:12px}.mb-16{margin-bottom:16px}
+
+.insight{border-left:3px solid var(--accent);background:#faf5ff;padding:14px 18px;border-radius:0 8px 8px 0;font-size:14px;color:var(--fg);line-height:1.6}
+.insight strong{font-weight:600}
+
+@media(max-width:900px){
+  .slide{padding:40px 28px}
+  h1,.big-text{font-size:40px}h2{font-size:28px}h3{font-size:20px}
+  .grid-3,.grid-4{grid-template-columns:1fr 1fr}
+  .grid-2{grid-template-columns:1fr}
+  .stat .num{font-size:36px}
+}
+</style>
+</head>
+<body>
+
+<div id="progress" style="width:0%"></div>
+<div id="section-label"></div>
+<div id="counter"></div>
+
+<div id="deck">
+
+<!-- ========== SLIDE 1: The Hook ========== -->
+<div class="slide active" data-section="">
+  <div class="slide-inner slide-center stagger">
+    <p class="subtitle-sm mb-16" style="max-width:520px">Какво е нужно за production Kubernetes клъстер с мрежа, база данни, кеш, DNS, secrets и GitOps?</p>
+    <div class="big-text">
+      <span class="hl">1,746</span>
+      <span class="line-muted">реда Terraform.</span>
+    </div>
+    <div class="big-text mt-8">
+      <span class="hl-warn">18</span>
+      <span class="line-muted">модула.</span>
+    </div>
+    <div class="big-text mt-8">
+      <span class="hl-danger">3</span>
+      <span class="line-muted">седмици.</span>
+    </div>
+    <p class="subtitle mt-32">И това е само за <strong style="color:var(--fg)">един</strong> облак. За три — умножете по три.</p>
+  </div>
+</div>
+
+<!-- ========== SLIDE 2: The Twist ========== -->
+<div class="slide" data-section="">
+  <div class="slide-inner slide-center stagger">
+    <p class="subtitle-sm mb-16">Или...</p>
+    <div class="big-text">
+      <span class="hl-green">1 формуляр.</span>
+      <span class="hl-green">11 секции.</span>
+      <span class="hl-green">20 минути.</span>
+    </div>
+    <div class="big-text mt-16">
+      <span style="color:var(--fg)">3 облака.</span>
+    </div>
+    <p class="subtitle mt-32">Това е дипломната ми работа.</p>
+    <p class="subtitle-sm mt-8">Борислав Тодоров Борисов &nbsp;&middot;&nbsp; 2026</p>
+  </div>
+</div>
+
+<!-- ========== SLIDE 3: What It Is ========== -->
+<div class="slide" data-section="Система">
+  <div class="slide-inner slide-center stagger">
+    <span class="tag tag-accent">Дипломна защита</span>
+    <h2>Trellis &mdash; хибридна система за оркестрация<br>на облачна инфраструктура</h2>
+    <p class="subtitle mt-8">Конфигурирай визуално. Деплойни от терминала. Без статични ключове.</p>
+
+    <div class="flow mt-32">
+      <div class="flow-step" style="border-color:var(--accent-border)"><strong style="color:var(--accent)">Trellis</strong> &mdash; Web</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step" style="border-color:var(--green-border)"><strong style="color:var(--green)">Grape</strong> &mdash; CLI</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step" style="border-color:var(--blue-border)"><strong style="color:var(--blue)">Worker</strong> &mdash; Execution</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step" style="border-color:var(--warn-border)"><strong style="color:var(--warn)">ArgoCD</strong> &mdash; GitOps</div>
+    </div>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:28px">
+      <span class="badge badge-muted">AWS</span>
+      <span class="badge badge-muted">GCP</span>
+      <span class="badge badge-muted">Azure</span>
+      <span class="badge badge-muted">Open Source</span>
+    </div>
+  </div>
+</div>
+
+<!-- ========== SLIDE 4: How It Works ========== -->
+<div class="slide" data-section="Архитектура">
+  <div class="slide-inner stagger">
+    <span class="tag tag-blue">Архитектура</span>
+    <h2>Как работи</h2>
+
+    <div class="flow mt-20">
+      <div class="flow-step">Потребител</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step" style="border-color:var(--accent-border)">Trellis</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">Job Queue</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step" style="border-color:var(--green-border)">Worker</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step" style="border-color:var(--warn-border)">AWS / GCP / Azure</div>
+    </div>
+
+    <div class="grid-3 mt-24">
+      <div class="card">
+        <span class="badge badge-accent mb-8">Визуална конфигурация</span>
+        <h4>11 секции &middot; 3 облака</h4>
+        <p>Мрежа, клъстер, бази данни, кеш, NoSQL, messaging, DNS, secrets, registry, repositories. Реално време оценка на разходите.</p>
+      </div>
+      <div class="card">
+        <span class="badge badge-green mb-8">Zero-Key сигурност</span>
+        <h4>Без статични ключове</h4>
+        <p>AWS: Cross-Account IAM Role. GCP: Workload Identity Federation. Azure: Federated Identity. Временни сесии, 1 час.</p>
+      </div>
+      <div class="card">
+        <span class="badge badge-warn mb-8">GitOps от Ден 1</span>
+        <h4>ArgoCD автоматично</h4>
+        <p>Инсталира се при bootstrap. Git е source of truth. Plan-Review-Apply workflow. Пълна одитна следа.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== SLIDE 5: Security ========== -->
+<div class="slide" data-section="Сигурност">
+  <div class="slide-inner stagger">
+    <span class="tag tag-danger">Сигурност</span>
+    <h2>Как работи без ключове?</h2>
+    <p class="subtitle mb-16">Платформата не съхранява облачни credentials. Worker поема временна роля при всяко изпълнение.</p>
+
+    <div class="grid-3 mt-20">
+      <div class="card">
+        <span class="badge badge-warn mb-8">AWS</span>
+        <h4>Cross-Account IAM Role</h4>
+        <p>Потребителят деплойва CloudFormation шаблон. Създава се IAM роля с External ID. Worker поема ролята чрез STS AssumeRole. Сесия: 1 час.</p>
+      </div>
+      <div class="card">
+        <span class="badge badge-blue mb-8">GCP</span>
+        <h4>Workload Identity Federation</h4>
+        <p>OIDC токен от Trellis се обменя за временни GCP credentials. Без service account JSON ключове.</p>
+      </div>
+      <div class="card">
+        <span class="badge badge-accent mb-8">Azure</span>
+        <h4>Federated Identity</h4>
+        <p>App Registration с федерирани credentials. OIDC автентикация. Без client secrets.</p>
+      </div>
+    </div>
+
+    <div class="insight mt-20">
+      <strong>CLI автентикация:</strong> RFC 8628 Device Authorization Flow. Потребителят потвърждава в браузъра — CLI получава Refresh Token, криптиран локално. Без пароли в терминала.
+    </div>
+  </div>
+</div>
+
+<!-- ========== SLIDE 6: Demo Overview ========== -->
+<div class="slide" data-section="Демонстрация">
+  <div class="slide-inner stagger">
+    <span class="tag tag-green">Демонстрация</span>
+    <h2>Какво ще покажа</h2>
+
+    <div class="grid-3 mt-24">
+      <div class="card card-sm">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span class="step-num">1</span>
+          <h4 style="margin:0">Вход + Интеграции</h4>
+        </div>
+        <p>Нов акаунт. Свързване на GitHub, AWS, GCP и Azure. Zero-credential модел.</p>
+      </div>
+      <div class="card card-sm">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span class="step-num">2</span>
+          <h4 style="margin:0">Plant a Vine</h4>
+        </div>
+        <p>VPC, EKS, Aurora, ElastiCache. Реално време разходи. 11 секции.</p>
+      </div>
+      <div class="card card-sm">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span class="step-num green">3</span>
+          <h4 style="margin:0">Plan + Workers</h4>
+        </div>
+        <p>Terraform plan. Създаване на Worker. Как Worker-ите работят.</p>
+      </div>
+    </div>
+    <div class="grid-3 mt-16">
+      <div class="card card-sm">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span class="step-num green">4</span>
+          <h4 style="margin:0">Apply + Логове</h4>
+        </div>
+        <p>Преглед на разходите. Apply. Realtime логове чрез WebSocket.</p>
+      </div>
+      <div class="card card-sm">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span class="step-num green">5</span>
+          <h4 style="margin:0">Job Statuses</h4>
+        </div>
+        <p>QUEUED &rarr; PROCESSING &rarr; SUCCESS. Пълна проследимост.</p>
+      </div>
+      <div class="card card-sm">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span class="step-num green">6</span>
+          <h4 style="margin:0">Готов клъстер</h4>
+        </div>
+        <p>Предварително провизиран EKS. ArgoCD инсталиран. GitOps.</p>
+      </div>
+    </div>
+
+    <p style="font-size:13px;color:var(--muted2);margin-top:28px;text-align:center">Провизирането на EKS отнема ~20 мин. Целият поток ще бъде показан на живо + предварително завършен клъстер.</p>
+  </div>
+</div>
+
+<!-- ========== SLIDE 7: Results ========== -->
+<div class="slide" data-section="Резултати">
+  <div class="slide-inner stagger">
+    <span class="tag tag-green">Резултати</span>
+    <h2>Какво беше постигнато</h2>
+
+    <div class="grid-4 mt-24">
+      <div class="card card-sm" style="text-align:center">
+        <div class="stat"><div class="num hl">3</div><div class="label">облака</div></div>
+      </div>
+      <div class="card card-sm" style="text-align:center">
+        <div class="stat"><div class="num hl-green">11</div><div class="label">секции</div></div>
+      </div>
+      <div class="card card-sm" style="text-align:center">
+        <div class="stat"><div class="num hl-warn">16</div><div class="label">CLI команди</div></div>
+      </div>
+      <div class="card card-sm" style="text-align:center">
+        <div class="stat"><div class="num" style="color:var(--blue)">12</div><div class="label">типа ресурси</div></div>
+      </div>
+    </div>
+
+    <div class="grid-2 mt-20">
+      <div class="card" style="border-color:var(--green-border)">
+        <h4 style="color:var(--green)">Ключови приноси</h4>
+        <ul>
+          <li>Хибриден модел &mdash; CLI + Web + Worker + GitOps</li>
+          <li>Zero-Key &mdash; IAM Role, WIF, Federated Identity</li>
+          <li>Мулти-клауд &mdash; AWS, GCP, Azure, пълен паритет</li>
+          <li>Реално време оценка на разходите</li>
+          <li>Worker система &mdash; Fargate, атомарен claim</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>Практическа стойност</h4>
+        <ul>
+          <li>Без Terraform, kubectl или Helm локално</li>
+          <li>Един формуляр &mdash; три облака</li>
+          <li>Plan-Review-Apply &mdash; нищо без потвърждение</li>
+          <li>Realtime логове &mdash; WebSocket от Worker</li>
+          <li>ArgoCD от Ден 1 &mdash; Git е source of truth</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== SLIDE 8: Closing ========== -->
+<div class="slide" data-section="">
+  <div class="slide-inner slide-center stagger">
+    <h2 style="font-size:48px;font-weight:800;letter-spacing:-.04em">Декларативно.<br>Сигурно.<br>Автоматизирано.</h2>
+    <div class="divider"></div>
+    <p class="subtitle" style="margin-top:20px">Хибридна мулти-клауд система, която комбинира визуална конфигурация, CLI, облачни Workers и GitOps.</p>
+
+    <div class="flow mt-32">
+      <div class="flow-step" style="border-color:var(--accent-border)"><strong class="hl">Trellis</strong></div>
+      <div class="flow-step" style="border-color:var(--green-border)"><strong class="hl-green">Grape</strong></div>
+      <div class="flow-step" style="border-color:var(--blue-border)"><strong style="color:var(--blue)">Worker</strong></div>
+      <div class="flow-step" style="border-color:var(--warn-border)"><strong class="hl-warn">ArgoCD</strong></div>
+    </div>
+
+    <p style="font-size:15px;color:var(--muted);margin-top:40px">Благодаря за вниманието</p>
+    <p style="font-size:13px;color:var(--muted2);margin-top:8px">Борислав Тодоров Борисов &nbsp;&middot;&nbsp; 2026</p>
+  </div>
+</div>
+
+</div><!-- /deck -->
+
+<script>
+(function(){
+  var slides=document.querySelectorAll('.slide'),total=slides.length,current=0;
+  var progress=document.getElementById('progress'),counter=document.getElementById('counter'),label=document.getElementById('section-label');
+
+  function show(i){
+    if(i<0||i>=total)return;
+    slides.forEach(function(s,j){s.className='slide'+(j<i?' prev':'')});
+    slides[i].className='slide active';current=i;
+    progress.style.width=((current/(total-1))*100)+'%';
+    counter.textContent=(current+1)+' / '+total;
+    label.textContent=slides[current].getAttribute('data-section')||'';
+  }
+
+  show(0);
+
+  document.addEventListener('keydown',function(e){
+    if(e.key==='ArrowRight'||e.key==='ArrowDown'||e.key===' '){e.preventDefault();show(current+1)}
+    if(e.key==='ArrowLeft'||e.key==='ArrowUp'){e.preventDefault();show(current-1)}
+    if(e.key==='Home'){e.preventDefault();show(0)}
+    if(e.key==='End'){e.preventDefault();show(total-1)}
+  });
+
+  var tx=0;
+  document.addEventListener('touchstart',function(e){tx=e.touches[0].clientX},{passive:true});
+  document.addEventListener('touchend',function(e){var d=e.changedTouches[0].clientX-tx;if(Math.abs(d)>50){d<0?show(current+1):show(current-1)}});
+
+  document.addEventListener('click',function(e){
+    if(e.target.closest('a,button,input,textarea'))return;
+    e.clientX>window.innerWidth/2?show(current+1):show(current-1);
+  });
+})();
+</script>
+</body>
+</html>

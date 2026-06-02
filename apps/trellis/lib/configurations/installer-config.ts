@@ -99,8 +99,7 @@ export function formatInstallerConfig(configData: ConfigRecord): ConfigRecord {
 	const result: ConfigRecord = {
 		project_name: configData.project_name || "adpminidemo",
 		environment: configData.environment_stage || "dev",
-		region: configData.aws_region || "eu-west-1",
-		aws_account_id: configData.aws_account_id || "791296381042",
+		region: configData.region || "eu-west-1",
 		terraform_ver: configData.terraform_version || "1.11.4",
 
 		env_template_repo: envRepo,

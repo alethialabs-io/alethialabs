@@ -1,50 +1,120 @@
-import { ClusterList } from "@/components/clusters/cluster-list";
-import { Button } from "@/components/ui/button";
-import { createClient } from "@/lib/supabase/server";
-import { Terminal } from "lucide-react";
+"use client";
+
+import { ClusterCard } from "@/components/clusters/cluster-card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useClustersStore } from "@/lib/stores/use-clusters-store";
+import { createClient } from "@/lib/supabase/client";
+import type { PublicVinesRow } from "@/lib/validations/db.schemas";
+import { Server } from "lucide-react";
 import Link from "next/link";
+import { useEffect } from "react";
 
-export default async function ClustersPage() {
-	const supabase = await createClient();
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
+export default function ClustersPage() {
+	const { clusters, isLoading, fetchClusters } = useClustersStore();
 
-	const { data: clusters } = await supabase
-		.from("clusters")
-		.select("*")
-		.eq("user_id", user!.id)
-		.order("created_at", { ascending: false });
+	useEffect(() => {
+		fetchClusters();
+	}, [fetchClusters]);
 
-	return (
-		<div className="space-y-8 w-full ">
-			<div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-				<div className="space-y-1.5">
-					<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
-						Connected Clusters
+	useEffect(() => {
+		const supabase = createClient();
+		const channel = supabase
+			.channel("clusters-realtime")
+			.on(
+				"postgres_changes",
+				{
+					event: "UPDATE",
+					schema: "public",
+					table: "vines",
+				},
+				(payload) => {
+					if (
+						(payload.new as PublicVinesRow).status === "ACTIVE"
+					) {
+						fetchClusters(true);
+					}
+				},
+			)
+			.subscribe();
+
+		return () => {
+			supabase.removeChannel(channel);
+		};
+	}, [fetchClusters]);
+
+	if (isLoading) {
+		return (
+			<div className="space-y-6">
+				<div>
+					<h1 className="text-2xl font-semibold tracking-tight text-foreground">
+						Clusters
 					</h1>
-					<p className="text-muted-foreground text-sm">
-						Manage your Kubernetes environments and Tendril agents.
+					<p className="text-sm text-muted-foreground mt-1">
+						Provisioned infrastructure and access credentials.
 					</p>
 				</div>
-				<div className="flex gap-3 shrink-0">
-					<Link
-						href="https://docs.itgix.com/setup/cli"
-						target="_blank"
-					>
-						<Button
-							variant="outline"
-							size="sm"
-							className="h-9 text-xs font-medium border-border/50"
-						>
-							<Terminal className="mr-2 h-3.5 w-3.5" />
-							CLI Documentation
-						</Button>
-					</Link>
+				<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+					{[1, 2].map((i) => (
+						<div key={i} className="rounded-lg border border-border/40 p-5 space-y-4">
+							<div className="flex items-center justify-between">
+								<Skeleton className="h-5 w-32" />
+								<Skeleton className="h-5 w-16 rounded-full" />
+							</div>
+							<div className="space-y-2">
+								<Skeleton className="h-3 w-48" />
+								<Skeleton className="h-3 w-36" />
+							</div>
+							<div className="flex gap-2 pt-2">
+								<Skeleton className="h-7 w-20 rounded-md" />
+								<Skeleton className="h-7 w-24 rounded-md" />
+							</div>
+						</div>
+					))}
 				</div>
 			</div>
+		);
+	}
 
-			<ClusterList initialClusters={clusters || []} userId={user!.id} />
+	return (
+		<div className="space-y-6">
+			<div>
+				<h1 className="text-2xl font-semibold tracking-tight text-foreground">
+					Clusters
+				</h1>
+				<p className="text-sm text-muted-foreground mt-1">
+					Provisioned infrastructure and access credentials.
+				</p>
+			</div>
+
+			{clusters.length === 0 ? (
+				<div className="flex flex-col items-center justify-center py-16 text-center">
+					<div className="p-3 bg-muted/50 rounded-full mb-4">
+						<Server className="h-8 w-8 text-muted-foreground" />
+					</div>
+					<h3 className="text-sm font-medium text-foreground mb-1">
+						No clusters provisioned
+					</h3>
+					<p className="text-xs text-muted-foreground max-w-sm">
+						Clusters appear here after you deploy a vine. Go to a
+						vine&apos;s detail page and click Deploy.
+					</p>
+					<Link
+						href="/dashboard/plant"
+						className="mt-4 text-xs text-primary hover:underline"
+					>
+						Plant a vine
+					</Link>
+				</div>
+			) : (
+				<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+					{clusters.map((cluster) => (
+						<ClusterCard
+							key={cluster.id}
+							data={cluster}
+						/>
+					))}
+				</div>
+			)}
 		</div>
 	);
 }

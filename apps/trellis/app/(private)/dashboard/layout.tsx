@@ -10,36 +10,36 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
 } from "@/components/ui/popover";
-import { useAwsOnboarding } from "@/hooks/use-aws-onboarding";
+import { useJobNotifications } from "@/hooks/use-job-notifications";
+import { useJobsStore } from "@/lib/stores/use-jobs-store";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import type { PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
 import { User as IUser } from "@supabase/supabase-js";
 import { SidebarVineyards } from "@/components/sidebar-vineyards";
+import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
 import {
-	AlertTriangle,
-	ArrowRight,
 	Bell,
-	Cloud,
-	Folder,
-	History,
+	Blocks,
+	ClipboardList,
 	LayoutDashboard,
 	LogOut,
 	Menu,
 	Plus,
-	Search,
 	Server,
 	Settings,
 	User,
+	Workflow,
 	X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import type React from "react";
 import { Suspense, useEffect, useState } from "react";
 
@@ -52,17 +52,35 @@ export default function DashboardLayout({
 	const router = useRouter();
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [user, setUser] = useState<IUser | null>(null);
-	const { showAwsAlert, setShowAwsAlert } = useAwsOnboarding();
+	const { notifications, unreadCount, markAsRead, markAllRead } = useJobNotifications();
 
 	useEffect(() => {
-		const getUser = async () => {
-			const supabase = createClient();
-			const {
-				data: { user },
-			} = await supabase.auth.getUser();
-			setUser(user);
+		const supabase = createClient();
+		let channel: ReturnType<typeof supabase.channel> | null = null;
+
+		supabase.auth.getUser().then(({ data: { user: u } }) => {
+			if (!u) return;
+			setUser(u);
+			useJobsStore.getState().fetchJobs(true);
+
+			channel = supabase
+				.channel("jobs-realtime-global")
+				.on(
+					"postgres_changes",
+					{ event: "*", schema: "public", table: "provision_jobs" },
+					(payload) => {
+						const job = payload.new as PublicProvisionJobsRow;
+						if (job && job.user_id === u.id) {
+							useJobsStore.getState().addOrUpdateJob(job);
+						}
+					},
+				)
+				.subscribe();
+		});
+
+		return () => {
+			if (channel) supabase.removeChannel(channel);
 		};
-		getUser();
 	}, []);
 
 	const handleLogout = async () => {
@@ -73,11 +91,11 @@ export default function DashboardLayout({
 
 	const navigation = [
 		{ name: "Overview", href: "/dashboard", icon: LayoutDashboard },
-		{ name: "Plant a Vine", href: "/dashboard/configure", icon: Plus },
-		{ name: "Vines", href: "/dashboard/vines", icon: Folder },
+		{ name: "Plant a Vine", href: "/dashboard/plant", icon: Plus },
 		{ name: "Clusters", href: "/dashboard/clusters", icon: Server },
-		{ name: "History", href: "/dashboard/history", icon: History },
-		{ name: "Providers", href: "/dashboard/providers", icon: Cloud },
+		{ name: "Jobs", href: "/dashboard/jobs", icon: ClipboardList },
+		{ name: "Integrations", href: "/dashboard/integrations", icon: Blocks },
+		{ name: "Tendrils", href: "/dashboard/tendrils", icon: Workflow },
 	];
 
 	const getUserInitials = () => {
@@ -86,7 +104,7 @@ export default function DashboardLayout({
 	};
 
 	return (
-		<div className="flex h-full w-full flex-col bg-background overflow-hidden">
+		<div className="flex h-dvh w-full flex-col bg-background overflow-hidden">
 			{/* Top Header - Edge to Edge */}
 			<header className="sticky top-0 z-40 flex h-14 shrink-0 items-center border-b border-border/40 bg-background/95 backdrop-blur px-4 sm:px-6 lg:px-8">
 				<div className="flex w-full items-center justify-between">
@@ -103,33 +121,10 @@ export default function DashboardLayout({
 								<Menu className="h-5 w-5" />
 							)}
 						</Button>
-						<Link
-							href="/dashboard"
-							className="flex items-center gap-3 transition-opacity hover:opacity-80"
-						>
-							<img
-								src="/itgix-favicon-32x32.png"
-								alt="ItGix Logo"
-								className="w-6 h-6 grayscale"
-							/>
-							<h2 className="font-semibold text-sm tracking-tight text-foreground">
-								Trellis
-							</h2>
-						</Link>
+						<HeaderBreadcrumbs />
 					</div>
 
 					<div className="flex items-center gap-2 sm:gap-4">
-						{/* Search Bar - Hidden on small screens */}
-						<div className="hidden md:flex items-center">
-							<div className="relative">
-								<Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-								<Input
-									placeholder="Search..."
-									className="w-64 bg-muted/30 border-border/50 pl-9 h-9 text-sm focus-visible:ring-1 focus-visible:ring-ring transition-colors"
-								/>
-							</div>
-						</div>
-
 						{/* Notifications */}
 						<Popover>
 							<PopoverTrigger asChild>
@@ -139,55 +134,60 @@ export default function DashboardLayout({
 									className="relative h-9 w-9 text-muted-foreground hover:text-foreground"
 								>
 									<Bell className="h-4 w-4" />
-									{showAwsAlert && (
+									{unreadCount > 0 && (
 										<span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-destructive" />
 									)}
-									<span className="sr-only">
-										Toggle notifications
-									</span>
+									<span className="sr-only">Notifications</span>
 								</Button>
 							</PopoverTrigger>
 							<PopoverContent className="w-80 p-0" align="end">
-								<div className="flex flex-col gap-1 border-b border-border/40 p-4">
-									<p className="text-sm font-semibold text-foreground">
-										Notifications
-									</p>
-									<p className="text-xs text-muted-foreground">
-										{showAwsAlert
-											? "You have 1 unread message."
-											: "You have no new messages."}
-									</p>
+								<div className="flex items-center justify-between border-b border-border/40 px-4 py-3">
+									<div>
+										<p className="text-sm font-semibold text-foreground">Notifications</p>
+										<p className="text-[11px] text-muted-foreground">
+											{unreadCount > 0 ? `${unreadCount} unread` : "All caught up"}
+										</p>
+									</div>
+									{unreadCount > 0 && (
+										<button
+											onClick={markAllRead}
+											className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+										>
+											Mark all read
+										</button>
+									)}
 								</div>
-								<div className="max-h-[300px] overflow-y-auto">
-									{showAwsAlert ? (
-										<div className="p-4 flex gap-4 hover:bg-muted/50 transition-colors">
-											<div className="mt-0.5 p-1.5 bg-destructive/10 rounded-md shrink-0 h-fit">
-												<AlertTriangle className="h-4 w-4 text-destructive" />
-											</div>
-											<div className="flex-1 space-y-1">
-												<p className="text-sm font-medium leading-none text-destructive">
-													AWS Account Disconnected
-												</p>
-												<p className="text-xs text-muted-foreground leading-relaxed mt-1.5 mb-2">
-													You haven't connected your AWS account yet. You can still create configurations, but you won't be able to provision any infrastructure until you connect.
-												</p>
-												<div className="pt-1">
-													<Link href="/dashboard/providers">
-														<Button
-															variant="outline"
-															size="sm"
-															className="border-destructive/30 hover:bg-destructive/10 text-destructive text-xs h-7 px-3 w-full"
-														>
-															Connect AWS Account
-															<ArrowRight className="ml-1.5 h-3 w-3" />
-														</Button>
-													</Link>
+								<div className="max-h-[320px] overflow-y-auto">
+									{notifications.map((n) => (
+										<Link
+											key={n.id}
+											href={`/dashboard/jobs/${n.jobId}`}
+											onClick={() => markAsRead(n.id)}
+										>
+											<div className={`px-4 py-2.5 flex items-center gap-3 hover:bg-muted/50 transition-colors border-b border-border/20 ${!n.read ? "bg-muted/20" : ""}`}>
+												<div className={`p-1 rounded-md shrink-0 ${n.status === "FAILED" ? "bg-destructive/10" : n.status === "SUCCESS" ? "bg-emerald-500/10" : "bg-blue-500/10"}`}>
+													<ClipboardList className={`h-3.5 w-3.5 ${n.status === "FAILED" ? "text-destructive" : n.status === "SUCCESS" ? "text-emerald-500" : "text-blue-500"}`} />
 												</div>
+												<div className="flex-1 min-w-0">
+													<p className="text-xs font-medium text-foreground">
+														{n.jobType.replace("_", " ")} — {n.status.toLowerCase()}
+													</p>
+													<p className="text-[11px] text-muted-foreground mt-0.5">
+														{new Date(n.createdAt).toLocaleTimeString()}
+													</p>
+												</div>
+												{!n.read && (
+													<span className={cn(
+														"h-2 w-2 rounded-full shrink-0",
+														n.status === "FAILED" ? "bg-destructive" : n.status === "SUCCESS" ? "bg-emerald-500" : "bg-blue-500",
+													)} />
+												)}
 											</div>
-										</div>
-									) : (
+										</Link>
+									))}
+									{notifications.length === 0 && (
 										<div className="p-8 text-center text-sm text-muted-foreground">
-											You're all caught up!
+											You&apos;re all caught up!
 										</div>
 									)}
 								</div>
@@ -235,7 +235,7 @@ export default function DashboardLayout({
 								</DropdownMenuItem>
 								<DropdownMenuItem asChild>
 									<Link
-										href="/dashboard/configure"
+										href="/dashboard/plant"
 										className="cursor-pointer"
 									>
 										<Settings className="mr-2 h-4 w-4 text-muted-foreground" />
@@ -262,7 +262,9 @@ export default function DashboardLayout({
 				<aside className="hidden lg:flex w-64 xl:w-72 shrink-0 flex-col overflow-y-auto border-r border-border/40 bg-background/50">
 					<nav className="flex-1 space-y-1 p-4 lg:p-6 overflow-y-auto">
 						{navigation.map((item) => {
-							const isActive = pathname === item.href;
+							const isActive = item.href === "/dashboard"
+								? pathname === "/dashboard"
+								: pathname.startsWith(item.href);
 							return (
 								<Link key={item.name} href={item.href}>
 									<Button
@@ -345,7 +347,9 @@ export default function DashboardLayout({
 							</div>
 							<nav className="flex-1 overflow-y-auto p-4 space-y-1">
 								{navigation.map((item) => {
-									const isActive = pathname === item.href;
+									const isActive = item.href === "/dashboard"
+								? pathname === "/dashboard"
+								: pathname.startsWith(item.href);
 									return (
 										<Link
 											key={item.name}
@@ -390,16 +394,20 @@ export default function DashboardLayout({
 				)}
 
 				{/* Main Content Area - Expands to fill remaining space */}
-				<main className="flex-1 overflow-y-auto bg-background p-4 sm:p-6 lg:p-8 xl:p-10">
-					<Suspense
-						fallback={
-							<div className="flex items-center justify-center h-full min-h-[50vh]">
-								<div className="w-6 h-6 border-2 border-foreground border-t-transparent rounded-full animate-spin"></div>
-							</div>
-						}
-					>
-						{children}
-					</Suspense>
+				<main className="flex-1 bg-background">
+					<ScrollArea className="h-[calc(100dvh-3.5rem)]">
+						<div className="p-4 sm:p-6 lg:p-8 xl:p-10">
+							<Suspense
+								fallback={
+									<div className="flex items-center justify-center min-h-[50vh]">
+										<div className="w-6 h-6 border-2 border-foreground border-t-transparent rounded-full animate-spin"></div>
+									</div>
+								}
+							>
+								{children}
+							</Suspense>
+						</div>
+					</ScrollArea>
 				</main>
 			</div>
 		</div>

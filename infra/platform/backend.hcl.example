@@ -1,0 +1,29 @@
+# Supabase S3-compatible backend for Terraform state.
+# Copy to backend.hcl and fill in credentials.
+# NEVER commit backend.hcl — it contains secrets.
+
+bucket = "terraform-state"
+key    = "tendril/terraform.tfstate"
+region = "eu-north-1"
+
+endpoints = {
+  s3 = "https://egzejziajjmjmdjplmii.storage.supabase.co/storage/v1/s3"
+}
+
+skip_credentials_validation = true
+skip_requesting_account_id  = true
+skip_metadata_api_check     = true
+skip_region_validation      = true
+skip_s3_checksum            = true
+use_path_style              = true
+
+# File-based state locking (no DynamoDB needed).
+use_lockfile = true
+
+# Credentials — set via environment variables:
+#   export AWS_ACCESS_KEY_ID="your-supabase-storage-key-id"
+#   export AWS_SECRET_ACCESS_KEY="your-supabase-storage-secret-key"
+#
+# Or uncomment (but NEVER commit this file):
+# access_key = "YOUR_SUPABASE_STORAGE_KEY_ID"
+# secret_key = "YOUR_SUPABASE_STORAGE_SECRET_KEY"

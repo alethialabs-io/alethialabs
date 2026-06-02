@@ -1,4 +1,4 @@
-import { Database } from "@/types/database.types";
+import { Database } from "@/types/database-custom.types";
 import { createBrowserClient } from "@supabase/ssr";
 import { env } from "next-runtime-env";
 

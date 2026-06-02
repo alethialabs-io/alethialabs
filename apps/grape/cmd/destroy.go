@@ -2,102 +2,66 @@ package cmd
 
 import (
 	"fmt"
-	"log"
 	"os"
-	"path/filepath"
 
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/api"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/terraform"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/types"
+	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/api"
 	"github.com/charmbracelet/huh"
-	"github.com/imroc/req/v3"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
-)
-
-var (
-	destroyVineyardID string
-	cleanupWorkspace  bool
 )
 
 var destroyCmd = &cobra.Command{
 	Use:   "destroy",
-	Short: "Destroy a bootstrapped environment",
-	Long:  `Destroy removes all resources associated with a specific vineyard and environment.`,
+	Short: "Destroy infrastructure resources",
+	Long:  `Destroy vines or workers by queuing a teardown job for a worker to execute.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("Use `grape destroy vine` or `grape destroy worker`")
+	},
+}
+
+var (
+	destroyVineID     string
+	destroyWorkerFlag string
+	destroyAssignedID string
+	destroyWait       bool
+)
+
+var destroyVineCmd = &cobra.Command{
+	Use:   "vine",
+	Short: "Queue a DESTROY job for a vine",
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			log.Fatalf("Authentication failed: %v", err)
+			fmt.Println(err)
+			os.Exit(1)
 		}
 
-		var vineyardName string
-		apiClient := api.NewClient(token)
+		vineyardID := ""
 
-		// Interactive Mode if vineyard ID is missing
-		if destroyVineyardID == "" {
-			fmt.Println("🔍 Fetching your Vineyards...")
-			var vResult struct {
-				Vineyards []types.Vineyard `json:"vineyards"`
-			}
-			webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
-			if webOrigin == "" {
-				webOrigin = "https://adp.prod.itgix.eu"
-			}
-			reqClient := req.C()
-			_, err := reqClient.R().
-				SetBearerAuthToken(token).
-				SetSuccessResult(&vResult).
-				Get(fmt.Sprintf("%s/api/cli/vineyards", webOrigin))
-
-			var vineyardOptions []huh.Option[string]
-			if err == nil && len(vResult.Vineyards) > 0 {
-				for _, v := range vResult.Vineyards {
-					vineyardOptions = append(vineyardOptions, huh.NewOption(v.Name, v.ID))
-				}
-			}
-
-			if len(vineyardOptions) == 0 {
-				fmt.Println("❌ No Vineyards found.")
-				return
-			}
-
-			form := huh.NewForm(
-				huh.NewGroup(
-					huh.NewSelect[string]().
-						Title("Vineyard Workspace").
-						Description("Select the Vineyard to destroy").
-						Options(vineyardOptions...).
-						Value(&destroyVineyardID),
-					huh.NewSelect[string]().
-						Title("Environment").
-						Options(
-							huh.NewOption("Development", "dev"),
-							huh.NewOption("Staging", "staging"),
-							huh.NewOption("Production", "prod"),
-						).Value(&environment),
-				),
-			)
-
-			err = form.Run()
+		if destroyVineID == "" {
+			vineyardID, _, err = selectVineyard(token)
 			if err != nil {
-				fmt.Println("Cancelled.")
-				return
+				fmt.Println(err)
+				os.Exit(1)
 			}
 
-			for _, v := range vResult.Vineyards {
-				if v.ID == destroyVineyardID {
-					vineyardName = v.Name
-					break
-				}
+			destroyVineID, err = selectVine(token, vineyardID)
+			if err != nil {
+				fmt.Println(err)
+				os.Exit(1)
 			}
 		}
 
-		// Confirm destruction
+		if vineyardID == "" {
+			vineyardID = destroyVineID
+		}
+
 		var confirm bool
 		confirmForm := huh.NewForm(
 			huh.NewGroup(
 				huh.NewConfirm().
-					Title(fmt.Sprintf("Are you sure you want to destroy %s-%s?", destroyVineyardID, environment)).
-					Description("This action will remove all cloud resources and unregister the cluster from Trellis. It cannot be undone.").
+					Title("Are you sure you want to destroy this vine?").
+					Description("This will tear down all cloud resources. It cannot be undone.").
 					Value(&confirm),
 			),
 		)
@@ -106,63 +70,118 @@ var destroyCmd = &cobra.Command{
 			return
 		}
 
-		home, err := os.UserHomeDir()
+		apiClient := api.NewClient(token)
+
+		params := api.QueueJobParams{
+			JobType:         "DESTROY",
+			VineyardID:      vineyardID,
+			ConfigurationID: destroyVineID,
+		}
+		if destroyAssignedID != "" {
+			params.AssignedWorkerID = destroyAssignedID
+		}
+
+		job, err := apiClient.QueueJobWithParams(params)
 		if err != nil {
-			log.Fatalf("Failed to get home directory: %v", err)
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
 		}
 
-		workspaceName := fmt.Sprintf("%s-%s", vineyardName, environment)
-		if vineyardName == "" {
-			workspaceName = fmt.Sprintf("%s-%s", destroyVineyardID, environment)
-		}
+		successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+		fmt.Printf("\n%s Queued DESTROY job (ID: %s)\n", successStyle.Render("✓"), job.ID)
 
-		workDir := filepath.Join(home, ".grape", "workspaces", workspaceName)
-		if _, err := os.Stat(workDir); os.IsNotExist(err) {
-			log.Fatalf("Workspace directory not found: %s", workDir)
-		}
-
-		fmt.Printf("🔥 Destroying environment %s...\n", workspaceName)
-
-		// 1. Unregister Cluster from Trellis
-		fmt.Println("   🔐 Unregistering cluster from Trellis...")
-		clusterName := fmt.Sprintf("%s-cluster", workspaceName)
-		if err := apiClient.UnregisterCluster("", clusterName); err != nil {
-			fmt.Printf("      ⚠️ Warning: Failed to unregister cluster from Trellis: %v\n", err)
-			fmt.Println("      Continuing with resource destruction...")
+		if destroyWait {
+			if err := waitForJob(apiClient, job.ID); err != nil {
+				os.Exit(1)
+			}
 		} else {
-			fmt.Println("      Cluster unregistered successfully.")
+			fmt.Println("A worker will pick up this job. Monitor with `grape jobs logs " + job.ID + " --follow`")
 		}
+	},
+}
 
-		// 2. Initialize Terraform
-		tf, err := terraform.NewTF_CLI("1.7.4")
+var (
+	destroyWorkerID         string
+	destroyWorkerAssignedID string
+	destroyWorkerWait       bool
+)
+
+var destroyWorkerCmd = &cobra.Command{
+	Use:   "worker",
+	Short: "Queue a DESTROY_WORKER job to tear down a deployed worker",
+	Run: func(cmd *cobra.Command, args []string) {
+		token, err := getAuthToken()
 		if err != nil {
-			log.Fatalf("Failed to initialize Terraform CLI: %v", err)
+			fmt.Println(err)
+			os.Exit(1)
 		}
 
-		// 3. Run Destroy
-		// We assume terraform.tfvars already exists in the workspace from bootstrap
-		fmt.Println("   ⚡ Destroying Cloud Resources (this may take 10-15 mins)...")
-		if err := tf.Destroy(workDir, "terraform.tfvars"); err != nil {
-			log.Fatalf("Terraform destroy failed: %v", err)
-		}
-
-		// 4. Cleanup workspace directory
-		if cleanupWorkspace {
-			fmt.Println("   🧹 Cleaning up workspace directory...")
-			if err := os.RemoveAll(workDir); err != nil {
-				fmt.Printf("      ⚠️ Warning: Failed to remove workspace directory: %v\n", err)
-			} else {
-				fmt.Println("      Workspace directory removed.")
+		if destroyWorkerID == "" {
+			destroyWorkerID, err = selectWorker(token)
+			if err != nil {
+				fmt.Println(err)
+				os.Exit(1)
 			}
 		}
 
-		fmt.Println("✅ Environment destroyed successfully!")
+		var confirm bool
+		confirmForm := huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title("Are you sure you want to destroy this worker?").
+					Description("This will tear down the worker's cloud infrastructure.").
+					Value(&confirm),
+			),
+		)
+		if err := confirmForm.Run(); err != nil || !confirm {
+			fmt.Println("Operation cancelled.")
+			return
+		}
+
+		apiClient := api.NewClient(token)
+
+		snapshot := map[string]interface{}{
+			"worker_id": destroyWorkerID,
+		}
+
+		params := api.QueueJobParams{
+			JobType:        "DESTROY_WORKER",
+			VineyardID:     "",
+			ConfigSnapshot: snapshot,
+		}
+		if destroyWorkerAssignedID != "" {
+			params.AssignedWorkerID = destroyWorkerAssignedID
+		}
+
+		job, err := apiClient.QueueJobWithParams(params)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+		fmt.Printf("\n%s Queued DESTROY_WORKER job (ID: %s)\n", successStyle.Render("✓"), job.ID)
+
+		if destroyWorkerWait {
+			if err := waitForJob(apiClient, job.ID); err != nil {
+				os.Exit(1)
+			}
+		} else {
+			fmt.Println("A worker will pick up this job. Monitor with `grape jobs logs " + job.ID + " --follow`")
+		}
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(destroyCmd)
-	destroyCmd.Flags().StringVarP(&destroyVineyardID, "vineyard-id", "v", "", "ID of the Vineyard")
-	destroyCmd.Flags().StringVarP(&environment, "environment", "e", "dev", "Environment name (e.g., dev, prod)")
-	destroyCmd.Flags().BoolVar(&cleanupWorkspace, "cleanup", true, "Remove workspace directory after destruction")
+	destroyCmd.AddCommand(destroyVineCmd)
+	destroyCmd.AddCommand(destroyWorkerCmd)
+
+	destroyVineCmd.Flags().StringVar(&destroyVineID, "vine-id", "", "ID of the vine to destroy")
+	destroyVineCmd.Flags().StringVar(&destroyAssignedID, "worker-id", "", "Assign to a specific worker")
+	destroyVineCmd.Flags().BoolVarP(&destroyWait, "wait", "w", false, "Wait for job completion")
+
+	destroyWorkerCmd.Flags().StringVar(&destroyWorkerID, "worker-id", "", "ID of the worker to destroy")
+	destroyWorkerCmd.Flags().StringVar(&destroyWorkerAssignedID, "assigned-worker-id", "", "Which worker executes the teardown")
+	destroyWorkerCmd.Flags().BoolVarP(&destroyWorkerWait, "wait", "w", false, "Wait for job completion")
 }

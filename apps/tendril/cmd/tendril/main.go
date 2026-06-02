@@ -1,56 +1,44 @@
 package main
 
 import (
-	"log"
+	"context"
+	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
-	"github.com/bobikenobi12/bb-thesis-2026/apps/tendril/internal/agent"
-	"github.com/supabase-community/supabase-go"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/tendril/internal/version"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/tendril/worker"
 )
 
 func main() {
-	log.Println("Starting Tendril Agent...")
+	cfg := worker.Config{
+		Mode:        envOrDefault("GRAPE_WORKER_MODE", "self-hosted"),
+		TrellisURL:  envOrDefault("GRAPE_WEB_ORIGIN", "https://adp.prod.itgix.eu"),
+		WorkerID:    os.Getenv("GRAPE_WORKER_ID"),
+		WorkerToken: os.Getenv("GRAPE_WORKER_TOKEN"),
 
-	// 1. Read Configuration from Env
-	clusterID := os.Getenv("TENDRIL_CLUSTER_ID")
-	apiToken := os.Getenv("TENDRIL_API_TOKEN")
-	supabaseURL := os.Getenv("SUPABASE_URL")
-	supabaseKey := os.Getenv("SUPABASE_KEY")
-
-	if clusterID == "" || apiToken == "" || supabaseURL == "" || supabaseKey == "" {
-		log.Fatal("Missing required environment variables: TENDRIL_CLUSTER_ID, TENDRIL_API_TOKEN, SUPABASE_URL, SUPABASE_KEY")
+		SupabaseS3Endpoint:  envOrDefault("SUPABASE_S3_ENDPOINT", ""),
+		SupabaseS3Region:    envOrDefault("SUPABASE_S3_REGION", ""),
+		SupabaseS3AccessKey: os.Getenv("SUPABASE_STORAGE_KEY_ID"),
+		SupabaseS3SecretKey: os.Getenv("SUPABASE_STORAGE_SECRET_KEY"),
 	}
 
-	// 2. Initialize Supabase Client (Singleton)
-	// We inject the Agent Token into every request header for security/auditing.
-	clientOptions := &supabase.ClientOptions{
-		Headers: map[string]string{
-			"X-Agent-Token": apiToken,
-			"X-Cluster-ID":  clusterID,
-		},
+	fmt.Printf("grape-worker %s\n", version.Version)
+
+	if cfg.WorkerID == "" || cfg.WorkerToken == "" {
+		fmt.Fprintln(os.Stderr, "Error: GRAPE_WORKER_ID and GRAPE_WORKER_TOKEN environment variables are required.")
+		os.Exit(1)
 	}
 
-	client, err := supabase.NewClient(supabaseURL, supabaseKey, clientOptions)
-	if err != nil {
-		log.Fatalf("Failed to initialize Supabase client: %v", err)
+	w := worker.New(cfg)
+	if err := w.Run(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "Worker error: %v\n", err)
+		os.Exit(1)
 	}
+}
 
-	// 3. Initialize Poller with the shared client
-	poller := agent.NewPoller(clusterID, apiToken, client)
-
-	// 4. Start Heartbeat (Background)
-	go poller.StartHeartbeat(30 * time.Second)
-
-	// 5. Start Job Loop
-	go poller.StartJobLoop(5 * time.Second)
-
-	// 6. Wait for Shutdown Signal
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
-
-	log.Println("Shutting down Tendril Agent...")
+func envOrDefault(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
 }

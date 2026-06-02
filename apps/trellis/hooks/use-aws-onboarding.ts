@@ -11,7 +11,7 @@ export function useAwsOnboarding() {
 
 	useEffect(() => {
 		const checkStatus = async () => {
-			if (pathname?.includes("/dashboard/providers")) {
+			if (pathname?.includes("/dashboard/integrations") || pathname?.includes("/dashboard/providers")) {
 				setIsLoading(false);
 				return;
 			}

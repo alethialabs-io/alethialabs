@@ -1,54 +1,70 @@
-# Stage 1: Build the Go Agent
-FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
-ARG TARGETOS
-ARG TARGETARCH
+RUN apk add --no-cache git
 
 WORKDIR /app
 
-# Copy Go module files first to leverage caching
-COPY go.mod go.sum ./
-RUN go mod download
+# Copy the workspace root files for multi-module builds
+COPY go.work go.work
+COPY packages/grape-core/ packages/grape-core/
 
-# Copy source code
-COPY . .
+# Copy tendril module
+COPY apps/tendril/go.mod apps/tendril/go.sum apps/tendril/
+RUN cd apps/tendril && go mod download
 
-# Build the binary
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o tendril ./cmd/tendril
+COPY apps/tendril/ apps/tendril/
 
-# Stage 2: Create the Runtime Image
-FROM alpine:3.19
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+    -ldflags="-s -w -X github.com/bobikenobi12/bb-thesis-2026/apps/tendril/internal/version.Version=${VERSION}" \
+    -o /tendril ./apps/tendril/cmd/tendril
 
-ARG TARGETARCH
+FROM alpine:3.21
 
-# Install dependencies
 RUN apk add --no-cache \
-    git \
-    openssh \
-    ca-certificates \
+    bash \
     curl \
-    unzip
+    unzip \
+    git \
+    openssh-client \
+    aws-cli \
+    kubectl \
+    helm \
+    python3 \
+    py3-pip \
+    && rm -rf /var/cache/apk/*
 
-# Install Terraform
-ENV TERRAFORM_VERSION=1.7.4
-RUN curl -LO https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip && \
-    unzip terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip && \
-    mv terraform /usr/local/bin/ && \
-    rm terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip
+RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
+    curl -fsSL "https://releases.hashicorp.com/terraform/1.7.4/terraform_1.7.4_linux_${ARCH}.zip" -o /tmp/tf.zip && \
+    unzip /tmp/tf.zip -d /usr/local/bin && \
+    rm /tmp/tf.zip && \
+    chmod +x /usr/local/bin/terraform
 
-# Create a non-root user
-RUN addgroup -S tendril && adduser -S tendril -G tendril
+RUN mkdir -p /opt/infracost && \
+    ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
+    curl -fsSL "https://github.com/infracost/infracost/releases/download/v0.10.39/infracost-linux-${ARCH}.tar.gz" | \
+    tar -xz -C /opt/infracost && \
+    chmod +x /opt/infracost/infracost
 
+# Google Cloud SDK
+RUN ARCH=$(uname -m | sed 's/x86_64/x86_64/' | sed 's/aarch64/arm/') && \
+    curl -fsSL "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-${ARCH}.tar.gz" | \
+    tar -xz -C /opt && \
+    /opt/google-cloud-sdk/install.sh --quiet --path-update=true && \
+    /opt/google-cloud-sdk/bin/gcloud components install gke-gcloud-auth-plugin --quiet
+ENV PATH="/opt/google-cloud-sdk/bin:${PATH}"
+
+# Azure CLI
+RUN pip3 install --break-system-packages azure-cli
+
+COPY --from=builder /tendril /usr/local/bin/tendril
+
+RUN adduser -D -u 1000 tendril
+USER tendril
 WORKDIR /home/tendril
 
-# Copy the binary from builder
-COPY --from=builder /app/tendril /usr/local/bin/tendril
+COPY --chown=tendril:tendril vine-templates/ /home/tendril/vine-templates/
+COPY --chown=tendril:tendril tendril-templates/ /home/tendril/tendril-templates/
+COPY --chown=tendril:tendril argocd-templates/ /home/tendril/argocd-templates/
 
-# Set permissions
-RUN chown -R tendril:tendril /home/tendril
-
-# Switch to non-root user
-USER tendril
-
-# Environment variables should be injected at runtime
-CMD ["tendril"]
+ENTRYPOINT ["tendril"]

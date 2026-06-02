@@ -1,6 +1,5 @@
 "use client";
 
-import { LinkedAccounts } from "@/components/linked-accounts";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { createClient } from "@/lib/supabase/client";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { Calendar, Mail, Shield, User } from "lucide-react";
@@ -37,10 +37,64 @@ export default function ProfilePage() {
 
 	if (loading) {
 		return (
-			<div className="max-w-[1000px] w-full space-y-8">
-				<div className="animate-pulse space-y-4">
-					<div className="h-8 bg-muted rounded w-1/4"></div>
-					<div className="h-64 bg-muted rounded"></div>
+			<div className="space-y-8 w-full max-w-[1000px]">
+				<div className="space-y-1.5">
+					<Skeleton className="h-8 w-48" />
+					<Skeleton className="h-4 w-72" />
+				</div>
+
+				<div className="rounded-lg border border-border/40 shadow-sm">
+					<div className="border-b border-border/40 p-6 bg-muted/5 space-y-1.5">
+						<Skeleton className="h-5 w-40" />
+						<Skeleton className="h-3 w-64" />
+					</div>
+					<div className="p-6">
+						<div className="flex flex-col sm:flex-row items-start gap-8">
+							<Skeleton className="h-20 w-20 sm:h-24 sm:w-24 rounded-full" />
+							<div className="flex-1 grid gap-6 sm:grid-cols-2 w-full">
+								{[1, 2, 3, 4].map((i) => (
+									<div key={i} className="space-y-1.5">
+										<Skeleton className="h-3 w-20" />
+										<Skeleton className="h-4 w-36" />
+									</div>
+								))}
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<div className="rounded-lg border border-border/40 shadow-sm">
+					<div className="border-b border-border/40 p-6 bg-muted/5 space-y-1.5">
+						<Skeleton className="h-5 w-32" />
+						<Skeleton className="h-3 w-48" />
+					</div>
+					<div className="p-6 space-y-5">
+						<div className="grid gap-5 sm:max-w-md">
+							{[1, 2].map((i) => (
+								<div key={i} className="space-y-2">
+									<Skeleton className="h-3 w-20" />
+									<Skeleton className="h-9 w-full rounded-md" />
+								</div>
+							))}
+						</div>
+						<Skeleton className="h-9 w-28 rounded-md" />
+					</div>
+				</div>
+
+				<div className="rounded-lg border border-destructive/20 shadow-sm">
+					<div className="border-b border-destructive/10 p-6 bg-destructive/5 space-y-1.5">
+						<Skeleton className="h-5 w-28" />
+						<Skeleton className="h-3 w-44" />
+					</div>
+					<div className="p-6">
+						<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+							<div className="space-y-1">
+								<Skeleton className="h-4 w-28" />
+								<Skeleton className="h-3 w-80" />
+							</div>
+							<Skeleton className="h-9 w-32 rounded-md" />
+						</div>
+					</div>
 				</div>
 			</div>
 		);
@@ -165,10 +219,6 @@ export default function ProfilePage() {
 					</div>
 				</CardContent>
 			</Card>
-
-			<div className="mb-6">
-				<LinkedAccounts />
-			</div>
 
 			{/* Account Details */}
 			<Card className="shadow-sm border-border/40">

@@ -1,0 +1,64 @@
+plugins:
+  - "@semantic-release/commit-analyzer"
+  - "@semantic-release/release-notes-generator"
+  - "@semantic-release/gitlab"
+  - "@semantic-release/changelog"
+  - "@semantic-release/git"
+  - "@semantic-release/exec"
+
+analyzeCommits:
+  - path: "@semantic-release/commit-analyzer"
+    preset: angular
+    releaseRules:
+      - type: BREAKING CHANGE
+        release: major
+      - type: feat
+        release: minor
+      - type: fix
+        release: patch
+      - type: style
+        release: patch
+      - type: test
+        release: patch
+      - type: refactor
+        release: patch
+      - type: perf
+        release: patch
+      - type: docs
+        release: patch
+      - type: chore
+        release: patch
+
+generateNotes:
+  - path: "@semantic-release/release-notes-generator"
+    preset: angular
+    releaseRules:
+      - type: BREAKING CHANGE
+        release: major
+      - type: feat
+        release: minor
+      - type: fix
+        release: patch
+      - type: style
+        release: patch
+      - type: test
+        release: patch
+      - type: refactor
+        release: patch
+      - type: perf
+        release: patch
+      - type: docs
+        release: patch
+      - type: chore
+        release: patch
+
+prepare:
+  - path: "@semantic-release/changelog"
+    changelogFile: "./CHANGELOG.md"
+  - path: "@semantic-release/git"
+    asset: "./CHANGELOG.md"
+    message: "${nextRelease.version} CHANGELOG [skip ci]\n\n${nextRelease.notes}"
+
+success: 
+  - path: "@semantic-release/exec"
+    successCmd: 'echo ${nextRelease.version} > release_version_only'

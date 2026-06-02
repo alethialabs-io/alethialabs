@@ -1,0 +1,41 @@
+# Tendril multi-environment deployment configuration
+# Copy to terraform.tfvars and fill in secrets.
+
+project_name = "tendril"
+environment  = "dev"
+
+# Each entry creates a tendril: VPC, ECS cluster, auto-registration.
+# Key = tendril name, region = AWS region, trellis_url = which Trellis it serves.
+tendrils = {
+  "prod-eu-west-1" = {
+    region      = "eu-west-1"
+    trellis_url = "https://adp.prod.itgix.eu"
+  }
+  "beta-eu-west-1" = {
+    region      = "eu-west-1"
+    trellis_url = "https://beta.adp.itgix.com"
+  }
+  "dev-eu-west-1" = {
+    region      = "eu-west-1"
+    trellis_url = "https://your-ngrok-url.ngrok-free.dev"
+  }
+}
+
+worker_mode     = "cloud-hosted"
+tendril_version = "latest"
+
+# Trellis API secret — used by tendrils to auto-register.
+trellis_api_secret = ""
+
+# Supabase API — used by the Lambda scaler to query queued jobs.
+supabase_url              = "https://YOUR_PROJECT.supabase.co"
+supabase_service_role_key = ""
+
+# Supabase S3 — Terraform state storage for provisioned vines.
+supabase_s3_endpoint        = "https://YOUR_PROJECT.storage.supabase.co/storage/v1/s3"
+supabase_s3_region          = "eu-north-1"
+supabase_storage_key_id     = ""
+supabase_storage_secret_key = ""
+
+# Infracost — cost estimation during plan jobs (optional).
+infracost_api_key = ""
