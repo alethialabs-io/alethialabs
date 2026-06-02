@@ -13,6 +13,13 @@ terraform {
 
 provider "aws" {
   region = var.region
+  default_tags {
+    tags = {
+      Environment = "Production"
+      Service     = "tendril"
+      ManagedBy   = "terraform"
+    }
+  }
 }
 
 locals {

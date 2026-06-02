@@ -33,6 +33,6 @@ variable "cluster_version" {
 
 variable "instance_types" {
   type        = list(string)
-  default     = ["t3.medium"]
+  default     = ["t4g.medium"]
   description = "EC2 instance types for the EKS managed node group"
 }

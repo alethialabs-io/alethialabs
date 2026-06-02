@@ -18,12 +18,26 @@ terraform {
 
 provider "aws" {
   region = var.region
+  default_tags {
+    tags = {
+      Environment = title(var.environment)
+      Service     = var.project_name
+      ManagedBy   = "terraform"
+    }
+  }
 }
 
 # needed for WAF module
 provider "aws" {
   alias  = "virginia"
   region = "us-east-1"
+  default_tags {
+    tags = {
+      Environment = title(var.environment)
+      Service     = var.project_name
+      ManagedBy   = "terraform"
+    }
+  }
 }
 
 provider "kubernetes" {

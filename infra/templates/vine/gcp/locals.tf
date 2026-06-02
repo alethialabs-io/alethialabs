@@ -43,7 +43,7 @@ locals {
 
   gcp_default_labels = {
     "environment" = var.environment
-    "project"     = var.project_name
+    "service"     = var.project_name
     "managed-by"  = "terraform"
   }
 

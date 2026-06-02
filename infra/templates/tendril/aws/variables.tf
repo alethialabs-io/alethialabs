@@ -57,6 +57,6 @@ variable "subnet_ids" {
 
 variable "assign_public_ip" {
   type        = bool
-  default     = true
+  default     = false
   description = "Assign public IP to the Fargate task (required if no NAT gateway)"
 }

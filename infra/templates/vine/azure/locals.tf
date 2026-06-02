@@ -41,9 +41,9 @@ locals {
   }
 
   azure_default_tags = {
-    "environment" = var.environment
-    "project"     = var.project_name
-    "managed-by"  = "terraform"
+    "Environment" = title(var.environment)
+    "Service"     = var.project_name
+    "ManagedBy"   = "terraform"
   }
 
   # Naming conventions
