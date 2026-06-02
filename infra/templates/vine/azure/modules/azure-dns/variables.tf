@@ -18,6 +18,12 @@ variable "domain" {
   type        = string
 }
 
+variable "managed_certificate" {
+  description = "Create a managed TLS certificate for the domain"
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

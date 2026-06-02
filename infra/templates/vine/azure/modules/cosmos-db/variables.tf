@@ -30,6 +30,17 @@ variable "consistency_level" {
   default     = "Session"
 }
 
+variable "collections" {
+  description = "List of Cosmos DB containers (collections) to create"
+  type = list(object({
+    name          = string
+    partition_key = optional(string, "/id")
+    billing_mode  = optional(string, "PAY_PER_REQUEST")
+    analytical_storage_enabled = optional(bool, false)
+  }))
+  default = []
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

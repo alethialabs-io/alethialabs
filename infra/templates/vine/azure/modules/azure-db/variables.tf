@@ -87,6 +87,12 @@ variable "port" {
   default     = 5432
 }
 
+variable "iam_auth" {
+  type        = bool
+  description = "Whether to enable Azure Active Directory (AAD) authentication on the Flexible Server"
+  default     = false
+}
+
 ################################################################################
 # Networking
 ################################################################################

@@ -24,5 +24,7 @@ module "cloud_sql" {
   iam_auth = var.cloud_sql_iam_auth
   port     = var.cloud_sql_port
 
+  authorized_networks = var.cloud_sql_authorized_networks
+
   labels = local.gcp_default_labels
 }

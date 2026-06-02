@@ -106,6 +106,15 @@ variable "port" {
   default     = null
 }
 
+variable "authorized_networks" {
+  type = list(object({
+    name  = string
+    value = string
+  }))
+  description = "List of authorized networks that can connect to Cloud SQL (each entry has a name and a CIDR value)"
+  default     = []
+}
+
 ################################################################################
 # Labels
 ################################################################################

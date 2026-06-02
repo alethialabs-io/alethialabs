@@ -148,6 +148,12 @@ variable "azure_db_port" {
   description = "Port number for the Azure Database instance"
 }
 
+variable "azure_db_iam_auth" {
+  type        = bool
+  default     = false
+  description = "Whether to enable Azure Active Directory (AAD) authentication on the Flexible Server"
+}
+
 #########################################################################
 ##                   Azure Cache (Redis) Variables                     ##
 #########################################################################
@@ -180,6 +186,12 @@ variable "azure_cache_redis_version" {
   type        = string
   default     = "6"
   description = "Redis version for Azure Cache"
+}
+
+variable "azure_cache_multi_az" {
+  type        = bool
+  default     = false
+  description = "Whether to enable zone redundancy for Azure Cache for Redis (requires Premium SKU)"
 }
 
 #########################################################################
@@ -232,6 +244,17 @@ variable "cosmos_db_consistency_level" {
   description = "Default consistency level for the Cosmos DB account"
 }
 
+variable "cosmos_db_collections" {
+  type = list(object({
+    name          = string
+    partition_key = optional(string, "/id")
+    billing_mode  = optional(string, "PAY_PER_REQUEST")
+    analytical_storage_enabled = optional(bool, false)
+  }))
+  default     = []
+  description = "List of Cosmos DB containers (collections) to create with partition keys"
+}
+
 #########################################################################
 ##                   Azure DNS Variables                               ##
 #########################################################################
@@ -252,6 +275,12 @@ variable "azure_dns_domain" {
   type        = string
   default     = ""
   description = "DNS domain name for the managed zone"
+}
+
+variable "azure_managed_certificate" {
+  type        = bool
+  default     = false
+  description = "Whether to provision an Azure-managed TLS certificate via App Service Managed Certificate"
 }
 
 #########################################################################

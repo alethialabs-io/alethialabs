@@ -38,6 +38,12 @@ variable "redis_version" {
   type        = string
 }
 
+variable "multi_az" {
+  description = "Whether to enable zone redundancy for the Redis cache (requires Premium SKU)"
+  type        = bool
+  default     = false
+}
+
 variable "subnet_id" {
   description = "Subnet ID for VNet integration (Premium SKU only)"
   type        = string

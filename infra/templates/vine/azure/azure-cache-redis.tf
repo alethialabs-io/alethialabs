@@ -12,6 +12,7 @@ module "azure_cache" {
   family              = var.azure_cache_family
   capacity            = var.azure_cache_capacity
   redis_version       = var.azure_cache_redis_version
+  multi_az            = var.azure_cache_multi_az
   subnet_id           = var.provision_vnet ? module.vnet[0].subnet_id : var.vnet_id
 
   tags = local.azure_default_tags

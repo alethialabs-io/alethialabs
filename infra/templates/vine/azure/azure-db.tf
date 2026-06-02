@@ -16,6 +16,7 @@ module "azure_db" {
   high_availability   = var.azure_db_high_availability
   backup_retention_days = var.azure_db_backup_retention_days
   port                = var.azure_db_port
+  iam_auth            = var.azure_db_iam_auth
   subnet_id           = var.provision_vnet ? module.vnet[0].subnet_id : var.vnet_id
 
   tags = local.azure_default_tags

@@ -80,6 +80,14 @@ resource "azurerm_postgresql_flexible_server" "this" {
   public_network_access_enabled = false
   zone                          = "1"
 
+  dynamic "authentication" {
+    for_each = var.iam_auth ? [1] : []
+    content {
+      active_directory_auth_enabled = true
+      password_auth_enabled         = true
+    }
+  }
+
   dynamic "high_availability" {
     for_each = var.high_availability ? [1] : []
     content {

@@ -19,9 +19,15 @@ func (p *azureProvider) RequiredCLIs() []string {
 
 func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]interface{} {
 	wafEnabled := false
+	managedCert := false
 	if v, ok := config.DNS.ProviderConfig["azure_waf"]; ok {
 		if b, ok := v.(bool); ok {
 			wafEnabled = b
+		}
+	}
+	if v, ok := config.DNS.ProviderConfig["managed_certificate"]; ok {
+		if b, ok := v.(bool); ok {
+			managedCert = b
 		}
 	}
 
@@ -53,6 +59,9 @@ func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]inte
 		// WAF
 		"azure_waf_enabled": wafEnabled,
 
+		// TLS
+		"azure_managed_certificate": managedCert,
+
 		// Service Bus
 		"create_service_bus": len(config.Queues) > 0 || len(config.Topics) > 0,
 		"service_bus_queues": buildServiceBusQueues(config.Queues),
@@ -66,9 +75,10 @@ func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]inte
 		"cosmos_db_collections": buildCosmosDBCollections(config.NosqlTables),
 
 		// ACR
-		"provision_acr": false,
+		"provision_acr": len(config.ContainerRegistries) > 0,
 
 		// Storage
+		// TODO: enable when VineConfig gains a storage config field
 		"create_storage_account": false,
 
 		// Secrets
@@ -94,12 +104,18 @@ func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]inte
 		if db.BackupRetentionDays != nil {
 			tfvars["azure_db_backup_retention_days"] = *db.BackupRetentionDays
 		}
+		if db.IamAuth != nil {
+			tfvars["azure_db_iam_auth"] = *db.IamAuth
+		}
 	}
 
 	if len(config.Caches) > 0 {
 		cache := config.Caches[0]
 		if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1 {
 			tfvars["azure_cache_sku"] = "Standard"
+		}
+		if cache.MultiAz != nil {
+			tfvars["azure_cache_multi_az"] = *cache.MultiAz
 		}
 	}
 

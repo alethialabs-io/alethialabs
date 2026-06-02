@@ -80,9 +80,13 @@ func (p *gcpProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		"firestore_databases": buildFirestoreDatabases(config.NosqlTables),
 
 		// Artifact Registry
+		// TODO: enable when VineConfig gains a ContainerRegistries field
+		// "provision_artifact_registry": len(config.ContainerRegistries) > 0,
 		"provision_artifact_registry": false,
 
 		// Cloud Storage
+		// TODO: enable when VineConfig gains a StorageBuckets field
+		// "create_cloud_storage": len(config.StorageBuckets) > 0,
 		"create_cloud_storage": false,
 
 		// Secrets
@@ -90,6 +94,8 @@ func (p *gcpProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 
 		// Cloud SQL
 		"create_cloud_sql": len(config.Databases) > 0,
+		// TODO: wire from VineConfig when an AuthorizedNetworks field is added
+		"cloud_sql_authorized_networks": []map[string]interface{}{},
 	}
 
 	if len(config.Databases) > 0 {
@@ -190,11 +196,21 @@ func buildPubSubTopics(topics []types.VineTopicConfig, queues []types.VineQueueC
 		}
 	}
 	for _, q := range queues {
+		ackDeadline := 10
+		if q.VisibilityTimeout != nil {
+			ackDeadline = *q.VisibilityTimeout
+		}
+
+		retention := "86400s"
+		if q.MessageRetention != nil {
+			retention = fmt.Sprintf("%ds", *q.MessageRetention)
+		}
+
 		subs := []map[string]interface{}{
-			{"name": q.Name + "-sub", "ack_deadline_seconds": 10},
+			{"name": q.Name + "-sub", "ack_deadline_seconds": ackDeadline},
 		}
 		result[q.Name] = map[string]interface{}{
-			"message_retention_duration": "86400s",
+			"message_retention_duration": retention,
 			"subscriptions":             subs,
 		}
 	}

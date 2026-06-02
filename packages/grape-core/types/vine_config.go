@@ -16,12 +16,13 @@ type VineConfig struct {
 	DNS          VineDNSConfig          `json:"dns"`
 	Repositories VineRepositoriesConfig `json:"repositories"`
 
-	Databases   []VineDatabaseConfig `json:"databases"`
-	Caches      []VineCacheConfig    `json:"caches"`
-	Queues      []VineQueueConfig    `json:"queues"`
-	Topics      []VineTopicConfig    `json:"topics"`
-	NosqlTables []VineNosqlConfig    `json:"nosql_tables"`
-	Secrets     []VineSecretConfig   `json:"secrets"`
+	Databases           []VineDatabaseConfig          `json:"databases"`
+	Caches              []VineCacheConfig              `json:"caches"`
+	Queues              []VineQueueConfig              `json:"queues"`
+	Topics              []VineTopicConfig              `json:"topics"`
+	NosqlTables         []VineNosqlConfig              `json:"nosql_tables"`
+	Secrets             []VineSecretConfig             `json:"secrets"`
+	ContainerRegistries []VineContainerRegistryConfig  `json:"container_registries"`
 
 	GitAccessToken string `json:"git_access_token"`
 
@@ -110,4 +111,10 @@ type VineSecretConfig struct {
 	Generate     bool   `json:"generate"`
 	Length       int    `json:"length"`
 	SpecialChars bool   `json:"special_chars"`
+}
+
+type VineContainerRegistryConfig struct {
+	Name               string `json:"name"`
+	ImageTagMutability string `json:"image_tag_mutability"`
+	ScanOnPush         *bool  `json:"scan_on_push"`
 }
