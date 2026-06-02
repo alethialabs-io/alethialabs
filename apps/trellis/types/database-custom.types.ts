@@ -150,6 +150,7 @@ export interface WorkerDeployConfig {
 	cpu: number;
 	memory: number;
 	image_repository: string;
+	worker_token?: string;
 }
 
 export interface WorkerMetadata {
@@ -243,9 +244,39 @@ export type Database = MergeDeep<
 					Update: { subscriptions?: TopicSubscription[] | null };
 				};
 				workers: {
-					Row: { metadata: WorkerMetadata | null };
-					Insert: { metadata?: WorkerMetadata | null };
-					Update: { metadata?: WorkerMetadata | null };
+					Row: {
+						metadata: WorkerMetadata | null;
+						release_id: string | null;
+					};
+					Insert: {
+						metadata?: WorkerMetadata | null;
+						release_id?: string | null;
+					};
+					Update: {
+						metadata?: WorkerMetadata | null;
+						release_id?: string | null;
+					};
+				};
+				worker_releases: {
+					Row: {
+						id: string;
+						version: string;
+						release_notes: string;
+						released_at: string;
+					};
+					Insert: {
+						id?: string;
+						version: string;
+						release_notes?: string;
+						released_at?: string;
+					};
+					Update: {
+						id?: string;
+						version?: string;
+						release_notes?: string;
+						released_at?: string;
+					};
+					Relationships: [];
 				};
 			};
 		};
