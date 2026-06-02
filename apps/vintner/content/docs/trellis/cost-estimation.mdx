@@ -1,0 +1,79 @@
+---
+title: Real-Time Cost Estimation
+description: How the cost sidebar and Infracost integration estimate infrastructure costs.
+---
+
+# Real-Time Cost Estimation
+
+The platform provides two layers of cost estimation: a **real-time cost sidebar** during configuration, and an **Infracost analysis** after Terraform plan.
+
+## Cost Sidebar
+
+The cost sidebar appears on the right side of the Plant a Vine form. As the user changes configuration values (instance types, node counts, database sizes), the sidebar recalculates the estimated monthly cost.
+
+### How It Works
+
+1. When a region is selected, Trellis fetches pricing data from the AWS Pricing API via a server action
+2. Prices are cached per region with a 24-hour TTL
+3. Each form section contributes a cost component:
+
+| Component | Cost Factors |
+|-----------|-------------|
+| Network | NAT Gateway hourly + data processing |
+| Cluster | EKS control plane + EC2 instances (count x type) |
+| Database | Aurora instance hours + storage (per node) |
+| Cache | ElastiCache node hours (count x type) |
+| DNS | Route 53 hosted zone + query volume |
+| WAF | WAF web ACL + rules + request volume |
+| Container Registry | ECR storage (baseline estimate) |
+
+4. The sidebar sums all components and displays the total estimated monthly cost
+5. Changes to any field trigger an immediate recalculation
+
+### Pricing Data
+
+The server action `pricing.ts` fetches pricing for:
+- **EC2 instances** — on-demand hourly rates for Karpenter-compatible types
+- **RDS instances** — Aurora instance class hourly rates
+- **ElastiCache nodes** — cache node type hourly rates
+- **EKS** — control plane fixed cost ($0.10/hour)
+
+Prices are region-specific. Switching regions in the form triggers a new pricing fetch.
+
+## Infracost Integration
+
+After a Tendril runs `terraform plan`, it optionally runs **Infracost** to analyze the plan output for a precise cost breakdown.
+
+### How It Works
+
+1. Tendril executes `terraform plan` and generates a plan JSON
+2. Tendril runs `infracost breakdown --path plan.json --format json`
+3. Infracost analyzes every resource in the plan and calculates costs based on:
+   - Resource type and configuration
+   - Region-specific pricing
+   - Usage patterns (where estimable)
+4. The cost breakdown is stored in the job's `execution_metadata` field
+5. Trellis displays the breakdown on the vine detail page's Plan tab
+
+### Cost Breakdown Display
+
+The Plan tab shows:
+- **Total estimated monthly cost** — sum of all resources
+- **Per-resource cost** — individual cost for each Terraform resource
+- **Cost diff** — comparison with current infrastructure (for updates)
+
+This is more accurate than the sidebar estimate because it analyzes the actual Terraform plan rather than form inputs.
+
+## Cost Flow Summary
+
+```
+Form input changes
+  └── Cost Sidebar (instant, approximate)
+       └── AWS Pricing API (cached 24h)
+
+Plan job completes
+  └── Infracost breakdown (precise, per-resource)
+       └── Plan tab cost display
+```
+
+The sidebar gives quick feedback during configuration. Infracost gives precise numbers after planning. Together they ensure the user always knows what they will pay before applying.

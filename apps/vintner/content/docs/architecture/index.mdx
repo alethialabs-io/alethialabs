@@ -1,0 +1,109 @@
+---
+title: Platform Overview
+description: High-level architecture of the Trellis multi-cloud infrastructure orchestration platform.
+---
+
+# Platform Overview
+
+Trellis is a hybrid multi-cloud infrastructure orchestration platform. It combines a visual web interface, a command-line tool, and autonomous execution agents to provision production-grade Kubernetes clusters with databases, caches, networking, DNS, secrets, and GitOps — across AWS, GCP, and Azure.
+
+## Three-Component Model
+
+The platform is built from three core components, each serving a distinct role:
+
+| Component | Type | Language | Role |
+|-----------|------|----------|------|
+| **Trellis** | Web application | TypeScript (Next.js 15) | Visual configuration, job management, real-time monitoring |
+| **Grape** | CLI tool | Go | Terminal-based operations, scripting, CI/CD integration |
+| **Tendril** | Execution agent | Go | Runs Terraform, installs ArgoCD, streams logs back to Trellis |
+
+## Data Flow
+
+```
+User ─► Trellis (web) ─► Job Queue (PostgreSQL) ─► Tendril (agent) ─► Cloud Provider
+         │                                            │
+         ├─ OR ──► Grape (CLI) ─► Job Queue ──────────┘
+         │
+         └─ Supabase Realtime ◄── Log Streaming ◄── Tendril
+```
+
+1. The user configures infrastructure through Trellis (web form) or Grape (CLI commands)
+2. Actions are queued as jobs in PostgreSQL
+3. A Tendril agent claims the job atomically and assumes temporary cloud credentials
+4. The Tendril executes Terraform and streams logs back in real-time
+5. On completion, ArgoCD is installed for GitOps-managed deployments
+
+## Multi-Cloud Support
+
+Every infrastructure component has provider-specific implementations across three clouds:
+
+| Capability | AWS | GCP | Azure |
+|-----------|-----|-----|-------|
+| Kubernetes | EKS | GKE | AKS |
+| Relational DB | Aurora PostgreSQL/MySQL | Cloud SQL | Azure Database |
+| Cache | ElastiCache (Redis/Valkey) | Memorystore | Azure Cache for Redis |
+| NoSQL | DynamoDB | Firestore | Cosmos DB |
+| Messaging | SQS + SNS | Pub/Sub | Service Bus |
+| DNS | Route 53 | Cloud DNS | Azure DNS |
+| Secrets | Secrets Manager | Secret Manager | Key Vault |
+| Container Registry | ECR | Artifact Registry | ACR |
+| Object Storage | S3 | Cloud Storage | Storage Account |
+| WAF | AWS WAFv2 | Cloud Armor | Azure WAF |
+
+The Plant Vine form adapts dynamically when the user switches providers via the Provider Ribbon.
+
+## Tech Stack
+
+**Web (Trellis):**
+- Next.js 15 with App Router and Server Actions
+- Supabase (PostgreSQL + GoTrue auth + Realtime WebSocket + S3 storage)
+- Tailwind CSS, shadcn/ui components
+- Zustand for client state management
+
+**CLI (Grape):**
+- Go with Cobra (command framework) and Charmbracelet (TUI: lipgloss, huh, bubbletea)
+- Distributed via Homebrew tap and GitHub Releases
+
+**Agent (Tendril):**
+- Go binary running in ECS Fargate (ARM64)
+- Embeds Terraform, kubectl, Helm, and cloud CLIs
+- Docker image pushed to ECR and GHCR
+
+**Shared (grape-core):**
+- Go package with provisioner, Terraform wrapper, cloud SDKs, ArgoCD installer, Infracost integration, Git operations, Helm operations
+
+**Infrastructure:**
+- Terraform for all infrastructure-as-code
+- Supabase S3 for Terraform state storage
+- Lambda-based scaler for Tendril scale-to-zero
+- release-please for versioning Grape and Tendril independently
+
+## Monorepo Structure
+
+```
+bb-thesis-2026/
+├── apps/
+│   ├── trellis/          # Next.js web platform
+│   ├── grape/            # Go CLI tool
+│   ├── tendril/          # Go execution agent
+│   └── vintner/          # Documentation site (Fumadocs)
+├── packages/
+│   ├── grape-core/       # Shared Go libraries
+│   ├── ui/               # Shared UI components
+│   ├── charts/           # Helm charts
+│   ├── typescript-config/ # Shared TS config
+│   └── eslint-config/    # Shared ESLint config
+├── infra/
+│   ├── platform/         # Tendril deployment infrastructure (ECR, ECS, Lambda scaler)
+│   ├── templates/
+│   │   ├── vine/         # User infrastructure templates (AWS/GCP/Azure)
+│   │   ├── tendril/      # Tendril bootstrap templates
+│   │   └── argocd/       # ArgoCD application templates
+│   └── onboarding/       # Cloud provider federation setup (AWS/GCP/Azure)
+├── supabase/
+│   └── migrations/       # PostgreSQL schema migrations
+└── .github/
+    └── workflows/        # CI/CD (release-please, release-grape, release-tendril)
+```
+
+The monorepo is managed with pnpm workspaces and Turborepo for the TypeScript packages, and a Go workspace (`go.work`) for the Go modules.

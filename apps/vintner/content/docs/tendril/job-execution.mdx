@@ -1,0 +1,142 @@
+---
+title: Job Execution
+description: How Tendril claims and executes each job type — from CONNECTION_TEST to DEPLOY.
+---
+
+# Job Execution
+
+Each job type has a specific execution flow. All jobs share the same claiming mechanism and credential handling, but differ in what they execute.
+
+## Job Claiming
+
+Every 10 seconds, Tendril calls `POST /api/jobs/claim`. The server executes:
+
+```sql
+SELECT * FROM provision_jobs
+WHERE status = 'QUEUED'
+ORDER BY created_at ASC
+FOR UPDATE SKIP LOCKED
+LIMIT 1;
+```
+
+`FOR UPDATE SKIP LOCKED` is the key: if another Tendril has already locked a row, this query skips it. This guarantees exactly-once claiming without distributed locks or coordination.
+
+If a job is returned, the Tendril:
+1. Updates status to PROCESSING
+2. Reads the vine configuration and cloud identity
+3. Assumes cloud credentials
+4. Executes the job-specific logic
+5. Updates status to SUCCESS or FAILED
+
+## Job Type: CONNECTION_TEST
+
+**Purpose:** Verify that cloud credentials work and discover existing resources.
+
+**Execution:**
+1. Assume cloud credentials (AWS/GCP/Azure)
+2. Call provider-specific identity verification (e.g., `sts:GetCallerIdentity` for AWS)
+3. Discover existing resources:
+   - AWS: VPCs, subnets, hosted zones, IAM users, security groups
+   - GCP: VPC networks, subnetworks, DNS zones
+   - Azure: VNets, subnets, DNS zones
+4. Cache discovered resources in the cloud identity's `credentials` JSONB
+5. Report SUCCESS with discovered resource counts
+
+## Job Type: FETCH_RESOURCES
+
+**Purpose:** Refresh the cached resource list for a cloud identity.
+
+**Execution:** Same as CONNECTION_TEST but without the initial credential verification step. Used to update the cache after the user has made changes in their cloud console.
+
+## Job Type: PLAN
+
+**Purpose:** Run `terraform plan` and optionally calculate costs.
+
+**Execution:**
+1. Assume cloud credentials
+2. Generate Terraform variable files from the vine configuration snapshot
+3. Run `terraform init` with Supabase S3 backend configuration:
+   ```
+   bucket = "vine-terraform-state"
+   key    = "{vineyard}/{project}/{stage}/{region}/terraform.tfstate"
+   ```
+4. Run `terraform plan -out=plan.tfplan`
+5. Run `terraform show -json plan.tfplan` for structured output
+6. If Infracost API key is configured:
+   - Run `infracost breakdown --path plan.json --format json`
+   - Parse cost breakdown and monthly estimate
+7. Upload plan artifact (JSON) to Supabase S3
+8. Report SUCCESS with:
+   - Resource change counts (add/change/destroy)
+   - Cost breakdown (if Infracost ran)
+   - Plan artifact reference
+
+## Job Type: DEPLOY
+
+**Purpose:** Apply the Terraform plan and install ArgoCD.
+
+**Execution:**
+1. Assume cloud credentials
+2. Download plan artifact from the PLAN job
+3. Validate configuration hash — if the vine was modified after the plan, fail with error
+4. Run `terraform init`
+5. Run `terraform apply plan.tfplan`
+6. Extract Terraform outputs (cluster name, endpoint, VPC ID, database endpoints, etc.)
+7. Generate kubeconfig for the new cluster
+8. Install ArgoCD via Helm:
+   - Deploy ArgoCD Helm chart
+   - Wait for ArgoCD pods to become Ready
+   - Extract admin password
+9. Configure ArgoCD with the **App of Apps** pattern:
+   - Render Application manifests from templates
+   - Inject infrastructure facts (cluster name, VPC ID, RDS endpoints) as Helm values
+   - Apply manifests to the cluster
+10. Report SUCCESS with:
+    - Cluster metadata (name, endpoint, ARN)
+    - ArgoCD URL and admin password
+    - Execution timing per phase
+
+## Job Type: DESTROY
+
+**Purpose:** Tear down all provisioned infrastructure.
+
+**Execution:**
+1. Assume cloud credentials
+2. Run `terraform init`
+3. Run `terraform destroy -auto-approve`
+4. Clean up Terraform state (remove state file from S3)
+5. Report SUCCESS
+
+Terraform state preservation during destroy means partial failures can be retried — Terraform picks up from where it left off.
+
+## Job Type: DEPLOY_WORKER
+
+**Purpose:** Provision a new Tendril in ECS Fargate.
+
+**Execution:**
+1. Use platform credentials (not user credentials)
+2. Generate Tendril Terraform configuration (ECS task definition, IAM roles, CloudWatch)
+3. Run `terraform init` and `terraform apply`
+4. Register the new Tendril with Trellis API
+5. Report SUCCESS with Tendril metadata
+
+## Job Type: DESTROY_WORKER
+
+**Purpose:** Tear down Tendril infrastructure.
+
+**Execution:**
+1. Use platform credentials
+2. Run `terraform destroy` for the Tendril's infrastructure
+3. Remove Tendril registration from Trellis
+4. Report SUCCESS
+
+## Error Handling
+
+When any step fails:
+1. Error is logged to the STDERR stream
+2. Job status is set to FAILED with the error message
+3. Terraform state is preserved (partial apply state is saved)
+4. Cloud credentials are cleared (deferred cleanup always runs)
+5. Tendril returns to the poll loop for the next job
+
+Users can retry failed jobs from the Trellis UI or CLI. Since Terraform state is preserved, retries continue from the last successful state rather than starting over.

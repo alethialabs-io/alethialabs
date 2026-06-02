@@ -1,0 +1,11 @@
+{
+  "title": "Architecture",
+  "root": true,
+  "pages": [
+    "index",
+    "domain-model",
+    "security",
+    "database",
+    "release-system"
+  ]
+}

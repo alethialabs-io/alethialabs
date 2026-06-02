@@ -2,6 +2,13 @@
   "title": "Tendril (Agent)",
   "root": true,
   "pages": [
-    "index"
+    "index",
+    "architecture",
+    "job-execution",
+    "cloud-credentials",
+    "log-streaming",
+    "scale-to-zero",
+    "self-hosted",
+    "infrastructure-templates"
   ]
 }

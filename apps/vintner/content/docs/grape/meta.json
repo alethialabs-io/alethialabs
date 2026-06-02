@@ -3,8 +3,11 @@
   "root": true,
   "pages": [
     "index",
-    "configuration",
-    "deployment",
-    "authentication"
+    "installation",
+    "authentication",
+    "commands",
+    "vineyards-and-vines",
+    "jobs-and-tendrils",
+    "selectors"
   ]
 }

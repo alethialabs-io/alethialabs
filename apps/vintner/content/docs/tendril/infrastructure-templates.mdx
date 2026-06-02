@@ -1,0 +1,152 @@
+---
+title: Infrastructure Templates
+description: Terraform modules for AWS, GCP, and Azure that Tendril uses to provision infrastructure.
+---
+
+# Infrastructure Templates
+
+Tendril provisions infrastructure using pre-built Terraform modules. These templates are embedded in the Docker image during the build process and cover all supported resource types across three cloud providers.
+
+## Template Categories
+
+| Category | Path | Purpose |
+|----------|------|---------|
+| AWS vine | `infra/templates/vine/aws/` | User infrastructure on AWS |
+| GCP vine | `infra/templates/vine/gcp/` | User infrastructure on GCP |
+| Azure vine | `infra/templates/vine/azure/` | User infrastructure on Azure |
+| Tendril | `infra/templates/tendril/aws/` | Tendril (worker) infrastructure |
+| ArgoCD | `infra/templates/argocd/` | ArgoCD applications and components |
+
+## AWS Templates
+
+### Core Resources
+
+| Template | Resources Created |
+|----------|------------------|
+| `networking.tf` | VPC, public/private subnets, NAT gateway, internet gateway, route tables, security groups |
+| `eks.tf` | EKS cluster, managed node group, OIDC provider for IRSA |
+| `karpenter.tf` | Karpenter provisioner for node auto-scaling |
+| `rds.tf` | Aurora PostgreSQL/MySQL cluster, instances, subnet group, security group |
+| `elasticache.tf` | ElastiCache Redis replication group, subnet group |
+| `valkey.tf` | Valkey (Redis alternative) node |
+| `dynamodb.tf` | DynamoDB tables with KMS encryption |
+| `ecr.tf` | ECR repositories with lifecycle policies and scan-on-push |
+| `s3.tf` | S3 buckets with encryption, versioning, lifecycle rules |
+| `sqs.tf` | SQS queues (standard and FIFO) + SNS topics with subscriptions |
+| `waf.tf` | WAFv2 web ACL with managed rule groups |
+| `acm-certificate.tf` | ACM SSL/TLS certificates with DNS validation |
+| `irsa.tf` | IAM Roles for Service Accounts (IRSA) |
+| `custom_secrets.tf` | Secrets Manager secrets with auto-generated passwords |
+
+### AWS Modules
+
+| Module | Path | Purpose |
+|--------|------|---------|
+| `modules/eks/` | EKS cluster, access entries, OIDC provider |
+| `modules/rds/` | Aurora cluster, instances, IAM auth, S3 export |
+| `modules/redis/` | ElastiCache Redis with auth token, encryption |
+| `modules/valkey/` | Valkey node with security group |
+| `modules/dynamodb/` | DynamoDB table with KMS, local encryption module |
+| `modules/ecr/` | ECR repository with lifecycle policy |
+| `modules/s3/` | S3 bucket with encryption, versioning |
+| `modules/sqs-sns/` | SQS queue + SNS topic with IAM policies |
+| `modules/wafv2/` | WAF web ACL with CloudWatch logging |
+| `modules/acm/` | ACM certificate with DNS validation |
+| `modules/awssm-passgen/` | Secrets Manager password generation |
+
+## GCP Templates
+
+| Template | Resources Created |
+|----------|------------------|
+| `main.tf` | GKE cluster with Workload Identity, node pool |
+| `vpn.tf` | VPC network, subnets, Cloud NAT, Cloud Router |
+| `cloudsql.tf` | Cloud SQL instances (PostgreSQL/MySQL), HA configuration |
+| `memorystore.tf` | Memorystore Redis instance |
+| `firestore.tf` | Firestore database, indexes |
+| `artifact-registry.tf` | Artifact Registry repository |
+| `cloud-dns.tf` | Cloud DNS managed zones, record sets |
+| `secret-manager.tf` | Secret Manager secrets |
+
+## Azure Templates
+
+| Template | Resources Created |
+|----------|------------------|
+| `aks.tf` | AKS cluster, default node pool, Azure AD integration |
+| `vnet.tf` | Virtual Network, subnets, NSG, NAT Gateway |
+| `azure-db.tf` | Azure Database for PostgreSQL/MySQL, flexible server |
+| `azure-cache-redis.tf` | Azure Cache for Redis |
+| `cosmos-db.tf` | Cosmos DB account, database, container |
+| `acr.tf` | Azure Container Registry |
+| `azure-dns.tf` | Azure DNS zone, record sets |
+| `key-vault.tf` | Key Vault, access policies |
+| `service-bus.tf` | Service Bus namespace, queues, topics |
+| `storage-account.tf` | Storage account, blob containers |
+| `azure-waf.tf` | Azure Application Gateway with WAF |
+
+## ArgoCD Templates
+
+After cluster provisioning, Tendril installs ArgoCD and configures it with these components:
+
+| Template | Component |
+|----------|-----------|
+| AWS Load Balancer Controller | Kubernetes ingress and service load balancing |
+| External DNS | Automatic DNS record management from Kubernetes resources |
+| External Secrets Operator | Sync secrets from cloud secret stores to Kubernetes Secrets |
+| Karpenter | Just-in-time node provisioning (AWS) |
+| Metrics Server | Resource metrics for Horizontal Pod Autoscaler |
+| Storage Class | EBS / Persistent Disk / Managed Disk provisioner |
+| ArgoCD Project | Application deployment boundary |
+
+These are deployed using the **App of Apps** pattern: a parent ArgoCD Application points to a directory of child Application manifests.
+
+## Terraform State
+
+State for all templates is stored in **Supabase S3** (Supabase's S3-compatible storage):
+
+```
+vine-terraform-state/
+├── {vineyard}/
+│   └── {project}/
+│       └── {stage}/
+│           └── {region}/
+│               └── terraform.tfstate
+```
+
+The backend configuration is generated dynamically by the Tendril before running `terraform init`:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket   = "vine-terraform-state"
+    key      = "{vineyard}/{project}/{stage}/{region}/terraform.tfstate"
+    endpoint = "{supabase_s3_endpoint}"
+    region   = "{supabase_s3_region}"
+  }
+}
+```
+
+## Template Staging (Docker Build)
+
+During the Tendril release pipeline, templates are copied into the Docker build context:
+
+```
+infra/templates/vine/aws     → apps/tendril/vine-templates/aws
+infra/templates/vine/gcp     → apps/tendril/vine-templates/gcp
+infra/templates/vine/azure   → apps/tendril/vine-templates/azure
+infra/templates/tendril      → apps/tendril/tendril-templates
+infra/templates/argocd       → apps/tendril/argocd-templates
+```
+
+The Tendril binary uses `go embed` or file system access to read these templates at runtime.
+
+## Variable Generation
+
+When executing a job, Tendril generates `terraform.tfvars` from the vine's configuration snapshot. Each vine component maps to specific Terraform variables:
+
+- `vine_network` → VPC CIDR, NAT gateway settings
+- `vine_cluster` → EKS version, instance types, node scaling
+- `vine_databases` → Aurora engine, version, capacity
+- `vine_caches` → Redis node type, count
+- And so on for all component types
+
+This mapping is handled by the provisioner in `packages/grape-core/provisioner/`.

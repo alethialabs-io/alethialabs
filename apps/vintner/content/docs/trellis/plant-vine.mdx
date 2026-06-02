@@ -1,0 +1,153 @@
+---
+title: Plant a Vine
+description: The 11-section infrastructure configuration form with multi-cloud support.
+---
+
+# Plant a Vine
+
+The Plant a Vine form is the primary way to define infrastructure. It has 11 sections covering everything from networking to GitOps repositories. The form adapts dynamically based on the selected cloud provider.
+
+## Provider Ribbon
+
+At the top of the form, a **Provider Ribbon** lets you switch between AWS, GCP, and Azure. When you switch providers:
+
+- Form fields adapt (EKS ↔ GKE ↔ AKS, Aurora ↔ Cloud SQL ↔ Azure Database, etc.)
+- Instance types change to provider-specific options
+- Region lists update to the provider's available regions
+- Cost estimates recalculate using the provider's pricing
+
+## Cloud Identity Selector
+
+Before configuring infrastructure, you must select a **Cloud Identity** — a connected cloud account. If no identities are connected, the selector is empty and links to the Integrations page.
+
+## Form Sections
+
+### 1. Project Basics
+
+| Field | Description |
+|-------|-------------|
+| Project Name | Infrastructure project identifier (used in resource naming) |
+| Provider | AWS / GCP / Azure (via Provider Ribbon) |
+| Region | Cloud region (e.g., eu-west-1, us-central1, westeurope) |
+| Environment Stage | development / staging / production |
+| Terraform Version | Default: 1.11.4 |
+
+### 2. Network
+
+| Field | AWS | GCP | Azure |
+|-------|-----|-----|-------|
+| Create new | VPC | VPC Network | VNet |
+| Use existing | Select from cached VPCs | Select from cached networks | Select from cached VNets |
+| CIDR block | e.g., 10.0.0.0/16 | e.g., 10.0.0.0/16 | e.g., 10.0.0.0/16 |
+| NAT gateway | Single NAT (cost-optimized) or one per AZ | Cloud NAT | NAT Gateway |
+| Allowed CIDRs | Inbound CIDR allowlist | Firewall rules | NSG rules |
+
+### 3. Cluster
+
+| Field | AWS | GCP | Azure |
+|-------|-----|-----|-------|
+| Service | EKS | GKE | AKS |
+| Version | e.g., 1.31 | e.g., 1.31 | e.g., 1.31 |
+| Instance types | m5.large, t3.medium, etc. | e2-standard-4, etc. | Standard_D4s_v5, etc. |
+| Min / Desired / Max nodes | Node group scaling | Node pool scaling | Node pool scaling |
+| Auto-scaler | Karpenter | Cluster Autoscaler | KEDA / Cluster Autoscaler |
+| Cluster admins | IAM ARNs | GCP emails | Azure AD object IDs |
+
+### 4. Database
+
+| Field | AWS | GCP | Azure |
+|-------|-----|-----|-------|
+| Service | Aurora | Cloud SQL | Azure Database |
+| Engine | PostgreSQL / MySQL | PostgreSQL / MySQL | PostgreSQL / MySQL |
+| Version | e.g., 16.4 | e.g., POSTGRES_16 | e.g., 16 |
+| Instance size | db.r6g.large | db-custom-2-8192 | GP_Standard_D2ds_v5 |
+| Replicas / Multi-AZ | 1-5 replicas, Multi-AZ | HA with failover | Zone-redundant HA |
+| IAM auth | Supported | Not applicable | AAD auth |
+| Backup retention | 1-35 days | 1-365 days | 1-35 days |
+
+Multiple databases can be added per vine. Each gets its own row in `vine_databases`.
+
+### 5. Cache
+
+| Field | AWS | GCP | Azure |
+|-------|-----|-----|-------|
+| Service | ElastiCache | Memorystore | Azure Cache for Redis |
+| Engine | Redis / Valkey | Redis | Redis |
+| Node type | cache.r6g.large | M1 / M2 | C1 / P1 |
+| Nodes | 1+ | 1 | 1+ shards |
+| Multi-AZ | Supported | Not applicable | Zone-redundant |
+
+### 6. NoSQL
+
+| Field | AWS | GCP | Azure |
+|-------|-----|-----|-------|
+| Service | DynamoDB | Firestore | Cosmos DB |
+| Table/collection name | User-defined | Collection path | Container name |
+| Key schema | Hash key + optional range key | Automatic | Partition key |
+| Billing mode | PAY_PER_REQUEST / PROVISIONED | Serverless | Serverless / Provisioned |
+| Point-in-time recovery | Supported | Automatic | Continuous backup |
+| Global replication | Global tables | Multi-region | Multi-region writes |
+
+### 7. Messaging
+
+| Field | AWS | GCP | Azure |
+|-------|-----|-----|-------|
+| Queues | SQS | Pub/Sub subscription | Service Bus Queue |
+| Topics | SNS | Pub/Sub topic | Service Bus Topic |
+| FIFO support | SQS FIFO | Ordering keys | Sessions |
+| Retention | 1 min - 14 days | 7 days | 1 sec - 14 days |
+
+### 8. DNS
+
+| Field | AWS | GCP | Azure |
+|-------|-----|-----|-------|
+| Service | Route 53 | Cloud DNS | Azure DNS |
+| Zone | Select existing hosted zone | Select existing zone | Select existing zone |
+| Domain | Apex or subdomain | Apex or subdomain | Apex or subdomain |
+| Certificate | ACM (auto-validated) | Managed certificate | App Service cert |
+| WAF | AWS WAFv2 | Cloud Armor | Azure WAF |
+
+### 9. Secrets
+
+| Field | AWS | GCP | Azure |
+|-------|-----|-----|-------|
+| Service | Secrets Manager | Secret Manager | Key Vault |
+| Auto-generate | Random password with configurable length and character set |
+| Custom secrets | Name-value pairs stored in the provider's secret store |
+
+### 10. Container Registry
+
+| Field | AWS | GCP | Azure |
+|-------|-----|-----|-------|
+| Service | ECR | Artifact Registry | ACR |
+| Tag mutability | MUTABLE / IMMUTABLE | MUTABLE / IMMUTABLE | N/A |
+| Scan on push | Supported | Supported | Supported |
+
+Multiple registries can be added per vine.
+
+### 11. Repositories
+
+Configure Git repositories for infrastructure and application code:
+
+| Field | Description |
+|-------|-------------|
+| Git provider | GitHub / GitLab / Bitbucket (from connected integrations) |
+| Infra template repo | Source template for Terraform modules |
+| Infra destination repo | Where generated Terraform is pushed |
+| GitOps template repo | Source template for ArgoCD manifests |
+| GitOps destination repo | Where rendered manifests are pushed |
+| App template repo | Source template for application boilerplate |
+| App destination repo | Where rendered application code is pushed |
+
+## Cost Sidebar
+
+As you fill in the form, a **Cost Sidebar** on the right shows the estimated monthly cost. It updates in real-time as fields change. See [Cost Estimation](/docs/trellis/cost-estimation) for details.
+
+## What Happens on Submit
+
+When you click "Plant Vine":
+
+1. A `vines` row is created with status `DRAFT`
+2. Component rows are created in the relevant tables (`vine_network`, `vine_cluster`, `vine_databases`, etc.)
+3. The vine appears in the vineyard's vine listing
+4. The user can now run Plan → Apply from the vine detail page

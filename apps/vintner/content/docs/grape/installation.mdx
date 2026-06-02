@@ -1,0 +1,60 @@
+---
+title: Installation
+description: Installing the Grape CLI via Homebrew, binary download, or from source.
+---
+
+# Installation
+
+## Homebrew (Recommended)
+
+The easiest way to install Grape on macOS or Linux:
+
+```bash
+brew install bobikenobi12/bb-thesis-2026/grape
+```
+
+This installs the latest release and adds `grape` to your PATH. Updates via `brew upgrade grape`.
+
+## Binary Download
+
+Pre-built binaries are available on [GitHub Releases](https://github.com/bobikenobi12/bb-thesis-2026/releases) for every tagged version:
+
+| Platform | Architecture | Archive |
+|----------|-------------|---------|
+| macOS | amd64 (Intel) | `grape_darwin_amd64.tar.gz` |
+| macOS | arm64 (Apple Silicon) | `grape_darwin_arm64.tar.gz` |
+| Linux | amd64 | `grape_linux_amd64.tar.gz` |
+| Linux | arm64 | `grape_linux_arm64.tar.gz` |
+
+Download, extract, and move to a directory in your PATH:
+
+```bash
+tar xzf grape_darwin_arm64.tar.gz
+mv grape /usr/local/bin/
+```
+
+## From Source
+
+Requires Go 1.22+:
+
+```bash
+cd apps/grape
+go build -o grape .
+./grape --version
+```
+
+## Verify Installation
+
+```bash
+grape --version
+# grape version 0.1.7
+```
+
+## GoReleaser
+
+Grape releases are built by [GoReleaser](https://goreleaser.com/) via GitHub Actions. The configuration is in `apps/grape/.goreleaser.yml`. On each `grape-v*` tag:
+
+1. GoReleaser builds 4 binaries (2 OS x 2 arch)
+2. Creates tar.gz archives with checksums
+3. Publishes a GitHub Release
+4. Updates the Homebrew formula automatically

@@ -1,0 +1,130 @@
+---
+title: Domain Model & Terminology
+description: The viticulture-themed domain model, entity relationships, and lifecycle states.
+---
+
+# Domain Model & Terminology
+
+The platform uses a viticulture (winemaking) metaphor for its domain model. This is not cosmetic — each term maps to a distinct architectural concept.
+
+## Glossary
+
+| Term | Meaning | Analogy |
+|------|---------|---------|
+| **Trellis** | Web platform (control plane) | The support structure for grapevines |
+| **Grape** | CLI tool | The fruit — what you pick and use |
+| **Vineyard** | Workspace / project grouping | A plot of land with multiple vines |
+| **Vine** | A single infrastructure configuration | One grapevine producing specific fruit |
+| **Tendril** | Execution agent (worker) | The curling shoot that reaches out and grabs |
+| **Harvest** | Deployment action (`grape harvest`) | Picking the fruit — deploying infrastructure |
+| **Plant** | Create a new vine configuration | Planting a new grapevine |
+
+## Entity Relationships
+
+```
+User
+ └── Vineyards (1:N)
+      └── Vines (1:N)
+           ├── Cloud Identity (N:1) ─── links to AWS/GCP/Azure account
+           ├── vine_network (1:1) ─── VPC / VNet / VPC Network
+           ├── vine_cluster (1:1) ─── EKS / GKE / AKS
+           ├── vine_dns (1:1) ─── Route53 / Cloud DNS / Azure DNS
+           ├── vine_repositories (1:1) ─── Git repo references
+           ├── vine_databases (1:N) ─── Aurora / Cloud SQL / Azure DB
+           ├── vine_caches (1:N) ─── ElastiCache / Memorystore / Azure Cache
+           ├── vine_queues (1:N) ─── SQS / Pub/Sub / Service Bus
+           ├── vine_topics (1:N) ─── SNS / Pub/Sub / Service Bus Topics
+           ├── vine_nosql_tables (1:N) ─── DynamoDB / Firestore / Cosmos DB
+           ├── vine_container_registries (1:N) ─── ECR / Artifact Registry / ACR
+           ├── vine_secrets (1:N) ─── Secrets Manager / Secret Manager / Key Vault
+           └── provision_jobs (1:N) ─── PLAN, DEPLOY, DESTROY, etc.
+                └── provision_job_logs (1:N)
+```
+
+**Singleton components** (1:1 per vine): network, cluster, DNS, repositories. Every vine has exactly one of each (or none if that section is disabled).
+
+**Multi-instance components** (1:N per vine): databases, caches, queues, topics, NoSQL tables, container registries, secrets. A vine can have zero or many of each.
+
+## Vine Lifecycle
+
+A vine progresses through these states:
+
+```
+DRAFT ──► QUEUED ──► PROVISIONING ──► ACTIVE
+                                        │
+                                        ▼
+                                    DESTROYING ──► DESTROYED
+                                        │
+                                        ▼
+                                      FAILED
+```
+
+| Status | Meaning |
+|--------|---------|
+| `DRAFT` | Configuration created but not yet submitted for provisioning |
+| `QUEUED` | A provisioning job has been created and is waiting for a Tendril |
+| `PROVISIONING` | A Tendril is actively running Terraform |
+| `ACTIVE` | Infrastructure is provisioned and running |
+| `DESTROYING` | A destroy job is in progress |
+| `DESTROYED` | Infrastructure has been torn down |
+| `FAILED` | Provisioning or destruction failed (can be retried) |
+
+## Component Status
+
+Each vine component (network, cluster, database, etc.) has its own status independent of the parent vine:
+
+| Status | Meaning |
+|--------|---------|
+| `PENDING` | Awaiting first provisioning |
+| `CREATING` | Currently being created by Terraform |
+| `ACTIVE` | Successfully provisioned |
+| `UPDATING` | Configuration change being applied |
+| `FAILED` | Creation or update failed |
+| `DESTROYING` | Being torn down |
+| `DESTROYED` | Successfully removed |
+
+## Job Lifecycle
+
+Jobs represent units of work executed by Tendrils:
+
+```
+QUEUED ──► CLAIMED ──► PROCESSING ──► SUCCESS
+                          │
+                          ├──► FAILED
+                          │
+                          └──► CANCELLED
+```
+
+| Status | Meaning |
+|--------|---------|
+| `QUEUED` | Waiting in the queue for a Tendril to claim |
+| `CLAIMED` | A Tendril has atomically claimed this job |
+| `PROCESSING` | Tendril is actively executing (Terraform running) |
+| `SUCCESS` | Job completed successfully |
+| `FAILED` | Job failed (error message attached) |
+| `CANCELLED` | User cancelled the job before completion |
+
+## Job Types
+
+| Type | Purpose |
+|------|---------|
+| `CONNECTION_TEST` | Verify cloud credentials work, cache discovered resources |
+| `FETCH_RESOURCES` | Discover existing cloud resources (VPCs, subnets, hosted zones) |
+| `BOOTSTRAP` | Initialize infrastructure workspace |
+| `PLAN` | Run `terraform plan` + optional Infracost analysis |
+| `DEPLOY` | Run `terraform apply` + install ArgoCD |
+| `DESTROY` | Run `terraform destroy` with graceful cleanup |
+| `DEPLOY_WORKER` | Provision Tendril infrastructure (ECS task definition, IAM roles) |
+| `DESTROY_WORKER` | Tear down Tendril infrastructure |
+
+## Environment Stages
+
+Each vine targets a specific environment:
+
+| Stage | Purpose |
+|-------|---------|
+| `development` | Development/testing infrastructure |
+| `staging` | Pre-production validation |
+| `production` | Production workloads |
+
+The environment stage affects naming conventions, resource sizing defaults, and Terraform state paths.

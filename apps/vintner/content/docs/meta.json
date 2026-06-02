@@ -2,8 +2,9 @@
   "title": "Documentation",
   "root": true,
   "pages": [
-    "grape",
+    "architecture",
     "trellis",
+    "grape",
     "tendril"
   ]
 }

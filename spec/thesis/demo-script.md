@@ -37,7 +37,7 @@
 - **AWS:**
   - Натискам "Connect" на AWS
   - Показвам CloudFormation шаблона
-  - "Потребителят деплойва CloudFormation шаблон, който създава IAM роля с External ID. Ние НИКОГА не съхраняваме AWS ключове. Worker-ът поема ролята чрез STS AssumeRole."
+  - "Потребителят деплойва CloudFormation шаблон, който създава IAM роля с External ID. Ние НИКОГА не съхраняваме AWS ключове. Tendril-ът поема ролята чрез STS AssumeRole."
   
 - **GCP (кратко):**
   - "За GCP — Workload Identity Federation. Обменяме OIDC токен за временни GCP credentials."
@@ -81,35 +81,38 @@
 
 - Отивам на vine detail страницата
 - Показвам Infrastructure tab-а — дърво от компоненти
-- Натискам "Plan" → отваря се Worker Select Popover
+- Натискам "Plan" → отваря се Tendril Select Popover
 
 - **Pause — обръщам се към комисията:**
   - "Може би се чудите — как точно се изпълнява този план? Как Terraform работи, ако ние нямаме статични ключове?"
   - "Сега ще ви покажа."
 
-- Избирам cloud worker → job се създава (QUEUED)
+- Избирам cloud tendril → job се създава (QUEUED)
 
-**Ключова фраза:** "Worker-ът работи в нашия акаунт, но поема IAM роля в акаунта на потребителя. Credentials-ите са временни — 1 час, после изтичат."
+**Ключова фраза:** "Tendril-ът работи в нашия акаунт, но поема IAM роля в акаунта на потребителя. Credentials-ите са временни — 1 час, после изтичат."
 
 ---
 
-## 6. Workers — обяснение и създаване — ~1.5 мин
+## 6. Tendrils — обяснение и създаване — ~1.5 мин
 
-- Отивам на Workers страницата
-- "Workers са Go контейнери, работещи в ECS Fargate. Те:"
+- Отивам на Tendrils страницата
+- "Tendrils са Go контейнери, работещи в ECS Fargate. Те:"
   - Полват за задачи на всеки 10 секунди
   - Изпращат heartbeat на всеки 30 секунди
-  - Поемат задачи атомарно — `claim_next_job()` гарантира, че една задача не се изпълнява от два Worker-а
+  - Поемат задачи атомарно — `claim_next_job()` гарантира, че една задача не се изпълнява от два Tendril-а
   - Стриймват логове обратно в Trellis в реално време
 
-- Създавам нов Worker:
+- **Scale-to-zero:**
+  - "Когато няма задачи в опашката за 5 минути, Lambda scaler мащабира ECS сервиса до 0. При нова задача — автоматично обратно на 1. Плащаме за Fargate само когато има работа."
+
+- Създавам нов Tendril:
   - Избирам регион, CPU, памет
   - Натискам Create → DEPLOY_WORKER job се създава
-  - "Ще отнеме около 2 минути. Worker-ът ще се появи тук със статус ONLINE."
+  - "Ще отнеме около 2 минути. Tendril-ът ще се появи тук със статус ONLINE."
 
 - Показвам статус: зелена точка = ONLINE, жълта = DRAINING, червена = OFFLINE
 
-**Ключова фраза:** "Worker-ът е безсървърен контейнер. Не инсталирате нищо — нито Terraform, нито kubectl, нито Helm."
+**Ключова фраза:** "Tendril-ът е безсървърен контейнер. Не инсталирате нищо — нито Terraform, нито kubectl, нито Helm. Scale-to-zero за минимални разходи."
 
 ---
 
@@ -132,9 +135,10 @@
 - Показвам списъка с jobs:
   - PLAN → SUCCESS (завършен)
   - DEPLOY → PROCESSING (в момента)
-  - DEPLOY_WORKER → SUCCESS (worker-ът е готов)
+  - DEPLOY_WORKER → SUCCESS (tendril-ът е готов)
 - Отварям DEPLOY job-а → показвам real-time логове
 - "Terraform stdout и stderr се стриймват чрез Supabase Realtime WebSocket директно в браузъра."
+- "И Grape, и Tendril се версионират чрез release-please с conventional commits — автоматични CHANGELOG-ове и GitHub Releases."
 
 **Ключова фраза:** "Всяка стъпка е проследима. Всяко действие е логнато."
 
@@ -157,7 +161,7 @@
 ## Край на демото → обратно към слайдовете
 
 - "Нека се върнем към слайдовете за обобщение."
-- Превключвам обратно на presentation.html → slide 8 (Резултати)
+- Превключвам обратно на presentation.html → slide 7 (Резултати)
 
 ---
 
@@ -170,7 +174,7 @@
 | Integrations | 2:00 | 2:45 |
 | Plant a Vine — конфигурация | 2:00 | 4:45 |
 | Vine Detail → Plan | 1:00 | 5:45 |
-| Workers | 1:30 | 7:15 |
+| Tendrils | 1:30 | 7:15 |
 | План + разходи + Apply | 0:30 | 7:45 |
 | Job статуси | 0:30 | 8:15 |
 | Pre-provisioned cluster | 0:30 | 8:45 |

@@ -2,6 +2,13 @@
   "title": "Trellis (Platform)",
   "root": true,
   "pages": [
-    "index"
+    "index",
+    "dashboard",
+    "plant-vine",
+    "cost-estimation",
+    "integrations",
+    "jobs",
+    "tendrils",
+    "clusters"
   ]
 }
