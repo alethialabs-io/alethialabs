@@ -137,9 +137,7 @@ func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 
 	if len(config.Caches) > 0 {
 		cache := config.Caches[0]
-		if cache.NodeType != "" {
-			tfvars["redis_instance_type"] = cache.NodeType
-		}
+		tfvars["redis_instance_type"] = orDefault(cache.NodeType, "cache.t3.medium")
 		if cache.NumCacheNodes != nil {
 			tfvars["redis_cluster_size"] = *cache.NumCacheNodes
 		}

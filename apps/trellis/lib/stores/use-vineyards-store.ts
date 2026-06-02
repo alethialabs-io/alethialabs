@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import {
 	getVineyards,
 	type VineyardWithVines,
+	type VineWithProvider,
 } from "@/app/server/actions/vineyards";
 
 /** How long cached vineyards are considered fresh (ms). */
@@ -27,6 +28,8 @@ interface VineyardsStore {
 	removeVine: (vineyardId: string, vineId: string) => void;
 	/** Removes an entire vineyard from the cached data. */
 	removeVineyard: (vineyardId: string) => void;
+	/** Patches a single vine's fields in the cached vineyards array (e.g. from a realtime event). */
+	updateVineInPlace: (vineId: string, patch: Partial<VineWithProvider>) => void;
 }
 
 export const useVineyardsStore = create<VineyardsStore>()(
@@ -95,6 +98,17 @@ export const useVineyardsStore = create<VineyardsStore>()(
 				set((state) => ({
 					vineyards: state.vineyards.filter((vy) => vy.id !== vineyardId),
 					expandedIds: state.expandedIds.filter((id) => id !== vineyardId),
+				}));
+			},
+
+			updateVineInPlace: (vineId, patch) => {
+				set((state) => ({
+					vineyards: state.vineyards.map((vy) => ({
+						...vy,
+						vines: vy.vines.map((v) =>
+							v.id === vineId ? { ...v, ...patch } : v,
+						),
+					})),
 				}));
 			},
 		}),

@@ -305,7 +305,5 @@ type InfraTabDns = {
 	waf_enabled: boolean | null;
 } | null;
 type InfraTabRepos = {
-	env_destination_repo: string | null;
-	gitops_destination_repo: string | null;
 	apps_destination_repo: string | null;
 } | null;

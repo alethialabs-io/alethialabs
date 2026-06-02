@@ -1,5 +1,6 @@
 {
   "title": "Trellis (Platform)",
+  "icon": "Sprout",
   "root": true,
   "pages": [
     "index",

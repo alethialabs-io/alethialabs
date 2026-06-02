@@ -18,7 +18,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 					<div className="flex items-center gap-2">
 						{logo}
 						<span className="font-medium max-md:hidden">
-							ItGix Platform
+							Vintner
 						</span>
 					</div>
 				),
