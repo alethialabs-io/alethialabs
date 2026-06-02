@@ -106,15 +106,6 @@ variable "cluster_log_retention_in_days" {
   default     = 14
 }
 
-variable "addons_versions" {
-  type = object({
-    kube_proxy = string
-    vpc_cni    = string
-    coredns    = string
-    ebs_csi    = string
-  })
-}
-
 variable "eks_kms_key_users" {
   description = "A list of IAM ARNs for [key users](https://docs.aws.amazon.com/kms/latest/developerguide/key-policy-default.html#key-policy-default-allow-users)"
   type        = list(string)
@@ -206,19 +197,19 @@ variable "create_rds" {
 variable "rds_config" {
   description = "Configuration for RDS resources"
   type = object({
-    engine         = string
-    engine_version = string
-    engine_mode    = string
-    cluster_family = string
-    cluster_size   = number
-    db_port        = number
-    db_name        = string
+    engine         = optional(string, "aurora-postgresql")
+    engine_version = optional(string, "16.6")
+    engine_mode    = optional(string, "provisioned")
+    cluster_family = optional(string, "aurora-postgresql16")
+    cluster_size   = optional(number, 1)
+    db_port        = optional(number, 5432)
+    db_name        = optional(string, "")
   })
   default = ({
     engine         = "aurora-postgresql"
-    engine_version = "14.5"
+    engine_version = "16.6"
     engine_mode    = "provisioned"
-    cluster_family = "aurora-postgresql14"
+    cluster_family = "aurora-postgresql16"
     cluster_size   = 1
     db_port        = 5432
     db_name        = ""

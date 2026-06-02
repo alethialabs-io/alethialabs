@@ -62,7 +62,8 @@ func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]inte
 		"create_azure_cache": len(config.Caches) > 0,
 
 		// Cosmos DB
-		"create_cosmos_db": len(config.NosqlTables) > 0,
+		"create_cosmos_db":      len(config.NosqlTables) > 0,
+		"cosmos_db_collections": buildCosmosDBCollections(config.NosqlTables),
 
 		// ACR
 		"provision_acr": false,
@@ -171,6 +172,22 @@ func buildServiceBusQueues(queues []types.VineQueueConfig) map[string]interface{
 			"max_delivery_count": 10,
 			"lock_duration":      "PT1M",
 		}
+		if q.Fifo != nil {
+			cfg["requires_session"] = *q.Fifo
+		}
+		if q.VisibilityTimeout != nil {
+			cfg["lock_duration"] = fmt.Sprintf("PT%dS", *q.VisibilityTimeout)
+		}
+		if q.MessageRetention != nil {
+			cfg["default_message_ttl"] = fmt.Sprintf("PT%dS", *q.MessageRetention)
+		}
+		if q.DelaySeconds != nil {
+			cfg["forward_dead_lettered_messages_to"] = ""
+			cfg["max_delivery_count"] = 10
+			// Azure Service Bus doesn't have a direct delay_seconds equivalent,
+			// but we can pass it for scheduled enqueue support
+			cfg["delay_seconds"] = *q.DelaySeconds
+		}
 		result[q.Name] = cfg
 	}
 	return result
@@ -189,6 +206,22 @@ func buildServiceBusTopics(topics []types.VineTopicConfig) map[string]interface{
 		result[t.Name] = map[string]interface{}{
 			"subscriptions": subs,
 		}
+	}
+	return result
+}
+
+func buildCosmosDBCollections(tables []types.VineNosqlConfig) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(tables))
+	for _, t := range tables {
+		entry := map[string]interface{}{
+			"name":          t.Name,
+			"partition_key": orDefault(t.HashKey, "/id"),
+			"billing_mode":  orDefault(t.BillingMode, "PAY_PER_REQUEST"),
+		}
+		if t.PointInTimeRecovery {
+			entry["analytical_storage_enabled"] = true
+		}
+		result = append(result, entry)
 	}
 	return result
 }

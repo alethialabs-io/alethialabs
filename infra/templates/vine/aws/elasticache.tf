@@ -13,6 +13,7 @@ module "elasticache" {
   cluster_size               = var.redis_cluster_size
   instance_type              = var.redis_instance_type
   automatic_failover_enabled = var.redis_automatic_failover_enabled
+  multi_az_enabled           = var.redis_multi_az_enabled
   engine_version             = var.redis_engine_version
   family                     = var.redis_family
   allowed_cidr_blocks        = local.redis_allowed_cidr_blocks

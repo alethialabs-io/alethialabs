@@ -21,13 +21,14 @@ module "eks" {
 
   cluster_addons = {
     coredns = {
-      addon_version = var.addons_versions.coredns
+      most_recent = true
     }
     kube-proxy = {
-      addon_version = var.addons_versions.kube_proxy
+      most_recent = true
     }
     vpc-cni = {
-      service_account_role_arn = module.vpc_cni_irsa.iam_role_arn
+      most_recent               = true
+      service_account_role_arn  = module.vpc_cni_irsa.iam_role_arn
     }
   }
 
@@ -118,10 +119,16 @@ module "eks" {
 
 }
 
+data "aws_eks_addon_version" "ebs_csi" {
+  addon_name         = "aws-ebs-csi-driver"
+  kubernetes_version = module.eks.cluster_version
+  most_recent        = true
+}
+
 resource "aws_eks_addon" "ebs-csi" {
   cluster_name             = module.eks.cluster_name
   addon_name               = "aws-ebs-csi-driver"
-  addon_version            = var.addons_versions.ebs_csi
+  addon_version            = data.aws_eks_addon_version.ebs_csi.version
   service_account_role_arn = module.irsa-ebs-csi.iam_role_arn
   tags = merge(
     var.eks_tags,

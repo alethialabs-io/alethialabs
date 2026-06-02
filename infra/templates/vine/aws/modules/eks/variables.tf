@@ -77,15 +77,6 @@ variable "cluster_log_retention_in_days" {
   default     = 14
 }
 
-variable "addons_versions" {
-  type = object({
-    kube_proxy = string
-    vpc_cni    = string
-    coredns    = string
-    ebs_csi    = string
-  })
-}
-
 variable "eks_tags" {
   type    = map(string)
   default = {}

@@ -18,7 +18,6 @@ module "eks" {
   cluster_endpoint_public_access_cidrs = var.cluster_endpoint_public_access_cidrs
 
   cluster_log_retention_in_days = var.cluster_log_retention_in_days
-  addons_versions               = var.addons_versions
 
   vpc_id                   = var.provision_vpc ? module.common_vpc[0].vpc_id : var.vpc_id
   subnet_ids               = var.provision_vpc ? module.common_vpc[0].private_subnets : var.vpc_private_subnet_ids

@@ -76,7 +76,8 @@ func (p *gcpProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		"create_memorystore": len(config.Caches) > 0,
 
 		// Firestore
-		"create_firestore": len(config.NosqlTables) > 0,
+		"create_firestore":    len(config.NosqlTables) > 0,
+		"firestore_databases": buildFirestoreDatabases(config.NosqlTables),
 
 		// Artifact Registry
 		"provision_artifact_registry": false,
@@ -116,6 +117,15 @@ func (p *gcpProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		cache := config.Caches[0]
 		if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1 {
 			tfvars["memorystore_tier"] = "STANDARD_HA"
+		}
+		if cache.Engine != "" {
+			tfvars["memorystore_engine"] = cache.Engine
+		}
+		if cache.NodeType != "" {
+			tfvars["memorystore_instance_type"] = cache.NodeType
+		}
+		if cache.MultiAz != nil {
+			tfvars["memorystore_multi_az"] = *cache.MultiAz
 		}
 	}
 
@@ -187,6 +197,21 @@ func buildPubSubTopics(topics []types.VineTopicConfig, queues []types.VineQueueC
 			"message_retention_duration": "86400s",
 			"subscriptions":             subs,
 		}
+	}
+	return result
+}
+
+func buildFirestoreDatabases(tables []types.VineNosqlConfig) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(tables))
+	for _, t := range tables {
+		entry := map[string]interface{}{
+			"name":         t.Name,
+			"billing_mode": orDefault(t.BillingMode, "PAY_PER_REQUEST"),
+		}
+		if t.PointInTimeRecovery {
+			entry["point_in_time_recovery"] = true
+		}
+		result = append(result, entry)
 	}
 	return result
 }

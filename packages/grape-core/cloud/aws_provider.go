@@ -58,19 +58,14 @@ func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		"aws_account_id": config.CloudAccountID,
 
 		// VPC
-		"provision_vpc": provisionVPC,
-		"vpc_cidr":      orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
+		"provision_vpc":           provisionVPC,
+		"vpc_cidr":               orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
+		"vpc_single_nat_gateway": config.Network.SingleNatGateway,
 
 		// EKS
 		"eks_cluster_version": orDefault(config.Cluster.ClusterVersion, "1.32"),
 		"enable_karpenter":    enableKarpenter,
 		"eks_cluster_admins":  ensureSlice(config.Cluster.ClusterAdmins),
-		"addons_versions": map[string]string{
-			"kube_proxy": "v1.32.0-eksbuild.2",
-			"vpc_cni":    "v1.19.2-eksbuild.5",
-			"coredns":    "v1.11.4-eksbuild.2",
-			"ebs_csi":    "v1.38.1-eksbuild.2",
-		},
 
 		// DNS / WAF
 		"dns_hosted_zone":               config.DNS.ZoneID,
@@ -122,6 +117,18 @@ func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 			scalingConfig["max_capacity"] = *db.MaxCapacity
 		}
 		tfvars["rds_scaling_config"] = scalingConfig
+		tfvars["rds_config"] = map[string]interface{}{
+			"engine":         orDefault(db.Engine, "aurora-postgresql"),
+			"engine_version": orDefault(db.EngineVersion, "16.6"),
+			"db_port":        derefIntOr(db.Port, 5432),
+			"db_name":        db.Name,
+		}
+		if db.BackupRetentionDays != nil {
+			tfvars["rds_backup_retention_period"] = *db.BackupRetentionDays
+		}
+		if db.IamAuth != nil {
+			tfvars["rds_iam_auth_enabled"] = *db.IamAuth
+		}
 	}
 
 	if len(config.Caches) > 0 {
@@ -131,6 +138,9 @@ func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		}
 		if cache.NumCacheNodes != nil {
 			tfvars["redis_cluster_size"] = *cache.NumCacheNodes
+		}
+		if cache.MultiAz != nil {
+			tfvars["redis_multi_az_enabled"] = *cache.MultiAz
 		}
 	}
 
@@ -160,6 +170,13 @@ func ensureSlice(s []interface{}) []interface{} {
 func orDefault(val, def string) string {
 	if val != "" {
 		return val
+	}
+	return def
+}
+
+func derefIntOr(p *int, def int) int {
+	if p != nil {
+		return *p
 	}
 	return def
 }
@@ -198,8 +215,9 @@ func buildSNSTopics(topics []types.VineTopicConfig) map[string]interface{} {
 				"endpoint": s.Endpoint,
 			})
 		}
-		result[t.Name] = map[string]interface{}{}
-		_ = subs
+		result[t.Name] = map[string]interface{}{
+			"subscriptions": subs,
+		}
 	}
 	return result
 }

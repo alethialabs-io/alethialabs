@@ -11,15 +11,6 @@ provider "aws" {
   region = var.region
 }
 
-variable "project_name" {}
-variable "environment" {}
-variable "region" {}
-variable "vpc_cidr" {
-  default = ""
-}
-variable "vpc_id" {
-  default = ""
-}
 
 locals {
   name = "${var.project_name}-${var.environment}"
@@ -72,7 +63,7 @@ module "eks" {
   version = "~> 20.0"
 
   cluster_name    = "${local.name}-cluster"
-  cluster_version = "1.29"
+  cluster_version = var.cluster_version
 
   vpc_id     = local.create_vpc ? module.vpc[0].vpc_id : var.vpc_id
   subnet_ids = local.subnet_ids
@@ -87,7 +78,7 @@ module "eks" {
       max_size     = 2
       desired_size = 1
 
-      instance_types = ["t3.medium"]
+      instance_types = var.instance_types
       capacity_type  = "SPOT"
       
       # Explicitly set subnets for the node group
