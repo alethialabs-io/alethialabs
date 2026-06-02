@@ -6,6 +6,7 @@ type JobAPI interface {
 	SendLog(jobID, logChunk, streamType string) error
 	Heartbeat() error
 	GetJob(jobID string) (*Job, error)
+	FetchGitToken(jobID string) (string, error)
 	UploadPlanArtifact(jobID, filePath string) error
 	DownloadPlanArtifact(jobID, destPath string) error
 	UpdateWorkerMetadata(workerID string, metadata map[string]any) error

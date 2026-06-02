@@ -556,11 +556,20 @@ func (w *Worker) executeDeploy(ctx context.Context, job *Job, provider string, i
 		}
 	}
 
+	gitToken := vc.GitAccessToken
+	if gitToken == "" {
+		if fetched, err := w.api.FetchGitToken(job.ID); err != nil {
+			fmt.Fprintf(stderr, "Warning: failed to fetch git token: %v\n", err)
+		} else {
+			gitToken = fetched
+		}
+	}
+
 	params := provisioner.DeployParams{
 		VineConfig:      vc,
 		Provider:        provider,
 		TemplatesDir:    filepath.Join(resolveVineTemplatesDir(), provider),
-		GitAccessToken:  vc.GitAccessToken,
+		GitAccessToken:  gitToken,
 		SupabaseBackend: w.supabaseBackend(),
 		Stdout:          stdout,
 		Stderr:          stderr,
@@ -624,13 +633,22 @@ func (w *Worker) executePlan(ctx context.Context, job *Job, provider string, ide
 
 	infracostKey := os.Getenv("INFRACOST_API_KEY")
 
+	planGitToken := vc.GitAccessToken
+	if planGitToken == "" {
+		if fetched, err := w.api.FetchGitToken(job.ID); err != nil {
+			fmt.Fprintf(stderr, "Warning: failed to fetch git token: %v\n", err)
+		} else {
+			planGitToken = fetched
+		}
+	}
+
 	params := provisioner.DeployParams{
 		VineConfig:      vc,
 		Provider:        provider,
 		DryRun:          true,
 		TemplatesDir:    filepath.Join(resolveVineTemplatesDir(), provider),
 		InfracostToken:  infracostKey,
-		GitAccessToken:  vc.GitAccessToken,
+		GitAccessToken:  planGitToken,
 		SupabaseBackend: w.supabaseBackend(),
 		Stdout:          stdout,
 		Stderr:          stderr,

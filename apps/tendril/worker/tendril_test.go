@@ -67,6 +67,10 @@ func (m *mockAPI) GetJob(jobID string) (*Job, error) {
 	return nil, fmt.Errorf("job not found: %s", jobID)
 }
 
+func (m *mockAPI) FetchGitToken(jobID string) (string, error) {
+	return "", nil
+}
+
 func (m *mockAPI) UploadPlanArtifact(jobID, filePath string) error {
 	return nil
 }

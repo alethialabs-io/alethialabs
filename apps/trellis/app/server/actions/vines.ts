@@ -1,7 +1,6 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { getValidProviderToken } from "./identities";
 import {
 	convertVineConfig,
 	type CloudProviderSlug,
@@ -439,21 +438,15 @@ async function buildConfigSnapshot(vineId: string) {
 		secrets: secrets.data || [],
 	};
 
-	const repoUrl = repos.data?.apps_destination_repo || "";
-	const gitProvider = repoUrl.includes("gitlab")
-		? "gitlab"
-		: repoUrl.includes("bitbucket")
-			? "bitbucket"
-			: "github";
-	const gitToken = await getValidProviderToken(gitProvider);
-
 	return {
 		user,
 		vine,
 		identity,
 		configSnapshot: {
 			...configSnapshot,
-			git_access_token: gitToken,
+			// Token is now fetched at runtime by the worker via POST /api/jobs/[id]/git-token.
+			// Keep the key with an empty string so older workers don't break on missing field.
+			git_access_token: "",
 		},
 	};
 }

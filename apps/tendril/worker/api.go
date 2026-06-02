@@ -243,6 +243,36 @@ func (c *WorkerAPIClient) DownloadPlanArtifact(jobID, destPath string) error {
 	return nil
 }
 
+func (c *WorkerAPIClient) FetchGitToken(jobID string) (string, error) {
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/jobs/%s/git-token", c.baseURL, jobID), nil)
+	if err != nil {
+		return "", err
+	}
+	c.setWorkerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch git token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch git token returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Token *string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode git token response: %w", err)
+	}
+
+	if result.Token == nil {
+		return "", nil
+	}
+	return *result.Token, nil
+}
+
 func (c *WorkerAPIClient) UpdateWorkerMetadata(workerID string, metadata map[string]any) error {
 	body, err := json.Marshal(metadata)
 	if err != nil {
