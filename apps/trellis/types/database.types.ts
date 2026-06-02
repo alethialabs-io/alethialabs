@@ -1035,45 +1035,21 @@ export type Database = {
       vine_repositories: {
         Row: {
           apps_destination_repo: string | null
-          apps_template_branch: string | null
-          apps_template_repo: string | null
           created_at: string
-          env_destination_repo: string | null
-          env_template_branch: string | null
-          env_template_repo: string
-          gitops_destination_repo: string | null
-          gitops_template_branch: string | null
-          gitops_template_repo: string
           id: string
           updated_at: string
           vine_id: string
         }
         Insert: {
           apps_destination_repo?: string | null
-          apps_template_branch?: string | null
-          apps_template_repo?: string | null
           created_at?: string
-          env_destination_repo?: string | null
-          env_template_branch?: string | null
-          env_template_repo?: string
-          gitops_destination_repo?: string | null
-          gitops_template_branch?: string | null
-          gitops_template_repo?: string
           id?: string
           updated_at?: string
           vine_id: string
         }
         Update: {
           apps_destination_repo?: string | null
-          apps_template_branch?: string | null
-          apps_template_repo?: string | null
           created_at?: string
-          env_destination_repo?: string | null
-          env_template_branch?: string | null
-          env_template_repo?: string
-          gitops_destination_repo?: string | null
-          gitops_template_branch?: string | null
-          gitops_template_repo?: string
           id?: string
           updated_at?: string
           vine_id?: string
@@ -1438,8 +1414,6 @@ export type Database = {
           acm_certificate_enable: boolean | null
           application_waf_enabled: boolean | null
           applications_destination_repo: string | null
-          applications_template_repo: string | null
-          applications_template_repo_branch: string | null
           aws_account_id: string | null
           aws_region: string | null
           cloud_identity_id: string | null
@@ -1462,14 +1436,8 @@ export type Database = {
           enable_dns: boolean | null
           enable_karpenter: boolean | null
           enable_redis: boolean | null
-          env_git_repo: string | null
-          env_template_repo: string | null
-          env_template_repo_branch: string | null
           environment_stage: string | null
           estimated_monthly_cost: number | null
-          gitops_destination_repo: string | null
-          gitops_template_repo: string | null
-          gitops_template_repo_branch: string | null
           id: string | null
           instance_types: string[] | null
           network_status: string | null

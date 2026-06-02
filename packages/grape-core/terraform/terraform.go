@@ -8,9 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
-	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/types"
 	"github.com/hashicorp/go-version"
 	"github.com/hashicorp/hc-install/product"
 	"github.com/hashicorp/hc-install/releases"
@@ -122,14 +120,6 @@ func (t *TerraformCLI) ShowPlanJSON(ctx context.Context, planFile string) (*tfjs
 	return t.tf.ShowPlanFile(ctx, planFile)
 }
 
-func GenerateBackendConfig(config *types.Configuration) map[string]string {
-	return map[string]string{
-		"bucket": fmt.Sprintf("%s-%s-%s-idp-state", config.ProjectName, config.EnvironmentStage, config.AwsRegion),
-		"key":    fmt.Sprintf("%s-%s-%s-terraform.tfstate", config.ProjectName, config.EnvironmentStage, config.AwsRegion),
-		"region": config.AwsRegion,
-	}
-}
-
 func OverrideTfvarsFromMap(dir string, tfvars map[string]interface{}) (string, error) {
 	tfvarsPath := filepath.Join(dir, "terraform.tfvars.json")
 
@@ -143,95 +133,6 @@ func OverrideTfvarsFromMap(dir string, tfvars map[string]interface{}) (string, e
 	}
 
 	return tfvarsPath, nil
-}
-
-func OverrideTfvars(dir string, config *types.Configuration) (string, error) {
-	tfvarsPath := filepath.Join(dir, "terraform.tfvars.json")
-
-	tfvars, err := configurationToTfvars(config)
-	if err != nil {
-		return "", err
-	}
-
-	tfvarsData, err := json.MarshalIndent(tfvars, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("failed to encode tfvars: %w", err)
-	}
-
-	if err := os.WriteFile(tfvarsPath, append(tfvarsData, '\n'), 0644); err != nil {
-		return "", fmt.Errorf("failed to write tfvars file: %w", err)
-	}
-
-	return tfvarsPath, nil
-}
-
-func configurationToTfvars(config *types.Configuration) (map[string]interface{}, error) {
-	if config == nil {
-		return nil, fmt.Errorf("configuration cannot be nil")
-	}
-
-	if config.FullConfig != nil && strings.TrimSpace(*config.FullConfig) != "" {
-		var tfvars map[string]interface{}
-		if err := json.Unmarshal([]byte(*config.FullConfig), &tfvars); err != nil {
-			return nil, fmt.Errorf("failed to parse raw configuration for tfvars: %w", err)
-		}
-		return tfvars, nil
-	}
-
-	tfvars := map[string]interface{}{
-		"project_name":   config.ProjectName,
-		"region":         config.AwsRegion,
-		"environment":    config.EnvironmentStage,
-		"aws_account_id": config.AwsAccountID,
-		"terraform_ver":  config.TerraformVersion,
-	}
-
-	setIfBoolPtr(tfvars, "provision_vpc", config.CreateVpc)
-	setIfStringPtr(tfvars, "vpc_cidr", config.VpcCidr)
-	setIfStringPtr(tfvars, "dns_hosted_zone", config.DnsHostedZone)
-	setIfStringPtr(tfvars, "dns_main_domain", config.DnsDomainName)
-	setIfNotEmpty(tfvars, "env_template_repo", config.EnvTemplateRepo)
-	setIfNotEmpty(tfvars, "env_template_repo_branch", config.EnvTemplateRepoBranch)
-	setIfNotEmpty(tfvars, "env_git_repo", config.EnvGitRepo)
-	setIfNotEmpty(tfvars, "gitops_template_repo", config.GitopsTemplateRepo)
-	setIfNotEmpty(tfvars, "gitops_template_repo_branch", config.GitopsTemplateRepoBranch)
-	setIfNotEmpty(tfvars, "gitops_destination_repo", config.GitopsDestinationRepo)
-	setIfNotEmpty(tfvars, "applications_template_repo", config.ApplicationsTemplateRepo)
-	setIfNotEmpty(tfvars, "applications_template_repo_branch", config.ApplicationsTemplateRepoBranch)
-	setIfNotEmpty(tfvars, "applications_destination_repo", config.ApplicationsDestinationRepo)
-	setIfStringPtr(tfvars, "gitops_argo_access_token", config.GitopsArgocdToken)
-	setIfStringPtr(tfvars, "applications_argo_access_token", config.GitopsAppToken)
-	setIfBoolPtr(tfvars, "acm_certificate_enable", config.EnableDns)
-	setIfBoolPtr(tfvars, "create_elasticache_redis", config.EnableRedis)
-	setIfBoolPtr(tfvars, "enable_karpenter", config.EnableKarpenter)
-	setIfBoolPtr(tfvars, "cloudfront_waf_enabled", config.EnableCloudfrontWaf)
-	if config.DbMinCapacity != nil {
-		tfvars["create_rds"] = true
-		tfvars["rds_scaling_config"] = map[string]interface{}{"min_capacity": *config.DbMinCapacity}
-	}
-	if config.RedisAllowedCidrBlocks != nil && *config.RedisAllowedCidrBlocks != "" {
-		tfvars["redis_allowed_cidr_blocks"] = strings.Split(*config.RedisAllowedCidrBlocks, ",")
-	}
-
-	return tfvars, nil
-}
-
-func setIfNotEmpty(values map[string]interface{}, key, value string) {
-	if value != "" {
-		values[key] = value
-	}
-}
-
-func setIfStringPtr(values map[string]interface{}, key string, value *string) {
-	if value != nil && *value != "" {
-		values[key] = *value
-	}
-}
-
-func setIfBoolPtr(values map[string]interface{}, key string, value *bool) {
-	if value != nil {
-		values[key] = *value
-	}
 }
 
 func ensureBinary(ctx context.Context, tfVersion string) (string, error) {

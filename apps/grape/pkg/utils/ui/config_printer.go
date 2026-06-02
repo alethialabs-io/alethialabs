@@ -74,18 +74,6 @@ func PrintConfiguration(config types.Configuration) {
 	doc.WriteString(kv("Region:", config.AwsRegion))
 	doc.WriteString("\n\n")
 
-	// Repositories
-	doc.WriteString(subHeaderStyle.Render("Repositories"))
-	doc.WriteString("\n")
-	doc.WriteString(kv("Environment:", getRepoName(config.EnvGitRepo)))
-	doc.WriteString("\n")
-	doc.WriteString(kv("GitOps:", getRepoName(config.GitopsDestinationRepo)))
-	if config.ApplicationsDestinationRepo != "" {
-		doc.WriteString("\n")
-		doc.WriteString(kv("Applications:", getRepoName(config.ApplicationsDestinationRepo)))
-	}
-	doc.WriteString("\n\n")
-
 	// Network Section
 	doc.WriteString(subHeaderStyle.Render("Network Configuration"))
 	doc.WriteString("\n")
@@ -133,14 +121,6 @@ func PrintConfiguration(config types.Configuration) {
 	doc.WriteString("\n")
 
 	fmt.Println(doc.String())
-}
-
-func getRepoName(url string) string {
-	parts := strings.Split(url, "/")
-	if len(parts) > 0 {
-		return parts[len(parts)-1]
-	}
-	return url
 }
 
 func derefString(s *string) string {

@@ -23,10 +23,7 @@ function buildValidFormData(overrides?: Partial<VineFormData>): VineFormData {
 			cluster_admins: [{ username: "admin@example.com", groups: ["system:masters"] }],
 		},
 		dns: { enabled: false },
-		repositories: {
-			env_template_repo: "git@github.com:itgix/adp-tf-envtempl-standard.git",
-			gitops_template_repo: "git@github.com:itgix/adp-k8s-templ-argoinfrasvcs.git",
-		},
+		repositories: {},
 		databases: [],
 		caches: [],
 		queues: [],
@@ -179,18 +176,12 @@ describe("CreateVineInput → server action mapping", () => {
 	it("repositories fields map to vine_repositories table insert", () => {
 		const data = buildValidFormData({
 			repositories: {
-				env_template_repo: "git@github.com:itgix/adp-tf-envtempl-standard.git",
-				env_template_branch: "v1.2.7",
-				env_destination_repo: "git@github.com:org/env-repo.git",
-				gitops_template_repo: "git@github.com:itgix/adp-k8s-templ-argoinfrasvcs.git",
-				gitops_destination_repo: "git@github.com:org/gitops-repo.git",
+				apps_destination_repo: "git@github.com:org/apps-repo.git",
 			} as any,
 		});
 		const parsed = vineFormSchema.parse(data);
 
-		expect(parsed.repositories.env_template_repo).toBe("git@github.com:itgix/adp-tf-envtempl-standard.git");
-		expect(parsed.repositories.env_destination_repo).toBe("git@github.com:org/env-repo.git");
-		expect(parsed.repositories.gitops_destination_repo).toBe("git@github.com:org/gitops-repo.git");
+		expect(parsed.repositories.apps_destination_repo).toBe("git@github.com:org/apps-repo.git");
 	});
 
 	it("omits auto-generated fields", () => {
