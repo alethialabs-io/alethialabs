@@ -67,7 +67,7 @@ jobs:
           push: true
           platforms: linux/arm64
           build-args: |
-            VERSION=${{ github.sha }}
+            VERSION=dev
           tags: |
             ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
             ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}

@@ -29,6 +29,9 @@ export interface TendrilRelease {
 	version: string;
 	release_notes: string;
 	released_at: string;
+	github_release_url: string | null;
+	commit_sha: string | null;
+	is_breaking: boolean;
 }
 
 export type TendrilWithRelease = PublicWorkersRow & {
@@ -82,7 +85,7 @@ export const useTendrilsStore = create<TendrilsStore>()((set, get) => ({
 			const [tendrilsRes, jobsRes, releaseRes] = await Promise.all([
 				supabase
 					.from("workers")
-					.select("*, worker_releases(version, release_notes, released_at)")
+					.select("*, worker_releases(version, release_notes, released_at, github_release_url, commit_sha, is_breaking)")
 					.order("is_default", { ascending: false })
 					.order("mode", { ascending: true })
 					.order("created_at", { ascending: true }),
@@ -92,7 +95,7 @@ export const useTendrilsStore = create<TendrilsStore>()((set, get) => ({
 					.in("status", ["QUEUED", "CLAIMED", "PROCESSING"]),
 				supabase
 					.from("worker_releases")
-					.select("version, release_notes, released_at")
+					.select("version, release_notes, released_at, github_release_url, commit_sha, is_breaking")
 					.order("released_at", { ascending: false })
 					.limit(1)
 					.maybeSingle(),
@@ -202,7 +205,7 @@ export const useTendrilsStore = create<TendrilsStore>()((set, get) => ({
 		const supabase = createClient();
 		const { data } = await supabase
 			.from("worker_releases")
-			.select("version, release_notes, released_at")
+			.select("version, release_notes, released_at, github_release_url, commit_sha, is_breaking")
 			.eq("version", version)
 			.maybeSingle();
 		return (data as TendrilRelease) ?? null;

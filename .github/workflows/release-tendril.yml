@@ -80,6 +80,7 @@ jobs:
         env:
           TRELLIS_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
           RELEASE_API_SECRET: ${{ secrets.RELEASE_API_SECRET }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           NOTES=$(gh release view "tendril-v${{ steps.meta.outputs.VERSION }}" --json body -q .body 2>/dev/null || echo "")
           curl -sf -X POST "${TRELLIS_URL}/api/releases/worker" \
@@ -88,7 +89,9 @@ jobs:
             -d "$(jq -n \
               --arg v "${{ steps.meta.outputs.VERSION }}" \
               --arg n "$NOTES" \
-              '{version: $v, release_notes: $n}')"
+              --arg u "https://github.com/${{ github.repository }}/releases/tag/tendril-v${{ steps.meta.outputs.VERSION }}" \
+              --arg s "${{ github.sha }}" \
+              '{version: $v, release_notes: $n, github_release_url: $u, commit_sha: $s}')"
 
       - name: Force new Fargate deployment
         run: |

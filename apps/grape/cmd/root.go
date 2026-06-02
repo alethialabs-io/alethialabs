@@ -4,9 +4,14 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/internal/version"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
+
+func init() {
+	rootCmd.Version = version.Version
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "grape",
