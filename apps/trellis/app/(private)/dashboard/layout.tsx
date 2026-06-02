@@ -103,7 +103,7 @@ export default function DashboardLayout({
 	};
 
 	return (
-		<div className="flex h-full w-full flex-col bg-background overflow-hidden">
+		<div className="flex h-dvh w-full flex-col bg-background overflow-hidden">
 			{/* Top Header - Edge to Edge */}
 			<header className="sticky top-0 z-40 flex h-14 shrink-0 items-center border-b border-border/40 bg-background/95 backdrop-blur px-4 sm:px-6 lg:px-8">
 				<div className="flex w-full items-center justify-between">
