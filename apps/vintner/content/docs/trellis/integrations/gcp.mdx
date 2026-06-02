@@ -1,0 +1,52 @@
+---
+title: GCP Integration
+description: Workload Identity Federation setup with OIDC token exchange.
+---
+
+# GCP Integration
+
+GCP integration uses **Workload Identity Federation (WIF)** to exchange OIDC tokens for temporary GCP credentials. No service account JSON keys are created or stored. See [Security Architecture](/concepts/security).
+
+## Setup
+
+<Steps>
+
+### Create Workload Identity Pool
+In your GCP project, create a Workload Identity Pool to group external identities.
+
+### Add OIDC Provider
+Add an OIDC Provider to the pool with:
+- **Issuer URL** — the Trellis platform's OIDC issuer
+- **Audience** — the platform's audience identifier
+- **Attribute mapping** — maps OIDC claims to Google attributes
+
+### Create Service Account
+Create a GCP service account with the required roles for infrastructure provisioning (Kubernetes Engine Admin, Cloud SQL Admin, etc.).
+
+### Bind Service Account
+Grant the Workload Identity Pool the `roles/iam.workloadIdentityUser` role on the service account. This allows OIDC-authenticated requests to impersonate the service account.
+
+### Export WIF Configuration
+Export the WIF configuration JSON from the Google Cloud Console.
+
+### Paste into Trellis
+Paste the WIF configuration JSON and click "Complete."
+
+</Steps>
+
+## Verification
+
+Trellis queues a `CONNECTION_TEST` job. The Tendril:
+
+1. Presents an OIDC token to GCP's Security Token Service
+2. GCP validates the token against the registered issuer/subject
+3. Returns a short-lived GCP access token
+4. The Tendril uses the access token to discover existing resources (VPC networks, subnets, DNS zones)
+
+## What's Stored
+
+- **GCP Project ID**
+- **Service account email**
+- **WIF configuration** (pool ID, provider ID, issuer details)
+
+No service account JSON keys. Access is revoked by deleting the WIF pool or unbinding the service account.

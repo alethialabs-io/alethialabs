@@ -1,0 +1,10 @@
+{
+  "title": "Integrations",
+  "pages": [
+    "index",
+    "aws",
+    "gcp",
+    "azure",
+    "git-providers"
+  ]
+}

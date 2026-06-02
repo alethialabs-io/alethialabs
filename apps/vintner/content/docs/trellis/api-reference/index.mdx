@@ -1,0 +1,51 @@
+---
+title: API Overview
+description: Trellis API endpoints — authentication methods, base URLs, and route categories.
+---
+
+# API Reference
+
+Trellis exposes three categories of API routes, each with its own authentication mechanism.
+
+## Authentication Methods
+
+| Category | Auth Header | Token Type | Used By |
+|----------|-----------|------------|---------|
+| **Worker APIs** | `X-Worker-ID` + `X-Worker-Token` | SHA-256 hashed token | Tendril agents |
+| **CLI APIs** | `Authorization: Bearer {jwt}` | HS256 JWT (1h access, 90d refresh) | Grape CLI |
+| **Release APIs** | `Authorization: Bearer {secret}` | Static secret (`RELEASE_API_SECRET`) | CI/CD pipeline |
+
+See [Authentication Flows](/concepts/authentication) for details on each mechanism.
+
+## API Categories
+
+<Cards>
+  <Card title="Worker APIs" href="/trellis/api-reference/worker-apis">
+    Job claiming, heartbeat, status updates, log streaming, plan artifacts.
+  </Card>
+  <Card title="CLI APIs" href="/trellis/api-reference/cli-apis">
+    Vineyards, configurations, jobs, workers, repositories.
+  </Card>
+  <Card title="Auth APIs" href="/trellis/api-reference/auth-apis">
+    Device code flow: generate, exchange, refresh.
+  </Card>
+</Cards>
+
+## Request Format
+
+All APIs accept and return JSON. Errors return a consistent format:
+
+```json
+{
+  "error": "Human-readable error message"
+}
+```
+
+HTTP status codes:
+- `200` — success
+- `201` — created
+- `400` — validation error
+- `401` — authentication failure
+- `404` — not found
+- `409` — conflict (e.g., duplicate release version)
+- `500` — internal error

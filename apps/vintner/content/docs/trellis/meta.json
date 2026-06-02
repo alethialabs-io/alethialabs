@@ -4,12 +4,13 @@
   "root": true,
   "pages": [
     "index",
+    "getting-started",
     "dashboard",
     "plant-vine",
-    "cost-estimation",
     "integrations",
     "jobs",
     "tendrils",
-    "clusters"
+    "clusters",
+    "api-reference"
   ]
 }

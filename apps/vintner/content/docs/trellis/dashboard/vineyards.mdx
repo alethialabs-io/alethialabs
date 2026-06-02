@@ -1,0 +1,57 @@
+---
+title: Vineyards
+description: Vineyard creation, listing, and the estate map visualization.
+---
+
+# Vineyards
+
+A **Vineyard** is a workspace that groups related infrastructure configurations (vines). Think of it as a project or team boundary. See [Domain Model](/concepts/domain-model) for how Vineyards fit into the entity hierarchy.
+
+## Creating a Vineyard
+
+From the dashboard or sidebar, create a vineyard with:
+
+| Field | Description |
+|-------|-------------|
+| **Name** | Unique per user, used in Terraform state paths |
+| **Description** | Optional, for documentation |
+
+The vineyard is created immediately. It starts empty — navigate to [Plant a Vine](/trellis/plant-vine) to add infrastructure configurations.
+
+<Callout type="info">
+Vineyard names are used in the Terraform state path structure: `{vineyard}/{project}/{stage}/{region}/terraform.tfstate`. Choose meaningful names. See [Terraform State](/concepts/terraform-state).
+</Callout>
+
+## Vineyard Detail Page
+
+Each vineyard has a detail page at `/dashboard/vineyards/{id}` showing:
+
+### Header
+- Vineyard name
+- Vine count and active vine count
+- Total estimated monthly cost (sum of all vines)
+- **Plant a Vine** button
+
+### View Modes
+
+Toggle between **List** and **Map** views:
+
+**List View** (default) — a data table with columns:
+
+| Column | Description |
+|--------|-------------|
+| Project | Vine name (monospace) |
+| Provider | AWS/GCP/Azure icon |
+| Region | Cloud region (monospace) |
+| Environment | Badge: dev / staging / prod |
+| Status | Color-coded badge (ACTIVE, DRAFT, PROVISIONING, FAILED, etc.) |
+| Cost | Estimated monthly cost |
+| Updated | Relative timestamp |
+
+Clicking a row navigates to the vine detail page.
+
+**Map View** — the **Vineyard Estate Map**, a visual representation of the vineyard's vines as interactive nodes grouped by region and provider.
+
+## Deleting a Vineyard
+
+Deleting a vineyard cascade-deletes all vines within it. This is a permanent action — the underlying cloud resources are **not** destroyed (use [Destroy](/trellis/jobs/plan-and-apply) for that first).

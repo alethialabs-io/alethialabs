@@ -1,0 +1,59 @@
+---
+title: Job Detail & Logs
+description: Real-time log streaming, status polling, and job actions.
+---
+
+# Job Detail & Logs
+
+The job detail page (`/dashboard/jobs/{id}`) shows the full execution state of a job with real-time log streaming. For the underlying streaming architecture, see [Real-time Architecture](/concepts/realtime).
+
+## Layout
+
+### Header
+- Job type icon and label
+- Status badge (animated for PROCESSING)
+- Duration (elapsed time, updates live)
+- Job ID (first 8 chars, copyable)
+- Assigned Tendril name
+- Created timestamp
+- Action buttons
+
+### Log Viewer
+
+A full-height, monospace, auto-scrolling log area showing Terraform output in real-time:
+
+- **STDOUT** — normal output (white/light gray)
+- **STDERR** — errors and warnings (red)
+- **SYSTEM** — platform messages like "Assuming IAM role..." (blue)
+
+Logs are streamed via Supabase Realtime subscription on `provision_job_logs` INSERT events, filtered by `job_id`. New chunks appear within ~2–3 seconds of the Tendril writing them.
+
+Auto-scroll pins to the bottom as new logs arrive. Scrolling up manually disables auto-scroll until the user scrolls back to the bottom.
+
+### Collapsible Details
+
+Three expandable sections below the logs:
+
+- **Job Details** — full metadata (ID, type, status, worker, all timestamps)
+- **Config Snapshot** — the vine configuration at time of job creation (JSON)
+- **Execution Metadata** — Terraform outputs, cost data, cluster info (JSON)
+
+## Actions
+
+| Button | When Visible | Effect |
+|--------|-------------|--------|
+| **Cancel** | QUEUED or PROCESSING | Sets status to CANCELLED, Tendril terminates gracefully |
+| **Apply** | PLAN job with SUCCESS status | Opens Tendril Select Popover → creates DEPLOY job |
+| **Re-run** | Any terminal status (SUCCESS, FAILED, CANCELLED) | Creates a new job with the same configuration |
+
+## Status Polling
+
+The page polls `getJobStatus(jobId)` every 3 seconds until the job reaches a terminal state. This is a lightweight query that returns only `status` and `error_message` — the full log streaming happens via the Realtime subscription.
+
+## Status Banner
+
+When the job reaches a terminal state, a banner appears:
+
+- **SUCCESS** — green banner with checkmark
+- **FAILED** — red banner with error message
+- **CANCELLED** — gray banner with "Cancelled by user"

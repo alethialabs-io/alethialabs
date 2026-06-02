@@ -1,0 +1,98 @@
+---
+title: Getting Started
+description: Quick start guide — sign up, connect a cloud provider, plant a vine, and deploy.
+---
+
+# Getting Started
+
+This guide walks through the complete flow from sign-up to a running Kubernetes cluster with ArgoCD.
+
+## Prerequisites
+
+- An AWS, GCP, or Azure account with admin-level access
+- A GitHub, GitLab, or Bitbucket account
+
+## The Flow
+
+<Steps>
+
+### Sign Up
+
+Navigate to Trellis and sign in with one of the supported OAuth providers (GitHub, GitLab, Bitbucket, or Google). Your account is created automatically on first login.
+
+After sign-in, you'll land on the dashboard — empty, with no vineyards or jobs.
+
+### Connect a Cloud Provider
+
+Go to **Integrations** in the sidebar. Connect your cloud account:
+
+<Tabs items={["AWS", "GCP", "Azure"]}>
+  <Tab value="AWS">
+    1. Click **Connect** on the AWS card
+    2. Copy the **External ID** shown
+    3. Deploy the provided **CloudFormation template** in your AWS account
+    4. Paste the resulting **Role ARN** back into Trellis
+    5. Trellis verifies the connection by assuming the role
+  </Tab>
+  <Tab value="GCP">
+    1. Click **Connect** on the GCP card
+    2. Create a **Workload Identity Pool** and OIDC Provider in your GCP project
+    3. Bind a service account with the required roles
+    4. Paste the WIF configuration JSON into Trellis
+  </Tab>
+  <Tab value="Azure">
+    1. Click **Connect** on the Azure card
+    2. Create an **App Registration** in Azure Entra ID
+    3. Add a **Federated Credential** with the Trellis OIDC issuer
+    4. Enter Tenant ID, Client ID, and Subscription ID in Trellis
+  </Tab>
+</Tabs>
+
+See [Integrations](/trellis/integrations) for detailed setup guides per provider.
+
+### Connect a Git Provider
+
+On the same Integrations page, click **Connect** on GitHub (or GitLab/Bitbucket). This uses standard OAuth — authorize the app, and you're connected.
+
+### Plant a Vine
+
+Go to **Plant a Vine** in the sidebar. Fill out the configuration form:
+
+1. **Project Basics** — name your project, select environment (production/staging/dev)
+2. **Network** — create a new VPC or select an existing one
+3. **Cluster** — choose K8s version, instance types, node scaling
+4. **Database** — add Aurora/Cloud SQL/Azure Database instances
+5. **Cache** — add Redis/Valkey instances
+6. Additional sections for NoSQL, messaging, DNS, secrets, container registries, and repositories
+
+The **cost sidebar** shows estimated monthly costs as you configure. Click **Create Vine** when ready.
+
+### Plan
+
+From the vine detail page, click **Plan**. Select a Tendril (or "Any available") to execute. The Tendril runs `terraform plan` and streams the output in real-time.
+
+Review the plan: how many resources will be created, what they'll cost.
+
+### Apply
+
+Click **Apply** to provision the infrastructure. The Tendril runs `terraform apply`, provisions all resources, installs ArgoCD, and reports back with cluster credentials.
+
+### Access Your Cluster
+
+Go to **Clusters** in the sidebar. Your new cluster shows:
+- Cluster endpoint
+- ArgoCD URL (with admin credentials)
+- kubeconfig command
+
+</Steps>
+
+<Callout type="info">
+Full cluster provisioning takes ~20 minutes (EKS) due to AWS control plane creation time. The Trellis UI shows real-time progress via log streaming.
+</Callout>
+
+## What's Next?
+
+- **[Dashboard](/trellis/dashboard)** — manage vineyards and vines
+- **[Plant a Vine](/trellis/plant-vine)** — deep dive into each form section
+- **[Jobs](/trellis/jobs)** — understand job types and monitoring
+- **[Concepts](/concepts)** — technical deep dives on security, job queues, real-time, etc.

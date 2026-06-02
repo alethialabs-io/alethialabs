@@ -1,0 +1,53 @@
+---
+title: Integrations Overview
+description: Connect cloud providers and Git accounts to enable infrastructure provisioning.
+---
+
+# Integrations
+
+The Integrations page manages connections to cloud providers (AWS, GCP, Azure) and Git providers (GitHub, GitLab, Bitbucket). All connections must be established before provisioning infrastructure.
+
+## How It Works
+
+Integrations are displayed as cards organized by category:
+
+| Category | Providers |
+|----------|-----------|
+| **Cloud Providers** | AWS, GCP, Azure |
+| **Git Providers** | GitHub, GitLab, Bitbucket |
+
+Each card shows:
+- Provider icon and name
+- Connection status: **Connected** (green), **Needs Reconnection** (amber), or **Not Connected**
+- Connected account identifier (AWS Account ID, GCP Project, GitHub username)
+- Action button (Connect / Disconnect / Reconnect)
+
+## Connection Status
+
+| Status | Meaning |
+|--------|---------|
+| **Connected** | Credentials valid and verified |
+| **Needs Reconnection** | Git token expired, automatic refresh failed |
+| **Not Connected** | No credentials on file |
+| **Coming Soon** | Provider supported but not yet implemented |
+
+## Cloud Provider Connections
+
+Cloud connections use the platform's [zero-credential model](/concepts/security) — no static keys are stored. Each provider uses a federation mechanism:
+
+<Cards>
+  <Card title="AWS" href="/trellis/integrations/aws">Cross-Account IAM Role with External ID</Card>
+  <Card title="GCP" href="/trellis/integrations/gcp">Workload Identity Federation with OIDC</Card>
+  <Card title="Azure" href="/trellis/integrations/azure">Federated Identity via Entra ID</Card>
+</Cards>
+
+After connecting, Trellis queues a `CONNECTION_TEST` job to verify the credentials and discover existing resources (VPCs, subnets, DNS zones). See [Job Queue Pattern](/concepts/job-queue).
+
+## Git Provider Connections
+
+Git connections use standard OAuth. See [Git Providers](/trellis/integrations/git-providers) for details.
+
+## Disconnecting
+
+- **Cloud providers**: Removes the `cloud_identities` record. Existing vines referencing that identity can no longer run jobs.
+- **Git providers**: Removes the `provider_tokens` record and revokes the OAuth grant.
