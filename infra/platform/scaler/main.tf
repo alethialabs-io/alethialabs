@@ -27,6 +27,8 @@ resource "aws_lambda_function" "scaler" {
 
   role = aws_iam_role.scaler.arn
 
+  architectures = ["arm64"]
+
   environment {
     variables = {
       SUPABASE_URL              = var.supabase_url

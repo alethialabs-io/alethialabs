@@ -21,7 +21,8 @@ provider "aws" {
   default_tags {
     tags = {
       Project     = var.project_name
-      Environment = var.environment
+      Environment = title(var.environment)
+      Service     = "Tendril"
       ManagedBy   = "terraform"
     }
   }
@@ -62,17 +63,17 @@ resource "aws_ecr_lifecycle_policy" "tendril" {
   })
 }
 
-# ---------- Dynamic per-region tendril workers ----------
+# ---------- Dynamic tendril deployments ----------
 
 module "tendril" {
   source   = "./worker"
-  for_each = toset(var.regions)
+  for_each = var.tendrils
 
-  region             = each.value
-  name_prefix        = local.name_prefix
+  region             = each.value.region
+  name_prefix        = "${local.name_prefix}-${each.key}"
   image              = var.image
   tendril_version    = var.tendril_version
-  trellis_url        = var.trellis_url
+  trellis_url        = each.value.trellis_url
   trellis_api_secret = var.trellis_api_secret
   worker_mode        = var.worker_mode
 
@@ -95,8 +96,8 @@ module "scaler" {
   supabase_service_role_key = var.supabase_service_role_key
 
   workers = [
-    for region, w in module.tendril : {
-      region  = region
+    for name, w in module.tendril : {
+      region  = var.tendrils[name].region
       cluster = w.cluster_name
       service = w.service_name
     }

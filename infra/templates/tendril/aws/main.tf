@@ -150,6 +150,11 @@ resource "aws_ecs_task_definition" "worker" {
   task_role_arn            = aws_iam_role.task.arn
   tags                     = local.tags
 
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "ARM64"
+  }
+
   container_definitions = jsonencode([{
     name      = "grape-worker"
     image     = "${var.image_repository}:${var.image_tag}"
@@ -180,6 +185,8 @@ resource "aws_ecs_service" "worker" {
   desired_count   = 1
   launch_type     = "FARGATE"
   tags            = local.tags
+
+  propagate_tags = "TASK_DEFINITION"
 
   network_configuration {
     subnets          = length(var.subnet_ids) > 0 ? var.subnet_ids : data.aws_subnets.default.ids

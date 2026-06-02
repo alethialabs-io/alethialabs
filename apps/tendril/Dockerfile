@@ -15,7 +15,7 @@ RUN cd apps/tendril && go mod download
 COPY apps/tendril/ apps/tendril/
 
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
     -ldflags="-s -w -X github.com/bobikenobi12/bb-thesis-2026/apps/tendril/internal/version.Version=${VERSION}" \
     -o /tendril ./apps/tendril/cmd/tendril
 
@@ -47,7 +47,8 @@ RUN mkdir -p /opt/infracost && \
     chmod +x /opt/infracost/infracost
 
 # Google Cloud SDK
-RUN curl -fsSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz | \
+RUN ARCH=$(uname -m | sed 's/x86_64/x86_64/' | sed 's/aarch64/arm/') && \
+    curl -fsSL "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-${ARCH}.tar.gz" | \
     tar -xz -C /opt && \
     /opt/google-cloud-sdk/install.sh --quiet --path-update=true && \
     /opt/google-cloud-sdk/bin/gcloud components install gke-gcloud-auth-plugin --quiet

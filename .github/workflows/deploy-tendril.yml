@@ -65,7 +65,7 @@ jobs:
           context: .
           file: apps/tendril/Dockerfile
           push: true
-          platforms: linux/amd64
+          platforms: linux/arm64
           build-args: |
             VERSION=${{ github.sha }}
           tags: |

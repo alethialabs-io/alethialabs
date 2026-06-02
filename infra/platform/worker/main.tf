@@ -30,14 +30,14 @@ provider "aws" {
 # ---------- locals ----------
 
 locals {
-  name_prefix = "${var.name_prefix}-${var.region}"
+  name_prefix = var.name_prefix
 }
 
 # ---------- Tendril auto-registration ----------
 
 resource "null_resource" "register_tendril" {
   triggers = {
-    region = var.region
+    name_prefix = var.name_prefix
   }
 
   provisioner "local-exec" {
@@ -45,20 +45,19 @@ resource "null_resource" "register_tendril" {
       RESPONSE=$(curl -sf -X POST "${var.trellis_url}/api/tendrils/register" \
         -H "Authorization: Bearer ${var.trellis_api_secret}" \
         -H "Content-Type: application/json" \
-        -d '{"name": "cloud-tendril-${var.region}", "mode": "cloud-hosted"}')
+        -d '{"name": "${var.name_prefix}", "mode": "cloud-hosted"}')
 
       TENDRIL_ID=$(echo "$RESPONSE" | jq -r '.tendril_id')
       TENDRIL_TOKEN=$(echo "$RESPONSE" | jq -r '.tendril_token')
 
-      # Write to a file that Terraform can read
-      echo "{\"tendril_id\": \"$TENDRIL_ID\", \"tendril_token\": \"$TENDRIL_TOKEN\"}" > ${path.module}/.registered-${var.region}.json
+      echo "{\"tendril_id\": \"$TENDRIL_ID\", \"tendril_token\": \"$TENDRIL_TOKEN\"}" > ${path.module}/.registered-${var.name_prefix}.json
     EOT
   }
 }
 
 data "local_file" "registration" {
   depends_on = [null_resource.register_tendril]
-  filename   = "${path.module}/.registered-${var.region}.json"
+  filename   = "${path.module}/.registered-${var.name_prefix}.json"
 }
 
 locals {
@@ -143,6 +142,11 @@ resource "aws_ecs_task_definition" "tendril" {
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.task.arn
 
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "ARM64"
+  }
+
   container_definitions = jsonencode([
     {
       name      = "tendril"
@@ -202,6 +206,8 @@ resource "aws_ecs_service" "tendril" {
     security_groups  = [aws_security_group.tendril.id]
     subnets          = aws_subnet.public[*].id
   }
+
+  propagate_tags = "TASK_DEFINITION"
 
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
