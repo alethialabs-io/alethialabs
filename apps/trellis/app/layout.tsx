@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "@xyflow/react/dist/style.css";
 import { PublicEnvScript } from "next-runtime-env";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
@@ -16,8 +17,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-	title: "ItGix Platform",
-	description: "Enterprise Application Development Platform",
+	title: "Trellis",
+	description:
+		"Configure multi-cloud infrastructure in the browser. Deploy from the terminal.",
 	icons: {
 		icon: [
 			{
@@ -52,15 +54,21 @@ export default function RootLayout({
 	children: React.ReactNode;
 }>) {
 	return (
-		<html lang="en">
+		<html lang="en" suppressHydrationWarning>
 			<head>
 				<PublicEnvScript />
 			</head>
 			<body
-				className={`${geistSans.variable} ${geistMono.variable} antialiased overflow-hidden h-full`}
+				className={`${geistSans.variable} ${geistMono.variable} antialiased`}
 			>
-				{children}
-				<Toaster />
+				<ThemeProvider
+					attribute="class"
+					defaultTheme="dark"
+					enableSystem
+				>
+					{children}
+					<Toaster />
+				</ThemeProvider>
 			</body>
 		</html>
 	);
