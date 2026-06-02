@@ -62,15 +62,23 @@ export async function PUT(
 				.eq("id", jobId)
 				.single();
 
-			if (job?.job_type === "DEPLOY" && job.vine_id) {
-				if (status === "PROCESSING") {
-					await supabase.from("vines").update({ status: "PROVISIONING" }).eq("id", job.vine_id);
-				} else if (status === "FAILED") {
-					await supabase.from("vines").update({ status: "FAILED" }).eq("id", job.vine_id);
-				} else if (status === "SUCCESS") {
-					finalizeDeploymentWithClient(supabase, jobId).catch((err) =>
-						console.error("Finalize deployment error:", err),
-					);
+			if (job?.vine_id) {
+				if (job.job_type === "DEPLOY") {
+					if (status === "PROCESSING") {
+						await supabase.from("vines").update({ status: "PROVISIONING" }).eq("id", job.vine_id);
+					} else if (status === "FAILED") {
+						await supabase.from("vines").update({ status: "FAILED" }).eq("id", job.vine_id);
+					} else if (status === "SUCCESS") {
+						finalizeDeploymentWithClient(supabase, jobId).catch((err) =>
+							console.error("Finalize deployment error:", err),
+						);
+					}
+				} else if (job.job_type === "PLAN") {
+					if (status === "FAILED") {
+						await supabase.from("vines").update({ status: "FAILED" }).eq("id", job.vine_id);
+					} else if (status === "SUCCESS") {
+						await supabase.from("vines").update({ status: "DRAFT" }).eq("id", job.vine_id);
+					}
 				}
 			}
 		}

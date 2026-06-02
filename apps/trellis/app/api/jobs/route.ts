@@ -24,34 +24,42 @@ export async function POST(req: Request) {
 			cluster_id,
 			cloud_identity_id,
 			config_snapshot,
+			assigned_worker_id,
+			plan_job_id,
 		} = body;
 
-		if (!job_type || !vineyard_id) {
+		if (!job_type) {
 			return NextResponse.json(
-				{ error: "job_type and vineyard_id are required" },
+				{ error: "job_type is required" },
 				{ status: 400 },
 			);
 		}
 
-		if (!["BOOTSTRAP", "DEPLOY", "DESTROY"].includes(job_type)) {
+		const validJobTypes = [
+			"DEPLOY",
+			"DESTROY",
+			"PLAN",
+			"DESTROY_WORKER",
+		];
+		if (!validJobTypes.includes(job_type)) {
 			return NextResponse.json(
 				{
-					error: "job_type must be BOOTSTRAP, DEPLOY, or DESTROY",
+					error: `job_type must be one of: ${validJobTypes.join(", ")}`,
 				},
 				{ status: 400 },
 			);
 		}
 
-		if (job_type === "DEPLOY" && !configuration_id) {
+		if ((job_type === "DEPLOY" || job_type === "PLAN") && !configuration_id) {
 			return NextResponse.json(
-				{ error: "configuration_id is required for DEPLOY jobs" },
+				{ error: "configuration_id is required for DEPLOY and PLAN jobs" },
 				{ status: 400 },
 			);
 		}
 
-		if (job_type === "DESTROY" && !cluster_id) {
+		if (job_type === "DESTROY" && !configuration_id) {
 			return NextResponse.json(
-				{ error: "cluster_id is required for DESTROY jobs" },
+				{ error: "configuration_id is required for DESTROY jobs" },
 				{ status: 400 },
 			);
 		}
@@ -60,8 +68,13 @@ export async function POST(req: Request) {
 
 		let snapshot = config_snapshot || {};
 		let configHash: string | null = null;
+		let resolvedCloudIdentityId = cloud_identity_id || null;
+		let resolvedVineyardId = vineyard_id || null;
 
-		if (job_type === "DEPLOY" && configuration_id) {
+		if (
+			(job_type === "DEPLOY" || job_type === "PLAN" || job_type === "DESTROY") &&
+			configuration_id
+		) {
 			const { data: config, error: configError } = await supabase
 				.from("vine_full")
 				.select("*")
@@ -80,21 +93,37 @@ export async function POST(req: Request) {
 			configHash = createHash("sha256")
 				.update(JSON.stringify(snapshot))
 				.digest("hex");
+
+			if (!resolvedCloudIdentityId && config.cloud_identity_id) {
+				resolvedCloudIdentityId = config.cloud_identity_id;
+			}
+			if (!resolvedVineyardId && config.vineyard_id) {
+				resolvedVineyardId = config.vineyard_id;
+			}
+		}
+
+		const insertData: Record<string, unknown> = {
+			user_id: userId,
+			vineyard_id: resolvedVineyardId,
+			cloud_identity_id: resolvedCloudIdentityId,
+			job_type,
+			vine_id: configuration_id || null,
+			config_snapshot: snapshot,
+			configuration_hash: configHash,
+			status: "QUEUED",
+		};
+
+		if (assigned_worker_id) {
+			insertData.assigned_worker_id = assigned_worker_id;
+		}
+
+		if (plan_job_id) {
+			insertData.plan_job_id = plan_job_id;
 		}
 
 		const { data: job, error: insertError } = await supabase
 			.from("provision_jobs")
-			.insert({
-				user_id: userId,
-				vineyard_id,
-				cloud_identity_id: cloud_identity_id || null,
-				job_type,
-				cluster_id: cluster_id || null,
-				configuration_id: configuration_id || null,
-				config_snapshot: snapshot,
-				configuration_hash: configHash,
-				status: "QUEUED",
-			})
+			.insert(insertData)
 			.select()
 			.single();
 
@@ -106,12 +135,28 @@ export async function POST(req: Request) {
 			);
 		}
 
+		if (
+			(job_type === "DEPLOY" || job_type === "PLAN") &&
+			configuration_id
+		) {
+			await supabase
+				.from("vines")
+				.update({ status: "QUEUED" })
+				.eq("id", configuration_id);
+		}
+
+		if (job_type === "DESTROY" && configuration_id) {
+			await supabase
+				.from("vines")
+				.update({ status: "DESTROYING" })
+				.eq("id", configuration_id);
+		}
+
 		return NextResponse.json({ job }, { status: 201 });
-	} catch (err: any) {
-		return NextResponse.json(
-			{ error: err.message || "Internal Server Error" },
-			{ status: 500 },
-		);
+	} catch (err: unknown) {
+		const message =
+			err instanceof Error ? err.message : "Internal Server Error";
+		return NextResponse.json({ error: message }, { status: 500 });
 	}
 }
 

@@ -7,12 +7,21 @@ export async function POST(req: Request) {
 		await verifyWorkerToken(req);
 	if (authError) return authError;
 
+	let workerVersion: string | null = null;
+	try {
+		const body = await req.json();
+		workerVersion = body.version ?? null;
+	} catch {
+		// Older workers send empty body — that's fine
+	}
+
 	try {
 		const supabase = await createServiceRoleClient();
 
 		const { error } = await supabase.rpc("worker_heartbeat", {
 			p_worker_id: workerId,
 			p_worker_token_hash: tokenHash,
+			p_version: workerVersion,
 		});
 
 		if (error) {

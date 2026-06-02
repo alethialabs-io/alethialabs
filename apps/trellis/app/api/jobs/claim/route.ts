@@ -40,10 +40,7 @@ export async function POST(req: Request) {
 		const job = jobs[0];
 
 		let cloud_identity = null;
-		if (
-			worker?.mode === "cloud-hosted" &&
-			job.cloud_identity_id
-		) {
+		if (job.cloud_identity_id) {
 			const { data: identity } = await supabase
 				.from("cloud_identities")
 				.select("credentials, provider")

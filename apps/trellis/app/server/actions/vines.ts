@@ -393,8 +393,9 @@ async function buildConfigSnapshot(vineId: string) {
 		network.data?.provision_network === false &&
 		!network.data?.network_id
 	) {
+		const netLabel = identity.provider === "azure" ? "VNet" : identity.provider === "gcp" ? "network" : "VPC";
 		throw new Error(
-			"Cannot plan: no VPC selected. Edit the vine's network settings.",
+			`Cannot plan: no ${netLabel} selected. Edit the vine's network settings or enable network provisioning.`,
 		);
 	}
 
@@ -427,8 +428,6 @@ async function buildConfigSnapshot(vineId: string) {
 		},
 
 		repositories: {
-			env_destination_repo: repos.data?.env_destination_repo,
-			gitops_destination_repo: repos.data?.gitops_destination_repo,
 			apps_destination_repo: repos.data?.apps_destination_repo,
 		},
 
@@ -440,10 +439,7 @@ async function buildConfigSnapshot(vineId: string) {
 		secrets: secrets.data || [],
 	};
 
-	const repoUrl =
-		repos.data?.env_destination_repo ||
-		repos.data?.gitops_destination_repo ||
-		"";
+	const repoUrl = repos.data?.apps_destination_repo || "";
 	const gitProvider = repoUrl.includes("gitlab")
 		? "gitlab"
 		: repoUrl.includes("bitbucket")
@@ -484,6 +480,8 @@ export async function planVine(vineId: string, workerId?: string | null) {
 
 	if (jobError)
 		throw new Error("Failed to queue plan job: " + jobError.message);
+
+	await supabase.from("vines").update({ status: "QUEUED" }).eq("id", vineId);
 
 	return { jobId: job.id };
 }
@@ -546,46 +544,32 @@ export async function deleteVine(vineId: string) {
 // Duplicate for another provider
 // ============================================================
 
-/** Duplicates a vine config for a different cloud provider, mapping all provider-specific values. */
-export async function duplicateVineForProvider(
-	sourceVineId: string,
-	targetCloudIdentityId: string,
-	targetRegion: string,
-): Promise<{ newVineId: string; warnings: ConversionWarning[] }> {
+/** Converts a vine's DB representation to VineFormData for use in duplication or pre-populating forms. */
+export async function getVineAsFormData(
+	vineId: string,
+): Promise<{ formData: VineFormData; provider: CloudProviderSlug }> {
 	const supabase = await createClient();
 	const {
 		data: { user },
 	} = await supabase.auth.getUser();
 	if (!user) throw new Error("Unauthorized");
 
-	const source = await getVine(sourceVineId);
+	const source = await getVine(vineId);
 
-	const { data: sourceIdentity } = await supabase
+	const { data: identity } = await supabase
 		.from("cloud_identities")
 		.select("provider")
 		.eq("id", source.vine.cloud_identity_id!)
 		.single();
 
-	const { data: targetIdentity } = await supabase
-		.from("cloud_identities")
-		.select("provider")
-		.eq("id", targetCloudIdentityId)
-		.eq("user_id", user.id)
-		.single();
-
-	if (!sourceIdentity || !targetIdentity) {
-		throw new Error("Cloud identity not found");
-	}
-
-	const sourceProvider = sourceIdentity.provider as CloudProviderSlug;
-	const targetProvider = targetIdentity.provider as CloudProviderSlug;
+	if (!identity) throw new Error("Cloud identity not found");
 
 	const formData: VineFormData = {
 		vine: {
 			project_name: source.vine.project_name,
 			environment_stage: source.vine.environment_stage,
 			region: source.vine.region,
-			cloud_identity_id: targetCloudIdentityId,
+			cloud_identity_id: source.vine.cloud_identity_id ?? "",
 			terraform_version: source.vine.terraform_version,
 			vineyard_id: source.vine.vineyard_id ?? "",
 		},
@@ -594,6 +578,7 @@ export async function duplicateVineForProvider(
 					provision_network: source.components.network.provision_network,
 					cidr_block: source.components.network.cidr_block ?? "10.0.0.0/16",
 					single_nat_gateway: source.components.network.single_nat_gateway ?? true,
+					network_id: source.components.network.network_id ?? undefined,
 				}
 			: { provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true },
 		cluster: source.components.cluster
@@ -619,14 +604,6 @@ export async function duplicateVineForProvider(
 			: { enabled: false },
 		repositories: source.components.repositories
 			? {
-					env_template_repo: source.components.repositories.env_template_repo,
-					env_template_branch: source.components.repositories.env_template_branch ?? undefined,
-					env_destination_repo: source.components.repositories.env_destination_repo ?? undefined,
-					gitops_template_repo: source.components.repositories.gitops_template_repo,
-					gitops_template_branch: source.components.repositories.gitops_template_branch ?? undefined,
-					gitops_destination_repo: source.components.repositories.gitops_destination_repo ?? undefined,
-					apps_template_repo: source.components.repositories.apps_template_repo ?? undefined,
-					apps_template_branch: source.components.repositories.apps_template_branch ?? undefined,
 					apps_destination_repo: source.components.repositories.apps_destination_repo ?? undefined,
 				}
 			: {},
@@ -676,6 +653,37 @@ export async function duplicateVineForProvider(
 		})),
 	} as VineFormData;
 
+	return { formData, provider: identity.provider as CloudProviderSlug };
+}
+
+/** Duplicates a vine config for a different cloud provider, mapping all provider-specific values. */
+export async function duplicateVineForProvider(
+	sourceVineId: string,
+	targetCloudIdentityId: string,
+	targetRegion: string,
+): Promise<{ newVineId: string; vineyardId: string; warnings: ConversionWarning[] }> {
+	const supabase = await createClient();
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
+	if (!user) throw new Error("Unauthorized");
+
+	const { formData, provider: sourceProvider } =
+		await getVineAsFormData(sourceVineId);
+
+	const { data: targetIdentity } = await supabase
+		.from("cloud_identities")
+		.select("provider")
+		.eq("id", targetCloudIdentityId)
+		.eq("user_id", user.id)
+		.single();
+
+	if (!targetIdentity) {
+		throw new Error("Target cloud identity not found");
+	}
+
+	const targetProvider = targetIdentity.provider as CloudProviderSlug;
+
 	const { data: converted, warnings } = convertVineConfig(
 		formData,
 		sourceProvider,
@@ -688,5 +696,5 @@ export async function duplicateVineForProvider(
 	const input = converted as unknown as CreateVineInput;
 	const { vine } = await createVine(input);
 
-	return { newVineId: vine.id, warnings };
+	return { newVineId: vine.id, vineyardId: converted.vine.vineyard_id, warnings };
 }
