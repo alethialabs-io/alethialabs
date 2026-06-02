@@ -1,5 +1,6 @@
-import { verifyWorkerToken } from "@/lib/workers/auth";
 import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { PublicGitProvider } from "@/lib/validations/db.schemas";
+import { verifyWorkerToken } from "@/lib/workers/auth";
 import { NextResponse } from "next/server";
 
 const PROVIDER_OAUTH: Record<
@@ -54,8 +55,12 @@ const PROVIDER_OAUTH: Record<
 async function refreshAndPersist(
 	supabase: Awaited<ReturnType<typeof createServiceRoleClient>>,
 	userId: string,
-	provider: string,
-	data: { access_token: string; refresh_token: string | null; expires_at: string | null },
+	provider: PublicGitProvider,
+	data: {
+		access_token: string;
+		refresh_token: string | null;
+		expires_at: string | null;
+	},
 ): Promise<string> {
 	if (!data.expires_at || new Date(data.expires_at) > new Date()) {
 		return data.access_token;
@@ -71,7 +76,11 @@ async function refreshAndPersist(
 	if (!clientId || !clientSecret) return data.access_token;
 
 	try {
-		const body = oauth.buildBody(clientId, clientSecret, data.refresh_token);
+		const body = oauth.buildBody(
+			clientId,
+			clientSecret,
+			data.refresh_token,
+		);
 		const headers: Record<string, string> = { Accept: "application/json" };
 
 		let fetchBody: string;
@@ -157,7 +166,7 @@ export async function POST(
 		const { data: repos } = await supabase
 			.from("vine_repositories")
 			.select("apps_destination_repo")
-			.eq("vine_id", job.vine_id)
+			.eq("vine_id", job.vine_id || "")
 			.maybeSingle();
 
 		const repoUrl = repos?.apps_destination_repo || "";
