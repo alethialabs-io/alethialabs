@@ -1,5 +1,6 @@
 {
-  "title": "Architecture",
+  "title": "Concepts",
+  "icon": "BookOpen",
   "root": true,
   "pages": [
     "index",

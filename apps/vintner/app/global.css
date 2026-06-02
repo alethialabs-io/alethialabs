@@ -3,7 +3,8 @@
 @import 'fumadocs-ui/css/preset.css';
 
 :root {
-  --grape-color: oklch(0.6 0.15 280);   /* Purple */
   --trellis-color: oklch(0.6 0.15 150); /* Green */
+  --grape-color: oklch(0.6 0.15 280);   /* Purple */
   --tendril-color: oklch(0.6 0.15 240); /* Blue */
+  --concepts-color: oklch(0.6 0.12 60); /* Amber */
 }

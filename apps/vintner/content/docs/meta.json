@@ -2,9 +2,10 @@
   "title": "Documentation",
   "root": true,
   "pages": [
-    "architecture",
+    "index",
     "trellis",
     "grape",
-    "tendril"
+    "tendril",
+    "concepts"
   ]
 }

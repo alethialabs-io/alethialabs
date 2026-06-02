@@ -1,13 +1,13 @@
 export function getSection(path: string | undefined) {
-	if (!path) return "architecture";
+	if (!path) return "trellis";
 	const [dir] = path.split("/", 1);
-	if (!dir) return "architecture";
+	if (!dir) return "trellis";
 	return (
 		{
-			architecture: "architecture",
-			grape: "grape",
 			trellis: "trellis",
+			grape: "grape",
 			tendril: "tendril",
-		}[dir] ?? "architecture"
+			concepts: "concepts",
+		}[dir] ?? "trellis"
 	);
 }
