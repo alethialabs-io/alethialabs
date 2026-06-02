@@ -79,7 +79,7 @@ jobs:
       - name: Publish release metadata to Trellis
         if: ${{ secrets.RELEASE_API_SECRET != '' }}
         env:
-          TRELLIS_URL: ${{ secrets.TRELLIS_URL }}
+          TRELLIS_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
           RELEASE_API_SECRET: ${{ secrets.RELEASE_API_SECRET }}
         run: |
           NOTES=$(gh release view "tendril-v${{ steps.meta.outputs.VERSION }}" --json body -q .body 2>/dev/null || echo "")
