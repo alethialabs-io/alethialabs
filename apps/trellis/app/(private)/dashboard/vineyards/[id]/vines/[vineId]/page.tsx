@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getVine, deleteVine } from "@/app/server/actions/vines";
 import { DuplicateModal } from "@/components/vine-detail/duplicate-modal";
@@ -48,8 +48,13 @@ export default function VineDetailPage() {
 	const { id: vineyardId, vineId } = useParams<{ id: string; vineId: string }>();
 	const router = useRouter();
 	const { removeVine } = useVineyardsStore();
-	const plan = usePlan(vineId);
 	const [detail, setDetail] = useState<VineDetail | null>(null);
+
+	const refreshDetail = useCallback(() => {
+		getVine(vineId).then(setDetail).catch(() => {});
+	}, [vineId]);
+
+	const plan = usePlan(vineId, refreshDetail);
 	const [loading, setLoading] = useState(true);
 	const [duplicateOpen, setDuplicateOpen] = useState(false);
 

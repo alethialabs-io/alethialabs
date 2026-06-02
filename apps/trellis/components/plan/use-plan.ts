@@ -41,7 +41,7 @@ export interface UsePlanReturn {
 	applyPlan: (workerId?: string | null) => Promise<void>;
 }
 
-export function usePlan(vineId: string | null): UsePlanReturn {
+export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanReturn {
 	const [phase, setPhase] = useState<PlanPhase>("idle");
 	const [planJobId, setPlanJobId] = useState<string | null>(null);
 	const [deployJobId, setDeployJobId] = useState<string | null>(null);
@@ -132,6 +132,7 @@ export function usePlan(vineId: string | null): UsePlanReturn {
 			cleanupChannel();
 			setPhase("failed");
 			setError(job.error_message || "Plan generation failed");
+			onRefresh?.();
 			return;
 		}
 
@@ -150,12 +151,13 @@ export function usePlan(vineId: string | null): UsePlanReturn {
 					);
 				}
 				setPhase("ready");
+				onRefresh?.();
 			}).catch(() => {
 				setPhase("failed");
 				setError("Failed to load plan results");
 			});
 		}
-	}, [jobs, planJobId, phase, cleanupChannel]);
+	}, [jobs, planJobId, phase, cleanupChannel, onRefresh]);
 
 	useEffect(() => {
 		if (!deployJobId || phase !== "applying") return;
@@ -165,13 +167,15 @@ export function usePlan(vineId: string | null): UsePlanReturn {
 		if (job.status === "FAILED") {
 			setPhase("failed");
 			setError(job.error_message || "Deployment failed");
+			onRefresh?.();
 			return;
 		}
 
 		if (job.status === "SUCCESS") {
 			setPhase("applied");
+			onRefresh?.();
 		}
-	}, [jobs, deployJobId, phase]);
+	}, [jobs, deployJobId, phase, onRefresh]);
 
 	const generatePlan = useCallback(async (workerId?: string | null) => {
 		if (!vineId) return;

@@ -17,9 +17,10 @@ import {
 } from "@/components/ui/popover";
 import { useJobNotifications } from "@/hooks/use-job-notifications";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
+import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import type { PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
+import type { PublicProvisionJobsRow, PublicVinesRow } from "@/lib/validations/db.schemas";
 import { User as IUser } from "@supabase/supabase-js";
 import { SidebarVineyards } from "@/components/sidebar-vineyards";
 import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
@@ -64,7 +65,7 @@ export default function DashboardLayout({
 			useJobsStore.getState().fetchJobs(true);
 
 			channel = supabase
-				.channel("jobs-realtime-global")
+				.channel("dashboard-realtime")
 				.on(
 					"postgres_changes",
 					{ event: "*", schema: "public", table: "provision_jobs" },
@@ -72,6 +73,19 @@ export default function DashboardLayout({
 						const job = payload.new as PublicProvisionJobsRow;
 						if (job && job.user_id === u.id) {
 							useJobsStore.getState().addOrUpdateJob(job);
+						}
+					},
+				)
+				.on(
+					"postgres_changes",
+					{ event: "UPDATE", schema: "public", table: "vines" },
+					(payload) => {
+						const vine = payload.new as PublicVinesRow;
+						if (vine && vine.user_id === u.id) {
+							useVineyardsStore.getState().updateVineInPlace(vine.id, {
+								status: vine.status,
+								estimated_monthly_cost: vine.estimated_monthly_cost,
+							});
 						}
 					},
 				)
