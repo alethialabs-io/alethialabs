@@ -1,18 +1,9 @@
-name: Deploy Tendril (dev)
-
-# Manual escape hatch for dev/hotfix deploys. For production releases,
-# use conventional commits → release-please → release-tendril.yml.
+name: Release Tendril
 
 on:
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Target environment'
-        required: true
-        default: 'dev'
-        type: choice
-        options:
-          - dev
+  push:
+    tags:
+      - 'tendril-v*'
 
 permissions:
   contents: read
@@ -26,11 +17,20 @@ env:
   GHCR_IMAGE: ghcr.io/bobikenobi12/tendril
 
 jobs:
-  build-and-deploy:
+  release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: meta
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG_NAME#tendril-v}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Stage templates for Docker build
         run: |
@@ -67,14 +67,29 @@ jobs:
           push: true
           platforms: linux/amd64
           build-args: |
-            VERSION=${{ github.sha }}
+            VERSION=${{ steps.meta.outputs.VERSION }}
           tags: |
             ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
-            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.VERSION }}
             ${{ env.GHCR_IMAGE }}:latest
-            ${{ env.GHCR_IMAGE }}:${{ github.sha }}
+            ${{ env.GHCR_IMAGE }}:${{ steps.meta.outputs.VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Publish release metadata to Trellis
+        if: ${{ secrets.RELEASE_API_SECRET != '' }}
+        env:
+          TRELLIS_URL: ${{ secrets.TRELLIS_URL }}
+          RELEASE_API_SECRET: ${{ secrets.RELEASE_API_SECRET }}
+        run: |
+          NOTES=$(gh release view "tendril-v${{ steps.meta.outputs.VERSION }}" --json body -q .body 2>/dev/null || echo "")
+          curl -sf -X POST "${TRELLIS_URL}/api/releases/worker" \
+            -H "Authorization: Bearer ${RELEASE_API_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg v "${{ steps.meta.outputs.VERSION }}" \
+              --arg n "$NOTES" \
+              '{version: $v, release_notes: $n}')"
 
       - name: Force new Fargate deployment
         run: |
@@ -83,4 +98,4 @@ jobs:
             --service ${{ env.ECS_SERVICE }} \
             --force-new-deployment \
             --region ${{ env.AWS_REGION }}
-          echo "Deployment triggered. Fargate will roll to the new image."
+          echo "Deployment triggered for tendril v${{ steps.meta.outputs.VERSION }}"
