@@ -67,7 +67,8 @@ export const useJobsStore = create<JobsStore>()(
 						lastFetchedAt: Date.now(),
 						isLoading: false,
 					});
-				} catch {
+				} catch (err) {
+					console.error("[jobs-store] fetchJobs failed:", err);
 					set({ isLoading: false });
 				}
 			},
