@@ -1752,6 +1752,68 @@ export const publicVineSecretsRelationshipsSchema = z.tuple([
   }),
 ]);
 
+export const publicVineStorageBucketsRowSchema = z.object({
+  cors_origins: z.array(z.string()).nullable(),
+  created_at: z.string(),
+  encryption: z.string().nullable(),
+  estimated_monthly_cost: z.number().nullable(),
+  id: z.string(),
+  name: z.string(),
+  public_access: z.boolean().nullable(),
+  status: publicComponentStatusSchema.nullable(),
+  status_message: z.string().nullable(),
+  updated_at: z.string(),
+  versioning: z.boolean().nullable(),
+  vine_id: z.string(),
+});
+
+export const publicVineStorageBucketsInsertSchema = z.object({
+  cors_origins: z.array(z.string()).optional().nullable(),
+  created_at: z.string().optional(),
+  encryption: z.string().optional().nullable(),
+  estimated_monthly_cost: z.number().optional().nullable(),
+  id: z.string().optional(),
+  name: z.string(),
+  public_access: z.boolean().optional().nullable(),
+  status: publicComponentStatusSchema.optional().nullable(),
+  status_message: z.string().optional().nullable(),
+  updated_at: z.string().optional(),
+  versioning: z.boolean().optional().nullable(),
+  vine_id: z.string(),
+});
+
+export const publicVineStorageBucketsUpdateSchema = z.object({
+  cors_origins: z.array(z.string()).optional().nullable(),
+  created_at: z.string().optional(),
+  encryption: z.string().optional().nullable(),
+  estimated_monthly_cost: z.number().optional().nullable(),
+  id: z.string().optional(),
+  name: z.string().optional(),
+  public_access: z.boolean().optional().nullable(),
+  status: publicComponentStatusSchema.optional().nullable(),
+  status_message: z.string().optional().nullable(),
+  updated_at: z.string().optional(),
+  versioning: z.boolean().optional().nullable(),
+  vine_id: z.string().optional(),
+});
+
+export const publicVineStorageBucketsRelationshipsSchema = z.tuple([
+  z.object({
+    foreignKeyName: z.literal("vine_storage_buckets_vine_id_fkey"),
+    columns: z.tuple([z.literal("vine_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("vine_full"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+  z.object({
+    foreignKeyName: z.literal("vine_storage_buckets_vine_id_fkey"),
+    columns: z.tuple([z.literal("vine_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("vines"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+]);
+
 export const publicVineTopicsRowSchema = z.object({
   created_at: z.string(),
   estimated_monthly_cost: z.number().nullable(),

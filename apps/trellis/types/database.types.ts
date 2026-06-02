@@ -1149,6 +1149,66 @@ export type Database = {
           },
         ]
       }
+      vine_storage_buckets: {
+        Row: {
+          cors_origins: string[] | null
+          created_at: string
+          encryption: string | null
+          estimated_monthly_cost: number | null
+          id: string
+          name: string
+          public_access: boolean | null
+          status: Database["public"]["Enums"]["component_status"] | null
+          status_message: string | null
+          updated_at: string
+          versioning: boolean | null
+          vine_id: string
+        }
+        Insert: {
+          cors_origins?: string[] | null
+          created_at?: string
+          encryption?: string | null
+          estimated_monthly_cost?: number | null
+          id?: string
+          name: string
+          public_access?: boolean | null
+          status?: Database["public"]["Enums"]["component_status"] | null
+          status_message?: string | null
+          updated_at?: string
+          versioning?: boolean | null
+          vine_id: string
+        }
+        Update: {
+          cors_origins?: string[] | null
+          created_at?: string
+          encryption?: string | null
+          estimated_monthly_cost?: number | null
+          id?: string
+          name?: string
+          public_access?: boolean | null
+          status?: Database["public"]["Enums"]["component_status"] | null
+          status_message?: string | null
+          updated_at?: string
+          versioning?: boolean | null
+          vine_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vine_storage_buckets_vine_id_fkey"
+            columns: ["vine_id"]
+            isOneToOne: false
+            referencedRelation: "vine_full"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vine_storage_buckets_vine_id_fkey"
+            columns: ["vine_id"]
+            isOneToOne: false
+            referencedRelation: "vines"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vine_topics: {
         Row: {
           created_at: string

@@ -286,6 +286,18 @@ export type PublicVineSecretsUpdate = z.infer<
 export type PublicVineSecretsRelationships = z.infer<
   typeof generated.publicVineSecretsRelationshipsSchema
 >;
+export type PublicVineStorageBucketsRow = z.infer<
+  typeof generated.publicVineStorageBucketsRowSchema
+>;
+export type PublicVineStorageBucketsInsert = z.infer<
+  typeof generated.publicVineStorageBucketsInsertSchema
+>;
+export type PublicVineStorageBucketsUpdate = z.infer<
+  typeof generated.publicVineStorageBucketsUpdateSchema
+>;
+export type PublicVineStorageBucketsRelationships = z.infer<
+  typeof generated.publicVineStorageBucketsRelationshipsSchema
+>;
 export type PublicVineTopicsRow = z.infer<
   typeof generated.publicVineTopicsRowSchema
 >;
