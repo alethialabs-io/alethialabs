@@ -77,7 +77,6 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Publish release metadata to Trellis
-        if: ${{ secrets.RELEASE_API_SECRET != '' }}
         env:
           TRELLIS_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
           RELEASE_API_SECRET: ${{ secrets.RELEASE_API_SECRET }}
