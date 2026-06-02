@@ -1,0 +1,98 @@
+---
+title: Auth APIs
+description: Device code flow endpoints for CLI authentication — generate, exchange, refresh.
+---
+
+# Auth APIs
+
+These endpoints implement the **Device Authorization Grant** (RFC 8628) for CLI authentication. See [Authentication Flows](/concepts/authentication) for the complete flow.
+
+## Device Code Flow
+
+### `POST /api/auth/cli/generate`
+
+Called by the **browser** (authenticated user) to approve a CLI login attempt.
+
+**Requires:** Active browser session (Supabase auth cookie).
+
+**Body:**
+```json
+{
+  "device_code": "uuid-from-cli"
+}
+```
+
+**Effect:**
+- Creates a `cli_logins` record with the device code, user profile ID, and a 6-character verification code
+- The verification code is displayed in the browser for the user to type into the CLI
+
+### `POST /api/auth/cli/exchange`
+
+Called by the **CLI** to exchange the device code + verification code for tokens.
+
+**No authentication required** (the device code + verification code pair is the proof).
+
+**Body:**
+```json
+{
+  "device_code": "uuid-from-cli"
+}
+```
+
+**Validation:**
+- Looks up the `cli_logins` record by device code
+- Verifies that `profile_id` is set (meaning the browser approved the login)
+
+**Response:**
+```json
+{
+  "access_token": "jwt...",
+  "refresh_token": "jwt...",
+  "provider_token": "git-oauth-token",
+  "user_email": "user@example.com"
+}
+```
+
+**Token Details:**
+- **Access token**: 1-hour TTL, HS256 signed with `CLI_JWT_SECRET`
+- **Refresh token**: 90-day TTL, same signing
+
+JWT payload:
+```json
+{
+  "sub": "user-uuid",
+  "email": "user@example.com",
+  "type": "access",
+  "iss": "urn:example:issuer",
+  "aud": "urn:example:audience"
+}
+```
+
+### `POST /api/auth/cli/refresh`
+
+Called by the CLI when the access token expires.
+
+**Body:**
+```json
+{
+  "refresh_token": "jwt..."
+}
+```
+
+**Response:**
+```json
+{
+  "access_token": "new-jwt...",
+  "refresh_token": "new-jwt..."
+}
+```
+
+Both tokens are rotated on refresh — the old refresh token is invalidated.
+
+## OAuth Callback
+
+### `GET /api/auth/callback`
+
+Handles the OAuth redirect from Supabase after provider authentication. Captures the authorization code and provider token, then redirects to the intended page.
+
+The middleware intercepts OAuth callbacks to save `provider_token` before the redirect reaches the final destination.

@@ -1,0 +1,89 @@
+---
+title: Plan & Apply
+description: The Plan-Review-Apply workflow for infrastructure provisioning.
+---
+
+# Plan & Apply
+
+Infrastructure provisioning follows a strict **Plan-Review-Apply** workflow. Nothing is provisioned without explicit user confirmation.
+
+## The Workflow
+
+<Steps>
+
+### Generate Plan
+From the [vine detail page](/trellis/dashboard/vine-detail), click **Plan**. Select a Tendril to execute. A `PLAN` job is queued.
+
+The Tendril:
+1. Assumes cloud credentials ([how](/concepts/authentication))
+2. Generates Terraform variable files from the vine's config snapshot
+3. Runs `terraform init` with Supabase S3 backend ([state management](/concepts/terraform-state))
+4. Runs `terraform plan -out=plan.tfplan`
+5. Runs `terraform show -json` for structured output
+6. Optionally runs Infracost for cost breakdown ([cost estimation](/concepts/cost-estimation))
+7. Uploads the plan artifact to Supabase S3
+8. Reports resource change counts and costs
+
+### Review Plan
+The Plan tab in vine detail shows:
+
+**Plan Summary Bar:**
+- Resources to **create** (green count)
+- Resources to **update** (yellow count)
+- Resources to **destroy** (red count)
+- Estimated monthly cost
+
+**Resource Groups:**
+Collapsible sections grouped by resource type (e.g., "AWS EKS", "AWS VPC", "AWS RDS"). Each resource shows:
+- Resource address (e.g., `module.eks.aws_eks_cluster.main`)
+- Action: create / update / delete
+- Per-resource monthly cost (from Infracost)
+
+**Cost Breakdown:**
+Total estimated monthly cost with per-resource itemization.
+
+### Apply
+Click **Apply** to provision. Select a Tendril. A `DEPLOY` job is queued.
+
+The Tendril:
+1. Downloads the plan artifact from the PLAN job
+2. Validates the config hash — if the vine was modified after planning, the apply fails with a hash mismatch error
+3. Runs `terraform apply plan.tfplan`
+4. Extracts Terraform outputs (cluster endpoint, database endpoints, etc.)
+5. Installs ArgoCD via Helm ([GitOps](/concepts/gitops-argocd))
+6. Reports cluster metadata back to Trellis
+
+### Finalization
+On DEPLOY success, Trellis's `finalizeDeployment()` server action:
+- Updates `vine_cluster` with cluster name, endpoint, ARN, ArgoCD URL and password
+- Updates `vine_databases` with writer/reader endpoints, credentials ARNs
+- Updates `vine_caches` with primary/reader endpoints
+- Sets vine status to `ACTIVE`
+
+</Steps>
+
+## Config Hash Validation
+
+The DEPLOY job references a specific PLAN job. Before applying, the Tendril compares:
+- The vine's current configuration hash
+- The plan's configuration hash (captured at plan time)
+
+If they differ (user modified the vine after planning), the job fails with:
+
+> "Configuration has changed since the plan was generated. Please re-plan."
+
+This prevents applying a stale plan that doesn't match the current desired state.
+
+## Destroy Workflow
+
+Destroy follows a simpler flow — no plan step required:
+
+1. Click **Destroy** from vine detail
+2. Select a Tendril
+3. A `DESTROY` job is queued
+4. The Tendril runs `terraform destroy -auto-approve`
+5. Vine status → DESTROYING → DESTROYED
+
+<Callout type="warn">
+Destroy permanently removes all cloud resources (VPC, cluster, databases, etc.). Terraform state is preserved so accidental destroys can be recovered by re-applying, but data in databases will be lost.
+</Callout>

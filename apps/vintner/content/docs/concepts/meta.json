@@ -7,6 +7,14 @@
     "domain-model",
     "security",
     "database",
-    "release-system"
+    "release-system",
+    "job-queue",
+    "cloud-abstraction",
+    "realtime",
+    "cost-estimation",
+    "authentication",
+    "multi-cloud-conversion",
+    "terraform-state",
+    "gitops-argocd"
   ]
 }

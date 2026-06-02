@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTendrilsStore, type TendrilRelease } from "@/lib/stores/use-tendrils-store";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowUpCircle, Loader2 } from "lucide-react";
+import { ArrowUpCircle, ExternalLink, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -77,6 +77,14 @@ export function ReleaseNotesDialog({
 				<DialogHeader>
 					<DialogTitle className="flex items-center gap-2">
 						<span className="font-mono">v{version}</span>
+						{release?.is_breaking && (
+							<Badge
+								variant="destructive"
+								className="text-[10px] py-0"
+							>
+								Breaking
+							</Badge>
+						)}
 						{isOutdated && (
 							<Badge
 								variant="outline"
@@ -87,8 +95,13 @@ export function ReleaseNotesDialog({
 						)}
 					</DialogTitle>
 					{release?.released_at && (
-						<DialogDescription>
-							Released {formatDistanceToNow(new Date(release.released_at), { addSuffix: true })}
+						<DialogDescription className="flex items-center gap-2">
+							<span>Released {formatDistanceToNow(new Date(release.released_at), { addSuffix: true })}</span>
+							{release.commit_sha && (
+								<span className="font-mono text-[10px] text-muted-foreground/60">
+									{release.commit_sha.slice(0, 7)}
+								</span>
+							)}
 						</DialogDescription>
 					)}
 				</DialogHeader>
@@ -109,7 +122,23 @@ export function ReleaseNotesDialog({
 					)}
 				</div>
 
-				<DialogFooter>
+				<DialogFooter className="gap-2 sm:gap-0">
+					{release?.github_release_url && (
+						<Button
+							variant="outline"
+							size="sm"
+							asChild
+						>
+							<a
+								href={release.github_release_url}
+								target="_blank"
+								rel="noopener noreferrer"
+							>
+								<ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+								GitHub Release
+							</a>
+						</Button>
+					)}
 					{isOutdated && workerId && (
 						<Button
 							size="sm"

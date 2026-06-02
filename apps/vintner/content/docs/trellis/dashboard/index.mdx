@@ -1,0 +1,68 @@
+---
+title: Dashboard Overview
+description: The main dashboard page — stats, integrations status, and recent jobs.
+---
+
+# Dashboard Overview
+
+The dashboard is the landing page after login. It provides a quick summary of your infrastructure state.
+
+## Layout
+
+The dashboard shell wraps all authenticated pages with:
+
+- **Header** — breadcrumbs, notifications bell (unread job count), user dropdown (profile, sign out)
+- **Sidebar** — main navigation (Overview, Plant a Vine, Clusters, Jobs, Integrations, Tendrils) plus a dynamic vineyard list with expandable vine sub-items
+- **Real-time subscriptions** — established on layout mount for job status and vine status updates (see [Real-time Architecture](/concepts/realtime))
+
+## Overview Page
+
+The overview page shows four stat chips at the top:
+
+| Stat | Source |
+|------|--------|
+| Total Vines | Count of all vines across vineyards |
+| Active Vines | Vines with status `ACTIVE` |
+| Online Tendrils | Tendrils with heartbeat within 60 seconds |
+| Total Jobs | Count of all provision jobs |
+
+Below the stats:
+
+### Integrations Panel
+
+Shows connected and disconnected integrations as badges. Connected providers show a green indicator and account identifier (AWS Account ID, GCP Project, GitHub username). Disconnected providers link to the integrations page.
+
+### Recent Jobs
+
+A data table showing the 5 most recent jobs with columns:
+- **Type** — job type with icon (PLAN, DEPLOY, DESTROY, etc.)
+- **Status** — color-coded badge (green=SUCCESS, red=FAILED, yellow=PROCESSING, gray=QUEUED)
+- **Vine** — target vine project name
+- **Created** — relative timestamp
+
+Clicking a job row navigates to the [job detail page](/trellis/jobs/job-detail).
+
+## Notifications
+
+The notifications bell in the header shows a badge with the count of unread job state changes. Clicking it opens a popover with recent notifications. Clicking a notification navigates to the relevant job. "Mark all read" clears the count.
+
+Notifications are driven by the real-time subscription to `provision_jobs` — every status change (QUEUED → PROCESSING → SUCCESS/FAILED) creates a notification.
+
+## Sidebar Navigation
+
+The sidebar has two sections:
+
+**Main Navigation:**
+- Overview (`/dashboard`)
+- Plant a Vine (`/dashboard/plant`)
+- Clusters (`/dashboard/clusters`)
+- Jobs (`/dashboard/jobs`)
+- Integrations (`/dashboard/integrations`)
+- Tendrils (`/dashboard/tendrils`)
+
+**Vineyards List:**
+- Dynamically loaded from the vineyards store
+- Each vineyard is expandable to show its vines
+- Vines show status dots (green=ACTIVE, yellow=PROVISIONING, red=FAILED) and provider icons
+- Active vine is highlighted based on current URL
+- "Plant a Vine" link shown if no vineyards exist

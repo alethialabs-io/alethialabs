@@ -1,71 +1,90 @@
 ---
-title: Managing Tendrils
-description: Registering, monitoring, and removing Tendril execution agents from the web UI.
+title: Tendrils
+description: Registering, monitoring, and managing Tendril execution agents.
 ---
 
-# Managing Tendrils
+# Tendrils
 
-Tendrils are the execution agents that run Terraform on behalf of users. The Tendrils page in Trellis lets you register, monitor, and remove them.
+Tendrils are the execution agents that run Terraform on behalf of users. The Tendrils page manages their lifecycle. For how Tendrils work internally, see the [Tendril Agent](/tendril) documentation.
 
 ## Tendrils Page
 
-The Tendrils page (`/dashboard/tendrils`) shows all registered Tendrils with:
+Located at `/dashboard/tendrils`, showing:
+
+### Status Filters
+- All, ONLINE, OFFLINE, DRAINING
+
+### Search
+Filter by Tendril name.
+
+### Data Table
 
 | Column | Description |
 |--------|-------------|
-| Name | Tendril identifier (auto-generated or custom) |
-| Status | ONLINE / OFFLINE / DRAINING |
-| Mode | cloud-hosted / self-hosted |
+| Name | Tendril identifier |
+| Type | `cloud-hosted` or `self-hosted` |
+| Region | AWS region (cloud-hosted only) |
+| Status | Badge: ONLINE (green), DRAINING (yellow), OFFLINE (red) |
 | Version | Tendril release version |
-| Region | AWS region where the Tendril runs |
-| Last Heartbeat | Timestamp of last heartbeat |
+| Created | Registration timestamp |
+| Actions | Deploy, update, remove buttons |
 
-### Status Indicators
+### Active Jobs Section
+A separate table showing jobs currently assigned to Tendrils (QUEUED, CLAIMED, or PROCESSING).
 
-- **Green dot (ONLINE)** — Heartbeat received within the last 60 seconds. Ready to accept jobs.
-- **Yellow dot (DRAINING)** — Finishing its current job but not accepting new ones. Used during graceful shutdown or maintenance.
-- **Red dot (OFFLINE)** — Heartbeat missed for more than 60 seconds. Jobs assigned to this Tendril will be requeued.
+### Update Alert
+If outdated Tendrils are detected (version < latest release), an alert appears with an **"Update All"** button that queues `UPDATE_WORKER` jobs for each outdated Tendril.
 
 ## Adding a Tendril
 
-Click "Add Tendril" to open the creation sheet:
+Click **"Add Tendril"** to open the registration sheet with two tabs:
 
-| Field | Description |
-|-------|-------------|
-| Region | AWS region for the Fargate task (e.g., eu-west-1, us-east-1) |
-| CPU | vCPU allocation (default: 1024 = 1 vCPU) |
-| Memory | RAM allocation (default: 4096 MB = 4 GiB) |
+<Tabs items={["Deploy (Cloud-Hosted)", "Register (Self-Hosted)"]}>
+  <Tab value="Deploy (Cloud-Hosted)">
+    Provisions a Tendril automatically in ECS Fargate:
 
-Submitting creates a `DEPLOY_WORKER` job that provisions:
-- ECS task definition with the latest Tendril Docker image
-- IAM roles (execution role for ECR pull, task role for Terraform operations)
-- CloudWatch log group for container logs
-- Security groups for network access
-- Registers the Tendril with Trellis API
+    1. Select a cloud identity and region
+    2. Click Deploy → queues a `DEPLOY_WORKER` job
+    3. The job provisions: ECS task definition, IAM roles, CloudWatch log group, security groups
+    4. After ~2 minutes, the Tendril appears as ONLINE
 
-The Tendril appears as OFFLINE until it boots, registers, and sends its first heartbeat (~2 minutes).
+    Cloud-hosted Tendrils support [scale-to-zero](/tendril/scale-to-zero) — they shut down when no jobs are queued and restart automatically when needed.
+  </Tab>
+  <Tab value="Register (Self-Hosted)">
+    For running Tendril on your own infrastructure:
 
-## Scale-to-Zero
+    1. Enter a name for the Tendril
+    2. Click Register → generates a `worker_id` and `worker_token`
+    3. Copy the credentials (shown once, never stored in plaintext)
+    4. Set the environment variables on your machine and run the Tendril binary
 
-Cloud-hosted Tendrils support **scale-to-zero**. When no jobs are queued for 5 consecutive minutes, a Lambda scaler automatically scales the ECS service to 0 desired tasks. When a new job is queued, the scaler scales back to 1.
+    See [Self-Hosted Mode](/tendril/self-hosted) for full setup instructions.
+  </Tab>
+</Tabs>
 
-This means you only pay for Fargate compute when there are jobs to process. See [Scale-to-Zero](/docs/tendril/scale-to-zero) for the full technical details.
+<Callout type="warn">
+The worker token is shown **only once** at registration. If lost, the Tendril must be re-registered. See [Authentication Flows](/concepts/authentication) for how token verification works.
+</Callout>
 
-## Removing a Tendril
+## Status Indicators
 
-Clicking "Remove" on a Tendril:
+Status is determined by heartbeat recency:
 
-1. Creates a `DESTROY_WORKER` job
-2. The job tears down the Tendril's ECS infrastructure
-3. The Tendril registration is removed from the `workers` table
+| Status | Meaning | Heartbeat |
+|--------|---------|-----------|
+| **ONLINE** | Ready to accept jobs | Within last 60 seconds |
+| **DRAINING** | Finishing current job, not accepting new ones | Sent with DRAINING flag |
+| **OFFLINE** | Missed heartbeat, jobs will be requeued | > 60 seconds ago |
 
-Any jobs currently assigned to the Tendril will be requeued to other available Tendrils.
+## Real-time Updates
+
+The Tendrils page subscribes to `workers` table changes and `provision_jobs` changes via [Supabase Realtime](/concepts/realtime). Status changes, new registrations, and job assignments appear instantly.
 
 ## Version Tracking
 
-Each Tendril reports its version on registration and heartbeat. The Tendrils page shows:
+Each Tendril reports its version on heartbeat. The page shows:
 - Current version per Tendril
-- Latest available version (from `worker_releases`)
-- Release notes dialog showing the changelog
+- Latest available version (from `worker_releases` table)
+- **Release Notes** dialog showing the changelog for each version
 
-When a new Tendril release is published, existing cloud-hosted Tendrils are automatically updated via ECS force-new-deployment.
+When a new Tendril release is published via the CI pipeline, existing cloud-hosted Tendrils are updated via `UPDATE_WORKER` jobs that trigger ECS force-new-deployment.

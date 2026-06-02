@@ -1,0 +1,50 @@
+---
+title: Jobs Overview
+description: Job list page with status and type filtering, search, and real-time updates.
+---
+
+# Jobs
+
+Every infrastructure operation is modeled as a **job**. The Jobs page shows all jobs with filtering, search, and real-time status updates. For the technical deep dive on how jobs are queued and claimed, see [Job Queue Pattern](/concepts/job-queue).
+
+## Job List Page
+
+Located at `/dashboard/jobs`, the page shows:
+
+### Filters
+
+**Status filters** (button group):
+- All, QUEUED, PROCESSING, SUCCESS, FAILED, CANCELLED
+
+**Type filters** (button group):
+- All Types, DEPLOY, PLAN, DESTROY, CONNECTION_TEST, FETCH_RESOURCES, DEPLOY_WORKER, UPDATE_WORKER, DESTROY_WORKER
+
+**Search** — filter by job ID, Tendril name, or vine name.
+
+### Data Table
+
+| Column | Description |
+|--------|-------------|
+| Type | Job type with icon |
+| Status | Color-coded badge |
+| Vine | Target vine project name |
+| Tendril | Assigned Tendril name |
+| Started | Timestamp |
+| Completed | Timestamp |
+| Duration | Elapsed time |
+
+Click any row to navigate to the [job detail page](/trellis/jobs/job-detail).
+
+### Real-time Updates
+
+The jobs store receives real-time events from the dashboard layout's Supabase subscription. New jobs appear automatically, and status changes update badges in-place without page refresh. See [Real-time Architecture](/concepts/realtime).
+
+## Tendril Select Popover
+
+When triggering Plan, Apply, or Destroy from a vine, the **Tendril Select Popover** appears:
+
+- Lists all registered Tendrils with status indicators (green = ONLINE, yellow = DRAINING, red = OFFLINE)
+- "Any available" option for automatic assignment
+- Only ONLINE Tendrils can accept new jobs
+
+The selected Tendril's ID is stored as `assigned_worker_id` on the job.

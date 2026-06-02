@@ -1,0 +1,138 @@
+---
+title: Worker APIs
+description: API endpoints used by Tendril agents for job claiming, heartbeat, and log streaming.
+---
+
+# Worker APIs
+
+These endpoints are called by Tendril agents. Authentication is via `X-Worker-ID` and `X-Worker-Token` headers. The token is hashed with SHA-256 and compared against the stored `workers.token_hash`.
+
+## Job Claiming
+
+### `POST /api/jobs/claim`
+
+Claims the next available job. Uses the `claim_next_job()` PostgreSQL function with `FOR UPDATE SKIP LOCKED` for atomic claiming. See [Job Queue Pattern](/concepts/job-queue).
+
+**Response** (if job available):
+```json
+{
+  "job": {
+    "id": "uuid",
+    "job_type": "PLAN",
+    "config_snapshot": { ... },
+    "vine_id": "uuid",
+    "vineyard_id": "uuid"
+  },
+  "cloud_identity": {
+    "provider": "aws",
+    "role_arn": "arn:aws:iam::123456789012:role/GrapeProvisionerRole",
+    "external_id": "uuid"
+  }
+}
+```
+
+**Response** (no jobs): `204 No Content`
+
+## Heartbeat
+
+### `POST /api/workers/heartbeat`
+
+Sent every 30 seconds. Updates `workers.last_heartbeat` and `workers.version`.
+
+**Body:**
+```json
+{
+  "version": "0.1.0"
+}
+```
+
+If a heartbeat is not received for 60 seconds, Trellis marks the Tendril OFFLINE.
+
+## Job Status
+
+### `PUT /api/jobs/{id}/status`
+
+Updates job status. Valid transitions: PROCESSING, SUCCESS, FAILED, CANCELLED.
+
+**Body:**
+```json
+{
+  "status": "SUCCESS",
+  "execution_metadata": {
+    "cluster_name": "api-backend-production",
+    "cluster_endpoint": "https://...",
+    "argocd_url": "https://...",
+    "outputs": { ... }
+  }
+}
+```
+
+On SUCCESS for DEPLOY jobs, the server automatically calls `finalizeDeployment()` to extract Terraform outputs and update vine component tables.
+
+On FAILED, the vine status is set to FAILED with the error message.
+
+## Log Streaming
+
+### `POST /api/jobs/{id}/logs`
+
+Receives log chunks from the Tendril. See [Real-time Architecture](/concepts/realtime) for how these are delivered to the browser.
+
+**Body:**
+```json
+{
+  "log_chunk": "Creating VPC...\nVPC created: vpc-12345\n",
+  "stream_type": "STDOUT"
+}
+```
+
+Stream types: `STDOUT`, `STDERR`, `SYSTEM`.
+
+### `GET /api/jobs/{id}/logs`
+
+Retrieves all logs for a job, ordered by ID. Supports `?after={id}` pagination.
+
+## Plan Artifacts
+
+### `POST /api/jobs/{id}/plan-artifact`
+
+Uploads the binary `terraform.plan.out` file to Supabase Storage (max 50MB).
+
+### `GET /api/jobs/{id}/plan-artifact`
+
+Downloads the plan artifact for apply execution.
+
+## Worker Registration
+
+### `POST /api/workers/register`
+
+Registers a new Tendril. Returns the plaintext worker token (shown once).
+
+**Body:**
+```json
+{
+  "name": "eu-west-1-tendril",
+  "mode": "self-hosted"
+}
+```
+
+**Response:**
+```json
+{
+  "worker_id": "uuid",
+  "worker_token": "plaintext-token"
+}
+```
+
+### `POST /api/workers/heartbeat`
+
+Also used for initial heartbeat after registration.
+
+## Worker Metadata
+
+### `GET /api/workers/{id}`
+
+Returns worker metadata including deploy configuration.
+
+### `POST /api/workers/{id}/metadata`
+
+Updates worker metadata (used for tracking deployment state).

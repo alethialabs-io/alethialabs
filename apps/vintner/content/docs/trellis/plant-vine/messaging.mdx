@@ -1,0 +1,63 @@
+---
+title: Messaging
+description: Queues and topics — SQS, SNS, Pub/Sub, Service Bus configuration.
+---
+
+# Messaging
+
+The messaging section configures message queues and publish/subscribe topics. Queues and topics are configured independently.
+
+## Queues
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **Name** | Text input | Queue name |
+| **FIFO** | Toggle | First-In-First-Out ordering guarantee |
+| **Visibility Timeout** | Number | 0–43,200 seconds (displayed as human-readable: s/m/h) |
+
+<Tabs items={["AWS", "GCP", "Azure"]}>
+  <Tab value="AWS">
+    **SQS** (Simple Queue Service)
+    - Standard queues: at-least-once delivery, best-effort ordering
+    - FIFO queues: exactly-once processing, strict ordering (name must end in `.fifo`)
+    - Visibility timeout: how long a message is hidden after a consumer reads it
+    - Dead letter queues configured automatically
+  </Tab>
+  <Tab value="GCP">
+    **Pub/Sub Subscriptions** (pull mode)
+    - No direct FIFO support — use ordering keys for per-key ordering
+    - At-least-once delivery by default
+    <Callout type="warn">
+    When converting from AWS SQS with FIFO enabled, a warning is shown: "GCP Pub/Sub has no direct FIFO support. Consider using ordering keys."
+    </Callout>
+  </Tab>
+  <Tab value="Azure">
+    **Service Bus Queues**
+    - FIFO support via Sessions
+    - At-least-once or at-most-once delivery modes
+    - Dead letter queues built-in
+  </Tab>
+</Tabs>
+
+## Topics
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **Name** | Text input | Topic name |
+| **Subscriptions** | JSONB (backend) | Configured per consumer after provisioning |
+
+<Tabs items={["AWS", "GCP", "Azure"]}>
+  <Tab value="AWS">
+    **SNS** (Simple Notification Service) — fan-out messaging. Subscribers can be SQS queues, Lambda functions, HTTP endpoints, email, or SMS.
+  </Tab>
+  <Tab value="GCP">
+    **Pub/Sub Topics** — message publishing endpoint. Subscribers create pull or push subscriptions.
+  </Tab>
+  <Tab value="Azure">
+    **Service Bus Topics** — publish/subscribe messaging with subscription filters.
+  </Tab>
+</Tabs>
+
+## Cost
+
+Messaging services are usage-based (per message/request), so they show $0 in the cost sidebar. Actual costs depend on message volume and size.

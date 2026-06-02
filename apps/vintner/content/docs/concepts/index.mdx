@@ -1,15 +1,13 @@
 ---
 title: Platform Overview
-description: High-level architecture of the Trellis multi-cloud infrastructure orchestration platform.
+description: High-level architecture of the multi-cloud infrastructure orchestration platform.
 ---
 
 # Platform Overview
 
-Trellis is a hybrid multi-cloud infrastructure orchestration platform. It combines a visual web interface, a command-line tool, and autonomous execution agents to provision production-grade Kubernetes clusters with databases, caches, networking, DNS, secrets, and GitOps — across AWS, GCP, and Azure.
+This platform is a hybrid multi-cloud infrastructure orchestration system. It combines a visual web interface, a command-line tool, and autonomous execution agents to provision production-grade Kubernetes clusters with databases, caches, networking, DNS, secrets, and GitOps — across AWS, GCP, and Azure.
 
 ## Three-Component Model
-
-The platform is built from three core components, each serving a distinct role:
 
 | Component | Type | Language | Role |
 |-----------|------|----------|------|
@@ -50,33 +48,60 @@ Every infrastructure component has provider-specific implementations across thre
 | Object Storage | S3 | Cloud Storage | Storage Account |
 | WAF | AWS WAFv2 | Cloud Armor | Azure WAF |
 
-The Plant Vine form adapts dynamically when the user switches providers via the Provider Ribbon.
-
 ## Tech Stack
 
-**Web (Trellis):**
-- Next.js 15 with App Router and Server Actions
-- Supabase (PostgreSQL + GoTrue auth + Realtime WebSocket + S3 storage)
-- Tailwind CSS, shadcn/ui components
-- Zustand for client state management
+**Web (Trellis):** Next.js 15, Supabase (PostgreSQL + GoTrue + Realtime + S3), Tailwind CSS, shadcn/ui, Zustand
 
-**CLI (Grape):**
-- Go with Cobra (command framework) and Charmbracelet (TUI: lipgloss, huh, bubbletea)
-- Distributed via Homebrew tap and GitHub Releases
+**CLI (Grape):** Go, Cobra, Charmbracelet (lipgloss, huh, bubbletea), Homebrew tap
 
-**Agent (Tendril):**
-- Go binary running in ECS Fargate (ARM64)
-- Embeds Terraform, kubectl, Helm, and cloud CLIs
-- Docker image pushed to ECR and GHCR
+**Agent (Tendril):** Go, ECS Fargate (ARM64), embeds Terraform + kubectl + Helm + cloud CLIs
 
-**Shared (grape-core):**
-- Go package with provisioner, Terraform wrapper, cloud SDKs, ArgoCD installer, Infracost integration, Git operations, Helm operations
+**Shared (grape-core):** Go package — provisioner, Terraform wrapper, cloud SDKs, ArgoCD, Infracost, Git, Helm
 
-**Infrastructure:**
-- Terraform for all infrastructure-as-code
-- Supabase S3 for Terraform state storage
-- Lambda-based scaler for Tendril scale-to-zero
-- release-please for versioning Grape and Tendril independently
+**Infrastructure:** Terraform, Supabase S3 (state), Lambda scaler (scale-to-zero), release-please
+
+## Concept Pages
+
+Deep dives into the platform's key technical patterns:
+
+<Cards>
+  <Card title="Domain Model" href="/concepts/domain-model">
+    Vineyard/Vine/Tendril entities, lifecycles, and relationships.
+  </Card>
+  <Card title="Security Architecture" href="/concepts/security">
+    Zero-credential model, RLS, cloud provider federation.
+  </Card>
+  <Card title="Database Schema" href="/concepts/database">
+    Full PostgreSQL schema — tables, enums, functions, Realtime.
+  </Card>
+  <Card title="Job Queue Pattern" href="/concepts/job-queue">
+    Atomic claiming, FOR UPDATE SKIP LOCKED, failure recovery.
+  </Card>
+  <Card title="Cloud Provider Abstraction" href="/concepts/cloud-abstraction">
+    Registry, region mapping, instance types, provider_config JSONB.
+  </Card>
+  <Card title="Real-time Architecture" href="/concepts/realtime">
+    Supabase Realtime, log streaming, store synchronization.
+  </Card>
+  <Card title="Cost Estimation" href="/concepts/cost-estimation">
+    AWS Pricing API, real-time sidebar, Infracost integration.
+  </Card>
+  <Card title="Authentication Flows" href="/concepts/authentication">
+    OAuth (web), Device Code Grant (CLI), token auth (Tendril).
+  </Card>
+  <Card title="Multi-Cloud Conversion" href="/concepts/multi-cloud-conversion">
+    Cross-provider vine duplication with mapping and warnings.
+  </Card>
+  <Card title="Terraform State" href="/concepts/terraform-state">
+    Supabase S3 backend, state paths, plan artifacts.
+  </Card>
+  <Card title="GitOps & ArgoCD" href="/concepts/gitops-argocd">
+    App of Apps pattern, infra facts, Helm values.
+  </Card>
+  <Card title="Release System" href="/concepts/release-system">
+    release-please, GoReleaser, Docker builds, CI/CD.
+  </Card>
+</Cards>
 
 ## Monorepo Structure
 
@@ -91,19 +116,12 @@ bb-thesis-2026/
 │   ├── grape-core/       # Shared Go libraries
 │   ├── ui/               # Shared UI components
 │   ├── charts/           # Helm charts
-│   ├── typescript-config/ # Shared TS config
-│   └── eslint-config/    # Shared ESLint config
+│   └── ...config/        # Shared TS/ESLint config
 ├── infra/
-│   ├── platform/         # Tendril deployment infrastructure (ECR, ECS, Lambda scaler)
-│   ├── templates/
-│   │   ├── vine/         # User infrastructure templates (AWS/GCP/Azure)
-│   │   ├── tendril/      # Tendril bootstrap templates
-│   │   └── argocd/       # ArgoCD application templates
-│   └── onboarding/       # Cloud provider federation setup (AWS/GCP/Azure)
-├── supabase/
-│   └── migrations/       # PostgreSQL schema migrations
-└── .github/
-    └── workflows/        # CI/CD (release-please, release-grape, release-tendril)
+│   ├── platform/         # Tendril deployment (ECR, ECS, Lambda scaler)
+│   ├── templates/vine/   # Infrastructure templates (AWS/GCP/Azure)
+│   ├── templates/argocd/ # ArgoCD application templates
+│   └── onboarding/       # Cloud provider federation setup
+├── supabase/migrations/  # PostgreSQL schema migrations
+└── .github/workflows/    # CI/CD (release-please, release-grape, release-tendril)
 ```
-
-The monorepo is managed with pnpm workspaces and Turborepo for the TypeScript packages, and a Go workspace (`go.work`) for the Go modules.

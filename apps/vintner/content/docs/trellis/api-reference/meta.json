@@ -1,0 +1,9 @@
+{
+  "title": "API Reference",
+  "pages": [
+    "index",
+    "worker-apis",
+    "cli-apis",
+    "auth-apis"
+  ]
+}

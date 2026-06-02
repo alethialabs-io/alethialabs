@@ -1,0 +1,90 @@
+---
+title: Multi-Cloud Conversion
+description: How vine configurations are converted across AWS, GCP, and Azure when duplicating.
+---
+
+# Multi-Cloud Conversion
+
+Users can duplicate an existing vine and target a different cloud provider. The platform converts the configuration automatically, mapping resources, instance types, and capacity units across providers.
+
+## When Conversion Happens
+
+1. User clicks **"Duplicate & Edit"** on an existing vine
+2. Selects a different cloud identity (e.g., switching from AWS to GCP)
+3. The `convertVineConfig()` function transforms the configuration
+4. Conversion **warnings** are displayed for items that need manual review
+5. User adjusts the converted config and submits
+
+## What Gets Converted
+
+### Region
+
+Regions are mapped via a cross-provider table:
+
+```
+AWS us-east-1 → GCP us-east4 → Azure eastus
+```
+
+If no mapping exists, the target provider's default region is used, and a warning is shown.
+
+### Cluster
+
+- **Instance types**: Mapped via `INSTANCE_TYPE_MAP` (e.g., `t3.medium` → `e2-medium` → `Standard_B2s`). Unmapped types generate a warning.
+- **K8s version**: Reset to the target provider's default (versions differ across providers)
+- **Autoscaler**: Key name converted in `provider_config` (`enable_karpenter` → `enable_autopilot` → `enable_cluster_autoscaler`)
+
+### Databases
+
+- **Engine**: Mapped (e.g., `aurora-postgresql` → `cloudsql-postgresql` → `azure-postgresql`)
+- **Capacity**: Clamped to target provider's min/max range. Units change (ACU → vCPU → vCores), and a warning explains the difference.
+
+### Caches
+
+- **Node type**: Mapped (e.g., `cache.t3.medium` → `M2` → `C2`). Unmapped types fall back to the target provider's default.
+
+### Network
+
+- If the source vine uses an **existing network** (`provision_network = false`), the conversion switches to **create new** (`provision_network = true`) with a warning: "Existing network cannot be reused across providers."
+- CIDR blocks are preserved (they're provider-agnostic).
+
+### DNS & WAF
+
+- **Zone ID and domain**: Cleared (DNS zones are provider-specific)
+- **WAF config**: Cleared with a warning (WAF rules differ significantly across providers)
+- User must re-select a DNS zone and re-configure WAF in the target provider.
+
+### NoSQL
+
+- **DynamoDB → Firestore**: Warning about data model differences ("Firestore is document-based, not key-value")
+- **Range key support**: Checked per provider. If the target doesn't support range keys natively, a warning is shown.
+
+### Messaging
+
+- **FIFO queues**: Warning when targeting GCP Pub/Sub ("No direct FIFO support; consider ordering keys")
+
+## Conversion Warnings
+
+Each conversion issue generates a `ConversionWarning`:
+
+```typescript
+interface ConversionWarning {
+  component: string;     // "cluster", "databases", "network", etc.
+  field: string;         // "instance_types", "engine", etc.
+  message: string;       // Human-readable explanation
+  severity: "info" | "warning" | "error";
+}
+```
+
+Warnings are displayed in the Plant a Vine form after provider switch, giving the user a chance to review and adjust before submitting.
+
+## What Cannot Be Converted
+
+Some configurations are fundamentally provider-specific:
+
+- **IAM roles / service accounts** — identity models differ
+- **Cluster admin ARNs** — IAM identifiers are provider-specific
+- **Existing network references** — VPC IDs don't translate across providers
+- **DNS hosted zones** — zone IDs are provider-specific
+- **WAF rules** — rule schemas differ significantly
+
+These are cleared during conversion and must be re-configured manually.

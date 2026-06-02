@@ -1,0 +1,87 @@
+---
+title: Network
+description: VPC/VNet configuration — create new or use existing, CIDR blocks, NAT gateways.
+---
+
+# Network
+
+The network section configures the virtual network that contains all provisioned resources.
+
+## Create New vs. Use Existing
+
+Two modes controlled by a toggle:
+
+### Create New Network
+
+Provisions a new network from scratch. Fields:
+
+| Field | Description |
+|-------|-------------|
+| **CIDR Block** | IP address range (e.g., `10.0.0.0/16`) |
+| **NAT Gateway** | Single (cost-optimized) or HA (one per availability zone) |
+
+<Tabs items={["AWS", "GCP", "Azure"]}>
+  <Tab value="AWS">
+    Creates a **VPC** with:
+    - Public and private subnets across availability zones
+    - Internet Gateway for public subnets
+    - NAT Gateway(s) for private subnet internet access
+    - Route tables for each subnet type
+    - Default security group
+  </Tab>
+  <Tab value="GCP">
+    Creates a **VPC Network** with:
+    - Custom-mode subnets in the selected region
+    - Cloud NAT with Cloud Router
+    - Firewall rules for internal communication
+  </Tab>
+  <Tab value="Azure">
+    Creates a **Virtual Network (VNet)** with:
+    - Subnets for cluster nodes and services
+    - NAT Gateway for outbound traffic
+    - Network Security Groups (NSGs)
+  </Tab>
+</Tabs>
+
+### Use Existing Network
+
+Select from existing networks discovered by the resource refresh job. The dropdown shows:
+- Network ID and name
+- CIDR range
+- Region
+
+<Callout type="info">
+Existing networks must be in the same region as the vine. The resource refresh job (`FETCH_RESOURCES`) populates the list by querying your cloud account. If you don't see a network, click the refresh button in the Provider Ribbon.
+</Callout>
+
+## CIDR Block Validation
+
+The form validates CIDR notation in real-time and shows a breakdown:
+
+```
+10.0.0.0/16
+├── Total addresses: 65,536
+├── Usable IPs: 65,531
+├── Range: 10.0.0.0 – 10.0.255.255
+└── Size: Large
+```
+
+Common ranges:
+- `/16` — 65,536 addresses (recommended for production)
+- `/20` — 4,096 addresses (suitable for small environments)
+- `/24` — 256 addresses (minimal, development only)
+
+## NAT Gateway Cost Impact
+
+NAT gateways have significant cost implications:
+
+| Mode | AWS Cost | Description |
+|------|---------|-------------|
+| Single | ~$35/mo | One NAT in a single AZ (cost-optimized, single point of failure) |
+| HA | ~$105/mo (3 AZ) | One NAT per AZ (high availability, 3x cost) |
+
+The [cost sidebar](/trellis/plant-vine/cost-sidebar) reflects the NAT gateway choice immediately.
+
+## Allowed CIDR Blocks
+
+Optional field for restricting inbound access. Enter CIDR ranges that should be allowed to connect to resources within the network. Default: open to the VPC CIDR only.

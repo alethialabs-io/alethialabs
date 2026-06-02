@@ -1,0 +1,33 @@
+---
+title: Repositories
+description: Git repository selection for application deployment via ArgoCD.
+---
+
+# Repositories
+
+The repositories section configures the Git repository that ArgoCD watches for application manifests. This is optional — if not configured, ArgoCD is installed but doesn't manage any applications automatically.
+
+## Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **Application Repo** | Repository selector | Git repo containing Kubernetes manifests or Helm charts |
+
+## Repository Selector
+
+The selector shows repositories from your connected Git provider (GitHub, GitLab, or Bitbucket). It fetches the repository list using the stored OAuth token (see [Authentication](/concepts/authentication)).
+
+## How It Works with ArgoCD
+
+When a repository is configured:
+
+1. During DEPLOY, the Tendril clones the repo and sets it up as an ArgoCD Application source
+2. ArgoCD watches the repo for changes (polling or webhook)
+3. Any push to the configured branch triggers ArgoCD to sync the manifests to the cluster
+4. The ArgoCD UI shows deployment status, sync state, and health
+
+See [GitOps & ArgoCD](/concepts/gitops-argocd) for the full ArgoCD architecture.
+
+<Callout type="info">
+The repository is accessed using the OAuth token from your Git provider integration. ArgoCD stores a copy of the token as a Kubernetes Secret in the cluster. Token refresh is handled automatically.
+</Callout>

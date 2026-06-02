@@ -227,8 +227,9 @@ function VersionCell({ worker }: { worker: TendrilRow }) {
 
 	const release = worker.worker_releases;
 	const displayVersion = release?.version ?? worker.version;
+	const isRelease = displayVersion && displayVersion !== "dev";
 	const isOutdated =
-		latestRelease && displayVersion && displayVersion !== latestRelease.version;
+		latestRelease && isRelease && displayVersion !== latestRelease.version;
 
 	return (
 		<>
@@ -238,11 +239,11 @@ function VersionCell({ worker }: { worker: TendrilRow }) {
 						type="button"
 						onClick={(e) => {
 							e.stopPropagation();
-							setDialogVersion(displayVersion);
+							if (isRelease) setDialogVersion(displayVersion);
 						}}
-						className="text-xs font-mono text-muted-foreground hover:text-foreground hover:underline transition-colors"
+						className={`text-xs font-mono text-muted-foreground transition-colors ${isRelease ? "hover:text-foreground hover:underline cursor-pointer" : "cursor-default"}`}
 					>
-						v{displayVersion}
+						{isRelease ? `v${displayVersion}` : displayVersion}
 					</button>
 				) : (
 					<span className="text-xs font-mono text-muted-foreground">Unknown</span>

@@ -9,36 +9,6 @@
 
 ---
 
-## Thesis Documentation Standards
-
-### Citation Strategy
-
-The thesis documentation relies on established technical literature and official cloud provider documentation. Many sections use direct quotes and summarized academic/technical concepts.
-
-**References file**: All external sources are tracked in a separate `references.md` file under the heading **ИЗПОЛЗВАНА ЛИТЕРАТУРА**.
-
-- **Format**: `[index] Title/Context – URL`
-- **Usage**: When a definition is used in the text, the corresponding index is placed at the end of the sentence.
-  - Example: "Понятието DevOps е комбинация от термините 'development' и 'operations'... [1][2]"
-
-### Glossary of Terms
-
-Technical terms must be shortened after their first introduction. The file `glossary.md` acts as the source of truth for these abbreviations.
-
-| Abbreviation | Full Term |
-| :--- | :--- |
-| API | Application Programming Interface |
-| AWS | Amazon Web Services |
-| AZ | Availability Zone |
-| CD | Continuous Delivery / Deployment |
-| CI | Continuous Integration |
-| IaC | Infrastructure as Code |
-| SPA | Single Page Application |
-
-Once a term is defined in the glossary, use the abbreviation consistently throughout the documentation.
-
----
-
 ## Trellis (Web Control Plane)
 
 ### Database Types Pipeline
@@ -217,17 +187,3 @@ Cloud account bootstrap scripts:
 - Use Tailwind CSS with shadcn/ui components. Vercel-like aesthetic: minimalist, monochrome, no excessive gradients.
 - Feature planning goes in `spec/features/` with checkable task lists.
 - Never start coding without a plan and explicit approval.
-
----
-
-## UI/UX Design Guidelines
-
-- **Aesthetic**: Vercel-like — highly modern, sophisticated, not flashy.
-- **Colors & Theming**: Basic shadcn/ui colors and theming. Avoid excessive gradients or overly bright, saturated colors. Keep it minimalist and monochrome/neutral where possible, prioritizing crisp typography and whitespace.
-
----
-
-## Agent Workflow Rules
-
-- **Feature Planning**: Always save progress for each feature in an `.md` file inside `spec/features/` with checkable task lists.
-- **Code Proposal**: Never start proposing code without giving the full rundown of the plan beforehand and explicitly asking for approval.
