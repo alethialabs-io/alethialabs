@@ -26,6 +26,7 @@ interface TendrilSelectPopoverProps {
 	variant?: "default" | "destructive";
 	confirmLabel?: string;
 	description?: string;
+	excludeId?: string;
 }
 
 const STATUS_DOT: Record<PublicWorkerStatus, string> = {
@@ -43,8 +44,10 @@ export function TendrilSelectPopover({
 	variant = "default",
 	confirmLabel,
 	description,
+	excludeId,
 }: TendrilSelectPopoverProps) {
-	const { tendrils, isLoading, fetchTendrils } = useTendrilsStore();
+	const { tendrils: allTendrils, isLoading, fetchTendrils } = useTendrilsStore();
+	const tendrils = excludeId ? allTendrils.filter((t) => t.id !== excludeId) : allTendrils;
 	const [open, setOpen] = useState(false);
 	const [selected, setSelected] = useState<string | null>(null);
 	const [rePlan, setRePlan] = useState(false);

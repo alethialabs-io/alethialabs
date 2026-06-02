@@ -88,7 +88,7 @@ content = replaceJsonField(
 
 // ── clusters ────────────────────────────────────────────────────────
 const clusterMetadataType =
-	"{ region?: string | null; vpc_cidr?: string | null; [key: string]: any; }";
+	"{ region?: string | null; vpc_cidr?: string | null; }";
 content = replaceJsonField(
 	content,
 	"clusters",

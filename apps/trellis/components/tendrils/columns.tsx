@@ -30,7 +30,7 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { WorkerMetadata } from "@/types/database-custom.types";
-import { ArrowUpCircle, Cloud, Loader2, Server, Star, Trash2 } from "lucide-react";
+import { ArrowUpCircle, Cloud, Loader2, Server, Star } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -71,6 +71,7 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 	const [acting, setActing] = useState(false);
 
 	const status = worker.status ?? "OFFLINE";
+	const isCloudHosted = worker.mode === "cloud-hosted";
 	const isDestroying = worker.activeJob?.job_type === "DESTROY_WORKER";
 	const metadata = worker.metadata as WorkerMetadata | null;
 	const hasCloudResources = !!worker.cloud_identity_id && !!metadata?.deploy_config;
@@ -163,20 +164,22 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 				</Tooltip>
 			</TooltipProvider>
 
-			{hasCloudResources ? (
+			{!isCloudHosted && hasCloudResources && (
 				<TendrilSelectPopover
 					trigger={
 						<Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive">
-							<Trash2 className="mr-1 h-3 w-3" />
 							Destroy
 						</Button>
 					}
 					variant="destructive"
 					confirmLabel="Destroy"
 					description={`This will tear down all cloud resources for "${worker.name}" and delete the tendril. This cannot be undone.`}
+					excludeId={worker.id}
 					onConfirm={handleDestroy}
 				/>
-			) : (
+			)}
+
+			{!isCloudHosted && !hasCloudResources && (
 				<>
 					<Button
 						variant="ghost"
@@ -184,7 +187,6 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 						className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
 						onClick={() => setShowRemoveDialog(true)}
 					>
-						<Trash2 className="mr-1 h-3 w-3" />
 						Remove
 					</Button>
 
