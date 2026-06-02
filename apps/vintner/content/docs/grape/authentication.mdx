@@ -1,36 +1,77 @@
 ---
 title: Authentication
-description: Authenticating with the Grape CLI.
+description: Device Authorization Grant flow, token management, and session handling.
 ---
 
 # Authentication
 
-The Grape CLI uses a Device Authorization Grant flow for authentication.
+Grape uses the **Device Authorization Grant** (RFC 8628) for authentication — the same flow used by GitHub CLI, Azure CLI, and AWS SSO. You never type a password in the terminal.
 
-## Login
-
-To log in:
+## Login Flow
 
 ```bash
 grape login
 ```
 
-This command will:
-1.  Print a verification code and a URL.
-2.  Open your browser to the verification URL.
-3.  Wait for you to confirm the code in the browser.
-4.  Store the access token securely.
+### Step-by-Step
+
+1. **CLI generates a device code** — a UUID identifying this login attempt
+2. **Browser opens** — navigates to `{trellis_url}/cli/login?device_code={code}`
+3. **User authenticates in browser** — logs in with any supported OAuth provider (GitHub, GitLab, Bitbucket, Google)
+4. **Verification code displayed** — the browser shows a 6-character code
+5. **User enters code in CLI** — types the code at the Bubble Tea TUI prompt
+6. **Token exchange** — CLI sends `POST /api/auth/cli/exchange` with the device_code and verification_code
+7. **Refresh token stored** — saved to `~/.config/grape/auth.json`
+
+The Bubble Tea TUI shows a spinner while waiting for the user to complete browser authentication.
+
+### Force Re-authentication
+
+```bash
+grape login --force
+```
+
+Re-authenticates even if a valid token already exists. Useful when switching accounts.
 
 ## Logout
-
-To log out:
 
 ```bash
 grape logout
 ```
 
-This removes the locally stored credentials.
+Removes the stored credentials from `~/.config/grape/auth.json`.
 
-## API Integration
+## Token Storage
 
-The CLI communicates with the Grape Web API to verify tokens and fetch configurations. The API ensures that only authorized users can deploy infrastructure.
+Tokens are stored in `~/.config/grape/auth.json`:
+
+```json
+{
+  "access_token": "eyJ...",
+  "refresh_token": "eyJ...",
+  "expires_at": "2026-06-02T15:30:00Z"
+}
+```
+
+The access token is short-lived. The refresh token is long-lived and used to obtain new access tokens.
+
+## Automatic Token Refresh
+
+Before each API call, Grape checks if the access token has expired. If so, it transparently refreshes via `POST /api/auth/cli/refresh` using the stored refresh token. The user never needs to re-login unless the refresh token itself expires or is revoked.
+
+## Environment Variables
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `GRAPE_WEB_ORIGIN` | Override the Trellis URL | Production URL |
+
+Set `GRAPE_WEB_ORIGIN` to point to a different Trellis instance (e.g., local development):
+
+```bash
+export GRAPE_WEB_ORIGIN=http://localhost:3000
+grape login
+```
+
+## API Authentication
+
+All CLI-to-Trellis API calls include the access token in the `Authorization: Bearer` header. The Trellis API validates the token against Supabase and extracts the user ID for RLS-scoped database queries.

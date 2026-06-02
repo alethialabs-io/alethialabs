@@ -1,32 +1,60 @@
 ---
 title: Tendril Agent
-description: Documentation for the Tendril Agent.
+description: Autonomous execution agent that runs Terraform, installs ArgoCD, and streams logs.
 ---
 
 # Tendril Agent
 
-Tendril is the autonomous agent that runs inside your Kubernetes cluster. It is responsible for executing provisioning jobs sent by the Trellis platform.
+Tendril is the execution engine of the platform. It is a Go binary packaged as a Docker container that runs in AWS ECS Fargate (ARM64). Tendrils claim jobs from the Trellis queue, assume temporary cloud credentials, execute Terraform, install ArgoCD, and stream logs back in real-time.
 
-## Features
+## Key Facts
 
-- **Secure Polling**: Connects outbound to Trellis to fetch jobs. No inbound ports required.
-- **Infrastructure as Code**: Executes Terraform natively within the cluster.
-- **Real-time Logging**: Streams execution logs back to the platform.
-- **Integrity Checks**: Verifies configuration hashes before execution.
+| Property | Value |
+|----------|-------|
+| Language | Go |
+| Runtime | ECS Fargate (ARM64 / Graviton) |
+| Container registries | AWS ECR + GitHub Container Registry |
+| Versioning | release-please (`tendril-v*` tags) |
+| Embedded tools | Terraform, kubectl, Helm, AWS CLI, gcloud, Azure CLI, Infracost |
+| Poll interval | 10 seconds |
+| Heartbeat interval | 30 seconds |
+| Idle scale-down | After 5 minutes (Lambda scaler) |
 
-## Installation
+## Two Operating Modes
 
-The agent is typically installed via the Grape CLI during the bootstrap process:
+| Mode | Description |
+|------|-------------|
+| **Cloud-hosted** | Deployed as ECS Fargate task, managed by the platform. Automatic scaling, no user setup required. |
+| **Self-hosted** | User runs the `tendril` binary on their own infrastructure. For on-premises or air-gapped environments. |
 
-```bash
-grape bootstrap
-```
+## What Tendril Does
 
-Alternatively, it can be installed via Helm:
+1. **Polls for jobs** — every 10 seconds, calls `POST /api/jobs/claim`
+2. **Claims atomically** — PostgreSQL `claim_next_job()` with `FOR UPDATE SKIP LOCKED` prevents double-execution
+3. **Assumes credentials** — STS AssumeRole (AWS), WIF token exchange (GCP), or OIDC federated identity (Azure)
+4. **Executes Terraform** — `init` → `plan` → `apply` or `destroy`
+5. **Installs ArgoCD** — Helm chart deployment after successful apply
+6. **Streams logs** — batched POST every 2 seconds → Supabase Realtime → browser
+7. **Reports results** — updates job status with execution metadata, timing, and outputs
+8. **Sends heartbeat** — every 30 seconds to confirm it is alive
 
-```bash
-helm install tendril oci://ghcr.io/bobikenobi12/charts/tendril \
-  --set config.clusterId=<CLUSTER_ID> \
-  --set config.apiToken=<TOKEN>
-```
+## Container Contents
 
+The Tendril Docker image includes:
+
+- **Go binary** — the tendril executable
+- **Terraform** — for infrastructure provisioning
+- **kubectl** — for Kubernetes cluster access
+- **Helm** — for ArgoCD and component installation
+- **Infrastructure templates** — all AWS, GCP, and Azure Terraform modules (embedded via `go embed` or staged during Docker build)
+- **ArgoCD templates** — Helm values and Application manifests
+
+## Quick Links
+
+- [Internal Architecture](/docs/tendril/architecture) — main loop, heartbeat, graceful shutdown
+- [Job Execution](/docs/tendril/job-execution) — per-job-type execution details
+- [Cloud Credentials](/docs/tendril/cloud-credentials) — how temporary credentials are assumed
+- [Log Streaming](/docs/tendril/log-streaming) — real-time log delivery
+- [Scale-to-Zero](/docs/tendril/scale-to-zero) — Lambda scaler for cost optimization
+- [Self-Hosted Mode](/docs/tendril/self-hosted) — running Tendril outside Fargate
+- [Infrastructure Templates](/docs/tendril/infrastructure-templates) — what Terraform modules are available

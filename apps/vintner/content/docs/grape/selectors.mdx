@@ -1,0 +1,67 @@
+---
+title: Interactive Selectors
+description: TUI-based interactive selectors for choosing vineyards, vines, and Tendrils.
+---
+
+# Interactive Selectors
+
+Grape uses the Charmbracelet suite (huh, bubbletea, lipgloss) to provide rich interactive terminal UI elements.
+
+## When Selectors Appear
+
+Interactive selectors activate when a required flag is omitted from a command:
+
+| Command | Missing Flag | Selector Shown |
+|---------|-------------|----------------|
+| `grape plan` | `--vine-id` | Vineyard → Vine picker |
+| `grape harvest` | `--vine-id` | Vineyard → Vine picker |
+| `grape destroy` | `--vine-id` | Vineyard → Vine picker |
+
+## Vineyard Selector
+
+When no vineyard is specified, Grape fetches all vineyards from the API and displays them as a selectable list:
+
+```
+? Select a vineyard:
+  > api-backend (3 vines)
+    data-platform (1 vine)
+    internal-tools (2 vines)
+```
+
+Navigate with arrow keys, confirm with Enter.
+
+## Vine Selector
+
+After selecting a vineyard, the vine selector shows all vines in that vineyard:
+
+```
+? Select a vine:
+  > production / eu-west-1 (ACTIVE)
+    staging / eu-west-1 (DRAFT)
+    development / us-east-1 (PROVISIONING)
+```
+
+Each vine shows its environment stage, region, and current status.
+
+## Standalone Selectors
+
+Run the selectors independently:
+
+```bash
+grape selectors
+```
+
+This launches the full selection flow (vineyard → vine) and prints the selected IDs. Useful for scripting:
+
+```bash
+VINE_ID=$(grape selectors --output-vine-id)
+grape plan --vine-id $VINE_ID
+```
+
+## TUI Library
+
+The selectors are built with:
+
+- **[huh](https://github.com/charmbracelet/huh)** — form and selection components
+- **[bubbletea](https://github.com/charmbracelet/bubbletea)** — terminal UI framework (used for the login spinner)
+- **[lipgloss](https://github.com/charmbracelet/lipgloss)** — styling and layout

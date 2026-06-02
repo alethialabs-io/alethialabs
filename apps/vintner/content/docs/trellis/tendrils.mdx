@@ -1,0 +1,71 @@
+---
+title: Managing Tendrils
+description: Registering, monitoring, and removing Tendril execution agents from the web UI.
+---
+
+# Managing Tendrils
+
+Tendrils are the execution agents that run Terraform on behalf of users. The Tendrils page in Trellis lets you register, monitor, and remove them.
+
+## Tendrils Page
+
+The Tendrils page (`/dashboard/tendrils`) shows all registered Tendrils with:
+
+| Column | Description |
+|--------|-------------|
+| Name | Tendril identifier (auto-generated or custom) |
+| Status | ONLINE / OFFLINE / DRAINING |
+| Mode | cloud-hosted / self-hosted |
+| Version | Tendril release version |
+| Region | AWS region where the Tendril runs |
+| Last Heartbeat | Timestamp of last heartbeat |
+
+### Status Indicators
+
+- **Green dot (ONLINE)** — Heartbeat received within the last 60 seconds. Ready to accept jobs.
+- **Yellow dot (DRAINING)** — Finishing its current job but not accepting new ones. Used during graceful shutdown or maintenance.
+- **Red dot (OFFLINE)** — Heartbeat missed for more than 60 seconds. Jobs assigned to this Tendril will be requeued.
+
+## Adding a Tendril
+
+Click "Add Tendril" to open the creation sheet:
+
+| Field | Description |
+|-------|-------------|
+| Region | AWS region for the Fargate task (e.g., eu-west-1, us-east-1) |
+| CPU | vCPU allocation (default: 1024 = 1 vCPU) |
+| Memory | RAM allocation (default: 4096 MB = 4 GiB) |
+
+Submitting creates a `DEPLOY_WORKER` job that provisions:
+- ECS task definition with the latest Tendril Docker image
+- IAM roles (execution role for ECR pull, task role for Terraform operations)
+- CloudWatch log group for container logs
+- Security groups for network access
+- Registers the Tendril with Trellis API
+
+The Tendril appears as OFFLINE until it boots, registers, and sends its first heartbeat (~2 minutes).
+
+## Scale-to-Zero
+
+Cloud-hosted Tendrils support **scale-to-zero**. When no jobs are queued for 5 consecutive minutes, a Lambda scaler automatically scales the ECS service to 0 desired tasks. When a new job is queued, the scaler scales back to 1.
+
+This means you only pay for Fargate compute when there are jobs to process. See [Scale-to-Zero](/docs/tendril/scale-to-zero) for the full technical details.
+
+## Removing a Tendril
+
+Clicking "Remove" on a Tendril:
+
+1. Creates a `DESTROY_WORKER` job
+2. The job tears down the Tendril's ECS infrastructure
+3. The Tendril registration is removed from the `workers` table
+
+Any jobs currently assigned to the Tendril will be requeued to other available Tendrils.
+
+## Version Tracking
+
+Each Tendril reports its version on registration and heartbeat. The Tendrils page shows:
+- Current version per Tendril
+- Latest available version (from `worker_releases`)
+- Release notes dialog showing the changelog
+
+When a new Tendril release is published, existing cloud-hosted Tendrils are automatically updated via ECS force-new-deployment.

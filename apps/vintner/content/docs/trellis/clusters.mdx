@@ -1,0 +1,58 @@
+---
+title: Cluster Management
+description: Viewing provisioned Kubernetes clusters, ArgoCD access, and kubeconfig.
+---
+
+# Cluster Management
+
+After a successful DEPLOY job, provisioned Kubernetes clusters appear on the Clusters page. This is a read-only view — clusters are provisioned through the vine lifecycle, not directly.
+
+## Clusters Page
+
+The Clusters page (`/dashboard/clusters`) shows all provisioned clusters as cards:
+
+### Cluster Card
+
+Each card displays:
+
+| Field | Description |
+|-------|-------------|
+| Cluster Name | The EKS / GKE / AKS cluster name |
+| Provider | AWS / GCP / Azure (with provider icon) |
+| Region | Cloud region (e.g., eu-west-1) |
+| Endpoint | Kubernetes API server endpoint |
+| ArgoCD URL | Link to the installed ArgoCD dashboard |
+
+### ArgoCD Access
+
+ArgoCD is installed automatically during the DEPLOY job. The cluster card shows:
+- **ArgoCD URL** — clickable link to the ArgoCD web UI
+- **Admin credentials** — stored in `vine_cluster.argocd_admin_password`
+
+ArgoCD is configured with the **App of Apps** pattern: a parent Application points to a `manifests/applications/` directory in the infrastructure Git repository. Adding a new YAML file to that directory automatically deploys a new application.
+
+### Pre-installed Components
+
+Every provisioned cluster comes with:
+
+| Component | Purpose |
+|-----------|---------|
+| **ArgoCD** | GitOps continuous delivery |
+| **AWS Load Balancer Controller** | Ingress and service load balancing (AWS) |
+| **External DNS** | Automatic DNS record management |
+| **External Secrets Operator** | Sync secrets from cloud secret stores to Kubernetes |
+| **Karpenter** | Node auto-scaling (AWS) |
+| **Metrics Server** | Resource metrics for HPA |
+| **Storage Class** | EBS / Persistent Disk / Managed Disk provisioner |
+
+These are installed via Helm charts during the DEPLOY job and managed by ArgoCD afterward.
+
+## Cluster Data Source
+
+Cluster information comes from the DEPLOY job's execution metadata. When a Tendril successfully provisions a cluster, it extracts:
+
+- Cluster name and endpoint from Terraform outputs
+- ArgoCD URL and admin password from the Helm installation
+- Provider-specific identifiers (ARN for AWS, resource ID for GCP/Azure)
+
+This data is stored in the `vine_cluster` table and displayed on the Clusters page.

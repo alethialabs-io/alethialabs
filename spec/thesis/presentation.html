@@ -168,7 +168,7 @@ h3{font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-.015em}
       <div class="flow-arrow">&rarr;</div>
       <div class="flow-step" style="border-color:var(--green-border)"><strong style="color:var(--green)">Grape</strong> &mdash; CLI</div>
       <div class="flow-arrow">&rarr;</div>
-      <div class="flow-step" style="border-color:var(--blue-border)"><strong style="color:var(--blue)">Worker</strong> &mdash; Execution</div>
+      <div class="flow-step" style="border-color:var(--blue-border)"><strong style="color:var(--blue)">Tendril</strong> &mdash; Execution</div>
       <div class="flow-arrow">&rarr;</div>
       <div class="flow-step" style="border-color:var(--warn-border)"><strong style="color:var(--warn)">ArgoCD</strong> &mdash; GitOps</div>
     </div>
@@ -195,7 +195,7 @@ h3{font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-.015em}
       <div class="flow-arrow">&rarr;</div>
       <div class="flow-step">Job Queue</div>
       <div class="flow-arrow">&rarr;</div>
-      <div class="flow-step" style="border-color:var(--green-border)">Worker</div>
+      <div class="flow-step" style="border-color:var(--green-border)">Tendril</div>
       <div class="flow-arrow">&rarr;</div>
       <div class="flow-step" style="border-color:var(--warn-border)">AWS / GCP / Azure</div>
     </div>
@@ -209,7 +209,7 @@ h3{font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-.015em}
       <div class="card">
         <span class="badge badge-green mb-8">Zero-Key сигурност</span>
         <h4>Без статични ключове</h4>
-        <p>AWS: Cross-Account IAM Role. GCP: Workload Identity Federation. Azure: Federated Identity. Временни сесии, 1 час.</p>
+        <p>AWS: Cross-Account IAM Role. GCP: Workload Identity Federation. Azure: Federated Identity. Tendril поема временна роля &mdash; 1 час.</p>
       </div>
       <div class="card">
         <span class="badge badge-warn mb-8">GitOps от Ден 1</span>
@@ -225,13 +225,13 @@ h3{font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-.015em}
   <div class="slide-inner stagger">
     <span class="tag tag-danger">Сигурност</span>
     <h2>Как работи без ключове?</h2>
-    <p class="subtitle mb-16">Платформата не съхранява облачни credentials. Worker поема временна роля при всяко изпълнение.</p>
+    <p class="subtitle mb-16">Платформата не съхранява облачни credentials. Tendril поема временна роля при всяко изпълнение.</p>
 
     <div class="grid-3 mt-20">
       <div class="card">
         <span class="badge badge-warn mb-8">AWS</span>
         <h4>Cross-Account IAM Role</h4>
-        <p>Потребителят деплойва CloudFormation шаблон. Създава се IAM роля с External ID. Worker поема ролята чрез STS AssumeRole. Сесия: 1 час.</p>
+        <p>Потребителят деплойва CloudFormation шаблон. Създава се IAM роля с External ID. Tendril поема ролята чрез STS AssumeRole. Сесия: 1 час.</p>
       </div>
       <div class="card">
         <span class="badge badge-blue mb-8">GCP</span>
@@ -275,9 +275,9 @@ h3{font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-.015em}
       <div class="card card-sm">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
           <span class="step-num green">3</span>
-          <h4 style="margin:0">Plan + Workers</h4>
+          <h4 style="margin:0">Plan + Tendrils</h4>
         </div>
-        <p>Terraform plan. Създаване на Worker. Как Worker-ите работят.</p>
+        <p>Terraform plan. Tendril агенти. Scale-to-zero при неактивност.</p>
       </div>
     </div>
     <div class="grid-3 mt-16">
@@ -333,11 +333,12 @@ h3{font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-.015em}
       <div class="card" style="border-color:var(--green-border)">
         <h4 style="color:var(--green)">Ключови приноси</h4>
         <ul>
-          <li>Хибриден модел &mdash; CLI + Web + Worker + GitOps</li>
+          <li>Хибриден модел &mdash; CLI + Web + Tendril + GitOps</li>
           <li>Zero-Key &mdash; IAM Role, WIF, Federated Identity</li>
           <li>Мулти-клауд &mdash; AWS, GCP, Azure, пълен паритет</li>
           <li>Реално време оценка на разходите</li>
-          <li>Worker система &mdash; Fargate, атомарен claim</li>
+          <li>Tendril система &mdash; Fargate, атомарен claim, scale-to-zero</li>
+          <li>release-please &mdash; версиониране на Grape и Tendril</li>
         </ul>
       </div>
       <div class="card">
@@ -346,7 +347,7 @@ h3{font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-.015em}
           <li>Без Terraform, kubectl или Helm локално</li>
           <li>Един формуляр &mdash; три облака</li>
           <li>Plan-Review-Apply &mdash; нищо без потвърждение</li>
-          <li>Realtime логове &mdash; WebSocket от Worker</li>
+          <li>Realtime логове &mdash; WebSocket от Tendril</li>
           <li>ArgoCD от Ден 1 &mdash; Git е source of truth</li>
         </ul>
       </div>
@@ -359,12 +360,12 @@ h3{font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-.015em}
   <div class="slide-inner slide-center stagger">
     <h2 style="font-size:48px;font-weight:800;letter-spacing:-.04em">Декларативно.<br>Сигурно.<br>Автоматизирано.</h2>
     <div class="divider"></div>
-    <p class="subtitle" style="margin-top:20px">Хибридна мулти-клауд система, която комбинира визуална конфигурация, CLI, облачни Workers и GitOps.</p>
+    <p class="subtitle" style="margin-top:20px">Хибридна мулти-клауд система, която комбинира визуална конфигурация, CLI, облачни Tendrils и GitOps.</p>
 
     <div class="flow mt-32">
       <div class="flow-step" style="border-color:var(--accent-border)"><strong class="hl">Trellis</strong></div>
       <div class="flow-step" style="border-color:var(--green-border)"><strong class="hl-green">Grape</strong></div>
-      <div class="flow-step" style="border-color:var(--blue-border)"><strong style="color:var(--blue)">Worker</strong></div>
+      <div class="flow-step" style="border-color:var(--blue-border)"><strong style="color:var(--blue)">Tendril</strong></div>
       <div class="flow-step" style="border-color:var(--warn-border)"><strong class="hl-warn">ArgoCD</strong></div>
     </div>
 

@@ -1,15 +1,68 @@
 ---
-title: Trellis Platform
-description: Documentation for the Trellis Web Application.
+title: Trellis Web Platform
+description: The central control plane for multi-cloud infrastructure orchestration.
 ---
 
-# Trellis Platform
+# Trellis Web Platform
 
-Trellis is the central control plane for your infrastructure. It manages configurations, deployments, and users.
+Trellis is the web-based control plane of the platform. It provides a visual interface for configuring infrastructure, managing cloud integrations, monitoring jobs, and viewing provisioned clusters.
 
-## Features
+## Tech Stack
 
-- **Configuration Management**: Create and version infrastructure configurations.
-- **Cluster Management**: View connected clusters and their health status.
-- **Deployment History**: Track who deployed what and when.
-- **Team Collaboration**: Manage access and permissions.
+- **Framework:** Next.js 15 with App Router and Server Actions
+- **Database:** Supabase PostgreSQL with Row Level Security
+- **Auth:** Supabase GoTrue (OAuth via GitHub, GitLab, Bitbucket, Google)
+- **Realtime:** Supabase Realtime WebSocket for live log streaming and status updates
+- **Storage:** Supabase S3 for Terraform state and plan artifacts
+- **UI:** Tailwind CSS, shadcn/ui, Zustand for client state
+
+## Key Routes
+
+| Route | Purpose |
+|-------|---------|
+| `/dashboard` | Overview with stats, recent jobs, integration status |
+| `/dashboard/vineyards` | Vineyard management (create, list, delete) |
+| `/dashboard/vineyards/[id]/vines/[vineId]` | Vine detail — infrastructure, plan, cluster access |
+| `/dashboard/plant` | Plant a Vine — 11-section configuration form |
+| `/dashboard/integrations` | Cloud and Git provider connections |
+| `/dashboard/jobs` | Job list with status filtering |
+| `/dashboard/jobs/[id]` | Job detail with real-time log streaming |
+| `/dashboard/tendrils` | Tendril management (register, monitor, remove) |
+| `/dashboard/clusters` | Provisioned cluster overview |
+| `/dashboard/profile` | User account settings |
+
+## API Routes
+
+Trellis exposes two sets of API routes:
+
+**Worker APIs** (authenticated via `X-Worker-ID` + `X-Worker-Token` headers):
+- `POST /api/jobs/claim` — Atomic job claiming
+- `PUT /api/jobs/[id]/status` — Job status updates
+- `POST /api/jobs/[id]/logs` — Log batch ingestion
+- `POST /api/jobs/[id]/plan-artifact` — Plan artifact upload
+- `POST /api/workers/heartbeat` — Tendril heartbeat
+- `POST /api/workers/register` — Tendril registration
+
+**CLI APIs** (authenticated via Supabase session token):
+- `POST /api/auth/cli/generate` — Generate device code for CLI login
+- `POST /api/auth/cli/exchange` — Exchange device code for token
+- `POST /api/auth/cli/refresh` — Refresh CLI access token
+- `GET /api/cli/vineyards/[id]` — Vineyard data export
+- `POST /api/cli/configurations` — Create vine from CLI
+- `GET /api/cli/repositories/[provider]` — List Git repositories
+- `POST /api/cli/jobs/[id]/cancel` — Cancel a running job
+
+**Release APIs:**
+- `GET /api/releases/worker` — Latest Tendril version metadata
+
+## Architecture
+
+```
+Browser ──► Next.js App Router
+              ├── Server Actions (database queries via Supabase client)
+              ├── API Routes (Worker + CLI endpoints)
+              └── Supabase Realtime (WebSocket subscriptions)
+                   └── Live updates to browser
+```
+
+All database access goes through Supabase with RLS policies enforcing per-user data isolation. Server Actions run server-side and use the authenticated Supabase client, so they inherit the user's RLS context automatically.

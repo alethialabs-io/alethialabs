@@ -1,0 +1,421 @@
+---
+title: Database Schema
+description: Complete PostgreSQL schema reference — tables, enums, functions, and Realtime subscriptions.
+---
+
+# Database Schema
+
+The platform uses **Supabase PostgreSQL** as its sole database. All tables are protected by Row Level Security (RLS). Real-time features are powered by Supabase Realtime subscriptions on specific tables.
+
+## Core Tables
+
+### `vineyards`
+
+Workspace grouping for infrastructure configurations.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `user_id` | uuid (FK → auth.users) | Owner |
+| `name` | text | Unique per user |
+| `description` | text | Optional |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz | |
+
+Constraint: `UNIQUE(user_id, name)`
+
+### `vines`
+
+Infrastructure configuration — the central entity.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `user_id` | uuid (FK) | Owner |
+| `vineyard_id` | uuid (FK → vineyards) | Parent vineyard |
+| `cloud_identity_id` | uuid (FK → cloud_identities) | Cloud account to provision in |
+| `project_name` | text | Infrastructure project name |
+| `environment_stage` | environment_stage enum | development / staging / production |
+| `region` | text | Cloud region (e.g., eu-west-1) |
+| `terraform_version` | text | Default: 1.11.4 |
+| `status` | vine_status enum | DRAFT → ACTIVE → DESTROYED |
+| `estimated_monthly_cost` | numeric | Calculated cost estimate |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz | |
+
+### `cloud_identities`
+
+Cloud provider connections (AWS, GCP, Azure).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `user_id` | uuid (FK) | Owner |
+| `provider` | text | aws / gcp / azure |
+| `name` | text | Display name |
+| `credentials` | jsonb | Provider-specific (role ARN, external ID, WIF config, etc.) |
+| `is_verified` | boolean | Passed connection test |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz | |
+
+### `provider_tokens`
+
+OAuth tokens for Git providers.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `user_id` | uuid (FK) | Owner |
+| `provider` | text | github / gitlab / bitbucket |
+| `access_token` | text | Encrypted at rest |
+| `refresh_token` | text | Encrypted at rest |
+| `expires_at` | timestamptz | Token expiry |
+
+## Vine Component Tables (Singleton — 1:1 per Vine)
+
+### `vine_network`
+
+VPC / VNet / VPC Network configuration.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `vine_id` | uuid (UNIQUE FK) | |
+| `provision_network` | boolean | Create new or use existing |
+| `network_id` | text | Existing network ID (if not provisioning) |
+| `cidr_block` | text | e.g., 10.0.0.0/16 |
+| `single_nat_gateway` | boolean | Cost optimization |
+| `allowed_cidr_blocks` | text[] | Allowed CIDR ranges |
+| `status` | component_status enum | |
+| `estimated_monthly_cost` | numeric | |
+
+### `vine_cluster`
+
+EKS / GKE / AKS configuration.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `vine_id` | uuid (UNIQUE FK) | |
+| `cluster_version` | text | e.g., 1.31 |
+| `provider_config` | jsonb | Provider-specific overrides |
+| `cluster_admins` | jsonb | Admin user list |
+| `instance_types` | text[] | e.g., ["m5.large"] |
+| `node_min_size` | integer | Minimum nodes |
+| `node_max_size` | integer | Maximum nodes |
+| `node_desired_size` | integer | Desired nodes |
+| `status` | component_status enum | |
+| `cluster_name` | text | Populated after provisioning |
+| `cluster_endpoint` | text | Populated after provisioning |
+| `cluster_arn` | text | Populated after provisioning |
+| `argocd_url` | text | Populated after ArgoCD install |
+| `argocd_admin_password` | text | Populated after ArgoCD install |
+
+### `vine_dns`
+
+Route53 / Cloud DNS / Azure DNS configuration.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `vine_id` | uuid (UNIQUE FK) | |
+| `enabled` | boolean | |
+| `zone_id` | text | Existing hosted zone |
+| `domain_name` | text | |
+| `managed_certificate` | boolean | ACM / managed cert |
+| `waf_enabled` | boolean | |
+| `provider_config` | jsonb | |
+| `status` | component_status enum | |
+
+### `vine_repositories`
+
+Git repository references for infra, GitOps, and application code.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `vine_id` | uuid (UNIQUE FK) | |
+| `env_template_repo` | text | Infrastructure template source |
+| `env_template_branch` | text | |
+| `env_destination_repo` | text | Infrastructure output destination |
+| `gitops_template_repo` | text | GitOps template source |
+| `gitops_template_branch` | text | |
+| `gitops_destination_repo` | text | GitOps output destination |
+| `apps_template_repo` | text | Application template source |
+| `apps_template_branch` | text | |
+| `apps_destination_repo` | text | Application output destination |
+
+## Vine Component Tables (Multi-Instance — 1:N per Vine)
+
+### `vine_databases`
+
+Aurora / Cloud SQL / Azure Database instances.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `vine_id` | uuid (FK) | |
+| `name` | text | Unique per vine |
+| `engine` | text | aurora-postgresql (default), aurora-mysql, etc. |
+| `engine_version` | text | e.g., 16.4 |
+| `min_capacity` | numeric | Aurora Serverless min ACU |
+| `max_capacity` | numeric | Aurora Serverless max ACU |
+| `port` | integer | |
+| `backup_retention_days` | integer | |
+| `iam_auth` | boolean | IAM database authentication |
+| `status` | component_status enum | |
+| `endpoint` | text | Writer endpoint (populated after provisioning) |
+| `reader_endpoint` | text | Reader endpoint |
+| `cluster_identifier` | text | |
+| `master_credentials_secret_arn` | text | Secrets Manager ARN |
+
+Constraint: `UNIQUE(vine_id, name)`
+
+### `vine_caches`
+
+ElastiCache / Memorystore / Azure Cache instances.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `vine_id` | uuid (FK) | |
+| `name` | text | Unique per vine |
+| `engine` | cache_engine enum | redis / valkey |
+| `node_type` | text | e.g., cache.r6g.large |
+| `num_cache_nodes` | integer | |
+| `multi_az` | boolean | |
+| `allowed_cidr_blocks` | text[] | |
+| `status` | component_status enum | |
+| `endpoint` | text | Populated after provisioning |
+| `estimated_monthly_cost` | numeric | |
+
+### `vine_nosql_tables`
+
+DynamoDB / Firestore / Cosmos DB tables.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `vine_id` | uuid (FK) | |
+| `name` | text | |
+| `table_type` | nosql_table_type enum | |
+| `hash_key` | text | Partition key name |
+| `hash_key_type` | nosql_key_type enum | S (string), N (number), B (binary) |
+| `range_key` | text | Sort key name (optional) |
+| `range_key_type` | nosql_key_type enum | |
+| `billing_mode` | nosql_billing_mode enum | PAY_PER_REQUEST / PROVISIONED |
+| `point_in_time_recovery` | boolean | |
+| `provider_config` | jsonb | |
+| `status` | component_status enum | |
+
+### `vine_queues`
+
+SQS / Pub/Sub / Service Bus queues.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `vine_id` | uuid (FK) | |
+| `name` | text | |
+| `fifo` | boolean | FIFO ordering guarantee |
+| `visibility_timeout` | integer | Seconds |
+| `message_retention` | integer | Seconds |
+| `delay_seconds` | integer | |
+| `status` | component_status enum | |
+
+### `vine_topics`
+
+SNS / Pub/Sub / Service Bus topics.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `vine_id` | uuid (FK) | |
+| `name` | text | |
+| `subscriptions` | jsonb | Array of subscription configs |
+| `status` | component_status enum | |
+
+### `vine_container_registries`
+
+ECR / Artifact Registry / ACR repositories.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `vine_id` | uuid (FK) | |
+| `name` | text | |
+| `image_tag_mutability` | registry_tag_mutability enum | MUTABLE / IMMUTABLE |
+| `scan_on_push` | boolean | |
+| `repository_url` | text | Populated after provisioning |
+| `provider_config` | jsonb | |
+| `status` | component_status enum | |
+
+### `vine_secrets`
+
+Secrets Manager / Secret Manager / Key Vault entries.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `vine_id` | uuid (FK) | |
+| `name` | text | Secret name |
+| `generate` | boolean | Auto-generate a random value |
+| `length` | integer | Generated password length |
+| `special_chars` | boolean | Include special characters |
+| `status` | component_status enum | |
+
+## Job Tables
+
+### `provision_jobs`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `user_id` | uuid (FK) | Owner |
+| `vine_id` | uuid (FK) | Target vine |
+| `cloud_identity_id` | uuid (FK) | Cloud account for execution |
+| `job_type` | text | CONNECTION_TEST, PLAN, DEPLOY, etc. |
+| `status` | provision_job_status enum | QUEUED → SUCCESS/FAILED |
+| `worker_id` | uuid (FK → workers) | Assigned Tendril |
+| `error_message` | text | Failure details |
+| `execution_metadata` | jsonb | Terraform outputs, cost data, timing |
+| `created_at` | timestamptz | |
+| `claimed_at` | timestamptz | When Tendril claimed it |
+| `started_at` | timestamptz | When execution began |
+| `completed_at` | timestamptz | |
+
+### `provision_job_logs`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `job_id` | uuid (FK → provision_jobs) | |
+| `log_chunk` | text | Log content batch |
+| `stream_type` | text | STDOUT / STDERR / SYSTEM |
+| `created_at` | timestamptz | |
+
+Realtime subscription: clients subscribe to INSERT events on this table filtered by `job_id` for live log streaming.
+
+## Worker Tables
+
+### `workers`
+
+Registered Tendril agents.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `user_id` | uuid (FK) | Owner |
+| `name` | text | Display name |
+| `mode` | worker_mode enum | self-hosted / cloud-hosted |
+| `status` | worker_status enum | ONLINE / OFFLINE / DRAINING |
+| `token_hash` | text | Hashed authentication token |
+| `version` | text | Tendril version string |
+| `release_id` | uuid (FK → worker_releases) | Current release |
+| `last_heartbeat` | timestamptz | Last heartbeat timestamp |
+| `created_at` | timestamptz | |
+
+### `worker_releases`
+
+Release catalog for Tendril versions.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `version` | text (UNIQUE) | Semantic version |
+| `release_notes` | text | Changelog content |
+| `released_at` | timestamptz | |
+
+## Audit Table
+
+### `vine_audit_log`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `vine_id` | uuid (FK) | |
+| `user_id` | uuid (FK) | Who performed the action |
+| `action` | audit_action enum | CREATED, UPDATED, DELETED, PROVISIONED, DESTROYED |
+| `component_type` | text | Which component was affected |
+| `component_id` | uuid | |
+| `changes` | jsonb | Before/after diff |
+| `created_at` | timestamptz | |
+
+## Key Enums
+
+```sql
+-- Vine lifecycle
+CREATE TYPE vine_status AS ENUM (
+  'DRAFT', 'QUEUED', 'PROVISIONING', 'ACTIVE',
+  'FAILED', 'DESTROYING', 'DESTROYED'
+);
+
+-- Component lifecycle
+CREATE TYPE component_status AS ENUM (
+  'PENDING', 'CREATING', 'ACTIVE', 'UPDATING',
+  'FAILED', 'DESTROYING', 'DESTROYED'
+);
+
+-- Job lifecycle
+CREATE TYPE provision_job_status AS ENUM (
+  'QUEUED', 'CLAIMED', 'PROCESSING',
+  'SUCCESS', 'FAILED', 'CANCELLED'
+);
+
+-- Worker status
+CREATE TYPE worker_mode AS ENUM ('self-hosted', 'cloud-hosted');
+CREATE TYPE worker_status AS ENUM ('ONLINE', 'OFFLINE', 'DRAINING');
+
+-- Environment
+CREATE TYPE environment_stage AS ENUM ('development', 'staging', 'production');
+
+-- Cache engines
+CREATE TYPE cache_engine AS ENUM ('redis', 'valkey');
+
+-- NoSQL
+CREATE TYPE nosql_table_type AS ENUM (...);
+CREATE TYPE nosql_key_type AS ENUM ('S', 'N', 'B');
+CREATE TYPE nosql_billing_mode AS ENUM ('PAY_PER_REQUEST', 'PROVISIONED');
+```
+
+## Key Database Functions
+
+### `claim_next_job()`
+
+Atomic job claiming using `FOR UPDATE SKIP LOCKED`:
+
+```sql
+CREATE OR REPLACE FUNCTION claim_next_job(p_worker_id uuid)
+RETURNS provision_jobs AS $$
+DECLARE
+  job provision_jobs;
+BEGIN
+  SELECT * INTO job
+  FROM provision_jobs
+  WHERE status = 'QUEUED'
+  ORDER BY created_at ASC
+  FOR UPDATE SKIP LOCKED
+  LIMIT 1;
+
+  IF job IS NOT NULL THEN
+    UPDATE provision_jobs
+    SET status = 'CLAIMED',
+        worker_id = p_worker_id,
+        claimed_at = now()
+    WHERE id = job.id;
+  END IF;
+
+  RETURN job;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+This guarantees that if two Tendrils poll simultaneously, only one gets the job. The `SKIP LOCKED` clause means the second Tendril skips the locked row and either gets the next one or gets nothing.
+
+## Realtime Subscriptions
+
+The following tables are published via Supabase Realtime for live UI updates:
+
+- `provision_job_logs` — log streaming (INSERT events)
+- `provision_jobs` — job status changes (UPDATE events)
+- `workers` — Tendril status changes (UPDATE events)

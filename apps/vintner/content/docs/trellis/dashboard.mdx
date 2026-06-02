@@ -1,0 +1,95 @@
+---
+title: Dashboard & Vineyards
+description: Vineyard management, vine listing, and the vine detail view.
+---
+
+# Dashboard & Vineyards
+
+The dashboard is the landing page after login. It shows an overview of the user's infrastructure: vineyards, recent jobs, integration status, and quick stats.
+
+## Dashboard Overview
+
+The main dashboard displays:
+
+- **Vineyard count** — total workspaces
+- **Active vines** — currently provisioned infrastructure
+- **Recent jobs** — last 5 jobs with status badges
+- **Integration status** — connected cloud and Git providers
+
+## Vineyards
+
+A **Vineyard** is a workspace that groups related infrastructure configurations (vines). Think of it as a project or team boundary.
+
+### Creating a Vineyard
+
+From the dashboard or sidebar, click "Create Vineyard":
+
+- **Name** — unique per user, used in Terraform state paths
+- **Description** — optional, for documentation
+
+The vineyard is created immediately in the database. It starts empty with no vines.
+
+### Vineyard List
+
+The vineyard list shows all vineyards with:
+- Name and description
+- Vine count
+- Creation date
+- Quick actions (view, delete)
+
+### Estate Map
+
+The Estate Map is a visual selector component that displays vineyards as cards on the dashboard. Clicking a vineyard navigates to its vine listing.
+
+## Vine Detail
+
+Each vine has a detail page at `/dashboard/vineyards/[id]/vines/[vineId]` with multiple tabs:
+
+### Infrastructure Tab
+
+Displays the configured components as a tree:
+
+```
+api-backend (production, eu-west-1)
+├── Network: 10.0.0.0/16, Single NAT
+├── Cluster: EKS 1.31, m5.large (2-10 nodes)
+├── Databases
+│   └── main-db: Aurora PostgreSQL 16.4
+├── Caches
+│   └── session-cache: Redis, cache.r6g.large
+├── DNS: example.com, ACM certificate
+└── Container Registries
+    └── api: ECR, scan-on-push
+```
+
+Each component shows its current status (PENDING, ACTIVE, FAILED, etc.) with color-coded badges.
+
+### Plan Tab
+
+After running a `PLAN` job, this tab shows:
+
+- **Resource changes** — what Terraform will create, update, or destroy
+- **Cost breakdown** — estimated monthly cost from Infracost
+- **Apply button** — triggers a DEPLOY job with the plan artifact
+
+### Cluster Access
+
+After successful provisioning, the cluster tab shows:
+
+- Cluster name and endpoint
+- ArgoCD URL (clickable link to the ArgoCD dashboard)
+- kubeconfig information
+- Provider and region
+
+## Vine Lifecycle Actions
+
+From the vine detail page, users can:
+
+| Action | Effect |
+|--------|--------|
+| **Plan** | Creates a PLAN job → Tendril runs `terraform plan` |
+| **Apply** | Creates a DEPLOY job → Tendril runs `terraform apply` + installs ArgoCD |
+| **Destroy** | Creates a DESTROY job → Tendril runs `terraform destroy` |
+| **Re-run** | Re-queues a failed job |
+
+All actions open a **Tendril Select Popover** where the user chooses which Tendril should execute the job (or selects "Any available" for automatic assignment).

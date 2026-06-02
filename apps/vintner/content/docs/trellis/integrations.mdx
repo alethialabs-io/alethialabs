@@ -1,0 +1,123 @@
+---
+title: Cloud & Git Integrations
+description: Connecting AWS, GCP, Azure cloud accounts and GitHub, GitLab, Bitbucket Git providers.
+---
+
+# Cloud & Git Integrations
+
+Before provisioning infrastructure, users must connect their cloud accounts and Git providers. The Integrations page manages these connections.
+
+## Integration Categories
+
+| Category | Providers | Purpose |
+|----------|-----------|---------|
+| **Cloud Providers** | AWS, GCP, Azure | Infrastructure provisioning target |
+| **Git Providers** | GitHub, GitLab, Bitbucket | Repository access for templates and GitOps |
+
+## AWS Integration
+
+### Connection Flow
+
+1. User clicks "Connect" on the AWS integration card
+2. Trellis displays a **CloudFormation template** with instructions
+3. User deploys the template in their AWS account
+4. The template creates an IAM role (`GrapeProvisionerRole`) with:
+   - Trust policy allowing the Trellis platform account to assume it
+   - External ID for confused deputy prevention
+   - Permissions for all supported Terraform resource types
+5. User enters their AWS Account ID and the Role ARN
+6. Trellis stores the connection in `cloud_identities` (provider: "aws", credentials: `{role_arn, external_id}`)
+
+### Connection Test
+
+After connecting, Trellis queues a `CONNECTION_TEST` job. A Tendril:
+1. Assumes the IAM role via STS AssumeRole
+2. Verifies the credentials work by calling `sts:GetCallerIdentity`
+3. Discovers existing resources (VPCs, subnets, hosted zones, etc.)
+4. Caches discovered resources in the cloud identity's `credentials` JSONB
+
+The cached resources appear in the Plant a Vine form (e.g., "Use existing VPC" dropdown).
+
+### What's Stored
+
+Only the Role ARN and External ID are stored in the database. No AWS access keys, secret keys, or session tokens are ever persisted.
+
+## GCP Integration
+
+### Connection Flow
+
+1. User clicks "Connect" on the GCP integration card
+2. Trellis provides setup instructions for Workload Identity Federation
+3. User configures in their GCP project:
+   - Workload Identity Pool
+   - OIDC Provider (with Trellis issuer URL)
+   - Service account binding
+4. User enters their GCP Project ID and WIF configuration
+5. Trellis stores the connection in `cloud_identities` (provider: "gcp", credentials: `{project_id, wif_config}`)
+
+### What's Stored
+
+Project ID and WIF pool/provider identifiers. No service account JSON keys.
+
+## Azure Integration
+
+### Connection Flow
+
+1. User clicks "Connect" on the Azure integration card
+2. Trellis provides setup instructions for Federated Identity
+3. User creates in Azure Entra ID:
+   - App Registration
+   - Federated Credential (with Trellis OIDC issuer)
+   - RBAC role assignment on the target subscription
+4. User enters Tenant ID, Client ID, and Subscription ID
+5. Trellis stores the connection in `cloud_identities` (provider: "azure", credentials: `{tenant_id, client_id, subscription_id}`)
+
+### What's Stored
+
+Tenant ID, Client ID, and Subscription ID. No client secrets.
+
+## Git Provider Integration
+
+### GitHub
+
+1. User clicks "Connect" on the GitHub card
+2. Redirected to GitHub OAuth authorization
+3. On callback, Supabase stores the identity in `auth.identities`
+4. A database trigger copies access_token and refresh_token to `provider_tokens`
+5. Status shows "Connected" with the GitHub username
+
+### GitLab
+
+Same OAuth flow as GitHub, using GitLab's OAuth2 authorization endpoint.
+
+### Bitbucket
+
+Same OAuth flow, using Bitbucket's OAuth2 authorization endpoint.
+
+### Token Refresh
+
+Git provider tokens have limited lifetimes. The `getValidProviderToken()` server action:
+
+1. Reads the token from `provider_tokens`
+2. Checks if `expires_at` is in the past
+3. If expired, calls the provider's token refresh endpoint
+4. Updates the token in the database
+5. Returns the valid access token
+
+This happens transparently whenever a Git operation is needed (cloning repos, pushing generated Terraform).
+
+## Integration Cards UI
+
+Each integration is displayed as a card showing:
+
+- Provider icon and name
+- Connection status (Connected / Not Connected)
+- Connected account identifier (AWS Account ID, GCP Project, GitHub username)
+- "Connect" or "Disconnect" action button
+- Detail sheet with full configuration view
+
+## Disconnecting
+
+Disconnecting a cloud provider removes the `cloud_identities` row. Existing vines that reference that identity will no longer be able to run jobs. The user should also remove the IAM role / WIF config / App Registration from their cloud account.
+
+Disconnecting a Git provider removes the `provider_tokens` entry and revokes the OAuth grant with the provider.
