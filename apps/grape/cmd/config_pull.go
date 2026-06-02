@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/api"
+	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/api"
 	"github.com/spf13/cobra"
 )
 

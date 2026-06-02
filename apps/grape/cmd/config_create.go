@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/api"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/types"
+	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/api"
+	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/types"
 	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/utils/ui"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"

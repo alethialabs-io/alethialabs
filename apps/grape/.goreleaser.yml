@@ -24,17 +24,6 @@ builds:
           - amd64
           - arm64
 
-    - id: grape-worker
-      dir: apps/grape
-      main: ./cmd/grape-worker
-      binary: grape-worker
-      env:
-          - CGO_ENABLED=0
-      goos:
-          - linux
-      goarch:
-          - amd64
-          - arm64
 
 archives:
     - name_template: >-

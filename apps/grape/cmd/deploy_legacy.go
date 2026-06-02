@@ -6,10 +6,10 @@ import (
 	"os"
 
 	"github.com/AlecAivazis/survey/v2"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/api"
+	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/api"
 	grapeconfig "github.com/bobikenobi12/bb-thesis-2026/apps/grape/config"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/provisioner"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/types"
+	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/provisioner"
+	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/types"
 	"github.com/spf13/cobra"
 )
 

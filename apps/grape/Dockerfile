@@ -31,5 +31,6 @@ WORKDIR /home/grape
 
 COPY --chown=grape:grape templates/ /home/grape/templates/
 COPY --chown=grape:grape templates-worker/ /home/grape/templates-worker/
+COPY --chown=grape:grape templates-argocd/ /home/grape/templates-argocd/
 
 ENTRYPOINT ["grape"]

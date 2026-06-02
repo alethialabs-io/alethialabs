@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/types"
+	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/types"
 	"github.com/go-playground/validator/v10"
 	"gopkg.in/yaml.v3"
 )

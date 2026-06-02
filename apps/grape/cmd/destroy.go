@@ -6,9 +6,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/api"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/provisioner"
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/types"
+	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/api"
+	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/provisioner"
+	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/imroc/req/v3"
 	"github.com/spf13/cobra"

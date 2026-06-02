@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/worker"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/tendril/worker"
 	"github.com/spf13/cobra"
 )
 
@@ -32,16 +32,24 @@ var workerStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the worker poll loop",
 	Run: func(cmd *cobra.Command, args []string) {
+		fileCreds := loadWorkerCredentials()
+
 		cfg := worker.Config{
 			Mode:        envOrFlag(workerMode, "GRAPE_WORKER_MODE", "self-hosted"),
-			TrellisURL:  envOrFlag("", "GRAPE_WEB_ORIGIN", "https://adp.prod.itgix.eu"),
-			WorkerID:    envOrFlag(workerID, "GRAPE_WORKER_ID", ""),
-			WorkerToken: envOrFlag(workerToken, "GRAPE_WORKER_TOKEN", ""),
+			TrellisURL:  envOrFlagOrCreds("", "GRAPE_WEB_ORIGIN", fileCreds, func(c *WorkerCredentials) string { return c.TrellisURL }, "https://adp.prod.itgix.eu"),
+			WorkerID:    envOrFlagOrCreds(workerID, "GRAPE_WORKER_ID", fileCreds, func(c *WorkerCredentials) string { return c.WorkerID }, ""),
+			WorkerToken: envOrFlagOrCreds(workerToken, "GRAPE_WORKER_TOKEN", fileCreds, func(c *WorkerCredentials) string { return c.WorkerToken }, ""),
+
+			SupabaseS3Endpoint:  envOrFlag("", "SUPABASE_S3_ENDPOINT", "https://egzejziajjmjmdjplmii.storage.supabase.co/storage/v1/s3"),
+			SupabaseS3Region:    envOrFlag("", "SUPABASE_S3_REGION", "eu-north-1"),
+			SupabaseS3AccessKey: os.Getenv("SUPABASE_STORAGE_KEY_ID"),
+			SupabaseS3SecretKey: os.Getenv("SUPABASE_STORAGE_SECRET_KEY"),
 		}
 
 		if cfg.WorkerID == "" || cfg.WorkerToken == "" {
 			fmt.Println("Error: worker-id and worker-token are required.")
-			fmt.Println("Set via flags (--worker-id, --worker-token) or env vars (GRAPE_WORKER_ID, GRAPE_WORKER_TOKEN)")
+			fmt.Println("Set via flags (--worker-id, --worker-token), env vars (GRAPE_WORKER_ID, GRAPE_WORKER_TOKEN),")
+			fmt.Println("or run `grape worker register` to save credentials automatically.")
 			os.Exit(1)
 		}
 
@@ -113,19 +121,27 @@ var workerRegisterCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		if err := saveWorkerCredentials(WorkerCredentials{
+			WorkerID:    result.Worker.ID,
+			WorkerToken: result.WorkerToken,
+			WorkerName:  result.Worker.Name,
+			TrellisURL:  webOrigin,
+		}); err != nil {
+			fmt.Printf("Warning: could not save credentials to config: %v\n", err)
+		}
+
+		configPath, _ := getWorkerConfigPath()
 		fmt.Println("Worker registered successfully!")
 		fmt.Printf("  Worker ID:    %s\n", result.Worker.ID)
 		fmt.Printf("  Worker Token: %s\n", result.WorkerToken)
 		fmt.Println()
-		fmt.Println("Save these values - the token cannot be recovered.")
+		fmt.Printf("  Credentials saved to: %s\n", configPath)
 		fmt.Println()
 		fmt.Println("Start the worker with:")
-		fmt.Printf("  grape worker start --worker-id=%s --worker-token=%s\n", result.Worker.ID, result.WorkerToken)
-		fmt.Println()
-		fmt.Println("Or set environment variables:")
-		fmt.Printf("  export GRAPE_WORKER_ID=%s\n", result.Worker.ID)
-		fmt.Printf("  export GRAPE_WORKER_TOKEN=%s\n", result.WorkerToken)
 		fmt.Println("  grape worker start")
+		fmt.Println()
+		fmt.Println("Or with explicit flags:")
+		fmt.Printf("  grape worker start --worker-id=%s --worker-token=%s\n", result.Worker.ID, result.WorkerToken)
 	},
 }
 
@@ -148,6 +164,21 @@ func envOrFlag(flag, envKey, defaultVal string) string {
 	}
 	if v := os.Getenv(envKey); v != "" {
 		return v
+	}
+	return defaultVal
+}
+
+func envOrFlagOrCreds(flag, envKey string, creds *WorkerCredentials, getter func(*WorkerCredentials) string, defaultVal string) string {
+	if flag != "" {
+		return flag
+	}
+	if v := os.Getenv(envKey); v != "" {
+		return v
+	}
+	if creds != nil {
+		if v := getter(creds); v != "" {
+			return v
+		}
 	}
 	return defaultVal
 }
