@@ -1,0 +1,77 @@
+---
+title: Worker Commands
+description: Register, list, configure, and remove Tendril agents from the CLI.
+---
+
+# Worker Commands
+
+Manage Tendril execution agents from the terminal.
+
+## `grape worker start`
+
+Start the Tendril polling loop (self-hosted mode).
+
+```bash
+grape worker start
+```
+
+This starts the Tendril agent locally — it polls for jobs, executes Terraform, and streams logs. Requires a registered worker with credentials stored in `~/.config/grape/worker.json`.
+
+See [Self-Hosted Mode](/tendril/self-hosted) for prerequisites and setup.
+
+## `grape worker register`
+
+Register a new self-hosted Tendril.
+
+```bash
+grape worker register
+```
+
+Interactive form prompts for a worker name. On success:
+- Generates a `worker_id` and `worker_token`
+- Saves credentials to `~/.config/grape/worker.json`
+- Prints the credentials for reference
+
+<Callout type="warn">
+The worker token is generated once and saved locally. If the config file is lost, the Tendril must be re-registered. See [Authentication Flows](/concepts/authentication).
+</Callout>
+
+## `grape worker list`
+
+List all registered Tendrils.
+
+```bash
+grape worker list
+```
+
+Output:
+
+```
+ID          NAME                STATUS   MODE           VERSION   LAST HEARTBEAT
+a1b2...     eu-west-1-tendril   ONLINE   cloud-hosted   0.1.0     5 sec ago
+c3d4...     self-hosted-dev     OFFLINE  self-hosted    0.1.0     2 min ago
+```
+
+## `grape worker config`
+
+Display the current worker configuration from `~/.config/grape/worker.json`.
+
+```bash
+grape worker config
+```
+
+Shows the stored worker ID, token presence, and API endpoint.
+
+## `grape worker remove`
+
+Remove a registered Tendril.
+
+```bash
+grape worker remove --id <worker-id>
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--id` | Yes | Worker UUID |
+
+For cloud-hosted Tendrils, this also queues a DESTROY_WORKER job to tear down the ECS infrastructure. For self-hosted Tendrils, it simply removes the registration from Trellis.

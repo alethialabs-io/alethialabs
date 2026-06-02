@@ -1,0 +1,94 @@
+---
+title: Plan & Harvest
+description: Queue plan, deploy, and destroy jobs from the CLI.
+---
+
+# Plan & Harvest
+
+These commands queue infrastructure operations that [Tendrils](/tendril) execute. They implement the Plan-Review-Apply workflow from the terminal.
+
+## `grape plan`
+
+Queue a Terraform plan job.
+
+```bash
+grape plan [--vine-id <id>] [--worker-id <id>] [--wait]
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--vine-id` | No | Vine UUID (interactive selector if omitted) |
+| `--worker-id` | No | Specific Tendril to execute (any available if omitted) |
+| `--wait` | No | Block until the job completes |
+
+On success, prints the job ID. Use `grape jobs logs --id <id> --follow` to stream the plan output.
+
+## `grape harvest`
+
+Queue a deployment (apply) job.
+
+```bash
+grape harvest [--vine-id <id>] [--worker-id <id>] [--plan-job-id <id>] [--wait]
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--vine-id` | No | Vine UUID (interactive selector if omitted) |
+| `--worker-id` | No | Specific Tendril to execute |
+| `--plan-job-id` | No | Reference a specific plan to apply |
+| `--wait` | No | Block until the job completes |
+
+The `--plan-job-id` flag ensures the apply uses the exact plan you reviewed. If the vine configuration changed since the plan was generated, the job fails with a [config hash mismatch](/trellis/jobs/plan-and-apply).
+
+## `grape destroy`
+
+Queue destruction jobs. Has three subcommands:
+
+### `grape destroy vine`
+
+Destroy a vine's provisioned infrastructure.
+
+```bash
+grape destroy vine --vine-id <id> [--worker-id <id>] [--wait]
+```
+
+Queues a DESTROY job. The Tendril runs `terraform destroy` to tear down all resources. Terraform state is preserved, so accidental destroys can be recovered by re-applying.
+
+### `grape destroy worker`
+
+Destroy a cloud-hosted Tendril's infrastructure.
+
+```bash
+grape destroy worker --worker-id <id>
+```
+
+Queues a DESTROY_WORKER job to tear down the ECS task definition, IAM roles, and CloudWatch resources.
+
+### `grape destroy vineyard`
+
+Delete a vineyard record (no cloud resource teardown).
+
+```bash
+grape destroy vineyard --vineyard-id <id>
+```
+
+## Interactive Selection
+
+When `--vine-id` is omitted, Grape launches a TUI selector:
+
+1. Select a vineyard from the list
+2. Select a vine within that vineyard
+3. The command proceeds with the selected vine
+
+See [TUI Components](/grape/tui) for details on the interactive selectors.
+
+## Scripting Examples
+
+```bash
+# Plan and wait, then harvest
+JOB_ID=$(grape plan --vine-id $VINE_ID --wait 2>&1 | grep "Job ID" | awk '{print $3}')
+grape harvest --vine-id $VINE_ID --plan-job-id $JOB_ID --wait
+
+# Destroy with wait
+grape destroy vine --vine-id $VINE_ID --wait
+```

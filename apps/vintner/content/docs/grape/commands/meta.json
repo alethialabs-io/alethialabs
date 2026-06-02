@@ -1,0 +1,12 @@
+{
+  "title": "Commands",
+  "pages": [
+    "index",
+    "vineyard",
+    "vine",
+    "plan-and-harvest",
+    "jobs",
+    "workers",
+    "clusters"
+  ]
+}

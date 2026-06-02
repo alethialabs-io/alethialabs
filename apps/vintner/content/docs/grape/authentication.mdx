@@ -1,29 +1,39 @@
 ---
 title: Authentication
-description: Device Authorization Grant flow, token management, and session handling.
+description: Device Authorization Grant flow, token storage, and automatic refresh.
 ---
 
 # Authentication
 
-Grape uses the **Device Authorization Grant** (RFC 8628) for authentication — the same flow used by GitHub CLI, Azure CLI, and AWS SSO. You never type a password in the terminal.
+Grape uses the **Device Authorization Grant** (RFC 8628) for authentication. You never type a password in the terminal. For the full technical details, see [Authentication Flows](/concepts/authentication).
 
-## Login Flow
+## Login
 
 ```bash
 grape login
 ```
 
-### Step-by-Step
+<Steps>
 
-1. **CLI generates a device code** — a UUID identifying this login attempt
-2. **Browser opens** — navigates to `{trellis_url}/cli/login?device_code={code}`
-3. **User authenticates in browser** — logs in with any supported OAuth provider (GitHub, GitLab, Bitbucket, Google)
-4. **Verification code displayed** — the browser shows a 6-character code
-5. **User enters code in CLI** — types the code at the Bubble Tea TUI prompt
-6. **Token exchange** — CLI sends `POST /api/auth/cli/exchange` with the device_code and verification_code
-7. **Refresh token stored** — saved to `~/.config/grape/auth.json`
+### CLI generates device code
+A UUID identifying this login attempt.
 
-The Bubble Tea TUI shows a spinner while waiting for the user to complete browser authentication.
+### Browser opens
+Navigates to `{trellis_url}/cli/login?device_code={code}`.
+
+### Authenticate in browser
+Log in with any OAuth provider (GitHub, GitLab, Bitbucket, Google). A 6-character verification code is displayed.
+
+### Enter code in CLI
+Type the code at the Bubble Tea TUI prompt. The CLI shows a spinner while waiting.
+
+### Token exchange
+CLI sends the device code + verification code to Trellis. On success, receives a JWT pair (access + refresh).
+
+### Tokens stored
+Saved to `~/.config/grape/auth.json`.
+
+</Steps>
 
 ### Force Re-authentication
 
@@ -39,11 +49,33 @@ Re-authenticates even if a valid token already exists. Useful when switching acc
 grape logout
 ```
 
-Removes the stored credentials from `~/.config/grape/auth.json`.
+Removes `~/.config/grape/auth.json`.
+
+## Token Lifecycle
+
+| Token | TTL | Purpose |
+|-------|-----|---------|
+| Access token | 1 hour | `Authorization: Bearer` header on API calls |
+| Refresh token | 90 days | Obtain new access tokens transparently |
+
+Before each API call, Grape checks the access token's expiry. If expired, it refreshes automatically via `POST /api/auth/cli/refresh`. The user never notices.
+
+## Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `GRAPE_WEB_ORIGIN` | Production URL (baked at build) | Override the Trellis API URL |
+
+```bash
+export GRAPE_WEB_ORIGIN=http://localhost:3000
+grape login  # authenticates against local dev server
+```
 
 ## Token Storage
 
-Tokens are stored in `~/.config/grape/auth.json`:
+```
+~/.config/grape/auth.json
+```
 
 ```json
 {
@@ -53,25 +85,6 @@ Tokens are stored in `~/.config/grape/auth.json`:
 }
 ```
 
-The access token is short-lived. The refresh token is long-lived and used to obtain new access tokens.
-
-## Automatic Token Refresh
-
-Before each API call, Grape checks if the access token has expired. If so, it transparently refreshes via `POST /api/auth/cli/refresh` using the stored refresh token. The user never needs to re-login unless the refresh token itself expires or is revoked.
-
-## Environment Variables
-
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `GRAPE_WEB_ORIGIN` | Override the Trellis URL | Production URL |
-
-Set `GRAPE_WEB_ORIGIN` to point to a different Trellis instance (e.g., local development):
-
-```bash
-export GRAPE_WEB_ORIGIN=http://localhost:3000
-grape login
-```
-
-## API Authentication
-
-All CLI-to-Trellis API calls include the access token in the `Authorization: Bearer` header. The Trellis API validates the token against Supabase and extracts the user ID for RLS-scoped database queries.
+<Callout type="warn">
+This file contains authentication tokens. It is not encrypted — protect it with filesystem permissions (created with `0600` by default).
+</Callout>
