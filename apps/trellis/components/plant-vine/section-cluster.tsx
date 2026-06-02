@@ -10,7 +10,9 @@ import { Switch } from "@/components/ui/switch";
 import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
 import { useProviderSlug, useProviderMeta, INSTANCE_TYPES, K8S_VERSIONS, AUTOSCALER } from "@/lib/cloud-providers";
-import { Server, X } from "lucide-react";
+import { useCloudProviderStore } from "@/lib/stores/use-cloud-provider-store";
+import type { CachedResources } from "@/types/database-custom.types";
+import { Server, ShieldCheck, X } from "lucide-react";
 import { useFormContext } from "react-hook-form";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
 
@@ -20,6 +22,9 @@ export function SectionCluster() {
 	const providerMeta = useProviderMeta();
 	const instanceTypeOptions = INSTANCE_TYPES[provider];
 	const autoscaler = AUTOSCALER[provider];
+
+	const cachedResources = useCloudProviderStore((s) => s.cachedResources);
+	const iamUsers = provider === "aws" ? (cachedResources as CachedResources | null)?.iam_users ?? [] : [];
 
 	const instanceTypes = watch("cluster.instance_types") || [];
 	const nodeMinSize = watch("cluster.node_min_size") ?? 2;
@@ -141,6 +146,61 @@ export function SectionCluster() {
 						<Switch checked={!!field.value} onCheckedChange={field.onChange} />
 					</div>
 				)} />
+
+				{/* Cluster Admins (AWS only — uses IAM users from cached resources) */}
+				{provider === "aws" && iamUsers.length > 0 && (
+					<div className="space-y-2">
+						<div className="flex items-center gap-1.5">
+							<ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" />
+							<Label className="text-xs font-medium">Cluster Admins</Label>
+							<HelpTooltip topic="cluster-admins" />
+						</div>
+						<div className="flex flex-wrap gap-1.5 min-h-[32px]">
+							{(watch("cluster.cluster_admins") ?? []).map((admin: { username: string; groups: string[] }) => (
+								<Badge key={admin.username} variant="secondary" className="text-[11px] gap-1 pr-1">
+									{admin.username}
+									<button
+										type="button"
+										onClick={() => {
+											const current = watch("cluster.cluster_admins") ?? [];
+											setValue(
+												"cluster.cluster_admins",
+												current.filter((a: { username: string }) => a.username !== admin.username),
+											);
+										}}
+										className="ml-0.5 hover:bg-muted rounded-full p-0.5"
+									>
+										<X className="h-2.5 w-2.5" />
+									</button>
+								</Badge>
+							))}
+						</div>
+						<Select
+							value=""
+							onValueChange={(username) => {
+								const current = watch("cluster.cluster_admins") ?? [];
+								if (current.some((a: { username: string }) => a.username === username)) return;
+								setValue("cluster.cluster_admins", [
+									...current,
+									{ username, groups: ["system:masters"] },
+								]);
+							}}
+						>
+							<SelectTrigger className="h-8 text-xs w-56">
+								<SelectValue placeholder="Add IAM user as admin" />
+							</SelectTrigger>
+							<SelectContent>
+								{iamUsers
+									.filter((u) => !(watch("cluster.cluster_admins") ?? []).some((a: { username: string }) => a.username === u.username))
+									.map((user) => (
+										<SelectItem key={user.username} value={user.username} className="text-xs">
+											{user.username}
+										</SelectItem>
+									))}
+							</SelectContent>
+						</Select>
+					</div>
+				)}
 			</CardContent>
 		</Card>
 	);
