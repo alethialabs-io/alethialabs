@@ -5,7 +5,7 @@
 module "dynamodb_table" {
   for_each = { for table in var.table_configuration : table.table_name_suffix => table }
   source   = "cloudposse/dynamodb/aws"
-  version  = "~> 0.34.0"
+  version  = "~> 0.37.0"
 
   name                               = "ddb-${each.value.table_type == "regional" ? local.aws_regions_short[var.region] : "global"}-${var.environment}-${each.value.table_name_suffix}"
   hash_key                           = each.value.hash_key

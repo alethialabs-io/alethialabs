@@ -132,9 +132,11 @@ func (w *Worker) pollLoop(ctx context.Context, draining *atomic.Bool) error {
 
 		fmt.Printf("Claimed job %s (type=%s)\n", claim.Job.ID, claim.Job.JobType)
 
-		if err := w.executeJob(ctx, claim); err != nil {
+		jobCtx, jobCancel := context.WithTimeout(ctx, 2*time.Hour)
+		if err := w.executeJob(jobCtx, claim); err != nil {
 			fmt.Fprintf(os.Stderr, "Job %s failed: %v\n", claim.Job.ID, err)
 		}
+		jobCancel()
 	}
 }
 

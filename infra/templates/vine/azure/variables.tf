@@ -68,7 +68,7 @@ variable "aks_cluster_version" {
 
 variable "aks_instance_types" {
   type        = list(string)
-  default     = ["Standard_D4s_v3"]
+  default     = ["Standard_D4s_v5"]
   description = "VM sizes for the AKS default node pool"
 }
 

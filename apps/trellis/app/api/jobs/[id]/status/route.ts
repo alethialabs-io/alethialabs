@@ -69,9 +69,12 @@ export async function PUT(
 					} else if (status === "FAILED") {
 						await supabase.from("vines").update({ status: "FAILED" }).eq("id", job.vine_id);
 					} else if (status === "SUCCESS") {
-						finalizeDeploymentWithClient(supabase, jobId).catch((err) =>
-							console.error("Finalize deployment error:", err),
-						);
+						try {
+							await finalizeDeploymentWithClient(supabase, jobId);
+						} catch (err) {
+							console.error("Finalize deployment error:", err);
+							await supabase.from("vines").update({ status: "FAILED" }).eq("id", job.vine_id);
+						}
 					}
 				} else if (job.job_type === "PLAN") {
 					if (status === "FAILED") {
