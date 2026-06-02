@@ -15,7 +15,7 @@ provider "aws" {
   region = var.region
   default_tags {
     tags = {
-      Environment = "Production"
+      Environment = "Prod"
       Service     = "tendril"
       ManagedBy   = "terraform"
     }
