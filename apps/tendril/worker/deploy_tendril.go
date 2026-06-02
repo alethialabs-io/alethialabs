@@ -51,7 +51,7 @@ func (w *Worker) executeDeployWorker(ctx context.Context, job *Job, provider str
 		cfg.ImageRepository = "787587782604.dkr.ecr.eu-west-1.amazonaws.com/grape-worker-dev-grape"
 	}
 
-	templatesDir := resolveWorkerTemplatesDir()
+	templatesDir := resolveTendrilTemplatesDir()
 	if templatesDir == "" {
 		return fmt.Errorf("worker templates directory not found")
 	}
@@ -148,11 +148,11 @@ func (w *Worker) executeDeployWorker(ctx context.Context, job *Job, provider str
 	return nil
 }
 
-func resolveWorkerTemplatesDir() string {
+func resolveTendrilTemplatesDir() string {
 	candidates := []string{
-		"/home/grape/templates-worker",
-		"templates-worker",
-		"../../packages/templates-worker",
+		"/home/tendril/tendril-templates",
+		"tendril-templates",
+		"../../infra/templates/tendril",
 	}
 	for _, d := range candidates {
 		if info, err := os.Stat(d); err == nil && info.IsDir() {

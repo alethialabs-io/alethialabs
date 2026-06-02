@@ -509,11 +509,11 @@ func (w *Worker) executeBootstrap(ctx context.Context, job *Job, stdout, stderr 
 	return nil
 }
 
-func resolveTemplatesDir() string {
+func resolveVineTemplatesDir() string {
 	candidates := []string{
-		"/home/grape/templates",
-		"templates",
-		"../../packages/templates",
+		"/home/tendril/vine-templates",
+		"vine-templates",
+		"../../infra/templates/vine",
 	}
 	for _, d := range candidates {
 		if info, err := os.Stat(d); err == nil && info.IsDir() {
@@ -559,7 +559,7 @@ func (w *Worker) executeDeploy(ctx context.Context, job *Job, provider string, i
 	params := provisioner.DeployParams{
 		VineConfig:      vc,
 		Provider:        provider,
-		TemplatesDir:    filepath.Join(resolveTemplatesDir(), provider),
+		TemplatesDir:    filepath.Join(resolveVineTemplatesDir(), provider),
 		GitAccessToken:  vc.GitAccessToken,
 		SupabaseBackend: w.supabaseBackend(),
 		Stdout:          stdout,
@@ -628,7 +628,7 @@ func (w *Worker) executePlan(ctx context.Context, job *Job, provider string, ide
 		VineConfig:      vc,
 		Provider:        provider,
 		DryRun:          true,
-		TemplatesDir:    filepath.Join(resolveTemplatesDir(), provider),
+		TemplatesDir:    filepath.Join(resolveVineTemplatesDir(), provider),
 		InfracostToken:  infracostKey,
 		GitAccessToken:  vc.GitAccessToken,
 		SupabaseBackend: w.supabaseBackend(),

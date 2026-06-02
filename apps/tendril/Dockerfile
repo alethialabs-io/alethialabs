@@ -62,7 +62,8 @@ RUN adduser -D -u 1000 tendril
 USER tendril
 WORKDIR /home/tendril
 
-COPY --chown=tendril:tendril templates/ /home/tendril/templates/
-COPY --chown=tendril:tendril templates-worker/ /home/tendril/templates-worker/
+COPY --chown=tendril:tendril vine-templates/ /home/tendril/vine-templates/
+COPY --chown=tendril:tendril tendril-templates/ /home/tendril/tendril-templates/
+COPY --chown=tendril:tendril argocd-templates/ /home/tendril/argocd-templates/
 
 ENTRYPOINT ["tendril"]

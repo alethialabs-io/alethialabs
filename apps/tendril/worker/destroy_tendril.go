@@ -22,7 +22,7 @@ func (w *Worker) executeDestroyWorker(ctx context.Context, job *Job, provider st
 		cfg.CloudProvider = "aws"
 	}
 
-	templatesDir := resolveWorkerTemplatesDir()
+	templatesDir := resolveTendrilTemplatesDir()
 	if templatesDir == "" {
 		return fmt.Errorf("worker templates directory not found")
 	}

@@ -284,9 +284,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 
 func resolveArgoTemplatesDir() string {
 	candidates := []string{
-		"/home/grape/templates-argocd",
-		"templates-argocd",
-		"../../packages/templates-argocd",
+		"/home/tendril/argocd-templates",
+		"argocd-templates",
+		"../../infra/templates/argocd",
 	}
 	for _, d := range candidates {
 		if info, err := os.Stat(d); err == nil && info.IsDir() {
