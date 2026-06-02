@@ -11,13 +11,7 @@ import {
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuSeparator,
-	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { ReleaseNotesDialog } from "@/components/tendrils/release-notes-dialog";
 import { TendrilSelectPopover } from "@/components/tendrils/tendril-select-popover";
@@ -36,7 +30,7 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { WorkerMetadata } from "@/types/database-custom.types";
-import { ArrowUpCircle, Cloud, Loader2, MoreHorizontal, Server, Star, Trash2 } from "lucide-react";
+import { ArrowUpCircle, Cloud, Loader2, Server, Star, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -151,87 +145,77 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 	}
 
 	return (
-		<>
-			<DropdownMenu>
-				<DropdownMenuTrigger asChild>
-					<button
-						type="button"
-						className="p-1 rounded hover:bg-muted transition-colors"
-						onClick={(e) => e.stopPropagation()}
-					>
-						<MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
-					</button>
-				</DropdownMenuTrigger>
-				<DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-					<DropdownMenuItem onClick={handleToggleDefault}>
-						<Star className={`mr-2 h-3.5 w-3.5 ${worker.is_default ? "fill-amber-400 text-amber-400" : ""}`} />
+		<div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+			<TooltipProvider delayDuration={300}>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							type="button"
+							onClick={handleToggleDefault}
+							className="p-1 rounded hover:bg-muted transition-colors"
+						>
+							<Star className={`h-3.5 w-3.5 ${worker.is_default ? "fill-amber-400 text-amber-400" : "text-muted-foreground hover:text-amber-400"}`} />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent side="top" className="text-xs">
 						{worker.is_default ? "Clear default" : "Set as default"}
-					</DropdownMenuItem>
-					{canUpdate && isOutdated && (
-						<>
-							<DropdownMenuSeparator />
-							<DropdownMenuItem onClick={handleUpdate}>
-								<ArrowUpCircle className="mr-2 h-3.5 w-3.5 text-blue-500" />
-								Update Tendril
-							</DropdownMenuItem>
-						</>
-					)}
-					{(hasCloudResources || !worker.cloud_identity_id) && <DropdownMenuSeparator />}
-					{hasCloudResources && (
-						<TendrilSelectPopover
-							trigger={
-								<DropdownMenuItem
-									className="text-destructive focus:text-destructive"
-									onSelect={(e) => e.preventDefault()}
-								>
-									<Trash2 className="mr-2 h-3.5 w-3.5" />
-									Destroy
-								</DropdownMenuItem>
-							}
-							variant="destructive"
-							confirmLabel="Destroy"
-							description={`This will tear down all cloud resources for "${worker.name}" and delete the tendril. This cannot be undone.`}
-							onConfirm={handleDestroy}
-						/>
-					)}
-					{!hasCloudResources && (
-						<DropdownMenuItem
-							className="text-destructive focus:text-destructive"
-							onClick={() => setShowRemoveDialog(true)}
-						>
-							<Trash2 className="mr-2 h-3.5 w-3.5" />
-							Remove
-						</DropdownMenuItem>
-					)}
-				</DropdownMenuContent>
-			</DropdownMenu>
+					</TooltipContent>
+				</Tooltip>
+			</TooltipProvider>
 
-			<AlertDialog
-				open={showRemoveDialog}
-				onOpenChange={(open) => !open && setShowRemoveDialog(false)}
-			>
-				<AlertDialogContent onClick={(e) => e.stopPropagation()}>
-					<AlertDialogHeader>
-						<AlertDialogTitle>
-							Remove tendril &ldquo;{worker.name}&rdquo;?
-						</AlertDialogTitle>
-						<AlertDialogDescription>
-							This will remove the tendril record from the database. This cannot be undone.
-						</AlertDialogDescription>
-					</AlertDialogHeader>
-					<AlertDialogFooter>
-						<AlertDialogCancel disabled={acting}>Cancel</AlertDialogCancel>
-						<AlertDialogAction
-							onClick={handleRemove}
-							disabled={acting}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-						>
-							{acting ? "Removing..." : "Remove"}
-						</AlertDialogAction>
-					</AlertDialogFooter>
-				</AlertDialogContent>
-			</AlertDialog>
-		</>
+			{hasCloudResources ? (
+				<TendrilSelectPopover
+					trigger={
+						<Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive">
+							<Trash2 className="mr-1 h-3 w-3" />
+							Destroy
+						</Button>
+					}
+					variant="destructive"
+					confirmLabel="Destroy"
+					description={`This will tear down all cloud resources for "${worker.name}" and delete the tendril. This cannot be undone.`}
+					onConfirm={handleDestroy}
+				/>
+			) : (
+				<>
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+						onClick={() => setShowRemoveDialog(true)}
+					>
+						<Trash2 className="mr-1 h-3 w-3" />
+						Remove
+					</Button>
+
+					<AlertDialog
+						open={showRemoveDialog}
+						onOpenChange={(open) => !open && setShowRemoveDialog(false)}
+					>
+						<AlertDialogContent onClick={(e) => e.stopPropagation()}>
+							<AlertDialogHeader>
+								<AlertDialogTitle>
+									Remove tendril &ldquo;{worker.name}&rdquo;?
+								</AlertDialogTitle>
+								<AlertDialogDescription>
+									This will remove the tendril record from the database. This cannot be undone.
+								</AlertDialogDescription>
+							</AlertDialogHeader>
+							<AlertDialogFooter>
+								<AlertDialogCancel disabled={acting}>Cancel</AlertDialogCancel>
+								<AlertDialogAction
+									onClick={handleRemove}
+									disabled={acting}
+									className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+								>
+									{acting ? "Removing..." : "Remove"}
+								</AlertDialogAction>
+							</AlertDialogFooter>
+						</AlertDialogContent>
+					</AlertDialog>
+				</>
+			)}
+		</div>
 	);
 }
 

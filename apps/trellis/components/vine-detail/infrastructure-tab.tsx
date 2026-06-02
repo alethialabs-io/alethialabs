@@ -28,8 +28,6 @@ interface InfrastructureTabProps {
 			waf_enabled: boolean | null;
 		} | null;
 		repositories: {
-			env_destination_repo: string | null;
-			gitops_destination_repo: string | null;
 			apps_destination_repo: string | null;
 		} | null;
 	};
@@ -50,8 +48,6 @@ export function InfrastructureTab({ vine, components, providerMeta }: Infrastruc
 	const { network, cluster, dns, repositories } = components;
 
 	const repoSummary = [
-		repositories?.env_destination_repo && `infra: ${repositories.env_destination_repo}`,
-		repositories?.gitops_destination_repo && `gitops: ${repositories.gitops_destination_repo}`,
 		repositories?.apps_destination_repo && `apps: ${repositories.apps_destination_repo}`,
 	].filter(Boolean).join(" · ");
 

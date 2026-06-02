@@ -1,30 +1,32 @@
 "use client";
 
+import type { ClusterData } from "@/app/server/actions/clusters";
+import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { ClusterData } from "@/lib/stores/use-clusters-store";
 import {
 	Check,
 	Copy,
 	Database,
 	ExternalLink,
-	Globe,
 	HardDrive,
 	Server,
+	Terminal,
 } from "lucide-react";
+import Image from "next/image";
 import { useState } from "react";
 
-function CopyBtn({ value }: { value: string }) {
+function CopyButton({ value }: { value: string }) {
 	const [copied, setCopied] = useState(false);
 	return (
 		<Button
 			variant="ghost"
 			size="icon"
-			className="h-5 w-5 shrink-0 opacity-0 group-hover/copy:opacity-100 transition-opacity"
+			className="h-6 w-6 shrink-0"
 			onClick={async () => {
 				await navigator.clipboard.writeText(value);
 				setCopied(true);
-				setTimeout(() => setCopied(false), 1500);
+				setTimeout(() => setCopied(false), 2000);
 			}}
 		>
 			{copied ? (
@@ -36,184 +38,159 @@ function CopyBtn({ value }: { value: string }) {
 	);
 }
 
-function InfoRow({
-	label,
-	value,
-	copyable,
-	href,
-}: {
-	label: string;
-	value: string;
-	copyable?: boolean;
-	href?: string;
-}) {
-	return (
-		<div className="group/copy flex items-center justify-between gap-2 py-1.5">
-			<span className="text-[11px] text-muted-foreground shrink-0">
-				{label}
-			</span>
-			<div className="flex items-center gap-1.5 min-w-0">
-				<code className="text-[11px] font-mono truncate text-foreground">
-					{value}
-				</code>
-				{copyable && <CopyBtn value={value} />}
-				{href && (
-					<a href={href} target="_blank" rel="noopener noreferrer">
-						<ExternalLink className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-					</a>
-				)}
-			</div>
-		</div>
-	);
-}
+export function ClusterCard({ data }: { data: ClusterData }) {
+	const provider = data.cloud_identities?.provider ?? "aws";
+	const meta = getProvider(provider as CloudProviderSlug);
+	const cluster = Array.isArray(data.vine_cluster) ? data.vine_cluster[0] : data.vine_cluster;
+	const databases = data.vine_databases ?? [];
+	const caches = data.vine_caches ?? [];
+	const dns = Array.isArray(data.vine_dns) ? data.vine_dns[0] : data.vine_dns;
 
-export function ClusterCard({ cluster }: { cluster: ClusterData }) {
-	const kubeconfigCmd = cluster.cluster_name
-		? `aws eks update-kubeconfig --name ${cluster.cluster_name} --region ${cluster.region}`
-		: null;
-	const argoUrl = cluster.dns_domain
-		? `https://argocd.${cluster.dns_domain}`
+	const kubeconfigCmd = cluster?.cluster_name
+		? `aws eks update-kubeconfig --name ${cluster.cluster_name} --region ${data.region}`
 		: null;
 
 	return (
-		<div className="rounded-lg border border-border/60 bg-card overflow-hidden">
-			<div className="px-5 py-4 border-b border-border/40 flex items-center justify-between">
+		<div className="rounded-lg border border-border/50 bg-card p-5 space-y-4">
+			{/* Header */}
+			<div className="flex items-center justify-between">
 				<div className="flex items-center gap-3">
-					<div className="p-2 rounded-md bg-emerald-500/10">
-						<Server className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-					</div>
+					<Image
+						src={meta.icon}
+						alt={meta.shortName}
+						width={20}
+						height={20}
+					/>
 					<div>
-						<h3 className="text-sm font-medium">
-							{cluster.project_name}
-						</h3>
+						<div className="flex items-center gap-2">
+							<h3 className="text-sm font-semibold">
+								{data.project_name}
+							</h3>
+							<Badge
+								variant="outline"
+								className="text-[10px] py-0 text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950"
+							>
+								Active
+							</Badge>
+						</div>
 						<p className="text-[11px] text-muted-foreground">
-							{cluster.environment_stage} &middot;{" "}
-							{cluster.region}
+							{meta.shortName} · {data.region} ·{" "}
+							{data.environment_stage}
+							{cluster?.cluster_version
+								? ` · K8s ${cluster.cluster_version}`
+								: ""}
 						</p>
 					</div>
 				</div>
-				<Badge
-					variant="outline"
-					className="text-[10px] py-0 text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950"
-				>
-					Active
-				</Badge>
 			</div>
 
-			<div className="px-5 py-3 space-y-4">
-				{/* EKS Cluster */}
-				{cluster.cluster_name && (
-					<div className="space-y-1">
-						<div className="flex items-center gap-1.5 mb-2">
-							<Globe className="h-3.5 w-3.5 text-muted-foreground" />
-							<span className="text-xs font-medium">
-								EKS Cluster
-							</span>
-							{cluster.cluster_version && (
-								<Badge
-									variant="outline"
-									className="text-[9px] py-0 ml-1"
-								>
-									v{cluster.cluster_version}
-								</Badge>
+			{/* Cluster access */}
+			{cluster?.cluster_endpoint && (
+				<div className="space-y-2">
+					<div className="flex items-center gap-1.5 text-muted-foreground">
+						<Terminal className="h-3.5 w-3.5" />
+						<span className="text-[11px] font-medium">
+							Cluster Access
+						</span>
+					</div>
+					<div className="flex items-center gap-2">
+						<code className="flex-1 text-[11px] bg-muted px-2 py-1 rounded font-mono truncate border border-border/50">
+							{cluster.cluster_endpoint}
+						</code>
+						<CopyButton value={cluster.cluster_endpoint} />
+					</div>
+					{kubeconfigCmd && (
+						<div className="flex items-center gap-2">
+							<code className="flex-1 text-[11px] bg-muted px-2 py-1 rounded font-mono truncate border border-border/50">
+								{kubeconfigCmd}
+							</code>
+							<CopyButton value={kubeconfigCmd} />
+						</div>
+					)}
+				</div>
+			)}
+
+			{/* ArgoCD */}
+			{cluster?.argocd_url && (
+				<div className="space-y-1.5">
+					<div className="flex items-center gap-1.5 text-muted-foreground">
+						<Server className="h-3.5 w-3.5" />
+						<span className="text-[11px] font-medium">ArgoCD</span>
+					</div>
+					<div className="flex items-center gap-2">
+						<code className="flex-1 text-[11px] bg-muted px-2 py-1 rounded font-mono truncate border border-border/50">
+							{cluster.argocd_url}
+						</code>
+						<a
+							href={cluster.argocd_url}
+							target="_blank"
+							rel="noopener noreferrer"
+						>
+							<Button
+								variant="ghost"
+								size="icon"
+								className="h-6 w-6 shrink-0"
+							>
+								<ExternalLink className="h-3 w-3" />
+							</Button>
+						</a>
+					</div>
+				</div>
+			)}
+
+			{/* Services */}
+			{(databases.length > 0 || caches.length > 0) && (
+				<div className="space-y-2 pt-1 border-t border-border/30">
+					{databases.map((db) => (
+						<div
+							key={db.name}
+							className="flex items-center justify-between"
+						>
+							<div className="flex items-center gap-2">
+								<Database className="h-3.5 w-3.5 text-muted-foreground" />
+								<span className="text-xs font-medium">
+									{db.name}
+								</span>
+								<span className="text-[10px] text-muted-foreground">
+									{db.engine}
+								</span>
+							</div>
+							{db.endpoint && (
+								<div className="flex items-center gap-1">
+									<code className="text-[10px] text-muted-foreground font-mono max-w-[200px] truncate">
+										{db.endpoint}
+									</code>
+									<CopyButton value={db.endpoint} />
+								</div>
 							)}
 						</div>
-						<InfoRow
-							label="Name"
-							value={cluster.cluster_name}
-							copyable
-						/>
-						{cluster.cluster_endpoint && (
-							<InfoRow
-								label="Endpoint"
-								value={cluster.cluster_endpoint}
-								copyable
-							/>
-						)}
-						{kubeconfigCmd && (
-							<InfoRow
-								label="kubeconfig"
-								value={kubeconfigCmd}
-								copyable
-							/>
-						)}
-						{argoUrl && (
-							<InfoRow
-								label="ArgoCD"
-								value={argoUrl}
-								copyable
-								href={argoUrl}
-							/>
-						)}
-					</div>
-				)}
-
-				{/* Databases */}
-				{cluster.databases.length > 0 && (
-					<div className="space-y-1 pt-2 border-t border-border/30">
-						<div className="flex items-center gap-1.5 mb-2">
-							<Database className="h-3.5 w-3.5 text-muted-foreground" />
-							<span className="text-xs font-medium">
-								Databases
-							</span>
-						</div>
-						{cluster.databases.map((db) => (
-							<div key={db.name} className="space-y-0.5">
-								<div className="flex items-center gap-2">
-									<span className="text-[11px] font-medium">
-										{db.name}
-									</span>
-									<Badge
-										variant="outline"
-										className="text-[9px] py-0"
-									>
-										{db.engine}
-									</Badge>
-								</div>
-								{db.endpoint && (
-									<InfoRow
-										label="Endpoint"
-										value={db.endpoint}
-										copyable
-									/>
-								)}
+					))}
+					{caches.map((cache) => (
+						<div
+							key={cache.name}
+							className="flex items-center justify-between"
+						>
+							<div className="flex items-center gap-2">
+								<HardDrive className="h-3.5 w-3.5 text-muted-foreground" />
+								<span className="text-xs font-medium">
+									{cache.name}
+								</span>
+								<span className="text-[10px] text-muted-foreground">
+									{cache.engine}
+								</span>
 							</div>
-						))}
-					</div>
-				)}
-
-				{/* Caches */}
-				{cluster.caches.length > 0 && (
-					<div className="space-y-1 pt-2 border-t border-border/30">
-						<div className="flex items-center gap-1.5 mb-2">
-							<HardDrive className="h-3.5 w-3.5 text-muted-foreground" />
-							<span className="text-xs font-medium">Caches</span>
-						</div>
-						{cluster.caches.map((cache) => (
-							<div key={cache.name} className="space-y-0.5">
-								<div className="flex items-center gap-2">
-									<span className="text-[11px] font-medium">
-										{cache.name}
-									</span>
-									<Badge
-										variant="outline"
-										className="text-[9px] py-0"
-									>
-										{cache.engine}
-									</Badge>
+							{cache.endpoint && (
+								<div className="flex items-center gap-1">
+									<code className="text-[10px] text-muted-foreground font-mono max-w-[200px] truncate">
+										{cache.endpoint}
+									</code>
+									<CopyButton value={cache.endpoint} />
 								</div>
-								{cache.endpoint && (
-									<InfoRow
-										label="Endpoint"
-										value={cache.endpoint}
-										copyable
-									/>
-								)}
-							</div>
-						))}
-					</div>
-				)}
-			</div>
+							)}
+						</div>
+					))}
+				</div>
+			)}
 		</div>
 	);
 }

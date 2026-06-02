@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, Grape, LayoutList, Map, Plus } from "lucide-react";
+import { Grape, LayoutList, Map, Plus } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
@@ -129,12 +129,6 @@ export default function VineyardDetailPage() {
 	if (!vineyard) {
 		return (
 			<div className="space-y-4">
-				<Link href="/dashboard/vineyards">
-					<Button variant="ghost" size="sm" className="text-xs">
-						<ArrowLeft className="h-3.5 w-3.5 mr-1.5" />
-						Back to Vineyards
-					</Button>
-				</Link>
 				<p className="text-muted-foreground text-sm">Vineyard not found.</p>
 			</div>
 		);
@@ -152,22 +146,15 @@ export default function VineyardDetailPage() {
 		<div className="space-y-6">
 			{/* Header */}
 			<div className="flex items-center justify-between">
-				<div className="flex items-center gap-4">
-					<Link href="/dashboard/vineyards">
-						<Button variant="ghost" size="icon" className="h-8 w-8">
-							<ArrowLeft className="h-4 w-4" />
-						</Button>
-					</Link>
-					<div>
-						<h1 className="text-xl font-semibold tracking-tight text-foreground">
-							{vineyard.name}
-						</h1>
-						<p className="text-xs text-muted-foreground">
-							{vines.length} vine{vines.length !== 1 ? "s" : ""}
-							{activeCount > 0 && ` · ${activeCount} active`}
-							{totalCost > 0 && ` · ~$${Math.round(totalCost)}/mo`}
-						</p>
-					</div>
+				<div>
+					<h1 className="text-xl font-semibold tracking-tight text-foreground">
+						{vineyard.name}
+					</h1>
+					<p className="text-xs text-muted-foreground">
+						{vines.length} vine{vines.length !== 1 ? "s" : ""}
+						{activeCount > 0 && ` · ${activeCount} active`}
+						{totalCost > 0 && ` · ~$${Math.round(totalCost)}/mo`}
+					</p>
 				</div>
 
 				<div className="flex items-center gap-2">
