@@ -5,7 +5,7 @@ resource "aws_kms_key" "redis" {
 
 module "redis" {
   source  = "cloudposse/elasticache-redis/aws"
-  version = "1.2.3"
+  version = "2.0.0"
 
   enabled     = true
   namespace   = local.namespace

@@ -9,7 +9,7 @@ resource "aws_kms_key" "rds" {
 #tfsec:ignore:aws-vpc-no-public-egress-sgr
 module "aurora_serverless_v2" {
   source  = "cloudposse/rds-cluster/aws"
-  version = "1.6.0"
+  version = "2.6.0"
 
   name           = var.rds_cluster_name == "" ? "rds-${local.name_string}" : var.rds_cluster_name
   engine         = var.rds_config.engine
