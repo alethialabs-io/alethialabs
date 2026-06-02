@@ -91,7 +91,7 @@ variable "provision_eks" {
 variable "eks_cluster_version" {
   type        = string
   description = "Desired Kubernetes cluster version"
-  default     = "1.32"
+  default     = "1.33"
 }
 
 variable "cluster_endpoint_public_access_cidrs" {
