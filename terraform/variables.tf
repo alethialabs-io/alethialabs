@@ -10,18 +10,19 @@ variable "environment" {
   default = "dev"
 }
 
-variable "aws_account_id" {
-  type = string
+variable "regions" {
+  type        = list(string)
+  default     = ["eu-west-1"]
+  description = "AWS regions to deploy cloud tendrils. Add a region string to scale out."
 }
 
 variable "worker_mode" {
-  type        = string
-  default     = "self-hosted"
-  description = "self-hosted: worker uses native AWS permissions. cloud-hosted: worker assumes roles into customer accounts."
+  type    = string
+  default = "cloud-hosted"
 
   validation {
     condition     = contains(["self-hosted", "cloud-hosted"], var.worker_mode)
-    error_message = "worker_mode must be self-hosted or cloud-hosted."
+    error_message = "Must be self-hosted or cloud-hosted."
   }
 }
 
@@ -30,10 +31,15 @@ variable "trellis_url" {
   default = "https://adp.prod.itgix.eu"
 }
 
-variable "image" {
+variable "trellis_api_secret" {
   type        = string
-  default     = "ghcr.io/bobikenobi12/tendril"
-  description = "Container image (without tag). Shared across all regions."
+  sensitive   = true
+  description = "Secret for authenticating with the Trellis API (tendril registration + releases)."
+}
+
+variable "image" {
+  type    = string
+  default = "ghcr.io/bobikenobi12/tendril"
 }
 
 variable "tendril_version" {
@@ -42,18 +48,16 @@ variable "tendril_version" {
 }
 
 variable "infracost_api_key" {
-  type        = string
-  sensitive   = true
-  description = "Infracost API key for cost estimation during plan jobs."
-  default     = ""
+  type      = string
+  sensitive = true
+  default   = ""
 }
 
 # ---------- ECR (eu-west-1 only) ----------
 
 variable "ecr_image_tag_mutability" {
-  type        = string
-  default     = "IMMUTABLE"
-  description = "Image tag mutability. Use MUTABLE for dev (allows :latest overwrites), IMMUTABLE for production."
+  type    = string
+  default = "MUTABLE"
 
   validation {
     condition     = contains(["MUTABLE", "IMMUTABLE"], var.ecr_image_tag_mutability)
@@ -62,111 +66,53 @@ variable "ecr_image_tag_mutability" {
 }
 
 variable "ecr_force_delete" {
-  type        = bool
-  default     = false
-  description = "Allow terraform destroy to delete ECR repo with images. true for dev, false for production."
+  type    = bool
+  default = false
 }
 
-# ---------- Shared worker settings ----------
+# ---------- Shared tendril settings ----------
 
 variable "secrets_recovery_window_days" {
-  type        = number
-  default     = 7
-  description = "Days before a deleted secret is permanently removed. 0 = immediate (dev only), 7-30 for production."
+  type    = number
+  default = 0
 
   validation {
     condition     = var.secrets_recovery_window_days == 0 || (var.secrets_recovery_window_days >= 7 && var.secrets_recovery_window_days <= 30)
-    error_message = "Must be 0 (immediate) or between 7 and 30 days."
+    error_message = "Must be 0 or 7-30."
   }
 }
 
-variable "assign_public_ip" {
-  type        = bool
-  default     = true
-  description = "Assign public IP to Fargate tasks. true for public subnets, false for private subnets with NAT gateway."
-}
-
-# ---------- Supabase S3 state backend (passed to worker containers) ----------
+# ---------- Supabase S3 state backend (passed to tendril containers) ----------
 
 variable "supabase_s3_endpoint" {
-  type        = string
-  default     = "https://egzejziajjmjmdjplmii.storage.supabase.co/storage/v1/s3"
-  description = "Supabase S3-compatible endpoint for Terraform state storage."
+  type    = string
+  default = ""
 }
 
 variable "supabase_s3_region" {
-  type        = string
-  default     = "eu-north-1"
-  description = "Region for the Supabase S3 state backend."
+  type    = string
+  default = "eu-north-1"
 }
 
 variable "supabase_storage_key_id" {
-  type        = string
-  sensitive   = true
-  description = "Supabase Storage S3 access key ID."
+  type      = string
+  sensitive = true
 }
 
 variable "supabase_storage_secret_key" {
-  type        = string
-  sensitive   = true
-  description = "Supabase Storage S3 secret access key."
+  type      = string
+  sensitive = true
 }
 
 # ---------- Supabase API (for Lambda scaler) ----------
 
 variable "supabase_url" {
   type        = string
-  description = "Supabase project URL (e.g. https://xyz.supabase.co)."
+  description = "Supabase project URL (for Lambda scaler)."
 }
 
 variable "supabase_service_role_key" {
   type        = string
   sensitive   = true
-  description = "Supabase service role key (server-side, bypasses RLS). Used by the scaler Lambda."
-}
-
-# ---------- eu-west-1 worker ----------
-
-variable "eu_west_1_vpc_id" {
-  type        = string
-  description = "VPC ID in eu-west-1."
-}
-
-variable "eu_west_1_subnet_ids" {
-  type        = list(string)
-  description = "Subnets in eu-west-1 (must have internet access)."
-}
-
-variable "eu_west_1_worker_id" {
-  type        = string
-  description = "Worker ID for the eu-west-1 worker."
-}
-
-variable "eu_west_1_worker_token" {
-  type        = string
-  sensitive   = true
-  description = "Worker token for the eu-west-1 worker."
-}
-
-# ---------- eu-central-1 worker ----------
-
-variable "eu_central_1_vpc_id" {
-  type        = string
-  description = "VPC ID in eu-central-1."
-}
-
-variable "eu_central_1_subnet_ids" {
-  type        = list(string)
-  description = "Subnets in eu-central-1 (must have internet access)."
-}
-
-variable "eu_central_1_worker_id" {
-  type        = string
-  description = "Worker ID for the eu-central-1 worker."
-}
-
-variable "eu_central_1_worker_token" {
-  type        = string
-  sensitive   = true
-  description = "Worker token for the eu-central-1 worker."
+  description = "Supabase service role key (for Lambda scaler)."
 }

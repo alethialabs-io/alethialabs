@@ -1,22 +1,11 @@
 variable "region" {
   type        = string
-  description = "AWS region for this worker."
+  description = "AWS region for this tendril."
 }
 
 variable "name_prefix" {
   type        = string
   description = "Prefix for all resource names (e.g. tendril-dev)."
-}
-
-variable "worker_id" {
-  type        = string
-  description = "Worker ID registered in Trellis."
-}
-
-variable "worker_token" {
-  type        = string
-  sensitive   = true
-  description = "Worker authentication token."
 }
 
 variable "image" {
@@ -31,25 +20,21 @@ variable "tendril_version" {
   description = "Image tag to deploy."
 }
 
-variable "vpc_id" {
-  type        = string
-  description = "VPC where the Fargate task will run."
-}
-
-variable "subnet_ids" {
-  type        = list(string)
-  description = "Subnets for the Fargate task (must have internet access)."
-}
-
 variable "trellis_url" {
   type        = string
   default     = "https://adp.prod.itgix.eu"
   description = "Trellis web origin URL."
 }
 
+variable "trellis_api_secret" {
+  type        = string
+  sensitive   = true
+  description = "Secret for authenticating with the Trellis API (tendril registration)."
+}
+
 variable "worker_mode" {
   type        = string
-  default     = "self-hosted"
+  default     = "cloud-hosted"
   description = "self-hosted: worker uses native AWS permissions. cloud-hosted: worker assumes roles into customer accounts."
 
   validation {
@@ -67,7 +52,7 @@ variable "infracost_api_key" {
 
 variable "supabase_s3_endpoint" {
   type        = string
-  default     = "https://egzejziajjmjmdjplmii.storage.supabase.co/storage/v1/s3"
+  default     = ""
   description = "Supabase S3-compatible endpoint for Terraform state storage."
 }
 
@@ -91,17 +76,11 @@ variable "supabase_storage_secret_key" {
 
 variable "secrets_recovery_window_days" {
   type        = number
-  default     = 7
+  default     = 0
   description = "Days before a deleted secret is permanently removed. 0 = immediate (dev only), 7-30 for production."
 
   validation {
     condition     = var.secrets_recovery_window_days == 0 || (var.secrets_recovery_window_days >= 7 && var.secrets_recovery_window_days <= 30)
     error_message = "Must be 0 (immediate) or between 7 and 30 days."
   }
-}
-
-variable "assign_public_ip" {
-  type        = bool
-  default     = true
-  description = "Assign public IP to Fargate tasks. true for public subnets, false for private subnets with NAT gateway."
 }

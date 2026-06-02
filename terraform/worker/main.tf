@@ -4,6 +4,26 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
+    local = {
+      source  = "hashicorp/local"
+      version = "~> 2.0"
+    }
+  }
+}
+
+# Nested provider — each module instance targets its own region.
+provider "aws" {
+  region = var.region
+  default_tags {
+    tags = {
+      Project     = var.name_prefix
+      Environment = "managed"
+      ManagedBy   = "terraform"
+    }
   }
 }
 
@@ -13,9 +33,87 @@ locals {
   name_prefix = "${var.name_prefix}-${var.region}"
 }
 
+# ---------- Tendril auto-registration ----------
+
+resource "null_resource" "register_tendril" {
+  triggers = {
+    region = var.region
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      RESPONSE=$(curl -sf -X POST "${var.trellis_url}/api/tendrils/register" \
+        -H "Authorization: Bearer ${var.trellis_api_secret}" \
+        -H "Content-Type: application/json" \
+        -d '{"name": "cloud-tendril-${var.region}", "mode": "cloud-hosted"}')
+
+      TENDRIL_ID=$(echo "$RESPONSE" | jq -r '.tendril_id')
+      TENDRIL_TOKEN=$(echo "$RESPONSE" | jq -r '.tendril_token')
+
+      # Write to a file that Terraform can read
+      echo "{\"tendril_id\": \"$TENDRIL_ID\", \"tendril_token\": \"$TENDRIL_TOKEN\"}" > ${path.module}/.registered-${var.region}.json
+    EOT
+  }
+}
+
+data "local_file" "registration" {
+  depends_on = [null_resource.register_tendril]
+  filename   = "${path.module}/.registered-${var.region}.json"
+}
+
+locals {
+  registration  = jsondecode(data.local_file.registration.content)
+  tendril_id    = local.registration.tendril_id
+  tendril_token = local.registration.tendril_token
+}
+
+# ---------- VPC ----------
+
+resource "aws_vpc" "tendril" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+  tags                 = { Name = "${var.name_prefix}-${var.region}-vpc" }
+}
+
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
+resource "aws_subnet" "public" {
+  count                   = 2
+  vpc_id                  = aws_vpc.tendril.id
+  cidr_block              = cidrsubnet(aws_vpc.tendril.cidr_block, 8, count.index)
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = true
+  tags                    = { Name = "${var.name_prefix}-${var.region}-public-${count.index}" }
+}
+
+resource "aws_internet_gateway" "tendril" {
+  vpc_id = aws_vpc.tendril.id
+  tags   = { Name = "${var.name_prefix}-${var.region}-igw" }
+}
+
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.tendril.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.tendril.id
+  }
+
+  tags = { Name = "${var.name_prefix}-${var.region}-public-rt" }
+}
+
+resource "aws_route_table_association" "public" {
+  count          = 2
+  subnet_id      = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.public.id
+}
+
 # ---------- ECS cluster ----------
 
-resource "aws_ecs_cluster" "worker" {
+resource "aws_ecs_cluster" "tendril" {
   name = "${local.name_prefix}-cluster"
 
   setting {
@@ -24,8 +122,8 @@ resource "aws_ecs_cluster" "worker" {
   }
 }
 
-resource "aws_ecs_cluster_capacity_providers" "worker" {
-  cluster_name       = aws_ecs_cluster.worker.name
+resource "aws_ecs_cluster_capacity_providers" "tendril" {
+  cluster_name       = aws_ecs_cluster.tendril.name
   capacity_providers = ["FARGATE"]
 
   default_capacity_provider_strategy {
@@ -36,7 +134,7 @@ resource "aws_ecs_cluster_capacity_providers" "worker" {
 
 # ---------- Task definition ----------
 
-resource "aws_ecs_task_definition" "worker" {
+resource "aws_ecs_task_definition" "tendril" {
   family                   = "${local.name_prefix}-task"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
@@ -54,7 +152,7 @@ resource "aws_ecs_task_definition" "worker" {
       environment = [
         { name = "GRAPE_WORKER_MODE", value = var.worker_mode },
         { name = "GRAPE_WEB_ORIGIN", value = var.trellis_url },
-        { name = "GRAPE_WORKER_ID", value = var.worker_id },
+        { name = "GRAPE_WORKER_ID", value = local.tendril_id },
         { name = "SUPABASE_S3_ENDPOINT", value = var.supabase_s3_endpoint },
         { name = "SUPABASE_S3_REGION", value = var.supabase_s3_region },
       ]
@@ -62,7 +160,7 @@ resource "aws_ecs_task_definition" "worker" {
       secrets = [
         {
           name      = "GRAPE_WORKER_TOKEN"
-          valueFrom = aws_secretsmanager_secret.worker_token.arn
+          valueFrom = aws_secretsmanager_secret.tendril_token.arn
         },
         {
           name      = "INFRACOST_API_KEY"
@@ -81,7 +179,7 @@ resource "aws_ecs_task_definition" "worker" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.worker.name
+          "awslogs-group"         = aws_cloudwatch_log_group.tendril.name
           "awslogs-region"        = var.region
           "awslogs-stream-prefix" = "tendril"
         }
@@ -92,17 +190,17 @@ resource "aws_ecs_task_definition" "worker" {
 
 # ---------- ECS service (scale-to-zero; Lambda scaler manages desired_count) ----------
 
-resource "aws_ecs_service" "worker" {
+resource "aws_ecs_service" "tendril" {
   name            = "${local.name_prefix}-service"
-  cluster         = aws_ecs_cluster.worker.id
-  task_definition = aws_ecs_task_definition.worker.arn
+  cluster         = aws_ecs_cluster.tendril.id
+  task_definition = aws_ecs_task_definition.tendril.arn
   desired_count   = 0
   launch_type     = "FARGATE"
 
   network_configuration {
-    assign_public_ip = var.assign_public_ip
-    security_groups  = [aws_security_group.worker.id]
-    subnets          = var.subnet_ids
+    assign_public_ip = true
+    security_groups  = [aws_security_group.tendril.id]
+    subnets          = aws_subnet.public[*].id
   }
 
   deployment_maximum_percent         = 200
@@ -116,14 +214,14 @@ resource "aws_ecs_service" "worker" {
 
 # ---------- Security group (outbound-only) ----------
 
-resource "aws_security_group" "worker" {
+resource "aws_security_group" "tendril" {
   name        = "${local.name_prefix}-sg"
-  description = "Tendril worker - outbound only"
-  vpc_id      = var.vpc_id
+  description = "Tendril - outbound only"
+  vpc_id      = aws_vpc.tendril.id
 }
 
 resource "aws_vpc_security_group_egress_rule" "all_outbound" {
-  security_group_id = aws_security_group.worker.id
+  security_group_id = aws_security_group.tendril.id
   description       = "Allow all outbound (HTTPS to Trellis, git, registries, AWS APIs)"
   ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"
@@ -131,22 +229,22 @@ resource "aws_vpc_security_group_egress_rule" "all_outbound" {
 
 # ---------- CloudWatch logs ----------
 
-resource "aws_cloudwatch_log_group" "worker" {
+resource "aws_cloudwatch_log_group" "tendril" {
   name              = "/ecs/${local.name_prefix}"
   retention_in_days = 30
 }
 
 # ---------- Secrets Manager ----------
 
-resource "aws_secretsmanager_secret" "worker_token" {
-  name                    = "${local.name_prefix}-worker-token"
-  description             = "Tendril worker authentication token"
+resource "aws_secretsmanager_secret" "tendril_token" {
+  name                    = "${local.name_prefix}-tendril-token"
+  description             = "Tendril authentication token (auto-registered)"
   recovery_window_in_days = var.secrets_recovery_window_days
 }
 
-resource "aws_secretsmanager_secret_version" "worker_token" {
-  secret_id     = aws_secretsmanager_secret.worker_token.id
-  secret_string = var.worker_token
+resource "aws_secretsmanager_secret_version" "tendril_token" {
+  secret_id     = aws_secretsmanager_secret.tendril_token.id
+  secret_string = local.tendril_token
 }
 
 resource "aws_secretsmanager_secret" "infracost_key" {
@@ -217,7 +315,7 @@ resource "aws_iam_role_policy" "execution_secrets" {
         Effect = "Allow"
         Action = ["secretsmanager:GetSecretValue"]
         Resource = [
-          aws_secretsmanager_secret.worker_token.arn,
+          aws_secretsmanager_secret.tendril_token.arn,
           aws_secretsmanager_secret.infracost_key.arn,
           aws_secretsmanager_secret.supabase_storage_key_id.arn,
           aws_secretsmanager_secret.supabase_storage_secret_key.arn,

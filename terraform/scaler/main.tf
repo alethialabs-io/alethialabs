@@ -17,7 +17,7 @@ data "archive_file" "lambda" {
 
 resource "aws_lambda_function" "scaler" {
   function_name    = "${var.name_prefix}-scaler"
-  description      = "Scale ECS workers based on queued provision jobs"
+  description      = "Scale ECS tendrils based on queued provision jobs"
   filename         = data.archive_file.lambda.output_path
   source_code_hash = data.archive_file.lambda.output_base64sha256
   handler          = "index.handler"
@@ -29,9 +29,9 @@ resource "aws_lambda_function" "scaler" {
 
   environment {
     variables = {
-      SUPABASE_URL             = var.supabase_url
+      SUPABASE_URL              = var.supabase_url
       SUPABASE_SERVICE_ROLE_KEY = var.supabase_service_role_key
-      WORKERS                  = jsonencode(var.workers)
+      WORKERS                   = jsonencode(var.workers)
     }
   }
 }

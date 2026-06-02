@@ -1,34 +1,33 @@
-project_name   = "tendril"
-environment    = "dev"
-aws_account_id = "YOUR_AWS_ACCOUNT_ID"
+# Tendril multi-region deployment configuration
+# Copy to terraform.tfvars and fill in secrets.
 
-worker_mode     = "self-hosted"
+project_name    = "tendril"
+environment     = "dev"
+
+# Add regions to scale out — each gets its own VPC, ECS cluster, and tendril worker.
+regions         = ["eu-west-1"]
+
+worker_mode     = "cloud-hosted"
 trellis_url     = "https://adp.prod.itgix.eu"
 tendril_version = "latest"
+
+# Trellis API secret — used by workers to auto-register as tendrils.
+trellis_api_secret = ""
+
+# Supabase API — used by the Lambda scaler to query queued jobs.
+supabase_url              = "https://YOUR_PROJECT.supabase.co"
+supabase_service_role_key = ""
+
+# Supabase S3 — Terraform state storage for provisioned vines.
+supabase_s3_endpoint        = "https://YOUR_PROJECT.storage.supabase.co/storage/v1/s3"
+supabase_s3_region          = "eu-north-1"
+supabase_storage_key_id     = ""
+supabase_storage_secret_key = ""
+
+# Infracost — cost estimation during plan jobs (optional).
 infracost_api_key = ""
 
-# Supabase S3 — Terraform state storage for provisioned vines
-supabase_storage_key_id     = "YOUR_SUPABASE_STORAGE_KEY_ID"
-supabase_storage_secret_key = "YOUR_SUPABASE_STORAGE_SECRET_KEY"
-
-# Supabase API — used by the Lambda scaler to query queued jobs
-supabase_url              = "https://YOUR_PROJECT.supabase.co"
-supabase_service_role_key = "YOUR_SUPABASE_SERVICE_ROLE_KEY"
-
-# --- eu-west-1 worker ---
-eu_west_1_vpc_id       = "vpc-0abc..."
-eu_west_1_subnet_ids   = ["subnet-0aaa...", "subnet-0bbb..."]
-eu_west_1_worker_id    = "YOUR_EU_WEST_1_WORKER_ID"
-eu_west_1_worker_token = "YOUR_EU_WEST_1_WORKER_TOKEN"
-
-# --- eu-central-1 worker ---
-eu_central_1_vpc_id       = "vpc-0def..."
-eu_central_1_subnet_ids   = ["subnet-0ccc...", "subnet-0ddd..."]
-eu_central_1_worker_id    = "YOUR_EU_CENTRAL_1_WORKER_ID"
-eu_central_1_worker_token = "YOUR_EU_CENTRAL_1_WORKER_TOKEN"
-
-# Hardening — relax these for dev, tighten for production
-ecr_image_tag_mutability     = "MUTABLE"    # use "IMMUTABLE" in production
-ecr_force_delete             = true          # use false in production
-secrets_recovery_window_days = 0             # use 7+ in production
-assign_public_ip             = true          # use false with private subnets + NAT
+# Hardening — relax these for dev, tighten for production.
+# ecr_image_tag_mutability     = "IMMUTABLE"   # default: MUTABLE
+# ecr_force_delete             = false          # default: false
+# secrets_recovery_window_days = 7              # default: 0 (immediate)
