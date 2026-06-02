@@ -20,9 +20,9 @@ permissions:
 
 env:
   AWS_REGION: eu-west-1
-  ECR_REPOSITORY: grape-worker-dev-grape
-  ECS_CLUSTER: grape-worker-dev-cluster
-  ECS_SERVICE: grape-worker-dev-service
+  ECR_REPOSITORY: tendril-dev-tendril
+  ECS_CLUSTER: tendril-dev-eu-west-1-cluster
+  ECS_SERVICE: tendril-dev-eu-west-1-service
   GHCR_IMAGE: ghcr.io/bobikenobi12/tendril
 
 jobs:

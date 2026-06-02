@@ -42,7 +42,7 @@ Terraform configuration that deploys the Grape provisioning worker as an AWS Far
 ## Prerequisites
 
 - AWS CLI configured with credentials for the target account
-- Terraform >= 1.5
+- Terraform >= 1.10
 - Docker
 - Grape CLI installed (`brew install grape` or build from source)
 - Trellis running and accessible (local or deployed)
@@ -100,34 +100,30 @@ Save these values - the token cannot be recovered.
 cd terraform
 ```
 
-Create a backend config file for your S3 state bucket:
+Create a backend config for Supabase S3-compatible storage:
 
 ```bash
-cat > backend.hcl <<EOF
-bucket  = "your-terraform-state-bucket"
-key     = "grape-worker/terraform.tfstate"
-region  = "eu-west-1"
-encrypt = true
-EOF
+cp backend.hcl.example backend.hcl
+# Edit backend.hcl — set your bucket name (create it in Supabase Storage dashboard first)
 ```
 
-Edit `terraform.tfvars` with real values:
+Set the Supabase storage credentials as environment variables:
 
-```hcl
-project_name   = "grape-worker"
-region         = "eu-west-1"
-environment    = "dev"
-aws_account_id = "787587782604"
-
-worker_mode  = "self-hosted"
-worker_id    = "a1b2c3d4-e5f6-..."      # from step 2
-worker_token = "64-char-hex-string"       # from step 2
-trellis_url  = "https://adp.prod.itgix.eu"
-
-grape_version = "latest"
-vpc_id        = "vpc-0abc123..."          # existing VPC with internet access
-subnet_ids    = ["subnet-0aaa...", "subnet-0bbb..."]  # public subnets
+```bash
+export AWS_ACCESS_KEY_ID="your-supabase-storage-key-id"
+export AWS_SECRET_ACCESS_KEY="your-supabase-storage-secret-key"
 ```
+
+> **Note:** `backend.hcl` is gitignored — it contains credentials. See `backend.hcl.example` for the full template.
+
+Copy and fill in the variables file:
+
+```bash
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars with real values (worker_id, worker_token, vpc_id, subnet_ids)
+```
+
+> **Note:** `terraform.tfvars` is gitignored — it contains sensitive values like `worker_token`.
 
 Apply:
 
@@ -135,6 +131,26 @@ Apply:
 terraform init -backend-config=backend.hcl
 terraform plan
 terraform apply
+```
+
+#### Migrating from an existing AWS S3 backend
+
+If you previously used an AWS S3 bucket for state:
+
+```bash
+# 1. Back up current state
+terraform state pull > terraform.tfstate.backup
+
+# 2. Create the new backend.hcl with Supabase config
+cp backend.hcl.example backend.hcl
+
+# 3. Set Supabase credentials and migrate
+export AWS_ACCESS_KEY_ID="your-supabase-storage-key-id"
+export AWS_SECRET_ACCESS_KEY="your-supabase-storage-secret-key"
+terraform init -migrate-state -backend-config=backend.hcl
+
+# 4. Verify
+terraform state list
 ```
 
 This creates:

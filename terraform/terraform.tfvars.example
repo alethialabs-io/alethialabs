@@ -1,0 +1,34 @@
+project_name   = "tendril"
+environment    = "dev"
+aws_account_id = "YOUR_AWS_ACCOUNT_ID"
+
+worker_mode     = "self-hosted"
+trellis_url     = "https://adp.prod.itgix.eu"
+tendril_version = "latest"
+infracost_api_key = ""
+
+# Supabase S3 — Terraform state storage for provisioned vines
+supabase_storage_key_id     = "YOUR_SUPABASE_STORAGE_KEY_ID"
+supabase_storage_secret_key = "YOUR_SUPABASE_STORAGE_SECRET_KEY"
+
+# Supabase API — used by the Lambda scaler to query queued jobs
+supabase_url              = "https://YOUR_PROJECT.supabase.co"
+supabase_service_role_key = "YOUR_SUPABASE_SERVICE_ROLE_KEY"
+
+# --- eu-west-1 worker ---
+eu_west_1_vpc_id       = "vpc-0abc..."
+eu_west_1_subnet_ids   = ["subnet-0aaa...", "subnet-0bbb..."]
+eu_west_1_worker_id    = "YOUR_EU_WEST_1_WORKER_ID"
+eu_west_1_worker_token = "YOUR_EU_WEST_1_WORKER_TOKEN"
+
+# --- eu-central-1 worker ---
+eu_central_1_vpc_id       = "vpc-0def..."
+eu_central_1_subnet_ids   = ["subnet-0ccc...", "subnet-0ddd..."]
+eu_central_1_worker_id    = "YOUR_EU_CENTRAL_1_WORKER_ID"
+eu_central_1_worker_token = "YOUR_EU_CENTRAL_1_WORKER_TOKEN"
+
+# Hardening — relax these for dev, tighten for production
+ecr_image_tag_mutability     = "MUTABLE"    # use "IMMUTABLE" in production
+ecr_force_delete             = true          # use false in production
+secrets_recovery_window_days = 0             # use 7+ in production
+assign_public_ip             = true          # use false with private subnets + NAT
