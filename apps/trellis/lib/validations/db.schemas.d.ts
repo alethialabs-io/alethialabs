@@ -317,6 +317,15 @@ export type PublicVineyardsInsert = z.infer<
 export type PublicVineyardsUpdate = z.infer<
   typeof generated.publicVineyardsUpdateSchema
 >;
+export type PublicWorkerReleasesRow = z.infer<
+  typeof generated.publicWorkerReleasesRowSchema
+>;
+export type PublicWorkerReleasesInsert = z.infer<
+  typeof generated.publicWorkerReleasesInsertSchema
+>;
+export type PublicWorkerReleasesUpdate = z.infer<
+  typeof generated.publicWorkerReleasesUpdateSchema
+>;
 export type PublicWorkersRow = z.infer<typeof generated.publicWorkersRowSchema>;
 export type PublicWorkersInsert = z.infer<
   typeof generated.publicWorkersInsertSchema
@@ -362,10 +371,4 @@ export type PublicUpdateJobStatusArgs = z.infer<
 >;
 export type PublicUpdateJobStatusReturns = z.infer<
   typeof generated.publicUpdateJobStatusReturnsSchema
->;
-export type PublicWorkerHeartbeatArgs = z.infer<
-  typeof generated.publicWorkerHeartbeatArgsSchema
->;
-export type PublicWorkerHeartbeatReturns = z.infer<
-  typeof generated.publicWorkerHeartbeatReturnsSchema
 >;

@@ -159,6 +159,7 @@ export const publicProvisionJobTypeSchema = z.union([
   z.literal("FETCH_RESOURCES"),
   z.literal("PLAN"),
   z.literal("DEPLOY_WORKER"),
+  z.literal("UPDATE_WORKER"),
 ]);
 
 export const publicRegistryTagMutabilitySchema = z.union([
@@ -1916,6 +1917,27 @@ export const publicVineyardsUpdateSchema = z.object({
   user_id: z.string().optional(),
 });
 
+export const publicWorkerReleasesRowSchema = z.object({
+  id: z.string(),
+  release_notes: z.string(),
+  released_at: z.string(),
+  version: z.string(),
+});
+
+export const publicWorkerReleasesInsertSchema = z.object({
+  id: z.string().optional(),
+  release_notes: z.string().optional(),
+  released_at: z.string().optional(),
+  version: z.string(),
+});
+
+export const publicWorkerReleasesUpdateSchema = z.object({
+  id: z.string().optional(),
+  release_notes: z.string().optional(),
+  released_at: z.string().optional(),
+  version: z.string().optional(),
+});
+
 export const publicWorkersRowSchema = z.object({
   cloud_identity_id: z.string().nullable(),
   created_at: z.string().nullable(),
@@ -1925,9 +1947,11 @@ export const publicWorkersRowSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).nullable(),
   mode: publicWorkerModeSchema,
   name: z.string(),
+  release_id: z.string().nullable(),
   status: publicWorkerStatusSchema.nullable(),
   token_hash: z.string(),
   user_id: z.string().nullable(),
+  version: z.string().nullable(),
 });
 
 export const publicWorkersInsertSchema = z.object({
@@ -1939,9 +1963,11 @@ export const publicWorkersInsertSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional().nullable(),
   mode: publicWorkerModeSchema,
   name: z.string(),
+  release_id: z.string().optional().nullable(),
   status: publicWorkerStatusSchema.optional().nullable(),
   token_hash: z.string(),
   user_id: z.string().optional().nullable(),
+  version: z.string().optional().nullable(),
 });
 
 export const publicWorkersUpdateSchema = z.object({
@@ -1953,9 +1979,11 @@ export const publicWorkersUpdateSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional().nullable(),
   mode: publicWorkerModeSchema.optional(),
   name: z.string().optional(),
+  release_id: z.string().optional().nullable(),
   status: publicWorkerStatusSchema.optional().nullable(),
   token_hash: z.string().optional(),
   user_id: z.string().optional().nullable(),
+  version: z.string().optional().nullable(),
 });
 
 export const publicWorkersRelationshipsSchema = z.tuple([
@@ -1964,6 +1992,13 @@ export const publicWorkersRelationshipsSchema = z.tuple([
     columns: z.tuple([z.literal("cloud_identity_id")]),
     isOneToOne: z.literal(false),
     referencedRelation: z.literal("cloud_identities"),
+    referencedColumns: z.tuple([z.literal("id")]),
+  }),
+  z.object({
+    foreignKeyName: z.literal("workers_release_id_fkey"),
+    columns: z.tuple([z.literal("release_id")]),
+    isOneToOne: z.literal(false),
+    referencedRelation: z.literal("worker_releases"),
     referencedColumns: z.tuple([z.literal("id")]),
   }),
 ]);
@@ -2101,10 +2136,3 @@ export const publicUpdateJobStatusArgsSchema = z.object({
 });
 
 export const publicUpdateJobStatusReturnsSchema = z.undefined();
-
-export const publicWorkerHeartbeatArgsSchema = z.object({
-  p_worker_id: z.string(),
-  p_worker_token_hash: z.string(),
-});
-
-export const publicWorkerHeartbeatReturnsSchema = z.undefined();

@@ -1287,6 +1287,27 @@ export type Database = {
         }
         Relationships: []
       }
+      worker_releases: {
+        Row: {
+          id: string
+          release_notes: string
+          released_at: string
+          version: string
+        }
+        Insert: {
+          id?: string
+          release_notes?: string
+          released_at?: string
+          version: string
+        }
+        Update: {
+          id?: string
+          release_notes?: string
+          released_at?: string
+          version?: string
+        }
+        Relationships: []
+      }
       workers: {
         Row: {
           cloud_identity_id: string | null
@@ -1297,9 +1318,11 @@ export type Database = {
           metadata: Record<string, unknown> | null
           mode: Database["public"]["Enums"]["worker_mode"]
           name: string
+          release_id: string | null
           status: Database["public"]["Enums"]["worker_status"] | null
           token_hash: string
           user_id: string | null
+          version: string | null
         }
         Insert: {
           cloud_identity_id?: string | null
@@ -1310,9 +1333,11 @@ export type Database = {
           metadata?: Record<string, unknown> | null
           mode: Database["public"]["Enums"]["worker_mode"]
           name: string
+          release_id?: string | null
           status?: Database["public"]["Enums"]["worker_status"] | null
           token_hash: string
           user_id?: string | null
+          version?: string | null
         }
         Update: {
           cloud_identity_id?: string | null
@@ -1323,9 +1348,11 @@ export type Database = {
           metadata?: Record<string, unknown> | null
           mode?: Database["public"]["Enums"]["worker_mode"]
           name?: string
+          release_id?: string | null
           status?: Database["public"]["Enums"]["worker_status"] | null
           token_hash?: string
           user_id?: string | null
+          version?: string | null
         }
         Relationships: [
           {
@@ -1333,6 +1360,13 @@ export type Database = {
             columns: ["cloud_identity_id"]
             isOneToOne: false
             referencedRelation: "cloud_identities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workers_release_id_fkey"
+            columns: ["release_id"]
+            isOneToOne: false
+            referencedRelation: "worker_releases"
             referencedColumns: ["id"]
           },
         ]
@@ -1471,10 +1505,19 @@ export type Database = {
         }
         Returns: undefined
       }
-      worker_heartbeat: {
-        Args: { p_worker_id: string; p_worker_token_hash: string }
-        Returns: undefined
-      }
+      worker_heartbeat:
+        | {
+            Args: { p_worker_id: string; p_worker_token_hash: string }
+            Returns: undefined
+          }
+        | {
+            Args: {
+              p_version?: string
+              p_worker_id: string
+              p_worker_token_hash: string
+            }
+            Returns: undefined
+          }
     }
     Enums: {
       audit_action:
@@ -1553,6 +1596,7 @@ export type Database = {
         | "FETCH_RESOURCES"
         | "PLAN"
         | "DEPLOY_WORKER"
+        | "UPDATE_WORKER"
       registry_tag_mutability: "MUTABLE" | "IMMUTABLE"
       vine_status:
         | "DRAFT"
@@ -1774,6 +1818,7 @@ export const Constants = {
         "FETCH_RESOURCES",
         "PLAN",
         "DEPLOY_WORKER",
+        "UPDATE_WORKER",
       ],
       registry_tag_mutability: ["MUTABLE", "IMMUTABLE"],
       vine_status: [
