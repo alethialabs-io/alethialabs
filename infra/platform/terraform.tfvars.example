@@ -1,17 +1,30 @@
-# Tendril multi-region deployment configuration
+# Tendril multi-environment deployment configuration
 # Copy to terraform.tfvars and fill in secrets.
 
-project_name    = "tendril"
-environment     = "dev"
+project_name = "tendril"
+environment  = "dev"
 
-# Add regions to scale out — each gets its own VPC, ECS cluster, and tendril worker.
-regions         = ["eu-west-1"]
+# Each entry creates a tendril: VPC, ECS cluster, auto-registration.
+# Key = tendril name, region = AWS region, trellis_url = which Trellis it serves.
+tendrils = {
+  "prod-eu-west-1" = {
+    region      = "eu-west-1"
+    trellis_url = "https://adp.prod.itgix.eu"
+  }
+  "beta-eu-west-1" = {
+    region      = "eu-west-1"
+    trellis_url = "https://beta.adp.itgix.com"
+  }
+  "dev-eu-west-1" = {
+    region      = "eu-west-1"
+    trellis_url = "https://your-ngrok-url.ngrok-free.dev"
+  }
+}
 
 worker_mode     = "cloud-hosted"
-trellis_url     = "https://adp.prod.itgix.eu"
 tendril_version = "latest"
 
-# Trellis API secret — used by workers to auto-register as tendrils.
+# Trellis API secret — used by tendrils to auto-register.
 trellis_api_secret = ""
 
 # Supabase API — used by the Lambda scaler to query queued jobs.
@@ -26,8 +39,3 @@ supabase_storage_secret_key = ""
 
 # Infracost — cost estimation during plan jobs (optional).
 infracost_api_key = ""
-
-# Hardening — relax these for dev, tighten for production.
-# ecr_image_tag_mutability     = "IMMUTABLE"   # default: MUTABLE
-# ecr_force_delete             = false          # default: false
-# secrets_recovery_window_days = 7              # default: 0 (immediate)

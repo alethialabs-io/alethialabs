@@ -10,10 +10,18 @@ variable "environment" {
   default = "dev"
 }
 
-variable "regions" {
-  type        = list(string)
-  default     = ["eu-west-1"]
-  description = "AWS regions to deploy cloud tendrils. Add a region string to scale out."
+variable "tendrils" {
+  type = map(object({
+    region      = string
+    trellis_url = string
+  }))
+  description = "Map of tendril deployments. Key is the tendril name, value specifies region and Trellis instance."
+  default = {
+    "prod-eu-west-1" = {
+      region      = "eu-west-1"
+      trellis_url = "https://adp.prod.itgix.eu"
+    }
+  }
 }
 
 variable "worker_mode" {
@@ -24,11 +32,6 @@ variable "worker_mode" {
     condition     = contains(["self-hosted", "cloud-hosted"], var.worker_mode)
     error_message = "Must be self-hosted or cloud-hosted."
   }
-}
-
-variable "trellis_url" {
-  type    = string
-  default = "https://adp.prod.itgix.eu"
 }
 
 variable "trellis_api_secret" {

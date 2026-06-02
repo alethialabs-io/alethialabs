@@ -3,9 +3,11 @@ output "ecr_repository_url" {
 }
 
 output "tendrils" {
-  description = "Per-region tendril cluster and service names"
+  description = "Per-tendril cluster and service names"
   value = {
-    for region, w in module.tendril : region => {
+    for name, w in module.tendril : name => {
+      region       = var.tendrils[name].region
+      trellis_url  = var.tendrils[name].trellis_url
       cluster_name = w.cluster_name
       service_name = w.service_name
     }
