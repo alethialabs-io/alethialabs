@@ -23,6 +23,7 @@ type VineConfig struct {
 	NosqlTables         []VineNosqlConfig              `json:"nosql_tables"`
 	Secrets             []VineSecretConfig             `json:"secrets"`
 	ContainerRegistries []VineContainerRegistryConfig  `json:"container_registries"`
+	StorageBuckets      []VineStorageBucketConfig      `json:"storage_buckets"`
 
 	GitAccessToken string `json:"git_access_token"`
 
@@ -117,4 +118,12 @@ type VineContainerRegistryConfig struct {
 	Name               string `json:"name"`
 	ImageTagMutability string `json:"image_tag_mutability"`
 	ScanOnPush         *bool  `json:"scan_on_push"`
+}
+
+type VineStorageBucketConfig struct {
+	Name         string   `json:"name"`
+	Versioning   bool     `json:"versioning"`
+	Encryption   string   `json:"encryption"`
+	PublicAccess bool     `json:"public_access"`
+	CorsOrigins  []string `json:"cors_origins"`
 }

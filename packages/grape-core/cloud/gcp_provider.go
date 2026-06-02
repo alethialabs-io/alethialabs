@@ -85,9 +85,8 @@ func (p *gcpProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		"provision_artifact_registry": false,
 
 		// Cloud Storage
-		// TODO: enable when VineConfig gains a StorageBuckets field
-		// "create_cloud_storage": len(config.StorageBuckets) > 0,
-		"create_cloud_storage": false,
+		"create_cloud_storage":  len(config.StorageBuckets) > 0,
+		"cloud_storage_buckets": buildGCSBuckets(config.StorageBuckets),
 
 		// Secrets
 		"custom_secrets": buildGCPSecrets(config.Secrets),
@@ -241,6 +240,21 @@ func buildGCPSecrets(secrets []types.VineSecretConfig) []map[string]interface{} 
 			"length":        s.Length,
 			"special_chars": s.SpecialChars,
 		})
+	}
+	return result
+}
+
+func buildGCSBuckets(buckets []types.VineStorageBucketConfig) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(buckets))
+	for _, b := range buckets {
+		entry := map[string]interface{}{
+			"name_suffix":    b.Name,
+			"versioning":     b.Versioning,
+			"uniform_access": !b.PublicAccess,
+			"cors_origins":   b.CorsOrigins,
+			"cors_methods":   []string{"GET", "PUT", "POST"},
+		}
+		result = append(result, entry)
 	}
 	return result
 }

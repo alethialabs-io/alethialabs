@@ -78,8 +78,8 @@ func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]inte
 		"provision_acr": len(config.ContainerRegistries) > 0,
 
 		// Storage
-		// TODO: enable when VineConfig gains a storage config field
-		"create_storage_account": false,
+		"create_storage_account": len(config.StorageBuckets) > 0,
+		"storage_containers":     buildAzureContainers(config.StorageBuckets),
 
 		// Secrets
 		"custom_secrets": buildGCPSecrets(config.Secrets),
@@ -238,6 +238,21 @@ func buildCosmosDBCollections(tables []types.VineNosqlConfig) []map[string]inter
 			entry["analytical_storage_enabled"] = true
 		}
 		result = append(result, entry)
+	}
+	return result
+}
+
+func buildAzureContainers(buckets []types.VineStorageBucketConfig) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(buckets))
+	for _, b := range buckets {
+		accessType := "private"
+		if b.PublicAccess {
+			accessType = "blob"
+		}
+		result = append(result, map[string]interface{}{
+			"name":                 b.Name,
+			"container_access_type": accessType,
+		})
 	}
 	return result
 }

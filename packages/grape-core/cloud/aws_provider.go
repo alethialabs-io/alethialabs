@@ -103,6 +103,10 @@ func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		"ddb_table_configuration":         buildDDBTables(config.NosqlTables, "standard"),
 		"ddb_global_table_configuration":  buildDDBTables(config.NosqlTables, "global"),
 
+		// S3
+		"s3_create":             len(config.StorageBuckets) > 0,
+		"bucket_configuration":  buildS3Buckets(config.StorageBuckets),
+
 		// RDS
 		"create_rds": len(config.Databases) > 0,
 	}
@@ -318,6 +322,37 @@ func buildDDBTables(tables []types.VineNosqlConfig, tableType string) []map[stri
 			"enable_point_in_time_recovery": t.PointInTimeRecovery,
 		}
 		result = append(result, entry)
+	}
+	return result
+}
+
+func buildS3Buckets(buckets []types.VineStorageBucketConfig) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(buckets))
+	for _, b := range buckets {
+		blockPublic := !b.PublicAccess
+		cors := []map[string]interface{}{}
+		if len(b.CorsOrigins) > 0 {
+			cors = append(cors, map[string]interface{}{
+				"allowed_headers": []string{"*"},
+				"allowed_methods": []string{"GET", "PUT", "POST"},
+				"allowed_origins": b.CorsOrigins,
+				"expose_headers":  []string{},
+				"max_age_seconds": 3600,
+			})
+		}
+		result = append(result, map[string]interface{}{
+			"bucket_name_suffix":      b.Name,
+			"acl_type":                "private",
+			"create_s3_user":          false,
+			"versioning_enabled":      b.Versioning,
+			"sse_algorithm":           orDefault(b.Encryption, "AES256"),
+			"store_access_key_in_ssm": false,
+			"block_public_acls":       blockPublic,
+			"block_public_policy":     blockPublic,
+			"ignore_public_acls":      blockPublic,
+			"restrict_public_buckets": blockPublic,
+			"cors_configuration":      cors,
+		})
 	}
 	return result
 }
