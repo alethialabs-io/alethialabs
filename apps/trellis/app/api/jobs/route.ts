@@ -102,28 +102,20 @@ export async function POST(req: Request) {
 			}
 		}
 
-		const insertData: Record<string, unknown> = {
-			user_id: userId,
-			vineyard_id: resolvedVineyardId,
-			cloud_identity_id: resolvedCloudIdentityId,
-			job_type,
-			vine_id: configuration_id || null,
-			config_snapshot: snapshot,
-			configuration_hash: configHash,
-			status: "QUEUED",
-		};
-
-		if (assigned_worker_id) {
-			insertData.assigned_worker_id = assigned_worker_id;
-		}
-
-		if (plan_job_id) {
-			insertData.plan_job_id = plan_job_id;
-		}
-
 		const { data: job, error: insertError } = await supabase
 			.from("provision_jobs")
-			.insert(insertData)
+			.insert({
+				user_id: userId,
+				vineyard_id: resolvedVineyardId,
+				cloud_identity_id: resolvedCloudIdentityId,
+				job_type: job_type as "DEPLOY" | "DESTROY" | "PLAN" | "DESTROY_WORKER",
+				vine_id: configuration_id || null,
+				config_snapshot: snapshot,
+				configuration_hash: configHash,
+				status: "QUEUED",
+				assigned_worker_id: assigned_worker_id || null,
+				plan_job_id: plan_job_id || null,
+			})
 			.select()
 			.single();
 

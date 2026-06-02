@@ -16,9 +16,9 @@ import (
 	"golang.org/x/term"
 )
 
-var listCmd = &cobra.Command{
+var listVinesCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all configurations",
+	Short: "List all vines",
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -26,10 +26,7 @@ var listCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
-		if webOrigin == "" {
-			webOrigin = "https://adp.prod.itgix.eu"
-		}
+		webOrigin := getWebOrigin()
 		listURL := fmt.Sprintf("%s/api/cli/configurations", webOrigin)
 
 		client := req.C()
@@ -52,29 +49,29 @@ var listCmd = &cobra.Command{
 		}
 
 		if resp.IsErrorState() {
-			fmt.Printf("Error fetching configurations (HTTP %d): %s\n", resp.StatusCode, errMsg.Error)
+			fmt.Printf("Error fetching vines (HTTP %d): %s\n", resp.StatusCode, errMsg.Error)
 			os.Exit(1)
 		}
 
 		if len(result.Configurations) == 0 {
-			fmt.Println("No configurations found.")
+			fmt.Println("No vines found.")
 			return
 		}
 
 		width, height, err := term.GetSize(int(os.Stdout.Fd()))
 		if err != nil {
-			height = 20 // Default height
+			height = 20
 		}
 		tableHeight := int(float64(height) * 0.8)
 
 		columns := []table.Column{
 			{Title: "Project", Width: width / 5},
 			{Title: "Environment", Width: width / 6},
-			{Title: "Container Platform", Width: width / 5},
+			{Title: "Status", Width: width / 6},
 			{Title: "Updated At", Width: width / 6},
 		}
 
-		rows := createRows(result.Configurations)
+		rows := createVineRows(result.Configurations)
 
 		t := table.New(
 			table.WithColumns(columns),
@@ -98,7 +95,7 @@ var listCmd = &cobra.Command{
 
 		t.SetStyles(s)
 
-		m := listModel{table: t, originalRows: rows, configurations: result.Configurations}
+		m := vineListModel{table: t, originalRows: rows, vines: result.Configurations}
 		if _, err := tea.NewProgram(m).Run(); err != nil {
 			fmt.Println("Error running program:", err)
 			os.Exit(1)
@@ -106,16 +103,16 @@ var listCmd = &cobra.Command{
 	},
 }
 
-type listModel struct {
-	table          table.Model
-	originalRows   []table.Row
-	configurations []types.ConfigurationSummary
-	sortAsc        bool
+type vineListModel struct {
+	table        table.Model
+	originalRows []table.Row
+	vines        []types.ConfigurationSummary
+	sortAsc      bool
 }
 
-func (m listModel) Init() tea.Cmd { return nil }
+func (m vineListModel) Init() tea.Cmd { return nil }
 
-func (m listModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m vineListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -124,13 +121,13 @@ func (m listModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "s":
 			m.sortAsc = !m.sortAsc
-			sort.Slice(m.configurations, func(i, j int) bool {
+			sort.Slice(m.vines, func(i, j int) bool {
 				if m.sortAsc {
-					return m.configurations[i].ProjectName < m.configurations[j].ProjectName
+					return m.vines[i].ProjectName < m.vines[j].ProjectName
 				}
-				return m.configurations[i].ProjectName > m.configurations[j].ProjectName
+				return m.vines[i].ProjectName > m.vines[j].ProjectName
 			})
-			m.table.SetRows(createRows(m.configurations))
+			m.table.SetRows(createVineRows(m.vines))
 			return m, nil
 		}
 	}
@@ -138,30 +135,30 @@ func (m listModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-var baseStyle = lipgloss.NewStyle().
-	BorderStyle(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("240"))
-
-func (m listModel) View() string {
-	status := fmt.Sprintf("Showing %d configurations | Press 'q' to quit | 'j/k' or arrows to navigate | 's' to sort by Project", len(m.table.Rows()))
+func (m vineListModel) View() string {
+	status := fmt.Sprintf("Showing %d vines | Press 'q' to quit | 'j/k' or arrows to navigate | 's' to sort by Project", len(m.table.Rows()))
 	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Padding(0, 1)
 	return baseStyle.Render(m.table.View()) + "\n" + statusStyle.Render(status)
 }
 
-func createRows(configs []types.ConfigurationSummary) []table.Row {
+var baseStyle = lipgloss.NewStyle().
+	BorderStyle(lipgloss.RoundedBorder()).
+	BorderForeground(lipgloss.Color("240"))
+
+func createVineRows(vines []types.ConfigurationSummary) []table.Row {
 	var rows []table.Row
-	for _, config := range configs {
+	for _, v := range vines {
 		rows = append(rows, table.Row{
-			config.ProjectName,
-			config.EnvironmentStage,
-			config.ContainerPlatform,
-			formatTime(config.UpdatedAt),
+			v.ProjectName,
+			v.EnvironmentStage,
+			v.ContainerPlatform,
+			formatVineTime(v.UpdatedAt),
 		})
 	}
 	return rows
 }
 
-func formatTime(t time.Time) string {
+func formatVineTime(t time.Time) string {
 	if time.Since(t).Hours() < 24*7 {
 		return humanize.Time(t)
 	}
@@ -169,5 +166,5 @@ func formatTime(t time.Time) string {
 }
 
 func init() {
-	configCmd.AddCommand(listCmd)
+	vineCmd.AddCommand(listVinesCmd)
 }

@@ -147,34 +147,34 @@ export function SectionCluster() {
 					</div>
 				)} />
 
-				{/* Cluster Admins (AWS only — uses IAM users from cached resources) */}
-				{provider === "aws" && iamUsers.length > 0 && (
-					<div className="space-y-2">
-						<div className="flex items-center gap-1.5">
-							<ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" />
-							<Label className="text-xs font-medium">Cluster Admins</Label>
-							<HelpTooltip topic="cluster-admins" />
-						</div>
-						<div className="flex flex-wrap gap-1.5 min-h-[32px]">
-							{(watch("cluster.cluster_admins") ?? []).map((admin: { username: string; groups: string[] }) => (
-								<Badge key={admin.username} variant="secondary" className="text-[11px] gap-1 pr-1">
-									{admin.username}
-									<button
-										type="button"
-										onClick={() => {
-											const current = watch("cluster.cluster_admins") ?? [];
-											setValue(
-												"cluster.cluster_admins",
-												current.filter((a: { username: string }) => a.username !== admin.username),
-											);
-										}}
-										className="ml-0.5 hover:bg-muted rounded-full p-0.5"
-									>
-										<X className="h-2.5 w-2.5" />
-									</button>
-								</Badge>
-							))}
-						</div>
+				{/* Cluster Admins */}
+				<div className="space-y-2">
+					<div className="flex items-center gap-1.5">
+						<ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" />
+						<Label className="text-xs font-medium">Cluster Admins</Label>
+						<HelpTooltip topic="cluster-admins" />
+					</div>
+					<div className="flex flex-wrap gap-1.5 min-h-[32px]">
+						{(watch("cluster.cluster_admins") ?? []).map((admin: { username: string; groups: string[] }) => (
+							<Badge key={admin.username} variant="secondary" className="text-[11px] gap-1 pr-1">
+								{admin.username}
+								<button
+									type="button"
+									onClick={() => {
+										const current = watch("cluster.cluster_admins") ?? [];
+										setValue(
+											"cluster.cluster_admins",
+											current.filter((a: { username: string }) => a.username !== admin.username),
+										);
+									}}
+									className="ml-0.5 hover:bg-muted rounded-full p-0.5"
+								>
+									<X className="h-2.5 w-2.5" />
+								</button>
+							</Badge>
+						))}
+					</div>
+					{iamUsers.length > 0 ? (
 						<Select
 							value=""
 							onValueChange={(username) => {
@@ -199,8 +199,26 @@ export function SectionCluster() {
 									))}
 							</SelectContent>
 						</Select>
-					</div>
-				)}
+					) : (
+						<Input
+							placeholder="Type username or email and press Enter"
+							className="h-8 text-xs w-56"
+							onKeyDown={(e) => {
+								if (e.key !== "Enter") return;
+								e.preventDefault();
+								const username = e.currentTarget.value.trim();
+								if (!username) return;
+								const current = watch("cluster.cluster_admins") ?? [];
+								if (current.some((a: { username: string }) => a.username === username)) return;
+								setValue("cluster.cluster_admins", [
+									...current,
+									{ username, groups: ["system:masters"] },
+								]);
+								e.currentTarget.value = "";
+							}}
+						/>
+					)}
+				</div>
 			</CardContent>
 		</Card>
 	);

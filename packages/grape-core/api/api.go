@@ -647,32 +647,94 @@ func (c *Client) UpdateBootstrapJobStatus(jobID, status, errorMessage string) er
 
 // ProvisionJob represents a queued provisioning job.
 type ProvisionJob struct {
-	ID              string `json:"id"`
-	JobType         string `json:"job_type"`
-	VineyardID      string `json:"vineyard_id"`
-	ConfigurationID string `json:"configuration_id,omitempty"`
-	ClusterID       string `json:"cluster_id,omitempty"`
-	Status          string `json:"status"`
+	ID                string                  `json:"id"`
+	JobType           string                  `json:"job_type"`
+	VineyardID        string                  `json:"vineyard_id"`
+	ConfigurationID   string                  `json:"configuration_id,omitempty"`
+	VineID            string                  `json:"vine_id,omitempty"`
+	ClusterID         string                  `json:"cluster_id,omitempty"`
+	CloudIdentityID   string                  `json:"cloud_identity_id,omitempty"`
+	WorkerID          string                  `json:"worker_id,omitempty"`
+	AssignedWorkerID  string                  `json:"assigned_worker_id,omitempty"`
+	PlanJobID         string                  `json:"plan_job_id,omitempty"`
+	Status            string                  `json:"status"`
+	ErrorMessage      *string                 `json:"error_message,omitempty"`
+	ExecutionMetadata *map[string]interface{} `json:"execution_metadata,omitempty"`
+	ConfigSnapshot    map[string]interface{}  `json:"config_snapshot,omitempty"`
+	CreatedAt         time.Time               `json:"created_at"`
+	StartedAt         *time.Time              `json:"started_at,omitempty"`
+	CompletedAt       *time.Time              `json:"completed_at,omitempty"`
+}
+
+// JobLog represents a log entry for a provisioning job.
+type JobLog struct {
+	ID         int       `json:"id"`
+	JobID      string    `json:"job_id"`
+	LogChunk   string    `json:"log_chunk"`
+	StreamType string    `json:"stream_type"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// Worker represents a registered provisioning worker.
+type Worker struct {
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Mode          string    `json:"mode"`
+	Status        string    `json:"status"`
+	LastHeartbeat string    `json:"last_heartbeat"`
+	Version       string    `json:"version"`
+	IsDefault     bool      `json:"is_default"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// QueueJobParams holds optional parameters for QueueJob.
+type QueueJobParams struct {
+	JobType          string
+	VineyardID       string
+	ConfigurationID  string
+	ClusterID        string
+	CloudIdentityID  string
+	AssignedWorkerID string
+	PlanJobID        string
+	ConfigSnapshot   map[string]interface{}
 }
 
 // QueueJob creates a new provisioning job on the broker queue.
 func (c *Client) QueueJob(jobType, vineyardID, configurationID, clusterID, cloudIdentityID string, configSnapshot map[string]interface{}) (*ProvisionJob, error) {
+	return c.QueueJobWithParams(QueueJobParams{
+		JobType:         jobType,
+		VineyardID:      vineyardID,
+		ConfigurationID: configurationID,
+		ClusterID:       clusterID,
+		CloudIdentityID: cloudIdentityID,
+		ConfigSnapshot:  configSnapshot,
+	})
+}
+
+// QueueJobWithParams creates a new provisioning job with full parameter control.
+func (c *Client) QueueJobWithParams(params QueueJobParams) (*ProvisionJob, error) {
 	endpoint := fmt.Sprintf("%s/jobs", c.baseURL)
 	payload := map[string]interface{}{
-		"job_type":    jobType,
-		"vineyard_id": vineyardID,
+		"job_type":    params.JobType,
+		"vineyard_id": params.VineyardID,
 	}
-	if configurationID != "" {
-		payload["configuration_id"] = configurationID
+	if params.ConfigurationID != "" {
+		payload["configuration_id"] = params.ConfigurationID
 	}
-	if clusterID != "" {
-		payload["cluster_id"] = clusterID
+	if params.ClusterID != "" {
+		payload["cluster_id"] = params.ClusterID
 	}
-	if cloudIdentityID != "" {
-		payload["cloud_identity_id"] = cloudIdentityID
+	if params.CloudIdentityID != "" {
+		payload["cloud_identity_id"] = params.CloudIdentityID
 	}
-	if configSnapshot != nil {
-		payload["config_snapshot"] = configSnapshot
+	if params.AssignedWorkerID != "" {
+		payload["assigned_worker_id"] = params.AssignedWorkerID
+	}
+	if params.PlanJobID != "" {
+		payload["plan_job_id"] = params.PlanJobID
+	}
+	if params.ConfigSnapshot != nil {
+		payload["config_snapshot"] = params.ConfigSnapshot
 	}
 
 	body, err := json.Marshal(payload)
@@ -745,4 +807,214 @@ func (c *Client) SendBootstrapLog(jobID string, logChunk string, streamType stri
 	}
 
 	return nil
+}
+
+// GetJob fetches a single job by ID.
+func (c *Client) GetJob(jobID string) (*ProvisionJob, error) {
+	endpoint := fmt.Sprintf("%s/cli/jobs/%s", c.baseURL, jobID)
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errorResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
+			return nil, fmt.Errorf("failed to get job: status code %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("failed to get job: %s", errorResp.Error)
+	}
+
+	var job ProvisionJob
+	if err := json.NewDecoder(resp.Body).Decode(&job); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &job, nil
+}
+
+// GetJobLogs fetches logs for a job, optionally after a specific log entry ID.
+func (c *Client) GetJobLogs(jobID string, afterID int) ([]JobLog, error) {
+	endpoint := fmt.Sprintf("%s/cli/jobs/%s/logs", c.baseURL, jobID)
+	if afterID > 0 {
+		endpoint = fmt.Sprintf("%s?after=%d", endpoint, afterID)
+	}
+
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errorResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
+			return nil, fmt.Errorf("failed to get job logs: status code %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("failed to get job logs: %s", errorResp.Error)
+	}
+
+	var successResp struct {
+		Logs []JobLog `json:"logs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&successResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return successResp.Logs, nil
+}
+
+// CancelJob cancels a queued or processing job.
+func (c *Client) CancelJob(jobID string) error {
+	endpoint := fmt.Sprintf("%s/cli/jobs/%s/cancel", c.baseURL, jobID)
+	req, err := http.NewRequest("POST", endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errorResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
+			return fmt.Errorf("failed to cancel job: status code %d", resp.StatusCode)
+		}
+		return fmt.Errorf("failed to cancel job: %s", errorResp.Error)
+	}
+
+	return nil
+}
+
+// GetWorkers lists all workers for the authenticated user.
+func (c *Client) GetWorkers() ([]Worker, error) {
+	endpoint := fmt.Sprintf("%s/cli/workers", c.baseURL)
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errorResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
+			return nil, fmt.Errorf("failed to get workers: status code %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("failed to get workers: %s", errorResp.Error)
+	}
+
+	var successResp struct {
+		Workers []Worker `json:"workers"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&successResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return successResp.Workers, nil
+}
+
+// RemoveWorker deletes a worker record (no cloud teardown).
+func (c *Client) RemoveWorker(workerID string) error {
+	endpoint := fmt.Sprintf("%s/cli/workers/%s", c.baseURL, workerID)
+	req, err := http.NewRequest("DELETE", endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errorResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
+			return fmt.Errorf("failed to remove worker: status code %d", resp.StatusCode)
+		}
+		return fmt.Errorf("failed to remove worker: %s", errorResp.Error)
+	}
+
+	return nil
+}
+
+// GetJobs fetches jobs with optional filters.
+func (c *Client) GetJobs(status, vineyardID string) ([]ProvisionJob, error) {
+	endpoint := fmt.Sprintf("%s/jobs", c.baseURL)
+
+	params := url.Values{}
+	if status != "" {
+		params.Set("status", status)
+	}
+	if vineyardID != "" {
+		params.Set("vineyard_id", vineyardID)
+	}
+	if len(params) > 0 {
+		endpoint = fmt.Sprintf("%s?%s", endpoint, params.Encode())
+	}
+
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.authToken))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errorResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
+			return nil, fmt.Errorf("failed to get jobs: status code %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("failed to get jobs: %s", errorResp.Error)
+	}
+
+	var successResp struct {
+		Jobs []ProvisionJob `json:"jobs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&successResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return successResp.Jobs, nil
 }

@@ -7,18 +7,18 @@ import (
 	"time"
 
 	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/types"
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/imroc/req/v3"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
-	"github.com/AlecAivazis/survey/v2"
 )
 
-var openInBrowser bool
+var openVineInBrowser bool
 
-var getCmd = &cobra.Command{
+var vineGetCmd = &cobra.Command{
 	Use:   "get [project_name]",
-	Short: "Get a specific configuration by project name",
+	Short: "Get a specific vine by project name",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		projectName := args[0]
@@ -29,10 +29,7 @@ var getCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
-		if webOrigin == "" {
-			webOrigin = "https://adp.prod.itgix.eu"
-		}
+		webOrigin := getWebOrigin()
 		getURL := fmt.Sprintf("%s/api/cli/configurations/by-project-name/%s", webOrigin, projectName)
 
 		client := req.C()
@@ -55,26 +52,32 @@ var getCmd = &cobra.Command{
 		}
 
 		if resp.IsErrorState() {
-			fmt.Printf("Error fetching configuration (HTTP %d): %s\n", resp.StatusCode, errMsg.Error)
+			fmt.Printf("Error fetching vine (HTTP %d): %s\n", resp.StatusCode, errMsg.Error)
 			os.Exit(1)
 		}
 
 		if result.Configuration.ID == "" {
-			fmt.Printf("No configuration found for project: %s\n", projectName)
+			fmt.Printf("No vine found for project: %s\n", projectName)
 			return
 		}
 
-		printConfiguration(result.Configuration)
+		printVine(result.Configuration)
 
-		if !openInBrowser {
-			prompt := &survey.Confirm{
-				Message: "Open in browser?",
+		if !openVineInBrowser {
+			var confirm bool
+			err := huh.NewConfirm().
+				Title("Open in browser?").
+				Affirmative("Yes").
+				Negative("No").
+				Value(&confirm).
+				Run()
+			if err == nil {
+				openVineInBrowser = confirm
 			}
-			survey.AskOne(prompt, &openInBrowser)
 		}
 
-		if openInBrowser {
-			url := fmt.Sprintf("%s/dashboard/configurations?highlight=%s", webOrigin, result.Configuration.ID)
+		if openVineInBrowser {
+			url := fmt.Sprintf("%s/dashboard", webOrigin)
 			fmt.Printf("Opening in browser: %s\n", url)
 			if err := browser.OpenURL(url); err != nil {
 				fmt.Printf("Error opening browser: %v\n", err)
@@ -84,13 +87,13 @@ var getCmd = &cobra.Command{
 }
 
 func init() {
-	configCmd.AddCommand(getCmd)
-	getCmd.Flags().BoolVarP(&openInBrowser, "open", "o", false, "Open the configuration in the web browser")
+	vineCmd.AddCommand(vineGetCmd)
+	vineGetCmd.Flags().BoolVarP(&openVineInBrowser, "open", "o", false, "Open the vine in the web browser")
 }
-func printConfiguration(config types.Configuration) {
+
+func printVine(config types.Configuration) {
 	doc := strings.Builder{}
 
-	// Styles
 	var (
 		headerStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63")).Padding(1, 0)
 		subHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("240")).Padding(0, 0, 0, 2)
@@ -98,7 +101,6 @@ func printConfiguration(config types.Configuration) {
 		valueStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
 	)
 
-	// Helper function for key-value pairs
 	kv := func(key string, value string) string {
 		return keyStyle.Render(key) + valueStyle.Render(value)
 	}
@@ -124,11 +126,8 @@ func printConfiguration(config types.Configuration) {
 		return kv(key, value.Format("2006-01-02 15:04:05"))
 	}
 
-	// General Section
-	doc.WriteString(headerStyle.Render("Configuration Details"))
+	doc.WriteString(headerStyle.Render("Vine Details"))
 	doc.WriteString("\n")
-	// doc.WriteString(kv("Name:", config.Name))
-	// doc.WriteString("\n")
 	doc.WriteString(kv("Project:", config.ProjectName))
 	doc.WriteString("\n")
 	doc.WriteString(kv("Environment:", config.EnvironmentStage))
@@ -138,15 +137,13 @@ func printConfiguration(config types.Configuration) {
 	doc.WriteString(kvTime("Last Updated:", config.UpdatedAt))
 	doc.WriteString("\n\n")
 
-	// AWS Section
-	doc.WriteString(subHeaderStyle.Render("AWS Configuration"))
+	doc.WriteString(subHeaderStyle.Render("Cloud Configuration"))
 	doc.WriteString("\n")
 	doc.WriteString(kv("Account ID:", config.AwsAccountID))
 	doc.WriteString("\n")
 	doc.WriteString(kv("Region:", config.AwsRegion))
 	doc.WriteString("\n\n")
 
-	// Network Section
 	doc.WriteString(subHeaderStyle.Render("Network Configuration"))
 	doc.WriteString("\n")
 	doc.WriteString(kvBool("Create VPC:", config.CreateVpc))
@@ -164,7 +161,6 @@ func printConfiguration(config types.Configuration) {
 	}
 	doc.WriteString("\n\n")
 
-	// Database Section
 	doc.WriteString(subHeaderStyle.Render("Database Configuration"))
 	doc.WriteString("\n")
 	doc.WriteString(kvNum("Min Capacity:", config.DbMinCapacity))
@@ -172,7 +168,6 @@ func printConfiguration(config types.Configuration) {
 	doc.WriteString(kvNum("Max Capacity:", config.DbMaxCapacity))
 	doc.WriteString("\n\n")
 
-	// Security Section
 	doc.WriteString(subHeaderStyle.Render("Security"))
 	doc.WriteString("\n")
 	doc.WriteString(kvBool("CloudFront WAF:", config.EnableCloudfrontWaf))
@@ -184,7 +179,6 @@ func printConfiguration(config types.Configuration) {
 	}
 	doc.WriteString("\n\n")
 
-	// Advanced Section
 	doc.WriteString(subHeaderStyle.Render("Advanced"))
 	doc.WriteString("\n")
 	doc.WriteString(kvBool("Karpenter Auto-Scaling:", config.EnableKarpenter))
