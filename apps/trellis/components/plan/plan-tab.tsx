@@ -108,7 +108,7 @@ export function PlanTab({ plan, onApplied }: PlanTabProps) {
 					<AlertDescription>{error}</AlertDescription>
 				</Alert>
 				<Button
-					onClick={generatePlan}
+					onClick={() => generatePlan()}
 					variant="outline"
 					size="sm"
 					className="gap-1.5"
@@ -294,7 +294,7 @@ export function PlanTab({ plan, onApplied }: PlanTabProps) {
 
 			<div className="flex items-center justify-between">
 				<Button
-					onClick={generatePlan}
+					onClick={() => generatePlan()}
 					variant="outline"
 					size="sm"
 					className="gap-1.5"

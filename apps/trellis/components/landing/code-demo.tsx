@@ -9,7 +9,7 @@ interface CodeLine {
 
 interface OutputLine {
 	text: string;
-	color?: "green" | "muted" | "yellow" | "white";
+	color?: "green" | "blue" | "muted" | "yellow" | "white";
 }
 
 interface DemoTab {
