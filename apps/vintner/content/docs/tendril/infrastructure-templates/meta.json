@@ -1,0 +1,10 @@
+{
+  "title": "Infrastructure Templates",
+  "pages": [
+    "index",
+    "aws",
+    "gcp",
+    "azure",
+    "argocd"
+  ]
+}

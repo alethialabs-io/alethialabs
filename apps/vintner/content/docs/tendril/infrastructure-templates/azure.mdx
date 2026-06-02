@@ -1,0 +1,48 @@
+---
+title: Azure Resources
+description: Terraform modules for Azure — AKS, Azure Database, Cosmos DB, and more.
+---
+
+# Azure Resources
+
+The Azure template set (`infra/templates/vine/azure/`) provides Azure-native equivalents for all supported resource types.
+
+## Resources
+
+| File | Resources Created |
+|------|------------------|
+| `aks.tf` | AKS cluster, default node pool, Azure AD integration |
+| `vnet.tf` | Virtual Network, subnets, NSG, NAT Gateway |
+| `azure-db.tf` | Azure Database for PostgreSQL/MySQL (Flexible Server) |
+| `azure-cache-redis.tf` | Azure Cache for Redis |
+| `cosmos-db.tf` | Cosmos DB account, database, container |
+| `acr.tf` | Azure Container Registry |
+| `storage-account.tf` | Storage account, blob containers |
+| `service-bus.tf` | Service Bus namespace, queues, topics |
+| `azure-dns.tf` | Azure DNS zone, record sets |
+| `key-vault.tf` | Key Vault, access policies |
+| `azure-waf.tf` | Azure Application Gateway with WAF |
+
+## Modules
+
+| Module | Purpose |
+|--------|---------|
+| `modules/aks/` | AKS cluster with AAD integration |
+| `modules/azure-db/` | Flexible Server PostgreSQL/MySQL |
+| `modules/azure-cache-redis/` | Azure Cache for Redis |
+| `modules/cosmos-db/` | Cosmos DB (multi-model NoSQL) |
+| `modules/acr/` | Azure Container Registry |
+| `modules/storage-account/` | Azure Blob Storage |
+| `modules/service-bus/` | Service Bus queues and topics |
+| `modules/azure-dns/` | DNS zones |
+| `modules/azure-waf/` | WAF via Application Gateway |
+| `modules/key-vault/` | Key Vault for secrets |
+| `modules/vnet/` | Virtual Network with subnets and NSGs |
+
+## Key Features
+
+**Azure AD Integration** — AKS integrates with Azure AD for RBAC. Cluster admins are Azure AD users or groups, not separate IAM identities.
+
+**Flexible Server** — Azure's latest managed database tier with zone-redundant HA, automatic backups, and vCore-based scaling (1–64 vCores).
+
+**Cosmos DB** — Globally distributed multi-model database supporting SQL (document), Table (key-value), MongoDB, Cassandra, and Gremlin APIs. Multi-region writes for global distribution.

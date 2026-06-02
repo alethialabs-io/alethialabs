@@ -10,6 +10,7 @@
     "log-streaming",
     "scale-to-zero",
     "self-hosted",
-    "infrastructure-templates"
+    "infrastructure-templates",
+    "grape-core"
   ]
 }
