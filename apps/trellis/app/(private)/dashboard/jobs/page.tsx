@@ -1,7 +1,7 @@
 "use client";
 
 import { DataTable } from "@/components/data-table";
-import { jobColumns } from "@/components/jobs/columns";
+import { jobColumns, JOB_TYPES } from "@/components/jobs/columns";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
 	useJobsStore,
@@ -11,6 +11,7 @@ import {
 import type { PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { ClipboardList, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo } from "react";
@@ -20,7 +21,7 @@ const STATUS_FILTERS: (PublicProvisionJobStatus | "All")[] = [
 ];
 
 const TYPE_FILTERS: (PublicProvisionJobType | "All")[] = [
-	"All", "DEPLOY", "PLAN", "DESTROY", "CONNECTION_TEST", "FETCH_RESOURCES", "DEPLOY_WORKER", "DESTROY_WORKER",
+	"All", "DEPLOY", "PLAN", "DESTROY", "CONNECTION_TEST", "FETCH_RESOURCES", "DEPLOY_WORKER", "UPDATE_WORKER", "DESTROY_WORKER",
 ];
 
 export default function JobsPage() {
@@ -144,7 +145,7 @@ export default function JobsPage() {
 						<div className="relative flex-1 max-w-xs">
 							<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
 							<Input
-								placeholder="Search by ID, worker, vine..."
+								placeholder="Search by ID, tendril, vine..."
 								value={searchQuery}
 								onChange={(e) => setSearchQuery(e.target.value)}
 								className="h-7 text-xs pl-8 bg-muted/30 border-border/50"
@@ -160,21 +161,23 @@ export default function JobsPage() {
 									className="h-7 text-[10px] px-2"
 									onClick={() => setTypeFilter(t)}
 								>
-									{t === "All" ? "All Types" : t.replace("_", " ")}
+									{t === "All" ? "All Types" : JOB_TYPES[t]?.label ?? t.replace("_", " ")}
 								</Button>
 							))}
 						</div>
 					</div>
 
-					<DataTable
-						columns={jobColumns}
-						data={filtered}
-						onRowClick={handleRowClick}
-						pageSize={pageSize}
-						pageIndex={currentPage}
-						onPageIndexChange={setCurrentPage}
-						scrollHeight="h-[70vh]"
-					/>
+					<TooltipProvider delayDuration={300}>
+						<DataTable
+							columns={jobColumns}
+							data={filtered}
+							onRowClick={handleRowClick}
+							pageSize={pageSize}
+							pageIndex={currentPage}
+							onPageIndexChange={setCurrentPage}
+							scrollHeight="h-[70vh]"
+						/>
+					</TooltipProvider>
 				</>
 			)}
 		</div>

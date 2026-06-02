@@ -1,6 +1,6 @@
 "use client";
 
-import { useWorkersStore } from "@/lib/stores/use-workers-store";
+import { useTendrilsStore } from "@/lib/stores/use-tendrils-store";
 import type { PublicWorkerStatus } from "@/lib/validations/db.schemas";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,15 +14,18 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Check, Loader2, Server } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Server } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
-interface WorkerSelectPopoverProps {
+interface TendrilSelectPopoverProps {
 	trigger: React.ReactNode;
 	onConfirm: (workerId: string | null, rePlan?: boolean) => void;
 	disabled?: boolean;
 	showRePlan?: boolean;
+	variant?: "default" | "destructive";
+	confirmLabel?: string;
+	description?: string;
 }
 
 const STATUS_DOT: Record<PublicWorkerStatus, string> = {
@@ -31,27 +34,30 @@ const STATUS_DOT: Record<PublicWorkerStatus, string> = {
 	DRAINING: "bg-amber-500",
 };
 
-/** Popover that shows before Plan/Deploy — lets the user pick a worker or "Any available". */
-export function WorkerSelectPopover({
+/** Popover that shows before Plan/Deploy — lets the user pick a tendril or "Any available". */
+export function TendrilSelectPopover({
 	trigger,
 	onConfirm,
 	disabled,
 	showRePlan,
-}: WorkerSelectPopoverProps) {
-	const { workers, isLoading, fetchWorkers } = useWorkersStore();
+	variant = "default",
+	confirmLabel,
+	description,
+}: TendrilSelectPopoverProps) {
+	const { tendrils, isLoading, fetchTendrils } = useTendrilsStore();
 	const [open, setOpen] = useState(false);
 	const [selected, setSelected] = useState<string | null>(null);
 	const [rePlan, setRePlan] = useState(false);
 
 	useEffect(() => {
 		if (open) {
-			fetchWorkers();
-			const defaultWorker = workers.find(
+			fetchTendrils();
+			const defaultWorker = tendrils.find(
 				(w) => w.is_default && w.status === "ONLINE",
 			);
 			setSelected(defaultWorker?.id ?? null);
 		}
-	}, [open, fetchWorkers, workers]);
+	}, [open, fetchTendrils, tendrils]);
 
 	const handleConfirm = () => {
 		setOpen(false);
@@ -66,13 +72,19 @@ export function WorkerSelectPopover({
 			</PopoverTrigger>
 			<PopoverContent align="end" className="w-72 p-0">
 				<div className="px-3 pt-3 pb-2 border-b border-border/40">
-					<p className="text-sm font-medium">Select worker</p>
+					<p className="text-sm font-medium">Select tendril</p>
 					<p className="text-xs text-muted-foreground">
-						Choose which worker runs this job.
+						Choose which tendril runs this job.
 					</p>
+					{variant === "destructive" && description && (
+						<div className="mt-2 flex gap-1.5 rounded-md bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+							<AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+							<span>{description}</span>
+						</div>
+					)}
 				</div>
 
-				{isLoading && workers.length === 0 ? (
+				{isLoading && tendrils.length === 0 ? (
 					<div className="flex items-center justify-center py-6">
 						<Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
 					</div>
@@ -95,7 +107,7 @@ export function WorkerSelectPopover({
 							<span>Any available</span>
 						</button>
 
-						{workers.map((w) => {
+						{tendrils.map((w) => {
 							const status = w.status ?? "OFFLINE";
 							const isOnline = status === "ONLINE";
 							return (
@@ -147,9 +159,9 @@ export function WorkerSelectPopover({
 							);
 						})}
 
-						{workers.length === 0 && (
+						{tendrils.length === 0 && (
 							<p className="px-3 py-4 text-xs text-muted-foreground text-center">
-								No workers registered.
+								No tendrils registered.
 							</p>
 						)}
 					</div>
@@ -169,11 +181,12 @@ export function WorkerSelectPopover({
 					)}
 					<Button
 						size="sm"
+						variant={variant === "destructive" ? "destructive" : "default"}
 						className="w-full h-8 text-xs"
 						onClick={handleConfirm}
-						disabled={isLoading && workers.length === 0}
+						disabled={isLoading && tendrils.length === 0}
 					>
-						Confirm
+						{confirmLabel ?? "Confirm"}
 					</Button>
 				</div>
 			</PopoverContent>

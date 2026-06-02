@@ -94,7 +94,7 @@ export default function DashboardLayout({
 		{ name: "Clusters", href: "/dashboard/clusters", icon: Server },
 		{ name: "Jobs", href: "/dashboard/jobs", icon: ClipboardList },
 		{ name: "Integrations", href: "/dashboard/integrations", icon: Blocks },
-		{ name: "Workers", href: "/dashboard/workers", icon: Workflow },
+		{ name: "Tendrils", href: "/dashboard/tendrils", icon: Workflow },
 	];
 
 	const getUserInitials = () => {

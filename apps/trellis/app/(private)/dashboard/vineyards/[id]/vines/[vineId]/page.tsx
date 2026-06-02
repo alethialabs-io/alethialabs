@@ -7,7 +7,7 @@ import { DuplicateModal } from "@/components/vine-detail/duplicate-modal";
 import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
 import { usePlan } from "@/components/plan/use-plan";
 import { VineDetailTabs } from "@/components/vine-detail/vine-detail-tabs";
-import { WorkerSelectPopover } from "@/components/workers/worker-select-popover";
+import { TendrilSelectPopover } from "@/components/tendrils/tendril-select-popover";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -137,7 +137,7 @@ export default function VineDetailPage() {
 				</div>
 
 				<div className="flex items-center gap-2">
-					<WorkerSelectPopover
+					<TendrilSelectPopover
 						trigger={
 							<Button variant="outline" size="sm" className="h-8 text-xs" disabled={plan.phase === "generating" || plan.phase === "applying"}>
 								{plan.phase === "generating" ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <FileText className="h-3.5 w-3.5 mr-1.5" />}
@@ -147,7 +147,7 @@ export default function VineDetailPage() {
 						onConfirm={handlePlan}
 						disabled={plan.phase === "generating" || plan.phase === "applying"}
 					/>
-					<WorkerSelectPopover
+					<TendrilSelectPopover
 						trigger={
 							<Button size="sm" className="h-8 text-xs" disabled={plan.phase !== "ready" && plan.phase !== "failed"}>
 								{plan.phase === "applying" ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5 mr-1.5" />}

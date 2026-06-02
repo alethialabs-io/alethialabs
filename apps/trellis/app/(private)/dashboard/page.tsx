@@ -28,7 +28,7 @@ export default function DashboardPage() {
 	const vineyardsStore = useVineyardsStore();
 
 	const [integrations, setIntegrations] = useState<IntegrationWithConnection[]>([]);
-	const [onlineWorkers, setOnlineWorkers] = useState(0);
+	const [onlineTendrils, setOnlineWorkers] = useState(0);
 
 	useEffect(() => {
 		jobsStore.fetchJobs();
@@ -148,7 +148,7 @@ export default function DashboardPage() {
 			<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
 				<StatChip icon={<Grape className="h-3.5 w-3.5" />} value={allVines.length} label="Vines" />
 				<StatChip icon={<CheckCircle2 className="h-3.5 w-3.5" />} value={activeVines} label="Active" />
-				<StatChip icon={<Workflow className="h-3.5 w-3.5" />} value={onlineWorkers} label={`Worker${onlineWorkers !== 1 ? "s" : ""} Online`} />
+				<StatChip icon={<Workflow className="h-3.5 w-3.5" />} value={onlineTendrils} label={`Tendril${onlineTendrils !== 1 ? "s" : ""} Online`} />
 				<StatChip icon={<ClipboardList className="h-3.5 w-3.5" />} value={jobsStore.jobs.length} label="Total Jobs" />
 			</div>
 

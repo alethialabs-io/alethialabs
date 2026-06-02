@@ -1,8 +1,10 @@
 "use client";
 
-import { getJobStatus, rerunJob } from "@/app/server/actions/jobs";
+import { getJobStatus, rerunJob, cancelJob } from "@/app/server/actions/jobs";
+import { provisionVine } from "@/app/server/actions/vines";
 import { createClient } from "@/lib/supabase/client";
 import { JOB_TYPES, STATUS_STYLES } from "@/components/jobs/columns";
+import { TendrilSelectPopover } from "@/components/tendrils/tendril-select-popover";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,16 +15,17 @@ import {
 } from "@/components/ui/collapsible";
 import {
 	AlertCircle,
-	ArrowLeft,
+	Ban,
 	CheckCircle2,
 	ChevronDown,
 	Loader2,
 	RefreshCw,
+	Rocket,
 	Terminal,
 	XCircle,
 } from "lucide-react";
-import Link from "next/link";
-import { useParams } from "next/navigation";
+
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -34,7 +37,7 @@ interface LogEntry {
 	stream_type: string | null;
 }
 
-type JobState = "QUEUED" | "CLAIMED" | "PROCESSING" | "SUCCESS" | "FAILED" | null;
+type JobState = "QUEUED" | "CLAIMED" | "PROCESSING" | "SUCCESS" | "FAILED" | "CANCELLED" | null;
 
 interface JobData {
 	id: string;
@@ -53,6 +56,7 @@ interface JobData {
 /** Full-page job detail view with realtime log streaming. */
 export default function JobDetailPage() {
 	const { id: jobId } = useParams<{ id: string }>();
+	const router = useRouter();
 	const supabase = createClient();
 
 	const [job, setJob] = useState<JobData | null>(null);
@@ -60,7 +64,7 @@ export default function JobDetailPage() {
 	const [jobState, setJobState] = useState<JobState>(null);
 	const [jobError, setJobError] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
-	const [rerunning, setRerunning] = useState(false);
+	const [actionLoading, setActionLoading] = useState(false);
 
 	const bottomRef = useRef<HTMLDivElement>(null);
 	const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -76,7 +80,6 @@ export default function JobDetailPage() {
 		}
 	}, []);
 
-	/** Fetch job metadata. */
 	useEffect(() => {
 		if (!jobId) return;
 
@@ -95,7 +98,6 @@ export default function JobDetailPage() {
 			});
 	}, [jobId]);
 
-	/** Fetch existing logs. */
 	useEffect(() => {
 		if (!jobId) return;
 
@@ -112,7 +114,6 @@ export default function JobDetailPage() {
 			});
 	}, [jobId, scrollToBottom]);
 
-	/** Realtime log subscription. */
 	useEffect(() => {
 		if (!jobId) return;
 
@@ -138,7 +139,6 @@ export default function JobDetailPage() {
 		};
 	}, [jobId, scrollToBottom]);
 
-	/** Status polling. */
 	useEffect(() => {
 		if (!jobId) return;
 
@@ -146,7 +146,7 @@ export default function JobDetailPage() {
 			const result = await getJobStatus(jobId);
 			if (!result) return;
 			setJobState(result.status as JobState);
-			if (result.status === "FAILED") {
+			if (result.status === "FAILED" || result.status === "CANCELLED") {
 				setJobError(result.error_message);
 				stopStatusPoll();
 			} else if (result.status === "SUCCESS") {
@@ -159,18 +159,49 @@ export default function JobDetailPage() {
 
 	const handleRerun = async () => {
 		if (!jobId) return;
-		setRerunning(true);
+		setActionLoading(true);
 		try {
-			await rerunJob(jobId);
+			const newJob = await rerunJob(jobId);
 			toast.success("Job re-queued");
+			router.push(`/dashboard/jobs/${newJob.id}`);
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : "Failed to re-run");
+			setActionLoading(false);
+		}
+	};
+
+	const handleCancel = async () => {
+		if (!jobId) return;
+		setActionLoading(true);
+		try {
+			await cancelJob(jobId);
+			setJobState("CANCELLED");
+			setJobError("Cancelled by user");
+			stopStatusPoll();
+			toast.success("Job cancelled");
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Failed to cancel");
 		} finally {
-			setRerunning(false);
+			setActionLoading(false);
+		}
+	};
+
+	const handleApply = async (workerId: string | null) => {
+		if (!job?.vine_id || !jobId) return;
+		setActionLoading(true);
+		try {
+			const { jobId: deployJobId } = await provisionVine(job.vine_id, jobId, workerId);
+			toast.success("Deploy job created");
+			router.push(`/dashboard/jobs/${deployJobId}`);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Failed to apply");
+			setActionLoading(false);
 		}
 	};
 
 	const isActive = jobState === "QUEUED" || jobState === "CLAIMED" || jobState === "PROCESSING";
+	const isTerminal = jobState === "SUCCESS" || jobState === "FAILED" || jobState === "CANCELLED";
+	const isPlanSuccess = job?.job_type === "PLAN" && jobState === "SUCCESS";
 	const info = job ? JOB_TYPES[job.job_type as keyof typeof JOB_TYPES] : null;
 	const Icon = info?.icon;
 
@@ -195,12 +226,6 @@ export default function JobDetailPage() {
 	if (!job) {
 		return (
 			<div className="space-y-4">
-				<Link href="/dashboard/jobs">
-					<Button variant="ghost" size="sm" className="text-xs">
-						<ArrowLeft className="h-3.5 w-3.5 mr-1.5" />
-						Back to Jobs
-					</Button>
-				</Link>
 				<p className="text-muted-foreground text-sm">Job not found.</p>
 			</div>
 		);
@@ -211,34 +236,49 @@ export default function JobDetailPage() {
 			{/* Header */}
 			<div className="px-6 py-4 border-b border-border/40 bg-muted/5 shrink-0">
 				<div className="flex items-center justify-between">
-					<div className="flex items-center gap-4">
-						<Link href="/dashboard/jobs">
-							<Button variant="ghost" size="icon" className="h-8 w-8">
-								<ArrowLeft className="h-4 w-4" />
-							</Button>
-						</Link>
-						<div className="flex items-center gap-3">
-							{Icon && <Icon className="h-5 w-5 text-muted-foreground" />}
-							<div>
-								<div className="flex items-center gap-2">
-									<h1 className="text-base font-semibold">{info?.label ?? job.job_type}</h1>
-									<Badge variant="outline" className={`text-[10px] ${STATUS_STYLES[job.status] ?? ""}`}>
-										{jobState ?? job.status}
-									</Badge>
-									{duration() && <span className="text-xs text-muted-foreground">{duration()}</span>}
-								</div>
-								<p className="text-xs text-muted-foreground">
-									<span className="font-mono">{job.id.slice(0, 8)}</span>
-									{job.worker_id && <> · Worker <span className="font-mono">{job.worker_id.slice(0, 8)}</span></>}
-									{job.created_at && <> · {formatDistanceToNow(new Date(job.created_at), { addSuffix: true })}</>}
-								</p>
+					<div className="flex items-center gap-3">
+						{Icon && <Icon className="h-5 w-5 text-muted-foreground" />}
+						<div>
+							<div className="flex items-center gap-2">
+								<h1 className="text-base font-semibold">{info?.label ?? job.job_type}</h1>
+								<Badge variant="outline" className={`text-[10px] ${STATUS_STYLES[jobState ?? job.status] ?? ""}`}>
+									{jobState ?? job.status}
+								</Badge>
+								{duration() && <span className="text-xs text-muted-foreground">{duration()}</span>}
 							</div>
+							<p className="text-xs text-muted-foreground">
+								<span className="font-mono">{job.id.slice(0, 8)}</span>
+								{job.worker_id && <> · Worker <span className="font-mono">{job.worker_id.slice(0, 8)}</span></>}
+								{job.created_at && <> · {formatDistanceToNow(new Date(job.created_at), { addSuffix: true })}</>}
+							</p>
 						</div>
 					</div>
-					<Button variant="outline" size="sm" className="h-8 text-xs" onClick={handleRerun} disabled={rerunning}>
-						{rerunning ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
-						Re-run
-					</Button>
+					<div className="flex items-center gap-2">
+						{isActive && (
+							<Button variant="outline" size="sm" className="h-8 text-xs text-destructive hover:text-destructive" onClick={handleCancel} disabled={actionLoading}>
+								{actionLoading ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Ban className="h-3.5 w-3.5 mr-1.5" />}
+								Cancel
+							</Button>
+						)}
+						{isPlanSuccess && job.vine_id && (
+							<TendrilSelectPopover
+								trigger={
+									<Button size="sm" className="h-8 text-xs" disabled={actionLoading}>
+										<Rocket className="h-3.5 w-3.5 mr-1.5" />
+										Apply
+									</Button>
+								}
+								onConfirm={handleApply}
+								disabled={actionLoading}
+							/>
+						)}
+						{isTerminal && (
+							<Button variant="outline" size="sm" className="h-8 text-xs" onClick={handleRerun} disabled={actionLoading}>
+								{actionLoading ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
+								Re-run
+							</Button>
+						)}
+					</div>
 				</div>
 			</div>
 
@@ -302,6 +342,15 @@ export default function JobDetailPage() {
 					{jobError && <p className="text-xs text-muted-foreground ml-6 mt-1 break-all">{jobError}</p>}
 				</div>
 			)}
+			{jobState === "CANCELLED" && (
+				<div className="px-6 py-3 border-t border-border bg-muted/10 shrink-0">
+					<div className="flex items-center gap-2">
+						<Ban className="w-4 h-4 text-muted-foreground shrink-0" />
+						<p className="text-sm font-medium text-foreground">Job cancelled</p>
+					</div>
+					{jobError && <p className="text-xs text-muted-foreground ml-6 mt-1 break-all">{jobError}</p>}
+				</div>
+			)}
 
 			{/* Collapsible Details / Config / Metadata */}
 			<div className="border-t border-border/40 shrink-0">
@@ -347,32 +396,32 @@ export default function JobDetailPage() {
 				</Collapsible>
 
 				{Object.keys(job.config_snapshot || {}).length > 0 && (
-						<Collapsible>
-							<CollapsibleTrigger className="flex items-center gap-2 w-full px-6 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors">
-								<ChevronDown className="h-3 w-3" />
-								Config Snapshot
-							</CollapsibleTrigger>
-							<CollapsibleContent className="px-6 pb-4">
-								<pre className="text-[11px] text-muted-foreground bg-muted/30 border rounded-md p-3 whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono">
-									{JSON.stringify(job.config_snapshot, null, 2)}
-								</pre>
-							</CollapsibleContent>
-						</Collapsible>
-					)}
-					{job.execution_metadata && Object.keys(job.execution_metadata).length > 0 && (
-						<Collapsible>
-							<CollapsibleTrigger className="flex items-center gap-2 w-full px-6 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors">
-								<ChevronDown className="h-3 w-3" />
-								Execution Metadata
-							</CollapsibleTrigger>
-							<CollapsibleContent className="px-6 pb-4">
-								<pre className="text-[11px] text-muted-foreground bg-muted/30 border rounded-md p-3 whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono">
-									{JSON.stringify(job.execution_metadata, null, 2)}
-								</pre>
-							</CollapsibleContent>
-						</Collapsible>
-					)}
-				</div>
+					<Collapsible>
+						<CollapsibleTrigger className="flex items-center gap-2 w-full px-6 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors">
+							<ChevronDown className="h-3 w-3" />
+							Config Snapshot
+						</CollapsibleTrigger>
+						<CollapsibleContent className="px-6 pb-4">
+							<pre className="text-[11px] text-muted-foreground bg-muted/30 border rounded-md p-3 whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono">
+								{JSON.stringify(job.config_snapshot, null, 2)}
+							</pre>
+						</CollapsibleContent>
+					</Collapsible>
+				)}
+				{job.execution_metadata && Object.keys(job.execution_metadata).length > 0 && (
+					<Collapsible>
+						<CollapsibleTrigger className="flex items-center gap-2 w-full px-6 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors">
+							<ChevronDown className="h-3 w-3" />
+							Execution Metadata
+						</CollapsibleTrigger>
+						<CollapsibleContent className="px-6 pb-4">
+							<pre className="text-[11px] text-muted-foreground bg-muted/30 border rounded-md p-3 whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono">
+								{JSON.stringify(job.execution_metadata, null, 2)}
+							</pre>
+						</CollapsibleContent>
+					</Collapsible>
+				)}
+			</div>
 		</div>
 	);
 }

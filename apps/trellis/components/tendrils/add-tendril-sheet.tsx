@@ -2,8 +2,8 @@
 
 import { z } from "zod";
 import { publicWorkersInsertSchema } from "@/lib/validations/database.schemas";
-import { useWorkersStore } from "@/lib/stores/use-workers-store";
-import { registerWorker } from "@/app/server/actions/workers";
+import { useTendrilsStore } from "@/lib/stores/use-tendrils-store";
+import { registerWorker } from "@/app/server/actions/tendrils";
 import {
 	getVerifiedCloudIdentities,
 	type CloudIdentityOption,
@@ -11,8 +11,7 @@ import {
 import {
 	CloudProviderProvider,
 	useCloudProvider,
-	REGION_LABELS,
-	type CloudProviderSlug,
+	groupRegions,
 } from "@/lib/cloud-providers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +40,7 @@ import {
 } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CloudIdentitySelector } from "@/components/plant-vine/cloud-identity-selector";
+import { TendrilSelectPopover } from "@/components/tendrils/tendril-select-popover";
 import {
 	AlertTriangle,
 	Check,
@@ -57,7 +57,7 @@ import { FormProvider, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 
-interface AddWorkerSheetProps {
+interface AddTendrilSheetProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }
@@ -66,12 +66,12 @@ const TABS = { deploy: "deploy", register: "register" } as const;
 type Tab = (typeof TABS)[keyof typeof TABS];
 
 const DESCRIPTIONS: Record<Tab, string> = {
-	deploy: "Deploy a self-hosted worker container to your cloud account.",
+	deploy: "Deploy a self-hosted tendril container to your cloud account.",
 	register:
-		"Register a self-hosted worker that runs in your own infrastructure.",
+		"Register a self-hosted tendril that runs in your own infrastructure.",
 };
 
-export function AddWorkerSheet({ open, onOpenChange }: AddWorkerSheetProps) {
+export function AddTendrilSheet({ open, onOpenChange }: AddTendrilSheetProps) {
 	const [tab, setTab] = useState<Tab>(TABS.deploy);
 	const [identities, setIdentities] = useState<CloudIdentityOption[]>([]);
 	const [credentials, setCredentials] = useState<RegisterCredentials | null>(
@@ -104,7 +104,7 @@ export function AddWorkerSheet({ open, onOpenChange }: AddWorkerSheetProps) {
 				<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
 					<SheetTitle className="flex items-center gap-2">
 						<Plus className="h-4 w-4" />
-						Add Worker
+						Add Tendril
 					</SheetTitle>
 					<SheetDescription>{description}</SheetDescription>
 				</SheetHeader>
@@ -158,30 +158,13 @@ export function AddWorkerSheet({ open, onOpenChange }: AddWorkerSheetProps) {
 // Deploy tab
 // ---------------------------------------------------------------------------
 
-const deployWorkerSchema = z.object({
-	name: publicWorkersInsertSchema.shape.name.min(1, "Worker name is required"),
+const deployTendrilSchema = z.object({
+	name: publicWorkersInsertSchema.shape.name.min(1, "Tendril name is required"),
 	cloud_identity_id: z.string().min(1, "Cloud account is required"),
 	region: z.string().min(1, "Region is required"),
 });
 
-type DeployWorkerFormData = z.infer<typeof deployWorkerSchema>;
-
-/** Groups region codes into geographic sections using the registry labels. */
-function groupRegions(codes: string[], provider: CloudProviderSlug) {
-	const labels = REGION_LABELS[provider] ?? {};
-	const grouped = new Map<string, Array<{ value: string; label: string }>>();
-	for (const code of codes) {
-		const meta = labels[code];
-		const group = meta?.group ?? "Other";
-		const label = meta?.label ?? code;
-		if (!grouped.has(group)) grouped.set(group, []);
-		grouped.get(group)!.push({ value: code, label });
-	}
-	return Array.from(grouped.entries()).map(([group, regions]) => ({
-		group,
-		regions: regions.sort((a, b) => a.label.localeCompare(b.label)),
-	}));
-}
+type DeployTendrilFormData = z.infer<typeof deployTendrilSchema>;
 
 function DeployForm({
 	identities,
@@ -191,11 +174,11 @@ function DeployForm({
 	onOpenChange: (open: boolean) => void;
 }) {
 	const router = useRouter();
-	const { deployWorker } = useWorkersStore();
+	const { deployTendril } = useTendrilsStore();
 	const { provider, cachedResources } = useCloudProvider();
 
-	const form = useForm<DeployWorkerFormData>({
-		resolver: zodResolver(deployWorkerSchema),
+	const form = useForm<DeployTendrilFormData>({
+		resolver: zodResolver(deployTendrilSchema),
 		defaultValues: {
 			name: "",
 			cloud_identity_id: "",
@@ -218,26 +201,28 @@ function DeployForm({
 		form.setValue("region", "");
 	}, [provider, form]);
 
-	const onSubmit = async (data: DeployWorkerFormData) => {
+	const handleDeploy = async (assignedWorkerId: string | null) => {
+		const data = form.getValues();
 		try {
-			const { jobId } = await deployWorker({
+			const { jobId } = await deployTendril({
 				name: data.name,
 				cloudIdentityId: data.cloud_identity_id,
 				region: data.region,
+				assignedWorkerId: assignedWorkerId,
 			});
-			toast.success("Worker deployment queued");
+			toast.success("Tendril deployment queued");
 			onOpenChange(false);
 			router.push(`/dashboard/jobs/${jobId}`);
 		} catch (err) {
 			toast.error(
-				err instanceof Error ? err.message : "Failed to deploy worker",
+				err instanceof Error ? err.message : "Failed to deploy tendril",
 			);
 		}
 	};
 
 	return (
 		<FormProvider {...form}>
-			<form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
+			<form onSubmit={(e) => e.preventDefault()} className="space-y-5">
 				<FormField
 					control={form.control}
 					name="name"
@@ -328,20 +313,24 @@ function DeployForm({
 					Terraform in your account.
 				</p>
 
-				<Button
-					type="submit"
-					className="w-full"
-					disabled={
-						!form.formState.isValid || form.formState.isSubmitting
+				<TendrilSelectPopover
+					trigger={
+						<Button
+							type="button"
+							className="w-full"
+							disabled={!form.formState.isValid || form.formState.isSubmitting}
+						>
+							{form.formState.isSubmitting ? (
+								<Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+							) : (
+								<Rocket className="mr-2 h-3.5 w-3.5" />
+							)}
+							Deploy Tendril
+						</Button>
 					}
-				>
-					{form.formState.isSubmitting ? (
-						<Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-					) : (
-						<Rocket className="mr-2 h-3.5 w-3.5" />
-					)}
-					Deploy Worker
-				</Button>
+					onConfirm={handleDeploy}
+					disabled={!form.formState.isValid || form.formState.isSubmitting}
+				/>
 			</form>
 		</FormProvider>
 	);
@@ -422,7 +411,7 @@ function RegisterForm({
 			toast.error(
 				error instanceof Error
 					? error.message
-					: "Failed to register worker",
+					: "Failed to register tendril",
 			);
 		} finally {
 			setIsSubmitting(false);
@@ -448,9 +437,9 @@ function RegisterForm({
 					</div>
 				</div>
 
-				<CopyField label="Worker ID" value={credentials.workerId} />
+				<CopyField label="Tendril ID" value={credentials.workerId} />
 				<CopyField
-					label="Worker Token"
+					label="Tendril Token"
 					value={credentials.workerToken}
 				/>
 
@@ -489,11 +478,11 @@ grape worker start`}
 	return (
 		<form onSubmit={handleSubmit} className="space-y-5">
 			<div className="space-y-2">
-				<Label htmlFor="worker-name" className="text-sm">
+				<Label htmlFor="tendril-name" className="text-sm">
 					Name
 				</Label>
 				<Input
-					id="worker-name"
+					id="tendril-name"
 					placeholder="e.g. fargate-eu-west-1"
 					value={name}
 					onChange={(e) => setName(e.target.value)}
@@ -520,7 +509,7 @@ grape worker start`}
 				) : (
 					<Server className="mr-2 h-3.5 w-3.5" />
 				)}
-				Register Worker
+				Register Tendril
 			</Button>
 		</form>
 	);

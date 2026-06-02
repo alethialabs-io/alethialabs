@@ -2,19 +2,27 @@
 
 import { Badge } from "@/components/ui/badge";
 import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { getProvider } from "@/lib/cloud-providers/registry";
+import {
 	PublicProvisionJobsRow,
 	PublicProvisionJobType,
 } from "@/lib/validations/db.schemas";
 import type { ColumnDef } from "@tanstack/react-table";
-import { formatDistanceToNow } from "date-fns";
-import { Container, FileSearch, Plug, RefreshCw, Rocket, Trash2, Upload } from "lucide-react";
+import { format, formatDistanceToNow } from "date-fns";
+import { ArrowUpCircle, Container, FileSearch, Plug, RefreshCw, Rocket, Trash2, Upload } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 
-/** Extended job row with joined vine/worker names from getJobs(). */
+/** Extended job row with joined vine/worker/provider data from getJobs(). */
 type JobRow = PublicProvisionJobsRow & {
 	vine_name?: string | null;
 	vine_vineyard_id?: string | null;
 	worker_name?: string | null;
+	cloud_provider?: string | null;
 };
 
 const JOB_TYPES: Record<
@@ -47,14 +55,19 @@ const JOB_TYPES: Record<
 		description: "Cache cloud regions, networks, zones",
 	},
 	DEPLOY_WORKER: {
-		label: "Deploy Worker",
+		label: "Deploy Tendril",
 		icon: Container,
-		description: "Deploy a self-hosted worker container",
+		description: "Deploy a self-hosted tendril container",
+	},
+	UPDATE_WORKER: {
+		label: "Update Tendril",
+		icon: ArrowUpCircle,
+		description: "Update a tendril to a newer version",
 	},
 	DESTROY_WORKER: {
-		label: "Destroy Worker",
+		label: "Destroy Tendril",
 		icon: Trash2,
-		description: "Tear down a self-hosted worker",
+		description: "Tear down a self-hosted tendril",
 	},
 } as Record<string, { label: string; icon: typeof Rocket; description: string }>;
 
@@ -71,6 +84,43 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 export { JOB_TYPES, STATUS_STYLES };
+
+function formatDuration(ms: number) {
+	const seconds = Math.floor(ms / 1000);
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	const remainingSeconds = seconds % 60;
+	return `${minutes}m ${remainingSeconds}s`;
+}
+
+function StatusBadge({ status, errorMessage }: { status: string; errorMessage?: string | null }) {
+	const badge = (
+		<Badge
+			variant="outline"
+			className={`text-[10px] py-0 ${STATUS_STYLES[status] ?? ""}`}
+		>
+			{status}
+		</Badge>
+	);
+
+	if (status === "FAILED" && errorMessage) {
+		const truncated = errorMessage.length > 120
+			? errorMessage.slice(0, 120) + "..."
+			: errorMessage;
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					{badge}
+				</TooltipTrigger>
+				<TooltipContent side="top" className="text-xs max-w-xs">
+					{truncated}
+				</TooltipContent>
+			</Tooltip>
+		);
+	}
+
+	return badge;
+}
 
 export const jobColumns: ColumnDef<JobRow>[] = [
 	{
@@ -103,14 +153,8 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 		enableSorting: true,
 		cell: ({ row }) => {
 			const status = row.getValue("status") as string;
-			return (
-				<Badge
-					variant="outline"
-					className={`text-[10px] py-0 ${STATUS_STYLES[status] ?? ""}`}
-				>
-					{status}
-				</Badge>
-			);
+			const errorMessage = row.original.error_message;
+			return <StatusBadge status={status} errorMessage={errorMessage} />;
 		},
 	},
 	{
@@ -121,25 +165,48 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 			const vineId = row.getValue("vine_id") as string | null;
 			const vineName = row.original.vine_name;
 			const vineyardId = row.original.vine_vineyard_id;
-			if (!vineId) return <span className="text-xs text-muted-foreground">—</span>;
+			const provider = row.original.cloud_provider;
+
+			const providerIcon = provider ? (
+				<Image
+					src={getProvider(provider).icon}
+					alt={getProvider(provider).shortName}
+					width={14}
+					height={14}
+					className="shrink-0"
+				/>
+			) : null;
+
+			if (!vineId) {
+				return (
+					<div className="flex items-center gap-1.5">
+						{providerIcon}
+						<span className="text-xs text-muted-foreground">—</span>
+					</div>
+				);
+			}
+
 			const href = vineyardId ? `/dashboard/vineyards/${vineyardId}/vines/${vineId}` : "#";
 			return (
-				<Link href={href} onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-foreground hover:underline">
-					{vineName ?? vineId.slice(0, 8)}
-				</Link>
+				<div className="flex items-center gap-1.5">
+					{providerIcon}
+					<Link href={href} onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-foreground hover:underline">
+						{vineName ?? vineId.slice(0, 8)}
+					</Link>
+				</div>
 			);
 		},
 	},
 	{
 		accessorKey: "worker_id",
-		header: "Worker",
+		header: "Tendril",
 		enableSorting: false,
 		cell: ({ row }) => {
 			const workerId = row.getValue("worker_id") as string | null;
 			const workerName = row.original.worker_name;
 			if (!workerId) return <span className="text-xs text-muted-foreground">—</span>;
 			return (
-				<Link href="/dashboard/workers" onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-foreground hover:underline">
+				<Link href="/dashboard/tendrils" onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-foreground hover:underline">
 					{workerName ?? workerId.slice(0, 8)}
 				</Link>
 			);
@@ -153,10 +220,18 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 			const date = row.getValue("created_at") as string | null;
 			if (!date)
 				return <span className="text-xs text-muted-foreground">—</span>;
+			const parsed = new Date(date);
 			return (
-				<span className="text-xs text-muted-foreground">
-					{formatDistanceToNow(new Date(date), { addSuffix: true })}
-				</span>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<span className="text-xs text-muted-foreground cursor-default">
+							{formatDistanceToNow(parsed, { addSuffix: true })}
+						</span>
+					</TooltipTrigger>
+					<TooltipContent side="top" className="text-xs">
+						{format(parsed, "MMM d, yyyy HH:mm:ss")}
+					</TooltipContent>
+				</Tooltip>
 			);
 		},
 	},
@@ -183,9 +258,10 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 				!completed &&
 				(status === "PROCESSING" || status === "CLAIMED")
 			) {
+				const ms = Date.now() - new Date(created).getTime();
 				return (
 					<span className="text-xs text-blue-500 animate-pulse">
-						Running...
+						{formatDuration(ms)}
 					</span>
 				);
 			}
@@ -195,16 +271,7 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 
 			const ms =
 				new Date(completed).getTime() - new Date(created).getTime();
-			const seconds = Math.floor(ms / 1000);
-			if (seconds < 60)
-				return <span className="text-xs">{seconds}s</span>;
-			const minutes = Math.floor(seconds / 60);
-			const remainingSeconds = seconds % 60;
-			return (
-				<span className="text-xs">
-					{minutes}m {remainingSeconds}s
-				</span>
-			);
+			return <span className="text-xs">{formatDuration(ms)}</span>;
 		},
 	},
 ];

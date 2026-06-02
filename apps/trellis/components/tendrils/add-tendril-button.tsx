@@ -1,11 +1,11 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { AddWorkerSheet } from "@/components/workers/add-worker-sheet";
+import { AddTendrilSheet } from "@/components/tendrils/add-tendril-sheet";
 import { Plus } from "lucide-react";
 import { useState } from "react";
 
-export function AddWorkerButton() {
+export function AddTendrilButton() {
 	const [open, setOpen] = useState(false);
 
 	return (
@@ -17,9 +17,9 @@ export function AddWorkerButton() {
 				onClick={() => setOpen(true)}
 			>
 				<Plus className="mr-2 h-3.5 w-3.5" />
-				Add Worker
+				Add Tendril
 			</Button>
-			<AddWorkerSheet open={open} onOpenChange={setOpen} />
+			<AddTendrilSheet open={open} onOpenChange={setOpen} />
 		</>
 	);
 }

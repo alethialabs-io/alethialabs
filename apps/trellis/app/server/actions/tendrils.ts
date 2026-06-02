@@ -74,6 +74,7 @@ export async function deployWorker(params: {
 	cloudIdentityId: string;
 	region: string;
 	imageTag?: string;
+	assignedWorkerId?: string | null;
 }) {
 	const supabase = await createClient();
 
@@ -126,6 +127,7 @@ export async function deployWorker(params: {
 			job_type: "DEPLOY_WORKER",
 			config_snapshot: configSnapshot,
 			status: "QUEUED",
+			assigned_worker_id: params.assignedWorkerId ?? undefined,
 		})
 		.select("id")
 		.single();
@@ -136,8 +138,8 @@ export async function deployWorker(params: {
 	return { workerId: worker.id, jobId: job.id };
 }
 
-/** Queues a DESTROY_WORKER job for a self-hosted worker with cloud resources. */
-export async function destroyWorker(workerId: string) {
+/** Fetches a deployed worker, verifies ownership, and resolves cloud provider. */
+async function fetchDeployedWorker(workerId: string) {
 	const supabase = await createClient();
 
 	const {
@@ -152,19 +154,16 @@ export async function destroyWorker(workerId: string) {
 		.eq("id", workerId)
 		.single();
 
-	if (workerError || !worker)
-		throw new Error("Worker not found");
-
-	if (worker.user_id !== user.id)
-		throw new Error("Unauthorized");
-
+	if (workerError || !worker) throw new Error("Worker not found");
+	if (worker.user_id !== user.id) throw new Error("Unauthorized");
 	if (!worker.cloud_identity_id)
-		throw new Error("Worker has no cloud identity — use removeWorker instead");
+		throw new Error("Worker has no cloud identity");
 
 	const deployConfig = worker.metadata?.deploy_config;
-
 	if (!deployConfig)
-		throw new Error("Worker has no deploy config in metadata — it may not have been deployed successfully");
+		throw new Error(
+			"Worker has no deploy config — it may not have been deployed successfully",
+		);
 
 	const { data: identity } = await supabase
 		.from("cloud_identities")
@@ -172,25 +171,98 @@ export async function destroyWorker(workerId: string) {
 		.eq("id", worker.cloud_identity_id)
 		.single();
 
-	const configSnapshot = {
+	return { supabase, user, worker, deployConfig, identity };
+}
+
+/** Builds a worker config snapshot from deploy_config with optional overrides. */
+function buildWorkerConfigSnapshot(
+	worker: { id: string; name: string },
+	deployConfig: NonNullable<Awaited<ReturnType<typeof fetchDeployedWorker>>["deployConfig"]>,
+	provider: string | null | undefined,
+	overrides?: { worker_token?: string; image_tag?: string },
+) {
+	return {
 		worker_id: worker.id,
-		worker_token: "",
+		worker_token: overrides?.worker_token ?? "",
 		worker_name: worker.name,
 		region: deployConfig.region,
-		cloud_provider: identity?.provider ?? deployConfig.cloud_provider ?? "aws",
-		image_tag: deployConfig.image_tag ?? "latest",
-		trellis_url: deployConfig.trellis_url ?? process.env.NEXT_PUBLIC_APP_URL ?? "https://adp.prod.itgix.eu",
+		cloud_provider: provider ?? deployConfig.cloud_provider ?? "aws",
+		image_tag: overrides?.image_tag ?? deployConfig.image_tag ?? "latest",
+		trellis_url:
+			deployConfig.trellis_url ??
+			process.env.NEXT_PUBLIC_APP_URL ??
+			"https://adp.prod.itgix.eu",
 		cpu: deployConfig.cpu ?? 512,
 		memory: deployConfig.memory ?? 1024,
-		image_repository: deployConfig.image_repository ?? "ghcr.io/bobikenobi12/grape-worker",
+		image_repository:
+			deployConfig.image_repository ??
+			"ghcr.io/bobikenobi12/grape-worker",
 	};
+}
+
+/** Queues a DESTROY_WORKER job for a self-hosted worker with cloud resources. */
+export async function destroyWorker(workerId: string, assignedWorkerId?: string | null) {
+	const { supabase, user, worker, deployConfig, identity } =
+		await fetchDeployedWorker(workerId);
+
+	const configSnapshot = buildWorkerConfigSnapshot(
+		worker, deployConfig, identity?.provider,
+		{ worker_token: deployConfig.worker_token },
+	);
 
 	const { data: job, error: jobError } = await supabase
 		.from("provision_jobs")
 		.insert({
 			user_id: user.id,
-			cloud_identity_id: worker.cloud_identity_id,
+			cloud_identity_id: worker.cloud_identity_id!,
 			job_type: "DESTROY_WORKER",
+			config_snapshot: configSnapshot,
+			status: "QUEUED",
+			assigned_worker_id: assignedWorkerId ?? undefined,
+		})
+		.select("id")
+		.single();
+
+	if (jobError)
+		throw new Error("Failed to queue destroy job: " + jobError.message);
+
+	return { jobId: job.id };
+}
+
+/** Queues an UPDATE_WORKER job to roll a deployed worker to the latest release. */
+export async function updateWorker(workerId: string) {
+	const { supabase, user, worker, deployConfig, identity } =
+		await fetchDeployedWorker(workerId);
+
+	if (!deployConfig.worker_token)
+		throw new Error(
+			"Worker is missing deploy token — re-deploy required to enable updates",
+		);
+
+	const { data: latestRelease } = await supabase
+		.from("worker_releases")
+		.select("version")
+		.order("released_at", { ascending: false })
+		.limit(1)
+		.single();
+
+	if (!latestRelease)
+		throw new Error("No worker releases found");
+
+	const configSnapshot = buildWorkerConfigSnapshot(
+		worker, deployConfig, identity?.provider,
+		{
+			worker_token: deployConfig.worker_token,
+			image_tag: latestRelease.version,
+		},
+	);
+
+	const { data: job, error: jobError } = await supabase
+		.from("provision_jobs")
+		.insert({
+			user_id: user.id,
+			cloud_identity_id: worker.cloud_identity_id!,
+			job_type: "UPDATE_WORKER",
 			config_snapshot: configSnapshot,
 			status: "QUEUED",
 		})
@@ -198,7 +270,7 @@ export async function destroyWorker(workerId: string) {
 		.single();
 
 	if (jobError)
-		throw new Error("Failed to queue destroy job: " + jobError.message);
+		throw new Error("Failed to queue update job: " + jobError.message);
 
 	return { jobId: job.id };
 }
@@ -227,6 +299,5 @@ export async function removeWorker(workerId: string) {
 		.delete()
 		.eq("id", workerId);
 
-	if (error)
-		throw new Error("Failed to remove worker: " + error.message);
+	if (error) throw new Error("Failed to remove worker: " + error.message);
 }
