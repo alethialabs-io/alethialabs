@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import type React from "react";
 import { Suspense, useEffect, useState } from "react";
 
@@ -393,16 +394,20 @@ export default function DashboardLayout({
 				)}
 
 				{/* Main Content Area - Expands to fill remaining space */}
-				<main className="flex-1 overflow-y-auto bg-background p-4 sm:p-6 lg:p-8 xl:p-10">
-					<Suspense
-						fallback={
-							<div className="flex items-center justify-center h-full min-h-[50vh]">
-								<div className="w-6 h-6 border-2 border-foreground border-t-transparent rounded-full animate-spin"></div>
-							</div>
-						}
-					>
-						{children}
-					</Suspense>
+				<main className="flex-1 bg-background">
+					<ScrollArea className="h-[calc(100dvh-3.5rem)]">
+						<div className="p-4 sm:p-6 lg:p-8 xl:p-10">
+							<Suspense
+								fallback={
+									<div className="flex items-center justify-center min-h-[50vh]">
+										<div className="w-6 h-6 border-2 border-foreground border-t-transparent rounded-full animate-spin"></div>
+									</div>
+								}
+							>
+								{children}
+							</Suspense>
+						</div>
+					</ScrollArea>
 				</main>
 			</div>
 		</div>
