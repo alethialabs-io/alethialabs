@@ -294,13 +294,14 @@ func installArgoCD(ctx context.Context, vc *types.VineConfig, outputs map[string
 		certArn := argocd.ExtractOutput(outputs, "acm_certificate_arn")
 		if certArn != "" {
 			installCmd += fmt.Sprintf(
-				" --set server.ingress.enabled=true"+
+				" --set configs.params.server\\.insecure=true"+
+					" --set server.ingress.enabled=true"+
 					" --set server.ingress.ingressClassName=alb"+
 					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/scheme=internet-facing'"+
 					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/target-type=ip'"+
 					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/listen-ports=[{\"HTTPS\":443}]'"+
 					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/certificate-arn=%s'"+
-					" --set server.ingress.hostname=%s",
+					" --set 'server.ingress.hosts[0]=%s'",
 				certArn, argoHost)
 			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s\n", argoHost)
 		}
