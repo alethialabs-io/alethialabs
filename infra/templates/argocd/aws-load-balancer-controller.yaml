@@ -20,7 +20,9 @@ spec:
         vpcId: {{ .VPCID }}
         serviceAccount:
           create: true
-          name: aws-load-balancer-controller
+          name: aws-load-balancer-controller-sa
+          annotations:
+            eks.amazonaws.com/role-arn: {{ .IRSAALBControllerArn }}
   destination:
     server: https://kubernetes.default.svc
     namespace: kube-system

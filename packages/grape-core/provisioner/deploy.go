@@ -240,7 +240,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	}
 
 	if !params.DryRun && result.ClusterName != "" {
-		if err := installArgoCD(ctx, vc, &result, stdout, stderr); err != nil {
+		if err := installArgoCD(ctx, vc, result.Outputs, &result, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: ArgoCD installation failed: %v\n", err)
 		}
 
@@ -279,7 +279,7 @@ func resolveArgoTemplatesDir() string {
 	return ""
 }
 
-func installArgoCD(ctx context.Context, vc *types.VineConfig, result *PlanResult, stdout, stderr io.Writer) error {
+func installArgoCD(ctx context.Context, vc *types.VineConfig, outputs map[string]interface{}, result *PlanResult, stdout, stderr io.Writer) error {
 	fmt.Fprintln(stdout, "Installing ArgoCD...")
 
 	addRepoCmd := "helm repo add argo https://argoproj.github.io/argo-helm && helm repo update"
@@ -288,6 +288,24 @@ func installArgoCD(ctx context.Context, vc *types.VineConfig, result *PlanResult
 	}
 
 	installCmd := "helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version 7.1.3 --wait --timeout 5m"
+
+	if vc.DNS.Enabled && vc.DNS.DomainName != "" {
+		argoHost := fmt.Sprintf("argocd.%s", vc.DNS.DomainName)
+		certArn := argocd.ExtractOutput(outputs, "acm_certificate_arn")
+		if certArn != "" {
+			installCmd += fmt.Sprintf(
+				" --set server.ingress.enabled=true"+
+					" --set server.ingress.ingressClassName=alb"+
+					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/scheme=internet-facing'"+
+					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/target-type=ip'"+
+					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/listen-ports=[{\"HTTPS\":443}]'"+
+					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/certificate-arn=%s'"+
+					" --set server.ingress.hostname=%s",
+				certArn, argoHost)
+			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s\n", argoHost)
+		}
+	}
+
 	if err := utils.ExecuteCommand(installCmd, ".", nil, stdout, stderr); err != nil {
 		return fmt.Errorf("failed to install ArgoCD: %w", err)
 	}

@@ -18,6 +18,10 @@ output "eks_irsa_external_dns_arn" {
   value = module.eks[0].eks_irsa_external_dns_arn
 }
 
+output "eks_irsa_alb_controller_arn" {
+  value = module.eks[0].eks_irsa_alb_controller_arn
+}
+
 output "rds_iam_auth_irsa_arn" {
   value = length(module.rds_iam_auth) > 0 ? module.rds_iam_auth[0].iam_role_arn : null
 }
@@ -93,6 +97,12 @@ output "rds_cluster_arn" {
 output "rds_credentials_kms_key_arn" {
   description = "RDS Credentials kms key arn"
   value       = var.create_rds ? module.rds_maindb[0].rds_credentials_kms_key_arn : null
+}
+
+# ACM
+output "acm_certificate_arn" {
+  description = "Wildcard ACM certificate ARN for the configured domain"
+  value       = var.acm_certificate_enable ? module.acm[0].acm_certificate_arn : null
 }
 
 # WAF
