@@ -5,21 +5,21 @@
 class Grape < Formula
   desc "Grape CLI for managing infrastructure configurations."
   homepage "https://github.com/bobikenobi12/bb-thesis-2026"
-  version "0.2.0"
+  version "0.2.1"
   license "Proprietary"
 
   on_macos do
     if Hardware::CPU.intel?
-      url "https://github.com/bobikenobi12/bb-thesis-2026/releases/download/v0.2.0/grape_Darwin_x86_64.tar.gz"
-      sha256 "17b357717b94a84fb8d12791d731bde87d9525dc4d97c464bde4dd5bda1ba09e"
+      url "https://github.com/bobikenobi12/bb-thesis-2026/releases/download/v0.2.1/grape_Darwin_x86_64.tar.gz"
+      sha256 "e3248397006b335336ebeb3b007cd32c9bb66d4ac27a1cd3a2d125db052e5beb"
 
       define_method(:install) do
         bin.install "grape"
       end
     end
     if Hardware::CPU.arm?
-      url "https://github.com/bobikenobi12/bb-thesis-2026/releases/download/v0.2.0/grape_Darwin_arm64.tar.gz"
-      sha256 "c59ccd55f07a32880b36e4ecda254959d609f6de97c308ceb07da0081a5b09a4"
+      url "https://github.com/bobikenobi12/bb-thesis-2026/releases/download/v0.2.1/grape_Darwin_arm64.tar.gz"
+      sha256 "4b56df4ce9f29703dd251d4668627e329e591c6633f0dd52888f9a032c456773"
 
       define_method(:install) do
         bin.install "grape"
@@ -29,15 +29,15 @@ class Grape < Formula
 
   on_linux do
     if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
-      url "https://github.com/bobikenobi12/bb-thesis-2026/releases/download/v0.2.0/grape_Linux_x86_64.tar.gz"
-      sha256 "4ea0e9860f0c15c573991554b8e825d924aa5302d8e8ab3cdcf4cd0831b6799d"
+      url "https://github.com/bobikenobi12/bb-thesis-2026/releases/download/v0.2.1/grape_Linux_x86_64.tar.gz"
+      sha256 "72ced7f3fca19eb53e1572ab767c2ac2bdfc3b7a518accb61b7fe463d934dbc5"
       define_method(:install) do
         bin.install "grape"
       end
     end
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
-      url "https://github.com/bobikenobi12/bb-thesis-2026/releases/download/v0.2.0/grape_Linux_arm64.tar.gz"
-      sha256 "dac63f71e7d0e44eceac33d92e81f39b2577f276003fc0ab0bd923c5fa329b83"
+      url "https://github.com/bobikenobi12/bb-thesis-2026/releases/download/v0.2.1/grape_Linux_arm64.tar.gz"
+      sha256 "6afbe6d4285e9d0ddc18820c77d28c8834d21df3f97d0604859bc4b1108e8eac"
       define_method(:install) do
         bin.install "grape"
       end
