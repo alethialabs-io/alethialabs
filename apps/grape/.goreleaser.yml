@@ -77,6 +77,11 @@ brews:
       # A brief description of the project.
       description: "Grape CLI for managing infrastructure configurations."
 
+      license: "Proprietary"
+
       # The install block for the formula.
       install: |
           bin.install "grape"
+
+      test: |
+          system "#{bin}/grape", "--version"

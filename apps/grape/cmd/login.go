@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/types"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/utils/ui"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -108,12 +109,10 @@ func (m model) View() string {
 		return fmt.Sprintf("%s Waiting for authentication in the browser...", m.spinner.View())
 	}
 	if m.done {
-		successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-		return successStyle.Render(fmt.Sprintf("✓ Welcome, %s! You are now authenticated.\n", m.userEmail))
+		return ui.FormatSuccess(fmt.Sprintf("Welcome, %s! You are now authenticated.", m.userEmail)) + "\n"
 	}
 	if m.err != nil {
-		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-		return errorStyle.Render(fmt.Sprintf("✗ Error: %v\n", m.err))
+		return ui.FormatError(fmt.Sprintf("Error: %v", m.err)) + "\n"
 	}
 	return ""
 }
@@ -187,18 +186,20 @@ func performLoginFlow() error {
 	prefs := loadPreferences()
 
 	if !prefs.HideLoginWarning {
-		infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Border(lipgloss.RoundedBorder()).Padding(1, 2).BorderForeground(lipgloss.Color("63"))
-		linkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Underline(true)
+		infoBox := lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorText)).Border(lipgloss.RoundedBorder()).Padding(1, 2).BorderForeground(lipgloss.Color(ui.ColorAccent))
 
-		msg := fmt.Sprintf("To use the Grape CLI, you must have an account on the ADP ItGix Platform.\nIf you don't have one, register at:\n%s", linkStyle.Render("https://adp.prod.itgix.eu/auth/signin"))
-		fmt.Println(infoStyle.Render(msg))
+		msg := fmt.Sprintf("To use the Grape CLI, you must have an account on the ADP ItGix Platform.\nIf you don't have one, register at:\n%s", ui.LinkStyle.Render("https://adp.prod.itgix.eu/auth/signin"))
+		fmt.Println(infoBox.Render(msg))
 		fmt.Println()
 
 		var hideWarning bool
-		err := huh.NewConfirm().
-			Title("Do you want to hide this message in the future?").
-			Value(&hideWarning).
-			Run()
+		err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title("Hide this message in the future?").
+					Value(&hideWarning),
+			),
+		).Run()
 
 		if err == nil && hideWarning {
 			prefs.HideLoginWarning = true
@@ -215,8 +216,7 @@ func performLoginFlow() error {
 	loginURL := fmt.Sprintf("%s/cli/login?device_code=%s", webOrigin, deviceCode)
 	exchangeURL := fmt.Sprintf("%s/api/auth/cli/exchange", webOrigin)
 
-	accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
-	fmt.Println(accentStyle.Render("Please open the following URL in your browser to log in:"))
+	fmt.Println(ui.CyanStyle.Render("Please open the following URL in your browser to log in:"))
 	fmt.Println(loginURL)
 
 	if err := browser.OpenURL(loginURL); err != nil {
@@ -253,19 +253,15 @@ var loginCmd = &cobra.Command{
 				var creds types.ExchangeResponse
 				json.Unmarshal(file, &creds)
 				
-				infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-				accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
-				
-				fmt.Println(infoStyle.Render(fmt.Sprintf("You are already logged in as: %s", accentStyle.Render(creds.UserEmail))))
-				fmt.Println(infoStyle.Render("Use --force to log in again."))
+					fmt.Println(ui.TextStyle.Render(fmt.Sprintf("You are already logged in as: %s", ui.CyanStyle.Render(creds.UserEmail))))
+				fmt.Println(ui.TextStyle.Render("Use --force to log in again."))
 				return
 			}
 		}
 
 		// 2. Proceed with login flow
 		if err := performLoginFlow(); err != nil {
-			errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-			fmt.Println(errorStyle.Render(err.Error()))
+			ui.Error(err.Error())
 			os.Exit(1)
 		}
 	},

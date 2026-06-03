@@ -5,17 +5,17 @@ import (
 	"os"
 
 	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/api"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/utils/ui"
 	"github.com/spf13/cobra"
 )
 
 var (
-	planVineID   string
-	planWorkerID string
-	planWait     bool
+	vinePlanVineID     string
+	vinePlanTendrilID  string
+	vinePlanWait       bool
 )
 
-var planCmd = &cobra.Command{
+var vinePlanCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Queue a plan (dry-run) job for a vine",
 	Long:  `Plan runs a Terraform plan with cost analysis without applying changes.`,
@@ -28,22 +28,26 @@ var planCmd = &cobra.Command{
 
 		vineyardID := ""
 
-		if planVineID == "" {
+		if vinePlanVineID == "" {
 			vineyardID, _, err = selectVineyard(token)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
 
-			planVineID, err = selectVine(token, vineyardID)
+			vinePlanVineID, err = selectVine(token, vineyardID)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
 		}
 
-		if vineyardID == "" {
-			vineyardID = planVineID
+		if vinePlanTendrilID == "" {
+			vinePlanTendrilID, err = selectTendril(token, "")
+			if err != nil {
+				fmt.Println(err)
+				os.Exit(1)
+			}
 		}
 
 		apiClient := api.NewClient(token)
@@ -51,10 +55,10 @@ var planCmd = &cobra.Command{
 		params := api.QueueJobParams{
 			JobType:         "PLAN",
 			VineyardID:      vineyardID,
-			ConfigurationID: planVineID,
+			ConfigurationID: vinePlanVineID,
 		}
-		if planWorkerID != "" {
-			params.AssignedWorkerID = planWorkerID
+		if vinePlanTendrilID != "" {
+			params.AssignedWorkerID = vinePlanTendrilID
 		}
 
 		job, err := apiClient.QueueJobWithParams(params)
@@ -63,22 +67,20 @@ var planCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-		fmt.Printf("\n%s Queued PLAN job (ID: %s)\n", successStyle.Render("✓"), job.ID)
-
-		if planWait {
+		if vinePlanWait {
+			ui.JobQueued("PLAN", job.ID)
 			if err := waitForJob(apiClient, job.ID); err != nil {
 				os.Exit(1)
 			}
 		} else {
-			fmt.Println("A worker will pick up this job. Monitor with `grape jobs logs " + job.ID + " --follow`")
+			ui.JobQueued("PLAN", job.ID)
 		}
 	},
 }
 
 func init() {
-	rootCmd.AddCommand(planCmd)
-	planCmd.Flags().StringVar(&planVineID, "vine-id", "", "ID of the vine to plan")
-	planCmd.Flags().StringVar(&planWorkerID, "worker-id", "", "Assign to a specific worker")
-	planCmd.Flags().BoolVarP(&planWait, "wait", "w", false, "Wait for job completion")
+	vineCmd.AddCommand(vinePlanCmd)
+	vinePlanCmd.Flags().StringVar(&vinePlanVineID, "vine-id", "", "ID of the vine to plan")
+	vinePlanCmd.Flags().StringVar(&vinePlanTendrilID, "tendril-id", "", "Assign to a specific tendril")
+	vinePlanCmd.Flags().BoolVarP(&vinePlanWait, "wait", "w", false, "Wait for job completion")
 }

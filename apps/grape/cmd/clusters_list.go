@@ -3,20 +3,19 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"sort"
+	"strings"
 
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/utils/ui"
 	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/api"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/dustin/go-humanize"
+	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
-var clustersListCmd = &cobra.Command{
+var clusterListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all connected clusters",
+	Short: "List all vine clusters",
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -24,125 +23,71 @@ var clustersListCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		client := api.NewClient(token)
-		clusters, err := client.GetClusters()
+		apiClient := api.NewClient(token)
+		var clusters []api.VineCluster
+
+		spinner.New().
+			Title("Fetching clusters...").
+			Action(func() {
+				clusters, err = apiClient.GetVineClusters()
+			}).Run()
+
 		if err != nil {
-			fmt.Printf("Error fetching clusters: %v\n", err)
+			ui.Error(fmt.Sprintf("Failed to fetch clusters: %v", err))
 			os.Exit(1)
 		}
 
 		if len(clusters) == 0 {
-			fmt.Println("No clusters found.")
+			ui.Muted("No clusters found. Create a vine with a cluster through Trellis.")
 			return
 		}
 
-		width, height, err := term.GetSize(int(os.Stdout.Fd()))
-		if err != nil {
-			height = 20 // Default height
-		}
-		tableHeight := int(float64(height) * 0.8)
-
 		columns := []table.Column{
-			{Title: "Name", Width: width / 4},
-			{Title: "Status", Width: width / 6},
-			{Title: "Last Heartbeat", Width: width / 4},
-			{Title: "Created At", Width: width / 4},
+			{Title: "Vine", Width: 22},
+			{Title: "Cluster", Width: 20},
+			{Title: "Version", Width: 10},
+			{Title: "Status", Width: 14},
+			{Title: "Nodes", Width: 14},
+			{Title: "Region", Width: 14},
 		}
 
-		rows := createClusterRows(clusters)
+		rows := make([]table.Row, len(clusters))
+		for i, c := range clusters {
+			clusterName := c.ClusterName
+			if clusterName == "" {
+				clusterName = ui.SymbolDash
+			}
 
-		t := table.New(
-			table.WithColumns(columns),
-			table.WithRows(rows),
-			table.WithFocused(true),
-			table.WithHeight(tableHeight),
-		)
+			version := c.ClusterVersion
+			if version == "" {
+				version = ui.SymbolDash
+			}
 
-		s := table.DefaultStyles()
-		s.Header = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252")).
-			BorderStyle(lipgloss.ThickBorder()).
-			BorderBottom(true).
-			Bold(true).
-			Padding(0, 1)
+			nodes := fmt.Sprintf("%d/%d/%d", c.NodeMinSize, c.NodeDesiredSize, c.NodeMaxSize)
 
-		s.Selected = lipgloss.NewStyle().
-			Background(lipgloss.Color("#008080")).
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Bold(false)
+			vineLabel := c.VineProjectName
+			if c.VineEnvironment != "" {
+				vineLabel += " (" + c.VineEnvironment + ")"
+			}
 
-		t.SetStyles(s)
+			rows[i] = table.Row{
+				vineLabel,
+				clusterName,
+				version,
+				fmt.Sprintf("%s %s", ui.StatusDot(c.Status), strings.ToLower(c.Status)),
+				nodes,
+				c.VineRegion,
+			}
+		}
 
-		m := clusterListModel{table: t, clusters: clusters, sortAsc: false}
+		m := ui.NewTableModel(columns, rows, "clusters", "vine", 0)
 		if _, err := tea.NewProgram(m).Run(); err != nil {
-			fmt.Println("Error running program:", err)
+			ui.Error(fmt.Sprintf("Table error: %v", err))
 			os.Exit(1)
 		}
 	},
 }
 
-type clusterListModel struct {
-	table    table.Model
-	clusters []api.Cluster
-	sortAsc  bool
-}
-
-func (m clusterListModel) Init() tea.Cmd { return nil }
-
-func (m clusterListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return m, tea.Quit
-		case "s":
-			m.sortAsc = !m.sortAsc
-			sort.Slice(m.clusters, func(i, j int) bool {
-				if m.sortAsc {
-					return m.clusters[i].Name < m.clusters[j].Name
-				}
-				return m.clusters[i].Name > m.clusters[j].Name
-			})
-			m.table.SetRows(createClusterRows(m.clusters))
-			return m, nil
-		}
-	}
-	m.table, cmd = m.table.Update(msg)
-	return m, cmd
-}
-
-func (m clusterListModel) View() string {
-	status := fmt.Sprintf("Showing %d clusters | Press 'q' to quit | 'j/k' or arrows to navigate | 's' to sort by Name", len(m.table.Rows()))
-	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Padding(0, 1)
-	baseStyle := lipgloss.NewStyle(). 
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240"))
-	return baseStyle.Render(m.table.View()) + "\n" + statusStyle.Render(status)
-}
-
-func createClusterRows(clusters []api.Cluster) []table.Row {
-	var rows []table.Row
-	for _, c := range clusters {
-		status := c.Status
-		if status == "ONLINE" {
-			status = "🟢 ONLINE"
-		} else if status == "OFFLINE" {
-			status = "🔴 OFFLINE"
-		} else {
-			status = "🟡 " + status
-		}
-
-		rows = append(rows, table.Row{
-			c.Name,
-			status,
-			humanize.Time(c.LastHeartbeat),
-			c.CreatedAt.Format("2006-01-02 15:04"),
-		})
-	}
-	return rows
-}
-
 func init() {
-	clustersCmd.AddCommand(clustersListCmd)
+	clusterCmd.AddCommand(clusterListCmd)
 }

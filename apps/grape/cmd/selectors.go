@@ -8,6 +8,7 @@ import (
 	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/utils/ui"
 	"github.com/imroc/req/v3"
 )
 
@@ -53,6 +54,7 @@ func selectVineyard(token string) (vineyardID, vineyardName string, err error) {
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Select Vineyard").
+				Description("Which workspace to use").
 				Options(vOptions...).
 				Value(&vineyardID),
 		),
@@ -70,12 +72,6 @@ func selectVineyard(token string) (vineyardID, vineyardName string, err error) {
 	}
 
 	return vineyardID, vineyardName, nil
-}
-
-type vineSummary struct {
-	ID          string
-	ProjectName string
-	VineyardID  string
 }
 
 func selectVine(token string, vineyardID string) (vineID string, err error) {
@@ -117,6 +113,7 @@ func selectVine(token string, vineyardID string) (vineID string, err error) {
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Select Vine").
+				Description("Which vine to operate on").
 				Options(vineOptions...).
 				Value(&vineID),
 		),
@@ -125,42 +122,117 @@ func selectVine(token string, vineyardID string) (vineID string, err error) {
 	return vineID, err
 }
 
-func selectWorker(token string) (workerID string, err error) {
+var (
+	statusOnline   = ui.SuccessStyle.Render(ui.SymbolOnline)
+	statusOffline  = ui.MutedStyle.Render(ui.SymbolOffline)
+	statusDraining = ui.WarningStyle.Render(ui.SymbolPending)
+)
+
+func selectTendril(token string, excludeID string) (tendrilID string, err error) {
 	apiClient := api.NewClient(token)
 
 	var workers []api.Worker
 
 	spinner.New().
-		Title("Fetching workers...").
+		Title("Fetching tendrils...").
 		Action(func() {
 			workers, err = apiClient.GetWorkers()
 		}).Run()
 
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch workers: %w", err)
+		return "", fmt.Errorf("failed to fetch tendrils: %w", err)
 	}
 
-	if len(workers) == 0 {
-		return "", fmt.Errorf("no workers found — register one with `grape worker register`")
+	options := []huh.Option[string]{
+		huh.NewOption(fmt.Sprintf("%s Any available", statusOnline), ""),
 	}
 
-	workerOptions := make([]huh.Option[string], len(workers))
-	for i, w := range workers {
-		label := fmt.Sprintf("%s (%s) [%s]", w.Name, w.Mode, w.Status)
-		if w.IsDefault {
-			label += " ★"
+	defaultValue := ""
+
+	for _, w := range workers {
+		if w.ID == excludeID {
+			continue
 		}
-		workerOptions[i] = huh.NewOption(label, w.ID)
+
+		var dot string
+		switch w.Status {
+		case "ONLINE":
+			dot = statusOnline
+		case "DRAINING":
+			dot = statusDraining
+		default:
+			dot = statusOffline
+		}
+
+		modeLabel := "cloud"
+		if w.Mode == "self-hosted" {
+			modeLabel = "self"
+		}
+
+		label := fmt.Sprintf("%s %s (%s)", dot, w.Name, modeLabel)
+		if w.IsDefault {
+			label += ui.DefaultBadge()
+		}
+
+		opt := huh.NewOption(label, w.ID)
+		if w.Status != "ONLINE" {
+			opt = opt.Selected(false)
+		}
+		options = append(options, opt)
+
+		if w.IsDefault && w.Status == "ONLINE" {
+			defaultValue = w.ID
+		}
+	}
+
+	tendrilID = defaultValue
+
+	err = huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Select Tendril").
+				Description("Choose which tendril runs this job").
+				Options(options...).
+				Value(&tendrilID),
+		),
+	).Run()
+
+	return tendrilID, err
+}
+
+func selectCloudIdentity(token string) (identityID string, err error) {
+	apiClient := api.NewClient(token)
+
+	var identities []api.CloudIdentity
+
+	spinner.New().
+		Title("Fetching cloud accounts...").
+		Action(func() {
+			identities, err = apiClient.GetCloudIdentities()
+		}).Run()
+
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch cloud identities: %w", err)
+	}
+
+	if len(identities) == 0 {
+		return "", fmt.Errorf("no cloud accounts linked — connect one through Trellis first")
+	}
+
+	options := make([]huh.Option[string], len(identities))
+	for i, id := range identities {
+		options[i] = huh.NewOption(id.Label, id.ID)
 	}
 
 	err = huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Select Worker").
-				Options(workerOptions...).
-				Value(&workerID),
+				Title("Select Cloud Account").
+				Description("Which cloud account to deploy into").
+				Options(options...).
+				Value(&identityID),
 		),
 	).Run()
 
-	return workerID, err
+	return identityID, err
 }

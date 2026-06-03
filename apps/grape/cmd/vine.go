@@ -1,17 +1,15 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 )
 
 var vineCmd = &cobra.Command{
 	Use:   "vine",
 	Short: "Manage vines (infrastructure configurations)",
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("Use `grape vine list` or `grape vine get <name>`")
-	},
+	Long: `Vines are infrastructure configurations for projects.
+
+Use the subcommands to list, view, plan, apply, or destroy vine infrastructure.`,
 }
 
 func init() {

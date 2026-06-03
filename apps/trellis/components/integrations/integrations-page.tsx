@@ -1,28 +1,28 @@
 "use client";
 
-import type { IntegrationWithConnection } from "@/app/server/actions/integrations";
-import { deleteProviderToken } from "@/app/server/actions/identities";
 import {
 	disconnectAwsIdentity,
 	saveAwsIdentity,
 } from "@/app/(private)/dashboard/providers/actions";
 import {
-	disconnectGcpIdentity,
-	saveGcpIdentity,
-} from "@/app/(private)/dashboard/providers/gcp-actions";
-import {
 	disconnectAzureIdentity,
 	saveAzureIdentity,
 } from "@/app/(private)/dashboard/providers/azure-actions";
-import { AwsConnection } from "@/components/onboarding/aws-connection";
-import { GcpConnection } from "@/components/onboarding/gcp-connection";
-import { AzureConnection } from "@/components/onboarding/azure-connection";
+import {
+	disconnectGcpIdentity,
+	saveGcpIdentity,
+} from "@/app/(private)/dashboard/providers/gcp-actions";
+import { deleteProviderToken } from "@/app/server/actions/identities";
+import type { IntegrationWithConnection } from "@/app/server/actions/integrations";
 import { IntegrationDetailSheet } from "@/components/integrations/integration-detail-sheet";
 import { IntegrationsList } from "@/components/integrations/integrations-list";
 import {
 	IntegrationsSidebar,
 	type CategoryFilter,
 } from "@/components/integrations/integrations-sidebar";
+import { AwsConnection } from "@/components/onboarding/aws-connection";
+import { AzureConnection } from "@/components/onboarding/azure-connection";
+import { GcpConnection } from "@/components/onboarding/gcp-connection";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -306,17 +306,19 @@ export function IntegrationsPage({
 					selectedIntegration && handleConnect(selectedIntegration)
 				}
 				onDisconnect={() =>
-					selectedIntegration &&
-					handleDisconnect(selectedIntegration)
+					selectedIntegration && handleDisconnect(selectedIntegration)
 				}
 				isConnecting={connectingSlug === selectedIntegration?.slug}
 			/>
 
 			{/* AWS Connection Sheet */}
-			<Sheet open={awsSheetOpen} onOpenChange={(open) => {
-				setAwsSheetOpen(open);
-				if (!open) router.refresh();
-			}}>
+			<Sheet
+				open={awsSheetOpen}
+				onOpenChange={(open) => {
+					setAwsSheetOpen(open);
+					if (!open) router.refresh();
+				}}
+			>
 				<SheetContent
 					side="right"
 					className="w-full sm:max-w-2xl overflow-y-auto p-0"
@@ -340,10 +342,13 @@ export function IntegrationsPage({
 			</Sheet>
 
 			{/* GCP Connection Sheet */}
-			<Sheet open={gcpSheetOpen} onOpenChange={(open) => {
-				setGcpSheetOpen(open);
-				if (!open) router.refresh();
-			}}>
+			<Sheet
+				open={gcpSheetOpen}
+				onOpenChange={(open) => {
+					setGcpSheetOpen(open);
+					if (!open) router.refresh();
+				}}
+			>
 				<SheetContent
 					side="right"
 					className="w-full sm:max-w-2xl overflow-y-auto p-0"
@@ -351,25 +356,26 @@ export function IntegrationsPage({
 					<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
 						<SheetTitle>Connect GCP Project</SheetTitle>
 						<SheetDescription>
-							Set up Workload Identity Federation to allow Grape to
-							provision infrastructure in your GCP project.
+							Set up Workload Identity Federation to allow Grape
+							to provision infrastructure in your GCP project.
 						</SheetDescription>
 					</SheetHeader>
 					<div className="px-6 py-6">
 						{gcpSetup && (
-							<GcpConnection
-								onComplete={handleGcpConnect}
-							/>
+							<GcpConnection onComplete={handleGcpConnect} />
 						)}
 					</div>
 				</SheetContent>
 			</Sheet>
 
 			{/* Azure Connection Sheet */}
-			<Sheet open={azureSheetOpen} onOpenChange={(open) => {
-				setAzureSheetOpen(open);
-				if (!open) router.refresh();
-			}}>
+			<Sheet
+				open={azureSheetOpen}
+				onOpenChange={(open) => {
+					setAzureSheetOpen(open);
+					if (!open) router.refresh();
+				}}
+			>
 				<SheetContent
 					side="right"
 					className="w-full sm:max-w-2xl overflow-y-auto p-0"
@@ -377,15 +383,14 @@ export function IntegrationsPage({
 					<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
 						<SheetTitle>Connect Azure Subscription</SheetTitle>
 						<SheetDescription>
-							Set up federated identity credentials to allow Grape to
-							provision infrastructure in your Azure subscription.
+							Set up federated identity credentials to allow Grape
+							to provision infrastructure in your Azure
+							subscription.
 						</SheetDescription>
 					</SheetHeader>
 					<div className="px-6 py-6">
 						{azureSetup && (
-							<AzureConnection
-								onComplete={handleAzureConnect}
-							/>
+							<AzureConnection onComplete={handleAzureConnect} />
 						)}
 					</div>
 				</SheetContent>
@@ -420,7 +425,6 @@ export function IntegrationsPage({
 						<AlertDialogAction
 							onClick={confirmDisconnect}
 							disabled={isDisconnecting}
-							className="bg-destructive text-white hover:bg-destructive/90"
 						>
 							{isDisconnecting ? (
 								<Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />

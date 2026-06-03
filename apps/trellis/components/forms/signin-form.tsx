@@ -6,44 +6,31 @@ import {
 	signInWithMagicLink,
 	signInWithOAuth,
 } from "@/app/(public)/auth/signin/actions";
+import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@/components/provider-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Boxes, GitBranch, Github, Mail } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { Loader2, Mail } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 type AuthProvider = "github" | "gitlab" | "bitbucket" | "google";
 
+const oauthProviders: AuthProvider[] = ["github", "google", "gitlab", "bitbucket"];
+
 export function SignInForm() {
 	const [isLoading, setIsLoading] = useState(false);
+	const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
 	const [email, setEmail] = useState("");
+	const [emailExpanded, setEmailExpanded] = useState(false);
 	const [emailSent, setEmailSent] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const router = useRouter();
 	const searchParams = useSearchParams();
 	const next = searchParams.get("next");
 
-	const handleMagicLinkLogin = async (e: React.FormEvent) => {
-		e.preventDefault();
-		setIsLoading(true);
-		setError(null);
-
-		try {
-			await signInWithMagicLink(email, next);
-			setEmailSent(true);
-		} catch (err) {
-			setError(
-				err instanceof Error ? err.message : "Failed to send magic link"
-			);
-		} finally {
-			setIsLoading(false);
-		}
-	};
-
 	const handleOAuthLogin = async (provider: AuthProvider) => {
 		setIsLoading(true);
+		setLoadingProvider(provider);
 		setError(null);
 
 		try {
@@ -55,6 +42,26 @@ export function SignInForm() {
 					: `Failed to sign in with ${provider}`
 			);
 			setIsLoading(false);
+			setLoadingProvider(null);
+		}
+	};
+
+	const handleMagicLinkLogin = async (e: React.FormEvent) => {
+		e.preventDefault();
+		setIsLoading(true);
+		setLoadingProvider("email");
+		setError(null);
+
+		try {
+			await signInWithMagicLink(email, next);
+			setEmailSent(true);
+		} catch (err) {
+			setError(
+				err instanceof Error ? err.message : "Failed to send magic link"
+			);
+		} finally {
+			setIsLoading(false);
+			setLoadingProvider(null);
 		}
 	};
 
@@ -73,16 +80,18 @@ export function SignInForm() {
 						<span className="font-medium text-foreground">{email}</span>
 					</p>
 					<p className="text-xs text-muted-foreground pt-2">
-						Click the link in the email to sign in automatically.
+						Click the link in the email to sign in.
 					</p>
 				</div>
 				<Button
-					variant="outline"
+					variant="ghost"
+					size="sm"
 					onClick={() => {
 						setEmailSent(false);
 						setEmail("");
+						setEmailExpanded(false);
 					}}
-					className="w-full"
+					className="text-muted-foreground"
 				>
 					Back to login
 				</Button>
@@ -91,102 +100,81 @@ export function SignInForm() {
 	}
 
 	return (
-		<div className="space-y-6">
+		<div className="space-y-4">
 			{error && (
-				<div className="bg-destructive/10 border border-destructive/20 text-destructive px-4 py-3 rounded-md text-sm">
+				<div className="bg-destructive/10 border border-destructive/20 text-destructive px-4 py-3 rounded-lg text-sm">
 					{error}
 				</div>
 			)}
 
-			<form onSubmit={handleMagicLinkLogin} className="space-y-4">
-				<div className="space-y-2">
-					<Label htmlFor="email" className="sr-only">Email</Label>
+			<div className="space-y-2">
+				{oauthProviders.map((provider) => (
+					<Button
+						key={provider}
+						onClick={() => handleOAuthLogin(provider)}
+						disabled={isLoading}
+						variant="outline"
+						className="w-full h-10 font-normal justify-center gap-2 hover:bg-muted/50 transition-colors"
+					>
+						{loadingProvider === provider ? (
+							<Loader2 className="w-4 h-4 animate-spin" />
+						) : (
+							<ProviderIcon provider={provider as Provider} size={16} />
+						)}
+						Continue with {PROVIDER_LABELS[provider as Provider]}
+					</Button>
+				))}
+			</div>
+
+			<div className="relative py-2">
+				<div className="absolute inset-0 flex items-center">
+					<Separator className="w-full" />
+				</div>
+				<div className="relative flex justify-center text-xs uppercase">
+					<span className="bg-background px-2 text-muted-foreground">
+						or
+					</span>
+				</div>
+			</div>
+
+			{!emailExpanded ? (
+				<Button
+					variant="ghost"
+					onClick={() => setEmailExpanded(true)}
+					disabled={isLoading}
+					className="w-full h-10 font-normal text-muted-foreground hover:text-foreground"
+				>
+					<Mail className="w-4 h-4 mr-2" />
+					Continue with Email
+				</Button>
+			) : (
+				<form onSubmit={handleMagicLinkLogin} className="space-y-2">
 					<Input
-						id="email"
 						type="email"
 						placeholder="name@example.com"
 						value={email}
 						onChange={(e) => setEmail(e.target.value)}
 						required
 						disabled={isLoading}
+						autoFocus
 						className="h-10 transition-colors focus-visible:ring-1"
 					/>
-				</div>
-
-				<Button
-					type="submit"
-					disabled={isLoading || !email}
-					className="w-full h-10 font-medium"
-				>
-					{isLoading ? "Sending link..." : "Continue with Email"}
-				</Button>
-			</form>
-
-			<div className="relative">
-				<div className="absolute inset-0 flex items-center">
-					<Separator className="w-full" />
-				</div>
-				<div className="relative flex justify-center text-xs uppercase">
-					<span className="bg-card px-2 text-muted-foreground">
-						Or continue with
-					</span>
-				</div>
-			</div>
-
-			<div className="space-y-3">
-				<Button
-					onClick={() => handleOAuthLogin("google")}
-					disabled={isLoading}
-					variant="outline"
-					className="w-full h-10 font-normal hover:bg-muted/50 transition-colors"
-				>
-					<Mail className="w-4 h-4 mr-2" />
-					Google
-				</Button>
-
-				<Button
-					onClick={() => handleOAuthLogin("github")}
-					disabled={isLoading}
-					variant="outline"
-					className="w-full h-10 font-normal hover:bg-muted/50 transition-colors"
-				>
-					<Github className="w-4 h-4 mr-2" />
-					GitHub
-				</Button>
-
-				<Button
-					onClick={() => handleOAuthLogin("gitlab")}
-					disabled={isLoading}
-					variant="outline"
-					className="w-full h-10 font-normal hover:bg-muted/50 transition-colors"
-				>
-					<GitBranch className="w-4 h-4 mr-2" />
-					GitLab
-				</Button>
-
-				<Button
-					onClick={() => handleOAuthLogin("bitbucket")}
-					disabled={isLoading}
-					variant="outline"
-					className="w-full h-10 font-normal hover:bg-muted/50 transition-colors"
-				>
-					<Boxes className="w-4 h-4 mr-2" />
-					Bitbucket
-				</Button>
-			</div>
-
-			<div className="text-center pt-2">
-				<p className="text-sm text-muted-foreground">
-					Don&apos;t have an account?{" "}
-					<button
-						type="button"
-						className="text-foreground hover:underline font-medium underline-offset-4 transition-colors"
-						onClick={() => router.push("/contact")}
+					<Button
+						type="submit"
+						disabled={isLoading || !email}
+						className="w-full h-10 font-medium"
 					>
-						Contact sales
-					</button>
-				</p>
-			</div>
+						{loadingProvider === "email" ? (
+							<>
+								<Loader2 className="w-4 h-4 mr-2 animate-spin" />
+								Sending link…
+							</>
+						) : (
+							"Send Magic Link"
+						)}
+					</Button>
+				</form>
+			)}
 		</div>
 	);
 }

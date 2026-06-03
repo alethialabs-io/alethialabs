@@ -29,8 +29,12 @@ dist
 
 # Go CLI
 /apps/grape/grape
+/apps/grape/grape-*
 /apps/grape/tmp
 /apps/grape/bin
+
+# Go workspace
+go.work.sum
 
 
 

@@ -1,6 +1,7 @@
 "use client";
 
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
+import { ProviderIcon } from "@/components/provider-icon";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers/registry";
 import { useCloudProviderStore } from "@/lib/stores/use-cloud-provider-store";
 import {
@@ -79,17 +80,10 @@ export function CloudIdentitySelector({
 				</SelectTrigger>
 				<SelectContent>
 					{identities.map((identity) => {
-						const meta = getProvider(identity.provider);
 						return (
 							<SelectItem key={identity.id} value={identity.id}>
 								<div className="flex items-center gap-2">
-									<Image
-										src={meta.icon}
-										alt={meta.shortName}
-										width={16}
-										height={16}
-										className="shrink-0"
-									/>
+									<ProviderIcon provider={identity.provider} size={16} className="shrink-0" />
 									<span>{identity.name}</span>
 									<span className="text-xs text-muted-foreground font-mono">
 										{identity.displayId}

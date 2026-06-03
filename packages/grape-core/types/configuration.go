@@ -3,14 +3,16 @@ package types
 import "time"
 
 type ConfigurationSummary struct {
-	ID string `json:"id"`
-	// Name             string    `json:"name"`
-	ProjectName       string    `json:"project_name"`
-	VineyardID        *string   `json:"vineyard_id"`
-	EnvironmentStage  string    `json:"environment_stage"`
-	ContainerPlatform string    `json:"container_platform"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID                   string    `json:"id"`
+	ProjectName          string    `json:"project_name"`
+	VineyardID           *string   `json:"vineyard_id"`
+	EnvironmentStage     string    `json:"environment_stage"`
+	Status               string    `json:"status"`
+	Region               string    `json:"region"`
+	CloudProvider        string    `json:"cloud_provider"`
+	EstimatedMonthlyCost *float64  `json:"estimated_monthly_cost"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 type Configuration struct {

@@ -1,5 +1,6 @@
 "use client";
 
+import { ProviderIcon } from "@/components/provider-icon";
 import { Button } from "@/components/ui/button";
 import { CodeDemo } from "./code-demo";
 import {
@@ -256,16 +257,12 @@ export function FeatureOverview() {
 
 					{/* Provider logos (static) */}
 					<div className="flex items-center justify-center gap-8 mt-8">
-						{[
-							{ name: "AWS", icon: "/aws/favicon_32x32.png" },
-							{ name: "GCP", icon: "/gcp/favicon_32x32.png" },
-							{ name: "Azure", icon: "/azure/favicon_32x32.png" },
-						].map((p) => (
-							<img
-								key={p.name}
-								src={p.icon}
-								alt={p.name}
-								className="h-5 w-5 opacity-30 grayscale"
+						{(["aws", "gcp", "azure"] as const).map((p) => (
+							<ProviderIcon
+								key={p}
+								provider={p}
+								size={20}
+								className="opacity-30 grayscale"
 							/>
 						))}
 					</div>

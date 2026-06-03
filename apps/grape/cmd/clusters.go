@@ -2,13 +2,12 @@ package cmd
 
 import "github.com/spf13/cobra"
 
-// clustersCmd represents the clusters command
-var clustersCmd = &cobra.Command{
-	Use:   "clusters",
-	Short: "Manage your Trellis clusters",
-	Long:  `List and manage the Kubernetes clusters connected to your Trellis platform.`,
+var clusterCmd = &cobra.Command{
+	Use:   "cluster",
+	Short: "View vine cluster information",
+	Long:  `List and inspect the Kubernetes clusters provisioned for your vines.`,
 }
 
 func init() {
-	rootCmd.AddCommand(clustersCmd)
+	rootCmd.AddCommand(clusterCmd)
 }
