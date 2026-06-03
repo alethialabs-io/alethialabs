@@ -244,6 +244,12 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 			fmt.Fprintf(stderr, "Warning: ArgoCD installation failed: %v\n", err)
 		}
 
+		if vc.Repositories.AppsDestinationRepo != "" && params.GitAccessToken != "" {
+			if err := argocd.ConfigureRepoCredentials(vc.Repositories.AppsDestinationRepo, params.GitAccessToken, stdout, stderr); err != nil {
+				fmt.Fprintf(stderr, "Warning: failed to configure ArgoCD repo credentials: %v\n", err)
+			}
+		}
+
 		argoTemplatesDir := resolveArgoTemplatesDir()
 		if argoTemplatesDir != "" {
 			facts := argocd.BuildFromOutputs(result.Outputs, vc)
