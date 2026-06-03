@@ -1,3 +1,7 @@
+output "vpc_id" {
+  value = var.provision_vpc ? module.common_vpc[0].vpc_id : var.vpc_id
+}
+
 output "eks_cluster_arn" {
   value = module.eks[0].eks_cluster_arn
 }
