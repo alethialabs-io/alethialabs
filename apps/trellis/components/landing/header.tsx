@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { ProviderIcon } from "@/components/provider-icon";
 import { TrellisLogo } from "@/components/trellis-logo";
 import { ThemeToggle } from "./theme-toggle";
 import { ExternalLink, Menu } from "lucide-react";
@@ -68,11 +69,7 @@ export function Header() {
 						rel="noopener noreferrer"
 						className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
 					>
-						<img
-							src="/icons/github/github-32x32.png"
-							alt="GitHub"
-							className="h-4 w-4 dark:invert"
-						/>
+						<ProviderIcon provider="github" size={16} className="dark:invert" />
 						GitHub
 					</a>
 					<ThemeToggle />

@@ -1,5 +1,6 @@
 "use client";
 
+import { ProviderIcon } from "@/components/provider-icon";
 import { useState } from "react";
 
 interface CodeLine {
@@ -22,7 +23,6 @@ interface DemoTab {
 interface Provider {
 	id: string;
 	name: string;
-	icon: string;
 }
 
 interface CodeDemoProps {
@@ -75,11 +75,7 @@ export function CodeDemo({
 										: "text-white/40 hover:text-white/70"
 								}`}
 							>
-								<img
-									src={p.icon}
-									alt={p.name}
-									className="h-3.5 w-3.5"
-								/>
+								<ProviderIcon provider={p.id} size={14} />
 								{p.name}
 							</button>
 						))}

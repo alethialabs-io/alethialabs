@@ -6,6 +6,7 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { ProviderIcon } from "@/components/provider-icon";
 import { getProvider } from "@/lib/cloud-providers/registry";
 import {
 	PublicProvisionJobsRow,
@@ -14,7 +15,6 @@ import {
 import type { ColumnDef } from "@tanstack/react-table";
 import { format, formatDistanceToNow } from "date-fns";
 import { ArrowUpCircle, Container, FileSearch, Plug, RefreshCw, Rocket, Trash2, Upload } from "lucide-react";
-import Image from "next/image";
 import Link from "next/link";
 
 /** Extended job row with joined vine/worker/provider data from getJobs(). */
@@ -168,13 +168,7 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 			const provider = row.original.cloud_provider;
 
 			const providerIcon = provider ? (
-				<Image
-					src={getProvider(provider).icon}
-					alt={getProvider(provider).shortName}
-					width={14}
-					height={14}
-					className="shrink-0"
-				/>
+				<ProviderIcon provider={provider} size={14} className="shrink-0" />
 			) : null;
 
 			if (!vineId) {

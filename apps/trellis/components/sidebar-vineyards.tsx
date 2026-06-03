@@ -1,10 +1,9 @@
 "use client";
 
 import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
-import { getProvider } from "@/lib/cloud-providers";
+import { ProviderIcon } from "@/components/provider-icon";
 import { cn } from "@/lib/utils";
 import { ChevronRight, Map, Plus } from "lucide-react";
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
@@ -107,7 +106,7 @@ export function SidebarVineyards() {
 									<div className="ml-6 pl-3 border-l border-border/40 space-y-0.5 py-0.5">
 										{vines.map((vine) => {
 											const isVineActive = pathname === `/dashboard/vineyards/${vineyard.id}/vines/${vine.id}`;
-											const providerMeta = vine.cloud_provider ? getProvider(vine.cloud_provider) : null;
+											const hasProvider = !!vine.cloud_provider;
 
 											return (
 												<Link
@@ -122,12 +121,10 @@ export function SidebarVineyards() {
 													)}>
 														<span className={cn("h-2 w-2 rounded-full shrink-0", STATUS_DOTS[vine.status] ?? "bg-muted-foreground/40")} />
 														<span className="truncate flex-1">{vine.project_name}</span>
-														{providerMeta && (
-															<Image
-																src={providerMeta.icon}
-																alt={providerMeta.shortName}
-																width={14}
-																height={14}
+														{hasProvider && (
+															<ProviderIcon
+																provider={vine.cloud_provider!}
+																size={14}
 																className="shrink-0 opacity-50"
 															/>
 														)}

@@ -10,9 +10,9 @@ import Link from "next/link";
 import { useState } from "react";
 
 const PROVIDERS = [
-	{ id: "aws", name: "AWS", icon: "/aws/favicon_32x32.png" },
-	{ id: "gcp", name: "GCP", icon: "/gcp/favicon_32x32.png" },
-	{ id: "azure", name: "Azure", icon: "/azure/favicon_32x32.png" },
+	{ id: "aws", name: "AWS" },
+	{ id: "gcp", name: "GCP" },
+	{ id: "azure", name: "Azure" },
 ];
 
 const CAPABILITY_TABS: Record<

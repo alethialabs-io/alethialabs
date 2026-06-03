@@ -6,21 +6,17 @@ import {
 	signInWithMagicLink,
 	signInWithOAuth,
 } from "@/app/(public)/auth/signin/actions";
+import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@/components/provider-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Boxes, GitBranch, Github, Loader2, Mail } from "lucide-react";
+import { Loader2, Mail } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 type AuthProvider = "github" | "gitlab" | "bitbucket" | "google";
 
-const providers: { id: AuthProvider; label: string; icon: typeof Github }[] = [
-	{ id: "github", label: "GitHub", icon: Github },
-	{ id: "google", label: "Google", icon: Mail },
-	{ id: "gitlab", label: "GitLab", icon: GitBranch },
-	{ id: "bitbucket", label: "Bitbucket", icon: Boxes },
-];
+const oauthProviders: AuthProvider[] = ["github", "google", "gitlab", "bitbucket"];
 
 export function SignInForm() {
 	const [isLoading, setIsLoading] = useState(false);
@@ -112,20 +108,20 @@ export function SignInForm() {
 			)}
 
 			<div className="space-y-2">
-				{providers.map((provider) => (
+				{oauthProviders.map((provider) => (
 					<Button
-						key={provider.id}
-						onClick={() => handleOAuthLogin(provider.id)}
+						key={provider}
+						onClick={() => handleOAuthLogin(provider)}
 						disabled={isLoading}
 						variant="outline"
 						className="w-full h-10 font-normal justify-center gap-2 hover:bg-muted/50 transition-colors"
 					>
-						{loadingProvider === provider.id ? (
+						{loadingProvider === provider ? (
 							<Loader2 className="w-4 h-4 animate-spin" />
 						) : (
-							<provider.icon className="w-4 h-4" />
+							<ProviderIcon provider={provider as Provider} size={16} />
 						)}
-						Continue with {provider.label}
+						Continue with {PROVIDER_LABELS[provider as Provider]}
 					</Button>
 				))}
 			</div>
@@ -171,7 +167,7 @@ export function SignInForm() {
 						{loadingProvider === "email" ? (
 							<>
 								<Loader2 className="w-4 h-4 mr-2 animate-spin" />
-								Sending link...
+								Sending link…
 							</>
 						) : (
 							"Send Magic Link"

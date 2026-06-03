@@ -1,6 +1,7 @@
 "use client";
 
 import type { ClusterData } from "@/app/server/actions/clusters";
+import { ProviderIcon } from "@/components/provider-icon";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,12 +56,7 @@ export function ClusterCard({ data }: { data: ClusterData }) {
 			{/* Header */}
 			<div className="flex items-center justify-between">
 				<div className="flex items-center gap-3">
-					<Image
-						src={meta.icon}
-						alt={meta.shortName}
-						width={20}
-						height={20}
-					/>
+					<ProviderIcon provider={provider} size={20} />
 					<div>
 						<div className="flex items-center gap-2">
 							<h3 className="text-sm font-semibold">
