@@ -1,9 +1,17 @@
 name: Release Grape CLI
 
 on:
-  push:
-    tags:
-      - 'grape-v*'
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 0.2.0)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -24,15 +32,12 @@ jobs:
           cache-dependency-path: apps/grape/go.sum
 
       - name: Prepare Clean Tag for GoReleaser
-        id: prepare_tag
         run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          CLEAN_TAG=${TAG_NAME#grape-}
+          CLEAN_TAG=v${{ inputs.version }}
           echo "CLEAN_TAG=$CLEAN_TAG" >> $GITHUB_ENV
-          # Create a local tag on HEAD so GoReleaser OSS validation passes
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag $CLEAN_TAG
+          git tag -f $CLEAN_TAG
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
@@ -44,4 +49,3 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ env.CLEAN_TAG }}
-

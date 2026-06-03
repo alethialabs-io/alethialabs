@@ -1,9 +1,17 @@
 name: Release Tendril
 
 on:
-  push:
-    tags:
-      - 'tendril-v*'
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 0.1.0)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -25,12 +33,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract version
+      - name: Set version
         id: meta
-        run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          VERSION=${TAG_NAME#tendril-v}
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${{ inputs.version }}" >> $GITHUB_OUTPUT
 
       - name: Stage templates for Docker build
         run: |
