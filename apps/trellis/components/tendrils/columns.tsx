@@ -59,6 +59,9 @@ export const STATUS_DOT_COLORS: Record<PublicWorkerStatus, string> = {
 const DESTROYING_BADGE_STYLE =
 	"text-orange-600 border-orange-200 bg-orange-50 dark:text-orange-400 dark:border-orange-800 dark:bg-orange-950";
 
+const PROVISIONING_BADGE_STYLE =
+	"text-blue-600 border-blue-200 bg-blue-50 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950";
+
 export type TendrilRow = PublicWorkersRow & {
 	activeJob: ActiveJob | null;
 	worker_releases: { version: string; release_notes: string; released_at: string } | null;
@@ -74,6 +77,7 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 	const status = worker.status ?? "OFFLINE";
 	const isCloudHosted = worker.mode === "cloud-hosted";
 	const isDestroying = worker.activeJob?.job_type === "DESTROY_WORKER";
+	const isProvisioning = worker.activeJob?.job_type === "DEPLOY_WORKER";
 	const metadata = worker.metadata as WorkerMetadata | null;
 	const hasCloudResources = !!worker.cloud_identity_id && !!metadata?.deploy_config;
 	const canUpdate = hasCloudResources && !!metadata?.deploy_config?.worker_token;
@@ -134,6 +138,19 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 			setShowRemoveDialog(false);
 		}
 	};
+
+	if (isProvisioning && worker.activeJob) {
+		return (
+			<Link
+				href={`/dashboard/jobs/${worker.activeJob.id}`}
+				onClick={(e) => e.stopPropagation()}
+				className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+			>
+				<Loader2 className="h-3 w-3 animate-spin" />
+				Provisioning…
+			</Link>
+		);
+	}
 
 	if (isDestroying && worker.activeJob) {
 		return (
@@ -299,10 +316,11 @@ export const tendrilColumns: ColumnDef<TendrilRow>[] = [
 			const worker = row.original;
 			const status = (worker.status ?? "OFFLINE") as PublicWorkerStatus;
 			const isDestroying = worker.activeJob?.job_type === "DESTROY_WORKER";
-			const dotColor = isDestroying ? "bg-orange-500" : STATUS_DOT_COLORS[status];
-			const isAnimated = status === "ONLINE" || isDestroying;
+			const isProvisioning = worker.activeJob?.job_type === "DEPLOY_WORKER";
+			const dotColor = isDestroying ? "bg-orange-500" : isProvisioning ? "bg-blue-500" : STATUS_DOT_COLORS[status];
+			const isAnimated = status === "ONLINE" || isDestroying || isProvisioning;
 			return (
-				<div className={`flex items-center gap-2.5 ${isDestroying ? "opacity-60" : ""}`}>
+				<div className={`flex items-center gap-2.5 ${isDestroying || isProvisioning ? "opacity-60" : ""}`}>
 					<span className="relative flex h-2.5 w-2.5 shrink-0">
 						{isAnimated && (
 							<span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${dotColor}`} />
@@ -324,6 +342,14 @@ export const tendrilColumns: ColumnDef<TendrilRow>[] = [
 		cell: ({ row }) => {
 			const worker = row.original;
 			const isDestroying = worker.activeJob?.job_type === "DESTROY_WORKER";
+			const isProvisioning = worker.activeJob?.job_type === "DEPLOY_WORKER";
+			if (isProvisioning) {
+				return (
+					<Badge variant="outline" className={`text-[10px] py-0 ${PROVISIONING_BADGE_STYLE}`}>
+						PROVISIONING
+					</Badge>
+				);
+			}
 			if (isDestroying) {
 				return (
 					<Badge variant="outline" className={`text-[10px] py-0 ${DESTROYING_BADGE_STYLE}`}>
