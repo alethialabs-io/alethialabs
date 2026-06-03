@@ -205,6 +205,21 @@ export async function destroyWorker(workerId: string, assignedWorkerId?: string 
 	const { supabase, user, worker, deployConfig, identity } =
 		await fetchDeployedWorker(workerId);
 
+	const { data: activeJobs } = await supabase
+		.from("provision_jobs")
+		.select("id, config_snapshot")
+		.eq("user_id", user.id)
+		.eq("job_type", "DESTROY_WORKER")
+		.in("status", ["QUEUED", "CLAIMED", "PROCESSING"]);
+
+	const duplicate = activeJobs?.find(
+		(j) => (j.config_snapshot as Record<string, unknown>)?.worker_id === workerId,
+	);
+
+	if (duplicate) {
+		throw new Error("A destroy job is already in progress for this worker");
+	}
+
 	const configSnapshot = buildWorkerConfigSnapshot(
 		worker, deployConfig, identity?.provider,
 		{ worker_token: deployConfig.worker_token },

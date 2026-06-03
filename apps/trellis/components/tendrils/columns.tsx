@@ -69,6 +69,7 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 	const { latestRelease, setDefaultTendril, updateTendril, destroyTendril, deleteTendril } = useTendrilsStore();
 	const [showRemoveDialog, setShowRemoveDialog] = useState(false);
 	const [acting, setActing] = useState(false);
+	const [destroying, setDestroying] = useState(false);
 
 	const status = worker.status ?? "OFFLINE";
 	const isCloudHosted = worker.mode === "cloud-hosted";
@@ -106,6 +107,7 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 	};
 
 	const handleDestroy = async (assignedWorkerId: string | null) => {
+		setDestroying(true);
 		try {
 			const { jobId } = await destroyTendril(worker.id, assignedWorkerId);
 			toast.success("Destroy job queued", {
@@ -116,6 +118,7 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 			});
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : "Failed to queue destroy");
+			setDestroying(false);
 		}
 	};
 
@@ -167,8 +170,8 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 			{!isCloudHosted && hasCloudResources && (
 				<TendrilSelectPopover
 					trigger={
-						<Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive">
-							Destroy
+						<Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive" disabled={destroying}>
+							{destroying ? "Destroying…" : "Destroy"}
 						</Button>
 					}
 					variant="destructive"
@@ -176,6 +179,7 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 					description={`This will tear down all cloud resources for "${worker.name}" and delete the tendril. This cannot be undone.`}
 					excludeId={worker.id}
 					onConfirm={handleDestroy}
+					disabled={destroying}
 				/>
 			)}
 
