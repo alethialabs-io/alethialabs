@@ -9,7 +9,6 @@ import {
 	type CloudIdentityOption,
 } from "@/app/server/actions/aws/identities";
 import {
-	CloudProviderProvider,
 	useCloudProvider,
 	groupRegions,
 } from "@/lib/cloud-providers";
@@ -132,12 +131,10 @@ export function AddTendrilSheet({ open, onOpenChange }: AddTendrilSheetProps) {
 						</TabsList>
 
 						<TabsContent value={TABS.deploy} className="pt-4">
-							<CloudProviderProvider>
-								<DeployForm
-									identities={identities}
-									onOpenChange={handleClose}
-								/>
-							</CloudProviderProvider>
+							<DeployForm
+								identities={identities}
+								onOpenChange={handleClose}
+							/>
 						</TabsContent>
 
 						<TabsContent value={TABS.register} className="pt-4">

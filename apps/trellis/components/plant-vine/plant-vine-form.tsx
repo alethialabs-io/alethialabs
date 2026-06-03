@@ -4,7 +4,6 @@ import { createVine, type CreateVineInput } from "@/app/server/actions/vines";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { vineFormSchema, type VineFormData } from "@/lib/validations/vine-form.schema";
 import {
-	CloudProviderProvider,
 	useCloudProvider,
 	DEFAULT_INSTANCE_TYPE,
 	DEFAULT_K8S_VERSION,
@@ -50,11 +49,9 @@ interface PlantVineFormProps {
 /** Outer wrapper that provides the CloudProvider context. */
 export function PlantVineForm({ cloudIdentities, sourceVine }: PlantVineFormProps) {
 	return (
-		<CloudProviderProvider>
-			<RepositoryProvider>
-				<PlantVineFormInner cloudIdentities={cloudIdentities} sourceVine={sourceVine} />
-			</RepositoryProvider>
-		</CloudProviderProvider>
+		<RepositoryProvider>
+			<PlantVineFormInner cloudIdentities={cloudIdentities} sourceVine={sourceVine} />
+		</RepositoryProvider>
 	);
 }
 
@@ -121,6 +118,11 @@ function PlantVineFormInner({ cloudIdentities, sourceVine }: PlantVineFormProps)
 		mode: "onChange",
 	});
 
+	useEffect(() => {
+		store.reset();
+		return () => { store.reset(); };
+	}, [store]);
+
 	const region = form.watch("vine.region");
 	useEffect(() => {
 		if (region) store.fetchPrices(region);
@@ -160,10 +162,11 @@ function PlantVineFormInner({ cloudIdentities, sourceVine }: PlantVineFormProps)
 	}, [provider, sourceVine, form]);
 
 	const onSubmit = async (data: VineFormData) => {
-		store.set({ isLoading: true, error: null });
+		store.setSubmitting();
 		try {
 			const input = data as unknown as CreateVineInput;
 			const { vine } = await createVine(input);
+			store.reset();
 			toast.success("Vine planted successfully!");
 			if (vine.vineyard_id) {
 				router.push(`/dashboard/vineyards/${vine.vineyard_id}`);
@@ -171,16 +174,11 @@ function PlantVineFormInner({ cloudIdentities, sourceVine }: PlantVineFormProps)
 				router.push("/dashboard/vines");
 			}
 		} catch (err) {
-			store.set({
-				error: err instanceof Error ? err.message : "An unexpected error occurred",
-				isLoading: false,
-			});
+			store.setError(err instanceof Error ? err.message : "An unexpected error occurred");
 		}
 	};
 
 	const onError = (errors: Record<string, unknown>) => {
-		store.set({ submitted: true });
-
 		const firstErrorKey = Object.keys(errors)[0];
 		const sectionId = fieldToSectionId[firstErrorKey];
 		if (sectionId) {

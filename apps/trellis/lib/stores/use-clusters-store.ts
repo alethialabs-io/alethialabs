@@ -6,6 +6,7 @@ const STALE_THRESHOLD = 30_000;
 interface ClustersStore {
 	clusters: ClusterData[];
 	isLoading: boolean;
+	error: string | null;
 	lastFetchedAt: number | null;
 	fetchClusters: (force?: boolean) => Promise<void>;
 }
@@ -13,6 +14,7 @@ interface ClustersStore {
 export const useClustersStore = create<ClustersStore>()((set, get) => ({
 	clusters: [],
 	isLoading: false,
+	error: null,
 	lastFetchedAt: null,
 
 	fetchClusters: async (force = false) => {
@@ -26,12 +28,12 @@ export const useClustersStore = create<ClustersStore>()((set, get) => ({
 			return;
 		}
 
-		set({ isLoading: true });
+		set({ isLoading: true, error: null });
 		try {
 			const clusters = await getClusters();
-			set({ clusters, lastFetchedAt: Date.now(), isLoading: false });
-		} catch {
-			set({ isLoading: false });
+			set({ clusters, lastFetchedAt: Date.now(), isLoading: false, error: null });
+		} catch (err) {
+			set({ isLoading: false, error: err instanceof Error ? err.message : "Failed to fetch clusters" });
 		}
 	},
 }));

@@ -1,4 +1,3 @@
-import { type ReactNode } from "react";
 import { create } from "zustand";
 import { createClient } from "@/lib/supabase/client";
 import { getCachedResources } from "@/app/server/actions/aws/resources";
@@ -22,6 +21,8 @@ interface CloudProviderStore {
 	cachedAt: string | null;
 	isStale: boolean;
 	isLoading: boolean;
+	error: string | null;
+	_cleanup: (() => void) | null;
 
 	setIdentity: (
 		identityId: string,
@@ -34,10 +35,6 @@ interface CloudProviderStore {
 	subscribe: () => () => void;
 }
 
-let activeChannel: ReturnType<
-	ReturnType<typeof createClient>["channel"]
-> | null = null;
-
 export const useCloudProviderStore = create<CloudProviderStore>()(
 	(set, get) => ({
 		provider: "aws",
@@ -46,16 +43,17 @@ export const useCloudProviderStore = create<CloudProviderStore>()(
 		cachedAt: null,
 		isStale: true,
 		isLoading: false,
+		error: null,
+		_cleanup: null,
 
 		setIdentity: async (identityId, provider) => {
-			set({ identityId, provider, isLoading: true });
-
-			// Tear down previous subscription
-			if (activeChannel) {
-				const supabase = createClient();
-				supabase.removeChannel(activeChannel);
-				activeChannel = null;
+			const prevCleanup = get()._cleanup;
+			if (prevCleanup) {
+				prevCleanup();
+				set({ _cleanup: null });
 			}
+
+			set({ identityId, provider, isLoading: true, error: null });
 
 			try {
 				const { resources, cachedAt } =
@@ -69,18 +67,20 @@ export const useCloudProviderStore = create<CloudProviderStore>()(
 					cachedAt,
 					isStale,
 					isLoading: false,
+					error: null,
 				});
-			} catch {
+			} catch (err) {
 				set({
 					cachedResources: null,
 					cachedAt: null,
 					isStale: true,
 					isLoading: false,
+					error: err instanceof Error ? err.message : "Failed to load cloud resources",
 				});
 			}
 
-			// Subscribe to realtime updates for this identity
-			get().subscribe();
+			const cleanup = get().subscribe();
+			set({ _cleanup: cleanup });
 		},
 
 		updateResources: (resources, cachedAt) => {
@@ -93,11 +93,6 @@ export const useCloudProviderStore = create<CloudProviderStore>()(
 		subscribe: () => {
 			const supabase = createClient();
 			const { identityId } = get();
-
-			if (activeChannel) {
-				supabase.removeChannel(activeChannel);
-				activeChannel = null;
-			}
 
 			if (!identityId) return () => {};
 
@@ -126,11 +121,8 @@ export const useCloudProviderStore = create<CloudProviderStore>()(
 				)
 				.subscribe();
 
-			activeChannel = channel;
-
 			return () => {
 				supabase.removeChannel(channel);
-				activeChannel = null;
 			};
 		},
 	}),
@@ -143,13 +135,4 @@ export function useProviderSlug(): CloudProviderSlug {
 export function useProviderMeta() {
 	const provider = useProviderSlug();
 	return PROVIDERS[provider];
-}
-
-export function CloudProviderProvider({
-	children,
-}: {
-	defaultProvider?: CloudProviderSlug;
-	children: ReactNode;
-}) {
-	return <>{children}</>;
 }

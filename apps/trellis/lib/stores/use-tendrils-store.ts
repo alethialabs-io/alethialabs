@@ -40,17 +40,14 @@ export type TendrilWithRelease = PublicWorkersRow & {
 
 interface TendrilsStore {
 	tendrils: TendrilWithRelease[];
-	activeJobs: ActiveJob[];
 	latestRelease: TendrilRelease | null;
 	isLoading: boolean;
+	error: string | null;
 	lastFetchedAt: number | null;
 
 	fetchTendrils: (force?: boolean) => Promise<void>;
 	addOrUpdateTendril: (tendril: TendrilWithRelease) => void;
 	removeTendril: (id: string) => void;
-	setActiveJobs: (jobs: ActiveJob[]) => void;
-	addOrUpdateJob: (job: ActiveJob) => void;
-	removeJob: (id: string) => void;
 	setDefaultTendril: (tendrilId: string | null) => Promise<void>;
 	deployTendril: (params: Parameters<typeof deployTendrilAction>[0]) => Promise<{ workerId: string; jobId: string }>;
 	updateTendril: (tendrilId: string) => Promise<{ jobId: string }>;
@@ -62,9 +59,9 @@ interface TendrilsStore {
 
 export const useTendrilsStore = create<TendrilsStore>()((set, get) => ({
 	tendrils: [],
-	activeJobs: [],
 	latestRelease: null,
 	isLoading: false,
+	error: null,
 	lastFetchedAt: null,
 
 	fetchTendrils: async (force = false) => {
@@ -79,20 +76,16 @@ export const useTendrilsStore = create<TendrilsStore>()((set, get) => ({
 			return;
 		}
 
-		set({ isLoading: true });
+		set({ isLoading: true, error: null });
 		try {
 			const supabase = createClient();
-			const [tendrilsRes, jobsRes, releaseRes] = await Promise.all([
+			const [tendrilsRes, releaseRes] = await Promise.all([
 				supabase
 					.from("workers")
 					.select("*, worker_releases(version, release_notes, released_at, github_release_url, commit_sha, is_breaking)")
 					.order("is_default", { ascending: false })
 					.order("mode", { ascending: true })
 					.order("created_at", { ascending: true }),
-				supabase
-					.from("provision_jobs")
-					.select("id, job_type, status, config_snapshot, worker_id, vine_id, vines(project_name)")
-					.in("status", ["QUEUED", "CLAIMED", "PROCESSING"]),
 				supabase
 					.from("worker_releases")
 					.select("version, release_notes, released_at, github_release_url, commit_sha, is_breaking")
@@ -103,13 +96,13 @@ export const useTendrilsStore = create<TendrilsStore>()((set, get) => ({
 
 			set({
 				tendrils: (tendrilsRes.data ?? []) as unknown as TendrilWithRelease[],
-				activeJobs: (jobsRes.data ?? []) as ActiveJob[],
 				latestRelease: (releaseRes.data as TendrilRelease) ?? null,
 				lastFetchedAt: Date.now(),
 				isLoading: false,
+				error: null,
 			});
-		} catch {
-			set({ isLoading: false });
+		} catch (err) {
+			set({ isLoading: false, error: err instanceof Error ? err.message : "Failed to fetch tendrils" });
 		}
 	},
 
@@ -128,29 +121,6 @@ export const useTendrilsStore = create<TendrilsStore>()((set, get) => ({
 	removeTendril: (id) => {
 		set((state) => ({
 			tendrils: state.tendrils.filter((t) => t.id !== id),
-		}));
-	},
-
-	setActiveJobs: (jobs) => set({ activeJobs: jobs }),
-
-	addOrUpdateJob: (job) => {
-		set((state) => {
-			if (job.status === "QUEUED" || job.status === "CLAIMED" || job.status === "PROCESSING") {
-				const idx = state.activeJobs.findIndex((j) => j.id === job.id);
-				if (idx >= 0) {
-					const next = [...state.activeJobs];
-					next[idx] = job;
-					return { activeJobs: next };
-				}
-				return { activeJobs: [...state.activeJobs, job] };
-			}
-			return { activeJobs: state.activeJobs.filter((j) => j.id !== job.id) };
-		});
-	},
-
-	removeJob: (id) => {
-		set((state) => ({
-			activeJobs: state.activeJobs.filter((j) => j.id !== id),
 		}));
 	},
 

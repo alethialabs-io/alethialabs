@@ -3,7 +3,7 @@ import { render } from "@testing-library/react";
 import { FormProvider, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { vineFormSchema, type VineFormData } from "@/lib/validations/vine-form.schema";
-import { CloudProviderProvider } from "@/lib/cloud-providers";
+
 
 const DEFAULT_VALUES: VineFormData = {
 	vine: {
@@ -48,9 +48,7 @@ function FormWrapper({
 	});
 
 	return (
-		<CloudProviderProvider>
-			<FormProvider {...form}>{children}</FormProvider>
-		</CloudProviderProvider>
+		<FormProvider {...form}>{children}</FormProvider>
 	);
 }
 

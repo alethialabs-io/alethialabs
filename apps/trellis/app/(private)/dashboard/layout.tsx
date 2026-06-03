@@ -58,9 +58,10 @@ export default function DashboardLayout({
 	useEffect(() => {
 		const supabase = createClient();
 		let channel: ReturnType<typeof supabase.channel> | null = null;
+		let cancelled = false;
 
 		supabase.auth.getUser().then(({ data: { user: u } }) => {
-			if (!u) return;
+			if (!u || cancelled) return;
 			setUser(u);
 			useJobsStore.getState().fetchJobs(true);
 
@@ -85,6 +86,11 @@ export default function DashboardLayout({
 							useVineyardsStore.getState().updateVineInPlace(vine.id, {
 								status: vine.status,
 								estimated_monthly_cost: vine.estimated_monthly_cost,
+								project_name: vine.project_name,
+								region: vine.region,
+								environment_stage: vine.environment_stage,
+								terraform_version: vine.terraform_version,
+								updated_at: vine.updated_at,
 							});
 						}
 					},
@@ -93,6 +99,7 @@ export default function DashboardLayout({
 		});
 
 		return () => {
+			cancelled = true;
 			if (channel) supabase.removeChannel(channel);
 		};
 	}, []);

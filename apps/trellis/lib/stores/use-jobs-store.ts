@@ -14,6 +14,7 @@ interface JobsStore {
 	/** Cached jobs array (in memory, not persisted). */
 	jobs: PublicProvisionJobsRow[];
 	isLoading: boolean;
+	error: string | null;
 	lastFetchedAt: number | null;
 
 	/** Filters (persisted to sessionStorage). */
@@ -39,6 +40,7 @@ export const useJobsStore = create<JobsStore>()(
 		(set, get) => ({
 			jobs: [],
 			isLoading: false,
+			error: null,
 			lastFetchedAt: null,
 
 			statusFilter: "All",
@@ -59,17 +61,18 @@ export const useJobsStore = create<JobsStore>()(
 					return;
 				}
 
-				set({ isLoading: true });
+				set({ isLoading: true, error: null });
 				try {
 					const data = await getJobs();
 					set({
 						jobs: data as PublicProvisionJobsRow[],
 						lastFetchedAt: Date.now(),
 						isLoading: false,
+						error: null,
 					});
 				} catch (err) {
 					console.error("[jobs-store] fetchJobs failed:", err);
-					set({ isLoading: false });
+					set({ isLoading: false, error: err instanceof Error ? err.message : "Failed to fetch jobs" });
 				}
 			},
 
@@ -116,6 +119,14 @@ export const useJobsStore = create<JobsStore>()(
 				currentPage: state.currentPage,
 				pageSize: state.pageSize,
 			}),
+			onRehydrateStorage: () => (state) => {
+				if (state && state.jobs.length === 0) {
+					state.statusFilter = "All";
+					state.typeFilter = "All";
+					state.searchQuery = "";
+					state.currentPage = 0;
+				}
+			},
 		},
 	),
 );
