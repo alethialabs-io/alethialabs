@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "vercel-microfrontends": {
+      "source": "vercel/microfrontends",
+      "sourceType": "github",
+      "skillPath": "skills/vercel-microfrontends/SKILL.md",
+      "computedHash": "cabdceabe3985a640fb5b5569aae0fdab7d0bcb2d077197ad43e485c1b05da07"
+    }
+  }
+}
