@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/api"
 	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/types"
@@ -13,11 +12,7 @@ import (
 )
 
 func getWebOrigin() string {
-	webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
-	if webOrigin == "" {
-		webOrigin = "https://beta.adp.itgix.com"
-	}
-	return webOrigin
+	return WebOrigin()
 }
 
 func selectVineyard(token string) (vineyardID, vineyardName string, err error) {
