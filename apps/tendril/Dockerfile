@@ -43,11 +43,11 @@ RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
     rm /tmp/tf.zip && \
     chmod +x /usr/local/bin/terraform
 
-RUN mkdir -p /opt/infracost && \
-    ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
+RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
     curl -fsSL "https://github.com/infracost/infracost/releases/download/v0.10.39/infracost-linux-${ARCH}.tar.gz" | \
-    tar -xz -C /opt/infracost && \
-    chmod +x /opt/infracost/infracost
+    tar -xz -C /usr/local/bin && \
+    mv /usr/local/bin/infracost-linux-${ARCH} /usr/local/bin/infracost && \
+    chmod +x /usr/local/bin/infracost
 
 # Google Cloud SDK
 RUN ARCH=$(uname -m | sed 's/x86_64/x86_64/' | sed 's/aarch64/arm/') && \
