@@ -1,0 +1,90 @@
+---
+title: TUI Components
+description: Terminal UI components — interactive selectors, progress steppers, and Bubble Tea spinners.
+---
+
+# TUI Components
+
+Grape uses the [Charmbracelet](https://charm.sh/) suite for rich terminal UI. Three libraries are used:
+
+| Library | Purpose |
+|---------|---------|
+| [**huh**](https://github.com/charmbracelet/huh) | Interactive forms and selection prompts |
+| [**bubbletea**](https://github.com/charmbracelet/bubbletea) | Full TUI framework (used for the login spinner) |
+| [**lipgloss**](https://github.com/charmbracelet/lipgloss) | Terminal styling and layout |
+
+## Interactive Selectors
+
+When `--vine-id` is omitted from `plan`, `harvest`, or `destroy`, Grape launches a two-step TUI selector:
+
+### Step 1: Vineyard Selector
+
+```
+? Select a vineyard:
+  > api-backend (3 vines)
+    data-platform (1 vine)
+    internal-tools (2 vines)
+```
+
+Navigate with arrow keys, confirm with Enter.
+
+### Step 2: Vine Selector
+
+```
+? Select a vine:
+  > production / eu-west-1 (ACTIVE)
+    staging / eu-west-1 (DRAFT)
+    development / us-east-1 (PROVISIONING)
+```
+
+Each vine shows its environment stage, region, and current status.
+
+### Standalone Usage
+
+```bash
+grape selectors
+```
+
+Runs the full selection flow and prints the selected IDs.
+
+## Progress Stepper
+
+The visual progress stepper shows deployment phase progress using diamond icons:
+
+```
+◆ Authentication     ← completed
+◆ Configuration      ← completed
+◈ Terraform Plan     ← current (running)
+◇ Cost Analysis      ← pending
+◇ Reporting          ← pending
+```
+
+- `◆` (filled diamond) — completed step
+- `◈` (diamond with dot) — currently executing
+- `◇` (empty diamond) — pending
+
+## Login Spinner
+
+The `grape login` command uses a Bubble Tea model for the authentication flow:
+
+```
+🔐 Waiting for browser authentication...
+
+  Visit: https://trellis.example.com/cli/login?device_code=abc123
+  Enter the verification code shown in your browser:
+
+  > _
+
+  ⠋ Waiting for approval...
+```
+
+The spinner animates while polling the exchange endpoint every 2 seconds.
+
+## Config Printer
+
+Job details and vine configurations are displayed with formatted JSON output using lipgloss styling:
+
+- Monospace font for values
+- Color-coded keys
+- Indented structure for nested objects
+- Truncated long values with ellipsis

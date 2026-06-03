@@ -39,3 +39,7 @@ output "oidc_provider_arn" {
   description = "The ARN of the OIDC Provider if `enable_irsa = true`"
   value       = module.eks.oidc_provider_arn
 }
+
+output "eks_irsa_alb_controller_arn" {
+  value = module.iam_assumable_role_admin_aws_load_balancer_controller.iam_role_arn
+}

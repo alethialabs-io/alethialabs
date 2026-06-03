@@ -13,15 +13,17 @@ type InfraFacts struct {
 	DNSZoneID        string
 	EnableKarpenter  bool
 
-	ClusterName        string
-	ClusterEndpoint    string
-	ClusterArn         string
-	AWSAccountID       string
-	VPCID              string
-	IRSAExternalDNSArn string
-	NodeIAMRoleName    string
-	NodeSecurityGroup  string
-	KarpenterQueueName string
+	ClusterName              string
+	ClusterEndpoint          string
+	ClusterArn               string
+	AWSAccountID             string
+	VPCID                    string
+	ACMCertificateArn        string
+	IRSAExternalDNSArn       string
+	IRSAALBControllerArn     string
+	NodeIAMRoleName          string
+	NodeSecurityGroup        string
+	KarpenterQueueName       string
 }
 
 func BuildFromOutputs(outputs map[string]interface{}, vc *types.VineConfig) *InfraFacts {
@@ -41,19 +43,21 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.VineConfig) *Inf
 		DNSZoneID:       vc.DNS.ZoneID,
 		EnableKarpenter: enableKarpenter,
 
-		ClusterName:        extractOutput(outputs, "eks_cluster_name"),
-		ClusterEndpoint:    extractOutput(outputs, "eks_cluster_endpoint"),
-		ClusterArn:         extractOutput(outputs, "eks_cluster_arn"),
-		AWSAccountID:       vc.CloudAccountID,
-		VPCID:              extractOutput(outputs, "vpc_id"),
-		IRSAExternalDNSArn: extractOutput(outputs, "eks_irsa_external_dns_arn"),
-		NodeIAMRoleName:    extractOutput(outputs, "node_iam_role_name"),
-		NodeSecurityGroup:  extractOutput(outputs, "node_security_group"),
-		KarpenterQueueName: extractOutput(outputs, "karpenter_queue_name"),
+		ClusterName:              ExtractOutput(outputs, "eks_cluster_name"),
+		ClusterEndpoint:          ExtractOutput(outputs, "eks_cluster_endpoint"),
+		ClusterArn:               ExtractOutput(outputs, "eks_cluster_arn"),
+		AWSAccountID:             vc.CloudAccountID,
+		VPCID:                    ExtractOutput(outputs, "vpc_id"),
+		ACMCertificateArn:        ExtractOutput(outputs, "acm_certificate_arn"),
+		IRSAExternalDNSArn:       ExtractOutput(outputs, "eks_irsa_external_dns_arn"),
+		IRSAALBControllerArn:     ExtractOutput(outputs, "eks_irsa_alb_controller_arn"),
+		NodeIAMRoleName:          ExtractOutput(outputs, "node_iam_role_name"),
+		NodeSecurityGroup:        ExtractOutput(outputs, "node_security_group"),
+		KarpenterQueueName:       ExtractOutput(outputs, "karpenter_queue_name"),
 	}
 }
 
-func extractOutput(outputs map[string]interface{}, key string) string {
+func ExtractOutput(outputs map[string]interface{}, key string) string {
 	val, ok := outputs[key]
 	if !ok || val == nil {
 		return ""

@@ -1,0 +1,10 @@
+{
+  "title": "Job Execution",
+  "pages": [
+    "index",
+    "plan-jobs",
+    "deploy-jobs",
+    "destroy-jobs",
+    "worker-jobs"
+  ]
+}

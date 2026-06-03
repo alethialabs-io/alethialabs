@@ -1,0 +1,62 @@
+---
+title: ArgoCD Components
+description: Pre-installed Kubernetes components managed by ArgoCD after cluster provisioning.
+---
+
+# ArgoCD Components
+
+After cluster provisioning, Tendril installs ArgoCD and deploys a set of supporting components via the [App of Apps pattern](/concepts/gitops-argocd). These templates live in `infra/templates/argocd/`.
+
+## Component Manifests
+
+| Template | Component | Purpose |
+|----------|-----------|---------|
+| `aws-load-balancer-controller.yaml` | AWS Load Balancer Controller | Provisions ALB/NLB for Kubernetes Ingress and Service resources |
+| `external-dns.yaml` | External DNS | Syncs Route53/Cloud DNS/Azure DNS records from Kubernetes Ingress annotations |
+| `external-secrets-operator.yaml` | External Secrets Operator | Pulls secrets from Secrets Manager/Secret Manager/Key Vault into Kubernetes Secrets |
+| `karpenter.yaml` | Karpenter | Just-in-time node provisioning based on pod resource requests (AWS) |
+| `metrics-server.yaml` | Metrics Server | Provides CPU/memory metrics for Horizontal Pod Autoscaler |
+| `storage-class-gp3.yaml` | Storage Class | GP3 EBS / Persistent Disk / Managed Disk storage provisioner |
+| `project-infra.yaml` | ArgoCD Project | Application deployment boundary and RBAC |
+
+## How Templates Are Rendered
+
+Each template is a Kubernetes manifest with Helm-style placeholders. During deployment, the Tendril:
+
+1. Extracts **infrastructure facts** from Terraform outputs (cluster name, VPC ID, database endpoints, etc.)
+2. Renders the facts into a Helm values file
+3. Applies each component manifest as an ArgoCD Application
+
+The ArgoCD Application resources reference Helm charts from public repositories with the infrastructure facts injected as values.
+
+## Infrastructure Facts
+
+Example facts passed to component Helm charts:
+
+```yaml
+cluster:
+  name: api-backend-production
+  endpoint: https://ABC123.gr7.eu-west-1.eks.amazonaws.com
+  oidcProviderArn: arn:aws:iam::123456789012:oidc-provider/...
+
+vpc:
+  id: vpc-0123456789abcdef0
+
+database:
+  endpoint: api-backend-production.cluster-abc123.eu-west-1.rds.amazonaws.com
+  port: 5432
+
+cache:
+  endpoint: api-backend-production.abc123.euw1.cache.amazonaws.com
+  port: 6379
+
+dns:
+  domain: api.example.com
+  zoneId: Z1234567890
+```
+
+Components use these values for provider-specific configuration (e.g., External DNS needs the hosted zone ID, External Secrets Operator needs the cluster OIDC provider ARN for IRSA).
+
+## Adding Custom Applications
+
+After the initial deployment, users can add their own applications by pushing YAML files to the `manifests/applications/` directory in the infrastructure Git repository. ArgoCD automatically deploys any new Application manifest it discovers.

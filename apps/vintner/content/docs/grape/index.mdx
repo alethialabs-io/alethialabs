@@ -1,46 +1,58 @@
 ---
 title: Grape CLI
-description: Go command-line tool for managing infrastructure via the Trellis platform.
+description: Go command-line tool for managing multi-cloud infrastructure via the Trellis platform.
 ---
 
 # Grape CLI
 
-Grape is the command-line interface for the Trellis platform. It provides terminal-based access to all infrastructure operations: creating vineyards, planning and deploying vines, monitoring jobs, and managing Tendrils.
+Grape is the command-line interface for the platform. It provides terminal-based access to all infrastructure operations — creating vineyards, planning and deploying vines, monitoring jobs, and managing Tendrils.
 
 ## Overview
 
-- **Language:** Go
-- **Framework:** Cobra (commands) + Charmbracelet (TUI: lipgloss, huh, bubbletea)
-- **Current version:** 0.1.7 (managed by release-please)
-- **Distribution:** Homebrew tap + GitHub Releases (linux/darwin, amd64/arm64)
-
-## Command Categories
-
-| Category | Commands | Purpose |
-|----------|----------|---------|
-| **Auth** | `login`, `logout` | Device code authentication |
-| **Vineyards** | `vineyard create`, `vineyard list`, `vineyard delete` | Workspace management |
-| **Vines** | `vine list`, `vine get` | Infrastructure configuration inspection |
-| **Operations** | `harvest`, `plan`, `destroy` | Queue provisioning jobs |
-| **Jobs** | `jobs list`, `jobs get`, `jobs logs`, `jobs cancel`, `jobs wait` | Monitor execution |
-| **Clusters** | `clusters list` | View provisioned clusters |
-| **Tendrils** | `worker list`, `worker config`, `worker remove` | Agent management |
-| **Selectors** | `selectors` | Interactive vineyard/vine picker |
+| Property | Value |
+|----------|-------|
+| Language | Go |
+| Framework | [Cobra](https://github.com/spf13/cobra) (commands) + [Charmbracelet](https://charm.sh/) (TUI) |
+| Version | Managed by release-please (`grape-v*` tags) |
+| Distribution | Homebrew tap + GitHub Releases (darwin/linux, amd64/arm64) |
 
 ## How It Works
 
-Grape communicates with the Trellis API over HTTPS. It does not run Terraform directly — instead, it queues jobs that Tendrils execute. The CLI is a thin client for:
+Grape is a **thin client** that communicates with the Trellis API over HTTPS. It does not run Terraform directly — instead, it queues jobs that [Tendrils](/tendril) execute. The CLI handles:
 
-1. **Authentication** — Device code flow, token stored locally
-2. **Configuration** — Creating and inspecting vineyards/vines
-3. **Job submission** — Queuing Plan/Deploy/Destroy jobs
-4. **Monitoring** — Streaming logs, checking job status
+1. **Authentication** — [Device code flow](/concepts/authentication) with tokens stored locally
+2. **Configuration** — Creating and inspecting vineyards and vines
+3. **Job submission** — Queuing Plan / Deploy / Destroy jobs
+4. **Monitoring** — Streaming logs, checking job status, waiting for completion
 5. **Management** — Listing clusters, managing Tendrils
+
+## Command Groups
+
+<Cards>
+  <Card title="Vineyard Commands" href="/grape/commands/vineyard">
+    Create, list, and delete workspaces.
+  </Card>
+  <Card title="Vine Commands" href="/grape/commands/vine">
+    List and inspect infrastructure configurations.
+  </Card>
+  <Card title="Plan & Harvest" href="/grape/commands/plan-and-harvest">
+    Queue plan, deploy, and destroy jobs.
+  </Card>
+  <Card title="Job Commands" href="/grape/commands/jobs">
+    List, stream logs, cancel, and wait for jobs.
+  </Card>
+  <Card title="Worker Commands" href="/grape/commands/workers">
+    Register, list, and remove Tendrils.
+  </Card>
+  <Card title="Cluster Commands" href="/grape/commands/clusters">
+    List provisioned Kubernetes clusters.
+  </Card>
+</Cards>
 
 ## Quick Start
 
 ```bash
-# Install via Homebrew
+# Install
 brew install bobikenobi12/bb-thesis-2026/grape
 
 # Authenticate
@@ -49,12 +61,12 @@ grape login
 # List vineyards
 grape vineyard list
 
-# Queue a plan for a vine
+# Plan infrastructure
 grape plan --vine-id <id>
 
-# Watch logs
+# Stream logs
 grape jobs logs --id <job-id> --follow
 
-# Deploy (harvest)
+# Deploy
 grape harvest --vine-id <id> --plan-job-id <plan-job-id>
 ```

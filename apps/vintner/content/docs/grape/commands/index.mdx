@@ -1,0 +1,79 @@
+---
+title: Command Reference
+description: Complete reference for all Grape CLI commands organized by group.
+---
+
+# Command Reference
+
+Grape provides 27 commands across 7 groups. All commands communicate with the Trellis API — they do not execute Terraform directly.
+
+## Command Tree
+
+```
+grape
+├── login [--force]
+├── logout
+├── vineyard
+│   ├── create --name <name>
+│   ├── list
+│   └── delete --id <id>
+├── vine
+│   ├── list [--vineyard-id <id>]
+│   └── get --id <id>
+├── plan [--vine-id <id>] [--worker-id <id>] [--wait]
+├── harvest [--vine-id <id>] [--worker-id <id>] [--plan-job-id <id>] [--wait]
+├── destroy
+│   ├── vine --vine-id <id> [--worker-id <id>] [--wait]
+│   ├── worker --worker-id <id>
+│   └── vineyard --vineyard-id <id>
+├── jobs
+│   ├── list
+│   ├── get --id <id>
+│   ├── logs --id <id> [--follow]
+│   ├── cancel --id <id>
+│   └── wait --id <id>
+├── worker
+│   ├── start
+│   ├── register
+│   ├── list
+│   ├── remove --id <id>
+│   └── config
+├── clusters
+│   └── list
+└── selectors
+```
+
+## Interactive Selection
+
+When `--vine-id` is omitted from `plan`, `harvest`, or `destroy`, Grape launches an interactive TUI selector. See [TUI Components](/grape/tui) for how this works.
+
+## Common Patterns
+
+### Plan-Review-Apply
+
+```bash
+# 1. Plan
+grape plan --vine-id <id>
+# Note the job ID from output
+
+# 2. Stream logs to review
+grape jobs logs --id <plan-job-id> --follow
+
+# 3. Apply
+grape harvest --vine-id <id> --plan-job-id <plan-job-id>
+```
+
+### Scripting with --wait
+
+```bash
+# Block until plan completes, then apply
+grape plan --vine-id <id> --wait
+grape harvest --vine-id <id> --plan-job-id <id> --wait
+```
+
+### Log Tailing
+
+```bash
+# Stream logs like tail -f
+grape jobs logs --id <job-id> --follow
+```
