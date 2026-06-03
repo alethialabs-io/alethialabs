@@ -13,6 +13,7 @@ interface VineyardsStore {
 	/** Cached vineyards with nested vines (in memory, not persisted). */
 	vineyards: VineyardWithVines[];
 	isLoading: boolean;
+	error: string | null;
 	lastFetchedAt: number | null;
 
 	/** Which vineyard IDs are expanded in the sidebar (persisted). */
@@ -28,6 +29,8 @@ interface VineyardsStore {
 	removeVine: (vineyardId: string, vineId: string) => void;
 	/** Removes an entire vineyard from the cached data. */
 	removeVineyard: (vineyardId: string) => void;
+	/** Optimistically renames a vineyard in the cached data. */
+	renameVineyard: (vineyardId: string, name: string) => void;
 	/** Patches a single vine's fields in the cached vineyards array (e.g. from a realtime event). */
 	updateVineInPlace: (vineId: string, patch: Partial<VineWithProvider>) => void;
 }
@@ -37,6 +40,7 @@ export const useVineyardsStore = create<VineyardsStore>()(
 		(set, get) => ({
 			vineyards: [],
 			isLoading: false,
+			error: null,
 			lastFetchedAt: null,
 			expandedIds: [],
 
@@ -52,16 +56,17 @@ export const useVineyardsStore = create<VineyardsStore>()(
 					return;
 				}
 
-				set({ isLoading: true });
+				set({ isLoading: true, error: null });
 				try {
 					const { vineyards } = await getVineyards();
 					set({
 						vineyards,
 						lastFetchedAt: Date.now(),
 						isLoading: false,
+						error: null,
 					});
-				} catch {
-					set({ isLoading: false });
+				} catch (err) {
+					set({ isLoading: false, error: err instanceof Error ? err.message : "Failed to fetch vineyards" });
 				}
 			},
 
@@ -98,6 +103,14 @@ export const useVineyardsStore = create<VineyardsStore>()(
 				set((state) => ({
 					vineyards: state.vineyards.filter((vy) => vy.id !== vineyardId),
 					expandedIds: state.expandedIds.filter((id) => id !== vineyardId),
+				}));
+			},
+
+			renameVineyard: (vineyardId, name) => {
+				set((state) => ({
+					vineyards: state.vineyards.map((vy) =>
+						vy.id === vineyardId ? { ...vy, name } : vy,
+					),
 				}));
 			},
 

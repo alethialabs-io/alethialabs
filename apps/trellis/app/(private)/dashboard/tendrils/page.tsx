@@ -9,7 +9,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
-import { useTendrilsStore, type ActiveJob, type TendrilWithRelease } from "@/lib/stores/use-tendrils-store";
+import { useTendrilsStore, type ActiveJob } from "@/lib/stores/use-tendrils-store";
+import { useJobsStore } from "@/lib/stores/use-jobs-store";
 import type { PublicProvisionJobType, PublicWorkerStatus, PublicWorkersRow, PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
 import type { WorkerMetadata } from "@/types/database-custom.types";
 import { ArrowUpCircle, Loader2, Search, Server } from "lucide-react";
@@ -25,15 +26,32 @@ export default function TendrilsPage() {
 	const router = useRouter();
 	const {
 		tendrils,
-		activeJobs,
 		latestRelease,
 		isLoading,
 		fetchTendrils,
 		addOrUpdateTendril,
 		removeTendril,
-		addOrUpdateJob,
 		updateAllOutdated,
 	} = useTendrilsStore();
+
+	const allJobs = useJobsStore((s) => s.jobs);
+	const activeJobs: ActiveJob[] = useMemo(() =>
+		allJobs
+			.filter((j) => j.status === "QUEUED" || j.status === "CLAIMED" || j.status === "PROCESSING")
+			.map((j) => {
+				const vineName = (j as Record<string, unknown>).vine_name as string | null;
+				return {
+					id: j.id,
+					job_type: j.job_type,
+					status: j.status,
+					config_snapshot: j.config_snapshot as Record<string, unknown>,
+					worker_id: j.worker_id,
+					vine_id: j.vine_id,
+					vines: vineName ? { project_name: vineName } : null,
+				};
+			}),
+		[allJobs],
+	);
 
 	const [statusFilter, setStatusFilter] = useState<PublicWorkerStatus | "All">("All");
 	const [searchQuery, setSearchQuery] = useState("");
@@ -59,20 +77,12 @@ export default function TendrilsPage() {
 					addOrUpdateTendril({ ...(payload.new as PublicWorkersRow), worker_releases: null });
 				},
 			)
-			.on(
-				"postgres_changes",
-				{ event: "*", schema: "public", table: "provision_jobs" },
-				(payload) => {
-					const job = payload.new as ActiveJob;
-					if (job) addOrUpdateJob(job);
-				},
-			)
 			.subscribe();
 
 		return () => {
 			supabase.removeChannel(channel);
 		};
-	}, [addOrUpdateTendril, removeTendril, addOrUpdateJob]);
+	}, [addOrUpdateTendril, removeTendril]);
 
 	const TENDRIL_JOB_TYPES = useMemo(
 		() => new Set<PublicProvisionJobType>(["DEPLOY_WORKER", "UPDATE_WORKER", "DESTROY_WORKER"]),

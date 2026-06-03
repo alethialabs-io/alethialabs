@@ -1,6 +1,7 @@
 "use client";
 
 import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
+import { VineyardActions } from "@/components/sidebar-vineyard-actions";
 import { ProviderIcon } from "@/components/provider-icon";
 import { cn } from "@/lib/utils";
 import { ChevronRight, Map, Plus } from "lucide-react";
@@ -74,7 +75,7 @@ export function SidebarVineyards() {
 						return (
 							<div key={vineyard.id}>
 								{/* Vineyard row */}
-								<div className="flex items-center">
+								<div className="group/vineyard flex items-center">
 									<button
 										type="button"
 										onClick={() => toggleExpanded(vineyard.id)}
@@ -99,6 +100,11 @@ export function SidebarVineyards() {
 											</span>
 										</div>
 									</Link>
+									<VineyardActions
+										vineyardId={vineyard.id}
+										vineyardName={vineyard.name}
+										vineCount={vines.length}
+									/>
 								</div>
 
 								{/* Vine sub-items */}

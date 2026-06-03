@@ -18,7 +18,7 @@ builds:
           - -s -w -X github.com/bobikenobi12/bb-thesis-2026/apps/grape/internal/version.Version={{.Version}}
       env:
           - CGO_ENABLED=0
-          - GRAPE_WEB_ORIGIN=https://adp.prod.itgix.eu
+          - GRAPE_WEB_ORIGIN=https://beta.adp.itgix.com
       goos:
           - linux
           - darwin

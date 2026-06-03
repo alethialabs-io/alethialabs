@@ -60,11 +60,7 @@ var createVineyardCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
-		if webOrigin == "" {
-			webOrigin = "https://adp.prod.itgix.eu"
-		}
-		createURL := fmt.Sprintf("%s/api/cli/vineyards", webOrigin)
+		createURL := fmt.Sprintf("%s/api/cli/vineyards", WebOrigin())
 
 		payload := map[string]string{
 			"name": name,

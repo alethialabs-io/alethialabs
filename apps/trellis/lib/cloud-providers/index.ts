@@ -20,6 +20,5 @@ export {
 	useCloudProviderStore as useCloudProvider,
 	useProviderSlug,
 	useProviderMeta,
-	CloudProviderProvider,
 	type AnyCachedResources,
 } from "@/lib/stores/use-cloud-provider-store";

@@ -51,6 +51,15 @@ It helps you automate, manage, and scale your cloud infrastructure easily.`,
 	},
 }
 
+const defaultWebOrigin = "https://beta.adp.itgix.com"
+
+func WebOrigin() string {
+	if v := os.Getenv("GRAPE_WEB_ORIGIN"); v != "" {
+		return v
+	}
+	return defaultWebOrigin
+}
+
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)

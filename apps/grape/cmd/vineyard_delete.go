@@ -24,10 +24,7 @@ var deleteVineyardCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
-		if webOrigin == "" {
-			webOrigin = "https://adp.prod.itgix.eu"
-		}
+		webOrigin := WebOrigin()
 
 		if len(args) == 0 {
 			var result struct {
