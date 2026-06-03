@@ -15,7 +15,7 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { AlertTriangle, Check, Loader2, Server } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 
 interface TendrilSelectPopoverProps {
@@ -47,7 +47,10 @@ export function TendrilSelectPopover({
 	excludeId,
 }: TendrilSelectPopoverProps) {
 	const { tendrils: allTendrils, isLoading, fetchTendrils } = useTendrilsStore();
-	const tendrils = excludeId ? allTendrils.filter((t) => t.id !== excludeId) : allTendrils;
+	const tendrils = useMemo(
+		() => excludeId ? allTendrils.filter((t) => t.id !== excludeId) : allTendrils,
+		[allTendrils, excludeId],
+	);
 	const [open, setOpen] = useState(false);
 	const [selected, setSelected] = useState<string | null>(null);
 	const [rePlan, setRePlan] = useState(false);
