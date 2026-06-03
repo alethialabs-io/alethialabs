@@ -8,6 +8,9 @@ WORKDIR /app
 COPY go.work go.work
 COPY packages/grape-core/ packages/grape-core/
 
+# Copy grape module stubs so go.work can resolve all entries
+COPY apps/grape/go.mod apps/grape/go.sum apps/grape/
+
 # Copy tendril module
 COPY apps/tendril/go.mod apps/tendril/go.sum apps/tendril/
 RUN cd apps/tendril && go mod download
