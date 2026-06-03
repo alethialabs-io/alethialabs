@@ -1325,19 +1325,28 @@ export type Database = {
       }
       worker_releases: {
         Row: {
+          commit_sha: string | null
+          github_release_url: string | null
           id: string
+          is_breaking: boolean
           release_notes: string
           released_at: string
           version: string
         }
         Insert: {
+          commit_sha?: string | null
+          github_release_url?: string | null
           id?: string
+          is_breaking?: boolean
           release_notes?: string
           released_at?: string
           version: string
         }
         Update: {
+          commit_sha?: string | null
+          github_release_url?: string | null
           id?: string
+          is_breaking?: boolean
           release_notes?: string
           released_at?: string
           version?: string

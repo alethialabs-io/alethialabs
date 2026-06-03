@@ -1956,21 +1956,30 @@ export const publicVineyardsUpdateSchema = z.object({
 });
 
 export const publicWorkerReleasesRowSchema = z.object({
+  commit_sha: z.string().nullable(),
+  github_release_url: z.string().nullable(),
   id: z.string(),
+  is_breaking: z.boolean(),
   release_notes: z.string(),
   released_at: z.string(),
   version: z.string(),
 });
 
 export const publicWorkerReleasesInsertSchema = z.object({
+  commit_sha: z.string().optional().nullable(),
+  github_release_url: z.string().optional().nullable(),
   id: z.string().optional(),
+  is_breaking: z.boolean().optional(),
   release_notes: z.string().optional(),
   released_at: z.string().optional(),
   version: z.string(),
 });
 
 export const publicWorkerReleasesUpdateSchema = z.object({
+  commit_sha: z.string().optional().nullable(),
+  github_release_url: z.string().optional().nullable(),
   id: z.string().optional(),
+  is_breaking: z.boolean().optional(),
   release_notes: z.string().optional(),
   released_at: z.string().optional(),
   version: z.string().optional(),
