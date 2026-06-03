@@ -1,8 +1,9 @@
 'use client'
 
+import { TrellisLogo } from '@/components/trellis-logo'
 import { useSearchParams } from 'next/navigation'
 import { Suspense, useEffect, useState } from 'react'
-import { CheckCircle, Loader2 } from 'lucide-react'
+import { CheckCircle, Loader2, XCircle } from 'lucide-react'
 
 function CliLoginContent() {
   const searchParams = useSearchParams()
@@ -38,29 +39,47 @@ function CliLoginContent() {
 
   return (
     <>
-      <h1 className="text-2xl font-bold mb-4">CLI Authentication</h1>
       {loading && (
-        <div className="flex flex-col items-center justify-center">
-          <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-          <p className="text-gray-400">
-            Approving login attempt...
-          </p>
+        <div className="flex flex-col items-center justify-center gap-4">
+          <Loader2 className="h-10 w-10 animate-spin text-muted-foreground" />
+          <div className="text-center space-y-1">
+            <p className="text-sm font-medium text-foreground">
+              Approving login…
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Connecting your CLI session
+            </p>
+          </div>
         </div>
       )}
       {!loading && !error && (
-        <div className="flex flex-col items-center justify-center">
-          <CheckCircle className="h-12 w-12 text-green-500 mb-4" />
-          <p className="text-lg text-gray-300 mb-2">
-            Authentication successful!
-          </p>
-          <p className="text-gray-400">
-            You can now close this window and return to your terminal.
-          </p>
+        <div className="flex flex-col items-center justify-center gap-4">
+          <div className="h-12 w-12 rounded-full bg-emerald-500/10 flex items-center justify-center">
+            <CheckCircle className="h-6 w-6 text-emerald-500" />
+          </div>
+          <div className="text-center space-y-1">
+            <p className="text-sm font-medium text-foreground">
+              Authentication successful
+            </p>
+            <p className="text-xs text-muted-foreground">
+              You can close this window and return to your terminal.
+            </p>
+          </div>
         </div>
       )}
       {error && (
-        <div className="flex flex-col items-center justify-center">
-          <p className="text-red-500">{error}</p>
+        <div className="flex flex-col items-center justify-center gap-4">
+          <div className="h-12 w-12 rounded-full bg-destructive/10 flex items-center justify-center">
+            <XCircle className="h-6 w-6 text-destructive" />
+          </div>
+          <div className="text-center space-y-1">
+            <p className="text-sm font-medium text-foreground">
+              Authentication failed
+            </p>
+            <p className="text-xs text-destructive">
+              {error}
+            </p>
+          </div>
         </div>
       )}
     </>
@@ -69,16 +88,27 @@ function CliLoginContent() {
 
 export default function CliLoginPage() {
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white">
-      <div className="p-8 bg-gray-900 rounded-lg shadow-md text-center max-w-md w-full">
-        <Suspense fallback={
-          <div className="flex flex-col items-center justify-center">
-            <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-            <p className="text-gray-400">Loading...</p>
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <div className="absolute top-6 left-6">
+        <TrellisLogo withText className="h-6 w-auto text-foreground" />
+      </div>
+
+      <div className="flex-1 flex items-center justify-center">
+        <div className="w-full max-w-sm border border-border/50 rounded-xl bg-card p-8">
+          <div className="text-center mb-6">
+            <h1 className="text-lg font-semibold tracking-tight text-foreground">
+              CLI Authentication
+            </h1>
           </div>
-        }>
-          <CliLoginContent />
-        </Suspense>
+          <Suspense fallback={
+            <div className="flex flex-col items-center justify-center gap-4">
+              <Loader2 className="h-10 w-10 animate-spin text-muted-foreground" />
+              <p className="text-xs text-muted-foreground">Loading…</p>
+            </div>
+          }>
+            <CliLoginContent />
+          </Suspense>
+        </div>
       </div>
     </div>
   )
