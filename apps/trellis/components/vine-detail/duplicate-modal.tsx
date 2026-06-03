@@ -210,7 +210,9 @@ export function DuplicateModal({
 												<div className="flex items-center gap-2">
 													<Image src={meta.icon} alt={meta.shortName} width={16} height={16} className="shrink-0" />
 													<span>{identity.name}</span>
-													<span className="text-xs text-muted-foreground font-mono">{identity.displayId}</span>
+													<span className="text-xs text-muted-foreground font-mono">
+														{identity.displayId.length > 12 ? identity.displayId.slice(0, 12) + "…" : identity.displayId}
+													</span>
 												</div>
 											</SelectItem>
 										);

@@ -24,6 +24,8 @@ type InfraFacts struct {
 	NodeIAMRoleName          string
 	NodeSecurityGroup        string
 	KarpenterQueueName       string
+
+	AppsDestinationRepo string
 }
 
 func BuildFromOutputs(outputs map[string]interface{}, vc *types.VineConfig) *InfraFacts {
@@ -54,6 +56,8 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.VineConfig) *Inf
 		NodeIAMRoleName:          ExtractOutput(outputs, "node_iam_role_name"),
 		NodeSecurityGroup:        ExtractOutput(outputs, "node_security_group"),
 		KarpenterQueueName:       ExtractOutput(outputs, "karpenter_queue_name"),
+
+		AppsDestinationRepo: vc.Repositories.AppsDestinationRepo,
 	}
 }
 

@@ -7,12 +7,37 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  packages: write
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      tendril-released: ${{ steps.release.outputs['apps/tendril--release_created'] }}
+      tendril-version: ${{ steps.release.outputs['apps/tendril--version'] }}
+      tendril-tag: ${{ steps.release.outputs['apps/tendril--tag_name'] }}
+      grape-released: ${{ steps.release.outputs['apps/grape--release_created'] }}
+      grape-version: ${{ steps.release.outputs['apps/grape--version'] }}
+      grape-tag: ${{ steps.release.outputs['apps/grape--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  release-tendril:
+    needs: release-please
+    if: needs.release-please.outputs.tendril-released == 'true'
+    uses: ./.github/workflows/release-tendril.yml
+    with:
+      version: ${{ needs.release-please.outputs.tendril-version }}
+    secrets: inherit
+
+  release-grape:
+    needs: release-please
+    if: needs.release-please.outputs.grape-released == 'true'
+    uses: ./.github/workflows/release-grape.yml
+    with:
+      version: ${{ needs.release-please.outputs.grape-version }}
+    secrets: inherit
