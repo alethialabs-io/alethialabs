@@ -131,7 +131,7 @@ func getAuthTokenInternal(promptLogin bool) (string, error) {
 func refreshAccessToken(refreshToken string) (string, error) {
 	webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
 	if webOrigin == "" {
-		webOrigin = "https://adp.prod.itgix.eu"
+		webOrigin = "https://beta.adp.itgix.com"
 	}
 	refreshURL := fmt.Sprintf("%s/api/auth/cli/refresh", webOrigin)
 

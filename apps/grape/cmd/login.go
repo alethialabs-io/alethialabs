@@ -188,7 +188,7 @@ func performLoginFlow() error {
 	if !prefs.HideLoginWarning {
 		infoBox := lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorText)).Border(lipgloss.RoundedBorder()).Padding(1, 2).BorderForeground(lipgloss.Color(ui.ColorAccent))
 
-		msg := fmt.Sprintf("To use the Grape CLI, you must have an account on the ADP ItGix Platform.\nIf you don't have one, register at:\n%s", ui.LinkStyle.Render("https://adp.prod.itgix.eu/auth/signin"))
+		msg := fmt.Sprintf("To use the Grape CLI, you must have an account on the ADP ItGix Platform.\nIf you don't have one, register at:\n%s", ui.LinkStyle.Render("https://beta.adp.itgix.com/auth/signin"))
 		fmt.Println(infoBox.Render(msg))
 		fmt.Println()
 
@@ -211,7 +211,7 @@ func performLoginFlow() error {
 	deviceCode := uuid.New().String()
 	webOrigin := os.Getenv("GRAPE_WEB_ORIGIN")
 	if webOrigin == "" {
-		webOrigin = "https://adp.prod.itgix.eu"
+		webOrigin = "https://beta.adp.itgix.com"
 	}
 	loginURL := fmt.Sprintf("%s/cli/login?device_code=%s", webOrigin, deviceCode)
 	exchangeURL := fmt.Sprintf("%s/api/auth/cli/exchange", webOrigin)
