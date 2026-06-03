@@ -4,18 +4,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/utils/ui"
 	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/api"
-	"github.com/charmbracelet/lipgloss"
-)
-
-var (
-	successIcon = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render("✓")
-	failIcon    = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true).Render("✗")
-	waitIcon    = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render("⏳")
 )
 
 func waitForJob(apiClient *api.Client, jobID string) error {
-	fmt.Printf("\n%s Waiting for job %s...\n", waitIcon, jobID)
+	fmt.Printf("\n%s Waiting for job %s...\n", ui.WarningStyle.Render(ui.SymbolWaiting), jobID)
 
 	lastStatus := ""
 	for {
@@ -31,7 +25,7 @@ func waitForJob(apiClient *api.Client, jobID string) error {
 
 		switch job.Status {
 		case "SUCCESS":
-			fmt.Printf("\n%s Job completed successfully\n", successIcon)
+			ui.Success("Job completed successfully")
 			if job.ExecutionMetadata != nil {
 				if costBreakdown, ok := (*job.ExecutionMetadata)["cost_breakdown"]; ok {
 					fmt.Printf("  Cost estimate: %v\n", costBreakdown)
@@ -43,10 +37,10 @@ func waitForJob(apiClient *api.Client, jobID string) error {
 			if job.ErrorMessage != nil {
 				errMsg = *job.ErrorMessage
 			}
-			fmt.Printf("\n%s Job failed: %s\n", failIcon, errMsg)
+			ui.Error(fmt.Sprintf("Job failed: %s", errMsg))
 			return fmt.Errorf("job failed: %s", errMsg)
 		case "CANCELLED":
-			fmt.Printf("\n%s Job was cancelled\n", failIcon)
+			ui.Error("Job was cancelled")
 			return fmt.Errorf("job was cancelled")
 		}
 
@@ -56,18 +50,16 @@ func waitForJob(apiClient *api.Client, jobID string) error {
 
 func formatJobStatus(status string) string {
 	switch status {
-	case "QUEUED":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("QUEUED")
-	case "CLAIMED":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("CLAIMED")
+	case "QUEUED", "CLAIMED":
+		return ui.WarningStyle.Render(status)
 	case "PROCESSING":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render("PROCESSING")
+		return ui.CyanStyle.Render(status)
 	case "SUCCESS":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("SUCCESS")
+		return ui.SuccessStyle.Render(status)
 	case "FAILED":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("FAILED")
+		return ui.ErrorStyle.Render(status)
 	case "CANCELLED":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("CANCELLED")
+		return ui.MutedStyle.Render(status)
 	default:
 		return status
 	}

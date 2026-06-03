@@ -7,7 +7,7 @@ import (
 	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/utils/ui"
 	"github.com/imroc/req/v3"
 	"github.com/spf13/cobra"
 )
@@ -76,7 +76,8 @@ var deleteVineyardCmd = &cobra.Command{
 			err = huh.NewForm(
 				huh.NewGroup(
 					huh.NewSelect[string]().
-						Title("Select a vineyard to delete").
+						Title("Select Vineyard").
+						Description("Which vineyard to delete").
 						Options(options...).
 						Value(&id),
 				),
@@ -140,8 +141,7 @@ var deleteVineyardCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-		fmt.Printf("\n%s Successfully deleted vineyard (ID: %s)\n", successStyle.Render("✓"), id)
+		ui.Success(fmt.Sprintf("Deleted vineyard (ID: %s)", id))
 	},
 }
 

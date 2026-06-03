@@ -19,7 +19,7 @@ export async function GET(req: Request) {
 	const supabase = await createServiceRoleClient();
 	const { data: vineyards, error } = await supabase
 		.from("vineyards")
-		.select("*, configurations(*)")
+		.select("*, vines(id, project_name, environment_stage, status, region)")
 		.eq("user_id", userId)
 		.order("created_at", { ascending: false });
 

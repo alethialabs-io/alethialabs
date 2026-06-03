@@ -9,7 +9,7 @@ import (
 	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/utils/ui"
 	"github.com/imroc/req/v3"
 	"github.com/spf13/cobra"
 )
@@ -107,8 +107,7 @@ var createVineyardCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-		fmt.Printf("\n%s Successfully created vineyard '%s' (ID: %s)\n", successStyle.Render("✓"), result.Vineyard.Name, result.Vineyard.ID)
+		ui.Success(fmt.Sprintf("Created vineyard '%s' (ID: %s)", result.Vineyard.Name, result.Vineyard.ID))
 	},
 }
 

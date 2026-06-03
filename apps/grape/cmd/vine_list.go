@@ -3,17 +3,17 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"sort"
+	"strings"
 	"time"
 
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/utils/ui"
 	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/types"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/huh/spinner"
 	"github.com/dustin/go-humanize"
 	"github.com/imroc/req/v3"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var listVinesCmd = &cobra.Command{
@@ -27,142 +27,89 @@ var listVinesCmd = &cobra.Command{
 		}
 
 		webOrigin := getWebOrigin()
-		listURL := fmt.Sprintf("%s/api/cli/configurations", webOrigin)
-
 		client := req.C()
 		var result struct {
 			Configurations []types.ConfigurationSummary `json:"configurations"`
 		}
-		var errMsg struct {
-			Error string `json:"error"`
-		}
 
-		resp, err := client.R().
-			SetBearerAuthToken(token).
-			SetSuccessResult(&result).
-			SetErrorResult(&errMsg).
-			Get(listURL)
+		spinner.New().
+			Title("Fetching vines...").
+			Action(func() {
+				_, err = client.R().
+					SetBearerAuthToken(token).
+					SetSuccessResult(&result).
+					Get(fmt.Sprintf("%s/api/cli/configurations", webOrigin))
+			}).Run()
 
 		if err != nil {
-			fmt.Printf("Error connecting to server: %v\n", err)
-			os.Exit(1)
-		}
-
-		if resp.IsErrorState() {
-			fmt.Printf("Error fetching vines (HTTP %d): %s\n", resp.StatusCode, errMsg.Error)
+			ui.Error(fmt.Sprintf("Failed to fetch vines: %v", err))
 			os.Exit(1)
 		}
 
 		if len(result.Configurations) == 0 {
-			fmt.Println("No vines found.")
+			ui.Muted("No vines found. Create one through Trellis.")
 			return
 		}
 
-		width, height, err := term.GetSize(int(os.Stdout.Fd()))
-		if err != nil {
-			height = 20
-		}
-		tableHeight := int(float64(height) * 0.8)
-
 		columns := []table.Column{
-			{Title: "Project", Width: width / 5},
-			{Title: "Environment", Width: width / 6},
-			{Title: "Status", Width: width / 6},
-			{Title: "Updated At", Width: width / 6},
+			{Title: "Project", Width: 20},
+			{Title: "Env", Width: 12},
+			{Title: "Status", Width: 16},
+			{Title: "Provider", Width: 8},
+			{Title: "Region", Width: 14},
+			{Title: "Cost", Width: 10},
+			{Title: "Updated", Width: 14},
 		}
 
-		rows := createVineRows(result.Configurations)
+		rows := make([]table.Row, len(result.Configurations))
+		for i, v := range result.Configurations {
+			provider := strings.ToUpper(v.CloudProvider)
+			if provider == "" {
+				provider = ui.SymbolDash
+			}
 
-		t := table.New(
-			table.WithColumns(columns),
-			table.WithRows(rows),
-			table.WithFocused(true),
-			table.WithHeight(tableHeight),
-		)
+			region := v.Region
+			if region == "" {
+				region = ui.SymbolDash
+			}
 
-		s := table.DefaultStyles()
-		s.Header = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252")).
-			BorderStyle(lipgloss.ThickBorder()).
-			BorderBottom(true).
-			Bold(true).
-			Padding(0, 1)
+			status := v.Status
+			if status == "" {
+				status = "DRAFT"
+			}
 
-		s.Selected = lipgloss.NewStyle().
-			Background(lipgloss.Color("#008080")).
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Bold(false)
+			cost := ui.SymbolDash
+			if v.EstimatedMonthlyCost != nil {
+				cost = fmt.Sprintf("$%.0f/mo", *v.EstimatedMonthlyCost)
+			}
 
-		t.SetStyles(s)
+			rows[i] = table.Row{
+				v.ProjectName,
+				v.EnvironmentStage,
+				fmt.Sprintf("%s %s", ui.StatusDot(status), strings.ToLower(status)),
+				provider,
+				region,
+				cost,
+				formatTime(v.UpdatedAt),
+			}
+		}
 
-		m := vineListModel{table: t, originalRows: rows, vines: result.Configurations}
+		m := ui.NewTableModel(columns, rows, "vines", "project", 0)
 		if _, err := tea.NewProgram(m).Run(); err != nil {
-			fmt.Println("Error running program:", err)
+			ui.Error(fmt.Sprintf("Table error: %v", err))
 			os.Exit(1)
 		}
 	},
 }
 
-type vineListModel struct {
-	table        table.Model
-	originalRows []table.Row
-	vines        []types.ConfigurationSummary
-	sortAsc      bool
-}
-
-func (m vineListModel) Init() tea.Cmd { return nil }
-
-func (m vineListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return m, tea.Quit
-		case "s":
-			m.sortAsc = !m.sortAsc
-			sort.Slice(m.vines, func(i, j int) bool {
-				if m.sortAsc {
-					return m.vines[i].ProjectName < m.vines[j].ProjectName
-				}
-				return m.vines[i].ProjectName > m.vines[j].ProjectName
-			})
-			m.table.SetRows(createVineRows(m.vines))
-			return m, nil
-		}
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return ui.SymbolDash
 	}
-	m.table, cmd = m.table.Update(msg)
-	return m, cmd
-}
-
-func (m vineListModel) View() string {
-	status := fmt.Sprintf("Showing %d vines | Press 'q' to quit | 'j/k' or arrows to navigate | 's' to sort by Project", len(m.table.Rows()))
-	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Padding(0, 1)
-	return baseStyle.Render(m.table.View()) + "\n" + statusStyle.Render(status)
-}
-
-var baseStyle = lipgloss.NewStyle().
-	BorderStyle(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("240"))
-
-func createVineRows(vines []types.ConfigurationSummary) []table.Row {
-	var rows []table.Row
-	for _, v := range vines {
-		rows = append(rows, table.Row{
-			v.ProjectName,
-			v.EnvironmentStage,
-			v.ContainerPlatform,
-			formatVineTime(v.UpdatedAt),
-		})
-	}
-	return rows
-}
-
-func formatVineTime(t time.Time) string {
 	if time.Since(t).Hours() < 24*7 {
 		return humanize.Time(t)
 	}
-	return t.Format("2006-01-02 15:04")
+	return t.Format("2006-01-02")
 }
 
 func init() {

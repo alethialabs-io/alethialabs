@@ -9,21 +9,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// PrintConfiguration prints a formatted configuration summary.
+var (
+	subHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorMuted)).Padding(0, 0, 0, 2)
+	printKeyStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorKey)).Padding(0, 2, 0, 4)
+)
+
 func PrintConfiguration(config types.Configuration) {
 	doc := strings.Builder{}
 
-	// Styles
-	var (
-		headerStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63")).Padding(1, 0)
-		subHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("240")).Padding(0, 0, 0, 2)
-		keyStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Padding(0, 2, 0, 4)
-		valueStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
-	)
-
-	// Helper function for key-value pairs
 	kv := func(key string, value string) string {
-		return keyStyle.Render(key) + valueStyle.Render(value)
+		return printKeyStyle.Render(key) + ValueStyle.Render(value)
 	}
 	kvBool := func(key string, value *bool) string {
 		valStr := "Disabled"
@@ -50,9 +45,8 @@ func PrintConfiguration(config types.Configuration) {
 		return kv(key, value.Format("2006-01-02 15:04:05"))
 	}
 
-	// General Section
-	doc.WriteString(headerStyle.Render("Configuration Details"))
-	doc.WriteString("\n")
+	doc.WriteString(AccentStyle.Render("  Configuration Details"))
+	doc.WriteString("\n\n")
 	doc.WriteString(kv("Project:", config.ProjectName))
 	doc.WriteString("\n")
 	doc.WriteString(kv("Environment:", config.EnvironmentStage))
@@ -66,7 +60,6 @@ func PrintConfiguration(config types.Configuration) {
 		doc.WriteString("\n")
 	}
 
-	// AWS Section
 	doc.WriteString(subHeaderStyle.Render("AWS Configuration"))
 	doc.WriteString("\n")
 	doc.WriteString(kv("Account ID:", config.AwsAccountID))
@@ -74,7 +67,6 @@ func PrintConfiguration(config types.Configuration) {
 	doc.WriteString(kv("Region:", config.AwsRegion))
 	doc.WriteString("\n\n")
 
-	// Network Section
 	doc.WriteString(subHeaderStyle.Render("Network Configuration"))
 	doc.WriteString("\n")
 	doc.WriteString(kvBool("Create VPC:", config.CreateVpc))
@@ -92,7 +84,6 @@ func PrintConfiguration(config types.Configuration) {
 	}
 	doc.WriteString("\n\n")
 
-	// Database Section
 	doc.WriteString(subHeaderStyle.Render("Database Configuration"))
 	doc.WriteString("\n")
 	doc.WriteString(kvNum("Min Capacity:", config.DbMinCapacity))
@@ -100,7 +91,6 @@ func PrintConfiguration(config types.Configuration) {
 	doc.WriteString(kvNum("Max Capacity:", config.DbMaxCapacity))
 	doc.WriteString("\n\n")
 
-	// Security Section
 	doc.WriteString(subHeaderStyle.Render("Security"))
 	doc.WriteString("\n")
 	doc.WriteString(kvBool("CloudFront WAF:", config.EnableCloudfrontWaf))
@@ -112,7 +102,6 @@ func PrintConfiguration(config types.Configuration) {
 	}
 	doc.WriteString("\n\n")
 
-	// Advanced Section
 	doc.WriteString(subHeaderStyle.Render("Advanced"))
 	doc.WriteString("\n")
 	doc.WriteString(kvBool("Karpenter Auto-Scaling:", config.EnableKarpenter))

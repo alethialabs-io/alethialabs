@@ -2,16 +2,17 @@ package cmd
 
 import (
 	"fmt"
+	"math"
 	"os"
-	"sort"
+	"time"
 
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/utils/ui"
 	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/api"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh/spinner"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var (
@@ -19,6 +20,17 @@ var (
 	jobsListVineyardID string
 	jobsListLimit      int
 )
+
+var jobTypeLabels = map[string]string{
+	"PLAN":            "Plan",
+	"DEPLOY":          "Deploy",
+	"DESTROY":         "Destroy",
+	"CONNECTION_TEST": "Test Conn.",
+	"FETCH_RESOURCES": "Fetch Res.",
+	"DEPLOY_WORKER":   "Deploy Tendril",
+	"UPDATE_WORKER":   "Update Tendril",
+	"DESTROY_WORKER":  "Destroy Tendril",
+}
 
 var jobsListCmd = &cobra.Command{
 	Use:   "list",
@@ -31,130 +43,163 @@ var jobsListCmd = &cobra.Command{
 		}
 
 		apiClient := api.NewClient(token)
-		var jobs []api.ProvisionJob
+		pageSize := jobsListLimit
+		if pageSize <= 0 {
+			pageSize = 20
+		}
+
+		var page *api.JobsPage
 
 		spinner.New().
 			Title("Fetching jobs...").
 			Action(func() {
-				jobs, err = apiClient.GetJobs(jobsListStatus, jobsListVineyardID)
+				page, err = apiClient.GetJobs(jobsListStatus, jobsListVineyardID, pageSize, 0)
 			}).Run()
 
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
+			ui.Error(fmt.Sprintf("Failed to fetch jobs: %v", err))
 			os.Exit(1)
 		}
 
-		if len(jobs) == 0 {
-			fmt.Println("No jobs found.")
+		if page.Total == 0 {
+			ui.Muted("No jobs found.")
 			return
 		}
 
-		if jobsListLimit > 0 && len(jobs) > jobsListLimit {
-			jobs = jobs[:jobsListLimit]
-		}
+		columns := jobColumns()
+		rows := jobRows(page.Jobs)
 
-		width, height, err := term.GetSize(int(os.Stdout.Fd()))
-		if err != nil {
-			height = 20
-		}
-		tableHeight := int(float64(height) * 0.8)
+		m := ui.NewPaginatedTableModel(columns, rows, "jobs", page.Total, pageSize)
 
-		columns := []table.Column{
-			{Title: "ID", Width: width / 6},
-			{Title: "Type", Width: width / 7},
-			{Title: "Status", Width: width / 7},
-			{Title: "Created", Width: width / 5},
-		}
-
-		rows := createJobRows(jobs)
-
-		t := table.New(
-			table.WithColumns(columns),
-			table.WithRows(rows),
-			table.WithFocused(true),
-			table.WithHeight(tableHeight),
-		)
-
-		s := table.DefaultStyles()
-		s.Header = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252")).
-			BorderStyle(lipgloss.ThickBorder()).
-			BorderBottom(true).
-			Bold(true).
-			Padding(0, 1)
-
-		s.Selected = lipgloss.NewStyle().
-			Background(lipgloss.Color("#008080")).
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Bold(false)
-
-		t.SetStyles(s)
-
-		m := jobsListModel{table: t, jobs: jobs}
-		if _, err := tea.NewProgram(m).Run(); err != nil {
-			fmt.Println("Error running program:", err)
+		p := tea.NewProgram(jobsPaginatedModel{
+			PaginatedTableModel: m,
+			apiClient:           apiClient,
+			pageSize:            pageSize,
+			status:              jobsListStatus,
+			vineyardID:          jobsListVineyardID,
+		})
+		if _, err := p.Run(); err != nil {
+			ui.Error(fmt.Sprintf("Table error: %v", err))
 			os.Exit(1)
 		}
 	},
 }
 
-type jobsListModel struct {
-	table   table.Model
-	jobs    []api.ProvisionJob
-	sortAsc bool
+type jobsPaginatedModel struct {
+	ui.PaginatedTableModel
+	apiClient  *api.Client
+	pageSize   int
+	status     string
+	vineyardID string
 }
 
-func (m jobsListModel) Init() tea.Cmd { return nil }
-
-func (m jobsListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
+func (m jobsPaginatedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return m, tea.Quit
-		case "s":
-			m.sortAsc = !m.sortAsc
-			sort.Slice(m.jobs, func(i, j int) bool {
-				if m.sortAsc {
-					return m.jobs[i].CreatedAt.Before(m.jobs[j].CreatedAt)
-				}
-				return m.jobs[i].CreatedAt.After(m.jobs[j].CreatedAt)
-			})
-			m.table.SetRows(createJobRows(m.jobs))
-			return m, nil
-		}
+	case ui.PageChangedMsg:
+		return m, m.fetchPage(msg.Page)
 	}
-	m.table, cmd = m.table.Update(msg)
+	updated, cmd := m.PaginatedTableModel.Update(msg)
+	m.PaginatedTableModel = updated.(ui.PaginatedTableModel)
 	return m, cmd
 }
 
-func (m jobsListModel) View() string {
-	status := fmt.Sprintf("Showing %d jobs | Press 'q' to quit | 'j/k' or arrows to navigate | 's' to sort by date", len(m.table.Rows()))
-	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Padding(0, 1)
-	return baseStyle.Render(m.table.View()) + "\n" + statusStyle.Render(status)
+func (m jobsPaginatedModel) fetchPage(page int) tea.Cmd {
+	return func() tea.Msg {
+		offset := (page - 1) * m.pageSize
+		result, err := m.apiClient.GetJobs(m.status, m.vineyardID, m.pageSize, offset)
+		if err != nil {
+			return nil
+		}
+		totalPages := int(math.Ceil(float64(result.Total) / float64(m.pageSize)))
+		if totalPages < 1 {
+			totalPages = 1
+		}
+		return ui.PageDataMsg{
+			Rows:       jobRows(result.Jobs),
+			Total:      result.Total,
+			Page:       page,
+			TotalPages: totalPages,
+		}
+	}
 }
 
-func createJobRows(jobs []api.ProvisionJob) []table.Row {
-	var rows []table.Row
-	for _, j := range jobs {
-		id := j.ID
-		if len(id) > 8 {
-			id = id[:8] + "..."
+func jobColumns() []table.Column {
+	return []table.Column{
+		{Title: "Type", Width: 16},
+		{Title: "Status", Width: 12},
+		{Title: "Vine", Width: 18},
+		{Title: "Tendril", Width: 16},
+		{Title: "Created", Width: 16},
+		{Title: "Duration", Width: 10},
+	}
+}
+
+func jobRows(jobs []api.ProvisionJob) []table.Row {
+	rows := make([]table.Row, len(jobs))
+	for i, j := range jobs {
+		typeLabel := jobTypeLabels[j.JobType]
+		if typeLabel == "" {
+			typeLabel = j.JobType
 		}
-		rows = append(rows, table.Row{
-			id,
-			j.JobType,
+
+		vine := j.VineName
+		if vine == "" && j.VineID != "" {
+			vine = truncID(j.VineID)
+		}
+		if vine == "" {
+			vine = ui.SymbolDash
+		}
+
+		tendril := j.WorkerName
+		if tendril == "" && j.WorkerID != "" {
+			tendril = truncID(j.WorkerID)
+		}
+		if tendril == "" {
+			tendril = ui.SymbolDash
+		}
+
+		rows[i] = table.Row{
+			typeLabel,
 			j.Status,
-			j.CreatedAt.Format("2006-01-02 15:04"),
-		})
+			vine,
+			tendril,
+			humanize.Time(j.CreatedAt),
+			formatDuration(j.StartedAt, j.CompletedAt),
+		}
 	}
 	return rows
+}
+
+func truncID(id string) string {
+	if len(id) > 8 {
+		return id[:8] + "…"
+	}
+	return id
+}
+
+func formatDuration(started, completed *time.Time) string {
+	if started == nil {
+		return ui.SymbolDash
+	}
+	end := time.Now()
+	suffix := "…"
+	if completed != nil {
+		end = *completed
+		suffix = ""
+	}
+	d := end.Sub(*started)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds%s", int(d.Seconds()), suffix)
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm %ds%s", int(d.Minutes()), int(d.Seconds())%60, suffix)
+	}
+	return fmt.Sprintf("%dh %dm%s", int(d.Hours()), int(d.Minutes())%60, suffix)
 }
 
 func init() {
 	jobsCmd.AddCommand(jobsListCmd)
 	jobsListCmd.Flags().StringVar(&jobsListStatus, "status", "", "Filter by status (QUEUED, CLAIMED, PROCESSING, SUCCESS, FAILED, CANCELLED)")
 	jobsListCmd.Flags().StringVar(&jobsListVineyardID, "vineyard-id", "", "Filter by vineyard ID")
-	jobsListCmd.Flags().IntVarP(&jobsListLimit, "limit", "n", 20, "Maximum number of jobs to display")
+	jobsListCmd.Flags().IntVarP(&jobsListLimit, "limit", "n", 20, "Jobs per page")
 }

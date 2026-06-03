@@ -167,14 +167,20 @@ export async function GET(req: Request) {
 	const { searchParams } = new URL(req.url);
 	const status = searchParams.get("status");
 	const vineyardId = searchParams.get("vineyard_id");
+	const limit = Math.min(parseInt(searchParams.get("limit") || "20", 10), 100);
+	const offset = parseInt(searchParams.get("offset") || "0", 10);
 
 	const supabase = await createServiceRoleClient();
 
 	let query = supabase
 		.from("provision_jobs")
-		.select("*")
+		.select(
+			"*, vines(project_name), workers!provision_jobs_worker_id_fkey(name)",
+			{ count: "exact" },
+		)
 		.eq("user_id", userId)
-		.order("created_at", { ascending: false });
+		.order("created_at", { ascending: false })
+		.range(offset, offset + limit - 1);
 
 	if (status) {
 		query = query.eq("status", status as any);
@@ -184,11 +190,19 @@ export async function GET(req: Request) {
 		query = query.eq("vineyard_id", vineyardId);
 	}
 
-	const { data: jobs, error } = await query;
+	const { data, error, count } = await query;
 
 	if (error) {
 		return NextResponse.json({ error: error.message }, { status: 500 });
 	}
 
-	return NextResponse.json({ jobs });
+	const jobs = (data ?? []).map((job: any) => ({
+		...job,
+		vine_name: job.vines?.project_name ?? null,
+		worker_name: job.workers?.name ?? null,
+		vines: undefined,
+		workers: undefined,
+	}));
+
+	return NextResponse.json({ jobs, total: count ?? 0, limit, offset });
 }

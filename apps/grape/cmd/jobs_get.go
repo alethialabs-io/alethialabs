@@ -5,9 +5,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/utils/ui"
 	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/api"
 	"github.com/charmbracelet/huh/spinner"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -34,7 +34,7 @@ var jobsGetCmd = &cobra.Command{
 			}).Run()
 
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
+			ui.Error(fmt.Sprintf("Failed to fetch job: %v", err))
 			os.Exit(1)
 		}
 
@@ -45,18 +45,14 @@ var jobsGetCmd = &cobra.Command{
 func printJob(job *api.ProvisionJob) {
 	doc := strings.Builder{}
 
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63")).Padding(1, 0)
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Padding(0, 2, 0, 2)
-	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
-
 	kv := func(key, value string) {
-		doc.WriteString(keyStyle.Render(key))
-		doc.WriteString(valueStyle.Render(value))
+		doc.WriteString(ui.KeyStyle.Render(key))
+		doc.WriteString(ui.ValueStyle.Render(value))
 		doc.WriteString("\n")
 	}
 
-	doc.WriteString(headerStyle.Render("Job Details"))
-	doc.WriteString("\n")
+	doc.WriteString(ui.AccentStyle.Render("  Job Details"))
+	doc.WriteString("\n\n")
 	kv("ID:", job.ID)
 	kv("Type:", job.JobType)
 	kv("Status:", job.Status)
@@ -75,15 +71,14 @@ func printJob(job *api.ProvisionJob) {
 		kv("Vine ID:", job.ConfigurationID)
 	}
 	if job.WorkerID != "" {
-		kv("Worker ID:", job.WorkerID)
+		kv("Tendril ID:", job.WorkerID)
 	}
 	if job.PlanJobID != "" {
 		kv("Plan Job ID:", job.PlanJobID)
 	}
 	if job.ErrorMessage != nil && *job.ErrorMessage != "" {
-		errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-		doc.WriteString(keyStyle.Render("Error:"))
-		doc.WriteString(errStyle.Render(*job.ErrorMessage))
+		doc.WriteString(ui.KeyStyle.Render("Error:"))
+		doc.WriteString(ui.ErrorStyle.Render(*job.ErrorMessage))
 		doc.WriteString("\n")
 	}
 

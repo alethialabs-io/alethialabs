@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/bobikenobi12/bb-thesis-2026/apps/grape/pkg/utils/ui"
 	"github.com/bobikenobi12/bb-thesis-2026/packages/grape-core/api"
 	"github.com/charmbracelet/huh/spinner"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -32,12 +32,11 @@ var jobsCancelCmd = &cobra.Command{
 			}).Run()
 
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
+			ui.Error(fmt.Sprintf("Failed to cancel job: %v", err))
 			os.Exit(1)
 		}
 
-		successStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-		fmt.Printf("%s Job %s cancelled\n", successStyle.Render("✓"), jobID)
+		ui.Success(fmt.Sprintf("Job %s cancelled", jobID))
 	},
 }
 
