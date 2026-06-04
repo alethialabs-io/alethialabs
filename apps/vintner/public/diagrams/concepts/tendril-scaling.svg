@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 400" width="100%" fill="none">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#52525B"/></marker>
+    <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#8B5CF6"/></marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#22C55E"/></marker>
+    <marker id="arrow-amber" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#F59E0B"/></marker>
+  </defs>
+  <rect width="820" height="400" rx="12" fill="#18181B"/>
+  <rect x="0.5" y="0.5" width="819" height="399" rx="12" fill="none" stroke="#3F3F46"/>
+  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Tendril Scaling &mdash; Scale-to-Zero Architecture</text>
+
+  <!-- EventBridge -->
+  <rect x="30" y="80" width="140" height="60" rx="8" fill="#27272A" stroke="#F59E0B"/>
+  <text x="100" y="104" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#F59E0B">EventBridge</text>
+  <text x="100" y="122" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">rate(1 minute)</text>
+
+  <line x1="170" y1="110" x2="208" y2="110" stroke="#F59E0B" stroke-width="1.5" marker-end="url(#arrow-amber)"/>
+
+  <!-- Lambda Scaler -->
+  <rect x="216" y="80" width="160" height="60" rx="8" fill="#27272A" stroke="#8B5CF6" stroke-width="1.5"/>
+  <text x="296" y="104" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#8B5CF6">Lambda Scaler</text>
+  <text x="296" y="122" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Python 3.12 / ARM64</text>
+
+  <!-- Lambda to Supabase (query) -->
+  <line x1="296" y1="140" x2="296" y2="178" stroke="#8B5CF6" stroke-width="1.5" marker-end="url(#arrow-accent)"/>
+
+  <!-- Supabase -->
+  <rect x="216" y="186" width="160" height="52" rx="8" fill="#27272A" stroke="#3F3F46"/>
+  <text x="296" y="208" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">Supabase</text>
+  <text x="296" y="224" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">SELECT count(QUEUED)</text>
+
+  <!-- Lambda to ECS (scale) -->
+  <line x1="376" y1="110" x2="448" y2="110" stroke="#8B5CF6" stroke-width="1.5" marker-end="url(#arrow-accent)"/>
+  <text x="412" y="102" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#8B5CF6">scale</text>
+
+  <!-- ECS Fargate -->
+  <rect x="456" y="72" width="170" height="76" rx="8" fill="#27272A" stroke="#22C55E"/>
+  <text x="541" y="98" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#22C55E">ECS Fargate</text>
+  <text x="541" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Tendril container</text>
+  <text x="541" y="132" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">ARM64, 1 vCPU, 4 GB</text>
+
+  <!-- ECS to Trellis (heartbeat) -->
+  <line x1="626" y1="110" x2="668" y2="110" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Trellis -->
+  <rect x="676" y="80" width="114" height="60" rx="8" fill="#27272A" stroke="#3F3F46"/>
+  <text x="733" y="104" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">Trellis</text>
+  <text x="733" y="122" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">heartbeat / 30s</text>
+
+  <!-- Scale-Up section -->
+  <line x1="30" y1="268" x2="790" y2="268" stroke="#3F3F46" stroke-dasharray="4 4"/>
+  <text x="120" y="292" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#22C55E">Scale Up</text>
+
+  <rect x="30" y="306" width="130" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="95" y="328" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Job Queued</text>
+  <line x1="160" y1="324" x2="178" y2="324" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="186" y="306" width="130" height="36" rx="6" fill="#27272A" stroke="#F59E0B"/>
+  <text x="251" y="322" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#F59E0B">Lambda detects</text>
+  <text x="251" y="336" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">&le; 60s</text>
+  <line x1="316" y1="324" x2="334" y2="324" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="342" y="306" width="130" height="36" rx="6" fill="#27272A" stroke="#8B5CF6"/>
+  <text x="407" y="322" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#8B5CF6">desiredCount: 0&rarr;1</text>
+  <text x="407" y="336" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">ECS update-service</text>
+  <line x1="472" y1="324" x2="490" y2="324" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="498" y="306" width="130" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="563" y="322" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Image pull + start</text>
+  <text x="563" y="336" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">~30&ndash;60s</text>
+  <line x1="628" y1="324" x2="646" y2="324" stroke="#22C55E" stroke-width="1" marker-end="url(#arrow-green)"/>
+
+  <rect x="654" y="306" width="130" height="36" rx="6" fill="#27272A" stroke="#22C55E"/>
+  <text x="719" y="328" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#22C55E">Job Claimed</text>
+
+  <!-- Scale-Down section -->
+  <text x="540" y="292" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#EF4444">Scale Down</text>
+
+  <rect x="440" y="360" width="180" height="28" rx="6" fill="#27272A" stroke="#EF444440" stroke-dasharray="3 3"/>
+  <text x="530" y="379" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#EF4444">5 idle checks (5 min) &rarr; desiredCount: 0</text>
+</svg>

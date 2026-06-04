@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import type { GcpCachedResources } from "@/types/database-custom.types";
+import { revalidatePath } from "next/cache";
 
 export type GcpConnectionStatus = {
 	connected: boolean;
@@ -238,6 +239,7 @@ export async function verifyGcpIdentity(identityId: string, jobId?: string) {
 		throw new Error("Failed to verify identity");
 	}
 
+	revalidatePath("/dashboard/integrations");
 	return { success: true };
 }
 

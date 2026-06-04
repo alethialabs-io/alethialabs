@@ -9,6 +9,7 @@
     "database",
     "release-system",
     "job-queue",
+    "tendril-scaling",
     "cloud-abstraction",
     "realtime",
     "cost-estimation",
