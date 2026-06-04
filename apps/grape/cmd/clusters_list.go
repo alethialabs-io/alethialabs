@@ -74,7 +74,7 @@ var clusterListCmd = &cobra.Command{
 				vineLabel,
 				clusterName,
 				version,
-				fmt.Sprintf("%s %s", ui.StatusDot(c.Status), strings.ToLower(c.Status)),
+				fmt.Sprintf("%s %s", ui.PlainStatusDot(c.Status), strings.ToLower(c.Status)),
 				nodes,
 				c.VineRegion,
 			}

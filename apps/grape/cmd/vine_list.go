@@ -53,10 +53,10 @@ var listVinesCmd = &cobra.Command{
 
 		columns := []table.Column{
 			{Title: "Project", Width: 20},
-			{Title: "Env", Width: 12},
+			{Title: "Env", Width: 14},
 			{Title: "Status", Width: 16},
-			{Title: "Provider", Width: 8},
-			{Title: "Region", Width: 14},
+			{Title: "Provider", Width: 10},
+			{Title: "Region", Width: 16},
 			{Title: "Cost", Width: 10},
 			{Title: "Updated", Width: 14},
 		}
@@ -86,7 +86,7 @@ var listVinesCmd = &cobra.Command{
 			rows[i] = table.Row{
 				v.ProjectName,
 				v.EnvironmentStage,
-				fmt.Sprintf("%s %s", ui.StatusDot(status), strings.ToLower(status)),
+				fmt.Sprintf("%s %s", ui.PlainStatusDot(status), strings.ToLower(status)),
 				provider,
 				region,
 				cost,

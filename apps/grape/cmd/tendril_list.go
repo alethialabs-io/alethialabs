@@ -76,7 +76,7 @@ var tendrilListCmd = &cobra.Command{
 			rows[i] = table.Row{
 				w.Name,
 				modeLabel,
-				fmt.Sprintf("%s %s", ui.StatusDot(w.Status), strings.ToLower(w.Status)),
+				fmt.Sprintf("%s %s", ui.PlainStatusDot(w.Status), strings.ToLower(w.Status)),
 				version,
 				defaultLabel,
 				heartbeat,
