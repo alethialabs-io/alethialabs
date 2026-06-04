@@ -7,6 +7,8 @@ description: How Terraform state is stored in Supabase S3, organized by vine, an
 
 Terraform tracks the real-world resources it manages in a **state file**. The platform stores state in Supabase's S3-compatible storage, enabling Tendrils to share state across executions and resume from failures.
 
+<img src="/docs/diagrams/concepts/terraform-state.svg" alt="Terraform State" />
+
 ## State Backend
 
 Terraform is configured with an S3 backend pointing to Supabase Storage:

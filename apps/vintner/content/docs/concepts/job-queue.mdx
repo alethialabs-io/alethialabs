@@ -7,6 +7,8 @@ description: How infrastructure operations are queued, claimed atomically, and e
 
 Every infrastructure operation in the platform — planning, deploying, destroying, connecting cloud accounts — is modeled as a **job** in a PostgreSQL queue. Tendrils poll for jobs, claim them atomically, execute them, and report results.
 
+<img src="/docs/diagrams/concepts/job-queue.svg" alt="Job Queue" />
+
 ## Why a Job Queue?
 
 Infrastructure provisioning is slow (minutes to hours) and must be reliable. A job queue provides:

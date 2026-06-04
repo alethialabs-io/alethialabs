@@ -7,6 +7,8 @@ description: How the platform abstracts AWS, GCP, and Azure behind a unified int
 
 The platform supports AWS, GCP, and Azure with full feature parity. A single form, a single CLI, and a single Tendril agent work across all three providers. This is achieved through a multi-layered abstraction.
 
+<img src="/docs/diagrams/concepts/cloud-abstraction.svg" alt="Cloud Abstraction" />
+
 ## Provider Registry
 
 The registry (`lib/cloud-providers/registry.ts`) maps each provider to its cloud-native service names:

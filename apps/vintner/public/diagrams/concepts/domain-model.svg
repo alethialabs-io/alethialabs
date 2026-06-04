@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 520" width="100%" fill="none">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#52525B"/></marker>
+  </defs>
+  <rect width="820" height="520" rx="12" fill="#18181B"/>
+  <rect x="0.5" y="0.5" width="819" height="519" rx="12" fill="none" stroke="#3F3F46"/>
+  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Domain Model — Entity Relationships</text>
+
+  <!-- User -->
+  <rect x="350" y="56" width="120" height="44" rx="8" fill="#27272A" stroke="#8B5CF6" stroke-width="1.5"/>
+  <text x="410" y="83" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FAFAFA">User</text>
+
+  <!-- Arrow User → Vineyard -->
+  <line x1="410" y1="100" x2="410" y2="124" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="430" y="116" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">1:N</text>
+
+  <!-- Vineyard -->
+  <rect x="330" y="128" width="160" height="44" rx="8" fill="#27272A" stroke="#3F3F46"/>
+  <text x="410" y="148" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FAFAFA">Vineyard</text>
+  <text x="410" y="164" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">workspace grouping</text>
+
+  <!-- Arrow Vineyard → Vine -->
+  <line x1="410" y1="172" x2="410" y2="196" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="430" y="188" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">1:N</text>
+
+  <!-- Vine (central) -->
+  <rect x="310" y="200" width="200" height="50" rx="8" fill="#27272A" stroke="#8B5CF6" stroke-width="1.5"/>
+  <text x="410" y="222" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="600" fill="#FAFAFA">Vine</text>
+  <text x="410" y="240" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">infrastructure configuration</text>
+
+  <!-- Cloud Identity (side) -->
+  <rect x="570" y="130" width="140" height="40" rx="8" fill="#27272A" stroke="#3F3F46"/>
+  <text x="640" y="155" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#FAFAFA">Cloud Identity</text>
+  <path d="M510,220 L640,174" stroke="#52525B" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+  <text x="590" y="194" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">N:1</text>
+
+  <!-- Singleton Components Group -->
+  <rect x="24" y="286" width="352" height="210" rx="8" fill="none" stroke="#3F3F46" stroke-dasharray="4 4"/>
+  <text x="200" y="306" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#A1A1AA">Singleton Components (1:1 per vine)</text>
+
+  <rect x="40" y="316" width="150" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="115" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_network</text>
+
+  <rect x="40" y="360" width="150" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="115" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_cluster</text>
+
+  <rect x="210" y="316" width="150" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="285" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_dns</text>
+
+  <rect x="210" y="360" width="150" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="285" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_repositories</text>
+
+  <!-- Arrows Vine → Singletons -->
+  <path d="M350,250 L200,282" stroke="#52525B" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- Multi-Instance Components Group -->
+  <rect x="394" y="286" width="402" height="210" rx="8" fill="none" stroke="#3F3F46" stroke-dasharray="4 4"/>
+  <text x="595" y="306" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#A1A1AA">Multi-Instance Components (1:N per vine)</text>
+
+  <rect x="410" y="316" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="470" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_databases</text>
+
+  <rect x="410" y="360" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="470" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_caches</text>
+
+  <rect x="410" y="404" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="470" y="426" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_queues</text>
+
+  <rect x="410" y="448" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="470" y="470" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_topics</text>
+
+  <rect x="548" y="316" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="608" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_nosql</text>
+
+  <rect x="548" y="360" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="608" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_registries</text>
+
+  <rect x="548" y="404" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="608" y="426" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_secrets</text>
+
+  <rect x="686" y="316" width="96" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="734" y="332" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">provision_jobs</text>
+  <text x="734" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">1:N</text>
+
+  <rect x="686" y="362" width="96" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="734" y="378" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">job_logs</text>
+  <text x="734" y="390" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">1:N</text>
+
+  <line x1="734" y1="350" x2="734" y2="358" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <!-- Arrows Vine → Multi-Instance -->
+  <path d="M470,250 L595,282" stroke="#52525B" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+</svg>
