@@ -15,7 +15,8 @@ terraform {
   backend "s3" {}
 }
 
-# Default provider (eu-west-1 for ECR + scaler)
+# ---------- Providers ----------
+
 provider "aws" {
   region = "eu-west-1"
   default_tags {
@@ -28,8 +29,43 @@ provider "aws" {
   }
 }
 
+provider "aws" {
+  alias  = "eu_central_1"
+  region = "eu-central-1"
+  default_tags {
+    tags = {
+      Project     = var.project_name
+      Environment = title(var.environment)
+      Service     = "Tendril"
+      ManagedBy   = "terraform"
+    }
+  }
+}
+
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
+
+  shared_worker_vars = {
+    image                       = var.image
+    tendril_version             = var.tendril_version
+    trellis_api_secret          = var.trellis_api_secret
+    worker_mode                 = var.worker_mode
+    infracost_api_key           = var.infracost_api_key
+    supabase_s3_endpoint        = var.supabase_s3_endpoint
+    supabase_s3_region          = var.supabase_s3_region
+    supabase_storage_key_id     = var.supabase_storage_key_id
+    supabase_storage_secret_key = var.supabase_storage_secret_key
+    secrets_recovery_window_days = var.secrets_recovery_window_days
+  }
+
+  all_tendrils = [
+    for name, cfg in var.tendrils : {
+      key         = name
+      region      = cfg.region
+      name_prefix = "${local.name_prefix}-${name}"
+      trellis_url = cfg.trellis_url
+    }
+  ]
 }
 
 # ---------- ECR (eu-west-1 only) ----------
@@ -63,30 +99,61 @@ resource "aws_ecr_lifecycle_policy" "tendril" {
   })
 }
 
-# ---------- Dynamic tendril deployments ----------
+# ---------- Tendril deployments (eu-west-1) ----------
 
-module "tendril" {
+module "tendril_eu_west_1" {
   source   = "./worker"
-  for_each = var.tendrils
+  for_each = { for t in local.all_tendrils : t.key => t if t.region == "eu-west-1" }
 
   region             = each.value.region
-  name_prefix        = "${local.name_prefix}-${each.key}"
-  image              = var.image
-  tendril_version    = var.tendril_version
+  name_prefix        = each.value.name_prefix
   trellis_url        = each.value.trellis_url
-  trellis_api_secret = var.trellis_api_secret
-  worker_mode        = var.worker_mode
+  image              = local.shared_worker_vars.image
+  tendril_version    = local.shared_worker_vars.tendril_version
+  trellis_api_secret = local.shared_worker_vars.trellis_api_secret
+  worker_mode        = local.shared_worker_vars.worker_mode
 
-  infracost_api_key           = var.infracost_api_key
-  supabase_s3_endpoint        = var.supabase_s3_endpoint
-  supabase_s3_region          = var.supabase_s3_region
-  supabase_storage_key_id     = var.supabase_storage_key_id
-  supabase_storage_secret_key = var.supabase_storage_secret_key
+  infracost_api_key           = local.shared_worker_vars.infracost_api_key
+  supabase_s3_endpoint        = local.shared_worker_vars.supabase_s3_endpoint
+  supabase_s3_region          = local.shared_worker_vars.supabase_s3_region
+  supabase_storage_key_id     = local.shared_worker_vars.supabase_storage_key_id
+  supabase_storage_secret_key = local.shared_worker_vars.supabase_storage_secret_key
 
-  secrets_recovery_window_days = var.secrets_recovery_window_days
+  secrets_recovery_window_days = local.shared_worker_vars.secrets_recovery_window_days
+}
+
+# ---------- Tendril deployments (eu-central-1) ----------
+
+module "tendril_eu_central_1" {
+  source   = "./worker"
+  for_each = { for t in local.all_tendrils : t.key => t if t.region == "eu-central-1" }
+
+  providers = {
+    aws = aws.eu_central_1
+  }
+
+  region             = each.value.region
+  name_prefix        = each.value.name_prefix
+  trellis_url        = each.value.trellis_url
+  image              = local.shared_worker_vars.image
+  tendril_version    = local.shared_worker_vars.tendril_version
+  trellis_api_secret = local.shared_worker_vars.trellis_api_secret
+  worker_mode        = local.shared_worker_vars.worker_mode
+
+  infracost_api_key           = local.shared_worker_vars.infracost_api_key
+  supabase_s3_endpoint        = local.shared_worker_vars.supabase_s3_endpoint
+  supabase_s3_region          = local.shared_worker_vars.supabase_s3_region
+  supabase_storage_key_id     = local.shared_worker_vars.supabase_storage_key_id
+  supabase_storage_secret_key = local.shared_worker_vars.supabase_storage_secret_key
+
+  secrets_recovery_window_days = local.shared_worker_vars.secrets_recovery_window_days
 }
 
 # ---------- Lambda scaler (eu-west-1) ----------
+
+locals {
+  all_worker_modules = merge(module.tendril_eu_west_1, module.tendril_eu_central_1)
+}
 
 module "scaler" {
   source = "./scaler"
@@ -96,7 +163,7 @@ module "scaler" {
   supabase_service_role_key = var.supabase_service_role_key
 
   workers = [
-    for name, w in module.tendril : {
+    for name, w in local.all_worker_modules : {
       region  = var.tendrils[name].region
       cluster = w.cluster_name
       service = w.service_name

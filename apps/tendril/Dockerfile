@@ -38,7 +38,7 @@ RUN apk add --no-cache \
     && rm -rf /var/cache/apk/*
 
 RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
-    curl -fsSL "https://releases.hashicorp.com/terraform/1.7.4/terraform_1.7.4_linux_${ARCH}.zip" -o /tmp/tf.zip && \
+    curl -fsSL "https://releases.hashicorp.com/terraform/1.10.3/terraform_1.10.3_linux_${ARCH}.zip" -o /tmp/tf.zip && \
     unzip /tmp/tf.zip -d /usr/local/bin && \
     rm /tmp/tf.zip && \
     chmod +x /usr/local/bin/terraform
