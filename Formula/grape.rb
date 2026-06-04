@@ -11,7 +11,7 @@ class Grape < Formula
   on_macos do
     if Hardware::CPU.intel?
       url "https://github.com/bobikenobi12/bb-thesis-2026/releases/download/v0.2.1/grape_Darwin_x86_64.tar.gz"
-      sha256 "e3248397006b335336ebeb3b007cd32c9bb66d4ac27a1cd3a2d125db052e5beb"
+      sha256 "52f05438b8d3303f920dafb24b6df083bd14cf76fc05e386b6d79d973ef32ec4"
 
       define_method(:install) do
         bin.install "grape"
@@ -19,7 +19,7 @@ class Grape < Formula
     end
     if Hardware::CPU.arm?
       url "https://github.com/bobikenobi12/bb-thesis-2026/releases/download/v0.2.1/grape_Darwin_arm64.tar.gz"
-      sha256 "4b56df4ce9f29703dd251d4668627e329e591c6633f0dd52888f9a032c456773"
+      sha256 "bcbe53e42bb40f8d4601b2b3b064b8bc0222b514b6dc31796cc4b64599a864fc"
 
       define_method(:install) do
         bin.install "grape"
@@ -30,14 +30,14 @@ class Grape < Formula
   on_linux do
     if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
       url "https://github.com/bobikenobi12/bb-thesis-2026/releases/download/v0.2.1/grape_Linux_x86_64.tar.gz"
-      sha256 "72ced7f3fca19eb53e1572ab767c2ac2bdfc3b7a518accb61b7fe463d934dbc5"
+      sha256 "c097acb56653263a97e4bca20b5455cee2e77c5ec89d848769dfbd387bf91854"
       define_method(:install) do
         bin.install "grape"
       end
     end
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
       url "https://github.com/bobikenobi12/bb-thesis-2026/releases/download/v0.2.1/grape_Linux_arm64.tar.gz"
-      sha256 "6afbe6d4285e9d0ddc18820c77d28c8834d21df3f97d0604859bc4b1108e8eac"
+      sha256 "3ae98f2de39896e9c4fe7611cac7225c0e8d85b7885777bef99e36897520bafa"
       define_method(:install) do
         bin.install "grape"
       end
