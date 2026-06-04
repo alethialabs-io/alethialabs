@@ -28,7 +28,7 @@ import {
 	Rocket,
 	Trash2,
 } from "lucide-react";
-import Image from "next/image";
+import { ProviderIcon } from "@/components/provider-icon";
 
 import { toast } from "sonner";
 
@@ -126,7 +126,7 @@ export default function VineDetailPage() {
 			{/* Header */}
 			<div className="flex items-center justify-between">
 				<div className="flex items-center gap-3">
-					<Image src={meta.icon} alt={meta.shortName} width={24} height={24} />
+					<ProviderIcon provider={providerSlug} size={24} />
 					<div>
 						<div className="flex items-center gap-2">
 							<h1 className="text-lg font-semibold">{vine.project_name}</h1>
