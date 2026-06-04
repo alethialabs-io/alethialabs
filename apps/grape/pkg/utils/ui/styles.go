@@ -102,6 +102,23 @@ func StatusDot(status string) string {
 	}
 }
 
+// PlainStatusDot returns an unstyled status symbol safe for use inside
+// bubbles/table cells (ANSI codes break column width calculation).
+func PlainStatusDot(status string) string {
+	switch status {
+	case "ONLINE", "ACTIVE":
+		return SymbolOnline
+	case "DRAINING", "CREATING", "UPDATING", "PROVISIONING", "QUEUED":
+		return SymbolPending
+	case "FAILED":
+		return SymbolError
+	case "DESTROYED":
+		return SymbolDash
+	default:
+		return SymbolOffline
+	}
+}
+
 func DefaultBadge() string {
 	return CyanStyle.Render(" " + SymbolDefault)
 }

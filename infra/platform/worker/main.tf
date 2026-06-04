@@ -15,19 +15,6 @@ terraform {
   }
 }
 
-# Nested provider — each module instance targets its own region.
-provider "aws" {
-  region = var.region
-  default_tags {
-    tags = {
-      Project     = var.name_prefix
-      Environment = "Dev"
-      Service     = "Tendril"
-      ManagedBy   = "terraform"
-    }
-  }
-}
-
 # ---------- locals ----------
 
 locals {
@@ -251,7 +238,7 @@ resource "aws_secretsmanager_secret" "tendril_token" {
 
 resource "aws_secretsmanager_secret_version" "tendril_token" {
   secret_id     = aws_secretsmanager_secret.tendril_token.id
-  secret_string = local.tendril_token
+  secret_string = coalesce(local.tendril_token, "pending")
 }
 
 resource "aws_secretsmanager_secret" "infracost_key" {
@@ -262,7 +249,7 @@ resource "aws_secretsmanager_secret" "infracost_key" {
 
 resource "aws_secretsmanager_secret_version" "infracost_key" {
   secret_id     = aws_secretsmanager_secret.infracost_key.id
-  secret_string = var.infracost_api_key
+  secret_string = coalesce(var.infracost_api_key, "not-set")
 }
 
 resource "aws_secretsmanager_secret" "supabase_storage_key_id" {
