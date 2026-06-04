@@ -1,5 +1,6 @@
 "use server";
 
+import { notifyScaler } from "@/lib/scaler";
 import { createClient } from "@/lib/supabase/server";
 import { PublicWorkerMode } from "@/lib/validations/db.schemas";
 import { createHash, randomBytes } from "crypto";
@@ -135,6 +136,7 @@ export async function deployWorker(params: {
 	if (jobError)
 		throw new Error("Failed to queue deployment: " + jobError.message);
 
+	notifyScaler();
 	return { workerId: worker.id, jobId: job.id };
 }
 
@@ -241,6 +243,7 @@ export async function destroyWorker(workerId: string, assignedWorkerId?: string 
 	if (jobError)
 		throw new Error("Failed to queue destroy job: " + jobError.message);
 
+	notifyScaler();
 	return { jobId: job.id };
 }
 
@@ -287,6 +290,7 @@ export async function updateWorker(workerId: string) {
 	if (jobError)
 		throw new Error("Failed to queue update job: " + jobError.message);
 
+	notifyScaler();
 	return { jobId: job.id };
 }
 

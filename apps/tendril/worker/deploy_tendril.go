@@ -48,7 +48,7 @@ func (w *Worker) executeDeployWorker(ctx context.Context, job *Job, provider str
 		cfg.TrellisURL = "https://adp.prod.itgix.eu"
 	}
 	if cfg.ImageRepository == "" {
-		cfg.ImageRepository = "787587782604.dkr.ecr.eu-west-1.amazonaws.com/grape-worker-dev-grape"
+		cfg.ImageRepository = "787587782604.dkr.ecr.eu-west-1.amazonaws.com/tendril-dev-tendril"
 	}
 
 	templatesDir := resolveTendrilTemplatesDir()

@@ -1,4 +1,5 @@
 import { verifyCliToken } from "@/lib/cli/auth";
+import { notifyScaler } from "@/lib/scaler";
 import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
 import { createHash, randomBytes } from "crypto";
 import { NextResponse } from "next/server";
@@ -111,6 +112,7 @@ export async function POST(req: Request) {
 			);
 		}
 
+		notifyScaler();
 		return NextResponse.json(
 			{ tendril: worker, job },
 			{ status: 201 },

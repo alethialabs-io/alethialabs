@@ -1,5 +1,6 @@
 "use server";
 
+import { notifyScaler } from "@/lib/scaler";
 import { createClient } from "@/lib/supabase/server";
 import {
 	convertVineConfig,
@@ -475,6 +476,7 @@ export async function planVine(vineId: string, workerId?: string | null) {
 		throw new Error("Failed to queue plan job: " + jobError.message);
 
 	await supabase.from("vines").update({ status: "QUEUED" }).eq("id", vineId);
+	notifyScaler();
 
 	return { jobId: job.id };
 }
@@ -510,6 +512,7 @@ export async function provisionVine(vineId: string, planJobId?: string, workerId
 		action: "PROVISIONED",
 		changes: { job_id: job.id },
 	});
+	notifyScaler();
 
 	return { jobId: job.id };
 }

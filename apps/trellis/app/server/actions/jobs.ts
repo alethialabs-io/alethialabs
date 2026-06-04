@@ -1,5 +1,6 @@
 "use server";
 
+import { notifyScaler } from "@/lib/scaler";
 import { createClient } from "@/lib/supabase/server";
 
 export async function getJobStatus(jobId: string) {
@@ -99,6 +100,7 @@ export async function rerunJob(jobId: string) {
 		.single();
 
 	if (insertError) throw new Error("Failed to create job: " + insertError.message);
+	notifyScaler();
 	return newJob;
 }
 

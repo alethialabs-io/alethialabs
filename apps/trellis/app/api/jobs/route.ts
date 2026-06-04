@@ -1,4 +1,5 @@
 import { verifyCliToken } from "@/lib/cli/auth";
+import { notifyScaler } from "@/lib/scaler";
 import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
 import { createHash } from "crypto";
 import { NextResponse } from "next/server";
@@ -144,6 +145,7 @@ export async function POST(req: Request) {
 				.eq("id", configuration_id);
 		}
 
+		notifyScaler();
 		return NextResponse.json({ job }, { status: 201 });
 	} catch (err: unknown) {
 		const message =

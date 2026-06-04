@@ -5,7 +5,7 @@ description: How Tendrils scale from zero to one when jobs arrive and back to ze
 
 # Tendril Scaling
 
-Tendrils run on AWS ECS Fargate with **scale-to-zero** enabled by default. A Lambda function polls the job queue every minute and spins up Tendril containers on demand. When no jobs remain, the same function scales them back down after a short idle period.
+Tendrils run on AWS ECS Fargate with **scale-to-zero** enabled by default. When a job is queued, Trellis immediately invokes a Lambda scaler via its Function URL to spin up a Tendril container. An EventBridge rule polls every minute as a fallback. When no jobs remain, the same Lambda scales containers back down after a short idle period.
 
 <img src="/docs/diagrams/concepts/tendril-scaling.svg" alt="Tendril Scaling Architecture" />
 
@@ -17,12 +17,13 @@ Scale-to-zero eliminates idle costs entirely. The platform only pays for compute
 
 ## Architecture
 
-Three components work together:
+Four components work together:
 
 | Component | Role |
 |-----------|------|
-| **EventBridge rule** | Triggers the Lambda scaler every 1 minute |
+| **Trellis** | Invokes the Lambda scaler instantly via Function URL when a job is queued |
 | **Lambda scaler** | Queries Supabase for queued jobs, adjusts ECS service desired count |
+| **EventBridge rule** | Triggers the Lambda every 1 minute as a fallback (also drives scale-down) |
 | **ECS Fargate** | Runs Tendril containers, pulls image from GHCR on scale-up |
 
 The Lambda function runs in `eu-west-1` but manages ECS services across multiple regions (currently `eu-west-1` and `eu-central-1`). Each Tendril deployment gets its own ECS cluster, service, VPC, and secrets.
@@ -35,9 +36,9 @@ The Lambda function runs in `eu-west-1` but manages ECS services across multiple
 
 A user clicks "Plan," "Apply," or "Destroy" in Trellis (or runs `grape plan` / `grape harvest` / `grape destroy`). A `provision_jobs` row is inserted with status `QUEUED`.
 
-### Lambda Detects Queued Jobs
+### Trellis Notifies the Scaler
 
-The EventBridge rule fires (up to 60 seconds after the job was queued). The Lambda function queries Supabase's REST API for the count of `QUEUED` jobs using the `content-range` header.
+Immediately after inserting the job, Trellis sends a fire-and-forget POST to the Lambda scaler's Function URL. The Lambda queries Supabase's REST API for the count of `QUEUED` jobs using the `content-range` header. If the direct call fails, EventBridge retries within 60 seconds.
 
 ### ECS Scales Up
 
@@ -54,7 +55,7 @@ The Tendril authenticates with Trellis using its worker token, enters its poll l
 </Steps>
 
 <Callout type="info">
-**Cold start latency**: worst case is ~2 minutes from job creation to job claimed — up to 60 seconds waiting for the Lambda poll, plus 30–60 seconds for ECS task startup. Subsequent jobs while the Tendril is already running are claimed within seconds.
+**Cold start latency**: ~30–60 seconds from job creation to job claimed, dominated by ECS task startup (image pull + container init). The Lambda is invoked instantly by Trellis, so there is no polling delay. Subsequent jobs while the Tendril is already running are claimed within seconds.
 </Callout>
 
 ## Scale-Down Flow

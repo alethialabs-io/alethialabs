@@ -1,5 +1,6 @@
 "use server";
 
+import { notifyScaler } from "@/lib/scaler";
 import { createClient } from "@/lib/supabase/server";
 import { randomUUID } from "crypto";
 
@@ -128,5 +129,6 @@ export async function saveAwsIdentity(identityId: string, roleArn: string) {
 		throw new Error("Failed to queue connection test: " + jobError.message);
 	}
 
+	notifyScaler();
 	return { jobId: job.id, identityId };
 }

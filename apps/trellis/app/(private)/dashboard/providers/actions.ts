@@ -1,5 +1,6 @@
 "use server";
 
+import { notifyScaler } from "@/lib/scaler";
 import { createClient } from "@/lib/supabase/server";
 import type { CachedResources } from "@/types/database-custom.types";
 import { revalidatePath } from "next/cache";
@@ -99,6 +100,7 @@ export async function refreshAwsResources(cloudIdentityId: string) {
 
 	if (error) throw new Error("Failed to queue resource fetch: " + error.message);
 
+	notifyScaler();
 	return { jobId: job.id };
 }
 
@@ -193,6 +195,7 @@ export async function saveAwsIdentity(identityId: string, roleArn: string) {
 		throw new Error("Failed to queue connection test: " + jobError.message);
 	}
 
+	notifyScaler();
 	return { jobId: job.id, identityId };
 }
 

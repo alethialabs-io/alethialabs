@@ -1,5 +1,6 @@
 "use server";
 
+import { notifyScaler } from "@/lib/scaler";
 import { createClient } from "@/lib/supabase/server";
 
 /** Queues a FETCH_RESOURCES job for any cloud identity, regardless of provider. */
@@ -26,6 +27,7 @@ export async function refreshCloudResources(cloudIdentityId: string) {
 	if (error)
 		throw new Error("Failed to queue resource fetch: " + error.message);
 
+	notifyScaler();
 	return { jobId: job.id };
 }
 
