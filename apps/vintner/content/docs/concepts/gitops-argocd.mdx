@@ -7,6 +7,8 @@ description: How ArgoCD is installed automatically and configured with the App o
 
 After a successful `terraform apply`, the Tendril automatically installs **ArgoCD** on the provisioned Kubernetes cluster. ArgoCD manages all subsequent application deployments via GitOps — Git is the source of truth.
 
+<img src="/docs/diagrams/concepts/gitops-argocd.svg" alt="GitOps ArgoCD" />
+
 ## What Gets Installed
 
 Every provisioned cluster comes with ArgoCD and a set of supporting components:

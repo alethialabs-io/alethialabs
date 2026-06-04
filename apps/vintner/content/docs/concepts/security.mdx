@@ -7,6 +7,8 @@ description: Zero-credential model, cloud provider authentication, CLI auth, and
 
 The platform's security model is built on one principle: **never store static cloud credentials**. Every cloud access is temporary, scoped, and revocable.
 
+<img src="/docs/diagrams/concepts/security.svg" alt="Security Architecture" />
+
 ## Zero-Credential Model
 
 Traditional infrastructure tools require users to provide long-lived access keys (AWS Access Key ID, GCP service account JSON, Azure client secret). These keys are stored in configuration files, environment variables, or vault systems — creating a persistent attack surface.

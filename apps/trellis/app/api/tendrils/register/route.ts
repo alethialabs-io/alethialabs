@@ -1,4 +1,5 @@
 import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { PublicWorkerMode } from "@/lib/validations/db.schemas";
 import { createHash, randomBytes } from "crypto";
 import { NextResponse } from "next/server";
 
@@ -11,7 +12,7 @@ export async function POST(req: Request) {
 		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 	}
 
-	let body: { name?: string; mode?: string };
+	let body: { name?: string; mode?: PublicWorkerMode };
 	try {
 		body = await req.json();
 	} catch {
@@ -32,11 +33,14 @@ export async function POST(req: Request) {
 	const supabase = await createServiceRoleClient();
 	const { data, error } = await supabase
 		.from("workers")
-		.insert({
-			name,
-			mode: (mode as "cloud-hosted" | "self-hosted") ?? "cloud-hosted",
-			token_hash: tokenHash,
-		})
+		.upsert(
+			{
+				name,
+				mode: mode ?? "cloud-hosted",
+				token_hash: tokenHash,
+			},
+			{ onConflict: "name" },
+		)
 		.select("id")
 		.single();
 

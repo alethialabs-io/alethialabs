@@ -50,5 +50,17 @@ terraform/.terraform/
 terraform/terraform.tfvars
 terraform/backend.hcl
 terraform/*.auto.tfvars
+infra/platform/.terraform/
+infra/platform/backend.hcl
+infra/platform/terraform.tfvars
+infra/platform/*.auto.tfvars
+infra/platform/tfplan
+infra/platform/scaler/lambda.zip
+
+# Tendril runtime template copies (source: packages/grape-core/assets/)
+apps/tendril/vine-templates/
+apps/tendril/tendril-templates/
+apps/tendril/argocd-templates/
+
 apps/trellis/playwright-report/
 apps/trellis/test-results/

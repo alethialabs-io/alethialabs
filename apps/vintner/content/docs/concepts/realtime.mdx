@@ -7,6 +7,8 @@ description: How Supabase Realtime powers live log streaming, job status updates
 
 The platform uses **Supabase Realtime** (built on PostgreSQL's logical replication) to push live updates to the browser. Three features depend on this: log streaming, job status updates, and Tendril status tracking.
 
+<img src="/docs/diagrams/concepts/realtime.svg" alt="Realtime Architecture" />
+
 ## How Supabase Realtime Works
 
 Supabase Realtime listens to PostgreSQL's Write-Ahead Log (WAL) and broadcasts row-level changes over WebSocket channels. Clients subscribe to specific tables and event types (INSERT, UPDATE, DELETE) with optional row-level filters.

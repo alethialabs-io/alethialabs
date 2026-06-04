@@ -22,6 +22,13 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     Files,
     Card,
     Cards,
+    img: (props: React.ComponentProps<'img'>) => {
+      if (typeof props.src === 'string' && props.src.endsWith('.svg')) {
+        return <img {...props} style={{ width: '100%', borderRadius: '0.5rem' }} />;
+      }
+      const DefaultImg = defaultMdxComponents.img;
+      return DefaultImg ? <DefaultImg {...props} /> : <img {...props} />;
+    },
     ...components,
   };
 }
