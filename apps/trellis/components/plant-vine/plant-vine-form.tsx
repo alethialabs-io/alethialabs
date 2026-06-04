@@ -72,7 +72,12 @@ const fieldToSectionId: Record<string, string> = {
 /** Inner form component with access to CloudProvider context. */
 function PlantVineFormInner({ cloudIdentities, sourceVine }: PlantVineFormProps) {
 	const router = useRouter();
-	const store = useVineStore();
+	const storeError = useVineStore((s) => s.error);
+	const isLoading = useVineStore((s) => s.isLoading);
+	const reset = useVineStore((s) => s.reset);
+	const fetchPrices = useVineStore((s) => s.fetchPrices);
+	const setSubmitting = useVineStore((s) => s.setSubmitting);
+	const setError = useVineStore((s) => s.setError);
 	const [conversionWarnings, setConversionWarnings] = useState<ConversionWarning[]>([]);
 
 	const defaultFormValues: VineFormData = sourceVine?.formData ?? {
@@ -119,13 +124,13 @@ function PlantVineFormInner({ cloudIdentities, sourceVine }: PlantVineFormProps)
 	});
 
 	useEffect(() => {
-		store.reset();
-		return () => { store.reset(); };
-	}, [store]);
+		reset();
+		return () => { reset(); };
+	}, [reset]);
 
 	const region = form.watch("vine.region");
 	useEffect(() => {
-		if (region) store.fetchPrices(region);
+		if (region) fetchPrices(region);
 	}, [region]);
 
 	const { provider } = useCloudProvider();
@@ -148,7 +153,7 @@ function PlantVineFormInner({ cloudIdentities, sourceVine }: PlantVineFormProps)
 			form.setValue("databases", []);
 			form.setValue("caches", []);
 		}
-	}, [provider, form]);
+	}, [provider]);
 
 	useEffect(() => {
 		if (!sourceVine || provider === sourceVine.provider) return;
@@ -159,14 +164,14 @@ function PlantVineFormInner({ cloudIdentities, sourceVine }: PlantVineFormProps)
 		);
 		setConversionWarnings(warnings);
 		form.reset(converted);
-	}, [provider, sourceVine, form]);
+	}, [provider, sourceVine]);
 
 	const onSubmit = async (data: VineFormData) => {
-		store.setSubmitting();
+		setSubmitting();
 		try {
 			const input = data as unknown as CreateVineInput;
 			const { vine } = await createVine(input);
-			store.reset();
+			reset();
 			toast.success("Vine planted successfully!");
 			if (vine.vineyard_id) {
 				router.push(`/dashboard/vineyards/${vine.vineyard_id}`);
@@ -174,7 +179,7 @@ function PlantVineFormInner({ cloudIdentities, sourceVine }: PlantVineFormProps)
 				router.push("/dashboard/vines");
 			}
 		} catch (err) {
-			store.setError(err instanceof Error ? err.message : "An unexpected error occurred");
+			setError(err instanceof Error ? err.message : "An unexpected error occurred");
 		}
 	};
 
@@ -273,9 +278,9 @@ function PlantVineFormInner({ cloudIdentities, sourceVine }: PlantVineFormProps)
 						</Collapsible>
 
 						<div className="flex items-center justify-end gap-4 pb-8">
-							{store.error && <p className="text-sm text-destructive">{store.error}</p>}
-							<Button type="submit" disabled={store.isLoading} className="min-w-[160px]">
-								{store.isLoading ? (
+							{storeError && <p className="text-sm text-destructive">{storeError}</p>}
+							<Button type="submit" disabled={isLoading} className="min-w-[160px]">
+								{isLoading ? (
 									<><Loader2 className="mr-2 h-4 w-4 animate-spin" />Planting...</>
 								) : (
 									<><Rocket className="mr-2 h-4 w-4" />Plant Vine</>
