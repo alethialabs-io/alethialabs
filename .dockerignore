@@ -20,3 +20,4 @@ idp-installer/venv
 idp-installer/logs
 idp-installer/temp
 idp-installer/__pycache__
+**/.terraform
