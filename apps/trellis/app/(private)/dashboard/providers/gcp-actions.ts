@@ -1,5 +1,6 @@
 "use server";
 
+import { notifyScaler } from "@/lib/scaler";
 import { createClient } from "@/lib/supabase/server";
 import type { GcpCachedResources } from "@/types/database-custom.types";
 import { revalidatePath } from "next/cache";
@@ -197,6 +198,7 @@ export async function saveGcpIdentity(
 		);
 	}
 
+	notifyScaler();
 	return { jobId: job.id, identityId };
 }
 
@@ -300,5 +302,6 @@ export async function refreshGcpResources(cloudIdentityId: string) {
 	if (error)
 		throw new Error("Failed to queue resource fetch: " + error.message);
 
+	notifyScaler();
 	return { jobId: job.id };
 }

@@ -38,7 +38,14 @@ resource "aws_lambda_function" "scaler" {
   }
 }
 
-# ---------- EventBridge rule (every 1 minute) ----------
+# ---------- Function URL (direct invoke from Trellis) ----------
+
+resource "aws_lambda_function_url" "scaler" {
+  function_name      = aws_lambda_function.scaler.function_name
+  authorization_type = "NONE"
+}
+
+# ---------- EventBridge rule (every 1 minute, fallback) ----------
 
 resource "aws_cloudwatch_event_rule" "every_minute" {
   name                = "${var.name_prefix}-scaler-tick"
