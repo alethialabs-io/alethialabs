@@ -26,7 +26,7 @@ env:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -70,7 +70,6 @@ jobs:
           context: .
           file: apps/tendril/Dockerfile
           push: true
-          platforms: linux/arm64
           build-args: |
             VERSION=${{ steps.meta.outputs.VERSION }}
           tags: |
