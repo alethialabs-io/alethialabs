@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import type { CachedResources } from "@/types/database-custom.types";
+import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
 
 export type AwsConnectionStatus = {
@@ -233,6 +234,7 @@ export async function verifyAwsIdentity(identityId: string, jobId?: string) {
 		throw new Error("Failed to verify identity");
 	}
 
+	revalidatePath("/dashboard/integrations");
 	return { success: true };
 }
 

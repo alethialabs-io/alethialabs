@@ -31,6 +31,7 @@ import {
 	Terminal,
 	XCircle,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -62,6 +63,7 @@ type VerifyState =
 	| { phase: "failed"; error: string };
 
 export function AzureConnection({ onComplete }: AzureConnectionProps) {
+	const router = useRouter();
 	const [method, setMethod] = useState<"cli" | "terraform">("cli");
 	const [verifyState, setVerifyState] = useState<VerifyState>({
 		phase: "idle",
@@ -92,6 +94,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 						await verifyAzureIdentity(identityId, jobId);
 						setVerifyState({ phase: "success" });
 						toast.success("Azure connection verified!");
+						router.refresh();
 					} else if (result.status === "FAILED") {
 						stopPolling();
 						setVerifyState({

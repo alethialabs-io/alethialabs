@@ -31,6 +31,7 @@ import {
 	Terminal,
 	XCircle,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -74,6 +75,7 @@ type VerifyState =
 	| { phase: "failed"; error: string };
 
 export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
+	const router = useRouter();
 	const [method, setMethod] = useState<"cloudformation" | "terraform">(
 		"cloudformation",
 	);
@@ -106,6 +108,7 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 						await verifyAwsIdentity(identityId, jobId);
 						setVerifyState({ phase: "success" });
 						toast.success("AWS connection verified!");
+						router.refresh();
 					} else if (result.status === "FAILED") {
 						stopPolling();
 						setVerifyState({
