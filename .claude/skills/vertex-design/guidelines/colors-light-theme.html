@@ -1,0 +1,21 @@
+<!-- @dsCard group="Colors" viewport="700x150" name="Light Theme" subtitle="The same ink ramp inverted for docs & dense data views" -->
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><link rel="stylesheet" href="../styles.css"/>
+<style>
+  body{margin:0;padding:22px 26px;background:var(--canvas);}
+  .row{display:flex;gap:14px;}
+  .chip{flex:1;border:1px solid var(--border);border-radius:var(--radius-md);height:64px;display:flex;flex-direction:column;justify-content:flex-end;padding:9px;}
+  .name{font-size:12px;font-weight:500;color:var(--text-primary);}
+  .tok{font-family:var(--font-mono);font-size:9px;color:var(--text-tertiary);}
+  .caption{font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-tertiary);margin:0 0 12px;}
+</style></head>
+<body>
+<p class="caption">Light theme · add no class (default :root)</p>
+<div class="row">
+  <div class="chip" style="background:var(--canvas)"><span class="name">Canvas</span><span class="tok">--canvas</span></div>
+  <div class="chip" style="background:var(--surface)"><span class="name">Surface</span><span class="tok">--surface</span></div>
+  <div class="chip" style="background:var(--surface-muted)"><span class="name">Muted</span><span class="tok">--surface-muted</span></div>
+  <div class="chip" style="background:var(--ink)"><span class="name" style="color:var(--ink-foreground)">Ink</span><span class="tok" style="color:var(--ink-foreground);opacity:.7">--ink</span></div>
+</div>
+</body></html>

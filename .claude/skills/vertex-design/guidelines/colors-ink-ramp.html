@@ -1,0 +1,21 @@
+<!-- @dsCard group="Colors" viewport="700x150" name="Ink Ramp" subtitle="The 16-step neutral scale that drives every theme" -->
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head><meta charset="utf-8"/><link rel="stylesheet" href="../styles.css"/>
+<style>
+  body{margin:0;padding:22px 26px;background:var(--canvas);}
+  .ramp{display:grid;grid-template-columns:repeat(8,1fr);gap:0;border:1px solid var(--border);border-radius:var(--radius-md);overflow:hidden;}
+  .sw{height:46px;display:flex;align-items:flex-end;padding:5px 6px;}
+  .sw span{font-family:var(--font-mono);font-size:9px;color:var(--text-tertiary);mix-blend-mode:difference;color:#fff;}
+  .caption{font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-tertiary);margin:0 0 12px;}
+</style></head>
+<body>
+<p class="caption">Neutral ink · oklch · zero chroma</p>
+<div class="ramp" id="r"></div>
+<div class="ramp" id="r2" style="margin-top:2px;"></div>
+<script>
+  const steps=[0,25,50,100,200,300,400,500,600,700,800,900,950,1000,1050,1100];
+  const r=document.getElementById('r'),r2=document.getElementById('r2');
+  steps.forEach((s,i)=>{const d=document.createElement('div');d.className='sw';d.style.background=`var(--gray-${s})`;d.innerHTML=`<span>${s}</span>`;(i<8?r:r2).appendChild(d);});
+</script>
+</body></html>

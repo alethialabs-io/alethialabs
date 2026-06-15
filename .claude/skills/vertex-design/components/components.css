@@ -1,0 +1,261 @@
+/* ============================================================
+   VERTEX — component classes
+   Styling for the bundled React primitives. Ships to consumers
+   via styles.css. Components carry these class names; all
+   visual values resolve from design tokens.
+   ============================================================ */
+
+/* ---------- Button ---------- */
+.vx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  font-family: var(--font-sans);
+  font-weight: var(--weight-medium);
+  font-size: var(--text-base);
+  line-height: 1;
+  white-space: nowrap;
+  border: var(--border-hairline) solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--duration-fast) var(--ease-standard),
+              color var(--duration-fast) var(--ease-standard),
+              border-color var(--duration-fast) var(--ease-standard),
+              box-shadow var(--duration-fast) var(--ease-standard),
+              transform var(--duration-instant) var(--ease-standard);
+}
+.vx-btn:focus-visible { box-shadow: 0 0 0 var(--ring-width) var(--ring-color); }
+.vx-btn:active { transform: translateY(0.5px); }
+.vx-btn:disabled { opacity: 0.45; pointer-events: none; }
+.vx-btn svg { width: 1em; height: 1em; flex-shrink: 0; }
+
+/* sizes */
+.vx-btn--xs { height: 1.5rem;  padding: 0 var(--space-2);   font-size: var(--text-xs); border-radius: var(--radius-xs); }
+.vx-btn--sm { height: 2rem;    padding: 0 var(--space-3);   font-size: var(--text-sm); }
+.vx-btn--md { height: 2.25rem; padding: 0 var(--space-4); }
+.vx-btn--lg { height: 2.5rem;  padding: 0 var(--space-6);   font-size: var(--text-md); }
+.vx-btn--icon { height: 2.25rem; width: 2.25rem; padding: 0; }
+.vx-btn--icon.vx-btn--sm { height: 2rem; width: 2rem; }
+.vx-btn--icon.vx-btn--xs { height: 1.5rem; width: 1.5rem; }
+
+/* variants */
+.vx-btn--primary   { background: var(--ink); color: var(--ink-foreground); }
+.vx-btn--primary:hover   { background: var(--ink-hover); }
+.vx-btn--secondary { background: var(--surface-muted); color: var(--text-primary); border-color: var(--border); }
+.vx-btn--secondary:hover { background: var(--border); }
+.vx-btn--outline   { background: transparent; color: var(--text-primary); border-color: var(--border-strong); box-shadow: var(--shadow-xs); }
+.vx-btn--outline:hover   { background: var(--surface-muted); border-color: var(--border-strong); }
+.vx-btn--ghost     { background: transparent; color: var(--text-secondary); }
+.vx-btn--ghost:hover     { background: var(--surface-muted); color: var(--text-primary); }
+.vx-btn--link      { background: transparent; color: var(--text-primary); height: auto; padding: 0; border-radius: 0; }
+.vx-btn--link:hover      { text-decoration: underline; text-underline-offset: 3px; }
+.vx-btn--destructive { background: transparent; color: var(--text-primary); border-color: var(--border-strong); }
+.vx-btn--destructive:hover { background: var(--signal-critical-surface); border-color: var(--text-primary); }
+
+/* ---------- Badge ---------- */
+.vx-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  line-height: 1;
+  padding: 0.1875rem var(--space-2);
+  border-radius: var(--radius-xs);
+  border: var(--border-hairline) solid transparent;
+  white-space: nowrap;
+}
+.vx-badge svg { width: 0.85em; height: 0.85em; }
+.vx-badge--solid   { background: var(--ink); color: var(--ink-foreground); }
+.vx-badge--muted   { background: var(--surface-muted); color: var(--text-secondary); border-color: var(--border); }
+.vx-badge--outline { background: transparent; color: var(--text-secondary); border-color: var(--border-strong); }
+.vx-badge--mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+
+/* ---------- Status badge / dot ---------- */
+.vx-status { display: inline-flex; align-items: center; gap: var(--space-1_5); font-family: var(--font-mono); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); text-transform: uppercase; color: var(--text-secondary); }
+.vx-status__dot { width: 7px; height: 7px; border-radius: var(--radius-full); flex-shrink: 0; }
+.vx-status--active  .vx-status__dot { background: var(--signal-strong); }
+.vx-status--active  { color: var(--text-primary); }
+.vx-status--pending .vx-status__dot { background: var(--signal-mute); box-shadow: 0 0 0 3px color-mix(in oklch, var(--signal-mute) 18%, transparent); }
+.vx-status--idle    .vx-status__dot { background: transparent; border: 1.5px solid var(--signal-mute); }
+.vx-status--failed  .vx-status__dot { background: var(--signal-critical); position: relative; }
+.vx-status--failed  .vx-status__dot::after { content: ""; position: absolute; inset: 2px; background: var(--signal-critical-surface); border-radius: 1px; }
+.vx-status--disabled .vx-status__dot { background: var(--signal-faint); }
+.vx-status--live .vx-status__dot { background: var(--signal-strong); animation: vertex-blink 1.4s var(--ease-linear) infinite; }
+
+/* ---------- Input / Textarea ---------- */
+.vx-input, .vx-textarea {
+  display: block;
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  background: transparent;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-3);
+  height: 2.25rem;
+  transition: border-color var(--duration-fast) var(--ease-standard),
+              box-shadow var(--duration-fast) var(--ease-standard);
+  outline: none;
+}
+.vx-textarea { height: auto; min-height: 5rem; padding: var(--space-2) var(--space-3); line-height: var(--leading-snug); resize: vertical; }
+.vx-input::placeholder, .vx-textarea::placeholder { color: var(--text-disabled); }
+.vx-input:focus, .vx-textarea:focus { border-color: var(--ring); box-shadow: 0 0 0 var(--ring-width) var(--ring-color); }
+.vx-input:disabled, .vx-textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+.vx-input--mono { font-family: var(--font-mono); font-size: var(--text-sm); }
+.vx-input[aria-invalid="true"] { border-color: var(--text-primary); box-shadow: 0 0 0 var(--ring-width) var(--signal-critical-surface); }
+
+.vx-field { display: flex; flex-direction: column; gap: var(--space-1_5); }
+.vx-label { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-primary); }
+.vx-hint  { font-size: var(--text-xs); color: var(--text-tertiary); }
+
+/* ---------- Select (wraps native) ---------- */
+.vx-select-wrap { position: relative; display: inline-flex; width: 100%; }
+.vx-select {
+  appearance: none;
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  background: transparent;
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-8) 0 var(--space-3);
+  height: 2.25rem;
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
+}
+.vx-select:focus { border-color: var(--ring); box-shadow: 0 0 0 var(--ring-width) var(--ring-color); }
+.vx-select-wrap__chevron { position: absolute; right: var(--space-3); top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-tertiary); width: 14px; height: 14px; }
+.vx-select option { background: var(--surface-raised); color: var(--text-primary); }
+
+/* ---------- Checkbox / Radio / Switch ---------- */
+.vx-check { display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer; font-size: var(--text-base); color: var(--text-primary); user-select: none; }
+.vx-check input { position: absolute; opacity: 0; width: 0; height: 0; }
+.vx-check__box {
+  width: 1.05rem; height: 1.05rem; flex-shrink: 0;
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--ink-foreground);
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard);
+}
+.vx-check__box--radio { border-radius: var(--radius-full); }
+.vx-check input:checked + .vx-check__box { background: var(--ink); border-color: var(--ink); }
+.vx-check input:checked + .vx-check__box svg { opacity: 1; }
+.vx-check__box svg { width: 0.75rem; height: 0.75rem; opacity: 0; }
+/* radio: keep ring, show centered ink dot when selected */
+.vx-check__box--radio { position: relative; }
+.vx-check input:checked + .vx-check__box--radio { background: transparent; border-color: var(--ink); }
+.vx-check__box--radio::after { content: ""; width: 0.5rem; height: 0.5rem; border-radius: var(--radius-full); background: var(--ink); opacity: 0; transition: opacity var(--duration-fast) var(--ease-standard); }
+.vx-check input:checked + .vx-check__box--radio::after { opacity: 1; }
+.vx-check input:focus-visible + .vx-check__box { box-shadow: 0 0 0 var(--ring-width) var(--ring-color); }
+.vx-check input:disabled ~ * { opacity: 0.45; }
+
+.vx-switch { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
+.vx-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.vx-switch__track {
+  width: 2.25rem; height: 1.25rem; border-radius: var(--radius-full);
+  background: var(--surface-muted); border: 1px solid var(--border-strong);
+  transition: background var(--duration-base) var(--ease-standard), border-color var(--duration-base) var(--ease-standard);
+}
+.vx-switch__thumb {
+  position: absolute; left: 3px; top: 50%; transform: translateY(-50%);
+  width: 0.875rem; height: 0.875rem; border-radius: var(--radius-full);
+  background: var(--text-secondary);
+  transition: transform var(--duration-base) var(--ease-out), background var(--duration-base) var(--ease-standard);
+}
+.vx-switch input:checked + .vx-switch__track { background: var(--ink); border-color: var(--ink); }
+.vx-switch input:checked + .vx-switch__track + .vx-switch__thumb { transform: translate(1.05rem, -50%); background: var(--ink-foreground); }
+.vx-switch input:focus-visible + .vx-switch__track { box-shadow: 0 0 0 var(--ring-width) var(--ring-color); }
+
+/* ---------- Card ---------- */
+.vx-card {
+  background: var(--surface);
+  border: var(--border-hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+.vx-card--flat { box-shadow: none; }
+.vx-card--interactive { transition: border-color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard); cursor: pointer; }
+.vx-card--interactive:hover { border-color: var(--border-strong); background: var(--surface-raised); }
+.vx-card__header { padding: var(--space-5) var(--space-5) 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.vx-card__title { font-family: var(--font-display); font-size: var(--text-md); font-weight: var(--weight-semibold); letter-spacing: var(--tracking-tight); color: var(--text-primary); }
+.vx-card__desc { font-size: var(--text-sm); color: var(--text-tertiary); line-height: var(--leading-snug); }
+.vx-card__body { padding: var(--space-5); }
+.vx-card__footer { padding: 0 var(--space-5) var(--space-5); display: flex; align-items: center; gap: var(--space-2); }
+
+/* ---------- Avatar ---------- */
+.vx-avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-full);
+  background: var(--surface-muted);
+  border: var(--border-hairline) solid var(--border);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.vx-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+/* ---------- Separator ---------- */
+.vx-sep { border: none; background: var(--border); }
+.vx-sep--h { height: 1px; width: 100%; margin: 0; }
+.vx-sep--v { width: 1px; align-self: stretch; min-height: 1em; }
+
+/* ---------- Kbd ---------- */
+.vx-kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.4rem; height: 1.4rem; padding: 0 var(--space-1_5);
+  font-family: var(--font-mono); font-size: var(--text-2xs);
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* ---------- Tabs ---------- */
+.vx-tabs { display: inline-flex; align-items: center; gap: var(--space-1); border-bottom: 1px solid var(--border); }
+.vx-tabs--pill { border: none; background: var(--surface-muted); padding: var(--space-1); border-radius: var(--radius-md); gap: 2px; }
+.vx-tab {
+  position: relative;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm); font-weight: var(--weight-medium);
+  color: var(--text-tertiary);
+  background: transparent; border: none; cursor: pointer;
+  padding: var(--space-2) var(--space-3);
+  transition: color var(--duration-fast) var(--ease-standard);
+}
+.vx-tab:hover { color: var(--text-primary); }
+.vx-tab--active { color: var(--text-primary); }
+.vx-tabs:not(.vx-tabs--pill) .vx-tab--active::after {
+  content: ""; position: absolute; left: var(--space-3); right: var(--space-3); bottom: -1px;
+  height: 2px; background: var(--text-primary); border-radius: 2px;
+}
+.vx-tabs--pill .vx-tab { border-radius: var(--radius-sm); padding: var(--space-1_5) var(--space-3); }
+.vx-tabs--pill .vx-tab--active { background: var(--surface); color: var(--text-primary); box-shadow: var(--shadow-xs); }
+
+/* ---------- Alert ---------- */
+.vx-alert { display: flex; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--surface-muted); }
+.vx-alert__icon { color: var(--text-secondary); flex-shrink: 0; margin-top: 1px; }
+.vx-alert__icon svg { width: 1rem; height: 1rem; display: block; }
+.vx-alert__title { font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--text-primary); }
+.vx-alert__body { font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-snug); }
+.vx-alert--critical { border-color: var(--border-strong); background: var(--signal-critical-surface); }
+.vx-alert--critical .vx-alert__icon { color: var(--text-primary); }
+
+/* ---------- Spinner ---------- */
+.vx-spinner { display: inline-block; border-radius: var(--radius-full); border: 2px solid var(--border-strong); border-top-color: var(--text-primary); animation: vertex-spin 0.7s var(--ease-linear) infinite; }
+@keyframes vertex-spin { to { transform: rotate(360deg); } }

@@ -1,0 +1,19 @@
+<!-- @dsCard group="Spacing" viewport="700x170" name="Spacing Scale" subtitle="4px base grid" -->
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head><meta charset="utf-8"/><link rel="stylesheet" href="../styles.css"/>
+<style>
+  body{margin:0;padding:22px 26px;background:var(--canvas);}
+  .r{display:flex;align-items:center;gap:12px;margin-bottom:7px;}
+  .bar{height:14px;background:var(--text-secondary);border-radius:2px;}
+  .tok{font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);width:74px;}
+  .px{font-family:var(--font-mono);font-size:10px;color:var(--text-tertiary);width:34px;}
+</style></head>
+<body>
+<div id="w"></div>
+<script>
+  const items=[['space-1',4],['space-2',8],['space-3',12],['space-4',16],['space-6',24],['space-8',32],['space-12',48],['space-16',64]];
+  const w=document.getElementById('w');
+  items.forEach(([t,px])=>{const r=document.createElement('div');r.className='r';r.innerHTML=`<span class="tok">--${t}</span><span class="px">${px}</span><div class="bar" style="width:${px*3}px"></div>`;w.appendChild(r);});
+</script>
+</body></html>
