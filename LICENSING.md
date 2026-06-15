@@ -14,8 +14,8 @@ the `ee/` features under a separate commercial license while keeping the core AG
 All files except those listed below are licensed `AGPL-3.0-only` (see `LICENSE`).
 This includes, among others:
 
-    apps/vertex/        apps/vtx/        apps/node/        apps/docs/
-    packages/vertex-core/   packages/ui/   packages/charts/   packages/eslint-config/
+    apps/console/        apps/cli/        apps/runner/        apps/docs/
+    packages/core/   packages/ui/   packages/charts/   packages/eslint-config/
     infra/   supabase/   scripts/   spec/
 
 ## `LicenseRef-Alethia-Commercial`

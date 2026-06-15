@@ -2,7 +2,7 @@
 
 variable "project_name" {
   type    = string
-  default = "node"
+  default = "runner"
 }
 
 variable "environment" {
@@ -13,13 +13,13 @@ variable "environment" {
 variable "nodes" {
   type = map(object({
     region      = string
-    vertex_url = string
+    alethia_url = string
   }))
-  description = "Map of node deployments. Key is the tendril name, value specifies region and Vertex instance."
+  description = "Map of node deployments. Key is the tendril name, value specifies region and Alethia instance."
   default = {
     "prod-eu-west-1" = {
       region      = "eu-west-1"
-      vertex_url = "https://adp.prod.itgix.eu"
+      alethia_url = "https://adp.prod.itgix.eu"
     }
   }
 }
@@ -34,15 +34,15 @@ variable "worker_mode" {
   }
 }
 
-variable "vertex_api_secret" {
+variable "alethia_api_secret" {
   type        = string
   sensitive   = true
-  description = "Secret for authenticating with the Vertex API (tendril registration + releases)."
+  description = "Secret for authenticating with the Alethia API (tendril registration + releases)."
 }
 
 variable "image" {
   type    = string
-  default = "ghcr.io/bobikenobi12/node"
+  default = "ghcr.io/alethialabs-io/runner"
 }
 
 variable "node_version" {

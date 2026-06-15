@@ -48,7 +48,7 @@ locals {
   shared_worker_vars = {
     image                       = var.image
     node_version             = var.node_version
-    vertex_api_secret          = var.vertex_api_secret
+    alethia_api_secret          = var.alethia_api_secret
     worker_mode                 = var.worker_mode
     infracost_api_key           = var.infracost_api_key
     supabase_s3_endpoint        = var.supabase_s3_endpoint
@@ -63,7 +63,7 @@ locals {
       key         = name
       region      = cfg.region
       name_prefix = "${local.name_prefix}-${name}"
-      vertex_url = cfg.vertex_url
+      alethia_url = cfg.alethia_url
     }
   ]
 }
@@ -107,10 +107,10 @@ module "tendril_eu_west_1" {
 
   region             = each.value.region
   name_prefix        = each.value.name_prefix
-  vertex_url        = each.value.vertex_url
+  alethia_url        = each.value.alethia_url
   image              = local.shared_worker_vars.image
   node_version    = local.shared_worker_vars.node_version
-  vertex_api_secret = local.shared_worker_vars.vertex_api_secret
+  alethia_api_secret = local.shared_worker_vars.alethia_api_secret
   worker_mode        = local.shared_worker_vars.worker_mode
 
   infracost_api_key           = local.shared_worker_vars.infracost_api_key
@@ -134,10 +134,10 @@ module "tendril_eu_central_1" {
 
   region             = each.value.region
   name_prefix        = each.value.name_prefix
-  vertex_url        = each.value.vertex_url
+  alethia_url        = each.value.alethia_url
   image              = local.shared_worker_vars.image
   node_version    = local.shared_worker_vars.node_version
-  vertex_api_secret = local.shared_worker_vars.vertex_api_secret
+  alethia_api_secret = local.shared_worker_vars.alethia_api_secret
   worker_mode        = local.shared_worker_vars.worker_mode
 
   infracost_api_key           = local.shared_worker_vars.infracost_api_key

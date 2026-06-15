@@ -26,8 +26,8 @@ Cloud / enterprise features that are **not** part of the open-source core:
 
 - Every file under `ee/` carries `SPDX-License-Identifier: LicenseRef-Alethia-Commercial`.
 - Core (AGPL) code must **not** depend on `ee/` code; `ee/` may depend on core.
-- Today, authentication is still implemented inline in `apps/vertex/app/(public)/auth`
-  and `apps/vertex/app/api/auth`. As the enterprise auth surface (SSO, RBAC, teams)
+- Today, authentication is still implemented inline in `apps/console/app/(public)/auth`
+  and `apps/console/app/api/auth`. As the enterprise auth surface (SSO, RBAC, teams)
   is built out, it moves here.
 
 ## Why this is allowed

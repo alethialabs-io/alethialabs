@@ -1,0 +1,44 @@
+/* ============================================================
+   EFFECTS — Alethia
+   Borders carry the structure; shadows are a whisper.
+   In monochrome, elevation reads through hairline borders and
+   barely-there shadows, not drop-shadow drama.
+   ============================================================ */
+
+:root {
+  /* ---- Border widths ---- */
+  --border-hairline: 1px;
+  --border-thick:    1.5px;
+
+  /* ---- Shadows (cool, low-opacity, neutral) ---- */
+  --shadow-xs:  0 1px 2px 0 oklch(0 0 0 / 0.05);
+  --shadow-sm:  0 1px 2px 0 oklch(0 0 0 / 0.06), 0 1px 1px -1px oklch(0 0 0 / 0.05);
+  --shadow-md:  0 2px 4px -1px oklch(0 0 0 / 0.07), 0 1px 2px -1px oklch(0 0 0 / 0.05);
+  --shadow-lg:  0 8px 24px -6px oklch(0 0 0 / 0.12), 0 2px 6px -2px oklch(0 0 0 / 0.06);
+  --shadow-xl:  0 24px 56px -12px oklch(0 0 0 / 0.22), 0 6px 16px -6px oklch(0 0 0 / 0.10);
+
+  /* ---- Focus ring ---- (3px translucent halo, shadcn-style) */
+  --ring-width: 3px;
+  --ring-color: color-mix(in oklch, var(--ring) 45%, transparent);
+
+  /* ---- Blur (glass headers / overlays) ---- */
+  --blur-sm: 6px;
+  --blur-md: 12px;
+  --blur-lg: 20px;
+
+  /* ---- Overlay scrim ---- */
+  --scrim: oklch(0.09 0 0 / 0.55);
+
+  /* ---- Hairline grid / hatch (decorative blueprint texture) ---- */
+  --grid-line: var(--border-faint);
+}
+
+.dark,
+[data-theme="dark"] {
+  --shadow-xs:  0 1px 2px 0 oklch(0 0 0 / 0.30);
+  --shadow-sm:  0 1px 2px 0 oklch(0 0 0 / 0.40), 0 1px 1px -1px oklch(0 0 0 / 0.30);
+  --shadow-md:  0 2px 6px -1px oklch(0 0 0 / 0.45), 0 1px 2px -1px oklch(0 0 0 / 0.35);
+  --shadow-lg:  0 12px 32px -8px oklch(0 0 0 / 0.60), 0 3px 8px -3px oklch(0 0 0 / 0.40);
+  --shadow-xl:  0 28px 64px -14px oklch(0 0 0 / 0.72), 0 8px 20px -8px oklch(0 0 0 / 0.50);
+  --scrim: oklch(0 0 0 / 0.70);
+}

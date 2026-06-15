@@ -38,7 +38,7 @@ resource "aws_lambda_function" "scaler" {
   }
 }
 
-# ---------- Function URL (direct invoke from Vertex) ----------
+# ---------- Function URL (direct invoke from Alethia) ----------
 
 resource "aws_lambda_function_url" "scaler" {
   function_name      = aws_lambda_function.scaler.function_name

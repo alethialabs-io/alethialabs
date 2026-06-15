@@ -6,16 +6,16 @@ An open-source, multi-cloud internal developer platform for provisioning and man
 
 © 2026 **Alethia OÜ** — open core ([see Licensing](#licensing)). Maintained by [Borislav Borisov](https://github.com/bobikenobi12) ([LinkedIn](https://www.linkedin.com/in/bbor1sov)).
 
-> Some internal component names — the `Vertex` control-plane app, the `vtx` CLI, and `vertex-core` — are codenames retained from earlier development and will be renamed in a later pass. The product is **Alethia Labs**.
+> Some internal component names — the `Alethia` control-plane app, the `alethia` CLI, and `core` — are codenames retained from earlier development and will be renamed in a later pass. The product is **Alethia Labs**.
 
 ## Architecture
 
 | Component | Role |
 | --- | --- |
-| **Vertex** (`apps/vertex`) | Web control plane — Next.js dashboard, Supabase state store, auth, configuration management, job orchestration |
-| **vtx** (`apps/vtx`) | Go CLI — authentication, vineyard/vine management, plan/deploy/destroy operations, worker registration |
-| **Node** (`apps/node`) | Go worker — claims provisioning jobs from the queue, executes Terraform, streams logs back to Vertex |
-| **vertex-core** (`packages/vertex-core`) | Shared Go library — cloud provider interfaces, embedded Terraform templates, config types |
+| **Alethia** (`apps/console`) | Web control plane — Next.js dashboard, Supabase state store, auth, configuration management, job orchestration |
+| **alethia** (`apps/cli`) | Go CLI — authentication, vineyard/vine management, plan/deploy/destroy operations, worker registration |
+| **Runner** (`apps/runner`) | Go worker — claims provisioning jobs from the queue, executes Terraform, streams logs back to Alethia |
+| **core** (`packages/core`) | Shared Go library — cloud provider interfaces, embedded Terraform templates, config types |
 | **docs** (`apps/docs`) | Documentation site (Next.js / Fumadocs) |
 | **ArgoCD** | In-cluster GitOps reconciler installed during bootstrap |
 
@@ -35,12 +35,12 @@ An open-source, multi-cloud internal developer platform for provisioning and man
 
 ```
 apps/
-  vertex/           — Web control plane (Next.js + Supabase)
-  vtx/             — CLI (Go + Cobra + Charmbracelet)
-  node/           — Provisioning worker (Go)
+  console/           — Web control plane (Next.js + Supabase)
+  alethia/             — CLI (Go + Cobra + Charmbracelet)
+  runner/           — Provisioning worker (Go)
   docs/           — Documentation site (Fumadocs)
 packages/
-  vertex-core/        — Shared Go library (cloud providers, Terraform templates)
+  core/        — Shared Go library (cloud providers, Terraform templates)
   ui/                — Shared React component library
   charts/            — Helm charts
   eslint-config/     — ESLint configurations
@@ -66,11 +66,11 @@ spec/
 - Turborepo (`npm i -g turbo`)
 - Supabase CLI (`brew install supabase/tap/supabase`)
 
-### Install vtx CLI (Homebrew)
+### Install alethia CLI (Homebrew)
 
 ```bash
 brew tap alethialabs-io/alethialabs
-brew install vtx
+brew install alethia
 ```
 
 If the repository is private, ensure your local Git environment is authenticated with GitHub (e.g. `export HOMEBREW_GITHUB_API_TOKEN=your_token`).
@@ -82,11 +82,11 @@ If the repository is private, ensure your local Git environment is authenticated
 turbo dev
 
 # Specific app
-turbo dev --filter=vertex
+turbo dev --filter=console
 turbo dev --filter=docs
 
-# vtx CLI (Go)
-cd apps/vtx && go run .
+# alethia CLI (Go)
+cd apps/cli && go run .
 ```
 
 ### Build
@@ -98,14 +98,14 @@ turbo build
 ### Test
 
 ```bash
-# Vertex unit tests
-pnpm -F vertex test
+# Alethia unit tests
+pnpm -F console test
 
-# Vertex E2E
-pnpm -F vertex test:e2e
+# Alethia E2E
+pnpm -F console test:e2e
 
 # Go tests
-cd apps/vtx && go test ./...
+cd apps/cli && go test ./...
 ```
 
 ## Infrastructure

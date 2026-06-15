@@ -16,8 +16,8 @@ export default async function Page(props: PageProps<'/[[...slug]]'>) {
 
   const MDX = page.data.body;
   const gitConfig = {
-    user: 'bobikenobi12',
-    repo: 'bb-thesis-2026',
+    user: 'alethialabs-io',
+    repo: 'alethialabs',
     branch: 'main',
   };
 

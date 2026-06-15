@@ -10,7 +10,7 @@ Metadata:
           - WorkerMode
           - WorkerId
           - WorkerToken
-          - VertexUrl
+          - AlethiaUrl
           - NodeVersion
       - Label:
           default: "Network Configuration"
@@ -24,8 +24,8 @@ Metadata:
         default: "Worker ID"
       WorkerToken:
         default: "Worker Token"
-      VertexUrl:
-        default: "Vertex URL"
+      AlethiaUrl:
+        default: "Alethia URL"
       NodeVersion:
         default: "Node Image Tag"
 
@@ -38,17 +38,17 @@ Parameters:
 
   WorkerId:
     Type: String
-    Description: 'Worker ID from `vtx worker register`.'
+    Description: 'Worker ID from `alethia worker register`.'
 
   WorkerToken:
     Type: String
     NoEcho: true
-    Description: 'Worker token from `vtx worker register`.'
+    Description: 'Worker token from `alethia worker register`.'
 
-  VertexUrl:
+  AlethiaUrl:
     Type: String
     Default: 'https://adp.prod.itgix.eu'
-    Description: 'URL of the Vertex control plane.'
+    Description: 'URL of the Alethia control plane.'
 
   NodeVersion:
     Type: String
@@ -135,7 +135,7 @@ Resources:
               Statement:
                 - Effect: Allow
                   Action: sts:AssumeRole
-                  Resource: 'arn:aws:iam::*:role/VertexProvisionerRole-*'
+                  Resource: 'arn:aws:iam::*:role/AlethiaProvisionerRole-*'
           - !Ref AWS::NoValue
 
   SecurityGroup:
@@ -146,7 +146,7 @@ Resources:
       SecurityGroupEgress:
         - IpProtocol: '-1'
           CidrIp: '0.0.0.0/0'
-          Description: 'Allow all outbound (HTTPS to Vertex, git, registries, AWS APIs)'
+          Description: 'Allow all outbound (HTTPS to Alethia, git, registries, AWS APIs)'
 
   WorkerTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -161,20 +161,20 @@ Resources:
       TaskRoleArn: !GetAtt WorkerTaskRole.Arn
       ContainerDefinitions:
         - Name: node-worker
-          Image: !Sub 'ghcr.io/bobikenobi12/node:${NodeVersion}'
+          Image: !Sub 'ghcr.io/alethialabs-io/runner:${NodeVersion}'
           Command:
             - node
             - worker
             - start
           Environment:
-            - Name: VTX_WORKER_MODE
+            - Name: ALETHIA_WORKER_MODE
               Value: !Ref WorkerMode
-            - Name: VTX_WEB_ORIGIN
-              Value: !Ref VertexUrl
-            - Name: VTX_WORKER_ID
+            - Name: ALETHIA_WEB_ORIGIN
+              Value: !Ref AlethiaUrl
+            - Name: ALETHIA_WORKER_ID
               Value: !Ref WorkerId
           Secrets:
-            - Name: VTX_WORKER_TOKEN
+            - Name: ALETHIA_WORKER_TOKEN
               ValueFrom: !Ref WorkerTokenSecret
           LogConfiguration:
             LogDriver: awslogs

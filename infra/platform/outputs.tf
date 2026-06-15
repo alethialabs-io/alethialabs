@@ -7,7 +7,7 @@ output "nodes" {
   value = {
     for name, w in local.all_worker_modules : name => {
       region       = var.nodes[name].region
-      vertex_url  = var.nodes[name].vertex_url
+      alethia_url  = var.nodes[name].alethia_url
       cluster_name = w.cluster_name
       service_name = w.service_name
     }

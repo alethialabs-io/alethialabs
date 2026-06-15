@@ -28,10 +28,10 @@ build
 dist
 
 # Go CLI
-/apps/vtx/vtx
-/apps/vtx/vtx-*
-/apps/vtx/tmp
-/apps/vtx/bin
+/apps/cli/alethia
+/apps/cli/alethia-*
+/apps/cli/tmp
+/apps/cli/bin
 
 # Go workspace
 go.work.sum
@@ -57,10 +57,10 @@ infra/platform/*.auto.tfvars
 infra/platform/tfplan
 infra/platform/scaler/lambda.zip
 
-# Node runtime template copies (source: packages/vertex-core/assets/)
-apps/node/vine-templates/
-apps/node/tendril-templates/
-apps/node/argocd-templates/
+# Node runtime template copies (source: packages/core/assets/)
+apps/runner/vine-templates/
+apps/runner/tendril-templates/
+apps/runner/argocd-templates/
 
-apps/vertex/playwright-report/
-apps/vertex/test-results/
+apps/console/playwright-report/
+apps/console/test-results/

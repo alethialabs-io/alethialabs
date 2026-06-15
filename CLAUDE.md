@@ -1,4 +1,4 @@
-# Vertex by Alethia — Development Guidelines
+# Alethia — Development Guidelines
 
 Do not include any Co-Authored-By or attribution lines in commit messages.
 
@@ -6,20 +6,20 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
 
 - **Package manager**: pnpm 9+ with workspaces (`apps/*`, `packages/*`)
 - **Task runner**: Turborepo — `turbo dev`, `turbo build`, `turbo lint`, `turbo check-types`
-- **Go workspaces**: `go.work` links `apps/vtx`, `apps/node`, and `packages/vertex-core`
-- **Releases**: release-please for automated versioning; GoReleaser for vtx CLI binaries and Homebrew tap
+- **Go workspaces**: `go.work` links `apps/cli`, `apps/runner`, and `packages/core`
+- **Releases**: release-please for automated versioning; GoReleaser for alethia CLI binaries and Homebrew tap
 
 ---
 
-## Vertex (Web Control Plane)
+## Alethia (Web Control Plane)
 
 ### Database Types Pipeline
 
 Database schema changes follow a strict pipeline. **Never edit generated files manually.**
 
 1. Apply the migration via Supabase dashboard or `supabase db push`
-2. Run `pnpm -F vertex update-types` — regenerates `types/database.types.ts` from the live schema
-3. Run `pnpm -F vertex update-schemas` — runs `scripts/merge-for-supazod.mjs` to type JSONB fields in `database.types.ts`, then generates Zod schemas in `lib/validations/database.schemas.ts`
+2. Run `pnpm -F console update-types` — regenerates `types/database.types.ts` from the live schema
+3. Run `pnpm -F console update-schemas` — runs `scripts/merge-for-supazod.mjs` to type JSONB fields in `database.types.ts`, then generates Zod schemas in `lib/validations/database.schemas.ts`
 
 ### How JSONB typing works
 
@@ -46,7 +46,7 @@ type VineWithComponents = QueryData<typeof vineWithComponentsQuery>
 
 Reusable query builders belong in `lib/queries/`.
 
-### Vertex Code Style
+### Alethia Code Style
 
 - All functions must have a brief JSDoc comment explaining what they do.
 - Group components by feature/domain, not by type. Example: `components/integrations/`, `components/plant-vine/`, not `components/buttons/`, `components/modals/`.
@@ -54,10 +54,10 @@ Reusable query builders belong in `lib/queries/`.
 - Never use `Record<string, unknown>` for JSONB fields that have a known shape. Define a proper interface in `database-custom.types.ts`.
 - Prefer `useFormContext` + `useFieldArray` over prop drilling for form sections.
 
-### Vertex Project Structure
+### Alethia Project Structure
 
 ```
-apps/vertex/
+apps/console/
   app/                    # Next.js app router
     (private)/dashboard/  # Authenticated routes
     (public)/auth/        # Sign-in, email confirmation
@@ -75,7 +75,7 @@ apps/vertex/
     database-custom.types.ts  # MergeDeep overrides for JSONB fields
 ```
 
-### Vertex Key Patterns
+### Alethia Key Patterns
 
 - Cloud integrations follow the same pattern across AWS/GCP/Azure: server actions in `app/(private)/dashboard/providers/`, connection components in `components/onboarding/`.
 - All `cloud_identities` queries must filter by `provider` to prevent cross-provider data leaks.
@@ -83,12 +83,12 @@ apps/vertex/
 
 ---
 
-## vtx (CLI)
+## alethia (CLI)
 
 ### Structure
 
-- **Entry point**: `apps/vtx/main.go` → `cmd.Execute()`
-- **Commands** (`apps/vtx/cmd/`): Cobra-based CLI with 27+ commands organized into groups:
+- **Entry point**: `apps/cli/main.go` → `cmd.Execute()`
+- **Commands** (`apps/cli/cmd/`): Cobra-based CLI with 27+ commands organized into groups:
   - **Auth**: `login`, `logout` — device code flow with browser automation, JWT tokens
   - **Vineyards**: `vineyard list|create|delete` — workspace management
   - **Vines**: `vine list|get` — infrastructure configuration browsing
@@ -107,31 +107,31 @@ apps/vertex/
 ### Build & Release
 
 - **GoReleaser** (`.goreleaser.yml`): cross-platform builds (Linux/macOS, amd64/arm64), Homebrew tap publishing
-- **Docker** (`Dockerfile`): multi-stage alpine build with runtime deps (bash, curl, git, aws-cli, kubectl, helm), non-root `vtx` user
+- **Docker** (`Dockerfile`): multi-stage alpine build with runtime deps (bash, curl, git, aws-cli, kubectl, helm), non-root `alethia` user
 
 ### Environment Variables
 
-- `VTX_WEB_ORIGIN` — API server URL (default: `https://adp.prod.itgix.eu`)
-- `VTX_WORKER_MODE` — Worker mode (`self-hosted` or `cloud-hosted`)
-- `VTX_WORKER_ID` / `VTX_WORKER_TOKEN` — Worker registration credentials
+- `ALETHIA_WEB_ORIGIN` — API server URL (default: `https://adp.prod.itgix.eu`)
+- `ALETHIA_WORKER_MODE` — Worker mode (`self-hosted` or `cloud-hosted`)
+- `ALETHIA_WORKER_ID` / `ALETHIA_WORKER_TOKEN` — Worker registration credentials
 - `SUPABASE_S3_ENDPOINT`, `SUPABASE_S3_REGION`, `SUPABASE_STORAGE_KEY_ID`, `SUPABASE_STORAGE_SECRET_KEY` — Artifact storage
 
 ---
 
-## Node (Provisioning Worker)
+## Runner (Provisioning Worker)
 
-- **Location**: `apps/node/`
+- **Location**: `apps/runner/`
 - **Structure**: `cmd/` (entry point), `internal/` (business logic), `worker/` (job execution engine)
-- **Purpose**: Long-running daemon that polls Vertex for queued provisioning jobs, claims them, executes Terraform operations, and streams logs back.
-- **Deployment**: Docker image on ECS Fargate, auto-registered with Vertex via HTTP on startup.
+- **Purpose**: Long-running daemon that polls Alethia for queued provisioning jobs, claims them, executes Terraform operations, and streams logs back.
+- **Deployment**: Docker image on ECS Fargate, auto-registered with Alethia via HTTP on startup.
 - **Worker modes**: `self-hosted` (runs in customer's cloud with native permissions) or `cloud-hosted` (runs in platform account, assumes role into customer account).
 
 ---
 
-## vertex-core (Shared Go Library)
+## core (Shared Go Library)
 
-- **Location**: `packages/vertex-core/`
-- **Purpose**: Shared types, cloud provider interfaces, and embedded Terraform templates used by both vtx and Node.
+- **Location**: `packages/core/`
+- **Purpose**: Shared types, cloud provider interfaces, and embedded Terraform templates used by both alethia and Node.
 - **Terraform templates**: Embedded in `assets/terraform/seed/` — vine provisioning templates for AWS, GCP, Azure.
 - **Key packages**: Config types (VineConfig), cloud provider abstraction (CloudProvider interface), template rendering (pongo2).
 
@@ -151,8 +151,8 @@ apps/vertex/
 ### Platform (`infra/platform/`)
 
 Core infrastructure managed by Terraform:
-- **ECR** (eu-west-1): Container registry for Vertex and Node Docker images
-- **ECS Fargate** (multi-region): Node worker tasks in VPC, auto-registered with Vertex
+- **ECR** (eu-west-1): Container registry for Alethia and Runner Docker images
+- **ECS Fargate** (multi-region): Runner worker tasks in VPC, auto-registered with Alethia
 - **Lambda scaler** (eu-west-1): EventBridge triggers every 1 minute, scales ECS tasks based on job queue depth
 
 ### Templates (`infra/templates/`)
@@ -175,7 +175,7 @@ Cloud account bootstrap scripts:
 
 - **`deploy-node.yml`** — Manual hotfix: build Node Docker image → push to ECR + GHCR → deploy to ECS
 - **`release-node.yml`** — Release-please driven: tag, build, publish Node binary releases
-- **`release-vtx.yml`** — GoReleaser: build vtx CLI binaries, publish Homebrew tap
+- **`release-alethia.yml`** — GoReleaser: build alethia CLI binaries, publish Homebrew tap
 - **`terraform-platform.yml`** — Validate, plan, and apply platform Terraform
 
 ---

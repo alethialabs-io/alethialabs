@@ -30,8 +30,8 @@ resource "null_resource" "register_tendril" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      RESPONSE=$(curl -sf -X POST "${var.vertex_url}/api/tendrils/register" \
-        -H "Authorization: Bearer ${var.vertex_api_secret}" \
+      RESPONSE=$(curl -sf -X POST "${var.alethia_url}/api/tendrils/register" \
+        -H "Authorization: Bearer ${var.alethia_api_secret}" \
         -H "Content-Type: application/json" \
         -d '{"name": "${var.name_prefix}", "mode": "cloud-hosted"}')
 
@@ -142,16 +142,16 @@ resource "aws_ecs_task_definition" "tendril" {
       essential = true
 
       environment = [
-        { name = "VTX_WORKER_MODE", value = var.worker_mode },
-        { name = "VTX_WEB_ORIGIN", value = var.vertex_url },
-        { name = "VTX_WORKER_ID", value = local.tendril_id },
+        { name = "ALETHIA_WORKER_MODE", value = var.worker_mode },
+        { name = "ALETHIA_WEB_ORIGIN", value = var.alethia_url },
+        { name = "ALETHIA_WORKER_ID", value = local.tendril_id },
         { name = "SUPABASE_S3_ENDPOINT", value = var.supabase_s3_endpoint },
         { name = "SUPABASE_S3_REGION", value = var.supabase_s3_region },
       ]
 
       secrets = [
         {
-          name      = "VTX_WORKER_TOKEN"
+          name      = "ALETHIA_WORKER_TOKEN"
           valueFrom = aws_secretsmanager_secret.tendril_token.arn
         },
         {
@@ -216,7 +216,7 @@ resource "aws_security_group" "tendril" {
 
 resource "aws_vpc_security_group_egress_rule" "all_outbound" {
   security_group_id = aws_security_group.tendril.id
-  description       = "Allow all outbound (HTTPS to Vertex, git, registries, AWS APIs)"
+  description       = "Allow all outbound (HTTPS to Alethia, git, registries, AWS APIs)"
   ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"
 }
@@ -343,7 +343,7 @@ resource "aws_iam_role_policy" "task_assume_customer" {
       {
         Effect   = "Allow"
         Action   = "sts:AssumeRole"
-        Resource = "arn:aws:iam::*:role/VertexProvisionerRole-*"
+        Resource = "arn:aws:iam::*:role/AlethiaProvisionerRole-*"
       }
     ]
   })

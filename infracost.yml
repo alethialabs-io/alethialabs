@@ -13,10 +13,10 @@ projects:
     - path: infra/templates/vine/azure
       name: vine-template-azure
 
-    # Node self-hosted template
-    - path: infra/templates/node/aws
-      name: node-template-aws
+    # Runner self-hosted template
+    - path: infra/templates/runner/aws
+      name: runner-template-aws
 
-    # Seed template (embedded in vertex-core)
-    - path: packages/vertex-core/assets/terraform/seed
+    # Seed template (embedded in core)
+    - path: packages/core/assets/terraform/seed
       name: seed-template

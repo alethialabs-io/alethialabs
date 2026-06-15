@@ -2,15 +2,15 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "separate-pull-requests": true,
   "packages": {
-    "apps/vtx": {
+    "apps/cli": {
       "release-type": "simple",
-      "component": "vtx",
+      "component": "cli",
       "include-component-in-tag": true,
       "changelog-path": "CHANGELOG.md"
     },
-    "apps/node": {
+    "apps/runner": {
       "release-type": "simple",
-      "component": "node",
+      "component": "runner",
       "include-component-in-tag": true,
       "changelog-path": "CHANGELOG.md"
     }

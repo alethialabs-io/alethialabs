@@ -10,7 +10,7 @@ variable "name_prefix" {
 
 variable "image" {
   type        = string
-  default     = "ghcr.io/bobikenobi12/node"
+  default     = "ghcr.io/alethialabs-io/runner"
   description = "Container image (without tag)."
 }
 
@@ -20,16 +20,16 @@ variable "node_version" {
   description = "Image tag to deploy."
 }
 
-variable "vertex_url" {
+variable "alethia_url" {
   type        = string
   default     = "https://adp.prod.itgix.eu"
-  description = "Vertex web origin URL."
+  description = "Alethia web origin URL."
 }
 
-variable "vertex_api_secret" {
+variable "alethia_api_secret" {
   type        = string
   sensitive   = true
-  description = "Secret for authenticating with the Vertex API (tendril registration)."
+  description = "Secret for authenticating with the Alethia API (tendril registration)."
 }
 
 variable "worker_mode" {

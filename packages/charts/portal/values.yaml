@@ -1,7 +1,7 @@
-vertex:
+console:
   replicaCount: 1
   image:
-    repository: ghcr.io/bobikenobi12/vertex
+    repository: ghcr.io/alethialabs-io/console
     pullPolicy: IfNotPresent
     tag: ""
   service:
@@ -13,7 +13,7 @@ vertex:
 docs:
   replicaCount: 1
   image:
-    repository: ghcr.io/bobikenobi12/docs
+    repository: ghcr.io/alethialabs-io/docs
     pullPolicy: IfNotPresent
     tag: ""
   service:
@@ -32,7 +32,7 @@ ingress:
         - path: /
           pathType: Prefix
           backend:
-            serviceName: vertex
+            serviceName: console
         - path: /docs
           pathType: Prefix
           backend:

@@ -13,12 +13,12 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     outputs:
-      node-released: ${{ steps.release.outputs['apps/node--release_created'] }}
-      node-version: ${{ steps.release.outputs['apps/node--version'] }}
-      node-tag: ${{ steps.release.outputs['apps/node--tag_name'] }}
-      vtx-released: ${{ steps.release.outputs['apps/vtx--release_created'] }}
-      vtx-version: ${{ steps.release.outputs['apps/vtx--version'] }}
-      vtx-tag: ${{ steps.release.outputs['apps/vtx--tag_name'] }}
+      runner-released: ${{ steps.release.outputs['apps/runner--release_created'] }}
+      runner-version: ${{ steps.release.outputs['apps/runner--version'] }}
+      runner-tag: ${{ steps.release.outputs['apps/runner--tag_name'] }}
+      alethia-released: ${{ steps.release.outputs['apps/cli--release_created'] }}
+      alethia-version: ${{ steps.release.outputs['apps/cli--version'] }}
+      alethia-tag: ${{ steps.release.outputs['apps/cli--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -28,16 +28,16 @@ jobs:
 
   release-node:
     needs: release-please
-    if: needs.release-please.outputs.node-released == 'true'
+    if: needs.release-please.outputs.runner-released == 'true'
     uses: ./.github/workflows/release-node.yml
     with:
-      version: ${{ needs.release-please.outputs.node-version }}
+      version: ${{ needs.release-please.outputs.runner-version }}
     secrets: inherit
 
-  release-vtx:
+  release-alethia:
     needs: release-please
-    if: needs.release-please.outputs.vtx-released == 'true'
-    uses: ./.github/workflows/release-vtx.yml
+    if: needs.release-please.outputs.alethia-released == 'true'
+    uses: ./.github/workflows/release-alethia.yml
     with:
-      version: ${{ needs.release-please.outputs.vtx-version }}
+      version: ${{ needs.release-please.outputs.alethia-version }}
     secrets: inherit

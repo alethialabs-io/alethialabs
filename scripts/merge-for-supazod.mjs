@@ -10,7 +10,7 @@ const __dirname = path.dirname(__filename);
 
 const generatedPath = path.resolve(
 	__dirname,
-	"../apps/vertex/types/database.types.ts",
+	"../apps/console/types/database.types.ts",
 );
 const outPath = generatedPath;
 

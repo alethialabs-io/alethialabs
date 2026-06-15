@@ -1,0 +1,87 @@
+# .goreleaser.yml
+# Make sure to check the documentation at https://goreleaser.com
+version: 2
+
+# Project name for the binary
+project_name: alethia
+
+before:
+    hooks:
+        - 'sh -c "cd apps/cli && go mod tidy"'
+
+builds:
+    - id: alethia
+      dir: apps/cli
+      main: ./
+      binary: alethia
+      ldflags:
+          - -s -w -X github.com/alethialabs-io/alethialabs/apps/cli/internal/version.Version={{.Version}}
+      env:
+          - CGO_ENABLED=0
+          - ALETHIA_WEB_ORIGIN=https://beta.adp.itgix.com
+      goos:
+          - linux
+          - darwin
+      goarch:
+          - amd64
+          - arm64
+
+
+archives:
+    - name_template: >-
+          {{ .ProjectName }}_
+          {{- title .Os }}_
+          {{- if eq .Arch "amd64" }}x86_64
+          {{- else if eq .Arch "386" }}i386
+          {{- else }}{{ .Arch }}{{ end }}
+          {{- if .Arm }}v{{ .Arm }}{{ end }}
+
+checksum:
+    name_template: "checksums.txt"
+
+snapshot:
+    version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+    sort: asc
+    filters:
+        exclude:
+            - "^docs:"
+            - "^test:"
+            - "merge"
+
+# Modelines, see https://goreleaser.com/customization/modelines/
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+brews:
+    - name: alethia
+      # The name of the GitHub repository for your Homebrew Tap.
+      # Convention is 'homebrew-<project-name>'
+      commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+      repository:
+          owner: "alethialabs-io"
+          name: "alethialabs"
+          branch: main
+          token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+
+      directory: "Formula"
+      # You can create a token with just 'public_repo' scope and set it here.
+          # Or you can simply use GITHUB_TOKEN.
+
+      commit_author:
+          name: alethialabs-io
+          email: contact@borislav.me
+
+      # The project's homepage.
+      homepage: "https://github.com/alethialabs-io/alethialabs"
+
+      # A brief description of the project.
+      description: "Alethia CLI for managing infrastructure configurations."
+
+      license: "Proprietary"
+
+      # The install block for the formula.
+      install: |
+          bin.install "alethia"
+
+      test: |
+          system "#{bin}/alethia", "--version"
