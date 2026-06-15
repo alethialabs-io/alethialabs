@@ -45,7 +45,7 @@ variable "memory" {
 
 variable "image_repository" {
   type        = string
-  default     = "787587782604.dkr.ecr.eu-west-1.amazonaws.com/grape-worker-dev-grape"
+  default     = "787587782604.dkr.ecr.eu-west-1.amazonaws.com/tendril-dev-tendril"
   description = "Container image repository"
 }
 
@@ -57,6 +57,6 @@ variable "subnet_ids" {
 
 variable "assign_public_ip" {
   type        = bool
-  default     = false
+  default     = true
   description = "Assign public IP to the Fargate task (required if no NAT gateway)"
 }

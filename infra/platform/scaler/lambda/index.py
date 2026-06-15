@@ -12,6 +12,10 @@ idle_counts = {}
 
 
 def handler(event, context):
+    recovered = recover_stale_jobs()
+    if recovered > 0:
+        print(f"Recovered {recovered} stale job(s)")
+
     queued = count_queued_jobs()
 
     for w in WORKERS:
@@ -40,6 +44,27 @@ def handler(event, context):
             idle_counts[key] = 0
 
     return {'queued': queued}
+
+
+def recover_stale_jobs():
+    url = f"{SUPABASE_URL}/rest/v1/rpc/recover_stale_jobs"
+    req = urllib.request.Request(
+        url,
+        data=b'{}',
+        headers={
+            'apikey': SUPABASE_KEY,
+            'Authorization': f'Bearer {SUPABASE_KEY}',
+            'Content-Type': 'application/json',
+        },
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            body = json.loads(resp.read())
+            return int(body) if isinstance(body, (int, float)) else 0
+    except Exception as e:
+        print(f"Warning: recover_stale_jobs failed: {e}")
+        return 0
 
 
 def count_queued_jobs():

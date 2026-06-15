@@ -1,5 +1,7 @@
 # ADP ItGix Platform — Development Guidelines
 
+Do not include any Co-Authored-By or attribution lines in commit messages.
+
 ## Monorepo Conventions
 
 - **Package manager**: pnpm 9+ with workspaces (`apps/*`, `packages/*`)
