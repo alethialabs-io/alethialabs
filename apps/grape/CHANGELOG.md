@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1](https://github.com/bobikenobi12/bb-thesis-2026/compare/grape-v0.2.0...grape-v0.2.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* **grape:** change default URL to beta.adp.itgix.com ([25b2f42](https://github.com/bobikenobi12/bb-thesis-2026/commit/25b2f42b46f093d8027fdf6f3d56b74451575d25))
+* **grape:** use unstyled status symbols in table cells ([da63824](https://github.com/bobikenobi12/bb-thesis-2026/commit/da6382432882897ee3dfc711cff316cb6d6f30fa))
+* **grape:** use unstyled status symbols in table cells ([cf4a1fc](https://github.com/bobikenobi12/bb-thesis-2026/commit/cf4a1fc5a261f6aa2cfb2ef2a733e61377519469))
+
 ## [0.2.0](https://github.com/bobikenobi12/bb-thesis-2026/compare/grape-v0.1.7...grape-v0.2.0) (2026-06-03)
 
 
