@@ -23,7 +23,7 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-	title: "Trellis",
+	title: "Vertex",
 	description:
 		"Configure multi-cloud infrastructure in the browser. Deploy from the terminal.",
 };

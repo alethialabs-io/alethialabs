@@ -157,7 +157,7 @@ const DEMO_TABS = [
 const MODULES = [
 	{
 		icon: Globe,
-		title: "Trellis",
+		title: "Vertex",
 		subtitle: "Web Control Plane",
 		description:
 			"Visual infrastructure configuration, job dashboard, real-time logs, cost estimation.",
@@ -186,7 +186,7 @@ export function FeatureOverview() {
 								Everything you need to ship infrastructure
 							</h2>
 							<p className="text-muted-foreground text-base leading-relaxed mb-8">
-								Trellis gives you a visual configuration form and a
+								Vertex gives you a visual configuration form and a
 								CLI that share the same state. Design in the browser,
 								execute from the terminal, reconcile with GitOps.
 							</p>

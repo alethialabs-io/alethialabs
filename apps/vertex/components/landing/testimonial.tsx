@@ -4,7 +4,7 @@ export function Testimonial() {
 			<div className="container mx-auto px-4">
 				<div className="max-w-[48rem] mx-auto text-center">
 					<blockquote className="text-xl sm:text-2xl md:text-3xl font-medium tracking-tight text-foreground leading-snug italic">
-						&ldquo;Trellis replaces weeks of Terraform boilerplate with
+						&ldquo;Vertex replaces weeks of Terraform boilerplate with
 						a 20-minute visual workflow — across AWS, GCP, and
 						Azure.&rdquo;
 					</blockquote>
@@ -17,7 +17,7 @@ export function Testimonial() {
 								Borislav Borisov
 							</p>
 							<p className="text-xs text-muted-foreground">
-								Creator of Trellis
+								Creator of Vertex
 							</p>
 						</div>
 					</div>

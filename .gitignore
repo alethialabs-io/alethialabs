@@ -62,5 +62,5 @@ apps/tendril/vine-templates/
 apps/tendril/tendril-templates/
 apps/tendril/argocd-templates/
 
-apps/trellis/playwright-report/
-apps/trellis/test-results/
+apps/vertex/playwright-report/
+apps/vertex/test-results/

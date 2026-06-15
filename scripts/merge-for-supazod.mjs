@@ -7,7 +7,7 @@ const __dirname = path.dirname(__filename);
 
 const generatedPath = path.resolve(
 	__dirname,
-	"../apps/trellis/types/database.types.ts",
+	"../apps/vertex/types/database.types.ts",
 );
 const outPath = generatedPath;
 

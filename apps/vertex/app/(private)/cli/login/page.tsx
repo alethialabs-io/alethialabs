@@ -1,6 +1,6 @@
 'use client'
 
-import { TrellisLogo } from '@/components/trellis-logo'
+import { VertexLogo } from '@/components/vertex-logo'
 import { useSearchParams } from 'next/navigation'
 import { Suspense, useEffect, useState } from 'react'
 import { CheckCircle, Loader2, XCircle } from 'lucide-react'
@@ -90,7 +90,7 @@ export default function CliLoginPage() {
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <div className="absolute top-6 left-6">
-        <TrellisLogo withText className="h-6 w-auto text-foreground" />
+        <VertexLogo withText className="h-6 w-auto text-foreground" />
       </div>
 
       <div className="flex-1 flex items-center justify-center">

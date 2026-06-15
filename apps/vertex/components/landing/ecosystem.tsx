@@ -13,7 +13,7 @@ interface EcoCard {
 const CARDS: EcoCard[] = [
 	{
 		icon: Globe,
-		title: "Trellis",
+		title: "Vertex",
 		description:
 			"Visual web control plane for infrastructure configuration, real-time job monitoring, and cost estimation across AWS, GCP, and Azure.",
 		cta: { label: "Open Dashboard", href: "/dashboard" },
@@ -48,7 +48,7 @@ export function Ecosystem() {
 			<div className="container mx-auto px-4">
 				<div className="max-w-[64rem] mx-auto">
 					<h2 className="font-bold text-3xl md:text-4xl tracking-tighter text-foreground mb-4">
-						The Trellis Ecosystem
+						The Vertex Ecosystem
 					</h2>
 					<p className="text-muted-foreground text-base leading-relaxed mb-12 max-w-[40rem]">
 						Four components that work together — a web dashboard, a CLI,

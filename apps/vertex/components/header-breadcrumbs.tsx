@@ -8,7 +8,7 @@ import {
 	BreadcrumbPage,
 	BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { TrellisLogo } from "@/components/trellis-logo";
+import { VertexLogo } from "@/components/vertex-logo";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
@@ -108,18 +108,18 @@ export function HeaderBreadcrumbs() {
 	return (
 		<Breadcrumb>
 			<BreadcrumbList className="flex-nowrap">
-				{/* Logo + "Trellis" — links to /dashboard */}
+				{/* Logo + "Vertex" — links to /dashboard */}
 				<BreadcrumbItem className="shrink-0">
 					{isHome ? (
 						<BreadcrumbPage className="flex items-center gap-1.5">
-							<TrellisLogo className="h-5 w-5" />
-							<span className="font-semibold">Trellis</span>
+							<VertexLogo className="h-5 w-5" />
+							<span className="font-semibold">Vertex</span>
 						</BreadcrumbPage>
 					) : (
 						<BreadcrumbLink asChild>
 							<Link href="/dashboard" className="flex items-center gap-1.5">
-								<TrellisLogo className="h-5 w-5" />
-								<span className="font-semibold text-foreground">Trellis</span>
+								<VertexLogo className="h-5 w-5" />
+								<span className="font-semibold text-foreground">Vertex</span>
 							</Link>
 						</BreadcrumbLink>
 					)}

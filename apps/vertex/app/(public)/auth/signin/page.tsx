@@ -1,5 +1,5 @@
 import { SignInForm } from "@/components/forms/signin-form";
-import { TrellisLogo } from "@/components/trellis-logo";
+import { VertexLogo } from "@/components/vertex-logo";
 import Link from "next/link";
 
 export default function SignInPage() {
@@ -7,7 +7,7 @@ export default function SignInPage() {
 		<div className="min-h-screen bg-background flex flex-col">
 			<div className="absolute top-6 left-6">
 				<Link href="/" className="inline-flex items-center gap-2 hover:opacity-80 transition-opacity">
-					<TrellisLogo withText className="h-6 w-auto text-foreground" />
+					<VertexLogo withText className="h-6 w-auto text-foreground" />
 				</Link>
 			</div>
 
@@ -15,7 +15,7 @@ export default function SignInPage() {
 				<div className="w-full max-w-sm space-y-8">
 					<div className="text-center">
 						<h1 className="text-2xl font-semibold tracking-tight text-foreground">
-							Log in to Trellis
+							Log in to Vertex
 						</h1>
 					</div>
 

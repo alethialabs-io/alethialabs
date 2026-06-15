@@ -1,35 +1,35 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "portal.fullname" . }}-trellis
+  name: {{ include "portal.fullname" . }}-docs
   labels:
     {{- include "portal.labels" . | nindent 4 }}
-    app.kubernetes.io/component: trellis
+    app.kubernetes.io/component: docs
 spec:
-  replicas: {{ .Values.trellis.replicaCount }}
+  replicas: {{ .Values.docs.replicaCount }}
   selector:
     matchLabels:
       {{- include "portal.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: trellis
+      app.kubernetes.io/component: docs
   template:
     metadata:
       labels:
         {{- include "portal.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: trellis
+        app.kubernetes.io/component: docs
     spec:
       serviceAccountName: {{ include "portal.serviceAccountName" . }}
       containers:
-        - name: trellis
-          image: "{{ .Values.trellis.image.repository }}:{{ .Values.trellis.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.trellis.image.pullPolicy }}
+        - name: docs
+          image: "{{ .Values.docs.image.repository }}:{{ .Values.docs.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.docs.image.pullPolicy }}
           ports:
             - name: http
-              containerPort: 3000
+              containerPort: 3001
               protocol: TCP
           envFrom:
             - secretRef:
                 name: {{ include "portal.fullname" . }}-secrets
-          {{- with .Values.trellis.env }}
+          {{- with .Values.docs.env }}
           env:
             {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -42,4 +42,4 @@ spec:
               path: /
               port: http
           resources:
-            {{- toYaml .Values.trellis.resources | nindent 12 }}
+            {{- toYaml .Values.docs.resources | nindent 12 }}

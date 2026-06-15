@@ -11,7 +11,7 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 RUN pnpm install -g turbo
 COPY . .
-RUN turbo prune vintner --docker
+RUN turbo prune docs --docker
 
 FROM alpine AS installer
 RUN apk update
@@ -24,7 +24,7 @@ RUN pnpm install --frozen-lockfile
 
 # Build the project
 COPY --from=builder /app/out/full/ .
-RUN pnpm turbo run build --filter=vintner
+RUN pnpm turbo run build --filter=docs
 
 FROM alpine AS runner
 WORKDIR /app
@@ -33,15 +33,15 @@ RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 USER nextjs
 
-COPY --from=installer /app/apps/vintner/next.config.mjs .
-COPY --from=installer /app/apps/vintner/package.json .
+COPY --from=installer /app/apps/docs/next.config.mjs .
+COPY --from=installer /app/apps/docs/package.json .
 
-COPY --from=installer --chown=nextjs:nodejs /app/apps/vintner/.next/standalone ./
-COPY --from=installer --chown=nextjs:nodejs /app/apps/vintner/.next/static ./apps/vintner/.next/static
-COPY --from=installer --chown=nextjs:nodejs /app/apps/vintner/public ./apps/vintner/public
+COPY --from=installer --chown=nextjs:nodejs /app/apps/docs/.next/standalone ./
+COPY --from=installer --chown=nextjs:nodejs /app/apps/docs/.next/static ./apps/docs/.next/static
+COPY --from=installer --chown=nextjs:nodejs /app/apps/docs/public ./apps/docs/public
 
 EXPOSE 3001
 ENV PORT=3001
 ENV HOSTNAME="0.0.0.0"
 
-CMD ["node", "apps/vintner/server.js"]
+CMD ["node", "apps/docs/server.js"]

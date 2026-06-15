@@ -1,17 +1,17 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "portal.fullname" . }}-vintner
+  name: {{ include "portal.fullname" . }}-vertex
   labels:
     {{- include "portal.labels" . | nindent 4 }}
-    app.kubernetes.io/component: vintner
+    app.kubernetes.io/component: vertex
 spec:
-  type: {{ .Values.vintner.service.type }}
+  type: {{ .Values.vertex.service.type }}
   ports:
-    - port: {{ .Values.vintner.service.port }}
+    - port: {{ .Values.vertex.service.port }}
       targetPort: http
       protocol: TCP
       name: http
   selector:
     {{- include "portal.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: vintner
+    app.kubernetes.io/component: vertex

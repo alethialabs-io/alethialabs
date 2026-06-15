@@ -1,7 +1,7 @@
-trellis:
+vertex:
   replicaCount: 1
   image:
-    repository: ghcr.io/bobikenobi12/trellis
+    repository: ghcr.io/bobikenobi12/vertex
     pullPolicy: IfNotPresent
     tag: ""
   service:
@@ -10,10 +10,10 @@ trellis:
   resources: {}
   env: []
 
-vintner:
+docs:
   replicaCount: 1
   image:
-    repository: ghcr.io/bobikenobi12/vintner
+    repository: ghcr.io/bobikenobi12/docs
     pullPolicy: IfNotPresent
     tag: ""
   service:
@@ -32,11 +32,11 @@ ingress:
         - path: /
           pathType: Prefix
           backend:
-            serviceName: trellis
+            serviceName: vertex
         - path: /docs
           pathType: Prefix
           backend:
-            serviceName: vintner
+            serviceName: docs
   tls: []
 
 secrets:
@@ -49,7 +49,7 @@ secrets:
     NEXT_PUBLIC_SUPABASE_ANON_KEY: ""
     SERVICE_ROLE_SECRET: ""
     CLI_JWT_SECRET: ""
-    VINTNER_URL: "http://vintner:3001"
+    VINTNER_URL: "http://docs:3001"
 
   # For ExternalSecrets
   externalSecret:

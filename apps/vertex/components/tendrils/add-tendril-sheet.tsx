@@ -306,7 +306,7 @@ function DeployForm({
 
 				<p className="text-xs text-muted-foreground">
 					The worker will be deployed as a container with full cloud
-					permissions. It will poll Trellis for jobs and execute
+					permissions. It will poll Vertex for jobs and execute
 					Terraform in your account.
 				</p>
 

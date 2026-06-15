@@ -1,4 +1,4 @@
-import { TrellisLogo } from "@/components/trellis-logo";
+import { VertexLogo } from "@/components/vertex-logo";
 import { ThemeToggle } from "./theme-toggle";
 
 interface FooterLink {
@@ -72,7 +72,7 @@ export function Footer() {
 				<div className="grid grid-cols-2 md:grid-cols-5 gap-8 mb-12">
 					{/* Logo column */}
 					<div className="col-span-2 md:col-span-1">
-						<TrellisLogo withText className="h-6 w-auto mb-4" />
+						<VertexLogo withText className="h-6 w-auto mb-4" />
 						<p className="text-xs text-muted-foreground leading-relaxed max-w-[14rem]">
 							Configure multi-cloud infrastructure in the browser.
 							Deploy from the terminal.
@@ -114,9 +114,9 @@ export function Footer() {
 				{/* Bottom bar */}
 				<div className="border-t border-border/40 pt-6 flex flex-col sm:flex-row items-center justify-between gap-4">
 					<div className="flex items-center gap-3">
-						<TrellisLogo className="h-4 w-4" />
+						<VertexLogo className="h-4 w-4" />
 						<p className="text-xs text-muted-foreground">
-							&copy; 2026 Trellis
+							&copy; 2026 Vertex
 						</p>
 					</div>
 					<div className="flex items-center gap-4">

@@ -36,7 +36,7 @@ spec:
               service:
                 name: {{ printf "%s-%s" $fullName .backend.serviceName }}
                 port:
-                  number: {{ if eq .backend.serviceName "trellis" }}{{ $.Values.trellis.service.port }}{{ else }}{{ $.Values.vintner.service.port }}{{ end }}
+                  number: {{ if eq .backend.serviceName "vertex" }}{{ $.Values.vertex.service.port }}{{ else }}{{ $.Values.docs.service.port }}{{ end }}
           {{- end }}
     {{- end }}
 {{- end }}

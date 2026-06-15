@@ -3,7 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { ProviderIcon } from "@/components/provider-icon";
-import { TrellisLogo } from "@/components/trellis-logo";
+import { VertexLogo } from "@/components/vertex-logo";
 import { ThemeToggle } from "./theme-toggle";
 import { ExternalLink, Menu } from "lucide-react";
 import Link from "next/link";
@@ -43,7 +43,7 @@ export function Header() {
 			<div className="container mx-auto px-4 h-14 flex items-center justify-between">
 				{/* Left: logo */}
 				<Link href="/" className="flex items-center gap-2 shrink-0">
-					<TrellisLogo withText className="h-6 w-auto" />
+					<VertexLogo withText className="h-6 w-auto" />
 				</Link>
 
 				{/* Center: nav (desktop) */}

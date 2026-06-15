@@ -1,11 +1,11 @@
 import type { SVGProps } from "react";
 
-interface TrellisLogoProps extends SVGProps<SVGSVGElement> {
+interface VertexLogoProps extends SVGProps<SVGSVGElement> {
 	withText?: boolean;
 }
 
-/** Green sprout logo — icon-only or with "Trellis" wordmark. */
-export function TrellisLogo({ withText, ...props }: TrellisLogoProps) {
+/** Green sprout logo — icon-only or with "Vertex" wordmark. */
+export function VertexLogo({ withText, ...props }: VertexLogoProps) {
 	if (withText) {
 		return (
 			<svg
@@ -29,7 +29,7 @@ export function TrellisLogo({ withText, ...props }: TrellisLogoProps) {
 					fontWeight="600"
 					letterSpacing="-0.02em"
 				>
-					Trellis
+					Vertex
 				</text>
 			</svg>
 		);
