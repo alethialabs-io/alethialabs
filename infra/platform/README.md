@@ -55,7 +55,7 @@ Terraform configuration that deploys the node provisioning worker as an AWS Farg
 The worker depends on the `workers`, `provision_jobs`, and `job_logs` tables plus the RPC functions (`claim_next_job`, `update_job_status`, `insert_job_log`, `worker_heartbeat`, `recover_stale_jobs`).
 
 ```bash
-cd apps/trellis
+cd apps/vertex
 npx supabase db push
 ```
 
@@ -172,10 +172,10 @@ ECR_URL=$(terraform output -raw ecr_repository_url)
 aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin $ECR_URL
 
 # Build the image (from repo root)
-docker build -t grape:latest ../apps/grape/
+docker build -t vtx:latest ../apps/vtx/
 
 # Tag and push
-docker tag grape:latest $ECR_URL:latest
+docker tag vtx:latest $ECR_URL:latest
 docker push $ECR_URL:latest
 ```
 
@@ -249,11 +249,11 @@ From the Vertex dashboard:
 
 ```bash
 # Build new image
-docker build -t grape:latest apps/grape/
+docker build -t vtx:latest apps/vtx/
 
 # Push to ECR
 ECR_URL=$(cd terraform && terraform output -raw ecr_repository_url)
-docker tag grape:latest $ECR_URL:latest
+docker tag vtx:latest $ECR_URL:latest
 docker push $ECR_URL:latest
 
 # Force ECS to pull the new image

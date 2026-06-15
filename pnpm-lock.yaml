@@ -76,8 +76,6 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
-  apps/grape: {}
-
   apps/vertex:
     dependencies:
       '@hookform/resolvers':
@@ -258,6 +256,8 @@ importers:
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@20.19.25)(jsdom@25.0.1)(lightningcss@1.32.0)
+
+  apps/vtx: {}
 
   packages/eslint-config:
     devDependencies:
