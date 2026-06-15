@@ -28,10 +28,10 @@ build
 dist
 
 # Go CLI
-/apps/grape/grape
-/apps/grape/grape-*
-/apps/grape/tmp
-/apps/grape/bin
+/apps/vtx/vtx
+/apps/vtx/vtx-*
+/apps/vtx/tmp
+/apps/vtx/bin
 
 # Go workspace
 go.work.sum
@@ -57,10 +57,10 @@ infra/platform/*.auto.tfvars
 infra/platform/tfplan
 infra/platform/scaler/lambda.zip
 
-# Tendril runtime template copies (source: packages/grape-core/assets/)
-apps/tendril/vine-templates/
-apps/tendril/tendril-templates/
-apps/tendril/argocd-templates/
+# Node runtime template copies (source: packages/vertex-core/assets/)
+apps/node/vine-templates/
+apps/node/tendril-templates/
+apps/node/argocd-templates/
 
 apps/vertex/playwright-report/
 apps/vertex/test-results/

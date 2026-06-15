@@ -1,0 +1,8 @@
+{
+  "name": "vtx",
+  "private": true,
+  "scripts": {
+    "dev": "air",
+    "build": "go build -o bin/cli main.go"
+  }
+}
