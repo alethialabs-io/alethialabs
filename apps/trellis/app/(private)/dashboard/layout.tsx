@@ -186,8 +186,8 @@ export default function DashboardLayout({
 											onClick={() => markAsRead(n.id)}
 										>
 											<div className={`px-4 py-2.5 flex items-center gap-3 hover:bg-muted/50 transition-colors border-b border-border/20 ${!n.read ? "bg-muted/20" : ""}`}>
-												<div className={`p-1 rounded-md shrink-0 ${n.status === "FAILED" ? "bg-destructive/10" : n.status === "SUCCESS" ? "bg-emerald-500/10" : "bg-blue-500/10"}`}>
-													<ClipboardList className={`h-3.5 w-3.5 ${n.status === "FAILED" ? "text-destructive" : n.status === "SUCCESS" ? "text-emerald-500" : "text-blue-500"}`} />
+												<div className={`p-1 rounded-md shrink-0 ${n.status === "FAILED" ? "bg-destructive/10" : "bg-muted"}`}>
+													<ClipboardList className={`h-3.5 w-3.5 ${n.status === "FAILED" ? "text-destructive" : n.status === "SUCCESS" ? "text-foreground" : "text-muted-foreground"}`} />
 												</div>
 												<div className="flex-1 min-w-0">
 													<p className="text-xs font-medium text-foreground">
@@ -200,7 +200,7 @@ export default function DashboardLayout({
 												{!n.read && (
 													<span className={cn(
 														"h-2 w-2 rounded-full shrink-0",
-														n.status === "FAILED" ? "bg-destructive" : n.status === "SUCCESS" ? "bg-emerald-500" : "bg-blue-500",
+														n.status === "FAILED" ? "bg-destructive" : n.status === "SUCCESS" ? "bg-foreground" : "bg-muted-foreground",
 													)} />
 												)}
 											</div>

@@ -391,8 +391,8 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 
 						<div className="pt-6 border-t border-border/40">
 							{verifyState.phase === "success" ? (
-								<div className="flex items-center gap-3 p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-md">
-									<CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+								<div className="flex items-center gap-3 p-4 bg-muted/50 border border-border rounded-md">
+									<CheckCircle2 className="w-5 h-5 text-foreground shrink-0" />
 									<div>
 										<p className="text-sm font-medium text-foreground">
 											Connection verified
@@ -464,7 +464,7 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 																	field.value.startsWith(
 																		"arn:aws:iam::",
 																	) && (
-																		<CheckCircle2 className="absolute right-3 top-2 h-5 w-5 text-emerald-500" />
+																		<CheckCircle2 className="absolute right-3 top-2 h-5 w-5 text-foreground" />
 																	)}
 															</div>
 															<Button

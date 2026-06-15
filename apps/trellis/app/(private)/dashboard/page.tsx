@@ -161,7 +161,7 @@ export default function DashboardPage() {
 							key={i.slug}
 							className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-border/40 bg-background text-xs"
 						>
-							<span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />
+							<span className="h-1.5 w-1.5 rounded-full bg-foreground shrink-0" />
 							<span className="font-medium">{i.name}</span>
 							<span className="text-muted-foreground">
 								{i.connection_details?.username

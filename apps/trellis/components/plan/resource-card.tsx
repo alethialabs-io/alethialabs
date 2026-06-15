@@ -86,23 +86,19 @@ const ACTION_STYLES: Record<
 > = {
 	create: {
 		label: "+ create",
-		className:
-			"border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+		className: "border-border bg-muted text-foreground",
 	},
 	update: {
 		label: "~ update",
-		className:
-			"border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+		className: "border-border bg-muted text-muted-foreground",
 	},
 	delete: {
 		label: "- destroy",
-		className:
-			"border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-400",
+		className: "border-destructive/30 bg-destructive/10 text-destructive",
 	},
 	replace: {
 		label: "+/- replace",
-		className:
-			"border-orange-500/50 bg-orange-500/10 text-orange-700 dark:text-orange-400",
+		className: "border-border bg-muted text-muted-foreground",
 	},
 	"no-op": {
 		label: "no change",

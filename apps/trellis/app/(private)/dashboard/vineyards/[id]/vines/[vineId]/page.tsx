@@ -9,7 +9,6 @@ import { usePlan } from "@/components/plan/use-plan";
 import { VineDetailTabs } from "@/components/vine-detail/vine-detail-tabs";
 import { TendrilSelectPopover } from "@/components/tendrils/tendril-select-popover";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -29,20 +28,11 @@ import {
 	Trash2,
 } from "lucide-react";
 import { ProviderIcon } from "@/components/provider-icon";
+import { StatusBadge } from "@/components/ui/status-badge";
 
 import { toast } from "sonner";
 
 type VineDetail = Awaited<ReturnType<typeof getVine>>;
-
-const VINE_STATUS_STYLES: Record<string, string> = {
-	ACTIVE: "text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950",
-	DRAFT: "text-muted-foreground border-border bg-muted/50",
-	QUEUED: "text-blue-600 border-blue-200 bg-blue-50",
-	PROVISIONING: "text-amber-600 border-amber-200 bg-amber-50",
-	FAILED: "text-destructive border-destructive/30 bg-destructive/10",
-	DESTROYING: "text-orange-600 border-orange-200 bg-orange-50",
-	DESTROYED: "text-muted-foreground border-border bg-muted/30",
-};
 
 export default function VineDetailPage() {
 	const { id: vineyardId, vineId } = useParams<{ id: string; vineId: string }>();
@@ -130,9 +120,7 @@ export default function VineDetailPage() {
 					<div>
 						<div className="flex items-center gap-2">
 							<h1 className="text-lg font-semibold">{vine.project_name}</h1>
-							<Badge variant="outline" className={`text-[10px] ${VINE_STATUS_STYLES[vine.status] ?? ""}`}>
-								{vine.status}
-							</Badge>
+							<StatusBadge status={vine.status} />
 						</div>
 						<p className="text-xs text-muted-foreground">
 							{meta.shortName} · {vine.region} · {vine.environment_stage}

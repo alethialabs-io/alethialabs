@@ -14,16 +14,7 @@ import { Grape, LayoutList, Map, Plus } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
-
-const STATUS_STYLES: Record<string, string> = {
-	ACTIVE: "text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950",
-	DRAFT: "text-muted-foreground border-border bg-muted/50",
-	QUEUED: "text-blue-600 border-blue-200 bg-blue-50 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950",
-	PROVISIONING: "text-amber-600 border-amber-200 bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950",
-	FAILED: "text-destructive border-destructive/30 bg-destructive/10",
-	DESTROYING: "text-orange-600 border-orange-200 bg-orange-50",
-	DESTROYED: "text-muted-foreground border-border bg-muted/30",
-};
+import { StatusBadge } from "@/components/ui/status-badge";
 
 /** Vine table columns for the vineyard detail list view. */
 const vineColumns: ColumnDef<VineWithProvider, unknown>[] = [
@@ -70,11 +61,7 @@ const vineColumns: ColumnDef<VineWithProvider, unknown>[] = [
 		header: "Status",
 		cell: ({ row }) => {
 			const status = row.getValue("status") as string;
-			return (
-				<Badge variant="outline" className={`text-[10px] py-0 ${STATUS_STYLES[status] ?? ""}`}>
-					{status}
-				</Badge>
-			);
+			return <StatusBadge status={status} />;
 		},
 	},
 	{

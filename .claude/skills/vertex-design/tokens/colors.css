@@ -1,0 +1,113 @@
+/* ============================================================
+   COLORS — Vertex
+   Pure grayscale. Zero chroma. No hue, ever.
+   A 16-step neutral ink ramp drives two themes (dark is the
+   signature surface; light is for docs & dense data views).
+   Semantic state is expressed through LUMINANCE + ICONOGRAPHY,
+   never through color.
+   ============================================================ */
+
+:root {
+  /* ---- Base ink ramp (theme-independent) ---- */
+  --gray-0:    oklch(1 0 0);        /* pure white          */
+  --gray-25:   oklch(0.992 0 0);
+  --gray-50:   oklch(0.985 0 0);
+  --gray-100:  oklch(0.967 0 0);
+  --gray-200:  oklch(0.928 0 0);
+  --gray-300:  oklch(0.882 0 0);
+  --gray-400:  oklch(0.788 0 0);
+  --gray-500:  oklch(0.664 0 0);
+  --gray-600:  oklch(0.556 0 0);
+  --gray-700:  oklch(0.440 0 0);
+  --gray-800:  oklch(0.345 0 0);
+  --gray-900:  oklch(0.268 0 0);
+  --gray-950:  oklch(0.205 0 0);
+  --gray-1000: oklch(0.165 0 0);
+  --gray-1050: oklch(0.130 0 0);
+  --gray-1100: oklch(0.108 0 0);
+  --black:     oklch(0.09 0 0);
+
+  /* ---- Semantic — LIGHT theme (default) ---- */
+  --canvas:            var(--gray-50);     /* page background          */
+  --surface:           var(--gray-0);      /* cards, panels            */
+  --surface-raised:    var(--gray-0);      /* popovers, dialogs        */
+  --surface-sunken:    var(--gray-100);    /* wells, inset code        */
+  --surface-muted:     var(--gray-100);    /* hover fills, chips       */
+
+  --text-primary:      var(--gray-1000);
+  --text-secondary:    var(--gray-700);
+  --text-tertiary:     var(--gray-600);
+  --text-disabled:     var(--gray-400);
+  --text-on-ink:       var(--gray-50);
+
+  --border:            var(--gray-200);
+  --border-strong:     var(--gray-300);
+  --border-faint:      var(--gray-100);
+
+  --ink:               var(--gray-950);    /* solid actions (near-black) */
+  --ink-hover:         var(--gray-900);
+  --ink-foreground:    var(--gray-50);
+
+  --ring:              var(--gray-950);
+
+  /* ---- Status (grayscale; pair with an icon) ---- */
+  --signal-strong:     var(--text-primary);   /* active · success · online  */
+  --signal-mute:       var(--text-tertiary);  /* queued · idle · pending    */
+  --signal-faint:      var(--gray-400);        /* disabled · skipped         */
+  --signal-critical:   var(--gray-1000);       /* failed/destructive ink     */
+  --signal-critical-surface: var(--gray-100);  /* failed/destructive fill    */
+
+  /* ---- shadcn-compatible aliases (consumer convenience) ---- */
+  --background:           var(--canvas);
+  --foreground:           var(--text-primary);
+  --card:                 var(--surface);
+  --card-foreground:      var(--text-primary);
+  --popover:              var(--surface-raised);
+  --popover-foreground:   var(--text-primary);
+  --primary:              var(--ink);
+  --primary-foreground:   var(--ink-foreground);
+  --secondary:            var(--surface-muted);
+  --secondary-foreground: var(--text-primary);
+  --muted:                var(--surface-muted);
+  --muted-foreground:     var(--text-secondary);
+  --accent:               var(--surface-muted);
+  --accent-foreground:    var(--text-primary);
+  --destructive:          var(--signal-critical);
+  --input:                var(--border);
+  --radius: 0.625rem;
+}
+
+/* ============================================================
+   DARK theme — the signature Vertex surface.
+   Add class="dark" (or data-theme="dark") to <html>.
+   ============================================================ */
+.dark,
+[data-theme="dark"] {
+  --canvas:            var(--gray-1050);
+  --surface:           var(--gray-1000);
+  --surface-raised:    var(--gray-950);
+  --surface-sunken:    var(--gray-1100);
+  --surface-muted:     var(--gray-950);
+
+  --text-primary:      var(--gray-50);
+  --text-secondary:    var(--gray-500);
+  --text-tertiary:     var(--gray-600);
+  --text-disabled:     var(--gray-700);
+  --text-on-ink:       var(--gray-1000);
+
+  --border:            oklch(1 0 0 / 0.10);
+  --border-strong:     oklch(1 0 0 / 0.17);
+  --border-faint:      oklch(1 0 0 / 0.05);
+
+  --ink:               var(--gray-50);     /* light solid on dark        */
+  --ink-hover:         var(--gray-200);
+  --ink-foreground:    var(--gray-1000);
+
+  --ring:              var(--gray-400);
+
+  --signal-strong:     var(--text-primary);
+  --signal-mute:       var(--text-tertiary);
+  --signal-faint:      var(--gray-700);
+  --signal-critical:   var(--gray-50);
+  --signal-critical-surface: oklch(1 0 0 / 0.08);
+}

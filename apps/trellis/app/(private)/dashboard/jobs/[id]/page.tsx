@@ -3,9 +3,9 @@
 import { getJobStatus, rerunJob, cancelJob } from "@/app/server/actions/jobs";
 import { provisionVine } from "@/app/server/actions/vines";
 import { createClient } from "@/lib/supabase/client";
-import { JOB_TYPES, STATUS_STYLES } from "@/components/jobs/columns";
+import { JOB_TYPES } from "@/components/jobs/columns";
 import { TendrilSelectPopover } from "@/components/tendrils/tendril-select-popover";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -241,9 +241,7 @@ export default function JobDetailPage() {
 						<div>
 							<div className="flex items-center gap-2">
 								<h1 className="text-base font-semibold">{info?.label ?? job.job_type}</h1>
-								<Badge variant="outline" className={`text-[10px] ${STATUS_STYLES[jobState ?? job.status] ?? ""}`}>
-									{jobState ?? job.status}
-								</Badge>
+								<StatusBadge status={jobState ?? job.status} />
 								{duration() && <span className="text-xs text-muted-foreground">{duration()}</span>}
 							</div>
 							<p className="text-xs text-muted-foreground">
@@ -328,8 +326,8 @@ export default function JobDetailPage() {
 
 			{/* Status Footer */}
 			{jobState === "SUCCESS" && (
-				<div className="px-6 py-3 border-t border-border bg-emerald-500/5 flex items-center gap-3 shrink-0">
-					<CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+				<div className="px-6 py-3 border-t border-border bg-muted/50 flex items-center gap-3 shrink-0">
+					<CheckCircle2 className="w-4 h-4 text-foreground shrink-0" />
 					<p className="text-sm text-foreground">Job completed successfully.</p>
 				</div>
 			)}

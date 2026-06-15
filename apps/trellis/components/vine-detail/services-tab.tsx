@@ -1,6 +1,6 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { CloudProviderMeta } from "@/lib/cloud-providers";
 import { Layers } from "lucide-react";
@@ -28,16 +28,6 @@ const SERVICE_ORDER: { key: keyof ServicesTabProps["components"]; type: ServiceT
 	{ key: "nosql_tables", type: "nosql_table" },
 	{ key: "secrets", type: "secret" },
 ];
-
-const STATUS_STYLES: Record<string, string> = {
-	ACTIVE: "text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950",
-	PENDING: "text-muted-foreground border-border bg-muted/50",
-	CREATING: "text-blue-600 border-blue-200 bg-blue-50",
-	UPDATING: "text-amber-600 border-amber-200 bg-amber-50",
-	FAILED: "text-destructive border-destructive/30 bg-destructive/10",
-	DESTROYING: "text-orange-600 border-orange-200 bg-orange-50",
-	DESTROYED: "text-muted-foreground border-border bg-muted/30",
-};
 
 export function ServicesTab({ components, providerMeta, capacityUnit }: ServicesTabProps) {
 	const allServices: { type: ServiceType; service: ServiceInstance; label: string }[] = [];
@@ -82,9 +72,7 @@ export function ServicesTab({ components, providerMeta, capacityUnit }: Services
 									<div className="flex items-center gap-1.5 min-w-0">
 										<span className="text-xs font-mono font-medium truncate">{service.name}</span>
 										{service.status && (
-											<Badge variant="outline" className={`text-[9px] py-0 px-1 shrink-0 ${STATUS_STYLES[service.status] ?? ""}`}>
-												{service.status}
-											</Badge>
+											<StatusBadge status={service.status} className="shrink-0" />
 										)}
 									</div>
 									<span className="text-[10px] text-muted-foreground truncate hidden sm:inline">{summary}</span>

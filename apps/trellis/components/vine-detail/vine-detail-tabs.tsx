@@ -1,11 +1,11 @@
 "use client";
 
 import { DataTable } from "@/components/data-table";
-import { JOB_TYPES, STATUS_STYLES } from "@/components/jobs/columns";
+import { JOB_TYPES } from "@/components/jobs/columns";
 import { PlanTab } from "@/components/plan/plan-tab";
 import type { UsePlanReturn } from "@/components/plan/use-plan";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getProvider, DB_CAPACITY, type CloudProviderSlug } from "@/lib/cloud-providers";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
@@ -88,12 +88,8 @@ const vineJobColumns: ColumnDef<PublicProvisionJobsRow>[] = [
 		header: "Status",
 		enableSorting: true,
 		cell: ({ row }) => {
-			const status = row.getValue("status") as string;
-			return (
-				<Badge variant="outline" className={`text-[10px] py-0 ${STATUS_STYLES[status] ?? ""}`}>
-					{status}
-				</Badge>
-			);
+			const status = row.getValue<string>("status");
+			return <StatusBadge status={status} />;
 		},
 	},
 	{
@@ -125,7 +121,7 @@ const vineJobColumns: ColumnDef<PublicProvisionJobsRow>[] = [
 			const status = row.original.status;
 			if (!created) return <span className="text-xs text-muted-foreground">—</span>;
 			if (!completed && (status === "PROCESSING" || status === "CLAIMED")) {
-				return <span className="text-xs text-blue-500 animate-pulse">Running...</span>;
+				return <span className="text-xs text-muted-foreground animate-pulse">Running...</span>;
 			}
 			if (!completed) return <span className="text-xs text-muted-foreground">—</span>;
 			const ms = new Date(completed).getTime() - new Date(created).getTime();
@@ -191,7 +187,7 @@ export function VineDetailTabs({ detail, vineId, plan, onApplied }: VineDetailTa
 						<FileText className="h-3.5 w-3.5 mr-1.5" />
 						Plan
 						{plan.phase !== "idle" && plan.phase !== "failed" && (
-							<span className="ml-1.5 h-1.5 w-1.5 rounded-full bg-blue-500 inline-block" />
+							<StatusBadge status="processing" showLabel={false} className="ml-1.5" />
 						)}
 					</TabsTrigger>
 			</TabsList>

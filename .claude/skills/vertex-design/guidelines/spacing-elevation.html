@@ -1,0 +1,17 @@
+<!-- @dsCard group="Spacing" viewport="700x150" name="Elevation" subtitle="Shadows are a whisper — structure comes from borders" -->
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><link rel="stylesheet" href="../styles.css"/>
+<style>
+  body{margin:0;padding:30px 26px;background:var(--canvas);display:flex;gap:26px;align-items:center;justify-content:space-around;}
+  .b{display:flex;flex-direction:column;align-items:center;gap:12px;}
+  .sq{width:78px;height:54px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);}
+  .tok{font-family:var(--font-mono);font-size:9.5px;color:var(--text-tertiary);}
+</style></head>
+<body>
+<div class="b"><div class="sq" style="box-shadow:var(--shadow-xs)"></div><span class="tok">shadow-xs</span></div>
+<div class="b"><div class="sq" style="box-shadow:var(--shadow-sm)"></div><span class="tok">shadow-sm</span></div>
+<div class="b"><div class="sq" style="box-shadow:var(--shadow-md)"></div><span class="tok">shadow-md</span></div>
+<div class="b"><div class="sq" style="box-shadow:var(--shadow-lg)"></div><span class="tok">shadow-lg</span></div>
+<div class="b"><div class="sq" style="box-shadow:var(--shadow-xl)"></div><span class="tok">shadow-xl</span></div>
+</body></html>

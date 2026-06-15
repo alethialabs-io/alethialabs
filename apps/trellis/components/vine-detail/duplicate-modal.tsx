@@ -131,7 +131,7 @@ export function DuplicateModal({
 				<DialogContent className="sm:max-w-md">
 					<DialogHeader>
 						<DialogTitle className="flex items-center gap-2">
-							<CheckCircle2 className="h-5 w-5 text-emerald-500" />
+							<CheckCircle2 className="h-5 w-5 text-foreground" />
 							Vine Duplicated
 						</DialogTitle>
 						<DialogDescription>
@@ -141,14 +141,14 @@ export function DuplicateModal({
 					</DialogHeader>
 
 					{result.warnings.length > 0 && (
-						<div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950">
+						<div className="space-y-2 rounded-md border border-border bg-muted p-3">
 							<p className="text-sm font-medium">Conversion notes</p>
 							<ul className="space-y-1.5">
 								{result.warnings.map((w, idx) => (
 									<li key={`${w.component}-${idx}`} className="flex items-start gap-2 text-xs">
 										{w.severity === "info"
-											? <Info className="h-3.5 w-3.5 shrink-0 text-blue-500 mt-0.5" />
-											: <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500 mt-0.5" />}
+											? <Info className="h-3.5 w-3.5 shrink-0 text-muted-foreground mt-0.5" />
+											: <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-muted-foreground mt-0.5" />}
 										<span>
 											<span className="font-medium">{w.component}:</span> {w.message}
 										</span>

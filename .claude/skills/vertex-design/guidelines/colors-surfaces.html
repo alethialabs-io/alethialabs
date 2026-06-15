@@ -1,0 +1,20 @@
+<!-- @dsCard group="Colors" viewport="700x150" name="Dark Surfaces" subtitle="Canvas, surface, raised, sunken — the signature dark theme" -->
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head><meta charset="utf-8"/><link rel="stylesheet" href="../styles.css"/>
+<style>
+  body{margin:0;padding:22px 26px;background:var(--canvas);}
+  .row{display:flex;gap:14px;}
+  .chip{flex:1;border:1px solid var(--border);border-radius:var(--radius-md);height:84px;display:flex;flex-direction:column;justify-content:flex-end;padding:10px;}
+  .name{font-family:var(--font-sans);font-size:12px;font-weight:500;color:var(--text-primary);}
+  .tok{font-family:var(--font-mono);font-size:9.5px;color:var(--text-tertiary);}
+</style></head>
+<body>
+<div class="row">
+  <div class="chip" style="background:var(--canvas)"><span class="name">Canvas</span><span class="tok">--canvas</span></div>
+  <div class="chip" style="background:var(--surface)"><span class="name">Surface</span><span class="tok">--surface</span></div>
+  <div class="chip" style="background:var(--surface-raised)"><span class="name">Raised</span><span class="tok">--surface-raised</span></div>
+  <div class="chip" style="background:var(--surface-sunken)"><span class="name">Sunken</span><span class="tok">--surface-sunken</span></div>
+  <div class="chip" style="background:var(--surface-muted)"><span class="name">Muted</span><span class="tok">--surface-muted</span></div>
+</div>
+</body></html>

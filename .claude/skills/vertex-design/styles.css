@@ -1,0 +1,17 @@
+/* ============================================================
+   VERTEX DESIGN SYSTEM — global entry point
+   by Alethia · multi-cloud Kubernetes control plane
+   Consumers link THIS file only. It is an @import manifest;
+   never add rules here directly.
+   ============================================================ */
+
+@import "tokens/fonts.css";
+@import "tokens/colors.css";
+@import "tokens/typography.css";
+@import "tokens/spacing.css";
+@import "tokens/effects.css";
+@import "tokens/motion.css";
+@import "tokens/base.css";
+
+/* Component layer — class definitions for the bundled React primitives */
+@import "components/components.css";

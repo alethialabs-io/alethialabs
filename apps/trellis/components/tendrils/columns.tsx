@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { ReleaseNotesDialog } from "@/components/tendrils/release-notes-dialog";
 import { TendrilSelectPopover } from "@/components/tendrils/tendril-select-popover";
@@ -35,35 +36,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-
-export const TENDRIL_STATUS_STYLES: Record<PublicWorkerStatus, string> = {
-	ONLINE:
-		"text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950",
-	OFFLINE: "text-muted-foreground border-border bg-muted/50",
-	DRAINING:
-		"text-amber-600 border-amber-200 bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950",
-};
-
-export const TENDRIL_MODE_STYLES: Record<PublicWorkerMode, string> = {
-	"cloud-hosted":
-		"text-blue-600 border-blue-200 bg-blue-50 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950",
-	"self-hosted": "text-muted-foreground border-border bg-muted/30",
-};
-
-export const STATUS_DOT_COLORS: Record<PublicWorkerStatus, string> = {
-	ONLINE: "bg-emerald-500",
-	OFFLINE: "bg-gray-400",
-	DRAINING: "bg-amber-500",
-};
-
-const DESTROYING_BADGE_STYLE =
-	"text-orange-600 border-orange-200 bg-orange-50 dark:text-orange-400 dark:border-orange-800 dark:bg-orange-950";
-
-const PROVISIONING_BADGE_STYLE =
-	"text-blue-600 border-blue-200 bg-blue-50 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-950";
-
-const UPDATING_BADGE_STYLE =
-	"text-amber-600 border-amber-200 bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950";
 
 export type TendrilRow = PublicWorkersRow & {
 	activeJob: ActiveJob | null;
@@ -148,7 +120,7 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 			<Link
 				href={`/dashboard/jobs/${worker.activeJob.id}`}
 				onClick={(e) => e.stopPropagation()}
-				className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+				className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
 			>
 				<Loader2 className="h-3 w-3 animate-spin" />
 				Provisioning…
@@ -161,7 +133,7 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 			<Link
 				href={`/dashboard/jobs/${worker.activeJob.id}`}
 				onClick={(e) => e.stopPropagation()}
-				className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 hover:underline"
+				className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
 			>
 				<Loader2 className="h-3 w-3 animate-spin" />
 				Updating…
@@ -174,7 +146,7 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 			<Link
 				href={`/dashboard/jobs/${worker.activeJob.id}`}
 				onClick={(e) => e.stopPropagation()}
-				className="flex items-center gap-1.5 text-xs text-orange-600 dark:text-orange-400 hover:underline"
+				className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
 			>
 				<Loader2 className="h-3 w-3 animate-spin" />
 				Destroying…
@@ -192,7 +164,7 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 							onClick={handleToggleDefault}
 							className="p-1 rounded hover:bg-muted transition-colors"
 						>
-							<Star className={`h-3.5 w-3.5 ${worker.is_default ? "fill-amber-400 text-amber-400" : "text-muted-foreground hover:text-amber-400"}`} />
+							<Star className={`h-3.5 w-3.5 ${worker.is_default ? "fill-foreground text-foreground" : "text-muted-foreground hover:text-foreground"}`} />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent side="top" className="text-xs">
@@ -299,7 +271,7 @@ function VersionCell({ worker }: { worker: TendrilRow }) {
 								>
 									<Badge
 										variant="outline"
-										className="text-[10px] py-0 gap-1 cursor-pointer text-amber-600 border-amber-200 bg-amber-50 hover:bg-amber-100 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950 dark:hover:bg-amber-900"
+										className="text-[10px] py-0 gap-1 cursor-pointer text-muted-foreground border-border bg-muted hover:bg-muted/80"
 									>
 										<ArrowUpCircle className="h-3 w-3" />
 										v{latestRelease.version}
@@ -336,19 +308,19 @@ export const tendrilColumns: ColumnDef<TendrilRow>[] = [
 			const isProvisioning = worker.activeJob?.job_type === "DEPLOY_WORKER";
 			const isUpdating = worker.activeJob?.job_type === "UPDATE_WORKER";
 			const isBusy = isDestroying || isProvisioning || isUpdating;
-			const dotColor = isDestroying ? "bg-orange-500" : isProvisioning ? "bg-blue-500" : isUpdating ? "bg-amber-500" : STATUS_DOT_COLORS[status];
-			const isAnimated = status === "ONLINE" || isBusy;
+			const dotStatus = isDestroying
+				? "DESTROYING"
+				: isProvisioning
+					? "PROVISIONING"
+					: isUpdating
+						? "UPDATING"
+						: status;
 			return (
 				<div className={`flex items-center gap-2.5 ${isBusy ? "opacity-60" : ""}`}>
-					<span className="relative flex h-2.5 w-2.5 shrink-0">
-						{isAnimated && (
-							<span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${dotColor}`} />
-						)}
-						<span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${dotColor}`} />
-					</span>
+					<StatusBadge status={dotStatus} showLabel={false} className="shrink-0" />
 					<span className="text-xs font-medium">{worker.name}</span>
 					{worker.is_default && (
-						<Star className="h-3 w-3 fill-amber-400 text-amber-400 shrink-0" />
+						<Star className="h-3 w-3 fill-foreground text-foreground shrink-0" />
 					)}
 				</div>
 			);
@@ -364,32 +336,16 @@ export const tendrilColumns: ColumnDef<TendrilRow>[] = [
 			const isProvisioning = worker.activeJob?.job_type === "DEPLOY_WORKER";
 			const isUpdating = worker.activeJob?.job_type === "UPDATE_WORKER";
 			if (isProvisioning) {
-				return (
-					<Badge variant="outline" className={`text-[10px] py-0 ${PROVISIONING_BADGE_STYLE}`}>
-						PROVISIONING
-					</Badge>
-				);
+				return <StatusBadge status="PROVISIONING" />;
 			}
 			if (isUpdating) {
-				return (
-					<Badge variant="outline" className={`text-[10px] py-0 ${UPDATING_BADGE_STYLE}`}>
-						UPDATING
-					</Badge>
-				);
+				return <StatusBadge status="UPDATING" />;
 			}
 			if (isDestroying) {
-				return (
-					<Badge variant="outline" className={`text-[10px] py-0 ${DESTROYING_BADGE_STYLE}`}>
-						DESTROYING
-					</Badge>
-				);
+				return <StatusBadge status="DESTROYING" />;
 			}
 			const status = (row.getValue("status") as PublicWorkerStatus | null) ?? "OFFLINE";
-			return (
-				<Badge variant="outline" className={`text-[10px] py-0 ${TENDRIL_STATUS_STYLES[status]}`}>
-					{status}
-				</Badge>
-			);
+			return <StatusBadge status={status} />;
 		},
 	},
 	{
@@ -400,7 +356,7 @@ export const tendrilColumns: ColumnDef<TendrilRow>[] = [
 			const mode = row.getValue("mode") as PublicWorkerMode;
 			const ModeIcon = mode === "cloud-hosted" ? Cloud : Server;
 			return (
-				<Badge variant="outline" className={`text-[10px] py-0 ${TENDRIL_MODE_STYLES[mode]}`}>
+				<Badge variant="outline" className="text-[10px] py-0 text-muted-foreground border-border bg-muted">
 					<ModeIcon className="mr-1 h-3 w-3" />
 					{mode === "cloud-hosted" ? "Cloud" : "Self-hosted"}
 				</Badge>
@@ -427,7 +383,7 @@ export const tendrilColumns: ColumnDef<TendrilRow>[] = [
 				<Link
 					href={`/dashboard/jobs/${job.id}`}
 					onClick={(e) => e.stopPropagation()}
-					className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+					className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
 				>
 					{Icon && <Icon className="h-3 w-3 shrink-0" />}
 					<span>{jobInfo?.label ?? job.job_type}</span>
