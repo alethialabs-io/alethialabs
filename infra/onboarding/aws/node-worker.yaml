@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Grape Worker: Fargate Task for Infrastructure Provisioning'
+Description: 'Node Worker: Fargate Task for Infrastructure Provisioning'
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -10,8 +10,8 @@ Metadata:
           - WorkerMode
           - WorkerId
           - WorkerToken
-          - TrellisUrl
-          - GrapeVersion
+          - VertexUrl
+          - NodeVersion
       - Label:
           default: "Network Configuration"
         Parameters:
@@ -24,10 +24,10 @@ Metadata:
         default: "Worker ID"
       WorkerToken:
         default: "Worker Token"
-      TrellisUrl:
-        default: "Trellis URL"
-      GrapeVersion:
-        default: "Grape Image Tag"
+      VertexUrl:
+        default: "Vertex URL"
+      NodeVersion:
+        default: "Node Image Tag"
 
 Parameters:
   WorkerMode:
@@ -38,22 +38,22 @@ Parameters:
 
   WorkerId:
     Type: String
-    Description: 'Worker ID from `grape worker register`.'
+    Description: 'Worker ID from `vtx worker register`.'
 
   WorkerToken:
     Type: String
     NoEcho: true
-    Description: 'Worker token from `grape worker register`.'
+    Description: 'Worker token from `vtx worker register`.'
 
-  TrellisUrl:
+  VertexUrl:
     Type: String
     Default: 'https://adp.prod.itgix.eu'
-    Description: 'URL of the Trellis control plane.'
+    Description: 'URL of the Vertex control plane.'
 
-  GrapeVersion:
+  NodeVersion:
     Type: String
     Default: 'latest'
-    Description: 'Docker image tag for the Grape worker.'
+    Description: 'Docker image tag for the Node worker.'
 
   VpcId:
     Type: AWS::EC2::VPC::Id
@@ -67,7 +67,7 @@ Resources:
   WorkerCluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: !Sub 'grape-worker-${AWS::StackName}'
+      ClusterName: !Sub 'node-worker-${AWS::StackName}'
       CapacityProviders:
         - FARGATE
       DefaultCapacityProviderStrategy:
@@ -77,20 +77,20 @@ Resources:
   LogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '/ecs/grape-worker-${AWS::StackName}'
+      LogGroupName: !Sub '/ecs/node-worker-${AWS::StackName}'
       RetentionInDays: 30
 
   WorkerTokenSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
-      Name: !Sub 'grape-worker-token-${AWS::StackName}'
-      Description: 'Grape worker authentication token'
+      Name: !Sub 'node-worker-token-${AWS::StackName}'
+      Description: 'Node worker authentication token'
       SecretString: !Ref WorkerToken
 
   WorkerExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub 'grape-worker-exec-${AWS::StackName}'
+      RoleName: !Sub 'node-worker-exec-${AWS::StackName}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -113,7 +113,7 @@ Resources:
   WorkerTaskRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub 'grape-worker-task-${AWS::StackName}'
+      RoleName: !Sub 'node-worker-task-${AWS::StackName}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -135,23 +135,23 @@ Resources:
               Statement:
                 - Effect: Allow
                   Action: sts:AssumeRole
-                  Resource: 'arn:aws:iam::*:role/GrapeProvisionerRole-*'
+                  Resource: 'arn:aws:iam::*:role/VertexProvisionerRole-*'
           - !Ref AWS::NoValue
 
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: 'Grape worker - outbound only'
+      GroupDescription: 'Node worker - outbound only'
       VpcId: !Ref VpcId
       SecurityGroupEgress:
         - IpProtocol: '-1'
           CidrIp: '0.0.0.0/0'
-          Description: 'Allow all outbound (HTTPS to Trellis, git, registries, AWS APIs)'
+          Description: 'Allow all outbound (HTTPS to Vertex, git, registries, AWS APIs)'
 
   WorkerTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: !Sub 'grape-worker-${AWS::StackName}'
+      Family: !Sub 'node-worker-${AWS::StackName}'
       Cpu: '1024'
       Memory: '4096'
       NetworkMode: awsvpc
@@ -160,34 +160,34 @@ Resources:
       ExecutionRoleArn: !GetAtt WorkerExecutionRole.Arn
       TaskRoleArn: !GetAtt WorkerTaskRole.Arn
       ContainerDefinitions:
-        - Name: grape-worker
-          Image: !Sub 'ghcr.io/bobikenobi12/grape:${GrapeVersion}'
+        - Name: node-worker
+          Image: !Sub 'ghcr.io/bobikenobi12/node:${NodeVersion}'
           Command:
-            - grape
+            - node
             - worker
             - start
           Environment:
-            - Name: GRAPE_WORKER_MODE
+            - Name: VTX_WORKER_MODE
               Value: !Ref WorkerMode
-            - Name: GRAPE_WEB_ORIGIN
-              Value: !Ref TrellisUrl
-            - Name: GRAPE_WORKER_ID
+            - Name: VTX_WEB_ORIGIN
+              Value: !Ref VertexUrl
+            - Name: VTX_WORKER_ID
               Value: !Ref WorkerId
           Secrets:
-            - Name: GRAPE_WORKER_TOKEN
+            - Name: VTX_WORKER_TOKEN
               ValueFrom: !Ref WorkerTokenSecret
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref LogGroup
               awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: grape-worker
+              awslogs-stream-prefix: node-worker
           Essential: true
 
   WorkerService:
     Type: AWS::ECS::Service
     Properties:
-      ServiceName: !Sub 'grape-worker-${AWS::StackName}'
+      ServiceName: !Sub 'node-worker-${AWS::StackName}'
       Cluster: !Ref WorkerCluster
       TaskDefinition: !Ref WorkerTaskDefinition
       DesiredCount: 1

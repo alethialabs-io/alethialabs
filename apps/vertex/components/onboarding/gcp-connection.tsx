@@ -165,15 +165,15 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 	});
 
 	const scriptUrl =
-		"https://grape-onboarding-templates.s3.eu-west-1.amazonaws.com/grape-gcp-setup.sh";
-	const cloudShellCmd = `curl -sO ${scriptUrl} && bash grape-gcp-setup.sh YOUR_PROJECT_ID`;
+		"https://vertex-onboarding-templates.s3.eu-west-1.amazonaws.com/vertex-gcp-setup.sh";
+	const cloudShellCmd = `curl -sO ${scriptUrl} && bash vertex-gcp-setup.sh YOUR_PROJECT_ID`;
 	const cloudShellUrl =
 		"https://shell.cloud.google.com/cloudshell/open?shellonly=true&show=terminal";
 
 	const handleDownload = () => {
 		const link = document.createElement("a");
-		link.href = "/grape-gcp-setup.sh";
-		link.download = "grape-gcp-setup.sh";
+		link.href = "/vertex-gcp-setup.sh";
+		link.download = "vertex-gcp-setup.sh";
 		document.body.appendChild(link);
 		link.click();
 		document.body.removeChild(link);

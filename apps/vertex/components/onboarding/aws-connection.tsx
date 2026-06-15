@@ -131,7 +131,7 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 	);
 
 	const templateUrl =
-		"https://grape-onboarding-templates.s3.eu-west-1.amazonaws.com/grape-bootstrap.yaml";
+		"https://vertex-onboarding-templates.s3.eu-west-1.amazonaws.com/vertex-bootstrap.yaml";
 	const launchStackUrl = `https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateURL=${encodeURIComponent(templateUrl)}&stackName=GrapeConnect&param_ExternalId=${encodeURIComponent(externalId)}&param_GrapeAwsAccountId=787587782604`;
 
 	const form = useForm<AwsRoleFormValues>({
@@ -144,8 +144,8 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 
 	const handleDownload = () => {
 		const link = document.createElement("a");
-		link.href = "/grape-bootstrap.yaml";
-		link.download = "grape-bootstrap.yaml";
+		link.href = "/vertex-bootstrap.yaml";
+		link.download = "vertex-bootstrap.yaml";
 		document.body.appendChild(link);
 		link.click();
 		document.body.removeChild(link);

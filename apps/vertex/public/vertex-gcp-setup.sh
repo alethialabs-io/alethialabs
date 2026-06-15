@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GRAPE_AWS_ACCOUNT_ID="787587782604"
-POOL_ID="grape-pool"
-PROVIDER_ID="grape-aws-provider"
-SA_NAME="grape-provisioner"
+VERTEX_AWS_ACCOUNT_ID="787587782604"
+POOL_ID="vertex-pool"
+PROVIDER_ID="vertex-aws-provider"
+SA_NAME="vertex-provisioner"
 
 if [ -z "${1:-}" ]; then
   echo "Usage: $0 <GCP_PROJECT_ID>"
   echo ""
   echo "Run this script in Google Cloud Shell or locally with gcloud installed."
-  echo "It creates the resources Grape needs to provision infrastructure in your project."
+  echo "It creates the resources Vertex needs to provision infrastructure in your project."
   exit 1
 fi
 
@@ -41,8 +41,8 @@ if gcloud iam service-accounts describe "${SA_EMAIL}" &>/dev/null; then
   echo "    Service account already exists, skipping."
 else
   gcloud iam service-accounts create "${SA_NAME}" \
-    --display-name="Grape Provisioner" \
-    --description="Used by Grape to provision GKE clusters and Google Cloud resources"
+    --display-name="Vertex Provisioner" \
+    --description="Used by Vertex to provision GKE clusters and Google Cloud resources"
 fi
 
 echo ""
@@ -61,8 +61,8 @@ if gcloud iam workload-identity-pools describe "${POOL_ID}" \
 else
   gcloud iam workload-identity-pools create "${POOL_ID}" \
     --location="global" \
-    --display-name="Grape Identity Pool" \
-    --description="Allows Grape workers to authenticate from AWS"
+    --display-name="Vertex Identity Pool" \
+    --description="Allows Vertex workers to authenticate from AWS"
 fi
 
 echo ""
@@ -75,8 +75,8 @@ else
   gcloud iam workload-identity-pools providers create-aws "${PROVIDER_ID}" \
     --location="global" \
     --workload-identity-pool="${POOL_ID}" \
-    --account-id="${GRAPE_AWS_ACCOUNT_ID}" \
-    --display-name="Grape AWS Provider"
+    --account-id="${VERTEX_AWS_ACCOUNT_ID}" \
+    --display-name="Vertex AWS Provider"
 fi
 
 PRINCIPAL="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/*"
@@ -92,7 +92,7 @@ gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
   --member="${PRINCIPAL}" \
   --quiet
 
-OUTPUT_FILE="grape-wif-config.json"
+OUTPUT_FILE="vertex-wif-config.json"
 
 echo ""
 echo "==> Generating credential configuration..."
@@ -108,7 +108,7 @@ echo "  Setup complete!"
 echo "============================================================"
 echo ""
 echo "Copy the contents of ${OUTPUT_FILE} and paste them into the"
-echo "Grape dashboard to complete the connection."
+echo "Vertex dashboard to complete the connection."
 echo ""
 echo "--- START CONFIG (copy everything below until END CONFIG) ---"
 cat "${OUTPUT_FILE}"

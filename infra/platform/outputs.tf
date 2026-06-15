@@ -2,12 +2,12 @@ output "ecr_repository_url" {
   value = aws_ecr_repository.tendril.repository_url
 }
 
-output "tendrils" {
+output "nodes" {
   description = "Per-tendril cluster and service names"
   value = {
     for name, w in local.all_worker_modules : name => {
-      region       = var.tendrils[name].region
-      trellis_url  = var.tendrils[name].trellis_url
+      region       = var.nodes[name].region
+      vertex_url  = var.nodes[name].vertex_url
       cluster_name = w.cluster_name
       service_name = w.service_name
     }

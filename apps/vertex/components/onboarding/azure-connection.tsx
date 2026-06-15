@@ -117,8 +117,8 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 	);
 
 	const scriptUrl =
-		"https://grape-onboarding-templates.s3.eu-west-1.amazonaws.com/grape-azure-setup.sh";
-	const cloudShellCmd = `curl -sO ${scriptUrl} && bash grape-azure-setup.sh YOUR_SUBSCRIPTION_ID`;
+		"https://vertex-onboarding-templates.s3.eu-west-1.amazonaws.com/vertex-azure-setup.sh";
+	const cloudShellCmd = `curl -sO ${scriptUrl} && bash vertex-azure-setup.sh YOUR_SUBSCRIPTION_ID`;
 	const cloudShellUrl =
 		"https://shell.azure.com";
 
@@ -134,8 +134,8 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 
 	const handleDownload = () => {
 		const link = document.createElement("a");
-		link.href = "/grape-azure-setup.sh";
-		link.download = "grape-azure-setup.sh";
+		link.href = "/vertex-azure-setup.sh";
+		link.download = "vertex-azure-setup.sh";
 		document.body.appendChild(link);
 		link.click();
 		document.body.removeChild(link);

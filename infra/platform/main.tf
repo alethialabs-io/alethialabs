@@ -47,8 +47,8 @@ locals {
 
   shared_worker_vars = {
     image                       = var.image
-    tendril_version             = var.tendril_version
-    trellis_api_secret          = var.trellis_api_secret
+    node_version             = var.node_version
+    vertex_api_secret          = var.vertex_api_secret
     worker_mode                 = var.worker_mode
     infracost_api_key           = var.infracost_api_key
     supabase_s3_endpoint        = var.supabase_s3_endpoint
@@ -58,12 +58,12 @@ locals {
     secrets_recovery_window_days = var.secrets_recovery_window_days
   }
 
-  all_tendrils = [
-    for name, cfg in var.tendrils : {
+  all_nodes = [
+    for name, cfg in var.nodes : {
       key         = name
       region      = cfg.region
       name_prefix = "${local.name_prefix}-${name}"
-      trellis_url = cfg.trellis_url
+      vertex_url = cfg.vertex_url
     }
   ]
 }
@@ -103,14 +103,14 @@ resource "aws_ecr_lifecycle_policy" "tendril" {
 
 module "tendril_eu_west_1" {
   source   = "./worker"
-  for_each = { for t in local.all_tendrils : t.key => t if t.region == "eu-west-1" }
+  for_each = { for t in local.all_nodes : t.key => t if t.region == "eu-west-1" }
 
   region             = each.value.region
   name_prefix        = each.value.name_prefix
-  trellis_url        = each.value.trellis_url
+  vertex_url        = each.value.vertex_url
   image              = local.shared_worker_vars.image
-  tendril_version    = local.shared_worker_vars.tendril_version
-  trellis_api_secret = local.shared_worker_vars.trellis_api_secret
+  node_version    = local.shared_worker_vars.node_version
+  vertex_api_secret = local.shared_worker_vars.vertex_api_secret
   worker_mode        = local.shared_worker_vars.worker_mode
 
   infracost_api_key           = local.shared_worker_vars.infracost_api_key
@@ -126,7 +126,7 @@ module "tendril_eu_west_1" {
 
 module "tendril_eu_central_1" {
   source   = "./worker"
-  for_each = { for t in local.all_tendrils : t.key => t if t.region == "eu-central-1" }
+  for_each = { for t in local.all_nodes : t.key => t if t.region == "eu-central-1" }
 
   providers = {
     aws = aws.eu_central_1
@@ -134,10 +134,10 @@ module "tendril_eu_central_1" {
 
   region             = each.value.region
   name_prefix        = each.value.name_prefix
-  trellis_url        = each.value.trellis_url
+  vertex_url        = each.value.vertex_url
   image              = local.shared_worker_vars.image
-  tendril_version    = local.shared_worker_vars.tendril_version
-  trellis_api_secret = local.shared_worker_vars.trellis_api_secret
+  node_version    = local.shared_worker_vars.node_version
+  vertex_api_secret = local.shared_worker_vars.vertex_api_secret
   worker_mode        = local.shared_worker_vars.worker_mode
 
   infracost_api_key           = local.shared_worker_vars.infracost_api_key
@@ -164,7 +164,7 @@ module "scaler" {
 
   workers = [
     for name, w in local.all_worker_modules : {
-      region  = var.tendrils[name].region
+      region  = var.nodes[name].region
       cluster = w.cluster_name
       service = w.service_name
     }

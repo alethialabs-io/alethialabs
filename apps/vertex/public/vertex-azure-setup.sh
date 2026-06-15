@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GRAPE_AWS_ACCOUNT_ID="787587782604"
-APP_NAME="grape-provisioner"
+VERTEX_AWS_ACCOUNT_ID="787587782604"
+APP_NAME="vertex-provisioner"
 
 if [ -z "${1:-}" ]; then
   echo "Usage: $0 <SUBSCRIPTION_ID>"
   echo ""
   echo "Run this script in Azure Cloud Shell or locally with az CLI installed."
-  echo "It creates the resources Grape needs to provision infrastructure in your subscription."
+  echo "It creates the resources Vertex needs to provision infrastructure in your subscription."
   exit 1
 fi
 
@@ -49,17 +49,17 @@ sleep 10
 
 echo ""
 echo "==> Creating Federated Identity Credential..."
-EXISTING_FIC=$(az ad app federated-credential list --id "${CLIENT_ID}" --query "[?name=='grape-aws-federation'].name" -o tsv 2>/dev/null || true)
+EXISTING_FIC=$(az ad app federated-credential list --id "${CLIENT_ID}" --query "[?name=='vertex-aws-federation'].name" -o tsv 2>/dev/null || true)
 
 if [ -n "${EXISTING_FIC}" ]; then
   echo "    Federated credential already exists, skipping."
 else
   az ad app federated-credential create --id "${CLIENT_ID}" --parameters '{
-    "name": "grape-aws-federation",
+    "name": "vertex-aws-federation",
     "issuer": "https://sts.amazonaws.com",
-    "subject": "'"${GRAPE_AWS_ACCOUNT_ID}"'",
+    "subject": "'"${VERTEX_AWS_ACCOUNT_ID}"'",
     "audiences": ["api://AzureADTokenExchange"],
-    "description": "Trust Grape AWS workers to authenticate as this app"
+    "description": "Trust Vertex AWS workers to authenticate as this app"
   }' -o none
   echo "    Federated credential created."
 fi
@@ -91,7 +91,7 @@ echo "============================================================"
 echo "  Setup complete!"
 echo "============================================================"
 echo ""
-echo "Copy these values into the Grape dashboard:"
+echo "Copy these values into the Vertex dashboard:"
 echo ""
 echo "  Tenant ID:       ${TENANT_ID}"
 echo "  Client ID:       ${CLIENT_ID}"

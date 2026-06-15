@@ -10,26 +10,26 @@ variable "name_prefix" {
 
 variable "image" {
   type        = string
-  default     = "ghcr.io/bobikenobi12/tendril"
+  default     = "ghcr.io/bobikenobi12/node"
   description = "Container image (without tag)."
 }
 
-variable "tendril_version" {
+variable "node_version" {
   type        = string
   default     = "latest"
   description = "Image tag to deploy."
 }
 
-variable "trellis_url" {
+variable "vertex_url" {
   type        = string
   default     = "https://adp.prod.itgix.eu"
-  description = "Trellis web origin URL."
+  description = "Vertex web origin URL."
 }
 
-variable "trellis_api_secret" {
+variable "vertex_api_secret" {
   type        = string
   sensitive   = true
-  description = "Secret for authenticating with the Trellis API (tendril registration)."
+  description = "Secret for authenticating with the Vertex API (tendril registration)."
 }
 
 variable "worker_mode" {
