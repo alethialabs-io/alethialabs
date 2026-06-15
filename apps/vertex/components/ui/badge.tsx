@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"

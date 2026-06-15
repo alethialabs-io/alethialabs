@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import type { PublicCloudProvider, PublicGitProvider } from "@/lib/validations/db.schemas";

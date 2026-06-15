@@ -1,4 +1,7 @@
 "use client";
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";

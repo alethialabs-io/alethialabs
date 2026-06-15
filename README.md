@@ -1,18 +1,22 @@
-# ADP ItGix Platform
+# Alethia Labs
 
-An internal developer platform for provisioning and managing multi-cloud infrastructure through a web control plane and CLI, backed by GitOps reconciliation.
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-Built by **Borislav Borisov** — [GitHub](https://github.com/bobikenobi12) · [LinkedIn](https://www.linkedin.com/in/bbor1sov)
+An open-source, multi-cloud internal developer platform for provisioning and managing infrastructure through a web control plane and CLI, backed by GitOps reconciliation.
+
+© 2026 **Alethia OÜ** — open core ([see Licensing](#licensing)). Maintained by [Borislav Borisov](https://github.com/bobikenobi12) ([LinkedIn](https://www.linkedin.com/in/bbor1sov)).
+
+> Some internal component names — the `Vertex` control-plane app, the `vtx` CLI, and `vertex-core` — are codenames retained from earlier development and will be renamed in a later pass. The product is **Alethia Labs**.
 
 ## Architecture
 
 | Component | Role |
 | --- | --- |
-| **Trellis** (`apps/trellis`) | Web control plane — Next.js dashboard, Supabase state store, auth, configuration management, job orchestration |
-| **Grape** (`apps/grape`) | Go CLI — authentication, vineyard/vine management, plan/deploy/destroy operations, worker registration |
-| **Tendril** (`apps/tendril`) | Go worker — claims provisioning jobs from the queue, executes Terraform, streams logs back to Trellis |
-| **Grape-Core** (`packages/grape-core`) | Shared Go library — cloud provider interfaces, embedded Terraform templates, config types |
-| **Vintner** (`apps/vintner`) | Documentation site (Next.js / Fumadocs) |
+| **Vertex** (`apps/vertex`) | Web control plane — Next.js dashboard, Supabase state store, auth, configuration management, job orchestration |
+| **vtx** (`apps/vtx`) | Go CLI — authentication, vineyard/vine management, plan/deploy/destroy operations, worker registration |
+| **Node** (`apps/node`) | Go worker — claims provisioning jobs from the queue, executes Terraform, streams logs back to Vertex |
+| **vertex-core** (`packages/vertex-core`) | Shared Go library — cloud provider interfaces, embedded Terraform templates, config types |
+| **docs** (`apps/docs`) | Documentation site (Next.js / Fumadocs) |
 | **ArgoCD** | In-cluster GitOps reconciler installed during bootstrap |
 
 ## Tech Stack
@@ -31,12 +35,12 @@ Built by **Borislav Borisov** — [GitHub](https://github.com/bobikenobi12) · [
 
 ```
 apps/
-  trellis/           — Web control plane (Next.js + Supabase)
-  grape/             — CLI (Go + Cobra + Charmbracelet)
-  tendril/           — Provisioning worker (Go)
-  vintner/           — Documentation site (Fumadocs)
+  vertex/           — Web control plane (Next.js + Supabase)
+  vtx/             — CLI (Go + Cobra + Charmbracelet)
+  node/           — Provisioning worker (Go)
+  docs/           — Documentation site (Fumadocs)
 packages/
-  grape-core/        — Shared Go library (cloud providers, Terraform templates)
+  vertex-core/        — Shared Go library (cloud providers, Terraform templates)
   ui/                — Shared React component library
   charts/            — Helm charts
   eslint-config/     — ESLint configurations
@@ -62,11 +66,11 @@ spec/
 - Turborepo (`npm i -g turbo`)
 - Supabase CLI (`brew install supabase/tap/supabase`)
 
-### Install Grape CLI (Homebrew)
+### Install vtx CLI (Homebrew)
 
 ```bash
-brew tap bobikenobi12/bb-thesis-2026 https://github.com/bobikenobi12/bb-thesis-2026
-brew install grape
+brew tap alethialabs-io/alethialabs
+brew install vtx
 ```
 
 If the repository is private, ensure your local Git environment is authenticated with GitHub (e.g. `export HOMEBREW_GITHUB_API_TOKEN=your_token`).
@@ -78,11 +82,11 @@ If the repository is private, ensure your local Git environment is authenticated
 turbo dev
 
 # Specific app
-turbo dev --filter=trellis
-turbo dev --filter=vintner
+turbo dev --filter=vertex
+turbo dev --filter=docs
 
-# Grape CLI (Go)
-cd apps/grape && go run .
+# vtx CLI (Go)
+cd apps/vtx && go run .
 ```
 
 ### Build
@@ -94,27 +98,37 @@ turbo build
 ### Test
 
 ```bash
-# Trellis unit tests
-pnpm -F trellis test
+# Vertex unit tests
+pnpm -F vertex test
 
-# Trellis E2E
-pnpm -F trellis test:e2e
+# Vertex E2E
+pnpm -F vertex test:e2e
 
 # Go tests
-cd apps/grape && go test ./...
+cd apps/vtx && go test ./...
 ```
 
 ## Infrastructure
 
 The `infra/` directory contains all Terraform configurations:
 
-- **`platform/`** — Core platform infrastructure: ECR container registry, ECS Fargate tendril workers (multi-region), Lambda auto-scaler (EventBridge-triggered, checks job queue depth every minute)
+- **`platform/`** — Core platform infrastructure: ECR container registry, ECS Fargate node workers (multi-region), Lambda auto-scaler (EventBridge-triggered, checks job queue depth every minute)
 - **`templates/vine/`** — Per-cloud IaC templates applied into user accounts (AWS EKS, GCP GKE, Azure AKS with associated networking, databases, and security groups)
-- **`templates/tendril/`** — Self-hosted worker deployment template
+- **`templates/node/`** — Self-hosted worker deployment template
 - **`onboarding/`** — Cloud account bootstrap (IAM cross-account roles for AWS, workload identity federation for GCP, federated identity for Azure)
 
 ## Documentation
 
-- [Vintner docs site](./apps/vintner/) — hosted documentation portal
+- [docs docs site](./apps/docs/) — hosted documentation portal
 - [Feature specs](./spec/features/) — active project documentation
 - [Thesis chapters](./spec/thesis/) — academic reference
+
+## Licensing
+
+Alethia Labs is **open core**:
+
+- The core is licensed under the GNU Affero General Public License v3.0 (`AGPL-3.0-only`) — see [`LICENSE`](./LICENSE).
+- Cloud / enterprise features under [`ee/`](./ee/) are commercially licensed (`LicenseRef-Alethia-Commercial`); production use requires a subscription.
+- A directory-by-directory map is in [`LICENSING.md`](./LICENSING.md); third-party attributions are in [`NOTICE`](./NOTICE).
+
+Contributions require signing our [CLA](./cla/) — see [`CONTRIBUTING.md`](./CONTRIBUTING.md). © 2026 Alethia OÜ.

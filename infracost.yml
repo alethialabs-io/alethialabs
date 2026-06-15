@@ -5,7 +5,7 @@ projects:
     - path: infra/platform
       name: infra-platform
 
-    # Vine templates (cost visibility only — applied by tendrils into user accounts)
+    # Vine templates (cost visibility only — applied by nodes into user accounts)
     - path: infra/templates/vine/aws
       name: vine-template-aws
     - path: infra/templates/vine/gcp
@@ -13,10 +13,10 @@ projects:
     - path: infra/templates/vine/azure
       name: vine-template-azure
 
-    # Tendril self-hosted template
-    - path: infra/templates/tendril/aws
-      name: tendril-template-aws
+    # Node self-hosted template
+    - path: infra/templates/node/aws
+      name: node-template-aws
 
-    # Seed template (embedded in grape-core)
-    - path: packages/grape-core/assets/terraform/seed
+    # Seed template (embedded in vertex-core)
+    - path: packages/vertex-core/assets/terraform/seed
       name: seed-template

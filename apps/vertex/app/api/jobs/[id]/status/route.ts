@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { finalizeDeploymentWithClient } from "@/app/server/actions/deployments";
 import { verifyWorkerToken } from "@/lib/workers/auth";
 import { createServiceRoleClient } from "@/lib/supabase/service-role-client";

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Handle, Position } from "@xyflow/react";
 import { Grape } from "lucide-react";

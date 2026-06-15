@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { createServerClient } from "@supabase/ssr";
 import { env } from "next-runtime-env";
 import { type NextRequest, NextResponse } from "next/server";

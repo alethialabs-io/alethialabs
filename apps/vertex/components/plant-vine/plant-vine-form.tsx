@@ -1,4 +1,7 @@
 "use client";
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 
 import { createVine, type CreateVineInput } from "@/app/server/actions/vines";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";

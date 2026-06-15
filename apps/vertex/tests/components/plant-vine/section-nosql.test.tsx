@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { describe, it, expect } from "vitest";
 import { screen, fireEvent } from "@testing-library/react";
 import { SectionNosql } from "@/components/plant-vine/section-nosql";

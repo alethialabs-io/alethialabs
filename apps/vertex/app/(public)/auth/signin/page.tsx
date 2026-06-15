@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { SignInForm } from "@/components/forms/signin-form";
 import { VertexLogo } from "@/components/vertex-logo";
 import Link from "next/link";

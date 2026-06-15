@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

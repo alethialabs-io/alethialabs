@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+
 set -euo pipefail
 
-GHCR_IMAGE="ghcr.io/bobikenobi12/tendril"
+GHCR_IMAGE="ghcr.io/bobikenobi12/node"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GIT_SHA=$(git -C "${REPO_ROOT}" rev-parse --short HEAD)
 
@@ -33,7 +36,7 @@ should_deploy() {
 
 echo "==> Building Docker image (${GIT_SHA})..."
 docker build \
-  -f "${REPO_ROOT}/apps/tendril/Dockerfile" \
+  -f "${REPO_ROOT}/apps/node/Dockerfile" \
   -t "${GHCR_IMAGE}:latest" \
   -t "${GHCR_IMAGE}:${GIT_SHA}" \
   --build-arg VERSION=dev \
@@ -50,8 +53,8 @@ for KEY in "${!TENDRILS[@]}"; do
   should_deploy "$KEY" || continue
 
   REGION="${TENDRILS[$KEY]}"
-  CLUSTER="tendril-dev-${KEY}-cluster"
-  SERVICE="tendril-dev-${KEY}-service"
+  CLUSTER="node-dev-${KEY}-cluster"
+  SERVICE="node-dev-${KEY}-service"
 
   echo "==> Deploying ${KEY} (${REGION})..."
   if aws ecs update-service \

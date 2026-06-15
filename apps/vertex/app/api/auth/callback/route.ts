@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { saveProviderToken } from "@/app/server/actions/identities";
 import { createClient } from "@/lib/supabase/server";
 import { PublicGitProvider } from "@/lib/validations/db.schemas";

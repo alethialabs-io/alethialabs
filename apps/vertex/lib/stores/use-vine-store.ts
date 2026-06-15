@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { create } from "zustand";
 import type { RegionPrices } from "@/app/server/actions/pricing";
 import { getRegionPrices } from "@/app/server/actions/pricing";

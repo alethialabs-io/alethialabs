@@ -1,5 +1,9 @@
-// app/actions/auth-actions.ts
 "use server";
+
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// app/actions/auth-actions.ts
 
 import { createClient } from "@/lib/supabase/server";
 import { cookies, headers } from "next/headers";

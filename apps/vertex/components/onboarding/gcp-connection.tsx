@@ -1,4 +1,7 @@
 "use client";
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 
 import { verifyGcpIdentity } from "@/app/(private)/dashboard/providers/gcp-actions";
 import { getJobStatus } from "@/app/server/actions/jobs";

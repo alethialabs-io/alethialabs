@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { AwsConnection } from "@/components/onboarding/aws-connection";
 import { SkipButton } from "@/components/onboarding/skip-button"; // New client component
 import { redirect } from "next/navigation";

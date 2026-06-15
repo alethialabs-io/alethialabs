@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Type for GitHub repository returned by the GitHub API. This is used to type the response when creating a new repository via the GitHub API.
  */

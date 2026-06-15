@@ -1,4 +1,7 @@
 "use client";
+// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 
 import { useTendrilsStore } from "@/lib/stores/use-tendrils-store";
 import { Button } from "@/components/ui/button";
