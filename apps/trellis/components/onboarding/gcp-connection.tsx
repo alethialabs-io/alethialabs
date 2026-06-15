@@ -437,8 +437,8 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 
 						<div className="pt-6 border-t border-border/40">
 							{verifyState.phase === "success" ? (
-								<div className="flex items-center gap-3 p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-md">
-									<CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+								<div className="flex items-center gap-3 p-4 bg-muted/50 border border-border rounded-md">
+									<CheckCircle2 className="w-5 h-5 text-foreground shrink-0" />
 									<div>
 										<p className="text-sm font-medium text-foreground">
 											Connection verified
@@ -508,7 +508,7 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 																.errors
 																.wifConfig &&
 																isValidJson && (
-																	<div className="flex items-center gap-1.5 text-emerald-500 text-xs">
+																	<div className="flex items-center gap-1.5 text-foreground text-xs">
 																		<CheckCircle2 className="w-3.5 h-3.5" />
 																		Valid
 																		credential

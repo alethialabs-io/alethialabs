@@ -1,0 +1,24 @@
+<!-- @dsCard group="Colors" viewport="700x150" name="Text & Borders" subtitle="Foreground hierarchy and hairline borders on dark" -->
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head><meta charset="utf-8"/><link rel="stylesheet" href="../styles.css"/>
+<style>
+  body{margin:0;padding:22px 26px;background:var(--canvas);display:grid;grid-template-columns:1.4fr 1fr;gap:26px;align-items:center;}
+  .t{margin:0 0 9px;font-family:var(--font-sans);}
+  .t b{font-weight:500;}
+  .tok{font-family:var(--font-mono);font-size:9.5px;color:var(--text-tertiary);margin-left:8px;}
+  .bbox{height:40px;border-radius:var(--radius-sm);margin-bottom:8px;display:flex;align-items:center;padding-left:12px;font-family:var(--font-mono);font-size:10px;color:var(--text-secondary);}
+</style></head>
+<body>
+<div>
+  <p class="t" style="color:var(--text-primary);font-size:17px"><b>Primary</b><span class="tok">--text-primary</span></p>
+  <p class="t" style="color:var(--text-secondary);font-size:15px">Secondary — body copy<span class="tok">--text-secondary</span></p>
+  <p class="t" style="color:var(--text-tertiary);font-size:14px">Tertiary — meta &amp; captions<span class="tok">--text-tertiary</span></p>
+  <p class="t" style="color:var(--text-disabled);font-size:14px">Disabled<span class="tok">--text-disabled</span></p>
+</div>
+<div>
+  <div class="bbox" style="border:1px solid var(--border)">--border</div>
+  <div class="bbox" style="border:1px solid var(--border-strong)">--border-strong</div>
+  <div class="bbox" style="border:1px solid var(--border-faint)">--border-faint</div>
+</div>
+</body></html>

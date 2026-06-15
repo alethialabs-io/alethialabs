@@ -3,21 +3,12 @@
 import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
 import { VineyardActions } from "@/components/sidebar-vineyard-actions";
 import { ProviderIcon } from "@/components/provider-icon";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { cn } from "@/lib/utils";
 import { ChevronRight, Map, Plus } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
-
-const STATUS_DOTS: Record<string, string> = {
-	ACTIVE: "bg-emerald-500",
-	DRAFT: "bg-muted-foreground/40",
-	QUEUED: "bg-blue-500",
-	PROVISIONING: "bg-amber-500",
-	FAILED: "bg-destructive",
-	DESTROYING: "bg-orange-500",
-	DESTROYED: "bg-muted-foreground/20",
-};
 
 /** Sidebar section showing vineyards as a collapsible tree with vine sub-items. */
 export function SidebarVineyards() {
@@ -125,7 +116,7 @@ export function SidebarVineyards() {
 															? "bg-muted/80 text-foreground"
 															: "text-muted-foreground hover:text-foreground hover:bg-muted/40",
 													)}>
-														<span className={cn("h-2 w-2 rounded-full shrink-0", STATUS_DOTS[vine.status] ?? "bg-muted-foreground/40")} />
+														<StatusBadge status={vine.status} showLabel={false} className="shrink-0" />
 														<span className="truncate flex-1">{vine.project_name}</span>
 														{hasProvider && (
 															<ProviderIcon

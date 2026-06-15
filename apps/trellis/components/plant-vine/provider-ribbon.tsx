@@ -137,7 +137,7 @@ export function ProviderRibbon({ identities }: ProviderRibbonProps) {
 			{/* Cache status + Refresh */}
 			<div className="flex items-center gap-2 shrink-0">
 				{cachedLabel && (
-					<span className={`text-[11px] whitespace-nowrap ${isStale ? "text-amber-500" : "text-muted-foreground"}`}>
+					<span className={`text-[11px] whitespace-nowrap ${isStale ? "text-muted-foreground" : "text-muted-foreground"}`}>
 						{isStale && "Stale — "}{cachedLabel}
 					</span>
 				)}

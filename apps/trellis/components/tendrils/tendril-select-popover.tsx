@@ -1,8 +1,8 @@
 "use client";
 
 import { useTendrilsStore } from "@/lib/stores/use-tendrils-store";
-import type { PublicWorkerStatus } from "@/lib/validations/db.schemas";
 import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/ui/status-badge";
 import {
 	Popover,
 	PopoverContent,
@@ -28,12 +28,6 @@ interface TendrilSelectPopoverProps {
 	description?: string;
 	excludeId?: string;
 }
-
-const STATUS_DOT: Record<PublicWorkerStatus, string> = {
-	ONLINE: "bg-emerald-500",
-	OFFLINE: "bg-zinc-400",
-	DRAINING: "bg-amber-500",
-};
 
 /** Popover that shows before Plan/Deploy — lets the user pick a tendril or "Any available". */
 export function TendrilSelectPopover({
@@ -138,12 +132,7 @@ export function TendrilSelectPopover({
 									<TooltipProvider delayDuration={300}>
 										<Tooltip>
 											<TooltipTrigger asChild>
-												<span className="relative flex h-2.5 w-2.5 shrink-0">
-													{isOnline && (
-														<span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${STATUS_DOT[status]}`} />
-													)}
-													<span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${STATUS_DOT[status]}`} />
-												</span>
+												<StatusBadge status={status} showLabel={false} className="shrink-0" />
 											</TooltipTrigger>
 											<TooltipContent side="top" className="text-xs">
 												{status}

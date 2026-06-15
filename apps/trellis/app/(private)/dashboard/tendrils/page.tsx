@@ -196,7 +196,7 @@ export default function TendrilsPage() {
 			</div>
 
 			{outdatedTendrils.length > 0 && latestRelease && (
-				<Alert className="text-amber-600 border-amber-200 bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950">
+				<Alert className="text-foreground border-border bg-muted">
 					<ArrowUpCircle className="h-4 w-4" />
 					<AlertTitle className="flex items-center justify-between">
 						<span>
@@ -204,7 +204,7 @@ export default function TendrilsPage() {
 							{outdatedTendrils.length !== 1 ? "have" : "has"} updates available
 							<span className="font-normal ml-1">— v{latestRelease.version} is out</span>
 							{outdatedTendrils.length > updatableTendrils.length && (
-								<span className="font-normal text-amber-500 dark:text-amber-500 ml-1">
+								<span className="font-normal text-muted-foreground ml-1">
 									({outdatedTendrils.length - updatableTendrils.length} require re-deploy)
 								</span>
 							)}
@@ -213,7 +213,7 @@ export default function TendrilsPage() {
 							<Button
 								size="sm"
 								variant="outline"
-								className="h-7 text-xs border-amber-300 text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-900"
+								className="h-7 text-xs border-border text-foreground hover:bg-muted"
 								disabled={isUpdatingAll}
 								onClick={handleUpdateAll}
 							>

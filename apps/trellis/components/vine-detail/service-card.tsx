@@ -1,6 +1,6 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { CloudProviderMeta } from "@/lib/cloud-providers";
 import {
@@ -39,16 +39,6 @@ export const SERVICE_TYPE_CONFIG: Record<
 	topic: { icon: MessageSquare, metaKey: "topicService" },
 	nosql_table: { icon: Table, metaKey: "nosqlService" },
 	secret: { icon: Lock, metaKey: "secretsService" },
-};
-
-const STATUS_STYLES: Record<string, string> = {
-	ACTIVE: "text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950",
-	PENDING: "text-muted-foreground border-border bg-muted/50",
-	CREATING: "text-blue-600 border-blue-200 bg-blue-50",
-	UPDATING: "text-amber-600 border-amber-200 bg-amber-50",
-	FAILED: "text-destructive border-destructive/30 bg-destructive/10",
-	DESTROYING: "text-orange-600 border-orange-200 bg-orange-50",
-	DESTROYED: "text-muted-foreground border-border bg-muted/30",
 };
 
 export function getConfigSummary(
@@ -123,12 +113,7 @@ export function ServiceCard({ type, service, providerMeta, capacityUnit }: Servi
 							</span>
 						</div>
 						{service.status && (
-							<Badge
-								variant="outline"
-								className={`text-[10px] py-0 shrink-0 ml-2 ${STATUS_STYLES[service.status] ?? ""}`}
-							>
-								{service.status}
-							</Badge>
+							<StatusBadge status={service.status} className="shrink-0 ml-2" />
 						)}
 					</div>
 					<p className="text-xs text-muted-foreground truncate">{summary}</p>

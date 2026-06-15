@@ -4,8 +4,9 @@ import type { IntegrationWithConnection } from "@/app/server/actions/integration
 import { GitProviderIcon } from "@/components/integrations/git-provider-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Unlink } from "lucide-react";
+import { Loader2, RefreshCw, Unlink } from "lucide-react";
 import Image from "next/image";
 
 const AUTH_METHOD_LABELS: Record<string, string> = {
@@ -68,22 +69,10 @@ export function IntegrationCard({
 						{integration.name}
 					</span>
 					{isConnected && needsReconnection && (
-						<Badge
-							variant="outline"
-							className="text-amber-600 border-amber-200 bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950 text-[10px] py-0"
-						>
-							<AlertTriangle className="w-3 h-3 mr-1" />
-							Needs Reconnection
-						</Badge>
+						<StatusBadge status="pending" label="Needs Reconnection" />
 					)}
 					{isConnected && !needsReconnection && (
-						<Badge
-							variant="outline"
-							className="text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950 text-[10px] py-0"
-						>
-							<CheckCircle2 className="w-3 h-3 mr-1" />
-							Connected
-						</Badge>
+						<StatusBadge status="connected" label="Connected" />
 					)}
 					{isComingSoon && (
 						<Badge
@@ -133,7 +122,7 @@ export function IntegrationCard({
 				{!isComingSoon && isConnected && needsReconnection && (
 					<Button
 						size="sm"
-						className="text-xs h-8 bg-amber-600 hover:bg-amber-700 text-white"
+						className="text-xs h-8 bg-primary hover:bg-primary/90 text-primary-foreground"
 						disabled={isConnecting}
 						onClick={(e) => {
 							e.stopPropagation();

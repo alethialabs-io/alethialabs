@@ -1,0 +1,50 @@
+/* ============================================================
+   TYPOGRAPHY — Vertex
+   Three voices: Display (Space Grotesk), Text (Geist),
+   Mono (Geist Mono). Mono is a first-class brand voice — used
+   for eyebrow labels, data readouts, and the terminal, not
+   only for code.
+   ============================================================ */
+
+:root {
+  /* ---- Families ---- */
+  --font-display: "Space Grotesk", "Geist", system-ui, sans-serif;
+  --font-sans:    "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:    "Geist Mono", ui-monospace, "SFMono-Regular", "Menlo", monospace;
+
+  /* ---- Weights ---- */
+  --weight-light:    300;
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+
+  /* ---- Type scale (rem; product UI base = 14px) ---- */
+  --text-2xs:  0.6875rem; /* 11 — micro labels, table meta   */
+  --text-xs:   0.75rem;   /* 12 — captions, badges           */
+  --text-sm:   0.8125rem; /* 13 — secondary UI               */
+  --text-base: 0.875rem;  /* 14 — body / UI default          */
+  --text-md:   1rem;      /* 16 — lead paragraph             */
+  --text-lg:   1.125rem;  /* 18                              */
+  --text-xl:   1.25rem;   /* 20                              */
+  --text-2xl:  1.5rem;    /* 24 — section titles             */
+  --text-3xl:  1.875rem;  /* 30                              */
+  --text-4xl:  2.25rem;   /* 36 — page heroes                */
+  --text-5xl:  3rem;      /* 48                              */
+  --text-6xl:  3.75rem;   /* 60 — marketing display          */
+  --text-7xl:  4.5rem;    /* 72                              */
+
+  /* ---- Letter-spacing ---- */
+  --tracking-tighter: -0.04em; /* large display              */
+  --tracking-tight:   -0.02em; /* headings                   */
+  --tracking-normal:  0;
+  --tracking-wide:    0.02em;
+  --tracking-eyebrow: 0.16em;  /* uppercase mono labels      */
+
+  /* ---- Line-height ---- */
+  --leading-none:    1;
+  --leading-tight:   1.08;
+  --leading-snug:    1.28;
+  --leading-normal:  1.5;
+  --leading-relaxed: 1.65;
+}
