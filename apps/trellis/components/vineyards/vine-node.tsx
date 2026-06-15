@@ -1,4 +1,4 @@
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Handle, Position } from "@xyflow/react";
 import { Grape } from "lucide-react";
 
@@ -9,16 +9,7 @@ interface VineNodeProps {
 	};
 }
 
-const STATUS_STYLES: Record<string, string> = {
-	DRAFT: "bg-muted text-muted-foreground",
-	QUEUED: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
-	PROVISIONING: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-	ACTIVE: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-	FAILED: "bg-red-500/10 text-red-700 dark:text-red-400",
-	DESTROYING: "bg-orange-500/10 text-orange-700 dark:text-orange-400",
-	DESTROYED: "bg-muted text-muted-foreground",
-};
-
+/** React Flow node rendering a vine card with its grayscale status badge. */
 export function VineNode({ data }: VineNodeProps) {
 	const { config, onClick } = data;
 	const status = config.status || "DRAFT";
@@ -38,12 +29,7 @@ export function VineNode({ data }: VineNodeProps) {
 							{config.project_name || "Vine"}
 						</span>
 					</div>
-					<Badge
-						variant="secondary"
-						className={`text-[10px] h-5 font-medium px-1.5 ${STATUS_STYLES[status] || ""}`}
-					>
-						{status}
-					</Badge>
+					<StatusBadge status={status} />
 				</div>
 
 				<div className="flex items-center gap-2 text-xs text-muted-foreground">

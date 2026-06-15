@@ -19,7 +19,7 @@ export function PlanSummaryBar({ plan, cost }: PlanSummaryBarProps) {
 				{counts.create > 0 && (
 					<Badge
 						variant="outline"
-						className="border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 gap-1"
+						className="border-border bg-muted text-foreground gap-1"
 					>
 						<Plus className="h-3 w-3" />
 						{counts.create} to create
@@ -28,7 +28,7 @@ export function PlanSummaryBar({ plan, cost }: PlanSummaryBarProps) {
 				{counts.update > 0 && (
 					<Badge
 						variant="outline"
-						className="border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400 gap-1"
+						className="border-border bg-muted text-muted-foreground gap-1"
 					>
 						<Pencil className="h-3 w-3" />
 						{counts.update} to update
@@ -37,7 +37,7 @@ export function PlanSummaryBar({ plan, cost }: PlanSummaryBarProps) {
 				{counts.delete > 0 && (
 					<Badge
 						variant="outline"
-						className="border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-400 gap-1"
+						className="border-destructive/30 bg-destructive/10 text-destructive gap-1"
 					>
 						<Trash2 className="h-3 w-3" />
 						{counts.delete} to destroy
@@ -46,7 +46,7 @@ export function PlanSummaryBar({ plan, cost }: PlanSummaryBarProps) {
 				{counts.replace > 0 && (
 					<Badge
 						variant="outline"
-						className="border-orange-500/50 bg-orange-500/10 text-orange-700 dark:text-orange-400 gap-1"
+						className="border-border bg-muted text-muted-foreground gap-1"
 					>
 						<RefreshCw className="h-3 w-3" />
 						{counts.replace} to replace

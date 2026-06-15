@@ -1,6 +1,6 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import {
 	Tooltip,
 	TooltipContent,
@@ -71,19 +71,7 @@ const JOB_TYPES: Record<
 	},
 } as Record<string, { label: string; icon: typeof Rocket; description: string }>;
 
-const STATUS_STYLES: Record<string, string> = {
-	SUCCESS:
-		"!text-emerald-600 border-emerald-200 bg-emerald-50 dark:!text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950",
-	FAILED: "!text-destructive border-destructive/30 bg-destructive/10",
-	PROCESSING:
-		"!text-blue-600 border-blue-200 bg-blue-50 dark:!text-blue-400 dark:border-blue-800 dark:bg-blue-950",
-	CLAIMED:
-		"!text-amber-600 border-amber-200 bg-amber-50 dark:!text-amber-400 dark:border-amber-800 dark:bg-amber-950",
-	QUEUED: "text-muted-foreground border-border bg-muted/50",
-	CANCELLED: "text-muted-foreground border-border bg-muted/30",
-};
-
-export { JOB_TYPES, STATUS_STYLES };
+export { JOB_TYPES };
 
 function formatDuration(ms: number) {
 	const seconds = Math.floor(ms / 1000);
@@ -93,15 +81,9 @@ function formatDuration(ms: number) {
 	return `${minutes}m ${remainingSeconds}s`;
 }
 
-function StatusBadge({ status, errorMessage }: { status: string; errorMessage?: string | null }) {
-	const badge = (
-		<Badge
-			variant="outline"
-			className={`text-[10px] py-0 ${STATUS_STYLES[status] ?? ""}`}
-		>
-			{status}
-		</Badge>
-	);
+/** Renders a grayscale job status, with a tooltip surfacing the error on FAILED. */
+function JobStatus({ status, errorMessage }: { status: string; errorMessage?: string | null }) {
+	const badge = <StatusBadge status={status} />;
 
 	if (status === "FAILED" && errorMessage) {
 		const truncated = errorMessage.length > 120
@@ -154,7 +136,7 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 		cell: ({ row }) => {
 			const status = row.getValue("status") as string;
 			const errorMessage = row.original.error_message;
-			return <StatusBadge status={status} errorMessage={errorMessage} />;
+			return <JobStatus status={status} errorMessage={errorMessage} />;
 		},
 	},
 	{
@@ -254,7 +236,7 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 			) {
 				const ms = Date.now() - new Date(created).getTime();
 				return (
-					<span className="text-xs text-blue-500 animate-pulse">
+					<span className="text-xs text-muted-foreground animate-pulse">
 						{formatDuration(ms)}
 					</span>
 				);

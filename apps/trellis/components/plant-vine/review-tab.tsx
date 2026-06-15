@@ -42,7 +42,7 @@ function Field({ label, value, mono }: { label: string; value: string | number |
 
 function FeaturePill({ label, enabled }: { label: string; enabled: boolean }) {
 	return (
-		<Badge variant="outline" className={`text-[10px] ${enabled ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400" : "bg-muted/30 border-border/40 text-muted-foreground opacity-60"}`}>
+		<Badge variant="outline" className={`text-[10px] ${enabled ? "bg-muted border-border text-foreground" : "bg-muted/30 border-border/40 text-muted-foreground opacity-60"}`}>
 			{enabled ? "On" : "Off"} {label}
 		</Badge>
 	);

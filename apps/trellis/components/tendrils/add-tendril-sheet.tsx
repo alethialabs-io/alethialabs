@@ -367,7 +367,7 @@ function CopyField({ label, value }: { label: string; value: string }) {
 					onClick={copy}
 				>
 					{copied ? (
-						<Check className="h-3.5 w-3.5 text-emerald-500" />
+						<Check className="h-3.5 w-3.5 text-foreground" />
 					) : (
 						<Copy className="h-3.5 w-3.5" />
 					)}
@@ -418,9 +418,9 @@ function RegisterForm({
 	if (credentials) {
 		return (
 			<div className="space-y-6">
-				<div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-4">
+				<div className="rounded-md border border-border bg-muted p-4">
 					<div className="flex gap-3">
-						<AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+						<AlertTriangle className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
 						<div className="space-y-1">
 							<p className="text-sm font-medium">
 								Save these credentials now

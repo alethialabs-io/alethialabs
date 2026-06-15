@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTendrilsStore, type TendrilRelease } from "@/lib/stores/use-tendrils-store";
 import { formatDistanceToNow } from "date-fns";
@@ -86,12 +87,7 @@ export function ReleaseNotesDialog({
 							</Badge>
 						)}
 						{isOutdated && (
-							<Badge
-								variant="outline"
-								className="text-[10px] py-0 text-amber-600 border-amber-200 bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950"
-							>
-								Outdated
-							</Badge>
+							<StatusBadge status="pending" label="Outdated" />
 						)}
 					</DialogTitle>
 					{release?.released_at && (

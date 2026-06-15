@@ -200,8 +200,8 @@ function PlantVineFormInner({ cloudIdentities, sourceVine }: PlantVineFormProps)
 				<ProviderRibbon identities={cloudIdentities} />
 
 				{sourceVine && (
-					<Alert variant="default" className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950">
-						<Info className="h-4 w-4 text-blue-500" />
+					<Alert variant="default" className="border-border bg-muted">
+						<Info className="h-4 w-4 text-muted-foreground" />
 						<AlertDescription className="text-sm">
 							Duplicating from <span className="font-medium">{sourceVine.formData.vine.project_name}</span>.
 							Select a cloud account to convert the configuration.
@@ -210,8 +210,8 @@ function PlantVineFormInner({ cloudIdentities, sourceVine }: PlantVineFormProps)
 				)}
 
 				{conversionWarnings.length > 0 && (
-					<Alert variant="default" className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950">
-						<AlertTriangle className="h-4 w-4 text-amber-500" />
+					<Alert variant="default" className="border-border bg-muted">
+						<AlertTriangle className="h-4 w-4 text-muted-foreground" />
 						<AlertDescription>
 							<p className="text-sm font-medium mb-1">Conversion notes:</p>
 							<ul className="text-xs space-y-1">

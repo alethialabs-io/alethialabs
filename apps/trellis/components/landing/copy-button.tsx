@@ -19,7 +19,7 @@ export function CopyButton({ text }: { text: string }) {
 			aria-label="Copy to clipboard"
 		>
 			{copied ? (
-				<Check className="h-4 w-4 text-green-500" />
+				<Check className="h-4 w-4 text-foreground" />
 			) : (
 				<Copy className="h-4 w-4" />
 			)}

@@ -3,8 +3,8 @@
 import type { ClusterData } from "@/app/server/actions/clusters";
 import { ProviderIcon } from "@/components/provider-icon";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/ui/status-badge";
 import {
 	Check,
 	Copy,
@@ -31,7 +31,7 @@ function CopyButton({ value }: { value: string }) {
 			}}
 		>
 			{copied ? (
-				<Check className="h-3 w-3 text-emerald-500" />
+				<Check className="h-3 w-3 text-foreground" />
 			) : (
 				<Copy className="h-3 w-3" />
 			)}
@@ -62,12 +62,7 @@ export function ClusterCard({ data }: { data: ClusterData }) {
 							<h3 className="text-sm font-semibold">
 								{data.project_name}
 							</h3>
-							<Badge
-								variant="outline"
-								className="text-[10px] py-0 text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950"
-							>
-								Active
-							</Badge>
+							<StatusBadge status="active" label="Active" />
 						</div>
 						<p className="text-[11px] text-muted-foreground">
 							{meta.shortName} · {data.region} ·{" "}

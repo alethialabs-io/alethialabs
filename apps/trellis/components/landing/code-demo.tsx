@@ -35,11 +35,11 @@ interface CodeDemoProps {
 function colorClass(color?: string, isCode?: boolean) {
 	switch (color) {
 		case "green":
-			return "text-green-400";
+			return "text-foreground";
 		case "blue":
-			return "text-blue-400";
+			return "text-muted-foreground";
 		case "yellow":
-			return "text-yellow-400";
+			return "text-foreground/70";
 		case "muted":
 			return isCode ? "text-white/30" : "text-white/40";
 		default:

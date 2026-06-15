@@ -54,8 +54,8 @@ function CliLoginContent() {
       )}
       {!loading && !error && (
         <div className="flex flex-col items-center justify-center gap-4">
-          <div className="h-12 w-12 rounded-full bg-emerald-500/10 flex items-center justify-center">
-            <CheckCircle className="h-6 w-6 text-emerald-500" />
+          <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
+            <CheckCircle className="h-6 w-6 text-foreground" />
           </div>
           <div className="text-center space-y-1">
             <p className="text-sm font-medium text-foreground">

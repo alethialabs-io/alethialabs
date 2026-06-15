@@ -5,6 +5,7 @@ import { GitProviderIcon } from "@/components/integrations/git-provider-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { StatusBadge } from "@/components/ui/status-badge";
 import {
 	Sheet,
 	SheetContent,
@@ -13,9 +14,7 @@ import {
 	SheetTitle,
 } from "@/components/ui/sheet";
 import {
-	AlertTriangle,
 	BookOpen,
-	CheckCircle2,
 	ExternalLink,
 	HelpCircle,
 	Loader2,
@@ -98,21 +97,9 @@ export function IntegrationDetailSheet({
 					{/* Status */}
 					<div className="flex items-center gap-2">
 						{isConnected && needsReconnection ? (
-							<Badge
-								variant="outline"
-								className="text-amber-600 border-amber-200 bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:bg-amber-950 text-xs"
-							>
-								<AlertTriangle className="w-3.5 h-3.5 mr-1.5" />
-								Needs Reconnection
-							</Badge>
+							<StatusBadge status="pending" label="Needs Reconnection" />
 						) : isConnected ? (
-							<Badge
-								variant="outline"
-								className="text-emerald-600 border-emerald-200 bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:bg-emerald-950 text-xs"
-							>
-								<CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
-								Connected
-							</Badge>
+							<StatusBadge status="connected" label="Connected" />
 						) : isComingSoon ? (
 							<Badge variant="secondary" className="text-xs">
 								Coming Soon
@@ -317,7 +304,7 @@ export function IntegrationDetailSheet({
 							{isConnected && needsReconnection ? (
 								<>
 									<Button
-										className="w-full bg-amber-600 hover:bg-amber-700 text-white"
+										className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
 										disabled={isConnecting}
 										onClick={onConnect}
 									>

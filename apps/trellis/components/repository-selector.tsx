@@ -234,7 +234,7 @@ export function RepositorySelector({
 		return (
 			<div className="space-y-3 border rounded-lg p-4 bg-muted/30">
 				<div className="flex items-center gap-2 text-sm font-medium">
-					<AlertCircle className="h-4 w-4 text-yellow-600" />
+					<AlertCircle className="h-4 w-4 text-muted-foreground" />
 					<span>No Git accounts linked</span>
 				</div>
 				<p className="text-sm text-muted-foreground">
@@ -295,7 +295,7 @@ export function RepositorySelector({
 					{label ? (
 						<label className="text-sm font-medium">
 							{label}
-							{required && <span className="text-red-500 ml-1">*</span>}
+							{required && <span className="text-destructive ml-1">*</span>}
 						</label>
 					) : <div />}
 					<Button
@@ -327,7 +327,7 @@ export function RepositorySelector({
 				<div className="flex items-center justify-between">
 					<label className="text-sm font-medium">
 						{label}
-						{required && <span className="text-red-500 ml-1">*</span>}
+						{required && <span className="text-destructive ml-1">*</span>}
 					</label>
 				</div>
 			)}
@@ -407,7 +407,7 @@ export function RepositorySelector({
 												{repositories.find((r) => r.url === value)?.full_name || value}
 											</span>
 											{repositories.find((r) => r.url === value)?.private && (
-												<span className="text-[10px] bg-yellow-100 text-yellow-800 px-1 py-0 rounded shrink-0">
+												<span className="text-[10px] bg-muted text-muted-foreground px-1 py-0 rounded shrink-0">
 													Private
 												</span>
 											)}
@@ -441,7 +441,7 @@ export function RepositorySelector({
 															{repo.full_name}
 														</span>
 														{repo.private && (
-															<span className="text-[10px] bg-yellow-100 text-yellow-800 px-1 py-0 rounded shrink-0 ml-2">
+															<span className="text-[10px] bg-muted text-muted-foreground px-1 py-0 rounded shrink-0 ml-2">
 																Private
 															</span>
 														)}
