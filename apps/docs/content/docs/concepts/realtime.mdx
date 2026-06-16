@@ -1,0 +1,150 @@
+---
+title: Real-time Architecture
+description: How Supabase Realtime powers live log streaming, job status updates, and store synchronization.
+---
+
+# Real-time Architecture
+
+The platform uses **Supabase Realtime** (built on PostgreSQL's logical replication) to push live updates to the browser. Three features depend on this: log streaming, job status updates, and Runner status tracking.
+
+<img src="/docs/diagrams/concepts/realtime.svg" alt="Realtime Architecture" />
+
+## How Supabase Realtime Works
+
+Supabase Realtime listens to PostgreSQL's Write-Ahead Log (WAL) and broadcasts row-level changes over WebSocket channels. Clients subscribe to specific tables and event types (INSERT, UPDATE, DELETE) with optional row-level filters.
+
+```
+PostgreSQL WAL ──► Supabase Realtime Server ──► WebSocket ──► Browser
+```
+
+## Log Streaming
+
+The most latency-sensitive use case. When a Runner executes Terraform, stdout/stderr are streamed to the browser in near real-time.
+
+### Data Flow
+
+<Steps>
+
+### Runner writes logs
+The `JobLogger` buffers Terraform output and flushes every 2 seconds (or when the buffer exceeds 10KB) via `POST /api/jobs/{id}/logs`.
+
+### Console inserts into database
+The API route inserts the log chunk into `provision_job_logs` with a stream type (STDOUT, STDERR, or SYSTEM).
+
+### Supabase broadcasts INSERT
+The `provision_job_logs` table is part of the `supabase_realtime` publication. Every INSERT triggers a broadcast.
+
+### Browser receives chunk
+The job detail page subscribes to INSERT events on `provision_job_logs` filtered by `job_id`. New chunks appear in the log viewer within milliseconds.
+
+</Steps>
+
+### Client Subscription
+
+```typescript
+supabase
+  .channel(`job-logs-${jobId}`)
+  .on('postgres_changes', {
+    event: 'INSERT',
+    schema: 'public',
+    table: 'provision_job_logs',
+    filter: `job_id=eq.${jobId}`
+  }, (payload) => {
+    appendLog(payload.new.log_chunk, payload.new.stream_type);
+  })
+  .subscribe();
+```
+
+### End-to-End Latency
+
+| Step | Latency |
+|------|---------|
+| Terraform → JobLogger buffer | ≤ 2 seconds |
+| POST to Console API | ~50ms |
+| Database INSERT | ~5ms |
+| Realtime broadcast | ~50ms |
+| **Total** | **~2–3 seconds** |
+
+## Job Status Updates
+
+The dashboard layout subscribes to `provision_jobs` changes to update the jobs store in real-time.
+
+### Subscription (Dashboard Layout)
+
+```typescript
+supabase
+  .channel('job-updates')
+  .on('postgres_changes', {
+    event: '*',  // INSERT, UPDATE, DELETE
+    schema: 'public',
+    table: 'provision_jobs',
+    filter: `user_id=eq.${userId}`
+  }, (payload) => {
+    jobsStore.addOrUpdateJob(payload.new);
+  })
+  .subscribe();
+```
+
+<Callout type="info">
+The `user_id` filter ensures multi-tenant isolation — each user only receives events for their own jobs, even at the WebSocket level.
+</Callout>
+
+### What triggers updates:
+- Job created (INSERT) → new row appears in job list
+- Runner claims job (UPDATE: QUEUED → CLAIMED)
+- Execution starts (UPDATE: CLAIMED → PROCESSING)
+- Job completes (UPDATE: PROCESSING → SUCCESS/FAILED)
+
+## Runner Status Tracking
+
+The Runners page subscribes to `workers` table changes:
+
+```typescript
+supabase
+  .channel('runner-updates')
+  .on('postgres_changes', {
+    event: '*',
+    schema: 'public',
+    table: 'workers'
+  }, (payload) => {
+    if (payload.eventType === 'DELETE') {
+      runnersStore.removeRunner(payload.old.id);
+    } else {
+      runnersStore.addOrUpdateRunner(payload.new);
+    }
+  })
+  .subscribe();
+```
+
+This enables live status indicators:
+- **Green** (ONLINE) — heartbeat received within 60 seconds
+- **Yellow** (DRAINING) — finishing current job, not accepting new ones
+- **Red** (OFFLINE) — heartbeat missed
+
+## Spec Status Updates
+
+The zones store listens for Spec status changes (e.g., DRAFT → PROVISIONING → ACTIVE):
+
+```typescript
+.on('postgres_changes', {
+  event: 'UPDATE',
+  schema: 'public',
+  table: 'specs'
+}, (payload) => {
+  zonesStore.updateSpecInPlace(payload.new.id, {
+    status: payload.new.status,
+    estimated_monthly_cost: payload.new.estimated_monthly_cost
+  });
+})
+```
+
+## Store Synchronization Pattern
+
+All Zustand stores follow the same pattern for real-time updates:
+
+1. **Initial fetch** on page mount (with 30-second stale threshold to avoid redundant API calls)
+2. **Realtime subscription** on dashboard layout mount
+3. **Optimistic updates** via `addOrUpdate` methods that upsert by ID
+4. **Session persistence** for filters and pagination state (via `sessionStorage`)
+
+This means the UI stays current without polling. Job status changes, Runner heartbeats, and Spec provisioning progress all appear instantly.

@@ -1,0 +1,135 @@
+---
+title: Platform Overview
+description: High-level architecture of the multi-cloud infrastructure orchestration platform.
+---
+
+# Platform Overview
+
+This platform is a hybrid multi-cloud infrastructure orchestration system. It combines a visual web interface, a command-line tool, and autonomous execution agents to provision production-grade Kubernetes clusters with databases, caches, networking, DNS, secrets, and GitOps — across AWS, GCP, and Azure.
+
+<img src="/docs/diagrams/concepts/platform-overview.svg" alt="Platform Architecture" />
+
+## Three-Component Model
+
+| Component | Type | Language | Role |
+|-----------|------|----------|------|
+| **Console** | Web application | TypeScript (Next.js 15) | Visual configuration, job management, real-time monitoring |
+| **alethia** | CLI tool | Go | Terminal-based operations, scripting, CI/CD integration |
+| **Runner** | Execution agent | Go | Runs Terraform, installs ArgoCD, streams logs back to Console |
+
+## Data Flow
+
+```
+User ─► Console (web) ─► Job Queue (PostgreSQL) ─► Runner (agent) ─► Cloud Provider
+         │                                            │
+         ├─ OR ──► alethia CLI ─► Job Queue ──────────┘
+         │
+         └─ Supabase Realtime ◄── Log Streaming ◄── Runner
+```
+
+1. The user configures infrastructure through Console (web form) or alethia (CLI commands)
+2. Actions are queued as jobs in PostgreSQL
+3. A Runner agent claims the job atomically and assumes temporary cloud credentials
+4. The Runner executes Terraform and streams logs back in real-time
+5. On completion, ArgoCD is installed for GitOps-managed deployments
+
+## Multi-Cloud Support
+
+Every infrastructure component has provider-specific implementations across three clouds:
+
+| Capability | AWS | GCP | Azure |
+|-----------|-----|-----|-------|
+| Kubernetes | EKS | GKE | AKS |
+| Relational DB | Aurora PostgreSQL/MySQL | Cloud SQL | Azure Database |
+| Cache | ElastiCache (Redis/Valkey) | Memorystore | Azure Cache for Redis |
+| NoSQL | DynamoDB | Firestore | Cosmos DB |
+| Messaging | SQS + SNS | Pub/Sub | Service Bus |
+| DNS | Route 53 | Cloud DNS | Azure DNS |
+| Secrets | Secrets Manager | Secret Manager | Key Vault |
+| Container Registry | ECR | Artifact Registry | ACR |
+| Object Storage | S3 | Cloud Storage | Storage Account |
+| WAF | AWS WAFv2 | Cloud Armor | Azure WAF |
+
+## Tech Stack
+
+**Web (Console):** Next.js 15, Supabase (PostgreSQL + GoTrue + Realtime + S3), Tailwind CSS, shadcn/ui, Zustand
+
+**CLI (alethia):** Go, Cobra, Charmbracelet (lipgloss, huh, bubbletea), Homebrew tap
+
+**Agent (Runner):** Go, ECS Fargate (ARM64), embeds Terraform + kubectl + Helm + cloud CLIs
+
+**Shared (core):** Go package — provisioner, Terraform wrapper, cloud SDKs, ArgoCD, Infracost, Git, Helm
+
+**Infrastructure:** Terraform, Supabase S3 (state), Lambda scaler (scale-to-zero), release-please
+
+## Concept Pages
+
+Deep dives into the platform's key technical patterns:
+
+<Cards>
+  <Card title="Domain Model" href="/concepts/domain-model">
+    Zone/Spec/Runner entities, lifecycles, and relationships.
+  </Card>
+  <Card title="Security Architecture" href="/concepts/security">
+    Zero-credential model, RLS, cloud provider federation.
+  </Card>
+  <Card title="Database Schema" href="/concepts/database">
+    Full PostgreSQL schema — tables, enums, functions, Realtime.
+  </Card>
+  <Card title="Job Queue Pattern" href="/concepts/job-queue">
+    Atomic claiming, FOR UPDATE SKIP LOCKED, failure recovery.
+  </Card>
+  <Card title="Runner Scaling" href="/concepts/runner-scaling">
+    Scale-to-zero with Lambda scaler, EventBridge, and ECS Fargate.
+  </Card>
+  <Card title="Cloud Provider Abstraction" href="/concepts/cloud-abstraction">
+    Registry, region mapping, instance types, provider_config JSONB.
+  </Card>
+  <Card title="Provisioning Pipeline" href="/concepts/provisioning-pipeline">
+    Form values → config snapshot → SpecConfig → terraform.tfvars.json → infrastructure.
+  </Card>
+  <Card title="Real-time Architecture" href="/concepts/realtime">
+    Supabase Realtime, log streaming, store synchronization.
+  </Card>
+  <Card title="Cost Estimation" href="/concepts/cost-estimation">
+    AWS Pricing API, real-time sidebar, Infracost integration.
+  </Card>
+  <Card title="Authentication Flows" href="/concepts/authentication">
+    OAuth (web), Device Code Grant (CLI), token auth (Runner).
+  </Card>
+  <Card title="Multi-Cloud Conversion" href="/concepts/multi-cloud-conversion">
+    Cross-provider Spec duplication with mapping and warnings.
+  </Card>
+  <Card title="Terraform State" href="/concepts/terraform-state">
+    Supabase S3 backend, state paths, plan artifacts.
+  </Card>
+  <Card title="GitOps & ArgoCD" href="/concepts/gitops-argocd">
+    App of Apps pattern, infra facts, Helm values.
+  </Card>
+  <Card title="Release System" href="/concepts/release-system">
+    release-please, GoReleaser, Docker builds, CI/CD.
+  </Card>
+</Cards>
+
+## Monorepo Structure
+
+```
+bb-thesis-2026/
+├── apps/
+│   ├── console/          # Next.js web platform
+│   ├── cli/              # Go CLI tool
+│   ├── runner/           # Go execution agent
+│   └── docs/             # Documentation site (Fumadocs)
+├── packages/
+│   ├── core/       # Shared Go libraries
+│   ├── ui/               # Shared UI components
+│   ├── charts/           # Helm charts
+│   └── ...config/        # Shared TS/ESLint config
+├── infra/
+│   ├── platform/         # Runner deployment (ECR, ECS, Lambda scaler)
+│   ├── templates/spec/   # Infrastructure templates (AWS/GCP/Azure)
+│   ├── templates/argocd/ # ArgoCD application templates
+│   └── onboarding/       # Cloud provider federation setup
+├── supabase/migrations/  # PostgreSQL schema migrations
+└── .github/workflows/    # CI/CD (release-please, release-alethia, release-runner)
+```

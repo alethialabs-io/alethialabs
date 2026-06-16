@@ -1,0 +1,46 @@
+---
+title: Spec Commands
+description: List and inspect infrastructure configurations from the CLI.
+---
+
+# Spec Commands
+
+Specs are infrastructure configurations within a zone. These commands are read-only — to create Specs, use the [Design a Spec](/console/design-spec) form in Alethia.
+
+## `alethia spec list`
+
+List all Specs, optionally filtered by zone.
+
+```bash
+alethia spec list [--zone-id <id>]
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--zone-id` | No | Filter to a specific zone |
+
+Output:
+
+```
+ID            PROJECT         PROVIDER  REGION      ENV         STATUS
+a1b2...       api-backend     aws       eu-west-1   production  ACTIVE
+c3d4...       data-pipeline   gcp       us-east4    staging     DRAFT
+```
+
+## `alethia spec get`
+
+Get detailed information about a specific Spec.
+
+```bash
+alethia spec get --id <spec-id>
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--id` | Yes | Spec UUID |
+
+Shows the full Spec configuration including:
+- Project name, provider, region, environment
+- Status and estimated monthly cost
+- Component summary (network, cluster, databases, caches, etc.)
+- Cloud identity reference

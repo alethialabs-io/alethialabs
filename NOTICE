@@ -1,0 +1,26 @@
+Alethia Labs
+Copyright (c) 2026-present Alethia Labs OÜ. All rights reserved.
+
+This product is developed and owned by Alethia Labs OÜ (Estonia).
+
+The core of this software is licensed under the GNU Affero General Public License
+v3.0 ("AGPL-3.0-only"). Certain features under the "ee/" directory are licensed
+commercially ("LicenseRef-Alethia-Commercial"). See LICENSE and LICENSING.md.
+
+================================================================================
+Third-party components
+================================================================================
+
+This software incorporates third-party open-source components, each under its own
+license. Notable bundled or vendored components include:
+
+  * HashiCorp Terraform, providers, and modules — licensed by HashiCorp under the
+    Business Source License / Mozilla Public License 2.0, as applicable.
+  * Vendored Terraform "valkey" module
+    (infra/templates/vine/aws/modules/valkey/) — Apache License 2.0.
+  * Node.js, Go, and JavaScript/TypeScript dependencies — each under the license
+    declared in its own package metadata (package.json / go.mod / *.dist-info).
+
+Full texts of the licenses referenced by this repository are kept under the
+LICENSES/ directory. This NOTICE file is provided for attribution and does not
+modify any license.

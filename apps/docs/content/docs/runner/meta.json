@@ -1,0 +1,16 @@
+{
+  "title": "Runner (Agent)",
+  "icon": "Waypoints",
+  "root": true,
+  "pages": [
+    "index",
+    "architecture",
+    "job-execution",
+    "cloud-credentials",
+    "log-streaming",
+    "scale-to-zero",
+    "self-hosted",
+    "infrastructure-templates",
+    "core"
+  ]
+}

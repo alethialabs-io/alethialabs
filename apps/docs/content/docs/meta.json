@@ -1,0 +1,11 @@
+{
+  "title": "Documentation",
+  "root": true,
+  "pages": [
+    "index",
+    "console",
+    "cli",
+    "runner",
+    "concepts"
+  ]
+}

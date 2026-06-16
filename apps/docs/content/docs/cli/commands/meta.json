@@ -1,0 +1,12 @@
+{
+  "title": "Commands",
+  "pages": [
+    "index",
+    "zone",
+    "spec",
+    "plan-and-apply",
+    "jobs",
+    "workers",
+    "clusters"
+  ]
+}

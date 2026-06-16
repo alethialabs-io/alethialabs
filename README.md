@@ -1,18 +1,22 @@
-# ADP ItGix Platform
+# Alethia Labs
 
-An internal developer platform for provisioning and managing multi-cloud infrastructure through a web control plane and CLI, backed by GitOps reconciliation.
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-Built by **Borislav Borisov** — [GitHub](https://github.com/bobikenobi12) · [LinkedIn](https://www.linkedin.com/in/bbor1sov)
+An open-source, multi-cloud internal developer platform for provisioning and managing infrastructure through a web control plane and CLI, backed by GitOps reconciliation.
+
+© 2026 **Alethia Labs OÜ** — open core ([see Licensing](#licensing)). Maintained by [Borislav Borisov](https://github.com/bobikenobi12) ([LinkedIn](https://www.linkedin.com/in/bbor1sov)).
+
+> Some internal component names — the `Alethia` control-plane app, the `alethia` CLI, and `core` — are codenames retained from earlier development and will be renamed in a later pass. The product is **Alethia Labs**.
 
 ## Architecture
 
 | Component | Role |
 | --- | --- |
-| **Trellis** (`apps/trellis`) | Web control plane — Next.js dashboard, Supabase state store, auth, configuration management, job orchestration |
-| **Grape** (`apps/grape`) | Go CLI — authentication, vineyard/vine management, plan/deploy/destroy operations, worker registration |
-| **Tendril** (`apps/tendril`) | Go worker — claims provisioning jobs from the queue, executes Terraform, streams logs back to Trellis |
-| **Grape-Core** (`packages/grape-core`) | Shared Go library — cloud provider interfaces, embedded Terraform templates, config types |
-| **Vintner** (`apps/vintner`) | Documentation site (Next.js / Fumadocs) |
+| **Alethia** (`apps/console`) | Web control plane — Next.js dashboard, Supabase state store, auth, configuration management, job orchestration |
+| **alethia** (`apps/cli`) | Go CLI — authentication, vineyard/vine management, plan/deploy/destroy operations, worker registration |
+| **Runner** (`apps/runner`) | Go worker — claims provisioning jobs from the queue, executes Terraform, streams logs back to Alethia |
+| **core** (`packages/core`) | Shared Go library — cloud provider interfaces, embedded Terraform templates, config types |
+| **docs** (`apps/docs`) | Documentation site (Next.js / Fumadocs) |
 | **ArgoCD** | In-cluster GitOps reconciler installed during bootstrap |
 
 ## Tech Stack
@@ -31,12 +35,12 @@ Built by **Borislav Borisov** — [GitHub](https://github.com/bobikenobi12) · [
 
 ```
 apps/
-  trellis/           — Web control plane (Next.js + Supabase)
-  grape/             — CLI (Go + Cobra + Charmbracelet)
-  tendril/           — Provisioning worker (Go)
-  vintner/           — Documentation site (Fumadocs)
+  console/           — Web control plane (Next.js + Supabase)
+  alethia/             — CLI (Go + Cobra + Charmbracelet)
+  runner/           — Provisioning worker (Go)
+  docs/           — Documentation site (Fumadocs)
 packages/
-  grape-core/        — Shared Go library (cloud providers, Terraform templates)
+  core/        — Shared Go library (cloud providers, Terraform templates)
   ui/                — Shared React component library
   charts/            — Helm charts
   eslint-config/     — ESLint configurations
@@ -62,14 +66,33 @@ spec/
 - Turborepo (`npm i -g turbo`)
 - Supabase CLI (`brew install supabase/tap/supabase`)
 
-### Install Grape CLI (Homebrew)
+### Install the `alethia` CLI
+
+**macOS / Linux** (`curl`):
 
 ```bash
-brew tap bobikenobi12/bb-thesis-2026 https://github.com/bobikenobi12/bb-thesis-2026
-brew install grape
+curl -fsSL https://get.alethialabs.io | sh
 ```
 
-If the repository is private, ensure your local Git environment is authenticated with GitHub (e.g. `export HOMEBREW_GITHUB_API_TOKEN=your_token`).
+**Windows** (PowerShell):
+
+```powershell
+irm https://get.alethialabs.io/install.ps1 | iex
+```
+
+**Homebrew** (macOS / Linux):
+
+```bash
+brew install alethialabs-io/alethialabs/alethia
+```
+
+**Docker**:
+
+```bash
+docker run --rm ghcr.io/alethialabs-io/alethia --version
+```
+
+Pin a version with `ALETHIA_VERSION=v0.2.0` (curl/PowerShell). While the repository is private (pre-launch), set `GITHUB_TOKEN` first for the curl/PowerShell installers, and `HOMEBREW_GITHUB_API_TOKEN` for Homebrew.
 
 ### Development
 
@@ -78,11 +101,11 @@ If the repository is private, ensure your local Git environment is authenticated
 turbo dev
 
 # Specific app
-turbo dev --filter=trellis
-turbo dev --filter=vintner
+turbo dev --filter=console
+turbo dev --filter=docs
 
-# Grape CLI (Go)
-cd apps/grape && go run .
+# alethia CLI (Go)
+cd apps/cli && go run .
 ```
 
 ### Build
@@ -94,27 +117,37 @@ turbo build
 ### Test
 
 ```bash
-# Trellis unit tests
-pnpm -F trellis test
+# Alethia unit tests
+pnpm -F console test
 
-# Trellis E2E
-pnpm -F trellis test:e2e
+# Alethia E2E
+pnpm -F console test:e2e
 
 # Go tests
-cd apps/grape && go test ./...
+cd apps/cli && go test ./...
 ```
 
 ## Infrastructure
 
 The `infra/` directory contains all Terraform configurations:
 
-- **`platform/`** — Core platform infrastructure: ECR container registry, ECS Fargate tendril workers (multi-region), Lambda auto-scaler (EventBridge-triggered, checks job queue depth every minute)
+- **`platform/`** — Core platform infrastructure: ECR container registry, ECS Fargate node workers (multi-region), Lambda auto-scaler (EventBridge-triggered, checks job queue depth every minute)
 - **`templates/vine/`** — Per-cloud IaC templates applied into user accounts (AWS EKS, GCP GKE, Azure AKS with associated networking, databases, and security groups)
-- **`templates/tendril/`** — Self-hosted worker deployment template
+- **`templates/node/`** — Self-hosted worker deployment template
 - **`onboarding/`** — Cloud account bootstrap (IAM cross-account roles for AWS, workload identity federation for GCP, federated identity for Azure)
 
 ## Documentation
 
-- [Vintner docs site](./apps/vintner/) — hosted documentation portal
+- [docs docs site](./apps/docs/) — hosted documentation portal
 - [Feature specs](./spec/features/) — active project documentation
 - [Thesis chapters](./spec/thesis/) — academic reference
+
+## Licensing
+
+Alethia Labs is **open core**:
+
+- The core is licensed under the GNU Affero General Public License v3.0 (`AGPL-3.0-only`) — see [`LICENSE`](./LICENSE).
+- Cloud / enterprise features under [`ee/`](./ee/) are commercially licensed (`LicenseRef-Alethia-Commercial`); production use requires a subscription.
+- A directory-by-directory map is in [`LICENSING.md`](./LICENSING.md); third-party attributions are in [`NOTICE`](./NOTICE).
+
+Contributions require signing our [CLA](./cla/) — see [`CONTRIBUTING.md`](./CONTRIBUTING.md). © 2026 Alethia Labs OÜ.

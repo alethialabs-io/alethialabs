@@ -1,6 +1,6 @@
 apiVersion: v2
 name: tendril
-description: The Grape Platform Agent
+description: The Alethia Runner Agent
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

@@ -1,0 +1,90 @@
+---
+title: Authentication
+description: Device Authorization Grant flow, token storage, and automatic refresh.
+---
+
+# Authentication
+
+alethia uses the **Device Authorization Grant** (RFC 8628) for authentication. You never type a password in the terminal. For the full technical details, see [Authentication Flows](/concepts/authentication).
+
+## Login
+
+```bash
+alethia login
+```
+
+<Steps>
+
+### CLI generates device code
+A UUID identifying this login attempt.
+
+### Browser opens
+Navigates to `{console_url}/cli/login?device_code={code}`.
+
+### Authenticate in browser
+Log in with any OAuth provider (GitHub, GitLab, Bitbucket, Google). A 6-character verification code is displayed.
+
+### Enter code in CLI
+Type the code at the Bubble Tea TUI prompt. The CLI shows a spinner while waiting.
+
+### Token exchange
+CLI sends the device code + verification code to Alethia. On success, receives a JWT pair (access + refresh).
+
+### Tokens stored
+Saved to `~/.config/alethia/auth.json`.
+
+</Steps>
+
+### Force Re-authentication
+
+```bash
+alethia login --force
+```
+
+Re-authenticates even if a valid token already exists. Useful when switching accounts.
+
+## Logout
+
+```bash
+alethia logout
+```
+
+Removes `~/.config/alethia/auth.json`.
+
+## Token Lifecycle
+
+| Token | TTL | Purpose |
+|-------|-----|---------|
+| Access token | 1 hour | `Authorization: Bearer` header on API calls |
+| Refresh token | 90 days | Obtain new access tokens transparently |
+
+Before each API call, alethia checks the access token's expiry. If expired, it refreshes automatically via `POST /api/auth/cli/refresh`. The user never notices.
+
+## Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ALETHIA_WEB_ORIGIN` | Production URL (baked at build) | Override the Alethia API URL |
+
+```bash
+export ALETHIA_WEB_ORIGIN=http://localhost:3000
+alethia login  # authenticates against local dev server
+```
+
+## Token Storage
+
+```
+~/.config/alethia/auth.json
+```
+
+```json
+{
+  "access_token": "eyJ...",
+  "refresh_token": "eyJ...",
+  "expires_at": "2026-06-02T15:30:00Z"
+}
+```
+
+<Callout type="warn">
+This file contains authentication tokens. It is not encrypted — protect it with filesystem permissions (created with `0600` by default).
+</Callout>

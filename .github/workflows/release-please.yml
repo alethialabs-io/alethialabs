@@ -13,12 +13,12 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     outputs:
-      tendril-released: ${{ steps.release.outputs['apps/tendril--release_created'] }}
-      tendril-version: ${{ steps.release.outputs['apps/tendril--version'] }}
-      tendril-tag: ${{ steps.release.outputs['apps/tendril--tag_name'] }}
-      grape-released: ${{ steps.release.outputs['apps/grape--release_created'] }}
-      grape-version: ${{ steps.release.outputs['apps/grape--version'] }}
-      grape-tag: ${{ steps.release.outputs['apps/grape--tag_name'] }}
+      runner-released: ${{ steps.release.outputs['apps/runner--release_created'] }}
+      runner-version: ${{ steps.release.outputs['apps/runner--version'] }}
+      runner-tag: ${{ steps.release.outputs['apps/runner--tag_name'] }}
+      alethia-released: ${{ steps.release.outputs['apps/cli--release_created'] }}
+      alethia-version: ${{ steps.release.outputs['apps/cli--version'] }}
+      alethia-tag: ${{ steps.release.outputs['apps/cli--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -26,18 +26,19 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  release-tendril:
+  release-runner:
     needs: release-please
-    if: needs.release-please.outputs.tendril-released == 'true'
-    uses: ./.github/workflows/release-tendril.yml
+    if: needs.release-please.outputs.runner-released == 'true'
+    uses: ./.github/workflows/release-runner.yml
     with:
-      version: ${{ needs.release-please.outputs.tendril-version }}
+      version: ${{ needs.release-please.outputs.runner-version }}
     secrets: inherit
 
-  release-grape:
+  release-alethia:
     needs: release-please
-    if: needs.release-please.outputs.grape-released == 'true'
-    uses: ./.github/workflows/release-grape.yml
+    if: needs.release-please.outputs.alethia-released == 'true'
+    uses: ./.github/workflows/release-alethia.yml
     with:
-      version: ${{ needs.release-please.outputs.grape-version }}
+      version: ${{ needs.release-please.outputs.alethia-version }}
+      tag: ${{ needs.release-please.outputs.alethia-tag }}
     secrets: inherit

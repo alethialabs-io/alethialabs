@@ -1,0 +1,59 @@
+---
+title: Destroy Jobs
+description: How Runner executes DESTROY jobs — terraform destroy with state cleanup.
+---
+
+# Destroy Jobs
+
+DESTROY jobs tear down all infrastructure provisioned by a spec.
+
+## Execution Flow
+
+<Steps>
+
+### Assume cloud credentials
+Same as other job types.
+
+### terraform init
+Initializes with the S3 backend to download the existing state file.
+
+### terraform destroy
+```bash
+terraform destroy -auto-approve
+```
+Removes all resources tracked in the Terraform state. No confirmation prompt — the user already confirmed via the UI or CLI.
+
+### State cleanup
+The state file in Supabase S3 is left in place (empty or minimal) for audit purposes.
+
+### Report results
+Job status → SUCCESS. Spec status is set to `DESTROYED`.
+
+</Steps>
+
+## Partial Destroy Recovery
+
+If the destroy fails mid-way (e.g., resource dependency, timeout):
+
+1. Terraform state reflects which resources were already destroyed
+2. The job is marked FAILED with the error message
+3. User retries — the next destroy only attempts the remaining resources
+4. This continues until all resources are removed
+
+## What Gets Destroyed
+
+Everything provisioned by the spec:
+- VPC/VNet and all networking resources (subnets, NAT gateways, security groups)
+- Kubernetes cluster (EKS/GKE/AKS) and node groups
+- Databases (Aurora/Cloud SQL/Azure Database instances)
+- Caches (ElastiCache/Memorystore/Azure Cache)
+- NoSQL tables, queues, topics
+- Container registries
+- Secrets
+- DNS records and certificates
+- WAF rules
+- IAM roles (IRSA)
+
+<Callout type="warn">
+Destroy is permanent for stateful resources. Database data, cache contents, and secret values are **lost**. Terraform state is preserved so re-apply is possible, but the data is gone.
+</Callout>

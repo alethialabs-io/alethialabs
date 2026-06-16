@@ -1,10 +1,10 @@
 # Terraform Golden Template — Bug Fixes & Supabase Backend
 
-Audit and hardening of the `terraform/` golden template that deploys Grape workers on ECS Fargate.
+Audit and hardening of the `terraform/` golden template that deploys Alethia workers on ECS Fargate.
 
 ## Background & Motivation
 
-The golden template is shipped to users as the canonical way to deploy a Grape worker. A review found a critical IAM bug (container fails to start), plaintext secrets committed to git, and several hardening gaps that make the template unsafe for production use. Additionally, the project already relies on Supabase — using Supabase S3-compatible storage for Terraform state eliminates the AWS S3 dependency.
+The golden template is shipped to users as the canonical way to deploy an Alethia worker. A review found a critical IAM bug (container fails to start), plaintext secrets committed to git, and several hardening gaps that make the template unsafe for production use. Additionally, the project already relies on Supabase — using Supabase S3-compatible storage for Terraform state eliminates the AWS S3 dependency.
 
 ## Findings
 

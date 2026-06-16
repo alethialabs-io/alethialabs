@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 420" width="100%" fill="none">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#52525B"/></marker>
+  </defs>
+  <rect width="820" height="420" rx="12" fill="#18181B"/>
+  <rect x="0.5" y="0.5" width="819" height="419" rx="12" fill="none" stroke="#3F3F46"/>
+  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Authentication Flows — Three Components, Three Mechanisms</text>
+
+  <!-- Web Lane -->
+  <rect x="20" y="56" width="254" height="340" rx="8" fill="none" stroke="#22C55E30"/>
+  <rect x="20" y="56" width="254" height="28" rx="8" fill="#22C55E10"/>
+  <rect x="20" y="78" width="254" height="1" fill="#22C55E30"/>
+  <text x="147" y="74" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#22C55E">Web (Console)</text>
+
+  <rect x="40" y="96" width="214" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="147" y="117" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Click OAuth provider button</text>
+  <line x1="147" y1="130" x2="147" y2="146" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="40" y="150" width="214" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="147" y="171" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Redirect → GitHub/GitLab/…</text>
+  <line x1="147" y1="184" x2="147" y2="200" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="40" y="204" width="214" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="147" y="225" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Callback → exchange code</text>
+  <line x1="147" y1="238" x2="147" y2="254" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="40" y="258" width="214" height="34" rx="6" fill="#27272A" stroke="#22C55E50"/>
+  <text x="147" y="279" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#22C55E">Supabase session (JWT)</text>
+  <line x1="147" y1="292" x2="147" y2="308" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="40" y="312" width="214" height="40" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="147" y="330" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Stored in: HTTP-only cookie</text>
+  <text x="147" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Lifetime: auto-refresh</text>
+
+  <!-- CLI Lane -->
+  <rect x="284" y="56" width="252" height="340" rx="8" fill="none" stroke="#8B5CF630"/>
+  <rect x="284" y="56" width="252" height="28" rx="8" fill="#8B5CF610"/>
+  <rect x="284" y="78" width="252" height="1" fill="#8B5CF630"/>
+  <text x="410" y="74" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#8B5CF6">CLI (Alethia)</text>
+
+  <rect x="304" y="96" width="212" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="410" y="117" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">alethia login → open browser</text>
+  <line x1="410" y1="130" x2="410" y2="146" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="304" y="150" width="212" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="410" y="171" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">User authenticates in browser</text>
+  <line x1="410" y1="184" x2="410" y2="200" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="304" y="204" width="212" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="410" y="225" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Enter 6-char code in CLI</text>
+  <line x1="410" y1="238" x2="410" y2="254" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="304" y="258" width="212" height="34" rx="6" fill="#27272A" stroke="#8B5CF650"/>
+  <text x="410" y="279" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#8B5CF6">Exchange → CLI JWT</text>
+  <line x1="410" y1="292" x2="410" y2="308" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="304" y="312" width="212" height="40" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="410" y="330" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Stored in: ~/.config/alethia/auth.json</text>
+  <text x="410" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Access: 1h · Refresh: 90d</text>
+
+  <!-- Runner Lane -->
+  <rect x="546" y="56" width="254" height="340" rx="8" fill="none" stroke="#F59E0B30"/>
+  <rect x="546" y="56" width="254" height="28" rx="8" fill="#F59E0B10"/>
+  <rect x="546" y="78" width="254" height="1" fill="#F59E0B30"/>
+  <text x="673" y="74" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#F59E0B">Agent (Runner)</text>
+
+  <rect x="566" y="96" width="214" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="673" y="117" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Registration → get token</text>
+  <line x1="673" y1="130" x2="673" y2="146" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="566" y="150" width="214" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="673" y="171" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">SHA-256 hash stored in DB</text>
+  <line x1="673" y1="184" x2="673" y2="200" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="566" y="204" width="214" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="673" y="225" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Send X-Worker-ID + Token</text>
+  <line x1="673" y1="238" x2="673" y2="254" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="566" y="258" width="214" height="34" rx="6" fill="#27272A" stroke="#F59E0B50"/>
+  <text x="673" y="279" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#F59E0B">Server verifies hash match</text>
+  <line x1="673" y1="292" x2="673" y2="308" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="566" y="312" width="214" height="40" rx="6" fill="#27272A" stroke="#3F3F46"/>
+  <text x="673" y="330" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Stored in: env variable</text>
+  <text x="673" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Lifetime: permanent (re-register)</text>
+</svg>

@@ -17,7 +17,7 @@ data "archive_file" "lambda" {
 
 resource "aws_lambda_function" "scaler" {
   function_name    = "${var.name_prefix}-scaler"
-  description      = "Scale ECS tendrils based on queued provision jobs"
+  description      = "Scale ECS nodes based on queued provision jobs"
   filename         = data.archive_file.lambda.output_path
   source_code_hash = data.archive_file.lambda.output_base64sha256
   handler          = "index.handler"
@@ -38,7 +38,7 @@ resource "aws_lambda_function" "scaler" {
   }
 }
 
-# ---------- Function URL (direct invoke from Trellis) ----------
+# ---------- Function URL (direct invoke from Alethia) ----------
 
 resource "aws_lambda_function_url" "scaler" {
   function_name      = aws_lambda_function.scaler.function_name

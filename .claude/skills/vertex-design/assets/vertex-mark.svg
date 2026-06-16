@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img" aria-label="Vertex">
-
-  <path d="M4 25.5 L16 6 L28 25.5" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"></path>
-  <path d="M10.5 25.5 L16 16.5 L21.5 25.5" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" opacity="0.4"></path>
-  <rect x="13.4" y="3.4" width="5.2" height="5.2" rx="1.1" transform="rotate(45 16 6)" fill="currentColor"></rect>
-</svg>

@@ -1,0 +1,99 @@
+---
+title: Cost Estimation
+description: How the platform estimates infrastructure costs in real-time and via Infracost analysis.
+---
+
+# Cost Estimation
+
+The platform provides two layers of cost estimation: a **real-time cost sidebar** during Spec configuration, and a **post-plan Infracost analysis** for precise per-resource costs.
+
+<img src="/docs/diagrams/concepts/cost-estimation.svg" alt="Cost Estimation" />
+
+## Cost Sidebar (Real-Time)
+
+The cost sidebar appears on the right side of the Design a Spec form. As the user configures infrastructure, the estimated monthly cost updates immediately.
+
+### How Pricing Works
+
+1. When a region is selected, the `fetchPrices(region)` action fetches pricing from the AWS Pricing API
+2. Prices are cached in the Zustand store with a 24-hour TTL
+3. Each component contributes a cost line item
+
+### Pricing Sources
+
+The `getRegionPrices(region)` server action fetches:
+
+| Resource | Pricing Key | Source |
+|----------|------------|--------|
+| EKS control plane | Fixed $0.10/hour | Hardcoded |
+| EC2 instances | Per instance type | AWS Pricing API (on-demand, Linux, shared tenancy) |
+| NAT Gateway | $0.048/hour | AWS Pricing API |
+| Aurora ACU | $0.14/ACU-hour | AWS Pricing API |
+| ElastiCache nodes | Per node type | AWS Pricing API |
+| WAF web ACL | ~$5/month | Hardcoded |
+| Secrets | $0.40/secret/month | Hardcoded |
+
+### Cost Calculation
+
+```
+Monthly cost = Σ (hourly_rate × 730 hours/month)
+```
+
+Per component:
+- **Cluster**: EKS control plane ($73/mo) + node_desired_size × average_instance_rate × 730
+- **NAT Gateway**: $0.048 × count × 730 (single = 1, HA = AZ count)
+- **Database**: min_capacity × ACU_rate × 730 per instance
+- **Cache**: node_rate × num_cache_nodes × 730 per cache
+- **WAF**: $5 per enabled WAF option
+- **Secrets**: $0.40 per secret
+- **NoSQL/Queues/Topics**: $0 (usage-based, not estimable from config)
+
+### Fallback Pricing
+
+If the AWS Pricing API call fails (network error, rate limit), hardcoded fallback rates are used:
+
+```typescript
+const FALLBACK_EC2: Record<string, number> = {
+  't3.medium': 0.0416,
+  't3.large': 0.0832,
+  'm5a.large': 0.086,
+  // ...
+};
+```
+
+## Infracost Analysis (Post-Plan)
+
+After a Runner runs `terraform plan`, it optionally runs [Infracost](https://www.infracost.io/) for a precise cost breakdown based on the actual Terraform resources.
+
+### How It Works
+
+<Steps>
+
+### Terraform plan completes
+The Runner generates a plan JSON via `terraform show -json plan.tfplan`.
+
+### Infracost analyzes the plan
+If an `INFRACOST_API_KEY` is configured, the Runner runs:
+```bash
+infracost breakdown --path plan.json --format json
+```
+
+### Cost data stored
+The Infracost output is parsed and stored in the job's `execution_metadata.cost_breakdown` field.
+
+### UI displays breakdown
+The Plan tab in the Spec detail page shows per-resource costs and a total monthly estimate.
+
+</Steps>
+
+### Why Both?
+
+| | Cost Sidebar | Infracost |
+|---|---|---|
+| **When** | During form editing | After plan generation |
+| **Speed** | Instant | Requires plan job |
+| **Accuracy** | Approximate (simple formulas) | Precise (analyzes actual Terraform resources) |
+| **Scope** | Major cost drivers only | Every resource in the plan |
+| **Use case** | Quick feedback while configuring | Final review before apply |
+
+The sidebar gives instant feedback to guide decisions. Infracost gives the precise number for sign-off before deploying.
