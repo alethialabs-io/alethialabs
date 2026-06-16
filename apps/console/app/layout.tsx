@@ -25,10 +25,29 @@ const spaceGrotesk = Space_Grotesk({
 	weight: ["400", "500", "600", "700"],
 });
 
+const SITE_DESCRIPTION =
+	"Configure multi-cloud infrastructure in the browser. Deploy from the terminal.";
+
 export const metadata: Metadata = {
-	title: "Alethia",
-	description:
-		"Configure multi-cloud infrastructure in the browser. Deploy from the terminal.",
+	metadataBase: new URL("https://alethialabs.io"),
+	title: {
+		default: "Alethia",
+		template: "%s — Alethia",
+	},
+	description: SITE_DESCRIPTION,
+	applicationName: "Alethia",
+	openGraph: {
+		title: "Alethia",
+		description: SITE_DESCRIPTION,
+		url: "/",
+		siteName: "Alethia",
+		type: "website",
+	},
+	twitter: {
+		card: "summary_large_image",
+		title: "Alethia",
+		description: SITE_DESCRIPTION,
+	},
 };
 
 export default function RootLayout({
