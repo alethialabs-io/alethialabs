@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 package provisioner
@@ -15,7 +15,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
-	grapeAws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
+	alethiaAws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
 	"github.com/alethialabs-io/alethialabs/packages/core/infracost"
 	"github.com/alethialabs-io/alethialabs/packages/core/terraform"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -83,7 +83,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		fmt.Fprintln(stdout, "Running in dry-run (plan) mode")
 	}
 
-	tmpRoot, err := os.MkdirTemp("", "grape-deploy-*")
+	tmpRoot, err := os.MkdirTemp("", "alethia-deploy-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
@@ -111,7 +111,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	if !vc.Network.ProvisionNetwork && vc.Network.NetworkID != "" && provider.Name() == "aws" {
 		tfvars["vpc_id"] = vc.Network.NetworkID
 		fmt.Fprintf(stdout, "Using existing VPC %s — looking up subnets...\n", vc.Network.NetworkID)
-		ec2Client, ec2Err := grapeAws.NewEC2Client(ctx, grapeAws.AWSOptions{Region: vc.Region})
+		ec2Client, ec2Err := alethiaAws.NewEC2Client(ctx, alethiaAws.AWSOptions{Region: vc.Region})
 		if ec2Err != nil {
 			fmt.Fprintf(stderr, "Warning: failed to create EC2 client for subnet lookup: %v\n", ec2Err)
 		} else {

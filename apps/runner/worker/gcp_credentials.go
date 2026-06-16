@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 package worker
@@ -16,7 +16,7 @@ func ActivateGcpWIF(wifConfigJSON string, projectID string) (func(), error) {
 		return nil, fmt.Errorf("empty WIF config")
 	}
 
-	tmpFile, err := os.CreateTemp("", "grape-wif-*.json")
+	tmpFile, err := os.CreateTemp("", "alethia-wif-*.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}

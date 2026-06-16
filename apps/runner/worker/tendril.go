@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 package worker
@@ -16,9 +16,9 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
-	grapeAws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
-	grapeAzure "github.com/alethialabs-io/alethialabs/packages/core/cloud/azure"
-	grapeGcp "github.com/alethialabs-io/alethialabs/packages/core/cloud/gcp"
+	alethiaAws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
+	alethiaAzure "github.com/alethialabs-io/alethialabs/packages/core/cloud/azure"
+	alethiaGcp "github.com/alethialabs-io/alethialabs/packages/core/cloud/gcp"
 	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -307,7 +307,7 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 
 func (w *Worker) fetchAwsResources(ctx context.Context, logger *JobLogger) (map[string]any, error) {
 	fmt.Fprintln(logger, "Fetching enabled regions...")
-	ec2Client, err := grapeAws.NewEC2Client(ctx, grapeAws.AWSOptions{Region: "us-east-1"})
+	ec2Client, err := alethiaAws.NewEC2Client(ctx, alethiaAws.AWSOptions{Region: "us-east-1"})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create EC2 client: %w", err)
 	}
@@ -322,7 +322,7 @@ func (w *Worker) fetchAwsResources(ctx context.Context, logger *JobLogger) (map[
 	subnets := make(map[string]any)
 
 	for _, region := range regions {
-		regionalClient, err := grapeAws.NewEC2Client(ctx, grapeAws.AWSOptions{Region: region})
+		regionalClient, err := alethiaAws.NewEC2Client(ctx, alethiaAws.AWSOptions{Region: region})
 		if err != nil {
 			continue
 		}
@@ -351,16 +351,16 @@ func (w *Worker) fetchAwsResources(ctx context.Context, logger *JobLogger) (map[
 	}
 
 	fmt.Fprintln(logger, "Fetching Route53 hosted zones...")
-	r53Client, err := grapeAws.NewRoute53Client(ctx, grapeAws.AWSOptions{Region: "us-east-1"})
-	var hostedZones []grapeAws.HostedZoneInfo
+	r53Client, err := alethiaAws.NewRoute53Client(ctx, alethiaAws.AWSOptions{Region: "us-east-1"})
+	var hostedZones []alethiaAws.HostedZoneInfo
 	if err == nil {
 		hostedZones, _ = r53Client.ListHostedZones(ctx)
 	}
 	fmt.Fprintf(logger, "Found %d hosted zones\n", len(hostedZones))
 
 	fmt.Fprintln(logger, "Fetching IAM users...")
-	iamClient, err := grapeAws.NewIAMClient(ctx, grapeAws.AWSOptions{Region: "us-east-1"})
-	var iamUsers []grapeAws.IAMUserInfo
+	iamClient, err := alethiaAws.NewIAMClient(ctx, alethiaAws.AWSOptions{Region: "us-east-1"})
+	var iamUsers []alethiaAws.IAMUserInfo
 	if err == nil {
 		iamUsers, _ = iamClient.ListUsers(ctx)
 	}
@@ -377,7 +377,7 @@ func (w *Worker) fetchAwsResources(ctx context.Context, logger *JobLogger) (map[
 
 func (w *Worker) fetchGcpResources(ctx context.Context, projectID string, logger *JobLogger) (map[string]any, error) {
 	fmt.Fprintln(logger, "Fetching GCP compute regions...")
-	computeClient, err := grapeGcp.NewComputeClient(ctx, projectID)
+	computeClient, err := alethiaGcp.NewComputeClient(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create compute client: %w", err)
 	}
@@ -407,8 +407,8 @@ func (w *Worker) fetchGcpResources(ctx context.Context, projectID string, logger
 	}
 
 	fmt.Fprintln(logger, "Fetching Cloud DNS managed zones...")
-	dnsClient, err := grapeGcp.NewDNSClient(ctx, projectID)
-	var managedZones []grapeGcp.ManagedZoneInfo
+	dnsClient, err := alethiaGcp.NewDNSClient(ctx, projectID)
+	var managedZones []alethiaGcp.ManagedZoneInfo
 	if err == nil {
 		managedZones, _ = dnsClient.ListManagedZones(ctx)
 	}
@@ -424,7 +424,7 @@ func (w *Worker) fetchGcpResources(ctx context.Context, projectID string, logger
 
 func (w *Worker) fetchAzureResources(ctx context.Context, subscriptionID string, logger *JobLogger) (map[string]any, error) {
 	fmt.Fprintln(logger, "Fetching Azure locations...")
-	computeClient, err := grapeAzure.NewComputeClient(ctx, subscriptionID)
+	computeClient, err := alethiaAzure.NewComputeClient(ctx, subscriptionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Azure compute client: %w", err)
 	}
@@ -448,7 +448,7 @@ func (w *Worker) fetchAzureResources(ctx context.Context, subscriptionID string,
 		if vnet.ID == "" {
 			continue
 		}
-		parsed, parseErr := grapeAzure.ParseResourceID(vnet.ID)
+		parsed, parseErr := alethiaAzure.ParseResourceID(vnet.ID)
 		if parseErr != nil {
 			fmt.Fprintf(logger, "Warning: could not parse VNet ID %s: %v\n", vnet.ID, parseErr)
 			continue
@@ -463,8 +463,8 @@ func (w *Worker) fetchAzureResources(ctx context.Context, subscriptionID string,
 	}
 
 	fmt.Fprintln(logger, "Fetching Azure DNS zones...")
-	dnsClient, err := grapeAzure.NewDNSClient(ctx, subscriptionID)
-	var dnsZones []grapeAzure.DnsZoneInfo
+	dnsClient, err := alethiaAzure.NewDNSClient(ctx, subscriptionID)
+	var dnsZones []alethiaAzure.DnsZoneInfo
 	if err == nil {
 		dnsZones, _ = dnsClient.ListDnsZones(ctx)
 	}

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 package worker
@@ -37,7 +37,7 @@ func (w *Worker) executeDestroyWorker(ctx context.Context, job *Job, provider st
 
 	fmt.Fprintf(stdout, "Destroying worker %q (%s) in %s/%s\n", cfg.WorkerName, cfg.WorkerID[:8], cfg.CloudProvider, cfg.Region)
 
-	tmpRoot, err := os.MkdirTemp("", "grape-destroy-worker-*")
+	tmpRoot, err := os.MkdirTemp("", "alethia-destroy-worker-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}

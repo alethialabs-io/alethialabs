@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 package k8s
@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
-	grapeaws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
+	alethiaaws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 	"gopkg.in/yaml.v3"
 )
@@ -23,8 +23,8 @@ type K8sCLI struct {
 	eksClient *eks.Client
 }
 
-func NewK8sCLI(opts grapeaws.AWSOptions, dryRun bool) (*K8sCLI, error) {
-	cfg, err := grapeaws.LoadConfig(context.Background(), opts)
+func NewK8sCLI(opts alethiaaws.AWSOptions, dryRun bool) (*K8sCLI, error) {
+	cfg, err := alethiaaws.LoadConfig(context.Background(), opts)
 	if err != nil {
 		return nil, fmt.Errorf("unable to load SDK config: %w", err)
 	}
