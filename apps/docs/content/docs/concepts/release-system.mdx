@@ -1,11 +1,11 @@
 ---
 title: Build, Release & CI/CD
-description: release-please versioning, GoReleaser for Alethia, Docker builds for Tendril, and GitHub Actions workflows.
+description: release-please versioning, GoReleaser for alethia, Docker builds for Runner, and GitHub Actions workflows.
 ---
 
 # Build, Release & CI/CD
 
-Alethia CLI and Tendril (agent) are versioned and released independently using **release-please** with conventional commits. Each component has its own release workflow, tag format, and distribution channel.
+alethia CLI and Runner (agent) are versioned and released independently using **release-please** with conventional commits. Each component has its own release workflow, tag format, and distribution channel.
 
 <img src="/docs/diagrams/concepts/release-system.svg" alt="Release Pipeline" />
 
@@ -24,9 +24,9 @@ The monorepo uses release-please with `separate-pull-requests: true`, meaning ea
       "include-component-in-tag": true,
       "changelog-path": "CHANGELOG.md"
     },
-    "apps/tendril": {
+    "apps/runner": {
       "release-type": "simple",
-      "component": "tendril",
+      "component": "runner",
       "include-component-in-tag": true,
       "changelog-path": "CHANGELOG.md"
     }
@@ -36,15 +36,15 @@ The monorepo uses release-please with `separate-pull-requests: true`, meaning ea
 
 **How it works:**
 
-1. Developers write conventional commits: `feat(alethia): add vine get command`, `fix(tendril): handle nil credential`
+1. Developers write conventional commits: `feat(alethia): add spec get command`, `fix(runner): handle nil credential`
 2. On push to main, release-please analyzes commits since the last release
 3. It creates (or updates) a release PR per component with:
    - Version bump (major/minor/patch based on commit type)
    - Auto-generated CHANGELOG.md entries
-4. When merged, release-please creates a git tag (`alethia-v0.1.8` or `tendril-v0.1.0`)
+4. When merged, release-please creates a git tag (`alethia-v0.1.8` or `runner-v0.1.0`)
 5. The tag triggers the component's release workflow
 
-## Alethia Release Pipeline
+## alethia Release Pipeline
 
 **Trigger:** Push to tag matching `alethia-v*`
 
@@ -69,21 +69,21 @@ Tag push (alethia-v0.1.8)
 - `brew install bobikenobi12/bb-thesis-2026/alethia` (macOS/Linux via Homebrew)
 - Direct binary download from GitHub Releases
 
-## Tendril Release Pipeline
+## Runner Release Pipeline
 
-**Trigger:** Push to tag matching `tendril-v*`
+**Trigger:** Push to tag matching `runner-v*`
 
-**Workflow:** `.github/workflows/release-tendril.yml`
+**Workflow:** `.github/workflows/release-runner.yml`
 
 ```
-Tag push (tendril-v0.1.0)
+Tag push (runner-v0.1.0)
   └── Checkout
        └── Stage templates
-            ├── infra/templates/vine/aws → apps/tendril/vine-templates/aws
-            ├── infra/templates/vine/gcp → apps/tendril/vine-templates/gcp
-            ├── infra/templates/vine/azure → apps/tendril/vine-templates/azure
-            ├── infra/templates/tendril → apps/tendril/tendril-templates
-            └── infra/templates/argocd → apps/tendril/argocd-templates
+            ├── infra/templates/spec/aws → apps/runner/spec-templates/aws
+            ├── infra/templates/spec/gcp → apps/runner/spec-templates/gcp
+            ├── infra/templates/spec/azure → apps/runner/spec-templates/azure
+            ├── infra/templates/runner → apps/runner/runner-templates
+            └── infra/templates/argocd → apps/runner/argocd-templates
        └── Docker buildx (ARM64)
             ├── Push to AWS ECR (eu-west-1)
             └── Push to GitHub Container Registry (ghcr.io)
@@ -95,16 +95,16 @@ Tag push (tendril-v0.1.0)
 
 **Key details:**
 - **Template staging:** Infrastructure templates are copied into the Docker build context so the final image contains all Terraform modules for AWS, GCP, and Azure
-- **ARM64 only:** Tendril runs on Graviton (ARM) Fargate tasks for cost efficiency
+- **ARM64 only:** Runner runs on Graviton (ARM) Fargate tasks for cost efficiency
 - **Dual registry:** ECR for production Fargate deployment, GHCR for public access
-- **API publish:** Trellis is notified of new releases and can display version info in the UI
+- **API publish:** Console is notified of new releases and can display version info in the UI
 - **Rolling deployment:** `--force-new-deployment` triggers ECS to launch new tasks with the updated image
 
-## Tendril Dev Deployment
+## Runner Dev Deployment
 
 **Trigger:** Manual (`workflow_dispatch`)
 
-**Workflow:** `.github/workflows/deploy-tendril.yml`
+**Workflow:** `.github/workflows/deploy-runner.yml`
 
 For development/hotfix deployments without a version tag. Builds and deploys using the git SHA as the image tag instead of a semver version. Same Docker build and ECS deployment steps as the release workflow.
 
@@ -125,14 +125,14 @@ Runs `googleapis/release-please-action` which:
 ```json
 {
   "apps/cli": "0.1.7",
-  "apps/tendril": "0.0.0"
+  "apps/runner": "0.0.0"
 }
 ```
 
 ## Version Tracking in the Platform
 
-When a Tendril release is published, the Trellis API receives the version and release notes via `POST /api/releases/worker`. This creates a `worker_releases` record. Registered Tendrils reference their `release_id` so the platform can:
+When a Runner release is published, the Console API receives the version and release notes via `POST /api/releases/worker`. This creates a `worker_releases` record. Registered Runners reference their `release_id` so the platform can:
 
-- Display current version per Tendril in the UI
+- Display current version per Runner in the UI
 - Show release notes and changelogs
-- Detect outdated Tendrils
+- Detect outdated Runners

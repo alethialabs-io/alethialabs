@@ -2,9 +2,9 @@
   "title": "Commands",
   "pages": [
     "index",
-    "vineyard",
-    "vine",
-    "plan-and-harvest",
+    "zone",
+    "spec",
+    "plan-and-apply",
     "jobs",
     "workers",
     "clusters"

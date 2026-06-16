@@ -1,7 +1,7 @@
 # Alethia Labs Individual Contributor License Agreement (v1.0)
 
 Thank you for your interest in contributing to software projects owned or managed
-by **Alethia OÜ** ("Alethia", "we", or "us"). This Agreement sets out the terms
+by **Alethia Labs OÜ** ("Alethia", "we", or "us"). This Agreement sets out the terms
 under which you contribute. It protects you as a contributor and Alethia, and lets
 Alethia continue to offer the project under both open-source and commercial
 licenses.

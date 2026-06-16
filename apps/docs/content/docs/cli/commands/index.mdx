@@ -1,11 +1,11 @@
 ---
 title: Command Reference
-description: Complete reference for all Alethia CLI commands organized by group.
+description: Complete reference for all alethia CLI commands organized by group.
 ---
 
 # Command Reference
 
-Alethia provides 27 commands across 7 groups. All commands communicate with the Trellis API — they do not execute Terraform directly.
+alethia provides 27 commands across 7 groups. All commands communicate with the Alethia API — they do not execute Terraform directly.
 
 ## Command Tree
 
@@ -13,19 +13,19 @@ Alethia provides 27 commands across 7 groups. All commands communicate with the 
 alethia
 ├── login [--force]
 ├── logout
-├── vineyard
+├── zone
 │   ├── create --name <name>
 │   ├── list
 │   └── delete --id <id>
-├── vine
-│   ├── list [--vineyard-id <id>]
+├── spec
+│   ├── list [--zone-id <id>]
 │   └── get --id <id>
-├── plan [--vine-id <id>] [--worker-id <id>] [--wait]
-├── harvest [--vine-id <id>] [--worker-id <id>] [--plan-job-id <id>] [--wait]
+├── plan [--spec-id <id>] [--worker-id <id>] [--wait]
+├── apply [--spec-id <id>] [--worker-id <id>] [--plan-job-id <id>] [--wait]
 ├── destroy
-│   ├── vine --vine-id <id> [--worker-id <id>] [--wait]
+│   ├── spec --spec-id <id> [--worker-id <id>] [--wait]
 │   ├── worker --worker-id <id>
-│   └── vineyard --vineyard-id <id>
+│   └── zone --zone-id <id>
 ├── jobs
 │   ├── list
 │   ├── get --id <id>
@@ -45,7 +45,7 @@ alethia
 
 ## Interactive Selection
 
-When `--vine-id` is omitted from `plan`, `harvest`, or `destroy`, Alethia launches an interactive TUI selector. See [TUI Components](/cli/tui) for how this works.
+When `--spec-id` is omitted from `plan`, `apply`, or `destroy`, alethia launches an interactive TUI selector. See [TUI Components](/cli/tui) for how this works.
 
 ## Common Patterns
 
@@ -53,22 +53,22 @@ When `--vine-id` is omitted from `plan`, `harvest`, or `destroy`, Alethia launch
 
 ```bash
 # 1. Plan
-alethia plan --vine-id <id>
+alethia plan --spec-id <id>
 # Note the job ID from output
 
 # 2. Stream logs to review
 alethia jobs logs --id <plan-job-id> --follow
 
 # 3. Apply
-alethia harvest --vine-id <id> --plan-job-id <plan-job-id>
+alethia apply --spec-id <id> --plan-job-id <plan-job-id>
 ```
 
 ### Scripting with --wait
 
 ```bash
 # Block until plan completes, then apply
-alethia plan --vine-id <id> --wait
-alethia harvest --vine-id <id> --plan-job-id <id> --wait
+alethia plan --spec-id <id> --wait
+alethia apply --spec-id <id> --plan-job-id <id> --wait
 ```
 
 ### Log Tailing

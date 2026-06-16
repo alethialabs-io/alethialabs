@@ -19,7 +19,7 @@
   <!-- CLAIMED -->
   <rect x="180" y="80" width="130" height="60" rx="8" fill="#27272A" stroke="#8B5CF6" stroke-width="1.5"/>
   <text x="245" y="106" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#8B5CF6">CLAIMED</text>
-  <text x="245" y="124" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Tendril locks job</text>
+  <text x="245" y="124" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Runner locks job</text>
 
   <!-- FOR UPDATE SKIP LOCKED annotation -->
   <rect x="165" y="155" width="160" height="40" rx="6" fill="#8B5CF610" stroke="#8B5CF640" stroke-dasharray="3 3"/>
@@ -64,7 +64,7 @@
   <line x1="150" y1="292" x2="168" y2="292" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
   <rect x="176" y="274" width="120" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="236" y="296" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Tendril Claims</text>
+  <text x="236" y="296" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Runner Claims</text>
   <line x1="296" y1="292" x2="314" y2="292" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
   <rect x="322" y="274" width="120" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>

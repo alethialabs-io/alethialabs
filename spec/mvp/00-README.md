@@ -44,6 +44,7 @@ The four pillars: zero-trust remote provisioning (shipped) · self-hostability (
 | 15 | [15-mvp-scope-milestones](15-mvp-scope-milestones.md) | Scope, milestones, risk register | ✅ |
 | 16 | [16-market-and-fundraising](16-market-and-fundraising.md) | TAM/SAM/SOM, comparables, the raise + GTM | ✅ |
 | 17 | [17-cost-model-and-pricing](17-cost-model-and-pricing.md) | Infra-grounded COGS, unit economics, pricing tiers | ✅ |
+| 18 | [18-repo-structure-and-naming](18-repo-structure-and-naming.md) | Repo structure + the lexicon↔code mapping | ✅ |
 | A | [A-rename-lexicon](A-rename-lexicon.md) | Terminology standard + rename migration map | ✅ |
 
 ⭐ = the three docs carrying the core thesis (self-hostability, enterprise auth, integrations).

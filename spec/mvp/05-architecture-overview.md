@@ -1,6 +1,6 @@
 # 05 — Architecture Overview
 
-System topology, the control/execution split, the two-axis provider model, and the data model — in the Alethia lexicon. Deep dives: self-hosting [06](06-self-hosting-architecture.md), authz [07](07-auth-rbac-sso.md), providers [09](09-multi-cloud-cluster-strategies.md).
+System topology, the control/execution split, the two-axis provider model, and the data model — in the Alethia lexicon. Deep dives: self-hosting [06](06-self-hosting-architecture.md), authz [07](07-auth-rbac-sso.md), providers [09](09-multi-cloud-cluster-strategies.md), repo structure & naming [18](18-repo-structure-and-naming.md).
 
 ## Topology
 

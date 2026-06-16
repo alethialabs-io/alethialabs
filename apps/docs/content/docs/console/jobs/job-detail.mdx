@@ -14,7 +14,7 @@ The job detail page (`/dashboard/jobs/{id}`) shows the full execution state of a
 - Status badge (animated for PROCESSING)
 - Duration (elapsed time, updates live)
 - Job ID (first 8 chars, copyable)
-- Assigned Tendril name
+- Assigned Runner name
 - Created timestamp
 - Action buttons
 
@@ -26,7 +26,7 @@ A full-height, monospace, auto-scrolling log area showing Terraform output in re
 - **STDERR** — errors and warnings (red)
 - **SYSTEM** — platform messages like "Assuming IAM role..." (blue)
 
-Logs are streamed via Supabase Realtime subscription on `provision_job_logs` INSERT events, filtered by `job_id`. New chunks appear within ~2–3 seconds of the Tendril writing them.
+Logs are streamed via Supabase Realtime subscription on `provision_job_logs` INSERT events, filtered by `job_id`. New chunks appear within ~2–3 seconds of the Runner writing them.
 
 Auto-scroll pins to the bottom as new logs arrive. Scrolling up manually disables auto-scroll until the user scrolls back to the bottom.
 
@@ -35,15 +35,15 @@ Auto-scroll pins to the bottom as new logs arrive. Scrolling up manually disable
 Three expandable sections below the logs:
 
 - **Job Details** — full metadata (ID, type, status, worker, all timestamps)
-- **Config Snapshot** — the vine configuration at time of job creation (JSON)
+- **Config Snapshot** — the spec configuration at time of job creation (JSON)
 - **Execution Metadata** — Terraform outputs, cost data, cluster info (JSON)
 
 ## Actions
 
 | Button | When Visible | Effect |
 |--------|-------------|--------|
-| **Cancel** | QUEUED or PROCESSING | Sets status to CANCELLED, Tendril terminates gracefully |
-| **Apply** | PLAN job with SUCCESS status | Opens Tendril Select Popover → creates DEPLOY job |
+| **Cancel** | QUEUED or PROCESSING | Sets status to CANCELLED, Runner terminates gracefully |
+| **Apply** | PLAN job with SUCCESS status | Opens Runner Select Popover → creates DEPLOY job |
 | **Re-run** | Any terminal status (SUCCESS, FAILED, CANCELLED) | Creates a new job with the same configuration |
 
 ## Status Polling

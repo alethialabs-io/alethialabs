@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 export function getSection(path: string | undefined) {
-	if (!path) return "trellis";
+	if (!path) return "console";
 	const [dir] = path.split("/", 1);
-	if (!dir) return "trellis";
+	if (!dir) return "console";
 	return (
 		{
-			trellis: "trellis",
+			console: "console",
 			cli: "cli",
-			tendril: "tendril",
+			runner: "runner",
 			concepts: "concepts",
-		}[dir] ?? "trellis"
+		}[dir] ?? "console"
 	);
 }

@@ -23,8 +23,14 @@ const config = {
 			// CLI docs renamed grape -> cli
 			{ source: "/grape", destination: "/cli", permanent: true },
 			{ source: "/grape/:path*", destination: "/cli/:path*", permanent: true },
-			// Shared Go package renamed grape-core -> core
-			{ source: "/tendril/grape-core", destination: "/tendril/core", permanent: true },
+			// Platform docs renamed trellis -> console
+			{ source: "/trellis", destination: "/console", permanent: true },
+			{ source: "/trellis/:path*", destination: "/console/:path*", permanent: true },
+			// Worker/agent docs renamed tendril -> runner
+			{ source: "/tendril", destination: "/runner", permanent: true },
+			{ source: "/tendril/:path*", destination: "/runner/:path*", permanent: true },
+			// Shared Go package renamed grape-core -> core (now under runner/)
+			{ source: "/runner/grape-core", destination: "/runner/core", permanent: true },
 		];
 	},
 };

@@ -1,6 +1,6 @@
 ---
 title: Authentication Flows
-description: OAuth for web, Device Code Grant for CLI, and token-based auth for Tendrils.
+description: OAuth for web, Device Code Grant for CLI, and token-based auth for Runners.
 ---
 
 # Authentication Flows
@@ -9,9 +9,9 @@ The platform has three distinct authentication mechanisms — one for each compo
 
 <img src="/docs/diagrams/concepts/authentication.svg" alt="Authentication Flows" />
 
-## Web Authentication (Trellis)
+## Web Authentication (Console)
 
-Trellis uses **Supabase GoTrue** with OAuth providers:
+Console uses **Supabase GoTrue** with OAuth providers:
 
 | Provider | Method |
 |----------|--------|
@@ -48,9 +48,9 @@ Supabase creates a session with a JWT. The JWT is stored in an HTTP-only cookie 
 - All database queries use the authenticated Supabase client, inheriting RLS context
 - `auth.uid()` in RLS policies ensures per-user data isolation
 
-## CLI Authentication (Alethia)
+## CLI Authentication (alethia)
 
-Alethia uses the **Device Authorization Grant** (RFC 8628) — the same pattern used by GitHub CLI, Azure CLI, and AWS SSO.
+alethia uses the **Device Authorization Grant** (RFC 8628) — the same pattern used by GitHub CLI, Azure CLI, and AWS SSO.
 
 ### Why Device Code?
 
@@ -63,16 +63,16 @@ Alethia uses the **Device Authorization Grant** (RFC 8628) — the same pattern 
 <Steps>
 
 ### CLI generates device code
-`alethia login` generates a UUID device code and opens the browser to `{trellis_url}/cli/login?device_code={code}`.
+`alethia login` generates a UUID device code and opens the browser to `{console_url}/cli/login?device_code={code}`.
 
 ### User authenticates in browser
-The user is already logged into Trellis (or logs in via OAuth). The CLI login page shows a 6-character verification code.
+The user is already logged into Console (or logs in via OAuth). The CLI login page shows a 6-character verification code.
 
 ### User enters code in CLI
 The user types the verification code at the Bubble Tea TUI prompt.
 
 ### Token exchange
-The CLI sends `POST /api/auth/cli/exchange` with the device code and verification code. Trellis validates the pair and returns a CLI-specific JWT.
+The CLI sends `POST /api/auth/cli/exchange` with the device code and verification code. Console validates the pair and returns a CLI-specific JWT.
 
 ### Token stored locally
 The refresh token is saved to `~/.config/alethia/auth.json`. The access token (1-hour TTL) is used for API calls. When it expires, the CLI transparently refreshes via `POST /api/auth/cli/refresh`.
@@ -97,13 +97,13 @@ CLI tokens are signed with HS256 using `CLI_JWT_SECRET`:
 - **Access token**: 1-hour TTL, used in `Authorization: Bearer` header
 - **Refresh token**: 90-day TTL, used only to obtain new access tokens
 
-## Tendril Authentication
+## Runner Authentication
 
-Tendrils authenticate with Trellis using **token-based auth** via HTTP headers.
+Runners authenticate with Console using **token-based auth** via HTTP headers.
 
 ### Registration
 
-When a Tendril is registered (via UI or CLI), the server:
+When a Runner is registered (via UI or CLI), the server:
 
 1. Generates a random token
 2. Hashes it with SHA-256
@@ -112,7 +112,7 @@ When a Tendril is registered (via UI or CLI), the server:
 
 ### Request Authentication
 
-Every Tendril API call includes two headers:
+Every Runner API call includes two headers:
 
 ```
 X-Worker-ID: {worker-uuid}
@@ -126,13 +126,13 @@ The server:
 4. Rejects if mismatch (401)
 
 <Callout type="warn">
-The plaintext token is shown only once at registration. If lost, the Tendril must be re-registered. This is intentional — it prevents token reuse and ensures tokens are not stored in a recoverable location.
+The plaintext token is shown only once at registration. If lost, the Runner must be re-registered. This is intentional — it prevents token reuse and ensures tokens are not stored in a recoverable location.
 </Callout>
 
 ## Authentication Summary
 
 | Component | Method | Token Lifetime | Storage |
 |-----------|--------|---------------|---------|
-| **Trellis** (web) | Supabase OAuth | Session-based (auto-refresh) | HTTP-only cookie |
-| **Alethia** (CLI) | Device Code Grant | Access: 1h, Refresh: 90d | `~/.config/alethia/auth.json` |
-| **Tendril** (agent) | SHA-256 token hash | Permanent (until re-registration) | Environment variable |
+| **Console** (web) | Supabase OAuth | Session-based (auto-refresh) | HTTP-only cookie |
+| **alethia** (CLI) | Device Code Grant | Access: 1h, Refresh: 90d | `~/.config/alethia/auth.json` |
+| **Runner** (agent) | SHA-256 token hash | Permanent (until re-registration) | Environment variable |

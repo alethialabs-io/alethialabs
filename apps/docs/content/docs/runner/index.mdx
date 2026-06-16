@@ -1,11 +1,11 @@
 ---
-title: Tendril Agent
+title: Runner Agent
 description: Autonomous execution agent that runs Terraform, installs ArgoCD, and streams logs.
 ---
 
-# Tendril Agent
+# Runner Agent
 
-Tendril is the execution engine. It's a Go binary packaged as a Docker container that runs in AWS ECS Fargate (ARM64). Tendrils claim jobs from the queue, assume temporary cloud credentials, execute Terraform, install ArgoCD, and stream logs back in real-time.
+Runner is the execution engine. It's a Go binary packaged as a Docker container that runs in AWS ECS Fargate (ARM64). Runners claim jobs from the queue, assume temporary cloud credentials, execute Terraform, install ArgoCD, and stream logs back in real-time.
 
 ## Key Facts
 
@@ -14,10 +14,10 @@ Tendril is the execution engine. It's a Go binary packaged as a Docker container
 | Language | Go |
 | Runtime | ECS Fargate (ARM64 / Graviton) |
 | Registries | AWS ECR + GitHub Container Registry |
-| Versioning | release-please (`tendril-v*` tags). See [Release System](/concepts/release-system). |
+| Versioning | release-please (`runner-v*` tags). See [Release System](/concepts/release-system). |
 | Poll interval | 10 seconds |
 | Heartbeat interval | 30 seconds |
-| Idle scale-down | After 5 minutes ([Scale-to-Zero](/tendril/scale-to-zero)) |
+| Idle scale-down | After 5 minutes ([Scale-to-Zero](/runner/scale-to-zero)) |
 
 ## Two Modes
 
@@ -26,7 +26,7 @@ Tendril is the execution engine. It's a Go binary packaged as a Docker container
 | **Cloud-hosted** | ECS Fargate task, managed by the platform. Automatic scaling, no user setup. |
 | **Self-hosted** | User runs the binary on their own machine. For on-prem or air-gapped environments. |
 
-## What Tendril Does
+## What Runner Does
 
 <Steps>
 
@@ -37,16 +37,16 @@ Every 10 seconds, calls `POST /api/jobs/claim`. See [Job Queue Pattern](/concept
 PostgreSQL `claim_next_job()` with `FOR UPDATE SKIP LOCKED` prevents double-execution.
 
 ### Assumes credentials
-STS AssumeRole (AWS), WIF token exchange (GCP), or OIDC federated identity (Azure). See [Cloud Credentials](/tendril/cloud-credentials).
+STS AssumeRole (AWS), WIF token exchange (GCP), or OIDC federated identity (Azure). See [Cloud Credentials](/runner/cloud-credentials).
 
 ### Executes Terraform
-`init` → `plan` → `apply` or `destroy`. See [Job Execution](/tendril/job-execution).
+`init` → `plan` → `apply` or `destroy`. See [Job Execution](/runner/job-execution).
 
 ### Installs ArgoCD
 Helm chart deployment with App of Apps pattern. See [GitOps & ArgoCD](/concepts/gitops-argocd).
 
 ### Streams logs
-Batched POST every 2 seconds → Supabase Realtime → browser. See [Log Streaming](/tendril/log-streaming).
+Batched POST every 2 seconds → Supabase Realtime → browser. See [Log Streaming](/runner/log-streaming).
 
 ### Reports results
 Updates job status with execution metadata, timing, and Terraform outputs.
@@ -62,7 +62,7 @@ The Docker image (Alpine 3.21, ARM64, non-root user) includes:
 
 | Tool | Purpose |
 |------|---------|
-| Go binary | The Tendril executable |
+| Go binary | The Runner executable |
 | Terraform 1.7.4 | Infrastructure provisioning |
 | kubectl | Kubernetes cluster access |
 | Helm | ArgoCD and component installation |
@@ -75,12 +75,12 @@ The Docker image (Alpine 3.21, ARM64, non-root user) includes:
 ## Documentation
 
 <Cards>
-  <Card title="Architecture" href="/tendril/architecture">Main loop, heartbeat, graceful shutdown</Card>
-  <Card title="Job Execution" href="/tendril/job-execution">Per-job-type execution details</Card>
-  <Card title="Cloud Credentials" href="/tendril/cloud-credentials">Temporary credential assumption</Card>
-  <Card title="Log Streaming" href="/tendril/log-streaming">Real-time log delivery</Card>
-  <Card title="Scale-to-Zero" href="/tendril/scale-to-zero">Lambda scaler for cost optimization</Card>
-  <Card title="Self-Hosted" href="/tendril/self-hosted">Running outside Fargate</Card>
-  <Card title="Infrastructure Templates" href="/tendril/infrastructure-templates">Terraform modules for all providers</Card>
-  <Card title="core Library" href="/tendril/core">Shared Go packages</Card>
+  <Card title="Architecture" href="/runner/architecture">Main loop, heartbeat, graceful shutdown</Card>
+  <Card title="Job Execution" href="/runner/job-execution">Per-job-type execution details</Card>
+  <Card title="Cloud Credentials" href="/runner/cloud-credentials">Temporary credential assumption</Card>
+  <Card title="Log Streaming" href="/runner/log-streaming">Real-time log delivery</Card>
+  <Card title="Scale-to-Zero" href="/runner/scale-to-zero">Lambda scaler for cost optimization</Card>
+  <Card title="Self-Hosted" href="/runner/self-hosted">Running outside Fargate</Card>
+  <Card title="Infrastructure Templates" href="/runner/infrastructure-templates">Terraform modules for all providers</Card>
+  <Card title="core Library" href="/runner/core">Shared Go packages</Card>
 </Cards>

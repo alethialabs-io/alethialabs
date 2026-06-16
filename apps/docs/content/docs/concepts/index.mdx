@@ -13,24 +13,24 @@ This platform is a hybrid multi-cloud infrastructure orchestration system. It co
 
 | Component | Type | Language | Role |
 |-----------|------|----------|------|
-| **Trellis** | Web application | TypeScript (Next.js 15) | Visual configuration, job management, real-time monitoring |
-| **Alethia** | CLI tool | Go | Terminal-based operations, scripting, CI/CD integration |
-| **Tendril** | Execution agent | Go | Runs Terraform, installs ArgoCD, streams logs back to Trellis |
+| **Console** | Web application | TypeScript (Next.js 15) | Visual configuration, job management, real-time monitoring |
+| **alethia** | CLI tool | Go | Terminal-based operations, scripting, CI/CD integration |
+| **Runner** | Execution agent | Go | Runs Terraform, installs ArgoCD, streams logs back to Console |
 
 ## Data Flow
 
 ```
-User ─► Trellis (web) ─► Job Queue (PostgreSQL) ─► Tendril (agent) ─► Cloud Provider
+User ─► Console (web) ─► Job Queue (PostgreSQL) ─► Runner (agent) ─► Cloud Provider
          │                                            │
-         ├─ OR ──► Alethia CLI ─► Job Queue ──────────┘
+         ├─ OR ──► alethia CLI ─► Job Queue ──────────┘
          │
-         └─ Supabase Realtime ◄── Log Streaming ◄── Tendril
+         └─ Supabase Realtime ◄── Log Streaming ◄── Runner
 ```
 
-1. The user configures infrastructure through Trellis (web form) or Alethia (CLI commands)
+1. The user configures infrastructure through Console (web form) or alethia (CLI commands)
 2. Actions are queued as jobs in PostgreSQL
-3. A Tendril agent claims the job atomically and assumes temporary cloud credentials
-4. The Tendril executes Terraform and streams logs back in real-time
+3. A Runner agent claims the job atomically and assumes temporary cloud credentials
+4. The Runner executes Terraform and streams logs back in real-time
 5. On completion, ArgoCD is installed for GitOps-managed deployments
 
 ## Multi-Cloud Support
@@ -52,11 +52,11 @@ Every infrastructure component has provider-specific implementations across thre
 
 ## Tech Stack
 
-**Web (Trellis):** Next.js 15, Supabase (PostgreSQL + GoTrue + Realtime + S3), Tailwind CSS, shadcn/ui, Zustand
+**Web (Console):** Next.js 15, Supabase (PostgreSQL + GoTrue + Realtime + S3), Tailwind CSS, shadcn/ui, Zustand
 
-**CLI (Alethia):** Go, Cobra, Charmbracelet (lipgloss, huh, bubbletea), Homebrew tap
+**CLI (alethia):** Go, Cobra, Charmbracelet (lipgloss, huh, bubbletea), Homebrew tap
 
-**Agent (Tendril):** Go, ECS Fargate (ARM64), embeds Terraform + kubectl + Helm + cloud CLIs
+**Agent (Runner):** Go, ECS Fargate (ARM64), embeds Terraform + kubectl + Helm + cloud CLIs
 
 **Shared (core):** Go package — provisioner, Terraform wrapper, cloud SDKs, ArgoCD, Infracost, Git, Helm
 
@@ -68,7 +68,7 @@ Deep dives into the platform's key technical patterns:
 
 <Cards>
   <Card title="Domain Model" href="/concepts/domain-model">
-    Vineyard/Vine/Tendril entities, lifecycles, and relationships.
+    Zone/Spec/Runner entities, lifecycles, and relationships.
   </Card>
   <Card title="Security Architecture" href="/concepts/security">
     Zero-credential model, RLS, cloud provider federation.
@@ -79,14 +79,14 @@ Deep dives into the platform's key technical patterns:
   <Card title="Job Queue Pattern" href="/concepts/job-queue">
     Atomic claiming, FOR UPDATE SKIP LOCKED, failure recovery.
   </Card>
-  <Card title="Tendril Scaling" href="/concepts/tendril-scaling">
+  <Card title="Runner Scaling" href="/concepts/runner-scaling">
     Scale-to-zero with Lambda scaler, EventBridge, and ECS Fargate.
   </Card>
   <Card title="Cloud Provider Abstraction" href="/concepts/cloud-abstraction">
     Registry, region mapping, instance types, provider_config JSONB.
   </Card>
   <Card title="Provisioning Pipeline" href="/concepts/provisioning-pipeline">
-    Form values → config snapshot → VineConfig → terraform.tfvars.json → infrastructure.
+    Form values → config snapshot → SpecConfig → terraform.tfvars.json → infrastructure.
   </Card>
   <Card title="Real-time Architecture" href="/concepts/realtime">
     Supabase Realtime, log streaming, store synchronization.
@@ -95,10 +95,10 @@ Deep dives into the platform's key technical patterns:
     AWS Pricing API, real-time sidebar, Infracost integration.
   </Card>
   <Card title="Authentication Flows" href="/concepts/authentication">
-    OAuth (web), Device Code Grant (CLI), token auth (Tendril).
+    OAuth (web), Device Code Grant (CLI), token auth (Runner).
   </Card>
   <Card title="Multi-Cloud Conversion" href="/concepts/multi-cloud-conversion">
-    Cross-provider vine duplication with mapping and warnings.
+    Cross-provider Spec duplication with mapping and warnings.
   </Card>
   <Card title="Terraform State" href="/concepts/terraform-state">
     Supabase S3 backend, state paths, plan artifacts.
@@ -116,20 +116,20 @@ Deep dives into the platform's key technical patterns:
 ```
 bb-thesis-2026/
 ├── apps/
-│   ├── trellis/          # Next.js web platform
+│   ├── console/          # Next.js web platform
 │   ├── cli/              # Go CLI tool
-│   ├── tendril/          # Go execution agent
-│   └── vintner/          # Documentation site (Fumadocs)
+│   ├── runner/           # Go execution agent
+│   └── docs/             # Documentation site (Fumadocs)
 ├── packages/
 │   ├── core/       # Shared Go libraries
 │   ├── ui/               # Shared UI components
 │   ├── charts/           # Helm charts
 │   └── ...config/        # Shared TS/ESLint config
 ├── infra/
-│   ├── platform/         # Tendril deployment (ECR, ECS, Lambda scaler)
-│   ├── templates/vine/   # Infrastructure templates (AWS/GCP/Azure)
+│   ├── platform/         # Runner deployment (ECR, ECS, Lambda scaler)
+│   ├── templates/spec/   # Infrastructure templates (AWS/GCP/Azure)
 │   ├── templates/argocd/ # ArgoCD application templates
 │   └── onboarding/       # Cloud provider federation setup
 ├── supabase/migrations/  # PostgreSQL schema migrations
-└── .github/workflows/    # CI/CD (release-please, release-alethia, release-tendril)
+└── .github/workflows/    # CI/CD (release-please, release-alethia, release-runner)
 ```

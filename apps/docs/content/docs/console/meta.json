@@ -1,15 +1,15 @@
 {
-  "title": "Trellis (Platform)",
+  "title": "Console",
   "icon": "Sprout",
   "root": true,
   "pages": [
     "index",
     "getting-started",
     "dashboard",
-    "plant-vine",
+    "design-spec",
     "integrations",
     "jobs",
-    "tendrils",
+    "runners",
     "clusters",
     "api-reference"
   ]

@@ -1,18 +1,18 @@
 ---
 title: API Overview
-description: Trellis API endpoints — authentication methods, base URLs, and route categories.
+description: Alethia API endpoints — authentication methods, base URLs, and route categories.
 ---
 
 # API Reference
 
-Trellis exposes three categories of API routes, each with its own authentication mechanism.
+Alethia exposes three categories of API routes, each with its own authentication mechanism.
 
 ## Authentication Methods
 
 | Category | Auth Header | Token Type | Used By |
 |----------|-----------|------------|---------|
-| **Worker APIs** | `X-Worker-ID` + `X-Worker-Token` | SHA-256 hashed token | Tendril agents |
-| **CLI APIs** | `Authorization: Bearer {jwt}` | HS256 JWT (1h access, 90d refresh) | Alethia CLI |
+| **Worker APIs** | `X-Worker-ID` + `X-Worker-Token` | SHA-256 hashed token | Runner agents |
+| **CLI APIs** | `Authorization: Bearer {jwt}` | HS256 JWT (1h access, 90d refresh) | alethia CLI |
 | **Release APIs** | `Authorization: Bearer {secret}` | Static secret (`RELEASE_API_SECRET`) | CI/CD pipeline |
 
 See [Authentication Flows](/concepts/authentication) for details on each mechanism.
@@ -20,13 +20,13 @@ See [Authentication Flows](/concepts/authentication) for details on each mechani
 ## API Categories
 
 <Cards>
-  <Card title="Worker APIs" href="/trellis/api-reference/worker-apis">
+  <Card title="Worker APIs" href="/console/api-reference/worker-apis">
     Job claiming, heartbeat, status updates, log streaming, plan artifacts.
   </Card>
-  <Card title="CLI APIs" href="/trellis/api-reference/cli-apis">
-    Vineyards, configurations, jobs, workers, repositories.
+  <Card title="CLI APIs" href="/console/api-reference/cli-apis">
+    Zones, configurations, jobs, workers, repositories.
   </Card>
-  <Card title="Auth APIs" href="/trellis/api-reference/auth-apis">
+  <Card title="Auth APIs" href="/console/api-reference/auth-apis">
     Device code flow: generate, exchange, refresh.
   </Card>
 </Cards>

@@ -7,7 +7,7 @@ The authoritative naming standard. The product is **Alethia**, by **Alethia Labs
 | | |
 |---|---|
 | Product / platform | **Alethia** |
-| Company | **Alethia Labs** (legal entity **Alethia OÜ**) |
+| Company | **Alethia Labs** (legal entity **Alethia Labs OÜ**) |
 | Domain | `alethialabs.io` (contact at `/contact`) |
 | GitHub org | `github.com/alethialabs-io` |
 | Contact | `inquiry@alethialabs.io` |
@@ -32,7 +32,7 @@ These are **locked**. Zones and Specs are unchanged. `harvest → alethia apply`
 The Vertex → Alethia rename **landed in the codebase** on branch `rename/vertex-lexicon` (**PR #45**, unmerged, stacked on the design PR), with an open-core AGPL licensing commit. Renamed in code:
 
 - **Dirs:** `apps/console` (web), `apps/cli` (binary `alethia`), `apps/runner` (the **Runner** worker), `packages/core`.
-- **Env** `ALETHIA_*`; cache `~/.alethia`; **Go module** `github.com/alethialabs-io/alethialabs`; GHCR `alethialabs-io/{console,runner}`; `AlethiaProvisionerRole`; design skill `.claude/skills/alethia-design`. License: SPDX `© Alethia OÜ`, `ee/` commercial, CLA.
+- **Env** `ALETHIA_*`; cache `~/.alethia`; **Go module** `github.com/alethialabs-io/alethialabs`; GHCR `alethialabs-io/{console,runner}`; `AlethiaProvisionerRole`; design skill `.claude/skills/alethia-design`. License: SPDX `© Alethia Labs OÜ`, `ee/` commercial, CLA.
 
 > **When a spec doc cites a code path, the real names are `apps/console` / `apps/cli` / `apps/runner` / `packages/core`.** Some docs use the simplified forms `apps/alethia` / `packages/alethia-core` — read those as `apps/console` / `packages/core`.
 
@@ -46,4 +46,4 @@ The folder / binary / env / module / design-skill rename is **done** (PR #45). W
 - [ ] **Prose/assets:** `apps/docs/content/**`; `tendril` helm/asset dirs.
 - [ ] **Out-of-band:** GitHub org/repo move to `alethialabs-io/alethialabs`; Homebrew tap; merge PR #45.
 
-_Cross-refs: [00-README](00-README.md) (glossary) · [12-licensing-open-core](12-licensing-open-core.md) (copyright = Alethia OÜ)._
+_Cross-refs: [00-README](00-README.md) (glossary) · [12-licensing-open-core](12-licensing-open-core.md) (copyright = Alethia Labs OÜ)._

@@ -9,7 +9,7 @@
     "database",
     "release-system",
     "job-queue",
-    "tendril-scaling",
+    "runner-scaling",
     "cloud-abstraction",
     "provisioning-pipeline",
     "realtime",

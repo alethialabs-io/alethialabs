@@ -1,15 +1,15 @@
 ---
 title: Self-Hosted Mode
-description: Running Tendril on your own infrastructure for on-premises or air-gapped environments.
+description: Running Runner on your own infrastructure for on-premises or air-gapped environments.
 ---
 
 # Self-Hosted Mode
 
-While the default deployment is cloud-hosted (ECS Fargate), Tendril can also run on any machine with the required dependencies. This is useful for on-premises environments, air-gapped networks, or development/testing.
+While the default deployment is cloud-hosted (ECS Fargate), Runner can also run on any machine with the required dependencies. This is useful for on-premises environments, air-gapped networks, or development/testing.
 
 ## Prerequisites
 
-The self-hosted Tendril binary requires these tools installed on the host:
+The self-hosted Runner binary requires these tools installed on the host:
 
 | Tool | Purpose | Minimum Version |
 |------|---------|----------------|
@@ -24,9 +24,9 @@ The cloud-hosted Docker image bundles all of these. In self-hosted mode, you mus
 
 ## Registration
 
-Before running, the Tendril must be registered with Trellis:
+Before running, the Runner must be registered with Alethia:
 
-1. Register via the Trellis API or CLI (`alethia worker register`)
+1. Register via the Alethia API or CLI (`alethia worker register`)
 2. Receive a `WORKER_ID` and `WORKER_TOKEN`
 3. Pass these as environment variables
 
@@ -35,7 +35,7 @@ Before running, the Tendril must be registered with Trellis:
 Set the required environment variables and start the binary:
 
 ```bash
-export TRELLIS_URL=https://trellis.example.com
+export ALETHIA_WEB_ORIGIN=https://alethia.example.com
 export ALETHIA_WORKER_ID=<worker-id>
 export ALETHIA_WORKER_TOKEN=<worker-token>
 export ALETHIA_WORKER_MODE=self-hosted
@@ -47,10 +47,10 @@ export SUPABASE_STORAGE_SECRET_KEY=<s3-secret>
 # Optional
 export INFRACOST_API_KEY=<key>
 
-./tendril
+./runner
 ```
 
-The Tendril will:
+The Runner will:
 1. Start the heartbeat goroutine
 2. Begin polling for jobs
 3. Execute jobs using locally installed tools
@@ -59,7 +59,7 @@ The Tendril will:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `TRELLIS_URL` | Yes | Trellis API base URL |
+| `ALETHIA_WEB_ORIGIN` | Yes | Alethia API base URL |
 | `ALETHIA_WORKER_ID` | Yes | Assigned worker ID |
 | `ALETHIA_WORKER_TOKEN` | Yes | Authentication token |
 | `ALETHIA_WORKER_MODE` | Yes | Must be `self-hosted` |
@@ -74,8 +74,8 @@ The Tendril will:
 ### On-Premises Infrastructure
 
 For organizations that need infrastructure provisioned from within their network (e.g., private cloud, bare metal):
-- Run Tendril on a bastion host or CI/CD runner
-- Tendril polls Trellis over HTTPS (outbound only — no inbound ports required)
+- Run Runner on a bastion host or CI/CD runner
+- Runner polls Alethia over HTTPS (outbound only — no inbound ports required)
 - Terraform provisions resources accessible from the internal network
 
 ### Air-Gapped Environments
@@ -83,13 +83,13 @@ For organizations that need infrastructure provisioned from within their network
 For high-security environments without internet access:
 - Pre-download Terraform providers and modules
 - Configure Terraform to use a local mirror
-- Tendril communicates with Trellis via an approved network path
+- Runner communicates with Alethia via an approved network path
 
 ### Development and Testing
 
 For local development:
-- Run Tendril alongside the Trellis dev server
-- Point `TRELLIS_URL` to `http://localhost:3000`
+- Run Runner alongside the Alethia dev server
+- Point `ALETHIA_WEB_ORIGIN` to `http://localhost:3000`
 - Test job execution without deploying to Fargate
 
 ## Differences from Cloud-Hosted

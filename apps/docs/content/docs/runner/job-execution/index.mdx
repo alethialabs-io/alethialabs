@@ -1,6 +1,6 @@
 ---
 title: Job Execution Overview
-description: How Tendril claims and executes each job type.
+description: How Runner claims and executes each job type.
 ---
 
 # Job Execution
@@ -9,28 +9,28 @@ All jobs share the same claiming mechanism and credential handling, but differ i
 
 ## Claiming
 
-Every 10 seconds, the Tendril calls `POST /api/jobs/claim`. The server runs `claim_next_job()` — a PostgreSQL function using `FOR UPDATE SKIP LOCKED` for atomic, exactly-once claiming.
+Every 10 seconds, the Runner calls `POST /api/jobs/claim`. The server runs `claim_next_job()` — a PostgreSQL function using `FOR UPDATE SKIP LOCKED` for atomic, exactly-once claiming.
 
-If a job is returned, the Tendril:
+If a job is returned, the Runner:
 1. Updates status to PROCESSING
-2. Reads the vine configuration and cloud identity from the job
-3. Assumes cloud credentials ([details](/tendril/cloud-credentials))
+2. Reads the spec configuration and cloud identity from the job
+3. Assumes cloud credentials ([details](/runner/cloud-credentials))
 4. Executes job-type-specific logic
 5. Updates status to SUCCESS or FAILED
 
 ## Job Types
 
 <Cards>
-  <Card title="Plan Jobs" href="/tendril/job-execution/plan-jobs">
+  <Card title="Plan Jobs" href="/runner/job-execution/plan-jobs">
     terraform plan + Infracost analysis
   </Card>
-  <Card title="Deploy Jobs" href="/tendril/job-execution/deploy-jobs">
+  <Card title="Deploy Jobs" href="/runner/job-execution/deploy-jobs">
     terraform apply + ArgoCD installation
   </Card>
-  <Card title="Destroy Jobs" href="/tendril/job-execution/destroy-jobs">
+  <Card title="Destroy Jobs" href="/runner/job-execution/destroy-jobs">
     terraform destroy + cleanup
   </Card>
-  <Card title="Worker Jobs" href="/tendril/job-execution/worker-jobs">
+  <Card title="Worker Jobs" href="/runner/job-execution/worker-jobs">
     DEPLOY_WORKER, UPDATE_WORKER, DESTROY_WORKER, CONNECTION_TEST
   </Card>
 </Cards>
@@ -42,6 +42,6 @@ When any step fails:
 2. Job status set to FAILED with error message
 3. Terraform state preserved (partial apply state saved to [Supabase S3](/concepts/terraform-state))
 4. Cloud credentials cleared (deferred cleanup always runs)
-5. Tendril returns to the poll loop for the next job
+5. Runner returns to the poll loop for the next job
 
 Users can retry failed jobs — since state is preserved, retries continue from the last successful resource rather than starting over.

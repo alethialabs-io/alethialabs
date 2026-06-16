@@ -19,7 +19,7 @@ Located at `/dashboard/jobs`, the page shows:
 **Type filters** (button group):
 - All Types, DEPLOY, PLAN, DESTROY, CONNECTION_TEST, FETCH_RESOURCES, DEPLOY_WORKER, UPDATE_WORKER, DESTROY_WORKER
 
-**Search** — filter by job ID, Tendril name, or vine name.
+**Search** — filter by job ID, Runner name, or spec name.
 
 ### Data Table
 
@@ -27,24 +27,24 @@ Located at `/dashboard/jobs`, the page shows:
 |--------|-------------|
 | Type | Job type with icon |
 | Status | Color-coded badge |
-| Vine | Target vine project name |
-| Tendril | Assigned Tendril name |
+| Spec | Target spec project name |
+| Runner | Assigned Runner name |
 | Started | Timestamp |
 | Completed | Timestamp |
 | Duration | Elapsed time |
 
-Click any row to navigate to the [job detail page](/trellis/jobs/job-detail).
+Click any row to navigate to the [job detail page](/console/jobs/job-detail).
 
 ### Real-time Updates
 
 The jobs store receives real-time events from the dashboard layout's Supabase subscription. New jobs appear automatically, and status changes update badges in-place without page refresh. See [Real-time Architecture](/concepts/realtime).
 
-## Tendril Select Popover
+## Runner Select Popover
 
-When triggering Plan, Apply, or Destroy from a vine, the **Tendril Select Popover** appears:
+When triggering Plan, Apply, or Destroy from a spec, the **Runner Select Popover** appears:
 
-- Lists all registered Tendrils with status indicators (green = ONLINE, yellow = DRAINING, red = OFFLINE)
+- Lists all registered Runners with status indicators (green = ONLINE, yellow = DRAINING, red = OFFLINE)
 - "Any available" option for automatic assignment
-- Only ONLINE Tendrils can accept new jobs
+- Only ONLINE Runners can accept new jobs
 
-The selected Tendril's ID is stored as `assigned_worker_id` on the job.
+The selected Runner's ID is stored as `assigned_worker_id` on the job.

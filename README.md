@@ -4,7 +4,7 @@
 
 An open-source, multi-cloud internal developer platform for provisioning and managing infrastructure through a web control plane and CLI, backed by GitOps reconciliation.
 
-© 2026 **Alethia OÜ** — open core ([see Licensing](#licensing)). Maintained by [Borislav Borisov](https://github.com/bobikenobi12) ([LinkedIn](https://www.linkedin.com/in/bbor1sov)).
+© 2026 **Alethia Labs OÜ** — open core ([see Licensing](#licensing)). Maintained by [Borislav Borisov](https://github.com/bobikenobi12) ([LinkedIn](https://www.linkedin.com/in/bbor1sov)).
 
 > Some internal component names — the `Alethia` control-plane app, the `alethia` CLI, and `core` — are codenames retained from earlier development and will be renamed in a later pass. The product is **Alethia Labs**.
 
@@ -66,14 +66,33 @@ spec/
 - Turborepo (`npm i -g turbo`)
 - Supabase CLI (`brew install supabase/tap/supabase`)
 
-### Install alethia CLI (Homebrew)
+### Install the `alethia` CLI
+
+**macOS / Linux** (`curl`):
 
 ```bash
-brew tap alethialabs-io/alethialabs
-brew install alethia
+curl -fsSL https://get.alethialabs.io | sh
 ```
 
-If the repository is private, ensure your local Git environment is authenticated with GitHub (e.g. `export HOMEBREW_GITHUB_API_TOKEN=your_token`).
+**Windows** (PowerShell):
+
+```powershell
+irm https://get.alethialabs.io/install.ps1 | iex
+```
+
+**Homebrew** (macOS / Linux):
+
+```bash
+brew install alethialabs-io/alethialabs/alethia
+```
+
+**Docker**:
+
+```bash
+docker run --rm ghcr.io/alethialabs-io/alethia --version
+```
+
+Pin a version with `ALETHIA_VERSION=v0.2.0` (curl/PowerShell). While the repository is private (pre-launch), set `GITHUB_TOKEN` first for the curl/PowerShell installers, and `HOMEBREW_GITHUB_API_TOKEN` for Homebrew.
 
 ### Development
 
@@ -131,4 +150,4 @@ Alethia Labs is **open core**:
 - Cloud / enterprise features under [`ee/`](./ee/) are commercially licensed (`LicenseRef-Alethia-Commercial`); production use requires a subscription.
 - A directory-by-directory map is in [`LICENSING.md`](./LICENSING.md); third-party attributions are in [`NOTICE`](./NOTICE).
 
-Contributions require signing our [CLA](./cla/) — see [`CONTRIBUTING.md`](./CONTRIBUTING.md). © 2026 Alethia OÜ.
+Contributions require signing our [CLA](./cla/) — see [`CONTRIBUTING.md`](./CONTRIBUTING.md). © 2026 Alethia Labs OÜ.

@@ -5,7 +5,7 @@ default license for this project is [`AGPL-3.0-only`](LICENSE).
 
 **Alethia Labs is open core.** The core is free and open source under the GNU
 Affero General Public License v3.0; a small set of cloud / enterprise features is
-commercially licensed. Alethia OÜ owns the copyright to the entire codebase
+commercially licensed. Alethia Labs OÜ owns the copyright to the entire codebase
 (contributions are consolidated via a [CLA](cla/)), which is what lets it offer
 the `ee/` features under a separate commercial license while keeping the core AGPL.
 

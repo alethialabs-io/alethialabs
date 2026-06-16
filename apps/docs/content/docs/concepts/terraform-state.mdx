@@ -1,11 +1,11 @@
 ---
 title: Terraform State Management
-description: How Terraform state is stored in Supabase S3, organized by vine, and shared across Tendril executions.
+description: How Terraform state is stored in Supabase S3, organized by Spec, and shared across Runner executions.
 ---
 
 # Terraform State Management
 
-Terraform tracks the real-world resources it manages in a **state file**. The platform stores state in Supabase's S3-compatible storage, enabling Tendrils to share state across executions and resume from failures.
+Terraform tracks the real-world resources it manages in a **state file**. The platform stores state in Supabase's S3-compatible storage, enabling Runners to share state across executions and resume from failures.
 
 <img src="/docs/diagrams/concepts/terraform-state.svg" alt="Terraform State" />
 
@@ -16,8 +16,8 @@ Terraform is configured with an S3 backend pointing to Supabase Storage:
 ```hcl
 terraform {
   backend "s3" {
-    bucket                      = "vine-terraform-state"
-    key                         = "{vineyard}/{project}/{stage}/{region}/terraform.tfstate"
+    bucket                      = "spec-terraform-state"
+    key                         = "{zone}/{project}/{stage}/{region}/terraform.tfstate"
     endpoint                    = "{supabase_s3_endpoint}"
     region                      = "{supabase_s3_region}"
     access_key                  = "{supabase_storage_key_id}"
@@ -32,8 +32,8 @@ terraform {
 ### Path Structure
 
 ```
-vine-terraform-state/
-├── my-vineyard/
+spec-terraform-state/
+├── my-zone/
 │   └── api-backend/
 │       ├── production/
 │       │   └── eu-west-1/
@@ -43,13 +43,13 @@ vine-terraform-state/
 │               └── terraform.tfstate
 ```
 
-Each vine gets its own state file, keyed by vineyard name, project name, environment stage, and region. This ensures isolation between vines and environments.
+Each Spec gets its own state file, keyed by zone name, project name, environment stage, and region. This ensures isolation between Specs and environments.
 
 ## State Lifecycle
 
 ### During `terraform plan`
 
-1. Tendril generates the backend configuration dynamically from the vine's metadata
+1. Runner generates the backend configuration dynamically from the Spec's metadata
 2. `terraform init` downloads the existing state (if any) from Supabase S3
 3. `terraform plan` compares the desired configuration against the current state
 4. The plan output describes what will change
@@ -69,14 +69,14 @@ Each vine gets its own state file, keyed by vineyard name, project name, environ
 
 - **No additional infrastructure** — no need for a separate AWS S3 bucket or DynamoDB table for locking
 - **Consistent with the platform** — same Supabase project used for database, auth, and storage
-- **Cross-provider** — works regardless of whether the vine targets AWS, GCP, or Azure
-- **Access control** — Tendril credentials (S3 keys) are set as environment variables, not stored in the vine config
+- **Cross-provider** — works regardless of whether the Spec targets AWS, GCP, or Azure
+- **Access control** — Runner credentials (S3 keys) are set as environment variables, not stored in the Spec config
 
 ## State and Failure Recovery
 
 Because state is persisted after every resource operation:
 
-- If a Tendril dies mid-apply, the state reflects all resources created so far
+- If a Runner dies mid-apply, the state reflects all resources created so far
 - A retry (new job) runs `terraform init` → downloads the existing state → `terraform plan` only shows remaining resources
 - No resources are double-created
 
@@ -86,8 +86,8 @@ This is why Terraform state is the foundation of the platform's reliability mode
 
 In addition to state, **plan artifacts** are stored in a separate Supabase Storage bucket (`plan-artifacts`). These are the binary `plan.tfplan` files that capture exactly what Terraform will do.
 
-When a user clicks "Apply" after reviewing a plan, the Tendril downloads the plan artifact and passes it to `terraform apply plan.tfplan`. This ensures the apply executes exactly what was planned, even if the Terraform configuration has changed since the plan was generated.
+When a user clicks "Apply" after reviewing a plan, the Runner downloads the plan artifact and passes it to `terraform apply plan.tfplan`. This ensures the apply executes exactly what was planned, even if the Terraform configuration has changed since the plan was generated.
 
 <Callout type="info">
-Plan artifacts are validated with a **config hash**. If the vine configuration was modified after the plan was generated, the hash won't match and the apply will fail, forcing the user to re-plan. This prevents stale plans from being applied.
+Plan artifacts are validated with a **config hash**. If the Spec configuration was modified after the plan was generated, the hash won't match and the apply will fail, forcing the user to re-plan. This prevents stale plans from being applied.
 </Callout>

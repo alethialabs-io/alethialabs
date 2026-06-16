@@ -1,54 +1,54 @@
 ---
-title: Vineyard Commands
-description: Create, list, and delete vineyards (workspaces) from the CLI.
+title: Zone Commands
+description: Create, list, and delete zones (workspaces) from the CLI.
 ---
 
-# Vineyard Commands
+# Zone Commands
 
-Vineyards are workspaces that group related infrastructure configurations. See [Domain Model](/concepts/domain-model) for how vineyards fit into the entity hierarchy.
+Zones are workspaces that group related infrastructure configurations. See [Domain Model](/concepts/domain-model) for how zones fit into the entity hierarchy.
 
-## `alethia vineyard create`
+## `alethia zone create`
 
-Create a new vineyard with an interactive form.
+Create a new zone with an interactive form.
 
 ```bash
-alethia vineyard create --name <name>
+alethia zone create --name <name>
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--name` | Yes | Vineyard name (unique per user) |
+| `--name` | Yes | Zone name (unique per user) |
 
-The command uses a [Charmbracelet `huh` form](/cli/tui) for interactive input if `--name` is omitted. On success, prints the vineyard ID.
+The command uses a [Charmbracelet `huh` form](/cli/tui) for interactive input if `--name` is omitted. On success, prints the zone ID.
 
-## `alethia vineyard list`
+## `alethia zone list`
 
-List all vineyards owned by the authenticated user.
+List all zones owned by the authenticated user.
 
 ```bash
-alethia vineyard list
+alethia zone list
 ```
 
 Output:
 
 ```
-ID                                   NAME          VINES  CREATED
+ID                                   NAME          SPECS  CREATED
 a1b2c3d4-...                         api-backend   2      2026-06-01
 e5f6g7h8-...                         data-platform 1      2026-05-28
 ```
 
-## `alethia vineyard delete`
+## `alethia zone delete`
 
-Delete a vineyard and all its vines.
+Delete a zone and all its Specs.
 
 ```bash
-alethia vineyard delete --id <vineyard-id>
+alethia zone delete --id <zone-id>
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--id` | Yes | Vineyard UUID |
+| `--id` | Yes | Zone UUID |
 
 <Callout type="warn">
-This deletes the vineyard record and all child vines from the database. It does NOT destroy provisioned cloud resources — run `alethia destroy vine` first to tear down infrastructure.
+This deletes the zone record and all child Specs from the database. It does NOT destroy provisioned cloud resources — run `alethia destroy spec` first to tear down infrastructure.
 </Callout>

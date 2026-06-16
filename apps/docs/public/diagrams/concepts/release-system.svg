@@ -48,9 +48,9 @@
   <text x="590" y="242" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">Homebrew Tap</text>
   <line x1="590" y1="210" x2="590" y2="220" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
-  <!-- Tendril path -->
+  <!-- Runner path -->
   <rect x="530" y="264" width="260" height="28" rx="6" fill="#F59E0B10" stroke="#F59E0B30"/>
-  <text x="660" y="282" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="600" fill="#F59E0B">Tendril Worker Release</text>
+  <text x="660" y="282" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="600" fill="#F59E0B">Runner Worker Release</text>
 
   <line x1="546" y1="292" x2="546" y2="308" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
 

@@ -2,7 +2,7 @@
   "title": "Dashboard",
   "pages": [
     "index",
-    "vineyards",
-    "vine-detail"
+    "zones",
+    "spec-detail"
   ]
 }

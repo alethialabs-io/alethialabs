@@ -1,38 +1,38 @@
 ---
 title: CLI APIs
-description: API endpoints used by the Alethia CLI for vineyard, vine, job, and worker management.
+description: API endpoints used by the alethia CLI for zone, spec, job, and worker management.
 ---
 
 # CLI APIs
 
-These endpoints are called by the Alethia CLI. Authentication is via `Authorization: Bearer {jwt}` header with a CLI-issued JWT. See [Authentication Flows](/concepts/authentication).
+These endpoints are called by the alethia CLI. Authentication is via `Authorization: Bearer {jwt}` header with a CLI-issued JWT. See [Authentication Flows](/concepts/authentication).
 
-## Vineyards
+## Zones
 
-### `GET /api/cli/vineyards`
-List all vineyards with nested vine configurations.
+### `GET /api/cli/zones`
+List all zones with nested spec configurations.
 
-### `POST /api/cli/vineyards`
-Create a new vineyard.
+### `POST /api/cli/zones`
+Create a new zone.
 
 **Body:** `{ "name": "api-backend" }`
 
-### `GET /api/cli/vineyards/{id}`
-Get a single vineyard with its vines.
+### `GET /api/cli/zones/{id}`
+Get a single zone with its specs.
 
-## Configurations (Vines)
+## Configurations (Specs)
 
 ### `GET /api/cli/configurations`
-List all vine configurations for the authenticated user.
+List all spec configurations for the authenticated user.
 
 ### `GET /api/cli/configurations/{name}`
 Get a configuration by name.
 
 ### `GET /api/cli/configurations/by-project-name/{project_name}`
-Look up a vine by project name.
+Look up a spec by project name.
 
 ### `POST /api/cli/configurations`
-Create a new vine configuration from CLI input.
+Create a new spec configuration from CLI input.
 
 ## Jobs
 
@@ -42,7 +42,7 @@ Create a new job. Accepts:
 ```json
 {
   "job_type": "PLAN",
-  "configuration_id": "vine-uuid",
+  "configuration_id": "spec-uuid",
   "assigned_worker_id": "worker-uuid",
   "plan_job_id": "plan-job-uuid"
 }
@@ -50,10 +50,10 @@ Create a new job. Accepts:
 
 Valid job types: PLAN, DEPLOY, DESTROY, DESTROY_WORKER.
 
-If `configuration_id` is provided, the server auto-resolves `cloud_identity_id`, `vineyard_id`, computes config hash, and creates a config snapshot.
+If `configuration_id` is provided, the server auto-resolves `cloud_identity_id`, `zone_id`, computes config hash, and creates a config snapshot.
 
 ### `GET /api/jobs`
-List all jobs for the authenticated user. Supports `?status={status}` and `?vineyard_id={id}` filters.
+List all jobs for the authenticated user. Supports `?status={status}` and `?zone_id={id}` filters.
 
 ### `GET /api/cli/jobs/{id}`
 Get job status and metadata.
@@ -67,13 +67,13 @@ Cancel a QUEUED or PROCESSING job.
 ## Workers
 
 ### `GET /api/cli/workers`
-List all registered Tendrils.
+List all registered Runners.
 
 ### `POST /api/cli/workers`
-Register a self-hosted Tendril.
+Register a self-hosted Runner.
 
 ### `GET /api/cli/workers/{id}`
-Get Tendril details.
+Get Runner details.
 
 ## Repositories
 
@@ -89,7 +89,7 @@ List Bitbucket repositories.
 ## Releases
 
 ### `POST /api/releases/worker`
-Publish a new Tendril release (CI/CD only, requires `RELEASE_API_SECRET`).
+Publish a new Runner release (CI/CD only, requires `RELEASE_API_SECRET`).
 
 **Body:**
 ```json
@@ -99,5 +99,5 @@ Publish a new Tendril release (CI/CD only, requires `RELEASE_API_SECRET`).
 }
 ```
 
-### `POST /api/tendrils/register`
-Register a cloud-hosted Tendril (CI/CD only, requires `RELEASE_API_SECRET`). Used by Terraform during Tendril deployment.
+### `POST /api/runners/register`
+Register a cloud-hosted Runner (CI/CD only, requires `RELEASE_API_SECRET`). Used by Terraform during Runner deployment.

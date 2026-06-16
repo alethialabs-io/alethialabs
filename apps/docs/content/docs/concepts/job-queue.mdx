@@ -1,11 +1,11 @@
 ---
 title: Job Queue Pattern
-description: How infrastructure operations are queued, claimed atomically, and executed by Tendrils.
+description: How infrastructure operations are queued, claimed atomically, and executed by Runners.
 ---
 
 # Job Queue Pattern
 
-Every infrastructure operation in the platform — planning, deploying, destroying, connecting cloud accounts — is modeled as a **job** in a PostgreSQL queue. Tendrils poll for jobs, claim them atomically, execute them, and report results.
+Every infrastructure operation in the platform — planning, deploying, destroying, connecting cloud accounts — is modeled as a **job** in a PostgreSQL queue. Runners poll for jobs, claim them atomically, execute them, and report results.
 
 <img src="/docs/diagrams/concepts/job-queue.svg" alt="Job Queue" />
 
@@ -14,8 +14,8 @@ Every infrastructure operation in the platform — planning, deploying, destroyi
 Infrastructure provisioning is slow (minutes to hours) and must be reliable. A job queue provides:
 
 - **Decoupling** — the web UI and CLI queue work without waiting for completion
-- **Exactly-once execution** — atomic claiming prevents two Tendrils from running the same job
-- **Resumability** — if a Tendril dies, the job can be retried from persisted Terraform state
+- **Exactly-once execution** — atomic claiming prevents two Runners from running the same job
+- **Resumability** — if a Runner dies, the job can be retried from persisted Terraform state
 - **Auditability** — every operation is logged with timestamps, status, and metadata
 
 ## Job Types
@@ -24,12 +24,12 @@ Infrastructure provisioning is slow (minutes to hours) and must be reliable. A j
 |------|---------|-------------|
 | `CONNECTION_TEST` | Verify cloud credentials, cache discovered resources | Connecting a cloud provider |
 | `FETCH_RESOURCES` | Refresh cached VPCs, subnets, hosted zones | Manual refresh in UI |
-| `PLAN` | Run `terraform plan` + optional Infracost analysis | Clicking "Plan" on a vine |
-| `DEPLOY` | Run `terraform apply` + install ArgoCD | Clicking "Apply" on a vine |
-| `DESTROY` | Run `terraform destroy` | Clicking "Destroy" on a vine |
-| `DEPLOY_WORKER` | Provision Tendril infrastructure (ECS task, IAM roles) | Adding a cloud-hosted Tendril |
-| `UPDATE_WORKER` | Update Tendril to latest release | Clicking "Update" on a Tendril |
-| `DESTROY_WORKER` | Tear down Tendril infrastructure | Removing a cloud-hosted Tendril |
+| `PLAN` | Run `terraform plan` + optional Infracost analysis | Clicking "Plan" on a Spec |
+| `DEPLOY` | Run `terraform apply` + install ArgoCD | Clicking "Apply" on a Spec |
+| `DESTROY` | Run `terraform destroy` | Clicking "Destroy" on a Spec |
+| `DEPLOY_WORKER` | Provision Runner infrastructure (ECS task, IAM roles) | Adding a cloud-hosted Runner |
+| `UPDATE_WORKER` | Update Runner to latest release | Clicking "Update" on a Runner |
+| `DESTROY_WORKER` | Tear down Runner infrastructure | Removing a cloud-hosted Runner |
 
 ## Job Lifecycle
 
@@ -43,16 +43,16 @@ QUEUED ──► CLAIMED ──► PROCESSING ──► SUCCESS
 
 | Status | Meaning |
 |--------|---------|
-| `QUEUED` | Waiting for a Tendril to pick it up |
-| `CLAIMED` | A Tendril has locked it (prevents double-execution) |
-| `PROCESSING` | Tendril is actively running Terraform |
+| `QUEUED` | Waiting for a Runner to pick it up |
+| `CLAIMED` | A Runner has locked it (prevents double-execution) |
+| `PROCESSING` | Runner is actively running Terraform |
 | `SUCCESS` | Completed successfully |
 | `FAILED` | Failed with error message |
 | `CANCELLED` | User cancelled before completion |
 
 ## Atomic Job Claiming
 
-The critical invariant: **exactly one Tendril executes each job**. This is enforced by PostgreSQL's `FOR UPDATE SKIP LOCKED`:
+The critical invariant: **exactly one Runner executes each job**. This is enforced by PostgreSQL's `FOR UPDATE SKIP LOCKED`:
 
 ```sql
 CREATE OR REPLACE FUNCTION claim_next_job(p_worker_id uuid)
@@ -81,46 +81,46 @@ $$ LANGUAGE plpgsql;
 ```
 
 <Callout type="info">
-`FOR UPDATE SKIP LOCKED` is the key mechanism. If Tendril A has locked a row, Tendril B's query **skips** it entirely rather than waiting. B either gets the next queued job or gets nothing. No distributed locks, no coordination — just PostgreSQL.
+`FOR UPDATE SKIP LOCKED` is the key mechanism. If Runner A has locked a row, Runner B's query **skips** it entirely rather than waiting. B either gets the next queued job or gets nothing. No distributed locks, no coordination — just PostgreSQL.
 </Callout>
 
 ## Config Snapshot
 
-When a job is created, the current vine configuration is serialized as a **config_snapshot** in the job record. This ensures the Tendril executes exactly the configuration that was planned, even if the user modifies the vine after queuing.
+When a job is created, the current Spec configuration is serialized as a **config_snapshot** in the job record. This ensures the Runner executes exactly the configuration that was planned, even if the user modifies the Spec after queuing.
 
-For DEPLOY jobs, a **plan hash** is validated: if the vine config changed since the plan was generated, the deploy fails with a hash mismatch error, forcing the user to re-plan.
+For DEPLOY jobs, a **plan hash** is validated: if the Spec config changed since the plan was generated, the deploy fails with a hash mismatch error, forcing the user to re-plan.
 
 ## Job Execution Flow
 
 <Steps>
 
 ### Job Created
-User clicks "Plan" / "Apply" / "Destroy" in the UI (or runs `alethia plan` / `alethia harvest` / `alethia destroy` in the CLI). A `provision_jobs` row is inserted with status `QUEUED`.
+User clicks "Plan" / "Apply" / "Destroy" in the UI (or runs `alethia plan` / `alethia apply` / `alethia destroy` in the CLI). A `provision_jobs` row is inserted with status `QUEUED`.
 
-### Tendril Claims Job
-A Tendril's poll loop calls `POST /api/jobs/claim`. The server executes `claim_next_job()`. If a job is returned, the Tendril proceeds.
+### Runner Claims Job
+A Runner's poll loop calls `POST /api/jobs/claim`. The server executes `claim_next_job()`. If a job is returned, the Runner proceeds.
 
 ### Credential Assumption
-The Tendril reads the `cloud_identity` from the job and assumes temporary credentials — STS AssumeRole (AWS), WIF token exchange (GCP), or federated identity (Azure).
+The Runner reads the `cloud_identity` from the job and assumes temporary credentials — STS AssumeRole (AWS), WIF token exchange (GCP), or federated identity (Azure).
 
 ### Execution
-The Tendril runs the job-type-specific logic (Terraform plan/apply/destroy, ArgoCD install, etc.) while streaming logs.
+The Runner runs the job-type-specific logic (Terraform plan/apply/destroy, ArgoCD install, etc.) while streaming logs.
 
 ### Result Reporting
-On completion, the Tendril calls `PUT /api/jobs/{id}/status` with SUCCESS or FAILED, plus execution metadata (Terraform outputs, cost data, cluster info).
+On completion, the Runner calls `PUT /api/jobs/{id}/status` with SUCCESS or FAILED, plus execution metadata (Terraform outputs, cost data, cluster info).
 
 ### Finalization
-For DEPLOY jobs, Trellis calls `finalizeDeployment()` to extract cluster metadata from Terraform outputs and update the vine's component tables (cluster endpoint, ArgoCD URL, database endpoints, etc.).
+For DEPLOY jobs, Console calls `finalizeDeployment()` to extract cluster metadata from Terraform outputs and update the Spec's component tables (cluster endpoint, ArgoCD URL, database endpoints, etc.).
 
 </Steps>
 
 ## Failure Recovery
 
-When a Tendril dies mid-job:
+When a Runner dies mid-job:
 
-1. Heartbeat stops → Trellis marks Tendril OFFLINE after 60 seconds
+1. Heartbeat stops → Console marks Runner OFFLINE after 60 seconds
 2. Job stays in PROCESSING with no new log updates
-3. After 5 minutes of no log activity, Trellis marks the job FAILED
+3. After 5 minutes of no log activity, Console marks the job FAILED
 4. User can **retry** the job — creates a new job with the same config
 5. Terraform state is preserved in Supabase S3, so the retry continues from the last successful state
 

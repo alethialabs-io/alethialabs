@@ -5,14 +5,14 @@ description: CLI configuration files, environment variables, and credential stor
 
 # Configuration
 
-Alethia stores configuration and credentials in the user's config directory.
+alethia stores configuration and credentials in the user's config directory.
 
 ## File Locations
 
 | File | Purpose |
 |------|---------|
 | `~/.config/alethia/auth.json` | CLI authentication tokens (access + refresh JWT) |
-| `~/.config/alethia/worker.json` | Self-hosted Tendril credentials (worker ID + token) |
+| `~/.config/alethia/worker.json` | Self-hosted Runner credentials (worker ID + token) |
 
 ## auth.json
 
@@ -30,29 +30,29 @@ The access token is refreshed automatically before each API call if expired. See
 
 ## worker.json
 
-Created by `alethia worker register`. Contains self-hosted Tendril credentials:
+Created by `alethia worker register`. Contains self-hosted Runner credentials:
 
 ```json
 {
   "worker_id": "uuid",
   "worker_token": "plaintext-token",
-  "api_url": "https://trellis.example.com"
+  "api_url": "https://alethia.example.com"
 }
 ```
 
-Used by `alethia worker start` to authenticate with the Trellis API.
+Used by `alethia worker start` to authenticate with the Alethia API.
 
 ## Environment Variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `ALETHIA_WEB_ORIGIN` | Production URL (baked at build time) | Override the Trellis API base URL |
+| `ALETHIA_WEB_ORIGIN` | Production URL (baked at build time) | Override the Alethia API base URL |
 
-This is the only environment variable Alethia uses. All other configuration comes from the JSON files above or command-line flags.
+This is the only environment variable alethia uses. All other configuration comes from the JSON files above or command-line flags.
 
 ## Build-Time Configuration
 
-The GoReleaser build injects `ALETHIA_WEB_ORIGIN` as an `ldflags` variable. The production build points to the production Trellis URL. For development, override with the environment variable:
+The GoReleaser build injects `ALETHIA_WEB_ORIGIN` as an `ldflags` variable. The production build points to the production Alethia URL. For development, override with the environment variable:
 
 ```bash
 export ALETHIA_WEB_ORIGIN=http://localhost:3000

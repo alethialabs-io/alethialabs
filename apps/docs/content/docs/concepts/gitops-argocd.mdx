@@ -5,7 +5,7 @@ description: How ArgoCD is installed automatically and configured with the App o
 
 # GitOps & ArgoCD
 
-After a successful `terraform apply`, the Tendril automatically installs **ArgoCD** on the provisioned Kubernetes cluster. ArgoCD manages all subsequent application deployments via GitOps — Git is the source of truth.
+After a successful `terraform apply`, the Runner automatically installs **ArgoCD** on the provisioned Kubernetes cluster. ArgoCD manages all subsequent application deployments via GitOps — Git is the source of truth.
 
 <img src="/docs/diagrams/concepts/gitops-argocd.svg" alt="GitOps ArgoCD" />
 
@@ -28,16 +28,16 @@ Every provisioned cluster comes with ArgoCD and a set of supporting components:
 <Steps>
 
 ### Terraform apply completes
-The Tendril provisions all infrastructure (VPC, cluster, databases, etc.) via Terraform. Outputs include cluster name, endpoint, and ARN.
+The Runner provisions all infrastructure (VPC, cluster, databases, etc.) via Terraform. Outputs include cluster name, endpoint, and ARN.
 
 ### Kubeconfig generated
-The Tendril calls the provider-specific CLI to generate a kubeconfig:
+The Runner calls the provider-specific CLI to generate a kubeconfig:
 - AWS: `aws eks update-kubeconfig --name {cluster} --region {region}`
 - GCP: `gcloud container clusters get-credentials {cluster} --region {region}`
 - Azure: `az aks get-credentials --name {cluster} --resource-group {rg}`
 
 ### ArgoCD installed via Helm
-The Tendril runs `helm upgrade --install argocd` with the ArgoCD Helm chart. It waits for all ArgoCD pods to become Ready.
+The Runner runs `helm upgrade --install argocd` with the ArgoCD Helm chart. It waits for all ArgoCD pods to become Ready.
 
 ### Admin password extracted
 The ArgoCD admin password is read from the `argocd-initial-admin-secret` Kubernetes Secret.
@@ -49,7 +49,7 @@ Terraform outputs (cluster name, VPC ID, RDS endpoints, ElastiCache endpoints, e
 ArgoCD Application manifests are rendered from templates and applied to the cluster.
 
 ### Metadata reported
-The ArgoCD URL, admin password, and cluster metadata are stored in the job's execution metadata and written to the vine's component tables.
+The ArgoCD URL, admin password, and cluster metadata are stored in the job's execution metadata and written to the Spec's component tables.
 
 </Steps>
 
@@ -98,7 +98,7 @@ ArgoCD applications reference these values in their Helm charts. For example, an
 
 ## ArgoCD Templates
 
-Templates are stored in `infra/templates/argocd/` and staged into the Tendril Docker image during the release build. Each template is a Kubernetes manifest with Helm-style placeholders:
+Templates are stored in `infra/templates/argocd/` and staged into the Runner Docker image during the release build. Each template is a Kubernetes manifest with Helm-style placeholders:
 
 | Template | What It Deploys |
 |----------|----------------|
@@ -115,6 +115,6 @@ Templates are stored in `infra/templates/argocd/` and staged into the Tendril Do
 After ArgoCD is installed:
 
 1. **All infrastructure components are managed by ArgoCD** — changes to Git repos are automatically synced
-2. **The ArgoCD URL is displayed** in the Trellis Clusters page with a clickable link
+2. **The ArgoCD URL is displayed** in the Console Clusters page with a clickable link
 3. **Applications can be added** by pushing new YAML files to the `manifests/applications/` directory
 4. **Drift detection** — ArgoCD continuously compares the live cluster state against Git and alerts on drift

@@ -12,8 +12,8 @@ The dashboard is the landing page after login. It provides a quick summary of yo
 The dashboard shell wraps all authenticated pages with:
 
 - **Header** — breadcrumbs, notifications bell (unread job count), user dropdown (profile, sign out)
-- **Sidebar** — main navigation (Overview, Plant a Vine, Clusters, Jobs, Integrations, Tendrils) plus a dynamic vineyard list with expandable vine sub-items
-- **Real-time subscriptions** — established on layout mount for job status and vine status updates (see [Real-time Architecture](/concepts/realtime))
+- **Sidebar** — main navigation (Overview, Design a Spec, Clusters, Jobs, Integrations, Runners) plus a dynamic zone list with expandable spec sub-items
+- **Real-time subscriptions** — established on layout mount for job status and spec status updates (see [Real-time Architecture](/concepts/realtime))
 
 ## Overview Page
 
@@ -21,9 +21,9 @@ The overview page shows four stat chips at the top:
 
 | Stat | Source |
 |------|--------|
-| Total Vines | Count of all vines across vineyards |
-| Active Vines | Vines with status `ACTIVE` |
-| Online Tendrils | Tendrils with heartbeat within 60 seconds |
+| Total Specs | Count of all specs across zones |
+| Active Specs | Specs with status `ACTIVE` |
+| Online Runners | Runners with heartbeat within 60 seconds |
 | Total Jobs | Count of all provision jobs |
 
 Below the stats:
@@ -37,10 +37,10 @@ Shows connected and disconnected integrations as badges. Connected providers sho
 A data table showing the 5 most recent jobs with columns:
 - **Type** — job type with icon (PLAN, DEPLOY, DESTROY, etc.)
 - **Status** — color-coded badge (green=SUCCESS, red=FAILED, yellow=PROCESSING, gray=QUEUED)
-- **Vine** — target vine project name
+- **Spec** — target spec project name
 - **Created** — relative timestamp
 
-Clicking a job row navigates to the [job detail page](/trellis/jobs/job-detail).
+Clicking a job row navigates to the [job detail page](/console/jobs/job-detail).
 
 ## Notifications
 
@@ -54,15 +54,15 @@ The sidebar has two sections:
 
 **Main Navigation:**
 - Overview (`/dashboard`)
-- Plant a Vine (`/dashboard/plant`)
+- Design a Spec (`/dashboard/design`)
 - Clusters (`/dashboard/clusters`)
 - Jobs (`/dashboard/jobs`)
 - Integrations (`/dashboard/integrations`)
-- Tendrils (`/dashboard/tendrils`)
+- Runners (`/dashboard/runners`)
 
-**Vineyards List:**
-- Dynamically loaded from the vineyards store
-- Each vineyard is expandable to show its vines
-- Vines show status dots (green=ACTIVE, yellow=PROVISIONING, red=FAILED) and provider icons
-- Active vine is highlighted based on current URL
-- "Plant a Vine" link shown if no vineyards exist
+**Zones List:**
+- Dynamically loaded from the zones store
+- Each zone is expandable to show its specs
+- Specs show status dots (green=ACTIVE, yellow=PROVISIONING, red=FAILED) and provider icons
+- Active spec is highlighted based on current URL
+- "Design a Spec" link shown if no zones exist

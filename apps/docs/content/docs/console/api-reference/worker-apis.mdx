@@ -1,11 +1,11 @@
 ---
 title: Worker APIs
-description: API endpoints used by Tendril agents for job claiming, heartbeat, and log streaming.
+description: API endpoints used by Runner agents for job claiming, heartbeat, and log streaming.
 ---
 
 # Worker APIs
 
-These endpoints are called by Tendril agents. Authentication is via `X-Worker-ID` and `X-Worker-Token` headers. The token is hashed with SHA-256 and compared against the stored `workers.token_hash`.
+These endpoints are called by Runner agents. Authentication is via `X-Worker-ID` and `X-Worker-Token` headers. The token is hashed with SHA-256 and compared against the stored `workers.token_hash`.
 
 ## Job Claiming
 
@@ -20,8 +20,8 @@ Claims the next available job. Uses the `claim_next_job()` PostgreSQL function w
     "id": "uuid",
     "job_type": "PLAN",
     "config_snapshot": { ... },
-    "vine_id": "uuid",
-    "vineyard_id": "uuid"
+    "spec_id": "uuid",
+    "zone_id": "uuid"
   },
   "cloud_identity": {
     "provider": "aws",
@@ -46,7 +46,7 @@ Sent every 30 seconds. Updates `workers.last_heartbeat` and `workers.version`.
 }
 ```
 
-If a heartbeat is not received for 60 seconds, Trellis marks the Tendril OFFLINE.
+If a heartbeat is not received for 60 seconds, Alethia marks the Runner OFFLINE.
 
 ## Job Status
 
@@ -67,15 +67,15 @@ Updates job status. Valid transitions: PROCESSING, SUCCESS, FAILED, CANCELLED.
 }
 ```
 
-On SUCCESS for DEPLOY jobs, the server automatically calls `finalizeDeployment()` to extract Terraform outputs and update vine component tables.
+On SUCCESS for DEPLOY jobs, the server automatically calls `finalizeDeployment()` to extract Terraform outputs and update spec component tables.
 
-On FAILED, the vine status is set to FAILED with the error message.
+On FAILED, the spec status is set to FAILED with the error message.
 
 ## Log Streaming
 
 ### `POST /api/jobs/{id}/logs`
 
-Receives log chunks from the Tendril. See [Real-time Architecture](/concepts/realtime) for how these are delivered to the browser.
+Receives log chunks from the Runner. See [Real-time Architecture](/concepts/realtime) for how these are delivered to the browser.
 
 **Body:**
 ```json
@@ -105,12 +105,12 @@ Downloads the plan artifact for apply execution.
 
 ### `POST /api/workers/register`
 
-Registers a new Tendril. Returns the plaintext worker token (shown once).
+Registers a new Runner. Returns the plaintext worker token (shown once).
 
 **Body:**
 ```json
 {
-  "name": "eu-west-1-tendril",
+  "name": "eu-west-1-runner",
   "mode": "self-hosted"
 }
 ```

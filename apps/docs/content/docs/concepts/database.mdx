@@ -11,7 +11,7 @@ The platform uses **Supabase PostgreSQL** as its sole database. All tables are p
 
 ## Core Tables
 
-### `vineyards`
+### `zones`
 
 Workspace grouping for infrastructure configurations.
 
@@ -26,7 +26,7 @@ Workspace grouping for infrastructure configurations.
 
 Constraint: `UNIQUE(user_id, name)`
 
-### `vines`
+### `specs`
 
 Infrastructure configuration — the central entity.
 
@@ -34,13 +34,13 @@ Infrastructure configuration — the central entity.
 |--------|------|-------------|
 | `id` | uuid (PK) | |
 | `user_id` | uuid (FK) | Owner |
-| `vineyard_id` | uuid (FK → vineyards) | Parent vineyard |
+| `zone_id` | uuid (FK → zones) | Parent zone |
 | `cloud_identity_id` | uuid (FK → cloud_identities) | Cloud account to provision in |
 | `project_name` | text | Infrastructure project name |
 | `environment_stage` | environment_stage enum | development / staging / production |
 | `region` | text | Cloud region (e.g., eu-west-1) |
 | `terraform_version` | text | Default: 1.11.4 |
-| `status` | vine_status enum | DRAFT → ACTIVE → DESTROYED |
+| `status` | spec_status enum | DRAFT → ACTIVE → DESTROYED |
 | `estimated_monthly_cost` | numeric | Calculated cost estimate |
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | |
@@ -73,16 +73,16 @@ OAuth tokens for Git providers.
 | `refresh_token` | text | Encrypted at rest |
 | `expires_at` | timestamptz | Token expiry |
 
-## Vine Component Tables (Singleton — 1:1 per Vine)
+## Spec Component Tables (Singleton — 1:1 per Spec)
 
-### `vine_network`
+### `spec_network`
 
 VPC / VNet / VPC Network configuration.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `vine_id` | uuid (UNIQUE FK) | |
+| `spec_id` | uuid (UNIQUE FK) | |
 | `provision_network` | boolean | Create new or use existing |
 | `network_id` | text | Existing network ID (if not provisioning) |
 | `cidr_block` | text | e.g., 10.0.0.0/16 |
@@ -91,14 +91,14 @@ VPC / VNet / VPC Network configuration.
 | `status` | component_status enum | |
 | `estimated_monthly_cost` | numeric | |
 
-### `vine_cluster`
+### `spec_cluster`
 
 EKS / GKE / AKS configuration.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `vine_id` | uuid (UNIQUE FK) | |
+| `spec_id` | uuid (UNIQUE FK) | |
 | `cluster_version` | text | e.g., 1.31 |
 | `provider_config` | jsonb | Provider-specific overrides |
 | `cluster_admins` | jsonb | Admin user list |
@@ -113,14 +113,14 @@ EKS / GKE / AKS configuration.
 | `argocd_url` | text | Populated after ArgoCD install |
 | `argocd_admin_password` | text | Populated after ArgoCD install |
 
-### `vine_dns`
+### `spec_dns`
 
 Route53 / Cloud DNS / Azure DNS configuration.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `vine_id` | uuid (UNIQUE FK) | |
+| `spec_id` | uuid (UNIQUE FK) | |
 | `enabled` | boolean | |
 | `zone_id` | text | Existing hosted zone |
 | `domain_name` | text | |
@@ -129,14 +129,14 @@ Route53 / Cloud DNS / Azure DNS configuration.
 | `provider_config` | jsonb | |
 | `status` | component_status enum | |
 
-### `vine_repositories`
+### `spec_repositories`
 
 Git repository references for infra, GitOps, and application code.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `vine_id` | uuid (UNIQUE FK) | |
+| `spec_id` | uuid (UNIQUE FK) | |
 | `env_template_repo` | text | Infrastructure template source |
 | `env_template_branch` | text | |
 | `env_destination_repo` | text | Infrastructure output destination |
@@ -147,17 +147,17 @@ Git repository references for infra, GitOps, and application code.
 | `apps_template_branch` | text | |
 | `apps_destination_repo` | text | Application output destination |
 
-## Vine Component Tables (Multi-Instance — 1:N per Vine)
+## Spec Component Tables (Multi-Instance — 1:N per Spec)
 
-### `vine_databases`
+### `spec_databases`
 
 Aurora / Cloud SQL / Azure Database instances.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `vine_id` | uuid (FK) | |
-| `name` | text | Unique per vine |
+| `spec_id` | uuid (FK) | |
+| `name` | text | Unique per Spec |
 | `engine` | text | aurora-postgresql (default), aurora-mysql, etc. |
 | `engine_version` | text | e.g., 16.4 |
 | `min_capacity` | numeric | Aurora Serverless min ACU |
@@ -171,17 +171,17 @@ Aurora / Cloud SQL / Azure Database instances.
 | `cluster_identifier` | text | |
 | `master_credentials_secret_arn` | text | Secrets Manager ARN |
 
-Constraint: `UNIQUE(vine_id, name)`
+Constraint: `UNIQUE(spec_id, name)`
 
-### `vine_caches`
+### `spec_caches`
 
 ElastiCache / Memorystore / Azure Cache instances.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `vine_id` | uuid (FK) | |
-| `name` | text | Unique per vine |
+| `spec_id` | uuid (FK) | |
+| `name` | text | Unique per Spec |
 | `engine` | cache_engine enum | redis / valkey |
 | `node_type` | text | e.g., cache.r6g.large |
 | `num_cache_nodes` | integer | |
@@ -191,14 +191,14 @@ ElastiCache / Memorystore / Azure Cache instances.
 | `endpoint` | text | Populated after provisioning |
 | `estimated_monthly_cost` | numeric | |
 
-### `vine_nosql_tables`
+### `spec_nosql_tables`
 
 DynamoDB / Firestore / Cosmos DB tables.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `vine_id` | uuid (FK) | |
+| `spec_id` | uuid (FK) | |
 | `name` | text | |
 | `table_type` | nosql_table_type enum | |
 | `hash_key` | text | Partition key name |
@@ -210,14 +210,14 @@ DynamoDB / Firestore / Cosmos DB tables.
 | `provider_config` | jsonb | |
 | `status` | component_status enum | |
 
-### `vine_queues`
+### `spec_queues`
 
 SQS / Pub/Sub / Service Bus queues.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `vine_id` | uuid (FK) | |
+| `spec_id` | uuid (FK) | |
 | `name` | text | |
 | `fifo` | boolean | FIFO ordering guarantee |
 | `visibility_timeout` | integer | Seconds |
@@ -225,26 +225,26 @@ SQS / Pub/Sub / Service Bus queues.
 | `delay_seconds` | integer | |
 | `status` | component_status enum | |
 
-### `vine_topics`
+### `spec_topics`
 
 SNS / Pub/Sub / Service Bus topics.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `vine_id` | uuid (FK) | |
+| `spec_id` | uuid (FK) | |
 | `name` | text | |
 | `subscriptions` | jsonb | Array of subscription configs |
 | `status` | component_status enum | |
 
-### `vine_container_registries`
+### `spec_container_registries`
 
 ECR / Artifact Registry / ACR repositories.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `vine_id` | uuid (FK) | |
+| `spec_id` | uuid (FK) | |
 | `name` | text | |
 | `image_tag_mutability` | registry_tag_mutability enum | MUTABLE / IMMUTABLE |
 | `scan_on_push` | boolean | |
@@ -252,14 +252,14 @@ ECR / Artifact Registry / ACR repositories.
 | `provider_config` | jsonb | |
 | `status` | component_status enum | |
 
-### `vine_secrets`
+### `spec_secrets`
 
 Secrets Manager / Secret Manager / Key Vault entries.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `vine_id` | uuid (FK) | |
+| `spec_id` | uuid (FK) | |
 | `name` | text | Secret name |
 | `generate` | boolean | Auto-generate a random value |
 | `length` | integer | Generated password length |
@@ -274,15 +274,15 @@ Secrets Manager / Secret Manager / Key Vault entries.
 |--------|------|-------------|
 | `id` | uuid (PK) | |
 | `user_id` | uuid (FK) | Owner |
-| `vine_id` | uuid (FK) | Target vine |
+| `spec_id` | uuid (FK) | Target Spec |
 | `cloud_identity_id` | uuid (FK) | Cloud account for execution |
 | `job_type` | text | CONNECTION_TEST, PLAN, DEPLOY, etc. |
 | `status` | provision_job_status enum | QUEUED → SUCCESS/FAILED |
-| `worker_id` | uuid (FK → workers) | Assigned Tendril |
+| `worker_id` | uuid (FK → workers) | Assigned Runner |
 | `error_message` | text | Failure details |
 | `execution_metadata` | jsonb | Terraform outputs, cost data, timing |
 | `created_at` | timestamptz | |
-| `claimed_at` | timestamptz | When Tendril claimed it |
+| `claimed_at` | timestamptz | When Runner claimed it |
 | `started_at` | timestamptz | When execution began |
 | `completed_at` | timestamptz | |
 
@@ -302,7 +302,7 @@ Realtime subscription: clients subscribe to INSERT events on this table filtered
 
 ### `workers`
 
-Registered Tendril agents.
+Registered Runner agents.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -312,14 +312,14 @@ Registered Tendril agents.
 | `mode` | worker_mode enum | self-hosted / cloud-hosted |
 | `status` | worker_status enum | ONLINE / OFFLINE / DRAINING |
 | `token_hash` | text | Hashed authentication token |
-| `version` | text | Tendril version string |
+| `version` | text | Runner version string |
 | `release_id` | uuid (FK → worker_releases) | Current release |
 | `last_heartbeat` | timestamptz | Last heartbeat timestamp |
 | `created_at` | timestamptz | |
 
 ### `worker_releases`
 
-Release catalog for Tendril versions.
+Release catalog for Runner versions.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -330,12 +330,12 @@ Release catalog for Tendril versions.
 
 ## Audit Table
 
-### `vine_audit_log`
+### `spec_audit_log`
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `vine_id` | uuid (FK) | |
+| `spec_id` | uuid (FK) | |
 | `user_id` | uuid (FK) | Who performed the action |
 | `action` | audit_action enum | CREATED, UPDATED, DELETED, PROVISIONED, DESTROYED |
 | `component_type` | text | Which component was affected |
@@ -346,8 +346,8 @@ Release catalog for Tendril versions.
 ## Key Enums
 
 ```sql
--- Vine lifecycle
-CREATE TYPE vine_status AS ENUM (
+-- Spec lifecycle
+CREATE TYPE spec_status AS ENUM (
   'DRAFT', 'QUEUED', 'PROVISIONING', 'ACTIVE',
   'FAILED', 'DESTROYING', 'DESTROYED'
 );
@@ -412,7 +412,7 @@ END;
 $$ LANGUAGE plpgsql;
 ```
 
-This guarantees that if two Tendrils poll simultaneously, only one gets the job. The `SKIP LOCKED` clause means the second Tendril skips the locked row and either gets the next one or gets nothing.
+This guarantees that if two Runners poll simultaneously, only one gets the job. The `SKIP LOCKED` clause means the second Runner skips the locked row and either gets the next one or gets nothing.
 
 ## Realtime Subscriptions
 
@@ -420,4 +420,4 @@ The following tables are published via Supabase Realtime for live UI updates:
 
 - `provision_job_logs` — log streaming (INSERT events)
 - `provision_jobs` — job status changes (UPDATE events)
-- `workers` — Tendril status changes (UPDATE events)
+- `workers` — Runner status changes (UPDATE events)

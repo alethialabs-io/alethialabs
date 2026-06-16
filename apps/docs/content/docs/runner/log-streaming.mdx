@@ -1,11 +1,11 @@
 ---
 title: Real-Time Log Streaming
-description: How Tendril streams Terraform output to the browser in real-time.
+description: How Runner streams Terraform output to the browser in real-time.
 ---
 
 # Real-Time Log Streaming
 
-Tendril streams all Terraform output back to Trellis in real-time. Users see `terraform plan` and `terraform apply` output in the browser as it happens.
+Runner streams all Terraform output back to Alethia in real-time. Users see `terraform plan` and `terraform apply` output in the browser as it happens.
 
 ## Architecture
 
@@ -26,7 +26,7 @@ Terraform process
 
 ## JobLogger
 
-The `JobLogger` is a Go struct that wraps an `io.Writer`. It buffers output and flushes to the Trellis API periodically.
+The `JobLogger` is a Go struct that wraps an `io.Writer`. It buffers output and flushes to the Alethia API periodically.
 
 **Two loggers per job:**
 - **STDOUT logger** — captures normal Terraform output (plan details, resource progress)
@@ -51,7 +51,7 @@ Content-Type: application/json
 }
 ```
 
-The Trellis API inserts the chunk into `provision_job_logs`:
+The Alethia API inserts the chunk into `provision_job_logs`:
 
 ```sql
 INSERT INTO provision_job_logs (job_id, log_chunk, stream_type, created_at)
@@ -76,7 +76,7 @@ supabase
   .subscribe();
 ```
 
-Each new batch appears in the log viewer within milliseconds of being written by the Tendril.
+Each new batch appears in the log viewer within milliseconds of being written by the Runner.
 
 ## Log Display
 
@@ -90,7 +90,7 @@ The job detail page renders logs in a terminal-like viewer:
 
 ## Local Echo
 
-All log output is also written to the container's stdout, which goes to CloudWatch Logs (for cloud-hosted Tendrils) or the local terminal (for self-hosted Tendrils). This provides a secondary log source for debugging.
+All log output is also written to the container's stdout, which goes to CloudWatch Logs (for cloud-hosted Runners) or the local terminal (for self-hosted Runners). This provides a secondary log source for debugging.
 
 ## Timing
 
@@ -98,7 +98,7 @@ All log output is also written to the container's stdout, which goes to CloudWat
 |-------|---------|
 | Terraform writes to stdout | 0ms (piped to JobLogger) |
 | JobLogger buffer flush | ≤ 2 seconds (ticker interval) |
-| API POST to Trellis | ~50ms (network) |
+| API POST to Alethia | ~50ms (network) |
 | Database INSERT | ~5ms |
 | Supabase Realtime delivery | ~50ms (WebSocket push) |
 | **Total: Terraform output → browser** | **~2-3 seconds** |

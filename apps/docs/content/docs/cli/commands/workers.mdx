@@ -1,27 +1,27 @@
 ---
 title: Worker Commands
-description: Register, list, configure, and remove Tendril agents from the CLI.
+description: Register, list, configure, and remove Runner agents from the CLI.
 ---
 
 # Worker Commands
 
-Manage Tendril execution agents from the terminal.
+Manage Runner execution agents from the terminal.
 
 ## `alethia worker start`
 
-Start the Tendril polling loop (self-hosted mode).
+Start the Runner polling loop (self-hosted mode).
 
 ```bash
 alethia worker start
 ```
 
-This starts the Tendril agent locally — it polls for jobs, executes Terraform, and streams logs. Requires a registered worker with credentials stored in `~/.config/alethia/worker.json`.
+This starts the Runner agent locally — it polls for jobs, executes Terraform, and streams logs. Requires a registered worker with credentials stored in `~/.config/alethia/worker.json`.
 
-See [Self-Hosted Mode](/tendril/self-hosted) for prerequisites and setup.
+See [Self-Hosted Mode](/runner/self-hosted) for prerequisites and setup.
 
 ## `alethia worker register`
 
-Register a new self-hosted Tendril.
+Register a new self-hosted Runner.
 
 ```bash
 alethia worker register
@@ -33,12 +33,12 @@ Interactive form prompts for a worker name. On success:
 - Prints the credentials for reference
 
 <Callout type="warn">
-The worker token is generated once and saved locally. If the config file is lost, the Tendril must be re-registered. See [Authentication Flows](/concepts/authentication).
+The worker token is generated once and saved locally. If the config file is lost, the Runner must be re-registered. See [Authentication Flows](/concepts/authentication).
 </Callout>
 
 ## `alethia worker list`
 
-List all registered Tendrils.
+List all registered Runners.
 
 ```bash
 alethia worker list
@@ -48,7 +48,7 @@ Output:
 
 ```
 ID          NAME                STATUS   MODE           VERSION   LAST HEARTBEAT
-a1b2...     eu-west-1-tendril   ONLINE   cloud-hosted   0.1.0     5 sec ago
+a1b2...     eu-west-1-runner    ONLINE   cloud-hosted   0.1.0     5 sec ago
 c3d4...     self-hosted-dev     OFFLINE  self-hosted    0.1.0     2 min ago
 ```
 
@@ -64,7 +64,7 @@ Shows the stored worker ID, token presence, and API endpoint.
 
 ## `alethia worker remove`
 
-Remove a registered Tendril.
+Remove a registered Runner.
 
 ```bash
 alethia worker remove --id <worker-id>
@@ -74,4 +74,4 @@ alethia worker remove --id <worker-id>
 |------|----------|-------------|
 | `--id` | Yes | Worker UUID |
 
-For cloud-hosted Tendrils, this also queues a DESTROY_WORKER job to tear down the ECS infrastructure. For self-hosted Tendrils, it simply removes the registration from Trellis.
+For cloud-hosted Runners, this also queues a DESTROY_WORKER job to tear down the ECS infrastructure. For self-hosted Runners, it simply removes the registration from Alethia.

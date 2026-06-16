@@ -1,4 +1,4 @@
-name: Release Tendril
+name: Release runner
 
 on:
   workflow_call:

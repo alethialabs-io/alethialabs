@@ -5,7 +5,7 @@ description: Pre-installed Kubernetes components managed by ArgoCD after cluster
 
 # ArgoCD Components
 
-After cluster provisioning, Tendril installs ArgoCD and deploys a set of supporting components via the [App of Apps pattern](/concepts/gitops-argocd). These templates live in `infra/templates/argocd/`.
+After cluster provisioning, Runner installs ArgoCD and deploys a set of supporting components via the [App of Apps pattern](/concepts/gitops-argocd). These templates live in `infra/templates/argocd/`.
 
 ## Component Manifests
 
@@ -21,7 +21,7 @@ After cluster provisioning, Tendril installs ArgoCD and deploys a set of support
 
 ## How Templates Are Rendered
 
-Each template is a Kubernetes manifest with Helm-style placeholders. During deployment, the Tendril:
+Each template is a Kubernetes manifest with Helm-style placeholders. During deployment, the Runner:
 
 1. Extracts **infrastructure facts** from Terraform outputs (cluster name, VPC ID, database endpoints, etc.)
 2. Renders the facts into a Helm values file

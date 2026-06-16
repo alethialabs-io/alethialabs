@@ -1,6 +1,6 @@
 ---
 title: Deploy Jobs
-description: How Tendril executes DEPLOY jobs — terraform apply, kubeconfig, and ArgoCD installation.
+description: How Runner executes DEPLOY jobs — terraform apply, kubeconfig, and ArgoCD installation.
 ---
 
 # Deploy Jobs
@@ -18,11 +18,11 @@ Same as PLAN jobs.
 Fetches the binary `plan.tfplan` from the PLAN job's Supabase Storage upload.
 
 ### Validate config hash
-Compares the vine's current config hash against the plan's config hash. If they differ (vine was modified after planning), the job fails:
+Compares the spec's current config hash against the plan's config hash. If they differ (spec was modified after planning), the job fails:
 
 > "Configuration has changed since the plan was generated. Please re-plan."
 
-This prevents applying a stale plan. See [Plan & Apply](/trellis/jobs/plan-and-apply).
+This prevents applying a stale plan. See [Plan & Apply](/console/jobs/plan-and-apply).
 
 ### terraform init
 Initializes with the S3 backend (same as PLAN).
@@ -74,10 +74,10 @@ Job status → SUCCESS with execution metadata:
 
 ## Finalization
 
-On the Trellis side, when the job reaches SUCCESS, the `finalizeDeployment()` server action:
-- Updates `vine_cluster` with cluster metadata and ArgoCD credentials
-- Updates `vine_databases` with writer/reader endpoints and credential ARNs
-- Updates `vine_caches` with primary/reader endpoints
-- Sets vine status to `ACTIVE`
+On the Alethia side, when the job reaches SUCCESS, the `finalizeDeployment()` server action:
+- Updates `spec_cluster` with cluster metadata and ArgoCD credentials
+- Updates `spec_databases` with writer/reader endpoints and credential ARNs
+- Updates `spec_caches` with primary/reader endpoints
+- Sets spec status to `ACTIVE`
 
-This data appears in the [Clusters page](/trellis/clusters) and vine detail.
+This data appears in the [Clusters page](/console/clusters) and spec detail.

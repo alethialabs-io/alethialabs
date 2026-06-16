@@ -3,9 +3,9 @@
   "root": true,
   "pages": [
     "index",
-    "trellis",
+    "console",
     "cli",
-    "tendril",
+    "runner",
     "concepts"
   ]
 }

@@ -10,7 +10,7 @@
   <rect x="20" y="56" width="254" height="340" rx="8" fill="none" stroke="#22C55E30"/>
   <rect x="20" y="56" width="254" height="28" rx="8" fill="#22C55E10"/>
   <rect x="20" y="78" width="254" height="1" fill="#22C55E30"/>
-  <text x="147" y="74" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#22C55E">Web (Trellis)</text>
+  <text x="147" y="74" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#22C55E">Web (Console)</text>
 
   <rect x="40" y="96" width="214" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
   <text x="147" y="117" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Click OAuth provider button</text>
@@ -58,11 +58,11 @@
   <text x="410" y="330" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Stored in: ~/.config/alethia/auth.json</text>
   <text x="410" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Access: 1h · Refresh: 90d</text>
 
-  <!-- Tendril Lane -->
+  <!-- Runner Lane -->
   <rect x="546" y="56" width="254" height="340" rx="8" fill="none" stroke="#F59E0B30"/>
   <rect x="546" y="56" width="254" height="28" rx="8" fill="#F59E0B10"/>
   <rect x="546" y="78" width="254" height="1" fill="#F59E0B30"/>
-  <text x="673" y="74" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#F59E0B">Agent (Tendril)</text>
+  <text x="673" y="74" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#F59E0B">Agent (Runner)</text>
 
   <rect x="566" y="96" width="214" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
   <text x="673" y="117" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Registration → get token</text>

@@ -5,7 +5,7 @@ description: Terminal UI components — interactive selectors, progress steppers
 
 # TUI Components
 
-Alethia uses the [Charmbracelet](https://charm.sh/) suite for rich terminal UI. Three libraries are used:
+alethia uses the [Charmbracelet](https://charm.sh/) suite for rich terminal UI. Three libraries are used:
 
 | Library | Purpose |
 |---------|---------|
@@ -15,29 +15,29 @@ Alethia uses the [Charmbracelet](https://charm.sh/) suite for rich terminal UI. 
 
 ## Interactive Selectors
 
-When `--vine-id` is omitted from `plan`, `harvest`, or `destroy`, Alethia launches a two-step TUI selector:
+When `--spec-id` is omitted from `plan`, `apply`, or `destroy`, alethia launches a two-step TUI selector:
 
-### Step 1: Vineyard Selector
+### Step 1: Zone Selector
 
 ```
-? Select a vineyard:
-  > api-backend (3 vines)
-    data-platform (1 vine)
-    internal-tools (2 vines)
+? Select a zone:
+  > api-backend (3 Specs)
+    data-platform (1 Spec)
+    internal-tools (2 Specs)
 ```
 
 Navigate with arrow keys, confirm with Enter.
 
-### Step 2: Vine Selector
+### Step 2: Spec Selector
 
 ```
-? Select a vine:
+? Select a Spec:
   > production / eu-west-1 (ACTIVE)
     staging / eu-west-1 (DRAFT)
     development / us-east-1 (PROVISIONING)
 ```
 
-Each vine shows its environment stage, region, and current status.
+Each Spec shows its environment stage, region, and current status.
 
 ### Standalone Usage
 
@@ -70,7 +70,7 @@ The `alethia login` command uses a Bubble Tea model for the authentication flow:
 ```
 🔐 Waiting for browser authentication...
 
-  Visit: https://trellis.example.com/cli/login?device_code=abc123
+  Visit: https://alethia.example.com/cli/login?device_code=abc123
   Enter the verification code shown in your browser:
 
   > _
@@ -82,7 +82,7 @@ The spinner animates while polling the exchange endpoint every 2 seconds.
 
 ## Config Printer
 
-Job details and vine configurations are displayed with formatted JSON output using lipgloss styling:
+Job details and Spec configurations are displayed with formatted JSON output using lipgloss styling:
 
 - Monospace font for values
 - Color-coded keys

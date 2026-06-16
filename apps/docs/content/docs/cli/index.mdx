@@ -1,11 +1,11 @@
 ---
-title: Alethia CLI
-description: Go command-line tool for managing multi-cloud infrastructure via the Trellis platform.
+title: alethia CLI
+description: Go command-line tool for managing multi-cloud infrastructure via the Alethia platform.
 ---
 
-# Alethia CLI
+# alethia CLI
 
-Alethia is the command-line interface for the platform. It provides terminal-based access to all infrastructure operations — creating vineyards, planning and deploying vines, monitoring jobs, and managing Tendrils.
+alethia is the command-line interface for the platform. It provides terminal-based access to all infrastructure operations — creating zones, planning and deploying Specs, monitoring jobs, and managing Runners.
 
 ## Overview
 
@@ -18,31 +18,31 @@ Alethia is the command-line interface for the platform. It provides terminal-bas
 
 ## How It Works
 
-Alethia is a **thin client** that communicates with the Trellis API over HTTPS. It does not run Terraform directly — instead, it queues jobs that [Tendrils](/tendril) execute. The CLI handles:
+alethia is a **thin client** that communicates with the Alethia API over HTTPS. It does not run Terraform directly — instead, it queues jobs that [Runners](/runner) execute. The CLI handles:
 
 1. **Authentication** — [Device code flow](/concepts/authentication) with tokens stored locally
-2. **Configuration** — Creating and inspecting vineyards and vines
+2. **Configuration** — Creating and inspecting zones and Specs
 3. **Job submission** — Queuing Plan / Deploy / Destroy jobs
 4. **Monitoring** — Streaming logs, checking job status, waiting for completion
-5. **Management** — Listing clusters, managing Tendrils
+5. **Management** — Listing clusters, managing Runners
 
 ## Command Groups
 
 <Cards>
-  <Card title="Vineyard Commands" href="/cli/commands/vineyard">
+  <Card title="Zone Commands" href="/cli/commands/zone">
     Create, list, and delete workspaces.
   </Card>
-  <Card title="Vine Commands" href="/cli/commands/vine">
+  <Card title="Spec Commands" href="/cli/commands/spec">
     List and inspect infrastructure configurations.
   </Card>
-  <Card title="Plan & Harvest" href="/cli/commands/plan-and-harvest">
+  <Card title="Plan & Apply" href="/cli/commands/plan-and-apply">
     Queue plan, deploy, and destroy jobs.
   </Card>
   <Card title="Job Commands" href="/cli/commands/jobs">
     List, stream logs, cancel, and wait for jobs.
   </Card>
   <Card title="Worker Commands" href="/cli/commands/workers">
-    Register, list, and remove Tendrils.
+    Register, list, and remove Runners.
   </Card>
   <Card title="Cluster Commands" href="/cli/commands/clusters">
     List provisioned Kubernetes clusters.
@@ -58,15 +58,15 @@ brew install bobikenobi12/bb-thesis-2026/alethia
 # Authenticate
 alethia login
 
-# List vineyards
-alethia vineyard list
+# List zones
+alethia zone list
 
 # Plan infrastructure
-alethia plan --vine-id <id>
+alethia plan --spec-id <id>
 
 # Stream logs
 alethia jobs logs --id <job-id> --follow
 
 # Deploy
-alethia harvest --vine-id <id> --plan-job-id <plan-job-id>
+alethia apply --spec-id <id> --plan-job-id <plan-job-id>
 ```

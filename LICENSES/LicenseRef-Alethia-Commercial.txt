@@ -1,6 +1,6 @@
 The Alethia Labs Enterprise Edition (EE) License
 
-Copyright (c) 2026-present Alethia OÜ. All rights reserved.
+Copyright (c) 2026-present Alethia Labs OÜ. All rights reserved.
 
 This license governs the software and associated documentation files (the
 "Software") that reside under the "ee/" directory of the Alethia Labs repository.
@@ -11,20 +11,20 @@ With regard to the Software:
 
 1. Permitted use. You may view, fork, and modify the source code in the "ee/"
    directory solely for the purposes of development, evaluation, testing, and
-   contributing back to Alethia OÜ.
+   contributing back to Alethia Labs OÜ.
 
 2. Production use requires a subscription. You may use the Software in production
    only if you (and any entity that you represent) have entered into, and remain
    in compliance with, a valid Alethia Labs commercial subscription agreement
    that covers the relevant features and number of users, available from
-   Alethia OÜ.
+   Alethia Labs OÜ.
 
 3. Restrictions. Except as expressly permitted above, you may not copy, modify,
    merge, publish, distribute, sublicense, and/or sell copies of the Software,
    and you may not remove or alter any license keys, copyright notices, or other
    proprietary notices.
 
-4. Reservation of rights. Alethia OÜ retains all right, title, and interest in
+4. Reservation of rights. Alethia Labs OÜ retains all right, title, and interest in
    and to the Software. No rights are granted other than those expressly set out
    in this license.
 

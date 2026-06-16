@@ -5,13 +5,13 @@ description: How the platform estimates infrastructure costs in real-time and vi
 
 # Cost Estimation
 
-The platform provides two layers of cost estimation: a **real-time cost sidebar** during vine configuration, and a **post-plan Infracost analysis** for precise per-resource costs.
+The platform provides two layers of cost estimation: a **real-time cost sidebar** during Spec configuration, and a **post-plan Infracost analysis** for precise per-resource costs.
 
 <img src="/docs/diagrams/concepts/cost-estimation.svg" alt="Cost Estimation" />
 
 ## Cost Sidebar (Real-Time)
 
-The cost sidebar appears on the right side of the Plant a Vine form. As the user configures infrastructure, the estimated monthly cost updates immediately.
+The cost sidebar appears on the right side of the Design a Spec form. As the user configures infrastructure, the estimated monthly cost updates immediately.
 
 ### How Pricing Works
 
@@ -63,17 +63,17 @@ const FALLBACK_EC2: Record<string, number> = {
 
 ## Infracost Analysis (Post-Plan)
 
-After a Tendril runs `terraform plan`, it optionally runs [Infracost](https://www.infracost.io/) for a precise cost breakdown based on the actual Terraform resources.
+After a Runner runs `terraform plan`, it optionally runs [Infracost](https://www.infracost.io/) for a precise cost breakdown based on the actual Terraform resources.
 
 ### How It Works
 
 <Steps>
 
 ### Terraform plan completes
-The Tendril generates a plan JSON via `terraform show -json plan.tfplan`.
+The Runner generates a plan JSON via `terraform show -json plan.tfplan`.
 
 ### Infracost analyzes the plan
-If an `INFRACOST_API_KEY` is configured, the Tendril runs:
+If an `INFRACOST_API_KEY` is configured, the Runner runs:
 ```bash
 infracost breakdown --path plan.json --format json
 ```
@@ -82,7 +82,7 @@ infracost breakdown --path plan.json --format json
 The Infracost output is parsed and stored in the job's `execution_metadata.cost_breakdown` field.
 
 ### UI displays breakdown
-The Plan tab in the vine detail page shows per-resource costs and a total monthly estimate.
+The Plan tab in the Spec detail page shows per-resource costs and a total monthly estimate.
 
 </Steps>
 

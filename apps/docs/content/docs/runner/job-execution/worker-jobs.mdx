@@ -5,11 +5,11 @@ description: DEPLOY_WORKER, UPDATE_WORKER, DESTROY_WORKER, and CONNECTION_TEST j
 
 # Worker & Utility Jobs
 
-These job types manage Tendril infrastructure and validate cloud connections.
+These job types manage Runner infrastructure and validate cloud connections.
 
 ## DEPLOY_WORKER
 
-Provisions a new cloud-hosted Tendril in ECS Fargate.
+Provisions a new cloud-hosted Runner in ECS Fargate.
 
 <Steps>
 
@@ -17,22 +17,22 @@ Provisions a new cloud-hosted Tendril in ECS Fargate.
 Worker jobs use the platform's own AWS credentials (not the user's cloud identity).
 
 ### Generate Terraform config
-Creates ECS task definition, IAM roles (execution + task), CloudWatch log group, security groups from the Tendril templates.
+Creates ECS task definition, IAM roles (execution + task), CloudWatch log group, security groups from the Runner templates.
 
 ### terraform apply
 Provisions the infrastructure in the specified region.
 
-### Register with Trellis
-Calls `POST /api/tendrils/register` to create a worker record. Returns the worker ID and token, which are injected as environment variables into the ECS task.
+### Register with Alethia
+Calls `POST /api/runners/register` to create a worker record. Returns the worker ID and token, which are injected as environment variables into the ECS task.
 
 ### Report results
-Job status → SUCCESS. The new Tendril boots, registers its heartbeat, and appears as ONLINE in the [Tendrils page](/trellis/tendrils).
+Job status → SUCCESS. The new Runner boots, registers its heartbeat, and appears as ONLINE in the [Runners page](/console/runners).
 
 </Steps>
 
 ## UPDATE_WORKER
 
-Updates an existing Tendril to the latest release.
+Updates an existing Runner to the latest release.
 
 1. Updates the ECS task definition with the latest Docker image tag
 2. Forces a new ECS Fargate deployment (`--force-new-deployment`)
@@ -40,11 +40,11 @@ Updates an existing Tendril to the latest release.
 
 ## DESTROY_WORKER
 
-Tears down a Tendril's infrastructure.
+Tears down a Runner's infrastructure.
 
-1. Runs `terraform destroy` on the Tendril's ECS resources
-2. Removes the worker registration from Trellis
-3. Any jobs assigned to this Tendril are requeued to other available Tendrils
+1. Runs `terraform destroy` on the Runner's ECS resources
+2. Removes the worker registration from Alethia
+3. Any jobs assigned to this Runner are requeued to other available Runners
 
 ## CONNECTION_TEST
 
@@ -76,7 +76,7 @@ Queries the cloud account for existing resources:
 </Tabs>
 
 ### Cache results
-Discovered resources are stored in `cloud_identities.credentials` (JSONB) for use in the Plant a Vine form (e.g., "Use existing VPC" dropdown).
+Discovered resources are stored in `cloud_identities.credentials` (JSONB) for use in the Design a Spec form (e.g., "Use existing VPC" dropdown).
 
 </Steps>
 

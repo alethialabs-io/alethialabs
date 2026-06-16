@@ -1,6 +1,6 @@
 ---
 title: Plan Jobs
-description: How Tendril executes PLAN jobs — terraform plan, structured output, and Infracost.
+description: How Runner executes PLAN jobs — terraform plan, structured output, and Infracost.
 ---
 
 # Plan Jobs
@@ -12,16 +12,16 @@ PLAN jobs run `terraform plan` to preview infrastructure changes without applyin
 <Steps>
 
 ### Assume cloud credentials
-Provider-specific: STS AssumeRole (AWS), WIF exchange (GCP), or federated identity (Azure). See [Cloud Credentials](/tendril/cloud-credentials).
+Provider-specific: STS AssumeRole (AWS), WIF exchange (GCP), or federated identity (Azure). See [Cloud Credentials](/runner/cloud-credentials).
 
 ### Generate Terraform variables
-The vine's config snapshot is transformed into `terraform.tfvars` by the provisioner. Each vine component maps to specific Terraform variables.
+The spec's config snapshot is transformed into `terraform.tfvars` by the provisioner. Each spec component maps to specific Terraform variables.
 
 ### terraform init
 Initializes with the [Supabase S3 backend](/concepts/terraform-state):
 ```
-bucket = "vine-terraform-state"
-key    = "{vineyard}/{project}/{stage}/{region}/terraform.tfstate"
+bucket = "spec-terraform-state"
+key    = "{zone}/{project}/{stage}/{region}/terraform.tfstate"
 ```
 
 ### terraform plan
@@ -56,7 +56,7 @@ Job status → SUCCESS with execution metadata:
 
 ## What the User Sees
 
-After the plan completes, the [Plan tab](/trellis/jobs/plan-and-apply) in the vine detail page shows:
+After the plan completes, the [Plan tab](/console/jobs/plan-and-apply) in the spec detail page shows:
 - Resource groups with create/update/delete actions
 - Per-resource costs
 - Total estimated monthly cost

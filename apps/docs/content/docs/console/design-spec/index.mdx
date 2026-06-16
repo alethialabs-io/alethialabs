@@ -1,11 +1,11 @@
 ---
-title: Plant a Vine Overview
+title: Design a Spec Overview
 description: The multi-section infrastructure configuration form with Provider Ribbon and Cloud Identity.
 ---
 
-# Plant a Vine
+# Design a Spec
 
-The Plant a Vine form is the primary way to define infrastructure. It has 11 configurable sections, a Provider Ribbon for switching between AWS/GCP/Azure, a Cloud Identity selector, and a real-time cost sidebar.
+The Design a Spec form is the primary way to define infrastructure. It has 11 configurable sections, a Provider Ribbon for switching between AWS/GCP/Azure, a Cloud Identity selector, and a real-time cost sidebar.
 
 ## Form Structure
 
@@ -24,34 +24,34 @@ The Provider Ribbon sits at the top of the form and controls three things:
 When the Cloud Identity changes (e.g., switching from an AWS account to a GCP project), the entire form adapts. See [Cloud Provider Abstraction](/concepts/cloud-abstraction) for how this works.
 
 <Callout type="warn">
-Switching providers resets all provider-specific defaults: instance types, K8s versions, database engines, cache node types, and DNS/WAF options. If you're duplicating a vine across providers, the platform converts the config automatically with warnings. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion).
+Switching providers resets all provider-specific defaults: instance types, K8s versions, database engines, cache node types, and DNS/WAF options. If you're duplicating a spec across providers, the platform converts the config automatically with warnings. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion).
 </Callout>
 
 ## Sections
 
 <Cards>
-  <Card title="Project Basics" href="/trellis/plant-vine/project-basics">Vineyard, name, environment, Terraform version</Card>
-  <Card title="Network" href="/trellis/plant-vine/network">VPC/VNet, CIDR, NAT gateway</Card>
-  <Card title="Cluster" href="/trellis/plant-vine/cluster">K8s, instance types, node scaling, Karpenter</Card>
-  <Card title="Databases" href="/trellis/plant-vine/databases">Aurora, Cloud SQL, Azure Database</Card>
-  <Card title="Caches" href="/trellis/plant-vine/caches">Redis, Valkey, Memorystore</Card>
-  <Card title="NoSQL" href="/trellis/plant-vine/nosql">DynamoDB, Firestore, Cosmos DB</Card>
-  <Card title="Messaging" href="/trellis/plant-vine/messaging">SQS, Pub/Sub, Service Bus</Card>
-  <Card title="DNS" href="/trellis/plant-vine/dns">Route53, certificates, WAF</Card>
-  <Card title="Secrets" href="/trellis/plant-vine/secrets">Password generation, secret stores</Card>
-  <Card title="Container Registry" href="/trellis/plant-vine/container-registry">ECR, Artifact Registry, ACR</Card>
-  <Card title="Repositories" href="/trellis/plant-vine/repositories">Git repos for GitOps</Card>
-  <Card title="Cost Sidebar" href="/trellis/plant-vine/cost-sidebar">Real-time pricing estimates</Card>
+  <Card title="Project Basics" href="/console/design-spec/project-basics">Zone, name, environment, Terraform version</Card>
+  <Card title="Network" href="/console/design-spec/network">VPC/VNet, CIDR, NAT gateway</Card>
+  <Card title="Cluster" href="/console/design-spec/cluster">K8s, instance types, node scaling, Karpenter</Card>
+  <Card title="Databases" href="/console/design-spec/databases">Aurora, Cloud SQL, Azure Database</Card>
+  <Card title="Caches" href="/console/design-spec/caches">Redis, Valkey, Memorystore</Card>
+  <Card title="NoSQL" href="/console/design-spec/nosql">DynamoDB, Firestore, Cosmos DB</Card>
+  <Card title="Messaging" href="/console/design-spec/messaging">SQS, Pub/Sub, Service Bus</Card>
+  <Card title="DNS" href="/console/design-spec/dns">Route53, certificates, WAF</Card>
+  <Card title="Secrets" href="/console/design-spec/secrets">Password generation, secret stores</Card>
+  <Card title="Container Registry" href="/console/design-spec/container-registry">ECR, Artifact Registry, ACR</Card>
+  <Card title="Repositories" href="/console/design-spec/repositories">Git repos for GitOps</Card>
+  <Card title="Cost Sidebar" href="/console/design-spec/cost-sidebar">Real-time pricing estimates</Card>
 </Cards>
 
 ## Review & Submit
 
 After filling in sections, the **Review Tab** shows a read-only summary of the entire configuration organized by category. On submit:
 
-1. A `vines` row is created with status `DRAFT`
-2. Component rows are created in the relevant tables (`vine_network`, `vine_cluster`, `vine_databases`, etc.)
-3. The vine appears in the vineyard's vine listing
-4. The user can now run Plan → Apply from the [vine detail page](/trellis/dashboard/vine-detail)
+1. A `specs` row is created with status `DRAFT`
+2. Component rows are created in the relevant tables (`spec_network`, `spec_cluster`, `spec_databases`, etc.)
+3. The spec appears in the zone's spec listing
+4. The user can now run Plan → Apply from the [spec detail page](/console/dashboard/spec-detail)
 
 ## Form Validation
 
@@ -61,7 +61,7 @@ Each section has its own Zod schema. Key validations:
 - CIDR blocks: regex validation + numeric range check
 - Node sizing: min ≤ desired ≤ max
 - Instance types: max 5 selected
-- Database names: unique per vine, lowercase
+- Database names: unique per spec, lowercase
 - Secret names: alphanumeric + hyphens only
 
 On submit failure, the form auto-scrolls to the first error field.

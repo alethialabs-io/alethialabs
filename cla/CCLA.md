@@ -1,6 +1,6 @@
 # Alethia Labs Corporate Contributor License Agreement (v1.0)
 
-This Agreement covers Contributions to projects owned or managed by **Alethia OÜ**
+This Agreement covers Contributions to projects owned or managed by **Alethia Labs OÜ**
 ("Alethia") that are made by employees or agents of the corporation identified
 below ("Corporation"). It allows the Corporation to authorize its designated
 employees to contribute, and grants Alethia the rights needed to keep offering the

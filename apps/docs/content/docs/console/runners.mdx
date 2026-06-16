@@ -1,69 +1,69 @@
 ---
-title: Tendrils
-description: Registering, monitoring, and managing Tendril execution agents.
+title: Runners
+description: Registering, monitoring, and managing Runner execution agents.
 ---
 
-# Tendrils
+# Runners
 
-Tendrils are the execution agents that run Terraform on behalf of users. The Tendrils page manages their lifecycle. For how Tendrils work internally, see the [Tendril Agent](/tendril) documentation.
+Runners are the execution agents that run Terraform on behalf of users. The Runners page manages their lifecycle. For how Runners work internally, see the [Runner Agent](/runner) documentation.
 
-## Tendrils Page
+## Runners Page
 
-Located at `/dashboard/tendrils`, showing:
+Located at `/dashboard/runners`, showing:
 
 ### Status Filters
 - All, ONLINE, OFFLINE, DRAINING
 
 ### Search
-Filter by Tendril name.
+Filter by Runner name.
 
 ### Data Table
 
 | Column | Description |
 |--------|-------------|
-| Name | Tendril identifier |
+| Name | Runner identifier |
 | Type | `cloud-hosted` or `self-hosted` |
 | Region | AWS region (cloud-hosted only) |
 | Status | Badge: ONLINE (green), DRAINING (yellow), OFFLINE (red) |
-| Version | Tendril release version |
+| Version | Runner release version |
 | Created | Registration timestamp |
 | Actions | Deploy, update, remove buttons |
 
 ### Active Jobs Section
-A separate table showing jobs currently assigned to Tendrils (QUEUED, CLAIMED, or PROCESSING).
+A separate table showing jobs currently assigned to Runners (QUEUED, CLAIMED, or PROCESSING).
 
 ### Update Alert
-If outdated Tendrils are detected (version < latest release), an alert appears with an **"Update All"** button that queues `UPDATE_WORKER` jobs for each outdated Tendril.
+If outdated Runners are detected (version < latest release), an alert appears with an **"Update All"** button that queues `UPDATE_WORKER` jobs for each outdated Runner.
 
-## Adding a Tendril
+## Adding a Runner
 
-Click **"Add Tendril"** to open the registration sheet with two tabs:
+Click **"Add Runner"** to open the registration sheet with two tabs:
 
 <Tabs items={["Deploy (Cloud-Hosted)", "Register (Self-Hosted)"]}>
   <Tab value="Deploy (Cloud-Hosted)">
-    Provisions a Tendril automatically in ECS Fargate:
+    Provisions a Runner automatically in ECS Fargate:
 
     1. Select a cloud identity and region
     2. Click Deploy → queues a `DEPLOY_WORKER` job
     3. The job provisions: ECS task definition, IAM roles, CloudWatch log group, security groups
-    4. After ~2 minutes, the Tendril appears as ONLINE
+    4. After ~2 minutes, the Runner appears as ONLINE
 
-    Cloud-hosted Tendrils support [scale-to-zero](/tendril/scale-to-zero) — they shut down when no jobs are queued and restart automatically when needed.
+    Cloud-hosted Runners support [scale-to-zero](/runner/scale-to-zero) — they shut down when no jobs are queued and restart automatically when needed.
   </Tab>
   <Tab value="Register (Self-Hosted)">
-    For running Tendril on your own infrastructure:
+    For running a Runner on your own infrastructure:
 
-    1. Enter a name for the Tendril
+    1. Enter a name for the Runner
     2. Click Register → generates a `worker_id` and `worker_token`
     3. Copy the credentials (shown once, never stored in plaintext)
-    4. Set the environment variables on your machine and run the Tendril binary
+    4. Set the environment variables on your machine and run the Runner binary
 
-    See [Self-Hosted Mode](/tendril/self-hosted) for full setup instructions.
+    See [Self-Hosted Mode](/runner/self-hosted) for full setup instructions.
   </Tab>
 </Tabs>
 
 <Callout type="warn">
-The worker token is shown **only once** at registration. If lost, the Tendril must be re-registered. See [Authentication Flows](/concepts/authentication) for how token verification works.
+The worker token is shown **only once** at registration. If lost, the Runner must be re-registered. See [Authentication Flows](/concepts/authentication) for how token verification works.
 </Callout>
 
 ## Status Indicators
@@ -78,13 +78,13 @@ Status is determined by heartbeat recency:
 
 ## Real-time Updates
 
-The Tendrils page subscribes to `workers` table changes and `provision_jobs` changes via [Supabase Realtime](/concepts/realtime). Status changes, new registrations, and job assignments appear instantly.
+The Runners page subscribes to `workers` table changes and `provision_jobs` changes via [Supabase Realtime](/concepts/realtime). Status changes, new registrations, and job assignments appear instantly.
 
 ## Version Tracking
 
-Each Tendril reports its version on heartbeat. The page shows:
-- Current version per Tendril
+Each Runner reports its version on heartbeat. The page shows:
+- Current version per Runner
 - Latest available version (from `worker_releases` table)
 - **Release Notes** dialog showing the changelog for each version
 
-When a new Tendril release is published via the CI pipeline, existing cloud-hosted Tendrils are updated via `UPDATE_WORKER` jobs that trigger ECS force-new-deployment.
+When a new Runner release is published via the CI pipeline, existing cloud-hosted Runners are updated via `UPDATE_WORKER` jobs that trigger ECS force-new-deployment.

@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 SPDX-License-Identifier: LicenseRef-Alethia-Commercial
 -->
 
@@ -32,7 +32,7 @@ Cloud / enterprise features that are **not** part of the open-source core:
 
 ## Why this is allowed
 
-Alethia OÜ holds copyright across the whole codebase (contributions are
+Alethia Labs OÜ holds copyright across the whole codebase (contributions are
 consolidated via the [CLA](../cla/)). The AGPL binds *licensees*, not the
-copyright holder — so Alethia OÜ may combine this commercially-licensed code with
+copyright holder — so Alethia Labs OÜ may combine this commercially-licensed code with
 the AGPL core and ship proprietary editions. See [`LICENSING.md`](../LICENSING.md).

@@ -36,18 +36,18 @@ Each card shows:
 Cloud connections use the platform's [zero-credential model](/concepts/security) — no static keys are stored. Each provider uses a federation mechanism:
 
 <Cards>
-  <Card title="AWS" href="/trellis/integrations/aws">Cross-Account IAM Role with External ID</Card>
-  <Card title="GCP" href="/trellis/integrations/gcp">Workload Identity Federation with OIDC</Card>
-  <Card title="Azure" href="/trellis/integrations/azure">Federated Identity via Entra ID</Card>
+  <Card title="AWS" href="/console/integrations/aws">Cross-Account IAM Role with External ID</Card>
+  <Card title="GCP" href="/console/integrations/gcp">Workload Identity Federation with OIDC</Card>
+  <Card title="Azure" href="/console/integrations/azure">Federated Identity via Entra ID</Card>
 </Cards>
 
-After connecting, Trellis queues a `CONNECTION_TEST` job to verify the credentials and discover existing resources (VPCs, subnets, DNS zones). See [Job Queue Pattern](/concepts/job-queue).
+After connecting, Alethia queues a `CONNECTION_TEST` job to verify the credentials and discover existing resources (VPCs, subnets, DNS zones). See [Job Queue Pattern](/concepts/job-queue).
 
 ## Git Provider Connections
 
-Git connections use standard OAuth. See [Git Providers](/trellis/integrations/git-providers) for details.
+Git connections use standard OAuth. See [Git Providers](/console/integrations/git-providers) for details.
 
 ## Disconnecting
 
-- **Cloud providers**: Removes the `cloud_identities` record. Existing vines referencing that identity can no longer run jobs.
+- **Cloud providers**: Removes the `cloud_identities` record. Existing specs referencing that identity can no longer run jobs.
 - **Git providers**: Removes the `provider_tokens` record and revokes the OAuth grant.

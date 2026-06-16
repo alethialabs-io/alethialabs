@@ -16,7 +16,7 @@ In your GCP project, create a Workload Identity Pool to group external identitie
 
 ### Add OIDC Provider
 Add an OIDC Provider to the pool with:
-- **Issuer URL** — the Trellis platform's OIDC issuer
+- **Issuer URL** — the Alethia platform's OIDC issuer
 - **Audience** — the platform's audience identifier
 - **Attribute mapping** — maps OIDC claims to Google attributes
 
@@ -29,19 +29,19 @@ Grant the Workload Identity Pool the `roles/iam.workloadIdentityUser` role on th
 ### Export WIF Configuration
 Export the WIF configuration JSON from the Google Cloud Console.
 
-### Paste into Trellis
+### Paste into Alethia
 Paste the WIF configuration JSON and click "Complete."
 
 </Steps>
 
 ## Verification
 
-Trellis queues a `CONNECTION_TEST` job. The Tendril:
+Alethia queues a `CONNECTION_TEST` job. The Runner:
 
 1. Presents an OIDC token to GCP's Security Token Service
 2. GCP validates the token against the registered issuer/subject
 3. Returns a short-lived GCP access token
-4. The Tendril uses the access token to discover existing resources (VPC networks, subnets, DNS zones)
+4. The Runner uses the access token to discover existing resources (VPC networks, subnets, DNS zones)
 
 ## What's Stored
 

@@ -7,15 +7,15 @@
   </defs>
   <rect width="820" height="400" rx="12" fill="#18181B"/>
   <rect x="0.5" y="0.5" width="819" height="399" rx="12" fill="none" stroke="#3F3F46"/>
-  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Tendril Scaling &mdash; Instant Scale-Up Architecture</text>
+  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Runner Scaling &mdash; Instant Scale-Up Architecture</text>
 
-  <!-- Trellis (top-left, primary trigger) -->
+  <!-- Console (top-left, primary trigger) -->
   <rect x="30" y="72" width="130" height="76" rx="8" fill="#27272A" stroke="#22C55E"/>
-  <text x="95" y="98" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#22C55E">Trellis</text>
+  <text x="95" y="98" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#22C55E">Console</text>
   <text x="95" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Job queued &rarr;</text>
   <text x="95" y="132" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">instant invoke</text>
 
-  <!-- Trellis to Lambda (primary path) -->
+  <!-- Console to Lambda (primary path) -->
   <line x1="160" y1="100" x2="228" y2="100" stroke="#22C55E" stroke-width="1.5" marker-end="url(#arrow-green)"/>
   <text x="194" y="92" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#22C55E">POST</text>
 
@@ -48,15 +48,15 @@
   <!-- ECS Fargate -->
   <rect x="476" y="72" width="170" height="76" rx="8" fill="#27272A" stroke="#22C55E"/>
   <text x="561" y="98" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#22C55E">ECS Fargate</text>
-  <text x="561" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Tendril container</text>
+  <text x="561" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Runner container</text>
   <text x="561" y="132" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">ARM64, 1 vCPU, 4 GB</text>
 
-  <!-- ECS to Trellis (heartbeat) -->
+  <!-- ECS to Console (heartbeat) -->
   <line x1="646" y1="110" x2="668" y2="110" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
 
-  <!-- Trellis (heartbeat receiver) -->
+  <!-- Console (heartbeat receiver) -->
   <rect x="676" y="86" width="114" height="48" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="733" y="107" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">Trellis</text>
+  <text x="733" y="107" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">Console</text>
   <text x="733" y="123" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">heartbeat / 30s</text>
 
   <!-- Scale-Up section -->
@@ -68,7 +68,7 @@
   <line x1="160" y1="314" x2="178" y2="314" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
   <rect x="186" y="296" width="130" height="36" rx="6" fill="#27272A" stroke="#22C55E"/>
-  <text x="251" y="312" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#22C55E">Trellis notifies</text>
+  <text x="251" y="312" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#22C55E">Console notifies</text>
   <text x="251" y="326" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">instant</text>
   <line x1="316" y1="314" x2="334" y2="314" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 

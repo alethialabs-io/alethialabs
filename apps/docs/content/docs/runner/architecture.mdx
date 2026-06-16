@@ -5,13 +5,13 @@ description: Main loop, heartbeat mechanism, graceful shutdown, and the core sha
 
 # Internal Architecture
 
-Tendril is a single Go binary with a straightforward architecture: a main poll loop, a heartbeat goroutine, and shared libraries from the `core` package.
+Runner is a single Go binary with a straightforward architecture: a main poll loop, a heartbeat goroutine, and shared libraries from the `core` package.
 
 ## Main Loop
 
 ```
-tendril start
-  ├── Register with Trellis API
+runner start
+  ├── Register with Alethia API
   ├── Start heartbeat goroutine (every 30s)
   └── Poll loop (every 10s)
        ├── POST /api/jobs/claim
@@ -23,16 +23,16 @@ tendril start
        └── If no job: sleep 10s, repeat
 ```
 
-The poll loop runs on the main goroutine. The heartbeat runs as a background goroutine. Both share the Tendril configuration.
+The poll loop runs on the main goroutine. The heartbeat runs as a background goroutine. Both share the Runner configuration.
 
 ## Configuration
 
-Tendril receives its configuration via environment variables:
+Runner receives its configuration via environment variables:
 
 | Variable | Description |
 |----------|-------------|
-| `TRELLIS_URL` | Base URL of the Trellis instance |
-| `ALETHIA_WORKER_ID` | Unique Tendril identifier (assigned at registration) |
+| `ALETHIA_WEB_ORIGIN` | Base URL of the Alethia instance |
+| `ALETHIA_WORKER_ID` | Unique Runner identifier (assigned at registration) |
 | `ALETHIA_WORKER_TOKEN` | Authentication token for API calls |
 | `ALETHIA_WORKER_MODE` | `cloud-hosted` or `self-hosted` |
 | `SUPABASE_S3_ENDPOINT` | S3 endpoint for Terraform state |
@@ -49,32 +49,32 @@ The heartbeat goroutine sends `POST /api/workers/heartbeat` every 30 seconds wit
 - Current status (ONLINE or DRAINING)
 - Currently executing job ID (if any)
 
-Trellis uses the heartbeat to:
-- Mark Tendrils as ONLINE (heartbeat within 60s) or OFFLINE (heartbeat missed)
-- Detect dead Tendrils and requeue their jobs
-- Track which Tendril is running which job
+Alethia uses the heartbeat to:
+- Mark Runners as ONLINE (heartbeat within 60s) or OFFLINE (heartbeat missed)
+- Detect dead Runners and requeue their jobs
+- Track which Runner is running which job
 
-If a Tendril crashes mid-job:
+If a Runner crashes mid-job:
 1. Heartbeat stops arriving
-2. After 60 seconds, Trellis marks the Tendril OFFLINE
+2. After 60 seconds, Alethia marks the Runner OFFLINE
 3. If no log updates for 5+ minutes, the job is marked FAILED
 4. User can retry the job — Terraform state is preserved in S3
 
 ## Graceful Shutdown
 
-When Tendril receives SIGINT or SIGTERM:
+When Runner receives SIGINT or SIGTERM:
 
 1. Sets status to **DRAINING** — stops accepting new jobs
-2. Sends a DRAINING heartbeat to Trellis
+2. Sends a DRAINING heartbeat to Alethia
 3. If a job is in progress, waits for it to complete (up to 10-minute grace period)
 4. Sends final heartbeat with OFFLINE status
 5. Exits
 
-ECS Fargate sends SIGTERM when stopping a task, so Tendrils always attempt a graceful shutdown.
+ECS Fargate sends SIGTERM when stopping a task, so Runners always attempt a graceful shutdown.
 
 ## API Client
 
-The `WorkerAPIClient` handles all communication with Trellis:
+The `WorkerAPIClient` handles all communication with Alethia:
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
@@ -89,7 +89,7 @@ All requests include `X-Worker-ID` and `X-Worker-Token` headers for authenticati
 
 ## Shared core Package
 
-Tendril and Alethia CLI both import from `packages/core/`:
+Runner and Alethia CLI both import from `packages/core/`:
 
 | Package | Purpose |
 |---------|---------|
@@ -104,4 +104,4 @@ Tendril and Alethia CLI both import from `packages/core/`:
 | `k8s/` | kubectl operations |
 | `infracost/` | Infracost CLI wrapper and output parsing |
 
-This shared package ensures both the CLI and Tendril use the same provisioning logic.
+This shared package ensures both the CLI and Runner use the same provisioning logic.

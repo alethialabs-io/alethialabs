@@ -5,7 +5,7 @@ description: How the platform abstracts AWS, GCP, and Azure behind a unified int
 
 # Cloud Provider Abstraction
 
-The platform supports AWS, GCP, and Azure with full feature parity. A single form, a single CLI, and a single Tendril agent work across all three providers. This is achieved through a multi-layered abstraction.
+The platform supports AWS, GCP, and Azure with full feature parity. A single form, a single CLI, and a single Runner agent work across all three providers. This is achieved through a multi-layered abstraction.
 
 <img src="/docs/diagrams/concepts/cloud-abstraction.svg" alt="Cloud Abstraction" />
 
@@ -30,7 +30,7 @@ The registry (`lib/cloud-providers/registry.ts`) maps each provider to its cloud
 
 ## Region Mapping
 
-Regions are mapped across providers for cross-cloud vine duplication:
+Regions are mapped across providers for cross-cloud Spec duplication:
 
 ```
 AWS us-east-1  ←→  GCP us-east4    ←→  Azure eastus
@@ -42,7 +42,7 @@ Each provider has a default region: `us-east-1` (AWS), `us-east4` (GCP), `eastus
 
 ## Instance Type Mapping
 
-Compute instance types are mapped for vine conversion:
+Compute instance types are mapped for Spec conversion:
 
 | AWS | GCP | Azure | Profile |
 |-----|-----|-------|---------|
@@ -73,7 +73,7 @@ This keeps the shared schema clean while allowing provider-specific features.
 
 ## How the Form Adapts
 
-When the user switches providers via the Provider Ribbon in the Plant a Vine form:
+When the user switches providers via the Provider Ribbon in the Design a Spec form:
 
 1. **Instance types** update to the target provider's catalog
 2. **K8s versions** update (e.g., 1.32 for AWS EKS, 1.31 for GCP GKE)
@@ -84,14 +84,14 @@ When the user switches providers via the Provider Ribbon in the Plant a Vine for
 7. **Autoscaler** toggles change (Karpenter → GKE Autopilot → Cluster Autoscaler)
 8. **Region dropdown** repopulates with the provider's regions
 
-All form fields reset to provider-appropriate defaults. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion) for how existing vines are converted across providers.
+All form fields reset to provider-appropriate defaults. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion) for how existing Specs are converted across providers.
 
 ## Terraform Templates
 
 Each provider has its own set of Terraform templates:
 
-- `infra/templates/vine/aws/` — EKS, Aurora, ElastiCache, DynamoDB, etc.
-- `infra/templates/vine/gcp/` — GKE, Cloud SQL, Memorystore, Firestore, etc.
-- `infra/templates/vine/azure/` — AKS, Azure Database, Azure Cache, Cosmos DB, etc.
+- `infra/templates/spec/aws/` — EKS, Aurora, ElastiCache, DynamoDB, etc.
+- `infra/templates/spec/gcp/` — GKE, Cloud SQL, Memorystore, Firestore, etc.
+- `infra/templates/spec/azure/` — AKS, Azure Database, Azure Cache, Cosmos DB, etc.
 
-The Tendril selects the correct template directory based on the vine's cloud provider and generates `terraform.tfvars` from the vine configuration.
+The Runner selects the correct template directory based on the Spec's cloud provider and generates `terraform.tfvars` from the Spec configuration.

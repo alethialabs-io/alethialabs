@@ -1,7 +1,7 @@
-name: Deploy Tendril (dev)
+name: Deploy runner (dev)
 
 # Manual escape hatch for dev/hotfix deploys. For production releases,
-# use conventional commits → release-please → release-node.yml.
+# use conventional commits → release-please → release-runner.yml.
 
 on:
   workflow_dispatch:

@@ -21,7 +21,7 @@ The selector shows repositories from your connected Git provider (GitHub, GitLab
 
 When a repository is configured:
 
-1. During DEPLOY, the Tendril clones the repo and sets it up as an ArgoCD Application source
+1. During DEPLOY, the Runner clones the repo and sets it up as an ArgoCD Application source
 2. ArgoCD watches the repo for changes (polling or webhook)
 3. Any push to the configured branch triggers ArgoCD to sync the manifests to the cluster
 4. The ArgoCD UI shows deployment status, sync state, and health

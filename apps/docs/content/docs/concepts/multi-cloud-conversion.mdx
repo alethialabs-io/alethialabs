@@ -1,19 +1,19 @@
 ---
 title: Multi-Cloud Conversion
-description: How vine configurations are converted across AWS, GCP, and Azure when duplicating.
+description: How Spec configurations are converted across AWS, GCP, and Azure when duplicating.
 ---
 
 # Multi-Cloud Conversion
 
-Users can duplicate an existing vine and target a different cloud provider. The platform converts the configuration automatically, mapping resources, instance types, and capacity units across providers.
+Users can duplicate an existing Spec and target a different cloud provider. The platform converts the configuration automatically, mapping resources, instance types, and capacity units across providers.
 
 <img src="/docs/diagrams/concepts/multi-cloud-conversion.svg" alt="Multi-Cloud Conversion" />
 
 ## When Conversion Happens
 
-1. User clicks **"Duplicate & Edit"** on an existing vine
+1. User clicks **"Duplicate & Edit"** on an existing Spec
 2. Selects a different cloud identity (e.g., switching from AWS to GCP)
-3. The `convertVineConfig()` function transforms the configuration
+3. The `convertSpecConfig()` function transforms the configuration
 4. Conversion **warnings** are displayed for items that need manual review
 5. User adjusts the converted config and submits
 
@@ -46,7 +46,7 @@ If no mapping exists, the target provider's default region is used, and a warnin
 
 ### Network
 
-- If the source vine uses an **existing network** (`provision_network = false`), the conversion switches to **create new** (`provision_network = true`) with a warning: "Existing network cannot be reused across providers."
+- If the source Spec uses an **existing network** (`provision_network = false`), the conversion switches to **create new** (`provision_network = true`) with a warning: "Existing network cannot be reused across providers."
 - CIDR blocks are preserved (they're provider-agnostic).
 
 ### DNS & WAF
@@ -77,7 +77,7 @@ interface ConversionWarning {
 }
 ```
 
-Warnings are displayed in the Plant a Vine form after provider switch, giving the user a chance to review and adjust before submitting.
+Warnings are displayed in the Design a Spec form after provider switch, giving the user a chance to review and adjust before submitting.
 
 ## What Cannot Be Converted
 

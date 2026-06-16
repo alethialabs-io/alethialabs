@@ -1,22 +1,22 @@
 ---
 title: Scale-to-Zero
-description: Lambda-based auto-scaler that scales Tendril ECS services to zero when idle.
+description: Lambda-based auto-scaler that scales Runner ECS services to zero when idle.
 ---
 
 # Scale-to-Zero
 
-Cloud-hosted Tendrils support automatic scale-to-zero. When no jobs are queued, the Lambda scaler scales ECS services down to 0 desired tasks. When a job arrives, it scales back to 1. This eliminates Fargate costs during idle periods.
+Cloud-hosted Runners support automatic scale-to-zero. When no jobs are queued, the Lambda scaler scales ECS services down to 0 desired tasks. When a job arrives, it scales back to 1. This eliminates Fargate costs during idle periods.
 
 ## How It Works
 
-A Lambda function runs on a 1-minute schedule via EventBridge. It checks the Trellis database for queued jobs and adjusts ECS service desired counts accordingly.
+A Lambda function runs on a 1-minute schedule via EventBridge. It checks the Alethia database for queued jobs and adjusts ECS service desired counts accordingly.
 
 ### Scale-Up Logic
 
 ```
 Every 1 minute:
   1. Query Supabase: SELECT count(*) FROM provision_jobs WHERE status = 'QUEUED'
-  2. For each registered Tendril ECS service:
+  2. For each registered Runner ECS service:
      - If queued > 0 AND current desired = 0:
        → Scale UP to 1
        → Reset idle counter
@@ -25,7 +25,7 @@ Every 1 minute:
 ### Scale-Down Logic
 
 ```
-  3. For each registered Tendril ECS service:
+  3. For each registered Runner ECS service:
      - If queued = 0 AND current desired > 0:
        → Increment idle counter
        → If idle counter >= 5 (5 consecutive checks = 5 minutes):
@@ -69,18 +69,18 @@ The Lambda function needs:
 [
   {
     "region": "eu-west-1",
-    "cluster": "trellis-prod-tendril-eu",
-    "service": "trellis-prod-tendril-eu-service"
+    "cluster": "alethia-prod-runner-eu",
+    "service": "alethia-prod-runner-eu-service"
   },
   {
     "region": "us-east-1",
-    "cluster": "trellis-prod-tendril-us",
-    "service": "trellis-prod-tendril-us-service"
+    "cluster": "alethia-prod-runner-us",
+    "service": "alethia-prod-runner-us-service"
   }
 ]
 ```
 
-Each entry maps to one ECS service running a Tendril. The scaler handles multiple regions independently.
+Each entry maps to one ECS service running a Runner. The scaler handles multiple regions independently.
 
 ## Job Count Query
 
@@ -99,27 +99,27 @@ It uses the `content-range` header to get the count without fetching all rows.
 
 ## Cold Start Behavior
 
-When a Tendril is scaled from 0 → 1:
+When a Runner is scaled from 0 → 1:
 
 1. **ECS task launch** — ~30 seconds (Fargate cold start, image pull)
-2. **Tendril boot** — ~5 seconds (binary startup, API registration)
+2. **Runner boot** — ~5 seconds (binary startup, API registration)
 3. **First heartbeat** — ~5 seconds after boot
 4. **First job claim** — next poll cycle (≤ 10 seconds)
 
 **Total cold start: ~50 seconds** from job queue to job start.
 
-During this time, the job remains in QUEUED status. The user sees "Waiting for Tendril..." in the UI.
+During this time, the job remains in QUEUED status. The user sees "Waiting for Runner..." in the UI.
 
 ## Cost Savings
 
-Without scale-to-zero, a single Tendril running 24/7 on Fargate costs:
-- 1 vCPU + 4 GiB memory ≈ **$40/month** per Tendril
+Without scale-to-zero, a single Runner running 24/7 on Fargate costs:
+- 1 vCPU + 4 GiB memory ≈ **$40/month** per Runner
 
 With scale-to-zero, you pay only for:
 - **Lambda invocations** — 43,200/month (1/min) × 128MB × 1s ≈ **$0.02/month**
 - **Fargate** — only when jobs are running
 
-For workloads with sporadic provisioning (a few deploys per week), this reduces Tendril costs by **~99%**.
+For workloads with sporadic provisioning (a few deploys per week), this reduces Runner costs by **~99%**.
 
 ## Terraform Configuration
 
@@ -134,8 +134,8 @@ module "scaler" {
   supabase_service_role_key = var.supabase_service_role_key
 
   workers = [
-    for name, w in module.tendril : {
-      region  = var.tendrils[name].region
+    for name, w in module.runner : {
+      region  = var.runners[name].region
       cluster = w.cluster_name
       service = w.service_name
     }
@@ -143,4 +143,4 @@ module "scaler" {
 }
 ```
 
-The scaler automatically discovers all Tendril deployments from the `module.tendril` outputs.
+The scaler automatically discovers all Runner deployments from the `module.runner` outputs.

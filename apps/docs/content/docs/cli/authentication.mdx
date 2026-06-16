@@ -5,7 +5,7 @@ description: Device Authorization Grant flow, token storage, and automatic refre
 
 # Authentication
 
-Alethia uses the **Device Authorization Grant** (RFC 8628) for authentication. You never type a password in the terminal. For the full technical details, see [Authentication Flows](/concepts/authentication).
+alethia uses the **Device Authorization Grant** (RFC 8628) for authentication. You never type a password in the terminal. For the full technical details, see [Authentication Flows](/concepts/authentication).
 
 ## Login
 
@@ -19,7 +19,7 @@ alethia login
 A UUID identifying this login attempt.
 
 ### Browser opens
-Navigates to `{trellis_url}/cli/login?device_code={code}`.
+Navigates to `{console_url}/cli/login?device_code={code}`.
 
 ### Authenticate in browser
 Log in with any OAuth provider (GitHub, GitLab, Bitbucket, Google). A 6-character verification code is displayed.
@@ -28,7 +28,7 @@ Log in with any OAuth provider (GitHub, GitLab, Bitbucket, Google). A 6-characte
 Type the code at the Bubble Tea TUI prompt. The CLI shows a spinner while waiting.
 
 ### Token exchange
-CLI sends the device code + verification code to Trellis. On success, receives a JWT pair (access + refresh).
+CLI sends the device code + verification code to Alethia. On success, receives a JWT pair (access + refresh).
 
 ### Tokens stored
 Saved to `~/.config/alethia/auth.json`.
@@ -58,13 +58,13 @@ Removes `~/.config/alethia/auth.json`.
 | Access token | 1 hour | `Authorization: Bearer` header on API calls |
 | Refresh token | 90 days | Obtain new access tokens transparently |
 
-Before each API call, Alethia checks the access token's expiry. If expired, it refreshes automatically via `POST /api/auth/cli/refresh`. The user never notices.
+Before each API call, alethia checks the access token's expiry. If expired, it refreshes automatically via `POST /api/auth/cli/refresh`. The user never notices.
 
 ## Environment Variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `ALETHIA_WEB_ORIGIN` | Production URL (baked at build) | Override the Trellis API URL |
+| `ALETHIA_WEB_ORIGIN` | Production URL (baked at build) | Override the Alethia API URL |
 
 ```bash
 export ALETHIA_WEB_ORIGIN=http://localhost:3000
