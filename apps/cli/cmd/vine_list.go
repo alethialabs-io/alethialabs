@@ -21,7 +21,7 @@ import (
 
 var listVinesCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all vines",
+	Short: "List all specs",
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -36,7 +36,7 @@ var listVinesCmd = &cobra.Command{
 		}
 
 		spinner.New().
-			Title("Fetching vines...").
+			Title("Fetching specs...").
 			Action(func() {
 				_, err = client.R().
 					SetBearerAuthToken(token).
@@ -45,12 +45,12 @@ var listVinesCmd = &cobra.Command{
 			}).Run()
 
 		if err != nil {
-			ui.Error(fmt.Sprintf("Failed to fetch vines: %v", err))
+			ui.Error(fmt.Sprintf("Failed to fetch specs: %v", err))
 			os.Exit(1)
 		}
 
 		if len(result.Configurations) == 0 {
-			ui.Muted("No vines found. Create one through Alethia.")
+			ui.Muted("No specs found. Create one through Alethia.")
 			return
 		}
 
@@ -97,7 +97,7 @@ var listVinesCmd = &cobra.Command{
 			}
 		}
 
-		m := ui.NewTableModel(columns, rows, "vines", "project", 0)
+		m := ui.NewTableModel(columns, rows, "specs", "project", 0)
 		if _, err := tea.NewProgram(m).Run(); err != nil {
 			ui.Error(fmt.Sprintf("Table error: %v", err))
 			os.Exit(1)

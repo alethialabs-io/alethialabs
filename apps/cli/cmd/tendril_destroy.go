@@ -21,8 +21,8 @@ var (
 
 var tendrilDestroyCmd = &cobra.Command{
 	Use:   "destroy",
-	Short: "Tear down a tendril's cloud infrastructure",
-	Long:  `Queues a DESTROY_WORKER job to tear down the tendril's cloud resources. Another tendril will execute the teardown.`,
+	Short: "Tear down a runner's cloud infrastructure",
+	Long:  `Queues a DESTROY_WORKER job to tear down the runner's cloud resources. Another runner will execute the teardown.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -37,7 +37,7 @@ var tendrilDestroyCmd = &cobra.Command{
 				os.Exit(1)
 			}
 			if destroyTendrilID == "" {
-				fmt.Println("Please select a specific tendril to destroy, not 'Any available'.")
+				fmt.Println("Please select a specific runner to destroy, not 'Any available'.")
 				os.Exit(1)
 			}
 		}
@@ -46,8 +46,8 @@ var tendrilDestroyCmd = &cobra.Command{
 		confirmForm := huh.NewForm(
 			huh.NewGroup(
 				huh.NewConfirm().
-					Title("Are you sure you want to destroy this tendril?").
-					Description("This will tear down the tendril's cloud infrastructure. It cannot be undone.").
+					Title("Are you sure you want to destroy this runner?").
+					Description("This will tear down the runner's cloud infrastructure. It cannot be undone.").
 					Value(&confirm),
 			),
 		)
@@ -95,7 +95,7 @@ var tendrilDestroyCmd = &cobra.Command{
 
 func init() {
 	tendrilCmd.AddCommand(tendrilDestroyCmd)
-	tendrilDestroyCmd.Flags().StringVar(&destroyTendrilID, "tendril-id", "", "ID of the tendril to destroy")
-	tendrilDestroyCmd.Flags().StringVar(&destroyTendrilAssignedID, "assigned-tendril-id", "", "Which tendril executes the teardown")
+	tendrilDestroyCmd.Flags().StringVar(&destroyTendrilID, "runner-id", "", "ID of the runner to destroy")
+	tendrilDestroyCmd.Flags().StringVar(&destroyTendrilAssignedID, "assigned-runner-id", "", "Which runner executes the teardown")
 	tendrilDestroyCmd.Flags().BoolVarP(&destroyTendrilWait, "wait", "w", false, "Wait for job completion")
 }

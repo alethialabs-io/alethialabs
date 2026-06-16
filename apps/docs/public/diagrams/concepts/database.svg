@@ -30,7 +30,7 @@
 
   <!-- Singleton Group -->
   <rect x="20" y="230" width="370" height="164" rx="8" fill="none" stroke="#3F3F46" stroke-dasharray="4 4"/>
-  <text x="205" y="248" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500" fill="#A1A1AA">Singleton (1:1 per vine)</text>
+  <text x="205" y="248" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500" fill="#A1A1AA">Singleton (1:1 per spec)</text>
 
   <rect x="36" y="260" width="160" height="30" rx="4" fill="#27272A" stroke="#3F3F46"/>
   <text x="116" y="280" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">vine_network</text>
@@ -53,7 +53,7 @@
 
   <!-- Multi-Instance Group -->
   <rect x="408" y="230" width="392" height="164" rx="8" fill="none" stroke="#3F3F46" stroke-dasharray="4 4"/>
-  <text x="604" y="248" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500" fill="#A1A1AA">Multi-Instance (1:N per vine)</text>
+  <text x="604" y="248" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500" fill="#A1A1AA">Multi-Instance (1:N per spec)</text>
 
   <rect x="424" y="260" width="120" height="30" rx="4" fill="#27272A" stroke="#3F3F46"/>
   <text x="484" y="280" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">vine_databases</text>

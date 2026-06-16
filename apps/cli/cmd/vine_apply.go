@@ -21,8 +21,8 @@ var (
 
 var vineApplyCmd = &cobra.Command{
 	Use:   "apply",
-	Short: "Apply infrastructure changes for a vine",
-	Long:  `Queues a DEPLOY job to provision or update a vine's infrastructure.`,
+	Short: "Apply infrastructure changes for a spec",
+	Long:  `Queues a DEPLOY job to provision or update a spec's infrastructure.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -87,8 +87,8 @@ var vineApplyCmd = &cobra.Command{
 
 func init() {
 	vineCmd.AddCommand(vineApplyCmd)
-	vineApplyCmd.Flags().StringVar(&vineApplyVineID, "vine-id", "", "ID of the vine to deploy")
-	vineApplyCmd.Flags().StringVar(&vineApplyTendrilID, "tendril-id", "", "Assign to a specific tendril")
+	vineApplyCmd.Flags().StringVar(&vineApplyVineID, "spec-id", "", "ID of the spec to deploy")
+	vineApplyCmd.Flags().StringVar(&vineApplyTendrilID, "runner-id", "", "Assign to a specific runner")
 	vineApplyCmd.Flags().StringVar(&vineApplyPlanJobID, "plan-job-id", "", "Reference a prior PLAN job")
 	vineApplyCmd.Flags().BoolVarP(&vineApplyWait, "wait", "w", false, "Wait for job completion")
 }

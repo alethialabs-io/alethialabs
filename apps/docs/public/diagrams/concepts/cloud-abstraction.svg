@@ -10,7 +10,7 @@
   <rect x="30" y="58" width="760" height="70" rx="8" fill="#8B5CF610" stroke="#8B5CF6"/>
   <text x="410" y="80" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#8B5CF6">Unified Interface</text>
   <rect x="140" y="92" width="140" height="28" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="210" y="110" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Plant a Vine (Web)</text>
+  <text x="210" y="110" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Create a Spec (Web)</text>
   <rect x="340" y="92" width="140" height="28" rx="6" fill="#27272A" stroke="#3F3F46"/>
   <text x="410" y="110" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">alethia harvest (CLI)</text>
   <rect x="540" y="92" width="140" height="28" rx="6" fill="#27272A" stroke="#3F3F46"/>

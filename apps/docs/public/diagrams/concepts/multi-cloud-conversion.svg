@@ -5,11 +5,11 @@
   </defs>
   <rect width="820" height="400" rx="12" fill="#18181B"/>
   <rect x="0.5" y="0.5" width="819" height="399" rx="12" fill="none" stroke="#3F3F46"/>
-  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Multi-Cloud Conversion — Cross-Provider Vine Duplication</text>
+  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Multi-Cloud Conversion — Cross-Provider Spec Duplication</text>
 
-  <!-- Source Vine -->
+  <!-- Source Spec -->
   <rect x="30" y="62" width="220" height="230" rx="8" fill="#27272A" stroke="#FF9900"/>
-  <text x="140" y="86" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FF9900">Source Vine (AWS)</text>
+  <text x="140" y="86" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FF9900">Source Spec (AWS)</text>
 
   <rect x="46" y="100" width="188" height="24" rx="4" fill="#18181B" stroke="#3F3F46"/>
   <text x="140" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">EKS · t3.medium · 1.32</text>
@@ -39,9 +39,9 @@
   <line x1="250" y1="150" x2="284" y2="150" stroke="#8B5CF6" stroke-width="1.5" marker-end="url(#arrow-accent)"/>
   <line x1="530" y1="150" x2="564" y2="150" stroke="#8B5CF6" stroke-width="1.5" marker-end="url(#arrow-accent)"/>
 
-  <!-- Target Vine -->
+  <!-- Target Spec -->
   <rect x="570" y="62" width="220" height="230" rx="8" fill="#27272A" stroke="#4285F4"/>
-  <text x="680" y="86" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#4285F4">Target Vine (GCP)</text>
+  <text x="680" y="86" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#4285F4">Target Spec (GCP)</text>
 
   <rect x="586" y="100" width="188" height="24" rx="4" fill="#18181B" stroke="#3F3F46"/>
   <text x="680" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">GKE · e2-medium · 1.31</text>

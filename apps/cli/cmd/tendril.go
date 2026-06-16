@@ -8,11 +8,11 @@ import (
 )
 
 var tendrilCmd = &cobra.Command{
-	Use:   "tendril",
-	Short: "Manage tendrils (provisioning workers)",
-	Long: `Tendrils are provisioning workers that execute infrastructure jobs.
+	Use:   "runner",
+	Short: "Manage runners (provisioning workers)",
+	Long: `Runners are provisioning workers that execute infrastructure jobs.
 
-Use the subcommands to list, deploy, destroy, or remove tendrils.`,
+Use the subcommands to list, deploy, destroy, or remove runners.`,
 }
 
 func init() {

@@ -15,9 +15,9 @@ import (
 )
 
 var tendrilRemoveCmd = &cobra.Command{
-	Use:   "remove [tendril_id]",
-	Short: "Remove a tendril record (no cloud teardown)",
-	Long:  `Removes the tendril's database record only. Use 'alethia tendril destroy' to tear down cloud resources first.`,
+	Use:   "remove [runner_id]",
+	Short: "Remove a runner record (no cloud teardown)",
+	Long:  `Removes the runner's database record only. Use 'alethia runner destroy' to tear down cloud resources first.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -35,7 +35,7 @@ var tendrilRemoveCmd = &cobra.Command{
 				os.Exit(1)
 			}
 			if tendrilID == "" {
-				fmt.Println("Please select a specific tendril, not 'Any available'.")
+				fmt.Println("Please select a specific runner, not 'Any available'.")
 				os.Exit(1)
 			}
 		}
@@ -44,7 +44,7 @@ var tendrilRemoveCmd = &cobra.Command{
 		confirmForm := huh.NewForm(
 			huh.NewGroup(
 				huh.NewConfirm().
-					Title("Remove this tendril record?").
+					Title("Remove this runner record?").
 					Description("This only removes the database record. Cloud resources will NOT be torn down.").
 					Value(&confirm),
 			),
@@ -57,7 +57,7 @@ var tendrilRemoveCmd = &cobra.Command{
 		apiClient := api.NewClient(token)
 
 		spinner.New().
-			Title("Removing tendril...").
+			Title("Removing runner...").
 			Action(func() {
 				err = apiClient.RemoveWorker(tendrilID)
 			}).Run()
@@ -67,7 +67,7 @@ var tendrilRemoveCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		ui.Success(fmt.Sprintf("Tendril record removed (ID: %s)", tendrilID))
+		ui.Success(fmt.Sprintf("Runner record removed (ID: %s)", tendrilID))
 	},
 }
 

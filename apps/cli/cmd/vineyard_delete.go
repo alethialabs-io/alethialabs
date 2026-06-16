@@ -17,7 +17,7 @@ import (
 
 var deleteVineyardCmd = &cobra.Command{
 	Use:   "delete [id]",
-	Short: "Delete a vineyard",
+	Short: "Delete a zone",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		var id string
@@ -50,7 +50,7 @@ var deleteVineyardCmd = &cobra.Command{
 			}
 
 			err = spinner.New().
-				Title("Fetching vineyards...").
+				Title("Fetching zones...").
 				Action(action).
 				Run()
 
@@ -59,12 +59,12 @@ var deleteVineyardCmd = &cobra.Command{
 				os.Exit(1)
 			}
 			if resp.IsErrorState() {
-				fmt.Printf("Error fetching vineyards (HTTP %d): %s\n", resp.StatusCode, errMsg.Error)
+				fmt.Printf("Error fetching zones (HTTP %d): %s\n", resp.StatusCode, errMsg.Error)
 				os.Exit(1)
 			}
 
 			if len(result.Vineyards) == 0 {
-				fmt.Println("No vineyards found to delete.")
+				fmt.Println("No zones found to delete.")
 				os.Exit(0)
 			}
 
@@ -76,8 +76,8 @@ var deleteVineyardCmd = &cobra.Command{
 			err = huh.NewForm(
 				huh.NewGroup(
 					huh.NewSelect[string]().
-						Title("Select Vineyard").
-						Description("Which vineyard to delete").
+						Title("Select Zone").
+						Description("Which zone to delete").
 						Options(options...).
 						Value(&id),
 				),
@@ -99,7 +99,7 @@ var deleteVineyardCmd = &cobra.Command{
 		err = huh.NewForm(
 			huh.NewGroup(
 				huh.NewConfirm().
-					Title(fmt.Sprintf("Are you sure you want to delete vineyard %s?", id)).
+					Title(fmt.Sprintf("Are you sure you want to delete zone %s?", id)).
 					Description("This action cannot be undone.").
 					Value(&confirm),
 			),
@@ -127,7 +127,7 @@ var deleteVineyardCmd = &cobra.Command{
 		}
 
 		err = spinner.New().
-			Title(fmt.Sprintf("Deleting vineyard %s...", id)).
+			Title(fmt.Sprintf("Deleting zone %s...", id)).
 			Action(deleteAction).
 			Run()
 
@@ -137,11 +137,11 @@ var deleteVineyardCmd = &cobra.Command{
 		}
 
 		if resp.IsErrorState() {
-			fmt.Printf("Error deleting vineyard (HTTP %d): %s\n", resp.StatusCode, errMsg.Error)
+			fmt.Printf("Error deleting zone (HTTP %d): %s\n", resp.StatusCode, errMsg.Error)
 			os.Exit(1)
 		}
 
-		ui.Success(fmt.Sprintf("Deleted vineyard (ID: %s)", id))
+		ui.Success(fmt.Sprintf("Deleted zone (ID: %s)", id))
 	},
 }
 

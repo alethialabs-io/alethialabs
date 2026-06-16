@@ -27,7 +27,7 @@ func selectVineyard(token string) (vineyardID, vineyardName string, err error) {
 	}
 
 	spinner.New().
-		Title("Fetching vineyards...").
+		Title("Fetching zones...").
 		Action(func() {
 			_, err = reqClient.R().
 				SetBearerAuthToken(token).
@@ -36,11 +36,11 @@ func selectVineyard(token string) (vineyardID, vineyardName string, err error) {
 		}).Run()
 
 	if err != nil {
-		return "", "", fmt.Errorf("failed to fetch vineyards: %w", err)
+		return "", "", fmt.Errorf("failed to fetch zones: %w", err)
 	}
 
 	if len(vResult.Vineyards) == 0 {
-		return "", "", fmt.Errorf("no vineyards found — create one first via Alethia or `alethia vineyard create`")
+		return "", "", fmt.Errorf("no zones found — create one first via Alethia or `alethia zone create`")
 	}
 
 	vOptions := make([]huh.Option[string], len(vResult.Vineyards))
@@ -51,7 +51,7 @@ func selectVineyard(token string) (vineyardID, vineyardName string, err error) {
 	err = huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Select Vineyard").
+				Title("Select Zone").
 				Description("Which workspace to use").
 				Options(vOptions...).
 				Value(&vineyardID),
@@ -81,7 +81,7 @@ func selectVine(token string, vineyardID string) (vineID string, err error) {
 	}
 
 	spinner.New().
-		Title("Fetching vines...").
+		Title("Fetching specs...").
 		Action(func() {
 			_, err = reqClient.R().
 				SetBearerAuthToken(token).
@@ -90,7 +90,7 @@ func selectVine(token string, vineyardID string) (vineID string, err error) {
 		}).Run()
 
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch vines: %w", err)
+		return "", fmt.Errorf("failed to fetch specs: %w", err)
 	}
 
 	vineOptions := []huh.Option[string]{}
@@ -104,14 +104,14 @@ func selectVine(token string, vineyardID string) (vineID string, err error) {
 	}
 
 	if len(vineOptions) == 0 {
-		return "", fmt.Errorf("no vines found in this vineyard — create one through Alethia")
+		return "", fmt.Errorf("no specs found in this zone — create one through Alethia")
 	}
 
 	err = huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Select Vine").
-				Description("Which vine to operate on").
+				Title("Select Spec").
+				Description("Which spec to operate on").
 				Options(vineOptions...).
 				Value(&vineID),
 		),
@@ -132,13 +132,13 @@ func selectTendril(token string, excludeID string) (tendrilID string, err error)
 	var workers []api.Worker
 
 	spinner.New().
-		Title("Fetching tendrils...").
+		Title("Fetching runners...").
 		Action(func() {
 			workers, err = apiClient.GetWorkers()
 		}).Run()
 
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch tendrils: %w", err)
+		return "", fmt.Errorf("failed to fetch runners: %w", err)
 	}
 
 	options := []huh.Option[string]{
@@ -188,8 +188,8 @@ func selectTendril(token string, excludeID string) (tendrilID string, err error)
 	err = huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Select Tendril").
-				Description("Choose which tendril runs this job").
+				Title("Select Runner").
+				Description("Choose which runner runs this job").
 				Options(options...).
 				Value(&tendrilID),
 		),

@@ -130,8 +130,8 @@ func jobColumns() []table.Column {
 	return []table.Column{
 		{Title: "Type", Width: 16},
 		{Title: "Status", Width: 12},
-		{Title: "Vine", Width: 18},
-		{Title: "Tendril", Width: 16},
+		{Title: "Spec", Width: 18},
+		{Title: "Runner", Width: 16},
 		{Title: "Created", Width: 16},
 		{Title: "Duration", Width: 10},
 	}
@@ -203,6 +203,6 @@ func formatDuration(started, completed *time.Time) string {
 func init() {
 	jobsCmd.AddCommand(jobsListCmd)
 	jobsListCmd.Flags().StringVar(&jobsListStatus, "status", "", "Filter by status (QUEUED, CLAIMED, PROCESSING, SUCCESS, FAILED, CANCELLED)")
-	jobsListCmd.Flags().StringVar(&jobsListVineyardID, "vineyard-id", "", "Filter by vineyard ID")
+	jobsListCmd.Flags().StringVar(&jobsListVineyardID, "zone-id", "", "Filter by zone ID")
 	jobsListCmd.Flags().IntVarP(&jobsListLimit, "limit", "n", 20, "Jobs per page")
 }

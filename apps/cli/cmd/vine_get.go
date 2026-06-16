@@ -19,7 +19,7 @@ var openVineInBrowser bool
 
 var vineGetCmd = &cobra.Command{
 	Use:   "get [project_name]",
-	Short: "Get a specific vine by project name",
+	Short: "Get a specific spec by project name",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		projectName := args[0]
@@ -53,12 +53,12 @@ var vineGetCmd = &cobra.Command{
 		}
 
 		if resp.IsErrorState() {
-			ui.Error(fmt.Sprintf("Failed to fetch vine (HTTP %d): %s", resp.StatusCode, errMsg.Error))
+			ui.Error(fmt.Sprintf("Failed to fetch spec (HTTP %d): %s", resp.StatusCode, errMsg.Error))
 			os.Exit(1)
 		}
 
 		if result.Configuration.ID == "" {
-			ui.Muted(fmt.Sprintf("No vine found for project: %s", projectName))
+			ui.Muted(fmt.Sprintf("No spec found for project: %s", projectName))
 			return
 		}
 
@@ -70,7 +70,7 @@ var vineGetCmd = &cobra.Command{
 				huh.NewGroup(
 					huh.NewConfirm().
 						Title("Open in Browser").
-						Description("View this vine in the Alethia web UI").
+						Description("View this spec in the Alethia web UI").
 						Affirmative("Yes").
 						Negative("No").
 						Value(&confirm),
@@ -93,5 +93,5 @@ var vineGetCmd = &cobra.Command{
 
 func init() {
 	vineCmd.AddCommand(vineGetCmd)
-	vineGetCmd.Flags().BoolVarP(&openVineInBrowser, "open", "o", false, "Open the vine in the web browser")
+	vineGetCmd.Flags().BoolVarP(&openVineInBrowser, "open", "o", false, "Open the spec in the web browser")
 }

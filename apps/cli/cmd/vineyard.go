@@ -10,10 +10,10 @@ import (
 )
 
 var vineyardCmd = &cobra.Command{
-	Use:   "vineyard",
-	Short: "Manage vineyards (workspaces)",
+	Use:   "zone",
+	Short: "Manage zones (workspaces)",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("Use `alethia vineyard list`, `alethia vineyard create <name>` or `alethia vineyard delete <name>`")
+		fmt.Println("Use `alethia zone list`, `alethia zone create <name>` or `alethia zone delete <name>`")
 	},
 }
 

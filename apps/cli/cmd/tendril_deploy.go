@@ -23,8 +23,8 @@ var (
 
 var tendrilDeployCmd = &cobra.Command{
 	Use:   "deploy",
-	Short: "Deploy a new tendril to a cloud account",
-	Long:  `Creates a tendril record and queues a DEPLOY_WORKER job using the latest stable release.`,
+	Short: "Deploy a new runner to a cloud account",
+	Long:  `Creates a runner record and queues a DEPLOY_WORKER job using the latest stable release.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -47,7 +47,7 @@ var tendrilDeployCmd = &cobra.Command{
 			err = huh.NewForm(
 				huh.NewGroup(
 					huh.NewInput().
-						Title("Tendril name").
+						Title("Runner name").
 						Value(&deployTendrilName).
 						Placeholder(defaultName),
 				),
@@ -67,7 +67,7 @@ var tendrilDeployCmd = &cobra.Command{
 				huh.NewGroup(
 					huh.NewInput().
 						Title("Region").
-						Description("Cloud region to deploy the tendril into").
+						Description("Cloud region to deploy the runner into").
 						Value(&deployRegion).
 						Placeholder("eu-west-1"),
 				),
@@ -113,8 +113,8 @@ var tendrilDeployCmd = &cobra.Command{
 func init() {
 	tendrilCmd.AddCommand(tendrilDeployCmd)
 	tendrilDeployCmd.Flags().StringVar(&deployCloudIdentityID, "cloud-identity-id", "", "Cloud identity to deploy into")
-	tendrilDeployCmd.Flags().StringVar(&deployTendrilName, "name", "", "Tendril name")
+	tendrilDeployCmd.Flags().StringVar(&deployTendrilName, "name", "", "Runner name")
 	tendrilDeployCmd.Flags().StringVar(&deployRegion, "region", "", "Cloud region")
-	tendrilDeployCmd.Flags().StringVar(&deployAssignedID, "assigned-tendril-id", "", "Which tendril executes the deployment")
+	tendrilDeployCmd.Flags().StringVar(&deployAssignedID, "assigned-runner-id", "", "Which runner executes the deployment")
 	tendrilDeployCmd.Flags().BoolVarP(&deployTendrilWait, "wait", "w", false, "Wait for job completion")
 }

@@ -61,5 +61,5 @@
   <rect x="30" y="60" width="210" height="52" rx="6" fill="#22C55E10" stroke="#22C55E40"/>
   <text x="135" y="80" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500" fill="#22C55E">Cross-provider state</text>
   <text x="135" y="96" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">Same S3 backend regardless</text>
-  <text x="135" y="108" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">of AWS, GCP, or Azure vine</text>
+  <text x="135" y="108" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">of AWS, GCP, or Azure spec</text>
 </svg>

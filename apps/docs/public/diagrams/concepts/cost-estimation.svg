@@ -13,7 +13,7 @@
   <text x="215" y="74" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#22C55E">Real-time (Instant)</text>
 
   <rect x="55" y="96" width="320" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="215" y="118" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">User configures vine in form</text>
+  <text x="215" y="118" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">User configures spec in form</text>
   <line x1="215" y1="132" x2="215" y2="148" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
   <rect x="55" y="152" width="320" height="36" rx="6" fill="#27272A" stroke="#3F3F46"/>

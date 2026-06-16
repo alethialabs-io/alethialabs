@@ -6,9 +6,9 @@
   <rect x="0.5" y="0.5" width="859" height="479" rx="12" fill="none" stroke="#3F3F46"/>
   <text x="430" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Provisioning Pipeline — Form to Infrastructure</text>
 
-  <!-- Stage 1: Vine Form -->
+  <!-- Stage 1: Spec Form -->
   <rect x="30" y="58" width="150" height="70" rx="8" fill="#8B5CF610" stroke="#8B5CF6"/>
-  <text x="105" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#8B5CF6">Vine Form</text>
+  <text x="105" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#8B5CF6">Spec Form</text>
   <text x="105" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">Console UI / Alethia CLI</text>
   <text x="105" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">createVine()</text>
 
@@ -127,7 +127,7 @@
   <line x1="646" y1="296" x2="646" y2="318" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
 
   <!-- Bottom summary -->
-  <text x="430" y="432" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#71717A">Config snapshot is immutable — a point-in-time freeze of the vine configuration.</text>
+  <text x="430" y="432" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#71717A">Config snapshot is immutable — a point-in-time freeze of the spec configuration.</text>
   <text x="430" y="450" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#71717A">No templating engine touches .tf files. Values flow through native terraform.tfvars.json.</text>
   <text x="430" y="468" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#52525B">Plan hash validation ensures apply matches the exact configuration that was planned.</text>
 </svg>

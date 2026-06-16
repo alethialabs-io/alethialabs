@@ -30,7 +30,7 @@ type vineyardWithVines struct {
 
 var listVineyardsCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all vineyards with their vines",
+	Short: "List all zones with their specs",
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -46,7 +46,7 @@ var listVineyardsCmd = &cobra.Command{
 		}
 
 		spinner.New().
-			Title("Fetching vineyards...").
+			Title("Fetching zones...").
 			Action(func() {
 				_, err = reqClient.R().
 					SetBearerAuthToken(token).
@@ -55,19 +55,19 @@ var listVineyardsCmd = &cobra.Command{
 			}).Run()
 
 		if err != nil {
-			ui.Error(fmt.Sprintf("Failed to fetch vineyards: %v", err))
+			ui.Error(fmt.Sprintf("Failed to fetch zones: %v", err))
 			os.Exit(1)
 		}
 
 		if len(result.Vineyards) == 0 {
-			ui.Muted("No vineyards found. Create one with `alethia vineyard create`.")
+			ui.Muted("No zones found. Create one with `alethia zone create`.")
 			return
 		}
 
 		fmt.Println()
 		for i, v := range result.Vineyards {
 			fmt.Printf("  %s", ui.AccentStyle.Render(v.Name))
-			fmt.Println(ui.MutedStyle.Render(fmt.Sprintf(" (%d vines)", len(v.Vines))))
+			fmt.Println(ui.MutedStyle.Render(fmt.Sprintf(" (%d specs)", len(v.Vines))))
 
 			if v.Description != nil && *v.Description != "" {
 				fmt.Printf("  %s\n", ui.MutedStyle.Render(*v.Description))
@@ -96,7 +96,7 @@ var listVineyardsCmd = &cobra.Command{
 					)
 				}
 			} else {
-				fmt.Printf("  %s\n", ui.MutedStyle.Render("  (no vines)"))
+				fmt.Printf("  %s\n", ui.MutedStyle.Render("  (no specs)"))
 			}
 
 			if i < len(result.Vineyards)-1 {

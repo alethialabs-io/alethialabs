@@ -19,7 +19,7 @@ import (
 
 var createVineyardCmd = &cobra.Command{
 	Use:   "create [name]",
-	Short: "Create a new vineyard (workspace)",
+	Short: "Create a new zone (workspace)",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		var name, desc string
@@ -28,7 +28,7 @@ var createVineyardCmd = &cobra.Command{
 			err := huh.NewForm(
 				huh.NewGroup(
 					huh.NewInput().
-						Title("Vineyard Name").
+						Title("Zone Name").
 						Description("Enter a unique name for your workspace").
 						Value(&name).
 						Validate(func(str string) error {
@@ -92,7 +92,7 @@ var createVineyardCmd = &cobra.Command{
 		}
 
 		err = spinner.New().
-			Title(fmt.Sprintf("Creating vineyard '%s'...", name)).
+			Title(fmt.Sprintf("Creating zone '%s'...", name)).
 			Action(action).
 			Run()
 
@@ -102,15 +102,15 @@ var createVineyardCmd = &cobra.Command{
 		}
 
 		if resp.IsErrorState() {
-			fmt.Printf("Error creating vineyard (HTTP %d): %s\n", resp.StatusCode, errMsg.Error)
+			fmt.Printf("Error creating zone (HTTP %d): %s\n", resp.StatusCode, errMsg.Error)
 			os.Exit(1)
 		}
 
-		ui.Success(fmt.Sprintf("Created vineyard '%s' (ID: %s)", result.Vineyard.Name, result.Vineyard.ID))
+		ui.Success(fmt.Sprintf("Created zone '%s' (ID: %s)", result.Vineyard.Name, result.Vineyard.ID))
 	},
 }
 
 func init() {
-	createVineyardCmd.Flags().StringP("description", "d", "", "Description for the vineyard")
+	createVineyardCmd.Flags().StringP("description", "d", "", "Description for the zone")
 	vineyardCmd.AddCommand(createVineyardCmd)
 }

@@ -18,7 +18,7 @@ import (
 
 var tendrilListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all tendrils",
+	Short: "List all runners",
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -30,18 +30,18 @@ var tendrilListCmd = &cobra.Command{
 		var workers []api.Worker
 
 		spinner.New().
-			Title("Fetching tendrils...").
+			Title("Fetching runners...").
 			Action(func() {
 				workers, err = apiClient.GetWorkers()
 			}).Run()
 
 		if err != nil {
-			ui.Error(fmt.Sprintf("Failed to fetch tendrils: %v", err))
+			ui.Error(fmt.Sprintf("Failed to fetch runners: %v", err))
 			os.Exit(1)
 		}
 
 		if len(workers) == 0 {
-			ui.Muted("No tendrils found. Deploy one with `alethia tendril deploy`.")
+			ui.Muted("No runners found. Deploy one with `alethia runner deploy`.")
 			return
 		}
 
@@ -86,7 +86,7 @@ var tendrilListCmd = &cobra.Command{
 			}
 		}
 
-		m := ui.NewTableModel(columns, rows, "tendrils", "name", 0)
+		m := ui.NewTableModel(columns, rows, "runners", "name", 0)
 		if _, err := tea.NewProgram(m).Run(); err != nil {
 			ui.Error(fmt.Sprintf("Table error: %v", err))
 			os.Exit(1)

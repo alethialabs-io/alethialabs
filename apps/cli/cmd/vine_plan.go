@@ -20,7 +20,7 @@ var (
 
 var vinePlanCmd = &cobra.Command{
 	Use:   "plan",
-	Short: "Queue a plan (dry-run) job for a vine",
+	Short: "Queue a plan (dry-run) job for a spec",
 	Long:  `Plan runs a Terraform plan with cost analysis without applying changes.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
@@ -83,7 +83,7 @@ var vinePlanCmd = &cobra.Command{
 
 func init() {
 	vineCmd.AddCommand(vinePlanCmd)
-	vinePlanCmd.Flags().StringVar(&vinePlanVineID, "vine-id", "", "ID of the vine to plan")
-	vinePlanCmd.Flags().StringVar(&vinePlanTendrilID, "tendril-id", "", "Assign to a specific tendril")
+	vinePlanCmd.Flags().StringVar(&vinePlanVineID, "spec-id", "", "ID of the spec to plan")
+	vinePlanCmd.Flags().StringVar(&vinePlanTendrilID, "runner-id", "", "Assign to a specific runner")
 	vinePlanCmd.Flags().BoolVarP(&vinePlanWait, "wait", "w", false, "Wait for job completion")
 }

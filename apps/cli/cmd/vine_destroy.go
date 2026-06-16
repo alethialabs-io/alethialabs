@@ -21,8 +21,8 @@ var (
 
 var vineDestroyCmd = &cobra.Command{
 	Use:   "destroy",
-	Short: "Destroy a vine's infrastructure",
-	Long:  `Queues a DESTROY job to tear down all cloud resources for a vine. This cannot be undone.`,
+	Short: "Destroy a spec's infrastructure",
+	Long:  `Queues a DESTROY job to tear down all cloud resources for a spec. This cannot be undone.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -50,7 +50,7 @@ var vineDestroyCmd = &cobra.Command{
 		confirmForm := huh.NewForm(
 			huh.NewGroup(
 				huh.NewConfirm().
-					Title("Are you sure you want to destroy this vine?").
+					Title("Are you sure you want to destroy this spec?").
 					Description("This will tear down all cloud resources. It cannot be undone.").
 					Value(&confirm),
 			),
@@ -98,7 +98,7 @@ var vineDestroyCmd = &cobra.Command{
 
 func init() {
 	vineCmd.AddCommand(vineDestroyCmd)
-	vineDestroyCmd.Flags().StringVar(&vineDestroyVineID, "vine-id", "", "ID of the vine to destroy")
-	vineDestroyCmd.Flags().StringVar(&vineDestroyTendrilID, "tendril-id", "", "Assign to a specific tendril")
+	vineDestroyCmd.Flags().StringVar(&vineDestroyVineID, "spec-id", "", "ID of the spec to destroy")
+	vineDestroyCmd.Flags().StringVar(&vineDestroyTendrilID, "runner-id", "", "Assign to a specific runner")
 	vineDestroyCmd.Flags().BoolVarP(&vineDestroyWait, "wait", "w", false, "Wait for job completion")
 }

@@ -18,7 +18,7 @@ import (
 
 var clusterListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all vine clusters",
+	Short: "List all spec clusters",
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -41,12 +41,12 @@ var clusterListCmd = &cobra.Command{
 		}
 
 		if len(clusters) == 0 {
-			ui.Muted("No clusters found. Create a vine with a cluster through Alethia.")
+			ui.Muted("No clusters found. Create a spec with a cluster through Alethia.")
 			return
 		}
 
 		columns := []table.Column{
-			{Title: "Vine", Width: 22},
+			{Title: "Spec", Width: 22},
 			{Title: "Cluster", Width: 20},
 			{Title: "Version", Width: 10},
 			{Title: "Status", Width: 14},
@@ -83,7 +83,7 @@ var clusterListCmd = &cobra.Command{
 			}
 		}
 
-		m := ui.NewTableModel(columns, rows, "clusters", "vine", 0)
+		m := ui.NewTableModel(columns, rows, "clusters", "spec", 0)
 		if _, err := tea.NewProgram(m).Run(); err != nil {
 			ui.Error(fmt.Sprintf("Table error: %v", err))
 			os.Exit(1)
