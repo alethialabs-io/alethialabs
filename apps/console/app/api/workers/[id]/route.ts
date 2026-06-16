@@ -1,11 +1,11 @@
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { verifyWorkerToken } from "@/lib/workers/auth";
 import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
 import { NextResponse } from "next/server";
 
-/** Deletes a worker record. Called by grape-worker after successful terraform destroy. */
+/** Deletes a worker record. Called by the runner after successful terraform destroy. */
 export async function DELETE(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },

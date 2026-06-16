@@ -459,7 +459,7 @@ alethia worker start`}
 						Or with flags
 					</Label>
 					<pre className="rounded-md bg-muted p-3 text-xs font-mono overflow-x-auto border border-border/50 leading-relaxed">
-{`grape worker start \\
+{`alethia worker start \\
   --worker-id=${credentials.workerId} \\
   --worker-token=${credentials.workerToken}`}
 					</pre>

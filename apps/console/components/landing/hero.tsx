@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -33,7 +33,7 @@ const CAPABILITY_TABS: Record<
 			label: "Network",
 			code: {
 				aws: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Network ──────────────────────────┐" },
 					{ text: "│ ☑ Create new VPC                 │" },
@@ -42,7 +42,7 @@ const CAPABILITY_TABS: Record<
 					{ text: "└──────────────────────────────────┘" },
 				],
 				gcp: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Network ──────────────────────────┐" },
 					{ text: "│ ☑ Create new VPC Network         │" },
@@ -51,7 +51,7 @@ const CAPABILITY_TABS: Record<
 					{ text: "└──────────────────────────────────┘" },
 				],
 				azure: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Network ──────────────────────────┐" },
 					{ text: "│ ☑ Create new VNet                │" },
@@ -93,7 +93,7 @@ const CAPABILITY_TABS: Record<
 			label: "Cluster",
 			code: {
 				aws: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Cluster ─────────────────────────┐" },
 					{ text: "│ Kubernetes: 1.31                 │" },
@@ -103,7 +103,7 @@ const CAPABILITY_TABS: Record<
 					{ text: "└──────────────────────────────────┘" },
 				],
 				gcp: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Cluster ─────────────────────────┐" },
 					{ text: "│ Kubernetes: 1.30                 │" },
@@ -113,7 +113,7 @@ const CAPABILITY_TABS: Record<
 					{ text: "└──────────────────────────────────┘" },
 				],
 				azure: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Cluster ─────────────────────────┐" },
 					{ text: "│ Kubernetes: 1.30                 │" },
@@ -154,7 +154,7 @@ const CAPABILITY_TABS: Record<
 			label: "Database",
 			code: {
 				aws: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Database ────────────────────────┐" },
 					{ text: "│ Engine: Aurora PostgreSQL 16.4   │" },
@@ -163,7 +163,7 @@ const CAPABILITY_TABS: Record<
 					{ text: "└──────────────────────────────────┘" },
 				],
 				gcp: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Database ────────────────────────┐" },
 					{ text: "│ Engine: Cloud SQL PostgreSQL 16  │" },
@@ -172,7 +172,7 @@ const CAPABILITY_TABS: Record<
 					{ text: "└──────────────────────────────────┘" },
 				],
 				azure: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Database ────────────────────────┐" },
 					{ text: "│ Engine: Azure Database for PG 16 │" },
@@ -209,7 +209,7 @@ const CAPABILITY_TABS: Record<
 			label: "Cache",
 			code: {
 				aws: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Cache ───────────────────────────┐" },
 					{ text: "│ Engine: ElastiCache Redis        │" },
@@ -218,7 +218,7 @@ const CAPABILITY_TABS: Record<
 					{ text: "└──────────────────────────────────┘" },
 				],
 				gcp: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Cache ───────────────────────────┐" },
 					{ text: "│ Engine: Memorystore for Redis    │" },
@@ -227,7 +227,7 @@ const CAPABILITY_TABS: Record<
 					{ text: "└──────────────────────────────────┘" },
 				],
 				azure: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Cache ───────────────────────────┐" },
 					{ text: "│ Engine: Azure Cache for Redis    │" },
@@ -260,7 +260,7 @@ const CAPABILITY_TABS: Record<
 			label: "DNS",
 			code: {
 				aws: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ DNS ─────────────────────────────┐" },
 					{ text: "│ Domain: api.example.com          │" },
@@ -270,7 +270,7 @@ const CAPABILITY_TABS: Record<
 					{ text: "└──────────────────────────────────┘" },
 				],
 				gcp: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ DNS ─────────────────────────────┐" },
 					{ text: "│ Domain: api.example.com          │" },
@@ -280,7 +280,7 @@ const CAPABILITY_TABS: Record<
 					{ text: "└──────────────────────────────────┘" },
 				],
 				azure: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ DNS ─────────────────────────────┐" },
 					{ text: "│ Domain: api.example.com          │" },
@@ -319,7 +319,7 @@ const CAPABILITY_TABS: Record<
 			label: "Secrets",
 			code: {
 				aws: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Secrets ─────────────────────────┐" },
 					{ text: "│ + DATABASE_URL    ••••••••       │" },
@@ -328,7 +328,7 @@ const CAPABILITY_TABS: Record<
 					{ text: "└──────────────────────────────────┘" },
 				],
 				gcp: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Secrets ─────────────────────────┐" },
 					{ text: "│ + DATABASE_URL    ••••••••       │" },
@@ -337,7 +337,7 @@ const CAPABILITY_TABS: Record<
 					{ text: "└──────────────────────────────────┘" },
 				],
 				azure: [
-					{ text: "grape config create", color: "muted" },
+					{ text: "alethia config create", color: "muted" },
 					{ text: "" },
 					{ text: "┌ Secrets ─────────────────────────┐" },
 					{ text: "│ + DATABASE_URL    ••••••••       │" },
