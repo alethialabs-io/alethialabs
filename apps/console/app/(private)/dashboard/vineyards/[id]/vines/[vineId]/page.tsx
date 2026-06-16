@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -73,7 +73,7 @@ export default function VineDetailPage() {
 	if (!detail) {
 		return (
 			<div className="space-y-4">
-				<p className="text-muted-foreground text-sm">Vine not found.</p>
+				<p className="text-muted-foreground text-sm">Spec not found.</p>
 			</div>
 		);
 	}
@@ -103,11 +103,11 @@ export default function VineDetailPage() {
 	};
 
 	const handleDelete = async () => {
-		if (!confirm("Delete this vine and all its components?")) return;
+		if (!confirm("Delete this spec and all its components?")) return;
 		try {
 			await deleteVine(vineId);
 			removeVine(vineyardId, vineId);
-			toast.success("Vine deleted");
+			toast.success("Spec deleted");
 			router.push(`/dashboard/vineyards/${vineyardId}`);
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : "Failed to delete");
@@ -172,7 +172,7 @@ export default function VineDetailPage() {
 							<DropdownMenuSeparator />
 							<DropdownMenuItem onClick={handleDelete} className="text-destructive focus:text-destructive">
 								<Trash2 className="h-3.5 w-3.5 mr-2" />
-								Delete Vine
+								Delete Spec
 							</DropdownMenuItem>
 						</DropdownMenuContent>
 					</DropdownMenu>

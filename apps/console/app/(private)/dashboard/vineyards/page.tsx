@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { getVineyards } from "@/app/server/actions/vineyards";
@@ -21,16 +21,16 @@ export default async function VineyardsPage() {
 				<Grape className="h-8 w-8 text-muted-foreground" />
 			</div>
 			<h3 className="text-sm font-medium text-foreground mb-1">
-				No vineyards yet
+				No zones yet
 			</h3>
 			<p className="text-xs text-muted-foreground max-w-sm mb-4">
-				Create your first vine to get started. A vineyard will
-				be created automatically when you plant a vine.
+				Create your first spec to get started. A zone will
+				be created automatically when you create a spec.
 			</p>
 			<Link href="/dashboard/plant">
 				<Button size="sm" className="h-8 text-xs">
 					<Plus className="h-3.5 w-3.5 mr-1.5" />
-					Plant a Vine
+					Create a Spec
 				</Button>
 			</Link>
 		</div>

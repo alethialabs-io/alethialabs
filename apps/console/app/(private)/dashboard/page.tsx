@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -142,16 +142,16 @@ export default function DashboardPage() {
 				<Link href="/dashboard/plant">
 					<Button size="sm" className="h-8 text-xs">
 						<Plus className="mr-1.5 h-3.5 w-3.5" />
-						Plant a Vine
+						Create a Spec
 					</Button>
 				</Link>
 			</div>
 
 			{/* Stats Strip */}
 			<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-				<StatChip icon={<Grape className="h-3.5 w-3.5" />} value={allVines.length} label="Vines" />
+				<StatChip icon={<Grape className="h-3.5 w-3.5" />} value={allVines.length} label="Specs" />
 				<StatChip icon={<CheckCircle2 className="h-3.5 w-3.5" />} value={activeVines} label="Active" />
-				<StatChip icon={<Workflow className="h-3.5 w-3.5" />} value={onlineTendrils} label={`Tendril${onlineTendrils !== 1 ? "s" : ""} Online`} />
+				<StatChip icon={<Workflow className="h-3.5 w-3.5" />} value={onlineTendrils} label={`Runner${onlineTendrils !== 1 ? "s" : ""} Online`} />
 				<StatChip icon={<ClipboardList className="h-3.5 w-3.5" />} value={jobsStore.jobs.length} label="Total Jobs" />
 			</div>
 
@@ -201,7 +201,7 @@ export default function DashboardPage() {
 						<div className="flex flex-col items-center justify-center py-10 text-center border border-dashed border-border/50 rounded-lg">
 							<ClipboardList className="h-6 w-6 text-muted-foreground/30 mb-2" />
 							<p className="text-xs text-muted-foreground">
-								No jobs yet. Plant a vine to get started.
+								No jobs yet. Create a spec to get started.
 							</p>
 						</div>
 					) : (

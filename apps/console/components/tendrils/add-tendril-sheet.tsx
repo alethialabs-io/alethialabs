@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -68,9 +68,9 @@ const TABS = { deploy: "deploy", register: "register" } as const;
 type Tab = (typeof TABS)[keyof typeof TABS];
 
 const DESCRIPTIONS: Record<Tab, string> = {
-	deploy: "Deploy a self-hosted tendril container to your cloud account.",
+	deploy: "Deploy a self-hosted runner container to your cloud account.",
 	register:
-		"Register a self-hosted tendril that runs in your own infrastructure.",
+		"Register a self-hosted runner that runs in your own infrastructure.",
 };
 
 export function AddTendrilSheet({ open, onOpenChange }: AddTendrilSheetProps) {
@@ -106,7 +106,7 @@ export function AddTendrilSheet({ open, onOpenChange }: AddTendrilSheetProps) {
 				<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
 					<SheetTitle className="flex items-center gap-2">
 						<Plus className="h-4 w-4" />
-						Add Tendril
+						Add Runner
 					</SheetTitle>
 					<SheetDescription>{description}</SheetDescription>
 				</SheetHeader>
@@ -159,7 +159,7 @@ export function AddTendrilSheet({ open, onOpenChange }: AddTendrilSheetProps) {
 // ---------------------------------------------------------------------------
 
 const deployTendrilSchema = z.object({
-	name: publicWorkersInsertSchema.shape.name.min(1, "Tendril name is required"),
+	name: publicWorkersInsertSchema.shape.name.min(1, "Runner name is required"),
 	cloud_identity_id: z.string().min(1, "Cloud account is required"),
 	region: z.string().min(1, "Region is required"),
 });
@@ -210,12 +210,12 @@ function DeployForm({
 				region: data.region,
 				assignedWorkerId: assignedWorkerId,
 			});
-			toast.success("Tendril deployment queued");
+			toast.success("Runner deployment queued");
 			onOpenChange(false);
 			router.push(`/dashboard/jobs/${jobId}`);
 		} catch (err) {
 			toast.error(
-				err instanceof Error ? err.message : "Failed to deploy tendril",
+				err instanceof Error ? err.message : "Failed to deploy runner",
 			);
 		}
 	};
@@ -325,7 +325,7 @@ function DeployForm({
 							) : (
 								<Rocket className="mr-2 h-3.5 w-3.5" />
 							)}
-							Deploy Tendril
+							Deploy Runner
 						</Button>
 					}
 					onConfirm={handleDeploy}
@@ -411,7 +411,7 @@ function RegisterForm({
 			toast.error(
 				error instanceof Error
 					? error.message
-					: "Failed to register tendril",
+					: "Failed to register runner",
 			);
 		} finally {
 			setIsSubmitting(false);
@@ -437,9 +437,9 @@ function RegisterForm({
 					</div>
 				</div>
 
-				<CopyField label="Tendril ID" value={credentials.workerId} />
+				<CopyField label="Runner ID" value={credentials.workerId} />
 				<CopyField
-					label="Tendril Token"
+					label="Runner Token"
 					value={credentials.workerToken}
 				/>
 
@@ -509,7 +509,7 @@ grape worker start`}
 				) : (
 					<Server className="mr-2 h-3.5 w-3.5" />
 				)}
-				Register Tendril
+				Register Runner
 			</Button>
 		</form>
 	);

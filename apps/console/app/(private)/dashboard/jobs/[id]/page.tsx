@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -388,7 +388,7 @@ export default function JobDetailPage() {
 							</div>
 							{job.vine_id && (
 								<div>
-									<p className="text-[11px] text-muted-foreground">Vine</p>
+									<p className="text-[11px] text-muted-foreground">Spec</p>
 									<p className="font-mono truncate">{job.vine_id}</p>
 								</div>
 							)}

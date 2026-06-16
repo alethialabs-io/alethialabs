@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -32,13 +32,13 @@ export function SectionProjectBasics() {
 					<CardTitle className="text-base">Project Basics</CardTitle>
 				</div>
 				<CardDescription className="text-xs">
-					Name your vine and choose where it grows.
+					Name your spec and choose where it runs.
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
 				<div className="space-y-1.5">
 					<div className="flex items-center gap-1.5">
-						<Label className="text-xs">Vineyard Workspace <span className="text-destructive">*</span></Label>
+						<Label className="text-xs">Zone <span className="text-destructive">*</span></Label>
 						<HelpTooltip topic="vineyard" />
 					</div>
 					<FormField
@@ -61,7 +61,7 @@ export function SectionProjectBasics() {
 				<div className="grid md:grid-cols-2 gap-4">
 					<div className="space-y-1.5">
 						<Label className="text-xs">
-							Vine Name <span className="text-destructive">*</span>
+							Spec Name <span className="text-destructive">*</span>
 						</Label>
 						<FormField
 							control={control}

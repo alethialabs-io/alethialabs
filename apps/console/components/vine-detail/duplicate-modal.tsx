@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -110,9 +110,9 @@ export function DuplicateModal({
 			);
 			setResult(res);
 			useVineyardsStore.getState().fetchVineyards(true);
-			toast.success("Vine duplicated");
+			toast.success("Spec duplicated");
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to duplicate vine");
+			toast.error(err instanceof Error ? err.message : "Failed to duplicate spec");
 		} finally {
 			setLoading(false);
 		}
@@ -135,7 +135,7 @@ export function DuplicateModal({
 					<DialogHeader>
 						<DialogTitle className="flex items-center gap-2">
 							<CheckCircle2 className="h-5 w-5 text-foreground" />
-							Vine Duplicated
+							Spec Duplicated
 						</DialogTitle>
 						<DialogDescription>
 							<span className="font-medium text-foreground">{sourceVineName}</span> has been
@@ -166,7 +166,7 @@ export function DuplicateModal({
 							Close
 						</Button>
 						<Button onClick={goToNewVine}>
-							View Vine
+							View Spec
 						</Button>
 					</DialogFooter>
 				</DialogContent>

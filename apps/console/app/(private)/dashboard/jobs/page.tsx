@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -125,7 +125,7 @@ export default function JobsPage() {
 					</div>
 					<h3 className="text-sm font-medium text-foreground mb-1">No jobs yet</h3>
 					<p className="text-xs text-muted-foreground max-w-sm">
-						Jobs are created when you provision a vine or connect a cloud account.
+						Jobs are created when you provision a spec or connect a cloud account.
 					</p>
 				</div>
 			) : (
@@ -148,7 +148,7 @@ export default function JobsPage() {
 						<div className="relative flex-1 max-w-xs">
 							<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
 							<Input
-								placeholder="Search by ID, tendril, vine..."
+								placeholder="Search by ID, runner, spec..."
 								value={searchQuery}
 								onChange={(e) => setSearchQuery(e.target.value)}
 								className="h-7 text-xs pl-8 bg-muted/30 border-border/50"

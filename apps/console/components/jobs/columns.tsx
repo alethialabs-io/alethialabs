@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -58,19 +58,19 @@ const JOB_TYPES: Record<
 		description: "Cache cloud regions, networks, zones",
 	},
 	DEPLOY_WORKER: {
-		label: "Deploy Tendril",
+		label: "Deploy Runner",
 		icon: Container,
-		description: "Deploy a self-hosted tendril container",
+		description: "Deploy a self-hosted runner container",
 	},
 	UPDATE_WORKER: {
-		label: "Update Tendril",
+		label: "Update Runner",
 		icon: ArrowUpCircle,
-		description: "Update a tendril to a newer version",
+		description: "Update a runner to a newer version",
 	},
 	DESTROY_WORKER: {
-		label: "Destroy Tendril",
+		label: "Destroy Runner",
 		icon: Trash2,
-		description: "Tear down a self-hosted tendril",
+		description: "Tear down a self-hosted runner",
 	},
 } as Record<string, { label: string; icon: typeof Rocket; description: string }>;
 
@@ -144,7 +144,7 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 	},
 	{
 		accessorKey: "vine_id",
-		header: "Vine",
+		header: "Spec",
 		enableSorting: false,
 		cell: ({ row }) => {
 			const vineId = row.getValue("vine_id") as string | null;
@@ -178,7 +178,7 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 	},
 	{
 		accessorKey: "worker_id",
-		header: "Tendril",
+		header: "Runner",
 		enableSorting: false,
 		cell: ({ row }) => {
 			const workerId = row.getValue("worker_id") as string | null;

@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -71,7 +71,7 @@ export function VineyardSelector({ value, onChange }: VineyardSelectorProps) {
 			setSearchQuery("");
 			setOpen(false);
 		} catch (err: any) {
-			setError(err.message || "Failed to create vineyard");
+			setError(err.message || "Failed to create zone");
 		} finally {
 			setIsCreating(false);
 		}
@@ -82,7 +82,7 @@ export function VineyardSelector({ value, onChange }: VineyardSelectorProps) {
 			<div className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm opacity-50">
 				<div className="flex items-center gap-2 text-muted-foreground">
 					<Loader2 className="h-4 w-4 animate-spin" />
-					Loading vineyards...
+					Loading zones...
 				</div>
 			</div>
 		);
@@ -106,7 +106,7 @@ export function VineyardSelector({ value, onChange }: VineyardSelectorProps) {
 						<Map className="h-4 w-4 shrink-0 opacity-50" />
 						{value && selectedVineyard
 							? selectedVineyard.name
-							: "Select a Vineyard workspace"}
+							: "Select a zone"}
 					</div>
 					<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
 				</Button>
@@ -114,13 +114,13 @@ export function VineyardSelector({ value, onChange }: VineyardSelectorProps) {
 			<PopoverContent className="w-[400px] p-0" align="start">
 				<Command>
 					<CommandInput
-						placeholder="Search vineyards..."
+						placeholder="Search zones..."
 						value={searchQuery}
 						onValueChange={setSearchQuery}
 					/>
 					<CommandList>
 						<CommandEmpty className="py-2 text-center text-sm">
-							<p className="text-muted-foreground mb-2">No vineyard found.</p>
+							<p className="text-muted-foreground mb-2">No zone found.</p>
 							{searchQuery.trim() && (
 								<Button
 									variant="outline"

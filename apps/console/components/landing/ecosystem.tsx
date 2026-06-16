@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { CopyButton } from "./copy-button";
@@ -23,14 +23,14 @@ const CARDS: EcoCard[] = [
 	},
 	{
 		icon: Terminal,
-		title: "Grape CLI",
+		title: "Alethia CLI",
 		description:
-			"Interactive terminal with TUI wizards for infrastructure design, provisioning, and teardown. Headless worker mode for CI/CD.",
+			"Interactive terminal with TUI wizards for infrastructure design, provisioning, and teardown. Headless runner mode for CI/CD.",
 		install: "brew install alethia",
 	},
 	{
 		icon: BookOpen,
-		title: "Vintner",
+		title: "Docs",
 		description:
 			"Complete documentation — CLI reference, platform guides, architecture overview, and API documentation.",
 		cta: { label: "Read the Docs", href: "/docs" },

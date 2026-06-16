@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -83,7 +83,7 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 		try {
 			const newValue = !worker.is_default;
 			await setDefaultTendril(newValue ? worker.id : null);
-			toast.success(newValue ? `${worker.name} set as default` : "Default tendril cleared");
+			toast.success(newValue ? `${worker.name} set as default` : "Default runner cleared");
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : "Failed to update");
 		}
@@ -185,7 +185,7 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 					}
 					variant="destructive"
 					confirmLabel="Destroy"
-					description={`This will tear down all cloud resources for "${worker.name}" and delete the tendril. This cannot be undone.`}
+					description={`This will tear down all cloud resources for "${worker.name}" and delete the runner. This cannot be undone.`}
 					excludeId={worker.id}
 					onConfirm={handleDestroy}
 					disabled={destroying}
@@ -210,10 +210,10 @@ function TendrilActions({ worker }: { worker: TendrilRow }) {
 						<AlertDialogContent onClick={(e) => e.stopPropagation()}>
 							<AlertDialogHeader>
 								<AlertDialogTitle>
-									Remove tendril &ldquo;{worker.name}&rdquo;?
+									Remove runner &ldquo;{worker.name}&rdquo;?
 								</AlertDialogTitle>
 								<AlertDialogDescription>
-									This will remove the tendril record from the database. This cannot be undone.
+									This will remove the runner record from the database. This cannot be undone.
 								</AlertDialogDescription>
 							</AlertDialogHeader>
 							<AlertDialogFooter>

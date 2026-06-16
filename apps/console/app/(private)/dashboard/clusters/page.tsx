@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -98,14 +98,14 @@ export default function ClustersPage() {
 						No clusters provisioned
 					</h3>
 					<p className="text-xs text-muted-foreground max-w-sm">
-						Clusters appear here after you deploy a vine. Go to a
-						vine&apos;s detail page and click Deploy.
+						Clusters appear here after you deploy a spec. Go to a
+						spec&apos;s detail page and click Deploy.
 					</p>
 					<Link
 						href="/dashboard/plant"
 						className="mt-4 text-xs text-primary hover:underline"
 					>
-						Plant a vine
+						Create a spec
 					</Link>
 				</div>
 			) : (

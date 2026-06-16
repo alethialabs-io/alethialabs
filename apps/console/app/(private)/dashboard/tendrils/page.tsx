@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -165,8 +165,8 @@ export default function TendrilsPage() {
 		return (
 			<div className="space-y-6">
 				<div>
-					<h1 className="text-2xl font-semibold tracking-tight text-foreground">Tendrils</h1>
-					<p className="text-sm text-muted-foreground mt-1">Live status of provisioning tendrils and their active jobs.</p>
+					<h1 className="text-2xl font-semibold tracking-tight text-foreground">Runners</h1>
+					<p className="text-sm text-muted-foreground mt-1">Live status of provisioning runners and their active jobs.</p>
 				</div>
 				<div className="space-y-3">
 					<div className="flex gap-1">
@@ -192,8 +192,8 @@ export default function TendrilsPage() {
 		<div className="space-y-8">
 			<div className="flex items-center justify-between">
 				<div>
-					<h1 className="text-2xl font-semibold tracking-tight text-foreground">Tendrils</h1>
-					<p className="text-sm text-muted-foreground mt-1">Live status of provisioning tendrils and their active jobs.</p>
+					<h1 className="text-2xl font-semibold tracking-tight text-foreground">Runners</h1>
+					<p className="text-sm text-muted-foreground mt-1">Live status of provisioning runners and their active jobs.</p>
 				</div>
 				<AddTendrilButton />
 			</div>
@@ -203,7 +203,7 @@ export default function TendrilsPage() {
 					<ArrowUpCircle className="h-4 w-4" />
 					<AlertTitle className="flex items-center justify-between">
 						<span>
-							<strong>{outdatedTendrils.length} tendril{outdatedTendrils.length !== 1 ? "s" : ""}</strong>{" "}
+							<strong>{outdatedTendrils.length} runner{outdatedTendrils.length !== 1 ? "s" : ""}</strong>{" "}
 							{outdatedTendrils.length !== 1 ? "have" : "has"} updates available
 							<span className="font-normal ml-1">— v{latestRelease.version} is out</span>
 							{outdatedTendrils.length > updatableTendrils.length && (
@@ -239,9 +239,9 @@ export default function TendrilsPage() {
 					<div className="p-3 bg-muted/50 rounded-full mb-4">
 						<Server className="h-8 w-8 text-muted-foreground" />
 					</div>
-					<h3 className="text-sm font-medium text-foreground mb-1">No tendrils available</h3>
+					<h3 className="text-sm font-medium text-foreground mb-1">No runners available</h3>
 					<p className="text-xs text-muted-foreground max-w-sm mb-4">
-						Tendrils execute provisioning jobs for your infrastructure. Cloud tendrils are managed by the platform. You can also deploy your own.
+						Runners execute provisioning jobs for your infrastructure. Cloud runners are managed by the platform. You can also deploy your own.
 					</p>
 					<AddTendrilButton />
 				</div>

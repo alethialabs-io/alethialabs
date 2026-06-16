@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
@@ -26,11 +26,11 @@ export default async function PlantPage({ searchParams }: PlantPageProps) {
 		<div className="w-full space-y-6">
 			<div className="space-y-1.5">
 				<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
-					{sourceVine ? "Duplicate & Edit" : "Plant a Vine"}
+					{sourceVine ? "Duplicate & Edit" : "Create a Spec"}
 				</h1>
 				<p className="text-muted-foreground text-sm">
 					{sourceVine
-						? "Review and edit the converted configuration before creating."
+						? "Review and edit the converted spec before creating."
 						: "Configure your infrastructure components. Each section maps to a resource in your cloud account."}
 				</p>
 			</div>

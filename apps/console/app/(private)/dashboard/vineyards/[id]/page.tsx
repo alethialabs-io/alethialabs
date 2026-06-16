@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -119,7 +119,7 @@ export default function VineyardDetailPage() {
 	if (!vineyard) {
 		return (
 			<div className="space-y-4">
-				<p className="text-muted-foreground text-sm">Vineyard not found.</p>
+				<p className="text-muted-foreground text-sm">Zone not found.</p>
 			</div>
 		);
 	}
@@ -141,7 +141,7 @@ export default function VineyardDetailPage() {
 						{vineyard.name}
 					</h1>
 					<p className="text-xs text-muted-foreground">
-						{vines.length} vine{vines.length !== 1 ? "s" : ""}
+						{vines.length} spec{vines.length !== 1 ? "s" : ""}
 						{activeCount > 0 && ` · ${activeCount} active`}
 						{totalCost > 0 && ` · ~$${Math.round(totalCost)}/mo`}
 					</p>
@@ -171,7 +171,7 @@ export default function VineyardDetailPage() {
 					<Link href="/dashboard/plant">
 						<Button size="sm" className="h-8 text-xs">
 							<Plus className="h-3.5 w-3.5 mr-1.5" />
-							Plant a Vine
+							Create a Spec
 						</Button>
 					</Link>
 				</div>
@@ -184,15 +184,15 @@ export default function VineyardDetailPage() {
 						<Grape className="h-8 w-8 text-muted-foreground" />
 					</div>
 					<h3 className="text-sm font-medium text-foreground mb-1">
-						No vines planted
+						No specs yet
 					</h3>
 					<p className="text-xs text-muted-foreground max-w-sm mb-4">
-						Plant your first vine in this vineyard to provision infrastructure.
+						Create your first spec in this zone to provision infrastructure.
 					</p>
 					<Link href="/dashboard/plant">
 						<Button size="sm" className="h-8 text-xs">
 							<Plus className="h-3.5 w-3.5 mr-1.5" />
-							Plant a Vine
+							Create a Spec
 						</Button>
 					</Link>
 				</div>

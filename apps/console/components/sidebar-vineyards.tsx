@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -43,7 +43,7 @@ export function SidebarVineyards() {
 	return (
 		<section className="mt-4">
 			<p className="px-3 mb-2 text-[10px] uppercase font-bold text-muted-foreground tracking-wider">
-				Vineyards
+				Zones
 			</p>
 
 			{isLoading && vineyards.length === 0 ? (
@@ -53,10 +53,10 @@ export function SidebarVineyards() {
 				</div>
 			) : vineyards.length === 0 ? (
 				<div className="px-3 space-y-2">
-					<p className="text-xs text-muted-foreground italic">No vineyards yet</p>
+					<p className="text-xs text-muted-foreground italic">No zones yet</p>
 					<Link href="/dashboard/plant" className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
 						<Plus className="h-3 w-3" />
-						Plant a Vine
+						Create a Spec
 					</Link>
 				</div>
 			) : (

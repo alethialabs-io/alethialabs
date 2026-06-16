@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -12,9 +12,9 @@ import { HelpCircle } from "lucide-react";
 
 const HELP_CONTENT: Record<string, { title: string; description: string }> = {
 	vineyard: {
-		title: "Vineyard Workspace",
+		title: "Zone",
 		description:
-			"Groups multiple vines together. Think of it as a project workspace — one vineyard per team or product.",
+			"Groups multiple specs together. Think of it as a project workspace — one zone per team or product.",
 	},
 	environment: {
 		title: "Environment Stage",
@@ -104,7 +104,7 @@ const HELP_CONTENT: Record<string, { title: string; description: string }> = {
 	"hosted-zone": {
 		title: "DNS Zone",
 		description:
-			"A DNS zone that manages records for your domain. Select an existing zone from your AWS account. Grape uses it for DNS records but does not create new zones.",
+			"A DNS zone that manages records for your domain. Select an existing zone from your AWS account. Alethia uses it for DNS records but does not create new zones.",
 	},
 	dynamodb: {
 		title: "DynamoDB Table",

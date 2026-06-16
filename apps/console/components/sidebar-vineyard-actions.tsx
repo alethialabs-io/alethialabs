@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -67,10 +67,10 @@ export function VineyardActions({ vineyardId, vineyardName, vineCount }: Vineyar
 		try {
 			await updateVineyard(vineyardId, { name: trimmed });
 			renameVineyard(vineyardId, trimmed);
-			toast.success("Vineyard renamed");
+			toast.success("Zone renamed");
 			setShowRename(false);
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to rename vineyard");
+			toast.error(err instanceof Error ? err.message : "Failed to rename zone");
 		} finally {
 			setActing(false);
 		}
@@ -82,14 +82,14 @@ export function VineyardActions({ vineyardId, vineyardName, vineCount }: Vineyar
 		try {
 			await deleteVineyard(vineyardId);
 			removeVineyard(vineyardId);
-			toast.success("Vineyard deleted");
+			toast.success("Zone deleted");
 			setShowDelete(false);
 
 			if (pathname.startsWith(`/dashboard/vineyards/${vineyardId}`)) {
 				router.push("/dashboard");
 			}
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to delete vineyard");
+			toast.error(err instanceof Error ? err.message : "Failed to delete zone");
 		} finally {
 			setActing(false);
 		}
@@ -129,16 +129,16 @@ export function VineyardActions({ vineyardId, vineyardName, vineCount }: Vineyar
 			<Dialog open={showRename} onOpenChange={setShowRename}>
 				<DialogContent className="sm:max-w-sm" onClick={(e) => e.stopPropagation()}>
 					<DialogHeader>
-						<DialogTitle>Rename Vineyard</DialogTitle>
+						<DialogTitle>Rename Zone</DialogTitle>
 						<DialogDescription>
-							Enter a new name for this vineyard.
+							Enter a new name for this zone.
 						</DialogDescription>
 					</DialogHeader>
 					<form onSubmit={(e) => { e.preventDefault(); handleRename(); }}>
 						<Input
 							value={newName}
 							onChange={(e) => setNewName(e.target.value)}
-							placeholder="Vineyard name"
+							placeholder="Zone name"
 							autoFocus
 							className="mb-4"
 						/>
@@ -160,8 +160,8 @@ export function VineyardActions({ vineyardId, vineyardName, vineCount }: Vineyar
 					<AlertDialogHeader>
 						<AlertDialogTitle>Delete &ldquo;{vineyardName}&rdquo;?</AlertDialogTitle>
 						<AlertDialogDescription>
-							This will permanently delete this vineyard
-							{vineCount > 0 && ` and its ${vineCount} vine${vineCount !== 1 ? "s" : ""}`}.
+							This will permanently delete this zone
+							{vineCount > 0 && ` and its ${vineCount} spec${vineCount !== 1 ? "s" : ""}`}.
 							This action cannot be undone.
 						</AlertDialogDescription>
 					</AlertDialogHeader>

@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -75,9 +75,9 @@ export function TendrilSelectPopover({
 			</PopoverTrigger>
 			<PopoverContent align="end" className="w-72 p-0">
 				<div className="px-3 pt-3 pb-2 border-b border-border/40">
-					<p className="text-sm font-medium">Select tendril</p>
+					<p className="text-sm font-medium">Select runner</p>
 					<p className="text-xs text-muted-foreground">
-						Choose which tendril runs this job.
+						Choose which runner runs this job.
 					</p>
 					{variant === "destructive" && description && (
 						<div className="mt-2 flex gap-1.5 rounded-md bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">

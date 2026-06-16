@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -20,11 +20,11 @@ import { usePathname } from "next/navigation";
 import { Fragment, useMemo } from "react";
 
 const SEGMENT_LABELS: Record<string, string> = {
-	plant: "Plant a Vine",
+	plant: "Create a Spec",
 	clusters: "Clusters",
 	jobs: "Jobs",
 	integrations: "Integrations",
-	tendrils: "Tendrils",
+	tendrils: "Runners",
 	profile: "Profile",
 };
 
@@ -79,7 +79,7 @@ export function HeaderBreadcrumbs() {
 						i += 2;
 					}
 				} else {
-					result.push({ label: "Vineyards" });
+					result.push({ label: "Zones" });
 					i++;
 				}
 				continue;

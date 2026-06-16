@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -42,10 +42,10 @@ const DEMO_TABS = [
 		id: "config",
 		label: "Config Create",
 		code: [
-			{ text: "$ grape config create", color: "muted" as const },
+			{ text: "$ alethia config create", color: "muted" as const },
 			{ text: "" },
-			{ text: "  Step 1/6: Vineyard & Basics" },
-			{ text: '    Vineyard:    production', color: "green" as const },
+			{ text: "  Step 1/6: Zone & Basics" },
+			{ text: '    Zone:        production', color: "green" as const },
 			{ text: "    Name:        api-backend", color: "green" as const },
 			{ text: "    Environment: production", color: "green" as const },
 			{ text: "    Region:      eu-west-1", color: "green" as const },
@@ -58,7 +58,7 @@ const DEMO_TABS = [
 		output: [
 			{ text: "✓ Configuration validated", color: "green" as const },
 			{ text: "" },
-			{ text: "  Vineyard: production" },
+			{ text: "  Zone: production" },
 			{ text: "  Project:  api-backend" },
 			{ text: "  Provider: AWS (eu-west-1)" },
 			{ text: "" },
@@ -73,10 +73,10 @@ const DEMO_TABS = [
 		id: "plan",
 		label: "Plan & Apply",
 		code: [
-			{ text: "$ grape harvest", color: "muted" as const },
+			{ text: "$ alethia harvest", color: "muted" as const },
 			{ text: "" },
-			{ text: "  ? Select vineyard: production" },
-			{ text: "  ? Select vine: api-backend" },
+			{ text: "  ? Select zone: production" },
+			{ text: "  ? Select spec: api-backend" },
 			{ text: "  ? Select worker: prod-worker (ONLINE)" },
 			{ text: "" },
 			{ text: "  ▸ Terraform init..." },
@@ -103,7 +103,7 @@ const DEMO_TABS = [
 		id: "cost",
 		label: "Cost Estimation",
 		code: [
-			{ text: "$ grape cost api-backend", color: "muted" as const },
+			{ text: "$ alethia cost api-backend", color: "muted" as const },
 			{ text: "" },
 			{ text: "  ┌ Monthly Cost Breakdown ────────┐" },
 			{ text: "  │                                 │" },
@@ -133,9 +133,9 @@ const DEMO_TABS = [
 		id: "destroy",
 		label: "Teardown",
 		code: [
-			{ text: "$ grape destroy", color: "muted" as const },
+			{ text: "$ alethia destroy", color: "muted" as const },
 			{ text: "" },
-			{ text: "  ? Select vineyard: production" },
+			{ text: "  ? Select zone: production" },
 			{ text: "  ? Confirm destroy? (y/N): y" },
 			{ text: "" },
 			{ text: "  ▸ Disabling ArgoCD self-healing..." },
@@ -168,8 +168,8 @@ const MODULES = [
 	},
 	{
 		icon: Terminal,
-		title: "Grape",
-		subtitle: "CLI + Worker",
+		title: "Alethia CLI",
+		subtitle: "CLI + Runner",
 		description:
 			"Interactive terminal wizard for provisioning, deployment, and teardown.",
 		href: "/docs",

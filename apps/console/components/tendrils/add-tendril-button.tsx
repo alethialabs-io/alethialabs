@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -20,7 +20,7 @@ export function AddTendrilButton() {
 				onClick={() => setOpen(true)}
 			>
 				<Plus className="mr-2 h-3.5 w-3.5" />
-				Add Tendril
+				Add Runner
 			</Button>
 			<AddTendrilSheet open={open} onOpenChange={setOpen} />
 		</>

@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -115,11 +115,11 @@ export default function DashboardLayout({
 
 	const navigation = [
 		{ name: "Overview", href: "/dashboard", icon: LayoutDashboard },
-		{ name: "Plant a Vine", href: "/dashboard/plant", icon: Plus },
+		{ name: "Create a Spec", href: "/dashboard/plant", icon: Plus },
 		{ name: "Clusters", href: "/dashboard/clusters", icon: Server },
 		{ name: "Jobs", href: "/dashboard/jobs", icon: ClipboardList },
 		{ name: "Integrations", href: "/dashboard/integrations", icon: Blocks },
-		{ name: "Tendrils", href: "/dashboard/tendrils", icon: Workflow },
+		{ name: "Runners", href: "/dashboard/tendrils", icon: Workflow },
 	];
 
 	const getUserInitials = () => {
@@ -263,7 +263,7 @@ export default function DashboardLayout({
 										className="cursor-pointer"
 									>
 										<Settings className="mr-2 h-4 w-4 text-muted-foreground" />
-										Plant a Vine
+										Create a Spec
 									</Link>
 								</DropdownMenuItem>
 								<DropdownMenuSeparator />
