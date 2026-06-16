@@ -51,7 +51,7 @@ A **boundary-guard CI lint** that fails the build if any file outside `ee/` impo
 
 Many enterprise legal teams **ban AGPL dependencies** outright, fearing the copyleft reaches their own code. Mitigation, stated explicitly in docs:
 
-- Alethia is a **tool that operates infrastructure**, not a library linked into the customer's product. The §13 obligation lands on whoever **modifies and hosts Alethia**, not on the customer's applications it provisions. The plain-HTTP worker boundary (`packages/alethia-core/api/api.go`, Bearer over `GRAPE_WEB_ORIGIN`) reinforces this — the customer's workloads never link Alethia code.
+- Alethia is a **tool that operates infrastructure**, not a library linked into the customer's product. The §13 obligation lands on whoever **modifies and hosts Alethia**, not on the customer's applications it provisions. The plain-HTTP worker boundary (`packages/alethia-core/api/api.go`, Bearer over `ALETHIA_WEB_ORIGIN`) reinforces this — the customer's workloads never link Alethia code.
 - Keep a **commercial/dual license** available for teams that won't touch AGPL regardless.
 
 ## CLA / copyright assignment (from day one)

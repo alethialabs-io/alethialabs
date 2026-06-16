@@ -46,7 +46,7 @@ Problems: AWS-only copy, no multi-cloud story, no code examples, no stats, no ec
 │     3 Clouds | 11 Sections | 12 Components | ... │
 ├─────────────────────────────────────────────────┤
 │  8. INSTALL CTA                                  │
-│     brew install grape + docs link               │
+│     brew install alethia + docs link               │
 ├─────────────────────────────────────────────────┤
 │  9. FOOTER                                       │
 │     Product | Developers | Community              │
@@ -97,10 +97,10 @@ Muted text, 1-2 sentences. Hits the three pillars: visual config, zero-credentia
 ### Terminal Snippet
 Dark terminal block with syntax highlighting:
 ```bash
-$ brew install grape
-$ grape login
+$ brew install alethia
+$ alethia login
   ✓ Authenticated as borislav@tovr.eu
-$ grape config create --provider aws
+$ alethia config create --provider aws
   ┌ Plant a Vine ─────────────────────┐
   │ Project:     api-backend          │
   │ Environment: production           │
@@ -109,7 +109,7 @@ $ grape config create --provider aws
   │ Database:    Aurora PostgreSQL     │
   │ Cost:        ~$847/mo             │
   └───────────────────────────────────┘
-$ grape harvest
+$ alethia harvest
   ✓ 47 resources provisioned in 12m 34s
 ```
 
@@ -139,7 +139,7 @@ Muted/grayscale, small. Caption: "Full feature parity across all three clouds."
 
 ### Step 2: Bootstrap
 - **Icon**: Terminal/CLI icon
-- **Title**: "Bootstrap with Grape"
+- **Title**: "Bootstrap with Alethia"
 - **Description**: "One command provisions your entire stack. VPC, Kubernetes cluster, databases, ArgoCD — all generated as production Terraform and deployed by a secure worker in your cloud account."
 
 ### Step 3: Ship
@@ -159,10 +159,10 @@ Muted/grayscale, small. Caption: "Full feature parity across all three clouds."
 | 2 | Visual Configuration | Layout icon | 11 infrastructure sections in a guided form. Network, cluster, databases, caches, NoSQL, messaging, DNS, secrets, registries, repos. |
 | 3 | Zero-Credential Security | Shield icon | No static cloud keys stored. Cross-account IAM roles (AWS), Workload Identity Federation (GCP), Federated Identity (Azure). |
 | 4 | GitOps by Default | Git icon | ArgoCD bootstrapped automatically. Git as audit trail. Plan-review-apply workflow for every change. |
-| 5 | CLI + Web, Unified | Terminal icon | Same state, two interfaces. Design in the browser with the 11-section form or from the terminal with Grape's interactive TUI. |
+| 5 | CLI + Web, Unified | Terminal icon | Same state, two interfaces. Design in the browser with the 11-section form or from the terminal with Alethia's interactive TUI. |
 | 6 | Real-Time Cost Estimation | Dollar icon | See monthly cost as you configure. The sidebar updates with every form change. Powered by cloud pricing APIs and Infracost. |
 | 7 | Worker-Based Execution | Server icon | Secure workers run in your cloud account. ECS Fargate or self-hosted. Job queue with real-time log streaming. |
-| 8 | Interactive TUI | Sparkles icon | Grape's CLI uses Charmbracelet forms — not flag soup. A 6-step wizard guides you through infrastructure design in the terminal. |
+| 8 | Interactive TUI | Sparkles icon | Alethia's CLI uses Charmbracelet forms — not flag soup. A 6-step wizard guides you through infrastructure design in the terminal. |
 | 9 | Safe Teardown | Trash icon | Clean resource cleanup. Disable ArgoCD healing, drain load balancers, terraform destroy — no orphaned resources. |
 
 ---
@@ -173,26 +173,26 @@ Muted/grayscale, small. Caption: "Full feature parity across all three clouds."
 
 ### Tab 1: Quick Start
 ```bash
-# Install Grape CLI
-brew install grape
+# Install Alethia CLI
+brew install alethia
 
 # Authenticate with Trellis
-grape login
+alethia login
 
 # Design infrastructure interactively
-grape config create
+alethia config create
 
 # Deploy to your cloud
-grape harvest
+alethia harvest
 ```
 
 ### Tab 2: Full Workflow
 ```bash
 # Create a workspace
-grape vineyard create "production"
+alethia vineyard create "production"
 
 # Configure a complete stack (6-step TUI wizard)
-grape config create
+alethia config create
   # Step 1: Vineyard & basics (name, region, provider)
   # Step 2: Platform (EKS/GKE/AKS, instance types, autoscaling)
   # Step 3: Git repositories
@@ -201,7 +201,7 @@ grape config create
   # Step 6: Review with cost estimate
 
 # Preview the Terraform plan
-grape harvest
+alethia harvest
   # ► 47 resources to create
   # ► Estimated cost: $847.23/mo
   # ► Confirm? (y/N)
@@ -210,10 +210,10 @@ grape harvest
 ### Tab 3: Worker Setup
 ```bash
 # Register a worker with Trellis
-grape worker register --name "prod-worker" --mode cloud-hosted
+alethia worker register --name "prod-worker" --mode cloud-hosted
 
 # Start the worker daemon
-grape worker start
+alethia worker start
   # ✓ Connected to Trellis
   # ✓ Polling for jobs every 10s
   # ✓ Heartbeat every 30s
@@ -285,7 +285,7 @@ Terraform    ArgoCD    Helm    Infracost
 |------|-------|-------|
 | Cloud Providers | **3** | AWS, GCP, Azure |
 | Infrastructure Sections | **11** | In the Plant a Vine form |
-| CLI Commands | **16** | Shipped in Grape |
+| CLI Commands | **16** | Shipped in Alethia |
 | Git Providers | **3** | GitHub, GitLab, Bitbucket |
 
 **Design**: Similar to ai-sdk.dev's stats strip (13M downloads, 24.6K stars, etc.). Bold number, small label below.
@@ -303,7 +303,7 @@ Get started in under a minute.
 
 ### Terminal Block
 ```bash
-brew install grape && grape login
+brew install alethia && alethia login
 ```
 With copy button.
 

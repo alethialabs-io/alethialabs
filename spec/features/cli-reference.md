@@ -1,6 +1,6 @@
-# CLI Reference — Grape
+# CLI Reference — Alethia
 
-Grape is the command-line interface for Trellis. It handles authentication, infrastructure configuration, provisioning, teardown, and worker management. Built in Go with Charmbracelet's `huh` library for interactive TUI forms.
+Alethia is the command-line interface for Trellis. It handles authentication, infrastructure configuration, provisioning, teardown, and worker management. Built in Go with Charmbracelet's `huh` library for interactive TUI forms.
 
 ---
 
@@ -8,7 +8,7 @@ Grape is the command-line interface for Trellis. It handles authentication, infr
 
 ```bash
 brew tap bobikenobi12/bb-thesis-2026 https://github.com/bobikenobi12/bb-thesis-2026
-brew install grape
+brew install alethia
 ```
 
 ---
@@ -16,7 +16,7 @@ brew install grape
 ## Command Tree (Shipped)
 
 ```
-grape
+alethia
 ├── login                     Device code auth with Trellis
 ├── logout                    Clear local auth token
 │
@@ -52,25 +52,25 @@ grape
 
 ```bash
 # Install and authenticate
-brew install grape
-grape login
+brew install alethia
+alethia login
 
 # Create a workspace and configure infrastructure
-grape vineyard create "my-project"
-grape config create
+alethia vineyard create "my-project"
+alethia config create
 
 # Deploy
-grape harvest
+alethia harvest
 ```
 
 ### Full Lifecycle
 
 ```bash
 # Authenticate
-grape login
+alethia login
 
 # Create workspace
-grape vineyard create "production"
+alethia vineyard create "production"
 
 # Design infrastructure (6-step interactive TUI)
 #   Step 1: Select vineyard + basics (name, environment, region)
@@ -79,51 +79,51 @@ grape vineyard create "production"
 #   Step 4: Network + advanced (VPC CIDR, NAT gateway, DNS)
 #   Step 5: Data services (databases, caches, queues)
 #   Step 6: Review + submit
-grape config create
+alethia config create
 
 # Preview what will be provisioned
-grape config get my-vine-name
+alethia config get my-vine-name
 
 # Deploy to cloud
-grape harvest
+alethia harvest
 
 # When done, tear down cleanly
-grape destroy
+alethia destroy
 ```
 
 ### Worker Setup
 
 ```bash
 # Register a worker with Trellis (gets worker ID + token)
-grape worker register --name "prod-worker" --mode cloud-hosted
+alethia worker register --name "prod-worker" --mode cloud-hosted
 
 # Start the worker daemon
 # Polls Trellis every 10s for jobs, sends heartbeat every 30s
-grape worker start
+alethia worker start
 ```
 
 ### CLI Authentication Flow
 
 ```bash
-# grape login triggers device code flow:
+# alethia login triggers device code flow:
 # 1. CLI requests device code from Trellis
 # 2. User opens browser to /cli/login?device_code=XXX&verification_code=YYY
 # 3. User approves in browser
 # 4. CLI receives refresh token via /api/auth/cli/exchange
-# 5. Token stored in ~/.config/grape/auth.json
-grape login
+# 5. Token stored in ~/.config/alethia/auth.json
+alethia login
 
 # Clear stored credentials
-grape logout
+alethia logout
 ```
 
 ---
 
 ## Interactive TUI Details
 
-Grape uses Charmbracelet's `huh` library for rich terminal forms. Key interactions:
+Alethia uses Charmbracelet's `huh` library for rich terminal forms. Key interactions:
 
-### `grape config create` — 6-Step Wizard
+### `alethia config create` — 6-Step Wizard
 
 | Step | Fields | Notes |
 |------|--------|-------|
@@ -134,7 +134,7 @@ Grape uses Charmbracelet's `huh` library for rich terminal forms. Key interactio
 | 5. Data Services | Databases (engine, version, size), caches, queues | Multi-item arrays |
 | 6. Review | Summary table, confirm or go back | Shows estimated cost |
 
-### `grape harvest` — Interactive Selection
+### `alethia harvest` — Interactive Selection
 
 ```
 ? Select a vineyard:
@@ -161,24 +161,24 @@ These commands map Trellis web features to the CLI. They are not yet implemented
 
 | Command | Maps from (Trellis) | Purpose |
 |---------|---------------------|---------|
-| `grape plan [vine-name]` | Terraform plan viewer | Run terraform plan and show resource diff without applying |
-| `grape cost [vine-name]` | Cost sidebar | Show monthly cost breakdown by component |
-| `grape status [vine-name]` | Vine detail page | Per-component provisioning status (network: ACTIVE, cluster: PROVISIONING, ...) |
-| `grape logs [job-id]` | Job log viewer | Stream real-time job logs to terminal |
+| `alethia plan [vine-name]` | Terraform plan viewer | Run terraform plan and show resource diff without applying |
+| `alethia cost [vine-name]` | Cost sidebar | Show monthly cost breakdown by component |
+| `alethia status [vine-name]` | Vine detail page | Per-component provisioning status (network: ACTIVE, cluster: PROVISIONING, ...) |
+| `alethia logs [job-id]` | Job log viewer | Stream real-time job logs to terminal |
 
 ### Worker Management
 
 | Command | Maps from (Trellis) | Purpose |
 |---------|---------------------|---------|
-| `grape worker list` | Workers dashboard | List all registered workers with status |
-| `grape worker status` | Workers dashboard | Show health, uptime, active jobs for a specific worker |
-| `grape worker destroy` | Worker management | Tear down cloud-hosted worker infrastructure |
+| `alethia worker list` | Workers dashboard | List all registered workers with status |
+| `alethia worker status` | Workers dashboard | Show health, uptime, active jobs for a specific worker |
+| `alethia worker destroy` | Worker management | Tear down cloud-hosted worker infrastructure |
 
 ### Integrations
 
 | Command | Maps from (Trellis) | Purpose |
 |---------|---------------------|---------|
-| `grape integrations list` | Integrations page | Show connected cloud + git providers with status |
+| `alethia integrations list` | Integrations page | Show connected cloud + git providers with status |
 
 ---
 
@@ -187,12 +187,12 @@ These commands map Trellis web features to the CLI. They are not yet implemented
 ### Hero Terminal Snippet
 
 ```bash
-$ brew install grape
-$ grape login
+$ brew install alethia
+$ alethia login
   ✓ Opening browser for authentication...
   ✓ Authenticated as borislav@tovr.eu
 
-$ grape config create
+$ alethia config create
   ┌─────────────────────────────────────┐
   │  Plant a Vine — Step 1 of 6        │
   │                                     │
@@ -208,15 +208,15 @@ $ grape config create
 
 ```bash
 # Same CLI, any cloud
-$ grape config create --provider aws    # EKS + Aurora + ElastiCache
-$ grape config create --provider gcp    # GKE + Cloud SQL + Memorystore
-$ grape config create --provider azure  # AKS + Azure DB + Azure Cache
+$ alethia config create --provider aws    # EKS + Aurora + ElastiCache
+$ alethia config create --provider gcp    # GKE + Cloud SQL + Memorystore
+$ alethia config create --provider azure  # AKS + Azure DB + Azure Cache
 ```
 
 ### Deployment Flow
 
 ```bash
-$ grape harvest
+$ alethia harvest
   ? Select vineyard: production
   ? Select vine: api-backend (eu-west-1)
   ? Select worker: prod-worker (ONLINE)
@@ -237,6 +237,6 @@ $ grape harvest
 
 | File | Location | Purpose |
 |------|----------|---------|
-| Auth token | `~/.config/grape/auth.json` | Trellis refresh token from `grape login` |
-| Worker credentials | `~/.config/grape/worker.json` | Worker ID + token from `grape worker register` |
-| Workspace state | `~/.grape/workspaces/{vineyard}-{env}/` | Local Terraform state and tfvars |
+| Auth token | `~/.config/alethia/auth.json` | Trellis refresh token from `alethia login` |
+| Worker credentials | `~/.config/alethia/worker.json` | Worker ID + token from `alethia worker register` |
+| Workspace state | `~/.alethia/workspaces/{vineyard}-{env}/` | Local Terraform state and tfvars |

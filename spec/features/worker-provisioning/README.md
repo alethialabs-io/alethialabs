@@ -15,17 +15,17 @@ The platform runs a cloud-hosted Fargate worker that provisions infrastructure f
 
 ## MVP Scope
 
-**Cloud-hosted worker first.** One central worker in Grape's account (`787587782604`) provisions into user accounts via cross-account IAM roles. Self-hosted workers are phase 2.
+**Cloud-hosted worker first.** One central worker in Alethia's account (`787587782604`) provisions into user accounts via cross-account IAM roles. Self-hosted workers are phase 2.
 
 ## Key Architecture
 
 ```
-User's AWS Account                     Grape's AWS Account (787587782604)
+User's AWS Account                     Alethia's AWS Account (787587782604)
 ┌─────────────────────┐                ┌─────────────────────────────────┐
-│ GrapeProvisionerRole│◄──AssumeRole───│ Fargate Worker                  │
+│ AlethiaProvisionerRole│◄──AssumeRole───│ Fargate Worker                  │
 │ (AdministratorAccess│                │ (polls Trellis, executes jobs)  │
 │  External ID guard) │                │                                 │
-│                     │                │ ECR repo (grape:latest)         │
+│                     │                │ ECR repo (alethia:latest)         │
 │ VPC, EKS, RDS, etc.│                │ CloudWatch logs                 │
 │ (provisioned by     │                └─────────────────────────────────┘
 │  the worker)        │                           │

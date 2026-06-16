@@ -18,7 +18,7 @@ Create configuration (Vine)     ← Configure page: project name, region, enviro
     │                              VPC, data services, GitOps repos, etc.
     │                              stored in configurations table
     ▼
-Harvest                         ← Click "Provision" or run `grape harvest`
+Harvest                         ← Click "Provision" or run `alethia harvest`
     │                              creates provision_jobs entry (QUEUED)
     │                              links to cloud_identity_id + config_snapshot
     ▼
@@ -41,7 +41,7 @@ Infrastructure ready            ← User has EKS + ArgoCD + GitOps in their AWS 
 
 ### 1. Sign Up / Login
 
-User creates account on Trellis (Supabase Auth). From CLI: `grape login`.
+User creates account on Trellis (Supabase Auth). From CLI: `alethia login`.
 
 ### 2. Connect AWS Account
 
@@ -49,11 +49,11 @@ User creates account on Trellis (Supabase Auth). From CLI: `grape login`.
 
 1. Trellis generates a unique **External ID** (UUID) for this user
 2. Trellis creates an unverified `cloud_identities` record
-3. User downloads the CloudFormation template (`grape-bootstrap.yaml`) or uses the AWS Console link
+3. User downloads the CloudFormation template (`alethia-bootstrap.yaml`) or uses the AWS Console link
 4. User deploys the stack in their AWS account with:
-   - **Grape Account ID:** `787587782604` (trusted principal)
+   - **Alethia Account ID:** `787587782604` (trusted principal)
    - **External ID:** the UUID from step 1
-5. CloudFormation creates IAM role: `GrapeProvisionerRole-{ExternalID}` with AdministratorAccess
+5. CloudFormation creates IAM role: `AlethiaProvisionerRole-{ExternalID}` with AdministratorAccess
 6. User copies the **Role ARN** from CloudFormation Outputs
 7. User pastes Role ARN into Trellis → Trellis validates format, extracts account ID, marks identity as `is_verified=true`
 
@@ -74,7 +74,7 @@ Saved as a `configurations` row with full JSON payload.
 
 User triggers provisioning:
 - **Trellis UI:** "Provision" button on the configuration page
-- **CLI:** `grape harvest` (interactive selection of vineyard + vine + cluster)
+- **CLI:** `alethia harvest` (interactive selection of vineyard + vine + cluster)
 
 This creates a `provision_jobs` entry:
 ```
@@ -88,11 +88,11 @@ config_snapshot: { ... } ← full config frozen at queue time
 
 ### 5. Worker Claims and Executes
 
-The cloud-hosted worker (running in Grape's account `787587782604`):
+The cloud-hosted worker (running in Alethia's account `787587782604`):
 
 1. Polls `POST /api/jobs/claim` → gets job + `cloud_identity`
 2. Calls `STS AssumeRole` with:
-   - `RoleArn`: `arn:aws:iam::{user_account}:role/GrapeProvisionerRole-{external_id}`
+   - `RoleArn`: `arn:aws:iam::{user_account}:role/AlethiaProvisionerRole-{external_id}`
    - `ExternalId`: the UUID
    - Gets temporary credentials (1 hour)
 3. Sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` in process env
@@ -118,7 +118,7 @@ The cloud-hosted worker (running in Grape's account `787587782604`):
 
 - Install Terraform
 - Install kubectl or Helm
-- Run any CLI commands (beyond `grape harvest` if they prefer CLI)
+- Run any CLI commands (beyond `alethia harvest` if they prefer CLI)
 - Deploy any worker infrastructure
 - Manage Docker images
 - Deal with Terraform state
@@ -130,4 +130,4 @@ For users who want:
 - Custom worker configurations
 - Multiple workers for parallelism
 
-This is where `grape worker register` with automatic Fargate deploy comes in. But it's not the MVP.
+This is where `alethia worker register` with automatic Fargate deploy comes in. But it's not the MVP.

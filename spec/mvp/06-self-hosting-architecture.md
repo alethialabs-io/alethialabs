@@ -8,7 +8,7 @@ Alethia must run on commodity infrastructure that anyone can self-host, with no 
 
 ## The principle that makes this tractable
 
-**The worker (runner) boundary is plain HTTP + S3 + Postgres RPCs — it never talks to Supabase directly** (`packages/alethia-core/api/api.go`, Bearer over `GRAPE_WEB_ORIGIN`; `cloud/supabase_backend.go` speaks the raw S3 protocol). So self-hosting only has to unwind the **web tier + storage**; the entire provisioning engine is untouched. The four Supabase subsystems are addressed **independently**.
+**The worker (runner) boundary is plain HTTP + S3 + Postgres RPCs — it never talks to Supabase directly** (`packages/alethia-core/api/api.go`, Bearer over `ALETHIA_WEB_ORIGIN`; `cloud/supabase_backend.go` speaks the raw S3 protocol). So self-hosting only has to unwind the **web tier + storage**; the entire provisioning engine is untouched. The four Supabase subsystems are addressed **independently**.
 
 ## Target stack — the "small package"
 
