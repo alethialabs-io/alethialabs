@@ -7,12 +7,12 @@ description: List and inspect infrastructure configurations from the CLI.
 
 Vines are infrastructure configurations within a vineyard. These commands are read-only — to create vines, use the [Plant a Vine](/trellis/plant-vine) form in Trellis.
 
-## `grape vine list`
+## `alethia vine list`
 
 List all vines, optionally filtered by vineyard.
 
 ```bash
-grape vine list [--vineyard-id <id>]
+alethia vine list [--vineyard-id <id>]
 ```
 
 | Flag | Required | Description |
@@ -27,12 +27,12 @@ a1b2...       api-backend     aws       eu-west-1   production  ACTIVE
 c3d4...       data-pipeline   gcp       us-east4    staging     DRAFT
 ```
 
-## `grape vine get`
+## `alethia vine get`
 
 Get detailed information about a specific vine.
 
 ```bash
-grape vine get --id <vine-id>
+alethia vine get --id <vine-id>
 ```
 
 | Flag | Required | Description |

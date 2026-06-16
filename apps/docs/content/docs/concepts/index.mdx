@@ -14,7 +14,7 @@ This platform is a hybrid multi-cloud infrastructure orchestration system. It co
 | Component | Type | Language | Role |
 |-----------|------|----------|------|
 | **Trellis** | Web application | TypeScript (Next.js 15) | Visual configuration, job management, real-time monitoring |
-| **Grape** | CLI tool | Go | Terminal-based operations, scripting, CI/CD integration |
+| **Alethia** | CLI tool | Go | Terminal-based operations, scripting, CI/CD integration |
 | **Tendril** | Execution agent | Go | Runs Terraform, installs ArgoCD, streams logs back to Trellis |
 
 ## Data Flow
@@ -22,12 +22,12 @@ This platform is a hybrid multi-cloud infrastructure orchestration system. It co
 ```
 User ─► Trellis (web) ─► Job Queue (PostgreSQL) ─► Tendril (agent) ─► Cloud Provider
          │                                            │
-         ├─ OR ──► Grape (CLI) ─► Job Queue ──────────┘
+         ├─ OR ──► Alethia CLI ─► Job Queue ──────────┘
          │
          └─ Supabase Realtime ◄── Log Streaming ◄── Tendril
 ```
 
-1. The user configures infrastructure through Trellis (web form) or Grape (CLI commands)
+1. The user configures infrastructure through Trellis (web form) or Alethia (CLI commands)
 2. Actions are queued as jobs in PostgreSQL
 3. A Tendril agent claims the job atomically and assumes temporary cloud credentials
 4. The Tendril executes Terraform and streams logs back in real-time
@@ -54,11 +54,11 @@ Every infrastructure component has provider-specific implementations across thre
 
 **Web (Trellis):** Next.js 15, Supabase (PostgreSQL + GoTrue + Realtime + S3), Tailwind CSS, shadcn/ui, Zustand
 
-**CLI (Grape):** Go, Cobra, Charmbracelet (lipgloss, huh, bubbletea), Homebrew tap
+**CLI (Alethia):** Go, Cobra, Charmbracelet (lipgloss, huh, bubbletea), Homebrew tap
 
 **Agent (Tendril):** Go, ECS Fargate (ARM64), embeds Terraform + kubectl + Helm + cloud CLIs
 
-**Shared (grape-core):** Go package — provisioner, Terraform wrapper, cloud SDKs, ArgoCD, Infracost, Git, Helm
+**Shared (core):** Go package — provisioner, Terraform wrapper, cloud SDKs, ArgoCD, Infracost, Git, Helm
 
 **Infrastructure:** Terraform, Supabase S3 (state), Lambda scaler (scale-to-zero), release-please
 
@@ -117,11 +117,11 @@ Deep dives into the platform's key technical patterns:
 bb-thesis-2026/
 ├── apps/
 │   ├── trellis/          # Next.js web platform
-│   ├── grape/            # Go CLI tool
+│   ├── cli/              # Go CLI tool
 │   ├── tendril/          # Go execution agent
 │   └── vintner/          # Documentation site (Fumadocs)
 ├── packages/
-│   ├── grape-core/       # Shared Go libraries
+│   ├── core/       # Shared Go libraries
 │   ├── ui/               # Shared UI components
 │   ├── charts/           # Helm charts
 │   └── ...config/        # Shared TS/ESLint config
@@ -131,5 +131,5 @@ bb-thesis-2026/
 │   ├── templates/argocd/ # ArgoCD application templates
 │   └── onboarding/       # Cloud provider federation setup
 ├── supabase/migrations/  # PostgreSQL schema migrations
-└── .github/workflows/    # CI/CD (release-please, release-grape, release-tendril)
+└── .github/workflows/    # CI/CD (release-please, release-alethia, release-tendril)
 ```

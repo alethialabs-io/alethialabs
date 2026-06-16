@@ -1,4 +1,4 @@
-/* SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+/* SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
@@ -8,7 +8,7 @@
 
 :root {
   --trellis-color: oklch(0.6 0.15 150); /* Green */
-  --grape-color: oklch(0.6 0.15 280);   /* Purple */
+  --cli-color: oklch(0.6 0.15 280);   /* Purple */
   --tendril-color: oklch(0.6 0.15 240); /* Blue */
   --concepts-color: oklch(0.6 0.12 60); /* Amber */
 }

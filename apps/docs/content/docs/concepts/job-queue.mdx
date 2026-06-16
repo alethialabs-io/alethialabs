@@ -95,7 +95,7 @@ For DEPLOY jobs, a **plan hash** is validated: if the vine config changed since 
 <Steps>
 
 ### Job Created
-User clicks "Plan" / "Apply" / "Destroy" in the UI (or runs `grape plan` / `grape harvest` / `grape destroy` in the CLI). A `provision_jobs` row is inserted with status `QUEUED`.
+User clicks "Plan" / "Apply" / "Destroy" in the UI (or runs `alethia plan` / `alethia harvest` / `alethia destroy` in the CLI). A `provision_jobs` row is inserted with status `QUEUED`.
 
 ### Tendril Claims Job
 A Tendril's poll loop calls `POST /api/jobs/claim`. The server executes `claim_next_job()`. If a job is returned, the Tendril proceeds.

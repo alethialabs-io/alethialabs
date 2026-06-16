@@ -1,11 +1,11 @@
 ---
 title: Build, Release & CI/CD
-description: release-please versioning, GoReleaser for Grape, Docker builds for Tendril, and GitHub Actions workflows.
+description: release-please versioning, GoReleaser for Alethia, Docker builds for Tendril, and GitHub Actions workflows.
 ---
 
 # Build, Release & CI/CD
 
-Grape (CLI) and Tendril (agent) are versioned and released independently using **release-please** with conventional commits. Each component has its own release workflow, tag format, and distribution channel.
+Alethia CLI and Tendril (agent) are versioned and released independently using **release-please** with conventional commits. Each component has its own release workflow, tag format, and distribution channel.
 
 <img src="/docs/diagrams/concepts/release-system.svg" alt="Release Pipeline" />
 
@@ -18,9 +18,9 @@ The monorepo uses release-please with `separate-pull-requests: true`, meaning ea
 {
   "separate-pull-requests": true,
   "packages": {
-    "apps/grape": {
+    "apps/cli": {
       "release-type": "simple",
-      "component": "grape",
+      "component": "alethia",
       "include-component-in-tag": true,
       "changelog-path": "CHANGELOG.md"
     },
@@ -36,22 +36,22 @@ The monorepo uses release-please with `separate-pull-requests: true`, meaning ea
 
 **How it works:**
 
-1. Developers write conventional commits: `feat(grape): add vine get command`, `fix(tendril): handle nil credential`
+1. Developers write conventional commits: `feat(alethia): add vine get command`, `fix(tendril): handle nil credential`
 2. On push to main, release-please analyzes commits since the last release
 3. It creates (or updates) a release PR per component with:
    - Version bump (major/minor/patch based on commit type)
    - Auto-generated CHANGELOG.md entries
-4. When merged, release-please creates a git tag (`grape-v0.1.8` or `tendril-v0.1.0`)
+4. When merged, release-please creates a git tag (`alethia-v0.1.8` or `tendril-v0.1.0`)
 5. The tag triggers the component's release workflow
 
-## Grape Release Pipeline
+## Alethia Release Pipeline
 
-**Trigger:** Push to tag matching `grape-v*`
+**Trigger:** Push to tag matching `alethia-v*`
 
-**Workflow:** `.github/workflows/release-grape.yml`
+**Workflow:** `.github/workflows/release-alethia.yml`
 
 ```
-Tag push (grape-v0.1.8)
+Tag push (alethia-v0.1.8)
   └── Checkout + Go setup
        └── GoReleaser
             ├── Build: darwin/amd64, darwin/arm64, linux/amd64, linux/arm64
@@ -60,13 +60,13 @@ Tag push (grape-v0.1.8)
             └── Homebrew: update formula in bobikenobi12/bb-thesis-2026 tap
 ```
 
-**GoReleaser config** (`apps/grape/.goreleaser.yml`):
+**GoReleaser config** (`apps/cli/.goreleaser.yml`):
 - Builds 4 binaries (2 OS x 2 arch)
 - Creates GitHub Release with download links
 - Updates Homebrew tap formula automatically
 
 **Distribution channels:**
-- `brew install bobikenobi12/bb-thesis-2026/grape` (macOS/Linux via Homebrew)
+- `brew install bobikenobi12/bb-thesis-2026/alethia` (macOS/Linux via Homebrew)
 - Direct binary download from GitHub Releases
 
 ## Tendril Release Pipeline
@@ -124,7 +124,7 @@ Runs `googleapis/release-please-action` which:
 
 ```json
 {
-  "apps/grape": "0.1.7",
+  "apps/cli": "0.1.7",
   "apps/tendril": "0.0.0"
 }
 ```

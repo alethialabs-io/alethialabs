@@ -1,11 +1,11 @@
 ---
 title: Internal Architecture
-description: Main loop, heartbeat mechanism, graceful shutdown, and the grape-core shared package.
+description: Main loop, heartbeat mechanism, graceful shutdown, and the core shared package.
 ---
 
 # Internal Architecture
 
-Tendril is a single Go binary with a straightforward architecture: a main poll loop, a heartbeat goroutine, and shared libraries from the `grape-core` package.
+Tendril is a single Go binary with a straightforward architecture: a main poll loop, a heartbeat goroutine, and shared libraries from the `core` package.
 
 ## Main Loop
 
@@ -32,9 +32,9 @@ Tendril receives its configuration via environment variables:
 | Variable | Description |
 |----------|-------------|
 | `TRELLIS_URL` | Base URL of the Trellis instance |
-| `GRAPE_WORKER_ID` | Unique Tendril identifier (assigned at registration) |
-| `GRAPE_WORKER_TOKEN` | Authentication token for API calls |
-| `GRAPE_WORKER_MODE` | `cloud-hosted` or `self-hosted` |
+| `ALETHIA_WORKER_ID` | Unique Tendril identifier (assigned at registration) |
+| `ALETHIA_WORKER_TOKEN` | Authentication token for API calls |
+| `ALETHIA_WORKER_MODE` | `cloud-hosted` or `self-hosted` |
 | `SUPABASE_S3_ENDPOINT` | S3 endpoint for Terraform state |
 | `SUPABASE_S3_REGION` | S3 region |
 | `SUPABASE_STORAGE_KEY_ID` | S3 access key |
@@ -87,9 +87,9 @@ The `WorkerAPIClient` handles all communication with Trellis:
 
 All requests include `X-Worker-ID` and `X-Worker-Token` headers for authentication.
 
-## Shared grape-core Package
+## Shared core Package
 
-Tendril and Grape CLI both import from `packages/grape-core/`:
+Tendril and Alethia CLI both import from `packages/core/`:
 
 | Package | Purpose |
 |---------|---------|

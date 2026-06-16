@@ -1,6 +1,6 @@
 {
-  "title": "Grape (CLI)",
-  "icon": "Grape",
+  "title": "Alethia CLI",
+  "icon": "Terminal",
   "root": true,
   "pages": [
     "index",

@@ -1,16 +1,16 @@
 ---
 title: Command Reference
-description: Complete reference for all Grape CLI commands organized by group.
+description: Complete reference for all Alethia CLI commands organized by group.
 ---
 
 # Command Reference
 
-Grape provides 27 commands across 7 groups. All commands communicate with the Trellis API — they do not execute Terraform directly.
+Alethia provides 27 commands across 7 groups. All commands communicate with the Trellis API — they do not execute Terraform directly.
 
 ## Command Tree
 
 ```
-grape
+alethia
 ├── login [--force]
 ├── logout
 ├── vineyard
@@ -45,7 +45,7 @@ grape
 
 ## Interactive Selection
 
-When `--vine-id` is omitted from `plan`, `harvest`, or `destroy`, Grape launches an interactive TUI selector. See [TUI Components](/grape/tui) for how this works.
+When `--vine-id` is omitted from `plan`, `harvest`, or `destroy`, Alethia launches an interactive TUI selector. See [TUI Components](/cli/tui) for how this works.
 
 ## Common Patterns
 
@@ -53,27 +53,27 @@ When `--vine-id` is omitted from `plan`, `harvest`, or `destroy`, Grape launches
 
 ```bash
 # 1. Plan
-grape plan --vine-id <id>
+alethia plan --vine-id <id>
 # Note the job ID from output
 
 # 2. Stream logs to review
-grape jobs logs --id <plan-job-id> --follow
+alethia jobs logs --id <plan-job-id> --follow
 
 # 3. Apply
-grape harvest --vine-id <id> --plan-job-id <plan-job-id>
+alethia harvest --vine-id <id> --plan-job-id <plan-job-id>
 ```
 
 ### Scripting with --wait
 
 ```bash
 # Block until plan completes, then apply
-grape plan --vine-id <id> --wait
-grape harvest --vine-id <id> --plan-job-id <id> --wait
+alethia plan --vine-id <id> --wait
+alethia harvest --vine-id <id> --plan-job-id <id> --wait
 ```
 
 ### Log Tailing
 
 ```bash
 # Stream logs like tail -f
-grape jobs logs --id <job-id> --follow
+alethia jobs logs --id <job-id> --follow
 ```

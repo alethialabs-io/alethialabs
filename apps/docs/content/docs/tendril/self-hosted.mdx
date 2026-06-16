@@ -26,7 +26,7 @@ The cloud-hosted Docker image bundles all of these. In self-hosted mode, you mus
 
 Before running, the Tendril must be registered with Trellis:
 
-1. Register via the Trellis API or CLI (`grape worker register`)
+1. Register via the Trellis API or CLI (`alethia worker register`)
 2. Receive a `WORKER_ID` and `WORKER_TOKEN`
 3. Pass these as environment variables
 
@@ -36,9 +36,9 @@ Set the required environment variables and start the binary:
 
 ```bash
 export TRELLIS_URL=https://trellis.example.com
-export GRAPE_WORKER_ID=<worker-id>
-export GRAPE_WORKER_TOKEN=<worker-token>
-export GRAPE_WORKER_MODE=self-hosted
+export ALETHIA_WORKER_ID=<worker-id>
+export ALETHIA_WORKER_TOKEN=<worker-token>
+export ALETHIA_WORKER_MODE=self-hosted
 export SUPABASE_S3_ENDPOINT=<s3-endpoint>
 export SUPABASE_S3_REGION=<s3-region>
 export SUPABASE_STORAGE_KEY_ID=<s3-key>
@@ -60,9 +60,9 @@ The Tendril will:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `TRELLIS_URL` | Yes | Trellis API base URL |
-| `GRAPE_WORKER_ID` | Yes | Assigned worker ID |
-| `GRAPE_WORKER_TOKEN` | Yes | Authentication token |
-| `GRAPE_WORKER_MODE` | Yes | Must be `self-hosted` |
+| `ALETHIA_WORKER_ID` | Yes | Assigned worker ID |
+| `ALETHIA_WORKER_TOKEN` | Yes | Authentication token |
+| `ALETHIA_WORKER_MODE` | Yes | Must be `self-hosted` |
 | `SUPABASE_S3_ENDPOINT` | Yes | Terraform state S3 endpoint |
 | `SUPABASE_S3_REGION` | Yes | S3 region |
 | `SUPABASE_STORAGE_KEY_ID` | Yes | S3 access key |

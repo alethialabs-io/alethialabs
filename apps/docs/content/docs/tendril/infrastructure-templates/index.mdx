@@ -38,7 +38,7 @@ infra/templates/argocd       → apps/tendril/argocd-templates
 
 ## Variable Generation
 
-When executing a job, Tendril generates `terraform.tfvars` from the vine's config snapshot. The provisioner in `packages/grape-core/provisioner/` maps each vine component to specific Terraform variables. See [Cloud Provider Abstraction](/concepts/cloud-abstraction) for the mapping layer.
+When executing a job, Tendril generates `terraform.tfvars` from the vine's config snapshot. The provisioner in `packages/core/provisioner/` maps each vine component to specific Terraform variables. See [Cloud Provider Abstraction](/concepts/cloud-abstraction) for the mapping layer.
 
 ## Terraform State
 

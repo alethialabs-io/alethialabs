@@ -7,12 +7,12 @@ description: List, stream logs, cancel, and wait for infrastructure jobs.
 
 Monitor and manage provision jobs from the terminal. For how jobs work internally, see [Job Queue Pattern](/concepts/job-queue).
 
-## `grape jobs list`
+## `alethia jobs list`
 
 List all jobs for the authenticated user.
 
 ```bash
-grape jobs list
+alethia jobs list
 ```
 
 Output:
@@ -24,22 +24,22 @@ c3d4...       DEPLOY   PROCESSING  api-backend     30 sec ago
 e5f6...       DESTROY  QUEUED      data-platform   just now
 ```
 
-## `grape jobs get`
+## `alethia jobs get`
 
 Get detailed information about a specific job.
 
 ```bash
-grape jobs get --id <job-id>
+alethia jobs get --id <job-id>
 ```
 
 Shows: type, status, assigned Tendril, all timestamps, error message (if failed), and execution metadata (Terraform outputs, cost data).
 
-## `grape jobs logs`
+## `alethia jobs logs`
 
 Stream job logs to the terminal.
 
 ```bash
-grape jobs logs --id <job-id> [--follow]
+alethia jobs logs --id <job-id> [--follow]
 ```
 
 | Flag | Required | Description |
@@ -51,27 +51,27 @@ Without `--follow`, prints all existing logs and exits. With `--follow`, the com
 
 Press `Ctrl+C` to stop following.
 
-## `grape jobs cancel`
+## `alethia jobs cancel`
 
 Cancel a queued or in-progress job.
 
 ```bash
-grape jobs cancel --id <job-id>
+alethia jobs cancel --id <job-id>
 ```
 
 Sets the job status to CANCELLED. If the job is currently being executed by a Tendril, the Tendril detects the cancellation on its next status check and terminates Terraform gracefully.
 
-## `grape jobs wait`
+## `alethia jobs wait`
 
 Block until a job reaches a terminal state.
 
 ```bash
-grape jobs wait --id <job-id>
+alethia jobs wait --id <job-id>
 ```
 
 Exits with code 0 on SUCCESS, non-zero on FAILED or CANCELLED. Useful in scripts:
 
 ```bash
-grape plan --vine-id $ID
-grape jobs wait --id $PLAN_JOB && echo "Plan succeeded"
+alethia plan --vine-id $ID
+alethia jobs wait --id $PLAN_JOB && echo "Plan succeeded"
 ```

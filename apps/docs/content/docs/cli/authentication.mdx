@@ -5,12 +5,12 @@ description: Device Authorization Grant flow, token storage, and automatic refre
 
 # Authentication
 
-Grape uses the **Device Authorization Grant** (RFC 8628) for authentication. You never type a password in the terminal. For the full technical details, see [Authentication Flows](/concepts/authentication).
+Alethia uses the **Device Authorization Grant** (RFC 8628) for authentication. You never type a password in the terminal. For the full technical details, see [Authentication Flows](/concepts/authentication).
 
 ## Login
 
 ```bash
-grape login
+alethia login
 ```
 
 <Steps>
@@ -31,14 +31,14 @@ Type the code at the Bubble Tea TUI prompt. The CLI shows a spinner while waitin
 CLI sends the device code + verification code to Trellis. On success, receives a JWT pair (access + refresh).
 
 ### Tokens stored
-Saved to `~/.config/grape/auth.json`.
+Saved to `~/.config/alethia/auth.json`.
 
 </Steps>
 
 ### Force Re-authentication
 
 ```bash
-grape login --force
+alethia login --force
 ```
 
 Re-authenticates even if a valid token already exists. Useful when switching accounts.
@@ -46,10 +46,10 @@ Re-authenticates even if a valid token already exists. Useful when switching acc
 ## Logout
 
 ```bash
-grape logout
+alethia logout
 ```
 
-Removes `~/.config/grape/auth.json`.
+Removes `~/.config/alethia/auth.json`.
 
 ## Token Lifecycle
 
@@ -58,23 +58,23 @@ Removes `~/.config/grape/auth.json`.
 | Access token | 1 hour | `Authorization: Bearer` header on API calls |
 | Refresh token | 90 days | Obtain new access tokens transparently |
 
-Before each API call, Grape checks the access token's expiry. If expired, it refreshes automatically via `POST /api/auth/cli/refresh`. The user never notices.
+Before each API call, Alethia checks the access token's expiry. If expired, it refreshes automatically via `POST /api/auth/cli/refresh`. The user never notices.
 
 ## Environment Variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `GRAPE_WEB_ORIGIN` | Production URL (baked at build) | Override the Trellis API URL |
+| `ALETHIA_WEB_ORIGIN` | Production URL (baked at build) | Override the Trellis API URL |
 
 ```bash
-export GRAPE_WEB_ORIGIN=http://localhost:3000
-grape login  # authenticates against local dev server
+export ALETHIA_WEB_ORIGIN=http://localhost:3000
+alethia login  # authenticates against local dev server
 ```
 
 ## Token Storage
 
 ```
-~/.config/grape/auth.json
+~/.config/alethia/auth.json
 ```
 
 ```json

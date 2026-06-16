@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 export function getSection(path: string | undefined) {
@@ -8,7 +8,7 @@ export function getSection(path: string | undefined) {
 	return (
 		{
 			trellis: "trellis",
-			grape: "grape",
+			cli: "cli",
 			tendril: "tendril",
 			concepts: "concepts",
 		}[dir] ?? "trellis"

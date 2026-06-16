@@ -5,7 +5,7 @@ description: Terminal UI components — interactive selectors, progress steppers
 
 # TUI Components
 
-Grape uses the [Charmbracelet](https://charm.sh/) suite for rich terminal UI. Three libraries are used:
+Alethia uses the [Charmbracelet](https://charm.sh/) suite for rich terminal UI. Three libraries are used:
 
 | Library | Purpose |
 |---------|---------|
@@ -15,7 +15,7 @@ Grape uses the [Charmbracelet](https://charm.sh/) suite for rich terminal UI. Th
 
 ## Interactive Selectors
 
-When `--vine-id` is omitted from `plan`, `harvest`, or `destroy`, Grape launches a two-step TUI selector:
+When `--vine-id` is omitted from `plan`, `harvest`, or `destroy`, Alethia launches a two-step TUI selector:
 
 ### Step 1: Vineyard Selector
 
@@ -42,7 +42,7 @@ Each vine shows its environment stage, region, and current status.
 ### Standalone Usage
 
 ```bash
-grape selectors
+alethia selectors
 ```
 
 Runs the full selection flow and prints the selected IDs.
@@ -65,7 +65,7 @@ The visual progress stepper shows deployment phase progress using diamond icons:
 
 ## Login Spinner
 
-The `grape login` command uses a Bubble Tea model for the authentication flow:
+The `alethia login` command uses a Bubble Tea model for the authentication flow:
 
 ```
 🔐 Waiting for browser authentication...

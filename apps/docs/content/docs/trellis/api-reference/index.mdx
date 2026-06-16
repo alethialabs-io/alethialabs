@@ -12,7 +12,7 @@ Trellis exposes three categories of API routes, each with its own authentication
 | Category | Auth Header | Token Type | Used By |
 |----------|-----------|------------|---------|
 | **Worker APIs** | `X-Worker-ID` + `X-Worker-Token` | SHA-256 hashed token | Tendril agents |
-| **CLI APIs** | `Authorization: Bearer {jwt}` | HS256 JWT (1h access, 90d refresh) | Grape CLI |
+| **CLI APIs** | `Authorization: Bearer {jwt}` | HS256 JWT (1h access, 90d refresh) | Alethia CLI |
 | **Release APIs** | `Authorization: Bearer {secret}` | Static secret (`RELEASE_API_SECRET`) | CI/CD pipeline |
 
 See [Authentication Flows](/concepts/authentication) for details on each mechanism.

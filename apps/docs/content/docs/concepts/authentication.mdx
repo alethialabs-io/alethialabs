@@ -48,9 +48,9 @@ Supabase creates a session with a JWT. The JWT is stored in an HTTP-only cookie 
 - All database queries use the authenticated Supabase client, inheriting RLS context
 - `auth.uid()` in RLS policies ensures per-user data isolation
 
-## CLI Authentication (Grape)
+## CLI Authentication (Alethia)
 
-Grape uses the **Device Authorization Grant** (RFC 8628) — the same pattern used by GitHub CLI, Azure CLI, and AWS SSO.
+Alethia uses the **Device Authorization Grant** (RFC 8628) — the same pattern used by GitHub CLI, Azure CLI, and AWS SSO.
 
 ### Why Device Code?
 
@@ -63,7 +63,7 @@ Grape uses the **Device Authorization Grant** (RFC 8628) — the same pattern us
 <Steps>
 
 ### CLI generates device code
-`grape login` generates a UUID device code and opens the browser to `{trellis_url}/cli/login?device_code={code}`.
+`alethia login` generates a UUID device code and opens the browser to `{trellis_url}/cli/login?device_code={code}`.
 
 ### User authenticates in browser
 The user is already logged into Trellis (or logs in via OAuth). The CLI login page shows a 6-character verification code.
@@ -75,7 +75,7 @@ The user types the verification code at the Bubble Tea TUI prompt.
 The CLI sends `POST /api/auth/cli/exchange` with the device code and verification code. Trellis validates the pair and returns a CLI-specific JWT.
 
 ### Token stored locally
-The refresh token is saved to `~/.config/grape/auth.json`. The access token (1-hour TTL) is used for API calls. When it expires, the CLI transparently refreshes via `POST /api/auth/cli/refresh`.
+The refresh token is saved to `~/.config/alethia/auth.json`. The access token (1-hour TTL) is used for API calls. When it expires, the CLI transparently refreshes via `POST /api/auth/cli/refresh`.
 
 </Steps>
 
@@ -134,5 +134,5 @@ The plaintext token is shown only once at registration. If lost, the Tendril mus
 | Component | Method | Token Lifetime | Storage |
 |-----------|--------|---------------|---------|
 | **Trellis** (web) | Supabase OAuth | Session-based (auto-refresh) | HTTP-only cookie |
-| **Grape** (CLI) | Device Code Grant | Access: 1h, Refresh: 90d | `~/.config/grape/auth.json` |
+| **Alethia** (CLI) | Device Code Grant | Access: 1h, Refresh: 90d | `~/.config/alethia/auth.json` |
 | **Tendril** (agent) | SHA-256 token hash | Permanent (until re-registration) | Environment variable |
