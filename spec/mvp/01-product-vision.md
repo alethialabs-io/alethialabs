@@ -1,116 +1,57 @@
-# Product Vision
+# 01 — Product Vision
 
 ## Brand
 
-**Trellis** — Enterprise Infrastructure, Cultivated.
+**Alethia** by **Alethia Labs**. *A production app platform you own — not rent.*
 
-The canonical product name is **Trellis**. All marketing, landing page copy, and pitch materials lead with "Trellis." The codebase reference "ADP ItGix Platform" is an internal/academic identifier and should not appear in user-facing content.
+> **One-liner:** Alethia provisions a complete, GitOps-wired Kubernetes platform on **your** cloud — zero stored credentials — and hands you a cluster you own. Your apps deploy from a `git push`; your databases, DNS, secrets, and registries are real cloud resources; your tools plug in.
 
----
+## The problem
 
-## One-Liner
+Getting from "we have an app" to "it runs in production on Kubernetes" forces a bad trade:
 
-> Configure multi-cloud infrastructure in the browser. Deploy from the terminal. Git is the source of truth.
+1. **The platform-engineering tax.** A real production cluster — networking, databases, caching, DNS, secrets, registries, autoscaling, GitOps — is weeks of Terraform/Helm/YAML. Every team rebuilds the same wheel.
+2. **Rent a black box, or build it yourself.** The app PaaS that saves you the weeks (Porter, Qovery, Northflank) makes you **hand them your cloud keys**, runs your control plane on **their** servers, and locks your deploys into **their** abstraction. The DIY route (Terraform + ArgoCD by hand) keeps ownership but brings back the tax.
+3. **Credential leakage.** Both paths leak long-lived cloud keys and admin kubeconfigs into CI and third-party SaaS — the thing every audit flags.
 
----
+## What Alethia is
 
-## Tagline
+Alethia gives you the **real thing**, provisioned for you, that **you own**. One **Spec** (your infrastructure design) → a remote **runner** (worker) provisions it in *your* cloud account, assuming roles **at runtime** so no credentials are ever stored, and hands you a complete, self-managing, GitOps-wired cluster.
 
-> Trellis — Enterprise Infrastructure, Cultivated.
+### What you actually get (verified, end-to-end)
 
----
+A single deploy provisions and wires the whole platform:
 
-## The Problem
+- **Cluster + network:** managed Kubernetes (EKS today; GKE/AKS + self-managed Talos/k3s on the roadmap) on a VPC with public/private subnets, security groups, IAM/IRSA, optional Karpenter autoscaling.
+- **Data + ops services:** Aurora PostgreSQL, ElastiCache Redis, DynamoDB, SQS/SNS, ECR, S3, Secrets Manager (KMS-encrypted), Route 53 + ACM, optional WAF.
+- **GitOps, wired — not just installed.** ArgoCD is installed **and connected to your Git repo** with auto-sync (prune + self-heal). Push to your repo → your apps deploy and stay reconciled. From day one.
+- **A real operator suite** via app-of-apps: external-secrets, external-dns, AWS load-balancer-controller, Karpenter, metrics-server, a default storage class.
+- **The handoff:** cluster endpoint + kubeconfig, ArgoCD URL + admin access, and every database/cache endpoint — all in your dashboard. It's **your** cluster in **your** account. Alethia doesn't sit in the data path.
 
-Cloud infrastructure provisioning is broken in three specific ways:
+## The four pillars
 
-### 1. Slow Onboarding
-Getting a production Kubernetes cluster with networking, databases, caching, messaging, DNS, secrets management, and GitOps takes weeks of boilerplate Terraform, Helm, and YAML. Every team reinvents the same wheel.
+1. **Zero-trust remote provisioning.** The runner assumes cloud roles at execution time; the control plane never sees or stores your keys.
+2. **Own it / self-hostable.** You own the cluster — and you can self-host the Alethia control plane itself as ~4 containers (no Supabase, no SaaS dependency). ([06-self-hosting-architecture](06-self-hosting-architecture.md))
+3. **GitOps app-delivery.** A real cluster + ArgoCD wired to your repo, using standard Kustomize/Helm — not a proprietary deploy pipeline you can't leave.
+4. **Pluggable integrations + multi-cloud.** Bring your own tools per category (Cloudflare DNS, Vault, Datadog/Grafana/Prometheus, Docker Hub) across many clouds. ([08-integrations-extensibility](08-integrations-extensibility.md), [09-multi-cloud-cluster-strategies](09-multi-cloud-cluster-strategies.md))
 
-### 2. Security Theater
-CI/CD pipelines demand static credentials — long-lived IAM keys, admin kubeconfigs, service account JSON files. These credentials leak, get over-permissioned, and violate every compliance framework. Teams know it's wrong but have no alternative.
+## Positioning — the anti-Porter
 
-### 3. Black-Box Deployments
-Once infrastructure is provisioned, developers have no visibility into what's running, what it costs, or what state it's in. Terraform state files sit in S3 buckets nobody reads. Cost surprises arrive at month-end.
+Porter/Qovery/Northflank **rent** you a proprietary PaaS: they hold your keys, run your control plane, and lock your deploys into their black box. **Alethia hands you the real, standard thing — EKS + ArgoCD + your own tools — provisioned zero-trust, and you own all of it.** Same outcome (production app platform, fast), opposite ownership model. Full landscape: [03-competitive-positioning](03-competitive-positioning.md).
 
----
+## Release trajectory
 
-## The Solution
+- **V1 — "Provision & Own"** (launch). Deliver the complete, GitOps-wired cluster you own; the app experience **is** ArgoCD (standard, yours). The Alethia dashboard adds a thin **visibility** layer — sync status, cost, health — over what you own. Plus the integration-catalog breadth. This is the sharp, shippable wedge: be the anti-Porter.
+- **V2 — "Provision & Operate."** Climb into an Alethia-native day-2 experience — deploys, logs, rollbacks, preview environments, ongoing cluster management — rivaling Porter's polish, while staying self-hostable and zero-trust. Same ownership promise, fuller DX.
 
-Trellis attacks all three problems with a platform built around three pillars:
+## Open source & business model
 
-### 1. Visual Configuration
-An 11-section guided form lets you design complete infrastructure visually — networking, Kubernetes clusters, databases, caches, NoSQL, messaging, DNS, secrets, container registries, and Git repositories. A real-time cost sidebar shows the monthly estimate as you configure. No YAML. No HCL. No guesswork.
+**AGPL-3.0**, open-core. The self-hostable core (provisioning + GitOps + integrations + single-tenant + community RBAC) is free and complete. Organizations/SSO/RBAC-at-scale/audit/multi-tenancy + hosted SaaS are the commercial `ee/` tier. ([12-licensing-open-core](12-licensing-open-core.md), [14-gtm-pricing](14-gtm-pricing.md))
 
-### 2. Zero-Credential Security
-Trellis never stores static cloud keys. Instead:
-- **AWS**: Cross-account IAM roles with External ID — the worker assumes your role at execution time
-- **GCP**: Workload Identity Federation — OIDC token exchange, no service account keys
-- **Azure**: Federated Identity — app registration with OIDC, no client secrets
+## What Alethia is NOT
 
-The control plane is decoupled from the execution plane. Your credentials never leave your cloud account.
-
-### 3. GitOps by Default
-ArgoCD is bootstrapped automatically during cluster creation. Git becomes the audit trail. Infrastructure changes flow through plan-review-apply, not ad-hoc `kubectl apply`. The platform generates real Terraform and Helm — you own everything it creates.
-
----
-
-## The Viticulture Lexicon
-
-The platform uses a viticulture (winemaking) metaphor that makes infrastructure memorable and less intimidating:
-
-| Term | Infrastructure Concept | Component |
-|------|----------------------|-----------|
-| **Trellis** | Web control plane | `apps/trellis/` — Next.js dashboard |
-| **Grape** | CLI tool + headless worker | `apps/grape/` — Go binary |
-| **Vintner** | Documentation site | `apps/vintner/` — Fumadocs |
-| **Vineyard** | Workspace / project boundary | Logical grouping of vines |
-| **Vine** | Infrastructure configuration | A complete set of cloud resources |
-| **Harvest** | Provisioning run / deployment | Executing a vine's Terraform |
-| **Plant a Vine** | Design new infrastructure | The 11-section configuration form |
-| **Estate Map** | Infrastructure topology view | React Flow visualization |
-
-### Deprecated terms
-- **Tendril** — was the in-cluster agent concept. Replaced by the Grape Worker pull model. Retained only as historical reference in documentation.
-
----
-
-## Target Audience
-
-### Primary: Platform Engineers & DevOps Teams
-Mid-market companies (50-500 engineers) where a small platform team serves many application teams. They need to provide self-service infrastructure without giving everyone Terraform access or admin credentials.
-
-### Secondary: Individual Developers
-Solo developers or small teams managing their own cloud infrastructure. They want production-quality EKS/GKE/AKS without the weeks of boilerplate.
-
-### Tertiary: Engineering Leadership
-CTOs and VPs evaluating build-vs-buy for internal developer platforms. They care about security posture, cost visibility, and time-to-production.
-
----
-
-## Multi-Cloud Story
-
-Trellis supports AWS, GCP, and Azure with feature parity across:
-- 12 infrastructure service categories (see feature inventory)
-- Provider-specific authentication (IAM roles, WIF, federated identity)
-- Native service names and configurations per cloud
-- One form, three clouds — switch providers with the provider ribbon
-
-This is not an abstraction layer that hides the cloud. Trellis generates cloud-native Terraform that uses each provider's best services (Aurora, not a generic "database"; EKS with Karpenter, not a generic "cluster").
-
----
-
-## Open Source
-
-Trellis is open source. The entire platform — web control plane, CLI, worker, documentation — is available on GitHub.
-
-**Made by Borislav Borisov. Open Source.**
-
----
-
-## What Trellis Is NOT
-
-- **Not a managed Kubernetes provider.** You own your clusters in your cloud accounts.
-- **Not a CI/CD platform.** Trellis provisions infrastructure, not application code.
-- **Not a YAML abstraction layer.** It generates real Terraform and Helm that you can read, modify, and own.
-- **Not a hosted service that holds your keys.** The zero-credential model means your secrets stay in your cloud.
+- **Not a rented PaaS** — it doesn't hold your keys or run your control plane; you own the cluster (and can self-host Alethia).
+- **Not a proprietary deploy pipeline** — app-delivery is GitOps (ArgoCD + your repo), standard and portable.
+- **Not your source host or CI** — your Git + CI build images; Alethia provisions the platform they run on.
+- **Not single-cloud, not single-vendor** — multi-cloud, multi-strategy, integrations of your choice.
+- **(V1) Not a day-2 ops console** — that's V2; V1 hands you a self-managing cluster with thin visibility.
