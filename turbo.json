@@ -6,7 +6,23 @@
 			"dependsOn": ["^build"],
 			"inputs": ["$TURBO_DEFAULT$", ".env*"],
 			"outputs": [".next/**", "!.next/cache/**"],
-			"env": ["DOCS_URL"]
+			"env": [
+				"DOCS_URL",
+				"SERVICE_ROLE_SECRET",
+				"SUPABASE_S3_ENDPOINT",
+				"SUPABASE_S3_REGION",
+				"SUPABASE_STORAGE_KEY_ID",
+				"SUPABASE_STORAGE_SECRET_KEY",
+				"RESEND_API_KEY",
+				"CLI_JWT_SECRET",
+				"INFRACOST_API_KEY",
+				"GITLAB_APPLICATION_ID",
+				"GITLAB_SECRET",
+				"BITBUCKET_KEY",
+				"BITBUCKET_SECRET",
+				"RELEASE_API_SECRET",
+				"SCALER_FUNCTION_URL"
+			]
 		},
 		"lint": {
 			"dependsOn": ["^lint"]

@@ -1,10 +1,13 @@
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { AwsConnection } from "@/components/onboarding/aws-connection";
 import { SkipButton } from "@/components/onboarding/skip-button"; // New client component
 import { redirect } from "next/navigation";
 import { getAwsExternalId, saveAwsIdentity } from "../actions";
+
+// Reads cookies (Supabase) at request time — opt out of static prerendering.
+export const dynamic = "force-dynamic";
 
 export default async function AwsOnboardingPage() {
 	// 1. Get the External ID (Server Side)
