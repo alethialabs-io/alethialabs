@@ -17,7 +17,7 @@ export function AlethiaLogo({ withText, ...props }: AlethiaLogoProps) {
 		return (
 			<svg
 				xmlns="http://www.w3.org/2000/svg"
-				viewBox="0 0 188 32"
+				viewBox="0 0 150 32"
 				fill="none"
 				{...props}
 			>
@@ -50,7 +50,7 @@ export function AlethiaLogo({ withText, ...props }: AlethiaLogoProps) {
 					Alethia
 				</text>
 				<text
-					x="139"
+					x="112"
 					y="21"
 					fill="currentColor"
 					fillOpacity="0.55"
