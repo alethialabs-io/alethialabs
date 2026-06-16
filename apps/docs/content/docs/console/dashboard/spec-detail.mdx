@@ -1,0 +1,88 @@
+---
+title: Spec Detail
+description: The spec detail page — services, infrastructure, plan, jobs, and lifecycle actions.
+---
+
+# Spec Detail
+
+Each spec has a detail page at `/dashboard/zones/{zoneId}/specs/{specId}` showing the complete infrastructure configuration and its deployment state.
+
+## Header
+
+The header displays:
+- **Spec name** and provider icon (AWS/GCP/Azure)
+- **Region** and **environment stage** (production/staging/development)
+- **Status badge** — DRAFT, QUEUED, PROVISIONING, ACTIVE, FAILED, DESTROYING, DESTROYED
+- **Estimated monthly cost**
+- **Action buttons**: Plan, Apply, and a dropdown menu
+
+### Action Dropdown
+
+| Action | Description |
+|--------|-------------|
+| **Plan** | Queue a PLAN job → Runner runs `terraform plan` |
+| **Apply** | Queue a DEPLOY job → Runner runs `terraform apply` + installs ArgoCD |
+| **Quick Duplicate** | Create a copy with the same config in the same zone |
+| **Duplicate & Edit** | Open the Design a Spec form pre-filled with this spec's config |
+| **Delete** | Delete the spec record (does NOT destroy cloud resources) |
+
+Plan and Apply actions open the **Runner Select Popover** where you choose which Runner executes the job. See [Job Queue Pattern](/concepts/job-queue).
+
+## Tabs
+
+### Configuration Tab (Default)
+
+Shows quick stat chips:
+- Service count (databases + caches + queues + topics + NoSQL + secrets)
+- Estimated monthly cost
+- Current status
+- Provider and region
+
+Then displays two sub-sections:
+
+**Infrastructure** — read-only display of:
+- Network: VPC/VNet (create new or existing), CIDR block, NAT gateway mode
+- Cluster: K8s version, node sizing (min/desired/max), instance types, autoscaler
+- DNS: domain, certificate, WAF settings (if enabled)
+- Repositories: application repo (if configured)
+- General: Terraform version, region, environment
+
+**Services** — grid of service buttons for each configured component:
+- Databases (engine, capacity, endpoints if provisioned)
+- Caches (engine, node type, endpoint if provisioned)
+- Queues (FIFO/standard, visibility timeout)
+- Topics (subscription count)
+- NoSQL tables (key schema, billing mode)
+- Secrets (length, generation settings)
+
+Each service button opens a **Service Popover** with full details, including:
+- Configuration parameters
+- Status with timestamp
+- Endpoint (if provisioned, with copy button)
+- Monthly cost estimate
+
+**Recent Jobs** — table showing the last 5 jobs for this spec (type, status, created, duration). Click to navigate to [job detail](/console/jobs/job-detail).
+
+### Plan Tab
+
+Visible after running a Plan job. Shows:
+
+- **Plan Summary Bar** — resource counts (add/change/destroy) and estimated cost
+- **Resource Groups** — collapsible sections grouped by resource type, each showing individual resources with their action (create/update/delete) and cost
+- **Apply Button** — queues a DEPLOY job using this plan's artifact
+
+See [Plan & Apply](/console/jobs/plan-and-apply) for the full workflow.
+
+## Cluster Access
+
+After a successful DEPLOY, the spec detail shows:
+- **Cluster endpoint** (copy button)
+- **kubeconfig command** (provider-specific, copy button)
+- **ArgoCD URL** (external link to ArgoCD dashboard)
+- **ArgoCD admin credentials**
+
+## Spec Duplication
+
+The **Duplicate & Edit** action opens the Design a Spec form pre-filled with the spec's current configuration. If you select a different cloud identity (e.g., switching from AWS to GCP), the configuration is converted automatically. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion) for how this works.
+
+Conversion warnings are displayed in the form if any settings couldn't be mapped directly (e.g., instance types, WAF rules, DNS zones).

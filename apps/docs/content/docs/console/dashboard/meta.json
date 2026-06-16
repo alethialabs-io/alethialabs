@@ -1,0 +1,8 @@
+{
+  "title": "Dashboard",
+  "pages": [
+    "index",
+    "zones",
+    "spec-detail"
+  ]
+}

@@ -1,0 +1,68 @@
+---
+title: Dashboard Overview
+description: The main dashboard page — stats, integrations status, and recent jobs.
+---
+
+# Dashboard Overview
+
+The dashboard is the landing page after login. It provides a quick summary of your infrastructure state.
+
+## Layout
+
+The dashboard shell wraps all authenticated pages with:
+
+- **Header** — breadcrumbs, notifications bell (unread job count), user dropdown (profile, sign out)
+- **Sidebar** — main navigation (Overview, Design a Spec, Clusters, Jobs, Integrations, Runners) plus a dynamic zone list with expandable spec sub-items
+- **Real-time subscriptions** — established on layout mount for job status and spec status updates (see [Real-time Architecture](/concepts/realtime))
+
+## Overview Page
+
+The overview page shows four stat chips at the top:
+
+| Stat | Source |
+|------|--------|
+| Total Specs | Count of all specs across zones |
+| Active Specs | Specs with status `ACTIVE` |
+| Online Runners | Runners with heartbeat within 60 seconds |
+| Total Jobs | Count of all provision jobs |
+
+Below the stats:
+
+### Integrations Panel
+
+Shows connected and disconnected integrations as badges. Connected providers show a green indicator and account identifier (AWS Account ID, GCP Project, GitHub username). Disconnected providers link to the integrations page.
+
+### Recent Jobs
+
+A data table showing the 5 most recent jobs with columns:
+- **Type** — job type with icon (PLAN, DEPLOY, DESTROY, etc.)
+- **Status** — color-coded badge (green=SUCCESS, red=FAILED, yellow=PROCESSING, gray=QUEUED)
+- **Spec** — target spec project name
+- **Created** — relative timestamp
+
+Clicking a job row navigates to the [job detail page](/console/jobs/job-detail).
+
+## Notifications
+
+The notifications bell in the header shows a badge with the count of unread job state changes. Clicking it opens a popover with recent notifications. Clicking a notification navigates to the relevant job. "Mark all read" clears the count.
+
+Notifications are driven by the real-time subscription to `provision_jobs` — every status change (QUEUED → PROCESSING → SUCCESS/FAILED) creates a notification.
+
+## Sidebar Navigation
+
+The sidebar has two sections:
+
+**Main Navigation:**
+- Overview (`/dashboard`)
+- Design a Spec (`/dashboard/design`)
+- Clusters (`/dashboard/clusters`)
+- Jobs (`/dashboard/jobs`)
+- Integrations (`/dashboard/integrations`)
+- Runners (`/dashboard/runners`)
+
+**Zones List:**
+- Dynamically loaded from the zones store
+- Each zone is expandable to show its specs
+- Specs show status dots (green=ACTIVE, yellow=PROVISIONING, red=FAILED) and provider icons
+- Active spec is highlighted based on current URL
+- "Design a Spec" link shown if no zones exist

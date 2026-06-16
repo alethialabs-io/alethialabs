@@ -1,7 +1,7 @@
 go 1.25.8
 
 use (
-	./apps/grape
-	./apps/tendril
-	./packages/grape-core
+	./apps/cli
+	./apps/runner
+	./packages/core
 )

@@ -1,12 +1,12 @@
-# Grape Worker — Fargate Infrastructure
+# Alethia Worker — Fargate Infrastructure
 
-Terraform configuration that deploys the Grape provisioning worker as an AWS Fargate service. The worker polls the Trellis control plane for queued jobs (BOOTSTRAP, DEPLOY, DESTROY), executes them, and streams logs back in real time.
+Terraform configuration that deploys the node provisioning worker as an AWS Fargate service. The worker polls the Alethia control plane for queued jobs (BOOTSTRAP, DEPLOY, DESTROY), executes them, and streams logs back in real time.
 
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Trellis (Control Plane)                                 │
+│  Alethia (Control Plane)                                 │
 │  ┌────────────────────────────────────────────────────┐  │
 │  │  Supabase                                          │  │
 │  │  · workers table         (registry + heartbeat)    │  │
@@ -20,7 +20,7 @@ Terraform configuration that deploys the Grape provisioning worker as an AWS Far
 │  │  Fargate Worker                                    │  │
 │  │  · Claims jobs atomically (SELECT FOR UPDATE)      │  │
 │  │  · Runs Terraform / Helm / kubectl                 │  │
-│  │  · Streams log chunks back to Trellis              │  │
+│  │  · Streams log chunks back to Alethia              │  │
 │  │  · Heartbeat every 30s                             │  │
 │  └────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────┘
@@ -30,12 +30,12 @@ Terraform configuration that deploys the Grape provisioning worker as an AWS Far
 
 | | Self-hosted | Cloud-hosted |
 |---|---|---|
-| **Where it runs** | In *your* AWS account | In *Grape's* central AWS account |
-| **AWS permissions** | Uses the Fargate task role directly (AdministratorAccess in the same account) | Assumes a cross-account IAM role (`GrapeProvisionerRole-*`) into each customer's account via STS |
-| **Who registers it** | You — the platform operator | Grape platform team |
+| **Where it runs** | In *your* AWS account | In *Alethia's* central AWS account |
+| **AWS permissions** | Uses the Fargate task role directly (AdministratorAccess in the same account) | Assumes a cross-account IAM role (`AlethiaProvisionerRole-*`) into each customer's account via STS |
+| **Who registers it** | You — the platform operator | Alethia platform team |
 | **Use case** | Single-tenant: you provision infrastructure in your own account | Multi-tenant: one worker serves multiple customer accounts |
-| **IAM setup** | Task role gets AdministratorAccess | Task role gets `sts:AssumeRole` on `arn:aws:iam::*:role/GrapeProvisionerRole-*`. Each customer deploys `packages/onboarding/aws/grape-bootstrap.yaml` to create the cross-account role. |
-| **Cloud identity** | Not used — worker has native permissions | Job includes `cloud_identity_id` → Trellis returns `role_arn` + `external_id` at claim time → worker calls `sts:AssumeRole` before executing |
+| **IAM setup** | Task role gets AdministratorAccess | Task role gets `sts:AssumeRole` on `arn:aws:iam::*:role/AlethiaProvisionerRole-*`. Each customer deploys `infra/onboarding/aws/alethia-bootstrap.yaml` to create the cross-account role. |
+| **Cloud identity** | Not used — worker has native permissions | Job includes `cloud_identity_id` → Alethia returns `role_arn` + `external_id` at claim time → worker calls `sts:AssumeRole` before executing |
 
 **For a thesis demo, use `self-hosted`.** It's simpler: one account, one worker, no cross-account IAM.
 
@@ -44,8 +44,8 @@ Terraform configuration that deploys the Grape provisioning worker as an AWS Far
 - AWS CLI configured with credentials for the target account
 - Terraform >= 1.10
 - Docker
-- Grape CLI installed (`brew install grape` or build from source)
-- Trellis running and accessible (local or deployed)
+- Alethia CLI installed (`brew install alethia` or build from source)
+- Alethia running and accessible (local or deployed)
 - Supabase migration `20260520_provision_broker.sql` applied
 
 ## Setup — Step by Step
@@ -55,7 +55,7 @@ Terraform configuration that deploys the Grape provisioning worker as an AWS Far
 The worker depends on the `workers`, `provision_jobs`, and `job_logs` tables plus the RPC functions (`claim_next_job`, `update_job_status`, `insert_job_log`, `worker_heartbeat`, `recover_stale_jobs`).
 
 ```bash
-cd apps/trellis
+cd apps/console
 npx supabase db push
 ```
 
@@ -65,12 +65,12 @@ Verify the tables exist:
 npx supabase db dump --schema public | grep -E 'CREATE TABLE.*workers|provision_jobs|job_logs'
 ```
 
-### 2. Log in to Grape and register a worker
+### 2. Log in to Alethia and register a worker
 
-You need to be authenticated with Trellis first:
+You need to be authenticated with Alethia first:
 
 ```bash
-grape login
+alethia login
 ```
 
 Then register a worker. This calls `POST /api/workers/register` which:
@@ -79,7 +79,7 @@ Then register a worker. This calls `POST /api/workers/register` which:
 - Returns the plaintext token **once** — it cannot be recovered
 
 ```bash
-grape worker register --name my-fargate-worker --mode self-hosted
+alethia worker register --name my-fargate-worker --mode self-hosted
 ```
 
 Output:
@@ -154,7 +154,7 @@ terraform state list
 ```
 
 This creates:
-- ECR repository for the Grape Docker image
+- ECR repository for the Alethia Docker image
 - ECS Fargate cluster + service + task definition
 - IAM execution role (pulls images, reads secrets)
 - IAM task role (AdministratorAccess for self-hosted)
@@ -172,10 +172,10 @@ ECR_URL=$(terraform output -raw ecr_repository_url)
 aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin $ECR_URL
 
 # Build the image (from repo root)
-docker build -t grape:latest ../apps/grape/
+docker build -t alethia:latest ../apps/cli/
 
 # Tag and push
-docker tag grape:latest $ECR_URL:latest
+docker tag alethia:latest $ECR_URL:latest
 docker push $ECR_URL:latest
 ```
 
@@ -197,15 +197,15 @@ Check ECS task status:
 
 ```bash
 aws ecs list-tasks \
-  --cluster grape-worker-dev-cluster \
-  --service-name grape-worker-dev-service \
+  --cluster runner-dev-runner-cluster \
+  --service-name runner-dev-runner-service \
   --region eu-west-1
 ```
 
 Check CloudWatch logs:
 
 ```bash
-aws logs tail /ecs/grape-worker-dev --follow --region eu-west-1
+aws logs tail /ecs/runner-dev-runner --follow --region eu-west-1
 ```
 
 You should see:
@@ -221,27 +221,27 @@ From the CLI:
 
 ```bash
 # Queue a bootstrap job
-grape bootstrap --queue
+alethia bootstrap --queue
 
 # Or queue a deploy job
-grape harvest
+alethia harvest
 ```
 
-From the Trellis dashboard:
+From the Alethia dashboard:
 - Go to Workers page — your worker should show as ONLINE
 - Create a configuration and trigger provisioning
 - Watch the log viewer for real-time streaming
 
 ## What happens during a job
 
-1. **User** creates a job (via CLI or Trellis UI) → `provision_jobs` row with status `QUEUED`
+1. **User** creates a job (via CLI or Alethia UI) → `provision_jobs` row with status `QUEUED`
 2. **Worker** polls `POST /api/jobs/claim` every 10 seconds
 3. **Supabase RPC** `claim_next_job()` atomically assigns the oldest queued job (uses `SELECT FOR UPDATE SKIP LOCKED` to prevent double-claims)
 4. **Worker** updates status to `PROCESSING`, starts executing:
    - **BOOTSTRAP**: Terraform → VPC + EKS, then Helm → ArgoCD
    - **DEPLOY**: Clone repos → Terraform apply → Helm install → ArgoCD manifests
    - **DESTROY**: Terraform destroy → cleanup
-5. **Logs** stream via `POST /api/jobs/{id}/logs` → `job_logs` table → Supabase Realtime → Trellis log viewer
+5. **Logs** stream via `POST /api/jobs/{id}/logs` → `job_logs` table → Supabase Realtime → Alethia log viewer
 6. **Worker** sets final status (`SUCCESS` or `FAILED`)
 7. **Stale recovery**: If a worker dies, `recover_stale_jobs()` resets orphaned jobs to `QUEUED` after 15 minutes with no heartbeat
 
@@ -249,17 +249,17 @@ From the Trellis dashboard:
 
 ```bash
 # Build new image
-docker build -t grape:latest apps/grape/
+docker build -t alethia:latest apps/cli/
 
 # Push to ECR
 ECR_URL=$(cd terraform && terraform output -raw ecr_repository_url)
-docker tag grape:latest $ECR_URL:latest
+docker tag alethia:latest $ECR_URL:latest
 docker push $ECR_URL:latest
 
 # Force ECS to pull the new image
 aws ecs update-service \
-  --cluster grape-worker-dev-cluster \
-  --service grape-worker-dev-service \
+  --cluster runner-dev-runner-cluster \
+  --service runner-dev-runner-service \
   --force-new-deployment \
   --region eu-west-1
 ```

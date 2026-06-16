@@ -2,7 +2,7 @@
 
 ## MVP Scope
 
-ONE cloud-hosted worker in Grape's AWS account (`787587782604`) serves all users. Users connect AWS via CloudFormation, configure infrastructure in Trellis, and harvest. The worker provisions into their accounts via cross-account IAM roles.
+ONE cloud-hosted worker in Alethia's AWS account (`787587782604`) serves all users. Users connect AWS via CloudFormation, configure infrastructure in Trellis, and harvest. The worker provisions into their accounts via cross-account IAM roles.
 
 ## Status Legend
 
@@ -42,7 +42,7 @@ ONE cloud-hosted worker in Grape's AWS account (`787587782604`) serves all users
 - [ ] Job detail view (click job → full log viewer)
 - [ ] Auto-queue DEPLOY job when configuration has cloud_identity (partially done in createConfiguration)
 
-## Grape Worker (Go)
+## Alethia Worker (Go)
 
 - [x] Worker poll loop (`worker/worker.go`)
 - [x] Worker API client (`worker/api.go`)
@@ -53,20 +53,20 @@ ONE cloud-hosted worker in Grape's AWS account (`787587782604`) serves all users
 - [x] Destroy provisioner (`provisioner/destroy.go`)
 - [x] Dockerfile (multi-stage, all tools)
 
-## Grape CLI
+## Alethia CLI
 
-- [x] `grape login` / `grape logout`
-- [x] `grape harvest` (queues DEPLOY job)
-- [x] `grape bootstrap --queue` (queues BOOTSTRAP job)
-- [x] `grape worker register` (DB registration via CLI)
-- [x] `grape worker start` (starts poll loop)
+- [x] `alethia login` / `alethia logout`
+- [x] `alethia harvest` (queues DEPLOY job)
+- [x] `alethia bootstrap --queue` (queues BOOTSTRAP job)
+- [x] `alethia worker register` (DB registration via CLI)
+- [x] `alethia worker start` (starts poll loop)
 
 ## Infrastructure — Central Worker Deployment
 
 - [x] Terraform for Fargate (`terraform/` — ecs, iam, networking, secrets, logging, ecr)
-- [x] CloudFormation template for cross-account role (`packages/onboarding/aws/grape-bootstrap.yaml`)
-- [x] Terraform version of cross-account role (`packages/onboarding/aws/grape-bootstrap.tf`)
-- [ ] **Deploy the central worker** — `terraform apply` in Grape's account
+- [x] CloudFormation template for cross-account role (`packages/onboarding/aws/alethia-bootstrap.yaml`)
+- [x] Terraform version of cross-account role (`packages/onboarding/aws/alethia-bootstrap.tf`)
+- [ ] **Deploy the central worker** — `terraform apply` in Alethia's account
 - [ ] **Build + push Docker image** to ECR
 - [ ] **Register central worker** in Trellis (mode=cloud-hosted)
 - [ ] **Verify heartbeat** — worker shows ONLINE
@@ -97,6 +97,6 @@ ONE cloud-hosted worker in Grape's AWS account (`787587782604`) serves all users
 8. Worker health monitoring in dashboard
 
 ### Phase 3: Self-hosted workers (post-MVP)
-9. `grape worker register` with automatic Fargate deploy
-10. `grape worker destroy`
-11. `grape worker status` / `grape worker list`
+9. `alethia worker register` with automatic Fargate deploy
+10. `alethia worker destroy`
+11. `alethia worker status` / `alethia worker list`

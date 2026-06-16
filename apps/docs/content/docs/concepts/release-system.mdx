@@ -1,0 +1,138 @@
+---
+title: Build, Release & CI/CD
+description: release-please versioning, GoReleaser for alethia, Docker builds for Runner, and GitHub Actions workflows.
+---
+
+# Build, Release & CI/CD
+
+alethia CLI and Runner (agent) are versioned and released independently using **release-please** with conventional commits. Each component has its own release workflow, tag format, and distribution channel.
+
+<img src="/docs/diagrams/concepts/release-system.svg" alt="Release Pipeline" />
+
+## release-please Configuration
+
+The monorepo uses release-please with `separate-pull-requests: true`, meaning each component gets its own release PR.
+
+```json
+// release-please-config.json
+{
+  "separate-pull-requests": true,
+  "packages": {
+    "apps/cli": {
+      "release-type": "simple",
+      "component": "alethia",
+      "include-component-in-tag": true,
+      "changelog-path": "CHANGELOG.md"
+    },
+    "apps/runner": {
+      "release-type": "simple",
+      "component": "runner",
+      "include-component-in-tag": true,
+      "changelog-path": "CHANGELOG.md"
+    }
+  }
+}
+```
+
+**How it works:**
+
+1. Developers write conventional commits: `feat(alethia): add spec get command`, `fix(runner): handle nil credential`
+2. On push to main, release-please analyzes commits since the last release
+3. It creates (or updates) a release PR per component with:
+   - Version bump (major/minor/patch based on commit type)
+   - Auto-generated CHANGELOG.md entries
+4. When merged, release-please creates a git tag (`alethia-v0.1.8` or `runner-v0.1.0`)
+5. The tag triggers the component's release workflow
+
+## alethia Release Pipeline
+
+**Trigger:** Push to tag matching `alethia-v*`
+
+**Workflow:** `.github/workflows/release-alethia.yml`
+
+```
+Tag push (alethia-v0.1.8)
+  └── Checkout + Go setup
+       └── GoReleaser
+            ├── Build: darwin/amd64, darwin/arm64, linux/amd64, linux/arm64
+            ├── Archive: tar.gz per platform
+            ├── GitHub Release: upload archives + checksums
+            └── Homebrew: update formula in bobikenobi12/bb-thesis-2026 tap
+```
+
+**GoReleaser config** (`apps/cli/.goreleaser.yml`):
+- Builds 4 binaries (2 OS x 2 arch)
+- Creates GitHub Release with download links
+- Updates Homebrew tap formula automatically
+
+**Distribution channels:**
+- `brew install bobikenobi12/bb-thesis-2026/alethia` (macOS/Linux via Homebrew)
+- Direct binary download from GitHub Releases
+
+## Runner Release Pipeline
+
+**Trigger:** Push to tag matching `runner-v*`
+
+**Workflow:** `.github/workflows/release-runner.yml`
+
+```
+Tag push (runner-v0.1.0)
+  └── Checkout
+       └── Stage templates
+            ├── infra/templates/spec/aws → apps/runner/spec-templates/aws
+            ├── infra/templates/spec/gcp → apps/runner/spec-templates/gcp
+            ├── infra/templates/spec/azure → apps/runner/spec-templates/azure
+            ├── infra/templates/runner → apps/runner/runner-templates
+            └── infra/templates/argocd → apps/runner/argocd-templates
+       └── Docker buildx (ARM64)
+            ├── Push to AWS ECR (eu-west-1)
+            └── Push to GitHub Container Registry (ghcr.io)
+       └── Publish release metadata
+            └── POST /api/releases/worker { version, release_notes }
+       └── Force new ECS Fargate deployment
+            └── aws ecs update-service --force-new-deployment
+```
+
+**Key details:**
+- **Template staging:** Infrastructure templates are copied into the Docker build context so the final image contains all Terraform modules for AWS, GCP, and Azure
+- **ARM64 only:** Runner runs on Graviton (ARM) Fargate tasks for cost efficiency
+- **Dual registry:** ECR for production Fargate deployment, GHCR for public access
+- **API publish:** Console is notified of new releases and can display version info in the UI
+- **Rolling deployment:** `--force-new-deployment` triggers ECS to launch new tasks with the updated image
+
+## Runner Dev Deployment
+
+**Trigger:** Manual (`workflow_dispatch`)
+
+**Workflow:** `.github/workflows/deploy-runner.yml`
+
+For development/hotfix deployments without a version tag. Builds and deploys using the git SHA as the image tag instead of a semver version. Same Docker build and ECS deployment steps as the release workflow.
+
+## release-please Automation
+
+**Workflow:** `.github/workflows/release-please.yml`
+
+**Trigger:** Push to default branch
+
+Runs `googleapis/release-please-action` which:
+1. Reads `release-please-config.json` and `.release-please-manifest.json`
+2. Analyzes conventional commits since the last release per component
+3. Creates/updates release PRs with changelogs
+4. On PR merge, creates git tags that trigger release workflows
+
+**Manifest** (`.release-please-manifest.json`) tracks current versions:
+
+```json
+{
+  "apps/cli": "0.1.7",
+  "apps/runner": "0.0.0"
+}
+```
+
+## Version Tracking in the Platform
+
+When a Runner release is published, the Console API receives the version and release notes via `POST /api/releases/worker`. This creates a `worker_releases` record. Registered Runners reference their `release_id` so the platform can:
+
+- Display current version per Runner in the UI
+- Show release notes and changelogs
+- Detect outdated Runners

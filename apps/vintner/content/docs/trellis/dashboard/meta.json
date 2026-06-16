@@ -1,8 +1,0 @@
-{
-  "title": "Dashboard",
-  "pages": [
-    "index",
-    "vineyards",
-    "vine-detail"
-  ]
-}

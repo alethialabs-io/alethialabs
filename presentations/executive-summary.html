@@ -1,0 +1,295 @@
+<!DOCTYPE html><html class="dark" lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Alethia — Executive Summary</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --g0:oklch(1 0 0);--g50:oklch(.985 0 0);--g100:oklch(.967 0 0);--g200:oklch(.928 0 0);
+  --g300:oklch(.882 0 0);--g400:oklch(.788 0 0);--g500:oklch(.664 0 0);--g600:oklch(.556 0 0);
+  --g700:oklch(.44 0 0);--g900:oklch(.268 0 0);--g950:oklch(.205 0 0);--g1000:oklch(.165 0 0);
+  --g1050:oklch(.13 0 0);--g1100:oklch(.108 0 0);
+  --font-display:"Space Grotesk",system-ui,sans-serif;--font-sans:"Geist",system-ui,-apple-system,sans-serif;--font-mono:"Geist Mono",ui-monospace,monospace;
+  --radius-sm:.375rem;--radius-lg:.625rem;--radius-xl:.875rem;
+}
+html.dark{--canvas:var(--g1050);--surface:var(--g1000);--surface-sunken:var(--g1100);--surface-muted:var(--g950);
+  --text:var(--g50);--text-2:var(--g500);--text-3:var(--g600);
+  --border:oklch(1 0 0 / .10);--border-strong:oklch(1 0 0 / .17);--border-faint:oklch(1 0 0 / .05);
+  --ink:var(--g50);--ink-fg:var(--g1000);}
+*{box-sizing:border-box}html,body{margin:0;padding:0;height:100%}
+body{background:var(--canvas);color:var(--text);font-family:var(--font-sans);font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:600;letter-spacing:-.02em;line-height:1.08;margin:0}
+h1{font-size:clamp(2.4rem,6vw,4.5rem);letter-spacing:-.035em}h2{font-size:clamp(1.7rem,4vw,2.9rem);letter-spacing:-.03em}h3{font-size:1.2rem}h4{font-size:1rem}
+p{margin:0;color:var(--text-2)}a{color:var(--text);text-decoration:none;border-bottom:1px solid var(--border-strong)}strong{color:var(--text);font-weight:600}
+ul{margin:0;padding-left:1.1rem;color:var(--text-2)}li{margin:.3rem 0}
+.eyebrow{font-family:var(--font-mono);font-size:.6875rem;font-weight:500;letter-spacing:.16em;text-transform:uppercase;color:var(--text-3)}
+.mono{font-family:var(--font-mono)}.muted{color:var(--text-2)}.faint{color:var(--text-3)}
+.lead{font-size:clamp(1.05rem,1.6vw,1.4rem);color:var(--text-2);line-height:1.45;max-width:52ch}
+.deck{scroll-snap-type:y mandatory;height:100vh;overflow-y:scroll;scroll-behavior:smooth}
+.slide{scroll-snap-align:start;min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:9vh 9vw 12vh;position:relative;border-bottom:1px solid var(--border-faint)}
+.slide>*+*{margin-top:1.25rem}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1.4rem}
+.card h3,.card h4{margin-bottom:.4rem}
+.grid{display:grid;gap:1rem}.g2{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:repeat(3,1fr)}.g4{grid-template-columns:repeat(4,1fr)}
+@media(max-width:820px){.g2,.g3,.g4{grid-template-columns:1fr}}
+.btn{display:inline-flex;align-items:center;gap:.5rem;font-weight:500;font-size:.9rem;height:2.5rem;padding:0 1.1rem;border:1px solid transparent;border-radius:var(--radius-sm);background:var(--ink);color:var(--ink-fg);cursor:pointer}
+.btn-ghost{background:transparent;border-color:var(--border-strong);color:var(--text)}
+.status{display:inline-flex;align-items:center;gap:.5rem;font-family:var(--font-mono);font-size:.6875rem;font-weight:500;text-transform:uppercase;letter-spacing:.04em;color:var(--text-2)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--text);flex:none}.dot-ring{background:transparent;border:1.5px solid var(--text-3)}.dot-live{box-shadow:0 0 0 3px oklch(1 0 0 / .12)}
+table{width:100%;border-collapse:collapse;font-size:.88rem}
+th,td{text-align:left;padding:.55rem .7rem;border-bottom:1px solid var(--border);vertical-align:top}
+th{font-family:var(--font-mono);font-size:.6875rem;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);font-weight:500}
+td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{color:var(--text)}
+.rule{height:1px;background:var(--border);border:0;margin:0}
+.stat{font-family:var(--font-display);font-size:clamp(2rem,4vw,3.2rem);font-weight:600;letter-spacing:-.03em;color:var(--text);line-height:1}
+.deck-foot{position:fixed;bottom:1.1rem;left:9vw;right:9vw;display:flex;justify-content:space-between;align-items:center;font-family:var(--font-mono);font-size:.6875rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-3);pointer-events:none;z-index:10}
+.wordmark{font-family:var(--font-display);font-weight:600;letter-spacing:-.01em;color:var(--text);font-size:1rem;text-transform:none}
+.fill{border:1px dashed var(--border-strong);border-radius:var(--radius-sm);padding:.1rem .5rem;color:var(--text-3);font-family:var(--font-mono);font-size:.75rem}
+.doc{max-width:1000px;margin:0 auto;padding:7vh 6vw 12vh}.doc section{margin-top:2.4rem}.doc h2{margin-bottom:.6rem}
+@media print{@page{size:landscape;margin:0}html,body{height:auto}.deck{height:auto;overflow:visible;scroll-snap-type:none}.slide{min-height:auto;height:100vh;page-break-after:always;border:0}.deck-foot{position:static}.doc{max-width:none}}
+.doc p+p{margin-top:.7rem}
+.doc .meta{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;flex-wrap:wrap}
+.doc header{padding-bottom:1.6rem;border-bottom:1px solid var(--border)}
+.tagline{margin-top:.5rem;font-size:1.05rem;color:var(--text-2)}
+.kvs{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-top:1.4rem}
+@media(max-width:820px){.kvs{grid-template-columns:repeat(2,1fr)}}
+.kv .stat{font-size:clamp(1.4rem,3vw,2rem)}
+.kv .eyebrow{display:block;margin-top:.35rem}
+.sec-head{display:flex;align-items:baseline;gap:.8rem;flex-wrap:wrap}
+.body-narrow{max-width:68ch}
+</style></head><body>
+<div class="doc">
+
+  <header>
+    <div class="meta">
+      <div>
+        <span class="wordmark" style="font-size:1.6rem">Alethia</span>
+        <span class="eyebrow" style="margin-left:.6rem">by Alethia Labs</span>
+        <div class="tagline">A production app platform you <strong>own</strong> — not rent.</div>
+      </div>
+      <div style="text-align:right">
+        <span class="status"><span class="dot dot-live"></span>Executive Summary</span>
+        <div class="eyebrow" style="margin-top:.4rem">Confidential · 2026</div>
+      </div>
+    </div>
+  </header>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">Company</span></div>
+    <p class="body-narrow" style="font-size:1.15rem;color:var(--text);line-height:1.5">
+      Alethia provisions a complete, GitOps-wired Kubernetes platform on <strong>your</strong> cloud account — with
+      <strong>zero stored credentials</strong> — and hands you a cluster you own. From one <strong>Spec</strong>, a remote
+      worker stands up EKS + VPC + Aurora + ElastiCache + DynamoDB + SQS/SNS + ECR + S3 + Secrets Manager + Route 53 + WAF,
+      installs ArgoCD <strong>wired to your Git repo</strong> with auto-sync, layers in a real operator suite, and hands over
+      kubeconfig, ArgoCD URL, and every endpoint. Your apps deploy from a <span class="mono">git push</span>. It's your
+      cluster, in your account — Alethia never sits in the data path.
+    </p>
+  </section>
+
+  <hr class="rule" style="margin-top:2.4rem">
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">The Problem</span></div>
+    <p class="body-narrow">
+      Getting from "we have an app" to "it runs in production on Kubernetes" forces a bad trade. A real production cluster —
+      networking, databases, caching, DNS, secrets, registries, autoscaling, GitOps — is weeks of Terraform, Helm, and YAML
+      that every team rebuilds from scratch. That's the <strong>platform-engineering tax</strong>.
+    </p>
+    <p class="body-narrow">
+      The PaaS tools that save you those weeks — Porter, Qovery, Northflank — make you <strong>hand them your cloud keys</strong>,
+      run your control plane on <strong>their</strong> servers, and lock your deploys into <strong>their</strong> black box. The
+      DIY route keeps ownership but brings the tax back. Both paths leak long-lived cloud keys and admin kubeconfigs into CI and
+      third-party SaaS — the exact thing every security audit flags.
+    </p>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">The Solution — the anti-Porter</span></div>
+    <p class="body-narrow">
+      Alethia gives you the <strong>real, standard thing</strong> — EKS + ArgoCD + your own tools — provisioned for you, that
+      you own end to end. Porter/Qovery/Northflank <strong>rent</strong> you a proprietary PaaS that holds your keys and runs
+      your control plane. Alethia delivers the same outcome — a production app platform, fast — with the opposite ownership model.
+      Four pillars set it apart:
+    </p>
+    <div class="grid g2" style="margin-top:1.2rem">
+      <div class="card">
+        <span class="eyebrow">01</span>
+        <h4>Zero-trust remote provisioning</h4>
+        <p>The worker (runner) runs in your account and assumes cloud roles at execution time. The control plane never sees or stores your keys — short-lived, scoped, nothing to leak.</p>
+      </div>
+      <div class="card">
+        <span class="eyebrow">02</span>
+        <h4>Own it / self-hostable</h4>
+        <p>You own the cluster — and you can self-host the Alethia control plane itself as ~4 containers (Postgres + S3 + app + worker). No Supabase, no SaaS dependency. Run it air-gapped, in-region.</p>
+      </div>
+      <div class="card">
+        <span class="eyebrow">03</span>
+        <h4>GitOps app-delivery</h4>
+        <p>Standard ArgoCD wired to your repo with auto-sync (Kustomize/Helm) — not a proprietary pipeline. There's nothing to leave: it's your cluster, your ArgoCD, your repo.</p>
+      </div>
+      <div class="card">
+        <span class="eyebrow">04</span>
+        <h4>Pluggable integrations + multi-cloud</h4>
+        <p>Bring your own tools per category — Cloudflare DNS, Vault, Datadog/Grafana/Prometheus, Docker Hub — across many clouds. No opinionated-stack lock-in.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">Who Buys — ICP</span></div>
+    <p class="body-narrow">
+      Engineering teams (~10–150 engineers, 0–2 dedicated platform engineers) who need to <strong>own their infrastructure
+      stack</strong> — for security, compliance, cost, or principle — and refuse to hand their cloud keys to a hosted SaaS or
+      lock into one cloud. Ownership + zero-trust + open source is the thesis; sovereignty/data-residency is a strong trigger for
+      a subset. Three personas:
+    </p>
+    <table style="margin-top:1.1rem">
+      <thead><tr><th>Persona</th><th>Role</th><th>Why Alethia</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Platform / DevOps Engineer</strong></td><td>User &amp; champion</td><td>Self-service infra without handing out admin keys; visual Spec + <span class="mono">alethia</span> CLI; zero stored credentials; GitOps by default; runs in their own account.</td></tr>
+        <tr><td><strong>Security / Compliance Buyer</strong></td><td>Economic &amp; gatekeeper</td><td>Can't put cloud keys in third-party SaaS or must keep the control plane in-house. AGPL self-host as ~4 containers; zero-credential model; SSO/RBAC/audit in <span class="mono">ee/</span>.</td></tr>
+        <tr><td><strong>Cost / Lock-in Owner</strong></td><td>Founder-CTO / budget owner</td><td>Feels the cloud bill and the lock-in. Multi-cloud + self-managed strategies; real-time Infracost; no per-seat PaaS markup; no vendor lock-in.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">Market</span></div>
+    <p class="body-narrow">
+      Alethia sits in the gap between two crowded categories: <strong>IaC orchestration</strong> (Terraform Cloud, Spacelift),
+      which gives you plumbing not a product and often wants your credentials; and the <strong>BYOC app PaaS</strong> (Qovery,
+      Porter, Northflank), a product that holds your keys and/or runs only on its hosted control plane. Alethia's wedge cuts across
+      both: a self-hostable, open-source control plane that designs and provisions infrastructure with zero stored credentials,
+      lets you plug in your own tools, and runs on any cloud. <strong>No one else owns "own-the-control-plane + zero-trust +
+      integration breadth + open source" together.</strong>
+      <strong>TAM</strong> ≈ $10B (2026) growing to ~$32B by 2031 at ~25% CAGR on a platform-engineering/IDP basis (an
+      expansive PaaS view runs $90B → $288B); <strong>SAM</strong> ≈ $80–120M/yr — paying BYOC / self-host / zero-trust
+      Kubernetes buyers (~7,000 target orgs × ~$12k ACV); <strong>SOM</strong> (3 yr) ≈ $2–3.5M ARR (~2–4% of SAM).
+      Demand is proven: 82% of container users run Kubernetes in production (CNCF 2025) and ArgoCD is the majority-adopted
+      GitOps solution. <span class="faint">(Market figures are estimates; sizing per Mordor / Grand View.)</span>
+    </p>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">Business Model — open-core</span></div>
+    <p class="body-narrow">
+      AGPL-3.0 core (provisioning + GitOps + integrations + single-tenant + community RBAC) is free and self-hostable — a model
+      closely mirroring Cal.com. The commercial <span class="mono">ee/</span> tier adds orgs, RBAC-at-scale, SSO (SAML/OIDC),
+      audit, and multi-tenancy. Three revenue lines:
+    </p>
+    <div class="grid g3" style="margin-top:1.1rem">
+      <div class="card"><span class="eyebrow">Primary</span><h4>Hosted Alethia Cloud</h4><p>Multi-tenant SaaS — zero ops, managed Postgres/S3, managed runner fleet, SSO/RBAC/audit by tier. The dominant line for an AGPL company.</p></div>
+      <div class="card"><span class="eyebrow">Contract</span><h4>Self-managed Enterprise</h4><p>Teams that must self-host (sovereignty, air-gapped, AGPL-averse) but need governance run <span class="mono">ee/</span> on-prem under commercial license + support/SLA.</p></div>
+      <div class="card"><span class="eyebrow">Meter</span><h4>Usage-based</h4><p>AI premium (repo-scanner / MCP) and cloud-hosted <strong>worker-minutes</strong> for the runner fleet. Stacks on top of seats.</p></div>
+    </div>
+    <p class="body-narrow" style="margin-top:1rem">
+      <strong>~90–99% software gross margin.</strong> The customer's cluster (EKS/Aurora/etc.) runs in <strong>their</strong> cloud
+      account — they pay that bill, not us. Alethia's COGS is just the control plane (fixed, amortized multi-tenant) plus
+      runner-minutes (cents per provisioning op) ≈ <strong>~$3–5 / customer / month</strong> at scale. Capital-efficient by design:
+      open-source distribution (low CAC) × top-decile margin. <span class="faint">($ figures are estimates / proposed.)</span>
+    </p>
+    <p class="body-narrow faint" style="margin-top:1rem;font-size:.85rem">
+      Tiers: <strong>Community</strong> (free, AGPL, self-host the full core) · <strong>Team</strong> (~$299/mo, hosted) ·
+      <strong>Business</strong> (~$999/mo, hosted; orgs/teams, RBAC, audit) · <strong>Enterprise</strong> (from ~$2,500/mo, annual;
+      <span class="mono">ee/</span> SSO/SAML, full audit, multi-tenancy, SLA; self-managed license option). Add-ons: runner-minutes
+      (metered) · AI premium (per-scan, metered). Free self-hosters pay $0 — revenue = hosting + <span class="mono">ee/</span> +
+      usage + support, never the open-source core.
+    </p>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">Traction — what is built (honest)</span></div>
+    <p class="body-narrow">
+      The hard, differentiating engineering is <strong>shipped and verified end-to-end</strong> — the risk ahead is execution on
+      a settled architecture, not unproven design.
+    </p>
+    <div class="grid g2" style="margin-top:1.1rem">
+      <div class="card">
+        <h4><span class="status" style="display:inline-flex"><span class="dot"></span></span> Shipped</h4>
+        <ul style="margin-top:.5rem">
+          <li>Zero-trust 3-cloud provisioning (AWS active; GCP/Azure templates exist)</li>
+          <li>GitOps-wired ArgoCD handoff + full operator suite</li>
+          <li>The <span class="mono">alethia</span> CLI (shared state with the Spec designer)</li>
+          <li>Spec designer + cost sidebar (Infracost)</li>
+          <li>Integrations catalog</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4><span class="status" style="display:inline-flex"><span class="dot dot-ring"></span></span> To build for V1 "Provision &amp; Own"</h4>
+        <ul style="margin-top:.5rem">
+          <li>De-Supabase self-host (~4 containers) — long pole</li>
+          <li>Auth / RBAC / SSO (Better Auth + PDP) — long pole</li>
+          <li>Integration backends (≥1 real provider per category)</li>
+          <li>OpenTofu swap; more clouds + cluster strategies</li>
+          <li>Open-core <span class="mono">ee/</span> boundary + AGPL license</li>
+        </ul>
+      </div>
+    </div>
+    <p class="body-narrow faint" style="margin-top:1rem;font-size:.85rem">
+      Trajectory: <strong>V1 "Provision &amp; Own"</strong> (launch — ownership + GitOps + integrations + thin dashboard
+      visibility) → <strong>V2 "Provision &amp; Operate"</strong> (Alethia-native day-2 console: deploys, logs, rollbacks,
+      preview-envs rivaling Porter's DX — still self-hostable + zero-trust). GCP/Azure onboarding and AI repo-scanner are
+      <span class="mono">coming_soon</span>. Status: <strong>pre-revenue, pre-incorporation</strong>; the Year-1 target is
+      ~$180k ARR / ~$15k MRR ≈ 12–15 paying orgs — the bootstrap-then-raise trigger.
+      <span class="fill">[TBD: current OSS metrics — stars, design partners, waitlist, pilots]</span>
+    </p>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">Team — founder + the team this round builds</span></div>
+    <p class="body-narrow">
+      Solo founder today. This raise funds the first two key hires.
+    </p>
+    <div class="grid g3" style="margin-top:1.1rem">
+      <div class="card">
+        <span class="eyebrow">Founder</span>
+        <h4>Borislav Borisov — Founder &amp; CEO</h4>
+        <p><span class="fill">[TBD: 1–2 line bio — prior platform/infra/OSS experience that makes this credible to build Alethia]</span></p>
+      </div>
+      <div class="card">
+        <span class="eyebrow">Hire 01</span>
+        <h4>Founding DevRel / GTM</h4>
+        <p>Open-source community, docs, and developer adoption — turning the AGPL core into a pipeline of design partners and paying orgs.</p>
+      </div>
+      <div class="card">
+        <span class="eyebrow">Hire 02</span>
+        <h4>Senior Infra / Platform Engineer</h4>
+        <p>De-Supabase self-host, integration backends, and more clouds + cluster strategies — depth on the V1 long poles.</p>
+      </div>
+    </div>
+    <p class="body-narrow" style="margin-top:1rem">
+      Open to building a team — reach out on LinkedIn.
+    </p>
+    <p class="body-narrow faint" style="margin-top:.6rem;font-size:.85rem">
+      <span class="fill">[TBD: notable advisors / relevant domain credentials, if any]</span>
+    </p>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">The Ask</span></div>
+    <p class="body-narrow">
+      Planning to raise <strong>~$1.5M</strong> on a post-money SAFE at a <strong>~$12–15M cap</strong> (~10–12% dilution) —
+      a small slice at a high valuation, raised from ~$15k MRR. <span class="faint">(Plan/estimate — not a closed round.)</span>
+    </p>
+    <p class="body-narrow" style="margin-top:.6rem">
+      <strong>Use of funds:</strong> de-Supabase self-host 25% · enterprise auth + <span class="mono">ee/</span> 20% ·
+      integration backends 15% · V2 day-2 console 15% · GTM / community / devrel 15% · first infra engineer + buffer 10%.
+    </p>
+    <p class="body-narrow" style="margin-top:.6rem">
+      <strong>Contact:</strong> Borislav Borisov, Founder &amp; CEO ·
+      <a href="mailto:inquiry@alethialabs.io">inquiry@alethialabs.io</a> ·
+      <a href="https://alethialabs.io">alethialabs.io</a> ·
+      <a href="https://github.com/alethialabs-io">github.com/alethialabs-io</a>
+    </p>
+  </section>
+
+  <hr class="rule" style="margin-top:2.4rem">
+
+  <div class="kvs">
+    <div class="kv"><div class="stat">$0</div><span class="eyebrow">credentials stored</span></div>
+    <div class="kv"><div class="stat">~4</div><span class="eyebrow">containers to self-host</span></div>
+    <div class="kv"><div class="stat">1</div><span class="eyebrow">Spec → full platform</span></div>
+    <div class="kv"><div class="stat">AGPL</div><span class="eyebrow">open-core license</span></div>
+  </div>
+
+  <p class="eyebrow" style="margin-top:2rem;text-align:center">Alethia by Alethia Labs · A production app platform you own — not rent.</p>
+
+</div>
+</body></html>

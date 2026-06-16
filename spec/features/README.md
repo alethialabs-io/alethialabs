@@ -1,6 +1,6 @@
 # Feature Specs
 
-Organized by product surface. The goal is to make the Grape/Trellis platform trackable and easy to promote into Vintner documentation.
+Organized by product surface. The goal is to make the Alethia/Trellis platform trackable and easy to promote into Vintner documentation.
 
 ## Folder Map
 
@@ -9,8 +9,8 @@ Organized by product surface. The goal is to make the Grape/Trellis platform tra
 | `vine-schema-redesign/` | **Active** — Normalize configurations into modular component tables with per-component status. |
 | `worker-provisioning/` | **Active** — MVP design: cloud-hosted worker, AWS connection, job queue, E2E test plan. |
 | `architecture/` | Platform architecture: ArgoCD pivot, bootstrap logging, GitOps wiring, and the system overview. |
-| `grape-legacy-migration/` | Canonical plan for porting `apps/legacy-cli` into `apps/grape` and tightening the Trellis integration. |
-| `cli/` | Grape CLI implementation plans: dependency checks, local provisioning, teardown, release, UX. |
+| `alethia-legacy-migration/` | Canonical plan for porting `apps/legacy-cli` into `apps/cli` and tightening the Trellis integration. |
+| `cli/` | Alethia CLI implementation plans: dependency checks, local provisioning, teardown, release, UX. |
 | `control-plane/` | Trellis-side plans: auth, cloud identity (AWS onboarding), Git providers. |
 | `trellis-ui/` | Dashboard and UI improvement specs. |
 | `configs/` | Configuration-related specs. |
@@ -20,5 +20,5 @@ Organized by product surface. The goal is to make the Grape/Trellis platform tra
 ## Rules For New Feature Specs
 
 - Put new work in the owning folder above.
-- Prefer updating the canonical migration docs when a task affects legacy CLI parity, Grape, Trellis API contracts, AWS auth, GitOps, or Vintner documentation.
+- Prefer updating the canonical migration docs when a task affects legacy CLI parity, Alethia, Trellis API contracts, AWS auth, GitOps, or Vintner documentation.
 - Do not add new top-level single-file feature docs — use the appropriate subfolder.

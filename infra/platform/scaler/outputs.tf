@@ -9,7 +9,7 @@ output "lambda_function_arn" {
 }
 
 output "scaler_function_url" {
-  description = "Scaler Lambda function URL (for direct invoke from Trellis)"
+  description = "Scaler Lambda function URL (for direct invoke from Alethia)"
   value       = aws_lambda_function_url.scaler.function_url
 }
 

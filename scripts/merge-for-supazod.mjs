@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,7 +10,7 @@ const __dirname = path.dirname(__filename);
 
 const generatedPath = path.resolve(
 	__dirname,
-	"../apps/trellis/types/database.types.ts",
+	"../apps/console/types/database.types.ts",
 );
 const outPath = generatedPath;
 

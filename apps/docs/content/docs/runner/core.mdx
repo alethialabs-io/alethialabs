@@ -1,0 +1,113 @@
+---
+title: core Library
+description: Shared Go packages used by both Alethia CLI and Runner agent.
+---
+
+# core Library
+
+`packages/core/` is a shared Go module imported by both Alethia CLI and Runner (agent). It contains the core logic for infrastructure provisioning, cloud provider interactions, and tool integrations.
+
+## Package Map
+
+| Package | Purpose |
+|---------|---------|
+| `api/` | HTTP client for Alethia API (Bearer token auth) |
+| `provisioner/` | Orchestrates deploy, destroy, and bootstrap workflows |
+| `terraform/` | Wrapper around `hashicorp/terraform-exec` |
+| `infracost/` | Infracost CLI wrapper and JSON output parser |
+| `argocd/` | ArgoCD installation, manifest rendering, infra facts |
+| `helm/` | Helm chart operations with retry logic |
+| `k8s/` | Kubernetes kubeconfig management |
+| `git/` | Git clone, checkout, commit, push |
+| `cloud/` | Cloud provider interface + implementations |
+| `types/` | SpecConfig, Zone, CloudIdentity structs |
+| `state/` | Terraform state file handling |
+| `utils/` | Logger, CLI execution, file operations |
+| `assets/` | Embedded templates and Helm charts (via `go embed`) |
+
+## Key Packages
+
+### provisioner/
+
+The main orchestration layer. Entry point: `RunDeployV2()`.
+
+```
+RunDeployV2(specConfig, provider, planFile, installerConfig, apiClient, dryRun)
+  → Validate dependencies (terraform, kubectl, helm, cloud CLIs)
+  → Download templates from embedded assets
+  → Generate terraform.tfvars from SpecConfig
+  → terraform init (with S3 backend)
+  → terraform plan (if no planFile) or terraform apply (if planFile)
+  → Infracost analysis (optional)
+  → Configure kubeconfig
+  → Install ArgoCD (Helm)
+  → Extract cluster info
+  → Return PlanResult
+```
+
+Also provides `RunDestroy()` for teardown and `RunBootstrap()` for initial cluster setup.
+
+### terraform/
+
+Wraps the `hashicorp/terraform-exec` package:
+
+- `Init()` / `InitWithBackendFile()` — initialize with backend config
+- `Plan()` — generate plan with optional output file
+- `Apply()` — apply a plan file or direct apply
+- `Destroy()` — destroy all tracked resources
+- Auto-downloads the Terraform binary if not present (via `hc-install`)
+- Structured JSON output parsing for plan results
+
+### cloud/
+
+Defines the `CloudProvider` interface:
+
+```go
+type CloudProvider interface {
+    Name() string
+    RequiredCLIs() []string
+    ProviderTfvars(config SpecConfig) map[string]interface{}
+    ConfigureKubeconfig(clusterName, region string) error
+}
+```
+
+Three implementations:
+- `aws_provider.go` — AWS SDK (STS, EC2, IAM, Route53, S3)
+- `gcp_provider.go` — GCP SDK (Compute, DNS)
+- `azure_provider.go` — Azure SDK (Compute, DNS)
+
+Plus `supabase_backend.go` — S3-compatible storage client for Terraform state and plan artifacts.
+
+### infracost/
+
+- `CheckToken()` — validates API key
+- `ensureBinary()` — downloads infracost if missing
+- `Run()` — executes `infracost breakdown` on Terraform plan JSON
+- `parse.go` — parses structured JSON into `CostBreakdown` struct
+- `types.go` — `CostBreakdown`, `ResourceCost` data structures
+
+### argocd/
+
+- `install.go` — deploys ArgoCD via Helm, waits for Ready
+- `render.go` — renders Application manifests from templates with infra facts
+- `infra_facts.go` — extracts cluster info, database endpoints, cache endpoints from Terraform outputs
+
+### helm/
+
+- `UpgradeInstall()` — runs `helm upgrade --install` with server-side dry-run
+- Retry logic: 3 attempts with 5-second backoff
+- Supports `--set-json` for complex values
+
+### assets/
+
+Uses Go's `embed` directive to include templates directly in the binary:
+
+```go
+//go:embed terraform/seed/*
+var SeedTemplates embed.FS
+
+//go:embed helm/runner/*
+var RunnerHelmChart embed.FS
+```
+
+This means the Runner binary is fully self-contained — no external file dependencies.

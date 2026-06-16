@@ -4,7 +4,7 @@
 
 - [x] Supabase with `20260520_provision_broker.sql` migration applied
 - [x] Trellis deployed and accessible
-- [ ] Central worker deployed in Grape's account (787587782604) via `terraform apply`
+- [ ] Central worker deployed in Alethia's account (787587782604) via `terraform apply`
 - [ ] Central worker registered as cloud-hosted in Trellis
 - [ ] A separate AWS account to act as the "user's account" (or use the same account for testing)
 
@@ -20,7 +20,7 @@
 4. Copy the **External ID** shown
 5. Click the CloudFormation console link (or download the template)
 6. Deploy the stack in the test AWS account:
-   - `GrapeAccountId`: `787587782604`
+   - `AlethiaAccountId`: `787587782604`
    - `ExternalId`: paste from step 4
 7. Copy the **Role ARN** from CloudFormation Outputs
 8. Paste Role ARN into Trellis
@@ -41,8 +41,8 @@
 4. Mode should be "cloud-hosted"
 
 **If OFFLINE:**
-- Check ECS task status: `aws ecs list-tasks --cluster grape-worker-dev-cluster --region eu-west-1`
-- Check CloudWatch logs: `aws logs tail /ecs/grape-worker-dev --follow --region eu-west-1`
+- Check ECS task status: `aws ecs list-tasks --cluster alethia-worker-dev-cluster --region eu-west-1`
+- Check CloudWatch logs: `aws logs tail /ecs/alethia-worker-dev --follow --region eu-west-1`
 
 ## Test 3: Job Queuing
 
@@ -54,7 +54,7 @@
    - Region: `eu-west-1`
    - Environment: `dev`
    - Cloud Identity: select the connected AWS identity
-3. Trigger provisioning (via Trellis UI or `grape harvest`)
+3. Trigger provisioning (via Trellis UI or `alethia harvest`)
 4. Go to Workers page → Recent Jobs
 
 **Verify:**
@@ -70,14 +70,14 @@
 2. Within 10 seconds, the worker should log:
    ```
    Claimed job {id} (type=DEPLOY)
-   Assuming role arn:aws:iam::{account}:role/GrapeProvisionerRole-{ext_id} into account {account}...
+   Assuming role arn:aws:iam::{account}:role/AlethiaProvisionerRole-{ext_id} into account {account}...
    ```
 3. Job status should transition: `QUEUED` → `CLAIMED` → `PROCESSING`
 
 **If role assumption fails:**
 - Check the CloudFormation stack in the user's account — is the role created?
 - Check the External ID matches between `cloud_identities` and the role's trust policy
-- Check the Grape account ID in the trust policy matches `787587782604`
+- Check the Alethia account ID in the trust policy matches `787587782604`
 
 ## Test 5: Log Streaming
 
@@ -115,7 +115,7 @@
 
 1. Queue a job
 2. Wait for it to be `CLAIMED`
-3. Stop the ECS task: `aws ecs stop-task --cluster grape-worker-dev-cluster --task {arn}`
+3. Stop the ECS task: `aws ecs stop-task --cluster alethia-worker-dev-cluster --task {arn}`
 4. Wait for ECS to auto-restart the task (~60 seconds)
 5. Wait 15 minutes for `recover_stale_jobs()` to fire
 6. Job should reset to `QUEUED` and get re-claimed by the restarted worker

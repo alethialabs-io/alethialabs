@@ -1,0 +1,104 @@
+---
+title: Real-Time Log Streaming
+description: How Runner streams Terraform output to the browser in real-time.
+---
+
+# Real-Time Log Streaming
+
+Runner streams all Terraform output back to Alethia in real-time. Users see `terraform plan` and `terraform apply` output in the browser as it happens.
+
+## Architecture
+
+```
+Terraform process
+  ├── stdout ──► JobLogger (STDOUT) ──► Buffer ──► POST /api/jobs/{id}/logs
+  └── stderr ──► JobLogger (STDERR) ──► Buffer ──► POST /api/jobs/{id}/logs
+                                                          │
+                                                          ▼
+                                                   provision_job_logs table
+                                                          │
+                                                          ▼
+                                                   Supabase Realtime (INSERT)
+                                                          │
+                                                          ▼
+                                                   Browser WebSocket subscription
+```
+
+## JobLogger
+
+The `JobLogger` is a Go struct that wraps an `io.Writer`. It buffers output and flushes to the Alethia API periodically.
+
+**Two loggers per job:**
+- **STDOUT logger** — captures normal Terraform output (plan details, resource progress)
+- **STDERR logger** — captures errors and warnings
+
+**Buffer flush triggers:**
+- Every **2 seconds** (ticker-based flush)
+- When the buffer exceeds **10 KB** (size-based flush)
+- On job completion (final flush)
+
+## API Delivery
+
+Each flush sends a batch POST:
+
+```
+POST /api/jobs/{job_id}/logs
+Content-Type: application/json
+
+{
+  "log_chunk": "Creating VPC...\nVPC created: vpc-12345\n",
+  "stream_type": "STDOUT"
+}
+```
+
+The Alethia API inserts the chunk into `provision_job_logs`:
+
+```sql
+INSERT INTO provision_job_logs (job_id, log_chunk, stream_type, created_at)
+VALUES ($1, $2, $3, now());
+```
+
+## Supabase Realtime
+
+The browser subscribes to INSERT events on `provision_job_logs` filtered by `job_id`:
+
+```typescript
+supabase
+  .channel(`job-logs-${jobId}`)
+  .on('postgres_changes', {
+    event: 'INSERT',
+    schema: 'public',
+    table: 'provision_job_logs',
+    filter: `job_id=eq.${jobId}`
+  }, (payload) => {
+    appendLogChunk(payload.new.log_chunk, payload.new.stream_type);
+  })
+  .subscribe();
+```
+
+Each new batch appears in the log viewer within milliseconds of being written by the Runner.
+
+## Log Display
+
+The job detail page renders logs in a terminal-like viewer:
+
+- **STDOUT** lines in default color (white/light gray)
+- **STDERR** lines in red
+- **SYSTEM** lines in blue (platform messages like "Assuming IAM role..." or "Starting terraform plan...")
+- Auto-scroll to bottom as new lines arrive
+- Manual scroll lock when the user scrolls up
+
+## Local Echo
+
+All log output is also written to the container's stdout, which goes to CloudWatch Logs (for cloud-hosted Runners) or the local terminal (for self-hosted Runners). This provides a secondary log source for debugging.
+
+## Timing
+
+| Event | Latency |
+|-------|---------|
+| Terraform writes to stdout | 0ms (piped to JobLogger) |
+| JobLogger buffer flush | ≤ 2 seconds (ticker interval) |
+| API POST to Alethia | ~50ms (network) |
+| Database INSERT | ~5ms |
+| Supabase Realtime delivery | ~50ms (WebSocket push) |
+| **Total: Terraform output → browser** | **~2-3 seconds** |

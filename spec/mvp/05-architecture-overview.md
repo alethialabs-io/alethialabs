@@ -1,211 +1,62 @@
-# Architecture Overview
+# 05 — Architecture Overview
 
-## System Topology
+System topology, the control/execution split, the two-axis provider model, and the data model — in the Alethia lexicon. Deep dives: self-hosting [06](06-self-hosting-architecture.md), authz [07](07-auth-rbac-sso.md), providers [09](09-multi-cloud-cluster-strategies.md), repo structure & naming [18](18-repo-structure-and-naming.md).
 
-```
-  Developer Browser                    Developer Terminal
-       │                                     │
-       ▼                                     ▼
-┌──────────────┐                     ┌───────────────┐
-│   Trellis    │                     │   Grape CLI   │
-│  (Next.js)   │◄────────────────────│   (Go/Cobra)  │
-│   Vercel     │     REST API        │   Homebrew    │
-└──────┬───────┘                     └───────────────┘
-       │
-       ▼
-┌──────────────┐         poll / log         ┌───────────────┐
-│   Supabase   │◄──────────────────────────►│  Grape Worker │
-│  PostgreSQL  │    /api/jobs/claim          │  (Go daemon)  │
-│  + Realtime  │    /api/jobs/{id}/logs      │  ECS Fargate  │
-│  + Auth      │                            └───────┬───────┘
-│  + RLS       │                                    │
-└──────────────┘                                    │
-                              AssumeRole / WIF / FederatedID
-                                                    │
-                                                    ▼
-                                     ┌─────────────────────────┐
-                                     │   User's Cloud Account  │
-                                     │   AWS  │  GCP  │  Azure │
-                                     ├─────────────────────────┤
-                                     │  VPC/VNet               │
-                                     │  EKS/GKE/AKS           │
-                                     │  Aurora/CloudSQL/AzDB   │
-                                     │  ElastiCache/Memorystore│
-                                     │  DynamoDB/Firestore     │
-                                     │  SQS/PubSub/ServiceBus  │
-                                     │  Route53/CloudDNS       │
-                                     │  ArgoCD (installed)     │
-                                     └─────────────────────────┘
-```
-
----
-
-## Component Responsibilities
-
-| Component | Language | Role | Deployment |
-|-----------|----------|------|------------|
-| **Trellis** | TypeScript / Next.js | Web control plane — auth, vineyards, vines, cloud identities, Git tokens, job queue, dashboard UI | Vercel |
-| **Grape CLI** | Go / Cobra | Local auth, config creation via interactive TUI, job queuing, legacy local provisioning | Homebrew binary |
-| **Grape Worker** | Go | Job claiming, cloud credential assumption, Terraform/Helm/kubectl execution, log streaming back to Trellis | ECS Fargate or self-hosted |
-| **Vintner** | TypeScript / Fumadocs | Documentation site with CLI, platform, and agent docs | Vercel |
-| **ArgoCD** | — | In-cluster GitOps reconciler, installed automatically during bootstrap | User's K8s cluster |
-
----
-
-## Security Architecture
-
-### Zero-Credential Model
-
-Trellis never stores static cloud keys. The control plane is decoupled from the execution plane:
+## Topology
 
 ```
-Traditional:    CI/CD ──(static keys)──► Cloud Account     ← keys leak, keys rotate, keys get over-permissioned
-Trellis:        Worker ──(assume role)──► Cloud Account     ← short-lived session, scoped permissions, no keys stored
+ Browser ─┐                         ┌─ Postgres (app + auth + queue RPCs + LISTEN/NOTIFY)
+ alethia CLI ─┼─► Alethia web (Next.js) ─┼─ S3 (SeaweedFS / any S3)
+          │   Better Auth · Drizzle  │
+          │   PDP · SSE              └─ ── ── ── ── ──┐
+          │                                           │ HTTP (Bearer) + S3 + Postgres
+          └─────────────────────────────────────►  runner (Go worker)
+                                                       │ assumes role at runtime
+                                                       ▼
+                                              Your cloud account (provision)
 ```
 
-### Per-Provider Authentication
+Self-host footprint ≈ **4 containers** (web · postgres · s3 · node). See [06](06-self-hosting-architecture.md).
 
-| Provider | Auth Method | How It Works |
-|----------|-------------|-------------|
-| **AWS** | Cross-account IAM Role | User deploys CloudFormation template that creates `GrapeProvisionerRole` with External ID. Worker calls `STS:AssumeRole` at job execution time. Session expires after 1 hour. |
-| **GCP** | Workload Identity Federation | User configures WIF pool + provider. Worker exchanges OIDC token for short-lived GCP credentials. No service account key file. |
-| **Azure** | Federated Identity | User creates App Registration with federated credential. Worker authenticates via OIDC token exchange. No client secret. |
+## Control plane vs execution plane (the zero-trust split)
 
-### Data Security
+- **Control plane** (Alethia web + Postgres): designs Specs, queues jobs, stores config and *identifiers* — never cloud secrets.
+- **Execution plane** (runner worker): runs in/against the user's cloud, **assumes roles at execution time**, executes OpenTofu, streams logs back over plain HTTP. The control plane and worker share only an HTTP/S3/Postgres contract (`packages/alethia-core/api/api.go`) — which is why the worker is unaffected by the de-Supabase migration.
 
-- All Supabase tables have Row-Level Security (RLS) policies scoped to `auth.uid()`
-- `cloud_identities` queries are always filtered by `provider` to prevent cross-provider data leaks
-- Git provider tokens (`provider_tokens`) are stored encrypted at rest in Supabase
-- Worker authentication uses unique token per worker, stored in `~/.config/grape/worker.json`
-- Device code auth flow for CLI — no password entry in terminal
+## The two-axis provider model
 
----
+Provisioning is parameterized on two independent axes (detail in [09](09-multi-cloud-cluster-strategies.md)):
 
-## Data Model
+| Axis | Today | Target |
+|---|---|---|
+| **CloudProvider** (infra) | `aws` / `gcp` / `azure` (hardcoded in `cloud/provider.go` + `registry.ts`) | many providers behind one source of truth |
+| **ClusterStrategy** | managed only (EKS/GKE/AKS) | `managed` \| `self-managed` (Talos/k3s, optional) |
 
-### Core Tables
+One level down, **category providers** (DNS/secrets/registry/observability) are pluggable per Spec ([08](08-integrations-extensibility.md)).
+
+## Data model
 
 ```
-profiles ─────────┐
-                   │ user_id
-vineyards ────────┤
-  │                │
-  │ vineyard_id    │
-  ▼                │
-vines ─────────────┘
-  │ vine_id
-  ├── vine_network            (1:1)
-  ├── vine_cluster            (1:1)
-  ├── vine_dns                (1:1)
-  ├── vine_database           (1:many)
-  ├── vine_caches             (1:many)
-  ├── vine_nosql_tables       (1:many)
-  ├── vine_queues             (1:many)
-  ├── vine_topics             (1:many)
-  ├── vine_secrets            (1:many)
-  └── vine_container_registries (1:many)
+user ──(member of)──► org [ee]           # community: org=null, single-owner
+   └──owns──► Zone ──contains──► Spec ──has──► components
+                                          (cluster, network, dns, databases, caches,
+                                           queues, topics, nosql, registries, secrets, observability)
+Spec ──provision──► job ──claimed by──► runner (worker)
+authz: every access via the PDP; coarse org_id RLS backstop  (see 07)
+integrations: catalog (registry of record) + credentials (cloud_identities / provider_tokens / integration_credentials)
 ```
 
-### Job Orchestration
+- **Specs** carry per-component config; each component has a `provider_config` JSONB and (target) a `provider` selector.
+- **Jobs** are rows claimed atomically (`FOR UPDATE SKIP LOCKED`); the **runner** streams logs and finalizes outputs.
+- **Authorization** runs through the PDP with a coarse `org_id` RLS blast-wall ([07](07-auth-rbac-sso.md)).
 
-```
-provision_jobs
-  │ job_id
-  ├── job_logs          (1:many, streamed chunks)
-  ├── config_snapshot   (JSONB — form data at submission time)
-  └── execution_metadata (JSONB — worker output, cluster info)
+## Tech stack (target)
 
-workers
-  ├── status: ONLINE | OFFLINE | DRAINING
-  └── metadata (JSONB — deploy config, region, image tag)
-```
+- **Web:** Next.js 16, React 19, Better Auth (MIT), Drizzle (Apache-2.0), Tailwind/shadcn, SSE.
+- **Data/infra:** Postgres, S3 (SeaweedFS default), OpenTofu, ArgoCD.
+- **Go:** `alethia` (CLI), `runner` (worker), `alethia-core` (shared lib: cloud abstraction, IaC exec, API client).
+- **Monorepo:** pnpm + Turborepo + Go workspaces; release-please + GoReleaser. Commercial `ee/` workspace ([12](12-licensing-open-core.md)).
 
-### Supporting Tables
+## Job lifecycle
 
-| Table | Purpose |
-|-------|---------|
-| `cloud_identities` | AWS/GCP/Azure credentials (role ARN, WIF config, federated identity config) + cached resources (VPCs, subnets, zones) |
-| `provider_tokens` | Git provider OAuth tokens (GitHub, GitLab, Bitbucket) with refresh logic |
-| `integrations` | Third-party service registry (name, auth method, status, docs URL) |
-| `cli_logins` | Device code auth flow state (device_code, verification_code, expires_at) |
-| `vine_audit_log` | Action history (action, component_type, changes JSONB) |
-
----
-
-## Tech Stack
-
-### Frontend
-| Technology | Purpose |
-|-----------|---------|
-| Next.js 16 | App router, server actions, API routes |
-| React 19 | UI components |
-| Tailwind CSS 4 | Styling |
-| shadcn/ui + Radix | Component library |
-| React Flow | Infrastructure topology visualization |
-| React Hook Form + Zod | Form management and validation |
-| Zustand | Client-side state management |
-
-### Backend
-| Technology | Purpose |
-|-----------|---------|
-| Supabase | PostgreSQL, Auth, Realtime (WebSockets), Row-Level Security, S3 storage |
-| Vercel | Hosting for Trellis and Vintner |
-
-### CLI & Worker
-| Technology | Purpose |
-|-----------|---------|
-| Go 1.25 | CLI binary and worker daemon |
-| Cobra | Command routing |
-| Charmbracelet (huh, lipgloss, bubbletea) | Interactive TUI forms and styling |
-| terraform-exec | Terraform CLI wrapper |
-| AWS SDK v2, GCP SDK, Azure SDK | Cloud resource discovery and authentication |
-| Helm SDK | Chart installation (ArgoCD) |
-
-### Infrastructure
-| Technology | Purpose |
-|-----------|---------|
-| Terraform | Infrastructure-as-Code generation and execution |
-| ArgoCD | In-cluster GitOps reconciliation |
-| Helm | Kubernetes package management |
-| Docker | Worker container images |
-| ECS Fargate | Cloud-hosted worker runtime |
-
-### Integrations
-| Technology | Purpose |
-|-----------|---------|
-| Infracost | Pre-deploy cost estimation |
-| GitHub / GitLab / Bitbucket | Git provider OAuth and repository integration |
-| AWS / GCP / Azure pricing APIs | Real-time cost sidebar data |
-
----
-
-## Worker Execution Flow
-
-```
-1. Worker starts (grape worker start)
-   └── Poll loop every 10s
-       └── POST /api/jobs/claim
-           ├── No job → sleep 10s → retry
-           └── Job claimed → executeJob(job)
-
-2. executeJob(job):
-   ├── Read cloud_identity from job config
-   ├── Assume credentials:
-   │   ├── AWS: STS AssumeRole
-   │   ├── GCP: WIF token exchange
-   │   └── Azure: Federated identity OIDC
-   ├── Switch on job.type:
-   │   ├── CONNECTION_TEST → verify auth, list resources
-   │   ├── FETCH_RESOURCES → discover VPCs, subnets, zones, IAM
-   │   ├── PLAN → terraform plan + infracost analysis
-   │   ├── DEPLOY → terraform apply + ArgoCD install
-   │   ├── DESTROY → terraform destroy
-   │   ├── DEPLOY_WORKER → provision worker infrastructure
-   │   └── DESTROY_WORKER → teardown worker infrastructure
-   ├── Stream logs → POST /api/jobs/{id}/logs (batched)
-   └── Update job status → SUCCESS or FAILED
-
-3. Heartbeat every 30s
-   └── POST /api/workers/heartbeat
-       └── If missed → Trellis marks worker OFFLINE → stale job recovery
-```
+`design Spec → queue job → runner claims (SKIP LOCKED) → assume role → OpenTofu init/plan/apply → stream logs (SSE) → finalize outputs (cluster endpoint, etc.) → ArgoCD reconciles`. Stale jobs are recovered by a periodic `recover_stale_jobs` sweep (moving off the AWS Lambda for self-host, see [06](06-self-hosting-architecture.md)).

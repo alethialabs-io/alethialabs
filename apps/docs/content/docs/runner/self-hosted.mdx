@@ -1,0 +1,104 @@
+---
+title: Self-Hosted Mode
+description: Running Runner on your own infrastructure for on-premises or air-gapped environments.
+---
+
+# Self-Hosted Mode
+
+While the default deployment is cloud-hosted (ECS Fargate), Runner can also run on any machine with the required dependencies. This is useful for on-premises environments, air-gapped networks, or development/testing.
+
+## Prerequisites
+
+The self-hosted Runner binary requires these tools installed on the host:
+
+| Tool | Purpose | Minimum Version |
+|------|---------|----------------|
+| Terraform | Infrastructure provisioning | 1.7+ |
+| kubectl | Kubernetes cluster access | 1.28+ |
+| Helm | Chart installation (ArgoCD, components) | 3.12+ |
+| AWS CLI | AWS credential handling (if targeting AWS) | 2.x |
+| gcloud | GCP credential handling (if targeting GCP) | Latest |
+| Azure CLI | Azure credential handling (if targeting Azure) | Latest |
+
+The cloud-hosted Docker image bundles all of these. In self-hosted mode, you must install them yourself.
+
+## Registration
+
+Before running, the Runner must be registered with Alethia:
+
+1. Register via the Alethia API or CLI (`alethia worker register`)
+2. Receive a `WORKER_ID` and `WORKER_TOKEN`
+3. Pass these as environment variables
+
+## Running
+
+Set the required environment variables and start the binary:
+
+```bash
+export ALETHIA_WEB_ORIGIN=https://alethia.example.com
+export ALETHIA_WORKER_ID=<worker-id>
+export ALETHIA_WORKER_TOKEN=<worker-token>
+export ALETHIA_WORKER_MODE=self-hosted
+export SUPABASE_S3_ENDPOINT=<s3-endpoint>
+export SUPABASE_S3_REGION=<s3-region>
+export SUPABASE_STORAGE_KEY_ID=<s3-key>
+export SUPABASE_STORAGE_SECRET_KEY=<s3-secret>
+
+# Optional
+export INFRACOST_API_KEY=<key>
+
+./runner
+```
+
+The Runner will:
+1. Start the heartbeat goroutine
+2. Begin polling for jobs
+3. Execute jobs using locally installed tools
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ALETHIA_WEB_ORIGIN` | Yes | Alethia API base URL |
+| `ALETHIA_WORKER_ID` | Yes | Assigned worker ID |
+| `ALETHIA_WORKER_TOKEN` | Yes | Authentication token |
+| `ALETHIA_WORKER_MODE` | Yes | Must be `self-hosted` |
+| `SUPABASE_S3_ENDPOINT` | Yes | Terraform state S3 endpoint |
+| `SUPABASE_S3_REGION` | Yes | S3 region |
+| `SUPABASE_STORAGE_KEY_ID` | Yes | S3 access key |
+| `SUPABASE_STORAGE_SECRET_KEY` | Yes | S3 secret key |
+| `INFRACOST_API_KEY` | No | Enables cost estimation |
+
+## Use Cases
+
+### On-Premises Infrastructure
+
+For organizations that need infrastructure provisioned from within their network (e.g., private cloud, bare metal):
+- Run Runner on a bastion host or CI/CD runner
+- Runner polls Alethia over HTTPS (outbound only — no inbound ports required)
+- Terraform provisions resources accessible from the internal network
+
+### Air-Gapped Environments
+
+For high-security environments without internet access:
+- Pre-download Terraform providers and modules
+- Configure Terraform to use a local mirror
+- Runner communicates with Alethia via an approved network path
+
+### Development and Testing
+
+For local development:
+- Run Runner alongside the Alethia dev server
+- Point `ALETHIA_WEB_ORIGIN` to `http://localhost:3000`
+- Test job execution without deploying to Fargate
+
+## Differences from Cloud-Hosted
+
+| Aspect | Cloud-Hosted | Self-Hosted |
+|--------|-------------|-------------|
+| Deployment | Automatic (ECS Fargate) | Manual (user manages) |
+| Scale-to-zero | Lambda scaler | Not applicable |
+| Tool management | Bundled in Docker image | User installs |
+| Updates | Automatic (ECS force-redeploy) | Manual binary update |
+| Monitoring | CloudWatch logs | Local stdout/stderr |
+| Network | Runs in platform VPC | Runs in user's network |
