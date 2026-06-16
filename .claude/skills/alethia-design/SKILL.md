@@ -11,8 +11,8 @@ Read `readme.md` in this skill first — it is the full design guide and manifes
 ## What's here
 - `styles.css` — the single CSS entry point (link this). Pulls in all tokens, fonts, and component classes.
 - `tokens/` — colors (grayscale ink ramp + dark/light themes), typography, spacing, effects, motion.
-- `components/` — React primitives (Button, Badge, Input, Select, Checkbox, Radio, Switch, Card, Avatar, Separator, Tabs, StatusBadge, Alert, Spinner, Kbd). They are bundled into `_ds_bundle.js` and exposed on `window.VertexDesignSystem_8c015f`.
-- `ui_kits/` — full interactive recreations: `vertex-app` (control-plane dashboard) and `vertex-web` (marketing landing).
+- `components/` — React primitives (Button, Badge, Input, Select, Checkbox, Radio, Switch, Card, Avatar, Separator, Tabs, StatusBadge, Alert, Spinner, Kbd). They are bundled into `_ds_bundle.js` and exposed on `window.AlethiaDesignSystem_8c015f`.
+- `ui_kits/` — full interactive recreations: `alethia-app` (control-plane dashboard) and `alethia-web` (marketing landing).
 - `guidelines/` — foundation specimen cards.
 - `assets/` — Alethia logo/mark, Alethia lockup, and original cloud-provider + integration brand marks.
 

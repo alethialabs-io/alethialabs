@@ -21,8 +21,8 @@
               "components/forms/**",
               "components/navigation/**",
               "components/surfaces/**",
-              "ui_kits/vertex-app/**",
-              "ui_kits/vertex-web/**"
+              "ui_kits/alethia-app/**",
+              "ui_kits/alethia-web/**"
             ],
             "message": "Import design-system components from 'index.js', not component internals."
           }

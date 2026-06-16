@@ -1,8 +1,8 @@
-/* @ds-bundle: {"format":3,"namespace":"VertexDesignSystem_8c015f","components":[{"name":"Badge","sourcePath":"components/buttons/Badge.jsx"},{"name":"Button","sourcePath":"components/buttons/Button.jsx"},{"name":"Kbd","sourcePath":"components/buttons/Kbd.jsx"},{"name":"Alert","sourcePath":"components/feedback/Alert.jsx"},{"name":"Spinner","sourcePath":"components/feedback/Alert.jsx"},{"name":"StatusBadge","sourcePath":"components/feedback/StatusBadge.jsx"},{"name":"Checkbox","sourcePath":"components/forms/Checkbox.jsx"},{"name":"Radio","sourcePath":"components/forms/Checkbox.jsx"},{"name":"Field","sourcePath":"components/forms/Field.jsx"},{"name":"Label","sourcePath":"components/forms/Field.jsx"},{"name":"Hint","sourcePath":"components/forms/Field.jsx"},{"name":"Input","sourcePath":"components/forms/Input.jsx"},{"name":"Textarea","sourcePath":"components/forms/Input.jsx"},{"name":"Select","sourcePath":"components/forms/Select.jsx"},{"name":"Switch","sourcePath":"components/forms/Switch.jsx"},{"name":"Tabs","sourcePath":"components/navigation/Tabs.jsx"},{"name":"Avatar","sourcePath":"components/surfaces/Avatar.jsx"},{"name":"Card","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardHeader","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardTitle","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardDescription","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardBody","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardFooter","sourcePath":"components/surfaces/Card.jsx"},{"name":"Separator","sourcePath":"components/surfaces/Separator.jsx"}],"sourceHashes":{"components/buttons/Badge.jsx":"047fa17b0ff4","components/buttons/Button.jsx":"f3b5ba412bbb","components/buttons/Kbd.jsx":"ad807993a0fd","components/feedback/Alert.jsx":"3845f66729ad","components/feedback/StatusBadge.jsx":"4730e4d183b7","components/forms/Checkbox.jsx":"947a55761fa6","components/forms/Field.jsx":"3cc9dcf9e0ae","components/forms/Input.jsx":"b9a3c7c65aa8","components/forms/Select.jsx":"8594e8bae0df","components/forms/Switch.jsx":"716cd8a0ef91","components/navigation/Tabs.jsx":"a10f819dfd81","components/surfaces/Avatar.jsx":"ed3235970c09","components/surfaces/Card.jsx":"acc5d2e0d16a","components/surfaces/Separator.jsx":"471014007d62","ui_kits/vertex-app/icons.jsx":"ed61f3f084bb","ui_kits/vertex-app/screens.jsx":"33ee0891b6eb","ui_kits/vertex-app/shell.jsx":"80aee4917e05","ui_kits/vertex-web/sections.jsx":"2c9a35c01254"},"inlinedExternals":[],"unexposedExports":[]} */
+/* @ds-bundle: {"format":3,"namespace":"AlethiaDesignSystem_8c015f","components":[{"name":"Badge","sourcePath":"components/buttons/Badge.jsx"},{"name":"Button","sourcePath":"components/buttons/Button.jsx"},{"name":"Kbd","sourcePath":"components/buttons/Kbd.jsx"},{"name":"Alert","sourcePath":"components/feedback/Alert.jsx"},{"name":"Spinner","sourcePath":"components/feedback/Alert.jsx"},{"name":"StatusBadge","sourcePath":"components/feedback/StatusBadge.jsx"},{"name":"Checkbox","sourcePath":"components/forms/Checkbox.jsx"},{"name":"Radio","sourcePath":"components/forms/Checkbox.jsx"},{"name":"Field","sourcePath":"components/forms/Field.jsx"},{"name":"Label","sourcePath":"components/forms/Field.jsx"},{"name":"Hint","sourcePath":"components/forms/Field.jsx"},{"name":"Input","sourcePath":"components/forms/Input.jsx"},{"name":"Textarea","sourcePath":"components/forms/Input.jsx"},{"name":"Select","sourcePath":"components/forms/Select.jsx"},{"name":"Switch","sourcePath":"components/forms/Switch.jsx"},{"name":"Tabs","sourcePath":"components/navigation/Tabs.jsx"},{"name":"Avatar","sourcePath":"components/surfaces/Avatar.jsx"},{"name":"Card","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardHeader","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardTitle","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardDescription","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardBody","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardFooter","sourcePath":"components/surfaces/Card.jsx"},{"name":"Separator","sourcePath":"components/surfaces/Separator.jsx"}],"sourceHashes":{"components/buttons/Badge.jsx":"047fa17b0ff4","components/buttons/Button.jsx":"f3b5ba412bbb","components/buttons/Kbd.jsx":"ad807993a0fd","components/feedback/Alert.jsx":"3845f66729ad","components/feedback/StatusBadge.jsx":"4730e4d183b7","components/forms/Checkbox.jsx":"947a55761fa6","components/forms/Field.jsx":"3cc9dcf9e0ae","components/forms/Input.jsx":"b9a3c7c65aa8","components/forms/Select.jsx":"8594e8bae0df","components/forms/Switch.jsx":"716cd8a0ef91","components/navigation/Tabs.jsx":"a10f819dfd81","components/surfaces/Avatar.jsx":"ed3235970c09","components/surfaces/Card.jsx":"acc5d2e0d16a","components/surfaces/Separator.jsx":"471014007d62","ui_kits/alethia-app/icons.jsx":"ed61f3f084bb","ui_kits/alethia-app/screens.jsx":"33ee0891b6eb","ui_kits/alethia-app/shell.jsx":"80aee4917e05","ui_kits/alethia-web/sections.jsx":"2c9a35c01254"},"inlinedExternals":[],"unexposedExports":[]} */
 
 (() => {
 
-const __ds_ns = (window.VertexDesignSystem_8c015f = window.VertexDesignSystem_8c015f || {});
+const __ds_ns = (window.AlethiaDesignSystem_8c015f = window.AlethiaDesignSystem_8c015f || {});
 
 const __ds_scope = {};
 
@@ -505,7 +505,7 @@ function Separator({
 Object.assign(__ds_scope, { Separator });
 })(); } catch (e) { __ds_ns.__errors.push({ path: "components/surfaces/Separator.jsx", error: String((e && e.message) || e) }); }
 
-// ui_kits/vertex-app/icons.jsx
+// ui_kits/alethia-app/icons.jsx
 try { (() => {
 /* Alethia UI kit — compact Lucide-style icon set (1.75px stroke, round caps). */
 const I = (paths, props = {}) => ({
@@ -946,12 +946,12 @@ const Icons = {
   Dollar: I(["M12 2v20", "M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"])
 };
 window.VxIcons = Icons;
-})(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/vertex-app/icons.jsx", error: String((e && e.message) || e) }); }
+})(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/alethia-app/icons.jsx", error: String((e && e.message) || e) }); }
 
-// ui_kits/vertex-app/screens.jsx
+// ui_kits/alethia-app/screens.jsx
 try { (() => {
 /* Alethia App UI kit — screen content. */
-const S_VX = window.VertexDesignSystem_8c015f;
+const S_VX = window.AlethiaDesignSystem_8c015f;
 const {
   Button: SBtn,
   Badge: SBadge,
@@ -1101,7 +1101,7 @@ function Overview() {
       flexWrap: "wrap",
       gap: 8
     }
-  }, [["aws", "AWS", "acct 4471-…"], ["gcp", "GCP", "vertex-prod"]].map(([id, n, d]) => /*#__PURE__*/React.createElement("span", {
+  }, [["aws", "AWS", "acct 4471-…"], ["gcp", "GCP", "alethia-prod"]].map(([id, n, d]) => /*#__PURE__*/React.createElement("span", {
     key: id,
     style: {
       display: "flex",
@@ -1688,13 +1688,13 @@ window.VxScreens = {
   Integrations,
   Tendrils
 };
-})(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/vertex-app/screens.jsx", error: String((e && e.message) || e) }); }
+})(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/alethia-app/screens.jsx", error: String((e && e.message) || e) }); }
 
-// ui_kits/vertex-app/shell.jsx
+// ui_kits/alethia-app/shell.jsx
 try { (() => {
 /* Alethia App UI kit — interactive control-plane recreation.
-   Composes the Alethia design-system primitives (window.VertexDesignSystem_8c015f). */
-const VX = window.VertexDesignSystem_8c015f;
+   Composes the Alethia design-system primitives (window.AlethiaDesignSystem_8c015f). */
+const VX = window.AlethiaDesignSystem_8c015f;
 const {
   Button,
   Badge,
@@ -2065,7 +2065,7 @@ function TopBar({
       fontSize: 12,
       color: "var(--text-tertiary)"
     }
-  }, /*#__PURE__*/React.createElement("span", null, "vertex"), /*#__PURE__*/React.createElement(Ic.ChevronRight, {
+  }, /*#__PURE__*/React.createElement("span", null, "alethia"), /*#__PURE__*/React.createElement(Ic.ChevronRight, {
     size: 13
   }), /*#__PURE__*/React.createElement("span", {
     style: {
@@ -2127,12 +2127,12 @@ window.VxApp = {
   Ic,
   VX
 };
-})(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/vertex-app/shell.jsx", error: String((e && e.message) || e) }); }
+})(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/alethia-app/shell.jsx", error: String((e && e.message) || e) }); }
 
-// ui_kits/vertex-web/sections.jsx
+// ui_kits/alethia-web/sections.jsx
 try { (() => {
 /* Alethia Web UI kit — marketing landing recreation. */
-const W = window.VertexDesignSystem_8c015f;
+const W = window.AlethiaDesignSystem_8c015f;
 const {
   Button: WBtn,
   Badge: WBadge,
@@ -2297,19 +2297,19 @@ function Header() {
 /* ---- Terminal demo ---- */
 const DEMO = {
   aws: {
-    plan: ["$ vertex plan", "", "  ▸ Terraform plan…", "  47 resources to add", "  0 to change, 0 to destroy", "", "  Estimated  $847.23/mo"],
-    deploy: ["$ vertex deploy", "", "  ✓ aws_vpc.main", "  ✓ aws_eks_cluster.main   v1.31", "  ✓ aws_rds_cluster.main    aurora", "  ✓ helm_release.argocd     v2.12", "  … +43 more", "  ✓ Apply complete · 12m 34s"],
-    cost: ["$ vertex cost", "", "  EKS cluster   ████████   $219", "  Aurora DB     ██████████ $412", "  ElastiCache   ██████     $156", "  NAT + DNS     ██          $33", "  ─────────────────────────────", "  Total                $847/mo"]
+    plan: ["$ alethia plan", "", "  ▸ Terraform plan…", "  47 resources to add", "  0 to change, 0 to destroy", "", "  Estimated  $847.23/mo"],
+    deploy: ["$ alethia deploy", "", "  ✓ aws_vpc.main", "  ✓ aws_eks_cluster.main   v1.31", "  ✓ aws_rds_cluster.main    aurora", "  ✓ helm_release.argocd     v2.12", "  … +43 more", "  ✓ Apply complete · 12m 34s"],
+    cost: ["$ alethia cost", "", "  EKS cluster   ████████   $219", "  Aurora DB     ██████████ $412", "  ElastiCache   ██████     $156", "  NAT + DNS     ██          $33", "  ─────────────────────────────", "  Total                $847/mo"]
   },
   gcp: {
-    plan: ["$ vertex plan", "", "  ▸ Terraform plan…", "  39 resources to add", "  0 to change, 0 to destroy", "", "  Estimated  $612.00/mo"],
-    deploy: ["$ vertex deploy", "", "  ✓ google_compute_network.main", "  ✓ google_container_cluster.main", "  ✓ google_sql_database_instance", "  ✓ helm_release.argocd", "  … +29 more", "  ✓ Apply complete · 9m 51s"],
-    cost: ["$ vertex cost", "", "  GKE Autopilot ████████   $241", "  Cloud SQL     █████████  $298", "  Memorystore   ████       $128", "  Other         ██          $45", "  ─────────────────────────────", "  Total                $612/mo"]
+    plan: ["$ alethia plan", "", "  ▸ Terraform plan…", "  39 resources to add", "  0 to change, 0 to destroy", "", "  Estimated  $612.00/mo"],
+    deploy: ["$ alethia deploy", "", "  ✓ google_compute_network.main", "  ✓ google_container_cluster.main", "  ✓ google_sql_database_instance", "  ✓ helm_release.argocd", "  … +29 more", "  ✓ Apply complete · 9m 51s"],
+    cost: ["$ alethia cost", "", "  GKE Autopilot ████████   $241", "  Cloud SQL     █████████  $298", "  Memorystore   ████       $128", "  Other         ██          $45", "  ─────────────────────────────", "  Total                $612/mo"]
   },
   azure: {
-    plan: ["$ vertex plan", "", "  ▸ Terraform plan…", "  41 resources to add", "  0 to change, 0 to destroy", "", "  Estimated  $408.00/mo"],
-    deploy: ["$ vertex deploy", "", "  ✓ azurerm_virtual_network.main", "  ✓ azurerm_kubernetes_cluster", "  ✓ azurerm_postgresql_flexible", "  ✓ helm_release.argocd", "  … +31 more", "  ✓ Apply complete · 11m 08s"],
-    cost: ["$ vertex cost", "", "  AKS           ███████    $198", "  Azure PG      ████████   $142", "  Redis         ████        $52", "  Other         █           $16", "  ─────────────────────────────", "  Total                $408/mo"]
+    plan: ["$ alethia plan", "", "  ▸ Terraform plan…", "  41 resources to add", "  0 to change, 0 to destroy", "", "  Estimated  $408.00/mo"],
+    deploy: ["$ alethia deploy", "", "  ✓ azurerm_virtual_network.main", "  ✓ azurerm_kubernetes_cluster", "  ✓ azurerm_postgresql_flexible", "  ✓ helm_release.argocd", "  … +31 more", "  ✓ Apply complete · 11m 08s"],
+    cost: ["$ alethia cost", "", "  AKS           ███████    $198", "  Azure PG      ████████   $142", "  Redis         ████        $52", "  Other         █           $16", "  ─────────────────────────────", "  Total                $408/mo"]
   }
 };
 function Terminal() {
@@ -2420,7 +2420,7 @@ function Terminal() {
       height: 15,
       background: "var(--text-primary)",
       verticalAlign: "middle",
-      animation: "vertex-blink 1.4s linear infinite"
+      animation: "alethia-blink 1.4s linear infinite"
     }
   })));
 }
@@ -2510,7 +2510,7 @@ function Hero() {
     style: {
       color: "var(--text-tertiary)"
     }
-  }, "$ "), "brew install vertex"), /*#__PURE__*/React.createElement("span", {
+  }, "$ "), "brew install alethia"), /*#__PURE__*/React.createElement("span", {
     style: {
       ...ebw,
       fontSize: 10
@@ -2653,7 +2653,7 @@ function Features() {
 
 /* ---- Ecosystem / modules ---- */
 function Ecosystem() {
-  const mods = [["Alethia", "Web control plane", "Visual infrastructure configuration, job dashboard, real-time logs, cost estimation."], ["vertex-cli", "CLI + worker", "An interactive terminal wizard for plan, deploy, and teardown across clouds."]];
+  const mods = [["Alethia", "Web control plane", "Visual infrastructure configuration, job dashboard, real-time logs, cost estimation."], ["alethia-cli", "CLI + worker", "An interactive terminal wizard for plan, deploy, and teardown across clouds."]];
   return /*#__PURE__*/React.createElement("section", {
     style: {
       padding: "0 0 80px"
@@ -2820,7 +2820,7 @@ function Site() {
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(Header, null), /*#__PURE__*/React.createElement(Hero, null), /*#__PURE__*/React.createElement(Features, null), /*#__PURE__*/React.createElement(Ecosystem, null), /*#__PURE__*/React.createElement(Footer, null));
 }
 window.VxSite = Site;
-})(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/vertex-web/sections.jsx", error: String((e && e.message) || e) }); }
+})(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/alethia-web/sections.jsx", error: String((e && e.message) || e) }); }
 
 __ds_ns.Badge = __ds_scope.Badge;
 

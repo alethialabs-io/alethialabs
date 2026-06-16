@@ -16,7 +16,7 @@ The platform has two surfaces, both recreated here as UI kits:
 | Surface | What it is |
 | --- | --- |
 | **Alethia (web control plane)** | Next.js dashboard — visual configuration, job orchestration, clusters, integrations, real-time logs, cost estimation. *(Source name: Trellis.)* |
-| **Alethia CLI** | Interactive terminal wizard — auth, plan, deploy (`harvest`), destroy, worker management. *(Source name: Grape.)* |
+| **Alethia CLI** | Interactive terminal wizard — auth, plan, deploy (`harvest`), destroy, worker management. |
 
 **Product domain vocabulary** (kept verbatim because it appears throughout real screens):
 *Vineyard* = a workspace · *Vine* = one infrastructure configuration · *Tendril* = a provisioning worker that runs Terraform · *Plant a Vine* = create & provision. Clouds supported: **AWS, GCP, Azure** (Alibaba scaffolded).
@@ -26,7 +26,7 @@ This system was reverse-engineered from a real codebase. If you have access, exp
 
 - **GitHub — `alethialabs-io/alethialabs`** → https://github.com/alethialabs-io/alethialabs
   - Web control plane: `apps/trellis` (Next.js 16, React 19, Tailwind v4, shadcn/ui "new-york", Lucide, default-dark, Geist + Geist Mono).
-  - CLI: `apps/grape` (Go, Cobra, Charmbracelet). Worker: `apps/tendril`. Docs: `apps/vintner`.
+  - CLI: `apps/cli` (Go, Cobra, Charmbracelet). Worker: `apps/runner`. Docs: `apps/docs`.
   - Marketing landing: `apps/trellis/components/landing/*`. Primitives: `apps/trellis/components/ui/*`.
 - Aesthetic reference supplied by the user: **tovr.eu** (and `/apex`, `/fos`) — sophisticated monochrome.
 
@@ -73,10 +73,10 @@ How Alethia writes. Channels the tovr.eu voice: terse, declarative, confident.
 
 ## 4 · Iconography
 
-- **Primary set: Lucide** — 1.5–1.75px stroke, round caps/joins, 24px grid, drawn in `currentColor` (so they inherit the ink). This matches the source product (`iconLibrary: "lucide"`). In consuming projects, link Lucide from CDN; in these kits a compact hand-matched subset lives in `ui_kits/vertex-app/icons.jsx`.
+- **Primary set: Lucide** — 1.5–1.75px stroke, round caps/joins, 24px grid, drawn in `currentColor` (so they inherit the ink). This matches the source product (`iconLibrary: "lucide"`). In consuming projects, link Lucide from CDN; in these kits a compact hand-matched subset lives in `ui_kits/alethia-app/icons.jsx`.
 - **No emoji. No unicode-glyph icons** (except `·`, `→`, `✓`, `▸` inside terminal output, which are type, not icons).
 - **Brand marks** (cloud providers, integrations) are **real raster logos** kept in original color — the only color in the system. Stored in `assets/providers/*.png` (AWS, GCP, Azure, Alibaba) and `assets/integrations/*.png` (GitHub, GitLab, Bitbucket, Cloudflare, Datadog, Dockerhub, Grafana, Prometheus). These were copied from the source repo's `public/` folder.
-- **The Alethia mark** is a monochrome geometric glyph (two stacked apex strokes converging on a node) — `assets/vertex-mark.svg`, drawn in `currentColor`. Wordmark uses Space Grotesk; the Alethia parent lockup uses tracked Geist Mono.
+- **The Alethia mark** is "the bracketed point" — a monochrome geometric glyph of two brackets framing a center dot — `assets/alethia-mark.svg`, drawn in `currentColor`. Wordmark uses Space Grotesk; the Alethia Labs parent lockup appends a tracked Geist Mono `LABS`.
 
 ---
 
@@ -86,10 +86,10 @@ How Alethia writes. Channels the tovr.eu voice: terse, declarative, confident.
 - `styles.css` — the single entry point consumers link (`@import` manifest only).
 - `tokens/` — `fonts · colors · typography · spacing · effects · motion · base`.
 - `components/components.css` — class layer for the bundled primitives.
-- `assets/` — `vertex-mark.svg`, `vertex-wordmark.svg`, `alethia-wordmark.svg`, `providers/`, `integrations/`.
+- `assets/` — `alethia-mark.svg`, `alethia-wordmark.svg`, `providers/`, `integrations/`.
 - `SKILL.md` — Agent-Skills-compatible entry point.
 
-**Components** (`window.VertexDesignSystem_8c015f.*`)
+**Components** (`window.AlethiaDesignSystem_8c015f.*`)
 - `components/buttons/` — **Button**, **Badge**, **Kbd**
 - `components/forms/` — **Input**, **Textarea**, **Field**, **Label**, **Hint**, **Select**, **Checkbox**, **Radio**, **Switch**
 - `components/surfaces/` — **Card** (+ Header/Title/Description/Body/Footer), **Avatar**, **Separator**
@@ -97,8 +97,8 @@ How Alethia writes. Channels the tovr.eu voice: terse, declarative, confident.
 - `components/navigation/` — **Tabs**
 
 **UI kits**
-- `ui_kits/vertex-app/` — interactive control-plane dashboard (6 screens + sign-in).
-- `ui_kits/vertex-web/` — marketing landing with interactive terminal.
+- `ui_kits/alethia-app/` — interactive control-plane dashboard (6 screens + sign-in).
+- `ui_kits/alethia-web/` — marketing landing with interactive terminal.
 
 **Foundation cards** (Design System tab) — `guidelines/*.html`: ink ramp, surfaces, text/borders, light theme, display/text/mono/scale type, spacing/radii/elevation, logo/lockups/iconography.
 
@@ -112,7 +112,7 @@ Link the stylesheet and read components off the namespace:
 <link rel="stylesheet" href="styles.css" />
 <script src="_ds_bundle.js"></script>
 <script>
-  const { Button, Card, StatusBadge } = window.VertexDesignSystem_8c015f;
+  const { Button, Card, StatusBadge } = window.AlethiaDesignSystem_8c015f;
 </script>
 ```
 

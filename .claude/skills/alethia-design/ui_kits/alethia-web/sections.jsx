@@ -1,5 +1,5 @@
 /* Alethia Web UI kit — marketing landing recreation. */
-const W = window.VertexDesignSystem_8c015f;
+const W = window.AlethiaDesignSystem_8c015f;
 const { Button: WBtn, Badge: WBadge, Tabs: WTabs, Card: WCard, CardBody: WCB, Separator: WSep } = W;
 
 const WMark = ({ size = 26 }) => (
@@ -39,19 +39,19 @@ function Header() {
 /* ---- Terminal demo ---- */
 const DEMO = {
   aws: {
-    plan: ["$ vertex plan", "", "  ▸ Terraform plan…", "  47 resources to add", "  0 to change, 0 to destroy", "", "  Estimated  $847.23/mo"],
-    deploy: ["$ vertex deploy", "", "  ✓ aws_vpc.main", "  ✓ aws_eks_cluster.main   v1.31", "  ✓ aws_rds_cluster.main    aurora", "  ✓ helm_release.argocd     v2.12", "  … +43 more", "  ✓ Apply complete · 12m 34s"],
-    cost: ["$ vertex cost", "", "  EKS cluster   ████████   $219", "  Aurora DB     ██████████ $412", "  ElastiCache   ██████     $156", "  NAT + DNS     ██          $33", "  ─────────────────────────────", "  Total                $847/mo"],
+    plan: ["$ alethia plan", "", "  ▸ Terraform plan…", "  47 resources to add", "  0 to change, 0 to destroy", "", "  Estimated  $847.23/mo"],
+    deploy: ["$ alethia deploy", "", "  ✓ aws_vpc.main", "  ✓ aws_eks_cluster.main   v1.31", "  ✓ aws_rds_cluster.main    aurora", "  ✓ helm_release.argocd     v2.12", "  … +43 more", "  ✓ Apply complete · 12m 34s"],
+    cost: ["$ alethia cost", "", "  EKS cluster   ████████   $219", "  Aurora DB     ██████████ $412", "  ElastiCache   ██████     $156", "  NAT + DNS     ██          $33", "  ─────────────────────────────", "  Total                $847/mo"],
   },
   gcp: {
-    plan: ["$ vertex plan", "", "  ▸ Terraform plan…", "  39 resources to add", "  0 to change, 0 to destroy", "", "  Estimated  $612.00/mo"],
-    deploy: ["$ vertex deploy", "", "  ✓ google_compute_network.main", "  ✓ google_container_cluster.main", "  ✓ google_sql_database_instance", "  ✓ helm_release.argocd", "  … +29 more", "  ✓ Apply complete · 9m 51s"],
-    cost: ["$ vertex cost", "", "  GKE Autopilot ████████   $241", "  Cloud SQL     █████████  $298", "  Memorystore   ████       $128", "  Other         ██          $45", "  ─────────────────────────────", "  Total                $612/mo"],
+    plan: ["$ alethia plan", "", "  ▸ Terraform plan…", "  39 resources to add", "  0 to change, 0 to destroy", "", "  Estimated  $612.00/mo"],
+    deploy: ["$ alethia deploy", "", "  ✓ google_compute_network.main", "  ✓ google_container_cluster.main", "  ✓ google_sql_database_instance", "  ✓ helm_release.argocd", "  … +29 more", "  ✓ Apply complete · 9m 51s"],
+    cost: ["$ alethia cost", "", "  GKE Autopilot ████████   $241", "  Cloud SQL     █████████  $298", "  Memorystore   ████       $128", "  Other         ██          $45", "  ─────────────────────────────", "  Total                $612/mo"],
   },
   azure: {
-    plan: ["$ vertex plan", "", "  ▸ Terraform plan…", "  41 resources to add", "  0 to change, 0 to destroy", "", "  Estimated  $408.00/mo"],
-    deploy: ["$ vertex deploy", "", "  ✓ azurerm_virtual_network.main", "  ✓ azurerm_kubernetes_cluster", "  ✓ azurerm_postgresql_flexible", "  ✓ helm_release.argocd", "  … +31 more", "  ✓ Apply complete · 11m 08s"],
-    cost: ["$ vertex cost", "", "  AKS           ███████    $198", "  Azure PG      ████████   $142", "  Redis         ████        $52", "  Other         █           $16", "  ─────────────────────────────", "  Total                $408/mo"],
+    plan: ["$ alethia plan", "", "  ▸ Terraform plan…", "  41 resources to add", "  0 to change, 0 to destroy", "", "  Estimated  $408.00/mo"],
+    deploy: ["$ alethia deploy", "", "  ✓ azurerm_virtual_network.main", "  ✓ azurerm_kubernetes_cluster", "  ✓ azurerm_postgresql_flexible", "  ✓ helm_release.argocd", "  … +31 more", "  ✓ Apply complete · 11m 08s"],
+    cost: ["$ alethia cost", "", "  AKS           ███████    $198", "  Azure PG      ████████   $142", "  Redis         ████        $52", "  Other         █           $16", "  ─────────────────────────────", "  Total                $408/mo"],
   },
 };
 function Terminal() {
@@ -79,7 +79,7 @@ function Terminal() {
           const dim = l.startsWith("$") || l.startsWith("  ▸");
           return <div key={i} style={{ color: strong ? "var(--text-primary)" : dim ? "var(--text-tertiary)" : "var(--text-secondary)" }}>{l || " "}</div>;
         })}
-        <span style={{ display: "inline-block", width: 8, height: 15, background: "var(--text-primary)", verticalAlign: "middle", animation: "vertex-blink 1.4s linear infinite" }} />
+        <span style={{ display: "inline-block", width: 8, height: 15, background: "var(--text-primary)", verticalAlign: "middle", animation: "alethia-blink 1.4s linear infinite" }} />
       </pre>
     </div>
   );
@@ -101,7 +101,7 @@ function Hero() {
           Configure multi-cloud Kubernetes visually. Deploy from the terminal. Zero credentials stored.
         </p>
         <div onClick={() => { setCopied(true); setTimeout(() => setCopied(false), 1400); }} style={{ display: "inline-flex", alignItems: "center", gap: 14, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "10px 16px", marginBottom: 44, cursor: "pointer", background: "var(--surface)" }}>
-          <code style={{ ...wmono, fontSize: 14, color: "var(--text-primary)" }}><span style={{ color: "var(--text-tertiary)" }}>$ </span>brew install vertex</code>
+          <code style={{ ...wmono, fontSize: 14, color: "var(--text-primary)" }}><span style={{ color: "var(--text-tertiary)" }}>$ </span>brew install alethia</code>
           <span style={{ ...ebw, fontSize: 10 }}>{copied ? "Copied" : "Copy"}</span>
         </div>
         <div style={{ width: "100%", maxWidth: 760 }}><Terminal /></div>
@@ -147,7 +147,7 @@ function Features() {
 
 /* ---- Ecosystem / modules ---- */
 function Ecosystem() {
-  const mods = [["Alethia", "Web control plane", "Visual infrastructure configuration, job dashboard, real-time logs, cost estimation."], ["vertex-cli", "CLI + worker", "An interactive terminal wizard for plan, deploy, and teardown across clouds."]];
+  const mods = [["Alethia", "Web control plane", "Visual infrastructure configuration, job dashboard, real-time logs, cost estimation."], ["alethia-cli", "CLI + worker", "An interactive terminal wizard for plan, deploy, and teardown across clouds."]];
   return (
     <section style={{ padding: "0 0 80px" }}>
       <Wrap>

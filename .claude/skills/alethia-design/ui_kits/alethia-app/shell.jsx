@@ -1,6 +1,6 @@
 /* Alethia App UI kit — interactive control-plane recreation.
-   Composes the Alethia design-system primitives (window.VertexDesignSystem_8c015f). */
-const VX = window.VertexDesignSystem_8c015f;
+   Composes the Alethia design-system primitives (window.AlethiaDesignSystem_8c015f). */
+const VX = window.AlethiaDesignSystem_8c015f;
 const { Button, Badge, StatusBadge, Card, CardHeader, CardTitle, CardDescription, CardBody, CardFooter, Input, Field, Label, Hint, Select, Switch, Checkbox, Radio, Tabs, Avatar, Separator, Alert, Spinner } = VX;
 const Ic = window.VxIcons;
 
@@ -113,7 +113,7 @@ function TopBar({ active }) {
   return (
     <header style={{ height: "var(--header-h)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 24px", borderBottom: "1px solid var(--border)", background: "color-mix(in oklch, var(--canvas) 80%, transparent)", backdropFilter: "blur(8px)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, ...mono, fontSize: 12, color: "var(--text-tertiary)" }}>
-        <span>vertex</span><Ic.ChevronRight size={13} /><span style={{ color: "var(--text-primary)" }}>{TITLES[active]}</span>
+        <span>alethia</span><Ic.ChevronRight size={13} /><span style={{ color: "var(--text-primary)" }}>{TITLES[active]}</span>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <Button variant="ghost" size="sm" icon aria-label="Search"><Ic.Search size={16} /></Button>

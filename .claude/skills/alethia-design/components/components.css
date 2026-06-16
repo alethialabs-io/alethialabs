@@ -1,5 +1,5 @@
 /* ============================================================
-   VERTEX — component classes
+   ALETHIA — component classes
    Styling for the bundled React primitives. Ships to consumers
    via styles.css. Components carry these class names; all
    visual values resolve from design tokens.
@@ -89,7 +89,7 @@
 .vx-status--failed  .vx-status__dot { background: var(--signal-critical); position: relative; }
 .vx-status--failed  .vx-status__dot::after { content: ""; position: absolute; inset: 2px; background: var(--signal-critical-surface); border-radius: 1px; }
 .vx-status--disabled .vx-status__dot { background: var(--signal-faint); }
-.vx-status--live .vx-status__dot { background: var(--signal-strong); animation: vertex-blink 1.4s var(--ease-linear) infinite; }
+.vx-status--live .vx-status__dot { background: var(--signal-strong); animation: alethia-blink 1.4s var(--ease-linear) infinite; }
 
 /* ---------- Input / Textarea ---------- */
 .vx-input, .vx-textarea {
@@ -257,5 +257,5 @@
 .vx-alert--critical .vx-alert__icon { color: var(--text-primary); }
 
 /* ---------- Spinner ---------- */
-.vx-spinner { display: inline-block; border-radius: var(--radius-full); border: 2px solid var(--border-strong); border-top-color: var(--text-primary); animation: vertex-spin 0.7s var(--ease-linear) infinite; }
-@keyframes vertex-spin { to { transform: rotate(360deg); } }
+.vx-spinner { display: inline-block; border-radius: var(--radius-full); border: 2px solid var(--border-strong); border-top-color: var(--text-primary); animation: alethia-spin 0.7s var(--ease-linear) infinite; }
+@keyframes alethia-spin { to { transform: rotate(360deg); } }
