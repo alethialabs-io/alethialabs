@@ -56,7 +56,7 @@ const awsRoleSchema = z.object({
 			ctx.addIssue({
 				code: "custom",
 				message:
-					"Invalid IAM Role ARN format. Example: arn:aws:iam::123456789012:role/GrapeProvisionerRole",
+					"Invalid IAM Role ARN format. Example: arn:aws:iam::123456789012:role/AlethiaProvisionerRole",
 			});
 		}
 	}),
@@ -135,7 +135,7 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 
 	const templateUrl =
 		"https://alethia-onboarding-templates.s3.eu-west-1.amazonaws.com/alethia-bootstrap.yaml";
-	const launchStackUrl = `https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateURL=${encodeURIComponent(templateUrl)}&stackName=GrapeConnect&param_ExternalId=${encodeURIComponent(externalId)}&param_GrapeAwsAccountId=787587782604`;
+	const launchStackUrl = `https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateURL=${encodeURIComponent(templateUrl)}&stackName=AlethiaConnect&param_ExternalId=${encodeURIComponent(externalId)}&param_AlethiaAwsAccountId=787587782604`;
 
 	const form = useForm<AwsRoleFormValues>({
 		resolver: zodResolver(awsRoleSchema),
@@ -455,7 +455,7 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 															<div className="relative flex-1">
 																<FormControl>
 																	<Input
-																		placeholder="arn:aws:iam::123456789012:role/GrapeProvisionerRole"
+																		placeholder="arn:aws:iam::123456789012:role/AlethiaProvisionerRole"
 																		className="h-9 text-sm border-border/50"
 																		{...field}
 																	/>

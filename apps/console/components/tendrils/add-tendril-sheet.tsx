@@ -448,9 +448,9 @@ function RegisterForm({
 						Start with environment variables
 					</Label>
 					<pre className="rounded-md bg-muted p-3 text-xs font-mono overflow-x-auto border border-border/50 leading-relaxed">
-{`export GRAPE_WORKER_ID=${credentials.workerId}
-export GRAPE_WORKER_TOKEN=${credentials.workerToken}
-grape worker start`}
+{`export ALETHIA_WORKER_ID=${credentials.workerId}
+export ALETHIA_WORKER_TOKEN=${credentials.workerToken}
+alethia worker start`}
 					</pre>
 				</div>
 

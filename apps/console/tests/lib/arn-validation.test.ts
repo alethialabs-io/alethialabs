@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, expect, it } from "vitest";
@@ -19,7 +19,7 @@ function validateRoleArn(
 	if (!match) {
 		return {
 			valid: false,
-			error: "Invalid IAM Role ARN format. Example: arn:aws:iam::123456789012:role/GrapeProvisionerRole",
+			error: "Invalid IAM Role ARN format. Example: arn:aws:iam::123456789012:role/AlethiaProvisionerRole",
 		};
 	}
 
@@ -29,7 +29,7 @@ function validateRoleArn(
 describe("ARN validation", () => {
 	it("accepts valid IAM role ARN", () => {
 		const result = validateRoleArn(
-			"arn:aws:iam::123456789012:role/GrapeProvisionerRole",
+			"arn:aws:iam::123456789012:role/AlethiaProvisionerRole",
 		);
 		expect(result.valid).toBe(true);
 		if (result.valid) expect(result.accountId).toBe("123456789012");
@@ -44,7 +44,7 @@ describe("ARN validation", () => {
 
 	it("rejects CloudFormation ARN with helpful message", () => {
 		const result = validateRoleArn(
-			"arn:aws:cloudformation:us-east-1:123456789012:stack/GrapeConnect/abc",
+			"arn:aws:cloudformation:us-east-1:123456789012:stack/AlethiaConnect/abc",
 		);
 		expect(result.valid).toBe(false);
 		if (!result.valid) expect(result.error).toContain("CloudFormation");
