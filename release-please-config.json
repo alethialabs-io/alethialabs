@@ -2,15 +2,15 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "separate-pull-requests": true,
   "packages": {
-    "apps/grape": {
+    "apps/cli": {
       "release-type": "simple",
-      "component": "grape",
+      "component": "cli",
       "include-component-in-tag": true,
       "changelog-path": "CHANGELOG.md"
     },
-    "apps/tendril": {
+    "apps/runner": {
       "release-type": "simple",
-      "component": "tendril",
+      "component": "runner",
       "include-component-in-tag": true,
       "changelog-path": "CHANGELOG.md"
     }

@@ -1,0 +1,16 @@
+{
+  "title": "Console",
+  "icon": "Sprout",
+  "root": true,
+  "pages": [
+    "index",
+    "getting-started",
+    "dashboard",
+    "design-spec",
+    "integrations",
+    "jobs",
+    "runners",
+    "clusters",
+    "api-reference"
+  ]
+}

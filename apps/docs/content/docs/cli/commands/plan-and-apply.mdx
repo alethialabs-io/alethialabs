@@ -1,0 +1,94 @@
+---
+title: Plan & Apply
+description: Queue plan, deploy, and destroy jobs from the CLI.
+---
+
+# Plan & Apply
+
+These commands queue infrastructure operations that [Runners](/runner) execute. They implement the Plan-Review-Apply workflow from the terminal.
+
+## `alethia plan`
+
+Queue a Terraform plan job.
+
+```bash
+alethia plan [--spec-id <id>] [--worker-id <id>] [--wait]
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--spec-id` | No | Spec UUID (interactive selector if omitted) |
+| `--worker-id` | No | Specific Runner to execute (any available if omitted) |
+| `--wait` | No | Block until the job completes |
+
+On success, prints the job ID. Use `alethia jobs logs --id <id> --follow` to stream the plan output.
+
+## `alethia apply`
+
+Queue a deployment (apply) job.
+
+```bash
+alethia apply [--spec-id <id>] [--worker-id <id>] [--plan-job-id <id>] [--wait]
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--spec-id` | No | Spec UUID (interactive selector if omitted) |
+| `--worker-id` | No | Specific Runner to execute |
+| `--plan-job-id` | No | Reference a specific plan to apply |
+| `--wait` | No | Block until the job completes |
+
+The `--plan-job-id` flag ensures the apply uses the exact plan you reviewed. If the Spec configuration changed since the plan was generated, the job fails with a [config hash mismatch](/console/jobs/plan-and-apply).
+
+## `alethia destroy`
+
+Queue destruction jobs. Has three subcommands:
+
+### `alethia destroy spec`
+
+Destroy a Spec's provisioned infrastructure.
+
+```bash
+alethia destroy spec --spec-id <id> [--worker-id <id>] [--wait]
+```
+
+Queues a DESTROY job. The Runner runs `terraform destroy` to tear down all resources. Terraform state is preserved, so accidental destroys can be recovered by re-applying.
+
+### `alethia destroy worker`
+
+Destroy a cloud-hosted Runner's infrastructure.
+
+```bash
+alethia destroy worker --worker-id <id>
+```
+
+Queues a DESTROY_WORKER job to tear down the ECS task definition, IAM roles, and CloudWatch resources.
+
+### `alethia destroy zone`
+
+Delete a zone record (no cloud resource teardown).
+
+```bash
+alethia destroy zone --zone-id <id>
+```
+
+## Interactive Selection
+
+When `--spec-id` is omitted, alethia launches a TUI selector:
+
+1. Select a zone from the list
+2. Select a Spec within that zone
+3. The command proceeds with the selected Spec
+
+See [TUI Components](/cli/tui) for details on the interactive selectors.
+
+## Scripting Examples
+
+```bash
+# Plan and wait, then apply
+JOB_ID=$(alethia plan --spec-id $SPEC_ID --wait 2>&1 | grep "Job ID" | awk '{print $3}')
+alethia apply --spec-id $SPEC_ID --plan-job-id $JOB_ID --wait
+
+# Destroy with wait
+alethia destroy spec --spec-id $SPEC_ID --wait
+```

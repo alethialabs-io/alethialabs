@@ -2,7 +2,7 @@
 
 variable "project_name" {
   type    = string
-  default = "tendril"
+  default = "runner"
 }
 
 variable "environment" {
@@ -10,16 +10,16 @@ variable "environment" {
   default = "dev"
 }
 
-variable "tendrils" {
+variable "nodes" {
   type = map(object({
     region      = string
-    trellis_url = string
+    alethia_url = string
   }))
-  description = "Map of tendril deployments. Key is the tendril name, value specifies region and Trellis instance."
+  description = "Map of node deployments. Key is the tendril name, value specifies region and Alethia instance."
   default = {
     "prod-eu-west-1" = {
       region      = "eu-west-1"
-      trellis_url = "https://adp.prod.itgix.eu"
+      alethia_url = "https://adp.prod.itgix.eu"
     }
   }
 }
@@ -34,18 +34,18 @@ variable "worker_mode" {
   }
 }
 
-variable "trellis_api_secret" {
+variable "alethia_api_secret" {
   type        = string
   sensitive   = true
-  description = "Secret for authenticating with the Trellis API (tendril registration + releases)."
+  description = "Secret for authenticating with the Alethia API (tendril registration + releases)."
 }
 
 variable "image" {
   type    = string
-  default = "ghcr.io/bobikenobi12/tendril"
+  default = "ghcr.io/alethialabs-io/runner"
 }
 
-variable "tendril_version" {
+variable "node_version" {
   type    = string
   default = "latest"
 }

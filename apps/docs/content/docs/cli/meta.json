@@ -1,0 +1,13 @@
+{
+  "title": "alethia CLI",
+  "icon": "Terminal",
+  "root": true,
+  "pages": [
+    "index",
+    "installation",
+    "authentication",
+    "commands",
+    "configuration",
+    "tui"
+  ]
+}

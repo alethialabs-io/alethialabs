@@ -2,7 +2,7 @@
 
 ## New Commands
 
-### `grape worker register`
+### `alethia worker register`
 
 **Purpose:** Register a worker in Trellis and deploy Fargate infrastructure in one shot.
 
@@ -38,7 +38,7 @@ Waiting for worker to come online...
   ✓ First heartbeat received — worker is ONLINE
 
 ✓ Worker "my-fargate-worker" is ready. Queue work with:
-    grape harvest
+    alethia harvest
 ```
 
 **Flags (override interactive):**
@@ -54,7 +54,7 @@ Waiting for worker to come online...
 3. `terraform version` — installed and >= 1.5
 4. Trellis reachable — HTTP GET to health endpoint
 
-### `grape worker status`
+### `alethia worker status`
 
 **Purpose:** Show worker health and recent jobs.
 
@@ -71,7 +71,7 @@ Recent Jobs:
   DEPLOY     QUEUED      just now     —
 ```
 
-### `grape worker destroy`
+### `alethia worker destroy`
 
 **Purpose:** Tear down worker Fargate infrastructure and deregister.
 
@@ -90,7 +90,7 @@ Destroying Fargate infrastructure...
 ✓ Worker "my-fargate-worker" destroyed.
 ```
 
-### `grape worker list`
+### `alethia worker list`
 
 **Purpose:** List all registered workers.
 
@@ -102,33 +102,33 @@ staging-worker        self-hosted   OFFLINE   us-east-1     3h ago
 
 ## Modified Commands
 
-### `grape harvest` (unchanged)
+### `alethia harvest` (unchanged)
 
 Already works correctly — queues jobs to the worker. No changes needed.
 
-### `grape bootstrap` (deprecated)
+### `alethia bootstrap` (deprecated)
 
 Change to print:
 ```
-⚠ `grape bootstrap` is deprecated.
+⚠ `alethia bootstrap` is deprecated.
 
 Bootstrap is now handled by your provisioning worker.
-Use `grape harvest` and select "Bootstrap new cluster" as the target.
+Use `alethia harvest` and select "Bootstrap new cluster" as the target.
 
 If you don't have a worker yet, run:
-    grape worker register
+    alethia worker register
 ```
 
 Keep the `--queue` flag working as a compatibility shim (it already queues a BOOTSTRAP job).
 
-### `grape deploy` (legacy, keep as-is)
+### `alethia deploy` (legacy, keep as-is)
 
 The legacy deploy command stays for backward compatibility with local provisioning. No changes.
 
 ## Command Tree
 
 ```
-grape
+alethia
 ├── login              — authenticate with Trellis
 ├── logout             — clear auth token
 ├── worker

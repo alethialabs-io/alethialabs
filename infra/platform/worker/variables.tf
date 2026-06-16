@@ -10,26 +10,26 @@ variable "name_prefix" {
 
 variable "image" {
   type        = string
-  default     = "ghcr.io/bobikenobi12/tendril"
+  default     = "ghcr.io/alethialabs-io/runner"
   description = "Container image (without tag)."
 }
 
-variable "tendril_version" {
+variable "node_version" {
   type        = string
   default     = "latest"
   description = "Image tag to deploy."
 }
 
-variable "trellis_url" {
+variable "alethia_url" {
   type        = string
   default     = "https://adp.prod.itgix.eu"
-  description = "Trellis web origin URL."
+  description = "Alethia web origin URL."
 }
 
-variable "trellis_api_secret" {
+variable "alethia_api_secret" {
   type        = string
   sensitive   = true
-  description = "Secret for authenticating with the Trellis API (tendril registration)."
+  description = "Secret for authenticating with the Alethia API (tendril registration)."
 }
 
 variable "worker_mode" {

@@ -1,6 +1,6 @@
 # 04 — Error Handling & Monitoring
 
-## Preflight Errors (during `grape worker register`)
+## Preflight Errors (during `alethia worker register`)
 
 | Check | Error | Recovery |
 |-------|-------|----------|
@@ -11,8 +11,8 @@
 | Docker not installed | `Docker not found in PATH. Install from: https://docs.docker.com/get-docker/` | User installs Docker |
 | Terraform not installed | `Terraform not found. The CLI will download it automatically.` | Auto-download via hc-install (existing pattern) |
 | Terraform wrong version | `Terraform {version} found, need >= 1.5. Upgrading...` | Auto-download correct version |
-| Trellis unreachable | `Cannot reach Trellis at {url}. Check your network or GRAPE_WEB_ORIGIN.` | User checks URL/network |
-| Not authenticated | `Not logged in. Run: grape login` | User runs grape login |
+| Trellis unreachable | `Cannot reach Trellis at {url}. Check your network or ALETHIA_WEB_ORIGIN.` | User checks URL/network |
+| Not authenticated | `Not logged in. Run: alethia login` | User runs alethia login |
 
 ## Deployment Errors (during Terraform/Docker)
 
@@ -20,7 +20,7 @@
 |-------|-------|----------|
 | ECR push fails | `Failed to push image: {error}. Retrying...` | Auto-retry 3 times with backoff |
 | Terraform plan fails | `Terraform plan failed: {error}` | Print full error, suggest checking AWS permissions |
-| Terraform apply fails | `Terraform apply failed: {error}. Resources may have been partially created.` | Print `grape worker destroy --name {name}` for cleanup |
+| Terraform apply fails | `Terraform apply failed: {error}. Resources may have been partially created.` | Print `alethia worker destroy --name {name}` for cleanup |
 | ECS task won't start | `ECS task failed to start after 5 minutes. Check CloudWatch logs: aws logs tail {log_group}` | Print log tail command |
 | No heartbeat after deploy | `Worker deployed but no heartbeat received after 2 minutes. Possible causes: ...` | Print checklist (network, Trellis URL, token) |
 

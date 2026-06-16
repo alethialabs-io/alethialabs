@@ -1,0 +1,53 @@
+---
+title: Installation
+description: Install Alethia via Homebrew, binary download, or from source.
+---
+
+# Installation
+
+## Homebrew (Recommended)
+
+```bash
+brew install bobikenobi12/bb-thesis-2026/alethia
+```
+
+Updates via `brew upgrade alethia`. Works on macOS and Linux.
+
+## Binary Download
+
+Pre-built binaries are available on GitHub Releases for every tagged version:
+
+| Platform | Architecture | Archive |
+|----------|-------------|---------|
+| macOS | Intel (amd64) | `alethia_darwin_amd64.tar.gz` |
+| macOS | Apple Silicon (arm64) | `alethia_darwin_arm64.tar.gz` |
+| Linux | amd64 | `alethia_linux_amd64.tar.gz` |
+| Linux | arm64 | `alethia_linux_arm64.tar.gz` |
+
+```bash
+tar xzf alethia_darwin_arm64.tar.gz
+mv alethia /usr/local/bin/
+alethia --version
+```
+
+## From Source
+
+Requires Go 1.22+:
+
+```bash
+cd apps/cli
+go build -o alethia .
+./alethia --version
+```
+
+## Build System
+
+Alethia releases are built by [GoReleaser](https://goreleaser.com/) via GitHub Actions. See [Release System](/concepts/release-system) for the full pipeline.
+
+The GoReleaser config (`apps/cli/.goreleaser.yml`) defines:
+- 4 binary builds (2 OS x 2 arch) with CGO disabled
+- tar.gz archives with checksums
+- GitHub Release publication
+- Homebrew formula auto-update in the `bobikenobi12/bb-thesis-2026` tap
+
+The `ALETHIA_WEB_ORIGIN` build variable is baked into the binary, pointing to the production Alethia URL.

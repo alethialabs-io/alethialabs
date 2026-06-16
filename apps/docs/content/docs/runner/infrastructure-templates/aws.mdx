@@ -1,0 +1,51 @@
+---
+title: AWS Resources
+description: Terraform modules for AWS — EKS, Aurora, ElastiCache, DynamoDB, and networking.
+---
+
+# AWS Resources
+
+The AWS template set (`infra/templates/spec/aws/`) is the most extensive, with ~15 top-level `.tf` files and 10 reusable modules.
+
+## Top-Level Resources
+
+| File | Resources Created |
+|------|------------------|
+| `networking.tf` | VPC, public/private subnets, NAT gateway, internet gateway, route tables, security groups |
+| `eks.tf` | EKS cluster, managed node group, OIDC provider for IRSA |
+| `karpenter.tf` | Karpenter provisioner, node pools, instance types |
+| `rds.tf` | Aurora PostgreSQL/MySQL cluster, instances, subnet group |
+| `elasticache.tf` | ElastiCache Redis replication group, subnet group |
+| `valkey.tf` | Valkey (open-source Redis fork) node |
+| `dynamodb.tf` | DynamoDB tables with KMS encryption |
+| `ecr.tf` | ECR repositories with lifecycle policies, scan-on-push |
+| `s3.tf` | S3 buckets with encryption, versioning, lifecycle rules |
+| `sqs.tf` | SQS queues (standard + FIFO) + SNS topics with subscriptions |
+| `waf.tf` | WAFv2 web ACL with managed rule groups |
+| `acm-certificate.tf` | ACM SSL/TLS certificates with DNS validation |
+| `irsa.tf` | IAM Roles for Service Accounts (pod-level AWS access) |
+| `custom_secrets.tf` | Secrets Manager secrets with auto-generated passwords |
+
+## Modules
+
+| Module | Purpose |
+|--------|---------|
+| `modules/eks/` | EKS cluster, access entries, OIDC provider |
+| `modules/rds/` | Aurora cluster, instances, IAM auth, S3 export |
+| `modules/redis/` | ElastiCache Redis with auth token, encryption |
+| `modules/valkey/` | Valkey node with security group |
+| `modules/dynamodb/` | DynamoDB table with KMS, local encryption module |
+| `modules/ecr/` | ECR repository with lifecycle policy |
+| `modules/s3/` | S3 bucket with encryption, versioning |
+| `modules/sqs-sns/` | SQS queue + SNS topic with IAM policies |
+| `modules/wafv2/` | WAF web ACL with CloudWatch logging |
+| `modules/acm/` | ACM certificate with DNS validation |
+| `modules/awssm-passgen/` | Secrets Manager password generation |
+
+## Key Features
+
+**IRSA (IAM Roles for Service Accounts)** — Kubernetes pods can assume IAM roles via their service account, eliminating the need for static credentials in containers. The EKS module creates an OIDC provider and the IRSA module creates per-service-account IAM roles.
+
+**Karpenter** — Just-in-time node provisioning. Instead of pre-scaling node groups, Karpenter watches for pending pods and launches appropriately-sized EC2 instances within seconds. Supports spot instances and multiple instance families.
+
+**Aurora Serverless v2** — Auto-scaling database with ACU-based capacity (0.5–128 ACUs). Scales to zero-ish (0.5 ACU minimum) during idle periods.
