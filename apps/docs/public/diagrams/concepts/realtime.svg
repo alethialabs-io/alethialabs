@@ -74,7 +74,7 @@
   <line x1="608" y1="250" x2="650" y2="250" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
 
   <rect x="658" y="228" width="100" height="44" rx="6" fill="#27272A" stroke="#22C55E"/>
-  <text x="708" y="248" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#22C55E">Grape CLI</text>
+  <text x="708" y="248" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#22C55E">Alethia CLI</text>
   <text x="708" y="264" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">colored output</text>
 
   <!-- Subscriptions summary -->

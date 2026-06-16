@@ -36,10 +36,10 @@
   <rect x="284" y="56" width="252" height="340" rx="8" fill="none" stroke="#8B5CF630"/>
   <rect x="284" y="56" width="252" height="28" rx="8" fill="#8B5CF610"/>
   <rect x="284" y="78" width="252" height="1" fill="#8B5CF630"/>
-  <text x="410" y="74" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#8B5CF6">CLI (Grape)</text>
+  <text x="410" y="74" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#8B5CF6">CLI (Alethia)</text>
 
   <rect x="304" y="96" width="212" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="410" y="117" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">grape login → open browser</text>
+  <text x="410" y="117" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">alethia login → open browser</text>
   <line x1="410" y1="130" x2="410" y2="146" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
   <rect x="304" y="150" width="212" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
@@ -55,7 +55,7 @@
   <line x1="410" y1="292" x2="410" y2="308" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
   <rect x="304" y="312" width="212" height="40" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="410" y="330" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Stored in: ~/.config/grape/auth.json</text>
+  <text x="410" y="330" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Stored in: ~/.config/alethia/auth.json</text>
   <text x="410" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Access: 1h · Refresh: 90d</text>
 
   <!-- Tendril Lane -->

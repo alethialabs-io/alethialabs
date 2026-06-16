@@ -9,7 +9,7 @@
   <!-- Stage 1: Vine Form -->
   <rect x="30" y="58" width="150" height="70" rx="8" fill="#8B5CF610" stroke="#8B5CF6"/>
   <text x="105" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#8B5CF6">Vine Form</text>
-  <text x="105" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">Trellis UI / Grape CLI</text>
+  <text x="105" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">Trellis UI / Alethia CLI</text>
   <text x="105" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">createVine()</text>
 
   <!-- Arrow 1→2 -->
