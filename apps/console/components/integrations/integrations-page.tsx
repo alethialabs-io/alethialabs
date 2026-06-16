@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -329,7 +329,7 @@ export function IntegrationsPage({
 					<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
 						<SheetTitle>Connect AWS Account</SheetTitle>
 						<SheetDescription>
-							Set up a cross-account IAM role to allow Grape to
+							Set up a cross-account IAM role to allow Alethia to
 							provision infrastructure in your AWS account.
 						</SheetDescription>
 					</SheetHeader>
@@ -359,7 +359,7 @@ export function IntegrationsPage({
 					<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
 						<SheetTitle>Connect GCP Project</SheetTitle>
 						<SheetDescription>
-							Set up Workload Identity Federation to allow Grape
+							Set up Workload Identity Federation to allow Alethia
 							to provision infrastructure in your GCP project.
 						</SheetDescription>
 					</SheetHeader>
@@ -386,7 +386,7 @@ export function IntegrationsPage({
 					<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
 						<SheetTitle>Connect Azure Subscription</SheetTitle>
 						<SheetDescription>
-							Set up federated identity credentials to allow Grape
+							Set up federated identity credentials to allow Alethia
 							to provision infrastructure in your Azure
 							subscription.
 						</SheetDescription>

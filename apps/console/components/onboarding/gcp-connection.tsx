@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -279,7 +279,7 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 							Setup Instructions
 						</CardTitle>
 						<CardDescription className="text-xs">
-							Follow these steps to authorize Grape in your GCP
+							Follow these steps to authorize Alethia in your GCP
 							project using Workload Identity Federation.
 						</CardDescription>
 					</CardHeader>
@@ -447,7 +447,7 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 											Connection verified
 										</p>
 										<p className="text-xs text-muted-foreground mt-0.5">
-											Grape can authenticate into your GCP
+											Alethia can authenticate into your GCP
 											project via Workload Identity
 											Federation. You&apos;re ready to
 											provision infrastructure.
@@ -540,11 +540,11 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 									<div className="mt-5 flex items-start gap-2.5 p-3 bg-muted/20 rounded-md border border-border/40 text-[11px] text-muted-foreground">
 										<AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
 										<p className="leading-relaxed">
-											Grape uses Workload Identity
+											Alethia uses Workload Identity
 											Federation for keyless
 											authentication. No service account
 											keys are stored — only the trust
-											configuration between Grape&apos;s
+											configuration between Alethia&apos;s
 											AWS infrastructure and your GCP
 											project.
 										</p>

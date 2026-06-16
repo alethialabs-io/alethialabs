@@ -17,7 +17,7 @@ import {
 	ArrowRight,
 	CheckCircle2,
 	ClipboardList,
-	Grape,
+	Box,
 	Plus,
 	Workflow,
 } from "lucide-react";
@@ -149,7 +149,7 @@ export default function DashboardPage() {
 
 			{/* Stats Strip */}
 			<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-				<StatChip icon={<Grape className="h-3.5 w-3.5" />} value={allVines.length} label="Specs" />
+				<StatChip icon={<Box className="h-3.5 w-3.5" />} value={allVines.length} label="Specs" />
 				<StatChip icon={<CheckCircle2 className="h-3.5 w-3.5" />} value={activeVines} label="Active" />
 				<StatChip icon={<Workflow className="h-3.5 w-3.5" />} value={onlineTendrils} label={`Runner${onlineTendrils !== 1 ? "s" : ""} Online`} />
 				<StatChip icon={<ClipboardList className="h-3.5 w-3.5" />} value={jobsStore.jobs.length} label="Total Jobs" />

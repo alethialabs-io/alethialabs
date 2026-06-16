@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Grape, LayoutList, Map, Plus } from "lucide-react";
+import { Box, LayoutList, Map, Plus } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
@@ -181,7 +181,7 @@ export default function VineyardDetailPage() {
 			{vines.length === 0 ? (
 				<div className="flex flex-col items-center justify-center py-16 text-center">
 					<div className="p-3 bg-muted/50 rounded-full mb-4">
-						<Grape className="h-8 w-8 text-muted-foreground" />
+						<Box className="h-8 w-8 text-muted-foreground" />
 					</div>
 					<h3 className="text-sm font-medium text-foreground mb-1">
 						No specs yet

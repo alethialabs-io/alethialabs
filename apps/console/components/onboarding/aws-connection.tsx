@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -239,7 +239,7 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 							Setup Instructions
 						</CardTitle>
 						<CardDescription className="text-xs">
-							Follow these steps to authorize Grape in your AWS
+							Follow these steps to authorize Alethia in your AWS
 							account.
 						</CardDescription>
 					</CardHeader>
@@ -401,7 +401,7 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 											Connection verified
 										</p>
 										<p className="text-xs text-muted-foreground mt-0.5">
-											Grape can assume the IAM role in
+											Alethia can assume the IAM role in
 											your account. You're ready to
 											provision infrastructure.
 										</p>
@@ -495,7 +495,7 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 									<div className="mt-5 flex items-start gap-2.5 p-3 bg-muted/20 rounded-md border border-border/40 text-[11px] text-muted-foreground">
 										<AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
 										<p className="leading-relaxed">
-											Grape will verify it can assume this
+											Alethia will verify it can assume this
 											role using the unique External ID.
 											This prevents unauthorized
 											cross-account access.

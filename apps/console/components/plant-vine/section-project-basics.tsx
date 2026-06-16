@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/form";
 import { VineyardSelector } from "@/components/vineyards/vineyard-selector";
 import { HelpTooltip } from "./help-tooltip";
-import { Grape } from "lucide-react";
+import { Box } from "lucide-react";
 import { useFormContext } from "react-hook-form";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
 
@@ -28,7 +28,7 @@ export function SectionProjectBasics() {
 		<Card>
 			<CardHeader>
 				<div className="flex items-center gap-2">
-					<Grape className="h-4 w-4 text-muted-foreground" />
+					<Box className="h-4 w-4 text-muted-foreground" />
 					<CardTitle className="text-base">Project Basics</CardTitle>
 				</div>
 				<CardDescription className="text-xs">

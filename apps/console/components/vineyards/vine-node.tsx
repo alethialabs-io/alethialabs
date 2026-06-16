@@ -1,9 +1,9 @@
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Handle, Position } from "@xyflow/react";
-import { Grape } from "lucide-react";
+import { Box } from "lucide-react";
 
 interface VineNodeProps {
 	data: {
@@ -26,7 +26,7 @@ export function VineNode({ data }: VineNodeProps) {
 				<div className="flex items-center justify-between">
 					<div className="flex items-center gap-2">
 						<div className="p-1.5 bg-muted rounded-md border border-border/50">
-							<Grape className="w-4 h-4 text-foreground" />
+							<Box className="w-4 h-4 text-foreground" />
 						</div>
 						<span className="font-semibold text-sm truncate max-w-[140px] text-foreground">
 							{config.project_name || "Vine"}

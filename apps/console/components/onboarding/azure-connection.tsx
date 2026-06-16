@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
@@ -234,7 +234,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 							Setup Instructions
 						</CardTitle>
 						<CardDescription className="text-xs">
-							Follow these steps to authorize Grape in your Azure
+							Follow these steps to authorize Alethia in your Azure
 							subscription using federated identity credentials.
 						</CardDescription>
 					</CardHeader>
@@ -405,7 +405,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 											Connection verified
 										</p>
 										<p className="text-xs text-muted-foreground mt-0.5">
-											Grape can authenticate into your
+											Alethia can authenticate into your
 											Azure subscription via federated
 											identity. You&apos;re ready to
 											provision infrastructure.
@@ -525,11 +525,11 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 									<div className="mt-5 flex items-start gap-2.5 p-3 bg-muted/20 rounded-md border border-border/40 text-[11px] text-muted-foreground">
 										<AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
 										<p className="leading-relaxed">
-											Grape uses Azure federated identity
+											Alethia uses Azure federated identity
 											credentials for keyless
 											authentication. No client secrets
 											are stored — only the trust
-											configuration between Grape&apos;s
+											configuration between Alethia&apos;s
 											AWS infrastructure and your Azure
 											tenant.
 										</p>
