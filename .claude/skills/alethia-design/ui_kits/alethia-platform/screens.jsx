@@ -1,5 +1,5 @@
-/* Alethia App UI kit — screen content. */
-const S_VX = window.AlethiaDesignSystem_8c015f;
+/* Alethia platform UI kit — screen content. */
+const S_VX = window.VertexDesignSystem_8c015f;
 const { Button: SBtn, Badge: SBadge, StatusBadge: SStatus, Card: SCard, CardHeader: SCH, CardTitle: SCT, CardDescription: SCD, CardBody: SCB, CardFooter: SCF, Input: SInput, Field: SField, Label: SLabel, Hint: SHint, Select: SSelect, Switch: SSwitch, Checkbox: SCheck, Radio: SRadio, Tabs: STabs, Separator: SSep, Alert: SAlert } = S_VX;
 const SIc = window.VxIcons;
 const { Provider: SProvider } = window.VxApp;
@@ -48,12 +48,12 @@ function Overview() {
         <SectionLabel right={<SBtn variant="link" size="sm" style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Manage</SBtn>}>Integrations</SectionLabel>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {[["aws", "AWS", "acct 4471-…"], ["gcp", "GCP", "alethia-prod"]].map(([id, n, d]) => (
-            <span key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--surface)", fontSize: 12 }}>
+            <span key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", border: "1px solid var(--border)", background: "var(--surface)", fontSize: 12 }}>
               <SProvider id={id} size={15} /><span style={{ fontWeight: 500, color: "var(--text-primary)" }}>{n}</span><span style={{ color: "var(--text-tertiary)", ...mn, fontSize: 11 }}>{d}</span>
             </span>
           ))}
           {[["azure", "Azure"], ["datadog", "Datadog"]].map(([id, n]) => (
-            <span key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", borderRadius: 999, border: "1px dashed var(--border-strong)", fontSize: 12, color: "var(--text-tertiary)" }}>
+            <span key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", border: "1px dashed var(--border-strong)", fontSize: 12, color: "var(--text-tertiary)" }}>
               <img src={`../../assets/${id === "azure" ? "providers" : "integrations"}/${id}.png`} width={14} height={14} style={{ objectFit: "contain", opacity: 0.6 }} /><span>{n}</span><span style={{ fontSize: 10 }}>Connect</span>
             </span>
           ))}

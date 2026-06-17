@@ -1,5 +1,5 @@
 /* ============================================================
-   SPACING & RADII — Alethia
+   SPACING & RADII — Alethia Labs
    4px base grid. Tight, dense, instrument-panel rhythm.
    ============================================================ */
 
@@ -23,15 +23,16 @@
   --space-24:  6rem;     /* 96 */
   --space-32:  8rem;     /* 128 */
 
-  /* ---- Radii ---- (base 0.625rem, matches product) */
+  /* ---- Radii ---- Architectural, not soft. Controls are squared;
+     surfaces carry only a whisper of a corner. tovr-inspired. */
   --radius-none: 0;
-  --radius-xs:  0.25rem;  /* 4  — chips, tags        */
-  --radius-sm:  0.375rem; /* 6  — buttons, inputs    */
-  --radius-md:  0.5rem;   /* 8  — small cards        */
-  --radius-lg:  0.625rem; /* 10 — cards              */
-  --radius-xl:  0.875rem; /* 14 — large panels       */
-  --radius-2xl: 1.125rem; /* 18 — hero containers    */
-  --radius-full: 9999px;
+  --radius-xs:  0;        /* squared controls: buttons, inputs, selects, badges, chips */
+  --radius-sm:  2px;      /* menus, popovers, small fills */
+  --radius-md:  3px;      /* alerts, small cards */
+  --radius-lg:  4px;      /* cards, panels */
+  --radius-xl:  6px;      /* large panels */
+  --radius-2xl: 8px;      /* hero containers */
+  --radius-full: 9999px;  /* dots, avatars, status, intentional pills */
 
   /* ---- Layout ---- */
   --container-max: 72rem;  /* marketing content max   */

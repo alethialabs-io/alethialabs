@@ -1,14 +1,14 @@
-/* Alethia App UI kit — interactive control-plane recreation.
-   Composes the Alethia design-system primitives (window.AlethiaDesignSystem_8c015f). */
-const VX = window.AlethiaDesignSystem_8c015f;
+/* Alethia platform UI kit — interactive control-plane recreation.
+   Composes the Alethia Labs design-system primitives (window.VertexDesignSystem_8c015f). */
+const VX = window.VertexDesignSystem_8c015f;
 const { Button, Badge, StatusBadge, Card, CardHeader, CardTitle, CardDescription, CardBody, CardFooter, Input, Field, Label, Hint, Select, Switch, Checkbox, Radio, Tabs, Avatar, Separator, Alert, Spinner } = VX;
 const Ic = window.VxIcons;
 
 const Mark = ({ size = 24 }) => (
   <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ display: "block", flexShrink: 0 }}>
-    <path d="M4 25.5 L16 6 L28 25.5" stroke="currentColor" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
-    <path d="M10.5 25.5 L16 16.5 L21.5 25.5" stroke="currentColor" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" opacity="0.4" />
-    <rect x="13.4" y="3.4" width="5.2" height="5.2" rx="1.1" transform="rotate(45 16 6)" fill="currentColor" />
+    <path d="M11 6 H6.5 V26 H11" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M21 6 H25.5 V26 H21" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx="16" cy="16" r="2.9" fill="currentColor" />
   </svg>
 );
 const Provider = ({ id, size = 18 }) => (

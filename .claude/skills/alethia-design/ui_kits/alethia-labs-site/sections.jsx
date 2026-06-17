@@ -1,12 +1,12 @@
-/* Alethia Web UI kit — marketing landing recreation. */
-const W = window.AlethiaDesignSystem_8c015f;
+/* Alethia Labs company site (alethialabs.io) UI kit — marketing landing recreation. */
+const W = window.VertexDesignSystem_8c015f;
 const { Button: WBtn, Badge: WBadge, Tabs: WTabs, Card: WCard, CardBody: WCB, Separator: WSep } = W;
 
 const WMark = ({ size = 26 }) => (
   <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ display: "block" }}>
-    <path d="M4 25.5 L16 6 L28 25.5" stroke="currentColor" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
-    <path d="M10.5 25.5 L16 16.5 L21.5 25.5" stroke="currentColor" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" opacity="0.4" />
-    <rect x="13.4" y="3.4" width="5.2" height="5.2" rx="1.1" transform="rotate(45 16 6)" fill="currentColor" />
+    <path d="M11 6 H6.5 V26 H11" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M21 6 H25.5 V26 H21" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx="16" cy="16" r="2.9" fill="currentColor" />
   </svg>
 );
 const Arrow = ({ size = 15 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14m-6-6 6 6-6 6" /></svg>;
@@ -16,13 +16,13 @@ const Wrap = ({ children, style }) => <div style={{ maxWidth: 1080, margin: "0 a
 
 /* ---- Header ---- */
 function Header() {
-  const links = ["Features", "CLI", "Ecosystem", "Docs"];
+  const links = ["Platform", "CLI", "Docs", "Company"];
   return (
     <header style={{ position: "sticky", top: 0, zIndex: 40, borderBottom: "1px solid var(--border)", background: "color-mix(in oklch, var(--canvas) 82%, transparent)", backdropFilter: "blur(10px)" }}>
       <Wrap style={{ height: 60, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 9, color: "var(--text-primary)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 11, color: "var(--text-primary)" }}>
           <WMark size={24} /><span style={{ fontFamily: "var(--font-display)", fontSize: 18, fontWeight: 600, letterSpacing: "-0.01em" }}>Alethia</span>
-          <span style={{ ...ebw, fontSize: 9, marginLeft: 6, opacity: 0.7 }}>by Alethia</span>
+          <span style={{ ...ebw, fontSize: 9, letterSpacing: "0.26em", opacity: 0.7 }}>Labs</span>
         </div>
         <nav style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {links.map((l) => <a key={l} href="#" style={{ padding: "6px 12px", fontSize: 13.5, color: "var(--text-tertiary)", borderRadius: "var(--radius-sm)" }}>{l}</a>)}
@@ -79,7 +79,7 @@ function Terminal() {
           const dim = l.startsWith("$") || l.startsWith("  ▸");
           return <div key={i} style={{ color: strong ? "var(--text-primary)" : dim ? "var(--text-tertiary)" : "var(--text-secondary)" }}>{l || " "}</div>;
         })}
-        <span style={{ display: "inline-block", width: 8, height: 15, background: "var(--text-primary)", verticalAlign: "middle", animation: "alethia-blink 1.4s linear infinite" }} />
+        <span style={{ display: "inline-block", width: 8, height: 15, background: "var(--text-primary)", verticalAlign: "middle", animation: "vertex-blink 1.4s linear infinite" }} />
       </pre>
     </div>
   );
@@ -93,7 +93,7 @@ function Hero() {
     <section style={{ position: "relative", paddingTop: 96, paddingBottom: 64 }}>
       <div style={{ position: "absolute", inset: 0, backgroundImage: "linear-gradient(var(--border-faint) 1px,transparent 1px),linear-gradient(90deg,var(--border-faint) 1px,transparent 1px)", backgroundSize: "44px 44px", maskImage: "radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 75%)", WebkitMaskImage: "radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 75%)", pointerEvents: "none" }} />
       <Wrap style={{ position: "relative", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <WBadge variant="outline" mono style={{ marginBottom: 24, padding: "5px 12px", borderRadius: 999 }}>Open-source infrastructure platform</WBadge>
+        <WBadge variant="outline" mono style={{ marginBottom: 24, padding: "5px 12px" }}>Alethia · multi-cloud Kubernetes</WBadge>
         <h1 style={{ fontFamily: "var(--font-display)", fontSize: 60, fontWeight: 600, letterSpacing: "-0.04em", lineHeight: 1.04, margin: 0, maxWidth: 760, color: "var(--text-primary)" }}>
           The infrastructure layer<br /><span style={{ color: "var(--text-tertiary)" }}>for cloud-native teams</span>
         </h1>
@@ -147,7 +147,7 @@ function Features() {
 
 /* ---- Ecosystem / modules ---- */
 function Ecosystem() {
-  const mods = [["Alethia", "Web control plane", "Visual infrastructure configuration, job dashboard, real-time logs, cost estimation."], ["alethia-cli", "CLI + worker", "An interactive terminal wizard for plan, deploy, and teardown across clouds."]];
+  const mods = [["Alethia Console", "Web control plane", "Visual infrastructure configuration, job dashboard, real-time logs, cost estimation."], ["alethia CLI", "CLI + worker", "An interactive terminal wizard for plan, deploy, and teardown across clouds."]];
   return (
     <section style={{ padding: "0 0 80px" }}>
       <Wrap>
@@ -156,7 +156,7 @@ function Ecosystem() {
             <WCard key={t} interactive>
               <WCB style={{ display: "flex", gap: 14 }}>
                 <span style={{ display: "grid", placeItems: "center", width: 40, height: 40, borderRadius: "var(--radius-md)", background: "var(--surface-muted)", color: "var(--text-primary)", flexShrink: 0 }}>
-                  {t === "Alethia" ? <WMark size={20} /> : <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="m4 17 6-6-6-6M12 19h8" /></svg>}
+                  {t === "Alethia Console" ? <WMark size={20} /> : <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="m4 17 6-6-6-6M12 19h8" /></svg>}
                 </span>
                 <div>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}><h3 style={{ fontSize: 15, fontWeight: 600, fontFamily: "var(--font-display)", margin: 0, color: "var(--text-primary)" }}>{t}</h3><span style={{ fontSize: 12, color: "var(--text-tertiary)", ...wmono }}>{sub}</span></div>
@@ -174,13 +174,13 @@ function Ecosystem() {
 
 /* ---- Footer ---- */
 function Footer() {
-  const cols = [["Product", ["Features", "CLI", "Dashboard", "Ecosystem"]], ["Developers", ["Documentation", "GitHub", "CLI reference"]], ["Resources", ["Architecture", "User flows", "Changelog"]], ["Company", ["Alethia", "Open source", "Contributing"]]];
+  const cols = [["Platform", ["Alethia Console", "alethia CLI", "Dashboard", "Pricing"]], ["Developers", ["Documentation", "GitHub", "CLI reference"]], ["Resources", ["Architecture", "User flows", "Changelog"]], ["Company", ["About Alethia Labs", "Open source", "Contributing"]]];
   return (
     <footer style={{ borderTop: "1px solid var(--border)", padding: "56px 0 32px" }}>
       <Wrap>
         <div style={{ display: "grid", gridTemplateColumns: "1.4fr repeat(4,1fr)", gap: 28, marginBottom: 44 }}>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 9, color: "var(--text-primary)", marginBottom: 14 }}><WMark size={22} /><span style={{ fontFamily: "var(--font-display)", fontSize: 17, fontWeight: 600 }}>Alethia</span></div>
+            <div style={{ display: "flex", alignItems: "center", gap: 11, color: "var(--text-primary)", marginBottom: 14 }}><WMark size={22} /><span style={{ fontFamily: "var(--font-display)", fontSize: 17, fontWeight: 600 }}>Alethia</span><span style={{ ...ebw, fontSize: 9, letterSpacing: "0.26em", opacity: 0.7 }}>Labs</span></div>
             <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", lineHeight: 1.6, maxWidth: 220, margin: 0 }}>Configure multi-cloud infrastructure in the browser. Deploy from the terminal.</p>
           </div>
           {cols.map(([title, links]) => (
@@ -194,8 +194,8 @@ function Footer() {
         </div>
         <WSep />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 22 }}>
-          <p style={{ ...ebw, fontSize: 10, margin: 0 }}>© 2026 Alethia · Alethia Systems</p>
-          <p style={{ ...ebw, fontSize: 10, margin: 0 }}>Built on the ADP control plane · Open source</p>
+          <p style={{ ...ebw, fontSize: 10, margin: 0 }}>© 2026 Alethia Labs</p>
+          <p style={{ ...ebw, fontSize: 10, margin: 0 }}>Alethia · multi-cloud Kubernetes · Open source</p>
         </div>
       </Wrap>
     </footer>

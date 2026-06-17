@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Alethia Labs">
+  
+  <rect width="512" height="512" rx="114" fill="#1A1A1A"></rect>
+  <g transform="translate(128 128) scale(8)" fill="none">
+    <path d="M11 6 H6.5 V26 H11" stroke="#FAFAFA" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+    <path d="M21 6 H25.5 V26 H21" stroke="#FAFAFA" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+    <circle cx="16" cy="16" r="2.9" fill="#FAFAFA"></circle>
+  </g>
+</svg>

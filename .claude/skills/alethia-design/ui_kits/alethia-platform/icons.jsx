@@ -1,4 +1,4 @@
-/* Alethia UI kit — compact Lucide-style icon set (1.75px stroke, round caps). */
+/* Vertex UI kit — compact Lucide-style icon set (1.75px stroke, round caps). */
 const I = (paths, props = {}) => ({ size = 18, ...rest }) =>
   React.createElement(
     "svg",

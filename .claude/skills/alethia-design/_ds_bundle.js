@@ -1,8 +1,8 @@
-/* @ds-bundle: {"format":3,"namespace":"AlethiaDesignSystem_8c015f","components":[{"name":"Badge","sourcePath":"components/buttons/Badge.jsx"},{"name":"Button","sourcePath":"components/buttons/Button.jsx"},{"name":"Kbd","sourcePath":"components/buttons/Kbd.jsx"},{"name":"Alert","sourcePath":"components/feedback/Alert.jsx"},{"name":"Spinner","sourcePath":"components/feedback/Alert.jsx"},{"name":"StatusBadge","sourcePath":"components/feedback/StatusBadge.jsx"},{"name":"Checkbox","sourcePath":"components/forms/Checkbox.jsx"},{"name":"Radio","sourcePath":"components/forms/Checkbox.jsx"},{"name":"Field","sourcePath":"components/forms/Field.jsx"},{"name":"Label","sourcePath":"components/forms/Field.jsx"},{"name":"Hint","sourcePath":"components/forms/Field.jsx"},{"name":"Input","sourcePath":"components/forms/Input.jsx"},{"name":"Textarea","sourcePath":"components/forms/Input.jsx"},{"name":"Select","sourcePath":"components/forms/Select.jsx"},{"name":"Switch","sourcePath":"components/forms/Switch.jsx"},{"name":"Tabs","sourcePath":"components/navigation/Tabs.jsx"},{"name":"Avatar","sourcePath":"components/surfaces/Avatar.jsx"},{"name":"Card","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardHeader","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardTitle","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardDescription","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardBody","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardFooter","sourcePath":"components/surfaces/Card.jsx"},{"name":"Separator","sourcePath":"components/surfaces/Separator.jsx"}],"sourceHashes":{"components/buttons/Badge.jsx":"047fa17b0ff4","components/buttons/Button.jsx":"f3b5ba412bbb","components/buttons/Kbd.jsx":"ad807993a0fd","components/feedback/Alert.jsx":"3845f66729ad","components/feedback/StatusBadge.jsx":"4730e4d183b7","components/forms/Checkbox.jsx":"947a55761fa6","components/forms/Field.jsx":"3cc9dcf9e0ae","components/forms/Input.jsx":"b9a3c7c65aa8","components/forms/Select.jsx":"8594e8bae0df","components/forms/Switch.jsx":"716cd8a0ef91","components/navigation/Tabs.jsx":"a10f819dfd81","components/surfaces/Avatar.jsx":"ed3235970c09","components/surfaces/Card.jsx":"acc5d2e0d16a","components/surfaces/Separator.jsx":"471014007d62","ui_kits/alethia-app/icons.jsx":"ed61f3f084bb","ui_kits/alethia-app/screens.jsx":"33ee0891b6eb","ui_kits/alethia-app/shell.jsx":"80aee4917e05","ui_kits/alethia-web/sections.jsx":"2c9a35c01254"},"inlinedExternals":[],"unexposedExports":[]} */
+/* @ds-bundle: {"format":3,"namespace":"VertexDesignSystem_8c015f","components":[{"name":"Badge","sourcePath":"components/buttons/Badge.jsx"},{"name":"Button","sourcePath":"components/buttons/Button.jsx"},{"name":"Kbd","sourcePath":"components/buttons/Kbd.jsx"},{"name":"Alert","sourcePath":"components/feedback/Alert.jsx"},{"name":"Spinner","sourcePath":"components/feedback/Alert.jsx"},{"name":"StatusBadge","sourcePath":"components/feedback/StatusBadge.jsx"},{"name":"Checkbox","sourcePath":"components/forms/Checkbox.jsx"},{"name":"Radio","sourcePath":"components/forms/Checkbox.jsx"},{"name":"Field","sourcePath":"components/forms/Field.jsx"},{"name":"Label","sourcePath":"components/forms/Field.jsx"},{"name":"Hint","sourcePath":"components/forms/Field.jsx"},{"name":"Input","sourcePath":"components/forms/Input.jsx"},{"name":"Textarea","sourcePath":"components/forms/Input.jsx"},{"name":"Select","sourcePath":"components/forms/Select.jsx"},{"name":"Switch","sourcePath":"components/forms/Switch.jsx"},{"name":"Tabs","sourcePath":"components/navigation/Tabs.jsx"},{"name":"Avatar","sourcePath":"components/surfaces/Avatar.jsx"},{"name":"Card","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardHeader","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardTitle","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardDescription","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardBody","sourcePath":"components/surfaces/Card.jsx"},{"name":"CardFooter","sourcePath":"components/surfaces/Card.jsx"},{"name":"Separator","sourcePath":"components/surfaces/Separator.jsx"}],"sourceHashes":{"components/buttons/Badge.jsx":"047fa17b0ff4","components/buttons/Button.jsx":"f3b5ba412bbb","components/buttons/Kbd.jsx":"ad807993a0fd","components/feedback/Alert.jsx":"3845f66729ad","components/feedback/StatusBadge.jsx":"4730e4d183b7","components/forms/Checkbox.jsx":"947a55761fa6","components/forms/Field.jsx":"3cc9dcf9e0ae","components/forms/Input.jsx":"b9a3c7c65aa8","components/forms/Select.jsx":"8594e8bae0df","components/forms/Switch.jsx":"716cd8a0ef91","components/navigation/Tabs.jsx":"a10f819dfd81","components/surfaces/Avatar.jsx":"ed3235970c09","components/surfaces/Card.jsx":"acc5d2e0d16a","components/surfaces/Separator.jsx":"471014007d62","ui_kits/alethia-app/icons.jsx":"ed61f3f084bb","ui_kits/alethia-app/screens.jsx":"33ee0891b6eb","ui_kits/alethia-app/shell.jsx":"80aee4917e05","ui_kits/alethia-web/sections.jsx":"2c9a35c01254"},"inlinedExternals":[],"unexposedExports":[]} */
 
 (() => {
 
-const __ds_ns = (window.AlethiaDesignSystem_8c015f = window.AlethiaDesignSystem_8c015f || {});
+const __ds_ns = (window.VertexDesignSystem_8c015f = window.VertexDesignSystem_8c015f || {});
 
 const __ds_scope = {};
 
@@ -951,7 +951,7 @@ window.VxIcons = Icons;
 // ui_kits/alethia-app/screens.jsx
 try { (() => {
 /* Alethia App UI kit — screen content. */
-const S_VX = window.AlethiaDesignSystem_8c015f;
+const S_VX = window.VertexDesignSystem_8c015f;
 const {
   Button: SBtn,
   Badge: SBadge,
@@ -1693,8 +1693,8 @@ window.VxScreens = {
 // ui_kits/alethia-app/shell.jsx
 try { (() => {
 /* Alethia App UI kit — interactive control-plane recreation.
-   Composes the Alethia design-system primitives (window.AlethiaDesignSystem_8c015f). */
-const VX = window.AlethiaDesignSystem_8c015f;
+   Composes the Alethia design-system primitives (window.VertexDesignSystem_8c015f). */
+const VX = window.VertexDesignSystem_8c015f;
 const {
   Button,
   Badge,
@@ -2132,7 +2132,7 @@ window.VxApp = {
 // ui_kits/alethia-web/sections.jsx
 try { (() => {
 /* Alethia Web UI kit — marketing landing recreation. */
-const W = window.AlethiaDesignSystem_8c015f;
+const W = window.VertexDesignSystem_8c015f;
 const {
   Button: WBtn,
   Badge: WBadge,
