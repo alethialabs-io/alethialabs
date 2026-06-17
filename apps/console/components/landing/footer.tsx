@@ -65,6 +65,15 @@ const COLUMNS: FooterColumn[] = [
 			},
 		],
 	},
+	{
+		title: "Legal",
+		links: [
+			{ label: "Terms of Service", href: "/terms" },
+			{ label: "Privacy Policy", href: "/privacy" },
+			{ label: "Cookie Policy", href: "/cookies" },
+			{ label: "Acceptable Use", href: "/acceptable-use" },
+		],
+	},
 ];
 
 export function Footer() {
@@ -72,7 +81,7 @@ export function Footer() {
 		<footer className="border-t border-border/40 mt-8">
 			<div className="container mx-auto px-4 py-12 md:py-16">
 				{/* Columns */}
-				<div className="grid grid-cols-2 md:grid-cols-5 gap-8 mb-12">
+				<div className="grid grid-cols-2 md:grid-cols-6 gap-8 mb-12">
 					{/* Logo column */}
 					<div className="col-span-2 md:col-span-1">
 						<AlethiaLogo withText className="h-6 w-auto mb-4" />
