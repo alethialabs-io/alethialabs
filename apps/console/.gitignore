@@ -49,3 +49,6 @@ certificates
 .terraform.lock.hcl
 *.plan.out
 tfplan
+# React Email
+.react-email/
+.react-email-out/
