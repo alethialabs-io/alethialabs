@@ -24,7 +24,7 @@ terraform destroy -auto-approve
 Removes all resources tracked in the Terraform state. No confirmation prompt — the user already confirmed via the UI or CLI.
 
 ### State cleanup
-The state file in Supabase S3 is left in place (empty or minimal) for audit purposes.
+The state file in S3-compatible storage is left in place (empty or minimal) for audit purposes.
 
 ### Report results
 Job status → SUCCESS. Spec status is set to `DESTROYED`.

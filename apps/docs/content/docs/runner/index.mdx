@@ -46,7 +46,7 @@ STS AssumeRole (AWS), WIF token exchange (GCP), or OIDC federated identity (Azur
 Helm chart deployment with App of Apps pattern. See [GitOps & ArgoCD](/concepts/gitops-argocd).
 
 ### Streams logs
-Batched POST every 2 seconds → Supabase Realtime → browser. See [Log Streaming](/runner/log-streaming).
+Batched POST every 2 seconds → Postgres LISTEN/NOTIFY → SSE → browser. See [Log Streaming](/runner/log-streaming).
 
 ### Reports results
 Updates job status with execution metadata, timing, and Terraform outputs.

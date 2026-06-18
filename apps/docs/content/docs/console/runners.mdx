@@ -78,7 +78,7 @@ Status is determined by heartbeat recency:
 
 ## Real-time Updates
 
-The Runners page subscribes to `workers` table changes and `provision_jobs` changes via [Supabase Realtime](/concepts/realtime). Status changes, new registrations, and job assignments appear instantly.
+The Runners page subscribes to `workers` table changes and `jobs` changes via [Postgres LISTEN/NOTIFY → SSE](/concepts/realtime). Status changes, new registrations, and job assignments appear instantly.
 
 ## Version Tracking
 

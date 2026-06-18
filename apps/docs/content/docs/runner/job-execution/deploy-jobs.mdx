@@ -15,7 +15,7 @@ DEPLOY jobs apply the Terraform plan and install ArgoCD on the provisioned clust
 Same as PLAN jobs.
 
 ### Download plan artifact
-Fetches the binary `plan.tfplan` from the PLAN job's Supabase Storage upload.
+Fetches the binary `plan.tfplan` from the PLAN job's S3-compatible storage upload.
 
 ### Validate config hash
 Compares the spec's current config hash against the plan's config hash. If they differ (spec was modified after planning), the job fails:

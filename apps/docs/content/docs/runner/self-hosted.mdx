@@ -39,10 +39,10 @@ export ALETHIA_WEB_ORIGIN=https://alethia.example.com
 export ALETHIA_WORKER_ID=<worker-id>
 export ALETHIA_WORKER_TOKEN=<worker-token>
 export ALETHIA_WORKER_MODE=self-hosted
-export SUPABASE_S3_ENDPOINT=<s3-endpoint>
-export SUPABASE_S3_REGION=<s3-region>
-export SUPABASE_STORAGE_KEY_ID=<s3-key>
-export SUPABASE_STORAGE_SECRET_KEY=<s3-secret>
+export ALETHIA_STORAGE_ENDPOINT=<s3-endpoint>
+export ALETHIA_STORAGE_REGION=<s3-region>
+export ALETHIA_STORAGE_ACCESS_KEY_ID=<s3-key>
+export ALETHIA_STORAGE_SECRET_ACCESS_KEY=<s3-secret>
 
 # Optional
 export INFRACOST_API_KEY=<key>
@@ -63,10 +63,10 @@ The Runner will:
 | `ALETHIA_WORKER_ID` | Yes | Assigned worker ID |
 | `ALETHIA_WORKER_TOKEN` | Yes | Authentication token |
 | `ALETHIA_WORKER_MODE` | Yes | Must be `self-hosted` |
-| `SUPABASE_S3_ENDPOINT` | Yes | Terraform state S3 endpoint |
-| `SUPABASE_S3_REGION` | Yes | S3 region |
-| `SUPABASE_STORAGE_KEY_ID` | Yes | S3 access key |
-| `SUPABASE_STORAGE_SECRET_KEY` | Yes | S3 secret key |
+| `ALETHIA_STORAGE_ENDPOINT` | Yes | Terraform state S3 endpoint |
+| `ALETHIA_STORAGE_REGION` | Yes | S3 region |
+| `ALETHIA_STORAGE_ACCESS_KEY_ID` | Yes | S3 access key |
+| `ALETHIA_STORAGE_SECRET_ACCESS_KEY` | Yes | S3 secret key |
 | `INFRACOST_API_KEY` | No | Enables cost estimation |
 
 ## Use Cases

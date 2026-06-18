@@ -9,15 +9,17 @@ Cloud-hosted Runners support automatic scale-to-zero. When no jobs are queued, t
 
 ## How It Works
 
-A Lambda function runs on a 1-minute schedule via EventBridge. It checks the Alethia database for queued jobs and adjusts ECS service desired counts accordingly.
+A Lambda function runs on a 1-minute schedule via EventBridge. For each node it asks the console how many jobs are queued, then adjusts that node's ECS service desired count accordingly. The Lambda never talks to the database directly — it calls a console API endpoint, which owns the queue logic.
 
 ### Scale-Up Logic
 
 ```
-Every 1 minute:
-  1. Query Supabase: SELECT count(*) FROM provision_jobs WHERE status = 'QUEUED'
-  2. For each registered Runner ECS service:
-     - If queued > 0 AND current desired = 0:
+Every 1 minute, for each entry in WORKERS:
+  1. POST {alethia_url}/api/platform/queue
+       Authorization: Bearer ${ALETHIA_API_SECRET}
+     → Console runs recover_stale_jobs()
+     → Console returns { recovered, queued }
+  2. If queued > 0 AND current desired = 0:
        → Scale UP to 1
        → Reset idle counter
 ```
@@ -25,7 +27,7 @@ Every 1 minute:
 ### Scale-Down Logic
 
 ```
-  3. For each registered Runner ECS service:
+  3. For each node:
      - If queued = 0 AND current desired > 0:
        → Increment idle counter
        → If idle counter >= 5 (5 consecutive checks = 5 minutes):
@@ -53,15 +55,14 @@ The 5-check threshold (5 minutes) prevents flapping — a brief gap between jobs
 The Lambda function needs:
 - `ecs:DescribeServices` — read current desired count
 - `ecs:UpdateService` — change desired count
-- Network access to Supabase REST API (for job count query)
+- Network access to each node's console URL (for the queue check)
 
 ### Environment Variables
 
 | Variable | Purpose |
 |----------|---------|
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service role key for admin API access |
-| `WORKERS` | JSON array of ECS service configurations |
+| `ALETHIA_API_SECRET` | Bearer secret sent to the console's `/api/platform/queue` endpoint |
+| `WORKERS` | JSON array of node configurations (region, cluster, service, alethia_url) |
 
 ### Workers Configuration
 
@@ -70,32 +71,37 @@ The Lambda function needs:
   {
     "region": "eu-west-1",
     "cluster": "alethia-prod-runner-eu",
-    "service": "alethia-prod-runner-eu-service"
+    "service": "alethia-prod-runner-eu-service",
+    "alethia_url": "https://eu.console.example.com"
   },
   {
     "region": "us-east-1",
     "cluster": "alethia-prod-runner-us",
-    "service": "alethia-prod-runner-us-service"
+    "service": "alethia-prod-runner-us-service",
+    "alethia_url": "https://us.console.example.com"
   }
 ]
 ```
 
 Each entry maps to one ECS service running a Runner. The scaler handles multiple regions independently.
 
-## Job Count Query
+## Queue Check
 
-The Lambda queries Supabase's REST API:
+The Lambda POSTs to the console's platform endpoint instead of querying the database:
 
 ```python
-url = f"{SUPABASE_URL}/rest/v1/provision_jobs?status=eq.QUEUED&select=id"
-req = urllib.request.Request(url, headers={
-    'apikey': SUPABASE_KEY,
-    'Authorization': f'Bearer {SUPABASE_KEY}',
-    'Prefer': 'count=exact',
-})
+req = urllib.request.Request(
+    f"{worker['alethia_url']}/api/platform/queue",
+    method="POST",
+    headers={
+        'Authorization': f'Bearer {ALETHIA_API_SECRET}',
+        'Content-Type': 'application/json',
+    },
+)
+# Response: { "recovered": <n>, "queued": <n> }
 ```
 
-It uses the `content-range` header to get the count without fetching all rows.
+The endpoint runs `recover_stale_jobs()` (re-queuing jobs orphaned by a crashed Runner) and returns the current `queued` count. The Lambda scales the node's ECS service up to 1 when `queued > 0`, and down to 0 after 5 consecutive idle checks.
 
 ## Cold Start Behavior
 
@@ -129,15 +135,15 @@ The scaler is defined in `infra/platform/scaler/`:
 module "scaler" {
   source = "./scaler"
 
-  name_prefix               = local.name_prefix
-  supabase_url              = var.supabase_url
-  supabase_service_role_key = var.supabase_service_role_key
+  name_prefix        = local.name_prefix
+  alethia_api_secret = var.alethia_api_secret
 
   workers = [
     for name, w in module.runner : {
-      region  = var.runners[name].region
-      cluster = w.cluster_name
-      service = w.service_name
+      region      = var.runners[name].region
+      cluster     = w.cluster_name
+      service     = w.service_name
+      alethia_url = var.runners[name].alethia_url
     }
   ]
 }

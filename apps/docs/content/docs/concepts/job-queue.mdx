@@ -122,8 +122,8 @@ When a Runner dies mid-job:
 2. Job stays in PROCESSING with no new log updates
 3. After 5 minutes of no log activity, Console marks the job FAILED
 4. User can **retry** the job — creates a new job with the same config
-5. Terraform state is preserved in Supabase S3, so the retry continues from the last successful state
+5. Terraform state is preserved in S3-compatible storage, so the retry continues from the last successful state
 
 ## Real-time Status Updates
 
-Job status changes are broadcast via [Supabase Realtime](/concepts/realtime). The UI subscribes to `provision_jobs` UPDATE events and updates the jobs store in real-time. The job detail page also subscribes to `provision_job_logs` INSERT events for live log streaming.
+Job status changes are broadcast via [Postgres LISTEN/NOTIFY → SSE](/concepts/realtime). The UI subscribes to `jobs` UPDATE events and updates the jobs store in real-time. The job detail page also subscribes to `provision_job_logs` INSERT events for live log streaming.

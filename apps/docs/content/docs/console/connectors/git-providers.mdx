@@ -26,10 +26,10 @@ Click "Connect" on the provider card in the Connectors page.
 You're redirected to the provider's authorization page. Grant the application access to your repositories.
 
 ### Callback
-The provider redirects back to Alethia with an authorization code. Supabase exchanges it for access and refresh tokens.
+The provider redirects back to Alethia with an authorization code. Better Auth exchanges it for access and refresh tokens.
 
 ### Token Storage
-A database trigger copies the tokens from `auth.identities` to the `provider_tokens` table. All tokens are encrypted at rest by Supabase.
+Better Auth stores the provider tokens in the `provider_tokens` table. All tokens are encrypted at rest.
 
 </Steps>
 
@@ -59,7 +59,7 @@ This happens transparently whenever a Git operation is needed.
 Disconnecting a Git provider:
 
 1. Deletes the `provider_tokens` record
-2. Revokes the OAuth grant with the provider via Supabase unlink
+2. Revokes the OAuth grant via Better Auth / the provider
 3. Existing ArgoCD installations that use this token will lose repository access
 
 <Callout type="warn">

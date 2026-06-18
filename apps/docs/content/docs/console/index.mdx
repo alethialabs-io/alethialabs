@@ -12,10 +12,10 @@ Alethia is the web-based control plane. It provides a visual interface for confi
 | Layer | Technology |
 |-------|-----------|
 | Framework | Next.js 15 (App Router, Server Actions) |
-| Database | Supabase PostgreSQL with Row Level Security |
-| Auth | Supabase GoTrue (OAuth: GitHub, GitLab, Bitbucket, Google) |
-| Realtime | Supabase Realtime WebSocket ([how it works](/concepts/realtime)) |
-| Storage | Supabase S3 for Terraform state and plan artifacts |
+| Database | PostgreSQL + Drizzle ORM with org-scoped Row Level Security |
+| Auth | Better Auth (OAuth: GitHub, GitLab, Bitbucket, Google; email OTP) |
+| Realtime | Postgres LISTEN/NOTIFY → SSE ([how it works](/concepts/realtime)) |
+| Storage | S3-compatible storage (default SeaweedFS) for Terraform state and plan artifacts |
 | UI | Tailwind CSS, shadcn/ui, Zustand state management |
 
 ## Key Pages
@@ -48,13 +48,13 @@ Alethia is the web-based control plane. It provides a visual interface for confi
 
 ```
 Browser ──► Next.js App Router
-              ├── Server Actions (Supabase client with RLS)
+              ├── Server Actions (Drizzle with org-scoped RLS)
               ├── API Routes (Worker + CLI token auth)
-              └── Supabase Realtime (WebSocket subscriptions)
+              └── LISTEN/NOTIFY → SSE (Server-Sent Events)
                    └── Live updates → browser stores
 ```
 
-All database access goes through Supabase with RLS policies enforcing per-user data isolation. Server Actions inherit the authenticated user's RLS context automatically.
+All database access goes through Drizzle with org-scoped RLS policies enforcing per-org data isolation through a Policy Decision Point (PDP). Server Actions set the current org context automatically.
 
 ## State Management
 

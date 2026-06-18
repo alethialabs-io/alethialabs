@@ -24,7 +24,7 @@ User ─► Console (web) ─► Job Queue (PostgreSQL) ─► Runner (agent) �
          │                                            │
          ├─ OR ──► alethia CLI ─► Job Queue ──────────┘
          │
-         └─ Supabase Realtime ◄── Log Streaming ◄── Runner
+         └─ LISTEN/NOTIFY → SSE ◄── Log Streaming ◄── Runner
 ```
 
 1. The user configures infrastructure through Console (web form) or alethia (CLI commands)
@@ -52,7 +52,7 @@ Every infrastructure component has provider-specific implementations across thre
 
 ## Tech Stack
 
-**Web (Console):** Next.js 15, Supabase (PostgreSQL + GoTrue + Realtime + S3), Tailwind CSS, shadcn/ui, Zustand
+**Web (Console):** Next.js 15, PostgreSQL + Drizzle ORM, Better Auth, LISTEN/NOTIFY + SSE realtime, S3-compatible storage (SeaweedFS), Tailwind CSS, shadcn/ui, Zustand
 
 **CLI (alethia):** Go, Cobra, Charmbracelet (lipgloss, huh, bubbletea), Homebrew tap
 
@@ -60,7 +60,7 @@ Every infrastructure component has provider-specific implementations across thre
 
 **Shared (core):** Go package — provisioner, Terraform wrapper, cloud SDKs, ArgoCD, Infracost, Git, Helm
 
-**Infrastructure:** Terraform, Supabase S3 (state), Lambda scaler (scale-to-zero), release-please
+**Infrastructure:** Terraform, S3-compatible storage / SeaweedFS (state), Lambda scaler (scale-to-zero), release-please
 
 ## Concept Pages
 
@@ -74,7 +74,7 @@ Deep dives into the platform's key technical patterns:
     Zero-credential model, RLS, cloud provider federation.
   </Card>
   <Card title="Database Schema" href="/concepts/database">
-    Full PostgreSQL schema — tables, enums, functions, Realtime.
+    Full PostgreSQL schema — tables, enums, functions, LISTEN/NOTIFY.
   </Card>
   <Card title="Job Queue Pattern" href="/concepts/job-queue">
     Atomic claiming, FOR UPDATE SKIP LOCKED, failure recovery.
@@ -89,7 +89,7 @@ Deep dives into the platform's key technical patterns:
     Form values → config snapshot → SpecConfig → terraform.tfvars.json → infrastructure.
   </Card>
   <Card title="Real-time Architecture" href="/concepts/realtime">
-    Supabase Realtime, log streaming, store synchronization.
+    LISTEN/NOTIFY → SSE, log streaming, store synchronization.
   </Card>
   <Card title="Cost Estimation" href="/concepts/cost-estimation">
     AWS Pricing API, real-time sidebar, Infracost integration.
@@ -101,7 +101,7 @@ Deep dives into the platform's key technical patterns:
     Cross-provider Spec duplication with mapping and warnings.
   </Card>
   <Card title="Terraform State" href="/concepts/terraform-state">
-    Supabase S3 backend, state paths, plan artifacts.
+    S3-compatible backend, state paths, plan artifacts.
   </Card>
   <Card title="GitOps & ArgoCD" href="/concepts/gitops-argocd">
     App of Apps pattern, infra facts, Helm values.
@@ -130,6 +130,6 @@ bb-thesis-2026/
 │   ├── templates/spec/   # Infrastructure templates (AWS/GCP/Azure)
 │   ├── templates/argocd/ # ArgoCD application templates
 │   └── connector/        # Cloud provider federation setup
-├── supabase/migrations/  # PostgreSQL schema migrations
+├── apps/console/lib/db/migrations/  # PostgreSQL schema migrations (Drizzle)
 └── .github/workflows/    # CI/CD (release-please, release-alethia, release-runner)
 ```

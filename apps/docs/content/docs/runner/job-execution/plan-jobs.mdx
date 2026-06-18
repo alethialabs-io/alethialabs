@@ -18,7 +18,7 @@ Provider-specific: STS AssumeRole (AWS), WIF exchange (GCP), or federated identi
 The spec's config snapshot is transformed into `terraform.tfvars` by the provisioner. Each spec component maps to specific Terraform variables.
 
 ### terraform init
-Initializes with the [Supabase S3 backend](/concepts/terraform-state):
+Initializes with the [S3-compatible state backend](/concepts/terraform-state):
 ```
 bucket = "spec-terraform-state"
 key    = "{zone}/{project}/{stage}/{region}/terraform.tfstate"
@@ -44,7 +44,7 @@ infracost breakdown --path plan.json --format json
 Parses per-resource cost estimates. See [Cost Estimation](/concepts/cost-estimation).
 
 ### Upload plan artifact
-The binary `plan.tfplan` file is uploaded to Supabase Storage (`plan-artifacts` bucket) for later use by DEPLOY jobs.
+The binary `plan.tfplan` file is uploaded to S3-compatible storage (`plan-artifacts` bucket) for later use by DEPLOY jobs.
 
 ### Report results
 Job status → SUCCESS with execution metadata:

@@ -42,7 +42,7 @@ When executing a job, Runner generates `terraform.tfvars` from the spec's config
 
 ## Terraform State
 
-State for all templates is stored in [Supabase S3](/concepts/terraform-state) with path structure:
+State for all templates is stored in [S3-compatible state](/concepts/terraform-state) with path structure:
 
 ```
 {zone}/{project}/{stage}/{region}/terraform.tfstate

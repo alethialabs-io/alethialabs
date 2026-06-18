@@ -102,10 +102,10 @@ The result is a `map[string]interface{}` written to `terraform.tfvars.json` via 
 The Runner resolves the template directory based on `SpecConfig.Provider` — one of `aws/`, `gcp/`, or `azure/` under the templates path.
 
 ### Backend Configuration
-Terraform state is stored in Supabase S3. The backend key follows the pattern `{zone_id}/{project}-{env}-{region}/terraform.tfstate`. See [Terraform State](/concepts/terraform-state).
+Terraform state is stored in S3-compatible storage. The backend key follows the pattern `{zone_id}/{project}-{env}-{region}/terraform.tfstate`. See [Terraform State](/concepts/terraform-state).
 
 ### Plan
-`terraform plan` runs with the generated tfvars. For PLAN jobs, an Infracost analysis is also generated. The plan artifact is uploaded to Supabase Storage.
+`terraform plan` runs with the generated tfvars. For PLAN jobs, an Infracost analysis is also generated. The plan artifact is uploaded to S3-compatible storage.
 
 ### Apply
 For DEPLOY jobs, `terraform apply` runs the plan. If a `plan_job_id` is linked, the cached plan artifact is downloaded and applied directly.

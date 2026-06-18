@@ -1,21 +1,23 @@
 ---
 title: Real-time Architecture
-description: How Supabase Realtime powers live log streaming, job status updates, and store synchronization.
+description: How Postgres LISTEN/NOTIFY fanned out over SSE powers live log streaming, job status updates, and store synchronization.
 ---
 
 # Real-time Architecture
 
-The platform uses **Supabase Realtime** (built on PostgreSQL's logical replication) to push live updates to the browser. Three features depend on this: log streaming, job status updates, and Runner status tracking.
+The platform uses **Postgres LISTEN/NOTIFY fanned out to the browser over SSE** (Server-Sent Events) to push live updates. Three features depend on this: log streaming, job status updates, and Runner status tracking.
 
 <img src="/docs/diagrams/concepts/realtime.svg" alt="Realtime Architecture" />
 
-## How Supabase Realtime Works
+## How LISTEN/NOTIFY → SSE Works
 
-Supabase Realtime listens to PostgreSQL's Write-Ahead Log (WAL) and broadcasts row-level changes over WebSocket channels. Clients subscribe to specific tables and event types (INSERT, UPDATE, DELETE) with optional row-level filters.
+When a row changes, a Postgres trigger emits a `NOTIFY` on a named channel with a small JSON payload. The console holds a single `LISTEN` connection per app instance and receives every notification. It fans those notifications out to connected browsers over an SSE stream, filtering each event to the subscriber that should see it.
 
 ```
-PostgreSQL WAL ──► Supabase Realtime Server ──► WebSocket ──► Browser
+Postgres NOTIFY ──► Console LISTEN (1 per instance) ──► SSE ──► Browser
 ```
+
+The implementation lives in `apps/console/lib/realtime/index.ts`. A single LISTEN connection avoids one connection per browser tab. For multi-instance scale-out, an optional Redis transport relays notifications between console instances (enterprise).
 
 ## Log Streaming
 
@@ -31,28 +33,23 @@ The `JobLogger` buffers Terraform output and flushes every 2 seconds (or when th
 ### Console inserts into database
 The API route inserts the log chunk into `provision_job_logs` with a stream type (STDOUT, STDERR, or SYSTEM).
 
-### Supabase broadcasts INSERT
-The `provision_job_logs` table is part of the `supabase_realtime` publication. Every INSERT triggers a broadcast.
+### Postgres emits NOTIFY
+An `AFTER INSERT` trigger on `provision_job_logs` fires `NOTIFY` on the log channel. The console's LISTEN connection receives it immediately.
 
 ### Browser receives chunk
-The job detail page subscribes to INSERT events on `provision_job_logs` filtered by `job_id`. New chunks appear in the log viewer within milliseconds.
+The job detail page holds an SSE connection scoped to its `job_id`. The console relays the matching notification down the stream and the chunk appears in the log viewer within milliseconds.
 
 </Steps>
 
 ### Client Subscription
 
 ```typescript
-supabase
-  .channel(`job-logs-${jobId}`)
-  .on('postgres_changes', {
-    event: 'INSERT',
-    schema: 'public',
-    table: 'provision_job_logs',
-    filter: `job_id=eq.${jobId}`
-  }, (payload) => {
-    appendLog(payload.new.log_chunk, payload.new.stream_type);
-  })
-  .subscribe();
+const events = new EventSource(`/api/jobs/${jobId}/logs/stream`);
+
+events.addEventListener('log', (event) => {
+  const { log_chunk, stream_type } = JSON.parse(event.data);
+  appendLog(log_chunk, stream_type);
+});
 ```
 
 ### End-to-End Latency
@@ -62,31 +59,25 @@ supabase
 | Terraform → JobLogger buffer | ≤ 2 seconds |
 | POST to Console API | ~50ms |
 | Database INSERT | ~5ms |
-| Realtime broadcast | ~50ms |
+| NOTIFY → SSE delivery | ~50ms |
 | **Total** | **~2–3 seconds** |
 
 ## Job Status Updates
 
-The dashboard layout subscribes to `provision_jobs` changes to update the jobs store in real-time.
+The dashboard layout opens an SSE stream for job changes to update the jobs store in real-time.
 
 ### Subscription (Dashboard Layout)
 
 ```typescript
-supabase
-  .channel('job-updates')
-  .on('postgres_changes', {
-    event: '*',  // INSERT, UPDATE, DELETE
-    schema: 'public',
-    table: 'provision_jobs',
-    filter: `user_id=eq.${userId}`
-  }, (payload) => {
-    jobsStore.addOrUpdateJob(payload.new);
-  })
-  .subscribe();
+const events = new EventSource('/api/jobs/stream');
+
+events.addEventListener('job', (event) => {
+  jobsStore.addOrUpdateJob(JSON.parse(event.data));
+});
 ```
 
 <Callout type="info">
-The `user_id` filter ensures multi-tenant isolation — each user only receives events for their own jobs, even at the WebSocket level.
+Events are scoped server-side by the caller's `org_id` (the same org the SSE handler resolves from the session) — each browser only receives events for jobs in its own organization, so multi-tenant isolation is enforced before anything reaches the stream.
 </Callout>
 
 ### What triggers updates:
@@ -97,23 +88,19 @@ The `user_id` filter ensures multi-tenant isolation — each user only receives 
 
 ## Runner Status Tracking
 
-The Runners page subscribes to `workers` table changes:
+The Runners page opens an SSE stream for `workers` changes:
 
 ```typescript
-supabase
-  .channel('runner-updates')
-  .on('postgres_changes', {
-    event: '*',
-    schema: 'public',
-    table: 'workers'
-  }, (payload) => {
-    if (payload.eventType === 'DELETE') {
-      runnersStore.removeRunner(payload.old.id);
-    } else {
-      runnersStore.addOrUpdateRunner(payload.new);
-    }
-  })
-  .subscribe();
+const events = new EventSource('/api/runners/stream');
+
+events.addEventListener('runner', (event) => {
+  const payload = JSON.parse(event.data);
+  if (payload.op === 'DELETE') {
+    runnersStore.removeRunner(payload.old.id);
+  } else {
+    runnersStore.addOrUpdateRunner(payload.new);
+  }
+});
 ```
 
 This enables live status indicators:
@@ -123,19 +110,16 @@ This enables live status indicators:
 
 ## Spec Status Updates
 
-The zones store listens for Spec status changes (e.g., DRAFT → PROVISIONING → ACTIVE):
+The zones store listens for Spec status changes (e.g., DRAFT → PROVISIONING → ACTIVE). A trigger on the `specs` table emits a NOTIFY on update, which the console relays over SSE:
 
 ```typescript
-.on('postgres_changes', {
-  event: 'UPDATE',
-  schema: 'public',
-  table: 'specs'
-}, (payload) => {
-  zonesStore.updateSpecInPlace(payload.new.id, {
-    status: payload.new.status,
-    estimated_monthly_cost: payload.new.estimated_monthly_cost
+events.addEventListener('spec', (event) => {
+  const spec = JSON.parse(event.data);
+  zonesStore.updateSpecInPlace(spec.id, {
+    status: spec.status,
+    estimated_monthly_cost: spec.estimated_monthly_cost
   });
-})
+});
 ```
 
 ## Store Synchronization Pattern
@@ -143,7 +127,7 @@ The zones store listens for Spec status changes (e.g., DRAFT → PROVISIONING �
 All Zustand stores follow the same pattern for real-time updates:
 
 1. **Initial fetch** on page mount (with 30-second stale threshold to avoid redundant API calls)
-2. **Realtime subscription** on dashboard layout mount
+2. **SSE subscription** on dashboard layout mount
 3. **Optimistic updates** via `addOrUpdate` methods that upsert by ID
 4. **Session persistence** for filters and pagination state (via `sessionStorage`)
 

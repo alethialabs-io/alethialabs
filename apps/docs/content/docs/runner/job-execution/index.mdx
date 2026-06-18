@@ -40,7 +40,7 @@ If a job is returned, the Runner:
 When any step fails:
 1. Error logged to STDERR stream
 2. Job status set to FAILED with error message
-3. Terraform state preserved (partial apply state saved to [Supabase S3](/concepts/terraform-state))
+3. Terraform state preserved (partial apply state saved to [S3-compatible state](/concepts/terraform-state))
 4. Cloud credentials cleared (deferred cleanup always runs)
 5. Runner returns to the poll loop for the next job
 

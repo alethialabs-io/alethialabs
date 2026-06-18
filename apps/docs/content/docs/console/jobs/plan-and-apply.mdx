@@ -17,11 +17,11 @@ From the [spec detail page](/console/dashboard/spec-detail), click **Plan**. Sel
 The Runner:
 1. Assumes cloud credentials ([how](/concepts/authentication))
 2. Generates Terraform variable files from the spec's config snapshot
-3. Runs `terraform init` with Supabase S3 backend ([state management](/concepts/terraform-state))
+3. Runs `terraform init` with S3-compatible backend ([state management](/concepts/terraform-state))
 4. Runs `terraform plan -out=plan.tfplan`
 5. Runs `terraform show -json` for structured output
 6. Optionally runs Infracost for cost breakdown ([cost estimation](/concepts/cost-estimation))
-7. Uploads the plan artifact to Supabase S3
+7. Uploads the plan artifact to S3-compatible storage
 8. Reports resource change counts and costs
 
 ### Review Plan
