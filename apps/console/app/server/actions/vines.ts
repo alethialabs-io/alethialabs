@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { requireOwner } from "@/lib/auth/owner";
+import { authorize } from "@/lib/authz/guard";
 import { withOwnerScope } from "@/lib/db";
 import {
 	auditLog,
@@ -83,7 +84,8 @@ export interface CreateVineInput {
 // ============================================================
 
 export async function createVine(data: CreateVineInput) {
-	const owner = await requireOwner();
+	const actor = await authorize("create", { type: "spec" });
+	const owner = actor.userId;
 
 	return withOwnerScope(owner, async (tx) => {
 		const { vineyard_id, ...vineFields } = data.vine;
@@ -164,7 +166,8 @@ export async function createVine(data: CreateVineInput) {
 // ============================================================
 
 export async function getVines() {
-	const owner = await requireOwner();
+	const actor = await authorize("view", { type: "spec" });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const vines = await tx
 			.select()
@@ -175,7 +178,8 @@ export async function getVines() {
 }
 
 export async function getVine(vineId: string) {
-	const owner = await requireOwner();
+	const actor = await authorize("view", { type: "spec", id: vineId });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const [vine] = await tx
 			.select()
@@ -388,7 +392,8 @@ async function buildConfigSnapshot(owner: string, vineId: string) {
 }
 
 export async function planVine(vineId: string, workerId?: string | null) {
-	const owner = await requireOwner();
+	const actor = await authorize("plan", { type: "spec", id: vineId });
+	const owner = actor.userId;
 	const { vine, identity, configSnapshot } = await buildConfigSnapshot(
 		owner,
 		vineId,
@@ -422,7 +427,8 @@ export async function provisionVine(
 	planJobId?: string,
 	workerId?: string | null,
 ) {
-	const owner = await requireOwner();
+	const actor = await authorize("deploy", { type: "spec", id: vineId });
+	const owner = actor.userId;
 	const { vine, identity, configSnapshot } = await buildConfigSnapshot(
 		owner,
 		vineId,
@@ -465,7 +471,8 @@ export async function provisionVine(
 // ============================================================
 
 export async function deleteVine(vineId: string) {
-	const owner = await requireOwner();
+	const actor = await authorize("destroy", { type: "spec", id: vineId });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		// CASCADE handles all component tables.
 		await tx.delete(specs).where(eq(specs.id, vineId));
@@ -615,7 +622,8 @@ export async function duplicateVineForProvider(
 	vineyardId: string;
 	warnings: ConversionWarning[];
 }> {
-	const owner = await requireOwner();
+	const actor = await authorize("create", { type: "spec" });
+	const owner = actor.userId;
 
 	const { formData, provider: sourceProvider } =
 		await getVineAsFormData(sourceVineId);

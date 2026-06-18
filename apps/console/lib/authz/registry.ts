@@ -57,7 +57,7 @@ const MATRIX: Partial<Record<Resource, readonly Action[]>> = {
 	spec: ["view", "create", "edit", "plan", "deploy", "destroy"],
 	runner: ["view", "create", "edit", "destroy", "deploy"],
 	cloud_identity: ["view", "manage_identities"],
-	job: ["view", "create"],
+	job: ["view", "create", "edit"],
 	connector: ["view", "manage_integrations"],
 	member: ["view", "manage_members"],
 	audit: ["view_audit", "export_audit"],

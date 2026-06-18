@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { requireOwner } from "@/lib/auth/owner";
+import { authorize } from "@/lib/authz/guard";
 import { withOwnerScope } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -26,7 +26,8 @@ export type GetVineyardsData = VineyardWithVines[];
 
 /** Fetches all zones with nested specs and each spec's cloud provider. */
 export async function getVineyards() {
-	const owner = await requireOwner();
+	const actor = await authorize("view", { type: "zone" });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const zoneRows = await tx
 			.select()
@@ -64,7 +65,8 @@ export async function getVineyards() {
 
 /** Fetches a single zone with nested specs and their cloud provider. */
 export async function getVineyardById(id: string) {
-	const owner = await requireOwner();
+	const actor = await authorize("view", { type: "zone", id });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const [zone] = await tx
 			.select()
@@ -95,7 +97,8 @@ export async function getVineyardById(id: string) {
 export async function createVineyard(
 	body: Omit<typeof zones.$inferInsert, "user_id">,
 ) {
-	const owner = await requireOwner();
+	const actor = await authorize("create", { type: "zone" });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const [zone] = await tx
 			.insert(zones)
@@ -120,7 +123,8 @@ export async function updateVineyard(
 	id: string,
 	body: Partial<typeof zones.$inferInsert>,
 ) {
-	const owner = await requireOwner();
+	const actor = await authorize("edit", { type: "zone", id });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const [zone] = await tx
 			.update(zones)
@@ -132,7 +136,8 @@ export async function updateVineyard(
 }
 
 export async function deleteVineyard(id: string) {
-	const owner = await requireOwner();
+	const actor = await authorize("destroy", { type: "zone", id });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		await tx.delete(zones).where(eq(zones.id, id));
 		return { success: true };

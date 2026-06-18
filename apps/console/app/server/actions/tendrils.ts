@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { requireOwner } from "@/lib/auth/owner";
+import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
@@ -43,7 +43,8 @@ function toReleaseInfo(r: {
 
 /** All runners visible to the user, joined with their pinned release, default first. */
 export async function getRunnersWithReleases() {
-	const owner = await requireOwner();
+	const actor = await authorize("view", { type: "runner" });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const rows = await tx
 			.select({ runner: runners, release: RELEASE_FIELDS })
@@ -63,7 +64,8 @@ export async function getRunnersWithReleases() {
 
 /** The most recent runner release, or null. */
 export async function getLatestRunnerRelease(): Promise<ReleaseInfo | null> {
-	const owner = await requireOwner();
+	const actor = await authorize("view", { type: "runner" });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const [r] = await tx
 			.select(RELEASE_FIELDS)
@@ -78,7 +80,8 @@ export async function getLatestRunnerRelease(): Promise<ReleaseInfo | null> {
 export async function getReleaseNotes(
 	version: string,
 ): Promise<ReleaseInfo | null> {
-	const owner = await requireOwner();
+	const actor = await authorize("view", { type: "runner" });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const [r] = await tx
 			.select(RELEASE_FIELDS)
@@ -91,7 +94,8 @@ export async function getReleaseNotes(
 
 /** Count of runners currently ONLINE and visible to the user. */
 export async function getOnlineRunnerCount(): Promise<number> {
-	const owner = await requireOwner();
+	const actor = await authorize("view", { type: "runner" });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const [row] = await tx
 			.select({ value: count() })
@@ -102,7 +106,8 @@ export async function getOnlineRunnerCount(): Promise<number> {
 }
 
 export async function registerWorker(name: string, mode: WorkerMode) {
-	const owner = await requireOwner();
+	const actor = await authorize("create", { type: "runner" });
+	const owner = actor.userId;
 	const workerToken = randomBytes(32).toString("hex");
 	const tokenHash = createHash("sha256").update(workerToken).digest("hex");
 
@@ -125,7 +130,11 @@ export async function registerWorker(name: string, mode: WorkerMode) {
 
 /** Sets (or clears) the default worker for the current user. */
 export async function setDefaultWorker(workerId: string | null) {
-	const owner = await requireOwner();
+	const actor = await authorize("edit", {
+		type: "runner",
+		id: workerId ?? undefined,
+	});
+	const owner = actor.userId;
 	await getServiceDb().execute(
 		sql`select set_default_runner(${owner}::uuid, ${workerId ?? null}::uuid)`,
 	);
@@ -133,7 +142,8 @@ export async function setDefaultWorker(workerId: string | null) {
 
 /** Returns all workers visible to the current user, default first. */
 export async function getAvailableWorkers() {
-	const owner = await requireOwner();
+	const actor = await authorize("view", { type: "runner" });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) =>
 		tx
 			.select({
@@ -156,7 +166,8 @@ export async function deployWorker(params: {
 	imageTag?: string;
 	assignedWorkerId?: string | null;
 }) {
-	const owner = await requireOwner();
+	const actor = await authorize("deploy", { type: "runner" });
+	const owner = actor.userId;
 	const workerToken = randomBytes(32).toString("hex");
 	const tokenHash = createHash("sha256").update(workerToken).digest("hex");
 
@@ -276,7 +287,8 @@ export async function destroyWorker(
 	workerId: string,
 	assignedWorkerId?: string | null,
 ) {
-	const owner = await requireOwner();
+	const actor = await authorize("destroy", { type: "runner", id: workerId });
+	const owner = actor.userId;
 	const { worker, deployConfig, identity } = await fetchDeployedWorker(
 		owner,
 		workerId,
@@ -288,7 +300,6 @@ export async function destroyWorker(
 			.from(jobs)
 			.where(
 				and(
-					eq(jobs.user_id, owner),
 					eq(jobs.job_type, "DESTROY_WORKER"),
 					inArray(jobs.status, ["QUEUED", "CLAIMED", "PROCESSING"]),
 				),
@@ -329,7 +340,8 @@ export async function destroyWorker(
 
 /** Queues an UPDATE_WORKER job to roll a deployed worker to the latest release. */
 export async function updateWorker(workerId: string) {
-	const owner = await requireOwner();
+	const actor = await authorize("edit", { type: "runner", id: workerId });
+	const owner = actor.userId;
 	const { worker, deployConfig, identity } = await fetchDeployedWorker(
 		owner,
 		workerId,
@@ -379,7 +391,8 @@ export async function updateWorker(workerId: string) {
 
 /** Deletes a worker record directly (no cloud resources to tear down). */
 export async function removeWorker(workerId: string) {
-	const owner = await requireOwner();
+	const actor = await authorize("destroy", { type: "runner", id: workerId });
+	const owner = actor.userId;
 	await withOwnerScope(owner, async (tx) => {
 		const [worker] = await tx
 			.select({ id: runners.id, user_id: runners.user_id })

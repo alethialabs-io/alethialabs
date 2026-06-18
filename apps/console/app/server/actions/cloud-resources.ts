@@ -3,14 +3,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { eq, sql } from "drizzle-orm";
-import { requireOwner } from "@/lib/auth/owner";
+import { authorize } from "@/lib/authz/guard";
 import { withOwnerScope } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 
 /** Queues a FETCH_RESOURCES job for any cloud identity, regardless of provider. */
 export async function refreshCloudResources(cloudIdentityId: string) {
-	const userId = await requireOwner();
+	const actor = await authorize("view", {
+		type: "cloud_identity",
+		id: cloudIdentityId,
+	});
+	const userId = actor.userId;
 
 	const jobId = await withOwnerScope(userId, async (tx) => {
 		const [job] = await tx
@@ -35,7 +39,11 @@ export async function completeResourceRefresh(
 	cloudIdentityId: string,
 	jobId: string,
 ) {
-	const userId = await requireOwner();
+	const actor = await authorize("view", {
+		type: "cloud_identity",
+		id: cloudIdentityId,
+	});
+	const userId = actor.userId;
 
 	return withOwnerScope(userId, async (tx) => {
 		const [job] = await tx

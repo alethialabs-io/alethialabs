@@ -2,14 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { requireOwner } from "@/lib/auth/owner";
+import { authorize } from "@/lib/authz/guard";
 import { withOwnerScope } from "@/lib/db";
 import { cloudIdentities, jobs, runners, specs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 
 export async function getJobStatus(jobId: string) {
-	const owner = await requireOwner();
+	const actor = await authorize("view", { type: "job", id: jobId });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const [row] = await tx
 			.select({ status: jobs.status, error_message: jobs.error_message })
@@ -23,7 +24,8 @@ export async function getJobStatus(jobId: string) {
 
 /** Fetches a single job (owner-scoped) by id, or null. */
 export async function getJob(jobId: string) {
-	const owner = await requireOwner();
+	const actor = await authorize("view", { type: "job", id: jobId });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const [row] = await tx
 			.select()
@@ -36,7 +38,8 @@ export async function getJob(jobId: string) {
 
 /** Fetches all jobs with spec project_name and runner name joined. */
 export async function getJobs() {
-	const owner = await requireOwner();
+	const actor = await authorize("view", { type: "job" });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const rows = await tx
 			.select({
@@ -66,7 +69,8 @@ export async function getJobs() {
 export type JobWithMeta = Awaited<ReturnType<typeof getJobs>>[number];
 
 export async function getPlanResult(jobId: string) {
-	const owner = await requireOwner();
+	const actor = await authorize("view", { type: "job", id: jobId });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const [row] = await tx
 			.select({
@@ -83,7 +87,8 @@ export async function getPlanResult(jobId: string) {
 }
 
 export async function getVineJobs(vineId: string) {
-	const owner = await requireOwner();
+	const actor = await authorize("view", { type: "spec", id: vineId });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		return tx
 			.select()
@@ -94,7 +99,8 @@ export async function getVineJobs(vineId: string) {
 }
 
 export async function rerunJob(jobId: string) {
-	const owner = await requireOwner();
+	const actor = await authorize("create", { type: "job" });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const [original] = await tx
 			.select({
@@ -130,12 +136,13 @@ export async function rerunJob(jobId: string) {
 
 /** Cancels a queued, claimed, or processing job. */
 export async function cancelJob(jobId: string) {
-	const owner = await requireOwner();
+	const actor = await authorize("edit", { type: "job", id: jobId });
+	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
 			.select({ status: jobs.status })
 			.from(jobs)
-			.where(and(eq(jobs.id, jobId), eq(jobs.user_id, owner)))
+			.where(eq(jobs.id, jobId))
 			.limit(1);
 
 		if (!job) throw new Error("Job not found");
