@@ -6,6 +6,7 @@
     "console",
     "cli",
     "runner",
+    "self-hosting",
     "concepts"
   ]
 }

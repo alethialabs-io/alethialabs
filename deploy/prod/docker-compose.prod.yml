@@ -1,12 +1,11 @@
-# Production overrides for the Hetzner single-VPS deploy. Layer on top of the
-# base bundle:
+# Production overrides for any single-VM deploy. Layer on top of the base bundle:
 #
-#   docker compose -f docker-compose.yml -f deploy/hetzner/docker-compose.prod.yml pull
-#   docker compose -f docker-compose.yml -f deploy/hetzner/docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml pull
+#   docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml up -d
 #
-# Differences vs local: the app/docs/runner run from prebuilt GHCR images (no
-# on-box builds), Caddy uses the real domain + automatic TLS, and the datastores
-# are NOT published to the host (only Caddy's 80/443 are public).
+# Differences vs local: app/docs/runner run from prebuilt public GHCR images (no
+# on-box builds), Caddy serves the real domain with automatic TLS (ALETHIA_DOMAIN),
+# and the datastores are NOT published to the host (only Caddy's 80/443 are public).
 name: alethia
 
 services:
@@ -28,8 +27,12 @@ services:
     pull_policy: always
 
   caddy:
+    environment:
+      # Drive the Caddyfile; empty ALETHIA_DOMAIN → plain HTTP on :80.
+      ALETHIA_DOMAIN: "${ALETHIA_DOMAIN:-}"
+      ALETHIA_ACME_EMAIL: "${ALETHIA_ACME_EMAIL:-}"
     volumes: !override
-      - ./deploy/hetzner/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/prod/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
 

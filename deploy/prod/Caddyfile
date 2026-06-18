@@ -1,10 +1,13 @@
 # Production ingress — automatic HTTPS via Let's Encrypt.
-# One front door: /docs* → docs, everything else → console.
+# Domain + ACME email come from the environment so any self-hoster can use it:
+#   ALETHIA_DOMAIN=app.example.com  ALETHIA_ACME_EMAIL=you@example.com
+# If ALETHIA_DOMAIN is unset it falls back to ":80" (plain HTTP, no TLS) — handy
+# for a quick IP-only test.
 {
-	email ops@alethialabs.io
+	email {$ALETHIA_ACME_EMAIL}
 }
 
-alethialabs.io, www.alethialabs.io {
+{$ALETHIA_DOMAIN::80} {
 	encode zstd gzip
 	handle /docs* {
 		reverse_proxy docs:3000

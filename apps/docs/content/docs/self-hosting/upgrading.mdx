@@ -1,0 +1,47 @@
+---
+title: Upgrading & Backups
+description: Update a self-hosted Alethia bundle and back up its data.
+---
+
+# Upgrading
+
+Re-run the installer (it's idempotent — it pulls the latest images and restarts):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/install.sh | sh
+```
+
+Or manually from `/opt/alethia`:
+
+```bash
+git pull
+docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml up -d --remove-orphans
+```
+
+Database migrations run automatically on boot (the one-shot `migrate` service runs
+before `app` starts). Your `.env` is never overwritten.
+
+# Backups
+
+Two things hold state: **Postgres** and the **object store** (Terraform state +
+plan artifacts). Terraform state is the only un-regenerable data — back it up.
+
+**Postgres** (schedule via cron):
+
+```bash
+docker compose exec -T postgres pg_dump -U alethia alethia | gzip > backup-$(date +%F).sql.gz
+```
+
+**Object storage** — snapshot the `seaweedfs-data` volume, or `aws s3 sync` it to
+an off-box bucket. If you point `ALETHIA_STORAGE_*` at managed S3/R2, use that
+provider's backups instead.
+
+On managed hosts, also enable the provider's **volume/server snapshots** for an
+off-box copy (e.g. Hetzner backups, EBS snapshots).
+
+# Inspecting the database
+
+```bash
+docker compose --profile tools up -d pgweb   # → http://localhost:8081
+```

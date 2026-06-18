@@ -1,0 +1,68 @@
+---
+title: Self-Hosting
+description: Run the whole Alethia platform on your own infrastructure with one docker-compose bundle.
+---
+
+# Self-Hosting Alethia
+
+Alethia ships as a single **docker-compose bundle** — the control plane (console),
+docs, Postgres, S3-compatible object storage (SeaweedFS), and a runner — behind a
+Caddy reverse proxy with automatic HTTPS. It runs on **any cloud's VM** (AWS, GCP,
+Azure, Alibaba, Hetzner) or your own hardware. No managed database or object store
+required; nothing is welded to a single SaaS.
+
+The whole stack is permissively licensed (Better Auth · Drizzle · SeaweedFS ·
+Postgres · Caddy) — only Alethia's own code is AGPL.
+
+## Quickstart (one command)
+
+On a fresh Linux VM with a domain pointed at it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/install.sh \
+  | DOMAIN=alethia.example.com ACME_EMAIL=you@example.com sh
+```
+
+The installer ensures Docker, fetches the repo to `/opt/alethia`, generates secrets
+into `.env`, and starts the bundle from prebuilt public images. Caddy obtains TLS
+for your domain automatically. Omit `DOMAIN` to serve plain HTTP on `:80` for a
+quick IP-only test.
+
+## Quickstart (manual)
+
+```bash
+git clone https://github.com/alethialabs-io/alethialabs.git && cd alethialabs
+cp .env.example .env            # then edit: secrets, OAuth, RESEND_API_KEY
+docker compose up -d            # builds locally; or use the prod overlay (below) for prebuilt images
+```
+
+Production (prebuilt images + TLS), after setting `ALETHIA_DOMAIN`/`ALETHIA_ACME_EMAIL` in `.env`:
+
+```bash
+docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml up -d
+```
+
+## Requirements
+
+- A Linux VM: **2+ vCPU / 4–8 GB RAM** (8 GB comfortable), ~25 GB disk.
+- **Docker** + the Compose v2 plugin (the installer adds them).
+- A **domain** (for automatic HTTPS). DNS `A`/`AAAA` → the VM's IP.
+- Outbound network for image pulls and to reach the clouds you provision into.
+
+## What's in the bundle
+
+| Service | Role |
+|---|---|
+| `app` | Console (Next.js control plane) + the marketing site |
+| `docs` | This documentation, served at `/docs` |
+| `postgres` | Application database (Drizzle) |
+| `seaweedfs` | S3-compatible object storage (Terraform state + plan artifacts) |
+| `runner` | Executes provisioning jobs (Terraform) — self-hosted mode |
+| `caddy` | Single ingress, automatic TLS |
+| `pgweb` | Optional DB browser (`--profile tools` → `:8081`) |
+
+## Next
+
+- **[Configuration](./configuration)** — every `.env` key (DB, storage, auth, OAuth, email).
+- **[Terraform](./terraform)** — provision the VM + DNS on a specific cloud.
+- **[Upgrading & backups](./upgrading)** — updates, Postgres dumps, volume snapshots.
