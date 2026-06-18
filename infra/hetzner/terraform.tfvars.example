@@ -10,6 +10,6 @@ domain               = "alethialabs.io"
 ssh_public_key = "ssh-ed25519 AAAA... deploy@alethia"
 
 # Cost/size knobs (defaults are the cheapest viable bundle host).
-server_type      = "cax31" # Ampere ARM64
+server_type      = "cax21" # Ampere ARM64 (cheapest that fits the bundle); cax31 if busy
 location         = "fsn1"
-data_volume_size = 50
+data_volume_size = 25

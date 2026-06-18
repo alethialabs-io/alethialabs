@@ -38,8 +38,12 @@ credits). Pick one; both target the same `DEPLOY_HOST`.
 2. Push to `main` (or run `deploy-app` manually). `migrate` runs, then `app`/`docs`/`runner` start
    behind Caddy (auto-TLS once DNS resolves).
 
-## Cost
-Hetzner CAX31 ~€18/mo (or CAX21 ~€11). AWS t4g.large ~$57/mo on-demand, **≈$0 on lab credits**.
+## Cost (Infracost-checked for AWS; Hetzner is fixed list price)
+- **Hetzner CAX21 (default) ≈ €10–11/mo** — 4 vCPU/8 GB + 25 GB vol + backups + IPv4; 20 TB egress incl.
+  (CAX31 ≈ €18 if it gets busy.) Runner is in the bundle — no separate fleet cost.
+- **AWS t4g.medium ≈ $36/mo** (Infracost $32 + ~$3.6 IPv4); t4g.large ≈ $59. Managed runner fleet
+  (`infra/platform`) ≈ $2/mo idle (scale-to-zero) + ~$0.05/runner-hr ARM Fargate only while provisioning.
+- → Hetzner is ~3× cheaper for the always-on box; chosen for the MVP.
 
 ## Gating / next
 - Hold the real cutover until de-Supabase auth lands (login still needs the Supabase vars in
