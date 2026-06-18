@@ -1,0 +1,100 @@
+name: Deploy App
+
+# Continuous deploy of the alethialabs.io self-host bundle to the control-plane
+# VM (Hetzner or AWS — host-agnostic via DEPLOY_HOST): build the images → push
+# to GHCR (public) → SSH in and `compose pull && up -d`.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/console/**'
+      - 'apps/docs/**'
+      - 'apps/runner/**'
+      - 'packages/**'
+      - 'docker-compose.yml'
+      - 'deploy/hetzner/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/alethialabs-io
+
+jobs:
+  build:
+    # Native arm64 — the box is Hetzner CAX (Ampere) and the runner image is arm64.
+    runs-on: ubuntu-24.04-arm64
+    strategy:
+      matrix:
+        include:
+          - image: console
+            file: apps/console/Dockerfile
+            target: runner
+          - image: console-migrate
+            file: apps/console/Dockerfile
+            target: migrate
+          - image: docs
+            file: apps/docs/Dockerfile
+            target: ""
+          - image: runner
+            file: apps/runner/Dockerfile
+            target: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
+          platforms: linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ github.sha }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        env:
+          ALETHIA_DOTENV: ${{ secrets.ALETHIA_DOTENV }}
+          IMAGE_TAG: ${{ github.sha }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          envs: ALETHIA_DOTENV,IMAGE_TAG
+          # GHCR images are public, so no docker login is needed on the box.
+          script: |
+            set -euo pipefail
+            cd /opt/alethia
+            git fetch origin main
+            git checkout -f "$IMAGE_TAG"
+            # Runtime secrets (delivered as one secret blob) + the image tag to pull.
+            printf '%s\n' "$ALETHIA_DOTENV" > .env
+            echo "ALETHIA_IMAGE_TAG=$IMAGE_TAG" >> .env
+            docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml pull
+            docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml up -d --remove-orphans
+            docker image prune -f
