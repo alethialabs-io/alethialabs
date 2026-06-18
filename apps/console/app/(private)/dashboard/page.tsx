@@ -4,9 +4,9 @@
 
 
 import { getConnectorsWithStatus, type ConnectorWithConnection } from "@/app/server/actions/connectors";
+import { getOnlineRunnerCount } from "@/app/server/actions/tendrils";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
 import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
-import { createClient } from "@/lib/supabase/client";
 import { DataTable } from "@/components/data-table";
 import { jobColumns } from "@/components/jobs/columns";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -37,13 +37,7 @@ export default function DashboardPage() {
 		jobsStore.fetchJobs();
 		vineyardsStore.fetchVineyards();
 		getConnectorsWithStatus().then(setIntegrations).catch(() => {});
-
-		const supabase = createClient();
-		supabase
-			.from("workers")
-			.select("id, status")
-			.eq("status", "ONLINE")
-			.then(({ data }) => setOnlineWorkers(data?.length ?? 0));
+		getOnlineRunnerCount().then(setOnlineWorkers).catch(() => {});
 	}, []);
 
 	const allVines = useMemo(

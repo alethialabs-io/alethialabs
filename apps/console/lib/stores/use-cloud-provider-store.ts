@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { create } from "zustand";
-import { createClient } from "@/lib/supabase/client";
 import { getCachedResources } from "@/app/server/actions/aws/resources";
 import type { CloudProviderSlug } from "@/lib/cloud-providers/registry";
 import { CACHE_TTL_HOURS, PROVIDERS } from "@/lib/cloud-providers/registry";
@@ -94,39 +93,10 @@ export const useCloudProviderStore = create<CloudProviderStore>()(
 		},
 
 		subscribe: () => {
-			const supabase = createClient();
-			const { identityId } = get();
-
-			if (!identityId) return () => {};
-
-			const channel = supabase
-				.channel(`cloud-identity-${identityId}`)
-				.on(
-					"postgres_changes",
-					{
-						event: "UPDATE",
-						schema: "public",
-						table: "cloud_identities",
-						filter: `id=eq.${identityId}`,
-					},
-					(payload) => {
-						const row = payload.new as {
-							cached_resources: AnyCachedResources | null;
-							cached_at: string | null;
-						};
-						if (row.cached_resources && row.cached_at) {
-							get().updateResources(
-								row.cached_resources,
-								row.cached_at,
-							);
-						}
-					},
-				)
-				.subscribe();
-
-			return () => {
-				supabase.removeChannel(channel);
-			};
+			// Supabase Realtime retired. cloud_identities.cached_resources refreshes
+			// via the explicit FETCH_RESOURCES job flow (refreshCloudResources →
+			// poll → completeResourceRefresh → updateResources), so no live channel.
+			return () => {};
 		},
 	}),
 );

@@ -7,9 +7,99 @@ import { getServiceDb, withOwnerScope } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import { createHash, randomBytes } from "crypto";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 
 type WorkerMode = "self-hosted" | "cloud-hosted";
+
+const RELEASE_FIELDS = {
+	version: runnerReleases.version,
+	release_notes: runnerReleases.release_notes,
+	released_at: runnerReleases.released_at,
+	github_release_url: runnerReleases.github_release_url,
+	commit_sha: runnerReleases.commit_sha,
+	is_breaking: runnerReleases.is_breaking,
+} as const;
+
+type ReleaseInfo = {
+	version: string;
+	release_notes: string;
+	released_at: string;
+	github_release_url: string | null;
+	commit_sha: string | null;
+	is_breaking: boolean;
+};
+
+/** Normalizes a release row (Date → ISO string) for the client store. */
+function toReleaseInfo(r: {
+	version: string;
+	release_notes: string;
+	released_at: Date;
+	github_release_url: string | null;
+	commit_sha: string | null;
+	is_breaking: boolean;
+}): ReleaseInfo {
+	return { ...r, released_at: r.released_at.toISOString() };
+}
+
+/** All runners visible to the user, joined with their pinned release, default first. */
+export async function getRunnersWithReleases() {
+	const owner = await requireOwner();
+	return withOwnerScope(owner, async (tx) => {
+		const rows = await tx
+			.select({ runner: runners, release: RELEASE_FIELDS })
+			.from(runners)
+			.leftJoin(runnerReleases, eq(runners.release_id, runnerReleases.id))
+			.orderBy(
+				desc(runners.is_default),
+				asc(runners.mode),
+				asc(runners.created_at),
+			);
+		return rows.map((r) => ({
+			...r.runner,
+			worker_releases: r.release ? toReleaseInfo(r.release) : null,
+		}));
+	});
+}
+
+/** The most recent runner release, or null. */
+export async function getLatestRunnerRelease(): Promise<ReleaseInfo | null> {
+	const owner = await requireOwner();
+	return withOwnerScope(owner, async (tx) => {
+		const [r] = await tx
+			.select(RELEASE_FIELDS)
+			.from(runnerReleases)
+			.orderBy(desc(runnerReleases.released_at))
+			.limit(1);
+		return r ? toReleaseInfo(r) : null;
+	});
+}
+
+/** A runner release by version, or null. */
+export async function getReleaseNotes(
+	version: string,
+): Promise<ReleaseInfo | null> {
+	const owner = await requireOwner();
+	return withOwnerScope(owner, async (tx) => {
+		const [r] = await tx
+			.select(RELEASE_FIELDS)
+			.from(runnerReleases)
+			.where(eq(runnerReleases.version, version))
+			.limit(1);
+		return r ? toReleaseInfo(r) : null;
+	});
+}
+
+/** Count of runners currently ONLINE and visible to the user. */
+export async function getOnlineRunnerCount(): Promise<number> {
+	const owner = await requireOwner();
+	return withOwnerScope(owner, async (tx) => {
+		const [row] = await tx
+			.select({ value: count() })
+			.from(runners)
+			.where(eq(runners.status, "ONLINE"));
+		return row?.value ?? 0;
+	});
+}
 
 export async function registerWorker(name: string, mode: WorkerMode) {
 	const owner = await requireOwner();

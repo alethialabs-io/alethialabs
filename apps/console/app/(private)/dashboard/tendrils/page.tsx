@@ -11,13 +11,11 @@ import { AddTendrilButton } from "@/components/tendrils/add-tendril-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { createClient } from "@/lib/supabase/client";
 import { useTendrilsStore, type ActiveJob } from "@/lib/stores/use-tendrils-store";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
 import type {
 	ProvisionJobType as PublicProvisionJobType,
 	WorkerStatus as PublicWorkerStatus,
-	Runner as PublicWorkersRow,
 } from "@/lib/db/schema";
 import type { JobWithMeta as PublicProvisionJobsRow } from "@/app/server/actions/jobs";
 import type { WorkerMetadata } from "@/types/database-custom.types";
@@ -37,8 +35,6 @@ export default function TendrilsPage() {
 		latestRelease,
 		isLoading,
 		fetchTendrils,
-		addOrUpdateTendril,
-		removeTendril,
 		updateAllOutdated,
 	} = useTendrilsStore();
 
@@ -67,30 +63,10 @@ export default function TendrilsPage() {
 
 	useEffect(() => {
 		fetchTendrils(true);
+		// Poll for runner status (heartbeat-driven ONLINE/OFFLINE changes server-side).
+		const interval = setInterval(() => fetchTendrils(true), 10_000);
+		return () => clearInterval(interval);
 	}, [fetchTendrils]);
-
-	useEffect(() => {
-		const supabase = createClient();
-
-		const channel = supabase
-			.channel("workers-live")
-			.on(
-				"postgres_changes",
-				{ event: "*", schema: "public", table: "workers" },
-				(payload) => {
-					if (payload.eventType === "DELETE") {
-						removeTendril((payload.old as { id: string }).id);
-						return;
-					}
-					addOrUpdateTendril({ ...(payload.new as PublicWorkersRow), worker_releases: null });
-				},
-			)
-			.subscribe();
-
-		return () => {
-			supabase.removeChannel(channel);
-		};
-	}, [addOrUpdateTendril, removeTendril]);
 
 	const TENDRIL_JOB_TYPES = useMemo(
 		() => new Set<PublicProvisionJobType>(["DEPLOY_WORKER", "UPDATE_WORKER", "DESTROY_WORKER"]),

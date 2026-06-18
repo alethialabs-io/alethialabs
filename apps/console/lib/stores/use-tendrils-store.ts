@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { create } from "zustand";
-import { createClient } from "@/lib/supabase/client";
 import {
 	setDefaultWorker as setDefaultTendrilAction,
 	deployWorker as deployTendrilAction,
 	destroyWorker as destroyTendrilAction,
 	removeWorker as removeTendrilAction,
 	updateWorker as updateTendrilAction,
+	getRunnersWithReleases,
+	getLatestRunnerRelease,
+	getReleaseNotes,
 } from "@/app/server/actions/tendrils";
 import type {
 	ProvisionJobStatus as PublicProvisionJobStatus,
@@ -81,25 +83,14 @@ export const useTendrilsStore = create<TendrilsStore>()((set, get) => ({
 
 		set({ isLoading: true, error: null });
 		try {
-			const supabase = createClient();
-			const [tendrilsRes, releaseRes] = await Promise.all([
-				supabase
-					.from("workers")
-					.select("*, worker_releases(version, release_notes, released_at, github_release_url, commit_sha, is_breaking)")
-					.order("is_default", { ascending: false })
-					.order("mode", { ascending: true })
-					.order("created_at", { ascending: true }),
-				supabase
-					.from("worker_releases")
-					.select("version, release_notes, released_at, github_release_url, commit_sha, is_breaking")
-					.order("released_at", { ascending: false })
-					.limit(1)
-					.maybeSingle(),
+			const [tendrils, latestRelease] = await Promise.all([
+				getRunnersWithReleases(),
+				getLatestRunnerRelease(),
 			]);
 
 			set({
-				tendrils: (tendrilsRes.data ?? []) as unknown as TendrilWithRelease[],
-				latestRelease: (releaseRes.data as TendrilRelease) ?? null,
+				tendrils,
+				latestRelease,
 				lastFetchedAt: Date.now(),
 				isLoading: false,
 				error: null,
@@ -175,12 +166,6 @@ export const useTendrilsStore = create<TendrilsStore>()((set, get) => ({
 	},
 
 	fetchReleaseNotes: async (version) => {
-		const supabase = createClient();
-		const { data } = await supabase
-			.from("worker_releases")
-			.select("version, release_notes, released_at, github_release_url, commit_sha, is_breaking")
-			.eq("version", version)
-			.maybeSingle();
-		return (data as TendrilRelease) ?? null;
+		return getReleaseNotes(version);
 	},
 }));
