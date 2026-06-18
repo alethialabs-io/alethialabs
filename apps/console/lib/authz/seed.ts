@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { permission, role, rolePermission } from "@/lib/db/schema";
 import {
@@ -61,4 +62,17 @@ export async function seedAuthz(): Promise<void> {
 	});
 
 	await db.insert(rolePermission).values(rolePerms).onConflictDoNothing();
+
+	// Backfill: every existing user owns their personal org (org-wide owner grant).
+	// New users get this in the Better Auth user-create hook (lib/auth/index.ts).
+	await db.execute(sql`
+		insert into grants (org_id, principal_type, principal_id, role_id, resource_type)
+		select u.id, 'user', u.id, ${BUILTIN_ROLE_IDS.owner}::uuid, 'org'
+		from "user" u
+		where not exists (
+			select 1 from grants g
+			where g.org_id = u.id and g.principal_id = u.id
+			  and g.role_id = ${BUILTIN_ROLE_IDS.owner}::uuid and g.resource_type = 'org'
+		)
+	`);
 }

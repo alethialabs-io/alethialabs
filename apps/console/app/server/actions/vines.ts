@@ -8,6 +8,7 @@ import {
 	auditLog,
 	cloudIdentities,
 	jobs,
+	resourceHierarchy,
 	type Spec,
 	specCaches,
 	specCluster,
@@ -93,6 +94,27 @@ export async function createVine(data: CreateVineInput) {
 			.returning();
 
 		if (!vine) throw new Error("Failed to create spec");
+
+		// Authz hierarchy edge: spec → its zone (or → org when zone-less), so a
+		// higher-scope grant flows down to this spec.
+		await tx
+			.insert(resourceHierarchy)
+			.values(
+				vineyard_id
+					? {
+							child_type: "spec",
+							child_id: vine.id,
+							parent_type: "zone",
+							parent_id: vineyard_id,
+						}
+					: {
+							child_type: "spec",
+							child_id: vine.id,
+							parent_type: "org",
+							parent_id: owner,
+						},
+			)
+			.onConflictDoNothing();
 
 		// Singleton components (tx rolls back automatically on any failure).
 		await tx.insert(specNetwork).values({ spec_id: vine.id, ...data.network });

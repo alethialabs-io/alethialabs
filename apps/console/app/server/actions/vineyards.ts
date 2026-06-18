@@ -6,6 +6,7 @@ import { requireOwner } from "@/lib/auth/owner";
 import { withOwnerScope } from "@/lib/db";
 import {
 	cloudIdentities,
+	resourceHierarchy,
 	type Spec,
 	specs,
 	type Zone,
@@ -100,6 +101,17 @@ export async function createVineyard(
 			.insert(zones)
 			.values({ ...body, user_id: owner })
 			.returning();
+		// Authz hierarchy edge: zone → org (community org_id == owner). Lets an
+		// org/zone-scoped grant flow down to this zone's specs.
+		await tx
+			.insert(resourceHierarchy)
+			.values({
+				child_type: "zone",
+				child_id: zone.id,
+				parent_type: "org",
+				parent_id: owner,
+			})
+			.onConflictDoNothing();
 		return { vineyard: zone };
 	});
 }

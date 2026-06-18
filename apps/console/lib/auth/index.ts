@@ -9,8 +9,10 @@ import type {
 	BetterAuthOptions,
 	SocialProviders,
 } from "better-auth";
+import { sql } from "drizzle-orm";
 import { getAuthConfig } from "@/lib/config/auth";
 import { getAuthPlugins } from "@/lib/auth/plugins";
+import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { getServiceDb } from "@/lib/db";
 import { account, session, user, verification } from "@/lib/db/schema";
 import { profiles } from "@/lib/db/schema";
@@ -113,6 +115,7 @@ export const auth = betterAuth({
 			create: {
 				after: async (u) => {
 					await upsertProfile(u);
+					await ensurePersonalOrgOwner(u.id);
 				},
 			},
 			update: {
@@ -147,4 +150,22 @@ async function upsertProfile(u: {
 			target: profiles.id,
 			set: { email: u.email, full_name: u.name ?? null, avatar_url: u.image ?? null },
 		});
+}
+
+/**
+ * Grants a new user the org-wide `owner` role over their personal org (org_id ==
+ * user.id). This is the single grant the community PDP needs — the user can do
+ * everything in their own org. Idempotent (NOT EXISTS); existing users are
+ * backfilled by seedAuthz().
+ */
+async function ensurePersonalOrgOwner(userId: string): Promise<void> {
+	await getServiceDb().execute(sql`
+		insert into grants (org_id, principal_type, principal_id, role_id, resource_type)
+		select ${userId}::uuid, 'user', ${userId}::uuid, ${BUILTIN_ROLE_IDS.owner}::uuid, 'org'
+		where not exists (
+			select 1 from grants g
+			where g.org_id = ${userId}::uuid and g.principal_id = ${userId}::uuid
+			  and g.role_id = ${BUILTIN_ROLE_IDS.owner}::uuid and g.resource_type = 'org'
+		)
+	`);
 }
