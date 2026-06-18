@@ -1,1 +1,0 @@
-ALTER TABLE "public"."configurations" ADD COLUMN "gitops_infra_destination_repo" text;

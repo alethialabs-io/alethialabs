@@ -1,1 +1,0 @@
-ALTER TABLE "public"."configurations" ADD COLUMN "create_rds" boolean DEFAULT true;

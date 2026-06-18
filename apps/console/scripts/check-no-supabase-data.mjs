@@ -1,29 +1,25 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Guard for the de-Supabase migration (P1): asserts that no Supabase *data* access
-// (`supabase.from("…")` / `supabase.rpc(…)`) remains in app/ + lib/. Every read and
-// write must go through Drizzle (getServiceDb / withOwnerScope). Supabase auth
-// (`supabase.auth.*`), realtime (`.channel`), and storage are intentionally out of
-// scope (P3/P4). Drizzle's own `.from(table)` takes an identifier, not a string,
-// so matching `.from("`/`.from('` cleanly targets Supabase calls only.
-//
-// ALLOWLIST: client components/stores that still read via the browser Supabase
-// client. These are realtime-coupled and migrate alongside the realtime→SSE work
-// (P4) by moving their initial reads into Drizzle-backed server actions. Remove
-// each entry as it is migrated; the goal is an empty allowlist.
+// Guard: asserts that NO Supabase usage remains in the console source. The whole
+// platform now runs on Drizzle (data), Better Auth (auth), SSE + Postgres
+// LISTEN/NOTIFY (realtime), and S3 (storage). The `@supabase/*` import ban is the
+// load-bearing check — without a Supabase client you can't call .from/.rpc/.auth/
+// .channel/.storage — and the explicit patterns catch accidental reintroduction.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const ROOTS = ["app", "lib"];
-const ALLOWLIST = new Set([
-	"app/(private)/dashboard/page.tsx",
-	"app/(private)/dashboard/jobs/[id]/page.tsx",
-	"lib/stores/use-tendrils-store.ts",
-]);
+const ROOTS = ["app", "lib", "components", "hooks"];
 
-const DATA_ACCESS = /\.from\(["']|\.rpc\(/;
+const FORBIDDEN = [
+	{ re: /@supabase\//, label: "@supabase/* import" },
+	{
+		re: /\bsupabase\s*\.\s*(from|rpc|auth|channel|storage|realtime|removeChannel)\b/,
+		label: "supabase client call",
+	},
+	{ re: /\.channel\(/, label: "realtime .channel()" },
+];
 
 /** Recursively collects .ts/.tsx files under a directory. */
 function walk(dir, out) {
@@ -49,23 +45,20 @@ for (const root of ROOTS) {
 const violations = [];
 for (const file of files) {
 	const rel = relative(".", file);
-	if (ALLOWLIST.has(rel)) continue;
 	const lines = readFileSync(file, "utf8").split("\n");
 	lines.forEach((line, i) => {
-		if (DATA_ACCESS.test(line)) {
-			violations.push(`${rel}:${i + 1}: ${line.trim()}`);
+		for (const { re, label } of FORBIDDEN) {
+			if (re.test(line)) {
+				violations.push(`${rel}:${i + 1} [${label}]: ${line.trim()}`);
+			}
 		}
 	});
 }
 
 if (violations.length > 0) {
-	console.error(
-		`Found ${violations.length} Supabase data-access call(s) that must use Drizzle:`,
-	);
+	console.error(`Found ${violations.length} Supabase reference(s) — none allowed:`);
 	for (const v of violations) console.error(`  ${v}`);
 	process.exit(1);
 }
 
-console.log(
-	`OK — no Supabase data access in app/ + lib/ (allowlist: ${ALLOWLIST.size} P4 client file(s)).`,
-);
+console.log("OK — zero Supabase references in app/ + lib/ + components/ + hooks/.");
