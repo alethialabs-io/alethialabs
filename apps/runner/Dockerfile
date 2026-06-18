@@ -18,7 +18,11 @@ RUN cd apps/runner && go mod download
 COPY apps/runner/ apps/runner/
 
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+# TARGETARCH is provided by buildx (defaults to the build host's arch). Fargate
+# builds pass --platform linux/arm64; the self-host bundle builds for its host
+# (e.g. amd64 on Hetzner CPX, arm64 on Hetzner CAX / Apple Silicon).
+ARG TARGETARCH=arm64
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
     -ldflags="-s -w -X github.com/alethialabs-io/alethialabs/apps/runner/internal/version.Version=${VERSION}" \
     -o /runner ./apps/runner/cmd/runner
 
@@ -71,8 +75,8 @@ RUN adduser -D -u 1000 runner
 USER runner
 WORKDIR /home/runner
 
-COPY --chown=runner:runner infra/templates/vine/ /home/runner/vine-templates/
-COPY --chown=runner:runner infra/templates/runner/ /home/runner/tendril-templates/
+COPY --chown=runner:runner infra/templates/spec/ /home/runner/spec-templates/
+COPY --chown=runner:runner infra/templates/runner/ /home/runner/runner-templates/
 COPY --chown=runner:runner infra/templates/argocd/ /home/runner/argocd-templates/
 
 ENTRYPOINT ["runner"]

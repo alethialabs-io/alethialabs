@@ -1,10 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import path from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
 	output: "standalone",
+	// Monorepo: trace workspace files from the repo root so the standalone
+	// bundle is self-contained inside Docker.
+	outputFileTracingRoot: path.join(__dirname, "../../"),
 	async rewrites() {
 		// Serve the CLI install script at the root of get.alethialabs.io
 		// (`curl -fsSL https://get.alethialabs.io | sh`). install.ps1 is reached

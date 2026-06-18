@@ -1,0 +1,17 @@
+# Local self-host ingress (plain HTTP). One front door for the bundle:
+#   /docs*  → docs service   (Next.js serves at basePath /docs, prefix kept)
+#   else    → console (app)
+# The production TLS variant (real domain + automatic HTTPS) lives in
+# deploy/hetzner/Caddyfile.
+{
+	auto_https off
+}
+
+:80 {
+	handle /docs* {
+		reverse_proxy docs:3000
+	}
+	handle {
+		reverse_proxy app:3000
+	}
+}

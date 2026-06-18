@@ -1,0 +1,15 @@
+# Production ingress — automatic HTTPS via Let's Encrypt.
+# One front door: /docs* → docs, everything else → console.
+{
+	email ops@alethialabs.io
+}
+
+alethialabs.io, www.alethialabs.io {
+	encode zstd gzip
+	handle /docs* {
+		reverse_proxy docs:3000
+	}
+	handle {
+		reverse_proxy app:3000
+	}
+}

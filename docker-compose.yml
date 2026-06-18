@@ -1,0 +1,177 @@
+# Alethia self-host stack.
+#
+# This file grows phase-by-phase toward the full ~4-container deliverable
+# (app · postgres · s3 · worker). Today it bundles the storage tier (SeaweedFS)
+# and the app database (Postgres) so the de-Supabase swap runs with zero manual
+# setup:
+#
+#   cp .env.example .env && docker compose up -d
+#
+# The console + worker (run on the host for now, or added here in later phases)
+# auto-create their buckets on first use — no `aws s3 mb` required. The console
+# auto-runs DB migrations on boot — no `db push` required.
+
+name: alethia
+
+services:
+  # S3-compatible object store (Apache-2.0). Default self-host backend for
+  # Terraform/OpenTofu state + plan artifacts. Swappable for AWS S3 / R2 / Garage
+  # by pointing ALETHIA_STORAGE_* at another endpoint.
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    command: >-
+      server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json
+      -master.volumeSizeLimitMB=1024
+    ports:
+      - "${ALETHIA_STORAGE_PORT:-8333}:8333" # S3 API
+    volumes:
+      - seaweedfs-data:/data
+      - ./deploy/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:9333/cluster/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # Application database (replaces Supabase Postgres). Drizzle connects here
+  # directly; the console auto-runs migrations on boot. Self-host default — point
+  # ALETHIA_DATABASE_URL at a managed Postgres to swap.
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: "${ALETHIA_DB_USER:-alethia}"
+      POSTGRES_PASSWORD: "${ALETHIA_DB_PASSWORD:-alethia-dev-secret}"
+      POSTGRES_DB: "${ALETHIA_DB_NAME:-alethia}"
+    # Host port defaults to 5433 to avoid colliding with a host-native Postgres
+    # (e.g. Homebrew postgresql on 5432). Container still listens on 5432.
+    ports:
+      - "${ALETHIA_DB_PORT:-5433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ALETHIA_DB_USER:-alethia} -d ${ALETHIA_DB_NAME:-alethia}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # Browser DB UI (optional). Not part of the default/prod bring-up.
+  #   docker compose --profile tools up -d pgweb   →  http://localhost:8081
+  # Connects to the bundled Postgres as the superuser role (sees every table;
+  # the app role is RLS-restricted). For a Drizzle-native UI instead, run
+  # `pnpm -F console db:studio` (https://local.drizzle.studio).
+  pgweb:
+    image: sosedoff/pgweb:latest
+    profiles: ["tools"]
+    environment:
+      PGWEB_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}?sslmode=disable"
+    ports:
+      - "${ALETHIA_PGWEB_PORT:-8081}:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # One-shot DB migrate. Runs schema migrations + programmables (functions,
+  # triggers, RLS) then sets the app-role password, and exits. `app` waits for
+  # this to complete. Built from the console image's `build` stage because the
+  # drizzle migrator + lib/db/migrations aren't traced into the slim runtime.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/console/Dockerfile
+      target: migrate
+    environment:
+      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_APP_DB_PASSWORD: "${ALETHIA_APP_DB_PASSWORD:-alethia-app-dev-secret}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # Console (Next.js control plane). Internal URLs point at the bundled
+  # postgres/seaweedfs; secrets (OAuth, Resend, CLI_JWT_SECRET, and — until the
+  # de-Supabase auth cutover — the Supabase vars) come from .env.
+  app:
+    build:
+      context: .
+      dockerfile: apps/console/Dockerfile
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_APP_DATABASE_URL: "postgres://alethia_app:${ALETHIA_APP_DB_PASSWORD:-alethia-app-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_STORAGE_ENDPOINT: "http://seaweedfs:8333"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Docs (Next.js + Fumadocs). Stateless; served at basePath /docs.
+  docs:
+    build:
+      context: .
+      dockerfile: apps/docs/Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    restart: unless-stopped
+
+  # Runner (Go). Talks to the console over HTTP + S3 only; self-registers on
+  # boot. Bundles Terraform/cloud CLIs, so the image is large to build.
+  # (ALETHIA_WORKER_* are the binary's current env contract — the runner rename
+  # of those env names is part of the deferred de-Supabase lexicon work.)
+  runner:
+    build:
+      context: .
+      dockerfile: apps/runner/Dockerfile
+    env_file: .env
+    environment:
+      ALETHIA_WEB_ORIGIN: "http://app:3000"
+      ALETHIA_STORAGE_ENDPOINT: "http://seaweedfs:8333"
+      ALETHIA_WORKER_MODE: self-hosted
+    depends_on:
+      app:
+        condition: service_started
+    restart: unless-stopped
+
+  # Single ingress: /docs* → docs, everything else → console. Local Caddyfile
+  # serves plain HTTP on :80; the production (TLS) variant lives in deploy/hetzner/.
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+      - docs
+    restart: unless-stopped
+
+  # Optional scale-out only (SSE fan-out). Never starts in the default profile.
+  redis:
+    image: redis:7-alpine
+    profiles: ["scale-out"]
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+volumes:
+  seaweedfs-data:
+  postgres-data:
+  caddy-data:
+  caddy-config:
+  redis-data:

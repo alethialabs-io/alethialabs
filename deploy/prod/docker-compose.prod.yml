@@ -1,0 +1,40 @@
+# Production overrides for the Hetzner single-VPS deploy. Layer on top of the
+# base bundle:
+#
+#   docker compose -f docker-compose.yml -f deploy/hetzner/docker-compose.prod.yml pull
+#   docker compose -f docker-compose.yml -f deploy/hetzner/docker-compose.prod.yml up -d
+#
+# Differences vs local: the app/docs/runner run from prebuilt GHCR images (no
+# on-box builds), Caddy uses the real domain + automatic TLS, and the datastores
+# are NOT published to the host (only Caddy's 80/443 are public).
+name: alethia
+
+services:
+  # Prebuilt images from CI (deploy-hetzner.yml). ALETHIA_IMAGE_TAG is the
+  # commit SHA the pipeline pushed; defaults to latest.
+  app:
+    image: "ghcr.io/alethialabs-io/console:${ALETHIA_IMAGE_TAG:-latest}"
+    pull_policy: always
+  docs:
+    image: "ghcr.io/alethialabs-io/docs:${ALETHIA_IMAGE_TAG:-latest}"
+    pull_policy: always
+  runner:
+    image: "ghcr.io/alethialabs-io/runner:${ALETHIA_IMAGE_TAG:-latest}"
+    pull_policy: always
+  # One-shot migrate — the console Dockerfile's `migrate` target (shares all
+  # build cache with console; the final stage is the only difference).
+  migrate:
+    image: "ghcr.io/alethialabs-io/console-migrate:${ALETHIA_IMAGE_TAG:-latest}"
+    pull_policy: always
+
+  caddy:
+    volumes: !override
+      - ./deploy/hetzner/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  # Keep Postgres + object storage on the internal network only.
+  postgres:
+    ports: !reset []
+  seaweedfs:
+    ports: !reset []

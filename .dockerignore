@@ -21,3 +21,9 @@ idp-installer/logs
 idp-installer/temp
 idp-installer/__pycache__
 **/.terraform
+**/.react-email
+**/.react-email-out
+**/test-results
+**/playwright-report
+.vercel
+apps/legacy-cli/venv
