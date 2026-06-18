@@ -34,8 +34,8 @@ jobs:
 
       - name: Stage templates for Docker build
         run: |
-          cp -r infra/templates/vine apps/runner/vine-templates
-          cp -r infra/templates/runner apps/runner/tendril-templates
+          cp -r infra/templates/spec apps/runner/spec-templates
+          cp -r infra/templates/runner apps/runner/runner-templates
           cp -r infra/templates/argocd apps/runner/argocd-templates
 
       - name: Set up Docker Buildx

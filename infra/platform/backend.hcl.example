@@ -1,13 +1,13 @@
-# Supabase S3-compatible backend for Terraform state.
+# S3-compatible backend for Terraform state (SeaweedFS / Garage / MinIO / S3 / R2).
 # Copy to backend.hcl and fill in credentials.
 # NEVER commit backend.hcl — it contains secrets.
 
 bucket = "terraform-state"
 key    = "tendril/terraform.tfstate"
-region = "eu-north-1"
+region = "us-east-1"
 
 endpoints = {
-  s3 = "https://egzejziajjmjmdjplmii.storage.supabase.co/storage/v1/s3"
+  s3 = "https://YOUR_S3_ENDPOINT"
 }
 
 skip_credentials_validation = true
@@ -21,9 +21,9 @@ use_path_style              = true
 use_lockfile = true
 
 # Credentials — set via environment variables:
-#   export AWS_ACCESS_KEY_ID="your-supabase-storage-key-id"
-#   export AWS_SECRET_ACCESS_KEY="your-supabase-storage-secret-key"
+#   export AWS_ACCESS_KEY_ID="your-s3-access-key-id"
+#   export AWS_SECRET_ACCESS_KEY="your-s3-secret-access-key"
 #
 # Or uncomment (but NEVER commit this file):
-# access_key = "YOUR_SUPABASE_STORAGE_KEY_ID"
-# secret_key = "YOUR_SUPABASE_STORAGE_SECRET_KEY"
+# access_key = "YOUR_S3_ACCESS_KEY_ID"
+# secret_key = "YOUR_S3_SECRET_ACCESS_KEY"

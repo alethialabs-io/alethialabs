@@ -85,24 +85,24 @@ variable "secrets_recovery_window_days" {
   }
 }
 
-# ---------- Supabase S3 state backend (passed to tendril containers) ----------
+# ---------- S3 state backend (passed to tendril containers) ----------
 
-variable "supabase_s3_endpoint" {
+variable "storage_endpoint" {
   type    = string
   default = ""
 }
 
-variable "supabase_s3_region" {
+variable "storage_region" {
   type    = string
-  default = "eu-north-1"
+  default = "us-east-1"
 }
 
-variable "supabase_storage_key_id" {
+variable "storage_access_key_id" {
   type      = string
   sensitive = true
 }
 
-variable "supabase_storage_secret_key" {
+variable "storage_secret_access_key" {
   type      = string
   sensitive = true
 }

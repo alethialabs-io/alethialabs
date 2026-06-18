@@ -25,10 +25,10 @@ env:
   TF_VAR_alethia_api_secret: ${{ secrets.RELEASE_API_SECRET }}
   TF_VAR_supabase_url: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
   TF_VAR_supabase_service_role_key: ${{ secrets.SERVICE_ROLE_SECRET }}
-  TF_VAR_supabase_storage_key_id: ${{ secrets.SUPABASE_STORAGE_KEY_ID }}
-  TF_VAR_supabase_storage_secret_key: ${{ secrets.SUPABASE_STORAGE_SECRET_KEY }}
-  TF_VAR_supabase_s3_endpoint: ${{ secrets.SUPABASE_S3_ENDPOINT }}
-  TF_VAR_supabase_s3_region: ${{ secrets.SUPABASE_S3_REGION }}
+  TF_VAR_storage_access_key_id: ${{ secrets.ALETHIA_STORAGE_ACCESS_KEY_ID }}
+  TF_VAR_storage_secret_access_key: ${{ secrets.ALETHIA_STORAGE_SECRET_ACCESS_KEY }}
+  TF_VAR_storage_endpoint: ${{ secrets.ALETHIA_STORAGE_ENDPOINT }}
+  TF_VAR_storage_region: ${{ secrets.ALETHIA_STORAGE_REGION }}
   TF_VAR_infracost_api_key: ${{ secrets.INFRACOST_API_KEY }}
   TF_VAR_nodes: '{"prod-eu-west-1":{"region":"eu-west-1","alethia_url":"https://adp.prod.itgix.eu"},"beta-eu-west-1":{"region":"eu-west-1","alethia_url":"https://beta.adp.itgix.com"},"dev-eu-west-1":{"region":"eu-west-1","alethia_url":"https://summer-disconsolate-jaquelyn.ngrok-free.dev"},"dev-eu-central-1":{"region":"eu-central-1","alethia_url":"https://summer-disconsolate-jaquelyn.ngrok-free.dev"}}'
 

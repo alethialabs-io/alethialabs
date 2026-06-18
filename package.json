@@ -8,6 +8,8 @@
 		"lint": "turbo run lint",
 		"format": "prettier --write \"**/*.{ts,tsx,md}\"",
 		"check-types": "turbo run check-types",
+		"db:up": "bash scripts/db-bootstrap.sh",
+		"db:reset": "docker compose down -v && bash scripts/db-bootstrap.sh",
 		"dataroom": "node scripts/build-dataroom.mjs"
 	},
 	"devDependencies": {

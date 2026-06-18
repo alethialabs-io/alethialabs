@@ -34,7 +34,7 @@ Terraform configuration that deploys the node provisioning worker as an AWS Farg
 | **AWS permissions** | Uses the Fargate task role directly (AdministratorAccess in the same account) | Assumes a cross-account IAM role (`AlethiaProvisionerRole-*`) into each customer's account via STS |
 | **Who registers it** | You — the platform operator | Alethia platform team |
 | **Use case** | Single-tenant: you provision infrastructure in your own account | Multi-tenant: one worker serves multiple customer accounts |
-| **IAM setup** | Task role gets AdministratorAccess | Task role gets `sts:AssumeRole` on `arn:aws:iam::*:role/AlethiaProvisionerRole-*`. Each customer deploys `infra/onboarding/aws/alethia-bootstrap.yaml` to create the cross-account role. |
+| **IAM setup** | Task role gets AdministratorAccess | Task role gets `sts:AssumeRole` on `arn:aws:iam::*:role/AlethiaProvisionerRole-*`. Each customer deploys `infra/connector/aws/alethia-bootstrap.yaml` to create the cross-account role. |
 | **Cloud identity** | Not used — worker has native permissions | Job includes `cloud_identity_id` → Alethia returns `role_arn` + `external_id` at claim time → worker calls `sts:AssumeRole` before executing |
 
 **For a thesis demo, use `self-hosted`.** It's simpler: one account, one worker, no cross-account IAM.

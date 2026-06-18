@@ -50,28 +50,28 @@ variable "infracost_api_key" {
   description = "Infracost API key for cost estimation during plan jobs."
 }
 
-variable "supabase_s3_endpoint" {
+variable "storage_endpoint" {
   type        = string
   default     = ""
-  description = "Supabase S3-compatible endpoint for Terraform state storage."
+  description = "S3-compatible endpoint for Terraform state storage."
 }
 
-variable "supabase_s3_region" {
+variable "storage_region" {
   type        = string
-  default     = "eu-north-1"
-  description = "Region for the Supabase S3 state backend."
+  default     = "us-east-1"
+  description = "Region for the S3 state backend."
 }
 
-variable "supabase_storage_key_id" {
-  type        = string
-  sensitive   = true
-  description = "Supabase Storage S3 access key ID."
-}
-
-variable "supabase_storage_secret_key" {
+variable "storage_access_key_id" {
   type        = string
   sensitive   = true
-  description = "Supabase Storage S3 secret access key."
+  description = "S3 access key ID for Terraform state."
+}
+
+variable "storage_secret_access_key" {
+  type        = string
+  sensitive   = true
+  description = "S3 secret access key for Terraform state."
 }
 
 variable "secrets_recovery_window_days" {

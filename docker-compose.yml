@@ -19,9 +19,11 @@ services:
   # by pointing ALETHIA_STORAGE_* at another endpoint.
   seaweedfs:
     image: chrislusf/seaweedfs:latest
+    # -ip.bind=0.0.0.0 makes master + S3 listen on all interfaces (default binds
+    # only the container IP), so the localhost healthcheck below can reach them.
     command: >-
       server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json
-      -master.volumeSizeLimitMB=1024
+      -master.volumeSizeLimitMB=1024 -ip.bind=0.0.0.0
     ports:
       - "${ALETHIA_STORAGE_PORT:-8333}:8333" # S3 API
     volumes:

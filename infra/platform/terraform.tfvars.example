@@ -31,11 +31,11 @@ trellis_api_secret = ""
 supabase_url              = "https://YOUR_PROJECT.supabase.co"
 supabase_service_role_key = ""
 
-# Supabase S3 — Terraform state storage for provisioned vines.
-supabase_s3_endpoint        = "https://YOUR_PROJECT.storage.supabase.co/storage/v1/s3"
-supabase_s3_region          = "eu-north-1"
-supabase_storage_key_id     = ""
-supabase_storage_secret_key = ""
+# S3-compatible state storage for provisioned vines (SeaweedFS / Garage / S3 / R2).
+storage_endpoint          = "https://YOUR_S3_ENDPOINT"
+storage_region            = "us-east-1"
+storage_access_key_id     = ""
+storage_secret_access_key = ""
 
 # Infracost — cost estimation during plan jobs (optional).
 infracost_api_key = ""

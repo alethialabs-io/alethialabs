@@ -77,7 +77,7 @@ apps/console/
 
 ### Alethia Key Patterns
 
-- Cloud integrations follow the same pattern across AWS/GCP/Azure: server actions in `app/(private)/dashboard/providers/`, connection components in `components/onboarding/`.
+- Cloud integrations follow the same pattern across AWS/GCP/Azure: server actions in `app/(private)/dashboard/providers/`, connection components in `components/connector/`.
 - All `cloud_identities` queries must filter by `provider` to prevent cross-provider data leaks.
 - The worker (Go) switches on `cloud_identity.provider` for auth — AWS uses `AssumeRole`, GCP uses WIF, Azure uses federated identity.
 
@@ -163,7 +163,7 @@ Core infrastructure managed by Terraform:
 - `node/aws/` — Self-hosted worker deployment template
 - `argocd/` — ArgoCD configuration templates
 
-### Onboarding (`infra/onboarding/`)
+### Connector (`infra/connector/`)
 
 Cloud account bootstrap scripts:
 - `aws/` — IAM cross-account roles and trust policies

@@ -48,7 +48,7 @@ packages/
 infra/
   platform/          — Platform infrastructure (ECR, ECS, Lambda scaler)
   templates/         — Vine IaC templates (AWS, GCP, Azure)
-  onboarding/        — Cloud account bootstrap scripts
+  connector/         — Cloud account bootstrap scripts
 supabase/
   migrations/        — PostgreSQL schema migrations
 spec/
@@ -134,7 +134,7 @@ The `infra/` directory contains all Terraform configurations:
 - **`platform/`** — Core platform infrastructure: ECR container registry, ECS Fargate node workers (multi-region), Lambda auto-scaler (EventBridge-triggered, checks job queue depth every minute)
 - **`templates/vine/`** — Per-cloud IaC templates applied into user accounts (AWS EKS, GCP GKE, Azure AKS with associated networking, databases, and security groups)
 - **`templates/node/`** — Self-hosted worker deployment template
-- **`onboarding/`** — Cloud account bootstrap (IAM cross-account roles for AWS, workload identity federation for GCP, federated identity for Azure)
+- **`connector/`** — Cloud account bootstrap (IAM cross-account roles for AWS, workload identity federation for GCP, federated identity for Azure)
 
 ## Documentation
 

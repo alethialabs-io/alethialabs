@@ -145,8 +145,8 @@ resource "aws_ecs_task_definition" "tendril" {
         { name = "ALETHIA_WORKER_MODE", value = var.worker_mode },
         { name = "ALETHIA_WEB_ORIGIN", value = var.alethia_url },
         { name = "ALETHIA_WORKER_ID", value = local.tendril_id },
-        { name = "SUPABASE_S3_ENDPOINT", value = var.supabase_s3_endpoint },
-        { name = "SUPABASE_S3_REGION", value = var.supabase_s3_region },
+        { name = "ALETHIA_STORAGE_ENDPOINT", value = var.storage_endpoint },
+        { name = "ALETHIA_STORAGE_REGION", value = var.storage_region },
       ]
 
       secrets = [
@@ -159,11 +159,11 @@ resource "aws_ecs_task_definition" "tendril" {
           valueFrom = aws_secretsmanager_secret.infracost_key.arn
         },
         {
-          name      = "SUPABASE_STORAGE_KEY_ID"
+          name      = "ALETHIA_STORAGE_ACCESS_KEY_ID"
           valueFrom = aws_secretsmanager_secret.supabase_storage_key_id.arn
         },
         {
-          name      = "SUPABASE_STORAGE_SECRET_KEY"
+          name      = "ALETHIA_STORAGE_SECRET_ACCESS_KEY"
           valueFrom = aws_secretsmanager_secret.supabase_storage_secret_key.arn
         }
       ]
@@ -260,7 +260,7 @@ resource "aws_secretsmanager_secret" "supabase_storage_key_id" {
 
 resource "aws_secretsmanager_secret_version" "supabase_storage_key_id" {
   secret_id     = aws_secretsmanager_secret.supabase_storage_key_id.id
-  secret_string = var.supabase_storage_key_id
+  secret_string = var.storage_access_key_id
 }
 
 resource "aws_secretsmanager_secret" "supabase_storage_secret_key" {
@@ -271,7 +271,7 @@ resource "aws_secretsmanager_secret" "supabase_storage_secret_key" {
 
 resource "aws_secretsmanager_secret_version" "supabase_storage_secret_key" {
   secret_id     = aws_secretsmanager_secret.supabase_storage_secret_key.id
-  secret_string = var.supabase_storage_secret_key
+  secret_string = var.storage_secret_access_key
 }
 
 # ---------- IAM ----------
