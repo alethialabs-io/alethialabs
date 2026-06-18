@@ -10,6 +10,7 @@ import type {
 	SocialProviders,
 } from "better-auth";
 import { getAuthConfig } from "@/lib/config/auth";
+import { getAuthPlugins } from "@/lib/auth/plugins";
 import { getServiceDb } from "@/lib/db";
 import { account, session, user, verification } from "@/lib/db/schema";
 import { profiles } from "@/lib/db/schema";
@@ -82,6 +83,9 @@ const plugins: BetterAuthOptions["plugins"] = [
 if (genericOAuthConfigs.length > 0) {
 	plugins.push(genericOAuth({ config: genericOAuthConfigs }));
 }
+// Enterprise plugins (organization, SSO) via the getAuthPlugins() seam — [] in the
+// community build (lib/auth/plugins.ts).
+plugins.push(...getAuthPlugins());
 // nextCookies MUST be last so it can set cookies on the outgoing response.
 plugins.push(nextCookies());
 

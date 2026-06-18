@@ -1,0 +1,104 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Registry-as-code (spec/mvp/07-auth-rbac-sso.md Part E): the single source of the
+// resource × action matrix + the built-in role templates. Adding a capability is a
+// one-line edit here; the exhaustive unions make a new action a compile error until
+// it's handled, and the DB `permission`/`role` tables are seeded FROM this file
+// (4.2) so code and data never drift.
+
+/** Resource types the PDP reasons about. */
+export const RESOURCES = [
+	"org",
+	"zone",
+	"spec",
+	"runner",
+	"cloud_identity",
+	"job",
+	"connector",
+	"member",
+	"audit",
+	"billing",
+] as const;
+export type Resource = (typeof RESOURCES)[number];
+
+/** Actions a principal can take on a resource. */
+export const ACTIONS = [
+	"view",
+	"create",
+	"edit",
+	"plan",
+	"deploy",
+	"destroy",
+	"manage_identities",
+	"manage_members",
+	"manage_integrations",
+	"view_audit",
+	"export_audit",
+	"manage_billing",
+] as const;
+export type Action = (typeof ACTIONS)[number];
+
+/** A permission key is `resource:action` (the PK of the `permission` table). */
+export type PermissionKey = `${Resource}:${Action}`;
+
+export interface PermissionDef {
+	key: PermissionKey;
+	resource: Resource;
+	action: Action;
+	description: string;
+}
+
+/** Which actions are valid on which resource (the matrix). Default-deny: a pair
+ *  not listed here is not a permission and can never be granted. */
+const MATRIX: Partial<Record<Resource, readonly Action[]>> = {
+	org: ["view", "edit", "manage_billing"],
+	zone: ["view", "create", "edit", "destroy"],
+	spec: ["view", "create", "edit", "plan", "deploy", "destroy"],
+	runner: ["view", "create", "edit", "destroy", "deploy"],
+	cloud_identity: ["view", "manage_identities"],
+	job: ["view", "create"],
+	connector: ["view", "manage_integrations"],
+	member: ["view", "manage_members"],
+	audit: ["view_audit", "export_audit"],
+	billing: ["manage_billing"],
+};
+
+/** The full permission registry, derived from the matrix. */
+export const PERMISSIONS: PermissionDef[] = RESOURCES.flatMap((resource) =>
+	(MATRIX[resource] ?? []).map((action) => ({
+		// `${Resource}:${Action}` is a valid PermissionKey by construction; TS widens
+		// template literals with union holes to `string`, so narrow it here once.
+		key: `${resource}:${action}` as PermissionKey,
+		resource,
+		action,
+		description: `${action} a ${resource}`,
+	})),
+);
+
+const ALL_KEYS = PERMISSIONS.map((p) => p.key);
+
+/** Built-in role templates (org_id NULL, is_builtin=true). Custom roles (ee/) are
+ *  org-scoped copies with deltas. `"*"` = every permission. */
+export type BuiltInRole = "owner" | "admin" | "operator" | "viewer";
+
+export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
+	// Full control, including billing + member management.
+	owner: "*",
+	// Everything except billing.
+	admin: ALL_KEYS.filter((k) => !k.startsWith("billing:")),
+	// Operate infrastructure (plan/deploy/destroy + view); not identities/members/billing.
+	operator: PERMISSIONS.filter(
+		(p) =>
+			(["view", "create", "edit", "plan", "deploy", "destroy"] as Action[]).includes(
+				p.action,
+			) && !["cloud_identity", "member", "billing", "audit"].includes(p.resource),
+	).map((p) => p.key),
+	// Read-only.
+	viewer: PERMISSIONS.filter((p) => p.action === "view").map((p) => p.key),
+};
+
+/** True if `key` is a real permission (guards against typos / stale grants). */
+export function isPermissionKey(key: string): key is PermissionKey {
+	return ALL_KEYS.includes(key as PermissionKey);
+}

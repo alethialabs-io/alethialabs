@@ -1,0 +1,11 @@
+{
+	"name": "@alethia/ee",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Alethia Enterprise Edition — orgs, SSO, OpenFGA-backed RBAC. Commercial license (see ./LICENSE). Imports the AGPL core via its seams; the core never imports this.",
+	"license": "LicenseRef-Alethia-Commercial",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	}
+}

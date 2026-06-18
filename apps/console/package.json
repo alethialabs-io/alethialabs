@@ -9,6 +9,7 @@
 		"lint": "eslint .",
 		"check-types": "tsc --noEmit",
 		"check:no-supabase": "node scripts/check-no-supabase-data.mjs",
+		"check:ee-boundary": "node scripts/check-ee-boundary.mjs",
 		"db:generate": "drizzle-kit generate",
 		"db:migrate": "node scripts/migrate.mjs",
 		"db:studio": "drizzle-kit studio",
