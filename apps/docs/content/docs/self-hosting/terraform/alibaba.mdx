@@ -1,0 +1,42 @@
+---
+title: Alibaba
+description: Provision the Alethia control plane on an Alibaba Cloud Yitian 710 (ARM) ECS instance.
+---
+
+# Alibaba (`infra/alibaba-cp`)
+
+A single **Yitian 710** (ARM) ECS instance — `ecs.g8y.large` (2 vCPU / 8 GB) — with a public IP,
+behind Caddy. **≈ $45–60/mo** (`ecs.c8y.large`, 2 vCPU / 4 GB, ≈ $35 if it fits). The g8y/c8y
+families are region-limited, so pick a region that offers them.
+
+## What it creates
+- `alicloud_instance` (`ecs.g8y.large`, Ubuntu 24.04 ARM64) with a 40 GB `cloud_essd` system disk
+- `alicloud_vpc` + `alicloud_vswitch` (AZ auto-picked to one that has the ARM type)
+- `alicloud_security_group` + rules (22/80/443)
+- `alicloud_ecs_key_pair` (your SSH public key)
+- `cloudflare_record` A for the apex + `www`
+- cloud-init via `user_data` (installs Docker, clones the repo)
+
+## Prerequisites
+- An Alibaba Cloud account with a **RAM access key** (ECS + VPC permissions).
+- Cloudflare API token + zone id; an SSH public key.
+- A region offering **Yitian 710** (e.g. `eu-central-1`, `ap-southeast-1`, `cn-hangzhou`).
+
+## Apply
+```bash
+cd infra/alibaba-cp
+cp backend.hcl.example backend.hcl
+cp terraform.tfvars.example terraform.tfvars  # region, cloudflare_*, ssh_public_key
+export ALICLOUD_ACCESS_KEY=... ALICLOUD_SECRET_KEY=...
+terraform init -backend-config=backend.hcl
+terraform apply
+terraform output server_ipv4
+```
+
+## CI secrets (`terraform-alibaba.yml`)
+`ALICLOUD_ACCESS_KEY`, `ALICLOUD_SECRET_KEY` (RAM key), `CLOUDFLARE_API_TOKEN`,
+`CLOUDFLARE_ZONE_ID`, `DEPLOY_SSH_PUBLIC_KEY`, and the `TF_STATE_S3_*` backend secrets.
+
+## Tuning
+`instance_type` (`ecs.g8y.large` default; `ecs.c8y.large` to save), `system_disk_size`, `region`
+(must have Yitian ARM), `zone_id` (leave empty to auto-pick), `ssh_allowed_cidrs`.

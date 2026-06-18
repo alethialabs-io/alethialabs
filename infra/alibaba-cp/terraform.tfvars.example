@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in CI.
+# Alibaba provider auth comes from ALICLOUD_ACCESS_KEY / ALICLOUD_SECRET_KEY.
+
+region  = "eu-central-1" # must offer Yitian 710 ARM (g8y)
+zone_id = ""             # empty = provider picks an AZ that has the instance type
+
+cloudflare_api_token = "YOUR_CLOUDFLARE_API_TOKEN"
+cloudflare_zone_id   = "YOUR_CLOUDFLARE_ZONE_ID"
+domain               = "alethialabs.io"
+
+# Public half of the CI deploy key (private half = GH secret DEPLOY_SSH_PRIVATE_KEY).
+ssh_public_key = "ssh-ed25519 AAAA... deploy@alethia"
+
+instance_type    = "ecs.g8y.large" # Yitian 710 ARM64, 2 vCPU / 8 GB
+system_disk_size = 40
