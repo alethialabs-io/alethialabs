@@ -18,6 +18,19 @@ WORKDIR /app
 FROM base AS build
 COPY . .
 RUN pnpm install --frozen-lockfile --filter console...
+# Placeholder env so the strict zod config modules (auth/database/storage) pass
+# validation while `next build` collects page data — importing route modules
+# constructs the auth instance, which builds the Drizzle client + reads config at
+# load time. These are BUILD-ONLY and do NOT carry into the runner stage (real
+# values come from the runtime env / compose env_file). postgres-js + the S3
+# client connect lazily, so no service is contacted during the build.
+ENV BETTER_AUTH_SECRET=build-time-placeholder \
+    BETTER_AUTH_URL=http://localhost:3000 \
+    ALETHIA_DATABASE_URL=postgres://build:build@localhost:5432/build \
+    ALETHIA_APP_DATABASE_URL=postgres://build:build@localhost:5432/build \
+    ALETHIA_STORAGE_ENDPOINT=http://localhost:8333 \
+    ALETHIA_STORAGE_ACCESS_KEY_ID=build \
+    ALETHIA_STORAGE_SECRET_ACCESS_KEY=build
 RUN pnpm --filter console build
 
 # ---- migrate: one-shot DB migrate (drizzle migrator lives in full node_modules) ----
