@@ -205,7 +205,7 @@ export default function VineyardDetailPage() {
 				/>
 			) : (
 				<div className="rounded-xl border border-border shadow-sm overflow-hidden" style={{ height: "calc(100vh - 200px)" }}>
-					<VineyardEstateMap vineyard={vineyard as any} />
+					<VineyardEstateMap vineyard={vineyard} />
 				</div>
 			)}
 		</div>

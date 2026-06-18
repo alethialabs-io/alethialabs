@@ -17,7 +17,6 @@ import {
 	Server,
 	Terminal,
 } from "lucide-react";
-import Image from "next/image";
 import { useState } from "react";
 
 function CopyButton({ value }: { value: string }) {
@@ -48,7 +47,6 @@ export function ClusterCard({ data }: { data: ClusterData }) {
 	const cluster = Array.isArray(data.vine_cluster) ? data.vine_cluster[0] : data.vine_cluster;
 	const databases = data.vine_databases ?? [];
 	const caches = data.vine_caches ?? [];
-	const dns = Array.isArray(data.vine_dns) ? data.vine_dns[0] : data.vine_dns;
 
 	const kubeconfigCmd = cluster?.cluster_name
 		? `aws eks update-kubeconfig --name ${cluster.cluster_name} --region ${data.region}`

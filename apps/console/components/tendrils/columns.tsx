@@ -47,37 +47,17 @@ export type TendrilRow = PublicWorkersRow & {
 
 function TendrilActions({ worker }: { worker: TendrilRow }) {
 	const router = useRouter();
-	const { latestRelease, setDefaultTendril, updateTendril, destroyTendril, deleteTendril } = useTendrilsStore();
+	const { setDefaultTendril, destroyTendril, deleteTendril } = useTendrilsStore();
 	const [showRemoveDialog, setShowRemoveDialog] = useState(false);
 	const [acting, setActing] = useState(false);
 	const [destroying, setDestroying] = useState(false);
 
-	const status = worker.status ?? "OFFLINE";
 	const isCloudHosted = worker.mode === "cloud-hosted";
 	const isDestroying = worker.activeJob?.job_type === "DESTROY_WORKER";
 	const isProvisioning = worker.activeJob?.job_type === "DEPLOY_WORKER";
 	const isUpdating = worker.activeJob?.job_type === "UPDATE_WORKER";
 	const metadata = worker.metadata as WorkerMetadata | null;
 	const hasCloudResources = !!worker.cloud_identity_id && !!metadata?.deploy_config;
-	const canUpdate = hasCloudResources && !!metadata?.deploy_config?.worker_token;
-	const isOutdated =
-		latestRelease &&
-		worker.version &&
-		worker.version !== latestRelease.version;
-
-	const handleUpdate = async () => {
-		try {
-			const { jobId } = await updateTendril(worker.id);
-			toast.success("Update job queued", {
-				action: {
-					label: "View job",
-					onClick: () => router.push(`/dashboard/jobs/${jobId}`),
-				},
-			});
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to queue update");
-		}
-	};
 
 	const handleToggleDefault = async () => {
 		try {

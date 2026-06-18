@@ -73,7 +73,6 @@ export function PlanTab({ plan, onApplied }: PlanTabProps) {
 		phase,
 		planResult,
 		costResult,
-		logs,
 		error,
 		generatePlan,
 		applyPlan,

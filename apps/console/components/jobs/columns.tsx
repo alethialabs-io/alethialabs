@@ -10,7 +10,6 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ProviderIcon } from "@/components/provider-icon";
-import { getProvider } from "@/lib/cloud-providers/registry";
 import type { JobWithMeta } from "@/app/server/actions/jobs";
 import type { ProvisionJobType } from "@/lib/db/schema";
 import type { ColumnDef } from "@tanstack/react-table";

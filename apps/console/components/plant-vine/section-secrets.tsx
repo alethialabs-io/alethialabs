@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form";
+import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
 import { useProviderMeta } from "@/lib/cloud-providers";
 import { KeyRound, Trash2 } from "lucide-react";
@@ -33,7 +33,7 @@ export function SectionSecrets() {
 		const preset = SECRET_PRESETS.find((p) => p.label === presetLabel);
 		if (!preset) return;
 		const baseName = preset.name || `secret-${fields.length + 1}`;
-		const existingNames = fields.map((f: any) => f.name);
+		const existingNames = fields.map((f) => f.name);
 		const finalName = existingNames.includes(baseName) ? `${baseName}-${fields.length + 1}` : baseName;
 		append({ name: finalName, generate: true, length: preset.length, special_chars: preset.special_chars });
 	};

@@ -5,7 +5,7 @@
 
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { ProviderIcon } from "@/components/provider-icon";
-import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers/registry";
+import type { CloudProviderSlug } from "@/lib/cloud-providers/registry";
 import { useCloudProviderStore } from "@/lib/stores/use-cloud-provider-store";
 import {
 	Select,
@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef } from "react";
 

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import type { ClusterProviderConfig } from "@/types/database-custom.types";
 import type { CloudProviderSlug } from "./registry";
 
 interface InstanceTypeOption {
@@ -55,7 +56,7 @@ export const K8S_VERSIONS: Record<CloudProviderSlug, string[]> = {
 };
 
 interface AutoscalerMeta {
-	providerConfigKey: string;
+	providerConfigKey: keyof ClusterProviderConfig;
 	label: string;
 	description: string;
 }

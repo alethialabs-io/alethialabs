@@ -4,6 +4,7 @@
 
 
 import { createVineyard, getVineyards } from "@/app/server/actions/vineyards";
+import type { Zone } from "@/lib/db/schema";
 import { Button } from "@/components/ui/button";
 import {
 	Command,
@@ -28,10 +29,10 @@ interface VineyardSelectorProps {
 }
 
 export function VineyardSelector({ value, onChange }: VineyardSelectorProps) {
-	const [vineyards, setVineyards] = useState<any[]>([]);
+	const [vineyards, setVineyards] = useState<Zone[]>([]);
 	const [isLoading, setIsLoading] = useState(true);
 	const [isCreating, setIsCreating] = useState(false);
-	const [error, setError] = useState<string | null>(null);
+	const [_error, setError] = useState<string | null>(null);
 	const [open, setOpen] = useState(false);
 	const [searchQuery, setSearchQuery] = useState("");
 
@@ -70,8 +71,8 @@ export function VineyardSelector({ value, onChange }: VineyardSelectorProps) {
 			onChange(vineyard.id);
 			setSearchQuery("");
 			setOpen(false);
-		} catch (err: any) {
-			setError(err.message || "Failed to create zone");
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to create zone");
 		} finally {
 			setIsCreating(false);
 		}
@@ -134,7 +135,7 @@ export function VineyardSelector({ value, onChange }: VineyardSelectorProps) {
 									) : (
 										<Plus className="mr-2 h-3 w-3" />
 									)}
-									Create "{searchQuery.trim()}"
+									Create &quot;{searchQuery.trim()}&quot;
 								</Button>
 							)}
 						</CommandEmpty>

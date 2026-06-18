@@ -181,7 +181,7 @@ export default function VineDetailPage() {
 
 			{/* Tabs */}
 			<VineDetailTabs
-				detail={detail as any}
+				detail={detail}
 				vineId={vineId}
 				plan={plan}
 				onApplied={handleApplied}

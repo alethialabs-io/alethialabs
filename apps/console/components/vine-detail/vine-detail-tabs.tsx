@@ -32,7 +32,7 @@ import { InfrastructureTab } from "./infrastructure-tab";
 import { ServicesTab } from "./services-tab";
 import type { ServiceInstance } from "./service-card";
 
-type VineDetail = {
+export type VineDetail = {
 	vine: {
 		id: string;
 		project_name: string;

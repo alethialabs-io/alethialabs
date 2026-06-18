@@ -371,8 +371,14 @@ export async function fetchRepositoriesByProvider(
 		}
 
 		return { repositories: allRepos };
-	} catch (error: any) {
+	} catch (error) {
 		console.error(`Error fetching ${provider} repositories:`, error);
-		return { repositories: [], error: error.message || "Failed to fetch repositories" };
+		return {
+			repositories: [],
+			error:
+				error instanceof Error
+					? error.message
+					: "Failed to fetch repositories",
+		};
 	}
 }

@@ -164,7 +164,7 @@ describe("CreateVineInput → server action mapping", () => {
 				zone_id: "Z123",
 				domain_name: "example.com",
 				provider_config: { acm_certificate: true, cloudfront_waf: true, application_waf: false },
-			} as any,
+			},
 		});
 		const parsed = vineFormSchema.parse(data);
 
@@ -180,7 +180,7 @@ describe("CreateVineInput → server action mapping", () => {
 		const data = buildValidFormData({
 			repositories: {
 				apps_destination_repo: "git@github.com:org/apps-repo.git",
-			} as any,
+			},
 		});
 		const parsed = vineFormSchema.parse(data);
 
@@ -212,31 +212,34 @@ describe("Validation edge cases", () => {
 
 	it("rejects invalid environment_stage", () => {
 		const data = buildValidFormData();
-		(data.vine as any).environment_stage = "invalid";
-		const result = vineFormSchema.safeParse(data);
+		const invalid = { ...data, vine: { ...data.vine, environment_stage: "invalid" } };
+		const result = vineFormSchema.safeParse(invalid);
 		expect(result.success).toBe(false);
 	});
 
 	it("rejects invalid cache engine", () => {
-		const data = buildValidFormData({
-			caches: [{ name: "test", engine: "memcached" as any }],
-		});
+		const data = {
+			...buildValidFormData(),
+			caches: [{ name: "test", engine: "memcached" }],
+		};
 		const result = vineFormSchema.safeParse(data);
 		expect(result.success).toBe(false);
 	});
 
 	it("rejects invalid dynamodb key type", () => {
-		const data = buildValidFormData({
-			nosql_tables: [{ name: "test", hash_key: "id", hash_key_type: "X" as any }],
-		});
+		const data = {
+			...buildValidFormData(),
+			nosql_tables: [{ name: "test", hash_key: "id", hash_key_type: "X" }],
+		};
 		const result = vineFormSchema.safeParse(data);
 		expect(result.success).toBe(false);
 	});
 
 	it("rejects invalid dynamodb billing mode", () => {
-		const data = buildValidFormData({
-			nosql_tables: [{ name: "test", hash_key: "id", billing_mode: "INVALID" as any }],
-		});
+		const data = {
+			...buildValidFormData(),
+			nosql_tables: [{ name: "test", hash_key: "id", billing_mode: "INVALID" }],
+		};
 		const result = vineFormSchema.safeParse(data);
 		expect(result.success).toBe(false);
 	});

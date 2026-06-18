@@ -429,7 +429,7 @@ function RegisterForm({
 							</p>
 							<p className="text-xs text-muted-foreground">
 								The worker token is shown only once and cannot be
-								recovered. If you lose it, you'll need to
+								recovered. If you lose it, you&apos;ll need to
 								register a new worker.
 							</p>
 						</div>

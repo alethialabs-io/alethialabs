@@ -7,7 +7,13 @@ import { SectionProjectBasics } from "@/components/plant-vine/section-project-ba
 import { renderWithForm } from "./test-utils";
 
 vi.mock("@/components/vineyards/vineyard-selector", () => ({
-	VineyardSelector: ({ value, onChange }: any) => (
+	VineyardSelector: ({
+		value,
+		onChange,
+	}: {
+		value?: string;
+		onChange: (value: string) => void;
+	}) => (
 		<select data-testid="vineyard-selector" value={value || ""} onChange={(e) => onChange(e.target.value)}>
 			<option value="">Select vineyard</option>
 			<option value="test-id">Test Vineyard</option>

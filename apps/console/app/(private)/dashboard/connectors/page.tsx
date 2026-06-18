@@ -19,13 +19,14 @@ import { ConnectorsPage } from "@/components/connectors/connectors-page";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 
 export default async function ConnectorsRoute() {
-	let [integrations, awsStatus, gcpStatus, azureStatus] =
+	const [initialIntegrations, awsStatus, gcpStatus, azureStatus] =
 		await Promise.all([
 			getConnectorsWithStatus(),
 			getAwsConnectionStatus(),
 			getGcpConnectionStatus(),
 			getAzureConnectionStatus(),
 		]);
+	let integrations = initialIntegrations;
 
 	// Attempt auto-refresh for expired git tokens
 	const expiredGitIntegrations = integrations.filter(

@@ -71,6 +71,7 @@ const vineSchema = vinesInsert
 		vineyard_id: z.string().min(1, "Vineyard is required"),
 		region: z.string().min(1, "Region is required"),
 		cloud_identity_id: z.string().min(1, "Cloud account is required"),
+		container_platform: z.string().optional(),
 	});
 
 const networkSchema = networkInsert
@@ -147,6 +148,7 @@ export const vineFormSchema = z.object({
 });
 
 export type VineFormData = z.infer<typeof vineFormSchema>;
+export type VineFormInput = z.input<typeof vineFormSchema>;
 
 export {
 	databaseItemSchema,

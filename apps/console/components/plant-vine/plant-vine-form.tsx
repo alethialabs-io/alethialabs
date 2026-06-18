@@ -5,7 +5,7 @@
 
 import { createVine, type CreateVineInput } from "@/app/server/actions/vines";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
-import { vineFormSchema, type VineFormData } from "@/lib/validations/vine-form.schema";
+import { vineFormSchema, type VineFormData, type VineFormInput } from "@/lib/validations/vine-form.schema";
 import {
 	useCloudProvider,
 	DEFAULT_INSTANCE_TYPE,
@@ -120,8 +120,8 @@ function PlantVineFormInner({ cloudIdentities, sourceVine }: PlantVineFormProps)
 		secrets: [],
 	};
 
-	const form = useForm<VineFormData>({
-		resolver: zodResolver(vineFormSchema) as any,
+	const form = useForm<VineFormInput, unknown, VineFormData>({
+		resolver: zodResolver(vineFormSchema),
 		defaultValues: defaultFormValues,
 		mode: "onChange",
 	});

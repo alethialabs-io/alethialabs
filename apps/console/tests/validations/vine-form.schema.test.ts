@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, it, expect } from "vitest";
-import { vineFormSchema, type VineFormData } from "@/lib/validations/vine-form.schema";
+import { vineFormSchema } from "@/lib/validations/vine-form.schema";
 
 const validVine = {
 	vine: {

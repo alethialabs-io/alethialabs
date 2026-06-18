@@ -46,14 +46,14 @@ describe("parseWifConfig", () => {
 	});
 
 	it("rejects a missing service_account_impersonation_url", () => {
-		const { service_account_impersonation_url, ...cfg } = validWif;
+		const { service_account_impersonation_url: _omit, ...cfg } = validWif;
 		expect(() => parseWifConfig(JSON.stringify(cfg))).toThrow(
 			"Missing service_account_impersonation_url",
 		);
 	});
 
 	it("rejects a missing credential_source", () => {
-		const { credential_source, ...cfg } = validWif;
+		const { credential_source: _omit, ...cfg } = validWif;
 		expect(() => parseWifConfig(JSON.stringify(cfg))).toThrow(
 			"Missing credential_source",
 		);

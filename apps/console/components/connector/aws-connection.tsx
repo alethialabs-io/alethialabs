@@ -165,10 +165,13 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 			const { jobId, identityId } = await onComplete(data.roleArn);
 			setVerifyState({ phase: "verifying", jobId, identityId });
 			startPolling(jobId, identityId);
-		} catch (error: any) {
+		} catch (error) {
 			setVerifyState({
 				phase: "failed",
-				error: error.message || "Failed to save connection.",
+				error:
+					error instanceof Error
+						? error.message
+						: "Failed to save connection.",
 			});
 		}
 	};
@@ -402,7 +405,7 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 										</p>
 										<p className="text-xs text-muted-foreground mt-0.5">
 											Alethia can assume the IAM role in
-											your account. You're ready to
+											your account. You&apos;re ready to
 											provision infrastructure.
 										</p>
 									</div>

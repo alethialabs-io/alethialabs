@@ -8,7 +8,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { ProviderIcon } from "@/components/provider-icon";
 import { AlethiaLogo } from "@/components/alethia-logo";
 import { ThemeToggle } from "./theme-toggle";
-import { ExternalLink, Menu } from "lucide-react";
+import { Menu } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 

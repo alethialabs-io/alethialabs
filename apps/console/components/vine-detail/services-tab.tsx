@@ -59,7 +59,7 @@ export function ServicesTab({ components, providerMeta, capacityUnit }: Services
 				Services ({allServices.length})
 			</h3>
 			<div className="flex flex-wrap gap-2">
-				{allServices.map(({ type, service, label }) => {
+				{allServices.map(({ type, service }) => {
 					const config = SERVICE_TYPE_CONFIG[type];
 					const Icon = config.icon;
 					const summary = getConfigSummary(type, service, type === "database" ? capacityUnit : undefined);

@@ -51,7 +51,7 @@ export async function verifyCliToken(req: Request) {
 		}
 
 		return { payload, error: null };
-	} catch (err) {
+	} catch {
 		return {
 			error: new Response(
 				JSON.stringify({ error: "Unauthorized: Invalid token" }),

@@ -4,12 +4,9 @@
 
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { CopyButton } from "./copy-button";
 import { CodeDemo } from "./code-demo";
 import { ScrollingLogos } from "./scrolling-logos";
-import { ArrowRight } from "lucide-react";
-import Link from "next/link";
 import { useState } from "react";
 
 const PROVIDERS = [

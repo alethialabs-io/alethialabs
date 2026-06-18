@@ -11,7 +11,6 @@ import { DataTable } from "@/components/data-table";
 import { jobColumns } from "@/components/jobs/columns";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { JobWithMeta } from "@/app/server/actions/jobs";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	ArrowRight,

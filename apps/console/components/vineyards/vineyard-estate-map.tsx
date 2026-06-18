@@ -17,10 +17,10 @@ import {
 } from "@xyflow/react";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useMemo } from "react";
-import { VineNode } from "./vine-node";
+import { VineNode, type VineNodeConfig } from "./vine-node";
 
 interface VineyardEstateMapProps {
-	vineyard: any;
+	vineyard: { vines?: VineNodeConfig[] | null };
 }
 
 const nodeTypes: NodeTypes = {
@@ -33,7 +33,7 @@ export function VineyardEstateMap({ vineyard }: VineyardEstateMapProps) {
 
 	const initialNodes = useMemo(() => {
 		return (vineyard.vines || []).map(
-			(config: any, index: number) => ({
+			(config: VineNodeConfig, index: number) => ({
 				id: `vine-${config.id}`,
 				type: "vineNode",
 				position: {
@@ -53,7 +53,7 @@ export function VineyardEstateMap({ vineyard }: VineyardEstateMapProps) {
 	// Create initial edges (empty for now unless we add harvests/tendrils)
 	const initialEdges: Edge[] = [];
 
-	const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+	const [nodes, _setNodes, onNodesChange] = useNodesState(initialNodes);
 	const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
 	const onConnect = useCallback(

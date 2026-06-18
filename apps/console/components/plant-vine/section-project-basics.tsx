@@ -21,8 +21,7 @@ import { useFormContext } from "react-hook-form";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
 
 export function SectionProjectBasics() {
-	const { control, watch, formState } = useFormContext<VineFormData>();
-	const projectName = watch("vine.project_name");
+	const { control } = useFormContext<VineFormData>();
 
 	return (
 		<Card>

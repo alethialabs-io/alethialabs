@@ -6,7 +6,9 @@
 import {
 	type ColumnDef,
 	type ColumnFiltersState,
+	type PaginationState,
 	type SortingState,
+	type Updater,
 	flexRender,
 	getCoreRowModel,
 	getFilteredRowModel,
@@ -90,7 +92,7 @@ export function DataTable<TData extends { id?: string }, TValue>({
 			}),
 		},
 		...(onPageIndexChange && {
-			onPaginationChange: (updater: any) => {
+			onPaginationChange: (updater: Updater<PaginationState>) => {
 				const next =
 					typeof updater === "function"
 						? updater({ pageIndex: externalPageIndex ?? 0, pageSize })

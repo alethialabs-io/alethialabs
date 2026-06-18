@@ -5,9 +5,19 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { Handle, Position } from "@xyflow/react";
 import { Box } from "lucide-react";
 
+export interface VineNodeConfig {
+	id: string;
+	project_name?: string | null;
+	region?: string | null;
+	environment_stage?: string | null;
+	status?: string | null;
+	ui_position_x?: number | null;
+	ui_position_y?: number | null;
+}
+
 interface VineNodeProps {
 	data: {
-		config: any;
+		config: VineNodeConfig;
 		onClick: () => void;
 	};
 }

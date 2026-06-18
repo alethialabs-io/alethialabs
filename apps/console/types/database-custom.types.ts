@@ -119,10 +119,12 @@ export interface ClusterAdmin {
 export interface ClusterProviderConfig {
 	enable_karpenter?: boolean;
 	enable_autopilot?: boolean;
+	enable_cluster_autoscaler?: boolean;
 }
 
 export interface DnsProviderConfig {
 	acm_certificate?: boolean;
+	managed_certificate?: boolean;
 	cloudfront_waf?: boolean;
 	application_waf?: boolean;
 	cloud_armor?: boolean;

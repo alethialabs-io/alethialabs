@@ -15,9 +15,7 @@ import {
 	Globe,
 	Lock,
 	MessageSquare,
-	Network,
 	Server,
-	Shield,
 	Table,
 	Zap,
 	type LucideIcon,
@@ -71,7 +69,6 @@ export function ReviewTab() {
 	const secrets = watch("secrets") || [];
 
 	const instanceTypes = (cluster.instance_types || []) as string[];
-	const providerConfig = cluster.provider_config || {};
 
 	return (
 		<div className="space-y-5">

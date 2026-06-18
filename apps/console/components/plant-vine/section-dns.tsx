@@ -125,7 +125,7 @@ export function SectionDns() {
 					</div>
 					<div className="space-y-2">
 						{/* Managed Certificate */}
-						<FormField control={control} name={`dns.provider_config.${certOption.providerConfigKey}` as any} render={({ field }) => (
+						<FormField control={control} name={`dns.provider_config.${certOption.providerConfigKey}`} render={({ field }) => (
 							<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
 								<div>
 									<p className="text-sm font-medium">{certOption.label}</p>
@@ -137,7 +137,7 @@ export function SectionDns() {
 
 						{/* WAF options (provider-specific) */}
 						{wafOptions.map((waf) => (
-							<FormField key={waf.providerConfigKey} control={control} name={`dns.provider_config.${waf.providerConfigKey}` as any} render={({ field }) => (
+							<FormField key={waf.providerConfigKey} control={control} name={`dns.provider_config.${waf.providerConfigKey}`} render={({ field }) => (
 								<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
 									<div className="flex items-center gap-1.5">
 										<Shield className="h-3.5 w-3.5 text-muted-foreground" />

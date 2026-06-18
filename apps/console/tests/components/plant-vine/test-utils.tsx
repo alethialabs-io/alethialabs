@@ -5,7 +5,7 @@ import React from "react";
 import { render } from "@testing-library/react";
 import { FormProvider, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { vineFormSchema, type VineFormData } from "@/lib/validations/vine-form.schema";
+import { vineFormSchema, type VineFormData, type VineFormInput } from "@/lib/validations/vine-form.schema";
 
 
 const DEFAULT_VALUES: VineFormData = {
@@ -44,9 +44,9 @@ function FormWrapper({
 	children: React.ReactNode;
 	defaultValues?: Partial<VineFormData>;
 }) {
-	const form = useForm<VineFormData>({
-		resolver: zodResolver(vineFormSchema) as any,
-		defaultValues: { ...DEFAULT_VALUES, ...defaultValues } as any,
+	const form = useForm<VineFormInput, unknown, VineFormData>({
+		resolver: zodResolver(vineFormSchema),
+		defaultValues: { ...DEFAULT_VALUES, ...defaultValues },
 		mode: "onChange",
 	});
 

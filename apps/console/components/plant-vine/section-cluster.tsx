@@ -55,7 +55,7 @@ export function SectionCluster() {
 				<CardDescription className="text-xs">Kubernetes cluster, node groups, and auto-scaling.</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-5">
-				<ContainerPlatformSelector selected={watch("vine.container_platform" as any) || "standard"} onSelect={(v) => setValue("vine.container_platform" as any, v)} />
+				<ContainerPlatformSelector selected={watch("vine.container_platform") || "standard"} onSelect={(v) => setValue("vine.container_platform", v)} />
 
 				<div className="grid md:grid-cols-2 gap-4">
 					<div className="space-y-1.5">
@@ -141,7 +141,7 @@ export function SectionCluster() {
 				</div>
 
 				{/* Autoscaler */}
-				<FormField control={control} name={`cluster.provider_config.${autoscaler.providerConfigKey}` as any} render={({ field }) => (
+				<FormField control={control} name={`cluster.provider_config.${autoscaler.providerConfigKey}`} render={({ field }) => (
 					<div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
 						<div className="flex items-center gap-1.5">
 							<div><p className="text-sm font-medium">{autoscaler.label}</p><p className="text-[11px] text-muted-foreground">{autoscaler.description}</p></div>

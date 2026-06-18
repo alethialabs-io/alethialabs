@@ -28,7 +28,7 @@ export interface ServiceInstance {
 	id: string;
 	name: string;
 	status: string | null;
-	estimated_monthly_cost: number | null;
+	estimated_monthly_cost?: number | null;
 	[key: string]: unknown;
 }
 
