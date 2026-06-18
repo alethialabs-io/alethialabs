@@ -8,10 +8,10 @@ Terraform configuration that deploys the node provisioning worker as an AWS Farg
 ┌──────────────────────────────────────────────────────────┐
 │  Alethia (Control Plane)                                 │
 │  ┌────────────────────────────────────────────────────┐  │
-│  │  Supabase                                          │  │
-│  │  · workers table         (registry + heartbeat)    │  │
-│  │  · provision_jobs table  (QUEUED → SUCCESS/FAILED) │  │
-│  │  · job_logs table        (Realtime streaming)      │  │
+│  │  Postgres (Drizzle)                                │  │
+│  │  · runners table         (registry + heartbeat)    │  │
+│  │  · jobs table            (QUEUED → SUCCESS/FAILED) │  │
+│  │  · job_logs table        (LISTEN/NOTIFY streaming) │  │
 │  └────────────────────────────────────────────────────┘  │
 │              ▲                                            │
 │              │  HTTPS (poll every 10s)                    │
@@ -45,25 +45,17 @@ Terraform configuration that deploys the node provisioning worker as an AWS Farg
 - Terraform >= 1.10
 - Docker
 - Alethia CLI installed (`brew install alethia` or build from source)
-- Alethia running and accessible (local or deployed)
-- Supabase migration `20260520_provision_broker.sql` applied
+- Alethia running and accessible (local or deployed) with its database migrated
 
 ## Setup — Step by Step
 
-### 1. Apply the Supabase migration
+### 1. Ensure the console database is migrated
 
-The worker depends on the `workers`, `provision_jobs`, and `job_logs` tables plus the RPC functions (`claim_next_job`, `update_job_status`, `insert_job_log`, `worker_heartbeat`, `recover_stale_jobs`).
-
-```bash
-cd apps/console
-npx supabase db push
-```
-
-Verify the tables exist:
-
-```bash
-npx supabase db dump --schema public | grep -E 'CREATE TABLE.*workers|provision_jobs|job_logs'
-```
+The worker depends on the `runners`, `jobs`, and `job_logs` tables plus the RPC functions
+(`claim_next_job`, `update_job_status`, `insert_job_log`, `worker_heartbeat`, `recover_stale_jobs`).
+These are Drizzle-managed and applied by the console's `migrate` step (the compose `migrate` one-shot
+/ `scripts/migrate.mjs`) — no separate migration to run here. Confirm the console booted cleanly
+against its `ALETHIA_DATABASE_URL`.
 
 ### 2. Log in to Alethia and register a worker
 
@@ -100,18 +92,18 @@ Save these values - the token cannot be recovered.
 cd terraform
 ```
 
-Create a backend config for Supabase S3-compatible storage:
+Create a backend config for your S3-compatible storage (SeaweedFS / Garage / MinIO / S3 / R2):
 
 ```bash
 cp backend.hcl.example backend.hcl
-# Edit backend.hcl — set your bucket name (create it in Supabase Storage dashboard first)
+# Edit backend.hcl — set the endpoint + bucket name (create the bucket first)
 ```
 
-Set the Supabase storage credentials as environment variables:
+Set the storage credentials as environment variables:
 
 ```bash
-export AWS_ACCESS_KEY_ID="your-supabase-storage-key-id"
-export AWS_SECRET_ACCESS_KEY="your-supabase-storage-secret-key"
+export AWS_ACCESS_KEY_ID="$ALETHIA_STORAGE_ACCESS_KEY_ID"
+export AWS_SECRET_ACCESS_KEY="$ALETHIA_STORAGE_SECRET_ACCESS_KEY"
 ```
 
 > **Note:** `backend.hcl` is gitignored — it contains credentials. See `backend.hcl.example` for the full template.
@@ -141,12 +133,12 @@ If you previously used an AWS S3 bucket for state:
 # 1. Back up current state
 terraform state pull > terraform.tfstate.backup
 
-# 2. Create the new backend.hcl with Supabase config
+# 2. Create the new backend.hcl with your S3-compatible config
 cp backend.hcl.example backend.hcl
 
-# 3. Set Supabase credentials and migrate
-export AWS_ACCESS_KEY_ID="your-supabase-storage-key-id"
-export AWS_SECRET_ACCESS_KEY="your-supabase-storage-secret-key"
+# 3. Set storage credentials and migrate
+export AWS_ACCESS_KEY_ID="$ALETHIA_STORAGE_ACCESS_KEY_ID"
+export AWS_SECRET_ACCESS_KEY="$ALETHIA_STORAGE_SECRET_ACCESS_KEY"
 terraform init -migrate-state -backend-config=backend.hcl
 
 # 4. Verify
@@ -234,14 +226,14 @@ From the Alethia dashboard:
 
 ## What happens during a job
 
-1. **User** creates a job (via CLI or Alethia UI) → `provision_jobs` row with status `QUEUED`
+1. **User** creates a job (via CLI or Alethia UI) → `jobs` row with status `QUEUED`
 2. **Worker** polls `POST /api/jobs/claim` every 10 seconds
-3. **Supabase RPC** `claim_next_job()` atomically assigns the oldest queued job (uses `SELECT FOR UPDATE SKIP LOCKED` to prevent double-claims)
+3. **Postgres RPC** `claim_next_job()` atomically assigns the oldest queued job (uses `SELECT FOR UPDATE SKIP LOCKED` to prevent double-claims)
 4. **Worker** updates status to `PROCESSING`, starts executing:
    - **BOOTSTRAP**: Terraform → VPC + EKS, then Helm → ArgoCD
    - **DEPLOY**: Clone repos → Terraform apply → Helm install → ArgoCD manifests
    - **DESTROY**: Terraform destroy → cleanup
-5. **Logs** stream via `POST /api/jobs/{id}/logs` → `job_logs` table → Supabase Realtime → Alethia log viewer
+5. **Logs** stream via `POST /api/jobs/{id}/logs` → `job_logs` table → Postgres LISTEN/NOTIFY → SSE → Alethia log viewer
 6. **Worker** sets final status (`SUCCESS` or `FAILED`)
 7. **Stale recovery**: If a worker dies, `recover_stale_jobs()` resets orphaned jobs to `QUEUED` after 15 minutes with no heartbeat
 
@@ -271,4 +263,4 @@ cd terraform
 terraform destroy
 ```
 
-This removes all Fargate resources, the ECR repository, Secrets Manager secret, and IAM roles. It does **not** touch Supabase tables or the worker registration (those live in the database).
+This removes all Fargate resources, the ECR repository, Secrets Manager secret, and IAM roles. It does **not** touch the database tables or the worker registration (those live in Postgres).

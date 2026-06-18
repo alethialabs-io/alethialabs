@@ -18,23 +18,45 @@ aws --endpoint-url "$ALETHIA_STORAGE_ENDPOINT"      s3 sync ./vts-backup s3://vi
 Keep the Supabase bucket warm until the acid test passes: `tofu init` + `tofu plan`
 against the migrated state produces **no spurious diff**.
 
-## 2. Still on Supabase (deferred to later phases — not storage)
+## 2. Done in code (Supabase fully removed)
 
-- **The platform's own TF-state backend** — `infra/platform/backend.hcl` (hardcoded
-  `…storage.supabase.co…`) and the CI `-backend-config` lines in
-  `.github/workflows/terraform-platform.yml` (~L52-55, L116-119). Repointing this is
-  its own careful cutover (sync the *platform* state bucket, then change the endpoint).
-- **Scaler Lambda** `supabase_url` / `supabase_service_role_key`, the `tendril` Helm
-  chart `SUPABASE_URL` / `SUPABASE_KEY`, and `portal` `NEXT_PUBLIC_SUPABASE_*` are
-  **DB/auth**, not storage — they go with Phase D/F.
-- **AWS Secrets Manager** resource labels (`aws_secretsmanager_secret.supabase_storage_*`)
-  and their `name = "…-supabase-s3-…"` strings are kept as-is: the AWS secret name is
-  immutable within its recovery window, so renaming forces replacement. Cosmetic →
-  folded into Phase F cleanup.
+- **Scaler Lambda** no longer touches Supabase. It now POSTs each node's
+  `${alethia_url}/api/platform/queue` (Bearer `RELEASE_API_SECRET`), which runs
+  `recover_stale_jobs()` and returns the QUEUED count. The `supabase_url` /
+  `supabase_service_role_key` variables are gone; the module takes `alethia_api_secret`
+  and a per-worker `alethia_url`.
+- **Helm `tendril` chart** `SUPABASE_URL` / `SUPABASE_KEY` and the `portal`
+  `NEXT_PUBLIC_SUPABASE_*` env are removed (the runner binary never read them).
+- **AWS Secrets Manager** resource labels (`aws_secretsmanager_secret.supabase_storage_*`,
+  `name = "…-supabase-s3-…"`) are **intentionally kept**: they already hold the
+  `ALETHIA_STORAGE_*` values (`secret_string = var.storage_access_key_id` / `…secret_access_key`).
+  The AWS secret name is immutable within its recovery window, so renaming forces
+  replacement of a live secret — a cosmetic rename deferred indefinitely.
 
-## 3. GitHub repo secrets
+## 3. Platform TF-state backend cutover (operator step — one time)
 
-CI now reads `ALETHIA_STORAGE_ACCESS_KEY_ID`, `ALETHIA_STORAGE_SECRET_ACCESS_KEY`, `ALETHIA_STORAGE_ENDPOINT`,
-`ALETHIA_STORAGE_REGION` (vine state). Add these; the old `SUPABASE_S3_*` / `SUPABASE_STORAGE_*`
-secrets for vine state can be removed after cutover (the platform-state backend config
-in §2 still uses the Supabase ones until that separate cutover).
+The platform's *own* state lives at `platform/terraform.tfstate`. The CI workflow and
+`backend.hcl.example` now use the `ALETHIA_STORAGE_*` endpoint; the live state object
+still sits in Supabase storage until you migrate it:
+
+```bash
+cd infra/platform
+# 1. Sync the platform state object Supabase → new S3.
+aws --endpoint-url "$SUPABASE_S3_ENDPOINT"     s3 cp s3://terraform-state/platform/terraform.tfstate ./platform.tfstate
+aws --endpoint-url "$ALETHIA_STORAGE_ENDPOINT" s3 cp ./platform.tfstate s3://terraform-state/platform/terraform.tfstate
+
+# 2. Point backend.hcl at the new endpoint (copy from backend.hcl.example), then:
+terraform init -reconfigure -migrate-state -backend-config=backend.hcl
+terraform plan   # acid test: no spurious diff
+```
+
+Keep the Supabase bucket warm until the plan is clean.
+
+## 4. GitHub repo secrets
+
+CI reads `ALETHIA_STORAGE_ACCESS_KEY_ID`, `ALETHIA_STORAGE_SECRET_ACCESS_KEY`,
+`ALETHIA_STORAGE_ENDPOINT`, `ALETHIA_STORAGE_REGION` for **both** vine state and the
+platform-state backend, and `RELEASE_API_SECRET` for the scaler. After the §3 cutover,
+delete the now-unused `SUPABASE_STORAGE_*`, `NEXT_PUBLIC_SUPABASE_URL`, and
+`SERVICE_ROLE_SECRET` repo secrets. Also drop the stale `supabase_*` lines from your
+local (untracked) `infra/platform/terraform.tfvars` — the variables no longer exist.
