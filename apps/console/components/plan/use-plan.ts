@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { planVine, provisionVine } from "@/app/server/actions/vines";
 import { getPlanResult, getVineJobs } from "@/app/server/actions/jobs";
 import {
@@ -15,7 +15,10 @@ import {
 	type CostSummary,
 } from "@/lib/plan/parse-cost";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
-import { createClient } from "@/lib/supabase/client";
+import {
+	type JobLogEntry,
+	useJobLogStream,
+} from "@/hooks/use-job-log-stream";
 
 export type PlanPhase =
 	| "idle"
@@ -25,20 +28,13 @@ export type PlanPhase =
 	| "applied"
 	| "failed";
 
-interface LogEntry {
-	id: number;
-	log_chunk: string;
-	stream_type: string;
-	created_at: string;
-}
-
 export interface UsePlanReturn {
 	phase: PlanPhase;
 	planJobId: string | null;
 	deployJobId: string | null;
 	planResult: PlanSummary | null;
 	costResult: CostSummary | null;
-	logs: LogEntry[];
+	logs: JobLogEntry[];
 	error: string | null;
 	generatePlan: (workerId?: string | null) => Promise<void>;
 	applyPlan: (workerId?: string | null) => Promise<void>;
@@ -50,23 +46,10 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 	const [deployJobId, setDeployJobId] = useState<string | null>(null);
 	const [planResult, setPlanResult] = useState<PlanSummary | null>(null);
 	const [costResult, setCostResult] = useState<CostSummary | null>(null);
-	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [error, setError] = useState<string | null>(null);
-	const channelRef = useRef<ReturnType<
-		ReturnType<typeof createClient>["channel"]
-	> | null>(null);
+	const { logs } = useJobLogStream(planJobId);
 
 	const jobs = useJobsStore((state) => state.jobs);
-
-	const cleanupChannel = useCallback(() => {
-		if (channelRef.current) {
-			const supabase = createClient();
-			supabase.removeChannel(channelRef.current);
-			channelRef.current = null;
-		}
-	}, []);
-
-	useEffect(() => cleanupChannel, [cleanupChannel]);
 
 	useEffect(() => {
 		if (!vineId) return;
@@ -132,7 +115,6 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 		if (!job) return;
 
 		if (job.status === "FAILED") {
-			cleanupChannel();
 			setPhase("failed");
 			setError(job.error_message || "Plan generation failed");
 			onRefresh?.();
@@ -140,7 +122,6 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 		}
 
 		if (job.status === "SUCCESS") {
-			cleanupChannel();
 			getPlanResult(planJobId).then((result) => {
 				const meta = result.execution_metadata as Record<string, unknown>;
 				if (meta?.plan_result) {
@@ -160,7 +141,7 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 				setError("Failed to load plan results");
 			});
 		}
-	}, [jobs, planJobId, phase, cleanupChannel, onRefresh]);
+	}, [jobs, planJobId, phase, onRefresh]);
 
 	useEffect(() => {
 		if (!deployJobId || phase !== "applying") return;
@@ -184,31 +165,13 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 		if (!vineId) return;
 		setPhase("generating");
 		setError(null);
-		setLogs([]);
 		setPlanResult(null);
 		setCostResult(null);
 
 		try {
 			const { jobId } = await planVine(vineId, workerId);
+			// Logs stream via useJobLogStream(planJobId) once this is set.
 			setPlanJobId(jobId);
-
-			const supabase = createClient();
-			const channel = supabase
-				.channel(`plan_logs:${jobId}`)
-				.on(
-					"postgres_changes",
-					{
-						event: "INSERT",
-						schema: "public",
-						table: "job_logs",
-						filter: `job_id=eq.${jobId}`,
-					},
-					(payload) => {
-						setLogs((prev) => [...prev, payload.new as LogEntry]);
-					},
-				)
-				.subscribe();
-			channelRef.current = channel;
 		} catch (err) {
 			setPhase("failed");
 			setError(

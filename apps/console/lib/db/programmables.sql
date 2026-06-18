@@ -114,6 +114,7 @@ $$;
 CREATE OR REPLACE FUNCTION public.insert_job_log(
     p_runner_id UUID, p_runner_token_hash TEXT, p_job_id UUID, p_log_chunk TEXT, p_stream_type TEXT DEFAULT 'STDOUT'
 ) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_log_id BIGINT;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.runners WHERE id = p_runner_id AND token_hash = p_runner_token_hash) THEN
         RAISE EXCEPTION 'Unauthorized runner';
@@ -122,7 +123,11 @@ BEGIN
         RAISE EXCEPTION 'Job not owned by this runner';
     END IF;
     INSERT INTO public.job_logs (job_id, log_chunk, stream_type)
-    VALUES (p_job_id, p_log_chunk, p_stream_type::public.log_stream_type);
+    VALUES (p_job_id, p_log_chunk, p_stream_type::public.log_stream_type)
+    RETURNING id INTO v_log_id;
+    -- Notify SSE listeners (one LISTEN conn per app instance fans out). IDs only
+    -- (8 KB payload cap); the stream route fetches rows since its last seen id.
+    PERFORM pg_notify('job_logs', json_build_object('jobId', p_job_id, 'logId', v_log_id)::text);
 END;
 $$;
 

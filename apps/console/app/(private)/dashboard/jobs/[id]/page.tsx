@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { getJobStatus, rerunJob, cancelJob } from "@/app/server/actions/jobs";
+import { getJob, getJobStatus, rerunJob, cancelJob } from "@/app/server/actions/jobs";
 import { provisionVine } from "@/app/server/actions/vines";
-import { createClient } from "@/lib/supabase/client";
+import { useJobLogStream } from "@/hooks/use-job-log-stream";
+import type { Job } from "@/lib/db/schema";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { TendrilSelectPopover } from "@/components/tendrils/tendril-select-popover";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -33,37 +34,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 
-interface LogEntry {
-	id: number;
-	created_at: string;
-	log_chunk: string;
-	stream_type: string | null;
-}
-
 type JobState = "QUEUED" | "CLAIMED" | "PROCESSING" | "SUCCESS" | "FAILED" | "CANCELLED" | null;
 
-interface JobData {
-	id: string;
-	job_type: string;
-	status: string;
-	error_message: string | null;
-	worker_id: string | null;
-	vine_id: string | null;
-	created_at: string | null;
-	started_at: string | null;
-	completed_at: string | null;
-	config_snapshot: Record<string, unknown>;
-	execution_metadata: Record<string, unknown> | null;
-}
-
-/** Full-page job detail view with realtime log streaming. */
+/** Full-page job detail view with realtime log streaming (SSE). */
 export default function JobDetailPage() {
 	const { id: jobId } = useParams<{ id: string }>();
 	const router = useRouter();
-	const supabase = createClient();
 
-	const [job, setJob] = useState<JobData | null>(null);
-	const [logs, setLogs] = useState<LogEntry[]>([]);
+	const [job, setJob] = useState<Job | null>(null);
+	const { logs } = useJobLogStream(jobId);
 	const [jobState, setJobState] = useState<JobState>(null);
 	const [jobError, setJobError] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
@@ -86,61 +65,22 @@ export default function JobDetailPage() {
 	useEffect(() => {
 		if (!jobId) return;
 
-		supabase
-			.from("provision_jobs")
-			.select("*")
-			.eq("id", jobId)
-			.single()
-			.then(({ data }) => {
+		getJob(jobId)
+			.then((data) => {
 				if (data) {
-					setJob(data as unknown as JobData);
-					setJobState(data.status as JobState);
+					setJob(data);
+					setJobState(data.status);
 					setJobError(data.error_message);
 				}
 				setIsLoading(false);
-			});
+			})
+			.catch(() => setIsLoading(false));
 	}, [jobId]);
 
+	// Auto-scroll as streamed logs (from useJobLogStream) arrive.
 	useEffect(() => {
-		if (!jobId) return;
-
-		supabase
-			.from("job_logs")
-			.select("*")
-			.eq("job_id", jobId)
-			.order("id", { ascending: true })
-			.then(({ data }) => {
-				if (data) {
-					setLogs(data as LogEntry[]);
-					scrollToBottom();
-				}
-			});
-	}, [jobId, scrollToBottom]);
-
-	useEffect(() => {
-		if (!jobId) return;
-
-		const channel = supabase
-			.channel(`job_logs:${jobId}`)
-			.on(
-				"postgres_changes",
-				{
-					event: "INSERT",
-					schema: "public",
-					table: "job_logs",
-					filter: `job_id=eq.${jobId}`,
-				},
-				(payload) => {
-					setLogs((prev) => [...prev, payload.new as LogEntry]);
-					scrollToBottom();
-				},
-			)
-			.subscribe();
-
-		return () => {
-			supabase.removeChannel(channel);
-		};
-	}, [jobId, scrollToBottom]);
+		if (logs.length > 0) scrollToBottom();
+	}, [logs.length, scrollToBottom]);
 
 	useEffect(() => {
 		if (!jobId) return;
@@ -148,7 +88,7 @@ export default function JobDetailPage() {
 		statusPollRef.current = setInterval(async () => {
 			const result = await getJobStatus(jobId);
 			if (!result) return;
-			setJobState(result.status as JobState);
+			setJobState(result.status);
 			if (result.status === "FAILED" || result.status === "CANCELLED") {
 				setJobError(result.error_message);
 				stopStatusPoll();
@@ -190,10 +130,10 @@ export default function JobDetailPage() {
 	};
 
 	const handleApply = async (workerId: string | null) => {
-		if (!job?.vine_id || !jobId) return;
+		if (!job?.spec_id || !jobId) return;
 		setActionLoading(true);
 		try {
-			const { jobId: deployJobId } = await provisionVine(job.vine_id, jobId, workerId);
+			const { jobId: deployJobId } = await provisionVine(job.spec_id, jobId, workerId);
 			toast.success("Deploy job created");
 			router.push(`/dashboard/jobs/${deployJobId}`);
 		} catch (err) {
@@ -249,7 +189,7 @@ export default function JobDetailPage() {
 							</div>
 							<p className="text-xs text-muted-foreground">
 								<span className="font-mono">{job.id.slice(0, 8)}</span>
-								{job.worker_id && <> · Worker <span className="font-mono">{job.worker_id.slice(0, 8)}</span></>}
+								{job.runner_id && <> · Worker <span className="font-mono">{job.runner_id.slice(0, 8)}</span></>}
 								{job.created_at && <> · {formatDistanceToNow(new Date(job.created_at), { addSuffix: true })}</>}
 							</p>
 						</div>
@@ -261,7 +201,7 @@ export default function JobDetailPage() {
 								Cancel
 							</Button>
 						)}
-						{isPlanSuccess && job.vine_id && (
+						{isPlanSuccess && job.spec_id && (
 							<TendrilSelectPopover
 								trigger={
 									<Button size="sm" className="h-8 text-xs" disabled={actionLoading}>
@@ -372,7 +312,7 @@ export default function JobDetailPage() {
 							</div>
 							<div>
 								<p className="text-[11px] text-muted-foreground">Worker</p>
-								<p className="font-mono">{job.worker_id ?? "—"}</p>
+								<p className="font-mono">{job.runner_id ?? "—"}</p>
 							</div>
 							<div>
 								<p className="text-[11px] text-muted-foreground">Created</p>
@@ -386,10 +326,10 @@ export default function JobDetailPage() {
 								<p className="text-[11px] text-muted-foreground">Completed</p>
 								<p>{job.completed_at ? new Date(job.completed_at).toLocaleString() : "—"}</p>
 							</div>
-							{job.vine_id && (
+							{job.spec_id && (
 								<div>
 									<p className="text-[11px] text-muted-foreground">Spec</p>
-									<p className="font-mono truncate">{job.vine_id}</p>
+									<p className="font-mono truncate">{job.spec_id}</p>
 								</div>
 							)}
 						</div>

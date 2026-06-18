@@ -21,6 +21,19 @@ export async function getJobStatus(jobId: string) {
 	});
 }
 
+/** Fetches a single job (owner-scoped) by id, or null. */
+export async function getJob(jobId: string) {
+	const owner = await requireOwner();
+	return withOwnerScope(owner, async (tx) => {
+		const [row] = await tx
+			.select()
+			.from(jobs)
+			.where(eq(jobs.id, jobId))
+			.limit(1);
+		return row ?? null;
+	});
+}
+
 /** Fetches all jobs with spec project_name and runner name joined. */
 export async function getJobs() {
 	const owner = await requireOwner();
