@@ -1,0 +1,38 @@
+---
+title: Hetzner
+description: Provision the Alethia control plane on a Hetzner Cloud ARM VM.
+---
+
+# Hetzner (`infra/hetzner`)
+
+The cheapest target: a Hetzner Cloud **CAX21** (Ampere ARM, 4 vCPU / 8 GB) with an attached data
+volume, behind Caddy. **≈ €10–11/mo.**
+
+## What it creates
+- `hcloud_server` (`cax21`) + `hcloud_volume` (25 GB, holds Postgres + object storage) + attachment
+- `hcloud_firewall` (22/80/443) + `hcloud_ssh_key`
+- `cloudflare_record` A/AAAA for the apex + `www`
+- cloud-init: installs Docker, moves Docker's data-root onto the volume, clones the repo
+
+## Prerequisites
+- A Hetzner Cloud **project + API token** (`HCLOUD_TOKEN`).
+- A Cloudflare **API token** (DNS edit) + **zone id** for your domain.
+- An SSH **public key** (the private half deploys updates).
+
+## Apply
+```bash
+cd infra/hetzner
+cp backend.hcl.example backend.hcl          # fill S3 endpoint + creds
+cp terraform.tfvars.example terraform.tfvars # hcloud_token, cloudflare_*, ssh_public_key, domain
+terraform init -backend-config=backend.hcl
+terraform apply
+terraform output server_ipv4
+```
+
+## CI secrets (`terraform-hetzner.yml`)
+`HCLOUD_TOKEN`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`, `DEPLOY_SSH_PUBLIC_KEY`,
+`TF_STATE_S3_ENDPOINT|REGION|ACCESS_KEY_ID|SECRET_ACCESS_KEY`.
+
+## Tuning
+`server_type` (`cax21` default; `cax31` if busy), `data_volume_size`, `location` (any EU region),
+`ssh_allowed_cidrs`.

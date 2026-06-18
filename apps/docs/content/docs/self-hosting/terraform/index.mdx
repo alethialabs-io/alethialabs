@@ -1,0 +1,47 @@
+---
+title: Terraform (per-cloud)
+description: Provision the VM + DNS for the Alethia bundle with Terraform, on any supported cloud.
+---
+
+# Terraform modules
+
+The bundle runs on **any VM**, so the simplest path is: make a VM, point DNS at it, and run the
+[installer](../index). The Terraform modules here automate that "VM + firewall + DNS + Docker" step
+per cloud — each provisions an **ARM** host and runs the same bundle via cloud-init, then you point
+`DEPLOY_HOST` at its IP.
+
+> **ARM only.** The published images are built `linux/arm64`, so every module uses an ARM instance
+> (Hetzner CAX, AWS Graviton, GCP Tau T2A, …). Pick ARM-capable regions.
+
+## Status
+
+| Cloud | Module | Page |
+|---|---|---|
+| Hetzner | `infra/hetzner` | [Hetzner](./hetzner) ✅ |
+| AWS | `infra/aws-cp` | [AWS](./aws) ✅ |
+| GCP | `infra/gcp-cp` | [GCP](./gcp) ✅ |
+| Azure | `infra/azure-cp` | planned |
+| Alibaba | `infra/alibaba-cp` | planned |
+
+## Shared workflow
+
+Every module follows the same steps:
+
+```bash
+cd infra/<cloud>
+cp backend.hcl.example backend.hcl          # S3-compatible state backend (endpoint + creds)
+cp terraform.tfvars.example terraform.tfvars # cloud creds, domain, ssh public key
+terraform init -backend-config=backend.hcl
+terraform apply
+terraform output server_ipv4                # → set as the DEPLOY_HOST secret / DNS target
+```
+
+State lives in an S3-compatible bucket (`TF_STATE_S3_*`), one key per module
+(`<cloud>/terraform.tfstate`). DNS records are created in **Cloudflare** (unproxied, so Caddy can
+get TLS). The **SSH public key** you pass is how the `deploy-app` workflow ships updates over SSH.
+
+## CI
+
+Each module has a workflow (`terraform-hetzner.yml`, `terraform-aws-cp.yml`, `terraform-gcp.yml`):
+**plan on PR**, **apply on `main`**. Apply only **one** control-plane module — they all manage the
+same DNS records. See each cloud's page for the exact GitHub secrets.

@@ -1,0 +1,21 @@
+#cloud-config
+# Prepares the box; it does NOT bring the stack up. The deploy-app workflow
+# writes /opt/alethia/.env from CI secrets and runs compose (images are public).
+package_update: true
+package_upgrade: true
+
+runcmd:
+  # Docker + compose plugin
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable --now docker
+  # If an extra data volume is attached (Hetzner auto-mounts at /mnt/HC_Volume_*),
+  # move Docker's data-root onto it. No-op on GCP (the boot disk is durable).
+  - |
+    vol=$(ls -d /mnt/HC_Volume_* 2>/dev/null | head -1)
+    if [ -n "$vol" ]; then
+      mkdir -p "$vol/docker" /etc/docker
+      printf '{ "data-root": "%s/docker" }\n' "$vol" > /etc/docker/daemon.json
+      systemctl restart docker
+    fi
+  - git clone ${repo_url} /opt/alethia || true
+  - test -f /opt/alethia/.env || cp /opt/alethia/.env.example /opt/alethia/.env

@@ -1,0 +1,42 @@
+---
+title: GCP
+description: Provision the Alethia control plane on a GCP Tau T2A (Ampere ARM) Compute Engine VM.
+---
+
+# GCP (`infra/gcp-cp`)
+
+A single **Tau T2A** (Ampere ARM) Compute Engine VM — `t2a-standard-2` (2 vCPU / 8 GB) — with a
+static external IP, behind Caddy. **≈ $45–55/mo** (`t2a-standard-1`, 1 vCPU / 4 GB, ≈ $28 if it
+fits). T2A is region-limited, so pick a region that has it.
+
+## What it creates
+- `google_compute_instance` (`t2a-standard-2`, Ubuntu 24.04 ARM64) with a 30 GB `pd-balanced` boot disk
+- `google_compute_address` (static external IP) → DNS
+- `google_compute_firewall` (22/80/443, by network tag `alethia-cp`)
+- `cloudflare_record` A for the apex + `www`
+- cloud-init via the `user-data` metadata key (installs Docker, clones the repo)
+
+## Prerequisites
+- A GCP **project** with the Compute Engine API enabled.
+- A **service-account JSON key** with Compute Admin (provider auth → `GOOGLE_CREDENTIALS`).
+- Cloudflare API token + zone id; an SSH public key.
+- A **T2A region** (e.g. `europe-west4`, `us-central1`, `asia-southeast1`).
+
+## Apply
+```bash
+cd infra/gcp-cp
+cp backend.hcl.example backend.hcl
+cp terraform.tfvars.example terraform.tfvars  # gcp_project, gcp_region/zone, cloudflare_*, ssh_public_key
+export GOOGLE_CREDENTIALS="$(cat service-account.json)"
+terraform init -backend-config=backend.hcl
+terraform apply
+terraform output server_ipv4
+```
+
+## CI secrets (`terraform-gcp.yml`)
+`GOOGLE_CREDENTIALS` (SA JSON), `GCP_PROJECT`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`,
+`DEPLOY_SSH_PUBLIC_KEY`, and the `TF_STATE_S3_*` backend secrets.
+
+## Tuning
+`machine_type` (`t2a-standard-2` default; `t2a-standard-1` to save), `boot_disk_size`,
+`gcp_region`/`gcp_zone` (must have T2A), `ssh_allowed_cidrs`.
