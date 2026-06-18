@@ -1,0 +1,10 @@
+# Local, secret-bearing config — never commit (use *.example as the template).
+terraform.tfvars
+backend.hcl
+*.auto.tfvars
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+tfplan
+lambda.zip

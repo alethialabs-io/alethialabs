@@ -3,22 +3,18 @@ variable "name_prefix" {
   description = "Prefix for all resource names (e.g. tendril-dev)."
 }
 
-variable "supabase_url" {
-  type        = string
-  description = "Supabase project URL for querying provision_jobs."
-}
-
-variable "supabase_service_role_key" {
+variable "alethia_api_secret" {
   type        = string
   sensitive   = true
-  description = "Supabase service role key (server-side, bypasses RLS)."
+  description = "Shared platform secret (Bearer) for the console /api/platform/queue probe."
 }
 
 variable "workers" {
   type = list(object({
-    region  = string
-    cluster = string
-    service = string
+    region      = string
+    cluster     = string
+    service     = string
+    alethia_url = string
   }))
-  description = "List of ECS worker services the scaler manages."
+  description = "ECS worker services the scaler manages, each with its node's console URL."
 }

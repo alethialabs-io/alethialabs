@@ -24,12 +24,9 @@ tendrils = {
 worker_mode     = "cloud-hosted"
 tendril_version = "latest"
 
-# Trellis API secret — used by tendrils to auto-register.
+# Platform API secret — used by tendrils to auto-register and by the Lambda
+# scaler to probe each node's /api/platform/queue (console RELEASE_API_SECRET).
 trellis_api_secret = ""
-
-# Supabase API — used by the Lambda scaler to query queued jobs.
-supabase_url              = "https://YOUR_PROJECT.supabase.co"
-supabase_service_role_key = ""
 
 # S3-compatible state storage for provisioned vines (SeaweedFS / Garage / S3 / R2).
 storage_endpoint          = "https://YOUR_S3_ENDPOINT"

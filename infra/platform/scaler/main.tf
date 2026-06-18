@@ -31,9 +31,8 @@ resource "aws_lambda_function" "scaler" {
 
   environment {
     variables = {
-      SUPABASE_URL              = var.supabase_url
-      SUPABASE_SERVICE_ROLE_KEY = var.supabase_service_role_key
-      WORKERS                   = jsonencode(var.workers)
+      ALETHIA_API_SECRET = var.alethia_api_secret
+      WORKERS            = jsonencode(var.workers)
     }
   }
 }

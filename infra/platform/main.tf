@@ -158,15 +158,15 @@ locals {
 module "scaler" {
   source = "./scaler"
 
-  name_prefix               = local.name_prefix
-  supabase_url              = var.supabase_url
-  supabase_service_role_key = var.supabase_service_role_key
+  name_prefix        = local.name_prefix
+  alethia_api_secret = var.alethia_api_secret
 
   workers = [
     for name, w in local.all_worker_modules : {
-      region  = var.nodes[name].region
-      cluster = w.cluster_name
-      service = w.service_name
+      region      = var.nodes[name].region
+      cluster     = w.cluster_name
+      service     = w.service_name
+      alethia_url = var.nodes[name].alethia_url
     }
   ]
 }

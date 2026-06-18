@@ -106,16 +106,3 @@ variable "storage_secret_access_key" {
   type      = string
   sensitive = true
 }
-
-# ---------- Supabase API (for Lambda scaler) ----------
-
-variable "supabase_url" {
-  type        = string
-  description = "Supabase project URL (for Lambda scaler)."
-}
-
-variable "supabase_service_role_key" {
-  type        = string
-  sensitive   = true
-  description = "Supabase service role key (for Lambda scaler)."
-}

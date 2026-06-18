@@ -3,8 +3,7 @@ import json
 import os
 import urllib.request
 
-SUPABASE_URL = os.environ['SUPABASE_URL']
-SUPABASE_KEY = os.environ['SUPABASE_SERVICE_ROLE_KEY']
+API_SECRET = os.environ['ALETHIA_API_SECRET']
 WORKERS = json.loads(os.environ['WORKERS'])
 IDLE_THRESHOLD = 5
 
@@ -12,16 +11,19 @@ idle_counts = {}
 
 
 def handler(event, context):
-    recovered = recover_stale_jobs()
-    if recovered > 0:
-        print(f"Recovered {recovered} stale job(s)")
-
-    queued = count_queued_jobs()
-
     for w in WORKERS:
         region = w['region']
         cluster = w['cluster']
         service = w['service']
+        alethia_url = w['alethia_url']
+
+        # Each node owns its own console + DB; ask it for its own queue depth.
+        # The probe also requeues stale jobs server-side (recover_stale_jobs).
+        stats = queue_stats(alethia_url)
+        queued = stats.get('queued', 0)
+        recovered = stats.get('recovered', 0)
+        if recovered > 0:
+            print(f"Recovered {recovered} stale job(s) on {alethia_url}")
 
         ecs = boto3.client('ecs', region_name=region)
         resp = ecs.describe_services(cluster=cluster, services=[service])
@@ -43,37 +45,32 @@ def handler(event, context):
         else:
             idle_counts[key] = 0
 
-    return {'queued': queued}
+    return {'ok': True}
 
 
-def recover_stale_jobs():
-    url = f"{SUPABASE_URL}/rest/v1/rpc/recover_stale_jobs"
+def queue_stats(alethia_url):
+    """Ask a node's console for its queue depth (and requeue stale jobs).
+
+    Returns {"recovered": int, "queued": int}; on any error returns zeros so a
+    single unreachable node never blocks scaling decisions for the others.
+    """
+    url = f"{alethia_url}/api/platform/queue"
     req = urllib.request.Request(
         url,
         data=b'{}',
         headers={
-            'apikey': SUPABASE_KEY,
-            'Authorization': f'Bearer {SUPABASE_KEY}',
+            'Authorization': f'Bearer {API_SECRET}',
             'Content-Type': 'application/json',
         },
         method='POST',
     )
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             body = json.loads(resp.read())
-            return int(body) if isinstance(body, (int, float)) else 0
+            return {
+                'recovered': int(body.get('recovered', 0)),
+                'queued': int(body.get('queued', 0)),
+            }
     except Exception as e:
-        print(f"Warning: recover_stale_jobs failed: {e}")
-        return 0
-
-
-def count_queued_jobs():
-    url = f"{SUPABASE_URL}/rest/v1/provision_jobs?status=eq.QUEUED&select=id"
-    req = urllib.request.Request(url, headers={
-        'apikey': SUPABASE_KEY,
-        'Authorization': f'Bearer {SUPABASE_KEY}',
-        'Prefer': 'count=exact',
-    })
-    with urllib.request.urlopen(req) as resp:
-        count = resp.headers.get('content-range', '*/0').split('/')[-1]
-        return int(count) if count != '*' else 0
+        print(f"Warning: queue_stats failed for {alethia_url}: {e}")
+        return {'recovered': 0, 'queued': 0}

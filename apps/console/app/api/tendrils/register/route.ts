@@ -3,18 +3,15 @@
 
 import { getServiceDb } from "@/lib/db";
 import { runners } from "@/lib/db/schema";
+import { verifyPlatformSecret } from "@/lib/platform/auth";
 import { createHash, randomBytes } from "crypto";
 import { sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 /** Terraform calls this to register a cloud-hosted tendril. */
 export async function POST(req: Request) {
-	const authHeader = req.headers.get("authorization");
-	const expected = process.env.RELEASE_API_SECRET;
-
-	if (!expected || authHeader !== `Bearer ${expected}`) {
-		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-	}
+	const unauthorized = verifyPlatformSecret(req);
+	if (unauthorized) return unauthorized;
 
 	let body: { name?: string; mode?: "self-hosted" | "cloud-hosted" };
 	try {
