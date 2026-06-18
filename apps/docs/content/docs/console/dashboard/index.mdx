@@ -12,7 +12,7 @@ The dashboard is the landing page after login. It provides a quick summary of yo
 The dashboard shell wraps all authenticated pages with:
 
 - **Header** — breadcrumbs, notifications bell (unread job count), user dropdown (profile, sign out)
-- **Sidebar** — main navigation (Overview, Design a Spec, Clusters, Jobs, Integrations, Runners) plus a dynamic zone list with expandable spec sub-items
+- **Sidebar** — main navigation (Overview, Design a Spec, Clusters, Jobs, Connectors, Runners) plus a dynamic zone list with expandable spec sub-items
 - **Real-time subscriptions** — established on layout mount for job status and spec status updates (see [Real-time Architecture](/concepts/realtime))
 
 ## Overview Page
@@ -28,9 +28,9 @@ The overview page shows four stat chips at the top:
 
 Below the stats:
 
-### Integrations Panel
+### Connectors Panel
 
-Shows connected and disconnected integrations as badges. Connected providers show a green indicator and account identifier (AWS Account ID, GCP Project, GitHub username). Disconnected providers link to the integrations page.
+Shows connected and disconnected integrations as badges. Connected providers show a green indicator and account identifier (AWS Account ID, GCP Project, GitHub username). Disconnected providers link to the connectors page.
 
 ### Recent Jobs
 
@@ -57,7 +57,7 @@ The sidebar has two sections:
 - Design a Spec (`/dashboard/design`)
 - Clusters (`/dashboard/clusters`)
 - Jobs (`/dashboard/jobs`)
-- Integrations (`/dashboard/integrations`)
+- Connectors (`/dashboard/connectors`)
 - Runners (`/dashboard/runners`)
 
 **Zones List:**

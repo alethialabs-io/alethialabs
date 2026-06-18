@@ -31,7 +31,7 @@ type DeployParams struct {
 	InfracostToken  string
 	GitAccessToken  string
 	TemplatesDir    string
-	SupabaseBackend *cloud.SupabaseBackendConfig
+	S3Backend       *cloud.S3BackendConfig
 	Stdout          io.Writer
 	Stderr          io.Writer
 	ApiClient       *api.Client
@@ -141,14 +141,17 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		}
 	}
 
-	if params.SupabaseBackend == nil {
-		return nil, fmt.Errorf("SupabaseBackend config is required for state storage")
+	if params.S3Backend == nil {
+		return nil, fmt.Errorf("S3Backend config is required for state storage")
 	}
-	backendFile, err := params.SupabaseBackend.WriteBackendHCL(tfDir, vc.VineyardID, vc.ProjectName, vc.EnvironmentStage, vc.Region)
+	if err := params.S3Backend.EnsureBucket(ctx); err != nil {
+		return nil, fmt.Errorf("failed to ensure state bucket: %w", err)
+	}
+	backendFile, err := params.S3Backend.WriteBackendHCL(tfDir, vc.VineyardID, vc.ProjectName, vc.EnvironmentStage, vc.Region)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write backend config: %w", err)
 	}
-	fmt.Fprintf(stdout, "State backend: Supabase S3 (bucket=%s)\n", params.SupabaseBackend.Bucket)
+	fmt.Fprintf(stdout, "State backend: S3 (bucket=%s)\n", params.S3Backend.Bucket)
 
 	fmt.Fprintf(stdout, "DEBUG provider=%s, project=%v, region=%v, provision_network=%v, network_id=%q, cidr=%q\n",
 		provider.Name(), tfvars["project_name"], vc.Region, vc.Network.ProvisionNetwork, vc.Network.NetworkID, vc.Network.CIDRBlock)
@@ -163,8 +166,8 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		return nil, err
 	}
 
-	// Suspend AWS env creds during init so the S3 backend uses inline Supabase creds from backend.hcl
-	// (ECS task role always sets AWS env vars, which would override the Supabase S3 endpoint)
+	// Suspend AWS env creds during init so the S3 backend uses inline creds from backend.hcl
+	// (ECS task role always sets AWS env vars, which would override the S3 endpoint)
 	savedCreds := suspendAWSEnvCreds()
 	if err := tf.InitWithBackendFile(ctx, backendFile, false); err != nil {
 		restoreAWSEnvCreds(savedCreds)

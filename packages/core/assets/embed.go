@@ -8,7 +8,7 @@ import (
 )
 
 //go:embed all:terraform/seed
-//go:embed all:helm/tendril
+//go:embed all:helm/runner
 var Assets embed.FS
 
 // GetTerraformSeed returns the embedded filesystem for the seed terraform
@@ -16,7 +16,7 @@ func GetTerraformSeed() embed.FS {
 	return Assets
 }
 
-// GetTendrilChart returns the embedded filesystem for the tendril helm chart
-func GetTendrilChart() embed.FS {
+// GetRunnerChart returns the embedded filesystem for the runner helm chart
+func GetRunnerChart() embed.FS {
 	return Assets
 }

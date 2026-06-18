@@ -89,5 +89,5 @@ Cloud/API prices as of 2026 (verify). Runner durations are infra-grounded; per-c
 
 ## Sources
 
-- Runner sizing / scaler: `infra/platform/worker/main.tf` (1 vCPU/4 GB ARM64), `infra/platform/scaler/lambda/index.py`, job durations in the runner. Cost boundary: `infra/onboarding/aws/alethia-bootstrap.yaml` (`AlethiaProvisionerRole`).
+- Runner sizing / scaler: `infra/platform/worker/main.tf` (1 vCPU/4 GB ARM64), `infra/platform/scaler/lambda/index.py`, job durations in the runner. Cost boundary: `infra/connector/aws/alethia-bootstrap.yaml` (`AlethiaProvisionerRole`).
 - Prices to verify: [AWS Fargate pricing](https://aws.amazon.com/fargate/pricing/) · [RDS pricing](https://aws.amazon.com/rds/postgresql/pricing/) · [S3 pricing](https://aws.amazon.com/s3/pricing/) · [Anthropic API pricing](https://www.anthropic.com/pricing) · comparable pricing in [`competitors/`](competitors/).

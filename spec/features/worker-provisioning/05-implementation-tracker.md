@@ -64,8 +64,8 @@ ONE cloud-hosted worker in Alethia's AWS account (`787587782604`) serves all use
 ## Infrastructure — Central Worker Deployment
 
 - [x] Terraform for Fargate (`terraform/` — ecs, iam, networking, secrets, logging, ecr)
-- [x] CloudFormation template for cross-account role (`packages/onboarding/aws/alethia-bootstrap.yaml`)
-- [x] Terraform version of cross-account role (`packages/onboarding/aws/alethia-bootstrap.tf`)
+- [x] CloudFormation template for cross-account role (`infra/connector/aws/alethia-bootstrap.yaml`)
+- [x] Terraform version of cross-account role (`infra/connector/aws/alethia-bootstrap.tf`)
 - [ ] **Deploy the central worker** — `terraform apply` in Alethia's account
 - [ ] **Build + push Docker image** to ECR
 - [ ] **Register central worker** in Trellis (mode=cloud-hosted)

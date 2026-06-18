@@ -54,7 +54,7 @@ func (w *Worker) executeDeployWorker(ctx context.Context, job *Job, provider str
 		cfg.ImageRepository = "787587782604.dkr.ecr.eu-west-1.amazonaws.com/tendril-dev-tendril"
 	}
 
-	templatesDir := resolveTendrilTemplatesDir()
+	templatesDir := resolveRunnerTemplatesDir()
 	if templatesDir == "" {
 		return fmt.Errorf("worker templates directory not found")
 	}
@@ -94,12 +94,15 @@ func (w *Worker) executeDeployWorker(ctx context.Context, job *Job, provider str
 		return fmt.Errorf("failed to write tfvars: %w", err)
 	}
 
-	backend := w.supabaseBackend()
+	backend := w.s3Backend()
+	if err := backend.EnsureBucket(ctx); err != nil {
+		return fmt.Errorf("failed to ensure state bucket: %w", err)
+	}
 	backendFile, err := backend.WriteWorkerBackendHCL(workDir, cfg.WorkerID[:8])
 	if err != nil {
 		return fmt.Errorf("failed to write backend config: %w", err)
 	}
-	fmt.Fprintf(stdout, "State backend: Supabase S3 (workers/%s)\n", cfg.WorkerID[:8])
+	fmt.Fprintf(stdout, "State backend: S3 (workers/%s)\n", cfg.WorkerID[:8])
 
 	tfVersion := "1.15.5"
 	tf, err := terraform.NewTerraformCLI(ctx, tfVersion, workDir, stdout, stderr)
@@ -151,10 +154,10 @@ func (w *Worker) executeDeployWorker(ctx context.Context, job *Job, provider str
 	return nil
 }
 
-func resolveTendrilTemplatesDir() string {
+func resolveRunnerTemplatesDir() string {
 	candidates := []string{
-		"/home/runner/tendril-templates",
-		"tendril-templates",
+		"/home/runner/runner-templates",
+		"runner-templates",
 		"../../infra/templates/runner",
 	}
 	for _, d := range candidates {

@@ -29,6 +29,9 @@ alethia is a **thin client** that communicates with the Alethia API over HTTPS. 
 ## Command Groups
 
 <Cards>
+  <Card title="Connector Commands" href="/cli/commands/connector">
+    Connect AWS, GCP, and Azure cloud accounts.
+  </Card>
   <Card title="Zone Commands" href="/cli/commands/zone">
     Create, list, and delete workspaces.
   </Card>
@@ -57,6 +60,9 @@ brew install bobikenobi12/bb-thesis-2026/alethia
 
 # Authenticate
 alethia login
+
+# Connect a cloud account (AWS, GCP, or Azure)
+alethia connector gcp --project my-gcp-project
 
 # List zones
 alethia zone list

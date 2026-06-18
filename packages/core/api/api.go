@@ -582,3 +582,94 @@ func (c *Client) GetCloudIdentities() ([]CloudIdentity, error) {
 	}
 	return successResp.CloudIdentities, nil
 }
+
+// --- Cloud Provider Connections ---
+
+type InitIdentityResponse struct {
+	IdentityID string `json:"identity_id"`
+	ExternalID string `json:"external_id"`
+}
+
+type ConnectIdentityResponse struct {
+	JobID      string `json:"job_id"`
+	IdentityID string `json:"identity_id"`
+}
+
+type ProviderStatus struct {
+	Connected  bool   `json:"connected"`
+	IdentityID string `json:"identityId"`
+	// AWS
+	AccountID  string `json:"accountId"`
+	RoleArn    string `json:"roleArn"`
+	ExternalID string `json:"externalId"`
+	// GCP
+	ProjectID           string `json:"projectId"`
+	ServiceAccountEmail string `json:"serviceAccountEmail"`
+	// Azure
+	TenantID       string `json:"tenantId"`
+	ClientID       string `json:"clientId"`
+	SubscriptionID string `json:"subscriptionId"`
+}
+
+// InitProviderIdentity gets or creates the pending identity for a provider.
+// For AWS, the response includes the external_id to embed in the trust policy.
+func (c *Client) InitProviderIdentity(provider string) (*InitIdentityResponse, error) {
+	endpoint := fmt.Sprintf("%s/cli/providers/%s/init", c.baseURL, provider)
+	var resp InitIdentityResponse
+	if err := c.doPost(endpoint, map[string]interface{}{}, &resp); err != nil {
+		return nil, fmt.Errorf("failed to initialize %s connection: %w", provider, err)
+	}
+	return &resp, nil
+}
+
+// ConnectProviderIdentity submits the captured credentials and queues a
+// CONNECTION_TEST job. The credentials map shape is provider-specific:
+//   - aws:   {"role_arn": "..."}
+//   - gcp:   {"wif_config": {...}}
+//   - azure: {"tenant_id": "...", "client_id": "...", "subscription_id": "..."}
+func (c *Client) ConnectProviderIdentity(provider, identityID string, credentials map[string]interface{}) (*ConnectIdentityResponse, error) {
+	endpoint := fmt.Sprintf("%s/cli/providers/%s/connect", c.baseURL, provider)
+	payload := map[string]interface{}{
+		"identity_id": identityID,
+		"credentials": credentials,
+	}
+	var resp ConnectIdentityResponse
+	if err := c.doPost(endpoint, payload, &resp); err != nil {
+		return nil, fmt.Errorf("failed to submit %s credentials: %w", provider, err)
+	}
+	return &resp, nil
+}
+
+// VerifyProviderIdentity marks an identity verified after its connection test
+// job has succeeded.
+func (c *Client) VerifyProviderIdentity(provider, identityID, jobID string) error {
+	endpoint := fmt.Sprintf("%s/cli/providers/%s/verify", c.baseURL, provider)
+	payload := map[string]interface{}{
+		"identity_id": identityID,
+		"job_id":      jobID,
+	}
+	if err := c.doPost(endpoint, payload, nil); err != nil {
+		return fmt.Errorf("failed to verify %s identity: %w", provider, err)
+	}
+	return nil
+}
+
+// DisconnectProviderIdentity resets a provider identity to its pending state.
+func (c *Client) DisconnectProviderIdentity(provider, identityID string) error {
+	endpoint := fmt.Sprintf("%s/cli/providers/%s/disconnect", c.baseURL, provider)
+	payload := map[string]interface{}{"identity_id": identityID}
+	if err := c.doPost(endpoint, payload, nil); err != nil {
+		return fmt.Errorf("failed to disconnect %s: %w", provider, err)
+	}
+	return nil
+}
+
+// GetProviderStatus returns the verified connection status for a provider.
+func (c *Client) GetProviderStatus(provider string) (*ProviderStatus, error) {
+	endpoint := fmt.Sprintf("%s/cli/providers/%s/status", c.baseURL, provider)
+	var resp ProviderStatus
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get %s status: %w", provider, err)
+	}
+	return &resp, nil
+}

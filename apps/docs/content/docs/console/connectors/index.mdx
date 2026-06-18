@@ -1,15 +1,15 @@
 ---
-title: Integrations Overview
+title: Connectors Overview
 description: Connect cloud providers and Git accounts to enable infrastructure provisioning.
 ---
 
-# Integrations
+# Connectors
 
-The Integrations page manages connections to cloud providers (AWS, GCP, Azure) and Git providers (GitHub, GitLab, Bitbucket). All connections must be established before provisioning infrastructure.
+The Connectors page manages connections to cloud providers (AWS, GCP, Azure) and Git providers (GitHub, GitLab, Bitbucket). All connections must be established before provisioning infrastructure.
 
 ## How It Works
 
-Integrations are displayed as cards organized by category:
+Connectors are displayed as cards organized by category:
 
 | Category | Providers |
 |----------|-----------|
@@ -36,16 +36,16 @@ Each card shows:
 Cloud connections use the platform's [zero-credential model](/concepts/security) — no static keys are stored. Each provider uses a federation mechanism:
 
 <Cards>
-  <Card title="AWS" href="/console/integrations/aws">Cross-Account IAM Role with External ID</Card>
-  <Card title="GCP" href="/console/integrations/gcp">Workload Identity Federation with OIDC</Card>
-  <Card title="Azure" href="/console/integrations/azure">Federated Identity via Entra ID</Card>
+  <Card title="AWS" href="/console/connectors/aws">Cross-Account IAM Role with External ID</Card>
+  <Card title="GCP" href="/console/connectors/gcp">Workload Identity Federation with OIDC</Card>
+  <Card title="Azure" href="/console/connectors/azure">Federated Identity via Entra ID</Card>
 </Cards>
 
 After connecting, Alethia queues a `CONNECTION_TEST` job to verify the credentials and discover existing resources (VPCs, subnets, DNS zones). See [Job Queue Pattern](/concepts/job-queue).
 
 ## Git Provider Connections
 
-Git connections use standard OAuth. See [Git Providers](/console/integrations/git-providers) for details.
+Git connections use standard OAuth. See [Git Providers](/console/connectors/git-providers) for details.
 
 ## Disconnecting
 

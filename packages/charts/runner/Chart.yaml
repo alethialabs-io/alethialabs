@@ -1,5 +1,5 @@
 apiVersion: v2
-name: tendril
+name: runner
 description: The Alethia Runner Agent
 type: application
 version: 0.1.0

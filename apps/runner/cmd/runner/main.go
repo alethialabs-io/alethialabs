@@ -19,10 +19,10 @@ func main() {
 		WorkerID:    os.Getenv("ALETHIA_WORKER_ID"),
 		WorkerToken: os.Getenv("ALETHIA_WORKER_TOKEN"),
 
-		SupabaseS3Endpoint:  envOrDefault("SUPABASE_S3_ENDPOINT", ""),
-		SupabaseS3Region:    envOrDefault("SUPABASE_S3_REGION", ""),
-		SupabaseS3AccessKey: os.Getenv("SUPABASE_STORAGE_KEY_ID"),
-		SupabaseS3SecretKey: os.Getenv("SUPABASE_STORAGE_SECRET_KEY"),
+		S3Endpoint:  envOrDefault("ALETHIA_STORAGE_ENDPOINT", ""),
+		S3Region:    envOrDefault("ALETHIA_STORAGE_REGION", ""),
+		S3AccessKey: os.Getenv("ALETHIA_STORAGE_ACCESS_KEY_ID"),
+		S3SecretKey: os.Getenv("ALETHIA_STORAGE_SECRET_ACCESS_KEY"),
 	}
 
 	fmt.Printf("runner-worker %s\n", version.Version)

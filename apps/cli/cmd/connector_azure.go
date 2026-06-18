@@ -1,0 +1,141 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package cmd
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/alethialabs-io/alethialabs/apps/cli/internal/cloudshell"
+	"github.com/alethialabs-io/alethialabs/apps/cli/internal/connector"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/charmbracelet/huh"
+	"github.com/spf13/cobra"
+)
+
+var (
+	connectorAzureSubscription string
+	connectorAzureManual       bool
+)
+
+var connectorAzureCmd = &cobra.Command{
+	Use:   "azure",
+	Short: "Connect an Azure subscription",
+	Long: `Connect an Azure subscription using federated identity.
+
+The setup creates an app registration with a federated credential trusting the
+Alethia AWS workers (no client secret) and grants it Contributor on the
+subscription.
+
+By default the setup runs with your local az CLI. Use --manual to run it in
+Azure Cloud Shell and paste back the tenant, client, and subscription IDs.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		token, err := getAuthToken()
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+		apiClient := api.NewClient(token)
+		steps := []string{"Subscription", "Create app registration", "Connection test"}
+
+		ui.PrintStepper(steps, 0)
+		if connectorAzureSubscription == "" {
+			if err := huh.NewForm(huh.NewGroup(
+				huh.NewInput().
+					Title("Azure Subscription ID").
+					Description("The subscription Alethia should provision into").
+					Value(&connectorAzureSubscription),
+			)).Run(); err != nil {
+				fmt.Println(err)
+				os.Exit(1)
+			}
+		}
+		connectorAzureSubscription = strings.TrimSpace(connectorAzureSubscription)
+		if connectorAzureSubscription == "" {
+			ui.Error("A subscription ID is required")
+			os.Exit(1)
+		}
+
+		initResp, err := initProviderIdentity(apiClient, "azure")
+		if err != nil {
+			ui.Error(err.Error())
+			os.Exit(1)
+		}
+
+		ui.PrintStepper(steps, 1)
+		var ids *cloudshell.AzureIDs
+		if connectorAzureManual {
+			ids, err = azureManualFlow(connectorAzureSubscription)
+		} else {
+			ids, err = azureLocalFlow(connectorAzureSubscription)
+		}
+		if err != nil {
+			ui.Error(err.Error())
+			os.Exit(1)
+		}
+
+		ui.PrintStepper(steps, 2)
+		creds := map[string]interface{}{
+			"tenant_id":       ids.TenantID,
+			"client_id":       ids.ClientID,
+			"subscription_id": ids.SubscriptionID,
+		}
+		if err := finalizeConnection(apiClient, "azure", initResp.IdentityID, creds); err != nil {
+			ui.Error(err.Error())
+			os.Exit(1)
+		}
+
+		ui.Success(fmt.Sprintf("Azure subscription %q connected", ids.SubscriptionID))
+	},
+}
+
+// azureLocalFlow runs the setup script with the local az CLI.
+func azureLocalFlow(subscriptionID string) (*cloudshell.AzureIDs, error) {
+	if err := cloudshell.EnsureAz(); err != nil {
+		ui.Error("az CLI not found on PATH")
+		ui.Muted("Install it: https://learn.microsoft.com/cli/azure/install-azure-cli")
+		ui.Muted("Or re-run with --manual to set it up in Azure Cloud Shell.")
+		return nil, err
+	}
+
+	ui.Info("Running setup via the local az CLI...")
+	return cloudshell.RunAzureSetup(connector.AzureSetupScript, subscriptionID)
+}
+
+// azureManualFlow guides the user through Azure Cloud Shell and prompts for the
+// resulting identity IDs.
+func azureManualFlow(subscriptionID string) (*cloudshell.AzureIDs, error) {
+	ui.Info("Manual setup:")
+	fmt.Printf("  Open Azure Cloud Shell (%s) and run:\n\n", ui.LinkStyle.Render(azureCloudShellURL))
+	fmt.Printf(
+		"     curl -sO %s/alethia-azure-setup.sh && bash alethia-azure-setup.sh %s\n\n",
+		connectorBaseURL, subscriptionID,
+	)
+	fmt.Println("  Then paste the values it prints below.")
+
+	ids := &cloudshell.AzureIDs{SubscriptionID: subscriptionID}
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewInput().Title("Tenant ID").Value(&ids.TenantID),
+		huh.NewInput().Title("Client ID (Application ID)").Value(&ids.ClientID),
+		huh.NewInput().Title("Subscription ID").Value(&ids.SubscriptionID),
+	)).Run(); err != nil {
+		return nil, err
+	}
+
+	ids.TenantID = strings.TrimSpace(ids.TenantID)
+	ids.ClientID = strings.TrimSpace(ids.ClientID)
+	ids.SubscriptionID = strings.TrimSpace(ids.SubscriptionID)
+	if ids.TenantID == "" || ids.ClientID == "" || ids.SubscriptionID == "" {
+		return nil, fmt.Errorf("tenant, client, and subscription IDs are all required")
+	}
+	return ids, nil
+}
+
+func init() {
+	connectorCmd.AddCommand(connectorAzureCmd)
+	connectorAzureCmd.Flags().StringVar(&connectorAzureSubscription, "subscription", "", "Azure subscription ID")
+	connectorAzureCmd.Flags().BoolVar(&connectorAzureManual, "manual", false, "Run setup in Azure Cloud Shell and paste the result")
+}

@@ -5,7 +5,7 @@ description: Complete reference for all alethia CLI commands organized by group.
 
 # Command Reference
 
-alethia provides 27 commands across 7 groups. All commands communicate with the Alethia API — they do not execute Terraform directly.
+alethia provides commands across 8 groups. All commands communicate with the Alethia API — they do not execute Terraform directly.
 
 ## Command Tree
 
@@ -13,6 +13,12 @@ alethia provides 27 commands across 7 groups. All commands communicate with the 
 alethia
 ├── login [--force]
 ├── logout
+├── connector
+│   ├── gcp [--project <id>] [--manual]
+│   ├── aws [--region <r>] [--role-name <name>] [--manual]
+│   ├── azure [--subscription <id>] [--manual]
+│   ├── list
+│   └── remove [provider] [--yes]
 ├── zone
 │   ├── create --name <name>
 │   ├── list
@@ -48,6 +54,18 @@ alethia
 When `--spec-id` is omitted from `plan`, `apply`, or `destroy`, alethia launches an interactive TUI selector. See [TUI Components](/cli/tui) for how this works.
 
 ## Common Patterns
+
+### Connect a Cloud Account
+
+```bash
+# Connect a GCP project (runs the installer in your Cloud Shell)
+alethia connector gcp --project my-gcp-project
+
+# List connected accounts
+alethia connector list
+```
+
+See [Connector Commands](/cli/commands/connector) for AWS and Azure flows.
 
 ### Plan-Review-Apply
 

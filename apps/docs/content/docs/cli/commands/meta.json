@@ -2,6 +2,7 @@
   "title": "Commands",
   "pages": [
     "index",
+    "connector",
     "zone",
     "spec",
     "plan-and-apply",

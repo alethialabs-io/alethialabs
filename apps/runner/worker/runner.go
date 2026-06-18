@@ -29,10 +29,10 @@ type Config struct {
 	WorkerID    string
 	WorkerToken string
 
-	SupabaseS3Endpoint  string
-	SupabaseS3Region    string
-	SupabaseS3AccessKey string
-	SupabaseS3SecretKey string
+	S3Endpoint  string
+	S3Region    string
+	S3AccessKey string
+	S3SecretKey string
 }
 
 type Worker struct {
@@ -51,12 +51,12 @@ func NewWithAPI(cfg Config, api JobAPI) *Worker {
 	return &Worker{config: cfg, api: api}
 }
 
-func (w *Worker) supabaseBackend() *cloud.SupabaseBackendConfig {
-	return cloud.SupabaseBackendFromConfig(
-		w.config.SupabaseS3Endpoint,
-		w.config.SupabaseS3Region,
-		w.config.SupabaseS3AccessKey,
-		w.config.SupabaseS3SecretKey,
+func (w *Worker) s3Backend() *cloud.S3BackendConfig {
+	return cloud.S3BackendFromConfig(
+		w.config.S3Endpoint,
+		w.config.S3Region,
+		w.config.S3AccessKey,
+		w.config.S3SecretKey,
 	)
 }
 
@@ -514,11 +514,11 @@ func (w *Worker) executeBootstrap(ctx context.Context, job *Job, stdout, stderr 
 	return nil
 }
 
-func resolveVineTemplatesDir() string {
+func resolveSpecTemplatesDir() string {
 	candidates := []string{
-		"/home/runner/vine-templates",
-		"vine-templates",
-		"../../infra/templates/vine",
+		"/home/runner/spec-templates",
+		"spec-templates",
+		"../../infra/templates/spec",
 	}
 	for _, d := range candidates {
 		if info, err := os.Stat(d); err == nil && info.IsDir() {
@@ -529,7 +529,7 @@ func resolveVineTemplatesDir() string {
 }
 
 func (w *Worker) executeDeploy(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
-	vc, err := snapshotToVineConfig(job.ConfigSnapshot)
+	vc, err := snapshotToSpecConfig(job.ConfigSnapshot)
 	if err != nil {
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
 	}
@@ -573,9 +573,9 @@ func (w *Worker) executeDeploy(ctx context.Context, job *Job, provider string, i
 	params := provisioner.DeployParams{
 		VineConfig:      vc,
 		Provider:        provider,
-		TemplatesDir:    filepath.Join(resolveVineTemplatesDir(), provider),
+		TemplatesDir:    filepath.Join(resolveSpecTemplatesDir(), provider),
 		GitAccessToken:  gitToken,
-		SupabaseBackend: w.supabaseBackend(),
+		S3Backend:       w.s3Backend(),
 		Stdout:          stdout,
 		Stderr:          stderr,
 	}
@@ -622,7 +622,7 @@ func (w *Worker) executeDeploy(ctx context.Context, job *Job, provider string, i
 }
 
 func (w *Worker) executePlan(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
-	vc, err := snapshotToVineConfig(job.ConfigSnapshot)
+	vc, err := snapshotToSpecConfig(job.ConfigSnapshot)
 	if err != nil {
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
 	}
@@ -651,10 +651,10 @@ func (w *Worker) executePlan(ctx context.Context, job *Job, provider string, ide
 		VineConfig:      vc,
 		Provider:        provider,
 		DryRun:          true,
-		TemplatesDir:    filepath.Join(resolveVineTemplatesDir(), provider),
+		TemplatesDir:    filepath.Join(resolveSpecTemplatesDir(), provider),
 		InfracostToken:  infracostKey,
 		GitAccessToken:  planGitToken,
-		SupabaseBackend: w.supabaseBackend(),
+		S3Backend:       w.s3Backend(),
 		Stdout:          stdout,
 		Stderr:          stderr,
 	}
@@ -735,7 +735,7 @@ func getSnapshotString(snapshot map[string]any, key string) string {
 	return ""
 }
 
-func snapshotToVineConfig(snapshot map[string]any) (*types.VineConfig, error) {
+func snapshotToSpecConfig(snapshot map[string]any) (*types.VineConfig, error) {
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return nil, err

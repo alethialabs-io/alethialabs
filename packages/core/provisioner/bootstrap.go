@@ -182,7 +182,7 @@ func extractAssets(destDir string) error {
 
 	dirs := map[string]string{
 		"terraform/seed": ".",
-		"helm/tendril":   "helm/tendril",
+		"helm/runner":   "helm/runner",
 	}
 
 	for srcRoot, destRel := range dirs {
