@@ -12,7 +12,7 @@ An open-source, multi-cloud internal developer platform for provisioning and man
 
 | Component | Role |
 | --- | --- |
-| **Alethia** (`apps/console`) | Web control plane — Next.js dashboard, Supabase state store, auth, configuration management, job orchestration |
+| **Alethia** (`apps/console`) | Web control plane — Next.js dashboard, Postgres (Drizzle) state store, Better Auth, configuration management, job orchestration |
 | **alethia** (`apps/cli`) | Go CLI — authentication, vineyard/vine management, plan/deploy/destroy operations, worker registration |
 | **Runner** (`apps/runner`) | Go worker — claims provisioning jobs from the queue, executes Terraform, streams logs back to Alethia |
 | **core** (`packages/core`) | Shared Go library — cloud provider interfaces, embedded Terraform templates, config types |
@@ -23,7 +23,7 @@ An open-source, multi-cloud internal developer platform for provisioning and man
 
 | Layer | Technology |
 | --- | --- |
-| Web Control Plane | Next.js 16, React 19, TypeScript 5.9, Supabase, Tailwind CSS 4, shadcn/ui |
+| Web Control Plane | Next.js 16, React 19, TypeScript 5.9, Postgres + Drizzle, Better Auth, Tailwind CSS 4, shadcn/ui |
 | CLI | Go 1.25, Cobra, Charmbracelet TUI (bubbletea, huh, lipgloss) |
 | Worker | Go 1.25, Terraform exec, multi-cloud SDKs (AWS, GCP, Azure) |
 | Documentation | Next.js 16, Fumadocs, MDX |
@@ -35,7 +35,7 @@ An open-source, multi-cloud internal developer platform for provisioning and man
 
 ```
 apps/
-  console/           — Web control plane (Next.js + Supabase)
+  console/           — Web control plane (Next.js + Postgres/Drizzle + Better Auth)
   alethia/             — CLI (Go + Cobra + Charmbracelet)
   runner/           — Provisioning worker (Go)
   docs/           — Documentation site (Fumadocs)
@@ -49,8 +49,6 @@ infra/
   platform/          — Platform infrastructure (ECR, ECS, Lambda scaler)
   templates/         — Vine IaC templates (AWS, GCP, Azure)
   connector/         — Cloud account bootstrap scripts
-supabase/
-  migrations/        — PostgreSQL schema migrations
 spec/
   features/          — Active feature specs and architecture docs
   thesis/            — Academic thesis (static reference)
@@ -64,7 +62,7 @@ spec/
 - pnpm 9+
 - Go 1.25+
 - Turborepo (`npm i -g turbo`)
-- Supabase CLI (`brew install supabase/tap/supabase`)
+- Docker + Compose v2 (for the self-host bundle: Postgres + S3-compatible storage)
 
 ### Install the `alethia` CLI
 
@@ -135,6 +133,20 @@ The `infra/` directory contains all Terraform configurations:
 - **`templates/vine/`** — Per-cloud IaC templates applied into user accounts (AWS EKS, GCP GKE, Azure AKS with associated networking, databases, and security groups)
 - **`templates/node/`** — Self-hosted worker deployment template
 - **`connector/`** — Cloud account bootstrap (IAM cross-account roles for AWS, workload identity federation for GCP, federated identity for Azure)
+
+## Self-Hosting
+
+Run the whole platform (console · docs · Postgres · object storage · runner) as one
+docker-compose bundle on any cloud VM:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/install.sh \
+  | DOMAIN=alethia.example.com ACME_EMAIL=you@example.com sh
+```
+
+See the [Self-Hosting guide](./apps/docs/content/docs/self-hosting/) (quickstart, configuration,
+per-cloud Terraform, upgrading) and the distribution roadmap in
+[`spec/mvp/09-self-host-distribution.md`](./spec/mvp/09-self-host-distribution.md).
 
 ## Documentation
 

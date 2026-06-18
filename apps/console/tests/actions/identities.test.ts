@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@/lib/supabase/server", () => ({
-	createClient: vi.fn(),
-}));
+import { describe, expect, it } from "vitest";
 
 describe("getLinkedProviders logic", () => {
 	it("deduplicates providers from DB and session", () => {

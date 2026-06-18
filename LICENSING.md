@@ -16,7 +16,7 @@ This includes, among others:
 
     apps/console/        apps/cli/        apps/runner/        apps/docs/
     packages/core/   packages/ui/   packages/charts/   packages/eslint-config/
-    infra/   supabase/   scripts/   spec/
+    infra/   deploy/   scripts/   spec/
 
 ## `LicenseRef-Alethia-Commercial`
 

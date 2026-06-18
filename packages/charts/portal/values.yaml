@@ -45,9 +45,8 @@ secrets:
   
   # For Kubernetes Secrets
   data:
-    NEXT_PUBLIC_SUPABASE_URL: ""
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: ""
-    SERVICE_ROLE_SECRET: ""
+    ALETHIA_DATABASE_URL: ""
+    BETTER_AUTH_SECRET: ""
     CLI_JWT_SECRET: ""
     VINTNER_URL: "http://docs:3001"
 
@@ -59,18 +58,14 @@ secrets:
     target:
       name: portal-secrets
     data:
-      - secretKey: NEXT_PUBLIC_SUPABASE_URL
+      - secretKey: ALETHIA_DATABASE_URL
         remoteRef:
           key: portal/secrets
-          property: NEXT_PUBLIC_SUPABASE_URL
-      - secretKey: NEXT_PUBLIC_SUPABASE_ANON_KEY
+          property: ALETHIA_DATABASE_URL
+      - secretKey: BETTER_AUTH_SECRET
         remoteRef:
           key: portal/secrets
-          property: NEXT_PUBLIC_SUPABASE_ANON_KEY
-      - secretKey: SERVICE_ROLE_SECRET
-        remoteRef:
-          key: portal/secrets
-          property: SERVICE_ROLE_SECRET
+          property: BETTER_AUTH_SECRET
       - secretKey: CLI_JWT_SECRET
         remoteRef:
           key: portal/secrets

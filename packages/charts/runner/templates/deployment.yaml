@@ -30,16 +30,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "tendril.fullname" . }}-config
                   key: api_token
-            - name: SUPABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "tendril.fullname" . }}-config
-                  key: supabase_url
-            - name: SUPABASE_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "tendril.fullname" . }}-config
-                  key: supabase_key
           resources:
             requests:
               cpu: 100m

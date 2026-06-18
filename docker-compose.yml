@@ -95,8 +95,8 @@ services:
     restart: "no"
 
   # Console (Next.js control plane). Internal URLs point at the bundled
-  # postgres/seaweedfs; secrets (OAuth, Resend, CLI_JWT_SECRET, and — until the
-  # de-Supabase auth cutover — the Supabase vars) come from .env.
+  # postgres/seaweedfs; secrets (OAuth, Resend, CLI_JWT_SECRET, BETTER_AUTH_SECRET)
+  # come from .env.
   app:
     build:
       context: .

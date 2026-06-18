@@ -6,8 +6,6 @@ image:
 config:
   clusterId: ""
   apiToken: ""
-  supabaseUrl: ""
-  supabaseKey: ""
   alethiaApiOrigin: ""
 
 serviceAccount:
