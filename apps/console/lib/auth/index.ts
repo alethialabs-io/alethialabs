@@ -25,7 +25,8 @@ if (cfg.providers.github) {
 		clientSecret: cfg.providers.github.clientSecret,
 		// `repo` so the linked account's token can drive the git integrations
 		// (full consolidation — the login account token IS the integration token).
-		scope: ["repo", "read:user", "user:email"],
+		// Better Auth merges its read:user/user:email defaults, so only add repo.
+		scope: ["repo"],
 	};
 }
 if (cfg.providers.google) {

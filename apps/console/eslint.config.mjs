@@ -13,6 +13,18 @@ const compat = new FlatCompat({
 });
 
 const eslintConfig = [
+  // Generated / build output — never linted (next lint ignored these by default).
+  {
+    ignores: [
+      ".next/**",
+      "out/**",
+      "build/**",
+      "coverage/**",
+      "next-env.d.ts",
+      "types/database.types.ts",
+      "lib/validations/database.schemas.ts",
+    ],
+  },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
 ];
 
