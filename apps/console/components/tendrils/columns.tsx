@@ -21,10 +21,10 @@ import { ReleaseNotesDialog } from "@/components/tendrils/release-notes-dialog";
 import { TendrilSelectPopover } from "@/components/tendrils/tendril-select-popover";
 import { useTendrilsStore, type ActiveJob } from "@/lib/stores/use-tendrils-store";
 import type {
-	PublicWorkerStatus,
-	PublicWorkerMode,
-	PublicWorkersRow,
-} from "@/lib/validations/db.schemas";
+	WorkerStatus as PublicWorkerStatus,
+	WorkerMode as PublicWorkerMode,
+	Runner as PublicWorkersRow,
+} from "@/lib/db/schema";
 import type { ColumnDef } from "@tanstack/react-table";
 import { formatDistanceToNow } from "date-fns";
 import {

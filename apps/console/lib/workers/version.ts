@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
-import { createClient } from "@/lib/supabase/server";
+import { desc, eq } from "drizzle-orm";
+import { getServiceDb } from "@/lib/db";
+import { runnerReleases } from "@/lib/db/schema";
 
 export interface WorkerRelease {
 	version: string;
@@ -14,32 +15,45 @@ export interface WorkerRelease {
 	is_breaking: boolean;
 }
 
-const RELEASE_COLUMNS =
-	"version, release_notes, released_at, github_release_url, commit_sha, is_breaking" as const;
+const releaseColumns = {
+	version: runnerReleases.version,
+	release_notes: runnerReleases.release_notes,
+	released_at: runnerReleases.released_at,
+	github_release_url: runnerReleases.github_release_url,
+	commit_sha: runnerReleases.commit_sha,
+	is_breaking: runnerReleases.is_breaking,
+};
+
+/** Shapes a runner_releases row into the public WorkerRelease (released_at → ISO). */
+function toRelease(row: {
+	version: string;
+	release_notes: string;
+	released_at: Date;
+	github_release_url: string | null;
+	commit_sha: string | null;
+	is_breaking: boolean;
+}): WorkerRelease {
+	return { ...row, released_at: row.released_at.toISOString() };
+}
 
 /** Fetches the most recent worker release from the database. */
 export async function getLatestWorkerRelease(): Promise<WorkerRelease | null> {
-	const supabase = await createClient();
-	const { data } = await supabase
-		.from("worker_releases")
-		.select(RELEASE_COLUMNS)
-		.order("released_at", { ascending: false })
-		.limit(1)
-		.single();
-
-	return (data as WorkerRelease) ?? null;
+	const [row] = await getServiceDb()
+		.select(releaseColumns)
+		.from(runnerReleases)
+		.orderBy(desc(runnerReleases.released_at))
+		.limit(1);
+	return row ? toRelease(row) : null;
 }
 
 /** Fetches release notes for a specific version. */
 export async function getWorkerRelease(
 	version: string,
 ): Promise<WorkerRelease | null> {
-	const supabase = await createClient();
-	const { data } = await supabase
-		.from("worker_releases")
-		.select(RELEASE_COLUMNS)
-		.eq("version", version)
-		.single();
-
-	return (data as WorkerRelease) ?? null;
+	const [row] = await getServiceDb()
+		.select(releaseColumns)
+		.from(runnerReleases)
+		.where(eq(runnerReleases.version, version))
+		.limit(1);
+	return row ? toRelease(row) : null;
 }

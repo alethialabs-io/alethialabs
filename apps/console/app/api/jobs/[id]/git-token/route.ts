@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
-import { PublicGitProvider } from "@/lib/validations/db.schemas";
-import { verifyWorkerToken } from "@/lib/workers/auth";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { getServiceDb } from "@/lib/db";
+import { jobs, providerTokens, specRepositories } from "@/lib/db/schema";
+import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
+import { verifyWorkerToken } from "@/lib/workers/auth";
 
 const PROVIDER_OAUTH: Record<
 	string,
@@ -54,18 +56,20 @@ const PROVIDER_OAUTH: Record<
 	},
 };
 
+type ServiceDb = ReturnType<typeof getServiceDb>;
+
 /** Refreshes an expired token and persists the new one (service-role context). */
 async function refreshAndPersist(
-	supabase: Awaited<ReturnType<typeof createServiceRoleClient>>,
+	db: ServiceDb,
 	userId: string,
 	provider: PublicGitProvider,
 	data: {
 		access_token: string;
 		refresh_token: string | null;
-		expires_at: string | null;
+		expires_at: Date | null;
 	},
 ): Promise<string> {
-	if (!data.expires_at || new Date(data.expires_at) > new Date()) {
+	if (!data.expires_at || data.expires_at > new Date()) {
 		return data.access_token;
 	}
 
@@ -79,11 +83,7 @@ async function refreshAndPersist(
 	if (!clientId || !clientSecret) return data.access_token;
 
 	try {
-		const body = oauth.buildBody(
-			clientId,
-			clientSecret,
-			data.refresh_token,
-		);
+		const body = oauth.buildBody(clientId, clientSecret, data.refresh_token);
 		const headers: Record<string, string> = { Accept: "application/json" };
 
 		let fetchBody: string;
@@ -106,26 +106,39 @@ async function refreshAndPersist(
 
 		if (!res.ok) return data.access_token;
 
-		const result = await res.json();
+		const result: {
+			access_token?: string;
+			refresh_token?: string;
+			expires_in?: number;
+		} = await res.json();
 		if (!result.access_token) return data.access_token;
 
-		await supabase.from("provider_tokens").upsert(
-			{
+		const newAccessToken = result.access_token;
+		const expiresAt = result.expires_in
+			? new Date(Date.now() + result.expires_in * 1000)
+			: null;
+
+		await db
+			.insert(providerTokens)
+			.values({
 				user_id: userId,
 				provider,
-				access_token: result.access_token,
+				access_token: newAccessToken,
 				refresh_token: result.refresh_token || data.refresh_token,
-				expires_at: result.expires_in
-					? new Date(
-							Date.now() + result.expires_in * 1000,
-						).toISOString()
-					: null,
-				updated_at: new Date().toISOString(),
-			},
-			{ onConflict: "user_id, provider" },
-		);
+				expires_at: expiresAt,
+				updated_at: new Date(),
+			})
+			.onConflictDoUpdate({
+				target: [providerTokens.user_id, providerTokens.provider],
+				set: {
+					access_token: newAccessToken,
+					refresh_token: result.refresh_token || data.refresh_token,
+					expires_at: expiresAt,
+					updated_at: new Date(),
+				},
+			});
 
-		return result.access_token;
+		return newAccessToken;
 	} catch {
 		return data.access_token;
 	}
@@ -142,57 +155,70 @@ export async function POST(
 	const { id: jobId } = await params;
 
 	try {
-		const supabase = await createServiceRoleClient();
+		const db = getServiceDb();
 
 		// Look up the job and verify the calling worker owns it
-		const { data: job, error: jobError } = await supabase
-			.from("provision_jobs")
-			.select("user_id, vine_id, worker_id")
-			.eq("id", jobId)
-			.single();
+		const [job] = await db
+			.select({
+				user_id: jobs.user_id,
+				spec_id: jobs.spec_id,
+				runner_id: jobs.runner_id,
+			})
+			.from(jobs)
+			.where(eq(jobs.id, jobId))
+			.limit(1);
 
-		if (jobError || !job) {
-			return NextResponse.json(
-				{ error: "Job not found" },
-				{ status: 404 },
-			);
+		if (!job) {
+			return NextResponse.json({ error: "Job not found" }, { status: 404 });
 		}
 
-		if (job.worker_id !== workerId) {
+		if (job.runner_id !== workerId) {
 			return NextResponse.json(
 				{ error: "Worker does not own this job" },
 				{ status: 403 },
 			);
 		}
 
-		// Get the vine's repository URL to determine the git provider
-		const { data: repos } = await supabase
-			.from("vine_repositories")
-			.select("apps_destination_repo")
-			.eq("vine_id", job.vine_id || "")
-			.maybeSingle();
+		// Get the spec's repository URL to determine the git provider
+		const [repos] = job.spec_id
+			? await db
+					.select({
+						apps_destination_repo: specRepositories.apps_destination_repo,
+					})
+					.from(specRepositories)
+					.where(eq(specRepositories.spec_id, job.spec_id))
+					.limit(1)
+			: [];
 
 		const repoUrl = repos?.apps_destination_repo || "";
-		const gitProvider = repoUrl.includes("gitlab")
+		const gitProvider: PublicGitProvider = repoUrl.includes("gitlab")
 			? "gitlab"
 			: repoUrl.includes("bitbucket")
 				? "bitbucket"
 				: "github";
 
-		// Fetch the user's provider token using the service role client
-		const { data: tokenRow } = await supabase
-			.from("provider_tokens")
-			.select("access_token, refresh_token, expires_at")
-			.eq("user_id", job.user_id)
-			.eq("provider", gitProvider)
-			.single();
+		// Fetch the user's provider token using the service connection
+		const [tokenRow] = await db
+			.select({
+				access_token: providerTokens.access_token,
+				refresh_token: providerTokens.refresh_token,
+				expires_at: providerTokens.expires_at,
+			})
+			.from(providerTokens)
+			.where(
+				and(
+					eq(providerTokens.user_id, job.user_id),
+					eq(providerTokens.provider, gitProvider),
+				),
+			)
+			.limit(1);
 
 		if (!tokenRow?.access_token) {
 			return NextResponse.json({ token: null });
 		}
 
 		const token = await refreshAndPersist(
-			supabase,
+			db,
 			job.user_id,
 			gitProvider,
 			tokenRow,

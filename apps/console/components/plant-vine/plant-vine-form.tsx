@@ -176,8 +176,8 @@ function PlantVineFormInner({ cloudIdentities, sourceVine }: PlantVineFormProps)
 			const { vine } = await createVine(input);
 			reset();
 			toast.success("Vine planted successfully!");
-			if (vine.vineyard_id) {
-				router.push(`/dashboard/vineyards/${vine.vineyard_id}`);
+			if (vine.zone_id) {
+				router.push(`/dashboard/vineyards/${vine.zone_id}`);
 			} else {
 				router.push("/dashboard/vines");
 			}

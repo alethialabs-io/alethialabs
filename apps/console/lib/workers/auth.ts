@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { getServiceDb } from "@/lib/db";
+import { runners } from "@/lib/db/schema";
 import { createHash } from "crypto";
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 export type WorkerAuthResult = {
@@ -30,14 +32,14 @@ export async function verifyWorkerToken(
 
 	const tokenHash = createHash("sha256").update(workerToken).digest("hex");
 
-	const supabase = await createServiceRoleClient();
-	const { data: worker, error } = await supabase
-		.from("workers")
-		.select("id, token_hash")
-		.eq("id", workerId)
-		.single();
+	const db = getServiceDb();
+	const [runner] = await db
+		.select({ id: runners.id, token_hash: runners.token_hash })
+		.from(runners)
+		.where(eq(runners.id, workerId))
+		.limit(1);
 
-	if (error || !worker || worker.token_hash !== tokenHash) {
+	if (!runner || runner.token_hash !== tokenHash) {
 		return {
 			workerId: "",
 			tokenHash: "",

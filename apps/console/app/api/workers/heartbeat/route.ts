@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { getServiceDb } from "@/lib/db";
 import { verifyWorkerToken } from "@/lib/workers/auth";
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
@@ -19,27 +20,15 @@ export async function POST(req: Request) {
 	}
 
 	try {
-		const supabase = await createServiceRoleClient();
-
-		const { error } = await supabase.rpc("worker_heartbeat", {
-			p_worker_id: workerId,
-			p_worker_token_hash: tokenHash,
-			p_version: workerVersion,
-		});
-
-		if (error) {
-			console.error("Heartbeat RPC error:", error);
-			return NextResponse.json(
-				{ error: "Failed to update heartbeat" },
-				{ status: 500 },
-			);
-		}
-
+		const db = getServiceDb();
+		await db.execute(
+			sql`select runner_heartbeat(${workerId}::uuid, ${tokenHash}, ${workerVersion})`,
+		);
 		return NextResponse.json({ success: true });
-	} catch (err: any) {
+	} catch (err) {
 		console.error("Heartbeat error:", err);
 		return NextResponse.json(
-			{ error: "Internal Server Error" },
+			{ error: "Failed to update heartbeat" },
 			{ status: 500 },
 		);
 	}

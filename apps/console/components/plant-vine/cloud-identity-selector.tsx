@@ -58,7 +58,7 @@ export function CloudIdentitySelector({
 					<AlertTriangle className="h-4 w-4" />
 					No cloud account connected
 				</div>
-				<Link href="/dashboard/integrations">
+				<Link href="/dashboard/connectors">
 					<Button variant="outline" size="sm" className="h-7 text-xs">
 						Connect
 					</Button>

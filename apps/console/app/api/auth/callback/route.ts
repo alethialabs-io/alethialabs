@@ -3,7 +3,7 @@
 
 import { saveProviderToken } from "@/app/server/actions/identities";
 import { createClient } from "@/lib/supabase/server";
-import { PublicGitProvider } from "@/lib/validations/db.schemas";
+import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 import { env } from "next-runtime-env";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";

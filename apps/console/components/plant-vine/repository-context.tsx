@@ -6,7 +6,7 @@
 import { getLinkedProviders } from "@/app/server/actions/identities";
 import { fetchRepositoriesByProvider } from "@/app/server/actions/git/repositories";
 import type { Repository } from "@/app/server/actions/git/types";
-import type { PublicGitProvider } from "@/lib/validations/db.schemas";
+import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 import {
 	createContext,
 	useCallback,

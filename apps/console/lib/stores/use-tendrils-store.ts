@@ -11,10 +11,10 @@ import {
 	updateWorker as updateTendrilAction,
 } from "@/app/server/actions/tendrils";
 import type {
-	PublicProvisionJobStatus,
-	PublicProvisionJobType,
-	PublicWorkersRow,
-} from "@/lib/validations/db.schemas";
+	ProvisionJobStatus as PublicProvisionJobStatus,
+	ProvisionJobType as PublicProvisionJobType,
+	Runner as PublicWorkersRow,
+} from "@/lib/db/schema";
 
 const STALE_THRESHOLD = 30_000;
 

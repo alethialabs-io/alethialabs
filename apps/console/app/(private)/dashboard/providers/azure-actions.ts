@@ -2,11 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
+import { revalidatePath } from "next/cache";
+import * as conn from "@/lib/cloud-providers/connections";
+import { withOwnerScope } from "@/lib/db";
+import { jobs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import { createClient } from "@/lib/supabase/server";
-import type { AzureCachedResources } from "@/types/database-custom.types";
-import { revalidatePath } from "next/cache";
 
 export type AzureConnectionStatus = {
 	connected: boolean;
@@ -16,74 +17,27 @@ export type AzureConnectionStatus = {
 	identityId?: string;
 };
 
+/** Returns the verified Azure connection status for the current user. */
 export async function getAzureConnectionStatus(): Promise<AzureConnectionStatus> {
 	const supabase = await createClient();
 	const {
 		data: { user },
 	} = await supabase.auth.getUser();
 	if (!user) return { connected: false };
-
-	const { data: identity } = await supabase
-		.from("cloud_identities")
-		.select("*")
-		.eq("provider", "azure")
-		.eq("user_id", user.id)
-		.eq("is_verified", true)
-		.maybeSingle();
-
-	if (identity) {
-		return {
-			connected: true,
-			tenantId: identity.credentials.tenant_id ?? undefined,
-			subscriptionId:
-				identity.credentials.subscription_id ?? undefined,
-			clientId: identity.credentials.client_id ?? undefined,
-			identityId: identity.id,
-		};
-	}
-
-	return { connected: false };
+	return conn.getStatus(user.id, "azure");
 }
 
+/** Gets or creates the user's pending Azure identity. */
 export async function initAzureIdentity() {
 	const supabase = await createClient();
 	const {
 		data: { user },
 	} = await supabase.auth.getUser();
 	if (!user) throw new Error("Unauthorized");
-
-	const { data: existing } = await supabase
-		.from("cloud_identities")
-		.select("*")
-		.eq("provider", "azure")
-		.eq("user_id", user.id)
-		.maybeSingle();
-
-	if (existing) {
-		return { identityId: existing.id };
-	}
-
-	const { data: newIdentity, error } = await supabase
-		.from("cloud_identities")
-		.insert({
-			provider: "azure",
-			name: "Azure Connection (Pending)",
-			credentials: {},
-			is_verified: false,
-		})
-		.select()
-		.single();
-
-	if (error) {
-		throw new Error("Failed to initialize Azure connection");
-	}
-
-	return { identityId: newIdentity.id };
+	return conn.initIdentity(user.id, "azure");
 }
 
-const GUID_REGEX =
-	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
+/** Validates the Azure GUIDs, persists them, and queues a connection test. */
 export async function saveAzureIdentity(
 	identityId: string,
 	tenantId: string,
@@ -95,156 +49,41 @@ export async function saveAzureIdentity(
 		data: { user },
 		error: authError,
 	} = await supabase.auth.getUser();
-
 	if (authError || !user) throw new Error("Unauthorized");
-
-	if (!GUID_REGEX.test(tenantId)) {
-		throw new Error("Invalid Tenant ID format. Expected a UUID.");
-	}
-	if (!GUID_REGEX.test(clientId)) {
-		throw new Error(
-			"Invalid Client ID (Application ID) format. Expected a UUID.",
-		);
-	}
-	if (!GUID_REGEX.test(subscriptionId)) {
-		throw new Error("Invalid Subscription ID format. Expected a UUID.");
-	}
-
-	const { data: identity, error: fetchError } = await supabase
-		.from("cloud_identities")
-		.select("*")
-		.eq("id", identityId)
-		.eq("user_id", user.id)
-		.single();
-
-	if (fetchError || !identity) {
-		throw new Error("Connection session not found");
-	}
-
-	const { error: updateError } = await supabase
-		.from("cloud_identities")
-		.update({
-			name: `Azure Subscription (${subscriptionId.slice(0, 8)}...)`,
-			credentials: {
-				tenant_id: tenantId,
-				client_id: clientId,
-				subscription_id: subscriptionId,
-			},
-			is_verified: false,
-			updated_at: new Date().toISOString(),
-		})
-		.eq("id", identityId);
-
-	if (updateError) {
-		throw new Error("Failed to save connection details");
-	}
-
-	const { data: job, error: jobError } = await supabase
-		.from("provision_jobs")
-		.insert({
-			user_id: user.id,
-			job_type: "CONNECTION_TEST",
-			cloud_identity_id: identityId,
-			config_snapshot: {
-				tenant_id: tenantId,
-				client_id: clientId,
-				subscription_id: subscriptionId,
-			},
-			status: "QUEUED",
-		})
-		.select("id")
-		.single();
-
-	if (jobError) {
-		throw new Error(
-			"Failed to queue connection test: " + jobError.message,
-		);
-	}
-
-	notifyScaler();
-	return { jobId: job.id, identityId };
+	return conn.saveAzureIdentity(
+		user.id,
+		identityId,
+		tenantId,
+		clientId,
+		subscriptionId,
+	);
 }
 
-export async function verifyAzureIdentity(
-	identityId: string,
-	jobId?: string,
-) {
+/** Marks the Azure identity verified using the connection test result. */
+export async function verifyAzureIdentity(identityId: string, jobId?: string) {
 	const supabase = await createClient();
 	const {
 		data: { user },
 		error: authError,
 	} = await supabase.auth.getUser();
-
 	if (authError || !user) throw new Error("Unauthorized");
-
-	const updateData: Record<string, unknown> = {
-		is_verified: true,
-		updated_at: new Date().toISOString(),
-	};
-
-	if (jobId) {
-		const { data: job } = await supabase
-			.from("provision_jobs")
-			.select("execution_metadata")
-			.eq("id", jobId)
-			.single();
-
-		const metadata = job?.execution_metadata;
-		if (metadata?.cached_resources) {
-			updateData.cached_resources =
-				metadata.cached_resources as AzureCachedResources;
-			updateData.cached_at = new Date().toISOString();
-		}
-	}
-
-	const { error } = await supabase
-		.from("cloud_identities")
-		.update(updateData)
-		.eq("id", identityId)
-		.eq("user_id", user.id);
-
-	if (error) {
-		throw new Error("Failed to verify identity");
-	}
-
-	revalidatePath("/dashboard/integrations");
-	return { success: true };
+	const result = await conn.verifyIdentity(user.id, identityId, jobId);
+	revalidatePath("/dashboard/connectors");
+	return result;
 }
 
+/** Resets the Azure identity to its pending state. */
 export async function disconnectAzureIdentity(identityId: string) {
 	const supabase = await createClient();
 	const {
 		data: { user },
 		error: authError,
 	} = await supabase.auth.getUser();
-
 	if (authError || !user) throw new Error("Unauthorized");
-
-	const { error } = await supabase
-		.from("cloud_identities")
-		.update({
-			name: "Azure Connection (Pending)",
-			is_verified: false,
-			credentials: {},
-			cached_resources: null,
-			cached_at: null,
-			updated_at: new Date().toISOString(),
-		})
-		.eq("id", identityId)
-		.eq("user_id", user.id);
-
-	if (error) {
-		throw new Error("Failed to disconnect Azure subscription");
-	}
-
-	await supabase
-		.from("vines")
-		.update({ cloud_identity_id: null })
-		.eq("cloud_identity_id", identityId);
-
-	return { success: true };
+	return conn.disconnectIdentity(user.id, identityId, "azure");
 }
 
+/** Queues a FETCH_RESOURCES job to refresh cached Azure resources. */
 export async function refreshAzureResources(cloudIdentityId: string) {
 	const supabase = await createClient();
 	const {
@@ -253,21 +92,20 @@ export async function refreshAzureResources(cloudIdentityId: string) {
 
 	if (!user) throw new Error("Unauthorized");
 
-	const { data: job, error } = await supabase
-		.from("provision_jobs")
-		.insert({
-			user_id: user.id,
-			job_type: "FETCH_RESOURCES",
-			cloud_identity_id: cloudIdentityId,
-			config_snapshot: {},
-			status: "QUEUED",
-		})
-		.select("id")
-		.single();
-
-	if (error)
-		throw new Error("Failed to queue resource fetch: " + error.message);
+	const jobId = await withOwnerScope(user.id, async (tx) => {
+		const [job] = await tx
+			.insert(jobs)
+			.values({
+				user_id: user.id,
+				job_type: "FETCH_RESOURCES",
+				cloud_identity_id: cloudIdentityId,
+				config_snapshot: {},
+				status: "QUEUED",
+			})
+			.returning({ id: jobs.id });
+		return job.id;
+	});
 
 	notifyScaler();
-	return { jobId: job.id };
+	return { jobId };
 }

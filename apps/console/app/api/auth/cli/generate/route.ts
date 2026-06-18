@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { getServiceDb } from "@/lib/db";
+import { cliLogins } from "@/lib/db/schema";
 import { createClient } from "@/lib/supabase/server";
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
@@ -26,22 +27,29 @@ export async function POST(req: Request) {
 		});
 	}
 
-	const supabaseServiceRole = await createServiceRoleClient();
-
-	const { error } = await supabaseServiceRole.from("cli_logins").upsert({
+	// Provider token is temporarily stashed in verification_code (CLI device flow).
+	const values = {
 		device_code,
 		profile_id: session.user.id,
-		verification_code: session.provider_token, // Temporarily store provider token here
-	});
+		verification_code: session.provider_token ?? null,
+	};
 
-	if (error) {
-		console.error("Error saving CLI login attempt:", error);
+	try {
+		await getServiceDb()
+			.insert(cliLogins)
+			.values(values)
+			.onConflictDoUpdate({
+				target: cliLogins.device_code,
+				set: {
+					profile_id: values.profile_id,
+					verification_code: values.verification_code,
+				},
+			});
+	} catch (err) {
+		console.error("Error saving CLI login attempt:", err);
 		return new Response(
 			JSON.stringify({ error: "Failed to save login attempt" }),
-			{
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			}
+			{ status: 500, headers: { "Content-Type": "application/json" } },
 		);
 	}
 

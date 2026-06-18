@@ -2,108 +2,79 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
-import { notifyScaler } from "@/lib/scaler";
-import { createClient } from "@/lib/supabase/server";
+import { requireOwner } from "@/lib/auth/owner";
+import { withOwnerScope } from "@/lib/db";
 import {
-	convertVineConfig,
+	auditLog,
+	cloudIdentities,
+	jobs,
+	type Spec,
+	specCaches,
+	specCluster,
+	specDatabases,
+	specDns,
+	specNetwork,
+	specNosqlTables,
+	specQueues,
+	specRepositories,
+	specSecrets,
+	specTopics,
+	specs,
+} from "@/lib/db/schema";
+import {
 	type CloudProviderSlug,
 	type ConversionWarning,
+	convertVineConfig,
 } from "@/lib/cloud-providers";
+import { notifyScaler } from "@/lib/scaler";
 import type { VineFormData } from "@/lib/validations/vine-form.schema";
-import type {
-	PublicVineCachesInsert,
-	PublicVineDatabasesInsert,
-	PublicVineDnsInsert,
-	PublicVineClusterInsert,
-	PublicVineQueuesInsert,
-	PublicVineRepositoriesInsert,
-	PublicVinesInsert,
-	PublicVineTopicsInsert,
-	PublicVineNetworkInsert,
-} from "@/lib/validations/db.schemas";
+import { eq } from "drizzle-orm";
 
 // ============================================================
-// Types
+// Types — form-facing shapes (vineyard_id retained until the form layer is
+// renamed; mapped to zone_id / spec_id at the DB boundary below).
 // ============================================================
+
+type ComponentInsert<T> = Omit<
+	T,
+	| "id"
+	| "spec_id"
+	| "status"
+	| "status_message"
+	| "estimated_monthly_cost"
+	| "created_at"
+	| "updated_at"
+>;
 
 export interface CreateVineInput {
-	vine: Omit<
-		PublicVinesInsert,
-		"user_id" | "status" | "created_at" | "updated_at"
-	>;
-	network: Omit<
-		PublicVineNetworkInsert,
-		| "vine_id"
-		| "status"
-		| "status_message"
-		| "estimated_monthly_cost"
-		| "created_at"
-		| "updated_at"
-	>;
+	vine: {
+		project_name: string;
+		environment_stage: Spec["environment_stage"];
+		region: string;
+		cloud_identity_id?: string | null;
+		terraform_version: string;
+		vineyard_id?: string | null;
+	};
+	network: ComponentInsert<typeof specNetwork.$inferInsert>;
 	cluster: Omit<
-		PublicVineClusterInsert,
-		| "vine_id"
-		| "status"
-		| "status_message"
-		| "estimated_monthly_cost"
-		| "cluster_name"
-		| "cluster_endpoint"
-		| "created_at"
-		| "updated_at"
+		ComponentInsert<typeof specCluster.$inferInsert>,
+		"cluster_name" | "cluster_endpoint"
 	>;
-	dns: Omit<
-		PublicVineDnsInsert,
-		| "vine_id"
-		| "status"
-		| "status_message"
-		| "estimated_monthly_cost"
-		| "created_at"
-		| "updated_at"
-	>;
+	dns: ComponentInsert<typeof specDns.$inferInsert>;
 	repositories: Omit<
-		PublicVineRepositoriesInsert,
-		"vine_id" | "created_at" | "updated_at"
+		typeof specRepositories.$inferInsert,
+		"id" | "spec_id" | "created_at" | "updated_at"
 	>;
 	databases?: Omit<
-		PublicVineDatabasesInsert,
-		| "vine_id"
-		| "status"
-		| "status_message"
-		| "estimated_monthly_cost"
-		| "endpoint"
-		| "reader_endpoint"
-		| "created_at"
-		| "updated_at"
+		ComponentInsert<typeof specDatabases.$inferInsert>,
+		"endpoint" | "reader_endpoint"
 	>[];
 	caches?: Omit<
-		PublicVineCachesInsert,
-		| "vine_id"
-		| "status"
-		| "status_message"
-		| "estimated_monthly_cost"
-		| "endpoint"
-		| "created_at"
-		| "updated_at"
+		ComponentInsert<typeof specCaches.$inferInsert>,
+		"endpoint"
 	>[];
-	queues?: Omit<
-		PublicVineQueuesInsert,
-		| "vine_id"
-		| "status"
-		| "status_message"
-		| "estimated_monthly_cost"
-		| "created_at"
-		| "updated_at"
-	>[];
-	topics?: Omit<
-		PublicVineTopicsInsert,
-		| "vine_id"
-		| "status"
-		| "status_message"
-		| "estimated_monthly_cost"
-		| "created_at"
-		| "updated_at"
-	>[];
+	queues?: ComponentInsert<typeof specQueues.$inferInsert>[];
+	topics?: ComponentInsert<typeof specTopics.$inferInsert>[];
 }
 
 // ============================================================
@@ -111,91 +82,59 @@ export interface CreateVineInput {
 // ============================================================
 
 export async function createVine(data: CreateVineInput) {
-	const supabase = await createClient();
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
+	const owner = await requireOwner();
 
-	if (!user) throw new Error("Unauthorized");
+	return withOwnerScope(owner, async (tx) => {
+		const { vineyard_id, ...vineFields } = data.vine;
 
-	// 1. Insert vine
-	const { data: vine, error: vineError } = await supabase
-		.from("vines")
-		.insert(data.vine as PublicVinesInsert)
-		.select()
-		.single();
+		const [vine] = await tx
+			.insert(specs)
+			.values({ ...vineFields, zone_id: vineyard_id ?? null, user_id: owner })
+			.returning();
 
-	if (vineError || !vine) {
-		throw new Error(
-			"Failed to create vine: " + (vineError?.message || "unknown"),
-		);
-	}
+		if (!vine) throw new Error("Failed to create spec");
 
-	// 2. Insert singleton components
-	const [networkRes, clusterRes, dnsRes, reposRes] = await Promise.all([
-		supabase.from("vine_network").insert({ vine_id: vine.id, ...data.network }),
-		supabase.from("vine_cluster").insert({ vine_id: vine.id, ...data.cluster } as PublicVineClusterInsert),
-		supabase.from("vine_dns").insert({ vine_id: vine.id, ...data.dns } as PublicVineDnsInsert),
-		supabase
-			.from("vine_repositories")
-			.insert({ vine_id: vine.id, ...data.repositories }),
-	]);
+		// Singleton components (tx rolls back automatically on any failure).
+		await tx.insert(specNetwork).values({ spec_id: vine.id, ...data.network });
+		await tx.insert(specCluster).values({ spec_id: vine.id, ...data.cluster });
+		await tx.insert(specDns).values({ spec_id: vine.id, ...data.dns });
+		await tx
+			.insert(specRepositories)
+			.values({ spec_id: vine.id, ...data.repositories });
 
-	const singletonErrors = [
-		networkRes.error,
-		clusterRes.error,
-		dnsRes.error,
-		reposRes.error,
-	].filter(Boolean);
-	if (singletonErrors.length > 0) {
-		await supabase.from("vines").delete().eq("id", vine.id);
-		throw new Error(
-			"Failed to create components: " +
-				singletonErrors.map((e) => e!.message).join(", "),
-		);
-	}
+		if (data.databases?.length) {
+			await tx
+				.insert(specDatabases)
+				.values(data.databases.map((db) => ({ spec_id: vine.id, ...db })));
+		}
+		if (data.caches?.length) {
+			await tx
+				.insert(specCaches)
+				.values(data.caches.map((c) => ({ spec_id: vine.id, ...c })));
+		}
+		if (data.queues?.length) {
+			await tx
+				.insert(specQueues)
+				.values(data.queues.map((q) => ({ spec_id: vine.id, ...q })));
+		}
+		if (data.topics?.length) {
+			await tx
+				.insert(specTopics)
+				.values(data.topics.map((t) => ({ spec_id: vine.id, ...t })));
+		}
 
-	// 3. Insert multi-instance components
-	if (data.databases && data.databases.length > 0) {
-		const { error } = await supabase
-			.from("vine_databases")
-			.insert(data.databases.map((db) => ({ vine_id: vine.id, ...db })));
-		if (error)
-			throw new Error("Failed to create databases: " + error.message);
-	}
+		await tx.insert(auditLog).values({
+			spec_id: vine.id,
+			user_id: owner,
+			action: "CREATED",
+			changes: {
+				project_name: data.vine.project_name,
+				environment: data.vine.environment_stage,
+			},
+		});
 
-	if (data.caches && data.caches.length > 0) {
-		const { error } = await supabase
-			.from("vine_caches")
-			.insert(data.caches.map((c) => ({ vine_id: vine.id, ...c })));
-		if (error) throw new Error("Failed to create caches: " + error.message);
-	}
-
-	if (data.queues && data.queues.length > 0) {
-		const { error } = await supabase
-			.from("vine_queues")
-			.insert(data.queues.map((q) => ({ vine_id: vine.id, ...q })));
-		if (error) throw new Error("Failed to create queues: " + error.message);
-	}
-
-	if (data.topics && data.topics.length > 0) {
-		const { error } = await supabase
-			.from("vine_topics")
-			.insert(data.topics.map((t) => ({ vine_id: vine.id, ...t })));
-		if (error) throw new Error("Failed to create topics: " + error.message);
-	}
-
-	// 4. Audit log
-	await supabase.from("vine_audit_log").insert({
-		vine_id: vine.id,
-		action: "CREATED",
-		changes: {
-			project_name: data.vine.project_name,
-			environment: data.vine.environment_stage,
-		},
+		return { vine };
 	});
-
-	return { vine };
 }
 
 // ============================================================
@@ -203,321 +142,300 @@ export async function createVine(data: CreateVineInput) {
 // ============================================================
 
 export async function getVines() {
-	const supabase = await createClient();
-
-	const { data, error } = await supabase
-		.from("vines")
-		.select("*")
-		.order("created_at", { ascending: false });
-
-	if (error) throw new Error("Failed to fetch vines: " + error.message);
-	return { vines: data };
+	const owner = await requireOwner();
+	return withOwnerScope(owner, async (tx) => {
+		const vines = await tx
+			.select()
+			.from(specs)
+			.orderBy(specs.created_at);
+		return { vines };
+	});
 }
 
 export async function getVine(vineId: string) {
-	const supabase = await createClient();
+	const owner = await requireOwner();
+	return withOwnerScope(owner, async (tx) => {
+		const [vine] = await tx
+			.select()
+			.from(specs)
+			.where(eq(specs.id, vineId))
+			.limit(1);
+		if (!vine) throw new Error("Vine not found");
 
-	const [
-		vine,
-		network,
-		cluster,
-		dns,
-		repos,
-		databases,
-		caches,
-		queues,
-		topics,
-		nosqlTables,
-		secrets,
-	] = await Promise.all([
-		supabase.from("vines").select("*").eq("id", vineId).single(),
-		supabase
-			.from("vine_network")
-			.select("*")
-			.eq("vine_id", vineId)
-			.maybeSingle(),
-		supabase
-			.from("vine_cluster")
-			.select("*")
-			.eq("vine_id", vineId)
-			.maybeSingle(),
-		supabase
-			.from("vine_dns")
-			.select("*")
-			.eq("vine_id", vineId)
-			.maybeSingle(),
-		supabase
-			.from("vine_repositories")
-			.select("*")
-			.eq("vine_id", vineId)
-			.maybeSingle(),
-		supabase
-			.from("vine_databases")
-			.select("*")
-			.eq("vine_id", vineId)
-			.order("created_at"),
-		supabase
-			.from("vine_caches")
-			.select("*")
-			.eq("vine_id", vineId)
-			.order("created_at"),
-		supabase
-			.from("vine_queues")
-			.select("*")
-			.eq("vine_id", vineId)
-			.order("created_at"),
-		supabase
-			.from("vine_topics")
-			.select("*")
-			.eq("vine_id", vineId)
-			.order("created_at"),
-		supabase
-			.from("vine_nosql_tables")
-			.select("*")
-			.eq("vine_id", vineId)
-			.order("created_at"),
-		supabase
-			.from("vine_secrets")
-			.select("*")
-			.eq("vine_id", vineId)
-			.order("created_at"),
-	]);
+		const [network] = await tx
+			.select()
+			.from(specNetwork)
+			.where(eq(specNetwork.spec_id, vineId))
+			.limit(1);
+		const [cluster] = await tx
+			.select()
+			.from(specCluster)
+			.where(eq(specCluster.spec_id, vineId))
+			.limit(1);
+		const [dns] = await tx
+			.select()
+			.from(specDns)
+			.where(eq(specDns.spec_id, vineId))
+			.limit(1);
+		const [repos] = await tx
+			.select()
+			.from(specRepositories)
+			.where(eq(specRepositories.spec_id, vineId))
+			.limit(1);
+		const databases = await tx
+			.select()
+			.from(specDatabases)
+			.where(eq(specDatabases.spec_id, vineId));
+		const caches = await tx
+			.select()
+			.from(specCaches)
+			.where(eq(specCaches.spec_id, vineId));
+		const queues = await tx
+			.select()
+			.from(specQueues)
+			.where(eq(specQueues.spec_id, vineId));
+		const topics = await tx
+			.select()
+			.from(specTopics)
+			.where(eq(specTopics.spec_id, vineId));
+		const nosqlTables = await tx
+			.select()
+			.from(specNosqlTables)
+			.where(eq(specNosqlTables.spec_id, vineId));
+		const secrets = await tx
+			.select()
+			.from(specSecrets)
+			.where(eq(specSecrets.spec_id, vineId));
 
-	if (vine.error || !vine.data) throw new Error("Vine not found");
+		let cloudProvider = "aws";
+		if (vine.cloud_identity_id) {
+			const [ci] = await tx
+				.select({ provider: cloudIdentities.provider })
+				.from(cloudIdentities)
+				.where(eq(cloudIdentities.id, vine.cloud_identity_id))
+				.limit(1);
+			if (ci) cloudProvider = ci.provider;
+		}
 
-	let cloudProvider: string = "aws";
-	if (vine.data.cloud_identity_id) {
-		const { data: ci } = await supabase
-			.from("cloud_identities")
-			.select("provider")
-			.eq("id", vine.data.cloud_identity_id)
-			.single();
-		if (ci) cloudProvider = ci.provider;
-	}
-
-	return {
-		vine: vine.data,
-		cloudProvider,
-		components: {
-			network: network.data,
-			cluster: cluster.data,
-			dns: dns.data,
-			repositories: repos.data,
-			databases: databases.data || [],
-			caches: caches.data || [],
-			queues: queues.data || [],
-			topics: topics.data || [],
-			nosql_tables: nosqlTables.data || [],
-			secrets: secrets.data || [],
-		},
-	};
+		return {
+			vine,
+			cloudProvider,
+			components: {
+				network: network ?? null,
+				cluster: cluster ?? null,
+				dns: dns ?? null,
+				repositories: repos ?? null,
+				databases,
+				caches,
+				queues,
+				topics,
+				nosql_tables: nosqlTables,
+				secrets,
+			},
+		};
+	});
 }
 
 // ============================================================
 // Provision
 // ============================================================
 
-async function buildConfigSnapshot(vineId: string) {
-	const supabase = await createClient();
+async function buildConfigSnapshot(owner: string, vineId: string) {
+	return withOwnerScope(owner, async (tx) => {
+		const [vine] = await tx
+			.select()
+			.from(specs)
+			.where(eq(specs.id, vineId))
+			.limit(1);
+		if (!vine) throw new Error("Vine not found");
 
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
-	if (!user) throw new Error("Unauthorized");
+		if (!vine.cloud_identity_id) {
+			throw new Error(
+				"No cloud account linked to this spec. Go to Connectors to connect.",
+			);
+		}
 
-	const { data: vine, error: vineError } = await supabase
-		.from("vines")
-		.select("*")
-		.eq("id", vineId)
-		.single();
+		const [identity] = await tx
+			.select({ id: cloudIdentities.id, provider: cloudIdentities.provider })
+			.from(cloudIdentities)
+			.where(eq(cloudIdentities.id, vine.cloud_identity_id))
+			.limit(1);
 
-	if (vineError || !vine) throw new Error("Vine not found");
+		if (!identity) {
+			throw new Error(
+				"Cloud account is not verified. Go to Connectors to verify.",
+			);
+		}
 
-	if (!vine.cloud_identity_id) {
-		throw new Error(
-			"No cloud account linked to this vine. Go to Integrations to connect.",
-		);
-	}
+		const [network] = await tx
+			.select()
+			.from(specNetwork)
+			.where(eq(specNetwork.spec_id, vineId))
+			.limit(1);
+		const [cluster] = await tx
+			.select()
+			.from(specCluster)
+			.where(eq(specCluster.spec_id, vineId))
+			.limit(1);
+		const [dns] = await tx
+			.select()
+			.from(specDns)
+			.where(eq(specDns.spec_id, vineId))
+			.limit(1);
+		const [repos] = await tx
+			.select()
+			.from(specRepositories)
+			.where(eq(specRepositories.spec_id, vineId))
+			.limit(1);
+		const databases = await tx
+			.select()
+			.from(specDatabases)
+			.where(eq(specDatabases.spec_id, vineId));
+		const caches = await tx
+			.select()
+			.from(specCaches)
+			.where(eq(specCaches.spec_id, vineId));
+		const queues = await tx
+			.select()
+			.from(specQueues)
+			.where(eq(specQueues.spec_id, vineId));
+		const topics = await tx
+			.select()
+			.from(specTopics)
+			.where(eq(specTopics.spec_id, vineId));
+		const nosqlTables = await tx
+			.select()
+			.from(specNosqlTables)
+			.where(eq(specNosqlTables.spec_id, vineId));
+		const secrets = await tx
+			.select()
+			.from(specSecrets)
+			.where(eq(specSecrets.spec_id, vineId));
 
-	const { data: identity } = await supabase
-		.from("cloud_identities")
-		.select("id, provider")
-		.eq("id", vine.cloud_identity_id)
-		.eq("is_verified", true)
-		.maybeSingle();
+		if (network?.provision_network === false && !network?.network_id) {
+			const netLabel =
+				identity.provider === "azure"
+					? "VNet"
+					: identity.provider === "gcp"
+						? "network"
+						: "VPC";
+			throw new Error(
+				`Cannot plan: no ${netLabel} selected. Edit the spec's network settings or enable network provisioning.`,
+			);
+		}
 
-	if (!identity) {
-		throw new Error(
-			"Cloud account is not verified. Go to Integrations to verify.",
-		);
-	}
-
-	const [
-		network,
-		cluster,
-		dns,
-		repos,
-		databases,
-		caches,
-		queues,
-		topics,
-		nosqlTables,
-		secrets,
-	] = await Promise.all([
-		supabase
-			.from("vine_network")
-			.select("*")
-			.eq("vine_id", vineId)
-			.maybeSingle(),
-		supabase
-			.from("vine_cluster")
-			.select("*")
-			.eq("vine_id", vineId)
-			.maybeSingle(),
-		supabase
-			.from("vine_dns")
-			.select("*")
-			.eq("vine_id", vineId)
-			.maybeSingle(),
-		supabase
-			.from("vine_repositories")
-			.select("*")
-			.eq("vine_id", vineId)
-			.maybeSingle(),
-		supabase.from("vine_databases").select("*").eq("vine_id", vineId),
-		supabase.from("vine_caches").select("*").eq("vine_id", vineId),
-		supabase.from("vine_queues").select("*").eq("vine_id", vineId),
-		supabase.from("vine_topics").select("*").eq("vine_id", vineId),
-		supabase.from("vine_nosql_tables").select("*").eq("vine_id", vineId),
-		supabase.from("vine_secrets").select("*").eq("vine_id", vineId),
-	]);
-
-	if (
-		network.data?.provision_network === false &&
-		!network.data?.network_id
-	) {
-		const netLabel = identity.provider === "azure" ? "VNet" : identity.provider === "gcp" ? "network" : "VPC";
-		throw new Error(
-			`Cannot plan: no ${netLabel} selected. Edit the vine's network settings or enable network provisioning.`,
-		);
-	}
-
-	const configSnapshot = {
-		...vine,
-		provider: identity.provider,
-
-		network: {
-			provision_network: network.data?.provision_network ?? true,
-			cidr_block: network.data?.cidr_block ?? "10.0.0.0/16",
-			network_id: network.data?.network_id,
-			single_nat_gateway: network.data?.single_nat_gateway ?? true,
-		},
-
-		cluster: {
-			cluster_version: cluster.data?.cluster_version,
-			instance_types: cluster.data?.instance_types ?? [],
-			node_min_size: cluster.data?.node_min_size ?? 2,
-			node_max_size: cluster.data?.node_max_size ?? 5,
-			node_desired_size: cluster.data?.node_desired_size ?? 2,
-			cluster_admins: cluster.data?.cluster_admins ?? [],
-			provider_config: cluster.data?.provider_config ?? {},
-		},
-
-		dns: {
-			enabled: dns.data?.enabled ?? false,
-			zone_id: dns.data?.zone_id,
-			domain_name: dns.data?.domain_name,
-			provider_config: dns.data?.provider_config ?? {},
-		},
-
-		repositories: {
-			apps_destination_repo: repos.data?.apps_destination_repo,
-		},
-
-		databases: databases.data || [],
-		caches: caches.data || [],
-		queues: queues.data || [],
-		topics: topics.data || [],
-		nosql_tables: nosqlTables.data || [],
-		secrets: secrets.data || [],
-	};
-
-	return {
-		user,
-		vine,
-		identity,
-		configSnapshot: {
-			...configSnapshot,
-			// Token is now fetched at runtime by the worker via POST /api/jobs/[id]/git-token.
-			// Keep the key with an empty string so older workers don't break on missing field.
+		const configSnapshot = {
+			...vine,
+			provider: identity.provider,
+			network: {
+				provision_network: network?.provision_network ?? true,
+				cidr_block: network?.cidr_block ?? "10.0.0.0/16",
+				network_id: network?.network_id,
+				single_nat_gateway: network?.single_nat_gateway ?? true,
+			},
+			cluster: {
+				cluster_version: cluster?.cluster_version,
+				instance_types: cluster?.instance_types ?? [],
+				node_min_size: cluster?.node_min_size ?? 2,
+				node_max_size: cluster?.node_max_size ?? 5,
+				node_desired_size: cluster?.node_desired_size ?? 2,
+				cluster_admins: cluster?.cluster_admins ?? [],
+				provider_config: cluster?.provider_config ?? {},
+			},
+			dns: {
+				enabled: dns?.enabled ?? false,
+				zone_id: dns?.zone_id,
+				domain_name: dns?.domain_name,
+				provider_config: dns?.provider_config ?? {},
+			},
+			repositories: {
+				apps_destination_repo: repos?.apps_destination_repo,
+			},
+			databases,
+			caches,
+			queues,
+			topics,
+			nosql_tables: nosqlTables,
+			secrets,
+			// Token is fetched at runtime by the worker via POST /api/jobs/[id]/git-token.
 			git_access_token: "",
-		},
-	};
+		};
+
+		return { vine, identity, configSnapshot };
+	});
 }
 
 export async function planVine(vineId: string, workerId?: string | null) {
-	const supabase = await createClient();
-	const { user, vine, identity, configSnapshot } =
-		await buildConfigSnapshot(vineId);
+	const owner = await requireOwner();
+	const { vine, identity, configSnapshot } = await buildConfigSnapshot(
+		owner,
+		vineId,
+	);
 
-	const { data: job, error: jobError } = await supabase
-		.from("provision_jobs")
-		.insert({
-			user_id: user.id,
-			vine_id: vineId,
-			vineyard_id: vine.vineyard_id || null,
-			cloud_identity_id: identity.id,
-			job_type: "PLAN" as any,
-			config_snapshot: configSnapshot,
-			status: "QUEUED",
-			...(workerId ? { assigned_worker_id: workerId } : {}),
-		})
-		.select("id")
-		.single();
+	const result = await withOwnerScope(owner, async (tx) => {
+		const [job] = await tx
+			.insert(jobs)
+			.values({
+				user_id: owner,
+				spec_id: vineId,
+				zone_id: vine.zone_id ?? null,
+				cloud_identity_id: identity.id,
+				job_type: "PLAN",
+				config_snapshot: configSnapshot,
+				status: "QUEUED",
+				...(workerId ? { assigned_runner_id: workerId } : {}),
+			})
+			.returning({ id: jobs.id });
 
-	if (jobError)
-		throw new Error("Failed to queue plan job: " + jobError.message);
+		await tx.update(specs).set({ status: "QUEUED" }).where(eq(specs.id, vineId));
+		return { jobId: job.id };
+	});
 
-	await supabase.from("vines").update({ status: "QUEUED" }).eq("id", vineId);
 	notifyScaler();
-
-	return { jobId: job.id };
+	return result;
 }
 
-export async function provisionVine(vineId: string, planJobId?: string, workerId?: string | null) {
-	const supabase = await createClient();
-	const { user, vine, identity, configSnapshot } =
-		await buildConfigSnapshot(vineId);
+export async function provisionVine(
+	vineId: string,
+	planJobId?: string,
+	workerId?: string | null,
+) {
+	const owner = await requireOwner();
+	const { vine, identity, configSnapshot } = await buildConfigSnapshot(
+		owner,
+		vineId,
+	);
 
-	const { data: job, error: jobError } = await supabase
-		.from("provision_jobs")
-		.insert({
-			user_id: user.id,
-			vine_id: vineId,
-			vineyard_id: vine.vineyard_id || null,
-			cloud_identity_id: identity.id,
-			job_type: "DEPLOY",
-			config_snapshot: configSnapshot,
-			status: "QUEUED",
-			...(planJobId ? { plan_job_id: planJobId } : {}),
-			...(workerId ? { assigned_worker_id: workerId } : {}),
-		} as any)
-		.select("id")
-		.single();
+	const result = await withOwnerScope(owner, async (tx) => {
+		const [job] = await tx
+			.insert(jobs)
+			.values({
+				user_id: owner,
+				spec_id: vineId,
+				zone_id: vine.zone_id ?? null,
+				cloud_identity_id: identity.id,
+				job_type: "DEPLOY",
+				config_snapshot: configSnapshot,
+				status: "QUEUED",
+				...(planJobId ? { plan_job_id: planJobId } : {}),
+				...(workerId ? { assigned_runner_id: workerId } : {}),
+			})
+			.returning({ id: jobs.id });
 
-	if (jobError)
-		throw new Error("Failed to queue provision job: " + jobError.message);
+		await tx.update(specs).set({ status: "QUEUED" }).where(eq(specs.id, vineId));
 
-	await supabase.from("vines").update({ status: "QUEUED" }).eq("id", vineId);
+		await tx.insert(auditLog).values({
+			spec_id: vineId,
+			user_id: owner,
+			action: "PROVISIONED",
+			changes: { job_id: job.id },
+		});
 
-	await supabase.from("vine_audit_log").insert({
-		vine_id: vineId,
-		action: "PROVISIONED",
-		changes: { job_id: job.id },
+		return { jobId: job.id };
 	});
-	notifyScaler();
 
-	return { jobId: job.id };
+	notifyScaler();
+	return result;
 }
 
 // ============================================================
@@ -525,43 +443,38 @@ export async function provisionVine(vineId: string, planJobId?: string, workerId
 // ============================================================
 
 export async function deleteVine(vineId: string) {
-	const supabase = await createClient();
-
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
-	if (!user) throw new Error("Unauthorized");
-
-	// CASCADE handles all component tables
-	const { error } = await supabase.from("vines").delete().eq("id", vineId);
-	if (error) throw new Error("Failed to delete vine: " + error.message);
-
-	return { success: true };
+	const owner = await requireOwner();
+	return withOwnerScope(owner, async (tx) => {
+		// CASCADE handles all component tables.
+		await tx.delete(specs).where(eq(specs.id, vineId));
+		return { success: true };
+	});
 }
 
 // ============================================================
 // Duplicate for another provider
 // ============================================================
 
-/** Converts a vine's DB representation to VineFormData for use in duplication or pre-populating forms. */
+/** Converts a spec's DB representation to VineFormData for duplication / pre-populating forms. */
 export async function getVineAsFormData(
 	vineId: string,
 ): Promise<{ formData: VineFormData; provider: CloudProviderSlug }> {
-	const supabase = await createClient();
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
-	if (!user) throw new Error("Unauthorized");
-
 	const source = await getVine(vineId);
 
-	const { data: identity } = await supabase
-		.from("cloud_identities")
-		.select("provider")
-		.eq("id", source.vine.cloud_identity_id!)
-		.single();
-
-	if (!identity) throw new Error("Cloud identity not found");
+	let provider: CloudProviderSlug = "aws";
+	if (source.vine.cloud_identity_id) {
+		const owner = await requireOwner();
+		const ci = await withOwnerScope(owner, async (tx) => {
+			const [row] = await tx
+				.select({ provider: cloudIdentities.provider })
+				.from(cloudIdentities)
+				.where(eq(cloudIdentities.id, source.vine.cloud_identity_id!))
+				.limit(1);
+			return row;
+		});
+		if (!ci) throw new Error("Cloud identity not found");
+		provider = ci.provider as CloudProviderSlug;
+	}
 
 	const formData: VineFormData = {
 		vine: {
@@ -570,16 +483,21 @@ export async function getVineAsFormData(
 			region: source.vine.region,
 			cloud_identity_id: source.vine.cloud_identity_id ?? "",
 			terraform_version: source.vine.terraform_version,
-			vineyard_id: source.vine.vineyard_id ?? "",
+			vineyard_id: source.vine.zone_id ?? "",
 		},
 		network: source.components.network
 			? {
 					provision_network: source.components.network.provision_network,
 					cidr_block: source.components.network.cidr_block ?? "10.0.0.0/16",
-					single_nat_gateway: source.components.network.single_nat_gateway ?? true,
+					single_nat_gateway:
+						source.components.network.single_nat_gateway ?? true,
 					network_id: source.components.network.network_id ?? undefined,
 				}
-			: { provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true },
+			: {
+					provision_network: true,
+					cidr_block: "10.0.0.0/16",
+					single_nat_gateway: true,
+				},
 		cluster: source.components.cluster
 			? {
 					cluster_version: source.components.cluster.cluster_version ?? "1.31",
@@ -590,20 +508,30 @@ export async function getVineAsFormData(
 					cluster_admins: source.components.cluster.cluster_admins ?? [],
 					provider_config: source.components.cluster.provider_config ?? {},
 				}
-			: { cluster_version: "1.31", instance_types: [], node_min_size: 2, node_max_size: 5, node_desired_size: 2, cluster_admins: [], provider_config: {} },
+			: {
+					cluster_version: "1.31",
+					instance_types: [],
+					node_min_size: 2,
+					node_max_size: 5,
+					node_desired_size: 2,
+					cluster_admins: [],
+					provider_config: {},
+				},
 		dns: source.components.dns
 			? {
 					enabled: source.components.dns.enabled,
 					zone_id: source.components.dns.zone_id ?? undefined,
 					domain_name: source.components.dns.domain_name ?? undefined,
-					managed_certificate: source.components.dns.managed_certificate ?? false,
+					managed_certificate:
+						source.components.dns.managed_certificate ?? false,
 					waf_enabled: source.components.dns.waf_enabled ?? false,
 					provider_config: source.components.dns.provider_config ?? {},
 				}
 			: { enabled: false },
 		repositories: source.components.repositories
 			? {
-					apps_destination_repo: source.components.repositories.apps_destination_repo ?? undefined,
+					apps_destination_repo:
+						source.components.repositories.apps_destination_repo ?? undefined,
 				}
 			: {},
 		databases: source.components.databases.map((db) => ({
@@ -652,34 +580,34 @@ export async function getVineAsFormData(
 		})),
 	} as VineFormData;
 
-	return { formData, provider: identity.provider as CloudProviderSlug };
+	return { formData, provider };
 }
 
-/** Duplicates a vine config for a different cloud provider, mapping all provider-specific values. */
+/** Duplicates a spec config for a different cloud provider, mapping provider-specific values. */
 export async function duplicateVineForProvider(
 	sourceVineId: string,
 	targetCloudIdentityId: string,
 	targetRegion: string,
-): Promise<{ newVineId: string; vineyardId: string; warnings: ConversionWarning[] }> {
-	const supabase = await createClient();
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
-	if (!user) throw new Error("Unauthorized");
+): Promise<{
+	newVineId: string;
+	vineyardId: string;
+	warnings: ConversionWarning[];
+}> {
+	const owner = await requireOwner();
 
 	const { formData, provider: sourceProvider } =
 		await getVineAsFormData(sourceVineId);
 
-	const { data: targetIdentity } = await supabase
-		.from("cloud_identities")
-		.select("provider")
-		.eq("id", targetCloudIdentityId)
-		.eq("user_id", user.id)
-		.single();
+	const targetIdentity = await withOwnerScope(owner, async (tx) => {
+		const [row] = await tx
+			.select({ provider: cloudIdentities.provider })
+			.from(cloudIdentities)
+			.where(eq(cloudIdentities.id, targetCloudIdentityId))
+			.limit(1);
+		return row;
+	});
 
-	if (!targetIdentity) {
-		throw new Error("Target cloud identity not found");
-	}
+	if (!targetIdentity) throw new Error("Target cloud identity not found");
 
 	const targetProvider = targetIdentity.provider as CloudProviderSlug;
 
@@ -695,5 +623,9 @@ export async function duplicateVineForProvider(
 	const input = converted as unknown as CreateVineInput;
 	const { vine } = await createVine(input);
 
-	return { newVineId: vine.id, vineyardId: converted.vine.vineyard_id, warnings };
+	return {
+		newVineId: vine.id,
+		vineyardId: converted.vine.vineyard_id,
+		warnings,
+	};
 }

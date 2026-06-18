@@ -2,21 +2,33 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
+import { and, count, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { withOwnerScope } from "@/lib/db";
+import { cloudIdentities, providerTokens } from "@/lib/db/schema";
 import { createClient } from "@/lib/supabase/server";
-import { PublicGitProvider } from "@/lib/validations/db.schemas";
+import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 
 export async function hasCloudIdentity() {
 	try {
 		const supabase = await createClient();
+		const {
+			data: { user },
+		} = await supabase.auth.getUser();
+		if (!user) return false;
 
-		const { count } = await supabase
-			.from("cloud_identities")
-			.select("*", { count: "exact", head: true })
-			.eq("provider", "aws")
-			.eq("is_verified", true);
-		return (count || 0) > 0;
+		return await withOwnerScope(user.id, async (tx) => {
+			const [row] = await tx
+				.select({ value: count() })
+				.from(cloudIdentities)
+				.where(
+					and(
+						eq(cloudIdentities.provider, "aws"),
+						eq(cloudIdentities.is_verified, true),
+					),
+				);
+			return (row?.value ?? 0) > 0;
+		});
 	} catch (error) {
 		console.error("Error checking cloud identities:", error);
 		return false;
@@ -26,33 +38,29 @@ export async function hasCloudIdentity() {
 export async function getLinkedProviders() {
 	try {
 		const supabase = await createClient();
-
-		const { data, error } = await supabase
-			.from("provider_tokens")
-			.select("provider");
-
-		if (error) {
-			console.error("Error fetching linked providers:", error);
-			return [];
-		}
-
-		const providers = new Set<string>(data?.map((p) => p.provider) || []);
-
-		// Fallback: add the active user provider if it's a git provider
 		const {
 			data: { user },
 		} = await supabase.auth.getUser();
+
+		const providers = new Set<PublicGitProvider>();
 		if (user) {
+			const rows = await withOwnerScope(user.id, (tx) =>
+				tx.select({ provider: providerTokens.provider }).from(providerTokens),
+			);
+			for (const r of rows) providers.add(r.provider);
+
+			// Fallback: add the active user provider if it's a git provider
 			const activeProvider = user.app_metadata?.provider;
 			if (
-				activeProvider &&
-				["github", "gitlab", "bitbucket"].includes(activeProvider)
+				activeProvider === "github" ||
+				activeProvider === "gitlab" ||
+				activeProvider === "bitbucket"
 			) {
 				providers.add(activeProvider);
 			}
 		}
 
-		return Array.from(providers) as PublicGitProvider[];
+		return Array.from(providers);
 	} catch (error) {
 		console.error("Unexpected error fetching linked providers:", error);
 		return [];
@@ -67,26 +75,27 @@ export async function saveProviderToken(
 	expiresAt?: string | null,
 ) {
 	try {
-		const supabase = await createClient();
-
-		const { error } = await supabase.from("provider_tokens").upsert(
-			{
-				user_id: userId,
-				provider,
-				access_token: accessToken,
-				refresh_token: refreshToken,
-				expires_at: expiresAt ?? null,
-				updated_at: new Date().toISOString(),
-			},
-			{
-				onConflict: "user_id, provider",
-			},
+		await withOwnerScope(userId, (tx) =>
+			tx
+				.insert(providerTokens)
+				.values({
+					user_id: userId,
+					provider,
+					access_token: accessToken,
+					refresh_token: refreshToken ?? null,
+					expires_at: expiresAt ? new Date(expiresAt) : null,
+					updated_at: new Date(),
+				})
+				.onConflictDoUpdate({
+					target: [providerTokens.user_id, providerTokens.provider],
+					set: {
+						access_token: accessToken,
+						refresh_token: refreshToken ?? null,
+						expires_at: expiresAt ? new Date(expiresAt) : null,
+						updated_at: new Date(),
+					},
+				}),
 		);
-
-		if (error) {
-			console.error("Error saving provider token:", error);
-			throw new Error("Failed to save provider token");
-		}
 
 		return { success: true };
 	} catch (error) {
@@ -96,30 +105,31 @@ export async function saveProviderToken(
 }
 
 export async function getProviderToken(
-	provider: "github" | "gitlab" | "bitbucket",
+	provider: PublicGitProvider,
 ): Promise<string | null> {
 	const supabase = await createClient();
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
+	if (!user) return null;
 
 	// 1. Check database
-	const { data } = await supabase
-		.from("provider_tokens")
-		.select("access_token")
-		.eq("provider", provider)
-		.single();
-
-	if (data?.access_token) {
-		return data.access_token;
-	}
+	const dbToken = await withOwnerScope(user.id, async (tx) => {
+		const [row] = await tx
+			.select({ access_token: providerTokens.access_token })
+			.from(providerTokens)
+			.where(eq(providerTokens.provider, provider))
+			.limit(1);
+		return row?.access_token ?? null;
+	});
+	if (dbToken) return dbToken;
 
 	// 2. Fallback: Check active session
 	const {
 		data: { session },
 	} = await supabase.auth.getSession();
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
 
-	if (session?.provider_token && user) {
+	if (session?.provider_token) {
 		const activeProvider = user.app_metadata?.provider;
 		if (activeProvider === provider) {
 			return session.provider_token;
@@ -178,19 +188,30 @@ const PROVIDER_OAUTH: Record<
 };
 
 export async function getValidProviderToken(
-	provider: "github" | "gitlab" | "bitbucket",
+	provider: PublicGitProvider,
 ): Promise<string | null> {
 	const supabase = await createClient();
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
+	if (!user) return null;
 
-	const { data } = await supabase
-		.from("provider_tokens")
-		.select("access_token, refresh_token, expires_at")
-		.eq("provider", provider)
-		.single();
+	const data = await withOwnerScope(user.id, async (tx) => {
+		const [row] = await tx
+			.select({
+				access_token: providerTokens.access_token,
+				refresh_token: providerTokens.refresh_token,
+				expires_at: providerTokens.expires_at,
+			})
+			.from(providerTokens)
+			.where(eq(providerTokens.provider, provider))
+			.limit(1);
+		return row ?? null;
+	});
 
 	if (!data?.access_token) return null;
 
-	if (!data.expires_at || new Date(data.expires_at) > new Date()) {
+	if (!data.expires_at || data.expires_at > new Date()) {
 		return data.access_token;
 	}
 
@@ -229,41 +250,47 @@ export async function getValidProviderToken(
 
 		if (!res.ok) return data.access_token;
 
-		const result = await res.json();
+		const result: {
+			access_token?: string;
+			refresh_token?: string;
+			expires_in?: number;
+		} = await res.json();
 		if (!result.access_token) return data.access_token;
 
-		const {
-			data: { user },
-		} = await supabase.auth.getUser();
-
-		if (user) {
-			await supabase.from("provider_tokens").upsert(
-				{
+		const newAccessToken = result.access_token;
+		await withOwnerScope(user.id, (tx) =>
+			tx
+				.insert(providerTokens)
+				.values({
 					user_id: user.id,
 					provider,
-					access_token: result.access_token,
-					refresh_token:
-						result.refresh_token || data.refresh_token,
+					access_token: newAccessToken,
+					refresh_token: result.refresh_token || data.refresh_token,
 					expires_at: result.expires_in
-						? new Date(
-								Date.now() + result.expires_in * 1000,
-							).toISOString()
+						? new Date(Date.now() + result.expires_in * 1000)
 						: null,
-					updated_at: new Date().toISOString(),
-				},
-				{ onConflict: "user_id, provider" },
-			);
-		}
+					updated_at: new Date(),
+				})
+				.onConflictDoUpdate({
+					target: [providerTokens.user_id, providerTokens.provider],
+					set: {
+						access_token: newAccessToken,
+						refresh_token: result.refresh_token || data.refresh_token,
+						expires_at: result.expires_in
+							? new Date(Date.now() + result.expires_in * 1000)
+							: null,
+						updated_at: new Date(),
+					},
+				}),
+		);
 
-		return result.access_token;
+		return newAccessToken;
 	} catch {
 		return data.access_token;
 	}
 }
 
-export async function deleteProviderToken(
-	provider: "github" | "gitlab" | "bitbucket",
-) {
+export async function deleteProviderToken(provider: PublicGitProvider) {
 	try {
 		const supabase = await createClient();
 		const {
@@ -274,18 +301,18 @@ export async function deleteProviderToken(
 			return { error: "User not authenticated" };
 		}
 
-		const { error } = await supabase
-			.from("provider_tokens")
-			.delete()
-			.eq("user_id", user.id)
-			.eq("provider", provider);
+		await withOwnerScope(user.id, (tx) =>
+			tx
+				.delete(providerTokens)
+				.where(
+					and(
+						eq(providerTokens.user_id, user.id),
+						eq(providerTokens.provider, provider),
+					),
+				),
+		);
 
-		if (error) {
-			console.error("Error deleting provider token:", error);
-			return { error: "Failed to delete provider token" };
-		}
-
-		revalidatePath("/dashboard/integrations");
+		revalidatePath("/dashboard/connectors");
 		return { success: true };
 	} catch (error) {
 		console.error("Unexpected error deleting provider token:", error);

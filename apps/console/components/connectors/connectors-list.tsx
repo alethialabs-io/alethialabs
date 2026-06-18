@@ -1,0 +1,117 @@
+"use client";
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+
+import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
+import { ConnectorCard } from "@/components/connectors/connector-card";
+import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { ChevronDown } from "lucide-react";
+import { useState } from "react";
+
+interface ConnectorsListProps {
+	integrations: ConnectorWithConnection[];
+	onCardClick: (integration: ConnectorWithConnection) => void;
+	onConnect: (integration: ConnectorWithConnection) => void;
+	onDisconnect: (integration: ConnectorWithConnection) => void;
+	connectingSlug?: string | null;
+}
+
+export function ConnectorsList({
+	integrations,
+	onCardClick,
+	onConnect,
+	onDisconnect,
+	connectingSlug,
+}: ConnectorsListProps) {
+	const [activeOpen, setActiveOpen] = useState(true);
+	const [availableOpen, setAvailableOpen] = useState(true);
+
+	const active = integrations.filter((i) => i.connected);
+	const available = integrations.filter((i) => !i.connected);
+
+	if (integrations.length === 0) {
+		return (
+			<div className="flex-1 flex items-center justify-center py-16">
+				<p className="text-sm text-muted-foreground">
+					No connectors match your search.
+				</p>
+			</div>
+		);
+	}
+
+	return (
+		<div className="flex-1 space-y-4">
+			{active.length > 0 && (
+				<Collapsible open={activeOpen} onOpenChange={setActiveOpen}>
+					<CollapsibleTrigger className="flex w-full items-center gap-2 px-1 py-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">
+						<ChevronDown
+							className={`h-3.5 w-3.5 transition-transform ${activeOpen ? "" : "-rotate-90"}`}
+						/>
+						Active
+						<span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium tabular-nums">
+							{active.length}
+						</span>
+					</CollapsibleTrigger>
+					<CollapsibleContent>
+						<div className="space-y-2 mt-2">
+							{active.map((integration) => (
+								<ConnectorCard
+									key={integration.id}
+									integration={integration}
+									onClick={() => onCardClick(integration)}
+									onConnect={() => onConnect(integration)}
+									onDisconnect={() =>
+										onDisconnect(integration)
+									}
+									isConnecting={
+										connectingSlug === integration.slug
+									}
+								/>
+							))}
+						</div>
+					</CollapsibleContent>
+				</Collapsible>
+			)}
+
+			{available.length > 0 && (
+				<Collapsible
+					open={availableOpen}
+					onOpenChange={setAvailableOpen}
+				>
+					<CollapsibleTrigger className="flex w-full items-center gap-2 px-1 py-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">
+						<ChevronDown
+							className={`h-3.5 w-3.5 transition-transform ${availableOpen ? "" : "-rotate-90"}`}
+						/>
+						Available
+						<span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium tabular-nums">
+							{available.length}
+						</span>
+					</CollapsibleTrigger>
+					<CollapsibleContent>
+						<div className="space-y-2 mt-2">
+							{available.map((integration) => (
+								<ConnectorCard
+									key={integration.id}
+									integration={integration}
+									onClick={() => onCardClick(integration)}
+									onConnect={() => onConnect(integration)}
+									onDisconnect={() =>
+										onDisconnect(integration)
+									}
+									isConnecting={
+										connectingSlug === integration.slug
+									}
+								/>
+							))}
+						</div>
+					</CollapsibleContent>
+				</Collapsible>
+			)}
+		</div>
+	);
+}

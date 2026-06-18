@@ -4,7 +4,6 @@
 
 
 import { z } from "zod";
-import { publicWorkersInsertSchema } from "@/lib/validations/database.schemas";
 import { useTendrilsStore } from "@/lib/stores/use-tendrils-store";
 import { registerWorker } from "@/app/server/actions/tendrils";
 import {
@@ -159,7 +158,7 @@ export function AddTendrilSheet({ open, onOpenChange }: AddTendrilSheetProps) {
 // ---------------------------------------------------------------------------
 
 const deployTendrilSchema = z.object({
-	name: publicWorkersInsertSchema.shape.name.min(1, "Runner name is required"),
+	name: z.string().min(1, "Runner name is required"),
 	cloud_identity_id: z.string().min(1, "Cloud account is required"),
 	region: z.string().min(1, "Region is required"),
 });

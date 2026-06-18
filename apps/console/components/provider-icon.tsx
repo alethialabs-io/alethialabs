@@ -3,7 +3,10 @@
 
 import Image from "next/image";
 import { cn } from "@/lib/utils";
-import type { PublicCloudProvider, PublicGitProvider } from "@/lib/validations/db.schemas";
+import type {
+	CloudProvider as PublicCloudProvider,
+	GitProvider as PublicGitProvider,
+} from "@/lib/db/schema";
 
 export type Provider = PublicCloudProvider | PublicGitProvider | "google";
 

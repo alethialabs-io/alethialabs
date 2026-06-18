@@ -4,7 +4,10 @@
 
 
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
-import type { PublicProvisionJobStatus, PublicProvisionJobType } from "@/lib/validations/db.schemas";
+import type {
+	ProvisionJobStatus as PublicProvisionJobStatus,
+	ProvisionJobType as PublicProvisionJobType,
+} from "@/lib/db/schema";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -64,7 +67,7 @@ export function useJobNotifications() {
 						jobId: job.id,
 						jobType: job.job_type,
 						status: job.status,
-						vineId: job.vine_id,
+						vineId: job.spec_id,
 						createdAt: new Date().toISOString(),
 						read: false,
 					};

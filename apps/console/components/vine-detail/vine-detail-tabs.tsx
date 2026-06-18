@@ -12,7 +12,8 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getProvider, DB_CAPACITY, type CloudProviderSlug } from "@/lib/cloud-providers";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
-import type { PublicProvisionJobsRow, PublicProvisionJobType } from "@/lib/validations/db.schemas";
+import type { JobWithMeta } from "@/app/server/actions/jobs";
+import type { ProvisionJobType } from "@/lib/db/schema";
 import type { ColumnDef } from "@tanstack/react-table";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -65,13 +66,13 @@ interface VineDetailTabsProps {
 }
 
 
-const vineJobColumns: ColumnDef<PublicProvisionJobsRow>[] = [
+const vineJobColumns: ColumnDef<JobWithMeta>[] = [
 	{
 		accessorKey: "job_type",
 		header: "Type",
 		enableSorting: true,
 		cell: ({ row }) => {
-			const type = row.getValue<PublicProvisionJobType>("job_type");
+			const type = row.getValue<ProvisionJobType>("job_type");
 			const info = JOB_TYPES[type];
 			if (!info) return <span className="text-xs">{type}</span>;
 			const Icon = info.icon;
@@ -162,14 +163,14 @@ export function VineDetailTabs({ detail, vineId, plan, onApplied }: VineDetailTa
 
 	const allJobs = useJobsStore((s) => s.jobs);
 	const jobs = useMemo(
-		() => allJobs.filter((j) => j.vine_id === vineId).slice(0, 5),
+		() => allJobs.filter((j) => j.spec_id === vineId).slice(0, 5),
 		[allJobs, vineId],
 	);
 
 	const cluster = components.cluster as { cluster_name: string | null; cluster_endpoint: string | null } | null;
 	const dns = components.dns as { domain_name: string | null } | null;
 
-	const handleJobClick = (job: PublicProvisionJobsRow) => {
+	const handleJobClick = (job: JobWithMeta) => {
 		router.push(`/dashboard/jobs/${job.id}`);
 	};
 

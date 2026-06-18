@@ -11,25 +11,18 @@ import {
 } from "@/components/ui/tooltip";
 import { ProviderIcon } from "@/components/provider-icon";
 import { getProvider } from "@/lib/cloud-providers/registry";
-import {
-	PublicProvisionJobsRow,
-	PublicProvisionJobType,
-} from "@/lib/validations/db.schemas";
+import type { JobWithMeta } from "@/app/server/actions/jobs";
+import type { ProvisionJobType } from "@/lib/db/schema";
 import type { ColumnDef } from "@tanstack/react-table";
 import { format, formatDistanceToNow } from "date-fns";
 import { ArrowUpCircle, Container, FileSearch, Plug, RefreshCw, Rocket, Trash2, Upload } from "lucide-react";
 import Link from "next/link";
 
-/** Extended job row with joined vine/worker/provider data from getJobs(). */
-type JobRow = PublicProvisionJobsRow & {
-	vine_name?: string | null;
-	vine_vineyard_id?: string | null;
-	worker_name?: string | null;
-	cloud_provider?: string | null;
-};
+/** A job row enriched with joined spec/runner/provider data from getJobs(). */
+type JobRow = JobWithMeta;
 
 const JOB_TYPES: Record<
-	PublicProvisionJobType,
+	ProvisionJobType,
 	{ label: string; icon: typeof Rocket; description: string }
 > = {
 	PLAN: {
@@ -113,7 +106,7 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 		header: "Type",
 		enableSorting: true,
 		cell: ({ row }) => {
-			const type = row.getValue<PublicProvisionJobType>("job_type");
+			const type = row.getValue<ProvisionJobType>("job_type");
 			const info = JOB_TYPES[type];
 			if (!info) return <span className="text-xs">{type}</span>;
 			const Icon = info.icon;
@@ -143,11 +136,11 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 		},
 	},
 	{
-		accessorKey: "vine_id",
+		accessorKey: "spec_id",
 		header: "Spec",
 		enableSorting: false,
 		cell: ({ row }) => {
-			const vineId = row.getValue("vine_id") as string | null;
+			const specId = row.getValue<string | null>("spec_id");
 			const vineName = row.original.vine_name;
 			const vineyardId = row.original.vine_vineyard_id;
 			const provider = row.original.cloud_provider;
@@ -156,7 +149,7 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 				<ProviderIcon provider={provider} size={14} className="shrink-0" />
 			) : null;
 
-			if (!vineId) {
+			if (!specId) {
 				return (
 					<div className="flex items-center gap-1.5">
 						{providerIcon}
@@ -165,28 +158,28 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 				);
 			}
 
-			const href = vineyardId ? `/dashboard/vineyards/${vineyardId}/vines/${vineId}` : "#";
+			const href = vineyardId ? `/dashboard/vineyards/${vineyardId}/vines/${specId}` : "#";
 			return (
 				<div className="flex items-center gap-1.5">
 					{providerIcon}
 					<Link href={href} onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-foreground hover:underline">
-						{vineName ?? vineId.slice(0, 8)}
+						{vineName ?? specId.slice(0, 8)}
 					</Link>
 				</div>
 			);
 		},
 	},
 	{
-		accessorKey: "worker_id",
+		accessorKey: "runner_id",
 		header: "Runner",
 		enableSorting: false,
 		cell: ({ row }) => {
-			const workerId = row.getValue("worker_id") as string | null;
+			const runnerId = row.getValue<string | null>("runner_id");
 			const workerName = row.original.worker_name;
-			if (!workerId) return <span className="text-xs text-muted-foreground">—</span>;
+			if (!runnerId) return <span className="text-xs text-muted-foreground">—</span>;
 			return (
 				<Link href="/dashboard/tendrils" onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-foreground hover:underline">
-					{workerName ?? workerId.slice(0, 8)}
+					{workerName ?? runnerId.slice(0, 8)}
 				</Link>
 			);
 		},

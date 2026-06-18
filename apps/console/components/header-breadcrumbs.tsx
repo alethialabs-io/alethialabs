@@ -23,7 +23,7 @@ const SEGMENT_LABELS: Record<string, string> = {
 	plant: "Create a Spec",
 	clusters: "Clusters",
 	jobs: "Jobs",
-	integrations: "Integrations",
+	connectors: "Connectors",
 	tendrils: "Runners",
 	profile: "Profile",
 };

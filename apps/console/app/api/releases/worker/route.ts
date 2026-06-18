@@ -1,8 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { getServiceDb } from "@/lib/db";
+import { runnerReleases } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
+
+/** Returns the Postgres error code if present (e.g. 23505 unique violation). */
+function pgErrorCode(err: unknown): string | undefined {
+	if (typeof err === "object" && err !== null && "code" in err) {
+		return String((err as { code: unknown }).code);
+	}
+	return undefined;
+}
 
 /** CI calls this endpoint to publish a new worker release. */
 export async function POST(req: Request) {
@@ -35,31 +44,32 @@ export async function POST(req: Request) {
 		);
 	}
 
-	const supabase = await createServiceRoleClient();
-	const { data, error } = await supabase
-		.from("worker_releases")
-		.insert({
-			version,
-			release_notes: release_notes ?? "",
-			github_release_url: github_release_url ?? null,
-			commit_sha: commit_sha ?? null,
-			is_breaking: is_breaking ?? false,
-		})
-		.select("id")
-		.single();
+	try {
+		const db = getServiceDb();
+		const [row] = await db
+			.insert(runnerReleases)
+			.values({
+				version,
+				release_notes: release_notes ?? "",
+				github_release_url: github_release_url ?? null,
+				commit_sha: commit_sha ?? null,
+				is_breaking: is_breaking ?? false,
+			})
+			.returning({ id: runnerReleases.id });
 
-	if (error) {
-		if (error.code === "23505") {
+		return NextResponse.json({ success: true, id: row.id });
+	} catch (err: unknown) {
+		if (pgErrorCode(err) === "23505") {
 			return NextResponse.json(
 				{ error: `Version ${version} already exists` },
 				{ status: 409 },
 			);
 		}
+		const message =
+			err instanceof Error ? err.message : "Internal Server Error";
 		return NextResponse.json(
-			{ error: "Failed to insert release: " + error.message },
+			{ error: "Failed to insert release: " + message },
 			{ status: 500 },
 		);
 	}
-
-	return NextResponse.json({ success: true, id: data.id });
 }

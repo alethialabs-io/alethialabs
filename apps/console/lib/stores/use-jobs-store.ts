@@ -4,18 +4,18 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { getJobs } from "@/app/server/actions/jobs";
-import type {
-	PublicProvisionJobsRow,
-	PublicProvisionJobType,
-	PublicProvisionJobStatus,
-} from "@/lib/validations/db.schemas";
+
+/** A job row as returned by the Drizzle-backed getJobs action. */
+type JobRow = Awaited<ReturnType<typeof getJobs>>[number];
+type PublicProvisionJobStatus = JobRow["status"];
+type PublicProvisionJobType = JobRow["job_type"];
 
 /** How long cached jobs are considered fresh (ms). */
 const STALE_THRESHOLD = 30_000;
 
 interface JobsStore {
 	/** Cached jobs array (in memory, not persisted). */
-	jobs: PublicProvisionJobsRow[];
+	jobs: JobRow[];
 	isLoading: boolean;
 	error: string | null;
 	lastFetchedAt: number | null;
@@ -30,7 +30,7 @@ interface JobsStore {
 	/** Fetches jobs from the server, skipping if data is fresh. */
 	fetchJobs: (force?: boolean) => Promise<void>;
 	/** Inserts or updates a job from a realtime event. */
-	addOrUpdateJob: (job: PublicProvisionJobsRow) => void;
+	addOrUpdateJob: (job: JobRow) => void;
 	setStatusFilter: (s: PublicProvisionJobStatus | "All") => void;
 	setTypeFilter: (t: PublicProvisionJobType | "All") => void;
 	setSearchQuery: (q: string) => void;
@@ -68,7 +68,7 @@ export const useJobsStore = create<JobsStore>()(
 				try {
 					const data = await getJobs();
 					set({
-						jobs: data as PublicProvisionJobsRow[],
+						jobs: data,
 						lastFetchedAt: Date.now(),
 						isLoading: false,
 						error: null,
@@ -82,7 +82,7 @@ export const useJobsStore = create<JobsStore>()(
 			addOrUpdateJob: (job) => {
 				set((state) => {
 					const idx = state.jobs.findIndex((j) => j.id === job.id);
-					let updated: PublicProvisionJobsRow[];
+					let updated: JobRow[];
 
 					if (idx >= 0) {
 						updated = [...state.jobs];

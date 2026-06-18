@@ -54,7 +54,7 @@ export async function updateSession(request: NextRequest) {
 		const url = new URL("/api/auth/callback", appUrl);
 		url.searchParams.set("code", code);
 		if (!request.nextUrl.searchParams.has("next")) {
-			url.searchParams.set("next", "/dashboard/integrations");
+			url.searchParams.set("next", "/dashboard/connectors");
 		} else {
 			url.searchParams.set("next", request.nextUrl.searchParams.get("next")!);
 		}

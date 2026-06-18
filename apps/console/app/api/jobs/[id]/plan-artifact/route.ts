@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { verifyWorkerToken } from "@/lib/workers/auth";
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { storage } from "@/lib/storage";
 import { NextResponse } from "next/server";
 
 const BUCKET = "plan-artifacts";
@@ -32,20 +32,23 @@ export async function POST(
 			);
 		}
 
-		const supabase = await createServiceRoleClient();
 		const path = `${jobId}/terraform.plan.out`;
 
-		const { error: uploadError } = await supabase.storage
-			.from(BUCKET)
-			.upload(path, body, {
-				contentType: "application/octet-stream",
-				upsert: true,
-			});
-
-		if (uploadError) {
-			console.error("Plan artifact upload error:", uploadError);
+		try {
+			await storage.put(
+				BUCKET,
+				path,
+				new Uint8Array(body),
+				"application/octet-stream",
+			);
+		} catch (uploadErr: unknown) {
+			const message =
+				uploadErr instanceof Error
+					? uploadErr.message
+					: "Upload failed";
+			console.error("Plan artifact upload error:", uploadErr);
 			return NextResponse.json(
-				{ error: "Upload failed: " + uploadError.message },
+				{ error: "Upload failed: " + message },
 				{ status: 500 },
 			);
 		}
@@ -68,22 +71,21 @@ export async function GET(
 	const { id: jobId } = await params;
 
 	try {
-		const supabase = await createServiceRoleClient();
 		const path = `${jobId}/terraform.plan.out`;
 
-		const { data, error: downloadError } = await supabase.storage
-			.from(BUCKET)
-			.download(path);
-
-		if (downloadError || !data) {
+		const data = await storage.get(BUCKET, path);
+		if (!data) {
 			return NextResponse.json(
 				{ error: "Plan artifact not found" },
 				{ status: 404 },
 			);
 		}
 
-		const arrayBuffer = await data.arrayBuffer();
-		return new Response(arrayBuffer, {
+		// Copy into a concrete ArrayBuffer-backed view so it satisfies BodyInit.
+		const out = new Uint8Array(data.byteLength);
+		out.set(data);
+
+		return new Response(out, {
 			status: 200,
 			headers: {
 				"Content-Type": "application/octet-stream",

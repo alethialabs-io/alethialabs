@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { verifyCliToken } from "@/lib/cli/auth";
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { getServiceDb } from "@/lib/db";
+import { runners } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 /** Deletes a worker record owned by the CLI user (no cloud teardown). */
@@ -24,19 +26,16 @@ export async function DELETE(
 	const { id: workerId } = await params;
 
 	try {
-		const supabase = await createServiceRoleClient();
+		const db = getServiceDb();
 
-		const { data: worker, error: fetchError } = await supabase
-			.from("workers")
-			.select("id, user_id")
-			.eq("id", workerId)
-			.single();
+		const [worker] = await db
+			.select({ id: runners.id, user_id: runners.user_id })
+			.from(runners)
+			.where(eq(runners.id, workerId))
+			.limit(1);
 
-		if (fetchError || !worker) {
-			return NextResponse.json(
-				{ error: "Worker not found" },
-				{ status: 404 },
-			);
+		if (!worker) {
+			return NextResponse.json({ error: "Worker not found" }, { status: 404 });
 		}
 
 		if (worker.user_id !== userId) {
@@ -46,17 +45,7 @@ export async function DELETE(
 			);
 		}
 
-		const { error: deleteError } = await supabase
-			.from("workers")
-			.delete()
-			.eq("id", workerId);
-
-		if (deleteError) {
-			return NextResponse.json(
-				{ error: "Failed to delete worker: " + deleteError.message },
-				{ status: 500 },
-			);
-		}
+		await db.delete(runners).where(eq(runners.id, workerId));
 
 		return NextResponse.json({ success: true });
 	} catch (err: unknown) {

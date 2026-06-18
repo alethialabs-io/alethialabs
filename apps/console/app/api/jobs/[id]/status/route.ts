@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { finalizeDeploymentWithClient } from "@/app/server/actions/deployments";
-import { verifyWorkerToken } from "@/lib/workers/auth";
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { finalizeDeployment } from "@/app/server/actions/deployments";
+import { getServiceDb } from "@/lib/db";
+import { jobs, specs } from "@/lib/db/schema";
+import { verifyWorkerToken } from "@/lib/workers/auth";
 
 export async function PUT(
 	req: Request,
@@ -26,12 +28,7 @@ export async function PUT(
 			);
 		}
 
-		const validStatuses = [
-			"PROCESSING",
-			"SUCCESS",
-			"FAILED",
-			"CANCELLED",
-		];
+		const validStatuses = ["PROCESSING", "SUCCESS", "FAILED", "CANCELLED"];
 		if (!validStatuses.includes(status)) {
 			return NextResponse.json(
 				{ error: `status must be one of: ${validStatuses.join(", ")}` },
@@ -39,61 +36,63 @@ export async function PUT(
 			);
 		}
 
-		const supabase = await createServiceRoleClient();
+		const db = getServiceDb();
 
-		const { error } = await supabase.rpc("update_job_status", {
-			p_worker_id: workerId,
-			p_worker_token_hash: tokenHash,
-			p_job_id: jobId,
-			p_status: status,
-			p_error_message: error_message || null,
-			p_execution_metadata: execution_metadata || null,
-		});
-
-		if (error) {
-			console.error("Update status RPC error:", error);
-			return NextResponse.json(
-				{ error: "Failed to update status: " + error.message },
-				{ status: 500 },
-			);
-		}
+		await db.execute(
+			sql`select update_job_status(${workerId}::uuid, ${tokenHash}, ${jobId}::uuid, ${status}, ${error_message || null}, ${execution_metadata ? JSON.stringify(execution_metadata) : null}::jsonb)`,
+		);
 
 		if (status === "PROCESSING" || status === "SUCCESS" || status === "FAILED") {
-			const { data: job } = await supabase
-				.from("provision_jobs")
-				.select("job_type, vine_id")
-				.eq("id", jobId)
-				.single();
+			const [job] = await db
+				.select({ job_type: jobs.job_type, spec_id: jobs.spec_id })
+				.from(jobs)
+				.where(eq(jobs.id, jobId))
+				.limit(1);
 
-			if (job?.vine_id) {
+			if (job?.spec_id) {
+				const specId = job.spec_id;
 				if (job.job_type === "DEPLOY") {
 					if (status === "PROCESSING") {
-						await supabase.from("vines").update({ status: "PROVISIONING" }).eq("id", job.vine_id);
+						await db
+							.update(specs)
+							.set({ status: "PROVISIONING" })
+							.where(eq(specs.id, specId));
 					} else if (status === "FAILED") {
-						await supabase.from("vines").update({ status: "FAILED" }).eq("id", job.vine_id);
+						await db
+							.update(specs)
+							.set({ status: "FAILED" })
+							.where(eq(specs.id, specId));
 					} else if (status === "SUCCESS") {
 						try {
-							await finalizeDeploymentWithClient(supabase, jobId);
+							await finalizeDeployment(jobId);
 						} catch (err) {
 							console.error("Finalize deployment error:", err);
-							await supabase.from("vines").update({ status: "FAILED" }).eq("id", job.vine_id);
+							await db
+								.update(specs)
+								.set({ status: "FAILED" })
+								.where(eq(specs.id, specId));
 						}
 					}
 				} else if (job.job_type === "PLAN") {
 					if (status === "FAILED") {
-						await supabase.from("vines").update({ status: "FAILED" }).eq("id", job.vine_id);
+						await db
+							.update(specs)
+							.set({ status: "FAILED" })
+							.where(eq(specs.id, specId));
 					} else if (status === "SUCCESS") {
-						await supabase.from("vines").update({ status: "DRAFT" }).eq("id", job.vine_id);
+						await db
+							.update(specs)
+							.set({ status: "DRAFT" })
+							.where(eq(specs.id, specId));
 					}
 				}
 			}
 		}
 
 		return NextResponse.json({ success: true });
-	} catch (err: any) {
-		return NextResponse.json(
-			{ error: err.message || "Internal Server Error" },
-			{ status: 500 },
-		);
+	} catch (err: unknown) {
+		const message =
+			err instanceof Error ? err.message : "Internal Server Error";
+		return NextResponse.json({ error: message }, { status: 500 });
 	}
 }

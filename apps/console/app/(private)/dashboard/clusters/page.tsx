@@ -6,11 +6,13 @@
 import { ClusterCard } from "@/components/clusters/cluster-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useClustersStore } from "@/lib/stores/use-clusters-store";
-import { createClient } from "@/lib/supabase/client";
-import type { PublicVinesRow } from "@/lib/validations/db.schemas";
 import { Server } from "lucide-react";
 import Link from "next/link";
 import { useEffect } from "react";
+
+// Interim reconciliation cadence while the data layer is off Supabase Realtime.
+// Phase E replaces this poll with an SSE stream (Postgres LISTEN/NOTIFY).
+const CLUSTERS_POLL_INTERVAL_MS = 5000;
 
 export default function ClustersPage() {
 	const { clusters, isLoading, fetchClusters } = useClustersStore();
@@ -20,28 +22,12 @@ export default function ClustersPage() {
 	}, [fetchClusters]);
 
 	useEffect(() => {
-		const supabase = createClient();
-		const channel = supabase
-			.channel("clusters-realtime")
-			.on(
-				"postgres_changes",
-				{
-					event: "UPDATE",
-					schema: "public",
-					table: "vines",
-				},
-				(payload) => {
-					if (
-						(payload.new as PublicVinesRow).status === "ACTIVE"
-					) {
-						fetchClusters(true);
-					}
-				},
-			)
-			.subscribe();
+		const interval = setInterval(() => {
+			fetchClusters(true);
+		}, CLUSTERS_POLL_INTERVAL_MS);
 
 		return () => {
-			supabase.removeChannel(channel);
+			clearInterval(interval);
 		};
 	}, [fetchClusters]);
 

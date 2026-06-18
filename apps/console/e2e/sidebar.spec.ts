@@ -9,7 +9,7 @@ test.describe("Sidebar navigation", () => {
 		await expect(page.getByRole("link", { name: "Vineyards" })).toBeVisible();
 		await expect(page.getByRole("link", { name: /plant/i })).toBeVisible();
 		await expect(page.getByRole("link", { name: "Jobs" })).toBeVisible();
-		await expect(page.getByRole("link", { name: "Integrations" })).toBeVisible();
+		await expect(page.getByRole("link", { name: "Connectors" })).toBeVisible();
 		await expect(page.getByRole("link", { name: "Workers" })).toBeVisible();
 	});
 
@@ -24,9 +24,9 @@ test.describe("Sidebar navigation", () => {
 		await expect(page.getByText("Vineyards")).toBeVisible();
 	});
 
-	test("navigates to Integrations", async ({ authedPage: page }) => {
-		await page.getByRole("link", { name: "Integrations" }).first().click();
-		await page.waitForURL(/\/dashboard\/integrations/);
-		await expect(page.getByText("Integrations")).toBeVisible();
+	test("navigates to Connectors", async ({ authedPage: page }) => {
+		await page.getByRole("link", { name: "Connectors" }).first().click();
+		await page.waitForURL(/\/dashboard\/connectors/);
+		await expect(page.getByText("Connectors")).toBeVisible();
 	});
 });

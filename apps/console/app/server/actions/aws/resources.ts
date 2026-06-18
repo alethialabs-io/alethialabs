@@ -2,10 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
-import { createClient } from "@/lib/supabase/server";
-import type { CachedResources } from "@/types/database-custom.types";
+import { and, eq } from "drizzle-orm";
+import { getOwner } from "@/lib/auth/owner";
+import { withOwnerScope } from "@/lib/db";
+import { cloudIdentities } from "@/lib/db/schema";
 import type { AnyCachedResources } from "@/lib/cloud-providers";
+import type { CachedResources } from "@/types/database-custom.types";
 
 export type CachedAwsResources = CachedResources & {
 	cached_at: string | null;
@@ -15,48 +17,61 @@ export type CachedAwsResources = CachedResources & {
 export async function getCachedAwsResources(
 	cloudIdentityId: string,
 ): Promise<CachedAwsResources | null> {
-	const supabase = await createClient();
+	const userId = await getOwner();
+	if (!userId) return null;
 
-	const { data, error } = await supabase
-		.from("cloud_identities")
-		.select("cached_resources, cached_at")
-		.eq("id", cloudIdentityId)
-		.eq("provider", "aws")
-		.single();
+	const [row] = await withOwnerScope(userId, (tx) =>
+		tx
+			.select({
+				cached_resources: cloudIdentities.cached_resources,
+				cached_at: cloudIdentities.cached_at,
+			})
+			.from(cloudIdentities)
+			.where(
+				and(
+					eq(cloudIdentities.id, cloudIdentityId),
+					eq(cloudIdentities.provider, "aws"),
+				),
+			)
+			.limit(1),
+	);
 
-	if (error || !data?.cached_resources) return null;
-
-	const res = data.cached_resources as CachedResources;
+	if (!row?.cached_resources) return null;
+	const res = row.cached_resources as CachedResources;
 	return {
 		regions: res.regions ?? [],
 		vpcs: res.vpcs ?? {},
 		subnets: res.subnets ?? {},
 		hosted_zones: res.hosted_zones ?? [],
-		cached_at: data.cached_at ?? null,
+		cached_at: row.cached_at?.toISOString() ?? null,
 	};
 }
 
 /** Fetches cached resources for any cloud identity, regardless of provider. */
-export async function getCachedResources(
-	cloudIdentityId: string,
-): Promise<{
+export async function getCachedResources(cloudIdentityId: string): Promise<{
 	resources: AnyCachedResources | null;
 	provider: string;
 	cachedAt: string | null;
 }> {
-	const supabase = await createClient();
+	const userId = await getOwner();
+	if (!userId) return { resources: null, provider: "aws", cachedAt: null };
 
-	const { data, error } = await supabase
-		.from("cloud_identities")
-		.select("cached_resources, cached_at, provider")
-		.eq("id", cloudIdentityId)
-		.single();
+	const [row] = await withOwnerScope(userId, (tx) =>
+		tx
+			.select({
+				cached_resources: cloudIdentities.cached_resources,
+				cached_at: cloudIdentities.cached_at,
+				provider: cloudIdentities.provider,
+			})
+			.from(cloudIdentities)
+			.where(eq(cloudIdentities.id, cloudIdentityId))
+			.limit(1),
+	);
 
-	if (error || !data) return { resources: null, provider: "aws", cachedAt: null };
-
+	if (!row) return { resources: null, provider: "aws", cachedAt: null };
 	return {
-		resources: data.cached_resources ?? null,
-		provider: data.provider,
-		cachedAt: data.cached_at,
+		resources: row.cached_resources ?? null,
+		provider: row.provider,
+		cachedAt: row.cached_at?.toISOString() ?? null,
 	};
 }

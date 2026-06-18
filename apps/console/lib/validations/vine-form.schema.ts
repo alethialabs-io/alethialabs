@@ -1,34 +1,68 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import {
-	publicVinesInsertSchema,
-	publicVineNetworkInsertSchema,
-	publicVineClusterInsertSchema,
-	publicVineDnsInsertSchema,
-	publicVineRepositoriesInsertSchema,
-	publicVineDatabasesInsertSchema,
-	publicVineCachesInsertSchema,
-	publicVineQueuesInsertSchema,
-	publicVineTopicsInsertSchema,
-	publicVineNosqlTablesInsertSchema,
-	publicVineSecretsInsertSchema,
-} from "./database.schemas";
+	specCaches,
+	specCluster,
+	specDatabases,
+	specDns,
+	specNetwork,
+	specNosqlTables,
+	specQueues,
+	specRepositories,
+	specSecrets,
+	specTopics,
+	specs,
+} from "@/lib/db/schema";
+import type {
+	ClusterAdmin,
+	ClusterProviderConfig,
+	DnsProviderConfig,
+	NosqlProviderConfig,
+	TopicSubscription,
+} from "@/types/database-custom.types";
+
+// Insert schemas derived from the Drizzle tables (drizzle-zod) — the replacement
+// for the retired supazod `public*InsertSchema` schemas. JSONB columns get their
+// typed shapes back via z.custom refinements (drizzle-zod emits z.unknown()
+// otherwise) so VineFormData keeps the same field types the form components rely on.
+const vinesInsert = createInsertSchema(specs);
+const networkInsert = createInsertSchema(specNetwork);
+const clusterInsert = createInsertSchema(specCluster, {
+	cluster_admins: z.custom<ClusterAdmin[]>().optional(),
+	provider_config: z.custom<ClusterProviderConfig>().optional(),
+});
+const dnsInsert = createInsertSchema(specDns, {
+	provider_config: z.custom<DnsProviderConfig>().optional(),
+});
+const repositoriesInsert = createInsertSchema(specRepositories);
+const databasesInsert = createInsertSchema(specDatabases);
+const cachesInsert = createInsertSchema(specCaches);
+const queuesInsert = createInsertSchema(specQueues);
+const topicsInsert = createInsertSchema(specTopics, {
+	subscriptions: z.custom<TopicSubscription[]>().optional(),
+});
+const nosqlInsert = createInsertSchema(specNosqlTables, {
+	provider_config: z.custom<NosqlProviderConfig>().optional(),
+});
+const secretsInsert = createInsertSchema(specSecrets);
 
 const autoFields = { id: true, created_at: true, updated_at: true } as const;
 const componentAutoFields = {
 	...autoFields,
-	vine_id: true,
+	spec_id: true,
 	status: true,
 	status_message: true,
 	estimated_monthly_cost: true,
 } as const;
 
-const vineSchema = publicVinesInsertSchema
+const vineSchema = vinesInsert
 	.omit({
 		...autoFields,
 		user_id: true,
+		zone_id: true,
 		status: true,
 		estimated_monthly_cost: true,
 	})
@@ -39,7 +73,7 @@ const vineSchema = publicVinesInsertSchema
 		cloud_identity_id: z.string().min(1, "Cloud account is required"),
 	});
 
-const networkSchema = publicVineNetworkInsertSchema
+const networkSchema = networkInsert
 	.omit(componentAutoFields)
 	.superRefine((data, ctx) => {
 		if (data.provision_network === false && !data.network_id) {
@@ -51,48 +85,49 @@ const networkSchema = publicVineNetworkInsertSchema
 		}
 	});
 
-const clusterSchema = publicVineClusterInsertSchema.omit({
+const clusterSchema = clusterInsert.omit({
 	...componentAutoFields,
 	cluster_name: true,
 	cluster_endpoint: true,
 });
 
-const dnsSchema = publicVineDnsInsertSchema.omit(componentAutoFields);
+const dnsSchema = dnsInsert.omit(componentAutoFields);
 
-const repositoriesSchema = publicVineRepositoriesInsertSchema.omit({
+const repositoriesSchema = repositoriesInsert.omit({
 	...autoFields,
-	vine_id: true,
+	spec_id: true,
 });
 
-const databaseItemSchema = publicVineDatabasesInsertSchema.omit({
+const databaseItemSchema = databasesInsert.omit({
 	...componentAutoFields,
 	endpoint: true,
 	reader_endpoint: true,
 }).extend({ name: z.string().min(1, "Database name is required") });
 
-const cacheItemSchema = publicVineCachesInsertSchema.omit({
+const cacheItemSchema = cachesInsert.omit({
 	...componentAutoFields,
 	endpoint: true,
+	reader_endpoint: true,
 }).extend({ name: z.string().min(1, "Cache name is required") });
 
-const queueItemSchema = publicVineQueuesInsertSchema
+const queueItemSchema = queuesInsert
 	.omit(componentAutoFields)
 	.extend({ name: z.string().min(1, "Queue name is required") });
 
-const topicItemSchema = publicVineTopicsInsertSchema
+const topicItemSchema = topicsInsert
 	.omit(componentAutoFields)
 	.extend({ name: z.string().min(1, "Topic name is required") });
 
-const nosqlItemSchema = publicVineNosqlTablesInsertSchema
+const nosqlItemSchema = nosqlInsert
 	.omit(componentAutoFields)
 	.extend({
 		name: z.string().min(1, "Table name is required"),
 		hash_key: z.string().min(1, "Hash key is required"),
 	});
 
-const secretItemSchema = publicVineSecretsInsertSchema.omit({
+const secretItemSchema = secretsInsert.omit({
 	...autoFields,
-	vine_id: true,
+	spec_id: true,
 	status: true,
 	status_message: true,
 }).extend({ name: z.string().min(1, "Secret name is required") });

@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { verifyCliToken } from "@/lib/cli/auth";
+import { getServiceDb } from "@/lib/db";
+import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
 import { createHash, randomBytes } from "crypto";
+import { desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 /** Deploys a tendril by creating a worker record + queuing a DEPLOY_WORKER job. */
@@ -31,15 +33,19 @@ export async function POST(req: Request) {
 			);
 		}
 
-		const supabase = await createServiceRoleClient();
+		const db = getServiceDb();
 
-		const { data: identity, error: identityError } = await supabase
-			.from("cloud_identities")
-			.select("id, provider, user_id")
-			.eq("id", cloud_identity_id)
-			.single();
+		const [identity] = await db
+			.select({
+				id: cloudIdentities.id,
+				provider: cloudIdentities.provider,
+				user_id: cloudIdentities.user_id,
+			})
+			.from(cloudIdentities)
+			.where(eq(cloudIdentities.id, cloud_identity_id))
+			.limit(1);
 
-		if (identityError || !identity) {
+		if (!identity) {
 			return NextResponse.json(
 				{ error: "Cloud identity not found" },
 				{ status: 404 },
@@ -53,36 +59,27 @@ export async function POST(req: Request) {
 			);
 		}
 
-		const { data: latestRelease } = await supabase
-			.from("worker_releases")
-			.select("version")
-			.order("released_at", { ascending: false })
-			.limit(1)
-			.single();
+		const [latestRelease] = await db
+			.select({ version: runnerReleases.version })
+			.from(runnerReleases)
+			.orderBy(desc(runnerReleases.released_at))
+			.limit(1);
 
 		const imageTag = latestRelease?.version ?? "latest";
 
 		const workerToken = randomBytes(32).toString("hex");
 		const tokenHash = createHash("sha256").update(workerToken).digest("hex");
 
-		const { data: worker, error: workerError } = await supabase
-			.from("workers")
-			.insert({
+		const [worker] = await db
+			.insert(runners)
+			.values({
 				user_id: userId,
 				name,
-				mode: "self-hosted" as const,
+				mode: "self-hosted",
 				token_hash: tokenHash,
 				cloud_identity_id,
 			})
-			.select("id, name")
-			.single();
-
-		if (workerError) {
-			return NextResponse.json(
-				{ error: "Failed to register tendril: " + workerError.message },
-				{ status: 500 },
-			);
-		}
+			.returning({ id: runners.id, name: runners.name });
 
 		const configSnapshot = {
 			worker_id: worker.id,
@@ -95,31 +92,24 @@ export async function POST(req: Request) {
 				process.env.NEXT_PUBLIC_APP_URL || "https://adp.prod.itgix.eu",
 		};
 
-		const { data: job, error: jobError } = await supabase
-			.from("provision_jobs")
-			.insert({
+		const [job] = await db
+			.insert(jobs)
+			.values({
 				user_id: userId,
 				cloud_identity_id,
 				job_type: "DEPLOY_WORKER",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
-				assigned_worker_id: assigned_worker_id || null,
+				assigned_runner_id: assigned_worker_id || null,
 			})
-			.select("id, status, created_at")
-			.single();
-
-		if (jobError) {
-			return NextResponse.json(
-				{ error: "Failed to queue deployment: " + jobError.message },
-				{ status: 500 },
-			);
-		}
+			.returning({
+				id: jobs.id,
+				status: jobs.status,
+				created_at: jobs.created_at,
+			});
 
 		notifyScaler();
-		return NextResponse.json(
-			{ tendril: worker, job },
-			{ status: 201 },
-		);
+		return NextResponse.json({ tendril: worker, job }, { status: 201 });
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";

@@ -195,7 +195,7 @@ export function DuplicateModal({
 							</div>
 						) : identities.length === 0 ? (
 							<p className="text-sm text-muted-foreground">
-								No other cloud accounts available. Connect one in Integrations.
+								No other cloud accounts available. Connect one in Connectors.
 							</p>
 						) : (
 							<Select value={selectedIdentityId} onValueChange={(id) => {

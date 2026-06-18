@@ -1,0 +1,45 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import * as conn from "@/lib/cloud-providers/connections";
+import { errorResponse, resolveCliProvider } from "@/lib/cli/providers";
+import { NextResponse } from "next/server";
+
+type VerifyBody = { identity_id?: string; job_id?: string };
+
+/** Marks an identity verified after its CONNECTION_TEST job has succeeded. */
+export async function POST(
+	req: Request,
+	{ params }: { params: Promise<{ provider: string }> },
+) {
+	const { userId, errorResponse: authError } = await resolveCliProvider(
+		req,
+		params,
+	);
+	if (authError) return authError;
+
+	let body: VerifyBody;
+	try {
+		body = await req.json();
+	} catch {
+		return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+	}
+
+	if (!body.identity_id) {
+		return NextResponse.json(
+			{ error: "Missing identity_id" },
+			{ status: 400 },
+		);
+	}
+
+	try {
+		const result = await conn.verifyIdentity(
+			userId,
+			body.identity_id,
+			body.job_id,
+		);
+		return NextResponse.json(result);
+	} catch (err) {
+		return errorResponse(err, 400);
+	}
+}

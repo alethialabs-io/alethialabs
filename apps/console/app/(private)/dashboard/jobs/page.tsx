@@ -11,7 +11,7 @@ import {
 	type PublicProvisionJobStatus,
 	type PublicProvisionJobType,
 } from "@/lib/stores/use-jobs-store";
-import type { PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
+import type { JobWithMeta } from "@/app/server/actions/jobs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -63,14 +63,14 @@ export default function JobsPage() {
 			result = result.filter(
 				(j) =>
 					j.id.toLowerCase().includes(q) ||
-					(j.worker_id && j.worker_id.toLowerCase().includes(q)) ||
-					(j.vine_id && j.vine_id.toLowerCase().includes(q)),
+					(j.runner_id && j.runner_id.toLowerCase().includes(q)) ||
+					(j.spec_id && j.spec_id.toLowerCase().includes(q)),
 			);
 		}
 		return result;
 	}, [jobs, statusFilter, typeFilter, searchQuery]);
 
-	const handleRowClick = (job: PublicProvisionJobsRow) => {
+	const handleRowClick = (job: JobWithMeta) => {
 		router.push(`/dashboard/jobs/${job.id}`);
 	};
 

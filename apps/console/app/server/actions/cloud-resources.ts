@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
+import { eq, sql } from "drizzle-orm";
+import { withOwnerScope } from "@/lib/db";
+import { jobs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import { createClient } from "@/lib/supabase/server";
 
@@ -15,23 +17,22 @@ export async function refreshCloudResources(cloudIdentityId: string) {
 
 	if (!user) throw new Error("Unauthorized");
 
-	const { data: job, error } = await supabase
-		.from("provision_jobs")
-		.insert({
-			user_id: user.id,
-			job_type: "FETCH_RESOURCES",
-			cloud_identity_id: cloudIdentityId,
-			config_snapshot: {},
-			status: "QUEUED",
-		})
-		.select("id")
-		.single();
-
-	if (error)
-		throw new Error("Failed to queue resource fetch: " + error.message);
+	const jobId = await withOwnerScope(user.id, async (tx) => {
+		const [job] = await tx
+			.insert(jobs)
+			.values({
+				user_id: user.id,
+				job_type: "FETCH_RESOURCES",
+				cloud_identity_id: cloudIdentityId,
+				config_snapshot: {},
+				status: "QUEUED",
+			})
+			.returning({ id: jobs.id });
+		return job.id;
+	});
 
 	notifyScaler();
-	return { jobId: job.id };
+	return { jobId };
 }
 
 /** Persists cached resources from a completed job to the cloud identity, then returns them. */
@@ -40,33 +41,31 @@ export async function completeResourceRefresh(
 	jobId: string,
 ) {
 	const supabase = await createClient();
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
+	if (!user) throw new Error("Unauthorized");
 
-	const { data: job } = await supabase
-		.from("provision_jobs")
-		.select("execution_metadata")
-		.eq("id", jobId)
-		.single();
+	return withOwnerScope(user.id, async (tx) => {
+		const [job] = await tx
+			.select({ execution_metadata: jobs.execution_metadata })
+			.from(jobs)
+			.where(eq(jobs.id, jobId))
+			.limit(1);
 
-	const metadata = job?.execution_metadata;
-	if (!metadata?.cached_resources) {
-		return { success: false, resources: null, cachedAt: null };
-	}
+		const cached = job?.execution_metadata?.cached_resources;
+		if (cached === undefined || cached === null) {
+			return { success: false, resources: null, cachedAt: null };
+		}
 
-	const cachedAt = new Date().toISOString();
+		const cachedAt = new Date().toISOString();
+		// Opaque runner-produced payload → raw jsonb assignment (RLS-scoped by tx).
+		await tx.execute(
+			sql`update cloud_identities
+			    set cached_resources = ${JSON.stringify(cached)}::jsonb, cached_at = ${cachedAt}::timestamptz
+			    where id = ${cloudIdentityId}`,
+		);
 
-	const resources = metadata.cached_resources as Record<string, unknown>;
-
-	await supabase
-		.from("cloud_identities")
-		.update({
-			cached_resources: resources as any,
-			cached_at: cachedAt,
-		})
-		.eq("id", cloudIdentityId);
-
-	return {
-		success: true,
-		resources,
-		cachedAt,
-	};
+		return { success: true, resources: cached, cachedAt };
+	});
 }

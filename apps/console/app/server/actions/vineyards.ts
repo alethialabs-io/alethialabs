@@ -2,114 +2,127 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { requireOwner } from "@/lib/auth/owner";
+import { withOwnerScope } from "@/lib/db";
+import {
+	cloudIdentities,
+	type Spec,
+	specs,
+	type Zone,
+	zones,
+} from "@/lib/db/schema";
+import { desc, eq } from "drizzle-orm";
 
-import { createClient } from "@/lib/supabase/server";
-import type {
-	PublicVineyardsInsert,
-	PublicVineyardsRow,
-	PublicVineyardsUpdate,
-	PublicVinesRow,
-} from "@/lib/validations/db.schemas";
-
-export type VineWithProvider = PublicVinesRow & {
+export type VineWithProvider = Spec & {
 	cloud_provider: string | null;
 };
 
-export type VineyardWithVines = PublicVineyardsRow & {
+export type VineyardWithVines = Zone & {
 	vines: VineWithProvider[];
 };
 
 export type GetVineyardsData = VineyardWithVines[];
 
-/** Maps raw vine + cloud_identities join into VineWithProvider. */
-function mapVinesWithProvider(raw: any[]): VineWithProvider[] {
-	return (raw ?? []).map((vine: any) => {
-		const provider = vine.cloud_identities?.provider ?? null;
-		const { cloud_identities: _, ...rest } = vine;
-		return { ...rest, cloud_provider: provider } as VineWithProvider;
+/** Fetches all zones with nested specs and each spec's cloud provider. */
+export async function getVineyards() {
+	const owner = await requireOwner();
+	return withOwnerScope(owner, async (tx) => {
+		const zoneRows = await tx
+			.select()
+			.from(zones)
+			.orderBy(desc(zones.created_at));
+
+		const specRows = await tx
+			.select({ spec: specs, cloud_provider: cloudIdentities.provider })
+			.from(specs)
+			.leftJoin(
+				cloudIdentities,
+				eq(specs.cloud_identity_id, cloudIdentities.id),
+			);
+
+		const byZone = new Map<string, VineWithProvider[]>();
+		for (const r of specRows) {
+			const vine: VineWithProvider = {
+				...r.spec,
+				cloud_provider: r.cloud_provider ?? null,
+			};
+			const key = r.spec.zone_id ?? "";
+			const arr = byZone.get(key) ?? [];
+			arr.push(vine);
+			byZone.set(key, arr);
+		}
+
+		const vineyards: GetVineyardsData = zoneRows.map((z) => ({
+			...z,
+			vines: byZone.get(z.id) ?? [],
+		}));
+
+		return { vineyards };
 	});
 }
 
-/** Fetches all vineyards with nested vines and their cloud provider. */
-export async function getVineyards() {
-	const supabase = await createClient();
-
-	const { data, error } = await supabase
-		.from("vineyards")
-		.select("*, vines(*, cloud_identities(provider))")
-		.order("created_at", { ascending: false });
-
-	if (error) throw new Error(error.message);
-
-	const vineyards: GetVineyardsData = (data ?? []).map((vy: any) => ({
-		...vy,
-		vines: mapVinesWithProvider(vy.vines),
-	}));
-
-	return { vineyards };
-}
-
-/** Fetches a single vineyard with nested vines and their cloud provider. */
+/** Fetches a single zone with nested specs and their cloud provider. */
 export async function getVineyardById(id: string) {
-	const supabase = await createClient();
+	const owner = await requireOwner();
+	return withOwnerScope(owner, async (tx) => {
+		const [zone] = await tx
+			.select()
+			.from(zones)
+			.where(eq(zones.id, id))
+			.limit(1);
 
-	const { data, error } = await supabase
-		.from("vineyards")
-		.select("*, vines(*, cloud_identities(provider))")
-		.eq("id", id)
-		.single();
+		if (!zone) throw new Error("Zone not found");
 
-	if (error) throw new Error(error.message);
+		const specRows = await tx
+			.select({ spec: specs, cloud_provider: cloudIdentities.provider })
+			.from(specs)
+			.leftJoin(
+				cloudIdentities,
+				eq(specs.cloud_identity_id, cloudIdentities.id),
+			)
+			.where(eq(specs.zone_id, id));
 
-	const vineyard: VineyardWithVines = {
-		...data,
-		vines: mapVinesWithProvider((data as any).vines),
-	};
+		const vines: VineWithProvider[] = specRows.map((r) => ({
+			...r.spec,
+			cloud_provider: r.cloud_provider ?? null,
+		}));
 
-	return { vineyard };
+		return { vineyard: { ...zone, vines } };
+	});
 }
 
 export async function createVineyard(
-	body: Omit<PublicVineyardsInsert, "user_id">,
+	body: Omit<typeof zones.$inferInsert, "user_id">,
 ) {
-	const supabase = await createClient();
-
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
-	if (!user) throw new Error("Unauthorized");
-
-	const { data, error } = await supabase
-		.from("vineyards")
-		.insert({ ...body, user_id: user.id })
-		.select()
-		.single();
-
-	if (error) throw new Error(error.message);
-
-	return { vineyard: data };
+	const owner = await requireOwner();
+	return withOwnerScope(owner, async (tx) => {
+		const [zone] = await tx
+			.insert(zones)
+			.values({ ...body, user_id: owner })
+			.returning();
+		return { vineyard: zone };
+	});
 }
 
-export async function updateVineyard(id: string, body: PublicVineyardsUpdate) {
-	const supabase = await createClient();
-
-	const { data, error } = await supabase
-		.from("vineyards")
-		.update(body)
-		.eq("id", id)
-		.select()
-		.single();
-
-	if (error) throw new Error(error.message);
-
-	return { vineyard: data };
+export async function updateVineyard(
+	id: string,
+	body: Partial<typeof zones.$inferInsert>,
+) {
+	const owner = await requireOwner();
+	return withOwnerScope(owner, async (tx) => {
+		const [zone] = await tx
+			.update(zones)
+			.set(body)
+			.where(eq(zones.id, id))
+			.returning();
+		return { vineyard: zone };
+	});
 }
 
 export async function deleteVineyard(id: string) {
-	const supabase = await createClient();
-
-	const { error } = await supabase.from("vineyards").delete().eq("id", id);
-	if (error) throw new Error(error.message);
-
-	return { success: true };
+	const owner = await requireOwner();
+	return withOwnerScope(owner, async (tx) => {
+		await tx.delete(zones).where(eq(zones.id, id));
+		return { success: true };
+	});
 }

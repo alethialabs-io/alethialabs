@@ -23,7 +23,6 @@ import { useJobsStore } from "@/lib/stores/use-jobs-store";
 import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import type { PublicProvisionJobsRow, PublicVinesRow } from "@/lib/validations/db.schemas";
 import { User as IUser } from "@supabase/supabase-js";
 import { SidebarVineyards } from "@/components/sidebar-vineyards";
 import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
@@ -74,9 +73,11 @@ export default function DashboardLayout({
 					"postgres_changes",
 					{ event: "*", schema: "public", table: "provision_jobs" },
 					(payload) => {
-						const job = payload.new as PublicProvisionJobsRow;
-						if (job && job.user_id === u.id) {
-							useJobsStore.getState().addOrUpdateJob(job);
+						const row = payload.new;
+						// Realtime payloads lack the spec/runner joins getJobs() adds, so
+						// reconcile by refetching rather than patching a partial row.
+						if (row && "user_id" in row && row.user_id === u.id) {
+							useJobsStore.getState().fetchJobs(true);
 						}
 					},
 				)
@@ -84,17 +85,9 @@ export default function DashboardLayout({
 					"postgres_changes",
 					{ event: "UPDATE", schema: "public", table: "vines" },
 					(payload) => {
-						const vine = payload.new as PublicVinesRow;
-						if (vine && vine.user_id === u.id) {
-							useVineyardsStore.getState().updateVineInPlace(vine.id, {
-								status: vine.status,
-								estimated_monthly_cost: vine.estimated_monthly_cost,
-								project_name: vine.project_name,
-								region: vine.region,
-								environment_stage: vine.environment_stage,
-								terraform_version: vine.terraform_version,
-								updated_at: vine.updated_at,
-							});
+						const row = payload.new;
+						if (row && "user_id" in row && row.user_id === u.id) {
+							useVineyardsStore.getState().fetchVineyards(true);
 						}
 					},
 				)
@@ -118,7 +111,7 @@ export default function DashboardLayout({
 		{ name: "Create a Spec", href: "/dashboard/plant", icon: Plus },
 		{ name: "Clusters", href: "/dashboard/clusters", icon: Server },
 		{ name: "Jobs", href: "/dashboard/jobs", icon: ClipboardList },
-		{ name: "Integrations", href: "/dashboard/integrations", icon: Blocks },
+		{ name: "Connectors", href: "/dashboard/connectors", icon: Blocks },
 		{ name: "Runners", href: "/dashboard/tendrils", icon: Workflow },
 	];
 

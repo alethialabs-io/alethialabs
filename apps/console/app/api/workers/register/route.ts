@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { verifyCliToken } from "@/lib/cli/auth";
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { getServiceDb } from "@/lib/db";
+import { runners } from "@/lib/db/schema";
 import { createHash, randomBytes } from "crypto";
 import { NextResponse } from "next/server";
 
@@ -36,15 +37,12 @@ export async function POST(req: Request) {
 		}
 
 		const workerToken = randomBytes(32).toString("hex");
-		const tokenHash = createHash("sha256")
-			.update(workerToken)
-			.digest("hex");
+		const tokenHash = createHash("sha256").update(workerToken).digest("hex");
 
-		const supabase = await createServiceRoleClient();
-
-		const { data: worker, error: insertError } = await supabase
-			.from("workers")
-			.insert({
+		const db = getServiceDb();
+		const [worker] = await db
+			.insert(runners)
+			.values({
 				user_id: userId,
 				name,
 				mode,
@@ -52,28 +50,22 @@ export async function POST(req: Request) {
 				token_hash: tokenHash,
 				metadata: metadata || {},
 			})
-			.select("id, name, mode, status, created_at")
-			.single();
-
-		if (insertError) {
-			console.error("Failed to register worker:", insertError);
-			return NextResponse.json(
-				{ error: "Failed to register worker: " + insertError.message },
-				{ status: 500 },
-			);
-		}
+			.returning({
+				id: runners.id,
+				name: runners.name,
+				mode: runners.mode,
+				status: runners.status,
+				// snake_case key preserves the Go CLI's Worker wire contract.
+				created_at: runners.created_at,
+			});
 
 		return NextResponse.json(
-			{
-				worker,
-				worker_token: workerToken,
-			},
+			{ worker, worker_token: workerToken },
 			{ status: 201 },
 		);
-	} catch (err: any) {
-		return NextResponse.json(
-			{ error: err.message || "Internal Server Error" },
-			{ status: 500 },
-		);
+	} catch (err: unknown) {
+		const message =
+			err instanceof Error ? err.message : "Internal Server Error";
+		return NextResponse.json({ error: message }, { status: 500 });
 	}
 }

@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
+import { getOwner } from "@/lib/auth/owner";
+import { withOwnerScope } from "@/lib/db";
+import { providerTokens } from "@/lib/db/schema";
 import { createClient } from "@/lib/supabase/server";
 import { getValidProviderToken } from "../identities";
 import {
@@ -18,21 +21,15 @@ export async function fetchAllRepositories(): Promise<{
 	error?: string;
 }> {
 	try {
-		const supabase = await createClient();
+		const owner = await getOwner();
+		if (!owner) return { repositories: [] };
 
-		// Get linked providers
-		const { data: linkedProvidersData, error: providersError } =
-			await supabase.from("provider_tokens").select("provider");
+		// Get linked providers (owner-scoped).
+		const linkedProvidersData = await withOwnerScope(owner, (tx) =>
+			tx.select({ provider: providerTokens.provider }).from(providerTokens),
+		);
 
-		if (providersError) {
-			console.error("Error fetching provider tokens:", providersError);
-			return {
-				repositories: [],
-				error: "Failed to fetch linked providers",
-			};
-		}
-
-		if (!linkedProvidersData || linkedProvidersData.length === 0) {
+		if (linkedProvidersData.length === 0) {
 			return { repositories: [] };
 		}
 

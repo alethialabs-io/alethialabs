@@ -2,12 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
+import { eq, sql } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
+import * as conn from "@/lib/cloud-providers/connections";
+import { withOwnerScope } from "@/lib/db";
+import { jobs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import { createClient } from "@/lib/supabase/server";
-import type { CachedResources } from "@/types/database-custom.types";
-import { revalidatePath } from "next/cache";
-import { randomUUID } from "crypto";
 
 export type AwsConnectionStatus = {
 	connected: boolean;
@@ -17,70 +18,29 @@ export type AwsConnectionStatus = {
 	externalId?: string;
 };
 
+/** Returns the verified AWS connection status for the current user. */
 export async function getAwsConnectionStatus(): Promise<AwsConnectionStatus> {
 	const supabase = await createClient();
-
-	const { data: identity } = await supabase
-		.from("cloud_identities")
-		.select("*")
-		.eq("provider", "aws")
-		.eq("is_verified", true)
-		.maybeSingle();
-
-	if (identity) {
-		return {
-			connected: true,
-			accountId: identity.credentials.account_id ?? undefined,
-			roleArn: identity.credentials.role_arn ?? undefined,
-			identityId: identity.id,
-		};
-	}
-
-	return { connected: false };
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
+	if (!user) return { connected: false };
+	return conn.getStatus(user.id, "aws");
 }
 
+/** Gets or creates the user's AWS identity and returns its external id. */
 export async function getAwsExternalId() {
 	const supabase = await createClient();
-
-	// UNIQUE constraint on (user_id, provider) guarantees at most one row
-	const { data: existing } = await supabase
-		.from("cloud_identities")
-		.select("*")
-		.eq("provider", "aws")
-		.maybeSingle();
-
-	if (existing) {
-		const credentials = existing.credentials;
-		if (credentials?.external_id) {
-			return {
-				externalId: credentials.external_id as string,
-				identityId: existing.id,
-			};
-		}
-	}
-
-	const newExternalId = randomUUID();
-	const { data: newIdentity, error } = await supabase
-		.from("cloud_identities")
-		.insert({
-			provider: "aws",
-			name: "AWS Connection (Pending)",
-			credentials: { external_id: newExternalId },
-			is_verified: false,
-		})
-		.select()
-		.single();
-
-	if (error) {
-		throw new Error("Failed to initialize AWS connection");
-	}
-
-	return {
-		externalId: newExternalId,
-		identityId: newIdentity.id,
-	};
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
+	if (!user) throw new Error("Unauthorized");
+	const { identityId, externalId } = await conn.initIdentity(user.id, "aws");
+	if (!externalId) throw new Error("Failed to initialize AWS external ID");
+	return { externalId, identityId };
 }
 
+/** Queues a FETCH_RESOURCES job to refresh cached AWS resources. */
 export async function refreshAwsResources(cloudIdentityId: string) {
 	const supabase = await createClient();
 	const {
@@ -89,203 +49,86 @@ export async function refreshAwsResources(cloudIdentityId: string) {
 
 	if (!user) throw new Error("Unauthorized");
 
-	const { data: job, error } = await supabase
-		.from("provision_jobs")
-		.insert({
-			user_id: user.id,
-			job_type: "FETCH_RESOURCES",
-			cloud_identity_id: cloudIdentityId,
-			config_snapshot: {},
-			status: "QUEUED",
-		})
-		.select("id")
-		.single();
-
-	if (error) throw new Error("Failed to queue resource fetch: " + error.message);
+	const jobId = await withOwnerScope(user.id, async (tx) => {
+		const [job] = await tx
+			.insert(jobs)
+			.values({
+				user_id: user.id,
+				job_type: "FETCH_RESOURCES",
+				cloud_identity_id: cloudIdentityId,
+				config_snapshot: {},
+				status: "QUEUED",
+			})
+			.returning({ id: jobs.id });
+		return job.id;
+	});
 
 	notifyScaler();
-	return { jobId: job.id };
+	return { jobId };
 }
 
-export async function persistCachedResources(cloudIdentityId: string, jobId: string) {
+/** Persists cached resources from a completed FETCH_RESOURCES job. */
+export async function persistCachedResources(
+	cloudIdentityId: string,
+	jobId: string,
+) {
 	const supabase = await createClient();
+	const {
+		data: { user },
+	} = await supabase.auth.getUser();
+	if (!user) throw new Error("Unauthorized");
 
-	const { data: job } = await supabase
-		.from("provision_jobs")
-		.select("execution_metadata")
-		.eq("id", jobId)
-		.single();
+	return withOwnerScope(user.id, async (tx) => {
+		const [job] = await tx
+			.select({ execution_metadata: jobs.execution_metadata })
+			.from(jobs)
+			.where(eq(jobs.id, jobId))
+			.limit(1);
 
-	const metadata = job?.execution_metadata;
-	if (!metadata?.cached_resources) return { success: false };
+		const cached = job?.execution_metadata?.cached_resources;
+		if (cached === undefined || cached === null) return { success: false };
 
-	const resources = metadata.cached_resources as CachedResources;
-	await supabase
-		.from("cloud_identities")
-		.update({
-			cached_resources: resources,
-			cached_at: new Date().toISOString(),
-		})
-		.eq("id", cloudIdentityId);
-
-	return { success: true };
+		// Opaque runner-produced payload → raw jsonb assignment (RLS-scoped by tx).
+		await tx.execute(
+			sql`update cloud_identities
+			    set cached_resources = ${JSON.stringify(cached)}::jsonb, cached_at = now()
+			    where id = ${cloudIdentityId}`,
+		);
+		return { success: true };
+	});
 }
 
+/** Validates a Role ARN, persists it, and queues a connection test. */
 export async function saveAwsIdentity(identityId: string, roleArn: string) {
 	const supabase = await createClient();
 	const {
 		data: { user },
 		error: authError,
 	} = await supabase.auth.getUser();
-
 	if (authError || !user) throw new Error("Unauthorized");
-
-	const arnRegex = /^arn:aws:iam::(\d{12}):role\/[\w+=,.@-]+$/;
-	const match = roleArn.match(arnRegex);
-
-	if (!match) {
-		throw new Error(
-			"Invalid format. Expected: arn:aws:iam::123456789012:role/RoleName",
-		);
-	}
-
-	const awsAccountId = match[1];
-
-	const { data: identity, error: fetchError } = await supabase
-		.from("cloud_identities")
-		.select("*")
-		.eq("id", identityId)
-		.eq("user_id", user.id)
-		.single();
-
-	if (fetchError || !identity) {
-		throw new Error("Connection session not found");
-	}
-
-	const currentCredentials = identity.credentials;
-
-	const { error: updateError } = await supabase
-		.from("cloud_identities")
-		.update({
-			name: `AWS Account (${awsAccountId})`,
-			credentials: {
-				...currentCredentials,
-				role_arn: roleArn,
-				account_id: awsAccountId,
-			},
-			is_verified: false,
-			updated_at: new Date().toISOString(),
-		})
-		.eq("id", identityId);
-
-	if (updateError) {
-		throw new Error("Failed to save connection details");
-	}
-
-	const { data: job, error: jobError } = await supabase
-		.from("provision_jobs")
-		.insert({
-			user_id: user.id,
-			job_type: "CONNECTION_TEST",
-			cloud_identity_id: identityId,
-			config_snapshot: { role_arn: roleArn, account_id: awsAccountId },
-			status: "QUEUED",
-		})
-		.select("id")
-		.single();
-
-	if (jobError) {
-		throw new Error("Failed to queue connection test: " + jobError.message);
-	}
-
-	notifyScaler();
-	return { jobId: job.id, identityId };
+	return conn.saveAwsIdentity(user.id, identityId, roleArn);
 }
 
+/** Marks the AWS identity verified using the connection test result. */
 export async function verifyAwsIdentity(identityId: string, jobId?: string) {
 	const supabase = await createClient();
 	const {
 		data: { user },
 		error: authError,
 	} = await supabase.auth.getUser();
-
 	if (authError || !user) throw new Error("Unauthorized");
-
-	const updateData: Record<string, any> = {
-		is_verified: true,
-		updated_at: new Date().toISOString(),
-	};
-
-	if (jobId) {
-		const { data: job } = await supabase
-			.from("provision_jobs")
-			.select("execution_metadata")
-			.eq("id", jobId)
-			.single();
-
-		const metadata = job?.execution_metadata;
-		if (metadata?.cached_resources) {
-			updateData.cached_resources = metadata.cached_resources as CachedResources;
-			updateData.cached_at = new Date().toISOString();
-		}
-	}
-
-	const { error } = await supabase
-		.from("cloud_identities")
-		.update(updateData)
-		.eq("id", identityId)
-		.eq("user_id", user.id);
-
-	if (error) {
-		throw new Error("Failed to verify identity");
-	}
-
-	revalidatePath("/dashboard/integrations");
-	return { success: true };
+	const result = await conn.verifyIdentity(user.id, identityId, jobId);
+	revalidatePath("/dashboard/connectors");
+	return result;
 }
 
+/** Resets the AWS identity to its pending state. */
 export async function disconnectAwsIdentity(identityId: string) {
 	const supabase = await createClient();
 	const {
 		data: { user },
 		error: authError,
 	} = await supabase.auth.getUser();
-
 	if (authError || !user) throw new Error("Unauthorized");
-
-	const { data: identity } = await supabase
-		.from("cloud_identities")
-		.select("credentials")
-		.eq("id", identityId)
-		.eq("user_id", user.id)
-		.single();
-
-	if (!identity) throw new Error("Identity not found");
-
-	const currentCredentials = identity.credentials;
-
-	const { error } = await supabase
-		.from("cloud_identities")
-		.update({
-			name: "AWS Connection (Pending)",
-			is_verified: false,
-			credentials: { external_id: currentCredentials?.external_id },
-			cached_resources: null,
-			cached_at: null,
-			updated_at: new Date().toISOString(),
-		})
-		.eq("id", identityId)
-		.eq("user_id", user.id);
-
-	if (error) {
-		throw new Error("Failed to disconnect AWS account");
-	}
-
-
-	await supabase
-		.from("vines")
-		.update({ cloud_identity_id: null })
-		.eq("cloud_identity_id", identityId);
-
-	return { success: true };
+	return conn.disconnectIdentity(user.id, identityId, "aws");
 }

@@ -14,7 +14,12 @@ import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
 import { useTendrilsStore, type ActiveJob } from "@/lib/stores/use-tendrils-store";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
-import type { PublicProvisionJobType, PublicWorkerStatus, PublicWorkersRow, PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
+import type {
+	ProvisionJobType as PublicProvisionJobType,
+	WorkerStatus as PublicWorkerStatus,
+	Runner as PublicWorkersRow,
+} from "@/lib/db/schema";
+import type { JobWithMeta as PublicProvisionJobsRow } from "@/app/server/actions/jobs";
 import type { WorkerMetadata } from "@/types/database-custom.types";
 import { ArrowUpCircle, Loader2, Search, Server } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -42,14 +47,14 @@ export default function TendrilsPage() {
 		allJobs
 			.filter((j) => j.status === "QUEUED" || j.status === "CLAIMED" || j.status === "PROCESSING")
 			.map((j) => {
-				const vineName = (j as Record<string, unknown>).vine_name as string | null;
+				const vineName = j.vine_name;
 				return {
 					id: j.id,
 					job_type: j.job_type,
 					status: j.status,
-					config_snapshot: j.config_snapshot as Record<string, unknown>,
-					worker_id: j.worker_id,
-					vine_id: j.vine_id,
+					config_snapshot: j.config_snapshot,
+					worker_id: j.runner_id,
+					vine_id: j.spec_id,
 					vines: vineName ? { project_name: vineName } : null,
 				};
 			}),

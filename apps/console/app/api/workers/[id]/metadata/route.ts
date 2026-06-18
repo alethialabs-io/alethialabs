@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { getServiceDb } from "@/lib/db";
+import { runners } from "@/lib/db/schema";
 import { verifyWorkerToken } from "@/lib/workers/auth";
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 /** Updates the metadata JSONB for a worker. Called by the runner after successful deploy. */
@@ -18,23 +20,16 @@ export async function PATCH(
 	try {
 		const metadata = await req.json();
 
-		const supabase = await createServiceRoleClient();
-		const { error } = await supabase
-			.from("workers")
-			.update({ metadata })
-			.eq("id", workerId);
-
-		if (error) {
-			return NextResponse.json(
-				{ error: "Failed to update metadata: " + error.message },
-				{ status: 500 },
-			);
-		}
+		const db = getServiceDb();
+		await db.update(runners).set({ metadata }).where(eq(runners.id, workerId));
 
 		return NextResponse.json({ success: true });
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";
-		return NextResponse.json({ error: message }, { status: 500 });
+		return NextResponse.json(
+			{ error: "Failed to update metadata: " + message },
+			{ status: 500 },
+		);
 	}
 }

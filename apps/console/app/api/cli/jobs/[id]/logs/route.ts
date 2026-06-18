@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { verifyCliToken } from "@/lib/cli/auth";
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { getServiceDb } from "@/lib/db";
+import { jobLogs, jobs } from "@/lib/db/schema";
+import { and, asc, eq, gt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 /** Fetches job logs for a CLI user, with optional pagination via ?after=<id>. */
@@ -26,40 +28,30 @@ export async function GET(
 	const after = searchParams.get("after");
 
 	try {
-		const supabase = await createServiceRoleClient();
+		const db = getServiceDb();
 
-		const { data: job, error: jobError } = await supabase
-			.from("provision_jobs")
-			.select("id")
-			.eq("id", jobId)
-			.eq("user_id", userId)
-			.single();
+		const [job] = await db
+			.select({ id: jobs.id })
+			.from(jobs)
+			.where(and(eq(jobs.id, jobId), eq(jobs.user_id, userId)))
+			.limit(1);
 
-		if (jobError || !job) {
+		if (!job) {
 			return NextResponse.json(
 				{ error: "Job not found or unauthorized" },
 				{ status: 404 },
 			);
 		}
 
-		let query = supabase
-			.from("job_logs")
-			.select("*")
-			.eq("job_id", jobId)
-			.order("id", { ascending: true });
-
-		if (after) {
-			query = query.gt("id", parseInt(after, 10));
-		}
-
-		const { data: logs, error } = await query;
-
-		if (error) {
-			return NextResponse.json(
-				{ error: error.message },
-				{ status: 500 },
-			);
-		}
+		const logs = await db
+			.select()
+			.from(jobLogs)
+			.where(
+				after
+					? and(eq(jobLogs.job_id, jobId), gt(jobLogs.id, parseInt(after, 10)))
+					: eq(jobLogs.job_id, jobId),
+			)
+			.orderBy(asc(jobLogs.id));
 
 		return NextResponse.json({ logs });
 	} catch (err: unknown) {

@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
-import { PublicWorkerMode } from "@/lib/validations/db.schemas";
+import { getServiceDb } from "@/lib/db";
+import { runners } from "@/lib/db/schema";
 import { createHash, randomBytes } from "crypto";
+import { sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 /** Terraform calls this to register a cloud-hosted tendril. */
@@ -15,7 +16,7 @@ export async function POST(req: Request) {
 		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 	}
 
-	let body: { name?: string; mode?: PublicWorkerMode };
+	let body: { name?: string; mode?: "self-hosted" | "cloud-hosted" };
 	try {
 		body = await req.json();
 	} catch {
@@ -33,29 +34,28 @@ export async function POST(req: Request) {
 	const tendrilToken = randomBytes(32).toString("hex");
 	const tokenHash = createHash("sha256").update(tendrilToken).digest("hex");
 
-	const supabase = await createServiceRoleClient();
-	const { data, error } = await supabase
-		.from("workers")
-		.upsert(
-			{
-				name,
-				mode: mode ?? "cloud-hosted",
-				token_hash: tokenHash,
-			},
-			{ onConflict: "name" },
-		)
-		.select("id")
-		.single();
+	try {
+		const db = getServiceDb();
+		const [row] = await db
+			.insert(runners)
+			.values({ name, mode: mode ?? "cloud-hosted", token_hash: tokenHash })
+			.onConflictDoUpdate({
+				target: runners.name,
+				targetWhere: sql`mode = 'cloud-hosted'`,
+				set: { token_hash: tokenHash },
+			})
+			.returning({ id: runners.id });
 
-	if (error) {
+		return NextResponse.json({
+			tendril_id: row.id,
+			tendril_token: tendrilToken,
+		});
+	} catch (err: unknown) {
+		const message =
+			err instanceof Error ? err.message : "Internal Server Error";
 		return NextResponse.json(
-			{ error: "Failed to register tendril: " + error.message },
+			{ error: "Failed to register tendril: " + message },
 			{ status: 500 },
 		);
 	}
-
-	return NextResponse.json({
-		tendril_id: data.id,
-		tendril_token: tendrilToken,
-	});
 }

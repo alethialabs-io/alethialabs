@@ -2,74 +2,60 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
+import { requireOwner } from "@/lib/auth/owner";
+import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
-import { createClient } from "@/lib/supabase/server";
-import { PublicWorkerMode } from "@/lib/validations/db.schemas";
 import { createHash, randomBytes } from "crypto";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
-export async function registerWorker(name: string, mode: PublicWorkerMode) {
-	const supabase = await createClient();
+type WorkerMode = "self-hosted" | "cloud-hosted";
 
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
-
-	if (!user) {
-		throw new Error("Unauthorized");
-	}
-
+export async function registerWorker(name: string, mode: WorkerMode) {
+	const owner = await requireOwner();
 	const workerToken = randomBytes(32).toString("hex");
 	const tokenHash = createHash("sha256").update(workerToken).digest("hex");
 
-	const { data: worker, error } = await supabase
-		.from("workers")
-		.insert({
-			user_id: user.id,
-			name,
-			mode,
-			token_hash: tokenHash,
-		})
-		.select("id, name, mode, status, created_at")
-		.single();
-
-	if (error) {
-		throw new Error("Failed to register worker: " + error.message);
-	}
+	const worker = await withOwnerScope(owner, async (tx) => {
+		const [w] = await tx
+			.insert(runners)
+			.values({ user_id: owner, name, mode, token_hash: tokenHash })
+			.returning({
+				id: runners.id,
+				name: runners.name,
+				mode: runners.mode,
+				status: runners.status,
+				created_at: runners.created_at,
+			});
+		return w;
+	});
 
 	return { worker, worker_token: workerToken };
 }
 
 /** Sets (or clears) the default worker for the current user. */
 export async function setDefaultWorker(workerId: string | null) {
-	const supabase = await createClient();
-
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
-
-	if (!user) throw new Error("Unauthorized");
-
-	const { error } = await supabase.rpc("set_default_worker", {
-		p_worker_id: workerId ?? undefined,
-	});
-
-	if (error)
-		throw new Error("Failed to set default worker: " + error.message);
+	const owner = await requireOwner();
+	await getServiceDb().execute(
+		sql`select set_default_runner(${owner}::uuid, ${workerId ?? null}::uuid)`,
+	);
 }
 
 /** Returns all workers visible to the current user, default first. */
 export async function getAvailableWorkers() {
-	const supabase = await createClient();
-
-	const { data, error } = await supabase
-		.from("workers")
-		.select("id, name, mode, status, is_default")
-		.order("is_default", { ascending: false })
-		.order("name", { ascending: true });
-
-	if (error) throw new Error("Failed to fetch workers: " + error.message);
-	return data ?? [];
+	const owner = await requireOwner();
+	return withOwnerScope(owner, async (tx) =>
+		tx
+			.select({
+				id: runners.id,
+				name: runners.name,
+				mode: runners.mode,
+				status: runners.status,
+				is_default: runners.is_default,
+			})
+			.from(runners)
+			.orderBy(desc(runners.is_default), asc(runners.name)),
+	);
 }
 
 /** Deploys a self-hosted worker container to the user's cloud account. */
@@ -80,109 +66,100 @@ export async function deployWorker(params: {
 	imageTag?: string;
 	assignedWorkerId?: string | null;
 }) {
-	const supabase = await createClient();
-
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
-
-	if (!user) throw new Error("Unauthorized");
-
+	const owner = await requireOwner();
 	const workerToken = randomBytes(32).toString("hex");
 	const tokenHash = createHash("sha256").update(workerToken).digest("hex");
 
-	const { data: worker, error: workerError } = await supabase
-		.from("workers")
-		.insert({
-			user_id: user.id,
-			name: params.name,
-			mode: "self-hosted" as const,
-			token_hash: tokenHash,
-			cloud_identity_id: params.cloudIdentityId,
-		})
-		.select("id, name")
-		.single();
+	const result = await withOwnerScope(owner, async (tx) => {
+		const [worker] = await tx
+			.insert(runners)
+			.values({
+				user_id: owner,
+				name: params.name,
+				mode: "self-hosted",
+				token_hash: tokenHash,
+				cloud_identity_id: params.cloudIdentityId,
+			})
+			.returning({ id: runners.id, name: runners.name });
 
-	if (workerError)
-		throw new Error("Failed to register worker: " + workerError.message);
+		const [identity] = await tx
+			.select({ provider: cloudIdentities.provider })
+			.from(cloudIdentities)
+			.where(eq(cloudIdentities.id, params.cloudIdentityId))
+			.limit(1);
 
-	const { data: identity } = await supabase
-		.from("cloud_identities")
-		.select("provider")
-		.eq("id", params.cloudIdentityId)
-		.single();
+		const configSnapshot = {
+			worker_id: worker.id,
+			worker_token: workerToken,
+			worker_name: params.name,
+			image_tag: params.imageTag || "latest",
+			region: params.region,
+			cloud_provider: identity?.provider ?? "aws",
+			trellis_url:
+				process.env.NEXT_PUBLIC_APP_URL || "https://adp.prod.itgix.eu",
+		};
 
-	const configSnapshot = {
-		worker_id: worker.id,
-		worker_token: workerToken,
-		worker_name: params.name,
-		image_tag: params.imageTag || "latest",
-		region: params.region,
-		cloud_provider: identity?.provider ?? "aws",
-		trellis_url:
-			process.env.NEXT_PUBLIC_APP_URL || "https://adp.prod.itgix.eu",
-	};
+		const [job] = await tx
+			.insert(jobs)
+			.values({
+				user_id: owner,
+				cloud_identity_id: params.cloudIdentityId,
+				job_type: "DEPLOY_WORKER",
+				config_snapshot: configSnapshot,
+				status: "QUEUED",
+				assigned_runner_id: params.assignedWorkerId ?? null,
+			})
+			.returning({ id: jobs.id });
 
-	const { data: job, error: jobError } = await supabase
-		.from("provision_jobs")
-		.insert({
-			user_id: user.id,
-			cloud_identity_id: params.cloudIdentityId,
-			job_type: "DEPLOY_WORKER",
-			config_snapshot: configSnapshot,
-			status: "QUEUED",
-			assigned_worker_id: params.assignedWorkerId ?? undefined,
-		})
-		.select("id")
-		.single();
-
-	if (jobError)
-		throw new Error("Failed to queue deployment: " + jobError.message);
+		return { workerId: worker.id, jobId: job.id };
+	});
 
 	notifyScaler();
-	return { workerId: worker.id, jobId: job.id };
+	return result;
 }
 
 /** Fetches a deployed worker, verifies ownership, and resolves cloud provider. */
-async function fetchDeployedWorker(workerId: string) {
-	const supabase = await createClient();
+async function fetchDeployedWorker(owner: string, workerId: string) {
+	return withOwnerScope(owner, async (tx) => {
+		const [worker] = await tx
+			.select({
+				id: runners.id,
+				name: runners.name,
+				user_id: runners.user_id,
+				cloud_identity_id: runners.cloud_identity_id,
+				metadata: runners.metadata,
+			})
+			.from(runners)
+			.where(eq(runners.id, workerId))
+			.limit(1);
 
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
+		if (!worker) throw new Error("Worker not found");
+		if (worker.user_id !== owner) throw new Error("Unauthorized");
+		if (!worker.cloud_identity_id)
+			throw new Error("Worker has no cloud identity");
 
-	if (!user) throw new Error("Unauthorized");
+		const deployConfig = worker.metadata?.deploy_config;
+		if (!deployConfig)
+			throw new Error(
+				"Worker has no deploy config — it may not have been deployed successfully",
+			);
 
-	const { data: worker, error: workerError } = await supabase
-		.from("workers")
-		.select("id, name, user_id, cloud_identity_id, metadata")
-		.eq("id", workerId)
-		.single();
+		const [identity] = await tx
+			.select({ provider: cloudIdentities.provider })
+			.from(cloudIdentities)
+			.where(eq(cloudIdentities.id, worker.cloud_identity_id))
+			.limit(1);
 
-	if (workerError || !worker) throw new Error("Worker not found");
-	if (worker.user_id !== user.id) throw new Error("Unauthorized");
-	if (!worker.cloud_identity_id)
-		throw new Error("Worker has no cloud identity");
-
-	const deployConfig = worker.metadata?.deploy_config;
-	if (!deployConfig)
-		throw new Error(
-			"Worker has no deploy config — it may not have been deployed successfully",
-		);
-
-	const { data: identity } = await supabase
-		.from("cloud_identities")
-		.select("provider")
-		.eq("id", worker.cloud_identity_id)
-		.single();
-
-	return { supabase, user, worker, deployConfig, identity };
+		return { worker, deployConfig, identity: identity ?? null };
+	});
 }
 
 /** Builds a worker config snapshot from deploy_config with optional overrides. */
 function buildWorkerConfigSnapshot(
 	worker: { id: string; name: string },
-	deployConfig: NonNullable<Awaited<ReturnType<typeof fetchDeployedWorker>>["deployConfig"]>,
+	deployConfig: NonNullable<
+		Awaited<ReturnType<typeof fetchDeployedWorker>>["deployConfig"]
+	>,
 	provider: string | null | undefined,
 	overrides?: { worker_token?: string; image_tag?: string },
 ) {
@@ -200,126 +177,129 @@ function buildWorkerConfigSnapshot(
 		cpu: deployConfig.cpu ?? 512,
 		memory: deployConfig.memory ?? 1024,
 		image_repository:
-			deployConfig.image_repository ??
-			"ghcr.io/alethialabs-io/runner",
+			deployConfig.image_repository ?? "ghcr.io/alethialabs-io/runner",
 	};
 }
 
 /** Queues a DESTROY_WORKER job for a self-hosted worker with cloud resources. */
-export async function destroyWorker(workerId: string, assignedWorkerId?: string | null) {
-	const { supabase, user, worker, deployConfig, identity } =
-		await fetchDeployedWorker(workerId);
-
-	const { data: activeJobs } = await supabase
-		.from("provision_jobs")
-		.select("id, config_snapshot")
-		.eq("user_id", user.id)
-		.eq("job_type", "DESTROY_WORKER")
-		.in("status", ["QUEUED", "CLAIMED", "PROCESSING"]);
-
-	const duplicate = activeJobs?.find(
-		(j) => (j.config_snapshot as Record<string, unknown>)?.worker_id === workerId,
+export async function destroyWorker(
+	workerId: string,
+	assignedWorkerId?: string | null,
+) {
+	const owner = await requireOwner();
+	const { worker, deployConfig, identity } = await fetchDeployedWorker(
+		owner,
+		workerId,
 	);
 
-	if (duplicate) {
-		throw new Error("A destroy job is already in progress for this worker");
-	}
+	const result = await withOwnerScope(owner, async (tx) => {
+		const activeJobs = await tx
+			.select({ id: jobs.id, config_snapshot: jobs.config_snapshot })
+			.from(jobs)
+			.where(
+				and(
+					eq(jobs.user_id, owner),
+					eq(jobs.job_type, "DESTROY_WORKER"),
+					inArray(jobs.status, ["QUEUED", "CLAIMED", "PROCESSING"]),
+				),
+			);
 
-	const configSnapshot = buildWorkerConfigSnapshot(
-		worker, deployConfig, identity?.provider,
-		{ worker_token: deployConfig.worker_token },
-	);
+		const duplicate = activeJobs.find(
+			(j) => j.config_snapshot?.worker_id === workerId,
+		);
+		if (duplicate) {
+			throw new Error("A destroy job is already in progress for this worker");
+		}
 
-	const { data: job, error: jobError } = await supabase
-		.from("provision_jobs")
-		.insert({
-			user_id: user.id,
-			cloud_identity_id: worker.cloud_identity_id!,
-			job_type: "DESTROY_WORKER",
-			config_snapshot: configSnapshot,
-			status: "QUEUED",
-			assigned_worker_id: assignedWorkerId ?? undefined,
-		})
-		.select("id")
-		.single();
+		const configSnapshot = buildWorkerConfigSnapshot(
+			worker,
+			deployConfig,
+			identity?.provider,
+			{ worker_token: deployConfig.worker_token },
+		);
 
-	if (jobError)
-		throw new Error("Failed to queue destroy job: " + jobError.message);
+		const [job] = await tx
+			.insert(jobs)
+			.values({
+				user_id: owner,
+				cloud_identity_id: worker.cloud_identity_id!,
+				job_type: "DESTROY_WORKER",
+				config_snapshot: configSnapshot,
+				status: "QUEUED",
+				assigned_runner_id: assignedWorkerId ?? null,
+			})
+			.returning({ id: jobs.id });
+
+		return { jobId: job.id };
+	});
 
 	notifyScaler();
-	return { jobId: job.id };
+	return result;
 }
 
 /** Queues an UPDATE_WORKER job to roll a deployed worker to the latest release. */
 export async function updateWorker(workerId: string) {
-	const { supabase, user, worker, deployConfig, identity } =
-		await fetchDeployedWorker(workerId);
+	const owner = await requireOwner();
+	const { worker, deployConfig, identity } = await fetchDeployedWorker(
+		owner,
+		workerId,
+	);
 
 	if (!deployConfig.worker_token)
 		throw new Error(
 			"Worker is missing deploy token — re-deploy required to enable updates",
 		);
 
-	const { data: latestRelease } = await supabase
-		.from("worker_releases")
-		.select("version")
-		.order("released_at", { ascending: false })
-		.limit(1)
-		.single();
+	const result = await withOwnerScope(owner, async (tx) => {
+		const [latestRelease] = await tx
+			.select({ version: runnerReleases.version })
+			.from(runnerReleases)
+			.orderBy(desc(runnerReleases.released_at))
+			.limit(1);
 
-	if (!latestRelease)
-		throw new Error("No worker releases found");
+		if (!latestRelease) throw new Error("No worker releases found");
 
-	const configSnapshot = buildWorkerConfigSnapshot(
-		worker, deployConfig, identity?.provider,
-		{
-			worker_token: deployConfig.worker_token,
-			image_tag: latestRelease.version,
-		},
-	);
+		const configSnapshot = buildWorkerConfigSnapshot(
+			worker,
+			deployConfig,
+			identity?.provider,
+			{
+				worker_token: deployConfig.worker_token,
+				image_tag: latestRelease.version,
+			},
+		);
 
-	const { data: job, error: jobError } = await supabase
-		.from("provision_jobs")
-		.insert({
-			user_id: user.id,
-			cloud_identity_id: worker.cloud_identity_id!,
-			job_type: "UPDATE_WORKER",
-			config_snapshot: configSnapshot,
-			status: "QUEUED",
-		})
-		.select("id")
-		.single();
+		const [job] = await tx
+			.insert(jobs)
+			.values({
+				user_id: owner,
+				cloud_identity_id: worker.cloud_identity_id!,
+				job_type: "UPDATE_WORKER",
+				config_snapshot: configSnapshot,
+				status: "QUEUED",
+			})
+			.returning({ id: jobs.id });
 
-	if (jobError)
-		throw new Error("Failed to queue update job: " + jobError.message);
+		return { jobId: job.id };
+	});
 
 	notifyScaler();
-	return { jobId: job.id };
+	return result;
 }
 
 /** Deletes a worker record directly (no cloud resources to tear down). */
 export async function removeWorker(workerId: string) {
-	const supabase = await createClient();
+	const owner = await requireOwner();
+	await withOwnerScope(owner, async (tx) => {
+		const [worker] = await tx
+			.select({ id: runners.id, user_id: runners.user_id })
+			.from(runners)
+			.where(eq(runners.id, workerId))
+			.limit(1);
 
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
+		if (!worker) throw new Error("Worker not found");
+		if (worker.user_id !== owner) throw new Error("Unauthorized");
 
-	if (!user) throw new Error("Unauthorized");
-
-	const { data: worker } = await supabase
-		.from("workers")
-		.select("id, user_id")
-		.eq("id", workerId)
-		.single();
-
-	if (!worker) throw new Error("Worker not found");
-	if (worker.user_id !== user.id) throw new Error("Unauthorized");
-
-	const { error } = await supabase
-		.from("workers")
-		.delete()
-		.eq("id", workerId);
-
-	if (error) throw new Error("Failed to remove worker: " + error.message);
+		await tx.delete(runners).where(eq(runners.id, workerId));
+	});
 }

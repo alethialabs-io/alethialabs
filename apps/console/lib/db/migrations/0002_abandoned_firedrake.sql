@@ -1,0 +1,1 @@
+ALTER TABLE "spec_caches" ADD COLUMN "reader_endpoint" text;

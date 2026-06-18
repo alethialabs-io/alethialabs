@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { getServiceDb } from "@/lib/db";
+import { cloudIdentities, type Job, runners } from "@/lib/db/schema";
 import { verifyWorkerToken } from "@/lib/workers/auth";
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
@@ -11,67 +13,54 @@ export async function POST(req: Request) {
 	if (authError) return authError;
 
 	try {
-		const supabase = await createServiceRoleClient();
+		const db = getServiceDb();
 
-		const { data: worker } = await supabase
-			.from("workers")
-			.select("cloud_identity_id, mode")
-			.eq("id", workerId)
-			.single();
+		const [runner] = await db
+			.select({ cloud_identity_id: runners.cloud_identity_id })
+			.from(runners)
+			.where(eq(runners.id, workerId))
+			.limit(1);
 
-		const { data: jobs, error: claimError } = await supabase.rpc(
-			"claim_next_job",
-			{
-				p_worker_id: workerId,
-				p_worker_token_hash: tokenHash,
-				p_cloud_identity_id: worker?.cloud_identity_id || undefined,
-			},
+		// claim_next_job returns SETOF jobs — typed via the execute generic.
+		const claimed = await db.execute<Job>(
+			sql`select * from claim_next_job(${workerId}::uuid, ${tokenHash}, ${runner?.cloud_identity_id ?? null}::uuid)`,
 		);
 
-		if (claimError) {
-			console.error("Claim RPC error:", claimError);
-			return NextResponse.json(
-				{ error: "Failed to claim job: " + claimError.message },
-				{ status: 500 },
-			);
-		}
-
-		if (!jobs || jobs.length === 0) {
+		const job = claimed[0];
+		if (!job) {
 			return NextResponse.json({ job: null });
 		}
 
-		const job = jobs[0];
-
 		let cloud_identity = null;
 		if (job.cloud_identity_id) {
-			const { data: identity } = await supabase
-				.from("cloud_identities")
-				.select("credentials, provider")
-				.eq("id", job.cloud_identity_id)
-				.single();
+			const [identity] = await db
+				.select({
+					credentials: cloudIdentities.credentials,
+					provider: cloudIdentities.provider,
+				})
+				.from(cloudIdentities)
+				.where(eq(cloudIdentities.id, job.cloud_identity_id))
+				.limit(1);
 
 			if (identity) {
+				const c = identity.credentials;
 				cloud_identity = {
 					provider: identity.provider,
-					role_arn: identity.credentials.role_arn ?? "",
-					external_id: identity.credentials.external_id ?? "",
-					account_id: identity.credentials.account_id ?? "",
-					project_id: identity.credentials.project_id ?? "",
-					service_account_email:
-						identity.credentials.service_account_email ?? "",
-					wif_config: identity.credentials.wif_config
-						? JSON.stringify(identity.credentials.wif_config)
-						: "",
-					tenant_id: identity.credentials.tenant_id ?? "",
-					client_id: identity.credentials.client_id ?? "",
-					subscription_id:
-						identity.credentials.subscription_id ?? "",
+					role_arn: c.role_arn ?? "",
+					external_id: c.external_id ?? "",
+					account_id: c.account_id ?? "",
+					project_id: c.project_id ?? "",
+					service_account_email: c.service_account_email ?? "",
+					wif_config: c.wif_config ? JSON.stringify(c.wif_config) : "",
+					tenant_id: c.tenant_id ?? "",
+					client_id: c.client_id ?? "",
+					subscription_id: c.subscription_id ?? "",
 				};
 			}
 		}
 
 		return NextResponse.json({ job, cloud_identity });
-	} catch (err: any) {
+	} catch (err) {
 		console.error("Claim error:", err);
 		return NextResponse.json(
 			{ error: "Internal Server Error" },

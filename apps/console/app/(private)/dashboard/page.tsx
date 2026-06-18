@@ -3,14 +3,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { getIntegrationsWithStatus, type IntegrationWithConnection } from "@/app/server/actions/integrations";
+import { getConnectorsWithStatus, type ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
 import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
 import { createClient } from "@/lib/supabase/client";
 import { DataTable } from "@/components/data-table";
 import { jobColumns } from "@/components/jobs/columns";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { PublicProvisionJobsRow } from "@/lib/validations/db.schemas";
+import type { JobWithMeta } from "@/app/server/actions/jobs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,13 +30,13 @@ export default function DashboardPage() {
 	const jobsStore = useJobsStore();
 	const vineyardsStore = useVineyardsStore();
 
-	const [integrations, setIntegrations] = useState<IntegrationWithConnection[]>([]);
+	const [integrations, setIntegrations] = useState<ConnectorWithConnection[]>([]);
 	const [onlineTendrils, setOnlineWorkers] = useState(0);
 
 	useEffect(() => {
 		jobsStore.fetchJobs();
 		vineyardsStore.fetchVineyards();
-		getIntegrationsWithStatus().then(setIntegrations).catch(() => {});
+		getConnectorsWithStatus().then(setIntegrations).catch(() => {});
 
 		const supabase = createClient();
 		supabase
@@ -62,7 +62,7 @@ export default function DashboardPage() {
 		(i) => !i.connected && i.status !== "coming_soon",
 	);
 
-	const handleJobClick = (job: PublicProvisionJobsRow) => {
+	const handleJobClick = (job: JobWithMeta) => {
 		router.push(`/dashboard/jobs/${job.id}`);
 	};
 
@@ -155,9 +155,9 @@ export default function DashboardPage() {
 				<StatChip icon={<ClipboardList className="h-3.5 w-3.5" />} value={jobsStore.jobs.length} label="Total Jobs" />
 			</div>
 
-			{/* Integrations */}
+			{/* Connectors */}
 			<section>
-				<SectionHeader title="Integrations" href="/dashboard/integrations" linkText="Manage" />
+				<SectionHeader title="Connectors" href="/dashboard/connectors" linkText="Manage" />
 				<div className="flex flex-wrap gap-2 mt-3">
 					{connectedIntegrations.map((i) => (
 						<div
@@ -179,7 +179,7 @@ export default function DashboardPage() {
 					{disconnectedIntegrations.map((i) => (
 						<Link
 							key={i.slug}
-							href="/dashboard/integrations"
+							href="/dashboard/connectors"
 							className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-dashed border-border/50 text-xs text-muted-foreground hover:border-border hover:text-foreground transition-colors"
 						>
 							<span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30 shrink-0" />
@@ -188,7 +188,7 @@ export default function DashboardPage() {
 						</Link>
 					))}
 					{connectedIntegrations.length === 0 && disconnectedIntegrations.length === 0 && (
-						<p className="text-xs text-muted-foreground">No integrations available.</p>
+						<p className="text-xs text-muted-foreground">No connectors available.</p>
 					)}
 				</div>
 			</section>

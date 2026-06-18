@@ -2,61 +2,69 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { eq } from "drizzle-orm";
+import { z } from "zod";
+import { getServiceDb } from "@/lib/db";
+import { jobs, specCaches, specCluster, specDatabases, specs } from "@/lib/db/schema";
 
-import { createClient } from "@/lib/supabase/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
+// execution_metadata is JSONB written by the runner. Parse the fields we read
+// (lenient: .catch(undefined) mirrors the old optional-read behavior without casts).
+const deployMetaSchema = z.object({
+	cluster_name: z.string().optional().catch(undefined),
+	cluster_endpoint: z.string().optional().catch(undefined),
+	argocd_url: z.string().optional().catch(undefined),
+	argocd_admin_password: z.string().optional().catch(undefined),
+	outputs: z.record(z.string(), z.unknown()).optional().catch(undefined),
+});
 
-/** After a DEPLOY job succeeds, persist terraform outputs to vine component tables. */
+/**
+ * After a DEPLOY job succeeds, persist terraform outputs to the spec component
+ * tables. Service path — runs on the BYPASSRLS connection (worker-triggered).
+ */
 export async function finalizeDeployment(jobId: string) {
-	const supabase = await createClient();
-	return finalizeDeploymentWithClient(supabase, jobId);
-}
+	const db = getServiceDb();
 
-/** Shared finalization logic — works with any Supabase client (user or service-role). */
-export async function finalizeDeploymentWithClient(
-	supabase: SupabaseClient,
-	jobId: string,
-) {
-	const { data: job, error: jobError } = await supabase
-		.from("provision_jobs")
-		.select("id, status, vine_id, job_type, execution_metadata")
-		.eq("id", jobId)
-		.single();
+	const [job] = await db
+		.select({
+			status: jobs.status,
+			spec_id: jobs.spec_id,
+			job_type: jobs.job_type,
+			execution_metadata: jobs.execution_metadata,
+		})
+		.from(jobs)
+		.where(eq(jobs.id, jobId))
+		.limit(1);
 
-	if (jobError || !job) return;
+	if (!job) return;
 	if (job.status !== "SUCCESS") return;
 	if (job.job_type !== "DEPLOY") return;
-	if (!job.vine_id) return;
+	if (!job.spec_id) return;
+	if (!job.execution_metadata) return;
 
-	const meta = job.execution_metadata as Record<string, unknown> | null;
-	if (!meta) return;
+	const specId = job.spec_id;
+	const meta = deployMetaSchema.parse(job.execution_metadata);
+	const outputs = meta.outputs;
 
-	const vineId = job.vine_id;
-	const clusterName = meta.cluster_name as string | undefined;
-	const clusterEndpoint = meta.cluster_endpoint as string | undefined;
-	const argocdUrl = meta.argocd_url as string | undefined;
-	const argocdAdminPassword = meta.argocd_admin_password as string | undefined;
-	const outputs = meta.outputs as Record<string, unknown> | undefined;
-
-	const clusterUpdate: Record<string, unknown> = { status: "ACTIVE" };
-	if (clusterName) clusterUpdate.cluster_name = clusterName;
-	if (clusterEndpoint) clusterUpdate.cluster_endpoint = clusterEndpoint;
-	if (argocdUrl) clusterUpdate.argocd_url = argocdUrl;
-	if (argocdAdminPassword) clusterUpdate.argocd_admin_password = argocdAdminPassword;
+	const clusterUpdate: Partial<typeof specCluster.$inferInsert> = {
+		status: "ACTIVE",
+	};
+	if (meta.cluster_name) clusterUpdate.cluster_name = meta.cluster_name;
+	if (meta.cluster_endpoint)
+		clusterUpdate.cluster_endpoint = meta.cluster_endpoint;
+	if (meta.argocd_url) clusterUpdate.argocd_url = meta.argocd_url;
+	if (meta.argocd_admin_password)
+		clusterUpdate.argocd_admin_password = meta.argocd_admin_password;
 	if (outputs) {
 		const clusterArn = extractOutputValue(outputs, "eks_cluster_arn");
 		if (clusterArn) clusterUpdate.cluster_arn = clusterArn;
 	}
 
-	await supabase
-		.from("vine_cluster")
-		.update(clusterUpdate)
-		.eq("vine_id", vineId);
+	await db.update(specCluster).set(clusterUpdate).where(eq(specCluster.spec_id, specId));
 
 	if (outputs) {
 		const rdsEndpoint = extractOutputValue(outputs, "rds_cluster_endpoint");
 		if (rdsEndpoint) {
-			const dbUpdate: Record<string, unknown> = {
+			const dbUpdate: Partial<typeof specDatabases.$inferInsert> = {
 				endpoint: rdsEndpoint,
 				status: "ACTIVE",
 			};
@@ -64,38 +72,54 @@ export async function finalizeDeploymentWithClient(
 			if (rdsId) dbUpdate.cluster_identifier = rdsId;
 			const rdsArn = extractOutputValue(outputs, "rds_cluster_arn");
 			if (rdsArn) dbUpdate.cluster_arn = rdsArn;
-			const masterSecret = extractOutputValue(outputs, "rds_master_credentials_secret_arn");
+			const masterSecret = extractOutputValue(
+				outputs,
+				"rds_master_credentials_secret_arn",
+			);
 			if (masterSecret) dbUpdate.master_credentials_secret_arn = masterSecret;
-			const extraSecret = extractOutputValue(outputs, "rds_extra_credentials_secret_arn");
+			const extraSecret = extractOutputValue(
+				outputs,
+				"rds_extra_credentials_secret_arn",
+			);
 			if (extraSecret) dbUpdate.extra_credentials_secret_arn = extraSecret;
-			const kmsKey = extractOutputValue(outputs, "rds_credentials_kms_key_arn");
+			const kmsKey = extractOutputValue(
+				outputs,
+				"rds_credentials_kms_key_arn",
+			);
 			if (kmsKey) dbUpdate.credentials_kms_key_arn = kmsKey;
 
-			await supabase
-				.from("vine_databases")
-				.update(dbUpdate)
-				.eq("vine_id", vineId);
+			await db
+				.update(specDatabases)
+				.set(dbUpdate)
+				.where(eq(specDatabases.spec_id, specId));
 		}
 
-		const redisEndpoint = extractOutputValue(outputs, "redis_primary_endpoint_address");
+		const redisEndpoint = extractOutputValue(
+			outputs,
+			"redis_primary_endpoint_address",
+		);
 		if (redisEndpoint) {
-			const cacheUpdate: Record<string, unknown> = {
+			const cacheUpdate: Partial<typeof specCaches.$inferInsert> = {
 				endpoint: redisEndpoint,
 				status: "ACTIVE",
 			};
-			const readerEndpoint = extractOutputValue(outputs, "redis_reader_endpoint_address");
+			const readerEndpoint = extractOutputValue(
+				outputs,
+				"redis_reader_endpoint_address",
+			);
 			if (readerEndpoint) cacheUpdate.reader_endpoint = readerEndpoint;
 
-			await supabase
-				.from("vine_caches")
-				.update(cacheUpdate)
-				.eq("vine_id", vineId);
+			await db
+				.update(specCaches)
+				.set(cacheUpdate)
+				.where(eq(specCaches.spec_id, specId));
 		}
 	}
 
-	await supabase.from("vines").update({ status: "ACTIVE" }).eq("id", vineId);
+	await db.update(specs).set({ status: "ACTIVE" }).where(eq(specs.id, specId));
 }
 
+/** Extracts a string from a terraform output entry (raw string or { value }). */
 function extractOutputValue(
 	outputs: Record<string, unknown>,
 	key: string,
@@ -104,7 +128,7 @@ function extractOutputValue(
 	if (!val) return null;
 	if (typeof val === "string") return val;
 	if (typeof val === "object" && val !== null && "value" in val) {
-		const v = (val as Record<string, unknown>).value;
+		const v = val.value;
 		if (typeof v === "string") return v;
 	}
 	return null;

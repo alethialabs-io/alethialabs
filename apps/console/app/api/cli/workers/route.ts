@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { verifyCliToken } from "@/lib/cli/auth";
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { getServiceDb } from "@/lib/db";
+import { runners } from "@/lib/db/schema";
+import { desc, eq, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 /** Lists workers owned by the CLI user (plus cloud-hosted workers visible to all). */
@@ -19,23 +21,21 @@ export async function GET(req: Request) {
 	}
 
 	try {
-		const supabase = await createServiceRoleClient();
-
-		const { data: workers, error } = await supabase
-			.from("workers")
-			.select(
-				"id, name, mode, status, last_heartbeat, version, is_default, created_at",
-			)
-			.or(`user_id.eq.${userId},mode.eq.cloud-hosted`)
-			.order("is_default", { ascending: false })
-			.order("created_at", { ascending: false });
-
-		if (error) {
-			return NextResponse.json(
-				{ error: error.message },
-				{ status: 500 },
-			);
-		}
+		const db = getServiceDb();
+		const workers = await db
+			.select({
+				id: runners.id,
+				name: runners.name,
+				mode: runners.mode,
+				status: runners.status,
+				last_heartbeat: runners.last_heartbeat,
+				version: runners.version,
+				is_default: runners.is_default,
+				created_at: runners.created_at,
+			})
+			.from(runners)
+			.where(or(eq(runners.user_id, userId), eq(runners.mode, "cloud-hosted")))
+			.orderBy(desc(runners.is_default), desc(runners.created_at));
 
 		return NextResponse.json({ workers });
 	} catch (err: unknown) {

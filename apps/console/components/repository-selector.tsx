@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { GitProviderIcon } from "@/components/integrations/git-provider-icon";
+import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { Button } from "@/components/ui/button";
 import {
 	Command,
@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/select";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { PublicGitProvider } from "@/lib/validations/db.schemas";
+import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 import { env } from "next-runtime-env";
 
 import { fetchRepositoriesByProvider } from "@/app/server/actions/git/repositories";
