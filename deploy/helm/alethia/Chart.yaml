@@ -1,0 +1,18 @@
+apiVersion: v2
+name: alethia
+description: Self-hostable Alethia control plane (console + docs + runner + Postgres + object store).
+type: application
+# Chart version — bump on chart changes. appVersion tracks the published images.
+version: 0.1.0
+appVersion: "latest"
+home: https://alethialabs.io
+sources:
+  - https://github.com/alethialabs-io/alethialabs
+keywords:
+  - alethia
+  - iac
+  - control-plane
+  - self-hosted
+maintainers:
+  - name: Alethia Labs
+    url: https://alethialabs.io

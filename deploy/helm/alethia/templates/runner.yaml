@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "alethia.fullname" . }}-runner
+  labels:
+    {{- include "alethia.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.runner.replicas }}
+  selector:
+    matchLabels:
+      {{- include "alethia.selectorLabels" (dict "ctx" . "component" "runner") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "alethia.selectorLabels" (dict "ctx" . "component" "runner") | nindent 8 }}
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: runner
+          image: {{ include "alethia.image.runner" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ include "alethia.secretName" . }}
+          env:
+            # Talks to the console over HTTP + S3 only; self-registers on boot.
+            - name: ALETHIA_WEB_ORIGIN
+              value: {{ printf "http://%s-console:3000" (include "alethia.fullname" .) | quote }}
+            - name: ALETHIA_WORKER_MODE
+              value: {{ .Values.runner.mode | quote }}
+          resources:
+            {{- toYaml .Values.runner.resources | nindent 12 }}

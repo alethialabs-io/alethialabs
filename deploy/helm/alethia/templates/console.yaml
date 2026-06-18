@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "alethia.fullname" . }}-console
+  labels:
+    {{- include "alethia.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "alethia.selectorLabels" (dict "ctx" . "component" "console") | nindent 4 }}
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "alethia.fullname" . }}-console
+  labels:
+    {{- include "alethia.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.console.replicas }}
+  selector:
+    matchLabels:
+      {{- include "alethia.selectorLabels" (dict "ctx" . "component" "console") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "alethia.selectorLabels" (dict "ctx" . "component" "console") | nindent 8 }}
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- if .Values.postgres.enabled }}
+        # Block until the bundled Postgres accepts connections.
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - until nc -z {{ include "alethia.pgHost" . }} {{ .Values.postgres.port }}; do echo waiting for postgres; sleep 2; done
+        {{- end }}
+        # Idempotent: applies schema/programmables + sets the app-role password.
+        - name: migrate
+          image: {{ include "alethia.image.migrate" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: ALETHIA_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "alethia.secretName" . }}
+                  key: ALETHIA_DATABASE_URL
+            - name: ALETHIA_APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "alethia.secretName" . }}
+                  key: ALETHIA_APP_DB_PASSWORD
+      containers:
+        - name: console
+          image: {{ include "alethia.image.console" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ include "alethia.secretName" . }}
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            - name: HOSTNAME
+              value: 0.0.0.0
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.console.resources | nindent 12 }}
