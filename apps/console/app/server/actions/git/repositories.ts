@@ -4,10 +4,7 @@
 
 
 import { getOwner } from "@/lib/auth/owner";
-import { withOwnerScope } from "@/lib/db";
-import { providerTokens } from "@/lib/db/schema";
-import { createClient } from "@/lib/supabase/server";
-import { getValidProviderToken } from "../identities";
+import { getLinkedProviders, getValidProviderToken } from "../identities";
 import {
 	BitbucketRepo,
 	FetchRepositoriesResult,
@@ -21,19 +18,12 @@ export async function fetchAllRepositories(): Promise<{
 	error?: string;
 }> {
 	try {
-		const owner = await getOwner();
-		if (!owner) return { repositories: [] };
-
-		// Get linked providers (owner-scoped).
-		const linkedProvidersData = await withOwnerScope(owner, (tx) =>
-			tx.select({ provider: providerTokens.provider }).from(providerTokens),
-		);
-
-		if (linkedProvidersData.length === 0) {
+		// Git providers the user has linked (Better Auth accounts).
+		const providers = await getLinkedProviders();
+		if (providers.length === 0) {
 			return { repositories: [] };
 		}
 
-		const providers = linkedProvidersData.map((p) => p.provider);
 		const allRepos: Repository[] = [];
 
 		await Promise.all(
@@ -136,12 +126,8 @@ export async function createRepository(
 	data: { name: string; workspace?: string; projectKey?: string },
 ): Promise<{ repository?: Repository; error?: string }> {
 	try {
-		const supabase = await createClient();
-		const {
-			data: { session },
-		} = await supabase.auth.getSession();
-
-		if (!session) {
+		const userId = await getOwner();
+		if (!userId) {
 			return { error: "Unauthorized" };
 		}
 

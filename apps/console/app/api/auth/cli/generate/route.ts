@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
 import { getServiceDb } from "@/lib/db";
 import { cliLogins } from "@/lib/db/schema";
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 
+const GIT_PROVIDERS = ["github", "gitlab", "bitbucket"];
+
 export async function POST(req: Request) {
-	const supabase = await createClient();
-	const {
-		data: { session },
-	} = await supabase.auth.getSession();
+	const hdrs = await headers();
+	const session = await auth.api.getSession({ headers: hdrs });
 
 	if (!session) {
 		return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -27,11 +28,27 @@ export async function POST(req: Request) {
 		});
 	}
 
-	// Provider token is temporarily stashed in verification_code (CLI device flow).
+	// Best-effort: stash the user's first linked git provider token for the CLI
+	// (temporarily held in verification_code, as in the Supabase device flow).
+	let providerToken: string | null = null;
+	try {
+		const accounts = await auth.api.listUserAccounts({ headers: hdrs });
+		const git = accounts.find((a) => GIT_PROVIDERS.includes(a.providerId));
+		if (git) {
+			const at = await auth.api.getAccessToken({
+				body: { providerId: git.providerId, userId: session.user.id },
+				headers: hdrs,
+			});
+			providerToken = at.accessToken ?? null;
+		}
+	} catch {
+		// No linked git provider / token unavailable — proceed without one.
+	}
+
 	const values = {
 		device_code,
 		profile_id: session.user.id,
-		verification_code: session.provider_token ?? null,
+		verification_code: providerToken,
 	};
 
 	try {

@@ -1,28 +1,23 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { createClient } from "@/lib/supabase/server";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
 
 /**
  * Returns the authenticated user's id — the owner scope passed to
- * withOwnerScope() for the per-owner RLS backstop. Identity still comes from
- * Supabase Auth during the de-Supabase data migration (P1); Better Auth (P3)
- * will replace the source without changing this contract. Throws on no session.
+ * withOwnerScope() for the per-owner RLS backstop. Identity comes from Better
+ * Auth (Phase D); the contract (a uuid string or throw) is unchanged from the
+ * Supabase era so every caller stays the same. Throws on no session.
  */
 export async function requireOwner(): Promise<string> {
-	const supabase = await createClient();
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
-	if (!user) throw new Error("Unauthorized");
-	return user.id;
+	const session = await auth.api.getSession({ headers: await headers() });
+	if (!session?.user) throw new Error("Unauthorized");
+	return session.user.id;
 }
 
 /** Like requireOwner() but returns null instead of throwing. */
 export async function getOwner(): Promise<string | null> {
-	const supabase = await createClient();
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
-	return user?.id ?? null;
+	const session = await auth.api.getSession({ headers: await headers() });
+	return session?.user?.id ?? null;
 }

@@ -1,22 +1,45 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { updateSession } from "@/lib/supabase/middleware";
-import { type NextRequest } from "next/server";
+import { getSessionCookie } from "better-auth/cookies";
+import { type NextRequest, NextResponse } from "next/server";
 
+// Routes that require a session. Auth UI pages live under /auth.
+const PRIVATE_ROUTES = ["/dashboard", "/cli"];
+
+/**
+ * Optimistic route guard: checks for the Better Auth session cookie (no DB hit)
+ * and redirects accordingly. Full session validation happens server-side in the
+ * route/layout via auth.api.getSession — this only gates navigation.
+ */
 export async function proxy(request: NextRequest) {
-	return await updateSession(request);
+	const path = request.nextUrl.pathname;
+	const isAuthRoute = path.startsWith("/auth");
+	const isPrivateRoute = PRIVATE_ROUTES.some((r) => path.startsWith(r));
+
+	const hasSession = Boolean(getSessionCookie(request));
+
+	if (!hasSession && !isAuthRoute && isPrivateRoute) {
+		const url = request.nextUrl.clone();
+		url.pathname = "/auth/signin";
+		// Preserve the original path + query (e.g. ?device_code) for post-login redirect.
+		const next = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+		if (next !== "/") url.searchParams.set("next", next);
+		return NextResponse.redirect(url);
+	}
+
+	if (hasSession && isAuthRoute) {
+		const url = request.nextUrl.clone();
+		url.pathname = "/dashboard";
+		return NextResponse.redirect(url);
+	}
+
+	return NextResponse.next();
 }
 
 export const config = {
 	matcher: [
-		/*
-		 * Match all request paths except for the ones starting with:
-		 * - _next/static (static files)
-		 * - _next/image (image optimization files)
-		 * - favicon.ico (favicon file)
-		 * Feel free to modify this pattern to include more paths.
-		 */
+		// All paths except static assets, image optimizer, favicon, docs, media.
 		"/((?!_next/static|_next/image|favicon.ico|docs|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
 	],
 };

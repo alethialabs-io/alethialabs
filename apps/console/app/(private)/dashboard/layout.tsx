@@ -19,11 +19,9 @@ import {
 	PopoverTrigger,
 } from "@/components/ui/popover";
 import { useJobNotifications } from "@/hooks/use-job-notifications";
+import { authClient } from "@/lib/auth/client";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
-import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
-import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { User as IUser } from "@supabase/supabase-js";
 import { SidebarVineyards } from "@/components/sidebar-vineyards";
 import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
 import {
@@ -54,55 +52,19 @@ export default function DashboardLayout({
 	const pathname = usePathname();
 	const router = useRouter();
 	const [sidebarOpen, setSidebarOpen] = useState(false);
-	const [user, setUser] = useState<IUser | null>(null);
+	const { data: session } = authClient.useSession();
+	const user = session?.user ?? null;
 	const { notifications, unreadCount, markAsRead, markAllRead } = useJobNotifications();
 
+	// Initial jobs load once a session is present. Live updates come from the
+	// jobs store + useJobNotifications polling (Supabase Realtime is gone; SSE
+	// replaces the poll in Phase E).
 	useEffect(() => {
-		const supabase = createClient();
-		let channel: ReturnType<typeof supabase.channel> | null = null;
-		let cancelled = false;
-
-		supabase.auth.getUser().then(({ data: { user: u } }) => {
-			if (!u || cancelled) return;
-			setUser(u);
-			useJobsStore.getState().fetchJobs(true);
-
-			channel = supabase
-				.channel("dashboard-realtime")
-				.on(
-					"postgres_changes",
-					{ event: "*", schema: "public", table: "provision_jobs" },
-					(payload) => {
-						const row = payload.new;
-						// Realtime payloads lack the spec/runner joins getJobs() adds, so
-						// reconcile by refetching rather than patching a partial row.
-						if (row && "user_id" in row && row.user_id === u.id) {
-							useJobsStore.getState().fetchJobs(true);
-						}
-					},
-				)
-				.on(
-					"postgres_changes",
-					{ event: "UPDATE", schema: "public", table: "vines" },
-					(payload) => {
-						const row = payload.new;
-						if (row && "user_id" in row && row.user_id === u.id) {
-							useVineyardsStore.getState().fetchVineyards(true);
-						}
-					},
-				)
-				.subscribe();
-		});
-
-		return () => {
-			cancelled = true;
-			if (channel) supabase.removeChannel(channel);
-		};
-	}, []);
+		if (user) useJobsStore.getState().fetchJobs(true);
+	}, [user]);
 
 	const handleLogout = async () => {
-		const supabase = createClient();
-		await supabase.auth.signOut();
+		await authClient.signOut();
 		router.push("/");
 	};
 
@@ -328,7 +290,7 @@ export default function DashboardLayout({
 								</Avatar>
 								<div className="flex-1 min-w-0">
 									<p className="text-sm font-medium text-foreground truncate">
-										{user?.user_metadata?.full_name ||
+										{user?.name ||
 											"User"}
 									</p>
 									<p className="text-xs text-muted-foreground truncate">

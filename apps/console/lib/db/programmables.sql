@@ -250,7 +250,7 @@ GRANT SELECT ON public.spec_full TO alethia_app;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['zones', 'specs', 'cloud_identities', 'jobs', 'provider_tokens']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['zones', 'specs', 'cloud_identities', 'jobs']) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(

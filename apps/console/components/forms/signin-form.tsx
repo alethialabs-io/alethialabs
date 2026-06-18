@@ -5,11 +5,7 @@
 
 import type React from "react";
 
-import {
-	sendEmailCode,
-	signInWithOAuth,
-	verifyEmailCode,
-} from "@/app/(public)/auth/signin/actions";
+import { authClient } from "@/lib/auth/client";
 import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@/components/provider-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,7 +17,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Loader2 } from "lucide-react";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 type AuthProvider = "github" | "gitlab" | "bitbucket" | "google";
@@ -37,6 +33,7 @@ export function SignInForm() {
 	const [code, setCode] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const searchParams = useSearchParams();
+	const router = useRouter();
 	const next = searchParams.get("next");
 
 	const handleOAuthLogin = async (provider: AuthProvider) => {
@@ -44,17 +41,28 @@ export function SignInForm() {
 		setLoadingProvider(provider);
 		setError(null);
 
-		try {
-			await signInWithOAuth(provider, next);
-		} catch (err) {
-			setError(
-				err instanceof Error
-					? err.message
-					: `Failed to sign in with ${provider}`
-			);
+		// Native providers go through signIn.social; self-hosted GitLab +
+		// Bitbucket are wired via the genericOAuth plugin (signIn.oauth2). Both
+		// redirect the browser, so control only returns here on error.
+		const callbackURL = next ?? "/dashboard";
+		const { error } =
+			provider === "github" || provider === "google"
+				? await authClient.signIn.social({ provider, callbackURL })
+				: await authClient.signIn.oauth2({ providerId: provider, callbackURL });
+
+		if (error) {
+			setError(error.message ?? `Failed to sign in with ${provider}`);
 			setIsLoading(false);
 			setLoadingProvider(null);
 		}
+	};
+
+	const sendCode = async () => {
+		const { error } = await authClient.emailOtp.sendVerificationOtp({
+			email,
+			type: "sign-in",
+		});
+		if (error) throw new Error(error.message ?? "Failed to send code");
 	};
 
 	const handleSendCode = async (e: React.FormEvent) => {
@@ -64,13 +72,11 @@ export function SignInForm() {
 		setError(null);
 
 		try {
-			await sendEmailCode(email);
+			await sendCode();
 			setCode("");
 			setStep("code");
 		} catch (err) {
-			setError(
-				err instanceof Error ? err.message : "Failed to send code"
-			);
+			setError(err instanceof Error ? err.message : "Failed to send code");
 		} finally {
 			setIsLoading(false);
 			setLoadingProvider(null);
@@ -83,31 +89,25 @@ export function SignInForm() {
 		setLoadingProvider("verify");
 		setError(null);
 
-		try {
-			// On success this redirects; control only returns here on failure.
-			await verifyEmailCode(email, value, next);
-		} catch (err) {
-			setError(
-				err instanceof Error && err.message !== "NEXT_REDIRECT"
-					? "That code didn’t work — try again."
-					: null
-			);
+		const { error } = await authClient.signIn.emailOtp({ email, otp: value });
+		if (error) {
+			setError("That code didn’t work — try again.");
 			setCode("");
 			setIsLoading(false);
 			setLoadingProvider(null);
+			return;
 		}
+		router.push(next ?? "/dashboard");
 	};
 
 	const handleResend = async () => {
 		setIsLoading(true);
 		setError(null);
 		try {
-			await sendEmailCode(email);
+			await sendCode();
 			setCode("");
 		} catch (err) {
-			setError(
-				err instanceof Error ? err.message : "Failed to resend code"
-			);
+			setError(err instanceof Error ? err.message : "Failed to resend code");
 		} finally {
 			setIsLoading(false);
 		}

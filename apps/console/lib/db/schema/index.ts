@@ -14,3 +14,4 @@ export * from "./runners";
 export * from "./jobs";
 export * from "./connectors";
 export * from "./accounts";
+export * from "./auth";

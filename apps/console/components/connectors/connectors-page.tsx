@@ -44,10 +44,9 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
-import { createClient } from "@/lib/supabase/client";
+import { authClient } from "@/lib/auth/client";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 import { Loader2, Search, Unplug } from "lucide-react";
-import { env } from "next-runtime-env";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -109,50 +108,24 @@ export function ConnectorsPage({
 		if (integration.category === "git") {
 			setConnectingSlug(integration.slug);
 			try {
-				const supabase = createClient();
-				const {
-					data: { user },
-					error: userError,
-				} = await supabase.auth.getUser();
-
-				if (userError || !user) {
-					await supabase.auth.signOut();
-					window.location.href = "/auth/signin";
-					return;
-				}
-
 				const provider = integration.slug as PublicGitProvider;
+				const callbackURL = "/dashboard/connectors";
 
-				// Unlink existing identity if still attached (e.g. after a disconnect that only deleted the token)
-				const existing = user.identities?.find(
-					(i) => i.provider === provider,
-				);
-				if (existing) {
-					const { error: unlinkError } =
-						await supabase.auth.unlinkIdentity(existing);
-					if (unlinkError) {
-						console.warn(
-							`Could not unlink existing ${provider} identity before re-linking: ${unlinkError.message}`,
-						);
-					}
-				}
-
-				// Store provider in cookie so the callback knows which token to save
-				document.cookie = `auth_linking_provider=${provider}; path=/; max-age=300; SameSite=Lax`;
-
-				const { error } = await supabase.auth.linkIdentity({
-					provider,
-					options: {
-						redirectTo: `${env("NEXT_PUBLIC_APP_URL") || window.location.origin}/api/auth/callback?next=/dashboard/connectors&provider=${provider}`,
-						scopes:
-							provider === "github"
-								? "repo"
-								: provider === "gitlab"
-									? "read_api read_user read_repository read_registry openid profile email"
-									: undefined,
-					},
-				});
-				if (error) throw error;
+				// Better Auth account linking — redirects to the provider. Native
+				// GitHub via linkSocial (repo scope); self-hosted GitLab + Bitbucket
+				// via the genericOAuth link endpoint (scopes are server-configured).
+				const { error } =
+					provider === "github"
+						? await authClient.linkSocial({
+								provider,
+								scopes: ["repo"],
+								callbackURL,
+							})
+						: await authClient.oauth2.link({
+								providerId: provider,
+								callbackURL,
+							});
+				if (error) throw new Error(error.message);
 			} catch (err) {
 				console.error(`Error linking ${integration.slug}:`, err);
 				toast.error(`Failed to connect ${integration.name}`);
@@ -180,30 +153,11 @@ export function ConnectorsPage({
 
 		try {
 			if (disconnectTarget.category === "git") {
-				// Delete the token first — this is the critical operation
+				// Unlinks the Better Auth account (removes its stored tokens).
 				const result = await deleteProviderToken(
 					disconnectTarget.slug as PublicGitProvider,
 				);
 				if (result.error) throw new Error(result.error);
-
-				// Try to unlink the Supabase identity (non-critical — may fail if last identity)
-				const supabase = createClient();
-				const {
-					data: { user },
-				} = await supabase.auth.getUser();
-				const identity = user?.identities?.find(
-					(i) => i.provider === disconnectTarget.slug,
-				);
-
-				if (identity) {
-					const { error } =
-						await supabase.auth.unlinkIdentity(identity);
-					if (error) {
-						console.warn(
-							`Could not unlink ${disconnectTarget.slug} identity: ${error.message}`,
-						);
-					}
-				}
 
 				toast.success(
 					`Successfully disconnected ${disconnectTarget.name}`,

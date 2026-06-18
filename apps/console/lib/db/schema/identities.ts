@@ -8,7 +8,6 @@ import {
 	pgTable,
 	text,
 	timestamp,
-	unique,
 	uuid,
 } from "drizzle-orm/pg-core";
 import type {
@@ -17,7 +16,7 @@ import type {
 	CloudCredentials,
 	GcpCachedResources,
 } from "@/types/database-custom.types";
-import { cloudProvider, gitProvider } from "./enums";
+import { cloudProvider } from "./enums";
 
 // Cloud credential anchors. `credentials`/`cached_resources` are typed JSONB.
 export const cloudIdentities = pgTable(
@@ -39,25 +38,9 @@ export const cloudIdentities = pgTable(
 	(t) => [index("idx_cloud_identities_user").on(t.user_id)],
 );
 
-// Git OAuth tokens (retired into Better Auth's `account` table in Phase D).
-export const providerTokens = pgTable(
-	"provider_tokens",
-	{
-		id: uuid().primaryKey().defaultRandom(),
-		user_id: uuid().notNull(),
-		provider: gitProvider().notNull(),
-		access_token: text().notNull(),
-		refresh_token: text(),
-		expires_at: timestamp({ withTimezone: true }),
-		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
-		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
-	},
-	(t) => [
-		unique("provider_tokens_user_id_provider_key").on(t.user_id, t.provider),
-	],
-);
+// Git OAuth tokens were retired into Better Auth's `account` table in Phase D
+// (the provider_tokens table is dropped). The gitProvider enum lives on in
+// enums.ts — its GitProvider type still names the git providers app-wide.
 
 export type CloudIdentity = typeof cloudIdentities.$inferSelect;
 export type NewCloudIdentity = typeof cloudIdentities.$inferInsert;
-export type ProviderToken = typeof providerTokens.$inferSelect;
-export type NewProviderToken = typeof providerTokens.$inferInsert;

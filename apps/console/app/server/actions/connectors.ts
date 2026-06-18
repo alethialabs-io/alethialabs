@@ -3,14 +3,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { asc, eq } from "drizzle-orm";
+import { getOwner } from "@/lib/auth/owner";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import {
+	account,
 	cloudIdentities,
 	type Connector,
 	connectors as connectorsTable,
-	providerTokens,
 } from "@/lib/db/schema";
-import { createClient } from "@/lib/supabase/server";
 
 export type ConnectorCategory = Connector["category"];
 export type ConnectorAuthMethod = Connector["auth_method"];
@@ -41,11 +41,7 @@ export type ConnectorWithConnection = Connector & {
 export async function getConnectorsWithStatus(): Promise<
 	ConnectorWithConnection[]
 > {
-	// Auth still comes from Supabase (retired in Phase D); data is on Drizzle.
-	const supabase = await createClient();
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
+	const userId = await getOwner();
 
 	// Public catalog — service connection (no owner scope).
 	const catalog = await getServiceDb()
@@ -53,17 +49,21 @@ export async function getConnectorsWithStatus(): Promise<
 		.from(connectorsTable)
 		.orderBy(asc(connectorsTable.sort_order));
 
-	// Per-user connection state — RLS-scoped to the owner.
-	const { tokenRows, cloudIdentityRows } = user
-		? await withOwnerScope(user.id, async (tx) => ({
-				tokenRows: await tx
-					.select({
-						provider: providerTokens.provider,
-						expires_at: providerTokens.expires_at,
-						refresh_token: providerTokens.refresh_token,
-					})
-					.from(providerTokens),
-				cloudIdentityRows: await tx
+	// Git provider tokens live in Better Auth's `account` table (service-managed —
+	// read via serviceDb scoped by user_id). Cloud identities stay RLS-scoped.
+	const tokenRows = userId
+		? await getServiceDb()
+				.select({
+					provider: account.providerId,
+					expires_at: account.accessTokenExpiresAt,
+					refresh_token: account.refreshToken,
+				})
+				.from(account)
+				.where(eq(account.userId, userId))
+		: [];
+	const cloudIdentityRows = userId
+		? await withOwnerScope(userId, (tx) =>
+				tx
 					.select({
 						id: cloudIdentities.id,
 						provider: cloudIdentities.provider,
@@ -71,8 +71,8 @@ export async function getConnectorsWithStatus(): Promise<
 					})
 					.from(cloudIdentities)
 					.where(eq(cloudIdentities.is_verified, true)),
-			}))
-		: { tokenRows: [], cloudIdentityRows: [] };
+			)
+		: [];
 
 	const tokens = new Set<string>(tokenRows.map((t) => t.provider));
 	const tokenHealth = new Map<string, GitTokenHealth>();
@@ -86,40 +86,17 @@ export async function getConnectorsWithStatus(): Promise<
 		}
 	}
 
-	const identityMap = new Map<
-		string,
-		{ username?: string; avatar_url?: string; id?: string }
-	>();
-	for (const identity of user?.identities ?? []) {
-		if (["github", "gitlab", "bitbucket"].includes(identity.provider)) {
-			identityMap.set(identity.provider, {
-				username:
-					identity.identity_data?.user_name ||
-					identity.identity_data?.preferred_username ||
-					identity.identity_data?.name,
-				avatar_url: identity.identity_data?.avatar_url,
-				id: identity.id,
-			});
-		}
-	}
-
 	return catalog.map((connector): ConnectorWithConnection => {
 		const slug = connector.slug;
 
 		if (connector.category === "git") {
 			const connected = tokens.has(slug);
-			const identity = identityMap.get(slug);
+			// Username/avatar enrichment is rebuilt from the Better Auth `account`
+			// table in D6; connected + token_health drive the UI meanwhile.
 			return {
 				...connector,
 				connected,
-				connection_details:
-					connected && identity
-						? {
-								username: identity.username,
-								avatar_url: identity.avatar_url,
-								identity_id: identity.id,
-							}
-						: null,
+				connection_details: null,
 				token_health: connected ? tokenHealth.get(slug) : undefined,
 			};
 		}

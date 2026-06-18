@@ -16,27 +16,21 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { createClient } from "@/lib/supabase/client";
-import type { User as SupabaseUser } from "@supabase/supabase-js";
+import { authClient } from "@/lib/auth/client";
 import { Calendar, Mail, Shield, User } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export default function ProfilePage() {
-	const [user, setUser] = useState<SupabaseUser | null>(null);
-	const [loading, setLoading] = useState(true);
+	const { data: session, isPending: loading } = authClient.useSession();
+	const user = session?.user ?? null;
+	const [providers, setProviders] = useState<string[]>([]);
 
 	useEffect(() => {
-		const getUser = async () => {
-			const supabase = createClient();
-			const {
-				data: { user },
-			} = await supabase.auth.getUser();
-			setUser(user);
-			setLoading(false);
-		};
-
-		getUser();
-	}, []);
+		if (!user) return;
+		authClient.listAccounts().then((res) => {
+			setProviders((res.data ?? []).map((a) => a.providerId));
+		});
+	}, [user]);
 
 	if (loading) {
 		return (
@@ -145,10 +139,7 @@ export default function ProfilePage() {
 					<div className="flex flex-col sm:flex-row items-start gap-8">
 						<Avatar className="h-20 w-20 sm:h-24 sm:w-24 border border-border/50 shadow-sm">
 							<AvatarImage
-								src={
-									user?.user_metadata?.avatar_url ||
-									"/generic-user-avatar.png"
-								}
+								src={user?.image || "/generic-user-avatar.png"}
 								alt="User avatar"
 							/>
 							<AvatarFallback className="text-2xl bg-muted text-muted-foreground">
@@ -162,9 +153,7 @@ export default function ProfilePage() {
 									Full Name
 								</Label>
 								<p className="text-sm font-medium text-foreground">
-									{user?.user_metadata?.full_name ||
-										user?.user_metadata?.name ||
-										"Not set"}
+									{user?.name || "Not set"}
 								</p>
 							</div>
 							<div className="space-y-1.5">
@@ -182,22 +171,14 @@ export default function ProfilePage() {
 									Authentication
 								</Label>
 								<div className="flex gap-2 flex-wrap">
-									{user?.identities &&
-									user.identities.length > 0 ? (
-										user.identities.map((identity) => (
-											<div key={identity.id}>
-												{getProviderBadge(
-													identity.provider,
-												)}
+									{providers.length > 0 ? (
+										providers.map((providerId) => (
+											<div key={providerId}>
+												{getProviderBadge(providerId)}
 											</div>
 										))
 									) : (
-										<div>
-											{user?.app_metadata?.provider &&
-												getProviderBadge(
-													user.app_metadata.provider,
-												)}
-										</div>
+										<div>{getProviderBadge("email")}</div>
 									)}
 								</div>
 							</div>
@@ -207,9 +188,9 @@ export default function ProfilePage() {
 									Member Since
 								</Label>
 								<p className="text-sm font-medium text-foreground">
-									{user?.created_at
+									{user?.createdAt
 										? new Date(
-												user.created_at,
+												user.createdAt,
 											).toLocaleDateString("en-US", {
 												year: "numeric",
 												month: "long",
@@ -241,11 +222,7 @@ export default function ProfilePage() {
 								id="name"
 								placeholder="Enter your name"
 								className="h-9 text-sm"
-								defaultValue={
-									user?.user_metadata?.full_name ||
-									user?.user_metadata?.name ||
-									""
-								}
+								defaultValue={user?.name || ""}
 							/>
 						</div>
 						<div className="space-y-2">

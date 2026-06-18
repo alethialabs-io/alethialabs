@@ -26,10 +26,9 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { createClient } from "@/lib/supabase/client";
+import { authClient } from "@/lib/auth/client";
 import { cn } from "@/lib/utils";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
-import { env } from "next-runtime-env";
 
 import { fetchRepositoriesByProvider } from "@/app/server/actions/git/repositories";
 import { Repository } from "@/app/server/actions/git/types";
@@ -189,33 +188,24 @@ export function RepositorySelector({
 
 	const handleLinkAccount = async (providerName: PublicGitProvider) => {
 		try {
-			const supabase = await createClient();
+			const callbackURL = "/dashboard/configure";
 
-			// Verify session is valid before linking
-			const {
-				data: { user },
-				error: userError,
-			} = await supabase.auth.getUser();
+			// Better Auth account linking — native GitHub via linkSocial (repo
+			// scope); self-hosted GitLab + Bitbucket via the genericOAuth link
+			// endpoint (scopes are server-configured). Redirects to the provider.
+			const { error } =
+				providerName === "github"
+					? await authClient.linkSocial({
+							provider: providerName,
+							scopes: ["repo"],
+							callbackURL,
+						})
+					: await authClient.oauth2.link({
+							providerId: providerName,
+							callbackURL,
+						});
 
-			if (userError || !user) {
-				console.error("Session invalid, signing out:", userError);
-				await supabase.auth.signOut();
-				window.location.href = "/auth/signin"; // Redirect to login
-				return;
-			}
-
-			// Store provider in cookie so the callback knows which token to save
-			document.cookie = `auth_linking_provider=${providerName}; path=/; max-age=300; SameSite=Lax`;
-
-			const { error } = await supabase.auth.linkIdentity({
-				provider: providerName,
-				options: {
-					redirectTo: `${env("NEXT_PUBLIC_APP_URL") || window.location.origin}/api/auth/callback?next=/dashboard/configure&provider=${providerName}`,
-					scopes: providerName === "github" ? "repo" : providerName === "gitlab" ? "read_api read_user read_repository read_registry openid profile email" : undefined,
-				},
-			});
-
-			if (error) throw error;
+			if (error) throw new Error(error.message);
 		} catch (err) {
 			console.error(`Error linking ${providerName}:`, err);
 			setError(

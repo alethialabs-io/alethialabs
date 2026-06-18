@@ -22,6 +22,20 @@
       "when": 1781787945407,
       "tag": "0002_abandoned_firedrake",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781796914277,
+      "tag": "0003_wise_xavin",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1781798206201,
+      "tag": "0004_luxuriant_imperial_guard",
+      "breakpoints": true
     }
   ]
 }

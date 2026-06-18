@@ -4,11 +4,11 @@
 
 import { eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { getOwner, requireOwner } from "@/lib/auth/owner";
 import * as conn from "@/lib/cloud-providers/connections";
 import { withOwnerScope } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
-import { createClient } from "@/lib/supabase/server";
 
 export type AwsConnectionStatus = {
 	connected: boolean;
@@ -20,40 +20,28 @@ export type AwsConnectionStatus = {
 
 /** Returns the verified AWS connection status for the current user. */
 export async function getAwsConnectionStatus(): Promise<AwsConnectionStatus> {
-	const supabase = await createClient();
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
-	if (!user) return { connected: false };
-	return conn.getStatus(user.id, "aws");
+	const userId = await getOwner();
+	if (!userId) return { connected: false };
+	return conn.getStatus(userId, "aws");
 }
 
 /** Gets or creates the user's AWS identity and returns its external id. */
 export async function getAwsExternalId() {
-	const supabase = await createClient();
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
-	if (!user) throw new Error("Unauthorized");
-	const { identityId, externalId } = await conn.initIdentity(user.id, "aws");
+	const userId = await requireOwner();
+	const { identityId, externalId } = await conn.initIdentity(userId, "aws");
 	if (!externalId) throw new Error("Failed to initialize AWS external ID");
 	return { externalId, identityId };
 }
 
 /** Queues a FETCH_RESOURCES job to refresh cached AWS resources. */
 export async function refreshAwsResources(cloudIdentityId: string) {
-	const supabase = await createClient();
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
+	const userId = await requireOwner();
 
-	if (!user) throw new Error("Unauthorized");
-
-	const jobId = await withOwnerScope(user.id, async (tx) => {
+	const jobId = await withOwnerScope(userId, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
 			.values({
-				user_id: user.id,
+				user_id: userId,
 				job_type: "FETCH_RESOURCES",
 				cloud_identity_id: cloudIdentityId,
 				config_snapshot: {},
@@ -72,13 +60,9 @@ export async function persistCachedResources(
 	cloudIdentityId: string,
 	jobId: string,
 ) {
-	const supabase = await createClient();
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
-	if (!user) throw new Error("Unauthorized");
+	const userId = await requireOwner();
 
-	return withOwnerScope(user.id, async (tx) => {
+	return withOwnerScope(userId, async (tx) => {
 		const [job] = await tx
 			.select({ execution_metadata: jobs.execution_metadata })
 			.from(jobs)
@@ -100,35 +84,20 @@ export async function persistCachedResources(
 
 /** Validates a Role ARN, persists it, and queues a connection test. */
 export async function saveAwsIdentity(identityId: string, roleArn: string) {
-	const supabase = await createClient();
-	const {
-		data: { user },
-		error: authError,
-	} = await supabase.auth.getUser();
-	if (authError || !user) throw new Error("Unauthorized");
-	return conn.saveAwsIdentity(user.id, identityId, roleArn);
+	const userId = await requireOwner();
+	return conn.saveAwsIdentity(userId, identityId, roleArn);
 }
 
 /** Marks the AWS identity verified using the connection test result. */
 export async function verifyAwsIdentity(identityId: string, jobId?: string) {
-	const supabase = await createClient();
-	const {
-		data: { user },
-		error: authError,
-	} = await supabase.auth.getUser();
-	if (authError || !user) throw new Error("Unauthorized");
-	const result = await conn.verifyIdentity(user.id, identityId, jobId);
+	const userId = await requireOwner();
+	const result = await conn.verifyIdentity(userId, identityId, jobId);
 	revalidatePath("/dashboard/connectors");
 	return result;
 }
 
 /** Resets the AWS identity to its pending state. */
 export async function disconnectAwsIdentity(identityId: string) {
-	const supabase = await createClient();
-	const {
-		data: { user },
-		error: authError,
-	} = await supabase.auth.getUser();
-	if (authError || !user) throw new Error("Unauthorized");
-	return conn.disconnectIdentity(user.id, identityId, "aws");
+	const userId = await requireOwner();
+	return conn.disconnectIdentity(userId, identityId, "aws");
 }

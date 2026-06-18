@@ -3,25 +3,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { eq, sql } from "drizzle-orm";
+import { requireOwner } from "@/lib/auth/owner";
 import { withOwnerScope } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
-import { createClient } from "@/lib/supabase/server";
 
 /** Queues a FETCH_RESOURCES job for any cloud identity, regardless of provider. */
 export async function refreshCloudResources(cloudIdentityId: string) {
-	const supabase = await createClient();
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
+	const userId = await requireOwner();
 
-	if (!user) throw new Error("Unauthorized");
-
-	const jobId = await withOwnerScope(user.id, async (tx) => {
+	const jobId = await withOwnerScope(userId, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
 			.values({
-				user_id: user.id,
+				user_id: userId,
 				job_type: "FETCH_RESOURCES",
 				cloud_identity_id: cloudIdentityId,
 				config_snapshot: {},
@@ -40,13 +35,9 @@ export async function completeResourceRefresh(
 	cloudIdentityId: string,
 	jobId: string,
 ) {
-	const supabase = await createClient();
-	const {
-		data: { user },
-	} = await supabase.auth.getUser();
-	if (!user) throw new Error("Unauthorized");
+	const userId = await requireOwner();
 
-	return withOwnerScope(user.id, async (tx) => {
+	return withOwnerScope(userId, async (tx) => {
 		const [job] = await tx
 			.select({ execution_metadata: jobs.execution_metadata })
 			.from(jobs)
