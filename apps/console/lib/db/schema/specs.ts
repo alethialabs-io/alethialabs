@@ -21,6 +21,8 @@ export const specs = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		user_id: uuid().notNull(),
+		// Coarse tenancy scope (RLS blast wall); community org_id = user_id via trigger.
+		org_id: uuid(),
 		zone_id: uuid().references(() => zones.id, { onDelete: "set null" }),
 		cloud_identity_id: uuid().references(() => cloudIdentities.id, {
 			onDelete: "set null",
@@ -36,6 +38,7 @@ export const specs = pgTable(
 	},
 	(t) => [
 		index("idx_specs_user").on(t.user_id),
+		index("idx_specs_org").on(t.org_id),
 		index("idx_specs_zone").on(t.zone_id),
 		index("idx_specs_cloud_identity").on(t.cloud_identity_id),
 	],

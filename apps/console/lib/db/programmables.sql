@@ -247,11 +247,37 @@ LEFT JOIN public.spec_repositories repos ON repos.spec_id = s.id;
 
 GRANT SELECT ON public.spec_full TO alethia_app;
 
--- ── Per-owner RLS backstop. current_setting('app.current_owner', true) is set
--- per-transaction by withOwnerScope(); NULL when unset → deny. Service/superuser
--- bypasses RLS; the app role is constrained. ──
+-- ── org_id coarse-tenancy backfill + trigger. Community: org_id = user_id (the
+-- user's personal org); the ee/ Teams build assigns real organization ids. The
+-- trigger keeps org_id populated without any insert call-site changes. ──
+CREATE OR REPLACE FUNCTION public.set_org_id()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.org_id IS NULL THEN NEW.org_id = NEW.user_id; END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- Owned tables (direct user_id)
+DO $$
+DECLARE tbl TEXT;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY['zones', 'specs', 'cloud_identities', 'jobs', 'runners']) LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS %1$s_set_org_id ON public.%1$I', tbl);
+    EXECUTE format(
+      'CREATE TRIGGER %1$s_set_org_id BEFORE INSERT ON public.%1$I
+         FOR EACH ROW EXECUTE FUNCTION public.set_org_id()', tbl);
+    EXECUTE format(
+      'UPDATE public.%I SET org_id = user_id WHERE org_id IS NULL AND user_id IS NOT NULL', tbl);
+  END LOOP;
+END $$;
+
+-- ── Tenant RLS backstop. Coarse org-isolation (org_id = app.current_org) OR'd with
+-- the per-owner check (user_id = app.current_owner); both set per-transaction by
+-- withScope(). Community: org_id = user_id and current_org = current_owner, so the
+-- two are identical — isolation is unchanged. Fine-grained decisions live in the PDP
+-- (lib/authz). NULL when unset → deny. Service/superuser bypasses RLS. ──
+
+-- Owned tables (direct user_id + org_id)
 DO $$
 DECLARE tbl TEXT;
 BEGIN
@@ -260,25 +286,33 @@ BEGIN
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(
       'CREATE POLICY owner_all ON public.%I FOR ALL
-         USING (user_id = current_setting(''app.current_owner'', true)::uuid)
-         WITH CHECK (user_id = current_setting(''app.current_owner'', true)::uuid)', tbl);
+         USING (user_id = current_setting(''app.current_owner'', true)::uuid
+                OR org_id = current_setting(''app.current_org'', true)::uuid)
+         WITH CHECK (user_id = current_setting(''app.current_owner'', true)::uuid
+                OR org_id = current_setting(''app.current_org'', true)::uuid)', tbl);
   END LOOP;
 END $$;
 
--- runners: cloud-hosted rows are public-read; writes are owner-scoped.
+-- runners: cloud-hosted rows are public-read; writes are owner/org-scoped.
 ALTER TABLE public.runners ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS runners_select ON public.runners;
 CREATE POLICY runners_select ON public.runners FOR SELECT
-  USING (mode = 'cloud-hosted'::public.worker_mode OR user_id = current_setting('app.current_owner', true)::uuid);
+  USING (mode = 'cloud-hosted'::public.worker_mode
+         OR user_id = current_setting('app.current_owner', true)::uuid
+         OR org_id = current_setting('app.current_org', true)::uuid);
 DROP POLICY IF EXISTS runners_insert ON public.runners;
 CREATE POLICY runners_insert ON public.runners FOR INSERT
-  WITH CHECK (mode = 'self-hosted'::public.worker_mode AND user_id = current_setting('app.current_owner', true)::uuid);
+  WITH CHECK (mode = 'self-hosted'::public.worker_mode
+         AND (user_id = current_setting('app.current_owner', true)::uuid
+              OR org_id = current_setting('app.current_org', true)::uuid));
 DROP POLICY IF EXISTS runners_update ON public.runners;
 CREATE POLICY runners_update ON public.runners FOR UPDATE
-  USING (user_id = current_setting('app.current_owner', true)::uuid);
+  USING (user_id = current_setting('app.current_owner', true)::uuid
+         OR org_id = current_setting('app.current_org', true)::uuid);
 DROP POLICY IF EXISTS runners_delete ON public.runners;
 CREATE POLICY runners_delete ON public.runners FOR DELETE
-  USING (user_id = current_setting('app.current_owner', true)::uuid);
+  USING (user_id = current_setting('app.current_owner', true)::uuid
+         OR org_id = current_setting('app.current_org', true)::uuid);
 
 -- Spec child tables (ownership via the parent spec)
 DO $$
@@ -293,8 +327,12 @@ BEGIN
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(
       'CREATE POLICY owner_all ON public.%I FOR ALL
-         USING (spec_id IN (SELECT id FROM public.specs WHERE user_id = current_setting(''app.current_owner'', true)::uuid))
-         WITH CHECK (spec_id IN (SELECT id FROM public.specs WHERE user_id = current_setting(''app.current_owner'', true)::uuid))', tbl);
+         USING (spec_id IN (SELECT id FROM public.specs
+                WHERE user_id = current_setting(''app.current_owner'', true)::uuid
+                   OR org_id = current_setting(''app.current_org'', true)::uuid))
+         WITH CHECK (spec_id IN (SELECT id FROM public.specs
+                WHERE user_id = current_setting(''app.current_owner'', true)::uuid
+                   OR org_id = current_setting(''app.current_org'', true)::uuid))', tbl);
   END LOOP;
 END $$;
 
@@ -303,12 +341,16 @@ ALTER TABLE public.job_logs ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS logs_select ON public.job_logs;
 CREATE POLICY logs_select ON public.job_logs FOR SELECT
   USING (EXISTS (SELECT 1 FROM public.jobs j
-    WHERE j.id = job_logs.job_id AND j.user_id = current_setting('app.current_owner', true)::uuid));
+    WHERE j.id = job_logs.job_id
+      AND (j.user_id = current_setting('app.current_owner', true)::uuid
+           OR j.org_id = current_setting('app.current_org', true)::uuid)));
 
 ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS audit_select ON public.audit_log;
 CREATE POLICY audit_select ON public.audit_log FOR SELECT
-  USING (spec_id IN (SELECT id FROM public.specs WHERE user_id = current_setting('app.current_owner', true)::uuid));
+  USING (spec_id IN (SELECT id FROM public.specs
+    WHERE user_id = current_setting('app.current_owner', true)::uuid
+       OR org_id = current_setting('app.current_org', true)::uuid));
 
 -- profiles: owner = id (CLI/service writes bypass via service role).
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;

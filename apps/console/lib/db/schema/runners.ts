@@ -34,6 +34,9 @@ export const runners = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		user_id: uuid(),
+		// Coarse tenancy scope; null for cloud-hosted (platform-owned, public-read),
+		// org_id = user_id for self-hosted (trigger backfill).
+		org_id: uuid(),
 		name: text().notNull(),
 		mode: workerMode().notNull(),
 		cloud_identity_id: uuid().references(() => cloudIdentities.id, {
@@ -50,6 +53,7 @@ export const runners = pgTable(
 	},
 	(t) => [
 		index("idx_runners_user").on(t.user_id),
+		index("idx_runners_org").on(t.org_id),
 		index("idx_runners_token_hash").on(t.id, t.token_hash),
 		uniqueIndex("idx_runners_one_default_per_user")
 			.on(t.user_id)

@@ -56,21 +56,39 @@ function getAppDb(): Db {
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
+/** Active tenancy scope. Community: `orgId === ownerId` (personal org). */
+export interface Scope {
+	ownerId: string;
+	orgId: string;
+}
+
 /**
- * Runs `fn` inside a transaction on the RLS-enforced app connection with
- * `app.current_owner` set to `ownerId` (transaction-scoped via the `true` flag —
- * pooler-safe). This is the single enforcement point for the per-owner RLS
- * backstop: the owner comes from getActiveScope(actor); ee/ Teams later resolves
- * it to an org without touching call sites.
+ * Runs `fn` inside a transaction on the RLS-enforced app connection with both
+ * `app.current_owner` and `app.current_org` set (transaction-scoped via the `true`
+ * flag — pooler-safe). The org var drives the coarse-org RLS blast wall; the owner
+ * var drives the per-owner policy. This is the single enforcement point; the scope
+ * comes from getActiveScope(actor) (community personal org; ee/ Teams resolves a
+ * real organization without touching call sites).
+ */
+export async function withScope<T>(
+	scope: Scope,
+	fn: (tx: Tx) => Promise<T>,
+): Promise<T> {
+	return getAppDb().transaction(async (tx) => {
+		await tx.execute(
+			sql`select set_config('app.current_owner', ${scope.ownerId}, true), set_config('app.current_org', ${scope.orgId}, true)`,
+		);
+		return fn(tx);
+	});
+}
+
+/**
+ * Convenience wrapper for the per-owner path: scopes to the owner's personal org
+ * (`orgId === ownerId`). Existing call sites pass just the owner id unchanged.
  */
 export async function withOwnerScope<T>(
 	ownerId: string,
 	fn: (tx: Tx) => Promise<T>,
 ): Promise<T> {
-	return getAppDb().transaction(async (tx) => {
-		await tx.execute(
-			sql`select set_config('app.current_owner', ${ownerId}, true)`,
-		);
-		return fn(tx);
-	});
+	return withScope({ ownerId, orgId: ownerId }, fn);
 }

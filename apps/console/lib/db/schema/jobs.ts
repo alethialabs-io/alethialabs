@@ -27,6 +27,8 @@ export const jobs = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		user_id: uuid().notNull(),
+		// Coarse tenancy scope (RLS blast wall); community org_id = user_id via trigger.
+		org_id: uuid(),
 		// Nullable: jobs always have a runner but not necessarily a zone —
 		// cloud-hosted runners and worker-lifecycle / FETCH_RESOURCES /
 		// CONNECTION_TEST jobs have no spec → no zone. Denormalized scope for
@@ -60,6 +62,7 @@ export const jobs = pgTable(
 	},
 	(t) => [
 		index("idx_jobs_user").on(t.user_id),
+		index("idx_jobs_org").on(t.org_id),
 		index("idx_jobs_zone").on(t.zone_id),
 		// FIFO claim index — the hot path for claim_next_job.
 		index("idx_jobs_queue")

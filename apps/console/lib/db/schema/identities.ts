@@ -24,6 +24,8 @@ export const cloudIdentities = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		user_id: uuid().notNull(),
+		// Coarse tenancy scope (RLS blast wall); community org_id = user_id via trigger.
+		org_id: uuid(),
 		provider: cloudProvider().notNull(),
 		name: text().default("My Cloud Account").notNull(),
 		credentials: jsonb().$type<CloudCredentials>().default({}).notNull(),
@@ -35,7 +37,10 @@ export const cloudIdentities = pgTable(
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
-	(t) => [index("idx_cloud_identities_user").on(t.user_id)],
+	(t) => [
+		index("idx_cloud_identities_user").on(t.user_id),
+		index("idx_cloud_identities_org").on(t.org_id),
+	],
 );
 
 // Git OAuth tokens were retired into Better Auth's `account` table in Phase D
