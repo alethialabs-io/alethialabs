@@ -82,6 +82,14 @@ const ALL_KEYS = PERMISSIONS.map((p) => p.key);
  *  org-scoped copies with deltas. `"*"` = every permission. */
 export type BuiltInRole = "owner" | "admin" | "operator" | "viewer";
 
+/** Stable UUIDs for the built-in roles so the seed is idempotent by primary key. */
+export const BUILTIN_ROLE_IDS: Record<BuiltInRole, string> = {
+	owner: "00000000-0000-4000-8000-000000000001",
+	admin: "00000000-0000-4000-8000-000000000002",
+	operator: "00000000-0000-4000-8000-000000000003",
+	viewer: "00000000-0000-4000-8000-000000000004",
+};
+
 export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 	// Full control, including billing + member management.
 	owner: "*",

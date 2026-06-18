@@ -43,6 +43,13 @@
       "when": 1781811114374,
       "tag": "0005_reflective_vertigo",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781811927426,
+      "tag": "0006_handy_scarecrow",
+      "breakpoints": true
     }
   ]
 }

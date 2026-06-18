@@ -6,4 +6,7 @@ export async function register() {
 	if (process.env.NEXT_RUNTIME !== "nodejs") return;
 	const { startStaleJobRecovery } = await import("@/lib/jobs/recovery");
 	startStaleJobRecovery();
+	// Sync the static authz registry (permissions + built-in roles) — idempotent.
+	const { seedAuthz } = await import("@/lib/authz/seed");
+	void seedAuthz().catch((err) => console.error("[authz] seed failed:", err));
 }
