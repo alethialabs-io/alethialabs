@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in CI.
+# Azure provider auth comes from ARM_CLIENT_ID / ARM_CLIENT_SECRET /
+# ARM_SUBSCRIPTION_ID / ARM_TENANT_ID (service principal).
+
+location            = "westeurope" # must offer Dpsv5 (Ampere ARM)
+resource_group_name = "alethia-cp"
+
+cloudflare_api_token = "YOUR_CLOUDFLARE_API_TOKEN"
+cloudflare_zone_id   = "YOUR_CLOUDFLARE_ZONE_ID"
+domain               = "alethialabs.io"
+
+# Public half of the CI deploy key (private half = GH secret DEPLOY_SSH_PRIVATE_KEY).
+ssh_public_key = "ssh-ed25519 AAAA... deploy@alethia"
+
+vm_size      = "Standard_D2ps_v5" # Ampere Altra ARM64, 2 vCPU / 8 GB
+os_disk_size = 30

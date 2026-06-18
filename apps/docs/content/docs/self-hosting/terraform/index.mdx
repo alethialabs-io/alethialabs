@@ -20,7 +20,7 @@ per cloud — each provisions an **ARM** host and runs the same bundle via cloud
 | Hetzner | `infra/hetzner` | [Hetzner](./hetzner) ✅ |
 | AWS | `infra/aws-cp` | [AWS](./aws) ✅ |
 | GCP | `infra/gcp-cp` | [GCP](./gcp) ✅ |
-| Azure | `infra/azure-cp` | planned |
+| Azure | `infra/azure-cp` | [Azure](./azure) ✅ |
 | Alibaba | `infra/alibaba-cp` | planned |
 
 ## Shared workflow
@@ -42,6 +42,7 @@ get TLS). The **SSH public key** you pass is how the `deploy-app` workflow ships
 
 ## CI
 
-Each module has a workflow (`terraform-hetzner.yml`, `terraform-aws-cp.yml`, `terraform-gcp.yml`):
+Each module has a workflow (`terraform-hetzner.yml`, `terraform-aws-cp.yml`, `terraform-gcp.yml`,
+`terraform-azure.yml`):
 **plan on PR**, **apply on `main`**. Apply only **one** control-plane module — they all manage the
 same DNS records. See each cloud's page for the exact GitHub secrets.

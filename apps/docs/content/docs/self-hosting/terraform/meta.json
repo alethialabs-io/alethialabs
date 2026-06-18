@@ -1,4 +1,4 @@
 {
   "title": "Terraform (per-cloud)",
-  "pages": ["index", "hetzner", "aws", "gcp"]
+  "pages": ["index", "hetzner", "aws", "gcp", "azure"]
 }

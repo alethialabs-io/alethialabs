@@ -1,0 +1,43 @@
+---
+title: Azure
+description: Provision the Alethia control plane on an Azure Dpsv5 (Ampere ARM) Linux VM.
+---
+
+# Azure (`infra/azure-cp`)
+
+A single **Dpsv5** (Ampere Altra ARM) Linux VM — `Standard_D2ps_v5` (2 vCPU / 8 GB) — with a static
+public IP, behind Caddy. **≈ $60–70/mo** (`Standard_D2pls_v5`, 2 vCPU / 4 GB, ≈ $45 if it fits).
+Dpsv5/Dplsv5 are region-limited, so pick a region that offers them.
+
+## What it creates
+- `azurerm_linux_virtual_machine` (`Standard_D2ps_v5`, Ubuntu 24.04 ARM64) with a 30 GB StandardSSD OS disk
+- `azurerm_resource_group`, `azurerm_virtual_network` + `azurerm_subnet`
+- `azurerm_public_ip` (Static / Standard) → DNS
+- `azurerm_network_security_group` (22/80/443) + NIC association
+- `cloudflare_record` A for the apex + `www`
+- cloud-init via `custom_data` (installs Docker, clones the repo)
+
+## Prerequisites
+- An Azure **subscription** and a **service principal** with Contributor on it.
+- Cloudflare API token + zone id; an SSH public key.
+- A region offering **Dpsv5** (e.g. `westeurope`, `northeurope`, `eastus`).
+
+## Apply
+```bash
+cd infra/azure-cp
+cp backend.hcl.example backend.hcl
+cp terraform.tfvars.example terraform.tfvars  # location, cloudflare_*, ssh_public_key
+export ARM_CLIENT_ID=... ARM_CLIENT_SECRET=... ARM_SUBSCRIPTION_ID=... ARM_TENANT_ID=...
+terraform init -backend-config=backend.hcl
+terraform apply
+terraform output server_ipv4
+```
+
+## CI secrets (`terraform-azure.yml`)
+`ARM_CLIENT_ID`, `ARM_CLIENT_SECRET`, `ARM_SUBSCRIPTION_ID`, `ARM_TENANT_ID` (service principal),
+`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`, `DEPLOY_SSH_PUBLIC_KEY`, and the `TF_STATE_S3_*`
+backend secrets.
+
+## Tuning
+`vm_size` (`Standard_D2ps_v5` default; `Standard_D2pls_v5` to save), `os_disk_size`, `location`
+(must have Dpsv5), `ssh_allowed_cidrs`.
