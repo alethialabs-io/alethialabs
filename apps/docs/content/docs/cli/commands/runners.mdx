@@ -1,77 +1,57 @@
 ---
-title: Worker Commands
-description: Register, list, configure, and remove Runner agents from the CLI.
+title: Runner Commands
+description: Deploy, list, and tear down runner agents from the CLI.
 ---
 
-# Worker Commands
+# Runner Commands
 
-Manage Runner execution agents from the terminal.
+Runners execute infrastructure jobs. Manage them with `alethia runner`.
 
-## `alethia worker start`
+## `alethia runner deploy`
 
-Start the Runner polling loop (self-hosted mode).
-
-```bash
-alethia worker start
-```
-
-This starts the Runner agent locally — it polls for jobs, executes Terraform, and streams logs. Requires a registered worker with credentials stored in `~/.config/alethia/worker.json`.
-
-See [Self-Hosted Mode](/runner/self-hosted) for prerequisites and setup.
-
-## `alethia worker register`
-
-Register a new self-hosted Runner.
+Deploy a new runner to a cloud account. Creates a runner record and queues a
+`DEPLOY_RUNNER` job using the latest stable release.
 
 ```bash
-alethia worker register
+alethia runner deploy --cloud-identity-id <id> --name <name> --region <region>
 ```
 
-Interactive form prompts for a worker name. On success:
-- Generates a `worker_id` and `worker_token`
-- Saves credentials to `~/.config/alethia/worker.json`
-- Prints the credentials for reference
+| Flag | Description |
+|------|-------------|
+| `--cloud-identity-id` | Cloud identity to deploy into |
+| `--name` | Runner name |
+| `--region` | Cloud region |
+| `--assigned-runner-id` | Which runner executes the deployment |
+| `--wait`, `-w` | Wait for job completion |
 
-<Callout type="warn">
-The worker token is generated once and saved locally. If the config file is lost, the Runner must be re-registered. See [Authentication Flows](/concepts/authentication).
-</Callout>
+## `alethia runner list`
 
-## `alethia worker list`
-
-List all registered Runners.
+List all runners (status, mode, version, last heartbeat).
 
 ```bash
-alethia worker list
+alethia runner list
 ```
 
-Output:
+## `alethia runner destroy`
 
-```
-ID          NAME                STATUS   MODE           VERSION   LAST HEARTBEAT
-a1b2...     eu-west-1-runner    ONLINE   cloud-hosted   0.1.0     5 sec ago
-c3d4...     self-hosted-dev     OFFLINE  self-hosted    0.1.0     2 min ago
-```
-
-## `alethia worker config`
-
-Display the current worker configuration from `~/.config/alethia/worker.json`.
+Tear down a runner's cloud infrastructure. Queues a `DESTROY_RUNNER` job; another
+runner executes the teardown.
 
 ```bash
-alethia worker config
+alethia runner destroy --runner-id <id>
 ```
 
-Shows the stored worker ID, token presence, and API endpoint.
+| Flag | Description |
+|------|-------------|
+| `--runner-id` | ID of the runner to destroy |
+| `--assigned-runner-id` | Which runner executes the teardown |
+| `--wait`, `-w` | Wait for job completion |
 
-## `alethia worker remove`
+## `alethia runner remove`
 
-Remove a registered Runner.
+Remove a runner's database record only (no cloud teardown). Run
+`alethia runner destroy` first to tear down cloud resources.
 
 ```bash
-alethia worker remove --id <worker-id>
+alethia runner remove <runner_id>
 ```
-
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--id` | Yes | Worker UUID |
-
-For cloud-hosted Runners, this also queues a DESTROY_WORKER job to tear down the ECS infrastructure. For self-hosted Runners, it simply removes the registration from Alethia.

@@ -17,7 +17,7 @@ Located at `/dashboard/jobs`, the page shows:
 - All, QUEUED, PROCESSING, SUCCESS, FAILED, CANCELLED
 
 **Type filters** (button group):
-- All Types, DEPLOY, PLAN, DESTROY, CONNECTION_TEST, FETCH_RESOURCES, DEPLOY_WORKER, UPDATE_WORKER, DESTROY_WORKER
+- All Types, DEPLOY, PLAN, DESTROY, CONNECTION_TEST, FETCH_RESOURCES, DEPLOY_RUNNER, UPDATE_RUNNER, DESTROY_RUNNER
 
 **Search** — filter by job ID, Runner name, or spec name.
 
@@ -47,4 +47,4 @@ When triggering Plan, Apply, or Destroy from a spec, the **Runner Select Popover
 - "Any available" option for automatic assignment
 - Only ONLINE Runners can accept new jobs
 
-The selected Runner's ID is stored as `assigned_worker_id` on the job.
+The selected Runner's ID is stored as `assigned_runner_id` on the job.

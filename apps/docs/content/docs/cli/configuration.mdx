@@ -12,7 +12,6 @@ alethia stores configuration and credentials in the user's config directory.
 | File | Purpose |
 |------|---------|
 | `~/.config/alethia/auth.json` | CLI authentication tokens (access + refresh JWT) |
-| `~/.config/alethia/worker.json` | Self-hosted Runner credentials (worker ID + token) |
 
 ## auth.json
 
@@ -28,19 +27,13 @@ Created by `alethia login`. Contains JWT tokens for API authentication:
 
 The access token is refreshed automatically before each API call if expired. See [Authentication](/cli/authentication).
 
-## worker.json
+## Runner Credentials
 
-Created by `alethia worker register`. Contains self-hosted Runner credentials:
-
-```json
-{
-  "worker_id": "uuid",
-  "worker_token": "plaintext-token",
-  "api_url": "https://alethia.example.com"
-}
-```
-
-Used by `alethia worker start` to authenticate with the Alethia API.
+The `alethia` CLI does not store Runner credentials. A self-hosted Runner is a
+separate binary configured entirely through environment variables — register the
+Runner in the console (or via the API) to obtain a `runner_id` / `runner_token`,
+then set `ALETHIA_WORKER_ID` and `ALETHIA_WORKER_TOKEN` on the host. See
+[Self-Hosted Mode](/runner/self-hosted) for the full env contract.
 
 ## Environment Variables
 

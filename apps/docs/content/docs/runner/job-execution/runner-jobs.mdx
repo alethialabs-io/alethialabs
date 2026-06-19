@@ -1,20 +1,20 @@
 ---
-title: Worker & Utility Jobs
-description: DEPLOY_WORKER, UPDATE_WORKER, DESTROY_WORKER, and CONNECTION_TEST jobs.
+title: Runner & Utility Jobs
+description: DEPLOY_RUNNER, UPDATE_RUNNER, DESTROY_RUNNER, and CONNECTION_TEST jobs.
 ---
 
-# Worker & Utility Jobs
+# Runner & Utility Jobs
 
 These job types manage Runner infrastructure and validate cloud connections.
 
-## DEPLOY_WORKER
+## DEPLOY_RUNNER
 
 Provisions a new cloud-hosted Runner in ECS Fargate.
 
 <Steps>
 
 ### Use platform credentials
-Worker jobs use the platform's own AWS credentials (not the user's cloud identity).
+Runner jobs use the platform's own cloud credentials (not the user's cloud identity).
 
 ### Generate Terraform config
 Creates ECS task definition, IAM roles (execution + task), CloudWatch log group, security groups from the Runner templates.
@@ -30,7 +30,7 @@ Job status → SUCCESS. The new Runner boots, registers its heartbeat, and appea
 
 </Steps>
 
-## UPDATE_WORKER
+## UPDATE_RUNNER
 
 Updates an existing Runner to the latest release.
 
@@ -38,7 +38,7 @@ Updates an existing Runner to the latest release.
 2. Forces a new ECS Fargate deployment (`--force-new-deployment`)
 3. The old task drains gracefully, the new task starts with the updated image
 
-## DESTROY_WORKER
+## DESTROY_RUNNER
 
 Tears down a Runner's infrastructure.
 

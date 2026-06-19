@@ -43,12 +43,12 @@ Create a new job. Accepts:
 {
   "job_type": "PLAN",
   "configuration_id": "spec-uuid",
-  "assigned_worker_id": "worker-uuid",
+  "assigned_runner_id": "runner-uuid",
   "plan_job_id": "plan-job-uuid"
 }
 ```
 
-Valid job types: PLAN, DEPLOY, DESTROY, DESTROY_WORKER.
+Valid job types: PLAN, DEPLOY, DESTROY, DESTROY_RUNNER.
 
 If `configuration_id` is provided, the server auto-resolves `cloud_identity_id`, `zone_id`, computes config hash, and creates a config snapshot.
 
@@ -59,21 +59,24 @@ List all jobs for the authenticated user. Supports `?status={status}` and `?zone
 Get job status and metadata.
 
 ### `GET /api/cli/jobs/{id}/logs`
-Get job logs (same format as worker API).
+Get job logs (same format as the Runner API).
 
 ### `POST /api/cli/jobs/{id}/cancel`
 Cancel a QUEUED or PROCESSING job.
 
-## Workers
+## Runners
 
-### `GET /api/cli/workers`
+### `GET /api/cli/runners`
 List all registered Runners.
 
-### `POST /api/cli/workers`
+### `POST /api/cli/runners/register`
 Register a self-hosted Runner.
 
-### `GET /api/cli/workers/{id}`
-Get Runner details.
+### `POST /api/cli/runners/deploy`
+Deploy a new cloud-hosted Runner.
+
+### `DELETE /api/cli/runners/{id}`
+Remove a Runner's database record.
 
 ## Repositories
 
@@ -88,7 +91,7 @@ List Bitbucket repositories.
 
 ## Releases
 
-### `POST /api/releases/worker`
+### `POST /api/releases/runner`
 Publish a new Runner release (CI/CD only, requires `RELEASE_API_SECRET`).
 
 **Body:**

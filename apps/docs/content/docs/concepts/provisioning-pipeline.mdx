@@ -31,7 +31,7 @@ Each table stores the shared schema. Provider-specific options live in `provider
 
 ## Stage 2: Database → Config Snapshot
 
-When a job is queued, `buildConfigSnapshot()` in `app/server/actions/specs.ts` queries all component tables in parallel and assembles a single JSON object. This object is stored in `provision_jobs.config_snapshot`.
+When a job is queued, `buildConfigSnapshot()` in `app/server/actions/specs.ts` queries all component tables in parallel and assembles a single JSON object. This object is stored in `jobs.config_snapshot`.
 
 The snapshot is a **point-in-time freeze**. Even if the user edits the Spec after queuing, the job executes the exact configuration that was planned.
 

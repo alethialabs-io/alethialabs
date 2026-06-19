@@ -88,7 +88,7 @@ Tag push (runner-v0.1.0)
             ├── Push to AWS ECR (eu-west-1)
             └── Push to GitHub Container Registry (ghcr.io)
        └── Publish release metadata
-            └── POST /api/releases/worker { version, release_notes }
+            └── POST /api/releases/runner { version, release_notes }
        └── Force new ECS Fargate deployment
             └── aws ecs update-service --force-new-deployment
 ```
@@ -131,7 +131,7 @@ Runs `googleapis/release-please-action` which:
 
 ## Version Tracking in the Platform
 
-When a Runner release is published, the Console API receives the version and release notes via `POST /api/releases/worker`. This creates a `worker_releases` record. Registered Runners reference their `release_id` so the platform can:
+When a Runner release is published, the Console API receives the version and release notes via `POST /api/releases/runner`. This creates a `runner_releases` record. Registered Runners reference their `release_id` so the platform can:
 
 - Display current version per Runner in the UI
 - Show release notes and changelogs

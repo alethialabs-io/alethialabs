@@ -39,7 +39,7 @@ User
            ├── spec_nosql_tables (1:N) ─── DynamoDB / Firestore / Cosmos DB
            ├── spec_container_registries (1:N) ─── ECR / Artifact Registry / ACR
            ├── spec_secrets (1:N) ─── Secrets Manager / Secret Manager / Key Vault
-           └── provision_jobs (1:N) ─── PLAN, DEPLOY, DESTROY, etc.
+           └── jobs (1:N) ─── PLAN, DEPLOY, DESTROY, etc.
                 └── provision_job_logs (1:N)
 ```
 
@@ -118,8 +118,8 @@ QUEUED ──► CLAIMED ──► PROCESSING ──► SUCCESS
 | `PLAN` | Run `terraform plan` + optional Infracost analysis |
 | `DEPLOY` | Run `terraform apply` + install ArgoCD |
 | `DESTROY` | Run `terraform destroy` with graceful cleanup |
-| `DEPLOY_WORKER` | Provision Runner infrastructure (ECS task definition, IAM roles) |
-| `DESTROY_WORKER` | Tear down Runner infrastructure |
+| `DEPLOY_RUNNER` | Provision Runner infrastructure (ECS task definition, IAM roles) |
+| `DESTROY_RUNNER` | Tear down Runner infrastructure |
 
 ## Environment Stages
 

@@ -1,11 +1,11 @@
 ---
-title: Worker APIs
+title: Runner APIs
 description: API endpoints used by Runner agents for job claiming, heartbeat, and log streaming.
 ---
 
-# Worker APIs
+# Runner APIs
 
-These endpoints are called by Runner agents. Authentication is via `X-Worker-ID` and `X-Worker-Token` headers. The token is hashed with SHA-256 and compared against the stored `workers.token_hash`.
+These endpoints are called by Runner agents. Authentication is via `X-Runner-ID` and `X-Runner-Token` headers. The token is hashed with SHA-256 and compared against the stored `runners.token_hash`.
 
 ## Job Claiming
 
@@ -35,9 +35,9 @@ Claims the next available job. Uses the `claim_next_job()` PostgreSQL function w
 
 ## Heartbeat
 
-### `POST /api/workers/heartbeat`
+### `POST /api/runners/heartbeat`
 
-Sent every 30 seconds. Updates `workers.last_heartbeat` and `workers.version`.
+Sent every 30 seconds. Updates `runners.last_heartbeat` and `runners.version`.
 
 **Body:**
 ```json
@@ -101,11 +101,11 @@ Uploads the binary `terraform.plan.out` file to S3-compatible storage (the `plan
 
 Downloads the plan artifact for apply execution.
 
-## Worker Registration
+## Runner Registration
 
-### `POST /api/workers/register`
+### `POST /api/runners/register`
 
-Registers a new Runner. Returns the plaintext worker token (shown once).
+Registers a new Runner. Returns the plaintext runner token (shown once).
 
 **Body:**
 ```json
@@ -118,21 +118,21 @@ Registers a new Runner. Returns the plaintext worker token (shown once).
 **Response:**
 ```json
 {
-  "worker_id": "uuid",
-  "worker_token": "plaintext-token"
+  "runner_id": "uuid",
+  "runner_token": "plaintext-token"
 }
 ```
 
-### `POST /api/workers/heartbeat`
+### `POST /api/runners/heartbeat`
 
 Also used for initial heartbeat after registration.
 
-## Worker Metadata
+## Runner Metadata
 
-### `GET /api/workers/{id}`
+### `GET /api/runners/{id}`
 
-Returns worker metadata including deploy configuration.
+Returns runner metadata including deploy configuration.
 
-### `POST /api/workers/{id}/metadata`
+### `POST /api/runners/{id}/metadata`
 
-Updates worker metadata (used for tracking deployment state).
+Updates runner metadata (used for tracking deployment state).

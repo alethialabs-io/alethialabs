@@ -26,8 +26,8 @@ The cloud-hosted Docker image bundles all of these. In self-hosted mode, you mus
 
 Before running, the Runner must be registered with Alethia:
 
-1. Register via the Alethia API or CLI (`alethia worker register`)
-2. Receive a `WORKER_ID` and `WORKER_TOKEN`
+1. Register the Runner via the Alethia console or API
+2. Receive a `runner_id` and `runner_token` (shown once)
 3. Pass these as environment variables
 
 ## Running
@@ -36,8 +36,8 @@ Set the required environment variables and start the binary:
 
 ```bash
 export ALETHIA_WEB_ORIGIN=https://alethia.example.com
-export ALETHIA_WORKER_ID=<worker-id>
-export ALETHIA_WORKER_TOKEN=<worker-token>
+export ALETHIA_WORKER_ID=<runner-id>
+export ALETHIA_WORKER_TOKEN=<runner-token>
 export ALETHIA_WORKER_MODE=self-hosted
 export ALETHIA_STORAGE_ENDPOINT=<s3-endpoint>
 export ALETHIA_STORAGE_REGION=<s3-region>
@@ -60,7 +60,7 @@ The Runner will:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ALETHIA_WEB_ORIGIN` | Yes | Alethia API base URL |
-| `ALETHIA_WORKER_ID` | Yes | Assigned worker ID |
+| `ALETHIA_WORKER_ID` | Yes | Assigned runner ID |
 | `ALETHIA_WORKER_TOKEN` | Yes | Authentication token |
 | `ALETHIA_WORKER_MODE` | Yes | Must be `self-hosted` |
 | `ALETHIA_STORAGE_ENDPOINT` | Yes | Terraform state S3 endpoint |

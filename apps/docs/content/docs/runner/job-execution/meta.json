@@ -5,6 +5,6 @@
     "plan-jobs",
     "deploy-jobs",
     "destroy-jobs",
-    "worker-jobs"
+    "runner-jobs"
   ]
 }

@@ -112,7 +112,7 @@ When a Runner is registered (via UI or CLI), the server:
 
 1. Generates a random token
 2. Hashes it with SHA-256
-3. Stores the **hash** in `workers.token_hash`
+3. Stores the **hash** in `runners.token_hash`
 4. Returns the **plaintext** token to the user (shown once, never stored)
 
 ### Request Authentication
@@ -120,14 +120,14 @@ When a Runner is registered (via UI or CLI), the server:
 Every Runner API call includes two headers:
 
 ```
-X-Worker-ID: {worker-uuid}
-X-Worker-Token: {plaintext-token}
+X-Runner-ID: {runner-uuid}
+X-Runner-Token: {plaintext-token}
 ```
 
 The server:
-1. Looks up the worker by `X-Worker-ID`
-2. Hashes the provided `X-Worker-Token` with SHA-256
-3. Compares against `workers.token_hash`
+1. Looks up the runner by `X-Runner-ID`
+2. Hashes the provided `X-Runner-Token` with SHA-256
+3. Compares against `runners.token_hash`
 4. Rejects if mismatch (401)
 
 <Callout type="warn">

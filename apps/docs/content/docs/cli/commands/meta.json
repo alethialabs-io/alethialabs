@@ -7,7 +7,7 @@
     "spec",
     "plan-and-apply",
     "jobs",
-    "workers",
+    "runners",
     "clusters"
   ]
 }

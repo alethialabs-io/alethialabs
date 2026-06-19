@@ -43,7 +43,7 @@ Runner receives its configuration via environment variables:
 
 ## Heartbeat Mechanism
 
-The heartbeat goroutine sends `POST /api/workers/heartbeat` every 30 seconds with:
+The heartbeat goroutine sends `POST /api/runners/heartbeat` every 30 seconds with:
 
 - Worker ID
 - Current status (ONLINE or DRAINING)
@@ -74,18 +74,18 @@ ECS Fargate sends SIGTERM when stopping a task, so Runners always attempt a grac
 
 ## API Client
 
-The `WorkerAPIClient` handles all communication with Alethia:
+The `RunnerAPIClient` handles all communication with Alethia:
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | `ClaimJob()` | `POST /api/jobs/claim` | Atomic job claiming |
-| `SendHeartbeat()` | `POST /api/workers/heartbeat` | Keepalive |
+| `Heartbeat()` | `POST /api/runners/heartbeat` | Keepalive |
 | `UpdateJobStatus()` | `PUT /api/jobs/{id}/status` | Status transitions |
-| `SendLogs()` | `POST /api/jobs/{id}/logs` | Log batch delivery |
+| `SendLog()` | `POST /api/jobs/{id}/logs` | Log batch delivery |
 | `UploadPlanArtifact()` | `POST /api/jobs/{id}/plan-artifact` | Plan JSON upload |
 | `DownloadPlanArtifact()` | `GET /api/jobs/{id}/plan-artifact` | Plan JSON download |
 
-All requests include `X-Worker-ID` and `X-Worker-Token` headers for authentication.
+All requests include `X-Runner-ID` and `X-Runner-Token` headers for authentication.
 
 ## Shared core Package
 

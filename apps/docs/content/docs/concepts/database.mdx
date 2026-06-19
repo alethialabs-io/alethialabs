@@ -109,9 +109,9 @@ EKS / GKE / AKS configuration.
 | `status` | component_status enum | |
 | `cluster_name` | text | Populated after provisioning |
 | `cluster_endpoint` | text | Populated after provisioning |
-| `cluster_arn` | text | Populated after provisioning |
 | `argocd_url` | text | Populated after ArgoCD install |
 | `argocd_admin_password` | text | Populated after ArgoCD install |
+| `provider_outputs` | jsonb | Provider-specific identifiers (e.g. `arn`) — populated after provisioning |
 
 ### `spec_dns`
 
@@ -158,7 +158,7 @@ Aurora / Cloud SQL / Azure Database instances.
 | `id` | uuid (PK) | |
 | `spec_id` | uuid (FK) | |
 | `name` | text | Unique per Spec |
-| `engine` | text | aurora-postgresql (default), aurora-mysql, etc. |
+| `engine` | text | Provider-specific engine, resolved per cloud (e.g. aurora-postgresql / cloudsql-postgresql) — no default |
 | `engine_version` | text | e.g., 16.4 |
 | `min_capacity` | numeric | Aurora Serverless min ACU |
 | `max_capacity` | numeric | Aurora Serverless max ACU |
@@ -168,8 +168,7 @@ Aurora / Cloud SQL / Azure Database instances.
 | `status` | component_status enum | |
 | `endpoint` | text | Writer endpoint (populated after provisioning) |
 | `reader_endpoint` | text | Reader endpoint |
-| `cluster_identifier` | text | |
-| `master_credentials_secret_arn` | text | Secrets Manager ARN |
+| `provider_outputs` | jsonb | Provider-specific identifiers (`identifier`, `arn`, `secret_ref`, `extra_secret_ref`, `kms_key`) — populated after provisioning |
 
 Constraint: `UNIQUE(spec_id, name)`
 
@@ -201,11 +200,11 @@ DynamoDB / Firestore / Cosmos DB tables.
 | `spec_id` | uuid (FK) | |
 | `name` | text | |
 | `table_type` | nosql_table_type enum | |
-| `hash_key` | text | Partition key name |
-| `hash_key_type` | nosql_key_type enum | S (string), N (number), B (binary) |
-| `range_key` | text | Sort key name (optional) |
-| `range_key_type` | nosql_key_type enum | |
-| `billing_mode` | nosql_billing_mode enum | PAY_PER_REQUEST / PROVISIONED |
+| `partition_key` | text | Partition key name |
+| `partition_key_type` | nosql_key_type enum | S (string), N (number), B (binary) |
+| `sort_key` | text | Sort key name (optional) |
+| `sort_key_type` | nosql_key_type enum | |
+| `capacity_mode` | nosql_capacity_mode enum | on_demand / provisioned (mapper translates to the provider value) |
 | `point_in_time_recovery` | boolean | |
 | `provider_config` | jsonb | |
 | `status` | component_status enum | |
@@ -219,10 +218,10 @@ SQS / Pub/Sub / Service Bus queues.
 | `id` | uuid (PK) | |
 | `spec_id` | uuid (FK) | |
 | `name` | text | |
-| `fifo` | boolean | FIFO ordering guarantee |
-| `visibility_timeout` | integer | Seconds |
+| `ordered` | boolean | Ordered delivery (SQS FIFO / Service Bus sessions / Pub/Sub ordering) |
+| `visibility_timeout` | integer | Seconds (SQS visibility ≈ Azure lock_duration ≈ Pub/Sub ack deadline) |
 | `message_retention` | integer | Seconds |
-| `delay_seconds` | integer | |
+| `provider_config` | jsonb | Provider-specific knobs (e.g. SQS `delay_seconds`) |
 | `status` | component_status enum | |
 
 ### `spec_topics`
@@ -246,10 +245,8 @@ ECR / Artifact Registry / ACR repositories.
 | `id` | uuid (PK) | |
 | `spec_id` | uuid (FK) | |
 | `name` | text | |
-| `image_tag_mutability` | registry_tag_mutability enum | MUTABLE / IMMUTABLE |
-| `scan_on_push` | boolean | |
 | `repository_url` | text | Populated after provisioning |
-| `provider_config` | jsonb | |
+| `provider_config` | jsonb | Provider-specific knobs (`immutable_tags`, `vulnerability_scanning`) |
 | `status` | component_status enum | |
 
 ### `spec_secrets`
@@ -268,7 +265,7 @@ Secrets Manager / Secret Manager / Key Vault entries.
 
 ## Job Tables
 
-### `provision_jobs`
+### `jobs`
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -276,9 +273,10 @@ Secrets Manager / Secret Manager / Key Vault entries.
 | `user_id` | uuid (FK) | Owner |
 | `spec_id` | uuid (FK) | Target Spec |
 | `cloud_identity_id` | uuid (FK) | Cloud account for execution |
-| `job_type` | text | CONNECTION_TEST, PLAN, DEPLOY, etc. |
+| `job_type` | provision_job_type enum | CONNECTION_TEST, PLAN, DEPLOY, DEPLOY_RUNNER, etc. |
 | `status` | provision_job_status enum | QUEUED → SUCCESS/FAILED |
-| `worker_id` | uuid (FK → workers) | Assigned Runner |
+| `runner_id` | uuid (FK → runners) | Assigned Runner |
+| `config_snapshot` | jsonb | Frozen Spec config for the job |
 | `error_message` | text | Failure details |
 | `execution_metadata` | jsonb | Terraform outputs, cost data, timing |
 | `created_at` | timestamptz | |
@@ -286,38 +284,38 @@ Secrets Manager / Secret Manager / Key Vault entries.
 | `started_at` | timestamptz | When execution began |
 | `completed_at` | timestamptz | |
 
-### `provision_job_logs`
+### `job_logs`
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `job_id` | uuid (FK → provision_jobs) | |
+| `job_id` | uuid (FK → jobs) | |
 | `log_chunk` | text | Log content batch |
-| `stream_type` | text | STDOUT / STDERR / SYSTEM |
+| `stream_type` | log_stream_type enum | STDOUT / STDERR / SYSTEM |
 | `created_at` | timestamptz | |
 
-Realtime subscription: clients subscribe to INSERT events on this table filtered by `job_id` for live log streaming.
+Live streaming: an `AFTER INSERT` trigger emits Postgres `NOTIFY`; the console relays it to the browser over SSE, filtered by `job_id`.
 
-## Worker Tables
+## Runner Tables
 
-### `workers`
+### `runners`
 
 Registered Runner agents.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `user_id` | uuid (FK) | Owner |
+| `user_id` | uuid (FK) | Owner (null for cloud-hosted) |
 | `name` | text | Display name |
-| `mode` | worker_mode enum | self-hosted / cloud-hosted |
-| `status` | worker_status enum | ONLINE / OFFLINE / DRAINING |
+| `mode` | runner_mode enum | self-hosted / cloud-hosted |
+| `status` | runner_status enum | ONLINE / OFFLINE / DRAINING |
 | `token_hash` | text | Hashed authentication token |
 | `version` | text | Runner version string |
-| `release_id` | uuid (FK → worker_releases) | Current release |
+| `release_id` | uuid (FK → runner_releases) | Current release |
 | `last_heartbeat` | timestamptz | Last heartbeat timestamp |
 | `created_at` | timestamptz | |
 
-### `worker_releases`
+### `runner_releases`
 
 Release catalog for Runner versions.
 
@@ -330,7 +328,7 @@ Release catalog for Runner versions.
 
 ## Audit Table
 
-### `spec_audit_log`
+### `audit_log`
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -364,9 +362,9 @@ CREATE TYPE provision_job_status AS ENUM (
   'SUCCESS', 'FAILED', 'CANCELLED'
 );
 
--- Worker status
-CREATE TYPE worker_mode AS ENUM ('self-hosted', 'cloud-hosted');
-CREATE TYPE worker_status AS ENUM ('ONLINE', 'OFFLINE', 'DRAINING');
+-- Runner status
+CREATE TYPE runner_mode AS ENUM ('self-hosted', 'cloud-hosted');
+CREATE TYPE runner_status AS ENUM ('ONLINE', 'OFFLINE', 'DRAINING');
 
 -- Environment
 CREATE TYPE environment_stage AS ENUM ('development', 'staging', 'production');
@@ -377,7 +375,7 @@ CREATE TYPE cache_engine AS ENUM ('redis', 'valkey');
 -- NoSQL
 CREATE TYPE nosql_table_type AS ENUM (...);
 CREATE TYPE nosql_key_type AS ENUM ('S', 'N', 'B');
-CREATE TYPE nosql_billing_mode AS ENUM ('PAY_PER_REQUEST', 'PROVISIONED');
+CREATE TYPE nosql_capacity_mode AS ENUM ('on_demand', 'provisioned');
 ```
 
 ## Key Database Functions
@@ -387,22 +385,22 @@ CREATE TYPE nosql_billing_mode AS ENUM ('PAY_PER_REQUEST', 'PROVISIONED');
 Atomic job claiming using `FOR UPDATE SKIP LOCKED`:
 
 ```sql
-CREATE OR REPLACE FUNCTION claim_next_job(p_worker_id uuid)
-RETURNS provision_jobs AS $$
+CREATE OR REPLACE FUNCTION claim_next_job(p_runner_id uuid)
+RETURNS jobs AS $$
 DECLARE
-  job provision_jobs;
+  job jobs;
 BEGIN
   SELECT * INTO job
-  FROM provision_jobs
+  FROM jobs
   WHERE status = 'QUEUED'
   ORDER BY created_at ASC
   FOR UPDATE SKIP LOCKED
   LIMIT 1;
 
   IF job IS NOT NULL THEN
-    UPDATE provision_jobs
+    UPDATE jobs
     SET status = 'CLAIMED',
-        worker_id = p_worker_id,
+        runner_id = p_runner_id,
         claimed_at = now()
     WHERE id = job.id;
   END IF;
@@ -418,6 +416,6 @@ This guarantees that if two Runners poll simultaneously, only one gets the job. 
 
 The following tables are broadcast via Postgres `LISTEN/NOTIFY` (delivered to browsers over SSE) for live UI updates:
 
-- `provision_job_logs` — log streaming (INSERT events)
-- `provision_jobs` — job status changes (UPDATE events)
-- `workers` — Runner status changes (UPDATE events)
+- `job_logs` — log streaming (INSERT events)
+- `jobs` — job status changes (UPDATE events)
+- `runners` — Runner status changes (UPDATE events)
