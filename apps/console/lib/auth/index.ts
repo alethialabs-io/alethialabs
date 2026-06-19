@@ -26,6 +26,7 @@ import {
 } from "@/lib/db/schema";
 import { profiles } from "@/lib/db/schema";
 import { sendSignInCodeEmail } from "@/lib/email/auth-email";
+import { sendWelcomeEmail } from "@/lib/email/notify-email";
 
 const cfg = getAuthConfig();
 
@@ -137,6 +138,10 @@ export const auth = betterAuth({
 				after: async (u) => {
 					await upsertProfile(u);
 					await ensurePersonalOrgOwner(u.id);
+					// Best-effort welcome (general stream); never block signup on email.
+					void sendWelcomeEmail(u.email).catch((e) =>
+						console.error("[email] welcome send failed:", e),
+					);
 				},
 			},
 			update: {
