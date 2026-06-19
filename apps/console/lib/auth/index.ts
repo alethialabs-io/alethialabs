@@ -14,7 +14,15 @@ import { getAuthConfig } from "@/lib/config/auth";
 import { getAuthPlugins } from "@/lib/auth/plugins";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { getServiceDb } from "@/lib/db";
-import { account, session, user, verification } from "@/lib/db/schema";
+import {
+	account,
+	invitation,
+	member,
+	organization,
+	session,
+	user,
+	verification,
+} from "@/lib/db/schema";
 import { profiles } from "@/lib/db/schema";
 import { sendSignInCodeEmail } from "@/lib/email/auth-email";
 
@@ -97,7 +105,17 @@ export const auth = betterAuth({
 	trustedOrigins: [cfg.baseURL],
 	database: drizzleAdapter(getServiceDb(), {
 		provider: "pg",
-		schema: { user, session, account, verification },
+		// organization/member/invitation are mapped for the enterprise organization
+		// plugin (getAuthPlugins); inert in community (the plugin isn't loaded).
+		schema: {
+			user,
+			session,
+			account,
+			verification,
+			organization,
+			member,
+			invitation,
+		},
 	}),
 	// UUID ids so user.id populates every `user_id uuid` column + the RLS
 	// backstop (current_setting('app.current_owner')::uuid).

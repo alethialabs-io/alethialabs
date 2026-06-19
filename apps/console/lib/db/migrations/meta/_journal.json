@@ -50,6 +50,13 @@
       "when": 1781811927426,
       "tag": "0006_handy_scarecrow",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1781858824836,
+      "tag": "0007_eager_matthew_murdock",
+      "breakpoints": true
     }
   ]
 }

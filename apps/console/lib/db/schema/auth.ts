@@ -30,6 +30,8 @@ export const session = pgTable("session", {
 	expiresAt: timestamp({ withTimezone: true }).notNull(),
 	ipAddress: text(),
 	userAgent: text(),
+	// Set by the enterprise organization plugin on org-switch; null in community.
+	activeOrganizationId: uuid(),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });

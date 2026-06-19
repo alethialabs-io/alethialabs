@@ -16,3 +16,4 @@ export * from "./connectors";
 export * from "./accounts";
 export * from "./auth";
 export * from "./authz";
+export * from "./organizations";
