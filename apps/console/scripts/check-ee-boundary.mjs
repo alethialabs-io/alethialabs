@@ -13,9 +13,10 @@ import { join, relative } from "node:path";
 const ROOTS = ["app", "lib", "components", "hooks"];
 const ALLOWLIST = new Set(["lib/enterprise.ts"]);
 
-// Any reference to the enterprise package specifier (static import, dynamic import,
-// require, or re-export).
-const EE_IMPORT = /@alethia\/ee\b/;
+// The enterprise package specifier as a QUOTED module string — i.e. an actual
+// static import / dynamic import / require / re-export. Matching the quotes (rather
+// than the bare name) avoids false positives on prose mentions in comments/docs.
+const EE_IMPORT = /['"]@alethia\/ee['"]/;
 
 function walk(dir, out) {
 	for (const entry of readdirSync(dir)) {
