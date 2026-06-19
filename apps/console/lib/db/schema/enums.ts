@@ -52,11 +52,6 @@ export const nosqlCapacityMode = pgEnum("nosql_capacity_mode", [
 	"provisioned",
 ]);
 
-export const registryTagMutability = pgEnum("registry_tag_mutability", [
-	"MUTABLE",
-	"IMMUTABLE",
-]);
-
 export const gitCredentialPurpose = pgEnum("git_credential_purpose", [
 	"argocd",
 	"applications",

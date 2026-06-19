@@ -118,9 +118,8 @@ type SpecSecretConfig struct {
 }
 
 type SpecContainerRegistryConfig struct {
-	Name               string `json:"name"`
-	ImageTagMutability string `json:"image_tag_mutability"`
-	ScanOnPush         *bool  `json:"scan_on_push"`
+	Name           string         `json:"name"`
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 type SpecStorageBucketConfig struct {

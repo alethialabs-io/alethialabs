@@ -92,6 +92,13 @@
       "when": 1781867336735,
       "tag": "0012_silly_snowbird",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1782000300000,
+      "tag": "0013_registry_provider_config",
+      "breakpoints": true
     }
   ]
 }

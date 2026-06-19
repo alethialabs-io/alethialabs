@@ -137,6 +137,7 @@ export interface NosqlProviderConfig {
 
 export interface RegistryProviderConfig {
 	vulnerability_scanning?: boolean;
+	immutable_tags?: boolean;
 }
 
 // Provider-specific resource identifiers captured after a deploy (cloud-agnostic

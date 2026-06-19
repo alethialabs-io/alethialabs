@@ -39,7 +39,6 @@ import {
 	nosqlCapacityMode,
 	nosqlKeyType,
 	nosqlTableType,
-	registryTagMutability,
 } from "./enums";
 import { specs } from "./specs";
 
@@ -239,9 +238,8 @@ export const specContainerRegistries = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		spec_id: specRef(),
 		name: text().notNull(),
-		image_tag_mutability: registryTagMutability().default("MUTABLE"),
-		scan_on_push: boolean().default(true),
 		repository_url: text(),
+		// Provider-specific knobs (immutable_tags, vulnerability_scanning) — neutral JSONB.
 		provider_config: jsonb().$type<RegistryProviderConfig>().default({}),
 		status: componentStatus().default("PENDING").notNull(),
 		status_message: text(),
