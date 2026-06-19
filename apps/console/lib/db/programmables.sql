@@ -71,7 +71,7 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.runners WHERE id = p_runner_id AND token_hash = p_runner_token_hash) THEN
         RAISE EXCEPTION 'Unauthorized runner';
     END IF;
-    UPDATE public.runners SET last_heartbeat = now(), status = 'ONLINE'::public.worker_status WHERE id = p_runner_id;
+    UPDATE public.runners SET last_heartbeat = now(), status = 'ONLINE'::public.runner_status WHERE id = p_runner_id;
     UPDATE public.jobs
     SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), updated_at = now()
     WHERE id = (
@@ -161,7 +161,7 @@ BEGIN
         SELECT id INTO v_release_id FROM public.runner_releases WHERE version = p_version;
     END IF;
     UPDATE public.runners
-    SET last_heartbeat = now(), status = 'ONLINE'::public.worker_status,
+    SET last_heartbeat = now(), status = 'ONLINE'::public.runner_status,
         version = COALESCE(p_version, version), release_id = COALESCE(v_release_id, release_id)
     WHERE id = p_runner_id AND token_hash = p_runner_token_hash;
     IF NOT FOUND THEN RAISE EXCEPTION 'Unauthorized runner'; END IF;
@@ -186,7 +186,10 @@ GRANT EXECUTE ON FUNCTION public.set_default_runner(UUID, UUID) TO alethia_app;
 -- OUTPUT column names match the SpecConfig wire contract (zone_id, create_vpc, …);
 -- sources the renamed spec_* tables. Numerics are cast to float8 so the JSON carries
 -- numbers (postgres-js otherwise returns numeric as a string). ──
-CREATE OR REPLACE VIEW public.spec_full AS
+-- DROP first: CREATE OR REPLACE VIEW cannot rename/reorder existing columns
+-- (Postgres 42P16), and this view's output columns change as the schema evolves.
+DROP VIEW IF EXISTS public.spec_full;
+CREATE VIEW public.spec_full AS
 SELECT
   s.id, s.user_id, s.zone_id AS zone_id, s.cloud_identity_id,
   s.project_name,
@@ -296,12 +299,12 @@ END $$;
 ALTER TABLE public.runners ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS runners_select ON public.runners;
 CREATE POLICY runners_select ON public.runners FOR SELECT
-  USING (mode = 'cloud-hosted'::public.worker_mode
+  USING (mode = 'cloud-hosted'::public.runner_mode
          OR user_id = current_setting('app.current_owner', true)::uuid
          OR org_id = current_setting('app.current_org', true)::uuid);
 DROP POLICY IF EXISTS runners_insert ON public.runners;
 CREATE POLICY runners_insert ON public.runners FOR INSERT
-  WITH CHECK (mode = 'self-hosted'::public.worker_mode
+  WITH CHECK (mode = 'self-hosted'::public.runner_mode
          AND (user_id = current_setting('app.current_owner', true)::uuid
               OR org_id = current_setting('app.current_org', true)::uuid));
 DROP POLICY IF EXISTS runners_update ON public.runners;

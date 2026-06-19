@@ -287,9 +287,9 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 		execErr = w.executeDestroy(ctx, job, stdoutLogger, stderrLogger)
 	// job_type enum values stay on the worker noun (DB/wire contract, deferred
 	// alongside the ALETHIA_WORKER_* env vars); the Go handlers use the new noun.
-	case "DEPLOY_WORKER", "UPDATE_WORKER":
+	case "DEPLOY_RUNNER", "UPDATE_RUNNER":
 		execErr = w.executeDeployRunner(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
-	case "DESTROY_WORKER":
+	case "DESTROY_RUNNER":
 		execErr = w.executeDestroyRunner(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)

@@ -22,7 +22,7 @@ var (
 var runnerDestroyCmd = &cobra.Command{
 	Use:   "destroy",
 	Short: "Tear down a runner's cloud infrastructure",
-	Long:  `Queues a DESTROY_WORKER job to tear down the runner's cloud resources. Another runner will execute the teardown.`,
+	Long:  `Queues a DESTROY_RUNNER job to tear down the runner's cloud resources. Another runner will execute the teardown.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -71,7 +71,7 @@ var runnerDestroyCmd = &cobra.Command{
 		}
 
 		params := api.QueueJobParams{
-			JobType:          "DESTROY_WORKER",
+			JobType:          "DESTROY_RUNNER",
 			ConfigSnapshot:   snapshot,
 			AssignedRunnerID: destroyRunnerAssignedID,
 		}
@@ -83,12 +83,12 @@ var runnerDestroyCmd = &cobra.Command{
 		}
 
 		if destroyRunnerWait {
-			ui.JobQueued("DESTROY_WORKER", job.ID)
+			ui.JobQueued("DESTROY_RUNNER", job.ID)
 			if err := waitForJob(apiClient, job.ID); err != nil {
 				os.Exit(1)
 			}
 		} else {
-			ui.JobQueued("DESTROY_WORKER", job.ID)
+			ui.JobQueued("DESTROY_RUNNER", job.ID)
 		}
 	},
 }

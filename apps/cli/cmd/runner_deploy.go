@@ -24,7 +24,7 @@ var (
 var runnerDeployCmd = &cobra.Command{
 	Use:   "deploy",
 	Short: "Deploy a new runner to a cloud account",
-	Long:  `Creates a runner record and queues a DEPLOY_WORKER job using the latest stable release.`,
+	Long:  `Creates a runner record and queues a DEPLOY_RUNNER job using the latest stable release.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -100,12 +100,12 @@ var runnerDeployCmd = &cobra.Command{
 
 		ui.Success(fmt.Sprintf("Runner %q created (ID: %s)", resp.Runner.Name, resp.Runner.ID))
 		if deployRunnerWait {
-			ui.JobQueued("DEPLOY_WORKER", resp.Job.ID)
+			ui.JobQueued("DEPLOY_RUNNER", resp.Job.ID)
 			if err := waitForJob(apiClient, resp.Job.ID); err != nil {
 				os.Exit(1)
 			}
 		} else {
-			ui.JobQueued("DEPLOY_WORKER", resp.Job.ID)
+			ui.JobQueued("DEPLOY_RUNNER", resp.Job.ID)
 		}
 	},
 }

@@ -193,7 +193,7 @@ func TestIntegration_GetJobs(t *testing.T) {
 	}
 	validTypes := map[string]bool{
 		"DEPLOY": true, "DESTROY": true, "PLAN": true,
-		"DEPLOY_WORKER": true, "UPDATE_WORKER": true, "DESTROY_WORKER": true,
+		"DEPLOY_RUNNER": true, "UPDATE_RUNNER": true, "DESTROY_RUNNER": true,
 		"CONNECTION_TEST": true, "FETCH_RESOURCES": true,
 	}
 

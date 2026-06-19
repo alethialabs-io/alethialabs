@@ -30,9 +30,9 @@ var jobTypeLabels = map[string]string{
 	"DESTROY":         "Destroy",
 	"CONNECTION_TEST": "Test Conn.",
 	"FETCH_RESOURCES": "Fetch Res.",
-	"DEPLOY_WORKER":   "Deploy Runner",
-	"UPDATE_WORKER":   "Update Runner",
-	"DESTROY_WORKER":  "Destroy Runner",
+	"DEPLOY_RUNNER":   "Deploy Runner",
+	"UPDATE_RUNNER":   "Update Runner",
+	"DESTROY_RUNNER":  "Destroy Runner",
 }
 
 var jobsListCmd = &cobra.Command{

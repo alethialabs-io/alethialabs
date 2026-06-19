@@ -21,8 +21,8 @@ import { ReleaseNotesDialog } from "@/components/runners/release-notes-dialog";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
 import { useRunnersStore, type ActiveJob } from "@/lib/stores/use-runners-store";
 import type {
-	WorkerStatus as PublicWorkerStatus,
-	WorkerMode as PublicWorkerMode,
+	RunnerStatus as PublicWorkerStatus,
+	RunnerMode as PublicWorkerMode,
 	Runner as PublicRunnerRow,
 } from "@/lib/db/schema";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -53,9 +53,9 @@ function RunnerActionsCell({ runner }: { runner: RunnerRow }) {
 	const [destroying, setDestroying] = useState(false);
 
 	const isCloudHosted = runner.mode === "cloud-hosted";
-	const isDestroying = runner.activeJob?.job_type === "DESTROY_WORKER";
-	const isProvisioning = runner.activeJob?.job_type === "DEPLOY_WORKER";
-	const isUpdating = runner.activeJob?.job_type === "UPDATE_WORKER";
+	const isDestroying = runner.activeJob?.job_type === "DESTROY_RUNNER";
+	const isProvisioning = runner.activeJob?.job_type === "DEPLOY_RUNNER";
+	const isUpdating = runner.activeJob?.job_type === "UPDATE_RUNNER";
 	const metadata = runner.metadata as RunnerMetadata | null;
 	const hasCloudResources = !!runner.cloud_identity_id && !!metadata?.deploy_config;
 
@@ -287,9 +287,9 @@ export const runnerColumns: ColumnDef<RunnerRow>[] = [
 		cell: ({ row }) => {
 			const runner = row.original;
 			const status = (runner.status ?? "OFFLINE") as PublicWorkerStatus;
-			const isDestroying = runner.activeJob?.job_type === "DESTROY_WORKER";
-			const isProvisioning = runner.activeJob?.job_type === "DEPLOY_WORKER";
-			const isUpdating = runner.activeJob?.job_type === "UPDATE_WORKER";
+			const isDestroying = runner.activeJob?.job_type === "DESTROY_RUNNER";
+			const isProvisioning = runner.activeJob?.job_type === "DEPLOY_RUNNER";
+			const isUpdating = runner.activeJob?.job_type === "UPDATE_RUNNER";
 			const isBusy = isDestroying || isProvisioning || isUpdating;
 			const dotStatus = isDestroying
 				? "DESTROYING"
@@ -315,9 +315,9 @@ export const runnerColumns: ColumnDef<RunnerRow>[] = [
 		enableSorting: true,
 		cell: ({ row }) => {
 			const runner = row.original;
-			const isDestroying = runner.activeJob?.job_type === "DESTROY_WORKER";
-			const isProvisioning = runner.activeJob?.job_type === "DEPLOY_WORKER";
-			const isUpdating = runner.activeJob?.job_type === "UPDATE_WORKER";
+			const isDestroying = runner.activeJob?.job_type === "DESTROY_RUNNER";
+			const isProvisioning = runner.activeJob?.job_type === "DEPLOY_RUNNER";
+			const isUpdating = runner.activeJob?.job_type === "UPDATE_RUNNER";
 			if (isProvisioning) {
 				return <StatusBadge status="PROVISIONING" />;
 			}

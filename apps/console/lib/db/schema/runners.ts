@@ -14,7 +14,7 @@ import {
 	uuid,
 } from "drizzle-orm/pg-core";
 import type { RunnerMetadata } from "@/types/database-custom.types";
-import { workerMode, workerStatus } from "./enums";
+import { runnerMode, runnerStatus } from "./enums";
 import { cloudIdentities } from "./identities";
 
 export const runnerReleases = pgTable("runner_releases", {
@@ -38,12 +38,12 @@ export const runners = pgTable(
 		// org_id = user_id for self-hosted (trigger backfill).
 		org_id: uuid(),
 		name: text().notNull(),
-		mode: workerMode().notNull(),
+		mode: runnerMode().notNull(),
 		cloud_identity_id: uuid().references(() => cloudIdentities.id, {
 			onDelete: "set null",
 		}),
 		token_hash: text().notNull(),
-		status: workerStatus().default("OFFLINE"),
+		status: runnerStatus().default("OFFLINE"),
 		last_heartbeat: timestamp({ withTimezone: true }),
 		version: text(),
 		release_id: uuid().references(() => runnerReleases.id),

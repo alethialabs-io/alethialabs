@@ -49,17 +49,17 @@ const JOB_TYPES: Record<
 		icon: RefreshCw,
 		description: "Cache cloud regions, networks, zones",
 	},
-	DEPLOY_WORKER: {
+	DEPLOY_RUNNER: {
 		label: "Deploy Runner",
 		icon: Container,
 		description: "Deploy a self-hosted runner container",
 	},
-	UPDATE_WORKER: {
+	UPDATE_RUNNER: {
 		label: "Update Runner",
 		icon: ArrowUpCircle,
 		description: "Update a runner to a newer version",
 	},
-	DESTROY_WORKER: {
+	DESTROY_RUNNER: {
 		label: "Destroy Runner",
 		icon: Trash2,
 		description: "Tear down a self-hosted runner",

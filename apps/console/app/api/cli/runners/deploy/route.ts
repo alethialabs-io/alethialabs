@@ -9,7 +9,7 @@ import { createHash, randomBytes } from "crypto";
 import { desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
-/** Deploys a runner by creating a runner record + queuing a DEPLOY_WORKER job. */
+/** Deploys a runner by creating a runner record + queuing a DEPLOY_RUNNER job. */
 export async function POST(req: Request) {
 	const auth = await authorizeCli(req, "deploy", { type: "runner" });
 	if ("error" in auth) return auth.error;
@@ -90,7 +90,7 @@ export async function POST(req: Request) {
 			.values({
 				user_id: actor.userId,
 				cloud_identity_id,
-				job_type: "DEPLOY_WORKER",
+				job_type: "DEPLOY_RUNNER",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
 				assigned_runner_id: assigned_runner_id || null,

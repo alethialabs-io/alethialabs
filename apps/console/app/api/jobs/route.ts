@@ -12,7 +12,7 @@ import { notifyScaler } from "@/lib/scaler";
 
 // Job types the CLI is allowed to queue through this endpoint (a subset of the
 // full provision_job_type enum — runner-lifecycle types are created elsewhere).
-type CreatableJobType = "DEPLOY" | "DESTROY" | "PLAN" | "DESTROY_WORKER";
+type CreatableJobType = "DEPLOY" | "DESTROY" | "PLAN" | "DESTROY_RUNNER";
 
 /** Narrows an untrusted body value to a CreatableJobType (no cast). */
 function parseJobType(v: unknown): CreatableJobType | null {
@@ -20,7 +20,7 @@ function parseJobType(v: unknown): CreatableJobType | null {
 		case "DEPLOY":
 		case "DESTROY":
 		case "PLAN":
-		case "DESTROY_WORKER":
+		case "DESTROY_RUNNER":
 			return v;
 		default:
 			return null;
@@ -60,7 +60,7 @@ export async function POST(req: Request) {
 		if (!jobType) {
 			return NextResponse.json(
 				{
-					error: "job_type must be one of: DEPLOY, DESTROY, PLAN, DESTROY_WORKER",
+					error: "job_type must be one of: DEPLOY, DESTROY, PLAN, DESTROY_RUNNER",
 				},
 				{ status: 400 },
 			);

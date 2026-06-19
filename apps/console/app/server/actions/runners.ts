@@ -9,7 +9,7 @@ import { notifyScaler } from "@/lib/scaler";
 import { createHash, randomBytes } from "crypto";
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 
-type WorkerMode = "self-hosted" | "cloud-hosted";
+type RunnerMode = "self-hosted" | "cloud-hosted";
 
 const RELEASE_FIELDS = {
 	version: runnerReleases.version,
@@ -105,7 +105,7 @@ export async function getOnlineRunnerCount(): Promise<number> {
 	});
 }
 
-export async function registerRunner(name: string, mode: WorkerMode) {
+export async function registerRunner(name: string, mode: RunnerMode) {
 	const actor = await authorize("create", { type: "runner" });
 	const owner = actor.userId;
 	const runnerToken = randomBytes(32).toString("hex");
@@ -205,7 +205,7 @@ export async function deployRunner(params: {
 			.values({
 				user_id: owner,
 				cloud_identity_id: params.cloudIdentityId,
-				job_type: "DEPLOY_WORKER",
+				job_type: "DEPLOY_RUNNER",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
 				assigned_runner_id: params.assignedRunnerId ?? null,
@@ -282,7 +282,7 @@ function buildRunnerConfigSnapshot(
 	};
 }
 
-/** Queues a DESTROY_WORKER job for a self-hosted runner with cloud resources. */
+/** Queues a DESTROY_RUNNER job for a self-hosted runner with cloud resources. */
 export async function destroyRunner(
 	runnerId: string,
 	assignedRunnerId?: string | null,
@@ -300,7 +300,7 @@ export async function destroyRunner(
 			.from(jobs)
 			.where(
 				and(
-					eq(jobs.job_type, "DESTROY_WORKER"),
+					eq(jobs.job_type, "DESTROY_RUNNER"),
 					inArray(jobs.status, ["QUEUED", "CLAIMED", "PROCESSING"]),
 				),
 			);
@@ -324,7 +324,7 @@ export async function destroyRunner(
 			.values({
 				user_id: owner,
 				cloud_identity_id: runner.cloud_identity_id!,
-				job_type: "DESTROY_WORKER",
+				job_type: "DESTROY_RUNNER",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
 				assigned_runner_id: assignedRunnerId ?? null,
@@ -338,7 +338,7 @@ export async function destroyRunner(
 	return result;
 }
 
-/** Queues an UPDATE_WORKER job to roll a deployed runner to the latest release. */
+/** Queues an UPDATE_RUNNER job to roll a deployed runner to the latest release. */
 export async function updateRunner(runnerId: string) {
 	const actor = await authorize("edit", { type: "runner", id: runnerId });
 	const owner = actor.userId;
@@ -376,7 +376,7 @@ export async function updateRunner(runnerId: string) {
 			.values({
 				user_id: owner,
 				cloud_identity_id: runner.cloud_identity_id!,
-				job_type: "UPDATE_WORKER",
+				job_type: "UPDATE_RUNNER",
 				config_snapshot: configSnapshot,
 				status: "QUEUED",
 			})

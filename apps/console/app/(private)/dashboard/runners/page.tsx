@@ -15,7 +15,7 @@ import { useRunnersStore, type ActiveJob } from "@/lib/stores/use-runners-store"
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
 import type {
 	ProvisionJobType as PublicProvisionJobType,
-	WorkerStatus as PublicWorkerStatus,
+	RunnerStatus as PublicWorkerStatus,
 } from "@/lib/db/schema";
 import type { JobWithMeta as PublicProvisionJobsRow } from "@/app/server/actions/jobs";
 import type { RunnerMetadata } from "@/types/database-custom.types";
@@ -69,7 +69,7 @@ export default function RunnersPage() {
 	}, [fetchRunners]);
 
 	const RUNNER_JOB_TYPES = useMemo(
-		() => new Set<PublicProvisionJobType>(["DEPLOY_WORKER", "UPDATE_WORKER", "DESTROY_WORKER"]),
+		() => new Set<PublicProvisionJobType>(["DEPLOY_RUNNER", "UPDATE_RUNNER", "DESTROY_RUNNER"]),
 		[],
 	);
 

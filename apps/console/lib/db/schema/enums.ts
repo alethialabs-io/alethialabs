@@ -92,18 +92,18 @@ export const provisionJobStatus = pgEnum("provision_job_status", [
 	"CANCELLED",
 ]);
 export const provisionJobType = pgEnum("provision_job_type", [
-	"DESTROY_WORKER",
+	"DESTROY_RUNNER",
 	"DEPLOY",
 	"DESTROY",
 	"CONNECTION_TEST",
 	"FETCH_RESOURCES",
 	"PLAN",
-	"DEPLOY_WORKER",
-	"UPDATE_WORKER",
+	"DEPLOY_RUNNER",
+	"UPDATE_RUNNER",
 ]);
 
-export const workerMode = pgEnum("worker_mode", ["self-hosted", "cloud-hosted"]);
-export const workerStatus = pgEnum("worker_status", [
+export const runnerMode = pgEnum("runner_mode", ["self-hosted", "cloud-hosted"]);
+export const runnerStatus = pgEnum("runner_status", [
 	"ONLINE",
 	"OFFLINE",
 	"DRAINING",
@@ -137,8 +137,8 @@ export type CloudProvider = (typeof cloudProvider.enumValues)[number];
 export type GitProvider = (typeof gitProvider.enumValues)[number];
 export type ProvisionJobType = (typeof provisionJobType.enumValues)[number];
 export type ProvisionJobStatus = (typeof provisionJobStatus.enumValues)[number];
-export type WorkerMode = (typeof workerMode.enumValues)[number];
-export type WorkerStatus = (typeof workerStatus.enumValues)[number];
+export type RunnerMode = (typeof runnerMode.enumValues)[number];
+export type RunnerStatus = (typeof runnerStatus.enumValues)[number];
 export type SpecStatus = (typeof specStatus.enumValues)[number];
 export type ComponentStatus = (typeof componentStatus.enumValues)[number];
 export type EnvironmentStage = (typeof environmentStage.enumValues)[number];
