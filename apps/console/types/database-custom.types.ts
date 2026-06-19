@@ -140,6 +140,12 @@ export interface RegistryProviderConfig {
 	immutable_tags?: boolean;
 }
 
+export interface StorageProviderConfig {
+	// AES256 / aws:kms (S3), google-managed / CMEK (GCS), etc.
+	encryption_algorithm?: string;
+	kms_key?: string;
+}
+
 // Provider-specific resource identifiers captured after a deploy (cloud-agnostic
 // keys). Replaces the AWS-shaped typed columns (cluster_arn, *_secret_arn, kms…)
 // — AWS fills arn/secret_ref/kms_key; GCP/Azure fill the keys their model uses.

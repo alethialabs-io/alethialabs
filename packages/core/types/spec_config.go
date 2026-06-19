@@ -123,9 +123,10 @@ type SpecContainerRegistryConfig struct {
 }
 
 type SpecStorageBucketConfig struct {
-	Name         string   `json:"name"`
-	Versioning   bool     `json:"versioning"`
-	Encryption   string   `json:"encryption"`
-	PublicAccess bool     `json:"public_access"`
-	CorsOrigins  []string `json:"cors_origins"`
+	Name              string         `json:"name"`
+	Versioning        bool           `json:"versioning"`
+	EncryptionEnabled bool           `json:"encryption_enabled"`
+	PublicAccess      bool           `json:"public_access"`
+	CorsOrigins       []string       `json:"cors_origins"`
+	ProviderConfig    map[string]any `json:"provider_config"`
 }

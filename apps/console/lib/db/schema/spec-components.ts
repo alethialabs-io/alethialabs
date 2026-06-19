@@ -28,6 +28,7 @@ import type {
 	NosqlProviderConfig,
 	ProviderOutputs,
 	RegistryProviderConfig,
+	StorageProviderConfig,
 	TopicSubscription,
 } from "@/types/database-custom.types";
 import {
@@ -275,9 +276,12 @@ export const specStorageBuckets = pgTable(
 		spec_id: specRef(),
 		name: text().notNull(),
 		versioning: boolean().default(false),
-		encryption: text().default("AES256"),
+		// Cross-cloud: whether at-rest encryption is on. The specific algorithm
+		// (AES256 / aws:kms / CMEK …) is a provider-specific knob in provider_config.
+		encryption_enabled: boolean().default(true),
 		public_access: boolean().default(false),
 		cors_origins: text().array().default([]),
+		provider_config: jsonb().$type<StorageProviderConfig>().default({}),
 		status: componentStatus().default("PENDING").notNull(),
 		status_message: text(),
 		estimated_monthly_cost: cost(),

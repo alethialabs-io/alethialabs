@@ -189,6 +189,18 @@ func ddbCapacityMode(mode string) string {
 	return "PAY_PER_REQUEST"
 }
 
+// s3SSEAlgorithm resolves the S3 server-side-encryption algorithm from the
+// bucket's provider_config (encryption_algorithm), defaulting to AES256 when
+// encryption is enabled.
+func s3SSEAlgorithm(b types.SpecStorageBucketConfig) string {
+	if b.ProviderConfig != nil {
+		if v, ok := b.ProviderConfig["encryption_algorithm"].(string); ok && v != "" {
+			return v
+		}
+	}
+	return "AES256"
+}
+
 func derefIntOr(p *int, def int) int {
 	if p != nil {
 		return *p
@@ -356,7 +368,7 @@ func buildS3Buckets(buckets []types.SpecStorageBucketConfig) []map[string]interf
 			"acl_type":                "private",
 			"create_s3_user":          false,
 			"versioning_enabled":      b.Versioning,
-			"sse_algorithm":           orDefault(b.Encryption, "AES256"),
+			"sse_algorithm":           s3SSEAlgorithm(b),
 			"store_access_key_in_ssm": false,
 			"block_public_acls":       blockPublic,
 			"block_public_policy":     blockPublic,
