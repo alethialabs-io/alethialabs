@@ -200,12 +200,12 @@ func buildServiceBusQueues(queues []types.SpecQueueConfig) map[string]interface{
 		if q.MessageRetention != nil {
 			cfg["default_message_ttl"] = fmt.Sprintf("PT%dS", *q.MessageRetention)
 		}
-		if q.DelaySeconds != nil {
+		if d, ok := providerInt(q.ProviderConfig, "delay_seconds"); ok {
 			cfg["forward_dead_lettered_messages_to"] = ""
 			cfg["max_delivery_count"] = 10
 			// Azure Service Bus doesn't have a direct delay_seconds equivalent,
 			// but we can pass it for scheduled enqueue support
-			cfg["delay_seconds"] = *q.DelaySeconds
+			cfg["delay_seconds"] = d
 		}
 		result[q.Name] = cfg
 	}

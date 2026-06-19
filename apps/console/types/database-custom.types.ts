@@ -146,6 +146,11 @@ export interface StorageProviderConfig {
 	kms_key?: string;
 }
 
+export interface QueueProviderConfig {
+	// SQS-only delivery delay (Azure Service Bus / Pub/Sub have no direct equivalent).
+	delay_seconds?: number;
+}
+
 // Provider-specific resource identifiers captured after a deploy (cloud-agnostic
 // keys). Replaces the AWS-shaped typed columns (cluster_arn, *_secret_arn, kms…)
 // — AWS fills arn/secret_ref/kms_key; GCP/Azure fill the keys their model uses.

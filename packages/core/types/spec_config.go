@@ -82,11 +82,11 @@ type SpecCacheConfig struct {
 }
 
 type SpecQueueConfig struct {
-	Name              string `json:"name"`
-	Ordered              *bool  `json:"ordered"`
-	VisibilityTimeout *int   `json:"visibility_timeout"`
-	MessageRetention  *int   `json:"message_retention"`
-	DelaySeconds      *int   `json:"delay_seconds"`
+	Name              string         `json:"name"`
+	Ordered           *bool          `json:"ordered"`
+	VisibilityTimeout *int           `json:"visibility_timeout"`
+	MessageRetention  *int           `json:"message_retention"`
+	ProviderConfig    map[string]any `json:"provider_config"`
 }
 
 type SpecTopicConfig struct {

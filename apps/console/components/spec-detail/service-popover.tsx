@@ -56,7 +56,6 @@ const FIELD_DEFS: Record<ServiceType, FieldDef[]> = {
 		{ key: "ordered", label: "Type", format: (v) => v === true ? "FIFO" : "Standard" },
 		{ key: "visibility_timeout", label: "Visibility Timeout", format: (v) => v != null ? `${v}s` : null },
 		{ key: "message_retention", label: "Message Retention", format: (v) => v != null ? `${v}s` : null },
-		{ key: "delay_seconds", label: "Delay", format: (v) => v != null ? `${v}s` : null },
 	],
 	topic: [
 		{ key: "subscriptions", label: "Subscriptions", format: (v) => {

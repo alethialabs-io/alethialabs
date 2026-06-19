@@ -113,6 +113,13 @@
       "when": 1782000500000,
       "tag": "0015_queue_ordered",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1782000600000,
+      "tag": "0016_queue_provider_config",
+      "breakpoints": true
     }
   ]
 }

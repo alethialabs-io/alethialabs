@@ -189,6 +189,21 @@ func ddbCapacityMode(mode string) string {
 	return "PAY_PER_REQUEST"
 }
 
+// providerInt reads an int from a provider_config JSONB map (JSON numbers
+// decode as float64). Returns false when absent or non-numeric.
+func providerInt(cfg map[string]any, key string) (int, bool) {
+	if cfg == nil {
+		return 0, false
+	}
+	switch v := cfg[key].(type) {
+	case float64:
+		return int(v), true
+	case int:
+		return v, true
+	}
+	return 0, false
+}
+
 // s3SSEAlgorithm resolves the S3 server-side-encryption algorithm from the
 // bucket's provider_config (encryption_algorithm), defaulting to AES256 when
 // encryption is enabled.
@@ -224,8 +239,8 @@ func buildSQSQueues(queues []types.SpecQueueConfig, topics []types.SpecTopicConf
 		if q.MessageRetention != nil {
 			cfg["message_retention_seconds"] = *q.MessageRetention
 		}
-		if q.DelaySeconds != nil {
-			cfg["delay_seconds"] = *q.DelaySeconds
+		if d, ok := providerInt(q.ProviderConfig, "delay_seconds"); ok {
+			cfg["delay_seconds"] = d
 		}
 		result[q.Name] = cfg
 	}

@@ -27,6 +27,7 @@ import type {
 	DnsProviderConfig,
 	NosqlProviderConfig,
 	ProviderOutputs,
+	QueueProviderConfig,
 	RegistryProviderConfig,
 	StorageProviderConfig,
 	TopicSubscription,
@@ -181,9 +182,11 @@ export const specQueues = pgTable(
 		spec_id: specRef(),
 		name: text().notNull(),
 		ordered: boolean().default(false),
+		// Cross-cloud: SQS visibility ≈ Azure lock_duration ≈ Pub/Sub ack deadline.
 		visibility_timeout: integer().default(30),
 		message_retention: integer().default(345600),
-		delay_seconds: integer().default(0),
+		// Provider-specific queue knobs (SQS delay_seconds — no Azure/GCP equivalent).
+		provider_config: jsonb().$type<QueueProviderConfig>().default({}),
 		status: componentStatus().default("PENDING").notNull(),
 		status_message: text(),
 		estimated_monthly_cost: cost(),
