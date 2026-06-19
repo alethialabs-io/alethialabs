@@ -12,7 +12,7 @@ One in-process auth library (MIT, Drizzle adapter) covers **all three** principa
 
 - **Web users:** social (GitHub/Google native; GitLab/Bitbucket via `genericOAuth`) + magic link; sessions via `auth.api.getSession()`; middleware route-protection. Git OAuth tokens live in Better Auth's `account` table (retires `provider_tokens`).
 - **CLI (`alethia`):** keep the existing custom device-code JWT for phase 1 (decoupled already); optionally migrate to Better Auth's RFC-8628 `deviceAuthorization` plugin later to unify CLI identity with SSO.
-- **runners (workers):** unchanged — `verifyWorkerToken` (sha256 worker token). A worker **acts as the user who queued the job**, so its authority is bounded by that user's grants.
+- **runners (runners):** unchanged — `verifyRunnerToken` (sha256 runner token). A runner **acts as the user who queued the job**, so its authority is bounded by that user's grants.
 - **Paid tier (plugins):** the `organization` plugin (members, teams, custom roles, `createAccessControl`/`hasPermission`) and `@better-auth/sso` (SAML 2.0 + OIDC, per-org IdP) are added **by the `ee/` build** at config time via a `getAuthPlugins()` registration point — `[]` in community, `[organization(), sso(), ...]` in enterprise. No `if/else` in core.
 
 ---
@@ -34,7 +34,7 @@ interface PDP {
 
 Three rules, enforced by CI lint:
 1. **No call site decides access itself** — no `auth.uid()`, no `.eq('user_id')` as authz. The grep that finds those today becomes a guard forbidding authz logic outside `lib/authz/`.
-2. **Every route / server action / CLI+worker route starts with `enforce()`** (or `listAccessible()` for lists). `getVineyards()` becomes `listAccessible(actor,'view','zone')` → fetch by id-set, not a bare query trusting RLS.
+2. **Every route / server action / CLI+runner route starts with `enforce()`** (or `listAccessible()` for lists). `getVineyards()` becomes `listAccessible(actor,'view','zone')` → fetch by id-set, not a bare query trusting RLS.
 3. **`listAccessible` is mandatory for every list view** — this is what makes the engine swap free and kills the N+1-authz trap.
 
 Because all three surfaces call the same `PDP`, **changing the backend never touches the ~200 call sites.**
@@ -64,7 +64,7 @@ The PDP is the rich policy; **coarse Postgres RLS is the blast wall.** Different
 - PDP = hierarchical, ABAC-capable decisions — but it's app code (bugs, missed call sites).
 - RLS = dumb but **unbypassable** tenant isolation — even raw SQL can't read another org's rows.
 
-Design: every tenant table gets `org_id`; one policy per table — `USING (org_id = current_setting('app.current_org')::uuid)`. A Drizzle wrapper runs `set_config('app.current_org', orgId, true)` (transaction-scoped — the `true` is essential) at the top of each request transaction from the verified session. **Pooler-safe** (transaction mode + transaction-local var; never session-scoped). RLS is **coarse org-isolation only** — fine-grained logic stays in the PDP, so we never ship two versions of SQL policies. The Go worker uses a service-role connection that bypasses RLS but is gated by `verifyWorkerToken` + a PDP check bound to the queuing user.
+Design: every tenant table gets `org_id`; one policy per table — `USING (org_id = current_setting('app.current_org')::uuid)`. A Drizzle wrapper runs `set_config('app.current_org', orgId, true)` (transaction-scoped — the `true` is essential) at the top of each request transaction from the verified session. **Pooler-safe** (transaction mode + transaction-local var; never session-scoped). RLS is **coarse org-isolation only** — fine-grained logic stays in the PDP, so we never ship two versions of SQL policies. The Go runner uses a service-role connection that bypasses RLS but is gated by `verifyRunnerToken` + a PDP check bound to the queuing user.
 
 **Cost:** community PDP check = one indexed Postgres query (sub-ms, same DB). Enterprise OpenFGA Check ≈ low-single-digit ms cached. `set_config` is negligible. Solve N+1 with `listAccessible()` (one query/page) and `bulkCheck()` (one round-trip) — **never loop `can()`**.
 

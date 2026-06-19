@@ -19,7 +19,7 @@ The authoritative naming standard. The product is **Alethia**, by **Alethia Labs
 |---|---|---|
 | trellis → Vertex → | **Alethia** | The product / platform / web control plane |
 | grape → vtx → | **`alethia`** | The developer CLI |
-| tendrils → Nodes → | **runners** | Distributed background workers / runtime execution agents |
+| tendrils → Nodes → | **runners** | Distributed background runners / runtime execution agents |
 | vineyards → | **Zones** | Isolated environments / workspaces / project clusters |
 | vines → | **Specs** | Configuration files / manifests / declarative state |
 | (company) Alethia → | **Alethia Labs** | The company / AGPL copyright holder |
@@ -31,7 +31,7 @@ These are **locked**. Zones and Specs are unchanged. `harvest → alethia apply`
 
 The Vertex → Alethia rename **landed in the codebase** on branch `rename/vertex-lexicon` (**PR #45**, unmerged, stacked on the design PR), with an open-core AGPL licensing commit. Renamed in code:
 
-- **Dirs:** `apps/console` (web), `apps/cli` (binary `alethia`), `apps/runner` (the **Runner** worker), `packages/core`.
+- **Dirs:** `apps/console` (web), `apps/cli` (binary `alethia`), `apps/runner` (the **Runner** runner), `packages/core`.
 - **Env** `ALETHIA_*`; cache `~/.alethia`; **Go module** `github.com/alethialabs-io/alethialabs`; GHCR `alethialabs-io/{console,runner}`; `AlethiaProvisionerRole`; design skill `.claude/skills/alethia-design`. License: SPDX `© Alethia Labs OÜ`, `ee/` commercial, CLA.
 
 > **When a spec doc cites a code path, the real names are `apps/console` / `apps/cli` / `apps/runner` / `packages/core`.** Some docs use the simplified forms `apps/alethia` / `packages/alethia-core` — read those as `apps/console` / `packages/core`.

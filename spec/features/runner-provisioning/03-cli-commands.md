@@ -2,13 +2,13 @@
 
 ## New Commands
 
-### `alethia worker register`
+### `alethia runner register`
 
-**Purpose:** Register a worker in Trellis and deploy Fargate infrastructure in one shot.
+**Purpose:** Register a runner in Trellis and deploy Fargate infrastructure in one shot.
 
 **Interactive flow:**
 ```
-? Worker name: my-fargate-worker
+? Runner name: my-fargate-runner
 ? Mode: Self-hosted
 ? AWS Region: Europe (Ireland) [eu-west-1]
 ? VPC: vpc-0abc123 (10.0.0.0/16) - main [Default]
@@ -19,9 +19,9 @@ Preflight checks...
   ✓ Docker daemon running
   ✓ Terraform >= 1.5 available
 
-Registering worker with Trellis...
-  ✓ Worker ID:    b189fccc-38e3-...
-  ✓ Worker Token: 5791f8a908...
+Registering runner with Trellis...
+  ✓ Runner ID:    b189fccc-38e3-...
+  ✓ Runner Token: 5791f8a908...
 
   ⚠ Save these credentials — the token cannot be recovered.
 
@@ -31,18 +31,18 @@ Deploying Fargate infrastructure...
   ✓ Pushing to ECR...
   ✓ ECS cluster + service created
   ✓ IAM roles configured
-  ✓ Worker token stored in Secrets Manager
+  ✓ Runner token stored in Secrets Manager
 
-Waiting for worker to come online...
+Waiting for runner to come online...
   ✓ ECS task RUNNING
-  ✓ First heartbeat received — worker is ONLINE
+  ✓ First heartbeat received — runner is ONLINE
 
-✓ Worker "my-fargate-worker" is ready. Queue work with:
+✓ Runner "my-fargate-runner" is ready. Queue work with:
     alethia harvest
 ```
 
 **Flags (override interactive):**
-- `--name` — worker name
+- `--name` — runner name
 - `--mode` — self-hosted / cloud-hosted
 - `--region` — AWS region
 - `--vpc-id` — VPC ID
@@ -54,12 +54,12 @@ Waiting for worker to come online...
 3. `terraform version` — installed and >= 1.5
 4. Trellis reachable — HTTP GET to health endpoint
 
-### `alethia worker status`
+### `alethia runner status`
 
-**Purpose:** Show worker health and recent jobs.
+**Purpose:** Show runner health and recent jobs.
 
 ```
-Worker: my-fargate-worker (b189fccc-38e3-...)
+Runner: my-fargate-runner (b189fccc-38e3-...)
 Mode:   self-hosted
 Status: ONLINE (last heartbeat 12s ago)
 Region: eu-west-1
@@ -71,12 +71,12 @@ Recent Jobs:
   DEPLOY     QUEUED      just now     —
 ```
 
-### `alethia worker destroy`
+### `alethia runner destroy`
 
-**Purpose:** Tear down worker Fargate infrastructure and deregister.
+**Purpose:** Tear down runner Fargate infrastructure and deregister.
 
 ```
-? Are you sure you want to destroy worker "my-fargate-worker"? This removes all Fargate resources. (y/N)
+? Are you sure you want to destroy runner "my-fargate-runner"? This removes all Fargate resources. (y/N)
 
 Destroying Fargate infrastructure...
   ✓ ECS service stopped
@@ -85,26 +85,26 @@ Destroying Fargate infrastructure...
   ✓ IAM roles removed
   ✓ Secrets Manager secret deleted
   ✓ CloudWatch log group removed
-  ✓ Worker deregistered from Trellis
+  ✓ Runner deregistered from Trellis
 
-✓ Worker "my-fargate-worker" destroyed.
+✓ Runner "my-fargate-runner" destroyed.
 ```
 
-### `alethia worker list`
+### `alethia runner list`
 
-**Purpose:** List all registered workers.
+**Purpose:** List all registered runners.
 
 ```
 NAME                  MODE          STATUS    REGION        LAST HEARTBEAT
-my-fargate-worker     self-hosted   ONLINE    eu-west-1     12s ago
-staging-worker        self-hosted   OFFLINE   us-east-1     3h ago
+my-fargate-runner     self-hosted   ONLINE    eu-west-1     12s ago
+staging-runner        self-hosted   OFFLINE   us-east-1     3h ago
 ```
 
 ## Modified Commands
 
 ### `alethia harvest` (unchanged)
 
-Already works correctly — queues jobs to the worker. No changes needed.
+Already works correctly — queues jobs to the runner. No changes needed.
 
 ### `alethia bootstrap` (deprecated)
 
@@ -112,11 +112,11 @@ Change to print:
 ```
 ⚠ `alethia bootstrap` is deprecated.
 
-Bootstrap is now handled by your provisioning worker.
+Bootstrap is now handled by your provisioning runner.
 Use `alethia harvest` and select "Bootstrap new cluster" as the target.
 
-If you don't have a worker yet, run:
-    alethia worker register
+If you don't have a runner yet, run:
+    alethia runner register
 ```
 
 Keep the `--queue` flag working as a compatibility shim (it already queues a BOOTSTRAP job).
@@ -131,12 +131,12 @@ The legacy deploy command stays for backward compatibility with local provisioni
 alethia
 ├── login              — authenticate with Trellis
 ├── logout             — clear auth token
-├── worker
+├── runner
 │   ├── register       — [NEW] register + deploy Fargate
-│   ├── start          — [EXISTING] start worker locally (for development/Docker)
-│   ├── status         — [NEW] show worker health
-│   ├── list           — [NEW] list all workers
-│   └── destroy        — [NEW] tear down worker infrastructure
+│   ├── start          — [EXISTING] start runner locally (for development/Docker)
+│   ├── status         — [NEW] show runner health
+│   ├── list           — [NEW] list all runners
+│   └── destroy        — [NEW] tear down runner infrastructure
 ├── harvest            — queue a provisioning job (DEPLOY/BOOTSTRAP)
 ├── provision          — alias for harvest
 ├── bootstrap          — [DEPRECATED] prints deprecation notice

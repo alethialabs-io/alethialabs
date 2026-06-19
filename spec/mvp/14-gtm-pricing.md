@@ -6,7 +6,7 @@ Open-core revenue, grounded in the `ee/` boundary ([12](12-licensing-open-core.m
 
 1. **Hosted Alethia Cloud (multi-tenant SaaS) — primary.** We run Alethia (the `ee/` multi-tenancy makes it possible). Sell convenience: zero ops, managed Postgres/S3, managed runner fleet, SSO/RBAC/audit by tier. For an AGPL company this is the dominant line — you can always host your own code, and §13 stops competitors out-hosting you.
 2. **Self-managed Enterprise license.** For teams that must self-host (sovereignty, air-gapped, AGPL-averse legal) but need governance — they run `ee/` on-prem under the commercial license + a signed entitlement. Also the **dual-license escape** for enterprises that ban AGPL outright. Annual, seat- or instance-tiered, with support/SLA.
-3. **Usage-based.** Two natural meters: **AI premium** (repo-scanner/MCP — [11](11-ai-scanner-mcp.md), high marginal cost → metered) and **cloud-hosted worker-minutes** (we run the runner fleet that provisions → bill compute). Stacks on top of seats.
+3. **Usage-based.** Two natural meters: **AI premium** (repo-scanner/MCP — [11](11-ai-scanner-mcp.md), high marginal cost → metered) and **cloud-hosted runner-minutes** (we run the runner fleet that provisions → bill compute). Stacks on top of seats.
 
 ## Pricing tiers
 
@@ -20,7 +20,7 @@ A generous hosted **Starter/individual** mirrors the self-host core as a funnel 
 
 ## The "free-management-layer floor" risk (name it)
 
-The core is a free management layer over the customer's **own** cloud spend — a self-hoster pays $0. **You cannot sell the core.** Sell *convenience* (hosted), *governance* (`ee/`: orgs/SSO/RBAC/audit/multi-tenant), *support/SLA*, and *usage* (AI, worker-minutes). Plan finances around enterprise/hosted ACVs + the worker-minutes meter — not on monetizing self-hosters (you won't, by design — and that's the trust that fuels the funnel).
+The core is a free management layer over the customer's **own** cloud spend — a self-hoster pays $0. **You cannot sell the core.** Sell *convenience* (hosted), *governance* (`ee/`: orgs/SSO/RBAC/audit/multi-tenant), *support/SLA*, and *usage* (AI, runner-minutes). Plan finances around enterprise/hosted ACVs + the runner-minutes meter — not on monetizing self-hosters (you won't, by design — and that's the trust that fuels the funnel).
 
 ## GTM motion
 
@@ -37,7 +37,7 @@ The core is a free management layer over the customer's **own** cloud spend — 
 | **PostHog** | MIT | RBAC/SSO + usage-based cloud | broad free tier + pay-as-you-go |
 | **Plausible** | AGPL | hosted + team UI only | sell *only* hosting + team mgmt |
 
-**Recommendation:** model on **Cal.com** (AGPL core + `ee/` commercial + Better-Auth-style pluggable identity), and add the **worker-minutes meter** as the compute-proportional line Cal.com lacks.
+**Recommendation:** model on **Cal.com** (AGPL core + `ee/` commercial + Better-Auth-style pluggable identity), and add the **runner-minutes meter** as the compute-proportional line Cal.com lacks.
 
 ## License hygiene (cross-ref [12](12-licensing-open-core.md))
 CLA from day one (keeps the dual-license/commercial option alive); SPDX/REUSE + boundary-guard lint keep the `ee/` line clean.

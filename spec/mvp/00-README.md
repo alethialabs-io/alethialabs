@@ -12,7 +12,7 @@ Alethia uses this lexicon throughout. Full standard + migration map: [A-rename-l
 |---|---|---|
 | **Alethia** | The core product ecosystem / platform layer | alethia |
 | **alethia** | The primary developer CLI | alethia |
-| **runners** | Distributed background workers / runtime execution agents | runners |
+| **runners** | Distributed background runners / runtime execution agents | runners |
 | **Zones** | Isolated environments, workspaces, or project clusters | vineyards |
 | **Specs** | Configuration files, manifests, declarative state definitions | vines |
 

@@ -7,7 +7,7 @@ Organized by product surface. The goal is to make the Alethia/Trellis platform t
 | Folder | Purpose |
 | --- | --- |
 | `vine-schema-redesign/` | **Active** — Normalize configurations into modular component tables with per-component status. |
-| `worker-provisioning/` | **Active** — MVP design: cloud-hosted worker, AWS connection, job queue, E2E test plan. |
+| `runner-provisioning/` | **Active** — MVP design: cloud-hosted runner, AWS connection, job queue, E2E test plan. |
 | `architecture/` | Platform architecture: ArgoCD pivot, bootstrap logging, GitOps wiring, and the system overview. |
 | `alethia-legacy-migration/` | Canonical plan for porting `apps/legacy-cli` into `apps/cli` and tightening the Trellis integration. |
 | `cli/` | Alethia CLI implementation plans: dependency checks, local provisioning, teardown, release, UX. |

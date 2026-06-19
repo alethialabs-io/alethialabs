@@ -37,7 +37,7 @@ Problems: AWS-only copy, no multi-cloud story, no code examples, no stats, no ec
 │     3x3 grid of 9 feature cards                  │
 ├─────────────────────────────────────────────────┤
 │  5. CODE EXAMPLES                                │
-│     Tabbed terminal: Quick Start | Workflow | Worker │
+│     Tabbed terminal: Quick Start | Workflow | Runner │
 ├─────────────────────────────────────────────────┤
 │  6. INFRASTRUCTURE STACK                         │
 │     Grid: services per cloud (12 categories)     │
@@ -140,7 +140,7 @@ Muted/grayscale, small. Caption: "Full feature parity across all three clouds."
 ### Step 2: Bootstrap
 - **Icon**: Terminal/CLI icon
 - **Title**: "Bootstrap with Alethia"
-- **Description**: "One command provisions your entire stack. VPC, Kubernetes cluster, databases, ArgoCD — all generated as production Terraform and deployed by a secure worker in your cloud account."
+- **Description**: "One command provisions your entire stack. VPC, Kubernetes cluster, databases, ArgoCD — all generated as production Terraform and deployed by a secure runner in your cloud account."
 
 ### Step 3: Ship
 - **Icon**: Rocket/deploy icon
@@ -161,7 +161,7 @@ Muted/grayscale, small. Caption: "Full feature parity across all three clouds."
 | 4 | GitOps by Default | Git icon | ArgoCD bootstrapped automatically. Git as audit trail. Plan-review-apply workflow for every change. |
 | 5 | CLI + Web, Unified | Terminal icon | Same state, two interfaces. Design in the browser with the 11-section form or from the terminal with Alethia's interactive TUI. |
 | 6 | Real-Time Cost Estimation | Dollar icon | See monthly cost as you configure. The sidebar updates with every form change. Powered by cloud pricing APIs and Infracost. |
-| 7 | Worker-Based Execution | Server icon | Secure workers run in your cloud account. ECS Fargate or self-hosted. Job queue with real-time log streaming. |
+| 7 | Runner-Based Execution | Server icon | Secure runners run in your cloud account. ECS Fargate or self-hosted. Job queue with real-time log streaming. |
 | 8 | Interactive TUI | Sparkles icon | Alethia's CLI uses Charmbracelet forms — not flag soup. A 6-step wizard guides you through infrastructure design in the terminal. |
 | 9 | Safe Teardown | Trash icon | Clean resource cleanup. Disable ArgoCD healing, drain load balancers, terraform destroy — no orphaned resources. |
 
@@ -207,18 +207,18 @@ alethia harvest
   # ► Confirm? (y/N)
 ```
 
-### Tab 3: Worker Setup
+### Tab 3: Runner Setup
 ```bash
-# Register a worker with Trellis
-alethia worker register --name "prod-worker" --mode cloud-hosted
+# Register a runner with Trellis
+alethia runner register --name "prod-runner" --mode cloud-hosted
 
-# Start the worker daemon
-alethia worker start
+# Start the runner daemon
+alethia runner start
   # ✓ Connected to Trellis
   # ✓ Polling for jobs every 10s
   # ✓ Heartbeat every 30s
 
-# Worker assumes cloud credentials at runtime
+# Runner assumes cloud credentials at runtime
 # No static keys. Short-lived sessions.
 ```
 

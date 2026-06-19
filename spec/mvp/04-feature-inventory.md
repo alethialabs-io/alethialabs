@@ -5,14 +5,14 @@ Honest **SHIPPED vs TO-BUILD**, re-grounded on the real code (the old inventory 
 ## ✅ Shipped (verified in code)
 
 **Zero-trust remote provisioning**
-- Worker (**runner**) assumes cloud roles at execution time — no static keys stored. AWS cross-account IAM (`AssumeRole`), GCP WIF and Azure federated identity wired in `packages/alethia-core/cloud/*` + the worker.
+- Runner (**runner**) assumes cloud roles at execution time — no static keys stored. AWS cross-account IAM (`AssumeRole`), GCP WIF and Azure federated identity wired in `packages/alethia-core/cloud/*` + the runner.
 - Robust job broker: `claim_next_job` two-pass **`FOR UPDATE SKIP LOCKED`**, heartbeat, `recover_stale_jobs`, log streaming, scale-to-zero Fargate via the Lambda scaler.
 
 **`alethia` CLI** (`apps/cli/cmd/`, distributed via Homebrew)
-- `vine apply` / `vine plan`, `vineyard`, `jobs` (list/get/logs/cancel/wait), `runner` (worker lifecycle), `clusters`. Device-code auth (custom JWT). Charmbracelet TUI. *(No `harvest`/`bootstrap`/`config` — those are gone.)*
+- `vine apply` / `vine plan`, `vineyard`, `jobs` (list/get/logs/cancel/wait), `runner` (runner lifecycle), `clusters`. Device-code auth (custom JWT). Charmbracelet TUI. *(No `harvest`/`bootstrap`/`config` — those are gone.)*
 
 **Web control plane** (Next.js + Supabase today)
-- Visual **Spec** designer (multi-section form) with per-component infra tables; real-time **cost sidebar** (Infracost); live **job-log viewer**; workers dashboard; plan viewer; audit log.
+- Visual **Spec** designer (multi-section form) with per-component infra tables; real-time **cost sidebar** (Infracost); live **job-log viewer**; runners dashboard; plan viewer; audit log.
 
 **Multi-cloud schema + templates**
 - Cloud-agnostic component tables (`vine_cluster`/`network`/`dns`/`databases`/`caches`/`queues`/`topics`/`nosql`/`container_registries`/`secrets`, each with a `provider_config` JSONB hook). OpenTofu/Terraform templates under `infra/templates/vine/{aws,gcp,azure}/`. **AWS is the active, verified path; GCP/Azure templates exist but provider onboarding is marked `coming_soon`** in the catalog.
@@ -25,7 +25,7 @@ Honest **SHIPPED vs TO-BUILD**, re-grounded on the real code (the old inventory 
 
 ## 🟡 In progress / partial
 - GCP/Azure parity (templates exist; onboarding `coming_soon`).
-- runner worker maturity (instant scale-up is recent).
+- runner runner maturity (instant scale-up is recent).
 
 ## 🔨 To build — MVP (this spec set)
 | Area | Doc |

@@ -21,7 +21,7 @@ its own (potentially large) fleet to serve hosted demand; customers can also bri
 
 - A console endpoint issues a runner identity in exchange for a **bootstrap token**
   (`ALETHIA_RUNNER_BOOTSTRAP_TOKEN`, org-scoped). On boot the runner self-registers → receives its
-  `worker_id` + signed token (HS256, same seam as `verifyWorkerToken`), persisted to a local volume.
+  `runner_id` + signed token (HS256, same seam as `verifyRunnerToken`), persisted to a local volume.
 - Modes unchanged: **self-hosted** (native creds) vs **cloud-hosted** (assume-role / WIF /
   federated into the target account). Fleet runners = cloud-hosted.
 - Keeps `claim_next_job` affinity (assigned → unassigned by `cloud_identity`) verbatim.

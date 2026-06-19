@@ -2,7 +2,7 @@
 
 ## Core Idea
 
-The platform runs ONE cloud-hosted worker (Fargate) that provisions infrastructure for ALL users. Users never deploy their own workers. They connect their AWS account, configure what they want, and click harvest. The worker does the rest.
+The platform runs ONE cloud-hosted runner (Fargate) that provisions infrastructure for ALL users. Users never deploy their own runners. They connect their AWS account, configure what they want, and click harvest. The runner does the rest.
 
 ## The Happy Path
 
@@ -22,7 +22,7 @@ Harvest                         ← Click "Provision" or run `alethia harvest`
     │                              creates provision_jobs entry (QUEUED)
     │                              links to cloud_identity_id + config_snapshot
     ▼
-Worker claims job               ← Cloud-hosted worker polls every 10s
+Runner claims job               ← Cloud-hosted runner polls every 10s
     │                              gets job + cloud_identity (role_arn, external_id)
     │                              calls STS AssumeRole into user's account
     ▼
@@ -86,9 +86,9 @@ cloud_identity_id: ...  ← links to the user's AWS credentials
 config_snapshot: { ... } ← full config frozen at queue time
 ```
 
-### 5. Worker Claims and Executes
+### 5. Runner Claims and Executes
 
-The cloud-hosted worker (running in Alethia's account `787587782604`):
+The cloud-hosted runner (running in Alethia's account `787587782604`):
 
 1. Polls `POST /api/jobs/claim` → gets job + `cloud_identity`
 2. Calls `STS AssumeRole` with:
@@ -119,15 +119,15 @@ The cloud-hosted worker (running in Alethia's account `787587782604`):
 - Install Terraform
 - Install kubectl or Helm
 - Run any CLI commands (beyond `alethia harvest` if they prefer CLI)
-- Deploy any worker infrastructure
+- Deploy any runner infrastructure
 - Manage Docker images
 - Deal with Terraform state
 
-## Phase 2 (After MVP): Self-hosted Workers
+## Phase 2 (After MVP): Self-hosted Runners
 
 For users who want:
-- Workers in their own account (data sovereignty)
-- Custom worker configurations
-- Multiple workers for parallelism
+- Runners in their own account (data sovereignty)
+- Custom runner configurations
+- Multiple runners for parallelism
 
-This is where `alethia worker register` with automatic Fargate deploy comes in. But it's not the MVP.
+This is where `alethia runner register` with automatic Fargate deploy comes in. But it's not the MVP.

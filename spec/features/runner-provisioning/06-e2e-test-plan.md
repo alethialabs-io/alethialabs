@@ -4,8 +4,8 @@
 
 - [x] Supabase with `20260520_provision_broker.sql` migration applied
 - [x] Trellis deployed and accessible
-- [ ] Central worker deployed in Alethia's account (787587782604) via `terraform apply`
-- [ ] Central worker registered as cloud-hosted in Trellis
+- [ ] Central runner deployed in Alethia's account (787587782604) via `terraform apply`
+- [ ] Central runner registered as cloud-hosted in Trellis
 - [ ] A separate AWS account to act as the "user's account" (or use the same account for testing)
 
 ---
@@ -31,18 +31,18 @@
 - `credentials` JSONB contains `role_arn`, `external_id`, `account_id`
 - Providers page shows AWS as "Connected"
 
-## Test 2: Worker Health
+## Test 2: Runner Health
 
-**Goal:** Verify the central worker is running and healthy.
+**Goal:** Verify the central runner is running and healthy.
 
-1. Go to Dashboard → Workers
-2. Central worker should show as **ONLINE**
+1. Go to Dashboard → Runners
+2. Central runner should show as **ONLINE**
 3. Last heartbeat should be < 1 minute ago
 4. Mode should be "cloud-hosted"
 
 **If OFFLINE:**
-- Check ECS task status: `aws ecs list-tasks --cluster alethia-worker-dev-cluster --region eu-west-1`
-- Check CloudWatch logs: `aws logs tail /ecs/alethia-worker-dev --follow --region eu-west-1`
+- Check ECS task status: `aws ecs list-tasks --cluster alethia-runner-dev-cluster --region eu-west-1`
+- Check CloudWatch logs: `aws logs tail /ecs/alethia-runner-dev --follow --region eu-west-1`
 
 ## Test 3: Job Queuing
 
@@ -55,7 +55,7 @@
    - Environment: `dev`
    - Cloud Identity: select the connected AWS identity
 3. Trigger provisioning (via Trellis UI or `alethia harvest`)
-4. Go to Workers page → Recent Jobs
+4. Go to Runners page → Recent Jobs
 
 **Verify:**
 - Job appears with type `DEPLOY` and status `QUEUED`
@@ -64,10 +64,10 @@
 
 ## Test 4: Job Claim + Role Assumption
 
-**Goal:** Verify the worker claims the job and assumes the cross-account role.
+**Goal:** Verify the runner claims the job and assumes the cross-account role.
 
-1. Watch CloudWatch logs for the central worker
-2. Within 10 seconds, the worker should log:
+1. Watch CloudWatch logs for the central runner
+2. Within 10 seconds, the runner should log:
    ```
    Claimed job {id} (type=DEPLOY)
    Assuming role arn:aws:iam::{account}:role/AlethiaProvisionerRole-{ext_id} into account {account}...
@@ -109,16 +109,16 @@
    - Check full logs in log viewer
    - Common failures: insufficient IAM permissions, resource limits, template errors
 
-## Test 7: Worker Recovery
+## Test 7: Runner Recovery
 
-**Goal:** Verify stale job recovery when the worker dies.
+**Goal:** Verify stale job recovery when the runner dies.
 
 1. Queue a job
 2. Wait for it to be `CLAIMED`
-3. Stop the ECS task: `aws ecs stop-task --cluster alethia-worker-dev-cluster --task {arn}`
+3. Stop the ECS task: `aws ecs stop-task --cluster alethia-runner-dev-cluster --task {arn}`
 4. Wait for ECS to auto-restart the task (~60 seconds)
 5. Wait 15 minutes for `recover_stale_jobs()` to fire
-6. Job should reset to `QUEUED` and get re-claimed by the restarted worker
+6. Job should reset to `QUEUED` and get re-claimed by the restarted runner
 
 ## Test 8: Error Case — Disconnected AWS
 
@@ -127,7 +127,7 @@
 1. Create a configuration with a cloud identity
 2. Delete the IAM role from the user's AWS account (or change the External ID)
 3. Queue a harvest
-4. Worker claims job, attempts `AssumeRole` → fails
+4. Runner claims job, attempts `AssumeRole` → fails
 5. Job status should be `FAILED` with error: "Failed to assume role..."
 6. Error should be visible in Trellis job logs
 

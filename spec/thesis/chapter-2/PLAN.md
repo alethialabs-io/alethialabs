@@ -23,16 +23,16 @@ To formally define the architecture of the "Grape" Hybrid Cloud Orchestration Sy
     *   *Pros:* Execution stays within user boundary.
     *   *Cons:* High maintenance for the user, "Chicken and Egg" bootstrapping problem.
 *   **Selected Architecture: SaaS-Managed Remote Execution**
-    *   *Description:* SaaS Worker assumes IAM Role to execute Terraform in ephemeral containers.
+    *   *Description:* SaaS Runner assumes IAM Role to execute Terraform in ephemeral containers.
     *   *Justification:* Best balance of UX (zero setup) and Security (STS credentials).
 
 ### 2.3. High-Level Architecture
 *   **Control Plane:** Next.js + Supabase. Handles Identity, State, and Webhooks.
-*   **Execution Plane (The Worker Fleet):** Go-based workers. Stateless.
+*   **Execution Plane (The Runner Fleet):** Go-based runners. Stateless.
     *   *Isolation:* Each job runs in a sandboxed container.
 *   **Data Plane (User AWS):**
     *   **Trust Relationship:** AWS OIDC Provider / Cross-Account Role.
-    *   **Resources:** EKS, VPC, RDS managed by the Worker.
+    *   **Resources:** EKS, VPC, RDS managed by the Runner.
 
 ### 2.4. Key Design Patterns
 *   **The "Bootstrapper" Pattern:** Using CloudFormation to bootstrap the initial trust relationship (Role ARN).

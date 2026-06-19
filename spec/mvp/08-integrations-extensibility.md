@@ -54,9 +54,9 @@ A **category registry** (`map[category]map[slug]CategoryProvider`) is the single
 2. **`provider` selector per component** — add a `provider` (slug) column to `vine_dns`, `vine_secrets`, `vine_container_registries` (default = the cluster cloud's native provider). Provider-specific options ride in the **existing `provider_config` JSONB**.
 3. **`vine_observability`** (new) — the missing component table; `enabled`, `provider` (datadog/grafana/prometheus/cloud-native), `provider_config`.
 
-## Credential flow to the worker (runner)
+## Credential flow to the runner (runner)
 
-Unchanged in shape from today: the `config_snapshot` carries **identifiers, not secrets**; the worker fetches the credential at execution time and injects it as a Terraform variable. Extend the resolver so that for a component whose `provider` is a pluggable one, the worker reads `integration_credentials` (instead of `cloud_identities`) and sets e.g. `TF_VAR_cloudflare_api_token` / `TF_VAR_vault_addr+token`. Zero-credential model preserved — secrets never sit in the snapshot, only flow to the worker at runtime.
+Unchanged in shape from today: the `config_snapshot` carries **identifiers, not secrets**; the runner fetches the credential at execution time and injects it as a Terraform variable. Extend the resolver so that for a component whose `provider` is a pluggable one, the runner reads `integration_credentials` (instead of `cloud_identities`) and sets e.g. `TF_VAR_cloudflare_api_token` / `TF_VAR_vault_addr+token`. Zero-credential model preserved — secrets never sit in the snapshot, only flow to the runner at runtime.
 
 ## Template / module layout
 
@@ -72,7 +72,7 @@ infra/templates/
   spec/{aws,gcp,azure,...}/    # the cluster + network (see 09); composes the category modules
 ```
 
-The worker selects modules by `(category, component.provider)` and composes them into the plan, regardless of the cluster's cloud.
+The runner selects modules by `(category, component.provider)` and composes them into the plan, regardless of the cluster's cloud.
 
 ## Adding a provider — the extensibility checklist (no core changes)
 
@@ -81,7 +81,7 @@ The worker selects modules by `(category, component.provider)` and composes them
 3. Add the OpenTofu module under `infra/templates/categories/<category>/<slug>/`.
 4. Map its credential into `integration_credentials` (the form is generated from `RequiredCredential()`).
 
-That's it — the card UI, the form, and the worker pick it up from the registry. This is the **open-ended catalog** promise: integrations are added by registration, not by editing call sites.
+That's it — the card UI, the form, and the runner pick it up from the registry. This is the **open-ended catalog** promise: integrations are added by registration, not by editing call sites.
 
 ## Compatibility validation
 
@@ -94,5 +94,5 @@ Integrations are **core value and stay AGPL/community** — gating the catalog w
 ## Exit criteria
 
 - A Spec on AWS can select **Cloudflare** for DNS, **Vault** for secrets, **Docker Hub** for a registry, and **Grafana/Prometheus** for observability, and provision successfully.
-- Adding a seventh provider requires only the 4-step checklist (catalog row + `CategoryProvider` + module + credential) — no changes to routes, the worker core, or the form engine.
-- Credentials for pluggable providers flow to the worker at runtime only (never in `config_snapshot`).
+- Adding a seventh provider requires only the 4-step checklist (catalog row + `CategoryProvider` + module + credential) — no changes to routes, the runner core, or the form engine.
+- Credentials for pluggable providers flow to the runner at runtime only (never in `config_snapshot`).

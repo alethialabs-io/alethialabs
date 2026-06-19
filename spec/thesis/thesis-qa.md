@@ -6,7 +6,7 @@
 
 Go е избран за CLI инструмента (Grape) и провизиониращия работник (Tendril) по няколко ключови причини:
 
-**Конкурентност.** Go предлага горутини (goroutines) и канали (channels) като вградени примитиви. Tendril работникът използва конкурентни горутини за polling на задачи, heartbeat цикъл и асинхронно изпращане на логове — всичко с чист, линеен код без callback hell или promise вериги. Например в `tendril/worker/tendril.go` две горутини вървят паралелно — една за heartbeat, друга за основния poll цикъл — координирани чрез `context.Context` и канали за сигнали.
+**Конкурентност.** Go предлага горутини (goroutines) и канали (channels) като вградени примитиви. Tendril работникът използва конкурентни горутини за polling на задачи, heartbeat цикъл и асинхронно изпращане на логове — всичко с чист, линеен код без callback hell или promise вериги. Например в `tendril/runner/tendril.go` две горутини вървят паралелно — една за heartbeat, друга за основния poll цикъл — координирани чрез `context.Context` и канали за сигнали.
 
 **Кроскомпилация и дистрибуция.** С една команда Go компилира статични бинарни файлове за Linux и macOS (amd64/arm64) без външни зависимости (`CGO_ENABLED=0`). GoReleaser (`.goreleaser.yml`) автоматизира билдване за 4 платформи и публикуване в Homebrew. Резултатният бинарен файл е ~8-15MB и не изисква runtime среда — за разлика от Node.js или Python, където потребителят трябва да инсталира интерпретатор.
 
@@ -22,13 +22,13 @@ Go е избран за CLI инструмента (Grape) и провизион
 
 Supabase изпълнява ролята на **Backend-as-a-Service (BaaS)** слой, предоставящ четири основни услуги:
 
-**PostgreSQL база данни.** Цялото състояние на платформата се съхранява в Supabase PostgreSQL — потребителски профили (`profiles`), облачни идентичности (`cloud_identities`), инфраструктурни конфигурации (`vines`, `vine_cluster`, `vine_database` и др.), задачи за провизиониране (`provision_jobs`), логове (`job_logs`) и работници (`workers`). Типовете се генерират автоматично в `types/database.types.ts`.
+**PostgreSQL база данни.** Цялото състояние на платформата се съхранява в Supabase PostgreSQL — потребителски профили (`profiles`), облачни идентичности (`cloud_identities`), инфраструктурни конфигурации (`vines`, `vine_cluster`, `vine_database` и др.), задачи за провизиониране (`provision_jobs`), логове (`job_logs`) и работници (`runners`). Типовете се генерират автоматично в `types/database.types.ts`.
 
 **Автентикация.** Supabase Auth управлява OAuth потоците за GitHub, GitLab, Bitbucket и Google чрез `signInWithOAuth()`. За CLI инструмента е имплементиран Device Code Flow — Grape генерира код чрез API, потребителят го потвърждава в браузъра, и CLI получава JWT токен чрез `/api/auth/cli/exchange`.
 
 **Row Level Security (RLS).** Всяка таблица има RLS политики, които ограничават достъпа до записите на автентикирания потребител (`auth.uid() = user_id`). Това означава, че дори при компрометиран клиент, потребител не може да види чужди ресурси.
 
-**Realtime.** Supabase Realtime осигурява WebSocket-базирано излъчване на промени в базата данни. Таблиците `job_logs`, `provision_jobs`, `workers` и `vine_cluster` са добавени към `supabase_realtime` публикацията. Уеб интерфейсът се абонира за `postgres_changes` събития и получава актуализации в реално време.
+**Realtime.** Supabase Realtime осигурява WebSocket-базирано излъчване на промени в базата данни. Таблиците `job_logs`, `provision_jobs`, `runners` и `vine_cluster` са добавени към `supabase_realtime` публикацията. Уеб интерфейсът се абонира за `postgres_changes` събития и получава актуализации в реално време.
 
 **Важно архитектурно решение:** CLI (Grape) и работникът (Tendril) **не комуникират директно** със Supabase. Те използват REST API на Trellis (Next.js), който от своя страна взаимодейства със Supabase чрез service role клиент. Това осигурява единна точка за оторизация и валидация.
 
@@ -38,9 +38,9 @@ Supabase изпълнява ролята на **Backend-as-a-Service (BaaS)** с
 
 Механизмът за стрийминг на логове преминава през 5 етапа:
 
-**Етап 1 — Работникът буферира логове.** Когато Tendril изпълнява Terraform операция, stdout и stderr се прихващат от два `JobLogger` инстанса (`tendril/worker/logger.go`). Всеки логер буферира текст и го изпраща на порции — или при достигане на 10KB, или на всеки 2 секунди (което от двете настъпи първо).
+**Етап 1 — Работникът буферира логове.** Когато Tendril изпълнява Terraform операция, stdout и stderr се прихващат от два `JobLogger` инстанса (`tendril/runner/logger.go`). Всеки логер буферира текст и го изпраща на порции — или при достигане на 10KB, или на всеки 2 секунди (което от двете настъпи първо).
 
-**Етап 2 — HTTP POST към API.** `JobLogger.Flush()` извиква `WorkerAPIClient.SendLog()`, който прави POST заявка към `/api/jobs/{id}/logs` с полета `log_chunk` и `stream_type` (STDOUT/STDERR). Заявката се автентикира с `X-Worker-ID` и `X-Worker-Token` хедъри.
+**Етап 2 — HTTP POST към API.** `JobLogger.Flush()` извиква `RunnerAPIClient.SendLog()`, който прави POST заявка към `/api/jobs/{id}/logs` с полета `log_chunk` и `stream_type` (STDOUT/STDERR). Заявката се автентикира с `X-Runner-ID` и `X-Runner-Token` хедъри.
 
 **Етап 3 — Запис в базата данни.** API маршрутът (`trellis/app/api/jobs/[id]/logs/route.ts`) валидира работника и извиква Supabase RPC функцията `insert_job_log()`. Тази функция е `SECURITY DEFINER` — верифицира собствеността на задачата и атомарно записва лога в таблицата `job_logs`.
 

@@ -76,7 +76,7 @@ td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{co
     <p class="body-narrow" style="font-size:1.15rem;color:var(--text);line-height:1.5">
       Alethia provisions a complete, GitOps-wired Kubernetes platform on <strong>your</strong> cloud account — with
       <strong>zero stored credentials</strong> — and hands you a cluster you own. From one <strong>Spec</strong>, a remote
-      worker stands up EKS + VPC + Aurora + ElastiCache + DynamoDB + SQS/SNS + ECR + S3 + Secrets Manager + Route 53 + WAF,
+      runner stands up EKS + VPC + Aurora + ElastiCache + DynamoDB + SQS/SNS + ECR + S3 + Secrets Manager + Route 53 + WAF,
       installs ArgoCD <strong>wired to your Git repo</strong> with auto-sync, layers in a real operator suite, and hands over
       kubeconfig, ArgoCD URL, and every endpoint. Your apps deploy from a <span class="mono">git push</span>. It's your
       cluster, in your account — Alethia never sits in the data path.
@@ -112,12 +112,12 @@ td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{co
       <div class="card">
         <span class="eyebrow">01</span>
         <h4>Zero-trust remote provisioning</h4>
-        <p>The worker (runner) runs in your account and assumes cloud roles at execution time. The control plane never sees or stores your keys — short-lived, scoped, nothing to leak.</p>
+        <p>The runner (runner) runs in your account and assumes cloud roles at execution time. The control plane never sees or stores your keys — short-lived, scoped, nothing to leak.</p>
       </div>
       <div class="card">
         <span class="eyebrow">02</span>
         <h4>Own it / self-hostable</h4>
-        <p>You own the cluster — and you can self-host the Alethia control plane itself as ~4 containers (Postgres + S3 + app + worker). No Supabase, no SaaS dependency. Run it air-gapped, in-region.</p>
+        <p>You own the cluster — and you can self-host the Alethia control plane itself as ~4 containers (Postgres + S3 + app + runner). No Supabase, no SaaS dependency. Run it air-gapped, in-region.</p>
       </div>
       <div class="card">
         <span class="eyebrow">03</span>
@@ -177,7 +177,7 @@ td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{co
     <div class="grid g3" style="margin-top:1.1rem">
       <div class="card"><span class="eyebrow">Primary</span><h4>Hosted Alethia Cloud</h4><p>Multi-tenant SaaS — zero ops, managed Postgres/S3, managed runner fleet, SSO/RBAC/audit by tier. The dominant line for an AGPL company.</p></div>
       <div class="card"><span class="eyebrow">Contract</span><h4>Self-managed Enterprise</h4><p>Teams that must self-host (sovereignty, air-gapped, AGPL-averse) but need governance run <span class="mono">ee/</span> on-prem under commercial license + support/SLA.</p></div>
-      <div class="card"><span class="eyebrow">Meter</span><h4>Usage-based</h4><p>AI premium (repo-scanner / MCP) and cloud-hosted <strong>worker-minutes</strong> for the runner fleet. Stacks on top of seats.</p></div>
+      <div class="card"><span class="eyebrow">Meter</span><h4>Usage-based</h4><p>AI premium (repo-scanner / MCP) and cloud-hosted <strong>runner-minutes</strong> for the runner fleet. Stacks on top of seats.</p></div>
     </div>
     <p class="body-narrow" style="margin-top:1rem">
       <strong>~90–99% software gross margin.</strong> The customer's cluster (EKS/Aurora/etc.) runs in <strong>their</strong> cloud

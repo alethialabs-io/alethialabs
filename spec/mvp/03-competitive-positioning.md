@@ -13,24 +13,24 @@ Alethia's wedge cuts across both: **a self-hostable, open-source control plane t
 | Capability | **Alethia** | Terraform Cloud | Spacelift | Qovery | Porter | Northflank | Crossplane | Cloudfleet / Syself |
 |---|---|---|---|---|---|---|---|---|
 | **Self-host the control plane** | ✅ ~4 containers | ❌ SaaS | ❌ SaaS | ❌ SaaS | partial | ❌ (control plane hosted) | ✅ (in your cluster) | ❌ managed |
-| **Zero stored credentials** | ✅ worker assumes roles | stored/dynamic | stored role | BYOC, but connected | BYOC | BYOC | n/a (in-cluster) | managed creds |
+| **Zero stored credentials** | ✅ runner assumes roles | stored/dynamic | stored role | BYOC, but connected | BYOC | BYOC | n/a (in-cluster) | managed creds |
 | **Open source** | ✅ AGPL core | OSS engine, paid SaaS | ❌ | partly | partly | ❌ closed-core | ✅ Apache | thin/none |
 | **Visual design + CLI, shared state** | ✅ Spec form + `alethia` | ❌ HCL only | ❌ | app UI | app UI | app UI | ❌ CRDs/YAML | ❌ |
 | **Pluggable integrations (mix-match)** | ✅ per-category | provider-agnostic | provider-agnostic | limited | limited | limited | composition | ❌ |
 | **Multi-cloud + managed/self-managed strategies** | ✅ | agnostic | agnostic | hyperscaler | hyperscaler | broad | k8s-native | EU providers |
 | **Generates real OpenTofu you own** | ✅ | you write it | you write it | abstracted | abstracted | abstracted | CRD-driven | n/a |
 | **App-delivery model** | ✅ GitOps (ArgoCD + your repo) | n/a | n/a | proprietary PaaS | proprietary PaaS | proprietary PaaS | GitOps/CRDs | n/a |
-| **Pricing model** | open-core: free self-host + hosted/ee | resource-based | from $399/mo + $40/worker | $899–$1,999/mo | ~$225/mo floor | usage-based | free (ops cost) | free→paid (Cloudfleet free ≤24 vCPU) |
+| **Pricing model** | open-core: free self-host + hosted/ee | resource-based | from $399/mo + $40/runner | $899–$1,999/mo | ~$225/mo floor | usage-based | free (ops cost) | free→paid (Cloudfleet free ≤24 vCPU) |
 
 *(Pricing as of 2026; sources below.)*
 
 ## Key differentiators
 
 ### 1. Own the control plane (self-hostable OSS)
-Terraform Cloud, Spacelift, Qovery, and Northflank are **SaaS** — the brain runs on the vendor's servers. Alethia's entire control plane self-hosts as ~4 containers (Postgres + S3 + app + worker), AGPL-licensed. You can run it air-gapped, in-region, under your own audit. ([06-self-hosting-architecture](06-self-hosting-architecture.md))
+Terraform Cloud, Spacelift, Qovery, and Northflank are **SaaS** — the brain runs on the vendor's servers. Alethia's entire control plane self-hosts as ~4 containers (Postgres + S3 + app + runner), AGPL-licensed. You can run it air-gapped, in-region, under your own audit. ([06-self-hosting-architecture](06-self-hosting-architecture.md))
 
 ### 2. Zero-trust remote provisioning
-Most tools ask you to store a cloud key or hand them an admin role. Alethia's worker (**runner**) runs in *your* account and assumes roles **at execution time** — the control plane never sees or stores cloud credentials. Short-lived, scoped, nothing to leak.
+Most tools ask you to store a cloud key or hand them an admin role. Alethia's runner (**runner**) runs in *your* account and assumes roles **at execution time** — the control plane never sees or stores cloud credentials. Short-lived, scoped, nothing to leak.
 
 ### 3. Integration breadth — your tools, not lock-in
 Cloud-native by default, but **swap any category**: Cloudflare DNS, Vault secrets, Datadog/Grafana/Prometheus observability, Docker Hub registries. The PaaS competitors lock you to their opinionated stack. ([08-integrations-extensibility](08-integrations-extensibility.md))

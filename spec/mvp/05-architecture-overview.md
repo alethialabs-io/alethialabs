@@ -10,7 +10,7 @@ System topology, the control/execution split, the two-axis provider model, and t
           │   Better Auth · Drizzle  │
           │   PDP · SSE              └─ ── ── ── ── ──┐
           │                                           │ HTTP (Bearer) + S3 + Postgres
-          └─────────────────────────────────────►  runner (Go worker)
+          └─────────────────────────────────────►  runner (Go runner)
                                                        │ assumes role at runtime
                                                        ▼
                                               Your cloud account (provision)
@@ -21,7 +21,7 @@ Self-host footprint ≈ **4 containers** (web · postgres · s3 · node). See [0
 ## Control plane vs execution plane (the zero-trust split)
 
 - **Control plane** (Alethia web + Postgres): designs Specs, queues jobs, stores config and *identifiers* — never cloud secrets.
-- **Execution plane** (runner worker): runs in/against the user's cloud, **assumes roles at execution time**, executes OpenTofu, streams logs back over plain HTTP. The control plane and worker share only an HTTP/S3/Postgres contract (`packages/alethia-core/api/api.go`) — which is why the worker is unaffected by the de-Supabase migration.
+- **Execution plane** (runner runner): runs in/against the user's cloud, **assumes roles at execution time**, executes OpenTofu, streams logs back over plain HTTP. The control plane and runner share only an HTTP/S3/Postgres contract (`packages/alethia-core/api/api.go`) — which is why the runner is unaffected by the de-Supabase migration.
 
 ## The two-axis provider model
 
@@ -41,7 +41,7 @@ user ──(member of)──► org [ee]           # community: org=null, single
    └──owns──► Zone ──contains──► Spec ──has──► components
                                           (cluster, network, dns, databases, caches,
                                            queues, topics, nosql, registries, secrets, observability)
-Spec ──provision──► job ──claimed by──► runner (worker)
+Spec ──provision──► job ──claimed by──► runner (runner)
 authz: every access via the PDP; coarse org_id RLS backstop  (see 07)
 integrations: catalog (registry of record) + credentials (cloud_identities / provider_tokens / integration_credentials)
 ```
@@ -54,7 +54,7 @@ integrations: catalog (registry of record) + credentials (cloud_identities / pro
 
 - **Web:** Next.js 16, React 19, Better Auth (MIT), Drizzle (Apache-2.0), Tailwind/shadcn, SSE.
 - **Data/infra:** Postgres, S3 (SeaweedFS default), OpenTofu, ArgoCD.
-- **Go:** `alethia` (CLI), `runner` (worker), `alethia-core` (shared lib: cloud abstraction, IaC exec, API client).
+- **Go:** `alethia` (CLI), `runner` (runner), `alethia-core` (shared lib: cloud abstraction, IaC exec, API client).
 - **Monorepo:** pnpm + Turborepo + Go workspaces; release-please + GoReleaser. Commercial `ee/` workspace ([12](12-licensing-open-core.md)).
 
 ## Job lifecycle

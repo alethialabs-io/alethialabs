@@ -53,10 +53,10 @@ Revisit (A) only if a needed provider is missing from the OpenTofu registry.
 
 1. `tofu version` parity vs the pinned version flow.
 2. On a throwaway Zone: `tofu init`/`plan` against an **existing terraform-created state** → assert **no spurious diff** (the acid test for state compatibility).
-3. Re-run the dry-run deploy path; confirm plan JSON (`resource_changes`) still populates (the worker reads this).
+3. Re-run the dry-run deploy path; confirm plan JSON (`resource_changes`) still populates (the runner reads this).
 4. Confirm Infracost breakdown still renders.
 5. `go test ./...` in `alethia-core`.
-6. **Bake the `tofu` binary into the runner (worker) Docker image** so it isn't downloaded at runtime.
+6. **Bake the `tofu` binary into the runner (runner) Docker image** so it isn't downloaded at runtime.
 
 ## Consequences
 

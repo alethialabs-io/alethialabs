@@ -4,7 +4,7 @@ The canonical map of where everything lives. The key idea: **two layers, kept de
 
 ## The two layers
 
-**Product lexicon (user-facing):** **Alethia** (the platform) · `alethia` (the CLI) · **runners** (the workers) · **Zones** (workspaces / environments) · **Specs** (declarative configs / manifests).
+**Product lexicon (user-facing):** **Alethia** (the platform) · `alethia` (the CLI) · **runners** (the runners) · **Zones** (workspaces / environments) · **Specs** (declarative configs / manifests).
 
 **Code structure (by role):**
 ```
@@ -12,7 +12,7 @@ alethialabs/                  the repo — the product "Alethia", company Alethi
 ├── apps/
 │   ├── console/              Web control plane — dashboard + API ("Alethia Console")
 │   ├── cli/                  The developer CLI (Go) → binary `alethia`
-│   ├── runner/               The worker that executes provisioning (instances = "runners")
+│   ├── runner/               The runner that executes provisioning (instances = "runners")
 │   └── docs/                 Public product docs (Fumadocs) — the ONLY public surface
 ├── packages/
 │   ├── core/                 Shared Go lib: cloud abstraction, OpenTofu exec, provisioning
@@ -30,7 +30,7 @@ alethialabs/                  the repo — the product "Alethia", company Alethi
 | **Alethia** | the product / brand | the repo (`alethialabs`) — *not* a folder |
 | **`alethia`** | the CLI | `apps/cli` → binary `alethia` |
 | Console | the web control plane | `apps/console` |
-| **runner** | the worker | `apps/runner`; runtime instances = runners; DB table `runners` |
+| **runner** | the runner | `apps/runner`; runtime instances = runners; DB table `runners` |
 | **Zone** | workspace / environment | **entity** → DB table `zones`, types — *not* a folder |
 | **Spec** | config / manifest | **entity** → DB table `specs`, type `SpecConfig` — *not* a folder |
 | — | shared Go lib | `packages/core` |
@@ -38,7 +38,7 @@ alethialabs/                  the repo — the product "Alethia", company Alethi
 
 ## Why folders are named by role, not brand
 
-The brand is **Alethia** — the *whole thing*. Naming a folder `alethia` would lose information, because everything is Alethia. So folders are named by **role**: `console` (the web console), `cli` (the command line), `runner` (the worker), `core` (the shared lib). This is the standard monorepo pattern and keeps each component's purpose obvious at a glance. **Decision: the web app stays `apps/console` ("Alethia Console").**
+The brand is **Alethia** — the *whole thing*. Naming a folder `alethia` would lose information, because everything is Alethia. So folders are named by **role**: `console` (the web console), `cli` (the command line), `runner` (the runner), `core` (the shared lib). This is the standard monorepo pattern and keeps each component's purpose obvious at a glance. **Decision: the web app stays `apps/console` ("Alethia Console").**
 
 ## Zones & Specs are entities, not folders
 

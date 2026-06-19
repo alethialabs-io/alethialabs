@@ -17,7 +17,7 @@ The provider set is **hand-maintained in ~4 places** — adding one means editin
 - `packages/alethia-core/cloud/provider.go` — `NewCloudProvider` switch (`aws/gcp/azure`) + `ExtractClusterName/Endpoint` keyed to `eks_/gke_/aks_`.
 - `apps/alethia/lib/cloud-providers/registry.ts` — `CloudProviderSlug = "aws"|"gcp"|"azure"`.
 - `infra/templates/vine/{aws,gcp,azure}/` — per-provider OpenTofu modules.
-- The worker's provider switch (`apps/runner/worker/runner.go`).
+- The runner's provider switch (`apps/runner/runner/runner.go`).
 
 **Fix:** declare the provider set **once** (a registry that emits both the Go switch and the TS union, e.g. via codegen) so "supported providers" lives in one place. New providers and the [08](08-integrations-extensibility.md) category providers share this discipline.
 
@@ -27,7 +27,7 @@ The provider set is **hand-maintained in ~4 places** — adding one means editin
 2. Register it in the single source of truth (→ Go switch + TS union update automatically).
 3. Add OpenTofu modules under `infra/templates/spec/<provider>/` (network + compute + the chosen ClusterStrategy).
 4. Add the catalog row + credential mapping ([08](08-integrations-extensibility.md)).
-5. Add the worker credential path (e.g. an API token for token-auth clouds; AssumeRole/WIF/federated for hyperscalers).
+5. Add the runner credential path (e.g. an API token for token-auth clouds; AssumeRole/WIF/federated for hyperscalers).
 
 ## ClusterStrategy: managed vs self-managed
 

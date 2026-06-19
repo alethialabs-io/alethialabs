@@ -60,7 +60,7 @@ td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{co
   <span class="eyebrow">Product Overview · Alethia Labs</span>
   <div class="wordmark" style="font-size:clamp(3rem,9vw,6rem);letter-spacing:-.04em;line-height:1">Alethia</div>
   <p class="lead" style="max-width:46ch">A production app platform you <strong>own</strong> — not rent.</p>
-  <p class="muted" style="max-width:54ch">One Spec → a remote worker provisions a complete, GitOps-wired Kubernetes platform in <strong>your</strong> cloud account, with zero stored credentials, and hands you a cluster you own.</p>
+  <p class="muted" style="max-width:54ch">One Spec → a remote runner provisions a complete, GitOps-wired Kubernetes platform in <strong>your</strong> cloud account, with zero stored credentials, and hands you a cluster you own.</p>
   <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1.6rem">
     <span class="status"><span class="dot dot-live"></span>AWS Active</span>
     <span class="status"><span class="dot dot-ring"></span>GCP / Azure — templates</span>
@@ -82,7 +82,7 @@ td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{co
     <div class="card">
       <span class="eyebrow">The Alethia model</span>
       <h3>One Spec → a cluster you own</h3>
-      <p class="muted">Your <strong>Spec</strong> (infra design) → a remote <strong>runner</strong> (worker) provisions it in your cloud, assuming roles <strong>at runtime</strong> so no credentials are ever stored. It hands you a self-managing, GitOps-wired cluster. Alethia never sits in the data path.</p>
+      <p class="muted">Your <strong>Spec</strong> (infra design) → a remote <strong>runner</strong> (runner) provisions it in your cloud, assuming roles <strong>at runtime</strong> so no credentials are ever stored. It hands you a self-managing, GitOps-wired cluster. Alethia never sits in the data path.</p>
     </div>
   </div>
   <p class="kicker" style="margin-top:.5rem">Same outcome (production platform, fast). Opposite ownership model — <strong>the anti-Porter</strong>.</p>
@@ -215,13 +215,13 @@ Browser ┤  app  (Next.js · Better Auth ·       │
        └───────┬──────┘   └───────┬────────┘
                │ NOTIFY (ids)     │ S3 protocol
                ▼                  ▼
-       app → SSE clients   node (Go worker)</div>
+       app → SSE clients   node (Go runner)</div>
     </div>
     <div class="grid" style="grid-template-columns:1fr;gap:1rem">
       <div class="card">
         <h4>Four required containers</h4>
         <div style="margin-top:.4rem">
-          <span class="pill">app</span><span class="pill">postgres</span><span class="pill">s3 (SeaweedFS)</span><span class="pill">node (worker)</span>
+          <span class="pill">app</span><span class="pill">postgres</span><span class="pill">s3 (SeaweedFS)</span><span class="pill">node (runner)</span>
         </div>
         <p class="muted" style="margin-top:.5rem"><span class="mono">redis</span> is an optional scale-out profile only. The operator provides one Postgres URL, one S3 endpoint + keys, and OAuth secrets — nothing else.</p>
       </div>

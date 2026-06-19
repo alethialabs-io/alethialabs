@@ -197,18 +197,18 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
       </div>
       <div class="card card-sm">
         <h4><span class="step-num">2</span></h4>
-        <p><strong style="color:var(--fg)">Grape CLI</strong> &mdash; Go инструмент за автентикация, деплой на Workers и управление на Harvests.</p>
+        <p><strong style="color:var(--fg)">Grape CLI</strong> &mdash; Go инструмент за автентикация, деплой на Runners и управление на Harvests.</p>
       </div>
       <div class="card card-sm">
         <h4><span class="step-num green">3</span></h4>
-        <p><strong style="color:var(--fg)">Worker система</strong> &mdash; Fargate контейнер, който провизира инфраструктура от опашка.</p>
+        <p><strong style="color:var(--fg)">Runner система</strong> &mdash; Fargate контейнер, който провизира инфраструктура от опашка.</p>
       </div>
       <div class="card card-sm">
         <h4><span class="step-num green">4</span></h4>
         <p><strong style="color:var(--fg)">GitOps</strong> &mdash; ArgoCD за непрекъсната синхронизация между Git и клъстера.</p>
       </div>
     </div>
-    <p class="subtitle mt-24">Хибриден модел: CLI за &bdquo;Ден 0&ldquo; (деплой на Worker), уеб портал за ежедневно управление, Worker за автоматично провизиране, GitOps за непрекъснато прилагане.</p>
+    <p class="subtitle mt-24">Хибриден модел: CLI за &bdquo;Ден 0&ldquo; (деплой на Runner), уеб портал за ежедневно управление, Runner за автоматично провизиране, GitOps за непрекъснато прилагане.</p>
   </div>
 </div>
 
@@ -224,7 +224,7 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
       <div class="flow-arrow">&rarr;</div>
       <div class="flow-step" style="border-color:rgba(244,114,182,.3)">Job Queue</div>
       <div class="flow-arrow">&rarr;</div>
-      <div class="flow-step" style="border-color:rgba(16,185,129,.3)">Fargate Worker</div>
+      <div class="flow-step" style="border-color:rgba(16,185,129,.3)">Fargate Runner</div>
       <div class="flow-arrow">&rarr;</div>
       <div class="flow-step" style="border-color:rgba(245,158,11,.3)">AWS / EKS</div>
     </div>
@@ -237,17 +237,17 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
       <div class="card card-sm">
         <span class="badge badge-green mb-8">CLI</span>
         <h4>Grape</h4>
-        <p>Go CLI за автентикация, деплой на Workers, създаване на Harvests. Интерактивен TUI.</p>
+        <p>Go CLI за автентикация, деплой на Runners, създаване на Harvests. Интерактивен TUI.</p>
       </div>
       <div class="card card-sm">
         <span class="badge badge-accent mb-8">Execution</span>
-        <h4>Fargate Worker</h4>
+        <h4>Fargate Runner</h4>
         <p>Go контейнер в ECS Fargate. Поема задачи от опашката, изпълнява Terraform, стрийми логове.</p>
       </div>
       <div class="card card-sm">
         <span class="badge badge-warn mb-8">Data Plane</span>
         <h4>AWS / EKS</h4>
-        <p>Инфраструктурата на клиента. Worker провизира, ArgoCD синхронизира.</p>
+        <p>Инфраструктурата на клиента. Runner провизира, ArgoCD синхронизира.</p>
       </div>
     </div>
   </div>
@@ -257,7 +257,7 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
 <div class="slide" data-section="Архитектура">
   <div class="slide-inner stagger">
     <span class="section-tag tag-warn">Еволюция</span>
-    <h2>От Tendril Agent към Worker + GitOps</h2>
+    <h2>От Tendril Agent към Runner + GitOps</h2>
     <div class="grid-2 mt-16">
       <div class="card card-danger card-sm">
         <h4><span class="hl-danger">Преди:</span> Tendril Agent (v1)</h4>
@@ -269,9 +269,9 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
         </ul>
       </div>
       <div class="card card-green card-sm">
-        <h4><span class="hl-green">Сега:</span> Fargate Worker + ArgoCD (v2)</h4>
+        <h4><span class="hl-green">Сега:</span> Fargate Runner + ArgoCD (v2)</h4>
         <ul>
-          <li>Централен Worker в Fargate &mdash; не зависи от потребителски клъстер</li>
+          <li>Централен Runner в Fargate &mdash; не зависи от потребителски клъстер</li>
           <li>Cross-account IAM Role &mdash; провизира в чужд AWS акаунт</li>
           <li>ArgoCD за Day 2+ &mdash; GitOps непрекъснатост след bootstrap</li>
           <li>Job Queue с атомарно claim_next_job()</li>
@@ -279,7 +279,7 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
       </div>
     </div>
     <div class="card mt-16 card-sm" style="border-left:3px solid var(--accent)">
-      <p><strong style="color:var(--fg)">Ключова промяна:</strong> потребителят не инсталира нищо локално. Свързва AWS акаунт, създава конфигурация, и Worker провизира автоматично.</p>
+      <p><strong style="color:var(--fg)">Ключова промяна:</strong> потребителят не инсталира нищо локално. Свързва AWS акаунт, създава конфигурация, и Runner провизира автоматично.</p>
     </div>
   </div>
 </div>
@@ -301,7 +301,7 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
         <p>PostgreSQL, Row Level Security, GoTrue Auth, Realtime WebSocket</p>
       </div>
       <div class="card card-sm">
-        <span class="badge badge-green mb-8">CLI &amp; Worker</span>
+        <span class="badge badge-green mb-8">CLI &amp; Runner</span>
         <h4>Go (Golang)</h4>
         <p>Cobra, Bubble Tea, Lip Gloss, AWS SDK v2, ECS Fargate</p>
       </div>
@@ -344,7 +344,7 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
         <h4>Провизиране и мониторинг</h4>
         <ul>
           <li><strong style="color:var(--fg)">provision_jobs</strong> &mdash; опашка с config snapshot и атомарен claim</li>
-          <li><strong style="color:var(--fg)">Workers</strong> &mdash; страница за статус, heartbeat и job history</li>
+          <li><strong style="color:var(--fg)">Runners</strong> &mdash; страница за статус, heartbeat и job history</li>
           <li><strong style="color:var(--fg)">Realtime Logs</strong> &mdash; WebSocket стрийминг на Terraform изход</li>
           <li><strong style="color:var(--fg)">Vineyards</strong> &mdash; Estate Map визуализация на топология</li>
         </ul>
@@ -369,11 +369,11 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
     <div class="flow mt-16">
       <div class="flow-step" style="border-color:rgba(139,92,246,.3)">grape login</div>
       <div class="flow-arrow">&rarr;</div>
-      <div class="flow-step" style="border-color:rgba(59,130,246,.3)">grape worker register</div>
+      <div class="flow-step" style="border-color:rgba(59,130,246,.3)">grape runner register</div>
       <div class="flow-arrow">&rarr;</div>
       <div class="flow-step" style="border-color:rgba(16,185,129,.3)">grape harvest</div>
       <div class="flow-arrow">&rarr;</div>
-      <div class="flow-step" style="border-color:rgba(245,158,11,.3)">Worker изпълнява</div>
+      <div class="flow-step" style="border-color:rgba(245,158,11,.3)">Runner изпълнява</div>
       <div class="flow-arrow">&rarr;</div>
       <div class="flow-step" style="border-color:rgba(16,185,129,.3)">Trellis логове</div>
     </div>
@@ -382,8 +382,8 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
         <h4>Команди</h4>
         <ul>
           <li><strong style="color:var(--fg)">login / logout</strong> &mdash; RFC 8628 Device Flow, Refresh Token</li>
-          <li><strong style="color:var(--fg)">worker register</strong> &mdash; деплой на Fargate Worker в AWS</li>
-          <li><strong style="color:var(--fg)">worker status / destroy</strong> &mdash; мониторинг и премахване</li>
+          <li><strong style="color:var(--fg)">runner register</strong> &mdash; деплой на Fargate Runner в AWS</li>
+          <li><strong style="color:var(--fg)">runner status / destroy</strong> &mdash; мониторинг и премахване</li>
           <li><strong style="color:var(--fg)">harvest</strong> &mdash; създаване на задача за провизиране</li>
           <li><strong style="color:var(--fg)">bootstrap</strong> &mdash; локално провизиране (legacy)</li>
         </ul>
@@ -402,11 +402,11 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
   </div>
 </div>
 
-<!-- ========== SLIDE 9: Worker Provisioning ========== -->
+<!-- ========== SLIDE 9: Runner Provisioning ========== -->
 <div class="slide" data-section="Реализация">
   <div class="slide-inner stagger">
-    <span class="section-tag tag-accent">Worker система</span>
-    <h2>Fargate Worker &mdash; Облачно провизиране</h2>
+    <span class="section-tag tag-accent">Runner система</span>
+    <h2>Fargate Runner &mdash; Облачно провизиране</h2>
     <div class="grid-2 mt-16">
       <div class="card">
         <h4>Жизнен цикъл</h4>
@@ -419,7 +419,7 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
         </ul>
       </div>
       <div class="card">
-        <h4>Инфраструктура на Worker</h4>
+        <h4>Инфраструктура на Runner</h4>
         <ul>
           <li><strong style="color:var(--fg)">ECS Fargate</strong> &mdash; безсървърен контейнер</li>
           <li><strong style="color:var(--fg)">ECR</strong> &mdash; Docker image registry</li>
@@ -430,7 +430,7 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
       </div>
     </div>
     <div class="card mt-16 card-sm" style="border-left:3px solid var(--accent)">
-      <p><strong style="color:var(--fg)">Cross-Account:</strong> Worker работи в акаунта на платформата, но поема IAM роля в акаунта на потребителя чрез STS AssumeRole с External ID. Потребителят запазва пълен контрол.</p>
+      <p><strong style="color:var(--fg)">Cross-Account:</strong> Runner работи в акаунта на платформата, но поема IAM роля в акаунта на потребителя чрез STS AssumeRole с External ID. Потребителят запазва пълен контрол.</p>
     </div>
   </div>
 </div>
@@ -521,9 +521,9 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
       <div class="card card-sm">
         <div class="flex" style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
           <span class="step-num">2</span>
-          <h4 style="margin:0">worker register</h4>
+          <h4 style="margin:0">runner register</h4>
         </div>
-        <p>CLI деплойва Fargate Worker &mdash; ECR image push, ECS задача, IAM роли, heartbeat потвърждение.</p>
+        <p>CLI деплойва Fargate Runner &mdash; ECR image push, ECS задача, IAM роли, heartbeat потвърждение.</p>
       </div>
       <div class="card card-sm">
         <div class="flex" style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
@@ -539,14 +539,14 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
           <span class="step-num green">4</span>
           <h4 style="margin:0">grape harvest</h4>
         </div>
-        <p>CLI създава provision_job с config snapshot. Задачата влиза в опашката и чака Worker.</p>
+        <p>CLI създава provision_job с config snapshot. Задачата влиза в опашката и чака Runner.</p>
       </div>
       <div class="card card-sm">
         <div class="flex" style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
           <span class="step-num green">5</span>
-          <h4 style="margin:0">Worker провизира</h4>
+          <h4 style="margin:0">Runner провизира</h4>
         </div>
-        <p>Worker поема задачата чрез claim_next_job(), AssumeRole в клиентския акаунт, изпълнява Terraform.</p>
+        <p>Runner поема задачата чрез claim_next_job(), AssumeRole в клиентския акаунт, изпълнява Terraform.</p>
       </div>
       <div class="card card-sm">
         <div class="flex" style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
@@ -568,7 +568,7 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
     <div class="flow mt-24">
       <div class="flow-step" style="border-color:rgba(16,185,129,.3)"><span class="badge badge-green" style="font-size:9px;margin-right:6px">1</span> grape login</div>
       <div class="flow-arrow">&rarr;</div>
-      <div class="flow-step" style="border-color:rgba(139,92,246,.3)"><span class="badge badge-accent" style="font-size:9px;margin-right:6px">2</span> worker register</div>
+      <div class="flow-step" style="border-color:rgba(139,92,246,.3)"><span class="badge badge-accent" style="font-size:9px;margin-right:6px">2</span> runner register</div>
       <div class="flow-arrow">&rarr;</div>
       <div class="flow-step" style="border-color:rgba(59,130,246,.3)"><span class="badge badge-blue" style="font-size:9px;margin-right:6px">3</span> Trellis UI</div>
       <div class="flow-arrow">&rarr;</div>
@@ -599,7 +599,7 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
         <h4>Подобрения над Legacy</h4>
         <ul>
           <li><strong style="color:var(--fg)">Без зависимости</strong> &mdash; Go бинарен файл вместо Python + venv</li>
-          <li><strong style="color:var(--fg)">Worker модел</strong> &mdash; няма нужда от локален Terraform</li>
+          <li><strong style="color:var(--fg)">Runner модел</strong> &mdash; няма нужда от локален Terraform</li>
           <li><strong style="color:var(--fg)">Интерактивен TUI</strong> &mdash; вместо 30+ CLI флага</li>
           <li><strong style="color:var(--fg)">Централен портал</strong> &mdash; видимост за всички проекти</li>
         </ul>
@@ -634,10 +634,10 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
       <div class="card card-green">
         <h4 style="color:var(--green)">Ключови приноси</h4>
         <ul>
-          <li>Хибриден модел &mdash; CLI + Web + Worker + GitOps</li>
+          <li>Хибриден модел &mdash; CLI + Web + Runner + GitOps</li>
           <li>Zero-Key сигурност &mdash; без статични AWS ключове</li>
-          <li>Worker система &mdash; автоматично провизиране от опашка</li>
-          <li>Realtime логове &mdash; WebSocket стрийминг от Worker</li>
+          <li>Runner система &mdash; автоматично провизиране от опашка</li>
+          <li>Realtime логове &mdash; WebSocket стрийминг от Runner</li>
         </ul>
       </div>
       <div class="card">
@@ -668,11 +668,11 @@ h3{font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.02em;margin-b
     <span class="section-tag tag-green">Заключение</span>
     <h2>Декларативно. Сигурно. Автоматизирано.</h2>
     <div class="divider"></div>
-    <p class="subtitle" style="margin-top:24px">Хибридна система, която комбинира CLI, уеб портал, облачни Workers и GitOps, за да трансформира управлението на облачна инфраструктура.</p>
+    <p class="subtitle" style="margin-top:24px">Хибридна система, която комбинира CLI, уеб портал, облачни Runners и GitOps, за да трансформира управлението на облачна инфраструктура.</p>
     <div class="grid-4 mt-24" style="max-width:700px;">
       <div class="stat"><div class="num hl" style="font-size:28px">Trellis</div><div class="label">Control</div></div>
       <div class="stat"><div class="num hl-green" style="font-size:28px">Grape</div><div class="label">CLI</div></div>
-      <div class="stat"><div class="num" style="font-size:28px;color:var(--pink)">Worker</div><div class="label">Execution</div></div>
+      <div class="stat"><div class="num" style="font-size:28px;color:var(--pink)">Runner</div><div class="label">Execution</div></div>
       <div class="stat"><div class="num hl-warn" style="font-size:28px">ArgoCD</div><div class="label">GitOps</div></div>
     </div>
     <p class="text-sm text-muted" style="margin-top:32px">Благодаря за вниманието</p>

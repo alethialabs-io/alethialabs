@@ -1,6 +1,6 @@
 # CLI Reference — Alethia
 
-Alethia is the command-line interface for Trellis. It handles authentication, infrastructure configuration, provisioning, teardown, and worker management. Built in Go with Charmbracelet's `huh` library for interactive TUI forms.
+Alethia is the command-line interface for Trellis. It handles authentication, infrastructure configuration, provisioning, teardown, and runner management. Built in Go with Charmbracelet's `huh` library for interactive TUI forms.
 
 ---
 
@@ -39,9 +39,9 @@ alethia
 ├── clusters
 │   └── list                  Table of bootstrapped clusters
 │
-└── worker
-    ├── register              Register worker with Trellis (saves token locally)
-    └── start                 Start worker poll loop (self-hosted or cloud-hosted mode)
+└── runner
+    ├── register              Register runner with Trellis (saves token locally)
+    └── start                 Start runner poll loop (self-hosted or cloud-hosted mode)
 ```
 
 ---
@@ -91,15 +91,15 @@ alethia harvest
 alethia destroy
 ```
 
-### Worker Setup
+### Runner Setup
 
 ```bash
-# Register a worker with Trellis (gets worker ID + token)
-alethia worker register --name "prod-worker" --mode cloud-hosted
+# Register a runner with Trellis (gets runner ID + token)
+alethia runner register --name "prod-runner" --mode cloud-hosted
 
-# Start the worker daemon
+# Start the runner daemon
 # Polls Trellis every 10s for jobs, sends heartbeat every 30s
-alethia worker start
+alethia runner start
 ```
 
 ### CLI Authentication Flow
@@ -146,8 +146,8 @@ Alethia uses Charmbracelet's `huh` library for rich terminal forms. Key interact
   > api-backend (us-east-1, ACTIVE)
     web-frontend (eu-west-1, DRAFT)
 
-? Select a worker:
-  > prod-worker (ONLINE, us-east-1)
+? Select a runner:
+  > prod-runner (ONLINE, us-east-1)
     self-hosted (ONLINE, local)
 ```
 
@@ -166,13 +166,13 @@ These commands map Trellis web features to the CLI. They are not yet implemented
 | `alethia status [vine-name]` | Vine detail page | Per-component provisioning status (network: ACTIVE, cluster: PROVISIONING, ...) |
 | `alethia logs [job-id]` | Job log viewer | Stream real-time job logs to terminal |
 
-### Worker Management
+### Runner Management
 
 | Command | Maps from (Trellis) | Purpose |
 |---------|---------------------|---------|
-| `alethia worker list` | Workers dashboard | List all registered workers with status |
-| `alethia worker status` | Workers dashboard | Show health, uptime, active jobs for a specific worker |
-| `alethia worker destroy` | Worker management | Tear down cloud-hosted worker infrastructure |
+| `alethia runner list` | Runners dashboard | List all registered runners with status |
+| `alethia runner status` | Runners dashboard | Show health, uptime, active jobs for a specific runner |
+| `alethia runner destroy` | Runner management | Tear down cloud-hosted runner infrastructure |
 
 ### Integrations
 
@@ -219,10 +219,10 @@ $ alethia config create --provider azure  # AKS + Azure DB + Azure Cache
 $ alethia harvest
   ? Select vineyard: production
   ? Select vine: api-backend (eu-west-1)
-  ? Select worker: prod-worker (ONLINE)
+  ? Select runner: prod-runner (ONLINE)
 
   ✓ Job queued: DEPLOY #42
-  ✓ Worker claimed job
+  ✓ Runner claimed job
   ► Terraform init...
   ► Terraform plan: 47 resources to create
   ► Terraform apply...
@@ -238,5 +238,5 @@ $ alethia harvest
 | File | Location | Purpose |
 |------|----------|---------|
 | Auth token | `~/.config/alethia/auth.json` | Trellis refresh token from `alethia login` |
-| Worker credentials | `~/.config/alethia/worker.json` | Worker ID + token from `alethia worker register` |
+| Runner credentials | `~/.config/alethia/runner.json` | Runner ID + token from `alethia runner register` |
 | Workspace state | `~/.alethia/workspaces/{vineyard}-{env}/` | Local Terraform state and tfvars |

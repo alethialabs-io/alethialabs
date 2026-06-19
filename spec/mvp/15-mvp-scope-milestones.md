@@ -72,7 +72,7 @@ This is a **broad** MVP. **M1 (de-Supabase) and M2 (identity) are the long poles
 
 | Risk | Likelihood / Impact | Mitigation |
 |---|---|---|
-| De-Supabase migration drags (4 subsystems) | High / High | Worker boundary already HTTP — scope to web tier + storage; tackle subsystems independently ([06](06-self-hosting-architecture.md)). |
+| De-Supabase migration drags (4 subsystems) | High / High | Runner boundary already HTTP — scope to web tier + storage; tackle subsystems independently ([06](06-self-hosting-architecture.md)). |
 | Identity build-vs-buy wrong call | Med / High | Decision doc with options + reversible adapter seam ([07](07-auth-rbac-sso.md)). |
 | Integration breadth scope-creep | High / Med | Ship one backend per category; catalog stays data-driven; rest stay `coming_soon`. |
 | Single-vendor / single-distro concentration | Med / Med | Multi-cloud + multi-strategy by design; no Hetzner/Talos lock-in. |

@@ -105,7 +105,7 @@ td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{co
       <p class="muted" style="margin-top:1.2rem">Same outcome as the rented PaaS — a production app platform, fast. <strong>Opposite ownership model.</strong> It's your cluster, in your account, with standard tools you can take anywhere. Alethia never sits in the data path.</p>
     </div>
     <div class="grid" style="gap:.75rem">
-      <div class="card" style="padding:1rem 1.2rem"><h4>Zero-trust provisioning</h4><p>Worker assumes cloud roles at execution time. Control plane never sees or stores your keys.</p></div>
+      <div class="card" style="padding:1rem 1.2rem"><h4>Zero-trust provisioning</h4><p>Runner assumes cloud roles at execution time. Control plane never sees or stores your keys.</p></div>
       <div class="card" style="padding:1rem 1.2rem"><h4>Own it / self-hostable</h4><p>You own the cluster — and can self-host Alethia itself as ~4 containers. No SaaS dependency.</p></div>
       <div class="card" style="padding:1rem 1.2rem"><h4>GitOps app-delivery</h4><p>Standard ArgoCD wired to your repo. Not a proprietary pipeline you can't leave.</p></div>
       <div class="card" style="padding:1rem 1.2rem"><h4>Pluggable + multi-cloud</h4><p>Bring your own tools per category, across many clouds.</p></div>
@@ -126,7 +126,7 @@ td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{co
     <div class="card">
       <div class="step-n">STEP 02</div>
       <h3>runner provisions</h3>
-      <p>A remote worker in <em>your</em> account assumes scoped roles and runs OpenTofu — EKS, VPC, Aurora, Redis, ECR, S3, Route 53, WAF.</p>
+      <p>A remote runner in <em>your</em> account assumes scoped roles and runs OpenTofu — EKS, VPC, Aurora, Redis, ECR, S3, Route 53, WAF.</p>
     </div>
     <div class="card">
       <div class="step-n">STEP 03</div>
@@ -202,7 +202,7 @@ td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{co
         <tr><th>Layer</th><th>Spend</th></tr>
         <tr><td><strong>Serviceable (SAM)</strong></td><td>~$80–120M/yr <span class="faint">(est.)</span> — paying BYOC / self-host / zero-trust K8s buyers (~7,000 orgs × ~$12k ACV)</td></tr>
         <tr><td><strong>Beachhead</strong></td><td>Platform/DevOps teams that must own their stack &amp; won't share cloud keys</td></tr>
-        <tr><td><strong>Expansion</strong></td><td>Orgs → SSO/RBAC/audit → hosted + worker-minutes</td></tr>
+        <tr><td><strong>Expansion</strong></td><td>Orgs → SSO/RBAC/audit → hosted + runner-minutes</td></tr>
       </table>
       <p class="muted" style="margin-top:1rem"><strong>SOM (3 yr) ~$2–3.5M ARR</strong> <span class="faint">(est., ~2–4% of SAM)</span>. We don't monetize self-hosters — we monetize <strong>convenience, governance, and usage</strong>. The free core is the funnel, not the loss.</p>
     </div>
@@ -227,7 +227,7 @@ td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{co
     <div class="card">
       <h3>Usage-based</h3>
       <p class="faint mono" style="font-size:.7rem;letter-spacing:.08em;margin-bottom:.5rem">METERED · STACKS ON SEATS</p>
-      <p>Two meters: <strong>AI premium</strong> (repo-scanner/MCP) and <strong>cloud-hosted worker-minutes</strong> — bill the compute that provisions.</p>
+      <p>Two meters: <strong>AI premium</strong> (repo-scanner/MCP) and <strong>cloud-hosted runner-minutes</strong> — bill the compute that provisions.</p>
     </div>
   </div>
   <div class="card" style="margin-top:.5rem">
@@ -296,7 +296,7 @@ td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{co
     </div>
     <div class="card">
       <h3>Monetize</h3>
-      <p>Hosted ACVs + enterprise contracts + the worker-minutes meter. Never on self-hosters — that trust fuels the funnel.</p>
+      <p>Hosted ACVs + enterprise contracts + the runner-minutes meter. Never on self-hosters — that trust fuels the funnel.</p>
     </div>
   </div>
   <div class="two-col" style="margin-top:.5rem">
@@ -321,7 +321,7 @@ td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{co
         <ul style="margin-top:.5rem">
           <li>Zero-trust 3-cloud provisioning (AWS/GCP/Azure auth wired)</li>
           <li>GitOps-wired ArgoCD handoff + full operator suite</li>
-          <li><span class="mono">alethia</span> CLI (Homebrew) — vine, jobs, workers, clusters</li>
+          <li><span class="mono">alethia</span> CLI (Homebrew) — vine, jobs, runners, clusters</li>
           <li>Spec designer + live cost sidebar (Infracost)</li>
           <li>Integrations catalog (Git OAuth active; 6 providers seeded)</li>
           <li>Robust job broker — claim, heartbeat, scale-to-zero Fargate</li>
@@ -332,7 +332,7 @@ td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{co
       <div class="card" style="padding:.9rem 1.2rem"><span class="status"><span class="dot dot-ring"></span>In progress / partial</span>
         <ul style="margin-top:.5rem">
           <li>GCP/Azure parity — templates exist, onboarding <span class="mono">coming_soon</span></li>
-          <li>runner worker maturity — instant scale-up is recent</li>
+          <li>runner runner maturity — instant scale-up is recent</li>
         </ul>
       </div>
       <div class="card" style="padding:.9rem 1.2rem"><span class="status"><span class="dot-ring dot"></span>To build — V1</span>

@@ -107,7 +107,7 @@
 
 - Създавам нов Tendril:
   - Избирам регион, CPU, памет
-  - Натискам Create → DEPLOY_WORKER job се създава
+  - Натискам Create → DEPLOY_RUNNER job се създава
   - "Ще отнеме около 2 минути. Tendril-ът ще се появи тук със статус ONLINE."
 
 - Показвам статус: зелена точка = ONLINE, жълта = DRAINING, червена = OFFLINE
@@ -135,7 +135,7 @@
 - Показвам списъка с jobs:
   - PLAN → SUCCESS (завършен)
   - DEPLOY → PROCESSING (в момента)
-  - DEPLOY_WORKER → SUCCESS (tendril-ът е готов)
+  - DEPLOY_RUNNER → SUCCESS (tendril-ът е готов)
 - Отварям DEPLOY job-а → показвам real-time логове
 - "Terraform stdout и stderr се стриймват чрез Supabase Realtime WebSocket директно в браузъра."
 - "И Grape, и Tendril се версионират чрез release-please с conventional commits — автоматични CHANGELOG-ове и GitHub Releases."

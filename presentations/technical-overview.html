@@ -56,7 +56,7 @@ pre.diagram{font-family:var(--font-mono);font-size:.72rem;line-height:1.45;color
   <div class="eyebrow">Technical Overview · For Evaluators &amp; Design Partners</div>
   <div class="wordmark" style="font-size:2.4rem;margin-top:.6rem">Alethia</div>
   <h1 style="margin-top:.4rem">A production app platform<br>you <em style="font-style:normal;border-bottom:2px solid var(--border-strong)">own</em> — not rent.</h1>
-  <p class="lead" style="margin-top:1.4rem">One Spec provisions a complete, GitOps-wired Kubernetes platform on <strong>your own cloud account</strong> — zero stored credentials. The control plane never holds a secret; the worker assumes cloud roles at runtime.</p>
+  <p class="lead" style="margin-top:1.4rem">One Spec provisions a complete, GitOps-wired Kubernetes platform on <strong>your own cloud account</strong> — zero stored credentials. The control plane never holds a secret; the runner assumes cloud roles at runtime.</p>
   <div class="grid g4" style="margin-top:2rem">
     <div><div class="eyebrow">Provisioning</div><div class="muted" style="margin-top:.3rem;font-size:.9rem">Zero-trust, remote</div></div>
     <div><div class="eyebrow">Delivery</div><div class="muted" style="margin-top:.3rem;font-size:.9rem">Standard ArgoCD GitOps</div></div>
@@ -77,7 +77,7 @@ pre.diagram{font-family:var(--font-mono);font-size:.72rem;line-height:1.45;color
           │   Better Auth·Drizzle  │
           │   PDP · SSE            └── ── ──┐
           │                                 │ HTTP(Bearer)
-          └──────────────────────────►   runner (Go worker)
+          └──────────────────────────►   runner (Go runner)
                                             │ assumes role
                                             ▼  at runtime
                                    Your cloud account</pre>
@@ -90,12 +90,12 @@ pre.diagram{font-family:var(--font-mono);font-size:.72rem;line-height:1.45;color
       </div>
       <div class="card">
         <div class="status"><span class="dot dot-live"></span>Execution plane</div>
-        <h3 style="margin-top:.5rem">runner (Go worker)</h3>
+        <h3 style="margin-top:.5rem">runner (Go runner)</h3>
         <p style="margin-top:.3rem;font-size:.92rem">Runs in/against your cloud, <strong>assumes roles at execution time</strong>, runs OpenTofu, streams logs back over plain HTTP.</p>
       </div>
     </div>
   </div>
-  <p class="faint" style="font-size:.82rem;margin-top:.4rem">Worker boundary is plain HTTP + S3 + Postgres RPCs (<span class="mono">packages/alethia-core/api/api.go</span>) — which is why the provisioning engine is untouched by the self-host migration.</p>
+  <p class="faint" style="font-size:.82rem;margin-top:.4rem">Runner boundary is plain HTTP + S3 + Postgres RPCs (<span class="mono">packages/alethia-core/api/api.go</span>) — which is why the provisioning engine is untouched by the self-host migration.</p>
 </section>
 
 <!-- 3 — SELF-HOST ARCHITECTURE -->
@@ -121,7 +121,7 @@ pre.diagram{font-family:var(--font-mono);font-size:.72rem;line-height:1.45;color
     </div>
     <div class="card">
       <div class="tag">node</div>
-      <h4 style="margin-top:.6rem">Go worker</h4>
+      <h4 style="margin-top:.6rem">Go runner</h4>
       <p style="font-size:.86rem;margin-top:.3rem">Already S3-native (path-style, lockfile — no DynamoDB). Pulls jobs over HTTP.</p>
     </div>
   </div>
@@ -138,7 +138,7 @@ pre.diagram{font-family:var(--font-mono);font-size:.72rem;line-height:1.45;color
   <p class="lead">Live job-log streaming and status, multi-instance, with no message bus.</p>
   <div class="grid g2" style="margin-top:.5rem">
     <div class="card">
-      <pre class="diagram">worker POST ─► insert_job_log() ─► job_logs
+      <pre class="diagram">runner POST ─► insert_job_log() ─► job_logs
                        │
               pg_notify('job_logs',{jobId,logId})
                        │  (IDs only, 8KB cap)
@@ -171,7 +171,7 @@ pre.diagram{font-family:var(--font-mono);font-size:.72rem;line-height:1.45;color
   → stream logs  (SSE)
   → finalize outputs (cluster endpoint…)
   → ArgoCD reconciles</pre>
-      <p class="faint" style="font-size:.82rem;margin-top:.6rem">Two-pass atomic claim (assigned worker → cloud-identity affinity); heartbeat + <span class="mono">recover_stale_jobs()</span> crash recovery, now an in-app interval — no Lambda.</p>
+      <p class="faint" style="font-size:.82rem;margin-top:.6rem">Two-pass atomic claim (assigned runner → cloud-identity affinity); heartbeat + <span class="mono">recover_stale_jobs()</span> crash recovery, now an in-app interval — no Lambda.</p>
     </div>
     <div class="grid" style="gap:1rem">
       <div class="card"><h4>OpenTofu (MPL-2.0)</h4><p style="font-size:.9rem;margin-top:.3rem">Provisions EKS + VPC + Aurora + ElastiCache + DynamoDB + SQS/SNS + ECR + S3 + Secrets Manager + Route53 + WAF.</p></div>
@@ -244,7 +244,7 @@ pre.diagram{font-family:var(--font-mono);font-size:.72rem;line-height:1.45;color
       <p class="faint" style="font-size:.82rem;margin-top:.6rem">Each implements <span class="mono">CategoryProvider</span> (Tfvars / ModulePath / Validate). Adding one = catalog row + impl + OpenTofu module + credential. No core changes.</p>
     </div>
   </div>
-  <p class="faint" style="font-size:.82rem">Credentials flow to the worker <strong>at runtime only</strong> — the <span class="mono">config_snapshot</span> carries identifiers, not secrets. Zero-credential model preserved across all providers.</p>
+  <p class="faint" style="font-size:.82rem">Credentials flow to the runner <strong>at runtime only</strong> — the <span class="mono">config_snapshot</span> carries identifiers, not secrets. Zero-credential model preserved across all providers.</p>
 </section>
 
 <!-- 8 — OPEN-CORE BOUNDARY -->
@@ -285,9 +285,9 @@ pre.diagram{font-family:var(--font-mono);font-size:.72rem;line-height:1.45;color
   <div class="eyebrow">07 · Security Posture — Summary</div>
   <h2>Zero-trust by construction; defense in depth.</h2>
   <div class="grid g3" style="margin-top:.5rem">
-    <div class="card"><h4>No stored cloud secrets</h4><p style="font-size:.9rem;margin-top:.3rem">Control plane stores identifiers only. The worker assumes roles at execution time — AssumeRole / WIF / federated identity per cloud.</p></div>
+    <div class="card"><h4>No stored cloud secrets</h4><p style="font-size:.9rem;margin-top:.3rem">Control plane stores identifiers only. The runner assumes roles at execution time — AssumeRole / WIF / federated identity per cloud.</p></div>
     <div class="card"><h4>Two-layer authorization</h4><p style="font-size:.9rem;margin-top:.3rem">Rich PDP for hierarchical / ABAC decisions; coarse <span class="mono">org_id</span> RLS as the unbypassable tenant blast wall. Default-deny everywhere.</p></div>
-    <div class="card"><h4>Bounded worker authority</h4><p style="font-size:.9rem;margin-top:.3rem">A runner acts as the user who queued the job; service-role DB connection bypasses RLS but is gated by <span class="mono">verifyWorkerToken</span> + a PDP check bound to that user.</p></div>
+    <div class="card"><h4>Bounded runner authority</h4><p style="font-size:.9rem;margin-top:.3rem">A runner acts as the user who queued the job; service-role DB connection bypasses RLS but is gated by <span class="mono">verifyRunnerToken</span> + a PDP check bound to that user.</p></div>
     <div class="card"><h4>Runtime-only credentials</h4><p style="font-size:.9rem;margin-top:.3rem">Integration secrets are fetched at execution and injected as TF vars — never in the <span class="mono">config_snapshot</span>, never at rest in the queue.</p></div>
     <div class="card"><h4>Audit at the decision point</h4><p style="font-size:.9rem;margin-top:.3rem"><span class="mono">authz_audit_log</span> is written by the PDP on every <span class="mono">enforce()</span> — audit can't be forgotten at call sites.</p></div>
     <div class="card"><h4>Permissive supply chain</h4><p style="font-size:.9rem;margin-top:.3rem">Better Auth (MIT), Drizzle / SeaweedFS (Apache-2.0), OpenTofu (MPL-2.0). License-scan CI keeps the graph clean. AGPL is our code only.</p></div>
