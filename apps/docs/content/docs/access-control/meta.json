@@ -1,0 +1,12 @@
+{
+  "title": "Access Control",
+  "icon": "ShieldCheck",
+  "root": true,
+  "pages": [
+    "index",
+    "roles-and-permissions",
+    "organizations",
+    "open-core",
+    "architecture"
+  ]
+}

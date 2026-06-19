@@ -1,0 +1,58 @@
+---
+title: Open-Core Model
+description: What's free in the AGPL Community edition vs the commercial Enterprise edition, how entitlements work, and the architectural boundary that keeps the Community build complete and self-contained.
+---
+
+# Open-Core Model
+
+Alethia is **open-core**. The entire product — including the authorization engine, roles, grants, hierarchy, and tenant isolation — is free and open source under the **AGPL-3.0**. A separate **Enterprise edition** adds organization-scale features under a commercial license. This page explains the split and the engineering that keeps it honest.
+
+## What's free vs licensed
+
+| Capability | Community (AGPL) | Enterprise (commercial) |
+|---|:--:|:--:|
+| Policy Decision Point + `enforce` / `listAccessible` | ✅ | ✅ |
+| Built-in roles (owner / admin / operator / viewer) | ✅ | ✅ |
+| Per-resource grants + Org → Zone → Spec inheritance | ✅ | ✅ |
+| Row-Level Security tenant isolation | ✅ | ✅ |
+| Audit log of authorization decisions | ✅ | ✅ |
+| Single-user personal organization | ✅ | ✅ |
+| **Multi-member organizations, teams, invitations** | — | ✅ |
+| **SSO (SAML / OIDC)** | — | _on the roadmap_ |
+| **Custom roles** (org copies of templates) | — | ✅ |
+| **Audit export** | — | ✅ |
+| **OpenFGA-backed policy engine at scale** | — | ✅ (optional) |
+
+<Callout type="info">
+The dividing line is **"single tenant vs many tenants."** Everything needed to run Alethia for yourself or your team-as-one-account is free. The Enterprise edition is about *organizations with multiple members and identities* — the things larger teams and companies need.
+</Callout>
+
+## Entitlements
+
+The Enterprise edition gates its features behind **entitlements** derived from a license. The core has **no `if (licensed)` checks scattered through it** — it simply asks the enterprise layer "is this feature on?" and the enterprise layer answers from the license. When no license is present (the Community build), every entitlement is off and the corresponding features are simply absent.
+
+## The boundary that makes it work
+
+Open-core only stays maintainable if the free edition is genuinely complete on its own. Alethia enforces that with a strict, mechanically-checked rule:
+
+<Callout type="warn">
+**The AGPL core never imports the Enterprise package.** The dependency only goes one way: Enterprise may build on core; core must run without Enterprise even present.
+</Callout>
+
+How it's enforced:
+
+- **Seams, not branches.** The core exposes a handful of extension points (the policy engine, the tenancy resolver, the auth plugins, the entitlement gate). In the Community build they return community defaults; the Enterprise package fills them in.
+- **One integration file.** Exactly one core file is allowed to load the Enterprise package, and it does so *tolerantly* — if the package isn't installed, it quietly falls back to community behavior.
+- **CI guards.** Three lint checks run on every build:
+  - **boundary guard** — fails if any file outside the allowed integration point imports the Enterprise package;
+  - **authz-scope guard** — fails if any code does ad-hoc ownership checks instead of going through the decision point;
+  - **no-Supabase guard** — a legacy guard from the database migration, kept green.
+- **Builds without it.** The Community build is verified to compile, test, and run with the Enterprise package completely absent.
+
+The payoff: the Enterprise edition can evolve independently, and the open-source edition is never a hollow shell — it's the real product.
+
+## For self-hosters
+
+If you self-host the Community edition you get the full single-tenant product: roles, grants, hierarchy, audit, and database-level tenant isolation, all under the AGPL. You can run it indefinitely with no license. Adding the Enterprise edition is what unlocks shared organizations and the features in the table above.
+
+See [Self-Hosting](/docs/self-hosting) for deployment, and [Architecture](/docs/access-control/architecture) for exactly how the seams and the loader work.

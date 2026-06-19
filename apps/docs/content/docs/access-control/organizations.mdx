@@ -1,0 +1,79 @@
+---
+title: Organizations & Teams
+description: How tenancy works — the personal organization in Community, and multi-member organizations with invitations and per-member roles in Enterprise.
+---
+
+# Organizations & Teams
+
+An **organization** is the tenancy boundary: every zone, spec, runner, cloud identity, and job belongs to exactly one organization, and members of that organization see only its resources. Your **active organization** is half of your [actor](/docs/access-control) identity — it's the scope every permission check runs against.
+
+## Community: your personal organization
+
+<Callout type="info">
+In the free Community edition there is **one organization per user** — your *personal organization* — and you are its sole `owner`. You never see another member. Everything you create is scoped to it automatically.
+</Callout>
+
+Under the hood, your personal organization's id is simply your user id, and you're given a single org-wide `owner` grant when your account is created. That's the entire setup — no organization to create, no members to manage. The full roles-and-grants engine is present and enforcing; it just has one member: you.
+
+## Enterprise: multi-member organizations
+
+The commercial Enterprise edition turns organizations into real, shared workspaces:
+
+<Cards>
+  <Card title="Organizations">
+    Named, shared tenancy boundaries. The creator becomes the <code>owner</code>. All existing resources stay scoped to their organization.
+  </Card>
+  <Card title="Members">
+    Users who belong to an organization, each holding a role (<code>owner</code> / <code>admin</code> / <code>operator</code> / <code>viewer</code>) that determines what they can do.
+  </Card>
+  <Card title="Invitations">
+    Invite a teammate by email; they accept and join with the role you choose.
+  </Card>
+  <Card title="Teams">
+    Group members so grants can target a whole team at once (rather than each user).
+  </Card>
+</Cards>
+
+### Lifecycle
+
+<Steps>
+<Step>
+**Create an organization.** The creator is automatically its `owner` — they get an org-wide owner grant, so the authorization engine recognizes them as fully privileged within the new org immediately.
+</Step>
+<Step>
+**Invite members by email.** Each invitation carries the role the new member will hold. The invitee accepts and becomes a member.
+</Step>
+<Step>
+**Members act within the org.** Every request a member makes is checked against *their* role in *that* organization — an `operator` can deploy infrastructure but not manage billing; a `viewer` can only look.
+</Step>
+<Step>
+**Scope flows everywhere.** Because the member's organization is their active scope, list views, actions, and the database isolation layer all key off it — a member of org A can never see org B's resources.
+</Step>
+</Steps>
+
+### How a member's role becomes access
+
+When a member makes a request, the system resolves their **active organization** and checks their grant in it:
+
+```text
+member: carol, role = operator, in org "Acme"
+  request: deploy spec "Acme/payments"
+  ⇒ operator includes spec:deploy  → ALLOWED (and scoped to Acme only)
+
+  request: invite a new member
+  ⇒ operator does NOT include member:manage_members → FORBIDDEN
+```
+
+Roles compose with the [Org → Zone → Spec hierarchy](/docs/access-control/roles-and-permissions#inheritance-the-org--zone--spec-hierarchy): you can give someone `operator` org-wide, or narrow them to just one zone.
+
+## Tenancy isolation
+
+Organization isolation isn't only an application-level check. The database enforces it too: every query runs with the active organization in scope, and PostgreSQL Row-Level Security only returns rows for that organization. So even a flaw in the application layer cannot surface another organization's data. See [Security → Row-Level Security](/docs/concepts/security).
+
+<Callout type="warn">
+**Current scope of the Enterprise org support (evolving):** members resolve to their **primary organization**. A live *active-organization switcher* (belonging to several orgs and toggling between them in one session) and **SSO** sign-in are on the roadmap — the building blocks (the org/member/invitation model, per-org roles, isolation) are already in place.
+</Callout>
+
+## Relationship to roles
+
+Organizations are *where* you have access; [roles](/docs/access-control/roles-and-permissions) are *what* that access is. A member always has both: an organization (the scope) and a role within it (the capability). Changing someone from `viewer` to `operator` changes what they can do; moving them between organizations changes what they can see.

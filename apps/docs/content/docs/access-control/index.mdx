@@ -1,0 +1,87 @@
+---
+title: Access Control Overview
+description: How Alethia decides who can do what — the Policy Decision Point, roles, permissions, and the tenancy model, with a single mental model that scales from one user to many organizations.
+---
+
+# Access Control Overview
+
+Every action in Alethia — viewing a spec, deploying infrastructure, destroying a runner, inviting a teammate — passes through one **authorization layer** before it runs. This page gives you the mental model; the rest of the section is the detail.
+
+<Callout type="info">
+**One sentence:** an **actor** (you, acting in an **organization**) is granted **roles**, each role carries a set of **permissions**, and a permission is the right to take an **action** on a **resource**. A request is allowed only if the actor holds a matching permission — everything else is denied.
+</Callout>
+
+## The mental model
+
+```
+ actor ──holds──▶ grant ──of a──▶ role ──bundles──▶ permissions ──gate──▶ actions on resources
+ (you + org)              (owner/admin/…)          (spec:deploy, …)
+```
+
+- **Actor** — a verified user plus their **active organization** (the tenancy scope). In the free Community edition there is exactly one organization per user — your *personal organization* — so "actor" is effectively just "you".
+- **Resource** — a thing you act on: an organization, a **zone** (workspace), a **spec** (an infrastructure definition), a **runner**, a **cloud identity**, a job, a connector, a member, audit logs, or billing.
+- **Action** — what you're trying to do: `view`, `create`, `edit`, `plan`, `deploy`, `destroy`, and the management actions (`manage_identities`, `manage_members`, `manage_integrations`, `view_audit`, `export_audit`, `manage_billing`).
+- **Permission** — a single `resource:action` pair, e.g. `spec:deploy`. The complete, exhaustive list is fixed in code (see [Roles & Permissions](/docs/access-control/roles-and-permissions)).
+- **Role** — a named bundle of permissions (`owner`, `admin`, `operator`, `viewer`). You don't grant permissions one by one; you grant a role.
+- **Grant** — "this actor gets this role, at this scope." The scope can be the whole organization, a single zone, or a single spec.
+
+## Default-deny
+
+The system is **default-deny**: if nothing explicitly grants you a permission for what you're attempting, the answer is *no*. There is no implicit "owner of the row can do anything" shortcut scattered through the code — every decision is made in one place (the **Policy Decision Point**, or PDP) and recorded.
+
+## One decision point
+
+A single component answers every authorization question:
+
+- **`enforce(action, resource)`** — the gate at the top of every server action and API route. It allows the request or throws a `403 Forbidden`.
+- **`listAccessible(type)`** — the "which ones can I see?" query that powers list views, so a list only ever returns resources you're allowed to see.
+
+Because all decisions flow through this one point, the rules are consistent everywhere, every denial can be audited, and the underlying engine can be swapped without touching a single call site (see [Architecture](/docs/access-control/architecture)).
+
+## Two layers of protection
+
+Authorization is enforced in **two independent layers**, so a bug in one cannot expose your data:
+
+<Cards>
+  <Card title="The PDP (fine-grained)" href="/docs/access-control/architecture">
+    Application-level role + permission checks: *can this actor take this action on this resource?* Rich, hierarchical, role-aware.
+  </Card>
+  <Card title="Row-Level Security (the blast wall)" href="/docs/concepts/security">
+    A coarse PostgreSQL guarantee that a request only ever sees rows belonging to its active organization — enforced by the database itself, beneath the application.
+  </Card>
+</Cards>
+
+The PDP decides *what you may do*; Row-Level Security guarantees *whose data you can even touch*. Together they mean a cross-tenant leak would require both layers to fail at once.
+
+## Community vs Enterprise at a glance
+
+The whole model above ships in the **free, open-source (AGPL) Community edition**. Organizations with multiple members are the main thing the commercial **Enterprise edition** adds.
+
+| | Community (free) | Enterprise |
+|---|---|---|
+| Roles & permissions (owner/admin/operator/viewer) | ✅ | ✅ |
+| Per-zone / per-spec grants + inheritance | ✅ | ✅ |
+| Row-Level Security tenant isolation | ✅ | ✅ |
+| Audit log of decisions | ✅ | ✅ |
+| **Organizations, teams, members, invitations** | — (single personal org) | ✅ |
+| **SSO (SAML / OIDC)** | — | _coming_ |
+| **Custom roles, audit export** | — | ✅ |
+
+In Community, every user is the sole `owner` of their own personal organization — so the org/roles machinery is fully present but you simply never see another member. The same code lights up into real multi-member organizations under an Enterprise license, with **no change to how permissions are decided**. See [Open-Core Model](/docs/access-control/open-core).
+
+## Where to go next
+
+<Cards>
+  <Card title="Roles & Permissions" href="/docs/access-control/roles-and-permissions">
+    The four built-in roles, the full permission matrix, grants, and how a grant on a zone flows down to its specs.
+  </Card>
+  <Card title="Organizations & Teams" href="/docs/access-control/organizations">
+    Multi-member organizations, invitations, and how a member's role determines what they can do (Enterprise).
+  </Card>
+  <Card title="Open-Core Model" href="/docs/access-control/open-core">
+    What's free vs licensed, and the boundary that keeps the Community build complete on its own.
+  </Card>
+  <Card title="Architecture" href="/docs/access-control/architecture">
+    For contributors: the PDP internals, the registry-as-code, the seams, and the enterprise loader.
+  </Card>
+</Cards>
