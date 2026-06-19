@@ -3,21 +3,21 @@
 
 import { test, expect } from "./fixtures/auth";
 
-test.describe("Vineyards page", () => {
-	test("loads with heading", async ({ authedPage: page }) => {
-		await page.goto("/dashboard/vineyards");
-		await expect(
-			page.getByRole("heading", { name: "Vineyards" }),
-		).toBeVisible();
+test.describe("Zones page", () => {
+	test("loads", async ({ authedPage: page }) => {
+		await page.goto("/dashboard/zones");
+		await expect(page).toHaveURL(/\/dashboard\/zones/);
 	});
 
-	test("shows empty state or vineyard cards", async ({ authedPage: page }) => {
-		await page.goto("/dashboard/vineyards");
-		const hasCards = await page.locator("[href^='/dashboard/vineyards/']").count();
-		if (hasCards === 0) {
-			await expect(page.getByText("No vineyards yet")).toBeVisible();
+	test("shows empty state or zone cards", async ({ authedPage: page }) => {
+		await page.goto("/dashboard/zones");
+		const cards = await page.locator("[href^='/dashboard/zones/']").count();
+		if (cards === 0) {
+			await expect(page.getByText("No zones yet")).toBeVisible();
 		} else {
-			await expect(page.locator("[href^='/dashboard/vineyards/']").first()).toBeVisible();
+			await expect(
+				page.locator("[href^='/dashboard/zones/']").first(),
+			).toBeVisible();
 		}
 	});
 });

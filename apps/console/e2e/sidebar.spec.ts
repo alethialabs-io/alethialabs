@@ -6,8 +6,8 @@ import { test, expect } from "./fixtures/auth";
 test.describe("Sidebar navigation", () => {
 	test("renders all nav items", async ({ authedPage: page }) => {
 		await expect(page.getByRole("link", { name: "Overview" })).toBeVisible();
-		await expect(page.getByRole("link", { name: "Vineyards" })).toBeVisible();
-		await expect(page.getByRole("link", { name: /plant/i })).toBeVisible();
+		await expect(page.getByRole("link", { name: /create a spec/i })).toBeVisible();
+		await expect(page.getByRole("link", { name: "Clusters" })).toBeVisible();
 		await expect(page.getByRole("link", { name: "Jobs" })).toBeVisible();
 		await expect(page.getByRole("link", { name: "Connectors" })).toBeVisible();
 		await expect(page.getByRole("link", { name: "Runners" })).toBeVisible();
@@ -18,10 +18,10 @@ test.describe("Sidebar navigation", () => {
 		await expect(overview).toBeVisible();
 	});
 
-	test("navigates to Vineyards", async ({ authedPage: page }) => {
-		await page.getByRole("link", { name: "Vineyards" }).first().click();
-		await page.waitForURL(/\/dashboard\/vineyards/);
-		await expect(page.getByText("Vineyards")).toBeVisible();
+	test("navigates to Runners", async ({ authedPage: page }) => {
+		await page.getByRole("link", { name: "Runners" }).first().click();
+		await page.waitForURL(/\/dashboard\/runners/);
+		await expect(page.getByText("Runners")).toBeVisible();
 	});
 
 	test("navigates to Connectors", async ({ authedPage: page }) => {
