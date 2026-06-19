@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { EnterpriseGate } from "@/components/settings/enterprise-gate";
+import { OrgGeneral } from "@/components/settings/general/org-general";
 import { SettingsHeader } from "@/components/settings/settings-header";
 
 export default function GeneralPage() {
@@ -10,15 +11,14 @@ export default function GeneralPage() {
 		<>
 			<SettingsHeader
 				title="General"
-				description="Your organization's name, slug, and danger zone."
+				description="Your organization's name and danger zone."
 			/>
 			<EnterpriseGate
 				entitlement="organizations"
 				title="Organization settings"
 				description="Create an organization to manage its name, members, and settings. Available on Enterprise."
 			>
-				{/* Org name/slug + danger zone land in UI-6. */}
-				<div />
+				<OrgGeneral />
 			</EnterpriseGate>
 		</>
 	);
