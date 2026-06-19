@@ -3,7 +3,7 @@
 # NEVER commit backend.hcl — it contains secrets.
 
 bucket = "terraform-state"
-key    = "tendril/terraform.tfstate"
+key    = "runner/terraform.tfstate"
 region = "us-east-1"
 
 endpoints = {

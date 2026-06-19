@@ -10,12 +10,12 @@ variable "environment" {
   default = "dev"
 }
 
-variable "nodes" {
+variable "runners" {
   type = map(object({
     region      = string
     alethia_url = string
   }))
-  description = "Map of node deployments. Key is the tendril name, value specifies region and Alethia instance."
+  description = "Map of runner deployments. Key is the runner name, value specifies region and Alethia instance."
   default = {
     "prod-eu-west-1" = {
       region      = "eu-west-1"
@@ -24,12 +24,12 @@ variable "nodes" {
   }
 }
 
-variable "worker_mode" {
+variable "runner_mode" {
   type    = string
   default = "cloud-hosted"
 
   validation {
-    condition     = contains(["self-hosted", "cloud-hosted"], var.worker_mode)
+    condition     = contains(["self-hosted", "cloud-hosted"], var.runner_mode)
     error_message = "Must be self-hosted or cloud-hosted."
   }
 }
@@ -37,7 +37,7 @@ variable "worker_mode" {
 variable "alethia_api_secret" {
   type        = string
   sensitive   = true
-  description = "Secret for authenticating with the Alethia API (tendril registration + releases)."
+  description = "Secret for authenticating with the Alethia API (runner registration + releases)."
 }
 
 variable "image" {
@@ -45,7 +45,7 @@ variable "image" {
   default = "ghcr.io/alethialabs-io/runner"
 }
 
-variable "node_version" {
+variable "runner_version" {
   type    = string
   default = "latest"
 }
@@ -73,7 +73,7 @@ variable "ecr_force_delete" {
   default = false
 }
 
-# ---------- Shared tendril settings ----------
+# ---------- Shared runner settings ----------
 
 variable "secrets_recovery_window_days" {
   type    = number
@@ -85,7 +85,7 @@ variable "secrets_recovery_window_days" {
   }
 }
 
-# ---------- S3 state backend (passed to tendril containers) ----------
+# ---------- S3 state backend (passed to runner containers) ----------
 
 variable "storage_endpoint" {
   type    = string

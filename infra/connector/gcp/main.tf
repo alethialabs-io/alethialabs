@@ -78,7 +78,7 @@ resource "google_project_iam_member" "alethia_editor" {
 resource "google_iam_workload_identity_pool" "alethia" {
   workload_identity_pool_id = var.pool_id
   display_name              = "Alethia Identity Pool"
-  description               = "Allows Alethia workers to authenticate from AWS"
+  description               = "Allows Alethia runners to authenticate from AWS"
 
   depends_on = [google_project_service.apis]
 }

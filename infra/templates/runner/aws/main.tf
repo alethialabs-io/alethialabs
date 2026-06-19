@@ -42,7 +42,7 @@ data "aws_subnets" "default" {
   }
 }
 
-resource "aws_ecs_cluster" "worker" {
+resource "aws_ecs_cluster" "runner" {
   name = local.name_prefix
   tags = local.tags
 
@@ -52,7 +52,7 @@ resource "aws_ecs_cluster" "worker" {
   }
 }
 
-resource "aws_cloudwatch_log_group" "worker" {
+resource "aws_cloudwatch_log_group" "runner" {
   name              = "/ecs/${local.name_prefix}"
   retention_in_days = 7
   tags              = local.tags
@@ -134,7 +134,7 @@ resource "aws_iam_role_policy" "task_permissions" {
   })
 }
 
-resource "aws_security_group" "worker" {
+resource "aws_security_group" "runner" {
   name_prefix = "${local.name_prefix}-"
   vpc_id      = data.aws_vpc.default.id
   tags        = local.tags
@@ -147,7 +147,7 @@ resource "aws_security_group" "worker" {
   }
 }
 
-resource "aws_ecs_task_definition" "worker" {
+resource "aws_ecs_task_definition" "runner" {
   family                   = local.name_prefix
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
@@ -168,27 +168,27 @@ resource "aws_ecs_task_definition" "worker" {
     essential = true
 
     environment = [
-      { name = "ALETHIA_WORKER_ID", value = var.runner_id },
-      { name = "ALETHIA_WORKER_TOKEN", value = var.runner_token },
+      { name = "ALETHIA_RUNNER_ID", value = var.runner_id },
+      { name = "ALETHIA_RUNNER_TOKEN", value = var.runner_token },
       { name = "ALETHIA_WEB_ORIGIN", value = var.alethia_url },
-      { name = "ALETHIA_WORKER_MODE", value = "self-hosted" },
+      { name = "ALETHIA_RUNNER_MODE", value = "self-hosted" },
     ]
 
     logConfiguration = {
       logDriver = "awslogs"
       options = {
-        "awslogs-group"         = aws_cloudwatch_log_group.worker.name
+        "awslogs-group"         = aws_cloudwatch_log_group.runner.name
         "awslogs-region"        = var.region
-        "awslogs-stream-prefix" = "worker"
+        "awslogs-stream-prefix" = "runner"
       }
     }
   }])
 }
 
-resource "aws_ecs_service" "worker" {
+resource "aws_ecs_service" "runner" {
   name            = local.name_prefix
-  cluster         = aws_ecs_cluster.worker.id
-  task_definition = aws_ecs_task_definition.worker.arn
+  cluster         = aws_ecs_cluster.runner.id
+  task_definition = aws_ecs_task_definition.runner.arn
   desired_count   = 1
   launch_type     = "FARGATE"
   tags            = local.tags
@@ -197,7 +197,7 @@ resource "aws_ecs_service" "worker" {
 
   network_configuration {
     subnets          = length(var.subnet_ids) > 0 ? var.subnet_ids : data.aws_subnets.default.ids
-    security_groups  = [aws_security_group.worker.id]
+    security_groups  = [aws_security_group.runner.id]
     assign_public_ip = var.assign_public_ip
   }
 }

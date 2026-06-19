@@ -1,11 +1,11 @@
 variable "region" {
   type        = string
-  description = "AWS region for this tendril."
+  description = "AWS region for this runner."
 }
 
 variable "name_prefix" {
   type        = string
-  description = "Prefix for all resource names (e.g. tendril-dev)."
+  description = "Prefix for all resource names (e.g. runner-dev)."
 }
 
 variable "image" {
@@ -14,7 +14,7 @@ variable "image" {
   description = "Container image (without tag)."
 }
 
-variable "node_version" {
+variable "runner_version" {
   type        = string
   default     = "latest"
   description = "Image tag to deploy."
@@ -29,17 +29,17 @@ variable "alethia_url" {
 variable "alethia_api_secret" {
   type        = string
   sensitive   = true
-  description = "Secret for authenticating with the Alethia API (tendril registration)."
+  description = "Secret for authenticating with the Alethia API (runner registration)."
 }
 
-variable "worker_mode" {
+variable "runner_mode" {
   type        = string
   default     = "cloud-hosted"
-  description = "self-hosted: worker uses native AWS permissions. cloud-hosted: worker assumes roles into customer accounts."
+  description = "self-hosted: runner uses native AWS permissions. cloud-hosted: runner assumes roles into customer accounts."
 
   validation {
-    condition     = contains(["self-hosted", "cloud-hosted"], var.worker_mode)
-    error_message = "worker_mode must be self-hosted or cloud-hosted."
+    condition     = contains(["self-hosted", "cloud-hosted"], var.runner_mode)
+    error_message = "runner_mode must be self-hosted or cloud-hosted."
   }
 }
 

@@ -1,59 +1,59 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Node Worker: Fargate Task for Infrastructure Provisioning'
+Description: 'Runner: Fargate Task for Infrastructure Provisioning'
 
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label:
-          default: "Worker Configuration"
+          default: "Runner Configuration"
         Parameters:
-          - WorkerMode
-          - WorkerId
-          - WorkerToken
+          - RunnerMode
+          - RunnerId
+          - RunnerToken
           - AlethiaUrl
-          - NodeVersion
+          - RunnerVersion
       - Label:
           default: "Network Configuration"
         Parameters:
           - VpcId
           - SubnetIds
     ParameterLabels:
-      WorkerMode:
-        default: "Worker Mode"
-      WorkerId:
-        default: "Worker ID"
-      WorkerToken:
-        default: "Worker Token"
+      RunnerMode:
+        default: "Runner Mode"
+      RunnerId:
+        default: "Runner ID"
+      RunnerToken:
+        default: "Runner Token"
       AlethiaUrl:
         default: "Alethia URL"
-      NodeVersion:
-        default: "Node Image Tag"
+      RunnerVersion:
+        default: "Runner Image Tag"
 
 Parameters:
-  WorkerMode:
+  RunnerMode:
     Type: String
     Default: 'self-hosted'
     AllowedValues: ['self-hosted', 'cloud-hosted']
-    Description: 'self-hosted: worker uses native AWS permissions. cloud-hosted: worker assumes roles into customer accounts.'
+    Description: 'self-hosted: runner uses native AWS permissions. cloud-hosted: runner assumes roles into customer accounts.'
 
-  WorkerId:
+  RunnerId:
     Type: String
-    Description: 'Worker ID from `alethia worker register`.'
+    Description: 'Runner ID from `alethia runner register`.'
 
-  WorkerToken:
+  RunnerToken:
     Type: String
     NoEcho: true
-    Description: 'Worker token from `alethia worker register`.'
+    Description: 'Runner token from `alethia runner register`.'
 
   AlethiaUrl:
     Type: String
     Default: 'https://adp.prod.itgix.eu'
     Description: 'URL of the Alethia control plane.'
 
-  NodeVersion:
+  RunnerVersion:
     Type: String
     Default: 'latest'
-    Description: 'Docker image tag for the Node worker.'
+    Description: 'Docker image tag for the Runner.'
 
   VpcId:
     Type: AWS::EC2::VPC::Id
@@ -64,10 +64,10 @@ Parameters:
     Description: 'Subnets for the Fargate task (must have internet access).'
 
 Resources:
-  WorkerCluster:
+  RunnerCluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: !Sub 'node-worker-${AWS::StackName}'
+      ClusterName: !Sub 'runner-${AWS::StackName}'
       CapacityProviders:
         - FARGATE
       DefaultCapacityProviderStrategy:
@@ -77,20 +77,20 @@ Resources:
   LogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '/ecs/node-worker-${AWS::StackName}'
+      LogGroupName: !Sub '/ecs/runner-${AWS::StackName}'
       RetentionInDays: 30
 
-  WorkerTokenSecret:
+  RunnerTokenSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
-      Name: !Sub 'node-worker-token-${AWS::StackName}'
-      Description: 'Node worker authentication token'
-      SecretString: !Ref WorkerToken
+      Name: !Sub 'runner-token-${AWS::StackName}'
+      Description: 'Runner authentication token'
+      SecretString: !Ref RunnerToken
 
-  WorkerExecutionRole:
+  RunnerExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub 'node-worker-exec-${AWS::StackName}'
+      RoleName: !Sub 'runner-exec-${AWS::StackName}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -108,12 +108,12 @@ Resources:
               - Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue
-                Resource: !Ref WorkerTokenSecret
+                Resource: !Ref RunnerTokenSecret
 
-  WorkerTaskRole:
+  RunnerTaskRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub 'node-worker-task-${AWS::StackName}'
+      RoleName: !Sub 'runner-task-${AWS::StackName}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -141,55 +141,52 @@ Resources:
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: 'Node worker - outbound only'
+      GroupDescription: 'Runner - outbound only'
       VpcId: !Ref VpcId
       SecurityGroupEgress:
         - IpProtocol: '-1'
           CidrIp: '0.0.0.0/0'
           Description: 'Allow all outbound (HTTPS to Alethia, git, registries, AWS APIs)'
 
-  WorkerTaskDefinition:
+  RunnerTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: !Sub 'node-worker-${AWS::StackName}'
+      Family: !Sub 'runner-${AWS::StackName}'
       Cpu: '1024'
       Memory: '4096'
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
-      ExecutionRoleArn: !GetAtt WorkerExecutionRole.Arn
-      TaskRoleArn: !GetAtt WorkerTaskRole.Arn
+      ExecutionRoleArn: !GetAtt RunnerExecutionRole.Arn
+      TaskRoleArn: !GetAtt RunnerTaskRole.Arn
       ContainerDefinitions:
-        - Name: node-worker
-          Image: !Sub 'ghcr.io/alethialabs-io/runner:${NodeVersion}'
-          Command:
-            - node
-            - worker
-            - start
+        - Name: runner
+          Image: !Sub 'ghcr.io/alethialabs-io/runner:${RunnerVersion}'
+          # No command override — the image ENTRYPOINT runs the runner daemon.
           Environment:
-            - Name: ALETHIA_WORKER_MODE
-              Value: !Ref WorkerMode
+            - Name: ALETHIA_RUNNER_MODE
+              Value: !Ref RunnerMode
             - Name: ALETHIA_WEB_ORIGIN
               Value: !Ref AlethiaUrl
-            - Name: ALETHIA_WORKER_ID
-              Value: !Ref WorkerId
+            - Name: ALETHIA_RUNNER_ID
+              Value: !Ref RunnerId
           Secrets:
-            - Name: ALETHIA_WORKER_TOKEN
-              ValueFrom: !Ref WorkerTokenSecret
+            - Name: ALETHIA_RUNNER_TOKEN
+              ValueFrom: !Ref RunnerTokenSecret
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref LogGroup
               awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: node-worker
+              awslogs-stream-prefix: runner
           Essential: true
 
-  WorkerService:
+  RunnerService:
     Type: AWS::ECS::Service
     Properties:
-      ServiceName: !Sub 'node-worker-${AWS::StackName}'
-      Cluster: !Ref WorkerCluster
-      TaskDefinition: !Ref WorkerTaskDefinition
+      ServiceName: !Sub 'runner-${AWS::StackName}'
+      Cluster: !Ref RunnerCluster
+      TaskDefinition: !Ref RunnerTaskDefinition
       DesiredCount: 1
       LaunchType: FARGATE
       NetworkConfiguration:
@@ -203,17 +200,17 @@ Resources:
         MinimumHealthyPercent: 100
 
 Conditions:
-  IsSelfHosted: !Equals [!Ref WorkerMode, 'self-hosted']
-  IsCloudHosted: !Equals [!Ref WorkerMode, 'cloud-hosted']
+  IsSelfHosted: !Equals [!Ref RunnerMode, 'self-hosted']
+  IsCloudHosted: !Equals [!Ref RunnerMode, 'cloud-hosted']
 
 Outputs:
   ClusterArn:
     Description: 'ECS Cluster ARN'
-    Value: !GetAtt WorkerCluster.Arn
+    Value: !GetAtt RunnerCluster.Arn
 
   ServiceName:
     Description: 'ECS Service Name'
-    Value: !GetAtt WorkerService.Name
+    Value: !GetAtt RunnerService.Name
 
   LogGroupName:
     Description: 'CloudWatch Log Group'

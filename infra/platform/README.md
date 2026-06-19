@@ -1,6 +1,6 @@
-# Alethia Worker — Fargate Infrastructure
+# Alethia Runner — Fargate Infrastructure
 
-Terraform configuration that deploys the node provisioning worker as an AWS Fargate service. The worker polls the Alethia control plane for queued jobs (BOOTSTRAP, DEPLOY, DESTROY), executes them, and streams logs back in real time.
+Terraform configuration that deploys the node provisioning runner as an AWS Fargate service. The runner polls the Alethia control plane for queued jobs (BOOTSTRAP, DEPLOY, DESTROY), executes them, and streams logs back in real time.
 
 ## Architecture
 
@@ -17,7 +17,7 @@ Terraform configuration that deploys the node provisioning worker as an AWS Farg
 │              │  HTTPS (poll every 10s)                    │
 │              ▼                                            │
 │  ┌────────────────────────────────────────────────────┐  │
-│  │  Fargate Worker                                    │  │
+│  │  Fargate Runner                                    │  │
 │  │  · Claims jobs atomically (SELECT FOR UPDATE)      │  │
 │  │  · Runs Terraform / Helm / kubectl                 │  │
 │  │  · Streams log chunks back to Alethia              │  │
@@ -33,11 +33,11 @@ Terraform configuration that deploys the node provisioning worker as an AWS Farg
 | **Where it runs** | In *your* AWS account | In *Alethia's* central AWS account |
 | **AWS permissions** | Uses the Fargate task role directly (AdministratorAccess in the same account) | Assumes a cross-account IAM role (`AlethiaProvisionerRole-*`) into each customer's account via STS |
 | **Who registers it** | You — the platform operator | Alethia platform team |
-| **Use case** | Single-tenant: you provision infrastructure in your own account | Multi-tenant: one worker serves multiple customer accounts |
+| **Use case** | Single-tenant: you provision infrastructure in your own account | Multi-tenant: one runner serves multiple customer accounts |
 | **IAM setup** | Task role gets AdministratorAccess | Task role gets `sts:AssumeRole` on `arn:aws:iam::*:role/AlethiaProvisionerRole-*`. Each customer deploys `infra/connector/aws/alethia-bootstrap.yaml` to create the cross-account role. |
-| **Cloud identity** | Not used — worker has native permissions | Job includes `cloud_identity_id` → Alethia returns `role_arn` + `external_id` at claim time → worker calls `sts:AssumeRole` before executing |
+| **Cloud identity** | Not used — runner has native permissions | Job includes `cloud_identity_id` → Alethia returns `role_arn` + `external_id` at claim time → runner calls `sts:AssumeRole` before executing |
 
-**For a thesis demo, use `self-hosted`.** It's simpler: one account, one worker, no cross-account IAM.
+**For a thesis demo, use `self-hosted`.** It's simpler: one account, one runner, no cross-account IAM.
 
 ## Prerequisites
 
@@ -51,13 +51,13 @@ Terraform configuration that deploys the node provisioning worker as an AWS Farg
 
 ### 1. Ensure the console database is migrated
 
-The worker depends on the `runners`, `jobs`, and `job_logs` tables plus the RPC functions
-(`claim_next_job`, `update_job_status`, `insert_job_log`, `worker_heartbeat`, `recover_stale_jobs`).
+The runner depends on the `runners`, `jobs`, and `job_logs` tables plus the RPC functions
+(`claim_next_job`, `update_job_status`, `insert_job_log`, `runner_heartbeat`, `recover_stale_jobs`).
 These are Drizzle-managed and applied by the console's `migrate` step (the compose `migrate` one-shot
 / `scripts/migrate.mjs`) — no separate migration to run here. Confirm the console booted cleanly
 against its `ALETHIA_DATABASE_URL`.
 
-### 2. Log in to Alethia and register a worker
+### 2. Log in to Alethia and register a runner
 
 You need to be authenticated with Alethia first:
 
@@ -67,19 +67,19 @@ alethia login
 
 Then register a runner. This calls `POST /api/cli/runners/register` which:
 - Generates a 32-byte random token
-- Stores a SHA-256 hash of that token in the `workers` table
+- Stores a SHA-256 hash of that token in the `runners` table
 - Returns the plaintext token **once** — it cannot be recovered
 
 ```bash
-alethia worker register --name my-fargate-worker --mode self-hosted
+alethia runner register --name my-fargate-runner --mode self-hosted
 ```
 
 Output:
 
 ```
-Worker registered successfully!
-  Worker ID:    a1b2c3d4-e5f6-...
-  Worker Token: 64-char-hex-string
+Runner registered successfully!
+  Runner ID:    a1b2c3d4-e5f6-...
+  Runner Token: 64-char-hex-string
 
 Save these values - the token cannot be recovered.
 ```
@@ -112,10 +112,10 @@ Copy and fill in the variables file:
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with real values (worker_id, worker_token, vpc_id, subnet_ids)
+# Edit terraform.tfvars with real values (runner_id, runner_token, vpc_id, subnet_ids)
 ```
 
-> **Note:** `terraform.tfvars` is gitignored — it contains sensitive values like `worker_token`.
+> **Note:** `terraform.tfvars` is gitignored — it contains sensitive values like `runner_token`.
 
 Apply:
 
@@ -150,7 +150,7 @@ This creates:
 - ECS Fargate cluster + service + task definition
 - IAM execution role (pulls images, reads secrets)
 - IAM task role (AdministratorAccess for self-hosted)
-- Secrets Manager secret for the worker token
+- Secrets Manager secret for the runner token
 - Security group (outbound-only)
 - CloudWatch log group
 
@@ -183,7 +183,7 @@ aws ecs update-service \
   --region eu-west-1
 ```
 
-### 6. Verify the worker is running
+### 6. Verify the runner is running
 
 Check ECS task status:
 
@@ -203,7 +203,7 @@ aws logs tail /ecs/runner-dev-runner --follow --region eu-west-1
 You should see:
 
 ```
-Worker started (id=a1b2c3d4-..., mode=self-hosted)
+Runner started (id=a1b2c3d4-..., mode=self-hosted)
 Polling https://adp.prod.itgix.eu for jobs...
 ```
 
@@ -220,24 +220,24 @@ alethia harvest
 ```
 
 From the Alethia dashboard:
-- Go to Workers page — your worker should show as ONLINE
+- Go to Runners page — your runner should show as ONLINE
 - Create a configuration and trigger provisioning
 - Watch the log viewer for real-time streaming
 
 ## What happens during a job
 
 1. **User** creates a job (via CLI or Alethia UI) → `jobs` row with status `QUEUED`
-2. **Worker** polls `POST /api/jobs/claim` every 10 seconds
+2. **Runner** polls `POST /api/jobs/claim` every 10 seconds
 3. **Postgres RPC** `claim_next_job()` atomically assigns the oldest queued job (uses `SELECT FOR UPDATE SKIP LOCKED` to prevent double-claims)
-4. **Worker** updates status to `PROCESSING`, starts executing:
+4. **Runner** updates status to `PROCESSING`, starts executing:
    - **BOOTSTRAP**: Terraform → VPC + EKS, then Helm → ArgoCD
    - **DEPLOY**: Clone repos → Terraform apply → Helm install → ArgoCD manifests
    - **DESTROY**: Terraform destroy → cleanup
 5. **Logs** stream via `POST /api/jobs/{id}/logs` → `job_logs` table → Postgres LISTEN/NOTIFY → SSE → Alethia log viewer
-6. **Worker** sets final status (`SUCCESS` or `FAILED`)
-7. **Stale recovery**: If a worker dies, `recover_stale_jobs()` resets orphaned jobs to `QUEUED` after 15 minutes with no heartbeat
+6. **Runner** sets final status (`SUCCESS` or `FAILED`)
+7. **Stale recovery**: If a runner dies, `recover_stale_jobs()` resets orphaned jobs to `QUEUED` after 15 minutes with no heartbeat
 
-## Updating the worker
+## Updating the runner
 
 ```bash
 # Build new image
@@ -263,4 +263,4 @@ cd terraform
 terraform destroy
 ```
 
-This removes all Fargate resources, the ECR repository, Secrets Manager secret, and IAM roles. It does **not** touch the database tables or the worker registration (those live in Postgres).
+This removes all Fargate resources, the ECR repository, Secrets Manager secret, and IAM roles. It does **not** touch the database tables or the runner registration (those live in Postgres).

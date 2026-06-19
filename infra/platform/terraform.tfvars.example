@@ -1,12 +1,12 @@
-# Tendril multi-environment deployment configuration
+# Runner multi-environment deployment configuration
 # Copy to terraform.tfvars and fill in secrets.
 
-project_name = "tendril"
+project_name = "runner"
 environment  = "dev"
 
-# Each entry creates a tendril: VPC, ECS cluster, auto-registration.
-# Key = tendril name, region = AWS region, trellis_url = which Trellis it serves.
-tendrils = {
+# Each entry creates a runner: VPC, ECS cluster, auto-registration.
+# Key = runner name, region = AWS region, trellis_url = which Trellis it serves.
+runners = {
   "prod-eu-west-1" = {
     region      = "eu-west-1"
     trellis_url = "https://adp.prod.itgix.eu"
@@ -21,11 +21,11 @@ tendrils = {
   }
 }
 
-worker_mode     = "cloud-hosted"
-tendril_version = "latest"
+runner_mode     = "cloud-hosted"
+runner_version = "latest"
 
-# Platform API secret — used by tendrils to auto-register and by the Lambda
-# scaler to probe each node's /api/platform/queue (console RELEASE_API_SECRET).
+# Platform API secret — used by runners to auto-register and by the Lambda
+# scaler to probe each runner's /api/platform/queue (console RELEASE_API_SECRET).
 trellis_api_secret = ""
 
 # S3-compatible state storage for provisioned vines (SeaweedFS / Garage / S3 / R2).

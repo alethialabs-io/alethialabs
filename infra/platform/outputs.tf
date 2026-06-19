@@ -1,13 +1,13 @@
 output "ecr_repository_url" {
-  value = aws_ecr_repository.tendril.repository_url
+  value = aws_ecr_repository.runner.repository_url
 }
 
-output "nodes" {
-  description = "Per-tendril cluster and service names"
+output "runners" {
+  description = "Per-runner cluster and service names"
   value = {
-    for name, w in local.all_worker_modules : name => {
-      region       = var.nodes[name].region
-      alethia_url  = var.nodes[name].alethia_url
+    for name, w in local.all_runner_modules : name => {
+      region       = var.runners[name].region
+      alethia_url  = var.runners[name].alethia_url
       cluster_name = w.cluster_name
       service_name = w.service_name
     }

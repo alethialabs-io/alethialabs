@@ -23,7 +23,7 @@ provider "aws" {
     tags = {
       Project     = var.project_name
       Environment = title(var.environment)
-      Service     = "Tendril"
+      Service     = "Runner"
       ManagedBy   = "terraform"
     }
   }
@@ -36,7 +36,7 @@ provider "aws" {
     tags = {
       Project     = var.project_name
       Environment = title(var.environment)
-      Service     = "Tendril"
+      Service     = "Runner"
       ManagedBy   = "terraform"
     }
   }
@@ -45,11 +45,11 @@ provider "aws" {
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
 
-  shared_worker_vars = {
+  shared_runner_vars = {
     image                        = var.image
-    node_version                 = var.node_version
+    runner_version               = var.runner_version
     alethia_api_secret           = var.alethia_api_secret
-    worker_mode                  = var.worker_mode
+    runner_mode                  = var.runner_mode
     infracost_api_key            = var.infracost_api_key
     storage_endpoint             = var.storage_endpoint
     storage_region               = var.storage_region
@@ -58,8 +58,8 @@ locals {
     secrets_recovery_window_days = var.secrets_recovery_window_days
   }
 
-  all_nodes = [
-    for name, cfg in var.nodes : {
+  all_runners = [
+    for name, cfg in var.runners : {
       key         = name
       region      = cfg.region
       name_prefix = "${local.name_prefix}-${name}"
@@ -70,8 +70,8 @@ locals {
 
 # ---------- ECR (eu-west-1 only) ----------
 
-resource "aws_ecr_repository" "tendril" {
-  name                 = "${local.name_prefix}-tendril"
+resource "aws_ecr_repository" "runner" {
+  name                 = "${local.name_prefix}-runner"
   image_tag_mutability = var.ecr_image_tag_mutability
   force_delete         = var.ecr_force_delete
 
@@ -80,8 +80,8 @@ resource "aws_ecr_repository" "tendril" {
   }
 }
 
-resource "aws_ecr_lifecycle_policy" "tendril" {
-  repository = aws_ecr_repository.tendril.name
+resource "aws_ecr_lifecycle_policy" "runner" {
+  repository = aws_ecr_repository.runner.name
 
   policy = jsonencode({
     rules = [
@@ -99,34 +99,34 @@ resource "aws_ecr_lifecycle_policy" "tendril" {
   })
 }
 
-# ---------- Tendril deployments (eu-west-1) ----------
+# ---------- Runner deployments (eu-west-1) ----------
 
-module "tendril_eu_west_1" {
-  source   = "./worker"
-  for_each = { for t in local.all_nodes : t.key => t if t.region == "eu-west-1" }
+module "runner_eu_west_1" {
+  source   = "./runner"
+  for_each = { for t in local.all_runners : t.key => t if t.region == "eu-west-1" }
 
   region             = each.value.region
   name_prefix        = each.value.name_prefix
   alethia_url        = each.value.alethia_url
-  image              = local.shared_worker_vars.image
-  node_version       = local.shared_worker_vars.node_version
-  alethia_api_secret = local.shared_worker_vars.alethia_api_secret
-  worker_mode        = local.shared_worker_vars.worker_mode
+  image              = local.shared_runner_vars.image
+  runner_version     = local.shared_runner_vars.runner_version
+  alethia_api_secret = local.shared_runner_vars.alethia_api_secret
+  runner_mode        = local.shared_runner_vars.runner_mode
 
-  infracost_api_key         = local.shared_worker_vars.infracost_api_key
-  storage_endpoint          = local.shared_worker_vars.storage_endpoint
-  storage_region            = local.shared_worker_vars.storage_region
-  storage_access_key_id     = local.shared_worker_vars.storage_access_key_id
-  storage_secret_access_key = local.shared_worker_vars.storage_secret_access_key
+  infracost_api_key         = local.shared_runner_vars.infracost_api_key
+  storage_endpoint          = local.shared_runner_vars.storage_endpoint
+  storage_region            = local.shared_runner_vars.storage_region
+  storage_access_key_id     = local.shared_runner_vars.storage_access_key_id
+  storage_secret_access_key = local.shared_runner_vars.storage_secret_access_key
 
-  secrets_recovery_window_days = local.shared_worker_vars.secrets_recovery_window_days
+  secrets_recovery_window_days = local.shared_runner_vars.secrets_recovery_window_days
 }
 
-# ---------- Tendril deployments (eu-central-1) ----------
+# ---------- Runner deployments (eu-central-1) ----------
 
-module "tendril_eu_central_1" {
-  source   = "./worker"
-  for_each = { for t in local.all_nodes : t.key => t if t.region == "eu-central-1" }
+module "runner_eu_central_1" {
+  source   = "./runner"
+  for_each = { for t in local.all_runners : t.key => t if t.region == "eu-central-1" }
 
   providers = {
     aws = aws.eu_central_1
@@ -135,24 +135,24 @@ module "tendril_eu_central_1" {
   region             = each.value.region
   name_prefix        = each.value.name_prefix
   alethia_url        = each.value.alethia_url
-  image              = local.shared_worker_vars.image
-  node_version       = local.shared_worker_vars.node_version
-  alethia_api_secret = local.shared_worker_vars.alethia_api_secret
-  worker_mode        = local.shared_worker_vars.worker_mode
+  image              = local.shared_runner_vars.image
+  runner_version     = local.shared_runner_vars.runner_version
+  alethia_api_secret = local.shared_runner_vars.alethia_api_secret
+  runner_mode        = local.shared_runner_vars.runner_mode
 
-  infracost_api_key         = local.shared_worker_vars.infracost_api_key
-  storage_endpoint          = local.shared_worker_vars.storage_endpoint
-  storage_region            = local.shared_worker_vars.storage_region
-  storage_access_key_id     = local.shared_worker_vars.storage_access_key_id
-  storage_secret_access_key = local.shared_worker_vars.storage_secret_access_key
+  infracost_api_key         = local.shared_runner_vars.infracost_api_key
+  storage_endpoint          = local.shared_runner_vars.storage_endpoint
+  storage_region            = local.shared_runner_vars.storage_region
+  storage_access_key_id     = local.shared_runner_vars.storage_access_key_id
+  storage_secret_access_key = local.shared_runner_vars.storage_secret_access_key
 
-  secrets_recovery_window_days = local.shared_worker_vars.secrets_recovery_window_days
+  secrets_recovery_window_days = local.shared_runner_vars.secrets_recovery_window_days
 }
 
 # ---------- Lambda scaler (eu-west-1) ----------
 
 locals {
-  all_worker_modules = merge(module.tendril_eu_west_1, module.tendril_eu_central_1)
+  all_runner_modules = merge(module.runner_eu_west_1, module.runner_eu_central_1)
 }
 
 module "scaler" {
@@ -161,12 +161,12 @@ module "scaler" {
   name_prefix        = local.name_prefix
   alethia_api_secret = var.alethia_api_secret
 
-  workers = [
-    for name, w in local.all_worker_modules : {
-      region      = var.nodes[name].region
+  runners = [
+    for name, w in local.all_runner_modules : {
+      region      = var.runners[name].region
       cluster     = w.cluster_name
       service     = w.service_name
-      alethia_url = var.nodes[name].alethia_url
+      alethia_url = var.runners[name].alethia_url
     }
   ]
 }

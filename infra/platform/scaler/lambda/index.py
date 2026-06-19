@@ -4,20 +4,20 @@ import os
 import urllib.request
 
 API_SECRET = os.environ['ALETHIA_API_SECRET']
-WORKERS = json.loads(os.environ['WORKERS'])
+RUNNERS = json.loads(os.environ['RUNNERS'])
 IDLE_THRESHOLD = 5
 
 idle_counts = {}
 
 
 def handler(event, context):
-    for w in WORKERS:
+    for w in RUNNERS:
         region = w['region']
         cluster = w['cluster']
         service = w['service']
         alethia_url = w['alethia_url']
 
-        # Each node owns its own console + DB; ask it for its own queue depth.
+        # Each runner owns its own console + DB; ask it for its own queue depth.
         # The probe also requeues stale jobs server-side (recover_stale_jobs).
         stats = queue_stats(alethia_url)
         queued = stats.get('queued', 0)
@@ -49,10 +49,10 @@ def handler(event, context):
 
 
 def queue_stats(alethia_url):
-    """Ask a node's console for its queue depth (and requeue stale jobs).
+    """Ask a runner's console for its queue depth (and requeue stale jobs).
 
     Returns {"recovered": int, "queued": int}; on any error returns zeros so a
-    single unreachable node never blocks scaling decisions for the others.
+    single unreachable runner never blocks scaling decisions for the others.
     """
     url = f"{alethia_url}/api/platform/queue"
     req = urllib.request.Request(

@@ -17,7 +17,7 @@ data "archive_file" "lambda" {
 
 resource "aws_lambda_function" "scaler" {
   function_name    = "${var.name_prefix}-scaler"
-  description      = "Scale ECS nodes based on queued provision jobs"
+  description      = "Scale ECS runners based on queued provision jobs"
   filename         = data.archive_file.lambda.output_path
   source_code_hash = data.archive_file.lambda.output_base64sha256
   handler          = "index.handler"
@@ -32,7 +32,7 @@ resource "aws_lambda_function" "scaler" {
   environment {
     variables = {
       ALETHIA_API_SECRET = var.alethia_api_secret
-      WORKERS            = jsonencode(var.workers)
+      RUNNERS            = jsonencode(var.runners)
     }
   }
 }

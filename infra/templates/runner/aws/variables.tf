@@ -23,7 +23,7 @@ variable "alethia_url" {
 variable "image_tag" {
   type        = string
   default     = "latest"
-  description = "node Docker image tag"
+  description = "runner Docker image tag"
 }
 
 variable "region" {

@@ -1,6 +1,6 @@
 # Migrating an existing Supabase install off Supabase Storage
 
-> **Fresh self-hosters do not need this doc.** Setup is codified: `cp .env.example .env && docker compose up -d` brings up SeaweedFS, and the console/worker **auto-create their buckets on first use** (`plan-artifacts`, `vine-terraform-state`) — no manual `aws s3 mb`, no hand-set env. See the repo-root `docker-compose.yml` and `.env.example`.
+> **Fresh self-hosters do not need this doc.** Setup is codified: `cp .env.example .env && docker compose up -d` brings up SeaweedFS, and the console/runner **auto-create their buckets on first use** (`plan-artifacts`, `vine-terraform-state`) — no manual `aws s3 mb`, no hand-set env. See the repo-root `docker-compose.yml` and `.env.example`.
 
 This note covers the **one-time data migration** for an *already-running* Supabase-hosted instance, plus storage items still pointing at Supabase that are deferred to later phases.
 
@@ -24,8 +24,8 @@ against the migrated state produces **no spurious diff**.
   `${alethia_url}/api/platform/queue` (Bearer `RELEASE_API_SECRET`), which runs
   `recover_stale_jobs()` and returns the QUEUED count. The `supabase_url` /
   `supabase_service_role_key` variables are gone; the module takes `alethia_api_secret`
-  and a per-worker `alethia_url`.
-- **Helm `tendril` chart** `SUPABASE_URL` / `SUPABASE_KEY` and the `portal`
+  and a per-runner `alethia_url`.
+- **Helm `runner` chart** `SUPABASE_URL` / `SUPABASE_KEY` and the `portal`
   `NEXT_PUBLIC_SUPABASE_*` env are removed (the runner binary never read them).
 - **AWS Secrets Manager** resource labels (`aws_secretsmanager_secret.supabase_storage_*`,
   `name = "…-supabase-s3-…"`) are **intentionally kept**: they already hold the

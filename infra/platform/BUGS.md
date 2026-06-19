@@ -1,10 +1,10 @@
 # Terraform Golden Template — Bug Fixes & Supabase Backend
 
-Audit and hardening of the `terraform/` golden template that deploys Alethia workers on ECS Fargate.
+Audit and hardening of the `terraform/` golden template that deploys Alethia runners on ECS Fargate.
 
 ## Background & Motivation
 
-The golden template is shipped to users as the canonical way to deploy an Alethia worker. A review found a critical IAM bug (container fails to start), plaintext secrets committed to git, and several hardening gaps that make the template unsafe for production use. Additionally, the project already relies on Supabase — using Supabase S3-compatible storage for Terraform state eliminates the AWS S3 dependency.
+The golden template is shipped to users as the canonical way to deploy an Alethia runner. A review found a critical IAM bug (container fails to start), plaintext secrets committed to git, and several hardening gaps that make the template unsafe for production use. Additionally, the project already relies on Supabase — using Supabase S3-compatible storage for Terraform state eliminates the AWS S3 dependency.
 
 ## Findings
 
@@ -12,14 +12,14 @@ The golden template is shipped to users as the canonical way to deploy an Alethi
 
 | # | File | Issue |
 |---|------|-------|
-| 1 | `iam.tf:23-37` | Execution role's `execution_secrets` policy only grants `secretsmanager:GetSecretValue` on `worker_token`. The task definition also injects `infracost_key` as a secret. ECS cannot start the container — `AccessDeniedException` at launch. |
+| 1 | `iam.tf:23-37` | Execution role's `execution_secrets` policy only grants `secretsmanager:GetSecretValue` on `runner_token`. The task definition also injects `infracost_key` as a secret. ECS cannot start the container — `AccessDeniedException` at launch. |
 
 ### Security
 
 | # | File | Issue |
 |---|------|-------|
-| 2 | `terraform.tfvars:8` | `worker_token` committed in plaintext to a git-tracked file. Token is visible in git history. |
-| 3 | `iam.tf:46-50` | Self-hosted mode attaches `AdministratorAccess` to the task role. Intentional (worker provisions full infrastructure) but should be documented clearly. |
+| 2 | `terraform.tfvars:8` | `runner_token` committed in plaintext to a git-tracked file. Token is visible in git history. |
+| 3 | `iam.tf:46-50` | Self-hosted mode attaches `AdministratorAccess` to the task role. Intentional (runner provisions full infrastructure) but should be documented clearly. |
 
 ### Hardening
 
