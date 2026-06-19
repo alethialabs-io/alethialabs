@@ -73,7 +73,7 @@
   <line x1="673" y1="184" x2="673" y2="200" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
   <rect x="566" y="204" width="214" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="673" y="225" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Send X-Worker-ID + Token</text>
+  <text x="673" y="225" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Send X-Runner-ID + Token</text>
   <line x1="673" y1="238" x2="673" y2="254" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
   <rect x="566" y="258" width="214" height="34" rx="6" fill="#27272A" stroke="#F59E0B50"/>

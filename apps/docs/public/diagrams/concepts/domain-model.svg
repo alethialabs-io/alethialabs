@@ -39,16 +39,16 @@
   <text x="200" y="306" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#A1A1AA">Singleton Components (1:1 per spec)</text>
 
   <rect x="40" y="316" width="150" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="115" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_network</text>
+  <text x="115" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_network</text>
 
   <rect x="40" y="360" width="150" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="115" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_cluster</text>
+  <text x="115" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_cluster</text>
 
   <rect x="210" y="316" width="150" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="285" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_dns</text>
+  <text x="285" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_dns</text>
 
   <rect x="210" y="360" width="150" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="285" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_repositories</text>
+  <text x="285" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_repositories</text>
 
   <!-- Arrows Spec → Singletons -->
   <path d="M350,250 L200,282" stroke="#52525B" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
@@ -58,25 +58,25 @@
   <text x="595" y="306" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#A1A1AA">Multi-Instance Components (1:N per spec)</text>
 
   <rect x="410" y="316" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="470" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_databases</text>
+  <text x="470" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_databases</text>
 
   <rect x="410" y="360" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="470" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_caches</text>
+  <text x="470" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_caches</text>
 
   <rect x="410" y="404" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="470" y="426" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_queues</text>
+  <text x="470" y="426" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_queues</text>
 
   <rect x="410" y="448" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="470" y="470" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_topics</text>
+  <text x="470" y="470" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_topics</text>
 
   <rect x="548" y="316" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="608" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_nosql</text>
+  <text x="608" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_nosql</text>
 
   <rect x="548" y="360" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="608" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_registries</text>
+  <text x="608" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_registries</text>
 
   <rect x="548" y="404" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="608" y="426" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">vine_secrets</text>
+  <text x="608" y="426" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_secrets</text>
 
   <rect x="686" y="316" width="96" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
   <text x="734" y="332" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">provision_jobs</text>

@@ -6,9 +6,9 @@
   <rect x="0.5" y="0.5" width="819" height="539" rx="12" fill="none" stroke="#3F3F46"/>
   <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Database Schema — Entity Relationships</text>
 
-  <!-- vineyards -->
+  <!-- zones -->
   <rect x="50" y="60" width="140" height="56" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="120" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">vineyards</text>
+  <text x="120" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">zones</text>
   <text x="120" y="104" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">id, user_id, name</text>
 
   <!-- cloud_identities -->
@@ -16,13 +16,13 @@
   <text x="590" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">cloud_identities</text>
   <text x="590" y="104" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">provider, credentials (JSONB)</text>
 
-  <!-- vines (central) -->
+  <!-- specs (central) -->
   <rect x="270" y="140" width="200" height="64" rx="8" fill="#27272A" stroke="#8B5CF6" stroke-width="1.5"/>
-  <text x="370" y="164" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="600" fill="#8B5CF6">vines</text>
+  <text x="370" y="164" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="600" fill="#8B5CF6">specs</text>
   <text x="370" y="180" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_name, region, status</text>
-  <text x="370" y="194" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">vineyard_id, cloud_identity_id</text>
+  <text x="370" y="194" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">zone_id, cloud_identity_id</text>
 
-  <!-- FK lines to vines -->
+  <!-- FK lines to specs -->
   <path d="M155,116 L310,140" stroke="#52525B" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
   <text x="218" y="124" font-family="Inter, system-ui, sans-serif" font-size="8" fill="#71717A">1:N</text>
   <path d="M545,116 L430,140" stroke="#52525B" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
@@ -33,22 +33,22 @@
   <text x="205" y="248" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500" fill="#A1A1AA">Singleton (1:1 per spec)</text>
 
   <rect x="36" y="260" width="160" height="30" rx="4" fill="#27272A" stroke="#3F3F46"/>
-  <text x="116" y="280" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">vine_network</text>
+  <text x="116" y="280" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">spec_network</text>
 
   <rect x="36" y="298" width="160" height="30" rx="4" fill="#27272A" stroke="#3F3F46"/>
-  <text x="116" y="318" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">vine_cluster</text>
+  <text x="116" y="318" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">spec_cluster</text>
 
   <rect x="214" y="260" width="160" height="30" rx="4" fill="#27272A" stroke="#3F3F46"/>
-  <text x="294" y="280" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">vine_dns</text>
+  <text x="294" y="280" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">spec_dns</text>
 
   <rect x="214" y="298" width="160" height="30" rx="4" fill="#27272A" stroke="#3F3F46"/>
-  <text x="294" y="318" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">vine_repositories</text>
+  <text x="294" y="318" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">spec_repositories</text>
 
   <rect x="36" y="338" width="338" height="46" rx="4" fill="#18181B" stroke="#3F3F46" stroke-dasharray="3 3"/>
-  <text x="205" y="356" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">vine_storage_buckets · vine_waf</text>
-  <text x="205" y="370" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">vine_argocd · vine_audit_log</text>
+  <text x="205" y="356" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">spec_storage_buckets · spec_waf</text>
+  <text x="205" y="370" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">spec_argocd · audit_log</text>
 
-  <!-- Arrow vines → singletons -->
+  <!-- Arrow specs → singletons -->
   <path d="M310,204 L205,226" stroke="#52525B" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
 
   <!-- Multi-Instance Group -->
@@ -56,27 +56,27 @@
   <text x="604" y="248" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500" fill="#A1A1AA">Multi-Instance (1:N per spec)</text>
 
   <rect x="424" y="260" width="120" height="30" rx="4" fill="#27272A" stroke="#3F3F46"/>
-  <text x="484" y="280" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">vine_databases</text>
+  <text x="484" y="280" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">spec_databases</text>
 
   <rect x="424" y="298" width="120" height="30" rx="4" fill="#27272A" stroke="#3F3F46"/>
-  <text x="484" y="318" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">vine_caches</text>
+  <text x="484" y="318" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">spec_caches</text>
 
   <rect x="558" y="260" width="120" height="30" rx="4" fill="#27272A" stroke="#3F3F46"/>
-  <text x="618" y="280" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">vine_queues</text>
+  <text x="618" y="280" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">spec_queues</text>
 
   <rect x="558" y="298" width="120" height="30" rx="4" fill="#27272A" stroke="#3F3F46"/>
-  <text x="618" y="318" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">vine_topics</text>
+  <text x="618" y="318" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">spec_topics</text>
 
   <rect x="424" y="338" width="120" height="30" rx="4" fill="#27272A" stroke="#3F3F46"/>
-  <text x="484" y="358" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">vine_nosql</text>
+  <text x="484" y="358" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">spec_nosql</text>
 
   <rect x="558" y="338" width="120" height="30" rx="4" fill="#27272A" stroke="#3F3F46"/>
-  <text x="618" y="358" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">vine_registries</text>
+  <text x="618" y="358" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">spec_registries</text>
 
   <rect x="692" y="260" width="94" height="30" rx="4" fill="#27272A" stroke="#3F3F46"/>
-  <text x="739" y="280" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">vine_secrets</text>
+  <text x="739" y="280" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">spec_secrets</text>
 
-  <!-- Arrow vines → multi -->
+  <!-- Arrow specs → multi -->
   <path d="M430,204 L604,226" stroke="#52525B" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
 
   <!-- Job section -->
@@ -85,7 +85,7 @@
 
   <rect x="36" y="448" width="180" height="50" rx="6" fill="#27272A" stroke="#F59E0B50"/>
   <text x="126" y="468" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#FAFAFA">provision_jobs</text>
-  <text x="126" y="486" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">type, status, worker_id</text>
+  <text x="126" y="486" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">type, status, runner_id</text>
 
   <line x1="216" y1="473" x2="252" y2="473" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
   <text x="234" y="466" font-family="Inter, system-ui, sans-serif" font-size="8" fill="#71717A">1:N</text>
@@ -94,20 +94,20 @@
   <text x="350" y="468" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#FAFAFA">provision_job_logs</text>
   <text x="350" y="486" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#8B5CF6">← Realtime INSERT</text>
 
-  <!-- Arrow vines → jobs -->
+  <!-- Arrow specs → jobs -->
   <path d="M310,204 L180,416" stroke="#52525B" stroke-width="1" fill="none" marker-end="url(#arrow)" stroke-dasharray="4 4"/>
 
-  <!-- Worker section -->
+  <!-- Runner section -->
   <rect x="500" y="416" width="300" height="100" rx="8" fill="none" stroke="#22C55E30"/>
-  <text x="650" y="436" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500" fill="#22C55E">Worker System</text>
+  <text x="650" y="436" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500" fill="#22C55E">Runner System</text>
 
   <rect x="516" y="448" width="130" height="50" rx="6" fill="#27272A" stroke="#22C55E50"/>
-  <text x="581" y="468" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#FAFAFA">workers</text>
+  <text x="581" y="468" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#FAFAFA">runners</text>
   <text x="581" y="486" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">status, token_hash</text>
 
   <line x1="646" y1="473" x2="658" y2="473" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
   <rect x="666" y="448" width="118" height="50" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="725" y="468" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#FAFAFA">worker_releases</text>
+  <text x="725" y="468" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#FAFAFA">runner_releases</text>
   <text x="725" y="486" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">version, notes</text>
 </svg>

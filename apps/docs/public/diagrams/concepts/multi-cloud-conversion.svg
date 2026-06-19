@@ -31,7 +31,7 @@
 
   <!-- Conversion Function -->
   <rect x="290" y="110" width="240" height="80" rx="8" fill="#8B5CF610" stroke="#8B5CF6"/>
-  <text x="410" y="138" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#8B5CF6">convertVineConfig()</text>
+  <text x="410" y="138" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#8B5CF6">convertSpecConfig()</text>
   <text x="410" y="158" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Region, instance, engine, capacity</text>
   <text x="410" y="174" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">mapping + validation + warnings</text>
 

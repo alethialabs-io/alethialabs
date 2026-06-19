@@ -88,8 +88,8 @@
   <text x="305" y="354" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">provision_jobs — UPDATE</text>
 
   <rect x="410" y="336" width="170" height="28" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="495" y="354" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">workers — UPDATE</text>
+  <text x="495" y="354" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">runners — UPDATE</text>
 
   <rect x="600" y="336" width="170" height="28" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="685" y="354" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">vines — UPDATE</text>
+  <text x="685" y="354" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">specs — UPDATE</text>
 </svg>
