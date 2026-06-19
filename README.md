@@ -13,8 +13,8 @@ An open-source, multi-cloud internal developer platform for provisioning and man
 | Component | Role |
 | --- | --- |
 | **Alethia** (`apps/console`) | Web control plane — Next.js dashboard, Postgres (Drizzle) state store, Better Auth, configuration management, job orchestration |
-| **alethia** (`apps/cli`) | Go CLI — authentication, vineyard/vine management, plan/deploy/destroy operations, worker registration |
-| **Runner** (`apps/runner`) | Go worker — claims provisioning jobs from the queue, executes Terraform, streams logs back to Alethia |
+| **alethia** (`apps/cli`) | Go CLI — authentication, zone/spec management, plan/deploy/destroy operations, runner registration |
+| **Runner** (`apps/runner`) | Go runner — claims provisioning jobs from the queue, executes Terraform, streams logs back to Alethia |
 | **core** (`packages/core`) | Shared Go library — cloud provider interfaces, embedded Terraform templates, config types |
 | **docs** (`apps/docs`) | Documentation site (Next.js / Fumadocs) |
 | **ArgoCD** | In-cluster GitOps reconciler installed during bootstrap |
@@ -25,7 +25,7 @@ An open-source, multi-cloud internal developer platform for provisioning and man
 | --- | --- |
 | Web Control Plane | Next.js 16, React 19, TypeScript 5.9, Postgres + Drizzle, Better Auth, Tailwind CSS 4, shadcn/ui |
 | CLI | Go 1.25, Cobra, Charmbracelet TUI (bubbletea, huh, lipgloss) |
-| Worker | Go 1.25, Terraform exec, multi-cloud SDKs (AWS, GCP, Azure) |
+| Runner | Go 1.25, Terraform exec, multi-cloud SDKs (AWS, GCP, Azure) |
 | Documentation | Next.js 16, Fumadocs, MDX |
 | Infrastructure | Terraform (AWS ECS Fargate, ECR, Lambda), ArgoCD |
 | Monorepo | pnpm workspaces, Turborepo, Go workspaces |
@@ -37,7 +37,7 @@ An open-source, multi-cloud internal developer platform for provisioning and man
 apps/
   console/           — Web control plane (Next.js + Postgres/Drizzle + Better Auth)
   alethia/             — CLI (Go + Cobra + Charmbracelet)
-  runner/           — Provisioning worker (Go)
+  runner/           — Provisioning runner (Go)
   docs/           — Documentation site (Fumadocs)
 packages/
   core/        — Shared Go library (cloud providers, Terraform templates)
@@ -129,9 +129,9 @@ cd apps/cli && go test ./...
 
 The `infra/` directory contains all Terraform configurations:
 
-- **`platform/`** — Core platform infrastructure: ECR container registry, ECS Fargate node workers (multi-region), Lambda auto-scaler (EventBridge-triggered, checks job queue depth every minute)
-- **`templates/vine/`** — Per-cloud IaC templates applied into user accounts (AWS EKS, GCP GKE, Azure AKS with associated networking, databases, and security groups)
-- **`templates/node/`** — Self-hosted worker deployment template
+- **`platform/`** — Core platform infrastructure: ECR container registry, ECS Fargate runners (multi-region), Lambda auto-scaler (EventBridge-triggered, checks job queue depth every minute)
+- **`templates/spec/`** — Per-cloud IaC templates applied into user accounts (AWS EKS, GCP GKE, Azure AKS with associated networking, databases, and security groups)
+- **`templates/runner/`** — Self-hosted runner deployment template
 - **`connector/`** — Cloud account bootstrap (IAM cross-account roles for AWS, workload identity federation for GCP, federated identity for Azure)
 
 ## Self-Hosting

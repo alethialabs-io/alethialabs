@@ -10,7 +10,7 @@ Terraform, streams logs. It already runs anywhere. Two things are missing for al
 **operate an elastic fleet** and for the system to **run runners on any cloud**:
 
 1. **Auto-registration** — fleet runners must self-register on boot (no manual
-   `ALETHIA_WORKER_ID/TOKEN`).
+   `ALETHIA_RUNNER_ID/TOKEN`).
 2. **Per-provider autoscaling** — scale the fleet by queue depth, on whichever cloud hosts it,
    replacing the AWS-only Lambda scaler.
 

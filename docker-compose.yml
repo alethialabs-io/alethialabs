@@ -1,13 +1,13 @@
 # Alethia self-host stack.
 #
 # This file grows phase-by-phase toward the full ~4-container deliverable
-# (app · postgres · s3 · worker). Today it bundles the storage tier (SeaweedFS)
+# (app · postgres · s3 · runner). Today it bundles the storage tier (SeaweedFS)
 # and the app database (Postgres) so the de-Supabase swap runs with zero manual
 # setup:
 #
 #   cp .env.example .env && docker compose up -d
 #
-# The console + worker (run on the host for now, or added here in later phases)
+# The console + runner (run on the host for now, or added here in later phases)
 # auto-create their buckets on first use — no `aws s3 mb` required. The console
 # auto-runs DB migrations on boot — no `db push` required.
 
@@ -131,8 +131,6 @@ services:
 
   # Runner (Go). Talks to the console over HTTP + S3 only; self-registers on
   # boot. Bundles Terraform/cloud CLIs, so the image is large to build.
-  # (ALETHIA_WORKER_* are the binary's current env contract — the runner rename
-  # of those env names is part of the deferred de-Supabase lexicon work.)
   runner:
     build:
       context: .
@@ -141,7 +139,7 @@ services:
     environment:
       ALETHIA_WEB_ORIGIN: "http://app:3000"
       ALETHIA_STORAGE_ENDPOINT: "http://seaweedfs:8333"
-      ALETHIA_WORKER_MODE: self-hosted
+      ALETHIA_RUNNER_MODE: self-hosted
     depends_on:
       app:
         condition: service_started

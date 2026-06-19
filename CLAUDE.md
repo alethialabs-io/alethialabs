@@ -67,7 +67,7 @@ apps/console/
   app/                    # Next.js app router
     (private)/dashboard/  # Authenticated routes
     (public)/auth/        # Sign-in, email confirmation
-    api/                  # API routes (auth, jobs, workers, CLI, tendrils)
+    api/                  # API routes (auth, jobs, runners, CLI)
     server/actions/       # Server actions (grouped by domain)
   components/             # UI components (grouped by feature)
   lib/
@@ -86,7 +86,7 @@ apps/console/
 
 - Cloud integrations follow the same pattern across AWS/GCP/Azure: server actions in `app/(private)/dashboard/providers/`, connection components in `components/connector/`.
 - All `cloud_identities` queries must filter by `provider` to prevent cross-provider data leaks.
-- The worker (Go) switches on `cloud_identity.provider` for auth — AWS uses `AssumeRole`, GCP uses WIF, Azure uses federated identity.
+- The runner (Go) switches on `cloud_identity.provider` for auth — AWS uses `AssumeRole`, GCP uses WIF, Azure uses federated identity.
 
 ---
 
@@ -100,8 +100,8 @@ apps/console/
   - **Vineyards**: `vineyard list|create|delete` — workspace management
   - **Vines**: `vine list|get` — infrastructure configuration browsing
   - **Jobs**: `jobs list|get|logs|cancel|wait` — provisioning job management
-  - **Provisioning**: `plan`, `harvest` (deploy), `destroy vine|worker` — queue IaC operations
-  - **Workers**: `worker register|start|list|remove|config` — worker lifecycle
+  - **Provisioning**: `spec plan`, `spec apply`, `spec destroy` — queue IaC operations
+  - **Runners**: `runner deploy|list|destroy|remove` — runner lifecycle
   - **Clusters**: `clusters list` — Kubernetes cluster management
 
 ### Conventions
@@ -119,19 +119,19 @@ apps/console/
 ### Environment Variables
 
 - `ALETHIA_WEB_ORIGIN` — API server URL (default: `https://adp.prod.itgix.eu`)
-- `ALETHIA_WORKER_MODE` — Worker mode (`self-hosted` or `cloud-hosted`)
-- `ALETHIA_WORKER_ID` / `ALETHIA_WORKER_TOKEN` — Worker registration credentials
+- `ALETHIA_RUNNER_MODE` — Runner mode (`self-hosted` or `cloud-hosted`)
+- `ALETHIA_RUNNER_ID` / `ALETHIA_RUNNER_TOKEN` — Runner registration credentials
 - `ALETHIA_STORAGE_ENDPOINT`, `ALETHIA_STORAGE_REGION`, `ALETHIA_STORAGE_ACCESS_KEY_ID`, `ALETHIA_STORAGE_SECRET_ACCESS_KEY` — Artifact / state storage (S3-compatible)
 
 ---
 
-## Runner (Provisioning Worker)
+## Runner (Provisioning Agent)
 
 - **Location**: `apps/runner/`
-- **Structure**: `cmd/` (entry point), `internal/` (business logic), `worker/` (job execution engine)
+- **Structure**: `cmd/` (entry point), `internal/` (business logic), `internal/agent/` (job execution engine)
 - **Purpose**: Long-running daemon that polls Alethia for queued provisioning jobs, claims them, executes Terraform operations, and streams logs back.
 - **Deployment**: Docker image on ECS Fargate, auto-registered with Alethia via HTTP on startup.
-- **Worker modes**: `self-hosted` (runs in customer's cloud with native permissions) or `cloud-hosted` (runs in platform account, assumes role into customer account).
+- **Runner modes**: `self-hosted` (runs in customer's cloud with native permissions) or `cloud-hosted` (runs in platform account, assumes role into customer account).
 
 ---
 
@@ -159,7 +159,7 @@ apps/console/
 
 Core infrastructure managed by Terraform:
 - **ECR** (eu-west-1): Container registry for Alethia and Runner Docker images
-- **ECS Fargate** (multi-region): Runner worker tasks in VPC, auto-registered with Alethia
+- **ECS Fargate** (multi-region): Runner tasks in VPC, auto-registered with Alethia
 - **Lambda scaler** (eu-west-1): EventBridge triggers every 1 minute, scales ECS tasks based on job queue depth
 
 ### Templates (`infra/templates/`)
@@ -167,7 +167,7 @@ Core infrastructure managed by Terraform:
 - `vine/aws/` — AWS EKS + VPC + RDS + security groups
 - `vine/gcp/` — GCP GKE + Cloud SQL + networking
 - `vine/azure/` — Azure AKS + managed resources
-- `node/aws/` — Self-hosted worker deployment template
+- `runner/aws/` — Self-hosted runner deployment template
 - `argocd/` — ArgoCD configuration templates
 
 ### Connector (`infra/connector/`)
