@@ -8,10 +8,25 @@
 // through `core.db`, so this package never imports core runtime internals.
 
 import { sso } from "@better-auth/sso";
+import { OpenFgaClient } from "@openfga/sdk";
 import { organization } from "better-auth/plugins/organization";
 import { sql } from "drizzle-orm";
-import type { CoreContext, EnterpriseModule } from "@/lib/enterprise";
+import type { TupleSync } from "@/lib/authz/tuple-sync";
 import type { Actor, Entitlements } from "@/lib/authz/types";
+import type { CoreContext, EnterpriseModule } from "@/lib/enterprise";
+import { FgaTupleSync } from "./fga-tuple-sync";
+
+/** Build the OpenFGA dual-write writer when OpenFGA is configured, else undefined. */
+function buildTupleSync(core: CoreContext): TupleSync | undefined {
+	if (!core.fga.isEnabled()) return undefined;
+	const cfg = core.fga.getConfig();
+	const client = new OpenFgaClient({
+		apiUrl: cfg.apiUrl,
+		storeId: cfg.storeId,
+		authorizationModelId: cfg.modelId,
+	});
+	return new FgaTupleSync(core, client);
+}
 
 const NO_ENTITLEMENTS: Entitlements = {
 	organizations: false,
@@ -120,7 +135,10 @@ export function register(core: CoreContext): EnterpriseModule {
 
 		entitlements: (_actor: Actor): Entitlements => entitlements,
 
+		// Dual-write to OpenFGA when configured (no-op seam otherwise).
+		tupleSync: buildTupleSync(core),
+
 		// pdp omitted — the community PostgresRbacPDP stays the engine; an OpenFgaPdp
-		// is a later binding flip (no call-site changes).
+		// is the next binding flip (FGA-3, no call-site changes).
 	};
 }

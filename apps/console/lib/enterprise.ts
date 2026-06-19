@@ -10,9 +10,18 @@
 
 import { createRequire } from "node:module";
 import type { BetterAuthOptions } from "better-auth";
+import { buildAuthorizationModel } from "@/lib/authz/fga-model";
+import {
+	expandGrant,
+	hierarchyTuple,
+	teamMemberTuple,
+} from "@/lib/authz/fga-tuples";
 import { orgAc, orgRoles } from "@/lib/authz/org-access-control";
 import { ensureMemberGrant, revokeMemberGrant } from "@/lib/authz/grants";
+import { rolePermissionKeys } from "@/lib/authz/role-permissions";
+import type { TupleSync } from "@/lib/authz/tuple-sync";
 import type { Actor, Entitlements, Pdp } from "@/lib/authz/types";
+import { getOpenFgaConfig, isOpenFgaEnabled } from "@/lib/config/openfga";
 import { getServiceDb } from "@/lib/db";
 import { sendInviteEmail } from "@/lib/email/notify-email";
 
@@ -20,8 +29,9 @@ import { sendInviteEmail } from "@/lib/email/notify-email";
  * Capabilities the core injects into the enterprise module. `ee/` queries through
  * `core.db` (raw SQL), uses `core.orgAc`/`core.orgRoles` so the organization plugin's
  * membership roles match the PDP, `core.ensureMemberGrant`/`core.revokeMemberGrant` to
- * sync membership → PDP grants, and `core.sendInviteEmail` to send the invitation
- * email. So `ee/` needs NO runtime import of core internals — only erased type
+ * sync membership → PDP grants, `core.sendInviteEmail` to send the invitation email,
+ * and `core.fga` (the pure OpenFGA model/tuple helpers + config) so the ee/ engine +
+ * tuple writer use core logic without importing core at runtime — only erased type
  * imports. Keeps the dependency direction clean.
  */
 export interface CoreContext {
@@ -31,11 +41,22 @@ export interface CoreContext {
 	ensureMemberGrant: typeof ensureMemberGrant;
 	revokeMemberGrant: typeof revokeMemberGrant;
 	sendInviteEmail: typeof sendInviteEmail;
+	fga: {
+		buildModel: typeof buildAuthorizationModel;
+		expandGrant: typeof expandGrant;
+		hierarchyTuple: typeof hierarchyTuple;
+		teamMemberTuple: typeof teamMemberTuple;
+		rolePermissionKeys: typeof rolePermissionKeys;
+		isEnabled: typeof isOpenFgaEnabled;
+		getConfig: typeof getOpenFgaConfig;
+	};
 }
 
 export interface EnterpriseModule {
 	/** Engine override (e.g. OpenFgaPdp). Community uses the default PostgresRbacPDP. */
 	pdp?: Pdp;
+	/** OpenFGA dual-write writer. Community = absent → the seam's no-op. */
+	tupleSync?: TupleSync;
 	/**
 	 * Resolves a user's active tenancy scope (multi-org). `activeOrgId` is the org the
 	 * session selected (validate membership before honoring it); fall back to the
@@ -77,6 +98,15 @@ function loadEnterprise(): void {
 			ensureMemberGrant,
 			revokeMemberGrant,
 			sendInviteEmail,
+			fga: {
+				buildModel: buildAuthorizationModel,
+				expandGrant,
+				hierarchyTuple,
+				teamMemberTuple,
+				rolePermissionKeys,
+				isEnabled: isOpenFgaEnabled,
+				getConfig: getOpenFgaConfig,
+			},
 		});
 	} catch {
 		registered = null; // community build — enterprise package absent

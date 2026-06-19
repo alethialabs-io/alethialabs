@@ -12,7 +12,13 @@
 import { sql } from "drizzle-orm";
 import { toOrgRole } from "@/lib/authz/org-access-control";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
+import { getTupleSync } from "@/lib/authz/tuple-sync";
 import { getServiceDb } from "@/lib/db";
+
+/** Mirror a grant change to OpenFGA, best-effort (Postgres is the source of truth). */
+function mirror(run: Promise<void>): void {
+	void run.catch((err) => console.error("[authz] tuple sync failed:", err));
+}
 
 /**
  * Sets a member's org-wide PDP grant to `role` (so the PDP authorizes them within
@@ -39,6 +45,7 @@ export async function ensureMemberGrant(
 		insert into grants (org_id, principal_type, principal_id, role_id, resource_type)
 		values (${orgId}::uuid, 'user', ${userId}::uuid, ${roleId}::uuid, 'org')
 	`);
+	mirror(getTupleSync().syncMemberGrant(orgId, userId, resolved));
 }
 
 /**
@@ -54,4 +61,5 @@ export async function revokeMemberGrant(
 		where org_id = ${orgId}::uuid and principal_type = 'user'
 		  and principal_id = ${userId}::uuid
 	`);
+	mirror(getTupleSync().revokeMemberGrant(orgId, userId));
 }

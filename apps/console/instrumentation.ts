@@ -8,5 +8,11 @@ export async function register() {
 	startStaleJobRecovery();
 	// Sync the static authz registry (permissions + built-in roles) — idempotent.
 	const { seedAuthz } = await import("@/lib/authz/seed");
-	void seedAuthz().catch((err) => console.error("[authz] seed failed:", err));
+	await seedAuthz().catch((err) => console.error("[authz] seed failed:", err));
+	// Mirror the model + grants into OpenFGA when the enterprise engine is active;
+	// a no-op in the community build. Runs after the registry seed so grants exist.
+	const { getTupleSync } = await import("@/lib/authz/tuple-sync");
+	void getTupleSync()
+		.backfill()
+		.catch((err) => console.error("[authz] FGA backfill failed:", err));
 }

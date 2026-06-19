@@ -19,6 +19,11 @@
 // Output is plain JSON typed locally (no @openfga/sdk import — this stays in core);
 // the ee/ client passes it to writeAuthorizationModel(), which validates it.
 
+import {
+	ancestorsOf,
+	INSTANCE_TYPES,
+	PARENTS,
+} from "@/lib/authz/fga-hierarchy";
 import { PERMISSIONS, type Action, type Resource } from "@/lib/authz/registry";
 
 interface DirectlyRelatedUserType {
@@ -59,36 +64,6 @@ const PRINCIPALS: DirectlyRelatedUserType[] = [
 	{ type: "user" },
 	{ type: "team", relation: "member" },
 ];
-
-/**
- * Parent types per instance resource (a DAG). Drives both hierarchy inheritance and
- * which containers carry which descendant capabilities. Org-level resources
- * (org/member/audit/billing) are not instance types and have no entry.
- */
-const PARENTS: Partial<Record<Resource, Resource[]>> = {
-	zone: ["org"],
-	spec: ["zone", "org"],
-	runner: ["org"],
-	cloud_identity: ["org"],
-	connector: ["org"],
-	job: ["spec", "zone", "org"],
-};
-
-/** The instance (per-id) resource types — those with a parent chain. */
-const INSTANCE_TYPES = Object.keys(PARENTS) as Resource[];
-
-/** Transitive ancestor types of a resource via PARENTS (excludes the resource itself). */
-function ancestors(resource: Resource): Resource[] {
-	const out = new Set<Resource>();
-	const stack = [...(PARENTS[resource] ?? [])];
-	while (stack.length > 0) {
-		const p = stack.pop();
-		if (p === undefined || out.has(p)) continue;
-		out.add(p);
-		for (const pp of PARENTS[p] ?? []) stack.push(pp);
-	}
-	return [...out];
-}
 
 /** Non-`create` actions applicable to a resource, from the registry. */
 function instanceActions(resource: Resource): Action[] {
@@ -140,7 +115,7 @@ export function buildAuthorizationModel(): AuthorizationModel {
 	// `<D>_<A>` = directly-assignable on this container OR inherited from its parent.
 	for (const d of INSTANCE_TYPES) {
 		const actions = instanceActions(d);
-		for (const c of ancestors(d)) {
+		for (const c of ancestorsOf(d)) {
 			if (c === "org") continue; // org already holds every capability directly.
 			ensure(c);
 			const rels = relations.get(c) ?? {};

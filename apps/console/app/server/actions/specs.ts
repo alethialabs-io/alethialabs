@@ -4,6 +4,7 @@
 
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
+import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { withOwnerScope } from "@/lib/db";
 import {
 	auditLog,
@@ -116,6 +117,12 @@ export async function createSpec(data: CreateSpecInput) {
 						},
 			)
 			.onConflictDoNothing();
+		mirrorHierarchyEdge(
+			"spec",
+			spec.id,
+			zone_id ? "zone" : "org",
+			zone_id ?? owner,
+		);
 
 		// Singleton components (tx rolls back automatically on any failure).
 		await tx.insert(specNetwork).values({ spec_id: spec.id, ...data.network });

@@ -8,12 +8,16 @@
 import type { Action, Resource } from "@/lib/authz/registry";
 
 // Resources whose actions are org-level capabilities — they have no per-instance
-// object, so they're always checked on the org.
+// object, so they're always checked on the org. `job` is included: jobs are
+// ephemeral + high-volume and never individually shared, so their permissions
+// resolve org-wide (kept in sync with lib/authz/fga-hierarchy.ts, which excludes
+// job from the instance types).
 const ORG_LEVEL: ReadonlySet<Resource> = new Set<Resource>([
 	"org",
 	"member",
 	"audit",
 	"billing",
+	"job",
 ]);
 
 export interface FgaCheck {

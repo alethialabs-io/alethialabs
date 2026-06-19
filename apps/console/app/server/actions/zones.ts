@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { authorize } from "@/lib/authz/guard";
+import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { withOwnerScope } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -115,6 +116,7 @@ export async function createZone(
 				parent_id: owner,
 			})
 			.onConflictDoNothing();
+		mirrorHierarchyEdge("zone", zone.id, "org", owner);
 		return { zone };
 	});
 }
