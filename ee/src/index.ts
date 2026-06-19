@@ -59,19 +59,20 @@ export function register(core: CoreContext): EnterpriseModule {
 						token: data.id,
 					});
 				},
+				// Sync org membership → PDP grants on every lifecycle event, so the PDP
+				// (which authorizes from grants, not member.role) actually grants access.
 				organizationHooks: {
-					// The creator owns the new org (org-wide owner grant) so the PDP
-					// authorizes them within it — mirrors core's ensurePersonalOrgOwner.
 					afterCreateOrganization: async ({ organization: org, user }) => {
-						await core.db.execute(sql`
-							insert into grants (org_id, principal_type, principal_id, role_id, resource_type)
-							select ${org.id}::uuid, 'user', ${user.id}::uuid, ${core.builtinRoleIds.owner}::uuid, 'org'
-							where not exists (
-								select 1 from grants g
-								where g.org_id = ${org.id}::uuid and g.principal_id = ${user.id}::uuid
-								  and g.role_id = ${core.builtinRoleIds.owner}::uuid and g.resource_type = 'org'
-							)
-						`);
+						await core.ensureMemberGrant(org.id, user.id, "owner");
+					},
+					afterAddMember: async ({ organization: org, user, member }) => {
+						await core.ensureMemberGrant(org.id, user.id, member.role);
+					},
+					afterUpdateMemberRole: async ({ organization: org, user, member }) => {
+						await core.ensureMemberGrant(org.id, user.id, member.role);
+					},
+					afterRemoveMember: async ({ organization: org, user }) => {
+						await core.revokeMemberGrant(org.id, user.id);
 					},
 				},
 			}),

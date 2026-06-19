@@ -11,24 +11,25 @@
 import { createRequire } from "node:module";
 import type { BetterAuthOptions } from "better-auth";
 import { orgAc, orgRoles } from "@/lib/authz/org-access-control";
-import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
+import { ensureMemberGrant, revokeMemberGrant } from "@/lib/authz/grants";
 import type { Actor, Entitlements, Pdp } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import { sendInviteEmail } from "@/lib/email/notify-email";
 
 /**
  * Capabilities the core injects into the enterprise module. `ee/` queries through
- * `core.db` (raw SQL), reads `core.builtinRoleIds` for stable role ids, uses
- * `core.orgAc`/`core.orgRoles` so the organization plugin's membership roles match
- * the PDP, and `core.sendInviteEmail` to send the invitation email. So `ee/` needs
- * NO runtime import of core internals — only erased type imports. Keeps the
- * dependency direction clean.
+ * `core.db` (raw SQL), uses `core.orgAc`/`core.orgRoles` so the organization plugin's
+ * membership roles match the PDP, `core.ensureMemberGrant`/`core.revokeMemberGrant` to
+ * sync membership → PDP grants, and `core.sendInviteEmail` to send the invitation
+ * email. So `ee/` needs NO runtime import of core internals — only erased type
+ * imports. Keeps the dependency direction clean.
  */
 export interface CoreContext {
 	db: ReturnType<typeof getServiceDb>;
-	builtinRoleIds: typeof BUILTIN_ROLE_IDS;
 	orgAc: typeof orgAc;
 	orgRoles: typeof orgRoles;
+	ensureMemberGrant: typeof ensureMemberGrant;
+	revokeMemberGrant: typeof revokeMemberGrant;
 	sendInviteEmail: typeof sendInviteEmail;
 }
 
@@ -71,9 +72,10 @@ function loadEnterprise(): void {
 		);
 		registered = mod.register({
 			db: getServiceDb(),
-			builtinRoleIds: BUILTIN_ROLE_IDS,
 			orgAc,
 			orgRoles,
+			ensureMemberGrant,
+			revokeMemberGrant,
 			sendInviteEmail,
 		});
 	} catch {
