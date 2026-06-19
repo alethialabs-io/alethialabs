@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-package worker
+package agent
 
 import (
 	"context"
@@ -283,8 +283,6 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 		execErr = w.executeDeploy(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	case "DESTROY":
 		execErr = w.executeDestroy(ctx, job, stdoutLogger, stderrLogger)
-	// job_type enum values stay on the worker noun (DB/wire contract, deferred
-	// alongside the ALETHIA_WORKER_* env vars); the Go handlers use the new noun.
 	case "DEPLOY_RUNNER", "UPDATE_RUNNER":
 		execErr = w.executeDeployRunner(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	case "DESTROY_RUNNER":

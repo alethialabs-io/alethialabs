@@ -9,15 +9,15 @@ import (
 	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
-	"github.com/alethialabs-io/alethialabs/apps/runner/worker"
+	"github.com/alethialabs-io/alethialabs/apps/runner/internal/agent"
 )
 
 func main() {
-	cfg := worker.Config{
-		Mode:        envOrDefault("ALETHIA_WORKER_MODE", "self-hosted"),
+	cfg := agent.Config{
+		Mode:        envOrDefault("ALETHIA_RUNNER_MODE", "self-hosted"),
 		TrellisURL:  envOrDefault("ALETHIA_WEB_ORIGIN", "https://adp.prod.itgix.eu"),
-		RunnerID:    os.Getenv("ALETHIA_WORKER_ID"),
-		RunnerToken: os.Getenv("ALETHIA_WORKER_TOKEN"),
+		RunnerID:    os.Getenv("ALETHIA_RUNNER_ID"),
+		RunnerToken: os.Getenv("ALETHIA_RUNNER_TOKEN"),
 
 		S3Endpoint:  envOrDefault("ALETHIA_STORAGE_ENDPOINT", ""),
 		S3Region:    envOrDefault("ALETHIA_STORAGE_REGION", ""),
@@ -28,11 +28,11 @@ func main() {
 	fmt.Printf("runner %s\n", version.Version)
 
 	if cfg.RunnerID == "" || cfg.RunnerToken == "" {
-		fmt.Fprintln(os.Stderr, "Error: ALETHIA_WORKER_ID and ALETHIA_WORKER_TOKEN environment variables are required.")
+		fmt.Fprintln(os.Stderr, "Error: ALETHIA_RUNNER_ID and ALETHIA_RUNNER_TOKEN environment variables are required.")
 		os.Exit(1)
 	}
 
-	w := worker.New(cfg)
+	w := agent.New(cfg)
 	if err := w.Run(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "Runner error: %v\n", err)
 		os.Exit(1)

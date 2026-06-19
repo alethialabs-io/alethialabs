@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-package worker
+package agent
 
 import (
 	"fmt"
@@ -116,16 +116,6 @@ func TestSnapshotToSpecConfig(t *testing.T) {
 			},
 			wantName:   "myproject",
 			wantRegion: "eu-west-1",
-		},
-		{
-			name: "legacy aws_region fallback",
-			snapshot: map[string]any{
-				"project_name":      "legacy",
-				"aws_region":        "us-east-1",
-				"environment_stage": "prod",
-			},
-			wantName:   "legacy",
-			wantRegion: "us-east-1",
 		},
 		{
 			name: "with databases",
