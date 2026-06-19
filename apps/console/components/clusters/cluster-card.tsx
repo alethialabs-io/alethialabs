@@ -44,9 +44,9 @@ function CopyButton({ value }: { value: string }) {
 export function ClusterCard({ data }: { data: ClusterData }) {
 	const provider = data.cloud_identities?.provider ?? "aws";
 	const meta = getProvider(provider as CloudProviderSlug);
-	const cluster = Array.isArray(data.vine_cluster) ? data.vine_cluster[0] : data.vine_cluster;
-	const databases = data.vine_databases ?? [];
-	const caches = data.vine_caches ?? [];
+	const cluster = Array.isArray(data.spec_cluster) ? data.spec_cluster[0] : data.spec_cluster;
+	const databases = data.spec_databases ?? [];
+	const caches = data.spec_caches ?? [];
 
 	const kubeconfigCmd = cluster?.cluster_name
 		? `aws eks update-kubeconfig --name ${cluster.cluster_name} --region ${data.region}`

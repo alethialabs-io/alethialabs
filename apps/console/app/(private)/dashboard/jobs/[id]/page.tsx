@@ -4,11 +4,11 @@
 
 
 import { getJob, getJobStatus, rerunJob, cancelJob } from "@/app/server/actions/jobs";
-import { provisionVine } from "@/app/server/actions/vines";
+import { provisionSpec } from "@/app/server/actions/specs";
 import { useJobLogStream } from "@/hooks/use-job-log-stream";
 import type { Job } from "@/lib/db/schema";
 import { JOB_TYPES } from "@/components/jobs/columns";
-import { TendrilSelectPopover } from "@/components/tendrils/tendril-select-popover";
+import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -128,11 +128,11 @@ export default function JobDetailPage() {
 		}
 	};
 
-	const handleApply = async (workerId: string | null) => {
+	const handleApply = async (runnerId: string | null) => {
 		if (!job?.spec_id || !jobId) return;
 		setActionLoading(true);
 		try {
-			const { jobId: deployJobId } = await provisionVine(job.spec_id, jobId, workerId);
+			const { jobId: deployJobId } = await provisionSpec(job.spec_id, jobId, runnerId);
 			toast.success("Deploy job created");
 			router.push(`/dashboard/jobs/${deployJobId}`);
 		} catch (err) {
@@ -188,7 +188,7 @@ export default function JobDetailPage() {
 							</div>
 							<p className="text-xs text-muted-foreground">
 								<span className="font-mono">{job.id.slice(0, 8)}</span>
-								{job.runner_id && <> · Worker <span className="font-mono">{job.runner_id.slice(0, 8)}</span></>}
+								{job.runner_id && <> · Runner <span className="font-mono">{job.runner_id.slice(0, 8)}</span></>}
 								{job.created_at && <> · {formatDistanceToNow(new Date(job.created_at), { addSuffix: true })}</>}
 							</p>
 						</div>
@@ -201,7 +201,7 @@ export default function JobDetailPage() {
 							</Button>
 						)}
 						{isPlanSuccess && job.spec_id && (
-							<TendrilSelectPopover
+							<RunnerSelectPopover
 								trigger={
 									<Button size="sm" className="h-8 text-xs" disabled={actionLoading}>
 										<Rocket className="h-3.5 w-3.5 mr-1.5" />
@@ -228,9 +228,9 @@ export default function JobDetailPage() {
 					{logs.length === 0 && isActive ? (
 						<div className="flex flex-col items-center justify-center text-muted-foreground py-20">
 							<Loader2 className="w-8 h-8 mb-4 animate-spin opacity-30" />
-							<p className="text-sm">Waiting for worker to claim job...</p>
+							<p className="text-sm">Waiting for runner to claim job...</p>
 							<p className="text-[11px] mt-2 text-muted-foreground/60">
-								The worker polls every 10 seconds. Logs will appear here automatically.
+								The runner polls every 10 seconds. Logs will appear here automatically.
 							</p>
 						</div>
 					) : logs.length === 0 ? (
@@ -310,7 +310,7 @@ export default function JobDetailPage() {
 								<p>{info?.label ?? job.job_type}</p>
 							</div>
 							<div>
-								<p className="text-[11px] text-muted-foreground">Worker</p>
+								<p className="text-[11px] text-muted-foreground">Runner</p>
 								<p className="font-mono">{job.runner_id ?? "—"}</p>
 							</div>
 							<div>

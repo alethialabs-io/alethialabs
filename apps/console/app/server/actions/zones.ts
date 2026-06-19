@@ -1,0 +1,145 @@
+"use server";
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import { authorize } from "@/lib/authz/guard";
+import { withOwnerScope } from "@/lib/db";
+import {
+	cloudIdentities,
+	resourceHierarchy,
+	type Spec,
+	specs,
+	type Zone,
+	zones,
+} from "@/lib/db/schema";
+import { desc, eq } from "drizzle-orm";
+
+export type SpecWithProvider = Spec & {
+	cloud_provider: string | null;
+};
+
+export type ZoneWithSpecs = Zone & {
+	specs: SpecWithProvider[];
+};
+
+export type GetZonesData = ZoneWithSpecs[];
+
+/** Fetches all zones with nested specs and each spec's cloud provider. */
+export async function getZones() {
+	const actor = await authorize("view", { type: "zone" });
+	const owner = actor.userId;
+	return withOwnerScope(owner, async (tx) => {
+		const zoneRows = await tx
+			.select()
+			.from(zones)
+			.orderBy(desc(zones.created_at));
+
+		const specRows = await tx
+			.select({ spec: specs, cloud_provider: cloudIdentities.provider })
+			.from(specs)
+			.leftJoin(
+				cloudIdentities,
+				eq(specs.cloud_identity_id, cloudIdentities.id),
+			);
+
+		const byZone = new Map<string, SpecWithProvider[]>();
+		for (const r of specRows) {
+			const spec: SpecWithProvider = {
+				...r.spec,
+				cloud_provider: r.cloud_provider ?? null,
+			};
+			const key = r.spec.zone_id ?? "";
+			const arr = byZone.get(key) ?? [];
+			arr.push(spec);
+			byZone.set(key, arr);
+		}
+
+		const zoneList: GetZonesData = zoneRows.map((z) => ({
+			...z,
+			specs: byZone.get(z.id) ?? [],
+		}));
+
+		return { zones: zoneList };
+	});
+}
+
+/** Fetches a single zone with nested specs and their cloud provider. */
+export async function getZoneById(id: string) {
+	const actor = await authorize("view", { type: "zone", id });
+	const owner = actor.userId;
+	return withOwnerScope(owner, async (tx) => {
+		const [zone] = await tx
+			.select()
+			.from(zones)
+			.where(eq(zones.id, id))
+			.limit(1);
+
+		if (!zone) throw new Error("Zone not found");
+
+		const specRows = await tx
+			.select({ spec: specs, cloud_provider: cloudIdentities.provider })
+			.from(specs)
+			.leftJoin(
+				cloudIdentities,
+				eq(specs.cloud_identity_id, cloudIdentities.id),
+			)
+			.where(eq(specs.zone_id, id));
+
+		const specList: SpecWithProvider[] = specRows.map((r) => ({
+			...r.spec,
+			cloud_provider: r.cloud_provider ?? null,
+		}));
+
+		return { zone: { ...zone, specs: specList } };
+	});
+}
+
+export async function createZone(
+	body: Omit<typeof zones.$inferInsert, "user_id">,
+) {
+	const actor = await authorize("create", { type: "zone" });
+	const owner = actor.userId;
+	return withOwnerScope(owner, async (tx) => {
+		const [zone] = await tx
+			.insert(zones)
+			.values({ ...body, user_id: owner })
+			.returning();
+		// Authz hierarchy edge: zone → org (community org_id == owner). Lets an
+		// org/zone-scoped grant flow down to this zone's specs.
+		await tx
+			.insert(resourceHierarchy)
+			.values({
+				child_type: "zone",
+				child_id: zone.id,
+				parent_type: "org",
+				parent_id: owner,
+			})
+			.onConflictDoNothing();
+		return { zone };
+	});
+}
+
+export async function updateZone(
+	id: string,
+	body: Partial<typeof zones.$inferInsert>,
+) {
+	const actor = await authorize("edit", { type: "zone", id });
+	const owner = actor.userId;
+	return withOwnerScope(owner, async (tx) => {
+		const [zone] = await tx
+			.update(zones)
+			.set(body)
+			.where(eq(zones.id, id))
+			.returning();
+		return { zone };
+	});
+}
+
+export async function deleteZone(id: string) {
+	const actor = await authorize("destroy", { type: "zone", id });
+	const owner = actor.userId;
+	return withOwnerScope(owner, async (tx) => {
+		await tx.delete(zones).where(eq(zones.id, id));
+		return { success: true };
+	});
+}

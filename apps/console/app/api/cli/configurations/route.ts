@@ -9,7 +9,7 @@ import { NextResponse } from "next/server";
 
 /**
  * Lists the CLI user's specs as ConfigurationSummary rows. Wire-locked: emits
- * the frozen summary keys (`vineyard_id`←zone_id, `cloud_provider`←identity
+ * the frozen summary keys (`zone_id`, `cloud_provider`←identity
  * provider) that the CLI `configurations list` command parses.
  */
 export async function GET(req: Request) {
@@ -22,7 +22,7 @@ export async function GET(req: Request) {
 			.select({
 				id: specs.id,
 				project_name: specs.project_name,
-				vineyard_id: specs.zone_id,
+				zone_id: specs.zone_id,
 				environment_stage: specs.environment_stage,
 				status: specs.status,
 				region: specs.region,

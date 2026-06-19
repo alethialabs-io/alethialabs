@@ -21,7 +21,7 @@ export interface ClusterData {
 	environment_stage: string;
 	status: string;
 	cloud_identities: { provider: string } | null;
-	vine_cluster: {
+	spec_cluster: {
 		cluster_name: string | null;
 		cluster_endpoint: string | null;
 		cluster_arn: string | null;
@@ -30,7 +30,7 @@ export interface ClusterData {
 		argocd_admin_password: string | null;
 		status: string;
 	} | null;
-	vine_databases: {
+	spec_databases: {
 		name: string;
 		engine: string | null;
 		endpoint: string | null;
@@ -38,13 +38,13 @@ export interface ClusterData {
 		master_credentials_secret_arn: string | null;
 		status: string;
 	}[];
-	vine_caches: {
+	spec_caches: {
 		name: string;
 		engine: string | null;
 		endpoint: string | null;
 		status: string;
 	}[];
-	vine_dns: { domain_name: string | null; enabled: boolean } | null;
+	spec_dns: { domain_name: string | null; enabled: boolean } | null;
 }
 
 /** Fetches all active specs with their cluster, database, cache, and DNS data. */
@@ -117,7 +117,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 			environment_stage: r.environment_stage,
 			status: r.status,
 			cloud_identities: r.provider ? { provider: r.provider } : null,
-			vine_cluster: r.cluster_status
+			spec_cluster: r.cluster_status
 				? {
 						cluster_name: r.cluster_name,
 						cluster_endpoint: r.cluster_endpoint,
@@ -128,13 +128,13 @@ export async function getClusters(): Promise<ClusterData[]> {
 						status: r.cluster_status,
 					}
 				: null,
-			vine_databases: dbRows
+			spec_databases: dbRows
 				.filter((d) => d.spec_id === r.id)
 				.map(({ spec_id: _s, ...db }) => db),
-			vine_caches: cacheRows
+			spec_caches: cacheRows
 				.filter((c) => c.spec_id === r.id)
 				.map(({ spec_id: _s, ...c }) => c),
-			vine_dns:
+			spec_dns:
 				r.dns_enabled !== null
 					? { domain_name: r.dns_domain_name, enabled: r.dns_enabled }
 					: null,

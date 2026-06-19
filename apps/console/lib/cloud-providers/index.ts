@@ -17,7 +17,7 @@ export { WAF_OPTIONS, CERT_OPTIONS } from "./dns";
 export { MESSAGING } from "./messaging";
 export { NOSQL } from "./nosql";
 export { NETWORK } from "./network";
-export { convertVineConfig, type ConversionWarning, type ConversionSeverity } from "./convert";
+export { convertSpecConfig, type ConversionWarning, type ConversionSeverity } from "./convert";
 export {
 	useCloudProviderStore,
 	useCloudProviderStore as useCloudProvider,

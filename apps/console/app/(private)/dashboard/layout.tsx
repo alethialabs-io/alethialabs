@@ -22,7 +22,7 @@ import { useJobNotifications } from "@/hooks/use-job-notifications";
 import { authClient } from "@/lib/auth/client";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
 import { cn } from "@/lib/utils";
-import { SidebarVineyards } from "@/components/sidebar-vineyards";
+import { SidebarZones } from "@/components/sidebar-zones";
 import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
 import {
 	Bell,
@@ -70,11 +70,11 @@ export default function DashboardLayout({
 
 	const navigation = [
 		{ name: "Overview", href: "/dashboard", icon: LayoutDashboard },
-		{ name: "Create a Spec", href: "/dashboard/plant", icon: Plus },
+		{ name: "Create a Spec", href: "/dashboard/design-spec", icon: Plus },
 		{ name: "Clusters", href: "/dashboard/clusters", icon: Server },
 		{ name: "Jobs", href: "/dashboard/jobs", icon: ClipboardList },
 		{ name: "Connectors", href: "/dashboard/connectors", icon: Blocks },
-		{ name: "Runners", href: "/dashboard/tendrils", icon: Workflow },
+		{ name: "Runners", href: "/dashboard/runners", icon: Workflow },
 	];
 
 	const getUserInitials = () => {
@@ -214,7 +214,7 @@ export default function DashboardLayout({
 								</DropdownMenuItem>
 								<DropdownMenuItem asChild>
 									<Link
-										href="/dashboard/plant"
+										href="/dashboard/design-spec"
 										className="cursor-pointer"
 									>
 										<Settings className="mr-2 h-4 w-4 text-muted-foreground" />
@@ -272,7 +272,7 @@ export default function DashboardLayout({
 						})}
 
 						<Suspense fallback={null}>
-							<SidebarVineyards />
+							<SidebarZones />
 						</Suspense>
 					</nav>
 
@@ -365,7 +365,7 @@ export default function DashboardLayout({
 								})}
 
 								<Suspense fallback={null}>
-									<SidebarVineyards />
+									<SidebarZones />
 								</Suspense>
 							</nav>
 						</aside>

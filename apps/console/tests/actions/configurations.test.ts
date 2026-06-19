@@ -7,7 +7,7 @@ function cleanEmptyUuids(
 	data: Record<string, unknown>,
 ): Record<string, unknown> {
 	const uuidFields = [
-		"vineyard_id",
+		"zone_id",
 		"cluster_id",
 		"cloud_identity_id",
 	];
@@ -22,20 +22,20 @@ function cleanEmptyUuids(
 
 function shouldAutoProvision(data: {
 	cloud_identity_id?: string | null;
-	vineyard_id?: string | null;
+	zone_id?: string | null;
 }): boolean {
-	return !!(data.cloud_identity_id && data.vineyard_id);
+	return !!(data.cloud_identity_id && data.zone_id);
 }
 
 describe("Configuration UUID cleanup", () => {
 	it("converts empty string UUIDs to null", () => {
 		const result = cleanEmptyUuids({
-			vineyard_id: "",
+			zone_id: "",
 			cluster_id: "",
 			cloud_identity_id: "",
 			project_name: "test",
 		});
-		expect(result.vineyard_id).toBeNull();
+		expect(result.zone_id).toBeNull();
 		expect(result.cluster_id).toBeNull();
 		expect(result.cloud_identity_id).toBeNull();
 		expect(result.project_name).toBe("test");
@@ -43,22 +43,22 @@ describe("Configuration UUID cleanup", () => {
 
 	it("preserves valid UUIDs", () => {
 		const uuid = "550e8400-e29b-41d4-a716-446655440000";
-		const result = cleanEmptyUuids({ vineyard_id: uuid });
-		expect(result.vineyard_id).toBe(uuid);
+		const result = cleanEmptyUuids({ zone_id: uuid });
+		expect(result.zone_id).toBe(uuid);
 	});
 
 	it("converts undefined to null", () => {
 		const result = cleanEmptyUuids({});
-		expect(result.vineyard_id).toBeNull();
+		expect(result.zone_id).toBeNull();
 	});
 });
 
 describe("Auto-provision logic", () => {
-	it("should auto-provision when both identity and vineyard set", () => {
+	it("should auto-provision when both identity and zone set", () => {
 		expect(
 			shouldAutoProvision({
 				cloud_identity_id: "id",
-				vineyard_id: "vid",
+				zone_id: "vid",
 			}),
 		).toBe(true);
 	});
@@ -67,16 +67,16 @@ describe("Auto-provision logic", () => {
 		expect(
 			shouldAutoProvision({
 				cloud_identity_id: null,
-				vineyard_id: "vid",
+				zone_id: "vid",
 			}),
 		).toBe(false);
 	});
 
-	it("should not auto-provision when vineyard missing", () => {
+	it("should not auto-provision when zone missing", () => {
 		expect(
 			shouldAutoProvision({
 				cloud_identity_id: "id",
-				vineyard_id: null,
+				zone_id: null,
 			}),
 		).toBe(false);
 	});

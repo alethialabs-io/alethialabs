@@ -140,8 +140,8 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 		enableSorting: false,
 		cell: ({ row }) => {
 			const specId = row.getValue<string | null>("spec_id");
-			const vineName = row.original.vine_name;
-			const vineyardId = row.original.vine_vineyard_id;
+			const specName = row.original.spec_name;
+			const zoneId = row.original.spec_zone_id;
 			const provider = row.original.cloud_provider;
 
 			const providerIcon = provider ? (
@@ -157,12 +157,12 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 				);
 			}
 
-			const href = vineyardId ? `/dashboard/vineyards/${vineyardId}/vines/${specId}` : "#";
+			const href = zoneId ? `/dashboard/zones/${zoneId}/specs/${specId}` : "#";
 			return (
 				<div className="flex items-center gap-1.5">
 					{providerIcon}
 					<Link href={href} onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-foreground hover:underline">
-						{vineName ?? specId.slice(0, 8)}
+						{specName ?? specId.slice(0, 8)}
 					</Link>
 				</div>
 			);
@@ -174,11 +174,11 @@ export const jobColumns: ColumnDef<JobRow>[] = [
 		enableSorting: false,
 		cell: ({ row }) => {
 			const runnerId = row.getValue<string | null>("runner_id");
-			const workerName = row.original.worker_name;
+			const runnerName = row.original.runner_name;
 			if (!runnerId) return <span className="text-xs text-muted-foreground">—</span>;
 			return (
-				<Link href="/dashboard/tendrils" onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-foreground hover:underline">
-					{workerName ?? runnerId.slice(0, 8)}
+				<Link href="/dashboard/runners" onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-foreground hover:underline">
+					{runnerName ?? runnerId.slice(0, 8)}
 				</Link>
 			);
 		},

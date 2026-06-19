@@ -11,7 +11,7 @@ import { querySpecFull } from "@/lib/queries/spec-full";
 import { notifyScaler } from "@/lib/scaler";
 
 // Job types the CLI is allowed to queue through this endpoint (a subset of the
-// full provision_job_type enum — worker-lifecycle types are created elsewhere).
+// full provision_job_type enum — runner-lifecycle types are created elsewhere).
 type CreatableJobType = "DEPLOY" | "DESTROY" | "PLAN" | "DESTROY_WORKER";
 
 /** Narrows an untrusted body value to a CreatableJobType (no cast). */
@@ -41,11 +41,11 @@ export async function POST(req: Request) {
 		const body = await req.json();
 		const {
 			job_type,
-			vineyard_id,
+			zone_id,
 			configuration_id,
 			cloud_identity_id,
 			config_snapshot,
-			assigned_worker_id,
+			assigned_runner_id,
 			plan_job_id,
 		} = body;
 
@@ -85,7 +85,7 @@ export async function POST(req: Request) {
 		let snapshot: Record<string, unknown> = config_snapshot || {};
 		let configHash: string | null = null;
 		let resolvedCloudIdentityId: string | null = cloud_identity_id || null;
-		let resolvedVineyardId: string | null = vineyard_id || null;
+		let resolvedZoneId: string | null = zone_id || null;
 
 		if (
 			(jobType === "DEPLOY" || jobType === "PLAN" || jobType === "DESTROY") &&
@@ -111,8 +111,8 @@ export async function POST(req: Request) {
 			if (!resolvedCloudIdentityId && config.cloud_identity_id) {
 				resolvedCloudIdentityId = config.cloud_identity_id;
 			}
-			if (!resolvedVineyardId && config.vineyard_id) {
-				resolvedVineyardId = config.vineyard_id;
+			if (!resolvedZoneId && config.zone_id) {
+				resolvedZoneId = config.zone_id;
 			}
 		}
 
@@ -120,14 +120,14 @@ export async function POST(req: Request) {
 			.insert(jobs)
 			.values({
 				user_id: userId,
-				zone_id: resolvedVineyardId,
+				zone_id: resolvedZoneId,
 				cloud_identity_id: resolvedCloudIdentityId,
 				job_type: jobType,
 				spec_id: configuration_id || null,
 				config_snapshot: snapshot,
 				configuration_hash: configHash,
 				status: "QUEUED",
-				assigned_runner_id: assigned_worker_id || null,
+				assigned_runner_id: assigned_runner_id || null,
 				plan_job_id: plan_job_id || null,
 			})
 			.returning();
@@ -167,7 +167,7 @@ export async function GET(req: Request) {
 
 	const { searchParams } = new URL(req.url);
 	const status = searchParams.get("status");
-	const vineyardId = searchParams.get("vineyard_id");
+	const zoneId = searchParams.get("zone_id");
 	const limit = Math.min(parseInt(searchParams.get("limit") || "20", 10), 100);
 	const offset = parseInt(searchParams.get("offset") || "0", 10);
 
@@ -175,7 +175,7 @@ export async function GET(req: Request) {
 
 	const conds: SQL[] = [eq(jobs.user_id, userId)];
 	if (status) conds.push(sql`${jobs.status}::text = ${status}`);
-	if (vineyardId) conds.push(eq(jobs.zone_id, vineyardId));
+	if (zoneId) conds.push(eq(jobs.zone_id, zoneId));
 	const whereExpr = and(...conds);
 
 	const rows = await db
@@ -199,8 +199,8 @@ export async function GET(req: Request) {
 
 	const result = rows.map((r) => ({
 		...r.job,
-		vine_name: r.project_name ?? null,
-		worker_name: r.runner_name ?? null,
+		spec_name: r.project_name ?? null,
+		runner_name: r.runner_name ?? null,
 	}));
 
 	return NextResponse.json({ jobs: result, total, limit, offset });

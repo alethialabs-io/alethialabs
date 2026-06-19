@@ -33,7 +33,7 @@ import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 import { fetchRepositoriesByProvider } from "@/app/server/actions/git/repositories";
 import { Repository } from "@/app/server/actions/git/types";
 import { getLinkedProviders } from "@/app/server/actions/identities";
-import { useRepositoryContext } from "@/components/plant-vine/repository-context";
+import { useRepositoryContext } from "@/components/design-spec/repository-context";
 import { AlertCircle, Plus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 

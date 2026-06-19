@@ -41,7 +41,7 @@ export const DEFAULT_CACHE_NODE: Record<CloudProviderSlug, string> = {
 	azure: "C1",
 };
 
-/** Cross-provider cache node mapping for vine conversion. */
+/** Cross-provider cache node mapping for spec conversion. */
 export const CACHE_NODE_MAP: Record<
 	CloudProviderSlug,
 	Record<CloudProviderSlug, Record<string, string>>

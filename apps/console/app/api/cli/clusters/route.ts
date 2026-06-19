@@ -9,7 +9,7 @@ import { NextResponse } from "next/server";
 
 /**
  * Lists spec_cluster data joined with the parent spec's project_name for the
- * CLI user. Wire-locked: the flat `vine_*` keys are the frozen CLI contract.
+ * CLI user. Wire-locked: the flat `spec_*` keys are the frozen CLI contract.
  */
 export async function GET(req: Request) {
 	const auth = await authorizeCli(req, "view", { type: "spec" });
@@ -32,9 +32,9 @@ export async function GET(req: Request) {
 				estimated_monthly_cost: specCluster.estimated_monthly_cost,
 				created_at: specCluster.created_at,
 				updated_at: specCluster.updated_at,
-				vine_project_name: specs.project_name,
-				vine_environment: specs.environment_stage,
-				vine_region: specs.region,
+				spec_project_name: specs.project_name,
+				spec_environment: specs.environment_stage,
+				spec_region: specs.region,
 			})
 			.from(specCluster)
 			.innerJoin(specs, eq(specCluster.spec_id, specs.id))

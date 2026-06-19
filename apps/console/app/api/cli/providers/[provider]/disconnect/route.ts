@@ -8,7 +8,7 @@ import { NextResponse } from "next/server";
 
 type DisconnectBody = { identity_id?: string };
 
-/** Resets a provider identity to its pending state and orphans its vines. */
+/** Resets a provider identity to its pending state and orphans its specs. */
 export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ provider: string }> },

@@ -44,9 +44,9 @@ export async function getJobs() {
 		const rows = await tx
 			.select({
 				job: jobs,
-				vine_name: specs.project_name,
-				vine_vineyard_id: specs.zone_id,
-				worker_name: runners.name,
+				spec_name: specs.project_name,
+				spec_zone_id: specs.zone_id,
+				runner_name: runners.name,
 				cloud_provider: cloudIdentities.provider,
 			})
 			.from(jobs)
@@ -57,9 +57,9 @@ export async function getJobs() {
 
 		return rows.map((r) => ({
 			...r.job,
-			vine_name: r.vine_name ?? null,
-			vine_vineyard_id: r.vine_vineyard_id ?? null,
-			worker_name: r.worker_name ?? null,
+			spec_name: r.spec_name ?? null,
+			spec_zone_id: r.spec_zone_id ?? null,
+			runner_name: r.runner_name ?? null,
 			cloud_provider: r.cloud_provider ?? null,
 		}));
 	});
@@ -86,14 +86,14 @@ export async function getPlanResult(jobId: string) {
 	});
 }
 
-export async function getVineJobs(vineId: string) {
-	const actor = await authorize("view", { type: "spec", id: vineId });
+export async function getSpecJobs(specId: string) {
+	const actor = await authorize("view", { type: "spec", id: specId });
 	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		return tx
 			.select()
 			.from(jobs)
-			.where(eq(jobs.spec_id, vineId))
+			.where(eq(jobs.spec_id, specId))
 			.orderBy(desc(jobs.created_at));
 	});
 }

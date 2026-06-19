@@ -183,13 +183,12 @@ $$;
 GRANT EXECUTE ON FUNCTION public.set_default_runner(UUID, UUID) TO alethia_app;
 
 -- ── spec_full: denormalized read model for the CLI config + job-create endpoints.
--- Mirrors the legacy vine_full OUTPUT column names exactly (vineyard_id, create_vpc,
--- …) so the Go wire contract holds; sources the renamed spec_* tables. Numerics are
--- cast to float8 so the JSON carries numbers (matching the old PostgREST output;
--- postgres-js otherwise returns numeric as a string). ──
+-- OUTPUT column names match the SpecConfig wire contract (zone_id, create_vpc, …);
+-- sources the renamed spec_* tables. Numerics are cast to float8 so the JSON carries
+-- numbers (postgres-js otherwise returns numeric as a string). ──
 CREATE OR REPLACE VIEW public.spec_full AS
 SELECT
-  s.id, s.user_id, s.zone_id AS vineyard_id, s.cloud_identity_id,
+  s.id, s.user_id, s.zone_id AS zone_id, s.cloud_identity_id,
   s.project_name,
   s.environment_stage::text AS environment_stage,
   s.region,

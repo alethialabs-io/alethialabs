@@ -4,9 +4,9 @@
 
 
 import { getConnectorsWithStatus, type ConnectorWithConnection } from "@/app/server/actions/connectors";
-import { getOnlineRunnerCount } from "@/app/server/actions/tendrils";
+import { getOnlineRunnerCount } from "@/app/server/actions/runners";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
-import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
+import { useZonesStore } from "@/lib/stores/use-zones-store";
 import { DataTable } from "@/components/data-table";
 import { jobColumns } from "@/components/jobs/columns";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,23 +27,23 @@ import { useEffect, useMemo, useState } from "react";
 export default function DashboardPage() {
 	const router = useRouter();
 	const jobsStore = useJobsStore();
-	const vineyardsStore = useVineyardsStore();
+	const zonesStore = useZonesStore();
 
 	const [integrations, setIntegrations] = useState<ConnectorWithConnection[]>([]);
-	const [onlineTendrils, setOnlineWorkers] = useState(0);
+	const [onlineRunners, setOnlineRunners] = useState(0);
 
 	useEffect(() => {
 		jobsStore.fetchJobs();
-		vineyardsStore.fetchVineyards();
+		zonesStore.fetchZones();
 		getConnectorsWithStatus().then(setIntegrations).catch(() => {});
-		getOnlineRunnerCount().then(setOnlineWorkers).catch(() => {});
+		getOnlineRunnerCount().then(setOnlineRunners).catch(() => {});
 	}, []);
 
-	const allVines = useMemo(
-		() => vineyardsStore.vineyards.flatMap((vy) => vy.vines ?? []),
-		[vineyardsStore.vineyards],
+	const allSpecs = useMemo(
+		() => zonesStore.zones.flatMap((z) => z.specs ?? []),
+		[zonesStore.zones],
 	);
-	const activeVines = allVines.filter((v) => v.status === "ACTIVE").length;
+	const activeSpecs = allSpecs.filter((v) => v.status === "ACTIVE").length;
 
 	const recentJobs = useMemo(
 		() => jobsStore.jobs.slice(0, 5),
@@ -59,7 +59,7 @@ export default function DashboardPage() {
 		router.push(`/dashboard/jobs/${job.id}`);
 	};
 
-	if (jobsStore.isLoading && vineyardsStore.isLoading) {
+	if (jobsStore.isLoading && zonesStore.isLoading) {
 		return (
 			<div className="space-y-8 w-full">
 				<div className="flex items-center justify-between">
@@ -132,7 +132,7 @@ export default function DashboardPage() {
 						Your infrastructure at a glance.
 					</p>
 				</div>
-				<Link href="/dashboard/plant">
+				<Link href="/dashboard/design-spec">
 					<Button size="sm" className="h-8 text-xs">
 						<Plus className="mr-1.5 h-3.5 w-3.5" />
 						Create a Spec
@@ -142,9 +142,9 @@ export default function DashboardPage() {
 
 			{/* Stats Strip */}
 			<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-				<StatChip icon={<Box className="h-3.5 w-3.5" />} value={allVines.length} label="Specs" />
-				<StatChip icon={<CheckCircle2 className="h-3.5 w-3.5" />} value={activeVines} label="Active" />
-				<StatChip icon={<Workflow className="h-3.5 w-3.5" />} value={onlineTendrils} label={`Runner${onlineTendrils !== 1 ? "s" : ""} Online`} />
+				<StatChip icon={<Box className="h-3.5 w-3.5" />} value={allSpecs.length} label="Specs" />
+				<StatChip icon={<CheckCircle2 className="h-3.5 w-3.5" />} value={activeSpecs} label="Active" />
+				<StatChip icon={<Workflow className="h-3.5 w-3.5" />} value={onlineRunners} label={`Runner${onlineRunners !== 1 ? "s" : ""} Online`} />
 				<StatChip icon={<ClipboardList className="h-3.5 w-3.5" />} value={jobsStore.jobs.length} label="Total Jobs" />
 			</div>
 

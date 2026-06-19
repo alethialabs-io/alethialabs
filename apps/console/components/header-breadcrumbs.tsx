@@ -13,18 +13,18 @@ import {
 } from "@/components/ui/breadcrumb";
 import { AlethiaLogo } from "@/components/alethia-logo";
 import { JOB_TYPES } from "@/components/jobs/columns";
-import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
+import { useZonesStore } from "@/lib/stores/use-zones-store";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Fragment, useMemo } from "react";
 
 const SEGMENT_LABELS: Record<string, string> = {
-	plant: "Create a Spec",
+	"design-spec": "Create a Spec",
 	clusters: "Clusters",
 	jobs: "Jobs",
 	connectors: "Connectors",
-	tendrils: "Runners",
+	runners: "Runners",
 	profile: "Profile",
 };
 
@@ -38,7 +38,7 @@ interface Crumb {
 /** Branding + route-aware breadcrumb bar for the dashboard header. */
 export function HeaderBreadcrumbs() {
 	const pathname = usePathname();
-	const { vineyards } = useVineyardsStore();
+	const { zones } = useZonesStore();
 	const { jobs } = useJobsStore();
 
 	const crumbs = useMemo(() => {
@@ -61,21 +61,21 @@ export function HeaderBreadcrumbs() {
 				continue;
 			}
 
-			if (seg === "vineyards") {
-				const vineyardId = raw[i + 1];
-				if (vineyardId && UUID_RE.test(vineyardId)) {
-					const vy = vineyards.find((v) => v.id === vineyardId);
-					const vyName = vy?.name ?? vineyardId.slice(0, 8) + "…";
-					const vineId = raw[i + 2] === "vines" ? raw[i + 3] : undefined;
+			if (seg === "zones") {
+				const zoneId = raw[i + 1];
+				if (zoneId && UUID_RE.test(zoneId)) {
+					const z = zones.find((v) => v.id === zoneId);
+					const zoneName = z?.name ?? zoneId.slice(0, 8) + "…";
+					const specId = raw[i + 2] === "specs" ? raw[i + 3] : undefined;
 
-					if (vineId && UUID_RE.test(vineId)) {
-						const vine = vy?.vines.find((v) => v.id === vineId);
-						const vineName = vine?.project_name ?? vineId.slice(0, 8) + "…";
-						result.push({ label: vyName, href: `/dashboard/vineyards/${vineyardId}` });
-						result.push({ label: vineName });
+					if (specId && UUID_RE.test(specId)) {
+						const spec = z?.specs.find((v) => v.id === specId);
+						const specName = spec?.project_name ?? specId.slice(0, 8) + "…";
+						result.push({ label: zoneName, href: `/dashboard/zones/${zoneId}` });
+						result.push({ label: specName });
 						i += 4;
 					} else {
-						result.push({ label: vyName });
+						result.push({ label: zoneName });
 						i += 2;
 					}
 				} else {
@@ -104,7 +104,7 @@ export function HeaderBreadcrumbs() {
 		}
 
 		return result;
-	}, [pathname, vineyards, jobs]);
+	}, [pathname, zones, jobs]);
 
 	const isHome = crumbs.length === 0;
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { VineFormData } from "@/lib/validations/vine-form.schema";
+import type { SpecFormData } from "@/lib/validations/spec-form.schema";
 import type { CloudProviderSlug } from "./registry";
 import { PROVIDERS } from "./registry";
 import { REGION_MAP, DEFAULT_REGION } from "./regions";
@@ -23,12 +23,12 @@ export interface ConversionWarning {
 	message: string;
 }
 
-/** Converts a vine form config from one cloud provider to another, mapping all provider-specific values. */
-export function convertVineConfig(
-	source: VineFormData,
+/** Converts a spec form config from one cloud provider to another, mapping all provider-specific values. */
+export function convertSpecConfig(
+	source: SpecFormData,
 	sourceProvider: CloudProviderSlug,
 	targetProvider: CloudProviderSlug,
-): { data: VineFormData; warnings: ConversionWarning[] } {
+): { data: SpecFormData; warnings: ConversionWarning[] } {
 	if (sourceProvider === targetProvider) {
 		return { data: structuredClone(source), warnings: [] };
 	}
@@ -39,16 +39,16 @@ export function convertVineConfig(
 
 	// --- Region ---
 	const regionMap = REGION_MAP[sourceProvider]?.[targetProvider] ?? {};
-	const mappedRegion = regionMap[data.vine.region];
+	const mappedRegion = regionMap[data.spec.region];
 	if (mappedRegion) {
-		data.vine.region = mappedRegion;
-	} else if (data.vine.region) {
+		data.spec.region = mappedRegion;
+	} else if (data.spec.region) {
 		warnings.push({
 			severity: "error",
 			component: "Region",
-			message: `Region "${data.vine.region}" has no equivalent on ${target.shortName}. Defaulting to ${DEFAULT_REGION[targetProvider]}.`,
+			message: `Region "${data.spec.region}" has no equivalent on ${target.shortName}. Defaulting to ${DEFAULT_REGION[targetProvider]}.`,
 		});
-		data.vine.region = DEFAULT_REGION[targetProvider];
+		data.spec.region = DEFAULT_REGION[targetProvider];
 	}
 
 	// --- Cluster ---

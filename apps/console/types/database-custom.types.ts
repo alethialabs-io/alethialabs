@@ -148,7 +148,7 @@ export interface AuditChanges {
 	[key: string]: unknown;
 }
 
-export interface WorkerDeployConfig {
+export interface RunnerDeployConfig {
 	region: string;
 	cloud_provider: string;
 	image_tag: string;
@@ -156,9 +156,9 @@ export interface WorkerDeployConfig {
 	cpu: number;
 	memory: number;
 	image_repository: string;
-	worker_token?: string;
+	runner_token?: string;
 }
 
-export interface WorkerMetadata {
-	deploy_config?: WorkerDeployConfig | null;
+export interface RunnerMetadata {
+	deploy_config?: RunnerDeployConfig | null;
 }

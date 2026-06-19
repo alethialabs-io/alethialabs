@@ -4,8 +4,8 @@
 
 
 import { useCallback, useEffect, useState } from "react";
-import { planVine, provisionVine } from "@/app/server/actions/vines";
-import { getPlanResult, getVineJobs } from "@/app/server/actions/jobs";
+import { planSpec, provisionSpec } from "@/app/server/actions/specs";
+import { getPlanResult, getSpecJobs } from "@/app/server/actions/jobs";
 import {
 	parsePlanJSON,
 	type PlanSummary,
@@ -36,11 +36,11 @@ export interface UsePlanReturn {
 	costResult: CostSummary | null;
 	logs: JobLogEntry[];
 	error: string | null;
-	generatePlan: (workerId?: string | null) => Promise<void>;
-	applyPlan: (workerId?: string | null) => Promise<void>;
+	generatePlan: (runnerId?: string | null) => Promise<void>;
+	applyPlan: (runnerId?: string | null) => Promise<void>;
 }
 
-export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanReturn {
+export function usePlan(specId: string | null, onRefresh?: () => void): UsePlanReturn {
 	const [phase, setPhase] = useState<PlanPhase>("idle");
 	const [planJobId, setPlanJobId] = useState<string | null>(null);
 	const [deployJobId, setDeployJobId] = useState<string | null>(null);
@@ -52,13 +52,13 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 	const jobs = useJobsStore((state) => state.jobs);
 
 	useEffect(() => {
-		if (!vineId) return;
+		if (!specId) return;
 		let cancelled = false;
 
 		async function loadExistingPlan() {
 			try {
-				const vineJobs = await getVineJobs(vineId!);
-				const latestPlan = vineJobs
+				const specJobs = await getSpecJobs(specId!);
+				const latestPlan = specJobs
 					.filter(
 						(j) =>
 							j.job_type === "PLAN" && j.status === "SUCCESS",
@@ -107,7 +107,7 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 		return () => {
 			cancelled = true;
 		};
-	}, [vineId]);
+	}, [specId]);
 
 	useEffect(() => {
 		if (!planJobId || phase !== "generating") return;
@@ -161,15 +161,15 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 		}
 	}, [jobs, deployJobId, phase, onRefresh]);
 
-	const generatePlan = useCallback(async (workerId?: string | null) => {
-		if (!vineId) return;
+	const generatePlan = useCallback(async (runnerId?: string | null) => {
+		if (!specId) return;
 		setPhase("generating");
 		setError(null);
 		setPlanResult(null);
 		setCostResult(null);
 
 		try {
-			const { jobId } = await planVine(vineId, workerId);
+			const { jobId } = await planSpec(specId, runnerId);
 			// Logs stream via useJobLogStream(planJobId) once this is set.
 			setPlanJobId(jobId);
 		} catch (err) {
@@ -180,15 +180,15 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 					: "Failed to start plan",
 			);
 		}
-	}, [vineId]);
+	}, [specId]);
 
-	const applyPlan = useCallback(async (workerId?: string | null) => {
-		if (!vineId || !planJobId) return;
+	const applyPlan = useCallback(async (runnerId?: string | null) => {
+		if (!specId || !planJobId) return;
 		setPhase("applying");
 		setError(null);
 
 		try {
-			const { jobId } = await provisionVine(vineId, planJobId, workerId);
+			const { jobId } = await provisionSpec(specId, planJobId, runnerId);
 			setDeployJobId(jobId);
 		} catch (err) {
 			setPhase("failed");
@@ -198,7 +198,7 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 					: "Failed to start provisioning",
 			);
 		}
-	}, [vineId, planJobId]);
+	}, [specId, planJobId]);
 
 	return {
 		phase,

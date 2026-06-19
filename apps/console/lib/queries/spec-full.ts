@@ -6,10 +6,10 @@ import type { getServiceDb } from "@/lib/db";
 import type { ClusterAdmin } from "@/types/database-custom.types";
 
 /**
- * Row shape of the `spec_full` view (lib/db/programmables.sql). The view keeps the
- * legacy vine_full OUTPUT column names (vineyard_id, create_vpc, …) so the Go/CLI
- * wire contract holds; this interface mirrors those columns and is the single TS
- * source for them (the SQL is the single source for the view itself). LEFT JOINs to
+ * Row shape of the `spec_full` view (lib/db/programmables.sql). OUTPUT column names
+ * match the SpecConfig wire contract (zone_id, create_vpc, …); this interface mirrors
+ * those columns and is the single TS source for them (the SQL is the single source for
+ * the view itself). LEFT JOINs to
  * the component tables mean component-derived columns are nullable. Numerics are
  * cast to float8 in the view so they arrive as numbers, not strings.
  *
@@ -20,7 +20,7 @@ import type { ClusterAdmin } from "@/types/database-custom.types";
 export type SpecFull = {
 	id: string;
 	user_id: string;
-	vineyard_id: string | null;
+	zone_id: string | null;
 	cloud_identity_id: string | null;
 	project_name: string;
 	environment_stage: string;

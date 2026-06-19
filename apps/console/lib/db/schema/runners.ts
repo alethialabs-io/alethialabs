@@ -13,7 +13,7 @@ import {
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
-import type { WorkerMetadata } from "@/types/database-custom.types";
+import type { RunnerMetadata } from "@/types/database-custom.types";
 import { workerMode, workerStatus } from "./enums";
 import { cloudIdentities } from "./identities";
 
@@ -48,7 +48,7 @@ export const runners = pgTable(
 		version: text(),
 		release_id: uuid().references(() => runnerReleases.id),
 		is_default: boolean().default(false).notNull(),
-		metadata: jsonb().$type<WorkerMetadata>().default({}),
+		metadata: jsonb().$type<RunnerMetadata>().default({}),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
 	(t) => [

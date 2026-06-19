@@ -88,7 +88,7 @@ export default function ClustersPage() {
 						spec&apos;s detail page and click Deploy.
 					</p>
 					<Link
-						href="/dashboard/plant"
+						href="/dashboard/design-spec"
 						className="mt-4 text-xs text-primary hover:underline"
 					>
 						Create a spec
