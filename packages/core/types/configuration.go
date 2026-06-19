@@ -19,23 +19,21 @@ type ConfigurationSummary struct {
 }
 
 type Configuration struct {
-	AwsAccountID            string    `json:"aws_account_id"`
-	AwsRegion               string    `json:"aws_region"`
+	CloudAccountID          string    `json:"cloud_account_id"`
+	Region                  string    `json:"region"`
 	ContainerPlatform       string    `json:"container_platform"`
-	CreateVpc               *bool     `json:"create_vpc"`
+	ProvisionNetwork        *bool     `json:"provision_network"`
 	CreatedAt               time.Time `json:"created_at"`
 	DbMaxCapacity           *float64  `json:"db_max_capacity"`
 	DbMinCapacity           *float64  `json:"db_min_capacity"`
 	Description             *string   `json:"description"`
 	DnsDomainName           *string   `json:"dns_domain_name"`
-	DnsHostedZone           *string   `json:"dns_hosted_zone"`
+	DnsZoneID               *string   `json:"dns_zone_id"`
 	DownloadCount           *int      `json:"download_count"`
-	EksClusterAdmins        *string   `json:"eks_cluster_admins"`
-	EnableCloudfrontWaf     *bool     `json:"enable_cloudfront_waf"`
-	EnableDns               *bool     `json:"enable_dns"`
+	ClusterAdmins           *string   `json:"cluster_admins"`
+	DnsEnabled              *bool     `json:"dns_enabled"`
 	EnableGitopsDestination *bool     `json:"enable_gitops_destination"`
-	EnableKarpenter         *bool     `json:"enable_karpenter"`
-	EnableRedis             *bool     `json:"enable_redis"`
+	HasCache                *bool     `json:"has_cache"`
 	EnvironmentRepository   *string   `json:"environment_repository"`
 	EnvironmentStage        string    `json:"environment_stage"`
 	FullConfig              *string   `json:"full_config"`
@@ -58,7 +56,7 @@ type Configuration struct {
 	UiPositionY            *float64  `json:"ui_position_y"`
 	UpdatedAt              time.Time `json:"updated_at"`
 	UserID                 string    `json:"user_id"`
-	VpcCidr                *string   `json:"vpc_cidr"`
+	CIDRBlock              *string   `json:"cidr_block"`
 }
 
 type Harvest struct {

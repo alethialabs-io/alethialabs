@@ -63,25 +63,25 @@ func PrintConfiguration(config types.Configuration) {
 		doc.WriteString("\n")
 	}
 
-	doc.WriteString(subHeaderStyle.Render("AWS Configuration"))
+	doc.WriteString(subHeaderStyle.Render("Cloud"))
 	doc.WriteString("\n")
-	doc.WriteString(kv("Account ID:", config.AwsAccountID))
+	doc.WriteString(kv("Account ID:", config.CloudAccountID))
 	doc.WriteString("\n")
-	doc.WriteString(kv("Region:", config.AwsRegion))
+	doc.WriteString(kv("Region:", config.Region))
 	doc.WriteString("\n\n")
 
 	doc.WriteString(subHeaderStyle.Render("Network Configuration"))
 	doc.WriteString("\n")
-	doc.WriteString(kvBool("Create VPC:", config.CreateVpc))
-	if config.CreateVpc != nil && *config.CreateVpc {
+	doc.WriteString(kvBool("Provision Network:", config.ProvisionNetwork))
+	if config.ProvisionNetwork != nil && *config.ProvisionNetwork {
 		doc.WriteString("\n")
-		doc.WriteString(kv("VPC CIDR:", derefString(config.VpcCidr)))
+		doc.WriteString(kv("Network CIDR:", derefString(config.CIDRBlock)))
 	}
 	doc.WriteString("\n")
-	doc.WriteString(kvBool("Enable DNS:", config.EnableDns))
-	if config.EnableDns != nil && *config.EnableDns {
+	doc.WriteString(kvBool("Enable DNS:", config.DnsEnabled))
+	if config.DnsEnabled != nil && *config.DnsEnabled {
 		doc.WriteString("\n")
-		doc.WriteString(kv("Hosted Zone:", derefString(config.DnsHostedZone)))
+		doc.WriteString(kv("DNS Zone:", derefString(config.DnsZoneID)))
 		doc.WriteString("\n")
 		doc.WriteString(kv("Domain Name:", derefString(config.DnsDomainName)))
 	}
@@ -94,20 +94,12 @@ func PrintConfiguration(config types.Configuration) {
 	doc.WriteString(kvNum("Max Capacity:", config.DbMaxCapacity))
 	doc.WriteString("\n\n")
 
-	doc.WriteString(subHeaderStyle.Render("Security"))
+	doc.WriteString(subHeaderStyle.Render("Services"))
 	doc.WriteString("\n")
-	doc.WriteString(kvBool("CloudFront WAF:", config.EnableCloudfrontWaf))
-	doc.WriteString("\n")
-	doc.WriteString(kvBool("Redis:", config.EnableRedis))
-	if config.EnableRedis != nil && *config.EnableRedis {
-		doc.WriteString("\n")
-		doc.WriteString(kv("Allowed CIDR Blocks:", derefString(config.RedisAllowedCidrBlocks)))
-	}
+	doc.WriteString(kvBool("Cache:", config.HasCache))
 	doc.WriteString("\n\n")
 
 	doc.WriteString(subHeaderStyle.Render("Advanced"))
-	doc.WriteString("\n")
-	doc.WriteString(kvBool("Karpenter Auto-Scaling:", config.EnableKarpenter))
 	doc.WriteString("\n")
 	doc.WriteString(kv("Terraform Version:", config.TerraformVersion))
 	doc.WriteString("\n")

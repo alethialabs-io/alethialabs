@@ -195,50 +195,46 @@ SELECT
   s.project_name,
   s.environment_stage::text AS environment_stage,
   s.region,
-  s.region AS aws_region,
   ci.provider AS cloud_provider,
-  ci.credentials->>'account_id' AS aws_account_id,
+  ci.credentials->>'account_id' AS cloud_account_id,
   s.terraform_version,
   s.status::text AS status,
   s.estimated_monthly_cost::float8 AS estimated_monthly_cost,
   s.created_at, s.updated_at,
 
   -- Network
-  net.provision_network AS create_vpc,
-  net.cidr_block AS vpc_cidr,
-  net.network_id AS selected_vpc_id,
+  net.provision_network,
+  net.cidr_block,
+  net.network_id,
   net.single_nat_gateway,
   net.status::text AS network_status,
-  net.status::text AS vpc_status,
 
-  -- Cluster
+  -- Cluster (provider-specific knobs travel in cluster_provider_config)
   cl.cluster_version,
-  (cl.provider_config->>'enable_karpenter')::boolean AS enable_karpenter,
+  cl.provider_config AS cluster_provider_config,
   cl.cluster_admins,
   cl.instance_types,
   cl.node_min_size, cl.node_max_size, cl.node_desired_size,
   cl.cluster_name, cl.cluster_endpoint,
   cl.status::text AS cluster_status,
-  cl.status::text AS eks_status,
 
-  -- DNS
-  dns.enabled AS enable_dns,
-  dns.domain_name AS dns_main_domain,
-  dns.zone_id AS dns_hosted_zone,
-  dns.managed_certificate AS acm_certificate_enable,
-  dns.waf_enabled,
-  (dns.provider_config->>'cloudfront_waf')::boolean AS cloudfront_waf_enabled,
-  (dns.provider_config->>'application_waf')::boolean AS application_waf_enabled,
+  -- DNS (provider-specific knobs travel in dns_provider_config)
+  dns.enabled AS dns_enabled,
+  dns.domain_name AS dns_domain_name,
+  dns.zone_id AS dns_zone_id,
+  dns.managed_certificate AS dns_managed_certificate,
+  dns.waf_enabled AS dns_waf_enabled,
+  dns.provider_config AS dns_provider_config,
   dns.status::text AS dns_status,
 
   -- Repositories
-  repos.apps_destination_repo AS applications_destination_repo,
+  repos.apps_destination_repo,
 
   -- Aggregated
-  EXISTS(SELECT 1 FROM public.spec_databases d WHERE d.spec_id = s.id AND d.status != 'DESTROYED') AS create_rds,
+  EXISTS(SELECT 1 FROM public.spec_databases d WHERE d.spec_id = s.id AND d.status != 'DESTROYED') AS has_database,
   (SELECT MIN(d.min_capacity)::float8 FROM public.spec_databases d WHERE d.spec_id = s.id AND d.status != 'DESTROYED') AS db_min_capacity,
   (SELECT MAX(d.max_capacity)::float8 FROM public.spec_databases d WHERE d.spec_id = s.id AND d.status != 'DESTROYED') AS db_max_capacity,
-  EXISTS(SELECT 1 FROM public.spec_caches c WHERE c.spec_id = s.id AND c.status != 'DESTROYED') AS enable_redis
+  EXISTS(SELECT 1 FROM public.spec_caches c WHERE c.spec_id = s.id AND c.status != 'DESTROYED') AS has_cache
 
 FROM public.specs s
 LEFT JOIN public.cloud_identities ci ON ci.id = s.cloud_identity_id

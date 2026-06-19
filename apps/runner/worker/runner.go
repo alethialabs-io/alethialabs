@@ -277,8 +277,6 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 				fmt.Fprintln(stdoutLogger, "AWS resources fetched successfully.")
 			}
 		}
-	case "BOOTSTRAP":
-		execErr = w.executeBootstrap(ctx, job, stdoutLogger, stderrLogger)
 	case "PLAN":
 		execErr = w.executePlan(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	case "DEPLOY":
@@ -480,42 +478,6 @@ func (w *Runner) fetchAzureResources(ctx context.Context, subscriptionID string,
 	}, nil
 }
 
-func (w *Runner) executeBootstrap(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
-	snapshot := job.ConfigSnapshot
-
-	params := provisioner.BootstrapParams{
-		ZoneID:      job.ZoneID,
-		Environment: getSnapshotString(snapshot, "environment_stage"),
-		Region:      getSnapshotString(snapshot, "aws_region"),
-		VpcCidr:     getSnapshotString(snapshot, "vpc_cidr"),
-		SelectedVpc: getSnapshotString(snapshot, "selected_vpc"),
-		Stdout:      stdout,
-		Stderr:      stderr,
-	}
-
-	if params.Environment == "" {
-		params.Environment = "dev"
-	}
-	if params.Region == "" {
-		params.Region = "eu-central-1"
-	}
-
-	result, err := provisioner.RunBootstrap(ctx, params)
-	if err != nil {
-		return err
-	}
-
-	if result != nil {
-		metadata := map[string]any{
-			"cluster_name": result.ClusterName,
-			"cluster_id":   result.ClusterID,
-		}
-		w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
-	}
-
-	return nil
-}
-
 func resolveSpecTemplatesDir() string {
 	candidates := []string{
 		"/home/runner/spec-templates",
@@ -712,9 +674,6 @@ func (w *Runner) executeDestroy(ctx context.Context, job *Job, stdout, stderr *J
 	snapshot := job.ConfigSnapshot
 
 	region := getSnapshotString(snapshot, "region")
-	if region == "" {
-		region = getSnapshotString(snapshot, "aws_region")
-	}
 
 	params := provisioner.DestroyParams{
 		ZoneID:           job.ZoneID,
@@ -746,14 +705,6 @@ func snapshotToSpecConfig(snapshot map[string]any) (*types.SpecConfig, error) {
 	var vc types.SpecConfig
 	if err := json.Unmarshal(data, &vc); err != nil {
 		return nil, err
-	}
-
-	if vc.Region == "" {
-		if r, ok := snapshot["aws_region"]; ok {
-			if s, ok := r.(string); ok {
-				vc.Region = s
-			}
-		}
 	}
 
 	return &vc, nil

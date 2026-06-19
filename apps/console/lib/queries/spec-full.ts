@@ -3,13 +3,17 @@
 
 import { type SQL, sql } from "drizzle-orm";
 import type { getServiceDb } from "@/lib/db";
-import type { ClusterAdmin } from "@/types/database-custom.types";
+import type {
+	ClusterAdmin,
+	ClusterProviderConfig,
+	DnsProviderConfig,
+} from "@/types/database-custom.types";
 
 /**
  * Row shape of the `spec_full` view (lib/db/programmables.sql). OUTPUT column names
- * match the SpecConfig wire contract (zone_id, create_vpc, …); this interface mirrors
- * those columns and is the single TS source for them (the SQL is the single source for
- * the view itself). LEFT JOINs to
+ * are cloud-neutral and mirror the table columns (provision_network, cidr_block,
+ * cluster_provider_config, …); this interface is the single TS source for them (the SQL
+ * is the single source for the view itself). LEFT JOINs to
  * the component tables mean component-derived columns are nullable. Numerics are
  * cast to float8 in the view so they arrive as numbers, not strings.
  *
@@ -25,9 +29,8 @@ export type SpecFull = {
 	project_name: string;
 	environment_stage: string;
 	region: string;
-	aws_region: string;
 	cloud_provider: string | null;
-	aws_account_id: string | null;
+	cloud_account_id: string | null;
 	terraform_version: string;
 	status: string;
 	estimated_monthly_cost: number | null;
@@ -35,16 +38,15 @@ export type SpecFull = {
 	updated_at: string;
 
 	// Network
-	create_vpc: boolean | null;
-	vpc_cidr: string | null;
-	selected_vpc_id: string | null;
+	provision_network: boolean | null;
+	cidr_block: string | null;
+	network_id: string | null;
 	single_nat_gateway: boolean | null;
 	network_status: string | null;
-	vpc_status: string | null;
 
-	// Cluster
+	// Cluster (provider-specific knobs in cluster_provider_config)
 	cluster_version: string | null;
-	enable_karpenter: boolean | null;
+	cluster_provider_config: ClusterProviderConfig | null;
 	cluster_admins: ClusterAdmin[] | null;
 	instance_types: string[] | null;
 	node_min_size: number | null;
@@ -53,26 +55,24 @@ export type SpecFull = {
 	cluster_name: string | null;
 	cluster_endpoint: string | null;
 	cluster_status: string | null;
-	eks_status: string | null;
 
-	// DNS
-	enable_dns: boolean | null;
-	dns_main_domain: string | null;
-	dns_hosted_zone: string | null;
-	acm_certificate_enable: boolean | null;
-	waf_enabled: boolean | null;
-	cloudfront_waf_enabled: boolean | null;
-	application_waf_enabled: boolean | null;
+	// DNS (provider-specific knobs in dns_provider_config)
+	dns_enabled: boolean | null;
+	dns_domain_name: string | null;
+	dns_zone_id: string | null;
+	dns_managed_certificate: boolean | null;
+	dns_waf_enabled: boolean | null;
+	dns_provider_config: DnsProviderConfig | null;
 	dns_status: string | null;
 
 	// Repositories
-	applications_destination_repo: string | null;
+	apps_destination_repo: string | null;
 
 	// Aggregated
-	create_rds: boolean;
+	has_database: boolean;
 	db_min_capacity: number | null;
 	db_max_capacity: number | null;
-	enable_redis: boolean;
+	has_cache: boolean;
 }
 
 type ServiceDb = ReturnType<typeof getServiceDb>;
