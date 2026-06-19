@@ -45,9 +45,11 @@ export const cacheEngine = pgEnum("cache_engine", ["redis", "valkey"]);
 
 export const nosqlTableType = pgEnum("nosql_table_type", ["standard", "global"]);
 export const nosqlKeyType = pgEnum("nosql_key_type", ["S", "N", "B"]);
-export const nosqlBillingMode = pgEnum("nosql_billing_mode", [
-	"PAY_PER_REQUEST",
-	"PROVISIONED",
+// Cloud-neutral capacity mode; mappers translate to the provider value
+// (AWS DynamoDB PAY_PER_REQUEST/PROVISIONED, etc.) at provision time.
+export const nosqlCapacityMode = pgEnum("nosql_capacity_mode", [
+	"on_demand",
+	"provisioned",
 ]);
 
 export const registryTagMutability = pgEnum("registry_tag_mutability", [

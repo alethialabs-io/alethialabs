@@ -22,10 +22,10 @@ export function SectionNosql() {
 
 	const addTable = () => append({
 		name: `table-${fields.length + 1}`,
-		hash_key: "id",
-		hash_key_type: "S",
+		partition_key: "id",
+		partition_key_type: "S",
 		table_type: "standard",
-		billing_mode: "PAY_PER_REQUEST",
+		capacity_mode: "on_demand",
 		point_in_time_recovery: true,
 	});
 
@@ -68,7 +68,7 @@ export function SectionNosql() {
 									<FormControl><Input {...f} value={f.value || ""} onChange={(e) => f.onChange(e.target.value.toLowerCase())} className="h-8 text-xs font-mono" /></FormControl>
 								</FormItem>
 							)} />
-							<FormField control={control} name={`nosql_tables.${i}.hash_key`} render={({ field: f }) => (
+							<FormField control={control} name={`nosql_tables.${i}.partition_key`} render={({ field: f }) => (
 								<FormItem className="space-y-1">
 									<div className="flex items-center gap-1">
 										<Label className="text-[11px]">Hash Key <span className="text-destructive">*</span></Label>
@@ -77,7 +77,7 @@ export function SectionNosql() {
 									<FormControl><Input {...f} value={f.value || ""} className="h-8 text-xs font-mono" placeholder="id" /></FormControl>
 								</FormItem>
 							)} />
-							<FormField control={control} name={`nosql_tables.${i}.hash_key_type`} render={({ field: f }) => (
+							<FormField control={control} name={`nosql_tables.${i}.partition_key_type`} render={({ field: f }) => (
 								<FormItem className="space-y-1">
 									<Label className="text-[11px]">Type</Label>
 									<Select value={f.value || "S"} onValueChange={f.onChange}>
@@ -99,7 +99,7 @@ export function SectionNosql() {
 							</CollapsibleTrigger>
 							<CollapsibleContent className="pt-3 space-y-3">
 								<div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-									<FormField control={control} name={`nosql_tables.${i}.range_key`} render={({ field: f }) => (
+									<FormField control={control} name={`nosql_tables.${i}.sort_key`} render={({ field: f }) => (
 										<FormItem className="space-y-1">
 											<div className="flex items-center gap-1"><Label className="text-[11px]">Range Key</Label><HelpTooltip topic="range-key" /></div>
 											<FormControl><Input {...f} value={f.value || ""} className="h-8 text-xs font-mono" placeholder="timestamp" /></FormControl>
@@ -117,14 +117,14 @@ export function SectionNosql() {
 											</Select>
 										</FormItem>
 									)} />
-									<FormField control={control} name={`nosql_tables.${i}.billing_mode`} render={({ field: f }) => (
+									<FormField control={control} name={`nosql_tables.${i}.capacity_mode`} render={({ field: f }) => (
 										<FormItem className="space-y-1">
 											<div className="flex items-center gap-1"><Label className="text-[11px]">Billing</Label><HelpTooltip topic="billing-mode" /></div>
-											<Select value={f.value || "PAY_PER_REQUEST"} onValueChange={f.onChange}>
+											<Select value={f.value || "on_demand"} onValueChange={f.onChange}>
 												<FormControl><SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger></FormControl>
 												<SelectContent>
-													<SelectItem value="PAY_PER_REQUEST">On-demand ($0 base)</SelectItem>
-													<SelectItem value="PROVISIONED">Provisioned</SelectItem>
+													<SelectItem value="on_demand">On-demand ($0 base)</SelectItem>
+													<SelectItem value="provisioned">Provisioned</SelectItem>
 												</SelectContent>
 											</Select>
 										</FormItem>

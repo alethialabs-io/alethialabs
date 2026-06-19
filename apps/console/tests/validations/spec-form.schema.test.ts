@@ -140,13 +140,13 @@ describe("specFormSchema", () => {
 		it("accepts valid nosql table", () => {
 			const data = {
 				...validSpec,
-				nosql_tables: [{ name: "users", hash_key: "id", hash_key_type: "S", table_type: "standard", billing_mode: "PAY_PER_REQUEST" }],
+				nosql_tables: [{ name: "users", partition_key: "id", partition_key_type: "S", table_type: "standard", capacity_mode: "on_demand" }],
 			};
 			const result = specFormSchema.safeParse(data);
 			expect(result.success).toBe(true);
 		});
 
-		it("rejects nosql table without hash_key", () => {
+		it("rejects nosql table without partition_key", () => {
 			const data = {
 				...validSpec,
 				nosql_tables: [{ name: "users" }],

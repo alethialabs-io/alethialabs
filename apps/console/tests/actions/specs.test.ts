@@ -82,10 +82,10 @@ describe("CreateSpecInput shape validation", () => {
 			nosql_tables: [
 				{
 					name: "users",
-					hash_key: "id",
-					hash_key_type: "S",
+					partition_key: "id",
+					partition_key_type: "S",
 					table_type: "standard",
-					billing_mode: "PAY_PER_REQUEST",
+					capacity_mode: "on_demand",
 					point_in_time_recovery: true,
 				},
 			],
@@ -114,7 +114,7 @@ describe("CreateSpecInput shape validation", () => {
 			caches: [{ name: "cache-1", engine: "redis", node_type: "cache.t3.medium", num_cache_nodes: 1 }],
 			queues: [{ name: "q-1", fifo: false, visibility_timeout: 30 }],
 			topics: [{ name: "t-1" }],
-			nosql_tables: [{ name: "ddb-1", hash_key: "id" }],
+			nosql_tables: [{ name: "ddb-1", partition_key: "id" }],
 			secrets: [{ name: "s-1", generate: true, length: 32 }],
 		});
 		const result = specFormSchema.safeParse(data);
@@ -229,7 +229,7 @@ describe("Validation edge cases", () => {
 	it("rejects invalid dynamodb key type", () => {
 		const data = {
 			...buildValidFormData(),
-			nosql_tables: [{ name: "test", hash_key: "id", hash_key_type: "X" }],
+			nosql_tables: [{ name: "test", partition_key: "id", partition_key_type: "X" }],
 		};
 		const result = specFormSchema.safeParse(data);
 		expect(result.success).toBe(false);
@@ -238,7 +238,7 @@ describe("Validation edge cases", () => {
 	it("rejects invalid dynamodb billing mode", () => {
 		const data = {
 			...buildValidFormData(),
-			nosql_tables: [{ name: "test", hash_key: "id", billing_mode: "INVALID" }],
+			nosql_tables: [{ name: "test", partition_key: "id", capacity_mode: "INVALID" }],
 		};
 		const result = specFormSchema.safeParse(data);
 		expect(result.success).toBe(false);

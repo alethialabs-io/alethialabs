@@ -77,9 +77,9 @@ export function getConfigSummary(
 			return `${subs?.length ?? 0} subscription${(subs?.length ?? 0) !== 1 ? "s" : ""}`;
 		}
 		case "nosql_table": {
-			const hashKey = (service.hash_key as string) ?? "";
-			const billing = service.billing_mode as string | null;
-			return `${hashKey} (${billing === "PROVISIONED" ? "Provisioned" : "On-Demand"})`;
+			const hashKey = (service.partition_key as string) ?? "";
+			const billing = service.capacity_mode as string | null;
+			return `${hashKey} (${billing === "provisioned" ? "Provisioned" : "On-Demand"})`;
 		}
 		case "secret": {
 			const length = service.length as number | null;

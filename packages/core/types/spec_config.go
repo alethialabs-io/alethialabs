@@ -101,12 +101,12 @@ type TopicSubscription struct {
 
 type SpecNosqlConfig struct {
 	Name                string `json:"name"`
-	HashKey             string `json:"hash_key"`
-	HashKeyType         string `json:"hash_key_type"`
-	RangeKey            string `json:"range_key"`
-	RangeKeyType        string `json:"range_key_type"`
+	PartitionKey        string `json:"partition_key"`
+	PartitionKeyType    string `json:"partition_key_type"`
+	SortKey             string `json:"sort_key"`
+	SortKeyType         string `json:"sort_key_type"`
 	TableType           string `json:"table_type"`
-	BillingMode         string `json:"billing_mode"`
+	CapacityMode        string `json:"capacity_mode"`
 	PointInTimeRecovery bool   `json:"point_in_time_recovery"`
 }
 

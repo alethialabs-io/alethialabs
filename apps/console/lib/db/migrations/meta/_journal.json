@@ -78,6 +78,13 @@
       "when": 1782000100000,
       "tag": "0010_provider_outputs_jsonb",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1782000200000,
+      "tag": "0011_nosql_cloud_agnostic",
+      "breakpoints": true
     }
   ]
 }

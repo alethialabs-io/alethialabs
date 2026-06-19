@@ -184,7 +184,7 @@ export function convertSpecConfig(
 		}
 		if (!targetNosql.supportsRangeKey) {
 			for (const table of data.nosql_tables) {
-				if (table.range_key) {
+				if (table.sort_key) {
 					warnings.push({
 						severity: "warning",
 						component: "NoSQL",

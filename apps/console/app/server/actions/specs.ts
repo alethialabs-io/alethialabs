@@ -592,12 +592,12 @@ export async function getSpecAsFormData(
 		})),
 		nosql_tables: source.components.nosql_tables.map((t) => ({
 			name: t.name,
-			hash_key: t.hash_key,
-			hash_key_type: t.hash_key_type ?? undefined,
-			range_key: t.range_key ?? undefined,
-			range_key_type: t.range_key_type ?? undefined,
+			partition_key: t.partition_key,
+			partition_key_type: t.partition_key_type ?? undefined,
+			sort_key: t.sort_key ?? undefined,
+			sort_key_type: t.sort_key_type ?? undefined,
 			table_type: t.table_type ?? undefined,
-			billing_mode: t.billing_mode ?? undefined,
+			capacity_mode: t.capacity_mode ?? undefined,
 			point_in_time_recovery: t.point_in_time_recovery ?? undefined,
 		})),
 		secrets: source.components.secrets.map((s) => ({

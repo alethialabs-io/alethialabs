@@ -123,7 +123,7 @@ const nosqlItemSchema = nosqlInsert
 	.omit(componentAutoFields)
 	.extend({
 		name: z.string().min(1, "Table name is required"),
-		hash_key: z.string().min(1, "Hash key is required"),
+		partition_key: z.string().min(1, "Hash key is required"),
 	});
 
 const secretItemSchema = secretsInsert.omit({

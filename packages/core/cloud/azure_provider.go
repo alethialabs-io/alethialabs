@@ -234,8 +234,8 @@ func buildCosmosDBCollections(tables []types.SpecNosqlConfig) []map[string]inter
 	for _, t := range tables {
 		entry := map[string]interface{}{
 			"name":          t.Name,
-			"partition_key": orDefault(t.HashKey, "/id"),
-			"billing_mode":  orDefault(t.BillingMode, "PAY_PER_REQUEST"),
+			"partition_key": orDefault(t.PartitionKey, "/id"),
+			"billing_mode":  ddbCapacityMode(t.CapacityMode),
 		}
 		if t.PointInTimeRecovery {
 			entry["analytical_storage_enabled"] = true

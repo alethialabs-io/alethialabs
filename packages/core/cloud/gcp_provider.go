@@ -224,7 +224,7 @@ func buildFirestoreDatabases(tables []types.SpecNosqlConfig) []map[string]interf
 	for _, t := range tables {
 		entry := map[string]interface{}{
 			"name":         t.Name,
-			"billing_mode": orDefault(t.BillingMode, "PAY_PER_REQUEST"),
+			"billing_mode": ddbCapacityMode(t.CapacityMode),
 		}
 		if t.PointInTimeRecovery {
 			entry["point_in_time_recovery"] = true

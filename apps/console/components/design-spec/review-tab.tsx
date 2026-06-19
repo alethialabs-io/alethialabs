@@ -256,12 +256,12 @@ export function ReviewTab() {
 												<div className="flex items-center justify-between mb-2">
 													<span className="text-sm font-medium font-mono">{d.name || "Unnamed"}</span>
 													<Badge variant="outline" className="text-[10px] bg-muted/30">
-														{d.billing_mode === "PROVISIONED" ? "Provisioned" : "On-Demand"}
+														{d.capacity_mode === "provisioned" ? "Provisioned" : "On-Demand"}
 													</Badge>
 												</div>
 												<div className="grid grid-cols-3 gap-3 text-xs">
-													<div><span className="text-muted-foreground">Hash Key</span><p className="font-medium font-mono">{d.hash_key} ({d.hash_key_type})</p></div>
-													{d.range_key && <div><span className="text-muted-foreground">Range Key</span><p className="font-medium font-mono">{d.range_key}</p></div>}
+													<div><span className="text-muted-foreground">Hash Key</span><p className="font-medium font-mono">{d.partition_key} ({d.partition_key_type})</p></div>
+													{d.sort_key && <div><span className="text-muted-foreground">Range Key</span><p className="font-medium font-mono">{d.sort_key}</p></div>}
 													<div><span className="text-muted-foreground">PITR</span><p className="font-medium">{d.point_in_time_recovery ? "Yes" : "No"}</p></div>
 												</div>
 											</div>

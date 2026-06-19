@@ -179,6 +179,16 @@ func orDefault(val, def string) string {
 	return def
 }
 
+// ddbCapacityMode translates the cloud-neutral capacity mode (on_demand /
+// provisioned) to the DynamoDB-style value the IaC templates expect. Defaults to
+// on-demand for empty/unknown input.
+func ddbCapacityMode(mode string) string {
+	if mode == "provisioned" {
+		return "PROVISIONED"
+	}
+	return "PAY_PER_REQUEST"
+}
+
 func derefIntOr(p *int, def int) int {
 	if p != nil {
 		return *p
@@ -315,11 +325,11 @@ func buildDDBTables(tables []types.SpecNosqlConfig, tableType string) []map[stri
 		}
 		entry := map[string]interface{}{
 			"table_name_suffix":             t.Name,
-			"hash_key":                      t.HashKey,
-			"hash_key_type":                 orDefault(t.HashKeyType, "S"),
-			"range_key":                     t.RangeKey,
-			"range_key_type":                orDefault(t.RangeKeyType, "S"),
-			"billing_mode":                  orDefault(t.BillingMode, "PAY_PER_REQUEST"),
+			"hash_key":                      t.PartitionKey,
+			"hash_key_type":                 orDefault(t.PartitionKeyType, "S"),
+			"range_key":                     t.SortKey,
+			"range_key_type":                orDefault(t.SortKeyType, "S"),
+			"billing_mode":                  ddbCapacityMode(t.CapacityMode),
 			"enable_point_in_time_recovery": t.PointInTimeRecovery,
 		}
 		result = append(result, entry)
