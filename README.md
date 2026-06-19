@@ -47,7 +47,7 @@ packages/
   typescript-config/ — Shared tsconfig
 infra/
   platform/          — Platform infrastructure (ECR, ECS, Lambda scaler)
-  templates/         — Vine IaC templates (AWS, GCP, Azure)
+  templates/         — Spec IaC templates (AWS, GCP, Azure)
   connector/         — Cloud account bootstrap scripts
 spec/
   features/          — Active feature specs and architecture docs
@@ -150,7 +150,7 @@ per-cloud Terraform, upgrading) and the distribution roadmap in
 
 ## Documentation
 
-- [docs docs site](./apps/docs/) — hosted documentation portal
+- [Docs site](./apps/docs/) — hosted documentation portal
 - [Feature specs](./spec/features/) — active project documentation
 - [Thesis chapters](./spec/thesis/) — academic reference
 

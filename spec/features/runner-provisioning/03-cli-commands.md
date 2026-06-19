@@ -4,7 +4,7 @@
 
 ### `alethia runner register`
 
-**Purpose:** Register a runner in Trellis and deploy Fargate infrastructure in one shot.
+**Purpose:** Register a runner in Alethia and deploy Fargate infrastructure in one shot.
 
 **Interactive flow:**
 ```
@@ -19,7 +19,7 @@ Preflight checks...
   ✓ Docker daemon running
   ✓ Terraform >= 1.5 available
 
-Registering runner with Trellis...
+Registering runner with Alethia...
   ✓ Runner ID:    b189fccc-38e3-...
   ✓ Runner Token: 5791f8a908...
 
@@ -38,7 +38,7 @@ Waiting for runner to come online...
   ✓ First heartbeat received — runner is ONLINE
 
 ✓ Runner "my-fargate-runner" is ready. Queue work with:
-    alethia harvest
+    alethia spec apply
 ```
 
 **Flags (override interactive):**
@@ -52,7 +52,7 @@ Waiting for runner to come online...
 1. `aws sts get-caller-identity` — valid credentials
 2. `docker info` — Docker daemon running
 3. `terraform version` — installed and >= 1.5
-4. Trellis reachable — HTTP GET to health endpoint
+4. Alethia reachable — HTTP GET to health endpoint
 
 ### `alethia runner status`
 
@@ -85,7 +85,7 @@ Destroying Fargate infrastructure...
   ✓ IAM roles removed
   ✓ Secrets Manager secret deleted
   ✓ CloudWatch log group removed
-  ✓ Runner deregistered from Trellis
+  ✓ Runner deregistered from Alethia
 
 ✓ Runner "my-fargate-runner" destroyed.
 ```
@@ -102,7 +102,7 @@ staging-runner        self-hosted   OFFLINE   us-east-1     3h ago
 
 ## Modified Commands
 
-### `alethia harvest` (unchanged)
+### `alethia spec apply` (unchanged)
 
 Already works correctly — queues jobs to the runner. No changes needed.
 
@@ -113,7 +113,7 @@ Change to print:
 ⚠ `alethia bootstrap` is deprecated.
 
 Bootstrap is now handled by your provisioning runner.
-Use `alethia harvest` and select "Bootstrap new cluster" as the target.
+Use `alethia spec apply` and select "Bootstrap new cluster" as the target.
 
 If you don't have a runner yet, run:
     alethia runner register
@@ -129,7 +129,7 @@ The legacy deploy command stays for backward compatibility with local provisioni
 
 ```
 alethia
-├── login              — authenticate with Trellis
+├── login              — authenticate with Alethia
 ├── logout             — clear auth token
 ├── runner
 │   ├── register       — [NEW] register + deploy Fargate
@@ -137,12 +137,12 @@ alethia
 │   ├── status         — [NEW] show runner health
 │   ├── list           — [NEW] list all runners
 │   └── destroy        — [NEW] tear down runner infrastructure
-├── harvest            — queue a provisioning job (DEPLOY/BOOTSTRAP)
-├── provision          — alias for harvest
+├── deploy            — queue a provisioning job (DEPLOY/BOOTSTRAP)
+├── provision          — alias for deploy
 ├── bootstrap          — [DEPRECATED] prints deprecation notice
 ├── deploy             — [LEGACY] local provisioning
 ├── destroy            — tear down a bootstrapped environment
-├── vineyard           — manage vineyards
+├── zone           — manage zones
 ├── clusters           — manage clusters
 └── config             — manage configurations
 ```

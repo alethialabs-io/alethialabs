@@ -16,7 +16,7 @@ Getting from "we have an app" to "it runs in production on Kubernetes" forces a 
 
 ## What Alethia is
 
-Alethia gives you the **real thing**, provisioned for you, that **you own**. One **Spec** (your infrastructure design) → a remote **runner** (runner) provisions it in *your* cloud account, assuming roles **at runtime** so no credentials are ever stored, and hands you a complete, self-managing, GitOps-wired cluster.
+Alethia gives you the **real thing**, provisioned for you, that **you own**. One **Spec** (your infrastructure design) → a remote **runner** provisions it in *your* cloud account, assuming roles **at runtime** so no credentials are ever stored, and hands you a complete, self-managing, GitOps-wired cluster.
 
 ### What you actually get (verified, end-to-end)
 

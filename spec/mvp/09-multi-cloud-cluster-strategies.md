@@ -14,16 +14,16 @@ A cluster = `(CloudProvider, ClusterStrategy)`. Managed strategies use the cloud
 ## Where it plugs in today (the single-source-of-truth problem)
 
 The provider set is **hand-maintained in ~4 places** — adding one means editing all four:
-- `packages/alethia-core/cloud/provider.go` — `NewCloudProvider` switch (`aws/gcp/azure`) + `ExtractClusterName/Endpoint` keyed to `eks_/gke_/aks_`.
+- `packages/core/cloud/provider.go` — `NewCloudProvider` switch (`aws/gcp/azure`) + `ExtractClusterName/Endpoint` keyed to `eks_/gke_/aks_`.
 - `apps/alethia/lib/cloud-providers/registry.ts` — `CloudProviderSlug = "aws"|"gcp"|"azure"`.
-- `infra/templates/vine/{aws,gcp,azure}/` — per-provider OpenTofu modules.
+- `infra/templates/spec/{aws,gcp,azure}/` — per-provider OpenTofu modules.
 - The runner's provider switch (`apps/runner/runner/runner.go`).
 
 **Fix:** declare the provider set **once** (a registry that emits both the Go switch and the TS union, e.g. via codegen) so "supported providers" lives in one place. New providers and the [08](08-integrations-extensibility.md) category providers share this discipline.
 
 ## Adding a CloudProvider — the checklist
 
-1. Implement the `CloudProvider` interface in `alethia-core` (credentials, region metadata, `Tfvars`, kubeconfig retrieval).
+1. Implement the `CloudProvider` interface in `core` (credentials, region metadata, `Tfvars`, kubeconfig retrieval).
 2. Register it in the single source of truth (→ Go switch + TS union update automatically).
 3. Add OpenTofu modules under `infra/templates/spec/<provider>/` (network + compute + the chosen ClusterStrategy).
 4. Add the catalog row + credential mapping ([08](08-integrations-extensibility.md)).

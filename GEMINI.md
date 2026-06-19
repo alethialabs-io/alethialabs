@@ -82,7 +82,7 @@ Form/input schemas live in `lib/validations/`. Reusable typed query builders bel
 ### Alethia Code Style
 
 - All functions must have a brief JSDoc comment explaining what they do.
-- Group components by feature/domain, not by type. Example: `components/integrations/`, `components/plant-vine/`, not `components/buttons/`, `components/modals/`.
+- Group components by feature/domain, not by type. Example: `components/integrations/`, `components/design-spec/`, not `components/buttons/`, `components/modals/`.
 - Component files that are renamed should be deleted, not left behind with re-exports.
 - Never use `Record<string, unknown>` for JSONB fields that have a known shape. Define a proper interface in `database-custom.types.ts`.
 - Prefer `useFormContext` + `useFieldArray` over prop drilling for form sections.
@@ -124,8 +124,8 @@ apps/console/
 - **Entry point**: `apps/cli/main.go` → `cmd.Execute()`
 - **Commands** (`apps/cli/cmd/`): Cobra-based CLI with 27+ commands organized into groups:
   - **Auth**: `login`, `logout` — device code flow with browser automation, JWT tokens
-  - **Vineyards**: `vineyard list|create|delete` — workspace management
-  - **Vines**: `vine list|get` — infrastructure configuration browsing
+  - **Zones**: `zone list|create|delete` — workspace management
+  - **Specs**: `spec list|get` — infrastructure configuration browsing
   - **Jobs**: `jobs list|get|logs|cancel|wait` — provisioning job management
   - **Provisioning**: `spec plan`, `spec apply`, `spec destroy` — queue IaC operations
   - **Runners**: `runner deploy|list|destroy|remove` — runner lifecycle
@@ -166,8 +166,8 @@ apps/console/
 
 - **Location**: `packages/core/`
 - **Purpose**: Shared types, cloud provider interfaces, and embedded Terraform templates used by both alethia and Node.
-- **Terraform templates**: Embedded in `assets/terraform/seed/` — vine provisioning templates for AWS, GCP, Azure.
-- **Key packages**: Config types (VineConfig), cloud provider abstraction (CloudProvider interface), template rendering (pongo2).
+- **Terraform templates**: Embedded in `assets/terraform/seed/` — spec provisioning templates for AWS, GCP, Azure.
+- **Key packages**: Config types (SpecConfig), cloud provider abstraction (CloudProvider interface), template rendering (pongo2).
 
 ---
 
@@ -191,9 +191,9 @@ Core infrastructure managed by Terraform:
 
 ### Templates (`infra/templates/`)
 
-- `vine/aws/` — AWS EKS + VPC + RDS + security groups
-- `vine/gcp/` — GCP GKE + Cloud SQL + networking
-- `vine/azure/` — Azure AKS + managed resources
+- `spec/aws/` — AWS EKS + VPC + RDS + security groups
+- `spec/gcp/` — GCP GKE + Cloud SQL + networking
+- `spec/azure/` — Azure AKS + managed resources
 - `runner/aws/` — Self-hosted runner deployment template
 - `argocd/` — ArgoCD configuration templates
 

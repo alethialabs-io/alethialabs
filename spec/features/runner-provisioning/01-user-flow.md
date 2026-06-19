@@ -2,23 +2,23 @@
 
 ## Core Idea
 
-The platform runs ONE cloud-hosted runner (Fargate) that provisions infrastructure for ALL users. Users never deploy their own runners. They connect their AWS account, configure what they want, and click harvest. The runner does the rest.
+The platform runs ONE cloud-hosted runner (Fargate) that provisions infrastructure for ALL users. Users never deploy their own runners. They connect their AWS account, configure what they want, and click deploy. The runner does the rest.
 
 ## The Happy Path
 
 ```
-User signs up on Trellis
+User signs up on Alethia
     │
     ▼
 Connect AWS account             ← Providers page: deploy CloudFormation in their account
     │                              creates cross-account IAM role → paste Role ARN
     │                              stored in cloud_identities table
     ▼
-Create configuration (Vine)     ← Configure page: project name, region, environment,
+Create configuration (Spec)     ← Configure page: project name, region, environment,
     │                              VPC, data services, GitOps repos, etc.
     │                              stored in configurations table
     ▼
-Harvest                         ← Click "Provision" or run `alethia harvest`
+Deploy                         ← Click "Provision" or run `alethia spec apply`
     │                              creates provision_jobs entry (QUEUED)
     │                              links to cloud_identity_id + config_snapshot
     ▼
@@ -31,7 +31,7 @@ Provisioning runs               ← Terraform (VPC, EKS, RDS, etc.)
     │                              Helm (ArgoCD install)
     │                              kubectl (ArgoCD manifests)
     ▼
-Logs stream in real time        ← job_logs table → Supabase Realtime → Trellis log viewer
+Logs stream in real time        ← job_logs table → Supabase Realtime → Alethia log viewer
     │
     ▼
 Infrastructure ready            ← User has EKS + ArgoCD + GitOps in their AWS account
@@ -41,27 +41,27 @@ Infrastructure ready            ← User has EKS + ArgoCD + GitOps in their AWS 
 
 ### 1. Sign Up / Login
 
-User creates account on Trellis (Supabase Auth). From CLI: `alethia login`.
+User creates account on Alethia (Supabase Auth). From CLI: `alethia login`.
 
 ### 2. Connect AWS Account
 
-**Trellis UI:** Dashboard → Providers → Connect AWS
+**Alethia UI:** Dashboard → Providers → Connect AWS
 
-1. Trellis generates a unique **External ID** (UUID) for this user
-2. Trellis creates an unverified `cloud_identities` record
+1. Alethia generates a unique **External ID** (UUID) for this user
+2. Alethia creates an unverified `cloud_identities` record
 3. User downloads the CloudFormation template (`alethia-bootstrap.yaml`) or uses the AWS Console link
 4. User deploys the stack in their AWS account with:
    - **Alethia Account ID:** `787587782604` (trusted principal)
    - **External ID:** the UUID from step 1
 5. CloudFormation creates IAM role: `AlethiaProvisionerRole-{ExternalID}` with AdministratorAccess
 6. User copies the **Role ARN** from CloudFormation Outputs
-7. User pastes Role ARN into Trellis → Trellis validates format, extracts account ID, marks identity as `is_verified=true`
+7. User pastes Role ARN into Alethia → Alethia validates format, extracts account ID, marks identity as `is_verified=true`
 
 **What's already built:** The entire Providers page, CloudFormation template, and `cloud_identities` table are complete and working.
 
-### 3. Create Configuration (Vine)
+### 3. Create Configuration (Spec)
 
-User configures infrastructure in Trellis:
+User configures infrastructure in Alethia:
 - Project name, environment (dev/staging/prod), AWS region
 - VPC settings (new or existing, CIDR)
 - Data services (RDS, ElastiCache, DynamoDB)
@@ -70,17 +70,17 @@ User configures infrastructure in Trellis:
 
 Saved as a `configurations` row with full JSON payload.
 
-### 4. Harvest (Provision)
+### 4. Deploy (Provision)
 
 User triggers provisioning:
-- **Trellis UI:** "Provision" button on the configuration page
-- **CLI:** `alethia harvest` (interactive selection of vineyard + vine + cluster)
+- **Alethia UI:** "Provision" button on the configuration page
+- **CLI:** `alethia spec apply` (interactive selection of zone + spec + cluster)
 
 This creates a `provision_jobs` entry:
 ```
 job_type: "DEPLOY" (or "BOOTSTRAP" for first-time cluster setup)
 status: "QUEUED"
-vineyard_id: ...
+zone_id: ...
 configuration_id: ...
 cloud_identity_id: ...  ← links to the user's AWS credentials
 config_snapshot: { ... } ← full config frozen at queue time
@@ -104,7 +104,7 @@ The cloud-hosted runner (running in Alethia's account `787587782604`):
    - Get kubeconfig
    - Install ArgoCD via Helm
    - Apply ArgoCD manifests
-5. Streams logs to Trellis via `POST /api/jobs/{id}/logs`
+5. Streams logs to Alethia via `POST /api/jobs/{id}/logs`
 6. Updates status to `SUCCESS` or `FAILED`
 7. Clears assumed credentials
 
@@ -118,7 +118,7 @@ The cloud-hosted runner (running in Alethia's account `787587782604`):
 
 - Install Terraform
 - Install kubectl or Helm
-- Run any CLI commands (beyond `alethia harvest` if they prefer CLI)
+- Run any CLI commands (beyond `alethia spec apply` if they prefer CLI)
 - Deploy any runner infrastructure
 - Manage Docker images
 - Deal with Terraform state

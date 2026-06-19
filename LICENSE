@@ -11,7 +11,7 @@ Alethia Labs is open core. Portions of this software are licensed as follows:
   * All third-party components incorporated into this software are licensed under
     the original license provided by the owner of the applicable component (for
     example, the vendored Terraform module under
-    "infra/templates/vine/aws/modules/valkey/" is licensed under Apache-2.0).
+    "infra/templates/spec/aws/modules/valkey/" is licensed under Apache-2.0).
   * The shared tooling under "packages/typescript-config/" is licensed under MIT.
   * Content outside of the above-mentioned directories or restrictions is
     available under the "AGPL-3.0-only" license whose full text follows below.

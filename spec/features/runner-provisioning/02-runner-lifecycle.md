@@ -18,7 +18,7 @@ REGISTERED → DEPLOYING → ONLINE ⇄ OFFLINE → DRAINING → DEREGISTERED
 ## Registration
 
 1. CLI calls `POST /api/runners/register` with name + mode
-2. Trellis generates 32-byte random token, stores SHA-256 hash
+2. Alethia generates 32-byte random token, stores SHA-256 hash
 3. Returns plaintext token **once** — cannot be recovered
 4. Runner row created in `runners` table with status `OFFLINE`
 
@@ -28,19 +28,19 @@ After registration, the CLI deploys infrastructure:
 
 1. **Workspace**: `~/.alethia/workspaces/runner-{name}/`
 2. **Extract embedded Terraform** (from `internal/assets/terraform/runner/`)
-3. **Generate tfvars.json** with: runner_id, runner_token, vpc_id, subnet_ids, region, mode, trellis_url, aws_account_id
+3. **Generate tfvars.json** with: runner_id, runner_token, vpc_id, subnet_ids, region, mode, alethia_url, aws_account_id
 4. **S3 state bucket**: `alethia-runner-{name}-{region}-tfstate` (created if not exists)
 5. **Terraform init** with S3 backend
 6. **Terraform plan + apply** → creates: ECR, ECS cluster, ECS service, task definition, IAM roles, Secrets Manager, security group, CloudWatch log group
 7. **Docker build** → build Alethia image from `apps/cli/`
 8. **ECR push** → authenticate with ECR, tag + push
 9. **Force deploy** → `aws ecs update-service --force-new-deployment`
-10. **Wait for health** → poll ECS task status, then check Trellis for heartbeat
+10. **Wait for health** → poll ECS task status, then check Alethia for heartbeat
 
 ## Heartbeat
 
 - Runner sends heartbeat every **30 seconds** via `POST /api/runners/heartbeat`
-- Trellis updates `last_heartbeat` timestamp and sets status to `ONLINE`
+- Alethia updates `last_heartbeat` timestamp and sets status to `ONLINE`
 - A runner is considered `OFFLINE` if `last_heartbeat` > 5 minutes ago
 
 ## Job Execution
@@ -57,7 +57,7 @@ After registration, the CLI deploys infrastructure:
 ## Stale Job Recovery
 
 The `recover_stale_jobs()` RPC handles orphaned jobs:
-- Runs periodically (should be called by a Supabase cron or from the Trellis backend)
+- Runs periodically (should be called by a Supabase cron or from the Alethia backend)
 - Resets jobs to `QUEUED` if:
   - Status is `CLAIMED` or `PROCESSING`
   - `claimed_at` > 15 minutes ago
@@ -71,7 +71,7 @@ alethia runner destroy --name my-runner
 
 1. Confirm with user (dangerous operation)
 2. Run `terraform destroy` in the runner workspace
-3. Delete runner row from Trellis (or mark as DEREGISTERED)
+3. Delete runner row from Alethia (or mark as DEREGISTERED)
 4. Clean up workspace directory
 
 ## Infrastructure Created per Runner

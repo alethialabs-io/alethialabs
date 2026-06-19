@@ -12,7 +12,7 @@ Migrate the IaC engine to **OpenTofu** (the `tofu` binary). Keep `terraform-exec
 
 ## The swap is localized to one function
 
-`packages/alethia-core/terraform/terraform.go` → `ensureBinary` (~lines 138–180):
+`packages/core/terraform/terraform.go` → `ensureBinary` (~lines 138–180):
 
 - **Today:** `exec.LookPath("terraform")`, then hc-install `releases.ExactVersion{Product: product.Terraform}`, cached at `~/.alethia/bin/terraform_<ver>`.
 - **Change to:** `exec.LookPath("tofu")`, then fetch the OpenTofu release asset from `github.com/opentofu/opentofu/releases` (verify `SHA256SUMS` + cosign/gpg signature), cached at `~/.alethia/bin/tofu_<ver>`. hc-install's product catalog has **no OpenTofu entry**, so this block is rewritten as a small custom downloader rather than reconfigured.
@@ -33,7 +33,7 @@ Recommendation: define one `DefaultIaCVersion` constant and reference it everywh
 
 ## State compatibility
 
-State format is **identical** across the TF 1.5/1.6 fork line → this is a binary swap, **not** a state migration. The Supabase S3 backend (`packages/alethia-core/cloud/supabase_backend.go`) emits a generic `s3` backend block read identically by `tofu`. No backend change.
+State format is **identical** across the TF 1.5/1.6 fork line → this is a binary swap, **not** a state migration. The Supabase S3 backend (`packages/core/cloud/supabase_backend.go`) emits a generic `s3` backend block read identically by `tofu`. No backend change.
 
 ## Provider lock files (the real risk)
 
@@ -55,8 +55,8 @@ Revisit (A) only if a needed provider is missing from the OpenTofu registry.
 2. On a throwaway Zone: `tofu init`/`plan` against an **existing terraform-created state** → assert **no spurious diff** (the acid test for state compatibility).
 3. Re-run the dry-run deploy path; confirm plan JSON (`resource_changes`) still populates (the runner reads this).
 4. Confirm Infracost breakdown still renders.
-5. `go test ./...` in `alethia-core`.
-6. **Bake the `tofu` binary into the runner (runner) Docker image** so it isn't downloaded at runtime.
+5. `go test ./...` in `core`.
+6. **Bake the `tofu` binary into the runner Docker image** so it isn't downloaded at runtime.
 
 ## Consequences
 

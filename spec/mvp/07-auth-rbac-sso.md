@@ -34,7 +34,7 @@ interface PDP {
 
 Three rules, enforced by CI lint:
 1. **No call site decides access itself** — no `auth.uid()`, no `.eq('user_id')` as authz. The grep that finds those today becomes a guard forbidding authz logic outside `lib/authz/`.
-2. **Every route / server action / CLI+runner route starts with `enforce()`** (or `listAccessible()` for lists). `getVineyards()` becomes `listAccessible(actor,'view','zone')` → fetch by id-set, not a bare query trusting RLS.
+2. **Every route / server action / CLI+runner route starts with `enforce()`** (or `listAccessible()` for lists). `getZones()` becomes `listAccessible(actor,'view','zone')` → fetch by id-set, not a bare query trusting RLS.
 3. **`listAccessible` is mandatory for every list view** — this is what makes the engine swap free and kills the N+1-authz trap.
 
 Because all three surfaces call the same `PDP`, **changing the backend never touches the ~200 call sites.**
@@ -134,7 +134,7 @@ The seams the AGPL core exposes so `ee/` bolts on without forking (core never im
 ## Migration sequence (maps to [06](06-self-hosting-architecture.md) phases)
 
 1. **P0 backstop** — add `org_id` + coarse RLS + `set_config` wrapper as `auth.uid()` RLS is removed.
-2. **P2 PDP + community RBAC** — land `lib/authz/` (`can/enforce/bulkCheck/listAccessible`), `PostgresRbacPDP`, the registry + `role/grant/resource_hierarchy` tables, Better Auth `organization` + `@better-auth/sso`. Refactor **every** server action / API route / CLI route onto the PDP (start with `vineyards.ts` → `listAccessible('view','zone')`). Add the CI guard. Built-in roles only.
+2. **P2 PDP + community RBAC** — land `lib/authz/` (`can/enforce/bulkCheck/listAccessible`), `PostgresRbacPDP`, the registry + `role/grant/resource_hierarchy` tables, Better Auth `organization` + `@better-auth/sso`. Refactor **every** server action / API route / CLI route onto the PDP (start with `zones.ts` → `listAccessible('view','zone')`). Add the CI guard. Built-in roles only.
 3. **Enterprise gating** — dynamic/custom roles, per-Zone grants, audit export (still on `PostgresRbacPDP`) → sellable enterprise RBAC with **no new service**.
 4. **OpenFGA** — add `OpenFgaPDP` + the grant→tuple sync + conditions for `destroy`-production, when cross-org sharing / deep graphs / `ListObjects` latency demand it. Binding flip + backfill.
 

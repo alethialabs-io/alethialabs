@@ -1,6 +1,6 @@
 # Alethia by Alethia Labs — MVP Specification
 
-This folder is the **source of truth** for the Alethia MVP — product vision, architecture, decisions, and roadmap. It supersedes the thesis-era "Trellis" docs. When marketing copy, code comments, the dashboard, or the pitch conflict with these specs, **update them to match the specs**, not the other way around.
+This folder is the **source of truth** for the Alethia MVP — product vision, architecture, decisions, and roadmap. It supersedes the thesis-era "Alethia" docs. When marketing copy, code comments, the dashboard, or the pitch conflict with these specs, **update them to match the specs**, not the other way around.
 
 > **Status:** reconsolidation in progress. Docs are produced in dependency-ordered waves (see [15-mvp-scope-milestones](15-mvp-scope-milestones.md)). The map below marks which are written.
 
@@ -13,8 +13,8 @@ Alethia uses this lexicon throughout. Full standard + migration map: [A-rename-l
 | **Alethia** | The core product ecosystem / platform layer | alethia |
 | **alethia** | The primary developer CLI | alethia |
 | **runners** | Distributed background runners / runtime execution agents | runners |
-| **Zones** | Isolated environments, workspaces, or project clusters | vineyards |
-| **Specs** | Configuration files, manifests, declarative state definitions | vines |
+| **Zones** | Isolated environments, workspaces, or project clusters | zones |
+| **Specs** | Configuration files, manifests, declarative state definitions | specs |
 
 ## What Alethia is
 

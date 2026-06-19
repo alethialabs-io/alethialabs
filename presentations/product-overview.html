@@ -82,7 +82,7 @@ td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{co
     <div class="card">
       <span class="eyebrow">The Alethia model</span>
       <h3>One Spec → a cluster you own</h3>
-      <p class="muted">Your <strong>Spec</strong> (infra design) → a remote <strong>runner</strong> (runner) provisions it in your cloud, assuming roles <strong>at runtime</strong> so no credentials are ever stored. It hands you a self-managing, GitOps-wired cluster. Alethia never sits in the data path.</p>
+      <p class="muted">Your <strong>Spec</strong> (infra design) → a remote <strong>runner</strong> provisions it in your cloud, assuming roles <strong>at runtime</strong> so no credentials are ever stored. It hands you a self-managing, GitOps-wired cluster. Alethia never sits in the data path.</p>
     </div>
   </div>
   <p class="kicker" style="margin-top:.5rem">Same outcome (production platform, fast). Opposite ownership model — <strong>the anti-Porter</strong>.</p>
@@ -221,7 +221,7 @@ Browser ┤  app  (Next.js · Better Auth ·       │
       <div class="card">
         <h4>Four required containers</h4>
         <div style="margin-top:.4rem">
-          <span class="pill">app</span><span class="pill">postgres</span><span class="pill">s3 (SeaweedFS)</span><span class="pill">node (runner)</span>
+          <span class="pill">app</span><span class="pill">postgres</span><span class="pill">s3 (SeaweedFS)</span><span class="pill">runner</span>
         </div>
         <p class="muted" style="margin-top:.5rem"><span class="mono">redis</span> is an optional scale-out profile only. The operator provides one Postgres URL, one S3 endpoint + keys, and OAuth secrets — nothing else.</p>
       </div>

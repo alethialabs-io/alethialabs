@@ -5,14 +5,14 @@
 ## Concept
 
 Two capabilities, one tool layer:
-1. **Repo-scanner** — point it at a repository; it analyzes the stack (Dockerfiles, `package.json`/`go.mod`, k8s manifests, framework signals) and **proposes a Spec** (the existing `VineConfig` schema), right-sized, with a live cost estimate and a provider comparison.
+1. **Repo-scanner** — point it at a repository; it analyzes the stack (Dockerfiles, `package.json`/`go.mod`, k8s manifests, framework signals) and **proposes a Spec** (the existing `SpecConfig` schema), right-sized, with a live cost estimate and a provider comparison.
 2. **MCP tool layer** — expose the platform's actions as **MCP tools** so the *same* surface drives both **Claude** (Claude Code / claude.ai / the SDK) and the **dashboard**.
 
 ## Where it slots in
 
 - **Wrap the existing API + PDP** — no new authority model. The MCP server calls the same verbs the dashboard does, through the PDP ([07](07-auth-rbac-sso.md)), so AI actions are bounded by the actor's grants.
-- **Scanner output = the existing `Spec`/`VineConfig`** — proposals feed straight into the plan/apply path, no parallel schema.
-- **Placement:** an MCP server as a new workspace package (TS, using the official MCP SDK) serving the dashboard in-process and Claude over a transport; the scanner can be Go (in `alethia-core`) or TS, emitting a `Spec`.
+- **Scanner output = the existing `Spec`/`SpecConfig`** — proposals feed straight into the plan/apply path, no parallel schema.
+- **Placement:** an MCP server as a new workspace package (TS, using the official MCP SDK) serving the dashboard in-process and Claude over a transport; the scanner can be Go (in `core`) or TS, emitting a `Spec`.
 
 ## Tool surface (serves Claude + dashboard identically)
 

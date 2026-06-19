@@ -23,7 +23,7 @@ The core journeys, in the Alethia lexicon. The hero flow is **provision infrastr
 2. In a Spec, pick the provider per category (default = cloud-native). E.g. an AWS cluster with **Cloudflare DNS + Vault secrets**.
 3. Apply — the runner composes the right category modules and injects credentials at runtime only. ([08](08-integrations-extensibility.md))
 
-## Flow 4 — runner (runner) lifecycle
+## Flow 4 — runner lifecycle
 
 - **Cloud-hosted:** a Fargate runner auto-registers, claims jobs (`SKIP LOCKED`), heartbeats, scales to zero when idle.
 - **Self-hosted:** `alethia runner` registers a runner in your own infra (native permissions). Stale jobs auto-recover.

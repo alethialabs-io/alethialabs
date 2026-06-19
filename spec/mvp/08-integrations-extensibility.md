@@ -8,7 +8,7 @@ The catalog already exists; the backends don't. The `integrations` table (`supab
 
 ## Today (the starting point)
 
-- The catalog is data-driven, but every category resolves to a **hardcoded cloud-native** backend per cloud directory: `infra/templates/vine/{aws,gcp,azure}/` uses `aws_route53_record` / `aws_secretsmanager_secret` / `aws_ecr_repository` (and GCP/Azure equivalents). DNS provider, secrets provider, etc. are *implied by the cluster's cloud*, not chosen.
+- The catalog is data-driven, but every category resolves to a **hardcoded cloud-native** backend per cloud directory: `infra/templates/spec/{aws,gcp,azure}/` uses `aws_route53_record` / `aws_secretsmanager_secret` / `aws_ecr_repository` (and GCP/Azure equivalents). DNS provider, secrets provider, etc. are *implied by the cluster's cloud*, not chosen.
 - Credentials live in `cloud_identities` (cloud, JSONB) and `provider_tokens` (git OAuth). The six `api_key` integrations have **no credential store yet**.
 - There is **no observability/monitoring component** table at all.
 
@@ -29,7 +29,7 @@ The `integrations` table stays the **registry of record** — adding a provider 
 
 ## The `CategoryProvider` contract
 
-Mirror the cloud-provider pattern (`packages/alethia-core/cloud/provider.go`, see [09](09-multi-cloud-cluster-strategies.md)) one level down, per category. Each provider backend implements:
+Mirror the cloud-provider pattern (`packages/core/cloud/provider.go`, see [09](09-multi-cloud-cluster-strategies.md)) one level down, per category. Each provider backend implements:
 
 ```go
 type CategoryProvider interface {
@@ -54,7 +54,7 @@ A **category registry** (`map[category]map[slug]CategoryProvider`) is the single
 2. **`provider` selector per component** — add a `provider` (slug) column to `vine_dns`, `vine_secrets`, `vine_container_registries` (default = the cluster cloud's native provider). Provider-specific options ride in the **existing `provider_config` JSONB**.
 3. **`vine_observability`** (new) — the missing component table; `enabled`, `provider` (datadog/grafana/prometheus/cloud-native), `provider_config`.
 
-## Credential flow to the runner (runner)
+## Credential flow to the runner
 
 Unchanged in shape from today: the `config_snapshot` carries **identifiers, not secrets**; the runner fetches the credential at execution time and injects it as a Terraform variable. Extend the resolver so that for a component whose `provider` is a pluggable one, the runner reads `integration_credentials` (instead of `cloud_identities`) and sets e.g. `TF_VAR_cloudflare_api_token` / `TF_VAR_vault_addr+token`. Zero-credential model preserved — secrets never sit in the snapshot, only flow to the runner at runtime.
 

@@ -67,8 +67,8 @@ infra/platform/tfplan
 infra/platform/scaler/lambda.zip
 
 # Node runtime template copies (source: packages/core/assets/)
-apps/runner/vine-templates/
-apps/runner/tendril-templates/
+apps/runner/spec-templates/
+apps/runner/runner-templates/
 apps/runner/argocd-templates/
 
 apps/console/playwright-report/

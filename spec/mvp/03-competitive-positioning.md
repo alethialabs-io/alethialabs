@@ -30,7 +30,7 @@ Alethia's wedge cuts across both: **a self-hostable, open-source control plane t
 Terraform Cloud, Spacelift, Qovery, and Northflank are **SaaS** — the brain runs on the vendor's servers. Alethia's entire control plane self-hosts as ~4 containers (Postgres + S3 + app + runner), AGPL-licensed. You can run it air-gapped, in-region, under your own audit. ([06-self-hosting-architecture](06-self-hosting-architecture.md))
 
 ### 2. Zero-trust remote provisioning
-Most tools ask you to store a cloud key or hand them an admin role. Alethia's runner (**runner**) runs in *your* account and assumes roles **at execution time** — the control plane never sees or stores cloud credentials. Short-lived, scoped, nothing to leak.
+Most tools ask you to store a cloud key or hand them an admin role. Alethia's runner runs in *your* account and assumes roles **at execution time** — the control plane never sees or stores cloud credentials. Short-lived, scoped, nothing to leak.
 
 ### 3. Integration breadth — your tools, not lock-in
 Cloud-native by default, but **swap any category**: Cloudflare DNS, Vault secrets, Datadog/Grafana/Prometheus observability, Docker Hub registries. The PaaS competitors lock you to their opinionated stack. ([08-integrations-extensibility](08-integrations-extensibility.md))

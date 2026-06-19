@@ -8,7 +8,7 @@ Alethia must run on commodity infrastructure that anyone can self-host, with no 
 
 ## The principle that makes this tractable
 
-**The runner (runner) boundary is plain HTTP + S3 + Postgres RPCs — it never talks to Supabase directly** (`packages/alethia-core/api/api.go`, Bearer over `ALETHIA_WEB_ORIGIN`; `cloud/supabase_backend.go` speaks the raw S3 protocol). So self-hosting only has to unwind the **web tier + storage**; the entire provisioning engine is untouched. The four Supabase subsystems are addressed **independently**.
+**The runner boundary is plain HTTP + S3 + Postgres RPCs — it never talks to Supabase directly** (`packages/core/api/api.go`, Bearer over `ALETHIA_WEB_ORIGIN`; `cloud/supabase_backend.go` speaks the raw S3 protocol). So self-hosting only has to unwind the **web tier + storage**; the entire provisioning engine is untouched. The four Supabase subsystems are addressed **independently**.
 
 ## Target stack — the "small package"
 
@@ -30,13 +30,13 @@ Browser ┤  app  (Next.js: Better Auth + Drizzle + SSE)  │
         app instances LISTEN→SSE    node (Go runner): TF state + artifacts
 ```
 
-**4 required containers:** `app` · `postgres` · `s3` · `node` (runner). `redis` is an optional scale-out profile only. The operator provides one Postgres URL, one S3 endpoint + keys, and OAuth client secrets — nothing else.
+**4 required containers:** `app` · `postgres` · `s3` · `runner`. `redis` is an optional scale-out profile only. The operator provides one Postgres URL, one S3 endpoint + keys, and OAuth client secrets — nothing else.
 
 ## The four subsystems
 
 ### 1. Database + authorization (replaces RLS)
 
-- **Today:** ~64 RLS policies, all pure per-user ownership (`auth.uid() = user_id`, or `vine_id IN (SELECT id FROM vines WHERE user_id = auth.uid())`). No org/membership tables. Server actions trust RLS implicitly (e.g. `app/server/actions/vineyards.ts` has *no* explicit filter).
+- **Today:** ~64 RLS policies, all pure per-user ownership (`auth.uid() = user_id`, or `vine_id IN (SELECT id FROM specs WHERE user_id = auth.uid())`). No org/membership tables. Server actions trust RLS implicitly (e.g. `app/server/actions/zones.ts` has *no* explicit filter).
 - **Target:** Postgres stays (it's portable). Data access moves to **Drizzle (Apache-2.0)**; the `supabase gen types → merge-for-supazod → supazod` pipeline is replaced by Drizzle schema + in-core `createSelectSchema`. Authorization moves behind a single **Policy Decision Point** and is enforced in the app — with **coarse Postgres RLS (`org_id`) kept as an unbypassable backstop**. Full design in **[07-auth-rbac-sso](07-auth-rbac-sso.md)**.
 - **Critical sequencing:** removing `auth.uid()` RLS without a replacement is a **security regression**. The coarse-RLS backstop (`org_id = current_setting('app.current_org')`, set per-request via transaction-scoped `set_config`) must land **in the same PR family** that removes the Supabase policies — never a window without a backstop.
 - **Exit criterion:** zero `supabase.from()` / `auth.uid()` in the codebase; every read/write goes through Drizzle + the PDP; cross-tenant isolation test passes.
@@ -52,16 +52,16 @@ Browser ┤  app  (Next.js: Better Auth + Drizzle + SSE)  │
 
 ### 3. Realtime (replaces Supabase Realtime / `postgres_changes`)
 
-- **Today:** `postgres_changes` for live **job-log streaming** (the critical feature: runner `POST` → `insert_job_log()` RPC → `job_logs` → frontend INSERT subscription on `dashboard/jobs/[id]/page.tsx`), plus `provision_jobs`/`vines` status. The job page *also* polls status every 3 s. The `runners` and `cloud_identities` subscriptions are already **broken** (not in the publication) → effectively poll-only today; do **not** preserve them.
+- **Today:** `postgres_changes` for live **job-log streaming** (the critical feature: runner `POST` → `insert_job_log()` RPC → `job_logs` → frontend INSERT subscription on `dashboard/jobs/[id]/page.tsx`), plus `provision_jobs`/`specs` status. The job page *also* polls status every 3 s. The `runners` and `cloud_identities` subscriptions are already **broken** (not in the publication) → effectively poll-only today; do **not** preserve them.
 - **Target: SSE backed by Postgres LISTEN/NOTIFY.** Add `pg_notify('job_logs', {jobId, logId})` (IDs only — 8 KB cap) inside `insert_job_log` (or an `AFTER INSERT` trigger). Each app instance holds **one** LISTEN connection and fans out to its SSE clients → **multi-instance with NO Redis**. Browser uses `EventSource('/api/stream/jobs/:id')`; on (re)connect it fetches logs since its last `logId`. The **3 s poll stays** as the reconciliation backstop (no message-loss regression). Heartbeat comment every ~20 s; document HTTP/2 at the proxy (SSE's ~6-conn/host HTTP/1.1 cap).
 - **Scale-out:** a Redis pub/sub implementation sits behind a **`RealtimeTransport`** interface for very-high-fan-out / hosted deployments. Default profile never starts Redis.
 - **Exit criterion:** live logs + status stream over SSE across ≥2 app instances with no Redis; `supabase_realtime` publication dropped.
 
 ### 4. Storage (replaces Supabase Storage)
 
-- **Today:** 2 buckets — `plan-artifacts` (TF plan binaries, via one API route using `supabase.storage.from()` + service role) and `vine-terraform-state` (TF state; runner via S3 protocol through `supabase_backend.go`, `SUPABASE_S3_*`). Runner is already S3-native (`use_path_style`, custom endpoint, `use_lockfile=true` → no DynamoDB).
+- **Today:** 2 buckets — `plan-artifacts` (TF plan binaries, via one API route using `supabase.storage.from()` + service role) and `spec-terraform-state` (TF state; runner via S3 protocol through `supabase_backend.go`, `SUPABASE_S3_*`). Runner is already S3-native (`use_path_style`, custom endpoint, `use_lockfile=true` → no DynamoDB).
 - **Target: any S3-compatible store; default-bundle SeaweedFS (Apache-2.0).** MinIO is now **AGPLv3 and archived/maintenance-mode (Feb 2026)** — avoid as the default; keep the endpoint swappable (SeaweedFS / Garage / MinIO / AWS S3 / R2). Runner = **env/endpoint change only** (rename `SUPABASE_S3_*` → `ALETHIA_STORAGE_*` — the `ALETHIA_*` env convention, backend-agnostic noun, per [A-rename-lexicon](A-rename-lexicon.md)). The one web route (`app/api/jobs/[id]/plan-artifact/route.ts`) swaps `supabase.storage` → `@aws-sdk/client-s3` (~40 lines). Behind a thin `StorageBackend` wrapper so "which S3" is pure config (also lets the hosted tier point at AWS S3/R2).
-- **State migration:** `aws s3 sync` the `vine-terraform-state` bucket before cutover — TF state is the only un-regenerable data; plan artifacts are ephemeral.
+- **State migration:** `aws s3 sync` the `spec-terraform-state` bucket before cutover — TF state is the only un-regenerable data; plan artifacts are ephemeral.
 - **Exit criterion:** plan upload/download + TF state read/write work against SeaweedFS; no `supabase.storage` references remain.
 
 ## Job queue — stays as-is (no pg-boss for provisioning)

@@ -1,6 +1,6 @@
 # Landing Page Specification
 
-Section-by-section design spec for the Trellis landing page. Inspired by [ai-sdk.dev](https://ai-sdk.dev/). Lives as a public route at `apps/trellis/app/page.tsx`.
+Section-by-section design spec for the Alethia landing page. Inspired by [ai-sdk.dev](https://ai-sdk.dev/). Lives as a public route at `apps/alethia/app/page.tsx`.
 
 ---
 
@@ -62,8 +62,8 @@ Problems: AWS-only copy, no multi-cloud story, no code examples, no stats, no ec
 
 | Element | Content | Behavior |
 |---------|---------|----------|
-| Left | Trellis logo + wordmark | Link to `/` |
-| Center nav | Features · CLI · Docs · GitHub | Anchor scroll for Features/CLI; external link for Docs (Vintner URL); external link for GitHub |
+| Left | Alethia logo + wordmark | Link to `/` |
+| Center nav | Features · CLI · Docs · GitHub | Anchor scroll for Features/CLI; external link for Docs (Docs URL); external link for GitHub |
 | Right | "Sign In" (unauthenticated) or "Dashboard" (authenticated) | Link to `/auth/signin` or `/dashboard` |
 
 **Design notes**: Match ai-sdk.dev's clean header. No dropdown menus. Theme toggle optional (dark/light).
@@ -101,7 +101,7 @@ $ brew install alethia
 $ alethia login
   ✓ Authenticated as borislav@tovr.eu
 $ alethia config create --provider aws
-  ┌ Plant a Vine ─────────────────────┐
+  ┌ Plant a Spec ─────────────────────┐
   │ Project:     api-backend          │
   │ Environment: production           │
   │ Region:      eu-west-1            │
@@ -109,7 +109,7 @@ $ alethia config create --provider aws
   │ Database:    Aurora PostgreSQL     │
   │ Cost:        ~$847/mo             │
   └───────────────────────────────────┘
-$ alethia harvest
+$ alethia spec apply
   ✓ 47 resources provisioned in 12m 34s
 ```
 
@@ -117,7 +117,7 @@ $ alethia harvest
 | Button | Style | Link |
 |--------|-------|------|
 | "Get Started" | Primary (filled) | `/auth/signin` |
-| "Read the Docs" | Secondary (outline) | Vintner docs URL |
+| "Read the Docs" | Secondary (outline) | Docs URL |
 
 ### Provider Strip
 Three cloud provider logos in a row below the CTA:
@@ -134,7 +134,7 @@ Muted/grayscale, small. Caption: "Full feature parity across all three clouds."
 
 ### Step 1: Design
 - **Icon**: Form/layout icon
-- **Title**: "Design in Trellis"
+- **Title**: "Design in Alethia"
 - **Description**: "Configure infrastructure with an 11-section guided form. Network, Kubernetes, databases, caches, messaging, DNS, secrets — all with real-time cost estimation. No YAML. No HCL."
 
 ### Step 2: Bootstrap
@@ -176,24 +176,24 @@ Muted/grayscale, small. Caption: "Full feature parity across all three clouds."
 # Install Alethia CLI
 brew install alethia
 
-# Authenticate with Trellis
+# Authenticate with Alethia
 alethia login
 
 # Design infrastructure interactively
 alethia config create
 
 # Deploy to your cloud
-alethia harvest
+alethia spec apply
 ```
 
 ### Tab 2: Full Workflow
 ```bash
 # Create a workspace
-alethia vineyard create "production"
+alethia zone create "production"
 
 # Configure a complete stack (6-step TUI wizard)
 alethia config create
-  # Step 1: Vineyard & basics (name, region, provider)
+  # Step 1: Zone & basics (name, region, provider)
   # Step 2: Platform (EKS/GKE/AKS, instance types, autoscaling)
   # Step 3: Git repositories
   # Step 4: Network & advanced (VPC, DNS, WAF)
@@ -201,7 +201,7 @@ alethia config create
   # Step 6: Review with cost estimate
 
 # Preview the Terraform plan
-alethia harvest
+alethia spec apply
   # ► 47 resources to create
   # ► Estimated cost: $847.23/mo
   # ► Confirm? (y/N)
@@ -209,12 +209,12 @@ alethia harvest
 
 ### Tab 3: Runner Setup
 ```bash
-# Register a runner with Trellis
+# Register a runner with Alethia
 alethia runner register --name "prod-runner" --mode cloud-hosted
 
 # Start the runner daemon
 alethia runner start
-  # ✓ Connected to Trellis
+  # ✓ Connected to Alethia
   # ✓ Polling for jobs every 10s
   # ✓ Heartbeat every 30s
 
@@ -284,7 +284,7 @@ Terraform    ArgoCD    Helm    Infracost
 | Stat | Value | Label |
 |------|-------|-------|
 | Cloud Providers | **3** | AWS, GCP, Azure |
-| Infrastructure Sections | **11** | In the Plant a Vine form |
+| Infrastructure Sections | **11** | In the Plant a Spec form |
 | CLI Commands | **16** | Shipped in Alethia |
 | Git Providers | **3** | GitHub, GitLab, Bitbucket |
 
@@ -309,13 +309,13 @@ With copy button.
 
 ### Secondary
 ```
-Or design your infrastructure visually at trellis.tovr.eu
+Or design your infrastructure visually at alethia.tovr.eu
 ```
 
 ### Links
 | Link | Destination |
 |------|-------------|
-| "Read the Documentation" | Vintner docs URL |
+| "Read the Documentation" | Docs URL |
 | "View on GitHub" | GitHub repository URL |
 
 ---
@@ -333,7 +333,7 @@ Or design your infrastructure visually at trellis.tovr.eu
 - Pricing (link: future, or omit)
 
 **Developers**
-- Documentation (external: Vintner URL)
+- Documentation (external: Docs URL)
 - GitHub (external: repository URL)
 - API Reference (link: future, or omit)
 - Changelog (link: future, or omit)
@@ -344,7 +344,7 @@ Or design your infrastructure visually at trellis.tovr.eu
 
 ### Bottom Bar
 ```
-© 2026 Trellis                    Made by Borislav Borisov · Open Source
+© 2026 Alethia                    Made by Borislav Borisov · Open Source
 ```
 
 Left: copyright. Right: attribution per requirement.
@@ -354,10 +354,10 @@ Left: copyright. Right: attribution per requirement.
 ## Technical Implementation Notes
 
 ### File structure
-The landing page currently lives at `apps/trellis/app/page.tsx`. For the expanded 9-section page, extract each section into its own component:
+The landing page currently lives at `apps/alethia/app/page.tsx`. For the expanded 9-section page, extract each section into its own component:
 
 ```
-apps/trellis/components/landing/
+apps/alethia/components/landing/
   header.tsx
   hero.tsx
   how-it-works.tsx
@@ -376,7 +376,7 @@ apps/trellis/components/landing/
 - `@/components/ui/tabs` — for code examples section
 
 ### Design system
-- Follow existing Tailwind + shadcn/ui patterns from the Trellis app
+- Follow existing Tailwind + shadcn/ui patterns from the Alethia app
 - Dark hero background with light text (current pattern)
 - Card-based sections on light/neutral background
 - Responsive: full grid on desktop, stacked on mobile

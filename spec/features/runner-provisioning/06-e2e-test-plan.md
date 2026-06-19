@@ -3,9 +3,9 @@
 ## Prerequisites
 
 - [x] Supabase with `20260520_provision_broker.sql` migration applied
-- [x] Trellis deployed and accessible
+- [x] Alethia deployed and accessible
 - [ ] Central runner deployed in Alethia's account (787587782604) via `terraform apply`
-- [ ] Central runner registered as cloud-hosted in Trellis
+- [ ] Central runner registered as cloud-hosted in Alethia
 - [ ] A separate AWS account to act as the "user's account" (or use the same account for testing)
 
 ---
@@ -14,7 +14,7 @@
 
 **Goal:** Verify a user can connect their AWS account via CloudFormation.
 
-1. Log in to Trellis
+1. Log in to Alethia
 2. Go to Dashboard → Providers
 3. Click "Connect" on AWS
 4. Copy the **External ID** shown
@@ -23,7 +23,7 @@
    - `AlethiaAccountId`: `787587782604`
    - `ExternalId`: paste from step 4
 7. Copy the **Role ARN** from CloudFormation Outputs
-8. Paste Role ARN into Trellis
+8. Paste Role ARN into Alethia
 9. Click Save
 
 **Verify:**
@@ -48,13 +48,13 @@
 
 **Goal:** Verify a job gets created when provisioning is triggered.
 
-1. Create a Vineyard (if none exists)
-2. Create a Configuration (Vine):
+1. Create a Zone (if none exists)
+2. Create a Configuration (Spec):
    - Project name: `e2e-test`
    - Region: `eu-west-1`
    - Environment: `dev`
    - Cloud Identity: select the connected AWS identity
-3. Trigger provisioning (via Trellis UI or `alethia harvest`)
+3. Trigger provisioning (via Alethia UI or `alethia spec apply`)
 4. Go to Runners page → Recent Jobs
 
 **Verify:**
@@ -81,9 +81,9 @@
 
 ## Test 5: Log Streaming
 
-**Goal:** Verify provisioning logs stream to Trellis in real time.
+**Goal:** Verify provisioning logs stream to Alethia in real time.
 
-1. While the job is `PROCESSING`, open the log viewer in Trellis
+1. While the job is `PROCESSING`, open the log viewer in Alethia
 2. Logs should appear within 2-3 seconds of being written
 3. Look for key milestones:
    - `Initializing Terraform...`
@@ -102,7 +102,7 @@
 1. Wait for job status to reach `SUCCESS` (or `FAILED`)
 2. If `SUCCESS`:
    - Check user's AWS account for: VPC, EKS cluster, RDS, S3 state bucket
-   - Verify Clusters page in Trellis shows the new cluster
+   - Verify Clusters page in Alethia shows the new cluster
    - Verify ArgoCD is accessible (if DNS is configured)
 3. If `FAILED`:
    - Check error message on the job
@@ -126,18 +126,18 @@
 
 1. Create a configuration with a cloud identity
 2. Delete the IAM role from the user's AWS account (or change the External ID)
-3. Queue a harvest
+3. Queue a deploy
 4. Runner claims job, attempts `AssumeRole` → fails
 5. Job status should be `FAILED` with error: "Failed to assume role..."
-6. Error should be visible in Trellis job logs
+6. Error should be visible in Alethia job logs
 
 ## Test 9: Full Loop — The Money Test
 
 **Goal:** Start from a fresh user, end with working infrastructure.
 
-1. Sign up on Trellis (new account)
+1. Sign up on Alethia (new account)
 2. Connect AWS (deploy CloudFormation, paste Role ARN)
-3. Create a Vineyard
+3. Create a Zone
 4. Create a Configuration (choose project, region, VPC, services)
 5. Click Provision
 6. Watch logs stream in real time

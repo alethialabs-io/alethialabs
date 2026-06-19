@@ -1,6 +1,6 @@
 # CLI Reference — Alethia
 
-Alethia is the command-line interface for Trellis. It handles authentication, infrastructure configuration, provisioning, teardown, and runner management. Built in Go with Charmbracelet's `huh` library for interactive TUI forms.
+Alethia is the command-line interface for Alethia. It handles authentication, infrastructure configuration, provisioning, teardown, and runner management. Built in Go with Charmbracelet's `huh` library for interactive TUI forms.
 
 ---
 
@@ -17,7 +17,7 @@ brew install alethia
 
 ```
 alethia
-├── login                     Device code auth with Trellis
+├── login                     Device code auth with Alethia
 ├── logout                    Clear local auth token
 │
 ├── config
@@ -26,13 +26,13 @@ alethia
 │   ├── get [name]            Fetch config by project name
 │   └── pull [name]           Export config YAML locally
 │
-├── vineyard
+├── zone
 │   ├── create [name]         Create workspace (interactive cloud identity selector)
-│   ├── list                  Table of vineyards with vine counts
-│   └── delete [id]           Delete vineyard with confirmation prompt
+│   ├── list                  Table of zones with spec counts
+│   └── delete [id]           Delete zone with confirmation prompt
 │
-├── harvest                   Queue a DEPLOY job (interactive vineyard → vine → cluster selection)
-├── provision                 Alias for harvest
+├── deploy                   Queue a DEPLOY job (interactive zone → spec → cluster selection)
+├── provision                 Alias for deploy
 ├── bootstrap                 First-time cluster setup: VPC + K8s + ArgoCD (supports --queue)
 ├── destroy                   Tear down bootstrapped environment with confirmation
 │
@@ -40,7 +40,7 @@ alethia
 │   └── list                  Table of bootstrapped clusters
 │
 └── runner
-    ├── register              Register runner with Trellis (saves token locally)
+    ├── register              Register runner with Alethia (saves token locally)
     └── start                 Start runner poll loop (self-hosted or cloud-hosted mode)
 ```
 
@@ -56,11 +56,11 @@ brew install alethia
 alethia login
 
 # Create a workspace and configure infrastructure
-alethia vineyard create "my-project"
+alethia zone create "my-project"
 alethia config create
 
 # Deploy
-alethia harvest
+alethia spec apply
 ```
 
 ### Full Lifecycle
@@ -70,10 +70,10 @@ alethia harvest
 alethia login
 
 # Create workspace
-alethia vineyard create "production"
+alethia zone create "production"
 
 # Design infrastructure (6-step interactive TUI)
-#   Step 1: Select vineyard + basics (name, environment, region)
+#   Step 1: Select zone + basics (name, environment, region)
 #   Step 2: Platform selection (EKS/GKE/AKS, instance types, autoscaling)
 #   Step 3: Git repositories (infra repo, app repo)
 #   Step 4: Network + advanced (VPC CIDR, NAT gateway, DNS)
@@ -82,10 +82,10 @@ alethia vineyard create "production"
 alethia config create
 
 # Preview what will be provisioned
-alethia config get my-vine-name
+alethia config get my-spec-name
 
 # Deploy to cloud
-alethia harvest
+alethia spec apply
 
 # When done, tear down cleanly
 alethia destroy
@@ -94,11 +94,11 @@ alethia destroy
 ### Runner Setup
 
 ```bash
-# Register a runner with Trellis (gets runner ID + token)
+# Register a runner with Alethia (gets runner ID + token)
 alethia runner register --name "prod-runner" --mode cloud-hosted
 
 # Start the runner daemon
-# Polls Trellis every 10s for jobs, sends heartbeat every 30s
+# Polls Alethia every 10s for jobs, sends heartbeat every 30s
 alethia runner start
 ```
 
@@ -106,7 +106,7 @@ alethia runner start
 
 ```bash
 # alethia login triggers device code flow:
-# 1. CLI requests device code from Trellis
+# 1. CLI requests device code from Alethia
 # 2. User opens browser to /cli/login?device_code=XXX&verification_code=YYY
 # 3. User approves in browser
 # 4. CLI receives refresh token via /api/auth/cli/exchange
@@ -127,22 +127,22 @@ Alethia uses Charmbracelet's `huh` library for rich terminal forms. Key interact
 
 | Step | Fields | Notes |
 |------|--------|-------|
-| 1. Vineyard & Basics | Vineyard selector, project name, environment (dev/staging/prod), region | Region list is provider-specific |
+| 1. Zone & Basics | Zone selector, project name, environment (dev/staging/prod), region | Region list is provider-specific |
 | 2. Platform | Cloud provider, K8s version, instance types, min/desired/max nodes | Supports Karpenter (AWS), Autopilot (GCP) |
 | 3. Repositories | Git provider, infra repo, app repo | Fetches repos from connected Git provider |
 | 4. Network & Advanced | VPC CIDR, NAT gateway mode, DNS zone, domain | Can use existing VPC |
 | 5. Data Services | Databases (engine, version, size), caches, queues | Multi-item arrays |
 | 6. Review | Summary table, confirm or go back | Shows estimated cost |
 
-### `alethia harvest` — Interactive Selection
+### `alethia spec apply` — Interactive Selection
 
 ```
-? Select a vineyard:
-  > production (3 vines)
-    staging (1 vine)
-    development (2 vines)
+? Select a zone:
+  > production (3 specs)
+    staging (1 spec)
+    development (2 specs)
 
-? Select a vine:
+? Select a spec:
   > api-backend (us-east-1, ACTIVE)
     web-frontend (eu-west-1, DRAFT)
 
@@ -155,20 +155,20 @@ Alethia uses Charmbracelet's `huh` library for rich terminal forms. Key interact
 
 ## Envisioned Commands
 
-These commands map Trellis web features to the CLI. They are not yet implemented but represent the natural CLI evolution.
+These commands map Alethia web features to the CLI. They are not yet implemented but represent the natural CLI evolution.
 
 ### Monitoring & Visibility
 
-| Command | Maps from (Trellis) | Purpose |
+| Command | Maps from (Alethia) | Purpose |
 |---------|---------------------|---------|
-| `alethia plan [vine-name]` | Terraform plan viewer | Run terraform plan and show resource diff without applying |
-| `alethia cost [vine-name]` | Cost sidebar | Show monthly cost breakdown by component |
-| `alethia status [vine-name]` | Vine detail page | Per-component provisioning status (network: ACTIVE, cluster: PROVISIONING, ...) |
+| `alethia plan [spec-name]` | Terraform plan viewer | Run terraform plan and show resource diff without applying |
+| `alethia cost [spec-name]` | Cost sidebar | Show monthly cost breakdown by component |
+| `alethia status [spec-name]` | Spec detail page | Per-component provisioning status (network: ACTIVE, cluster: PROVISIONING, ...) |
 | `alethia logs [job-id]` | Job log viewer | Stream real-time job logs to terminal |
 
 ### Runner Management
 
-| Command | Maps from (Trellis) | Purpose |
+| Command | Maps from (Alethia) | Purpose |
 |---------|---------------------|---------|
 | `alethia runner list` | Runners dashboard | List all registered runners with status |
 | `alethia runner status` | Runners dashboard | Show health, uptime, active jobs for a specific runner |
@@ -176,7 +176,7 @@ These commands map Trellis web features to the CLI. They are not yet implemented
 
 ### Integrations
 
-| Command | Maps from (Trellis) | Purpose |
+| Command | Maps from (Alethia) | Purpose |
 |---------|---------------------|---------|
 | `alethia integrations list` | Integrations page | Show connected cloud + git providers with status |
 
@@ -194,9 +194,9 @@ $ alethia login
 
 $ alethia config create
   ┌─────────────────────────────────────┐
-  │  Plant a Vine — Step 1 of 6        │
+  │  Plant a Spec — Step 1 of 6        │
   │                                     │
-  │  Vineyard:    production            │
+  │  Zone:    production            │
   │  Project:     api-backend           │
   │  Environment: production            │
   │  Region:      eu-west-1             │
@@ -216,9 +216,9 @@ $ alethia config create --provider azure  # AKS + Azure DB + Azure Cache
 ### Deployment Flow
 
 ```bash
-$ alethia harvest
-  ? Select vineyard: production
-  ? Select vine: api-backend (eu-west-1)
+$ alethia spec apply
+  ? Select zone: production
+  ? Select spec: api-backend (eu-west-1)
   ? Select runner: prod-runner (ONLINE)
 
   ✓ Job queued: DEPLOY #42
@@ -237,6 +237,6 @@ $ alethia harvest
 
 | File | Location | Purpose |
 |------|----------|---------|
-| Auth token | `~/.config/alethia/auth.json` | Trellis refresh token from `alethia login` |
+| Auth token | `~/.config/alethia/auth.json` | Alethia refresh token from `alethia login` |
 | Runner credentials | `~/.config/alethia/runner.json` | Runner ID + token from `alethia runner register` |
-| Workspace state | `~/.alethia/workspaces/{vineyard}-{env}/` | Local Terraform state and tfvars |
+| Workspace state | `~/.alethia/workspaces/{zone}-{env}/` | Local Terraform state and tfvars |

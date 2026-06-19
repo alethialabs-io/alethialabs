@@ -11,7 +11,7 @@
 | Docker not installed | `Docker not found in PATH. Install from: https://docs.docker.com/get-docker/` | User installs Docker |
 | Terraform not installed | `Terraform not found. The CLI will download it automatically.` | Auto-download via hc-install (existing pattern) |
 | Terraform wrong version | `Terraform {version} found, need >= 1.5. Upgrading...` | Auto-download correct version |
-| Trellis unreachable | `Cannot reach Trellis at {url}. Check your network or ALETHIA_WEB_ORIGIN.` | User checks URL/network |
+| Alethia unreachable | `Cannot reach Alethia at {url}. Check your network or ALETHIA_WEB_ORIGIN.` | User checks URL/network |
 | Not authenticated | `Not logged in. Run: alethia login` | User runs alethia login |
 
 ## Deployment Errors (during Terraform/Docker)
@@ -22,17 +22,17 @@
 | Terraform plan fails | `Terraform plan failed: {error}` | Print full error, suggest checking AWS permissions |
 | Terraform apply fails | `Terraform apply failed: {error}. Resources may have been partially created.` | Print `alethia runner destroy --name {name}` for cleanup |
 | ECS task won't start | `ECS task failed to start after 5 minutes. Check CloudWatch logs: aws logs tail {log_group}` | Print log tail command |
-| No heartbeat after deploy | `Runner deployed but no heartbeat received after 2 minutes. Possible causes: ...` | Print checklist (network, Trellis URL, token) |
+| No heartbeat after deploy | `Runner deployed but no heartbeat received after 2 minutes. Possible causes: ...` | Print checklist (network, Alethia URL, token) |
 
 ## Runtime Errors (runner running in Fargate)
 
 ### Runner Goes Offline
 
-**Detection:** Trellis checks `last_heartbeat` on runners table.
+**Detection:** Alethia checks `last_heartbeat` on runners table.
 
 **Causes:**
 1. ECS task crashed (OOM, process exit)
-2. Network issue (can't reach Trellis)
+2. Network issue (can't reach Alethia)
 3. Fargate capacity issue
 
 **Recovery:**
@@ -41,7 +41,7 @@
 - Stale jobs auto-recovered by `recover_stale_jobs()` RPC after 15 minutes
 
 **User-visible:**
-- Trellis Runners page shows status `OFFLINE` with last heartbeat time
+- Alethia Runners page shows status `OFFLINE` with last heartbeat time
 - Jobs stuck in `CLAIMED`/`PROCESSING` get reset to `QUEUED` after 15 minutes
 - Future: push notification to user when runner goes offline
 
@@ -58,7 +58,7 @@
 **Recovery:**
 - Error message stored in `provision_jobs.error_message`
 - Full error logs in `job_logs` table (streamed in real time)
-- User can inspect logs in Trellis log viewer, fix config, re-queue
+- User can inspect logs in Alethia log viewer, fix config, re-queue
 
 **What we do NOT auto-retry:**
 - Terraform apply failures (could leave partial state)
@@ -82,7 +82,7 @@
 
 ## Monitoring
 
-### What Trellis Shows
+### What Alethia Shows
 
 **Runners page:**
 - Runner name, mode, status (ONLINE/OFFLINE/DRAINING), last heartbeat, created date
@@ -101,10 +101,10 @@
 
 - Container stdout/stderr (same as log viewer, but persisted 30 days)
 - ECS task events (start, stop, crash, restart)
-- Useful for debugging runner-level issues (vs job-level issues in Trellis)
+- Useful for debugging runner-level issues (vs job-level issues in Alethia)
 
 ### Future: Health Alerts
 
-- Trellis detects runner OFFLINE for > 10 minutes → email/notification
+- Alethia detects runner OFFLINE for > 10 minutes → email/notification
 - Job stuck in PROCESSING for > 30 minutes → alert
 - Job failure rate > 50% in last hour → alert
