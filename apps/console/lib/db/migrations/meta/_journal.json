@@ -85,6 +85,13 @@
       "when": 1782000200000,
       "tag": "0011_nosql_cloud_agnostic",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1781867336735,
+      "tag": "0012_silly_snowbird",
+      "breakpoints": true
     }
   ]
 }

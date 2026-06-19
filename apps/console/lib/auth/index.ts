@@ -20,6 +20,7 @@ import {
 	member,
 	organization,
 	session,
+	ssoProvider,
 	user,
 	verification,
 } from "@/lib/db/schema";
@@ -105,8 +106,9 @@ export const auth = betterAuth({
 	trustedOrigins: [cfg.baseURL],
 	database: drizzleAdapter(getServiceDb(), {
 		provider: "pg",
-		// organization/member/invitation are mapped for the enterprise organization
-		// plugin (getAuthPlugins); inert in community (the plugin isn't loaded).
+		// organization/member/invitation + ssoProvider are mapped for the enterprise
+		// organization + SSO plugins (getAuthPlugins); inert in community (the plugins
+		// aren't loaded).
 		schema: {
 			user,
 			session,
@@ -115,6 +117,7 @@ export const auth = betterAuth({
 			organization,
 			member,
 			invitation,
+			ssoProvider,
 		},
 	}),
 	// UUID ids so user.id populates every `user_id uuid` column + the RLS
