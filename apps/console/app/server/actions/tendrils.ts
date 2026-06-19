@@ -226,7 +226,6 @@ async function fetchDeployedWorker(owner: string, workerId: string) {
 			.select({
 				id: runners.id,
 				name: runners.name,
-				user_id: runners.user_id,
 				cloud_identity_id: runners.cloud_identity_id,
 				metadata: runners.metadata,
 			})
@@ -234,8 +233,9 @@ async function fetchDeployedWorker(owner: string, workerId: string) {
 			.where(eq(runners.id, workerId))
 			.limit(1);
 
+		// Ownership: enforced by the caller's authorize() + the withOwnerScope RLS
+		// (a worker outside the actor's org is simply not returned above).
 		if (!worker) throw new Error("Worker not found");
-		if (worker.user_id !== owner) throw new Error("Unauthorized");
 		if (!worker.cloud_identity_id)
 			throw new Error("Worker has no cloud identity");
 
@@ -395,13 +395,13 @@ export async function removeWorker(workerId: string) {
 	const owner = actor.userId;
 	await withOwnerScope(owner, async (tx) => {
 		const [worker] = await tx
-			.select({ id: runners.id, user_id: runners.user_id })
+			.select({ id: runners.id })
 			.from(runners)
 			.where(eq(runners.id, workerId))
 			.limit(1);
 
+		// Ownership enforced by authorize() above + withOwnerScope RLS.
 		if (!worker) throw new Error("Worker not found");
-		if (worker.user_id !== owner) throw new Error("Unauthorized");
 
 		await tx.delete(runners).where(eq(runners.id, workerId));
 	});

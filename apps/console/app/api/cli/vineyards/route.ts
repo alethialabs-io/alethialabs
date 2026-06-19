@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { desc, eq, inArray } from "drizzle-orm";
-import { verifyCliToken } from "@/lib/cli/auth";
+import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { specs, zones } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
@@ -13,24 +13,16 @@ import { NextResponse } from "next/server";
  * (zones/specs) are mapped back to the frozen JSON keys here.
  */
 export async function GET(req: Request) {
-	const { payload, error: authError } = await verifyCliToken(req);
-	if (authError) {
-		return authError;
-	}
-
-	const userId = payload.sub;
-	if (!userId) {
-		return new Response(JSON.stringify({ error: "Invalid token payload" }), {
-			status: 400,
-		});
-	}
+	const auth = await authorizeCli(req, "view", { type: "zone" });
+	if ("error" in auth) return auth.error;
+	const { actor } = auth;
 
 	const db = getServiceDb();
 
 	const zoneRows = await db
 		.select()
 		.from(zones)
-		.where(eq(zones.user_id, userId))
+		.where(eq(zones.org_id, actor.orgId))
 		.orderBy(desc(zones.created_at));
 
 	const zoneIds = zoneRows.map((z) => z.id);
@@ -66,17 +58,9 @@ export async function GET(req: Request) {
 
 /** Creates a new zone for the CLI user (wire name: vineyard). */
 export async function POST(req: Request) {
-	const { payload, error: authError } = await verifyCliToken(req);
-	if (authError) {
-		return authError;
-	}
-
-	const userId = payload.sub;
-	if (!userId) {
-		return new Response(JSON.stringify({ error: "Invalid token payload" }), {
-			status: 400,
-		});
-	}
+	const auth = await authorizeCli(req, "create", { type: "zone" });
+	if ("error" in auth) return auth.error;
+	const { actor } = auth;
 
 	try {
 		const body = await req.json();
@@ -90,7 +74,7 @@ export async function POST(req: Request) {
 		const [zone] = await getServiceDb()
 			.insert(zones)
 			.values({
-				user_id: userId,
+				user_id: actor.userId,
 				name: body.name,
 				description: body.description || null,
 			})

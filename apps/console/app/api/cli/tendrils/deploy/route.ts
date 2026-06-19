@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { verifyCliToken } from "@/lib/cli/auth";
+import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
@@ -11,16 +11,9 @@ import { NextResponse } from "next/server";
 
 /** Deploys a tendril by creating a worker record + queuing a DEPLOY_WORKER job. */
 export async function POST(req: Request) {
-	const { payload, error: authError } = await verifyCliToken(req);
-	if (authError) return authError;
-
-	const userId = payload?.sub;
-	if (!userId) {
-		return NextResponse.json(
-			{ error: "Invalid token payload" },
-			{ status: 401 },
-		);
-	}
+	const auth = await authorizeCli(req, "deploy", { type: "runner" });
+	if ("error" in auth) return auth.error;
+	const { actor } = auth;
 
 	try {
 		const body = await req.json();
@@ -39,7 +32,7 @@ export async function POST(req: Request) {
 			.select({
 				id: cloudIdentities.id,
 				provider: cloudIdentities.provider,
-				user_id: cloudIdentities.user_id,
+				org_id: cloudIdentities.org_id,
 			})
 			.from(cloudIdentities)
 			.where(eq(cloudIdentities.id, cloud_identity_id))
@@ -52,9 +45,9 @@ export async function POST(req: Request) {
 			);
 		}
 
-		if (identity.user_id !== userId) {
+		if (identity.org_id !== actor.orgId) {
 			return NextResponse.json(
-				{ error: "Unauthorized: cloud identity belongs to another user" },
+				{ error: "Unauthorized: cloud identity belongs to another org" },
 				{ status: 403 },
 			);
 		}
@@ -73,7 +66,7 @@ export async function POST(req: Request) {
 		const [worker] = await db
 			.insert(runners)
 			.values({
-				user_id: userId,
+				user_id: actor.userId,
 				name,
 				mode: "self-hosted",
 				token_hash: tokenHash,
@@ -95,7 +88,7 @@ export async function POST(req: Request) {
 		const [job] = await db
 			.insert(jobs)
 			.values({
-				user_id: userId,
+				user_id: actor.userId,
 				cloud_identity_id,
 				job_type: "DEPLOY_WORKER",
 				config_snapshot: configSnapshot,

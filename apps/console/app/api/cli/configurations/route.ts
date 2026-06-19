@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { desc, eq } from "drizzle-orm";
-import { verifyCliToken } from "@/lib/cli/auth";
+import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, specs } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
@@ -13,13 +13,9 @@ import { NextResponse } from "next/server";
  * provider) that the CLI `configurations list` command parses.
  */
 export async function GET(req: Request) {
-	const { payload, error: authError } = await verifyCliToken(req);
-	if (authError) return authError;
-
-	const userId = payload.sub;
-	if (!userId) {
-		return NextResponse.json({ error: "Invalid token payload" }, { status: 400 });
-	}
+	const auth = await authorizeCli(req, "view", { type: "spec" });
+	if ("error" in auth) return auth.error;
+	const { actor } = auth;
 
 	try {
 		const rows = await getServiceDb()
@@ -37,7 +33,7 @@ export async function GET(req: Request) {
 			})
 			.from(specs)
 			.leftJoin(cloudIdentities, eq(specs.cloud_identity_id, cloudIdentities.id))
-			.where(eq(specs.user_id, userId))
+			.where(eq(specs.org_id, actor.orgId))
 			.orderBy(desc(specs.created_at));
 
 		const configurations = rows.map((r) => ({

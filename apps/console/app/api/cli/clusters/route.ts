@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { desc, eq } from "drizzle-orm";
-import { verifyCliToken } from "@/lib/cli/auth";
+import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { specCluster, specs } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
@@ -12,13 +12,9 @@ import { NextResponse } from "next/server";
  * CLI user. Wire-locked: the flat `vine_*` keys are the frozen CLI contract.
  */
 export async function GET(req: Request) {
-	const { payload, error: authError } = await verifyCliToken(req);
-	if (authError) return authError;
-
-	const userId = payload?.sub;
-	if (!userId) {
-		return NextResponse.json({ error: "Invalid token payload" }, { status: 401 });
-	}
+	const auth = await authorizeCli(req, "view", { type: "spec" });
+	if ("error" in auth) return auth.error;
+	const { actor } = auth;
 
 	try {
 		const rows = await getServiceDb()
@@ -42,7 +38,7 @@ export async function GET(req: Request) {
 			})
 			.from(specCluster)
 			.innerJoin(specs, eq(specCluster.spec_id, specs.id))
-			.where(eq(specs.user_id, userId))
+			.where(eq(specs.org_id, actor.orgId))
 			.orderBy(desc(specCluster.updated_at));
 
 		return NextResponse.json({ clusters: rows });

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { verifyCliToken } from "@/lib/cli/auth";
+import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { querySpecFull } from "@/lib/queries/spec-full";
 import { NextResponse } from "next/server";
@@ -11,21 +11,18 @@ export async function GET(
 	req: Request,
 	{ params }: { params: Promise<{ name: string }> },
 ) {
-	const { payload, error: authError } = await verifyCliToken(req);
-	if (authError) return authError;
-
-	const userId = payload.sub;
-	if (!userId) {
-		return NextResponse.json({ error: "Invalid token payload" }, { status: 400 });
-	}
+	const auth = await authorizeCli(req, "view", { type: "spec" });
+	if ("error" in auth) return auth.error;
+	const { actor } = auth;
 
 	const { name: projectName } = await params;
 	if (!projectName) {
 		return NextResponse.json({ error: "Project name is required" }, { status: 400 });
 	}
 
+	// querySpecFull still scopes by user_id (community-correct; threaded to org_id in 4.5).
 	const [configuration] = await querySpecFull(getServiceDb(), {
-		user_id: userId,
+		user_id: actor.userId,
 		project_name: projectName,
 	});
 

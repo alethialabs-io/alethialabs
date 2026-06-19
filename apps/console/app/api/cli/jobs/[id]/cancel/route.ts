@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { verifyCliToken } from "@/lib/cli/auth";
+import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
@@ -12,18 +12,11 @@ export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const { payload, error: authError } = await verifyCliToken(req);
-	if (authError) return authError;
-
-	const userId = payload?.sub;
-	if (!userId) {
-		return NextResponse.json(
-			{ error: "Invalid token payload" },
-			{ status: 401 },
-		);
-	}
-
 	const { id: jobId } = await params;
+
+	const auth = await authorizeCli(req, "edit", { type: "job", id: jobId });
+	if ("error" in auth) return auth.error;
+	const { actor } = auth;
 
 	try {
 		const db = getServiceDb();
@@ -31,7 +24,7 @@ export async function POST(
 		const [job] = await db
 			.select({ status: jobs.status })
 			.from(jobs)
-			.where(and(eq(jobs.id, jobId), eq(jobs.user_id, userId)))
+			.where(and(eq(jobs.id, jobId), eq(jobs.org_id, actor.orgId)))
 			.limit(1);
 
 		if (!job) {

@@ -3,6 +3,8 @@
 
 import { and, asc, eq, gt } from "drizzle-orm";
 import { getOwner } from "@/lib/auth/owner";
+import { getActiveScope } from "@/lib/auth/scope";
+import { authorizeUserId } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { jobLogs, jobs } from "@/lib/db/schema";
 import { getRealtimeTransport } from "@/lib/realtime";
@@ -29,14 +31,18 @@ export async function GET(
 	if (!owner) return new Response("Unauthorized", { status: 401 });
 
 	const { id: jobId } = await params;
+
+	const forbid = await authorizeUserId(owner, "view", { type: "job", id: jobId });
+	if (forbid) return forbid;
+	const actor = await getActiveScope(owner);
 	const db = getServiceDb();
 
 	const [job] = await db
-		.select({ user_id: jobs.user_id })
+		.select({ org_id: jobs.org_id })
 		.from(jobs)
 		.where(eq(jobs.id, jobId))
 		.limit(1);
-	if (!job || job.user_id !== owner) {
+	if (!job || job.org_id !== actor.orgId) {
 		return new Response("Not found", { status: 404 });
 	}
 

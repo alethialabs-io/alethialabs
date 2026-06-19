@@ -5,7 +5,8 @@ import { requireOwner } from "@/lib/auth/owner";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import type { Action, Resource } from "@/lib/authz/registry";
-import type { Actor, ResourceRef } from "@/lib/authz/types";
+import { type Actor, ForbiddenError, type ResourceRef } from "@/lib/authz/types";
+import { verifyCliToken } from "@/lib/cli/auth";
 
 /**
  * Resolves the verified caller into an Actor (identity → active tenancy scope).
@@ -29,4 +30,60 @@ export async function authorize(
 	const ref: ResourceRef = { type: resource.type, id: resource.id };
 	await getPdp().enforce(actor, action, ref);
 	return actor;
+}
+
+function forbidden(): Response {
+	return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
+}
+
+/**
+ * CLI-route authorization: verify the CLI token, resolve the actor, and enforce.
+ * Returns `{ actor }` on success or `{ error }` (the Response to return). CLI routes
+ * query via getServiceDb() (no RLS), so the caller MUST also scope its query by
+ * `actor.orgId` — enforce() is the permission gate, org_id is the tenancy boundary.
+ */
+export async function authorizeCli(
+	req: Request,
+	action: Action,
+	resource: { type: Resource; id?: string },
+): Promise<{ actor: Actor } | { error: Response }> {
+	const { payload, error } = await verifyCliToken(req);
+	if (error) return { error };
+	const userId = payload?.sub;
+	if (!userId) {
+		return {
+			error: new Response(JSON.stringify({ error: "Invalid token payload" }), {
+				status: 400,
+			}),
+		};
+	}
+	const actor = await getActiveScope(userId);
+	try {
+		await getPdp().enforce(actor, action, { type: resource.type, id: resource.id });
+	} catch (e) {
+		if (e instanceof ForbiddenError) return { error: forbidden() };
+		throw e;
+	}
+	return { actor };
+}
+
+/**
+ * Enforces `action` on `resource` for an already-resolved userId (e.g. provider
+ * routes that authenticated via resolveCliProvider). Returns a 403 Response on
+ * denial, or null when allowed. Callers that also need explicit org scoping should
+ * resolve the actor via getActiveScope (or use authorizeCli, which returns it).
+ */
+export async function authorizeUserId(
+	userId: string,
+	action: Action,
+	resource: { type: Resource; id?: string },
+): Promise<Response | null> {
+	const actor = await getActiveScope(userId);
+	try {
+		await getPdp().enforce(actor, action, { type: resource.type, id: resource.id });
+	} catch (e) {
+		if (e instanceof ForbiddenError) return forbidden();
+		throw e;
+	}
+	return null;
 }

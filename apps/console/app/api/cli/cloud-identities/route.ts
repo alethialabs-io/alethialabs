@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, asc, eq } from "drizzle-orm";
-import { verifyCliToken } from "@/lib/cli/auth";
+import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
 import type { CloudCredentials } from "@/types/database-custom.types";
@@ -10,19 +10,12 @@ import { NextResponse } from "next/server";
 
 /** Lists verified cloud identities for the CLI user. */
 export async function GET(req: Request) {
-	const { payload, error: authError } = await verifyCliToken(req);
-	if (authError) return authError;
-
-	const userId = payload?.sub;
-	if (!userId) {
-		return NextResponse.json(
-			{ error: "Invalid token payload" },
-			{ status: 401 },
-		);
-	}
+	const auth = await authorizeCli(req, "view", { type: "cloud_identity" });
+	if ("error" in auth) return auth.error;
+	const { actor } = auth;
 
 	try {
-		// Service connection (worker/CLI path) — scoped explicitly by the token's user.
+		// Service connection (no RLS) — scoped explicitly by the actor's org.
 		const identities = await getServiceDb()
 			.select({
 				id: cloudIdentities.id,
@@ -33,7 +26,7 @@ export async function GET(req: Request) {
 			.from(cloudIdentities)
 			.where(
 				and(
-					eq(cloudIdentities.user_id, userId),
+					eq(cloudIdentities.org_id, actor.orgId),
 					eq(cloudIdentities.is_verified, true),
 				),
 			)
