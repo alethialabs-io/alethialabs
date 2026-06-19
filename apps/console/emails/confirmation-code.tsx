@@ -30,31 +30,43 @@ export function ConfirmationCodeEmail({
 					with this address. Questions?{" "}
 					<Link
 						href="mailto:support@alethialabs.io"
+						className="a-text-2"
 						style={footerLegalLink}
 					>
 						support@alethialabs.io
 					</Link>{" "}
 					·{" "}
-					<Link href="https://alethialabs.io/privacy" style={footerLegalLink}>
+					<Link
+						href="https://alethialabs.io/privacy"
+						className="a-text-2"
+						style={footerLegalLink}
+					>
 						Privacy
 					</Link>{" "}
 					·{" "}
-					<Link href="https://alethialabs.io/terms" style={footerLegalLink}>
+					<Link
+						href="https://alethialabs.io/terms"
+						className="a-text-2"
+						style={footerLegalLink}
+					>
 						Terms
 					</Link>
 				</>
 			}
 		>
-			<Text style={text.eyebrow}>Verify your email</Text>
-			<Heading as="h2" style={text.heading}>
+			<Text className="a-text-3" style={text.eyebrow}>
+				Verify your email
+			</Text>
+			<Heading as="h2" className="a-text" style={text.heading}>
 				Confirm your email address
 			</Heading>
-			<Text style={text.body}>
+			<Text className="a-text-2" style={text.body}>
 				Enter this code to finish signing in to Alethia. Codes are
 				single-use and tied to this request.
 			</Text>
 
 			<Section
+				className="a-sunken a-border-strong"
 				style={{
 					margin: "4px 0 22px",
 					border: `1px solid ${colors.borderStrong}`,
@@ -65,6 +77,7 @@ export function ConfirmationCodeEmail({
 				}}
 			>
 				<Text
+					className="a-text"
 					style={{
 						fontFamily: fonts.mono,
 						fontSize: "38px",
@@ -77,6 +90,7 @@ export function ConfirmationCodeEmail({
 					{grouped}
 				</Text>
 				<Text
+					className="a-text-3"
 					style={{
 						fontFamily: fonts.mono,
 						fontSize: "11px",
@@ -90,6 +104,7 @@ export function ConfirmationCodeEmail({
 			</Section>
 
 			<Text
+				className="a-text-3"
 				style={{
 					...text.body,
 					fontSize: "13px",

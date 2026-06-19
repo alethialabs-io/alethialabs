@@ -15,8 +15,8 @@ interface WelcomeEmailProps {
 const STEPS = [
 	{
 		n: "01",
-		title: "Plant a Vine.",
-		body: "Open the console and walk the eleven guided sections into your first cluster.",
+		title: "Create a Spec.",
+		body: "Open the console and walk the guided sections into your first cluster.",
 	},
 	{
 		n: "02",
@@ -26,7 +26,7 @@ const STEPS = [
 	{
 		n: "03",
 		title: "Read the docs.",
-		body: "Architecture, the Vineyard model, and provider setup for AWS, GCP, and Azure.",
+		body: "Architecture, the Zones & Specs model, and provider setup for AWS, GCP, and Azure.",
 	},
 ] as const;
 
@@ -36,44 +36,56 @@ export function WelcomeEmail({
 }: WelcomeEmailProps) {
 	return (
 		<EmailLayout
-			preview="Your Alethia control plane is ready — plant your first Vine."
+			preview="Your Alethia control plane is ready — design your first spec."
 			legal={
 				<>
 					You&apos;re receiving this because you created an Alethia
 					account. Manage{" "}
 					<Link
 						href="https://alethialabs.io/settings/notifications"
+						className="a-text-2"
 						style={footerLegalLink}
 					>
 						email preferences
 					</Link>{" "}
 					·{" "}
-					<Link href="https://alethialabs.io/privacy" style={footerLegalLink}>
+					<Link
+						href="https://alethialabs.io/privacy"
+						className="a-text-2"
+						style={footerLegalLink}
+					>
 						Privacy
 					</Link>{" "}
 					·{" "}
-					<Link href="https://alethialabs.io/terms" style={footerLegalLink}>
+					<Link
+						href="https://alethialabs.io/terms"
+						className="a-text-2"
+						style={footerLegalLink}
+					>
 						Terms
 					</Link>
 				</>
 			}
 		>
-			<Text style={text.eyebrow}>Welcome</Text>
-			<Heading as="h2" style={text.heading}>
+			<Text className="a-text-3" style={text.eyebrow}>
+				Welcome
+			</Text>
+			<Heading as="h2" className="a-text" style={text.heading}>
 				Your control plane is ready.
 			</Heading>
-			<Text style={text.body}>
+			<Text className="a-text-2" style={text.body}>
 				Configure multi-cloud Kubernetes visually. Deploy from the
 				terminal. Zero credentials stored. Everything you provision
 				compiles into a single Terraform plan you can review before it
 				runs.
 			</Text>
-			<Text style={{ ...text.body, marginBottom: "22px" }}>
-				Sign in to the console to plant your first Vine, or pick up the
+			<Text className="a-text-2" style={{ ...text.body, marginBottom: "22px" }}>
+				Sign in to the console to design your first spec, or pick up the
 				CLI:
 			</Text>
 
 			<Section
+				className="a-sunken a-border a-text-2"
 				style={{
 					fontFamily: fonts.mono,
 					fontSize: "13px",
@@ -85,13 +97,17 @@ export function WelcomeEmail({
 					margin: "4px 0 22px",
 				}}
 			>
-				<span style={{ color: colors.textTertiary }}>$</span> alethia login
+				<span className="a-text-3" style={{ color: colors.textTertiary }}>
+					$
+				</span>{" "}
+				alethia login
 			</Section>
 
 			<Section style={{ margin: "4px 0 26px" }}>
 				{STEPS.map((step, i) => (
 					<Section
 						key={step.n}
+						className="a-border"
 						style={{
 							padding: "14px 0",
 							borderTop: `1px solid ${colors.border}`,
@@ -102,6 +118,7 @@ export function WelcomeEmail({
 						}}
 					>
 						<span
+							className="a-text-3"
 							style={{
 								fontFamily: fonts.mono,
 								fontSize: "11px",
@@ -114,6 +131,7 @@ export function WelcomeEmail({
 							{step.n}
 						</span>
 						<span
+							className="a-text-2"
 							style={{
 								fontFamily: fonts.sans,
 								fontSize: "13.5px",
@@ -121,7 +139,10 @@ export function WelcomeEmail({
 								color: colors.textSecondary,
 							}}
 						>
-							<strong style={{ color: colors.textPrimary, fontWeight: 500 }}>
+							<strong
+								className="a-text"
+								style={{ color: colors.textPrimary, fontWeight: 500 }}
+							>
 								{step.title}
 							</strong>{" "}
 							{step.body}
@@ -130,7 +151,7 @@ export function WelcomeEmail({
 				))}
 			</Section>
 
-			<Button href={consoleUrl} style={primaryButton}>
+			<Button href={consoleUrl} className="a-btn" style={primaryButton}>
 				Open the console →
 			</Button>
 		</EmailLayout>

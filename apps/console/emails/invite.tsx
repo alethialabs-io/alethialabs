@@ -15,67 +15,85 @@ import { footerLegalLink } from "./components/footer";
 import { colors, fonts, primaryButton, radii, text } from "./components/theme";
 
 export const subject = (inviterName: string) =>
-	`${inviterName} invited you to a vineyard on Alethia`;
+	`${inviterName} invited you to a workspace on Alethia`;
 
 interface InviteEmailProps {
 	inviterName?: string;
 	inviterInitials?: string;
-	vineyardName?: string;
+	workspaceName?: string;
 	role?: string;
 	acceptUrl?: string;
 	expiresInDays?: number;
 }
 
-/** Team flow — invitation to collaborate on a vineyard. */
+/** Team flow — invitation to collaborate in a workspace (organization). */
 export function InviteEmail({
 	inviterName = "Dana Okafor",
 	inviterInitials = "DO",
-	vineyardName = "platform-core",
+	workspaceName = "platform-core",
 	role = "Maintainer",
-	acceptUrl = "https://console.alethialabs.io/invites/accept?token=vyd_9f31a0",
+	acceptUrl = "https://console.alethialabs.io/invites/accept?token=inv_9f31a0",
 	expiresInDays = 7,
 }: InviteEmailProps) {
 	return (
 		<EmailLayout
-			preview={`${inviterName} invited you to the ${vineyardName} vineyard on Alethia.`}
+			preview={`${inviterName} invited you to the ${workspaceName} workspace on Alethia.`}
 			legal={
 				<>
-					This invite was sent to you by a member of {vineyardName}.
+					This invite was sent to you by a member of {workspaceName}.
 					Questions?{" "}
 					<Link
 						href="mailto:support@alethialabs.io"
+						className="a-text-2"
 						style={footerLegalLink}
 					>
 						support@alethialabs.io
 					</Link>{" "}
 					·{" "}
-					<Link href="https://alethialabs.io/privacy" style={footerLegalLink}>
+					<Link
+						href="https://alethialabs.io/privacy"
+						className="a-text-2"
+						style={footerLegalLink}
+					>
 						Privacy
 					</Link>{" "}
 					·{" "}
-					<Link href="https://alethialabs.io/terms" style={footerLegalLink}>
+					<Link
+						href="https://alethialabs.io/terms"
+						className="a-text-2"
+						style={footerLegalLink}
+					>
 						Terms
 					</Link>
 				</>
 			}
 		>
-			<Text style={text.eyebrow}>Invitation</Text>
-			<Heading as="h2" style={text.heading}>
-				You&apos;ve been invited to a vineyard.
+			<Text className="a-text-3" style={text.eyebrow}>
+				Invitation
+			</Text>
+			<Heading as="h2" className="a-text" style={text.heading}>
+				You&apos;ve been invited to a workspace.
 			</Heading>
-			<Text style={text.body}>
-				<strong style={{ color: colors.textPrimary, fontWeight: 500 }}>
+			<Text className="a-text-2" style={text.body}>
+				<strong
+					className="a-text"
+					style={{ color: colors.textPrimary, fontWeight: 500 }}
+				>
 					{inviterName}
 				</strong>{" "}
 				invited you to collaborate on the{" "}
-				<strong style={{ color: colors.textPrimary, fontWeight: 500 }}>
-					{vineyardName}
+				<strong
+					className="a-text"
+					style={{ color: colors.textPrimary, fontWeight: 500 }}
+				>
+					{workspaceName}
 				</strong>{" "}
-				vineyard — a shared workspace for provisioning and managing
+				workspace — a shared space for provisioning and managing
 				infrastructure on Alethia.
 			</Text>
 
 			<Section
+				className="a-sunken a-border"
 				style={{
 					border: `1px solid ${colors.border}`,
 					borderRadius: radii.md,
@@ -87,6 +105,7 @@ export function InviteEmail({
 				<Row>
 					<Column style={{ width: "44px", verticalAlign: "middle" }}>
 						<Section
+							className="a-muted a-border-strong"
 							style={{
 								width: "44px",
 								height: "44px",
@@ -97,6 +116,7 @@ export function InviteEmail({
 							}}
 						>
 							<Text
+								className="a-text"
 								style={{
 									fontFamily: fonts.mono,
 									fontSize: "14px",
@@ -112,6 +132,7 @@ export function InviteEmail({
 					</Column>
 					<Column style={{ paddingLeft: "16px", verticalAlign: "middle" }}>
 						<Text
+							className="a-text"
 							style={{
 								fontFamily: fonts.sans,
 								fontSize: "14px",
@@ -123,6 +144,7 @@ export function InviteEmail({
 							{inviterName}
 						</Text>
 						<Text
+							className="a-text-3"
 							style={{
 								fontFamily: fonts.mono,
 								fontSize: "11px",
@@ -131,17 +153,18 @@ export function InviteEmail({
 								margin: 0,
 							}}
 						>
-							{vineyardName} · role: {role}
+							{workspaceName} · role: {role}
 						</Text>
 					</Column>
 				</Row>
 			</Section>
 
-			<Button href={acceptUrl} style={primaryButton}>
+			<Button href={acceptUrl} className="a-btn" style={primaryButton}>
 				Accept invitation →
 			</Button>
 
 			<Text
+				className="a-text-3"
 				style={{
 					...text.body,
 					fontSize: "13px",
@@ -159,9 +182,9 @@ export function InviteEmail({
 InviteEmail.PreviewProps = {
 	inviterName: "Dana Okafor",
 	inviterInitials: "DO",
-	vineyardName: "platform-core",
+	workspaceName: "platform-core",
 	role: "Maintainer",
-	acceptUrl: "https://console.alethialabs.io/invites/accept?token=vyd_9f31a0",
+	acceptUrl: "https://console.alethialabs.io/invites/accept?token=inv_9f31a0",
 	expiresInDays: 7,
 } satisfies InviteEmailProps;
 

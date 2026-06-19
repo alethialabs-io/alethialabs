@@ -9,6 +9,7 @@ import { colors, fonts } from "./theme";
 export function EmailHeader() {
 	return (
 		<Section
+			className="a-border"
 			style={{
 				padding: "30px 40px 26px",
 				borderBottom: `1px solid ${colors.border}`,
@@ -17,10 +18,12 @@ export function EmailHeader() {
 		>
 			<Link
 				href="https://alethialabs.io"
+				className="a-text"
 				style={{ textDecoration: "none", color: colors.textPrimary }}
 			>
 				<Mark size={22} />
 				<span
+					className="a-text"
 					style={{
 						fontFamily: fonts.sans,
 						fontSize: "19px",
@@ -33,6 +36,7 @@ export function EmailHeader() {
 					Alethia
 				</span>
 				<span
+					className="a-text-3"
 					style={{
 						fontFamily: fonts.mono,
 						fontSize: "9px",

@@ -22,6 +22,7 @@ interface EmailFooterProps {
 export function EmailFooter({ legal }: EmailFooterProps) {
 	return (
 		<Section
+			className="a-border"
 			style={{
 				padding: "28px 40px 34px",
 				borderTop: `1px solid ${colors.border}`,
@@ -30,6 +31,7 @@ export function EmailFooter({ legal }: EmailFooterProps) {
 			<Section style={{ marginBottom: "16px" }}>
 				<Mark size={18} color={colors.textSecondary} />
 				<span
+					className="a-text-2"
 					style={{
 						fontFamily: fonts.sans,
 						fontSize: "14px",
@@ -42,6 +44,7 @@ export function EmailFooter({ legal }: EmailFooterProps) {
 					Alethia
 				</span>
 				<span
+					className="a-text-3"
 					style={{
 						fontFamily: fonts.mono,
 						fontSize: "8px",
@@ -61,6 +64,7 @@ export function EmailFooter({ legal }: EmailFooterProps) {
 					<Link
 						key={link.label}
 						href={link.href}
+						className="a-text-3"
 						style={{
 							fontFamily: fonts.mono,
 							fontSize: "11px",
@@ -76,6 +80,7 @@ export function EmailFooter({ legal }: EmailFooterProps) {
 			</Section>
 
 			<Text
+				className="a-text-3"
 				style={{
 					fontFamily: fonts.sans,
 					fontSize: "12px",
@@ -88,6 +93,7 @@ export function EmailFooter({ legal }: EmailFooterProps) {
 			</Text>
 
 			<Text
+				className="a-text-3"
 				style={{
 					fontFamily: fonts.mono,
 					fontSize: "10px",

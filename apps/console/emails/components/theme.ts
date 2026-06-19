@@ -24,6 +24,41 @@ export const colors = {
 	inkForeground: "#18181a", // text on the light action
 } as const;
 
+/** Light-mode Alethia grayscale (mirrors the dark ramp). */
+export const lightColors = {
+	canvas: "#f4f4f5",
+	surface: "#ffffff",
+	surfaceRaised: "#fafafa",
+	surfaceSunken: "#f4f4f5",
+	surfaceMuted: "#f0f0f1",
+	textPrimary: "#18181a",
+	textSecondary: "#52525b",
+	textTertiary: "#71717a",
+	textDisabled: "#a1a1aa",
+	border: "#e4e4e7",
+	borderStrong: "#d4d4d8",
+	ink: "#18181a",
+	inkForeground: "#fafafa",
+} as const;
+
+/** prefers-color-scheme:light overrides, keyed on the class hooks below. */
+export const lightModeCss = `
+@media (prefers-color-scheme: light) {
+  .a-canvas { background-color: ${lightColors.canvas} !important; }
+  .a-surface { background-color: ${lightColors.surface} !important; }
+  .a-sunken { background-color: ${lightColors.surfaceSunken} !important; }
+  .a-muted { background-color: ${lightColors.surfaceMuted} !important; }
+  .a-text { color: ${lightColors.textPrimary} !important; }
+  .a-text-2 { color: ${lightColors.textSecondary} !important; }
+  .a-text-3 { color: ${lightColors.textTertiary} !important; }
+  .a-border { border-color: ${lightColors.border} !important; }
+  .a-border-strong { border-color: ${lightColors.borderStrong} !important; }
+  .a-btn { background-color: ${lightColors.ink} !important; color: ${lightColors.inkForeground} !important; border-color: ${lightColors.ink} !important; }
+  .a-mark { color: ${lightColors.ink} !important; }
+  .a-mark path { stroke: ${lightColors.ink} !important; }
+  .a-mark circle { fill: ${lightColors.ink} !important; }
+}`;
+
 /** Type voices. Geist first, system fallback (web fonts are unreliable in email). */
 export const fonts = {
 	sans: "Geist, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",

@@ -12,7 +12,7 @@ import {
 import type { ReactNode } from "react";
 import { EmailFooter } from "./footer";
 import { EmailHeader } from "./header";
-import { colors, fonts } from "./theme";
+import { colors, fonts, lightModeCss } from "./theme";
 
 interface EmailLayoutProps {
 	/** Inbox preheader text. */
@@ -26,9 +26,14 @@ interface EmailLayoutProps {
 export function EmailLayout({ preview, legal, children }: EmailLayoutProps) {
 	return (
 		<Html lang="en">
-			<Head />
+			<Head>
+				<meta name="color-scheme" content="light dark" />
+				<meta name="supported-color-schemes" content="light dark" />
+				<style dangerouslySetInnerHTML={{ __html: lightModeCss }} />
+			</Head>
 			<Preview>{preview}</Preview>
 			<Body
+				className="a-canvas"
 				style={{
 					margin: 0,
 					backgroundColor: colors.canvas,
@@ -36,6 +41,7 @@ export function EmailLayout({ preview, legal, children }: EmailLayoutProps) {
 				}}
 			>
 				<Container
+					className="a-surface"
 					style={{
 						maxWidth: "600px",
 						margin: "0 auto",
