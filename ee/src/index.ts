@@ -48,6 +48,17 @@ export function register(core: CoreContext): EnterpriseModule {
 				// from core so the org-plugin role vocabulary matches end-to-end.
 				ac: core.orgAc,
 				roles: core.orgRoles,
+				// Send the invitation email (the drafted emails/invite.tsx) via core.
+				sendInvitationEmail: async (data) => {
+					await core.sendInviteEmail({
+						to: data.email,
+						inviterName:
+							data.inviter.user.name ?? data.inviter.user.email ?? "A teammate",
+						workspaceName: data.organization.name,
+						role: typeof data.role === "string" ? data.role : data.role[0],
+						token: data.id,
+					});
+				},
 				organizationHooks: {
 					// The creator owns the new org (org-wide owner grant) so the PDP
 					// authorizes them within it — mirrors core's ensurePersonalOrgOwner.

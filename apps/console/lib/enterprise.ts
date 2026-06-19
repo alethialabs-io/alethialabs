@@ -14,19 +14,22 @@ import { orgAc, orgRoles } from "@/lib/authz/org-access-control";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import type { Actor, Entitlements, Pdp } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
+import { sendInviteEmail } from "@/lib/email/notify-email";
 
 /**
  * Capabilities the core injects into the enterprise module. `ee/` queries through
- * `core.db` (raw SQL), reads `core.builtinRoleIds` for stable role ids, and uses
+ * `core.db` (raw SQL), reads `core.builtinRoleIds` for stable role ids, uses
  * `core.orgAc`/`core.orgRoles` so the organization plugin's membership roles match
- * the PDP (owner/admin/operator/viewer). So `ee/` needs NO runtime import of core
- * internals — only erased type imports. Keeps the dependency direction clean.
+ * the PDP, and `core.sendInviteEmail` to send the invitation email. So `ee/` needs
+ * NO runtime import of core internals — only erased type imports. Keeps the
+ * dependency direction clean.
  */
 export interface CoreContext {
 	db: ReturnType<typeof getServiceDb>;
 	builtinRoleIds: typeof BUILTIN_ROLE_IDS;
 	orgAc: typeof orgAc;
 	orgRoles: typeof orgRoles;
+	sendInviteEmail: typeof sendInviteEmail;
 }
 
 export interface EnterpriseModule {
@@ -71,6 +74,7 @@ function loadEnterprise(): void {
 			builtinRoleIds: BUILTIN_ROLE_IDS,
 			orgAc,
 			orgRoles,
+			sendInviteEmail,
 		});
 	} catch {
 		registered = null; // community build — enterprise package absent
