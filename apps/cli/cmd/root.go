@@ -47,7 +47,7 @@ It helps you automate, manage, and scale your cloud infrastructure easily.`,
 		fmt.Println()
 		fmt.Println(textStyle.Render("This tool is open source and I'd love collaboration."))
 		fmt.Println(textStyle.Render("Alethia is designed to manage, provision, and automate complex cloud infrastructure effortlessly."))
-		fmt.Println(textStyle.Render("You can also set up things through our web platform: ") + linkStyle.Render("https://trellis.itgix.eu"))
+		fmt.Println(textStyle.Render("You can also set up things through our web platform: ") + linkStyle.Render("https://adp.prod.itgix.eu"))
 		fmt.Println()
 
 		cmd.Help()
