@@ -4,6 +4,7 @@
 
 import { EnterpriseGate } from "@/components/settings/enterprise-gate";
 import { SettingsHeader } from "@/components/settings/settings-header";
+import { SsoProviders } from "@/components/settings/sso/sso-providers";
 
 export default function SsoPage() {
 	return (
@@ -17,8 +18,7 @@ export default function SsoPage() {
 				title="Single Sign-On"
 				description="Connect your IdP (Okta, Entra ID, AWS IAM Identity Center, Google Workspace, …) over OIDC or SAML. Available on Enterprise."
 			>
-				{/* Provider list + register-provider dialog land in UI-4. */}
-				<div />
+				<SsoProviders />
 			</EnterpriseGate>
 		</>
 	);
