@@ -27,7 +27,7 @@ export const runnerReleases = pgTable("runner_releases", {
 	is_breaking: boolean().default(false).notNull(),
 });
 
-// Runner — the worker that executes provisioning. `user_id` is null for
+// Runner — the runner that executes provisioning. `user_id` is null for
 // cloud-hosted runners (platform-owned, public-read); set for self-hosted.
 export const runners = pgTable(
 	"runners",

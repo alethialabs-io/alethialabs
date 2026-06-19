@@ -87,7 +87,7 @@ interface SpecFullFilters {
 /**
  * Reads rows from the `spec_full` view with the given equality filters. Returns the
  * raw view rows typed as SpecFull[] (caller decides single/array/not-found). Service
- * path only — the 4 consumers are all CLI/worker endpoints on getServiceDb().
+ * path only — the 4 consumers are all CLI/runner endpoints on getServiceDb().
  */
 export async function querySpecFull(
 	db: ServiceDb,

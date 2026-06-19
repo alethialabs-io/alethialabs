@@ -13,17 +13,17 @@ function verifyToken(providedToken: string, storedHash: string): boolean {
 	return computedHash === storedHash;
 }
 
-function extractWorkerHeaders(headers: Record<string, string | undefined>): {
-	workerId: string | null;
-	workerToken: string | null;
+function extractRunnerHeaders(headers: Record<string, string | undefined>): {
+	runnerId: string | null;
+	runnerToken: string | null;
 } {
 	return {
-		workerId: headers["x-worker-id"] ?? null,
-		workerToken: headers["x-worker-token"] ?? null,
+		runnerId: headers["x-runner-id"] ?? null,
+		runnerToken: headers["x-runner-token"] ?? null,
 	};
 }
 
-describe("Worker auth - token hashing", () => {
+describe("Runner auth - token hashing", () => {
 	it("produces consistent SHA256 hash", () => {
 		const token = "abc123";
 		const hash1 = hashToken(token);
@@ -37,7 +37,7 @@ describe("Worker auth - token hashing", () => {
 	});
 });
 
-describe("Worker auth - token verification", () => {
+describe("Runner auth - token verification", () => {
 	it("verifies correct token", () => {
 		const token = "my-secret-token";
 		const hash = hashToken(token);
@@ -50,19 +50,19 @@ describe("Worker auth - token verification", () => {
 	});
 });
 
-describe("Worker auth - header extraction", () => {
-	it("extracts worker ID and token", () => {
-		const result = extractWorkerHeaders({
-			"x-worker-id": "worker-1",
-			"x-worker-token": "token-abc",
+describe("Runner auth - header extraction", () => {
+	it("extracts runner ID and token", () => {
+		const result = extractRunnerHeaders({
+			"x-runner-id": "runner-1",
+			"x-runner-token": "token-abc",
 		});
-		expect(result.workerId).toBe("worker-1");
-		expect(result.workerToken).toBe("token-abc");
+		expect(result.runnerId).toBe("runner-1");
+		expect(result.runnerToken).toBe("token-abc");
 	});
 
 	it("returns null for missing headers", () => {
-		const result = extractWorkerHeaders({});
-		expect(result.workerId).toBeNull();
-		expect(result.workerToken).toBeNull();
+		const result = extractRunnerHeaders({});
+		expect(result.runnerId).toBeNull();
+		expect(result.runnerToken).toBeNull();
 	});
 });

@@ -10,7 +10,7 @@ test.describe("Sidebar navigation", () => {
 		await expect(page.getByRole("link", { name: /plant/i })).toBeVisible();
 		await expect(page.getByRole("link", { name: "Jobs" })).toBeVisible();
 		await expect(page.getByRole("link", { name: "Connectors" })).toBeVisible();
-		await expect(page.getByRole("link", { name: "Workers" })).toBeVisible();
+		await expect(page.getByRole("link", { name: "Runners" })).toBeVisible();
 	});
 
 	test("Overview is active on /dashboard", async ({ authedPage: page }) => {

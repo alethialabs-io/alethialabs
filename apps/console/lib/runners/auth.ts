@@ -7,21 +7,21 @@ import { createHash } from "crypto";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
-export type WorkerAuthResult = {
-	workerId: string;
+export type RunnerAuthResult = {
+	runnerId: string;
 	tokenHash: string;
 	error: NextResponse | null;
 };
 
-export async function verifyWorkerToken(
+export async function verifyRunnerToken(
 	req: Request,
-): Promise<WorkerAuthResult> {
-	const workerId = req.headers.get("X-Runner-ID");
-	const workerToken = req.headers.get("X-Runner-Token");
+): Promise<RunnerAuthResult> {
+	const runnerId = req.headers.get("X-Runner-ID");
+	const runnerToken = req.headers.get("X-Runner-Token");
 
-	if (!workerId || !workerToken) {
+	if (!runnerId || !runnerToken) {
 		return {
-			workerId: "",
+			runnerId: "",
 			tokenHash: "",
 			error: NextResponse.json(
 				{ error: "Missing X-Runner-ID or X-Runner-Token" },
@@ -30,18 +30,18 @@ export async function verifyWorkerToken(
 		};
 	}
 
-	const tokenHash = createHash("sha256").update(workerToken).digest("hex");
+	const tokenHash = createHash("sha256").update(runnerToken).digest("hex");
 
 	const db = getServiceDb();
 	const [runner] = await db
 		.select({ id: runners.id, token_hash: runners.token_hash })
 		.from(runners)
-		.where(eq(runners.id, workerId))
+		.where(eq(runners.id, runnerId))
 		.limit(1);
 
 	if (!runner || runner.token_hash !== tokenHash) {
 		return {
-			workerId: "",
+			runnerId: "",
 			tokenHash: "",
 			error: NextResponse.json(
 				{ error: "Invalid runner ID or token" },
@@ -50,5 +50,5 @@ export async function verifyWorkerToken(
 		};
 	}
 
-	return { workerId, tokenHash, error: null };
+	return { runnerId, tokenHash, error: null };
 }

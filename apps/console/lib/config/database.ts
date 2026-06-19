@@ -7,7 +7,7 @@ import { z } from "zod";
 /**
  * Typed, validated Postgres configuration. Read once, lazily, and cached. Two
  * connection URLs back the two-role model: the service/migration URL (bypasses
- * RLS — worker/CLI/RPC paths) and the app URL (least-privilege, RLS-enforced —
+ * RLS — runner/CLI/RPC paths) and the app URL (least-privilege, RLS-enforced —
  * user-facing queries via withOwnerScope). If the app URL is unset it falls back
  * to the service URL (single-role dev), with the caveat that the RLS backstop is
  * only truly enforced when the app role lacks BYPASSRLS.

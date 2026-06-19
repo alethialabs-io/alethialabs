@@ -3,7 +3,7 @@
 
 import { getServiceDb } from "@/lib/db";
 import { jobLogs } from "@/lib/db/schema";
-import { verifyWorkerToken } from "@/lib/workers/auth";
+import { verifyRunnerToken } from "@/lib/runners/auth";
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
@@ -11,8 +11,8 @@ export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const { workerId, tokenHash, error: authError } =
-		await verifyWorkerToken(req);
+	const { runnerId, tokenHash, error: authError } =
+		await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	const { id: jobId } = await params;
@@ -29,7 +29,7 @@ export async function POST(
 
 		const db = getServiceDb();
 		await db.execute(
-			sql`select insert_job_log(${workerId}::uuid, ${tokenHash}, ${jobId}::uuid, ${log_chunk}, ${stream_type || "STDOUT"})`,
+			sql`select insert_job_log(${runnerId}::uuid, ${tokenHash}, ${jobId}::uuid, ${log_chunk}, ${stream_type || "STDOUT"})`,
 		);
 
 		return NextResponse.json({ success: true }, { status: 201 });
@@ -43,7 +43,7 @@ export async function GET(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const { error: authError } = await verifyWorkerToken(req);
+	const { error: authError } = await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	const { id: jobId } = await params;

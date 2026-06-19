@@ -7,14 +7,14 @@ import { auth } from "@/lib/auth";
 import { getServiceDb } from "@/lib/db";
 import { jobs, specRepositories } from "@/lib/db/schema";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
-import { verifyWorkerToken } from "@/lib/workers/auth";
+import { verifyRunnerToken } from "@/lib/runners/auth";
 
 /** Returns the git provider token for the user who owns a job. */
 export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const { workerId, error: authError } = await verifyWorkerToken(req);
+	const { runnerId, error: authError } = await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	const { id: jobId } = await params;
@@ -22,7 +22,7 @@ export async function POST(
 	try {
 		const db = getServiceDb();
 
-		// Look up the job and verify the calling worker owns it.
+		// Look up the job and verify the calling runner owns it.
 		const [job] = await db
 			.select({
 				user_id: jobs.user_id,
@@ -37,9 +37,9 @@ export async function POST(
 			return NextResponse.json({ error: "Job not found" }, { status: 404 });
 		}
 
-		if (job.runner_id !== workerId) {
+		if (job.runner_id !== runnerId) {
 			return NextResponse.json(
-				{ error: "Worker does not own this job" },
+				{ error: "Runner does not own this job" },
 				{ status: 403 },
 			);
 		}

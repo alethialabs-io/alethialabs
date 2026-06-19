@@ -15,7 +15,7 @@ import { useRunnersStore, type ActiveJob } from "@/lib/stores/use-runners-store"
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
 import type {
 	ProvisionJobType as PublicProvisionJobType,
-	RunnerStatus as PublicWorkerStatus,
+	RunnerStatus as PublicRunnerStatus,
 } from "@/lib/db/schema";
 import type { JobWithMeta as PublicProvisionJobsRow } from "@/app/server/actions/jobs";
 import type { RunnerMetadata } from "@/types/database-custom.types";
@@ -24,7 +24,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-const STATUS_FILTERS: (PublicWorkerStatus | "All")[] = [
+const STATUS_FILTERS: (PublicRunnerStatus | "All")[] = [
 	"All", "ONLINE", "OFFLINE", "DRAINING",
 ];
 
@@ -57,7 +57,7 @@ export default function RunnersPage() {
 		[allJobs],
 	);
 
-	const [statusFilter, setStatusFilter] = useState<PublicWorkerStatus | "All">("All");
+	const [statusFilter, setStatusFilter] = useState<PublicRunnerStatus | "All">("All");
 	const [searchQuery, setSearchQuery] = useState("");
 	const [isUpdatingAll, setIsUpdatingAll] = useState(false);
 

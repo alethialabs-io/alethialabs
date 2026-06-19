@@ -21,8 +21,8 @@ import { ReleaseNotesDialog } from "@/components/runners/release-notes-dialog";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
 import { useRunnersStore, type ActiveJob } from "@/lib/stores/use-runners-store";
 import type {
-	RunnerStatus as PublicWorkerStatus,
-	RunnerMode as PublicWorkerMode,
+	RunnerStatus as PublicRunnerStatus,
+	RunnerMode as PublicRunnerMode,
 	Runner as PublicRunnerRow,
 } from "@/lib/db/schema";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -286,7 +286,7 @@ export const runnerColumns: ColumnDef<RunnerRow>[] = [
 		enableSorting: true,
 		cell: ({ row }) => {
 			const runner = row.original;
-			const status = (runner.status ?? "OFFLINE") as PublicWorkerStatus;
+			const status = (runner.status ?? "OFFLINE") as PublicRunnerStatus;
 			const isDestroying = runner.activeJob?.job_type === "DESTROY_RUNNER";
 			const isProvisioning = runner.activeJob?.job_type === "DEPLOY_RUNNER";
 			const isUpdating = runner.activeJob?.job_type === "UPDATE_RUNNER";
@@ -327,7 +327,7 @@ export const runnerColumns: ColumnDef<RunnerRow>[] = [
 			if (isDestroying) {
 				return <StatusBadge status="DESTROYING" />;
 			}
-			const status = (row.getValue("status") as PublicWorkerStatus | null) ?? "OFFLINE";
+			const status = (row.getValue("status") as PublicRunnerStatus | null) ?? "OFFLINE";
 			return <StatusBadge status={status} />;
 		},
 	},
@@ -336,7 +336,7 @@ export const runnerColumns: ColumnDef<RunnerRow>[] = [
 		header: "Mode",
 		enableSorting: false,
 		cell: ({ row }) => {
-			const mode = row.getValue("mode") as PublicWorkerMode;
+			const mode = row.getValue("mode") as PublicRunnerMode;
 			const ModeIcon = mode === "cloud-hosted" ? Cloud : Server;
 			return (
 				<Badge variant="outline" className="text-[10px] py-0 text-muted-foreground border-border bg-muted">

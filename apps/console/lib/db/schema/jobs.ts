@@ -21,7 +21,7 @@ import { zones } from "./zones";
 
 // Unified provisioning job queue. Claimed atomically by runners via the
 // claim_next_job RPC (FOR UPDATE SKIP LOCKED). `zone_id` is denormalized
-// (NOT NULL) so worker-lifecycle jobs — which have no spec — still carry a
+// (NOT NULL) so runner-lifecycle jobs — which have no spec — still carry a
 // scope; a trigger keeps it consistent with the spec's zone when spec_id is set.
 export const jobs = pgTable(
 	"jobs",
@@ -31,7 +31,7 @@ export const jobs = pgTable(
 		// Coarse tenancy scope (RLS blast wall); community org_id = user_id via trigger.
 		org_id: uuid(),
 		// Nullable: jobs always have a runner but not necessarily a zone —
-		// cloud-hosted runners and worker-lifecycle / FETCH_RESOURCES /
+		// cloud-hosted runners and runner-lifecycle / FETCH_RESOURCES /
 		// CONNECTION_TEST jobs have no spec → no zone. Denormalized scope for
 		// spec jobs only (kept in sync by the jobs_sync_zone trigger).
 		zone_id: uuid().references(() => zones.id, { onDelete: "set null" }),

@@ -447,8 +447,8 @@ function RegisterForm({
 						Start with environment variables
 					</Label>
 					<pre className="rounded-md bg-muted p-3 text-xs font-mono overflow-x-auto border border-border/50 leading-relaxed">
-{`export ALETHIA_WORKER_ID=${credentials.runnerId}
-export ALETHIA_WORKER_TOKEN=${credentials.runnerToken}
+{`export ALETHIA_RUNNER_ID=${credentials.runnerId}
+export ALETHIA_RUNNER_TOKEN=${credentials.runnerToken}
 alethia runner start`}
 					</pre>
 				</div>

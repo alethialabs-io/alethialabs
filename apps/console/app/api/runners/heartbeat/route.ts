@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { getServiceDb } from "@/lib/db";
-import { verifyWorkerToken } from "@/lib/workers/auth";
+import { verifyRunnerToken } from "@/lib/runners/auth";
 import { sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
-	const { workerId: runnerId, tokenHash, error: authError } =
-		await verifyWorkerToken(req);
+	const { runnerId, tokenHash, error: authError } =
+		await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	let runnerVersion: string | null = null;

@@ -20,7 +20,7 @@ const deployMetaSchema = z.object({
 
 /**
  * After a DEPLOY job succeeds, persist terraform outputs to the spec component
- * tables. Service path — runs on the BYPASSRLS connection (worker-triggered).
+ * tables. Service path — runs on the BYPASSRLS connection (runner-triggered).
  */
 export async function finalizeDeployment(jobId: string) {
 	const db = getServiceDb();

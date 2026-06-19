@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { verifyWorkerToken } from "@/lib/workers/auth";
+import { verifyRunnerToken } from "@/lib/runners/auth";
 import { storage } from "@/lib/storage";
 import { NextResponse } from "next/server";
 
@@ -11,7 +11,7 @@ export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const { error: authError } = await verifyWorkerToken(req);
+	const { error: authError } = await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	const { id: jobId } = await params;
@@ -65,7 +65,7 @@ export async function GET(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const { error: authError } = await verifyWorkerToken(req);
+	const { error: authError } = await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	const { id: jobId } = await params;

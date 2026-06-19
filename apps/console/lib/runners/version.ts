@@ -6,7 +6,7 @@ import { desc, eq } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { runnerReleases } from "@/lib/db/schema";
 
-export interface WorkerRelease {
+export interface RunnerRelease {
 	version: string;
 	release_notes: string;
 	released_at: string;
@@ -24,7 +24,7 @@ const releaseColumns = {
 	is_breaking: runnerReleases.is_breaking,
 };
 
-/** Shapes a runner_releases row into the public WorkerRelease (released_at → ISO). */
+/** Shapes a runner_releases row into the public RunnerRelease (released_at → ISO). */
 function toRelease(row: {
 	version: string;
 	release_notes: string;
@@ -32,12 +32,12 @@ function toRelease(row: {
 	github_release_url: string | null;
 	commit_sha: string | null;
 	is_breaking: boolean;
-}): WorkerRelease {
+}): RunnerRelease {
 	return { ...row, released_at: row.released_at.toISOString() };
 }
 
-/** Fetches the most recent worker release from the database. */
-export async function getLatestWorkerRelease(): Promise<WorkerRelease | null> {
+/** Fetches the most recent runner release from the database. */
+export async function getLatestRunnerRelease(): Promise<RunnerRelease | null> {
 	const [row] = await getServiceDb()
 		.select(releaseColumns)
 		.from(runnerReleases)
@@ -47,9 +47,9 @@ export async function getLatestWorkerRelease(): Promise<WorkerRelease | null> {
 }
 
 /** Fetches release notes for a specific version. */
-export async function getWorkerRelease(
+export async function getRunnerRelease(
 	version: string,
-): Promise<WorkerRelease | null> {
+): Promise<RunnerRelease | null> {
 	const [row] = await getServiceDb()
 		.select(releaseColumns)
 		.from(runnerReleases)

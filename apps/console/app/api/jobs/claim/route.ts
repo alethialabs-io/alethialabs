@@ -3,13 +3,13 @@
 
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, type Job, runners } from "@/lib/db/schema";
-import { verifyWorkerToken } from "@/lib/workers/auth";
+import { verifyRunnerToken } from "@/lib/runners/auth";
 import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
-	const { workerId, tokenHash, error: authError } =
-		await verifyWorkerToken(req);
+	const { runnerId, tokenHash, error: authError } =
+		await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	try {
@@ -18,12 +18,12 @@ export async function POST(req: Request) {
 		const [runner] = await db
 			.select({ cloud_identity_id: runners.cloud_identity_id })
 			.from(runners)
-			.where(eq(runners.id, workerId))
+			.where(eq(runners.id, runnerId))
 			.limit(1);
 
 		// claim_next_job returns SETOF jobs — typed via the execute generic.
 		const claimed = await db.execute<Job>(
-			sql`select * from claim_next_job(${workerId}::uuid, ${tokenHash}, ${runner?.cloud_identity_id ?? null}::uuid)`,
+			sql`select * from claim_next_job(${runnerId}::uuid, ${tokenHash}, ${runner?.cloud_identity_id ?? null}::uuid)`,
 		);
 
 		const job = claimed[0];

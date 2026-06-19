@@ -4,7 +4,7 @@
 import postgres from "postgres";
 import { getDatabaseConfig } from "@/lib/config/database";
 
-// Realtime fan-out for job-log streaming (replaces Supabase Realtime). The worker's
+// Realtime fan-out for job-log streaming (replaces Supabase Realtime). The runner's
 // insert_job_log() RPC does pg_notify('job_logs', {jobId, logId}); each app instance
 // holds ONE dedicated LISTEN connection and dispatches to its SSE subscribers — so it
 // scales to multiple instances with no Redis. The ee/ tier swaps a Redis-backed impl

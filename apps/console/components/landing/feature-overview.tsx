@@ -77,7 +77,7 @@ const DEMO_TABS = [
 			{ text: "" },
 			{ text: "  ? Select zone: production" },
 			{ text: "  ? Select spec: api-backend" },
-			{ text: "  ? Select worker: prod-worker (ONLINE)" },
+			{ text: "  ? Select runner: prod-runner (ONLINE)" },
 			{ text: "" },
 			{ text: "  ▸ Terraform init..." },
 			{ text: "  ▸ Terraform plan..." },

@@ -6,14 +6,14 @@ import { NextResponse } from "next/server";
 import { finalizeDeployment } from "@/app/server/actions/deployments";
 import { getServiceDb } from "@/lib/db";
 import { jobs, specs } from "@/lib/db/schema";
-import { verifyWorkerToken } from "@/lib/workers/auth";
+import { verifyRunnerToken } from "@/lib/runners/auth";
 
 export async function PUT(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const { workerId, tokenHash, error: authError } =
-		await verifyWorkerToken(req);
+	const { runnerId, tokenHash, error: authError } =
+		await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	const { id: jobId } = await params;
@@ -39,7 +39,7 @@ export async function PUT(
 		const db = getServiceDb();
 
 		await db.execute(
-			sql`select update_job_status(${workerId}::uuid, ${tokenHash}, ${jobId}::uuid, ${status}, ${error_message || null}, ${execution_metadata ? JSON.stringify(execution_metadata) : null}::jsonb)`,
+			sql`select update_job_status(${runnerId}::uuid, ${tokenHash}, ${jobId}::uuid, ${status}, ${error_message || null}, ${execution_metadata ? JSON.stringify(execution_metadata) : null}::jsonb)`,
 		);
 
 		if (status === "PROCESSING" || status === "SUCCESS" || status === "FAILED") {

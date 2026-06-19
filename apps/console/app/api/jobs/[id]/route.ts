@@ -3,7 +3,7 @@
 
 import { getServiceDb } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
-import { verifyWorkerToken } from "@/lib/workers/auth";
+import { verifyRunnerToken } from "@/lib/runners/auth";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
@@ -11,7 +11,7 @@ export async function GET(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const { error: authError } = await verifyWorkerToken(req);
+	const { error: authError } = await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	const { id: jobId } = await params;
