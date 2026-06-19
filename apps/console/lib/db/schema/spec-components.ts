@@ -26,6 +26,7 @@ import type {
 	ClusterProviderConfig,
 	DnsProviderConfig,
 	NosqlProviderConfig,
+	ProviderOutputs,
 	RegistryProviderConfig,
 	TopicSubscription,
 } from "@/types/database-custom.types";
@@ -81,9 +82,10 @@ export const specCluster = pgTable("spec_cluster", {
 	provider_config: jsonb().$type<ClusterProviderConfig>().default({}),
 	cluster_name: text(),
 	cluster_endpoint: text(),
-	cluster_arn: text(),
 	argocd_url: text(),
 	argocd_admin_password: text(),
+	// Provider-specific resource identifiers (ARN/KMS/… on AWS) — cloud-agnostic.
+	provider_outputs: jsonb().$type<ProviderOutputs>().default({}),
 	status: componentStatus().default("PENDING").notNull(),
 	status_message: text(),
 	estimated_monthly_cost: cost(),
@@ -134,11 +136,9 @@ export const specDatabases = pgTable(
 		iam_auth: boolean().default(false),
 		endpoint: text(),
 		reader_endpoint: text(),
-		cluster_identifier: text(),
-		cluster_arn: text(),
-		master_credentials_secret_arn: text(),
-		extra_credentials_secret_arn: text(),
-		credentials_kms_key_arn: text(),
+		// Provider-specific resource identifiers (cluster ARN/identifier, credential
+		// secret refs, KMS key on AWS) — cloud-agnostic JSONB.
+		provider_outputs: jsonb().$type<ProviderOutputs>().default({}),
 		status: componentStatus().default("PENDING").notNull(),
 		status_message: text(),
 		estimated_monthly_cost: cost(),

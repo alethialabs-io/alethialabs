@@ -64,7 +64,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 				provider: cloudIdentities.provider,
 				cluster_name: specCluster.cluster_name,
 				cluster_endpoint: specCluster.cluster_endpoint,
-				cluster_arn: specCluster.cluster_arn,
+				cluster_outputs: specCluster.provider_outputs,
 				cluster_version: specCluster.cluster_version,
 				argocd_url: specCluster.argocd_url,
 				argocd_admin_password: specCluster.argocd_admin_password,
@@ -92,8 +92,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 					engine: specDatabases.engine,
 					endpoint: specDatabases.endpoint,
 					reader_endpoint: specDatabases.reader_endpoint,
-					master_credentials_secret_arn:
-						specDatabases.master_credentials_secret_arn,
+					provider_outputs: specDatabases.provider_outputs,
 					status: specDatabases.status,
 				})
 				.from(specDatabases)
@@ -121,7 +120,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 				? {
 						cluster_name: r.cluster_name,
 						cluster_endpoint: r.cluster_endpoint,
-						cluster_arn: r.cluster_arn,
+						cluster_arn: r.cluster_outputs?.arn ?? null,
 						cluster_version: r.cluster_version,
 						argocd_url: r.argocd_url,
 						argocd_admin_password: r.argocd_admin_password,
@@ -130,7 +129,10 @@ export async function getClusters(): Promise<ClusterData[]> {
 				: null,
 			spec_databases: dbRows
 				.filter((d) => d.spec_id === r.id)
-				.map(({ spec_id: _s, ...db }) => db),
+				.map(({ spec_id: _s, provider_outputs, ...db }) => ({
+					...db,
+					master_credentials_secret_arn: provider_outputs?.secret_ref ?? null,
+				})),
 			spec_caches: cacheRows
 				.filter((c) => c.spec_id === r.id)
 				.map(({ spec_id: _s, ...c }) => c),

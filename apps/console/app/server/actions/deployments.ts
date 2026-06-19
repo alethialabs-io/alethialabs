@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
 import { jobs, specCaches, specCluster, specDatabases, specs } from "@/lib/db/schema";
+import type { ProviderOutputs } from "@/types/database-custom.types";
 
 // execution_metadata is JSONB written by the runner. Parse the fields we read
 // (lenient: .catch(undefined) mirrors the old optional-read behavior without casts).
@@ -56,7 +57,7 @@ export async function finalizeDeployment(jobId: string) {
 		clusterUpdate.argocd_admin_password = meta.argocd_admin_password;
 	if (outputs) {
 		const clusterArn = extractOutputValue(outputs, "eks_cluster_arn");
-		if (clusterArn) clusterUpdate.cluster_arn = clusterArn;
+		if (clusterArn) clusterUpdate.provider_outputs = { arn: clusterArn };
 	}
 
 	await db.update(specCluster).set(clusterUpdate).where(eq(specCluster.spec_id, specId));
@@ -64,29 +65,32 @@ export async function finalizeDeployment(jobId: string) {
 	if (outputs) {
 		const rdsEndpoint = extractOutputValue(outputs, "rds_cluster_endpoint");
 		if (rdsEndpoint) {
-			const dbUpdate: Partial<typeof specDatabases.$inferInsert> = {
-				endpoint: rdsEndpoint,
-				status: "ACTIVE",
-			};
+			const dbOutputs: ProviderOutputs = {};
 			const rdsId = extractOutputValue(outputs, "rds_cluster_identifier");
-			if (rdsId) dbUpdate.cluster_identifier = rdsId;
+			if (rdsId) dbOutputs.identifier = rdsId;
 			const rdsArn = extractOutputValue(outputs, "rds_cluster_arn");
-			if (rdsArn) dbUpdate.cluster_arn = rdsArn;
+			if (rdsArn) dbOutputs.arn = rdsArn;
 			const masterSecret = extractOutputValue(
 				outputs,
 				"rds_master_credentials_secret_arn",
 			);
-			if (masterSecret) dbUpdate.master_credentials_secret_arn = masterSecret;
+			if (masterSecret) dbOutputs.secret_ref = masterSecret;
 			const extraSecret = extractOutputValue(
 				outputs,
 				"rds_extra_credentials_secret_arn",
 			);
-			if (extraSecret) dbUpdate.extra_credentials_secret_arn = extraSecret;
+			if (extraSecret) dbOutputs.extra_secret_ref = extraSecret;
 			const kmsKey = extractOutputValue(
 				outputs,
 				"rds_credentials_kms_key_arn",
 			);
-			if (kmsKey) dbUpdate.credentials_kms_key_arn = kmsKey;
+			if (kmsKey) dbOutputs.kms_key = kmsKey;
+
+			const dbUpdate: Partial<typeof specDatabases.$inferInsert> = {
+				endpoint: rdsEndpoint,
+				status: "ACTIVE",
+				provider_outputs: dbOutputs,
+			};
 
 			await db
 				.update(specDatabases)

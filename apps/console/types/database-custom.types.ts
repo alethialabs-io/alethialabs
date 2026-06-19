@@ -139,6 +139,17 @@ export interface RegistryProviderConfig {
 	vulnerability_scanning?: boolean;
 }
 
+// Provider-specific resource identifiers captured after a deploy (cloud-agnostic
+// keys). Replaces the AWS-shaped typed columns (cluster_arn, *_secret_arn, kms…)
+// — AWS fills arn/secret_ref/kms_key; GCP/Azure fill the keys their model uses.
+export interface ProviderOutputs {
+	arn?: string;
+	identifier?: string;
+	secret_ref?: string;
+	extra_secret_ref?: string;
+	kms_key?: string;
+}
+
 export interface TopicSubscription {
 	protocol: string;
 	endpoint: string;

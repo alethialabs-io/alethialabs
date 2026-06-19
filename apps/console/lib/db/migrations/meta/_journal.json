@@ -71,6 +71,13 @@
       "when": 1781863733812,
       "tag": "0009_neutralize_cloud_defaults",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1782000100000,
+      "tag": "0010_provider_outputs_jsonb",
+      "breakpoints": true
     }
   ]
 }
