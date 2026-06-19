@@ -173,3 +173,17 @@ export interface RunnerDeployConfig {
 export interface RunnerMetadata {
 	deploy_config?: RunnerDeployConfig | null;
 }
+
+// jobs.execution_metadata — written by the runner via update_job_status. Known
+// shape (deploy outputs + cached cloud resources from CONNECTION_TEST/FETCH jobs).
+export interface ExecutionMetadata {
+	cluster_name?: string;
+	cluster_endpoint?: string;
+	argocd_url?: string;
+	argocd_admin_password?: string;
+	outputs?: Record<string, unknown>;
+	cached_resources?:
+		| CachedResources
+		| GcpCachedResources
+		| AzureCachedResources;
+}

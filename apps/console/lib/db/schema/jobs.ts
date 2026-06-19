@@ -12,6 +12,7 @@ import {
 	timestamp,
 	uuid,
 } from "drizzle-orm/pg-core";
+import type { ExecutionMetadata } from "@/types/database-custom.types";
 import { logStreamType, provisionJobStatus, provisionJobType } from "./enums";
 import { cloudIdentities } from "./identities";
 import { runners } from "./runners";
@@ -39,6 +40,9 @@ export const jobs = pgTable(
 			onDelete: "set null",
 		}),
 		job_type: provisionJobType().notNull(),
+		// Intentionally polymorphic per job_type: a frozen spec_full snapshot for
+		// spec jobs, a runner-deploy config for runner-lifecycle jobs, or {} for
+		// connection-test/fetch jobs — so an open JSON record is the correct type.
 		config_snapshot: jsonb()
 			.$type<Record<string, unknown>>()
 			.default({})
@@ -56,7 +60,7 @@ export const jobs = pgTable(
 		started_at: timestamp({ withTimezone: true }),
 		completed_at: timestamp({ withTimezone: true }),
 		error_message: text(),
-		execution_metadata: jsonb().$type<Record<string, unknown>>(),
+		execution_metadata: jsonb().$type<ExecutionMetadata>(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
