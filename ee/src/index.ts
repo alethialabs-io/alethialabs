@@ -1,18 +1,84 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: LicenseRef-Alethia-Commercial
 
-// Alethia Enterprise Edition entry point. `register(core)` is invoked once at app
-// boot by the core's allowlisted lib/enterprise.ts loader; it receives core
-// capabilities (CoreContext.db) and returns the implementations the core seams
-// consult: an optional PDP engine override, a multi-org tenancy resolver, extra
-// Better Auth plugins (organization; SSO later), and the entitlement gate. Only
-// TYPE imports from core (`@/...`) are used — erased at compile time — so this
-// package never imports core runtime internals (it queries via core.db).
+// Alethia Enterprise Edition entry point. `register(core)` runs once at app boot
+// (via the core's allowlisted lib/enterprise.ts loader); it receives core
+// capabilities and returns the implementations the seams consult. Only TYPE imports
+// from core (`@/...`) are used (erased at compile time) — runtime data access goes
+// through `core.db`, so this package never imports core runtime internals.
 
+import { organization } from "better-auth/plugins/organization";
+import { sql } from "drizzle-orm";
 import type { CoreContext, EnterpriseModule } from "@/lib/enterprise";
+import type { Actor, Entitlements } from "@/lib/authz/types";
 
-/** Returns the enterprise registration. Implementations land in sub-phase 4.5b;
- *  an empty module keeps every core seam on its community default. */
-export function register(_core: CoreContext): EnterpriseModule {
-	return {};
+const NO_ENTITLEMENTS: Entitlements = {
+	organizations: false,
+	sso: false,
+	customRoles: false,
+	auditExport: false,
+};
+
+/**
+ * Feature entitlements for this deployment. The seam is synchronous, so we resolve
+ * once at registration from the environment (set by the licensing service after it
+ * verifies the signed license key). STANDUP: replace with signed-license (JWT)
+ * verification against a public key. SSO stays off until the SSO package lands.
+ */
+function readEntitlements(): Entitlements {
+	if (process.env.ALETHIA_LICENSE_ACTIVE !== "true") return NO_ENTITLEMENTS;
+	return {
+		organizations: true,
+		sso: false, // deferred — no @better-auth/sso yet
+		customRoles: true,
+		auditExport: true,
+	};
+}
+
+export function register(core: CoreContext): EnterpriseModule {
+	const entitlements = readEntitlements();
+
+	return {
+		// Better Auth organization plugin: orgs / teams / members / invitations.
+		authPlugins: [
+			organization({
+				creatorRole: "owner",
+				organizationHooks: {
+					// The creator owns the new org (org-wide owner grant) so the PDP
+					// authorizes them within it — mirrors core's ensurePersonalOrgOwner.
+					afterCreateOrganization: async ({ organization: org, user }) => {
+						await core.db.execute(sql`
+							insert into grants (org_id, principal_type, principal_id, role_id, resource_type)
+							select ${org.id}::uuid, 'user', ${user.id}::uuid, ${core.builtinRoleIds.owner}::uuid, 'org'
+							where not exists (
+								select 1 from grants g
+								where g.org_id = ${org.id}::uuid and g.principal_id = ${user.id}::uuid
+								  and g.role_id = ${core.builtinRoleIds.owner}::uuid and g.resource_type = 'org'
+							)
+						`);
+					},
+				},
+			}),
+		],
+
+		// Map a verified user to their active org. Primary org = earliest membership;
+		// users with no org membership fall back to their personal org (orgId == userId).
+		// STANDUP follow-up: honor session.activeOrganizationId for active-org switching
+		// (needs the session/headers threaded into getActiveScope).
+		resolveScope: async (userId: string): Promise<Actor> => {
+			const rows = await core.db.execute<{ organization_id: string }>(sql`
+				select organization_id from member
+				where user_id = ${userId}::uuid
+				order by created_at asc
+				limit 1
+			`);
+			const orgId = rows[0]?.organization_id ?? userId;
+			return { userId, orgId };
+		},
+
+		entitlements: (_actor: Actor): Entitlements => entitlements,
+
+		// pdp omitted — the community PostgresRbacPDP stays the engine; an OpenFgaPdp
+		// is a later binding flip (no call-site changes).
+	};
 }

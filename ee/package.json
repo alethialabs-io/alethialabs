@@ -17,7 +17,8 @@
 		"check-types": "tsc -p tsconfig.json --noEmit"
 	},
 	"peerDependencies": {
-		"better-auth": "^1.6.19"
+		"better-auth": "^1.6.19",
+		"drizzle-orm": "^0.45.2"
 	},
 	"devDependencies": {
 		"typescript": "^5"
