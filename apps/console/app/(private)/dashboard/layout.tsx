@@ -24,6 +24,7 @@ import { useJobsStore } from "@/lib/stores/use-jobs-store";
 import { cn } from "@/lib/utils";
 import { SidebarZones } from "@/components/sidebar-zones";
 import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
+import { OrgSwitcher } from "@/components/org-switcher";
 import {
 	Bell,
 	Blocks,
@@ -100,6 +101,11 @@ export default function DashboardLayout({
 								<Menu className="h-5 w-5" />
 							)}
 						</Button>
+						{/* Active workspace (org/team) switcher, then the breadcrumb trail. */}
+						<OrgSwitcher />
+						<span className="text-border/70 select-none" aria-hidden>
+							/
+						</span>
 						<HeaderBreadcrumbs />
 					</div>
 
