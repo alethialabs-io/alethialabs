@@ -26,6 +26,12 @@ const SEGMENT_LABELS: Record<string, string> = {
 	connectors: "Connectors",
 	runners: "Runners",
 	profile: "Profile",
+	settings: "Settings",
+	general: "General",
+	members: "Members",
+	roles: "Roles",
+	sso: "Single Sign-On",
+	audit: "Audit Log",
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
