@@ -69,9 +69,12 @@ export const specNetwork = pgTable("spec_network", {
 export const specCluster = pgTable("spec_cluster", {
 	id: uuid().primaryKey().defaultRandom(),
 	spec_id: specRef().unique(),
-	cluster_version: text().default("1.32"),
+	// No cloud-specific defaults: the provider mapper resolves the K8s version /
+	// node instance types per cloud at provision time (the form supplies explicit
+	// values for a chosen provider).
+	cluster_version: text(),
 	cluster_admins: jsonb().$type<ClusterAdmin[]>().default([]),
-	instance_types: text().array().default(["t3.medium"]),
+	instance_types: text().array(),
 	node_min_size: integer().default(2),
 	node_max_size: integer().default(5),
 	node_desired_size: integer().default(2),
@@ -120,8 +123,10 @@ export const specDatabases = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		spec_id: specRef(),
 		name: text().notNull(),
-		engine: text().default("aurora-postgresql"),
-		engine_version: text().default("14.5"),
+		// Provider-neutral: the mapper translates a generic engine family to the
+		// cloud's managed DB (Aurora / Cloud SQL / Azure DB) at provision time.
+		engine: text(),
+		engine_version: text(),
 		min_capacity: numeric({ precision: 6, scale: 2, mode: "number" }).default(0.5),
 		max_capacity: numeric({ precision: 6, scale: 2, mode: "number" }).default(4),
 		port: integer().default(5432),
@@ -150,7 +155,8 @@ export const specCaches = pgTable(
 		spec_id: specRef(),
 		name: text().notNull(),
 		engine: cacheEngine().default("redis"),
-		node_type: text().default("cache.t3.medium"),
+		// Provider-neutral: the mapper picks the cloud's cache node type/SKU.
+		node_type: text(),
 		num_cache_nodes: integer().default(1),
 		multi_az: boolean().default(false),
 		allowed_cidr_blocks: text().array().default([]),
