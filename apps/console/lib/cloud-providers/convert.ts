@@ -197,7 +197,7 @@ export function convertSpecConfig(
 
 	// --- Messaging ---
 	if (data.queues && data.queues.length > 0) {
-		const hasFireQueues = data.queues.some((q) => q.fifo);
+		const hasFireQueues = data.queues.some((q) => q.ordered);
 		if (hasFireQueues && targetProvider === "gcp") {
 			warnings.push({
 				severity: "warning",

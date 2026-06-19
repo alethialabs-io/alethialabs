@@ -70,7 +70,7 @@ describe("CreateSpecInput shape validation", () => {
 
 	it("form data with queues and topics passes schema", () => {
 		const data = buildValidFormData({
-			queues: [{ name: "email-queue", fifo: false, visibility_timeout: 30 }],
+			queues: [{ name: "email-queue", ordered: false, visibility_timeout: 30 }],
 			topics: [{ name: "user-events", subscriptions: [] }],
 		});
 		const result = specFormSchema.safeParse(data);
@@ -112,7 +112,7 @@ describe("CreateSpecInput shape validation", () => {
 		const data = buildValidFormData({
 			databases: [{ name: "db-1", engine: "aurora-postgresql", min_capacity: 0.5, max_capacity: 4 }],
 			caches: [{ name: "cache-1", engine: "redis", node_type: "cache.t3.medium", num_cache_nodes: 1 }],
-			queues: [{ name: "q-1", fifo: false, visibility_timeout: 30 }],
+			queues: [{ name: "q-1", ordered: false, visibility_timeout: 30 }],
 			topics: [{ name: "t-1" }],
 			nosql_tables: [{ name: "ddb-1", partition_key: "id" }],
 			secrets: [{ name: "s-1", generate: true, length: 32 }],

@@ -180,7 +180,7 @@ export const specQueues = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		spec_id: specRef(),
 		name: text().notNull(),
-		fifo: boolean().default(false),
+		ordered: boolean().default(false),
 		visibility_timeout: integer().default(30),
 		message_retention: integer().default(345600),
 		delay_seconds: integer().default(0),

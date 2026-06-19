@@ -215,8 +215,8 @@ func buildSQSQueues(queues []types.SpecQueueConfig, topics []types.SpecTopicConf
 			"fifo_queue": false,
 			"dlq_enable": false,
 		}
-		if q.Fifo != nil {
-			cfg["fifo_queue"] = *q.Fifo
+		if q.Ordered != nil {
+			cfg["fifo_queue"] = *q.Ordered
 		}
 		if q.VisibilityTimeout != nil {
 			cfg["visibility_timeout_seconds"] = *q.VisibilityTimeout

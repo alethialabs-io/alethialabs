@@ -180,7 +180,7 @@ describe("specFormSchema", () => {
 		it("accepts valid queue", () => {
 			const data = {
 				...validSpec,
-				queues: [{ name: "email-processing", fifo: false, visibility_timeout: 30 }],
+				queues: [{ name: "email-processing", ordered: false, visibility_timeout: 30 }],
 			};
 			const result = specFormSchema.safeParse(data);
 			expect(result.success).toBe(true);

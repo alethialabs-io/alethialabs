@@ -581,7 +581,7 @@ export async function getSpecAsFormData(
 		})),
 		queues: source.components.queues.map((q) => ({
 			name: q.name,
-			fifo: q.fifo ?? undefined,
+			ordered: q.ordered ?? undefined,
 			visibility_timeout: q.visibility_timeout ?? undefined,
 			message_retention: q.message_retention ?? undefined,
 			delay_seconds: q.delay_seconds ?? undefined,

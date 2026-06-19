@@ -53,7 +53,7 @@ const FIELD_DEFS: Record<ServiceType, FieldDef[]> = {
 		{ key: "multi_az", label: "Multi-AZ", format: (v) => v === true ? "Yes" : v === false ? "No" : null },
 	],
 	queue: [
-		{ key: "fifo", label: "Type", format: (v) => v === true ? "FIFO" : "Standard" },
+		{ key: "ordered", label: "Type", format: (v) => v === true ? "FIFO" : "Standard" },
 		{ key: "visibility_timeout", label: "Visibility Timeout", format: (v) => v != null ? `${v}s` : null },
 		{ key: "message_retention", label: "Message Retention", format: (v) => v != null ? `${v}s` : null },
 		{ key: "delay_seconds", label: "Delay", format: (v) => v != null ? `${v}s` : null },

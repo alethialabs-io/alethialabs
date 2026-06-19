@@ -191,8 +191,8 @@ func buildServiceBusQueues(queues []types.SpecQueueConfig) map[string]interface{
 			"max_delivery_count": 10,
 			"lock_duration":      "PT1M",
 		}
-		if q.Fifo != nil {
-			cfg["requires_session"] = *q.Fifo
+		if q.Ordered != nil {
+			cfg["requires_session"] = *q.Ordered
 		}
 		if q.VisibilityTimeout != nil {
 			cfg["lock_duration"] = fmt.Sprintf("PT%dS", *q.VisibilityTimeout)

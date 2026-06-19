@@ -76,7 +76,7 @@ const HELP_CONTENT: Record<string, { title: string; description: string }> = {
 		description:
 			"Automatically replicates your cache to another availability zone. If the primary fails, the replica takes over with minimal downtime. Recommended for production.",
 	},
-	fifo: {
+	ordered: {
 		title: "FIFO Queue",
 		description:
 			"First-In-First-Out. Guarantees messages are processed in exact order and delivered exactly once. Standard queues are cheaper but may deliver messages out of order or more than once.",

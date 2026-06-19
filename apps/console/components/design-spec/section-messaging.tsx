@@ -35,7 +35,7 @@ export function SectionMessaging() {
 						<CardTitle className="text-base">Messaging</CardTitle>
 					</div>
 					<div className="flex gap-2">
-						<Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={() => queues.append({ name: "", fifo: false, visibility_timeout: 30 })}>
+						<Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={() => queues.append({ name: "", ordered: false, visibility_timeout: 30 })}>
 							<Plus className="h-3.5 w-3.5 mr-1" />Queue
 						</Button>
 						<Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={() => topics.append({ name: "", subscriptions: [] })}>
@@ -78,9 +78,9 @@ export function SectionMessaging() {
 														</div>
 													</FormItem>
 												)} />
-												<FormField control={control} name={`queues.${i}.fifo`} render={({ field: f }) => (
+												<FormField control={control} name={`queues.${i}.ordered`} render={({ field: f }) => (
 													<FormItem className="space-y-1">
-														<div className="flex items-center gap-1"><Label className="text-[10px] text-muted-foreground">FIFO</Label><HelpTooltip topic="fifo" /></div>
+														<div className="flex items-center gap-1"><Label className="text-[10px] text-muted-foreground">FIFO</Label><HelpTooltip topic="ordered" /></div>
 														<div className="flex items-center h-8"><Switch checked={f.value ?? false} onCheckedChange={f.onChange} /></div>
 													</FormItem>
 												)} />

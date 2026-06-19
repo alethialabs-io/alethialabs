@@ -217,7 +217,7 @@ export function ReviewTab() {
 											<div key={i} className="flex items-center justify-between p-3 rounded-md border bg-background">
 												<span className="text-sm font-medium font-mono">{q.name || "Unnamed"}</span>
 												<div className="flex gap-2">
-													{q.fifo && <Badge variant="outline" className="text-[10px] bg-muted/30">FIFO</Badge>}
+													{q.ordered && <Badge variant="outline" className="text-[10px] bg-muted/30">FIFO</Badge>}
 													<span className="text-xs text-muted-foreground">{q.visibility_timeout}s timeout</span>
 												</div>
 											</div>

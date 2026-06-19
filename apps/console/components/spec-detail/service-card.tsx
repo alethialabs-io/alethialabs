@@ -68,9 +68,9 @@ export function getConfigSummary(
 				: `${engine} · ${nodeType}`;
 		}
 		case "queue": {
-			const fifo = service.fifo as boolean | null;
+			const ordered = service.ordered as boolean | null;
 			const timeout = service.visibility_timeout as number | null;
-			return `${fifo ? "FIFO" : "Standard"}${timeout ? ` · ${timeout}s timeout` : ""}`;
+			return `${ordered ? "FIFO" : "Standard"}${timeout ? ` · ${timeout}s timeout` : ""}`;
 		}
 		case "topic": {
 			const subs = service.subscriptions as unknown[] | null;

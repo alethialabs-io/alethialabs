@@ -83,7 +83,7 @@ type SpecCacheConfig struct {
 
 type SpecQueueConfig struct {
 	Name              string `json:"name"`
-	Fifo              *bool  `json:"fifo"`
+	Ordered              *bool  `json:"ordered"`
 	VisibilityTimeout *int   `json:"visibility_timeout"`
 	MessageRetention  *int   `json:"message_retention"`
 	DelaySeconds      *int   `json:"delay_seconds"`
