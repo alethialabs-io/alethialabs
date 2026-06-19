@@ -10,19 +10,23 @@
 
 import { createRequire } from "node:module";
 import type { BetterAuthOptions } from "better-auth";
+import { orgAc, orgRoles } from "@/lib/authz/org-access-control";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import type { Actor, Entitlements, Pdp } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 
 /**
  * Capabilities the core injects into the enterprise module. `ee/` queries through
- * `core.db` (raw SQL) and reads `core.builtinRoleIds` for stable role ids, so it
- * needs NO runtime import of core internals — only erased type imports. Keeps the
- * dependency direction clean (ee → core types only).
+ * `core.db` (raw SQL), reads `core.builtinRoleIds` for stable role ids, and uses
+ * `core.orgAc`/`core.orgRoles` so the organization plugin's membership roles match
+ * the PDP (owner/admin/operator/viewer). So `ee/` needs NO runtime import of core
+ * internals — only erased type imports. Keeps the dependency direction clean.
  */
 export interface CoreContext {
 	db: ReturnType<typeof getServiceDb>;
 	builtinRoleIds: typeof BUILTIN_ROLE_IDS;
+	orgAc: typeof orgAc;
+	orgRoles: typeof orgRoles;
 }
 
 export interface EnterpriseModule {
@@ -65,6 +69,8 @@ function loadEnterprise(): void {
 		registered = mod.register({
 			db: getServiceDb(),
 			builtinRoleIds: BUILTIN_ROLE_IDS,
+			orgAc,
+			orgRoles,
 		});
 	} catch {
 		registered = null; // community build — enterprise package absent

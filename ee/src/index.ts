@@ -44,6 +44,10 @@ export function register(core: CoreContext): EnterpriseModule {
 		authPlugins: [
 			organization({
 				creatorRole: "owner",
+				// Membership roles = the PDP roles (owner/admin/operator/viewer), injected
+				// from core so the org-plugin role vocabulary matches end-to-end.
+				ac: core.orgAc,
+				roles: core.orgRoles,
 				organizationHooks: {
 					// The creator owns the new org (org-wide owner grant) so the PDP
 					// authorizes them within it — mirrors core's ensurePersonalOrgOwner.
