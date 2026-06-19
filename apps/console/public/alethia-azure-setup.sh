@@ -62,7 +62,7 @@ else
     "issuer": "https://sts.amazonaws.com",
     "subject": "'"${VERTEX_AWS_ACCOUNT_ID}"'",
     "audiences": ["api://AzureADTokenExchange"],
-    "description": "Trust Alethia AWS workers to authenticate as this app"
+    "description": "Trust Alethia AWS runners to authenticate as this app"
   }' -o none
   echo "    Federated credential created."
 fi

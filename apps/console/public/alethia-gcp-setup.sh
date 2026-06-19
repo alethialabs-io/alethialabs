@@ -65,7 +65,7 @@ else
   gcloud iam workload-identity-pools create "${POOL_ID}" \
     --location="global" \
     --display-name="Alethia Identity Pool" \
-    --description="Allows Alethia workers to authenticate from AWS"
+    --description="Allows Alethia runners to authenticate from AWS"
 fi
 
 echo ""
