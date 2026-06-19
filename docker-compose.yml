@@ -94,6 +94,55 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # OpenFGA — the Enterprise fine-grained authorization engine. Off by default
+  # (the community PostgresRbacPDP runs without it). Bring up with:
+  #   docker compose --profile enterprise up -d openfga
+  # then create a store + load the model at standup (sets OPENFGA_STORE_ID).
+  # Backed by its own Postgres so it never touches the app schema.
+  openfga-db:
+    image: postgres:17-alpine
+    profiles: ["enterprise"]
+    environment:
+      POSTGRES_USER: openfga
+      POSTGRES_PASSWORD: "${OPENFGA_DB_PASSWORD:-openfga-dev-secret}"
+      POSTGRES_DB: openfga
+    volumes:
+      - openfga-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openfga -d openfga"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # One-shot: create/upgrade the OpenFGA datastore schema, then exit.
+  openfga-migrate:
+    image: openfga/openfga:latest
+    profiles: ["enterprise"]
+    command: migrate
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: "postgres://openfga:${OPENFGA_DB_PASSWORD:-openfga-dev-secret}@openfga-db:5432/openfga?sslmode=disable"
+    depends_on:
+      openfga-db:
+        condition: service_healthy
+    restart: "no"
+
+  openfga:
+    image: openfga/openfga:latest
+    profiles: ["enterprise"]
+    command: run
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: "postgres://openfga:${OPENFGA_DB_PASSWORD:-openfga-dev-secret}@openfga-db:5432/openfga?sslmode=disable"
+    ports:
+      - "${OPENFGA_HTTP_PORT:-8082}:8080" # HTTP API (8082 host to avoid pgweb's 8081)
+    depends_on:
+      openfga-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
   # Console (Next.js control plane). Internal URLs point at the bundled
   # postgres/seaweedfs; secrets (OAuth, Resend, CLI_JWT_SECRET, BETTER_AUTH_SECRET)
   # come from .env.
@@ -109,6 +158,10 @@ services:
       ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
       ALETHIA_APP_DATABASE_URL: "postgres://alethia_app:${ALETHIA_APP_DB_PASSWORD:-alethia-app-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
       ALETHIA_STORAGE_ENDPOINT: "http://seaweedfs:8333"
+      # OpenFGA (Enterprise engine). Empty unless set in .env → OpenFGA disabled,
+      # community PostgresRbacPDP stays the engine. Set both to enable.
+      OPENFGA_API_URL: "${OPENFGA_API_URL-}"
+      OPENFGA_STORE_ID: "${OPENFGA_STORE_ID-}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -172,6 +225,7 @@ services:
 volumes:
   seaweedfs-data:
   postgres-data:
+  openfga-data:
   caddy-data:
   caddy-config:
   redis-data:
