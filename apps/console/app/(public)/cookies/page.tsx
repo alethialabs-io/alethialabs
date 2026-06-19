@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 /**
  * Public Cookie Policy page. Reflects the essential-only cookie usage of the
- * Service (Supabase auth session and the app's auth redirect cookie); any
+ * Service (Better Auth session and the app's auth redirect cookie); any
  * future analytics/marketing cookies are flagged with a <mark> placeholder.
  */
 export default function CookiesPage() {
@@ -39,7 +39,7 @@ export default function CookiesPage() {
 			<ul>
 				<li>
 					<strong>Authentication / session cookies</strong> — set by our
-					authentication provider (Supabase) to keep you securely signed in
+					authentication layer (Better Auth) to keep you securely signed in
 					and to refresh your session as you navigate.
 				</li>
 				<li>

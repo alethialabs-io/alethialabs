@@ -35,8 +35,8 @@ export default function PrivacyPage() {
 				When you sign in we receive identity information from your chosen
 				provider (GitHub, GitLab, Bitbucket, or Google) — typically your
 				name, email address, avatar, and provider user ID — or, for email
-				sign-in, your email address. Authentication is handled by Supabase
-				GoTrue, which issues a session token (JWT).
+				sign-in, your email address. Authentication is handled by Better
+				Auth, which issues a session token (JWT).
 			</p>
 			<h3>Git provider tokens</h3>
 			<p>
@@ -90,7 +90,8 @@ export default function PrivacyPage() {
 
 			<h2>4. How we store and protect data</h2>
 			<p>
-				Data is stored using Supabase (PostgreSQL) and Amazon Web Services.
+				Data is stored in PostgreSQL and an S3-compatible object store, hosted
+				on our own infrastructure and Amazon Web Services.
 				Personal data and tokens are encrypted at rest, and every
 				user-scoped database table is protected by Row Level Security, so a
 				query can only ever return the authenticated user’s own data. Cloud
@@ -105,7 +106,6 @@ export default function PrivacyPage() {
 				behalf, including:
 			</p>
 			<ul>
-				<li>Supabase — authentication and database hosting.</li>
 				<li>Amazon Web Services — cloud infrastructure and hosting.</li>
 				<li>
 					Your chosen identity provider (GitHub, GitLab, Bitbucket, or
