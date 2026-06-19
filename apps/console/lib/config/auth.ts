@@ -41,23 +41,8 @@ export interface AuthProviders {
 	bitbucket: ProviderCredentials | null;
 }
 
-/**
- * AWS SES email config. Enabled when a region is set; the sender (emailFrom)
- * must be a verified SES identity. Credentials are explicit when provided, else
- * the AWS SDK's default chain resolves them (IAM role / AWS_* env / shared config).
- */
-export interface SesConfig {
-	region: string;
-	accessKeyId?: string;
-	secretAccessKey?: string;
-}
-
 export interface ResolvedAuthConfig extends AuthConfig {
 	providers: AuthProviders;
-	/** AWS SES config for OTP email; when null, OTP codes are logged (dev). */
-	ses: SesConfig | null;
-	/** From-address for transactional auth email (must be a verified SES identity). */
-	emailFrom: string;
 }
 
 let cached: ResolvedAuthConfig | undefined;
@@ -89,19 +74,6 @@ export function getAuthConfig(): ResolvedAuthConfig {
 			gitlab: provider("GITLAB_APPLICATION_ID", "GITLAB_SECRET"),
 			bitbucket: provider("BITBUCKET_KEY", "BITBUCKET_SECRET"),
 		},
-		ses: resolveSes(),
-		emailFrom: env("AUTH_EMAIL_FROM") || "Alethia <noreply@alethialabs.io>",
 	};
 	return cached;
-}
-
-/** Builds SES config from env; null (→ codes logged) when no region is set. */
-function resolveSes(): SesConfig | null {
-	const region = env("ALETHIA_SES_REGION") || env("AWS_REGION");
-	if (!region) return null;
-	return {
-		region,
-		accessKeyId: env("ALETHIA_SES_ACCESS_KEY_ID") || undefined,
-		secretAccessKey: env("ALETHIA_SES_SECRET_ACCESS_KEY") || undefined,
-	};
 }

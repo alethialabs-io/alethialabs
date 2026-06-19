@@ -1,0 +1,117 @@
+---
+title: Email
+description: Set up transactional email on AWS SES with reputation-isolated sending subdomains (auth, product, marketing).
+---
+
+# Email (AWS SES)
+
+Alethia sends transactional email through **AWS SES** — there is no third-party
+email SaaS. Until you configure SES, sign-in codes and other emails are **logged
+to the server console** (run `docker compose logs app`), so a fresh self-host
+works with zero email setup. This page is what you do to send real email.
+
+## Why subdomains
+
+Mail is split across **dedicated sending subdomains**, one per *stream*, so a
+reputation hit on one stream can never poison another — which matters most for
+auth mail (a sign-in code in spam = a locked-out user). The root domain is
+reserved for your human/corporate mail and never sends app email.
+
+| Stream | Subdomain | From-address (env) | Used for |
+| --- | --- | --- | --- |
+| Auth / security | `auth.alethialabs.io` | `AUTH_EMAIL_FROM` | sign-in codes, email verification, password reset |
+| Product / general | `mail.alethialabs.io` | `EMAIL_FROM` | welcome, org invites, job notifications |
+| Marketing *(future)* | `marketing.alethialabs.io` | — | bulk/marketing — give it its **own** SES identity and ideally a separate IP pool / configuration set, so a campaign flagged as spam never touches auth or product deliverability |
+| Human / corporate | `alethialabs.io` (root) | — | your mailboxes only; locked down with DMARC, the app never sends from it |
+
+Swap `alethialabs.io` for your own domain throughout.
+
+## Setup steps (one-time)
+
+### 1. Verify the sending domains in SES
+
+In the SES console (in your chosen AWS region), create a **domain identity** for
+each sending subdomain you'll use now — `auth.alethialabs.io` and
+`mail.alethialabs.io`. (Add `marketing.alethialabs.io` later when you need it.)
+
+### 2. Enable DKIM
+
+For each identity, turn on **Easy DKIM**. SES gives you **3 CNAME records** per
+domain — add them to your DNS. DKIM-signs every message and is required for DMARC
+alignment.
+
+### 3. Set a custom MAIL FROM
+
+For each identity, set a **custom MAIL FROM** subdomain (e.g.
+`bounce.auth.alethialabs.io`, `bounce.mail.alethialabs.io`) and add the records
+SES shows:
+
+- an **MX** record pointing at the SES regional mail endpoint, and
+- an **SPF** `TXT` record: `"v=spf1 include:amazonses.com ~all"`.
+
+This aligns SPF (and bounces) with your domain so DMARC passes.
+
+### 4. Add a DMARC policy
+
+Add a `TXT` record at `_dmarc.alethialabs.io`. Start in monitor mode and tighten
+once reports look clean:
+
+```
+v=DMARC1; p=none; rua=mailto:dmarc@alethialabs.io
+```
+
+Progression: `p=none` → `p=quarantine` → `p=reject`.
+
+### 5. Leave the SES sandbox
+
+New SES accounts are **sandboxed** — they can only mail verified addresses.
+Request **production access** in the SES console to send to anyone.
+
+### 6. Grant send permission
+
+SES authenticates with AWS credentials. Either:
+
+- attach an **IAM role** with `ses:SendEmail` / `ses:SendRawEmail` to the host
+  running the console (cleanest — no secrets in env), **or**
+- create an **IAM user** with that permission and set `ALETHIA_SES_ACCESS_KEY_ID`
+  / `ALETHIA_SES_SECRET_ACCESS_KEY`.
+
+### 7. Configure the console
+
+Set these in `.env` (then `docker compose up -d app`):
+
+```bash
+ALETHIA_SES_REGION=eu-west-1            # the region you verified the domains in
+# Only if NOT using an IAM role:
+ALETHIA_SES_ACCESS_KEY_ID=...
+ALETHIA_SES_SECRET_ACCESS_KEY=...
+
+AUTH_EMAIL_FROM="Alethia <no-reply@auth.alethialabs.io>"
+EMAIL_FROM="Alethia <hello@mail.alethialabs.io>"
+```
+
+`ALETHIA_SES_REGION` is the switch — set it and SES is used; leave it empty and
+emails are logged. `EMAIL_FROM` falls back to `AUTH_EMAIL_FROM` if unset.
+
+## DNS records, at a glance
+
+Per sending subdomain (`auth.`, `mail.`, …):
+
+| Record | Host | Type | Value |
+| --- | --- | --- | --- |
+| DKIM ×3 | `<token>._domainkey.<subdomain>` | CNAME | `<token>.dkim.amazonses.com` (from SES) |
+| MAIL FROM MX | `bounce.<subdomain>` | MX | `feedback-smtp.<region>.amazonses.com` (priority 10) |
+| MAIL FROM SPF | `bounce.<subdomain>` | TXT | `v=spf1 include:amazonses.com ~all` |
+
+Once per root domain:
+
+| Record | Host | Type | Value |
+| --- | --- | --- | --- |
+| DMARC | `_dmarc.alethialabs.io` | TXT | `v=DMARC1; p=none; rua=mailto:dmarc@alethialabs.io` |
+
+## Verify
+
+1. Open the console and request an email sign-in code.
+2. It should arrive from `no-reply@auth.alethialabs.io` (check spam on the first
+   send). If nothing arrives, `docker compose logs app` shows either the SES
+   send error or — if SES isn't configured — the code itself.
