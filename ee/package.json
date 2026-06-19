@@ -17,8 +17,11 @@
 		"check-types": "tsc -p tsconfig.json --noEmit"
 	},
 	"peerDependencies": {
+		"@better-auth/sso": "^1.6.0",
 		"better-auth": "^1.6.19",
-		"drizzle-orm": "^0.45.2"
+		"drizzle-orm": "^0.45.2",
+		"jose": "^5.0.0",
+		"samlify": "^2.0.0"
 	},
 	"devDependencies": {
 		"typescript": "^5"

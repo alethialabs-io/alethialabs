@@ -7,6 +7,7 @@
 // from core (`@/...`) are used (erased at compile time) — runtime data access goes
 // through `core.db`, so this package never imports core runtime internals.
 
+import { sso } from "@better-auth/sso";
 import { organization } from "better-auth/plugins/organization";
 import { sql } from "drizzle-orm";
 import type { CoreContext, EnterpriseModule } from "@/lib/enterprise";
@@ -23,13 +24,13 @@ const NO_ENTITLEMENTS: Entitlements = {
  * Feature entitlements for this deployment. The seam is synchronous, so we resolve
  * once at registration from the environment (set by the licensing service after it
  * verifies the signed license key). STANDUP: replace with signed-license (JWT)
- * verification against a public key. SSO stays off until the SSO package lands.
+ * verification against a public key.
  */
 function readEntitlements(): Entitlements {
 	if (process.env.ALETHIA_LICENSE_ACTIVE !== "true") return NO_ENTITLEMENTS;
 	return {
 		organizations: true,
-		sso: false, // deferred — no @better-auth/sso yet
+		sso: true, // OIDC + SAML via @better-auth/sso
 		customRoles: true,
 		auditExport: true,
 	};
@@ -57,6 +58,19 @@ export function register(core: CoreContext): EnterpriseModule {
 							)
 						`);
 					},
+				},
+			}),
+
+			// Enterprise SSO (OIDC + SAML): Alethia as the Service Provider consuming
+			// the customer's IdP (Okta / Entra ID / AWS IAM Identity Center / …).
+			// Loaded after organization() so per-org providers (ssoProvider.organizationId)
+			// resolve. SSO users are provisioned into their org as least-privileged
+			// members so the PDP scopes them correctly. STANDUP: add a getRole mapping
+			// (IdP group claim → owner/admin/operator/viewer) and harden SAML
+			// (algorithms.onDeprecated: "reject", enable InResponseTo validation).
+			sso({
+				organizationProvisioning: {
+					defaultRole: "viewer",
 				},
 			}),
 		],
