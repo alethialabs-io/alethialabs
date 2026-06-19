@@ -16,15 +16,15 @@ export type WorkerAuthResult = {
 export async function verifyWorkerToken(
 	req: Request,
 ): Promise<WorkerAuthResult> {
-	const workerId = req.headers.get("X-Worker-ID");
-	const workerToken = req.headers.get("X-Worker-Token");
+	const workerId = req.headers.get("X-Runner-ID");
+	const workerToken = req.headers.get("X-Runner-Token");
 
 	if (!workerId || !workerToken) {
 		return {
 			workerId: "",
 			tokenHash: "",
 			error: NextResponse.json(
-				{ error: "Missing X-Worker-ID or X-Worker-Token" },
+				{ error: "Missing X-Runner-ID or X-Runner-Token" },
 				{ status: 401 },
 			),
 		};
@@ -44,7 +44,7 @@ export async function verifyWorkerToken(
 			workerId: "",
 			tokenHash: "",
 			error: NextResponse.json(
-				{ error: "Invalid worker ID or token" },
+				{ error: "Invalid runner ID or token" },
 				{ status: 401 },
 			),
 		};
