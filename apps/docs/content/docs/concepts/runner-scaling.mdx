@@ -38,7 +38,7 @@ A user clicks "Plan," "Apply," or "Destroy" in Console (or runs `alethia plan` /
 
 ### Console Notifies the Scaler
 
-Immediately after inserting the job, Console sends a fire-and-forget POST to the Lambda scaler's Function URL. For each node in its `WORKERS` config (region/cluster/service/`alethia_url`), the Lambda POSTs to `{alethia_url}/api/platform/queue` with header `Authorization: Bearer ${ALETHIA_API_SECRET}`. That console endpoint runs `recover_stale_jobs()` and returns `{ recovered, queued }`. If the direct call fails, EventBridge retries within 60 seconds.
+Immediately after inserting the job, Console sends a fire-and-forget POST to the Lambda scaler's Function URL. For each runner in its `RUNNERS` config (region/cluster/service/`alethia_url`), the Lambda POSTs to `{alethia_url}/api/platform/queue` with header `Authorization: Bearer ${ALETHIA_API_SECRET}`. That console endpoint runs `recover_stale_jobs()` and returns `{ recovered, queued }`. If the direct call fails, EventBridge retries within 60 seconds.
 
 ### ECS Scales Up
 
@@ -50,7 +50,7 @@ ECS Fargate pulls the Runner Docker image from GHCR (`ghcr.io/bobikenobi12/runne
 
 ### Runner Claims Job
 
-The Runner authenticates with Console using its worker token, enters its poll loop, and claims the queued job atomically via `FOR UPDATE SKIP LOCKED`. See [Job Queue Pattern](/concepts/job-queue) for claiming details.
+The Runner authenticates with Console using its runner token, enters its poll loop, and claims the queued job atomically via `FOR UPDATE SKIP LOCKED`. See [Job Queue Pattern](/concepts/job-queue) for claiming details.
 
 </Steps>
 

@@ -63,7 +63,7 @@ Click **"Add Runner"** to open the registration sheet with two tabs:
 </Tabs>
 
 <Callout type="warn">
-The worker token is shown **only once** at registration. If lost, the Runner must be re-registered. See [Authentication Flows](/concepts/authentication) for how token verification works.
+The runner token is shown **only once** at registration. If lost, the Runner must be re-registered. See [Authentication Flows](/concepts/authentication) for how token verification works.
 </Callout>
 
 ## Status Indicators
@@ -78,7 +78,7 @@ Status is determined by heartbeat recency:
 
 ## Real-time Updates
 
-The Runners page subscribes to `workers` table changes and `jobs` changes via [Postgres LISTEN/NOTIFY → SSE](/concepts/realtime). Status changes, new registrations, and job assignments appear instantly.
+The Runners page subscribes to `runners` table changes and `jobs` changes via [Postgres LISTEN/NOTIFY → SSE](/concepts/realtime). Status changes, new registrations, and job assignments appear instantly.
 
 ## Version Tracking
 

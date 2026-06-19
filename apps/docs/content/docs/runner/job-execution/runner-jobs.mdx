@@ -23,7 +23,7 @@ Creates ECS task definition, IAM roles (execution + task), CloudWatch log group,
 Provisions the infrastructure in the specified region.
 
 ### Register with Alethia
-Calls `POST /api/runners/register` to create a worker record. Returns the worker ID and token, which are injected as environment variables into the ECS task.
+Calls `POST /api/runners/register` to create a runner record. Returns the runner ID and token, which are injected as environment variables into the ECS task.
 
 ### Report results
 Job status → SUCCESS. The new Runner boots, registers its heartbeat, and appears as ONLINE in the [Runners page](/console/runners).
@@ -43,7 +43,7 @@ Updates an existing Runner to the latest release.
 Tears down a Runner's infrastructure.
 
 1. Runs `terraform destroy` on the Runner's ECS resources
-2. Removes the worker registration from Alethia
+2. Removes the runner registration from Alethia
 3. Any jobs assigned to this Runner are requeued to other available Runners
 
 ## CONNECTION_TEST

@@ -33,7 +33,7 @@ const config = {
 			// Platform docs renamed trellis -> console
 			{ source: "/trellis", destination: "/console", permanent: true },
 			{ source: "/trellis/:path*", destination: "/console/:path*", permanent: true },
-			// Worker/agent docs renamed tendril -> runner
+			// Runner/agent docs renamed tendril -> runner
 			{ source: "/tendril", destination: "/runner", permanent: true },
 			{ source: "/tendril/:path*", destination: "/runner/:path*", permanent: true },
 			// Shared Go package renamed grape-core -> core (now under runner/)

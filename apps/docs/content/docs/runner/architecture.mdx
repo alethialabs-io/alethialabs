@@ -32,9 +32,9 @@ Runner receives its configuration via environment variables:
 | Variable | Description |
 |----------|-------------|
 | `ALETHIA_WEB_ORIGIN` | Base URL of the Alethia instance |
-| `ALETHIA_WORKER_ID` | Unique Runner identifier (assigned at registration) |
-| `ALETHIA_WORKER_TOKEN` | Authentication token for API calls |
-| `ALETHIA_WORKER_MODE` | `cloud-hosted` or `self-hosted` |
+| `ALETHIA_RUNNER_ID` | Unique Runner identifier (assigned at registration) |
+| `ALETHIA_RUNNER_TOKEN` | Authentication token for API calls |
+| `ALETHIA_RUNNER_MODE` | `cloud-hosted` or `self-hosted` |
 | `ALETHIA_STORAGE_ENDPOINT` | S3 endpoint for Terraform state |
 | `ALETHIA_STORAGE_REGION` | S3 region |
 | `ALETHIA_STORAGE_ACCESS_KEY_ID` | S3 access key |
@@ -45,7 +45,7 @@ Runner receives its configuration via environment variables:
 
 The heartbeat goroutine sends `POST /api/runners/heartbeat` every 30 seconds with:
 
-- Worker ID
+- Runner ID
 - Current status (ONLINE or DRAINING)
 - Currently executing job ID (if any)
 

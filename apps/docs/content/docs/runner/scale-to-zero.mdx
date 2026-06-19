@@ -9,12 +9,12 @@ Cloud-hosted Runners support automatic scale-to-zero. When no jobs are queued, t
 
 ## How It Works
 
-A Lambda function runs on a 1-minute schedule via EventBridge. For each node it asks the console how many jobs are queued, then adjusts that node's ECS service desired count accordingly. The Lambda never talks to the database directly — it calls a console API endpoint, which owns the queue logic.
+A Lambda function runs on a 1-minute schedule via EventBridge. For each runner it asks the console how many jobs are queued, then adjusts that runner's ECS service desired count accordingly. The Lambda never talks to the database directly — it calls a console API endpoint, which owns the queue logic.
 
 ### Scale-Up Logic
 
 ```
-Every 1 minute, for each entry in WORKERS:
+Every 1 minute, for each entry in RUNNERS:
   1. POST {alethia_url}/api/platform/queue
        Authorization: Bearer ${ALETHIA_API_SECRET}
      → Console runs recover_stale_jobs()
@@ -27,7 +27,7 @@ Every 1 minute, for each entry in WORKERS:
 ### Scale-Down Logic
 
 ```
-  3. For each node:
+  3. For each runner:
      - If queued = 0 AND current desired > 0:
        → Increment idle counter
        → If idle counter >= 5 (5 consecutive checks = 5 minutes):
@@ -55,16 +55,16 @@ The 5-check threshold (5 minutes) prevents flapping — a brief gap between jobs
 The Lambda function needs:
 - `ecs:DescribeServices` — read current desired count
 - `ecs:UpdateService` — change desired count
-- Network access to each node's console URL (for the queue check)
+- Network access to each runner's console URL (for the queue check)
 
 ### Environment Variables
 
 | Variable | Purpose |
 |----------|---------|
 | `ALETHIA_API_SECRET` | Bearer secret sent to the console's `/api/platform/queue` endpoint |
-| `WORKERS` | JSON array of node configurations (region, cluster, service, alethia_url) |
+| `RUNNERS` | JSON array of runner configurations (region, cluster, service, alethia_url) |
 
-### Workers Configuration
+### Runners Configuration
 
 ```json
 [
@@ -91,7 +91,7 @@ The Lambda POSTs to the console's platform endpoint instead of querying the data
 
 ```python
 req = urllib.request.Request(
-    f"{worker['alethia_url']}/api/platform/queue",
+    f"{runner['alethia_url']}/api/platform/queue",
     method="POST",
     headers={
         'Authorization': f'Bearer {ALETHIA_API_SECRET}',
@@ -101,7 +101,7 @@ req = urllib.request.Request(
 # Response: { "recovered": <n>, "queued": <n> }
 ```
 
-The endpoint runs `recover_stale_jobs()` (re-queuing jobs orphaned by a crashed Runner) and returns the current `queued` count. The Lambda scales the node's ECS service up to 1 when `queued > 0`, and down to 0 after 5 consecutive idle checks.
+The endpoint runs `recover_stale_jobs()` (re-queuing jobs orphaned by a crashed Runner) and returns the current `queued` count. The Lambda scales the runner's ECS service up to 1 when `queued > 0`, and down to 0 after 5 consecutive idle checks.
 
 ## Cold Start Behavior
 
@@ -138,7 +138,7 @@ module "scaler" {
   name_prefix        = local.name_prefix
   alethia_api_secret = var.alethia_api_secret
 
-  workers = [
+  runners = [
     for name, w in module.runner : {
       region      = var.runners[name].region
       cluster     = w.cluster_name

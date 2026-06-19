@@ -40,7 +40,7 @@ Alethia is the web-based control plane. It provides a visual interface for confi
     View provisioned Kubernetes clusters with ArgoCD access.
   </Card>
   <Card title="API Reference" href="/console/api-reference">
-    Worker, CLI, and Auth API endpoints.
+    Runner, CLI, and Auth API endpoints.
   </Card>
 </Cards>
 
@@ -49,7 +49,7 @@ Alethia is the web-based control plane. It provides a visual interface for confi
 ```
 Browser ──► Next.js App Router
               ├── Server Actions (Drizzle with org-scoped RLS)
-              ├── API Routes (Worker + CLI token auth)
+              ├── API Routes (Runner + CLI token auth)
               └── LISTEN/NOTIFY → SSE (Server-Sent Events)
                    └── Live updates → browser stores
 ```

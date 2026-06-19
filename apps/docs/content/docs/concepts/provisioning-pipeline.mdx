@@ -58,7 +58,7 @@ The git access token is intentionally left empty in the snapshot. The Runner fet
 
 ## Stage 3: Config Snapshot → SpecConfig
 
-The Runner worker claims the job and deserializes the JSON snapshot into a strongly-typed Go struct:
+The Runner claims the job and deserializes the JSON snapshot into a strongly-typed Go struct:
 
 ```go
 func snapshotToSpecConfig(snapshot map[string]any) (*types.SpecConfig, error) {
@@ -129,5 +129,5 @@ When a DEPLOY job references a prior PLAN job, the platform validates that the c
 | GCP tfvars mapping | `packages/core/cloud/gcp_provider.go` — `ProviderTfvars()` |
 | Azure tfvars mapping | `packages/core/cloud/azure_provider.go` — `ProviderTfvars()` |
 | Deploy orchestration | `packages/core/provisioner/deploy.go` — `RunDeployV2()` |
-| Snapshot deserialization | `apps/runner/worker/runner.go` — `snapshotToSpecConfig()` |
+| Snapshot deserialization | `apps/runner/internal/agent/runner.go` — `snapshotToSpecConfig()` |
 | Terraform CLI wrapper | `packages/core/terraform/terraform.go` |

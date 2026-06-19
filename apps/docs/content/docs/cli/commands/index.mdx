@@ -5,7 +5,9 @@ description: Complete reference for all alethia CLI commands organized by group.
 
 # Command Reference
 
-alethia provides commands across 8 groups. All commands communicate with the Alethia API — they do not execute Terraform directly.
+alethia organizes its commands into groups (`connector`, `zone`, `spec`, `runner`, `jobs`, `cluster`)
+plus top-level auth commands. All commands communicate with the Alethia API — they do not execute
+Terraform directly.
 
 ## Command Tree
 
@@ -13,6 +15,7 @@ alethia provides commands across 8 groups. All commands communicate with the Ale
 alethia
 ├── login [--force]
 ├── logout
+├── version
 ├── connector
 │   ├── gcp [--project <id>] [--manual]
 │   ├── aws [--region <r>] [--role-name <name>] [--manual]
@@ -20,38 +23,33 @@ alethia
 │   ├── list
 │   └── remove [provider] [--yes]
 ├── zone
-│   ├── create --name <name>
+│   ├── create [name]
 │   ├── list
-│   └── delete --id <id>
+│   └── delete [id]
 ├── spec
 │   ├── list [--zone-id <id>]
-│   └── get --id <id>
-├── plan [--spec-id <id>] [--worker-id <id>] [--wait]
-├── apply [--spec-id <id>] [--worker-id <id>] [--plan-job-id <id>] [--wait]
-├── destroy
-│   ├── spec --spec-id <id> [--worker-id <id>] [--wait]
-│   ├── worker --worker-id <id>
-│   └── zone --zone-id <id>
+│   ├── get [project_name]
+│   ├── plan [--spec-id <id>] [--runner-id <id>] [--wait]
+│   ├── apply [--spec-id <id>] [--runner-id <id>] [--plan-job-id <id>] [--wait]
+│   └── destroy [--spec-id <id>] [--runner-id <id>] [--wait]
+├── runner
+│   ├── deploy [--cloud-identity-id <id>] [--name <name>] [--region <r>] [--assigned-runner-id <id>] [--wait]
+│   ├── list
+│   ├── destroy [--runner-id <id>] [--assigned-runner-id <id>] [--wait]
+│   └── remove [runner_id]
 ├── jobs
 │   ├── list
-│   ├── get --id <id>
-│   ├── logs --id <id> [--follow]
-│   ├── cancel --id <id>
-│   └── wait --id <id>
-├── worker
-│   ├── start
-│   ├── register
-│   ├── list
-│   ├── remove --id <id>
-│   └── config
-├── clusters
-│   └── list
-└── selectors
+│   ├── get <job_id>
+│   ├── logs <job_id> [--follow]
+│   └── cancel <job_id>
+└── cluster
+    └── list
 ```
 
 ## Interactive Selection
 
-When `--spec-id` is omitted from `plan`, `apply`, or `destroy`, alethia launches an interactive TUI selector. See [TUI Components](/cli/tui) for how this works.
+When `--spec-id` is omitted from `spec plan`, `spec apply`, or `spec destroy`, alethia launches an
+interactive TUI selector. See [TUI Components](/cli/tui) for how this works.
 
 ## Common Patterns
 
@@ -71,27 +69,27 @@ See [Connector Commands](/cli/commands/connector) for AWS and Azure flows.
 
 ```bash
 # 1. Plan
-alethia plan --spec-id <id>
+alethia spec plan --spec-id <id>
 # Note the job ID from output
 
 # 2. Stream logs to review
-alethia jobs logs --id <plan-job-id> --follow
+alethia jobs logs <plan-job-id> --follow
 
 # 3. Apply
-alethia apply --spec-id <id> --plan-job-id <plan-job-id>
+alethia spec apply --spec-id <id> --plan-job-id <plan-job-id>
 ```
 
 ### Scripting with --wait
 
 ```bash
 # Block until plan completes, then apply
-alethia plan --spec-id <id> --wait
-alethia apply --spec-id <id> --plan-job-id <id> --wait
+alethia spec plan --spec-id <id> --wait
+alethia spec apply --spec-id <id> --plan-job-id <id> --wait
 ```
 
 ### Log Tailing
 
 ```bash
 # Stream logs like tail -f
-alethia jobs logs --id <job-id> --follow
+alethia jobs logs <job-id> --follow
 ```

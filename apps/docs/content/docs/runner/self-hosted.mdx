@@ -36,9 +36,9 @@ Set the required environment variables and start the binary:
 
 ```bash
 export ALETHIA_WEB_ORIGIN=https://alethia.example.com
-export ALETHIA_WORKER_ID=<runner-id>
-export ALETHIA_WORKER_TOKEN=<runner-token>
-export ALETHIA_WORKER_MODE=self-hosted
+export ALETHIA_RUNNER_ID=<runner-id>
+export ALETHIA_RUNNER_TOKEN=<runner-token>
+export ALETHIA_RUNNER_MODE=self-hosted
 export ALETHIA_STORAGE_ENDPOINT=<s3-endpoint>
 export ALETHIA_STORAGE_REGION=<s3-region>
 export ALETHIA_STORAGE_ACCESS_KEY_ID=<s3-key>
@@ -60,9 +60,9 @@ The Runner will:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ALETHIA_WEB_ORIGIN` | Yes | Alethia API base URL |
-| `ALETHIA_WORKER_ID` | Yes | Assigned runner ID |
-| `ALETHIA_WORKER_TOKEN` | Yes | Authentication token |
-| `ALETHIA_WORKER_MODE` | Yes | Must be `self-hosted` |
+| `ALETHIA_RUNNER_ID` | Yes | Assigned runner ID |
+| `ALETHIA_RUNNER_TOKEN` | Yes | Authentication token |
+| `ALETHIA_RUNNER_MODE` | Yes | Must be `self-hosted` |
 | `ALETHIA_STORAGE_ENDPOINT` | Yes | Terraform state S3 endpoint |
 | `ALETHIA_STORAGE_REGION` | Yes | S3 region |
 | `ALETHIA_STORAGE_ACCESS_KEY_ID` | Yes | S3 access key |

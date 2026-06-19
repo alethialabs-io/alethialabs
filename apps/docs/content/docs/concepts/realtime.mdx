@@ -88,7 +88,7 @@ Events are scoped server-side by the caller's `org_id` (the same org the SSE han
 
 ## Runner Status Tracking
 
-The Runners page opens an SSE stream for `workers` changes:
+The Runners page opens an SSE stream for `runners` changes:
 
 ```typescript
 const events = new EventSource('/api/runners/stream');
