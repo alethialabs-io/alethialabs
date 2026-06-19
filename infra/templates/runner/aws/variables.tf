@@ -1,17 +1,17 @@
-variable "worker_id" {
+variable "runner_id" {
   type        = string
-  description = "Pre-registered worker UUID"
+  description = "Pre-registered runner UUID"
 }
 
-variable "worker_token" {
+variable "runner_token" {
   type        = string
   sensitive   = true
-  description = "Worker authentication token"
+  description = "Runner authentication token"
 }
 
-variable "worker_name" {
+variable "runner_name" {
   type        = string
-  description = "Human-readable worker name"
+  description = "Human-readable runner name"
 }
 
 variable "alethia_url" {

@@ -7,18 +7,18 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/spf13/cobra"
 )
 
 var (
-	vinePlanVineID     string
-	vinePlanTendrilID  string
-	vinePlanWait       bool
+	specPlanSpecID   string
+	specPlanRunnerID string
+	specPlanWait     bool
 )
 
-var vinePlanCmd = &cobra.Command{
+var specPlanCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Queue a plan (dry-run) job for a spec",
 	Long:  `Plan runs a Terraform plan with cost analysis without applying changes.`,
@@ -29,24 +29,24 @@ var vinePlanCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		vineyardID := ""
+		zoneID := ""
 
-		if vinePlanVineID == "" {
-			vineyardID, _, err = selectVineyard(token)
+		if specPlanSpecID == "" {
+			zoneID, _, err = selectZone(token)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
 
-			vinePlanVineID, err = selectVine(token, vineyardID)
+			specPlanSpecID, err = selectSpec(token, zoneID)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
 		}
 
-		if vinePlanTendrilID == "" {
-			vinePlanTendrilID, err = selectTendril(token, "")
+		if specPlanRunnerID == "" {
+			specPlanRunnerID, err = selectRunner(token, "")
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -57,11 +57,11 @@ var vinePlanCmd = &cobra.Command{
 
 		params := api.QueueJobParams{
 			JobType:         "PLAN",
-			VineyardID:      vineyardID,
-			ConfigurationID: vinePlanVineID,
+			ZoneID:          zoneID,
+			ConfigurationID: specPlanSpecID,
 		}
-		if vinePlanTendrilID != "" {
-			params.AssignedWorkerID = vinePlanTendrilID
+		if specPlanRunnerID != "" {
+			params.AssignedRunnerID = specPlanRunnerID
 		}
 
 		job, err := apiClient.QueueJobWithParams(params)
@@ -70,7 +70,7 @@ var vinePlanCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if vinePlanWait {
+		if specPlanWait {
 			ui.JobQueued("PLAN", job.ID)
 			if err := waitForJob(apiClient, job.ID); err != nil {
 				os.Exit(1)
@@ -82,8 +82,8 @@ var vinePlanCmd = &cobra.Command{
 }
 
 func init() {
-	vineCmd.AddCommand(vinePlanCmd)
-	vinePlanCmd.Flags().StringVar(&vinePlanVineID, "spec-id", "", "ID of the spec to plan")
-	vinePlanCmd.Flags().StringVar(&vinePlanTendrilID, "runner-id", "", "Assign to a specific runner")
-	vinePlanCmd.Flags().BoolVarP(&vinePlanWait, "wait", "w", false, "Wait for job completion")
+	specCmd.AddCommand(specPlanCmd)
+	specPlanCmd.Flags().StringVar(&specPlanSpecID, "spec-id", "", "ID of the spec to plan")
+	specPlanCmd.Flags().StringVar(&specPlanRunnerID, "runner-id", "", "Assign to a specific runner")
+	specPlanCmd.Flags().BoolVarP(&specPlanWait, "wait", "w", false, "Wait for job completion")
 }

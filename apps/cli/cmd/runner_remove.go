@@ -7,14 +7,14 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/spf13/cobra"
 )
 
-var tendrilRemoveCmd = &cobra.Command{
+var runnerRemoveCmd = &cobra.Command{
 	Use:   "remove [runner_id]",
 	Short: "Remove a runner record (no cloud teardown)",
 	Long:  `Removes the runner's database record only. Use 'alethia runner destroy' to tear down cloud resources first.`,
@@ -25,16 +25,16 @@ var tendrilRemoveCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		tendrilID := ""
+		runnerID := ""
 		if len(args) > 0 {
-			tendrilID = args[0]
+			runnerID = args[0]
 		} else {
-			tendrilID, err = selectTendril(token, "")
+			runnerID, err = selectRunner(token, "")
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
-			if tendrilID == "" {
+			if runnerID == "" {
 				fmt.Println("Please select a specific runner, not 'Any available'.")
 				os.Exit(1)
 			}
@@ -59,7 +59,7 @@ var tendrilRemoveCmd = &cobra.Command{
 		spinner.New().
 			Title("Removing runner...").
 			Action(func() {
-				err = apiClient.RemoveWorker(tendrilID)
+				err = apiClient.RemoveRunner(runnerID)
 			}).Run()
 
 		if err != nil {
@@ -67,10 +67,10 @@ var tendrilRemoveCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		ui.Success(fmt.Sprintf("Runner record removed (ID: %s)", tendrilID))
+		ui.Success(fmt.Sprintf("Runner record removed (ID: %s)", runnerID))
 	},
 }
 
 func init() {
-	tendrilCmd.AddCommand(tendrilRemoveCmd)
+	runnerCmd.AddCommand(runnerRemoveCmd)
 }

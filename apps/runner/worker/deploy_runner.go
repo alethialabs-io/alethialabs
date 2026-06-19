@@ -13,10 +13,10 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/terraform"
 )
 
-type workerDeployConfig struct {
-	WorkerID        string `json:"worker_id"`
-	WorkerToken     string `json:"worker_token"`
-	WorkerName      string `json:"worker_name"`
+type runnerDeployConfig struct {
+	RunnerID        string `json:"runner_id"`
+	RunnerToken     string `json:"runner_token"`
+	RunnerName      string `json:"runner_name"`
 	ImageTag        string `json:"image_tag"`
 	Region          string `json:"region"`
 	CloudProvider   string `json:"cloud_provider"`
@@ -26,10 +26,10 @@ type workerDeployConfig struct {
 	ImageRepository string `json:"image_repository"`
 }
 
-func (w *Worker) executeDeployWorker(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
-	cfg, err := parseWorkerDeployConfig(job.ConfigSnapshot)
+func (w *Runner) executeDeployRunner(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
+	cfg, err := parseRunnerDeployConfig(job.ConfigSnapshot)
 	if err != nil {
-		return fmt.Errorf("failed to parse worker deploy config: %w", err)
+		return fmt.Errorf("failed to parse runner deploy config: %w", err)
 	}
 
 	if cfg.CloudProvider == "" {
@@ -56,7 +56,7 @@ func (w *Worker) executeDeployWorker(ctx context.Context, job *Job, provider str
 
 	templatesDir := resolveRunnerTemplatesDir()
 	if templatesDir == "" {
-		return fmt.Errorf("worker templates directory not found")
+		return fmt.Errorf("runner templates directory not found")
 	}
 
 	providerDir := filepath.Join(templatesDir, cfg.CloudProvider)
@@ -64,9 +64,9 @@ func (w *Worker) executeDeployWorker(ctx context.Context, job *Job, provider str
 		return fmt.Errorf("no templates for provider %s: %w", cfg.CloudProvider, err)
 	}
 
-	fmt.Fprintf(stdout, "Deploying worker %q (%s) to %s/%s\n", cfg.WorkerName, cfg.WorkerID[:8], cfg.CloudProvider, cfg.Region)
+	fmt.Fprintf(stdout, "Deploying runner %q (%s) to %s/%s\n", cfg.RunnerName, cfg.RunnerID[:8], cfg.CloudProvider, cfg.Region)
 
-	tmpRoot, err := os.MkdirTemp("", "alethia-deploy-worker-*")
+	tmpRoot, err := os.MkdirTemp("", "alethia-deploy-runner-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
@@ -74,13 +74,13 @@ func (w *Worker) executeDeployWorker(ctx context.Context, job *Job, provider str
 
 	workDir := filepath.Join(tmpRoot, "work")
 	if err := copyDir(providerDir, workDir); err != nil {
-		return fmt.Errorf("failed to copy worker templates: %w", err)
+		return fmt.Errorf("failed to copy runner templates: %w", err)
 	}
 
 	tfvars := map[string]interface{}{
-		"worker_id":        cfg.WorkerID,
-		"worker_token":     cfg.WorkerToken,
-		"worker_name":      cfg.WorkerName,
+		"runner_id":        cfg.RunnerID,
+		"runner_token":     cfg.RunnerToken,
+		"runner_name":      cfg.RunnerName,
 		"trellis_url":      cfg.TrellisURL,
 		"image_tag":        cfg.ImageTag,
 		"region":           cfg.Region,
@@ -98,11 +98,11 @@ func (w *Worker) executeDeployWorker(ctx context.Context, job *Job, provider str
 	if err := backend.EnsureBucket(ctx); err != nil {
 		return fmt.Errorf("failed to ensure state bucket: %w", err)
 	}
-	backendFile, err := backend.WriteWorkerBackendHCL(workDir, cfg.WorkerID[:8])
+	backendFile, err := backend.WriteRunnerBackendHCL(workDir, cfg.RunnerID[:8])
 	if err != nil {
 		return fmt.Errorf("failed to write backend config: %w", err)
 	}
-	fmt.Fprintf(stdout, "State backend: S3 (workers/%s)\n", cfg.WorkerID[:8])
+	fmt.Fprintf(stdout, "State backend: S3 (runners/%s)\n", cfg.RunnerID[:8])
 
 	tfVersion := "1.15.5"
 	tf, err := terraform.NewTerraformCLI(ctx, tfVersion, workDir, stdout, stderr)
@@ -131,11 +131,11 @@ func (w *Worker) executeDeployWorker(ctx context.Context, job *Job, provider str
 		fmt.Fprintf(stderr, "Warning: could not read terraform outputs: %v\n", err)
 	} else if len(outputs) > 0 {
 		w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
-			"worker_outputs": outputs,
+			"runner_outputs": outputs,
 		})
 	}
 
-	if err := w.api.UpdateWorkerMetadata(cfg.WorkerID, map[string]any{
+	if err := w.api.UpdateRunnerMetadata(cfg.RunnerID, map[string]any{
 		"deploy_config": map[string]any{
 			"region":           cfg.Region,
 			"cloud_provider":   cfg.CloudProvider,
@@ -144,13 +144,13 @@ func (w *Worker) executeDeployWorker(ctx context.Context, job *Job, provider str
 			"cpu":              cfg.CPU,
 			"memory":           cfg.Memory,
 			"image_repository": cfg.ImageRepository,
-			"worker_token":     cfg.WorkerToken,
+			"runner_token":     cfg.RunnerToken,
 		},
 	}); err != nil {
-		fmt.Fprintf(stderr, "Warning: failed to save deploy config to worker metadata: %v\n", err)
+		fmt.Fprintf(stderr, "Warning: failed to save deploy config to runner metadata: %v\n", err)
 	}
 
-	fmt.Fprintf(stdout, "Worker %q deployed successfully\n", cfg.WorkerName)
+	fmt.Fprintf(stdout, "Runner %q deployed successfully\n", cfg.RunnerName)
 	return nil
 }
 
@@ -168,32 +168,32 @@ func resolveRunnerTemplatesDir() string {
 	return ""
 }
 
-func parseWorkerDeployConfig(snapshot map[string]any) (*workerDeployConfig, error) {
+func parseRunnerDeployConfig(snapshot map[string]any) (*runnerDeployConfig, error) {
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return nil, err
 	}
-	var cfg workerDeployConfig
+	var cfg runnerDeployConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
-	if cfg.WorkerID == "" || cfg.WorkerToken == "" {
-		return nil, fmt.Errorf("worker_id and worker_token are required in config_snapshot")
+	if cfg.RunnerID == "" || cfg.RunnerToken == "" {
+		return nil, fmt.Errorf("runner_id and runner_token are required in config_snapshot")
 	}
 	return &cfg, nil
 }
 
-func parseWorkerDestroyConfig(snapshot map[string]any) (*workerDeployConfig, error) {
+func parseRunnerDestroyConfig(snapshot map[string]any) (*runnerDeployConfig, error) {
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return nil, err
 	}
-	var cfg workerDeployConfig
+	var cfg runnerDeployConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
-	if cfg.WorkerID == "" {
-		return nil, fmt.Errorf("worker_id is required in config_snapshot")
+	if cfg.RunnerID == "" {
+		return nil, fmt.Errorf("runner_id is required in config_snapshot")
 	}
 	return &cfg, nil
 }

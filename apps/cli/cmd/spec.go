@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var vineCmd = &cobra.Command{
+var specCmd = &cobra.Command{
 	Use:   "spec",
 	Short: "Manage specs (infrastructure configurations)",
 	Long: `Specs are infrastructure configurations for projects.
@@ -16,5 +16,5 @@ Use the subcommands to list, view, plan, apply, or destroy spec infrastructure.`
 }
 
 func init() {
-	rootCmd.AddCommand(vineCmd)
+	rootCmd.AddCommand(specCmd)
 }

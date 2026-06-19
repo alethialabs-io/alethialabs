@@ -19,15 +19,15 @@ import (
 )
 
 type BootstrapParams struct {
-	VineyardID   string
-	VineyardName string
-	Environment  string
-	Region       string
-	VpcCidr      string
-	SelectedVpc  string
-	Stdout       io.Writer
-	Stderr       io.Writer
-	ApiClient    *api.Client
+	ZoneID      string
+	ZoneName    string
+	Environment string
+	Region      string
+	VpcCidr     string
+	SelectedVpc string
+	Stdout      io.Writer
+	Stderr      io.Writer
+	ApiClient   *api.Client
 }
 
 type BootstrapResult struct {
@@ -43,9 +43,9 @@ func RunBootstrap(ctx context.Context, params BootstrapParams) (*BootstrapResult
 		out = os.Stdout
 	}
 
-	workspaceName := fmt.Sprintf("%s-%s", params.VineyardName, params.Environment)
-	if params.VineyardName == "" {
-		workspaceName = fmt.Sprintf("%s-%s", params.VineyardID, params.Environment)
+	workspaceName := fmt.Sprintf("%s-%s", params.ZoneName, params.Environment)
+	if params.ZoneName == "" {
+		workspaceName = fmt.Sprintf("%s-%s", params.ZoneID, params.Environment)
 	}
 
 	if params.VpcCidr == "" {
@@ -57,7 +57,7 @@ func RunBootstrap(ctx context.Context, params BootstrapParams) (*BootstrapResult
 
 	if params.ApiClient != nil {
 		var err error
-		job, err = params.ApiClient.CreateBootstrapJob(params.VineyardID)
+		job, err = params.ApiClient.CreateBootstrapJob(params.ZoneID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize bootstrap job: %w", err)
 		}
@@ -140,7 +140,7 @@ func RunBootstrap(ctx context.Context, params BootstrapParams) (*BootstrapResult
 			finalVpcID = params.SelectedVpc
 		}
 
-		regResp, err := params.ApiClient.RegisterCluster(clusterName, finalVpcID, params.VpcCidr, params.Region, params.VineyardID)
+		regResp, err := params.ApiClient.RegisterCluster(clusterName, finalVpcID, params.VpcCidr, params.Region, params.ZoneID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to register cluster: %w", err)
 		}
@@ -182,7 +182,7 @@ func extractAssets(destDir string) error {
 
 	dirs := map[string]string{
 		"terraform/seed": ".",
-		"helm/runner":   "helm/runner",
+		"helm/runner":    "helm/runner",
 	}
 
 	for srcRoot, destRel := range dirs {

@@ -8,30 +8,30 @@ import (
 )
 
 type InfraFacts struct {
-	ProjectName      string
-	Environment      string
-	Region           string
-	Provider         string
-	DomainName       string
-	DNSZoneID        string
-	EnableKarpenter  bool
+	ProjectName     string
+	Environment     string
+	Region          string
+	Provider        string
+	DomainName      string
+	DNSZoneID       string
+	EnableKarpenter bool
 
-	ClusterName              string
-	ClusterEndpoint          string
-	ClusterArn               string
-	AWSAccountID             string
-	VPCID                    string
-	ACMCertificateArn        string
-	IRSAExternalDNSArn       string
-	IRSAALBControllerArn     string
-	NodeIAMRoleName          string
-	NodeSecurityGroup        string
-	KarpenterQueueName       string
+	ClusterName          string
+	ClusterEndpoint      string
+	ClusterArn           string
+	AWSAccountID         string
+	VPCID                string
+	ACMCertificateArn    string
+	IRSAExternalDNSArn   string
+	IRSAALBControllerArn string
+	NodeIAMRoleName      string
+	NodeSecurityGroup    string
+	KarpenterQueueName   string
 
 	AppsDestinationRepo string
 }
 
-func BuildFromOutputs(outputs map[string]interface{}, vc *types.VineConfig) *InfraFacts {
+func BuildFromOutputs(outputs map[string]interface{}, vc *types.SpecConfig) *InfraFacts {
 	enableKarpenter := false
 	if v, ok := vc.Cluster.ProviderConfig["enable_karpenter"]; ok {
 		if b, ok := v.(bool); ok {
@@ -48,17 +48,17 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.VineConfig) *Inf
 		DNSZoneID:       vc.DNS.ZoneID,
 		EnableKarpenter: enableKarpenter,
 
-		ClusterName:              ExtractOutput(outputs, "eks_cluster_name"),
-		ClusterEndpoint:          ExtractOutput(outputs, "eks_cluster_endpoint"),
-		ClusterArn:               ExtractOutput(outputs, "eks_cluster_arn"),
-		AWSAccountID:             vc.CloudAccountID,
-		VPCID:                    ExtractOutput(outputs, "vpc_id"),
-		ACMCertificateArn:        ExtractOutput(outputs, "acm_certificate_arn"),
-		IRSAExternalDNSArn:       ExtractOutput(outputs, "eks_irsa_external_dns_arn"),
-		IRSAALBControllerArn:     ExtractOutput(outputs, "eks_irsa_alb_controller_arn"),
-		NodeIAMRoleName:          ExtractOutput(outputs, "node_iam_role_name"),
-		NodeSecurityGroup:        ExtractOutput(outputs, "node_security_group"),
-		KarpenterQueueName:       ExtractOutput(outputs, "karpenter_queue_name"),
+		ClusterName:          ExtractOutput(outputs, "eks_cluster_name"),
+		ClusterEndpoint:      ExtractOutput(outputs, "eks_cluster_endpoint"),
+		ClusterArn:           ExtractOutput(outputs, "eks_cluster_arn"),
+		AWSAccountID:         vc.CloudAccountID,
+		VPCID:                ExtractOutput(outputs, "vpc_id"),
+		ACMCertificateArn:    ExtractOutput(outputs, "acm_certificate_arn"),
+		IRSAExternalDNSArn:   ExtractOutput(outputs, "eks_irsa_external_dns_arn"),
+		IRSAALBControllerArn: ExtractOutput(outputs, "eks_irsa_alb_controller_arn"),
+		NodeIAMRoleName:      ExtractOutput(outputs, "node_iam_role_name"),
+		NodeSecurityGroup:    ExtractOutput(outputs, "node_security_group"),
+		KarpenterQueueName:   ExtractOutput(outputs, "karpenter_queue_name"),
 
 		AppsDestinationRepo: vc.Repositories.AppsDestinationRepo,
 	}

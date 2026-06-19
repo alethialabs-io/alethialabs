@@ -7,21 +7,21 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/spf13/cobra"
 )
 
 var (
 	deployCloudIdentityID string
-	deployTendrilName     string
+	deployRunnerName      string
 	deployRegion          string
 	deployAssignedID      string
-	deployTendrilWait     bool
+	deployRunnerWait      bool
 )
 
-var tendrilDeployCmd = &cobra.Command{
+var runnerDeployCmd = &cobra.Command{
 	Use:   "deploy",
 	Short: "Deploy a new runner to a cloud account",
 	Long:  `Creates a runner record and queues a DEPLOY_WORKER job using the latest stable release.`,
@@ -40,15 +40,15 @@ var tendrilDeployCmd = &cobra.Command{
 			}
 		}
 
-		if deployTendrilName == "" {
+		if deployRunnerName == "" {
 			hostname, _ := os.Hostname()
-			defaultName := fmt.Sprintf("tendril-%s", hostname)
+			defaultName := fmt.Sprintf("runner-%s", hostname)
 
 			err = huh.NewForm(
 				huh.NewGroup(
 					huh.NewInput().
 						Title("Runner name").
-						Value(&deployTendrilName).
+						Value(&deployRunnerName).
 						Placeholder(defaultName),
 				),
 			).Run()
@@ -57,8 +57,8 @@ var tendrilDeployCmd = &cobra.Command{
 				os.Exit(1)
 			}
 
-			if deployTendrilName == "" {
-				deployTendrilName = defaultName
+			if deployRunnerName == "" {
+				deployRunnerName = defaultName
 			}
 		}
 
@@ -83,7 +83,7 @@ var tendrilDeployCmd = &cobra.Command{
 		}
 
 		if deployAssignedID == "" {
-			deployAssignedID, err = selectTendril(token, "")
+			deployAssignedID, err = selectRunner(token, "")
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -92,14 +92,14 @@ var tendrilDeployCmd = &cobra.Command{
 
 		apiClient := api.NewClient(token)
 
-		resp, err := apiClient.DeployTendril(deployTendrilName, deployCloudIdentityID, deployRegion, deployAssignedID)
+		resp, err := apiClient.DeployRunner(deployRunnerName, deployCloudIdentityID, deployRegion, deployAssignedID)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
 
-		ui.Success(fmt.Sprintf("Tendril %q created (ID: %s)", resp.Tendril.Name, resp.Tendril.ID))
-		if deployTendrilWait {
+		ui.Success(fmt.Sprintf("Runner %q created (ID: %s)", resp.Runner.Name, resp.Runner.ID))
+		if deployRunnerWait {
 			ui.JobQueued("DEPLOY_WORKER", resp.Job.ID)
 			if err := waitForJob(apiClient, resp.Job.ID); err != nil {
 				os.Exit(1)
@@ -111,10 +111,10 @@ var tendrilDeployCmd = &cobra.Command{
 }
 
 func init() {
-	tendrilCmd.AddCommand(tendrilDeployCmd)
-	tendrilDeployCmd.Flags().StringVar(&deployCloudIdentityID, "cloud-identity-id", "", "Cloud identity to deploy into")
-	tendrilDeployCmd.Flags().StringVar(&deployTendrilName, "name", "", "Runner name")
-	tendrilDeployCmd.Flags().StringVar(&deployRegion, "region", "", "Cloud region")
-	tendrilDeployCmd.Flags().StringVar(&deployAssignedID, "assigned-runner-id", "", "Which runner executes the deployment")
-	tendrilDeployCmd.Flags().BoolVarP(&deployTendrilWait, "wait", "w", false, "Wait for job completion")
+	runnerCmd.AddCommand(runnerDeployCmd)
+	runnerDeployCmd.Flags().StringVar(&deployCloudIdentityID, "cloud-identity-id", "", "Cloud identity to deploy into")
+	runnerDeployCmd.Flags().StringVar(&deployRunnerName, "name", "", "Runner name")
+	runnerDeployCmd.Flags().StringVar(&deployRegion, "region", "", "Cloud region")
+	runnerDeployCmd.Flags().StringVar(&deployAssignedID, "assigned-runner-id", "", "Which runner executes the deployment")
+	runnerDeployCmd.Flags().BoolVarP(&deployRunnerWait, "wait", "w", false, "Wait for job completion")
 }

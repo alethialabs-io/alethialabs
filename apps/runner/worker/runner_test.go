@@ -10,13 +10,13 @@ import (
 )
 
 type mockAPI struct {
-	mu              sync.Mutex
-	statusUpdates   []statusUpdate
-	logChunks       []logEntry
-	heartbeatCount  int
-	claimResponse   *ClaimResponse
-	claimErr        error
-	jobs            map[string]*Job
+	mu             sync.Mutex
+	statusUpdates  []statusUpdate
+	logChunks      []logEntry
+	heartbeatCount int
+	claimResponse  *ClaimResponse
+	claimErr       error
+	jobs           map[string]*Job
 }
 
 type statusUpdate struct {
@@ -82,11 +82,11 @@ func (m *mockAPI) DownloadPlanArtifact(jobID, destPath string) error {
 	return fmt.Errorf("not implemented in mock")
 }
 
-func (m *mockAPI) UpdateWorkerMetadata(workerID string, metadata map[string]any) error {
+func (m *mockAPI) UpdateRunnerMetadata(runnerID string, metadata map[string]any) error {
 	return nil
 }
 
-func (m *mockAPI) DeleteWorker(workerID string) error {
+func (m *mockAPI) DeleteRunner(runnerID string) error {
 	return nil
 }
 
@@ -98,11 +98,11 @@ func (m *mockAPI) getStatusUpdates() []statusUpdate {
 	return result
 }
 
-func TestSnapshotToVineConfig(t *testing.T) {
+func TestSnapshotToSpecConfig(t *testing.T) {
 	tests := []struct {
-		name     string
-		snapshot map[string]any
-		wantName string
+		name       string
+		snapshot   map[string]any
+		wantName   string
 		wantRegion string
 	}{
 		{

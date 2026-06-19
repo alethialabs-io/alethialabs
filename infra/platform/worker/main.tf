@@ -30,13 +30,13 @@ resource "null_resource" "register_tendril" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      RESPONSE=$(curl -sf -X POST "${var.alethia_url}/api/tendrils/register" \
+      RESPONSE=$(curl -sf -X POST "${var.alethia_url}/api/runners/register" \
         -H "Authorization: Bearer ${var.alethia_api_secret}" \
         -H "Content-Type: application/json" \
         -d '{"name": "${var.name_prefix}", "mode": "cloud-hosted"}')
 
-      TENDRIL_ID=$(echo "$RESPONSE" | jq -r '.tendril_id')
-      TENDRIL_TOKEN=$(echo "$RESPONSE" | jq -r '.tendril_token')
+      TENDRIL_ID=$(echo "$RESPONSE" | jq -r '.runner_id')
+      TENDRIL_TOKEN=$(echo "$RESPONSE" | jq -r '.runner_token')
 
       echo "{\"tendril_id\": \"$TENDRIL_ID\", \"tendril_token\": \"$TENDRIL_TOKEN\"}" > ${path.module}/.registered-${var.name_prefix}.json
     EOT

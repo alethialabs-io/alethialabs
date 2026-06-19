@@ -12,10 +12,10 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/terraform"
 )
 
-func (w *Worker) executeDestroyWorker(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
-	cfg, err := parseWorkerDestroyConfig(job.ConfigSnapshot)
+func (w *Runner) executeDestroyRunner(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
+	cfg, err := parseRunnerDestroyConfig(job.ConfigSnapshot)
 	if err != nil {
-		return fmt.Errorf("failed to parse worker destroy config: %w", err)
+		return fmt.Errorf("failed to parse runner destroy config: %w", err)
 	}
 
 	if cfg.CloudProvider == "" {
@@ -27,7 +27,7 @@ func (w *Worker) executeDestroyWorker(ctx context.Context, job *Job, provider st
 
 	templatesDir := resolveRunnerTemplatesDir()
 	if templatesDir == "" {
-		return fmt.Errorf("worker templates directory not found")
+		return fmt.Errorf("runner templates directory not found")
 	}
 
 	providerDir := filepath.Join(templatesDir, cfg.CloudProvider)
@@ -35,9 +35,9 @@ func (w *Worker) executeDestroyWorker(ctx context.Context, job *Job, provider st
 		return fmt.Errorf("no templates for provider %s: %w", cfg.CloudProvider, err)
 	}
 
-	fmt.Fprintf(stdout, "Destroying worker %q (%s) in %s/%s\n", cfg.WorkerName, cfg.WorkerID[:8], cfg.CloudProvider, cfg.Region)
+	fmt.Fprintf(stdout, "Destroying runner %q (%s) in %s/%s\n", cfg.RunnerName, cfg.RunnerID[:8], cfg.CloudProvider, cfg.Region)
 
-	tmpRoot, err := os.MkdirTemp("", "alethia-destroy-worker-*")
+	tmpRoot, err := os.MkdirTemp("", "alethia-destroy-runner-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
@@ -45,13 +45,13 @@ func (w *Worker) executeDestroyWorker(ctx context.Context, job *Job, provider st
 
 	workDir := filepath.Join(tmpRoot, "work")
 	if err := copyDir(providerDir, workDir); err != nil {
-		return fmt.Errorf("failed to copy worker templates: %w", err)
+		return fmt.Errorf("failed to copy runner templates: %w", err)
 	}
 
 	varFile, err := terraform.OverrideTfvarsFromMap(workDir, map[string]any{
-		"worker_id":        cfg.WorkerID,
-		"worker_token":     "destroy-placeholder",
-		"worker_name":      cfg.WorkerName,
+		"runner_id":        cfg.RunnerID,
+		"runner_token":     "destroy-placeholder",
+		"runner_name":      cfg.RunnerName,
 		"trellis_url":      cfg.TrellisURL,
 		"image_tag":        cfg.ImageTag,
 		"region":           cfg.Region,
@@ -67,11 +67,11 @@ func (w *Worker) executeDestroyWorker(ctx context.Context, job *Job, provider st
 	if err := backend.EnsureBucket(ctx); err != nil {
 		return fmt.Errorf("failed to ensure state bucket: %w", err)
 	}
-	backendFile, err := backend.WriteWorkerBackendHCL(workDir, cfg.WorkerID[:8])
+	backendFile, err := backend.WriteRunnerBackendHCL(workDir, cfg.RunnerID[:8])
 	if err != nil {
 		return fmt.Errorf("failed to write backend config: %w", err)
 	}
-	fmt.Fprintf(stdout, "State backend: S3 (workers/%s)\n", cfg.WorkerID[:8])
+	fmt.Fprintf(stdout, "State backend: S3 (runners/%s)\n", cfg.RunnerID[:8])
 
 	tfVersion := "1.15.5"
 	tf, err := terraform.NewTerraformCLI(ctx, tfVersion, workDir, stdout, stderr)
@@ -89,11 +89,11 @@ func (w *Worker) executeDestroyWorker(ctx context.Context, job *Job, provider st
 		return fmt.Errorf("terraform destroy failed: %w", err)
 	}
 
-	fmt.Fprintln(stdout, "Deleting worker record...")
-	if err := w.api.DeleteWorker(cfg.WorkerID); err != nil {
-		fmt.Fprintf(stderr, "Warning: failed to delete worker record: %v\n", err)
+	fmt.Fprintln(stdout, "Deleting runner record...")
+	if err := w.api.DeleteRunner(cfg.RunnerID); err != nil {
+		fmt.Fprintf(stderr, "Warning: failed to delete runner record: %v\n", err)
 	}
 
-	fmt.Fprintf(stdout, "Worker %q destroyed successfully\n", cfg.WorkerName)
+	fmt.Fprintf(stdout, "Runner %q destroyed successfully\n", cfg.RunnerName)
 	return nil
 }

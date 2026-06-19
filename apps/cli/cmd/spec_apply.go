@@ -7,19 +7,19 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/spf13/cobra"
 )
 
 var (
-	vineApplyVineID    string
-	vineApplyTendrilID string
-	vineApplyPlanJobID string
-	vineApplyWait      bool
+	specApplySpecID    string
+	specApplyRunnerID  string
+	specApplyPlanJobID string
+	specApplyWait      bool
 )
 
-var vineApplyCmd = &cobra.Command{
+var specApplyCmd = &cobra.Command{
 	Use:   "apply",
 	Short: "Apply infrastructure changes for a spec",
 	Long:  `Queues a DEPLOY job to provision or update a spec's infrastructure.`,
@@ -30,24 +30,24 @@ var vineApplyCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		vineyardID := ""
+		zoneID := ""
 
-		if vineApplyVineID == "" {
-			vineyardID, _, err = selectVineyard(token)
+		if specApplySpecID == "" {
+			zoneID, _, err = selectZone(token)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
 
-			vineApplyVineID, err = selectVine(token, vineyardID)
+			specApplySpecID, err = selectSpec(token, zoneID)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
 		}
 
-		if vineApplyTendrilID == "" {
-			vineApplyTendrilID, err = selectTendril(token, "")
+		if specApplyRunnerID == "" {
+			specApplyRunnerID, err = selectRunner(token, "")
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -58,14 +58,14 @@ var vineApplyCmd = &cobra.Command{
 
 		params := api.QueueJobParams{
 			JobType:         "DEPLOY",
-			VineyardID:      vineyardID,
-			ConfigurationID: vineApplyVineID,
+			ZoneID:          zoneID,
+			ConfigurationID: specApplySpecID,
 		}
-		if vineApplyTendrilID != "" {
-			params.AssignedWorkerID = vineApplyTendrilID
+		if specApplyRunnerID != "" {
+			params.AssignedRunnerID = specApplyRunnerID
 		}
-		if vineApplyPlanJobID != "" {
-			params.PlanJobID = vineApplyPlanJobID
+		if specApplyPlanJobID != "" {
+			params.PlanJobID = specApplyPlanJobID
 		}
 
 		job, err := apiClient.QueueJobWithParams(params)
@@ -74,7 +74,7 @@ var vineApplyCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if vineApplyWait {
+		if specApplyWait {
 			ui.JobQueued("DEPLOY", job.ID)
 			if err := waitForJob(apiClient, job.ID); err != nil {
 				os.Exit(1)
@@ -86,9 +86,9 @@ var vineApplyCmd = &cobra.Command{
 }
 
 func init() {
-	vineCmd.AddCommand(vineApplyCmd)
-	vineApplyCmd.Flags().StringVar(&vineApplyVineID, "spec-id", "", "ID of the spec to deploy")
-	vineApplyCmd.Flags().StringVar(&vineApplyTendrilID, "runner-id", "", "Assign to a specific runner")
-	vineApplyCmd.Flags().StringVar(&vineApplyPlanJobID, "plan-job-id", "", "Reference a prior PLAN job")
-	vineApplyCmd.Flags().BoolVarP(&vineApplyWait, "wait", "w", false, "Wait for job completion")
+	specCmd.AddCommand(specApplyCmd)
+	specApplyCmd.Flags().StringVar(&specApplySpecID, "spec-id", "", "ID of the spec to deploy")
+	specApplyCmd.Flags().StringVar(&specApplyRunnerID, "runner-id", "", "Assign to a specific runner")
+	specApplyCmd.Flags().StringVar(&specApplyPlanJobID, "plan-job-id", "", "Reference a prior PLAN job")
+	specApplyCmd.Flags().BoolVarP(&specApplyWait, "wait", "w", false, "Wait for job completion")
 }

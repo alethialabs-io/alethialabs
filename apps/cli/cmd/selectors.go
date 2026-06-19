@@ -6,11 +6,11 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/imroc/req/v3"
 )
 
@@ -18,12 +18,12 @@ func getWebOrigin() string {
 	return WebOrigin()
 }
 
-func selectVineyard(token string) (vineyardID, vineyardName string, err error) {
+func selectZone(token string) (zoneID, zoneName string, err error) {
 	webOrigin := getWebOrigin()
 	reqClient := req.C()
 
 	var vResult struct {
-		Vineyards []types.Vineyard `json:"vineyards"`
+		Zones []types.Zone `json:"zones"`
 	}
 
 	spinner.New().
@@ -32,19 +32,19 @@ func selectVineyard(token string) (vineyardID, vineyardName string, err error) {
 			_, err = reqClient.R().
 				SetBearerAuthToken(token).
 				SetSuccessResult(&vResult).
-				Get(fmt.Sprintf("%s/api/cli/vineyards", webOrigin))
+				Get(fmt.Sprintf("%s/api/cli/zones", webOrigin))
 		}).Run()
 
 	if err != nil {
 		return "", "", fmt.Errorf("failed to fetch zones: %w", err)
 	}
 
-	if len(vResult.Vineyards) == 0 {
+	if len(vResult.Zones) == 0 {
 		return "", "", fmt.Errorf("no zones found — create one first via Alethia or `alethia zone create`")
 	}
 
-	vOptions := make([]huh.Option[string], len(vResult.Vineyards))
-	for i, v := range vResult.Vineyards {
+	vOptions := make([]huh.Option[string], len(vResult.Zones))
+	for i, v := range vResult.Zones {
 		vOptions[i] = huh.NewOption(v.Name, v.ID)
 	}
 
@@ -54,7 +54,7 @@ func selectVineyard(token string) (vineyardID, vineyardName string, err error) {
 				Title("Select Zone").
 				Description("Which workspace to use").
 				Options(vOptions...).
-				Value(&vineyardID),
+				Value(&zoneID),
 		),
 	).Run()
 
@@ -62,17 +62,17 @@ func selectVineyard(token string) (vineyardID, vineyardName string, err error) {
 		return "", "", err
 	}
 
-	for _, v := range vResult.Vineyards {
-		if v.ID == vineyardID {
-			vineyardName = v.Name
+	for _, v := range vResult.Zones {
+		if v.ID == zoneID {
+			zoneName = v.Name
 			break
 		}
 	}
 
-	return vineyardID, vineyardName, nil
+	return zoneID, zoneName, nil
 }
 
-func selectVine(token string, vineyardID string) (vineID string, err error) {
+func selectSpec(token string, zoneID string) (specID string, err error) {
 	webOrigin := getWebOrigin()
 	reqClient := req.C()
 
@@ -93,17 +93,17 @@ func selectVine(token string, vineyardID string) (vineID string, err error) {
 		return "", fmt.Errorf("failed to fetch specs: %w", err)
 	}
 
-	vineOptions := []huh.Option[string]{}
+	specOptions := []huh.Option[string]{}
 	for _, c := range configsResult.Configurations {
-		if vineyardID == "" || (c.VineyardID != nil && *c.VineyardID == vineyardID) {
-			vineOptions = append(vineOptions, huh.NewOption(
+		if zoneID == "" || (c.ZoneID != nil && *c.ZoneID == zoneID) {
+			specOptions = append(specOptions, huh.NewOption(
 				fmt.Sprintf("%s (%s)", c.ProjectName, c.EnvironmentStage),
 				c.ID,
 			))
 		}
 	}
 
-	if len(vineOptions) == 0 {
+	if len(specOptions) == 0 {
 		return "", fmt.Errorf("no specs found in this zone — create one through Alethia")
 	}
 
@@ -112,12 +112,12 @@ func selectVine(token string, vineyardID string) (vineID string, err error) {
 			huh.NewSelect[string]().
 				Title("Select Spec").
 				Description("Which spec to operate on").
-				Options(vineOptions...).
-				Value(&vineID),
+				Options(specOptions...).
+				Value(&specID),
 		),
 	).Run()
 
-	return vineID, err
+	return specID, err
 }
 
 var (
@@ -126,15 +126,15 @@ var (
 	statusDraining = ui.WarningStyle.Render(ui.SymbolPending)
 )
 
-func selectTendril(token string, excludeID string) (tendrilID string, err error) {
+func selectRunner(token string, excludeID string) (runnerID string, err error) {
 	apiClient := api.NewClient(token)
 
-	var workers []api.Worker
+	var runners []api.Runner
 
 	spinner.New().
 		Title("Fetching runners...").
 		Action(func() {
-			workers, err = apiClient.GetWorkers()
+			runners, err = apiClient.GetRunners()
 		}).Run()
 
 	if err != nil {
@@ -147,7 +147,7 @@ func selectTendril(token string, excludeID string) (tendrilID string, err error)
 
 	defaultValue := ""
 
-	for _, w := range workers {
+	for _, w := range runners {
 		if w.ID == excludeID {
 			continue
 		}
@@ -183,7 +183,7 @@ func selectTendril(token string, excludeID string) (tendrilID string, err error)
 		}
 	}
 
-	tendrilID = defaultValue
+	runnerID = defaultValue
 
 	err = huh.NewForm(
 		huh.NewGroup(
@@ -191,11 +191,11 @@ func selectTendril(token string, excludeID string) (tendrilID string, err error)
 				Title("Select Runner").
 				Description("Choose which runner runs this job").
 				Options(options...).
-				Value(&tendrilID),
+				Value(&runnerID),
 		),
 	).Run()
 
-	return tendrilID, err
+	return runnerID, err
 }
 
 func selectCloudIdentity(token string) (identityID string, err error) {

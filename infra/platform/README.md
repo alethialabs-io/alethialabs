@@ -65,7 +65,7 @@ You need to be authenticated with Alethia first:
 alethia login
 ```
 
-Then register a worker. This calls `POST /api/workers/register` which:
+Then register a runner. This calls `POST /api/cli/runners/register` which:
 - Generates a 32-byte random token
 - Stores a SHA-256 hash of that token in the `workers` table
 - Returns the plaintext token **once** — it cannot be recovered

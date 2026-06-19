@@ -12,6 +12,6 @@ type JobAPI interface {
 	FetchGitToken(jobID string) (string, error)
 	UploadPlanArtifact(jobID, filePath string) error
 	DownloadPlanArtifact(jobID, destPath string) error
-	UpdateWorkerMetadata(workerID string, metadata map[string]any) error
-	DeleteWorker(workerID string) error
+	UpdateRunnerMetadata(runnerID string, metadata map[string]any) error
+	DeleteRunner(runnerID string) error
 }

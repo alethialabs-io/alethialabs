@@ -20,7 +20,7 @@ func (p *azureProvider) RequiredCLIs() []string {
 	return []string{"az", "kubectl", "helm"}
 }
 
-func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]interface{} {
+func (p *azureProvider) ProviderTfvars(config *types.SpecConfig) map[string]interface{} {
 	wafEnabled := false
 	managedCert := false
 	if v, ok := config.DNS.ProviderConfig["azure_waf"]; ok {
@@ -46,8 +46,8 @@ func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]inte
 		"environment":     config.EnvironmentStage,
 
 		// Network
-		"provision_vnet":    provisionVnet,
-		"vnet_cidr":         orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
+		"provision_vnet":     provisionVnet,
+		"vnet_cidr":          orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
 		"single_nat_gateway": config.Network.SingleNatGateway,
 
 		// AKS
@@ -55,8 +55,8 @@ func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]inte
 		"aks_cluster_version": orDefault(config.Cluster.ClusterVersion, "1.31"),
 
 		// DNS
-		"azure_dns_enabled": config.DNS.Enabled,
-		"azure_dns_domain":  config.DNS.DomainName,
+		"azure_dns_enabled":   config.DNS.Enabled,
+		"azure_dns_domain":    config.DNS.DomainName,
 		"azure_dns_zone_name": config.DNS.ZoneID,
 
 		// WAF
@@ -142,7 +142,7 @@ func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]inte
 	return tfvars
 }
 
-func (p *azureProvider) ConfigureKubeconfig(ctx context.Context, config *types.VineConfig, outputs map[string]interface{}, stdout io.Writer) error {
+func (p *azureProvider) ConfigureKubeconfig(ctx context.Context, config *types.SpecConfig, outputs map[string]interface{}, stdout io.Writer) error {
 	clusterName := ExtractClusterName(outputs)
 	if clusterName == "" {
 		return fmt.Errorf("no AKS cluster name in outputs")
@@ -184,7 +184,7 @@ func extractOutputString(outputs map[string]interface{}, key string) string {
 	return ""
 }
 
-func buildServiceBusQueues(queues []types.VineQueueConfig) map[string]interface{} {
+func buildServiceBusQueues(queues []types.SpecQueueConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, q := range queues {
 		cfg := map[string]interface{}{
@@ -212,7 +212,7 @@ func buildServiceBusQueues(queues []types.VineQueueConfig) map[string]interface{
 	return result
 }
 
-func buildServiceBusTopics(topics []types.VineTopicConfig) map[string]interface{} {
+func buildServiceBusTopics(topics []types.SpecTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
 		subs := []map[string]interface{}{}
@@ -229,7 +229,7 @@ func buildServiceBusTopics(topics []types.VineTopicConfig) map[string]interface{
 	return result
 }
 
-func buildCosmosDBCollections(tables []types.VineNosqlConfig) []map[string]interface{} {
+func buildCosmosDBCollections(tables []types.SpecNosqlConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(tables))
 	for _, t := range tables {
 		entry := map[string]interface{}{
@@ -245,7 +245,7 @@ func buildCosmosDBCollections(tables []types.VineNosqlConfig) []map[string]inter
 	return result
 }
 
-func buildAzureContainers(buckets []types.VineStorageBucketConfig) []map[string]interface{} {
+func buildAzureContainers(buckets []types.SpecStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
 		accessType := "private"
@@ -253,7 +253,7 @@ func buildAzureContainers(buckets []types.VineStorageBucketConfig) []map[string]
 			accessType = "blob"
 		}
 		result = append(result, map[string]interface{}{
-			"name":                 b.Name,
+			"name":                  b.Name,
 			"container_access_type": accessType,
 		})
 	}

@@ -26,8 +26,8 @@ import (
 type Config struct {
 	Mode        string // "self-hosted" or "cloud-hosted"
 	TrellisURL  string
-	WorkerID    string
-	WorkerToken string
+	RunnerID    string
+	RunnerToken string
 
 	S3Endpoint  string
 	S3Region    string
@@ -35,23 +35,23 @@ type Config struct {
 	S3SecretKey string
 }
 
-type Worker struct {
+type Runner struct {
 	config Config
 	api    JobAPI
 }
 
-func New(cfg Config) *Worker {
-	return &Worker{
+func New(cfg Config) *Runner {
+	return &Runner{
 		config: cfg,
-		api:    NewWorkerAPIClient(cfg.TrellisURL, cfg.WorkerID, cfg.WorkerToken),
+		api:    NewRunnerAPIClient(cfg.TrellisURL, cfg.RunnerID, cfg.RunnerToken),
 	}
 }
 
-func NewWithAPI(cfg Config, api JobAPI) *Worker {
-	return &Worker{config: cfg, api: api}
+func NewWithAPI(cfg Config, api JobAPI) *Runner {
+	return &Runner{config: cfg, api: api}
 }
 
-func (w *Worker) s3Backend() *cloud.S3BackendConfig {
+func (w *Runner) s3Backend() *cloud.S3BackendConfig {
 	return cloud.S3BackendFromConfig(
 		w.config.S3Endpoint,
 		w.config.S3Region,
@@ -60,7 +60,7 @@ func (w *Worker) s3Backend() *cloud.S3BackendConfig {
 	)
 }
 
-func (w *Worker) Run(ctx context.Context) error {
+func (w *Runner) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -80,13 +80,13 @@ func (w *Worker) Run(ctx context.Context) error {
 
 	go w.heartbeatLoop(ctx)
 
-	fmt.Printf("Worker started (id=%s, mode=%s, version=%s)\n", w.config.WorkerID, w.config.Mode, version.Version)
+	fmt.Printf("Runner started (id=%s, mode=%s, version=%s)\n", w.config.RunnerID, w.config.Mode, version.Version)
 	fmt.Printf("Polling %s for jobs...\n", w.config.TrellisURL)
 
 	return w.pollLoop(ctx, &draining)
 }
 
-func (w *Worker) heartbeatLoop(ctx context.Context) {
+func (w *Runner) heartbeatLoop(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -106,7 +106,7 @@ func (w *Worker) heartbeatLoop(ctx context.Context) {
 	}
 }
 
-func (w *Worker) pollLoop(ctx context.Context, draining *atomic.Bool) error {
+func (w *Runner) pollLoop(ctx context.Context, draining *atomic.Bool) error {
 	pollInterval := 10 * time.Second
 
 	for {
@@ -143,7 +143,7 @@ func (w *Worker) pollLoop(ctx context.Context, draining *atomic.Bool) error {
 	}
 }
 
-func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
+func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	job := claim.Job
 
 	stdoutLogger := NewJobLogger(w.api, job.ID, "STDOUT")
@@ -159,7 +159,7 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 		switch claim.CloudIdentity.Provider {
 		case "aws":
 			fmt.Fprintf(stdoutLogger, "Assuming role %s into account %s...\n", claim.CloudIdentity.RoleArn, claim.CloudIdentity.AccountID)
-			sessionName := fmt.Sprintf("runner-worker-%s", job.ID[:8])
+			sessionName := fmt.Sprintf("runner-%s", job.ID[:8])
 			if err := AssumeRole(ctx, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID, sessionName); err != nil {
 				errMsg := fmt.Sprintf("Failed to assume role: %v", err)
 				fmt.Fprintln(stderrLogger, errMsg)
@@ -285,10 +285,12 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 		execErr = w.executeDeploy(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	case "DESTROY":
 		execErr = w.executeDestroy(ctx, job, stdoutLogger, stderrLogger)
+	// job_type enum values stay on the worker noun (DB/wire contract, deferred
+	// alongside the ALETHIA_WORKER_* env vars); the Go handlers use the new noun.
 	case "DEPLOY_WORKER", "UPDATE_WORKER":
-		execErr = w.executeDeployWorker(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
+		execErr = w.executeDeployRunner(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	case "DESTROY_WORKER":
-		execErr = w.executeDestroyWorker(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
+		execErr = w.executeDestroyRunner(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}
@@ -305,7 +307,7 @@ func (w *Worker) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	return nil
 }
 
-func (w *Worker) fetchAwsResources(ctx context.Context, logger *JobLogger) (map[string]any, error) {
+func (w *Runner) fetchAwsResources(ctx context.Context, logger *JobLogger) (map[string]any, error) {
 	fmt.Fprintln(logger, "Fetching enabled regions...")
 	ec2Client, err := alethiaAws.NewEC2Client(ctx, alethiaAws.AWSOptions{Region: "us-east-1"})
 	if err != nil {
@@ -375,7 +377,7 @@ func (w *Worker) fetchAwsResources(ctx context.Context, logger *JobLogger) (map[
 	}, nil
 }
 
-func (w *Worker) fetchGcpResources(ctx context.Context, projectID string, logger *JobLogger) (map[string]any, error) {
+func (w *Runner) fetchGcpResources(ctx context.Context, projectID string, logger *JobLogger) (map[string]any, error) {
 	fmt.Fprintln(logger, "Fetching GCP compute regions...")
 	computeClient, err := alethiaGcp.NewComputeClient(ctx, projectID)
 	if err != nil {
@@ -422,7 +424,7 @@ func (w *Worker) fetchGcpResources(ctx context.Context, projectID string, logger
 	}, nil
 }
 
-func (w *Worker) fetchAzureResources(ctx context.Context, subscriptionID string, logger *JobLogger) (map[string]any, error) {
+func (w *Runner) fetchAzureResources(ctx context.Context, subscriptionID string, logger *JobLogger) (map[string]any, error) {
 	fmt.Fprintln(logger, "Fetching Azure locations...")
 	computeClient, err := alethiaAzure.NewComputeClient(ctx, subscriptionID)
 	if err != nil {
@@ -478,11 +480,11 @@ func (w *Worker) fetchAzureResources(ctx context.Context, subscriptionID string,
 	}, nil
 }
 
-func (w *Worker) executeBootstrap(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
+func (w *Runner) executeBootstrap(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
 	snapshot := job.ConfigSnapshot
 
 	params := provisioner.BootstrapParams{
-		VineyardID:  job.VineyardID,
+		ZoneID:      job.ZoneID,
 		Environment: getSnapshotString(snapshot, "environment_stage"),
 		Region:      getSnapshotString(snapshot, "aws_region"),
 		VpcCidr:     getSnapshotString(snapshot, "vpc_cidr"),
@@ -528,7 +530,7 @@ func resolveSpecTemplatesDir() string {
 	return ""
 }
 
-func (w *Worker) executeDeploy(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
+func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
 	vc, err := snapshotToSpecConfig(job.ConfigSnapshot)
 	if err != nil {
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
@@ -571,13 +573,13 @@ func (w *Worker) executeDeploy(ctx context.Context, job *Job, provider string, i
 	}
 
 	params := provisioner.DeployParams{
-		VineConfig:      vc,
-		Provider:        provider,
-		TemplatesDir:    filepath.Join(resolveSpecTemplatesDir(), provider),
-		GitAccessToken:  gitToken,
-		S3Backend:       w.s3Backend(),
-		Stdout:          stdout,
-		Stderr:          stderr,
+		SpecConfig:     vc,
+		Provider:       provider,
+		TemplatesDir:   filepath.Join(resolveSpecTemplatesDir(), provider),
+		GitAccessToken: gitToken,
+		S3Backend:      w.s3Backend(),
+		Stdout:         stdout,
+		Stderr:         stderr,
 	}
 
 	if job.PlanJobID != nil && *job.PlanJobID != "" {
@@ -621,7 +623,7 @@ func (w *Worker) executeDeploy(ctx context.Context, job *Job, provider string, i
 	return nil
 }
 
-func (w *Worker) executePlan(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
+func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
 	vc, err := snapshotToSpecConfig(job.ConfigSnapshot)
 	if err != nil {
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
@@ -648,15 +650,15 @@ func (w *Worker) executePlan(ctx context.Context, job *Job, provider string, ide
 	}
 
 	params := provisioner.DeployParams{
-		VineConfig:      vc,
-		Provider:        provider,
-		DryRun:          true,
-		TemplatesDir:    filepath.Join(resolveSpecTemplatesDir(), provider),
-		InfracostToken:  infracostKey,
-		GitAccessToken:  planGitToken,
-		S3Backend:       w.s3Backend(),
-		Stdout:          stdout,
-		Stderr:          stderr,
+		SpecConfig:     vc,
+		Provider:       provider,
+		DryRun:         true,
+		TemplatesDir:   filepath.Join(resolveSpecTemplatesDir(), provider),
+		InfracostToken: infracostKey,
+		GitAccessToken: planGitToken,
+		S3Backend:      w.s3Backend(),
+		Stdout:         stdout,
+		Stderr:         stderr,
 	}
 
 	w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
@@ -706,7 +708,7 @@ func (w *Worker) executePlan(ctx context.Context, job *Job, provider string, ide
 	return nil
 }
 
-func (w *Worker) executeDestroy(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
+func (w *Runner) executeDestroy(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
 	snapshot := job.ConfigSnapshot
 
 	region := getSnapshotString(snapshot, "region")
@@ -715,7 +717,7 @@ func (w *Worker) executeDestroy(ctx context.Context, job *Job, stdout, stderr *J
 	}
 
 	params := provisioner.DestroyParams{
-		VineyardID:       job.VineyardID,
+		ZoneID:           job.ZoneID,
 		Environment:      getSnapshotString(snapshot, "environment_stage"),
 		Region:           region,
 		CleanupWorkspace: true,
@@ -735,13 +737,13 @@ func getSnapshotString(snapshot map[string]any, key string) string {
 	return ""
 }
 
-func snapshotToSpecConfig(snapshot map[string]any) (*types.VineConfig, error) {
+func snapshotToSpecConfig(snapshot map[string]any) (*types.SpecConfig, error) {
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return nil, err
 	}
 
-	var vc types.VineConfig
+	var vc types.SpecConfig
 	if err := json.Unmarshal(data, &vc); err != nil {
 		return nil, err
 	}

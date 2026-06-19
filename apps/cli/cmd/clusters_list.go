@@ -27,12 +27,12 @@ var clusterListCmd = &cobra.Command{
 		}
 
 		apiClient := api.NewClient(token)
-		var clusters []api.VineCluster
+		var clusters []api.SpecCluster
 
 		spinner.New().
 			Title("Fetching clusters...").
 			Action(func() {
-				clusters, err = apiClient.GetVineClusters()
+				clusters, err = apiClient.GetSpecClusters()
 			}).Run()
 
 		if err != nil {
@@ -68,18 +68,18 @@ var clusterListCmd = &cobra.Command{
 
 			nodes := fmt.Sprintf("%d/%d/%d", c.NodeMinSize, c.NodeDesiredSize, c.NodeMaxSize)
 
-			vineLabel := c.VineProjectName
-			if c.VineEnvironment != "" {
-				vineLabel += " (" + c.VineEnvironment + ")"
+			specLabel := c.SpecProjectName
+			if c.SpecEnvironment != "" {
+				specLabel += " (" + c.SpecEnvironment + ")"
 			}
 
 			rows[i] = table.Row{
-				vineLabel,
+				specLabel,
 				clusterName,
 				version,
 				fmt.Sprintf("%s %s", ui.PlainStatusDot(c.Status), strings.ToLower(c.Status)),
 				nodes,
-				c.VineRegion,
+				c.SpecRegion,
 			}
 		}
 

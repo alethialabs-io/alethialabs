@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var vineyardCmd = &cobra.Command{
+var zoneCmd = &cobra.Command{
 	Use:   "zone",
 	Short: "Manage zones (workspaces)",
 	Run: func(cmd *cobra.Command, args []string) {
@@ -18,5 +18,5 @@ var vineyardCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(vineyardCmd)
+	rootCmd.AddCommand(zoneCmd)
 }

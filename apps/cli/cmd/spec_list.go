@@ -19,7 +19,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var listVinesCmd = &cobra.Command{
+var listSpecsCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all specs",
 	Run: func(cmd *cobra.Command, args []string) {
@@ -116,5 +116,5 @@ func formatTime(t time.Time) string {
 }
 
 func init() {
-	vineCmd.AddCommand(listVinesCmd)
+	specCmd.AddCommand(listSpecsCmd)
 }

@@ -57,20 +57,20 @@ func TestAWSProvider_RequiredCLIs(t *testing.T) {
 
 func TestAWSProvider_ProviderTfvars(t *testing.T) {
 	p := &awsProvider{}
-	vc := &types.VineConfig{
+	vc := &types.SpecConfig{
 		ProjectName:      "test",
 		Region:           "us-east-1",
 		EnvironmentStage: "prod",
 		TerraformVersion: "1.11.4",
-		Network: types.VineNetworkConfig{
+		Network: types.SpecNetworkConfig{
 			ProvisionNetwork: true,
 			CIDRBlock:        "10.0.0.0/16",
 		},
-		Cluster: types.VineClusterConfig{
+		Cluster: types.SpecClusterConfig{
 			ClusterVersion: "1.30",
 			ProviderConfig: map[string]any{"enable_karpenter": true},
 		},
-		DNS: types.VineDNSConfig{
+		DNS: types.SpecDNSConfig{
 			Enabled:    true,
 			DomainName: "example.com",
 			ZoneID:     "Z123",
@@ -79,10 +79,10 @@ func TestAWSProvider_ProviderTfvars(t *testing.T) {
 				"cloudfront_waf":  true,
 			},
 		},
-		Databases: []types.VineDatabaseConfig{
+		Databases: []types.SpecDatabaseConfig{
 			{Name: "main", MinCapacity: floatPtr(0.5), MaxCapacity: floatPtr(4.0)},
 		},
-		Caches: []types.VineCacheConfig{
+		Caches: []types.SpecCacheConfig{
 			{Name: "redis", NodeType: "cache.t3.micro"},
 		},
 	}
@@ -147,40 +147,40 @@ func TestExtractClusterName(t *testing.T) {
 
 func TestGCPProvider_ProviderTfvars(t *testing.T) {
 	p := &gcpProvider{}
-	vc := &types.VineConfig{
+	vc := &types.SpecConfig{
 		ProjectName:      "test-gcp",
 		Region:           "us-central1",
 		EnvironmentStage: "staging",
 		CloudAccountID:   "my-gcp-project",
-		Network: types.VineNetworkConfig{
+		Network: types.SpecNetworkConfig{
 			ProvisionNetwork: true,
 			CIDRBlock:        "10.0.0.0/16",
 			SingleNatGateway: true,
 		},
-		Cluster: types.VineClusterConfig{
-			ClusterVersion: "1.31",
-			InstanceTypes:  []string{"e2-standard-4"},
-			NodeMinSize:    2,
-			NodeMaxSize:    5,
+		Cluster: types.SpecClusterConfig{
+			ClusterVersion:  "1.31",
+			InstanceTypes:   []string{"e2-standard-4"},
+			NodeMinSize:     2,
+			NodeMaxSize:     5,
 			NodeDesiredSize: 3,
-			ProviderConfig: map[string]any{"enable_autopilot": true},
+			ProviderConfig:  map[string]any{"enable_autopilot": true},
 		},
-		DNS: types.VineDNSConfig{
+		DNS: types.SpecDNSConfig{
 			Enabled:    true,
 			DomainName: "example.com",
 			ZoneID:     "my-zone",
 			ProviderConfig: map[string]any{
-				"cloud_armor":        true,
+				"cloud_armor":         true,
 				"managed_certificate": true,
 			},
 		},
-		Databases: []types.VineDatabaseConfig{
+		Databases: []types.SpecDatabaseConfig{
 			{Name: "main", Engine: "aurora-postgresql", EngineVersion: "16", Port: intPtr(5432)},
 		},
-		Caches: []types.VineCacheConfig{
+		Caches: []types.SpecCacheConfig{
 			{Name: "redis"},
 		},
-		Secrets: []types.VineSecretConfig{
+		Secrets: []types.SpecSecretConfig{
 			{Name: "api-key", Generate: true, Length: 32, SpecialChars: true},
 		},
 	}
@@ -225,37 +225,37 @@ func TestGCPProvider_ProviderTfvars(t *testing.T) {
 
 func TestAzureProvider_ProviderTfvars(t *testing.T) {
 	p := &azureProvider{}
-	vc := &types.VineConfig{
+	vc := &types.SpecConfig{
 		ProjectName:      "test-azure",
 		Region:           "westeurope",
 		EnvironmentStage: "production",
 		CloudAccountID:   "sub-12345",
-		Network: types.VineNetworkConfig{
+		Network: types.SpecNetworkConfig{
 			ProvisionNetwork: true,
 			CIDRBlock:        "10.0.0.0/16",
 		},
-		Cluster: types.VineClusterConfig{
-			ClusterVersion: "1.31",
-			InstanceTypes:  []string{"Standard_D4s_v3"},
-			NodeMinSize:    2,
-			NodeMaxSize:    5,
+		Cluster: types.SpecClusterConfig{
+			ClusterVersion:  "1.31",
+			InstanceTypes:   []string{"Standard_D4s_v3"},
+			NodeMinSize:     2,
+			NodeMaxSize:     5,
 			NodeDesiredSize: 3,
-			ProviderConfig: map[string]any{},
+			ProviderConfig:  map[string]any{},
 		},
-		DNS: types.VineDNSConfig{
+		DNS: types.SpecDNSConfig{
 			Enabled:    true,
 			DomainName: "example.com",
 			ProviderConfig: map[string]any{
 				"azure_waf": true,
 			},
 		},
-		Databases: []types.VineDatabaseConfig{
+		Databases: []types.SpecDatabaseConfig{
 			{Name: "main", Engine: "mysql", EngineVersion: "8.0", Port: intPtr(3306)},
 		},
-		Queues: []types.VineQueueConfig{
+		Queues: []types.SpecQueueConfig{
 			{Name: "events"},
 		},
-		Topics: []types.VineTopicConfig{
+		Topics: []types.SpecTopicConfig{
 			{Name: "notifications"},
 		},
 	}

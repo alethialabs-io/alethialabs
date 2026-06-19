@@ -24,14 +24,14 @@ func TestClaimJob_WithJob(t *testing.T) {
 		if r.Method != "POST" {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
-		if r.Header.Get("X-Worker-ID") != "w1" {
-			t.Errorf("missing worker ID header")
+		if r.Header.Get("X-Runner-ID") != "w1" {
+			t.Errorf("missing runner ID header")
 		}
 		json.NewEncoder(w).Encode(ClaimResponse{Job: &job})
 	}))
 	defer server.Close()
 
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	resp, err := client.ClaimJob()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -50,7 +50,7 @@ func TestClaimJob_NoJob(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	resp, err := client.ClaimJob()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -66,7 +66,7 @@ func TestClaimJob_ServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	_, err := client.ClaimJob()
 	if err == nil {
 		t.Fatal("expected error for 500 response")
@@ -87,7 +87,7 @@ func TestUpdateJobStatus_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	err := client.UpdateJobStatus("job-123", "SUCCESS", "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -105,7 +105,7 @@ func TestUpdateJobStatus_WithMetadata(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	meta := map[string]any{"phase": "terraform_plan"}
 	err := client.UpdateJobStatus("job-123", "PROCESSING", "", meta)
 	if err != nil {
@@ -128,7 +128,7 @@ func TestUpdateJobStatus_WithError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	err := client.UpdateJobStatus("job-123", "FAILED", "terraform crashed", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -149,7 +149,7 @@ func TestSendLog_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	err := client.SendLog("job-123", "hello world", "STDOUT")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -164,7 +164,7 @@ func TestSendLog_Success(t *testing.T) {
 
 func TestHeartbeat_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/workers/heartbeat" {
+		if r.URL.Path != "/api/runners/heartbeat" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Method != "POST" {
@@ -174,7 +174,7 @@ func TestHeartbeat_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	err := client.Heartbeat()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -187,7 +187,7 @@ func TestHeartbeat_Failure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewWorkerAPIClient(server.URL, "w1", "bad-token")
+	client := NewRunnerAPIClient(server.URL, "w1", "bad-token")
 	err := client.Heartbeat()
 	if err == nil {
 		t.Fatal("expected error for 401 response")
@@ -206,7 +206,7 @@ func TestGetJob_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	job, err := client.GetJob("plan-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -225,7 +225,7 @@ func TestGetJob_NotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	_, err := client.GetJob("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for 404 response")
@@ -234,11 +234,11 @@ func TestGetJob_NotFound(t *testing.T) {
 
 func TestHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Worker-ID") != "w-abc" {
-			t.Errorf("expected worker ID w-abc, got %s", r.Header.Get("X-Worker-ID"))
+		if r.Header.Get("X-Runner-ID") != "w-abc" {
+			t.Errorf("expected runner ID w-abc, got %s", r.Header.Get("X-Runner-ID"))
 		}
-		if r.Header.Get("X-Worker-Token") != "secret-tok" {
-			t.Errorf("expected worker token")
+		if r.Header.Get("X-Runner-Token") != "secret-tok" {
+			t.Errorf("expected runner token")
 		}
 		if r.Header.Get("Content-Type") != "application/json" {
 			t.Errorf("expected application/json content type")
@@ -247,6 +247,6 @@ func TestHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewWorkerAPIClient(server.URL, "w-abc", "secret-tok")
+	client := NewRunnerAPIClient(server.URL, "w-abc", "secret-tok")
 	client.Heartbeat()
 }

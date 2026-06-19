@@ -7,15 +7,15 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/imroc/req/v3"
 	"github.com/spf13/cobra"
 )
 
-var deleteVineyardCmd = &cobra.Command{
+var deleteZoneCmd = &cobra.Command{
 	Use:   "delete [id]",
 	Short: "Delete a zone",
 	Args:  cobra.MaximumNArgs(1),
@@ -31,14 +31,14 @@ var deleteVineyardCmd = &cobra.Command{
 
 		if len(args) == 0 {
 			var result struct {
-				Vineyards []types.Vineyard `json:"vineyards"`
+				Zones []types.Zone `json:"zones"`
 			}
 			var errMsg struct {
 				Error string `json:"error"`
 			}
 
 			client := req.C()
-			listURL := fmt.Sprintf("%s/api/cli/vineyards", webOrigin)
+			listURL := fmt.Sprintf("%s/api/cli/zones", webOrigin)
 
 			var resp *req.Response
 			action := func() {
@@ -63,13 +63,13 @@ var deleteVineyardCmd = &cobra.Command{
 				os.Exit(1)
 			}
 
-			if len(result.Vineyards) == 0 {
+			if len(result.Zones) == 0 {
 				fmt.Println("No zones found to delete.")
 				os.Exit(0)
 			}
 
-			options := make([]huh.Option[string], len(result.Vineyards))
-			for i, v := range result.Vineyards {
+			options := make([]huh.Option[string], len(result.Zones))
+			for i, v := range result.Zones {
 				options[i] = huh.NewOption(fmt.Sprintf("%s (%s)", v.Name, v.ID), v.ID)
 			}
 
@@ -110,7 +110,7 @@ var deleteVineyardCmd = &cobra.Command{
 			os.Exit(0)
 		}
 
-		deleteURL := fmt.Sprintf("%s/api/cli/vineyards/%s", webOrigin, id)
+		deleteURL := fmt.Sprintf("%s/api/cli/zones/%s", webOrigin, id)
 
 		var errMsg struct {
 			Error string `json:"error"`
@@ -146,5 +146,5 @@ var deleteVineyardCmd = &cobra.Command{
 }
 
 func init() {
-	vineyardCmd.AddCommand(deleteVineyardCmd)
+	zoneCmd.AddCommand(deleteZoneCmd)
 }

@@ -19,7 +19,7 @@ import (
 
 const (
 	DefaultS3Region    = "us-east-1"
-	DefaultStateBucket = "vine-terraform-state"
+	DefaultStateBucket = "spec-terraform-state"
 )
 
 // S3BackendConfig describes an S3-compatible state backend (SeaweedFS / Garage /
@@ -109,14 +109,14 @@ func autoCreateBuckets() bool {
 }
 
 // WriteBackendHCL writes a backend.hcl file for tofu init -backend-config=<file>.
-func (c *S3BackendConfig) WriteBackendHCL(dir, vineyardID, projectName, environment, region string) (string, error) {
-	key := fmt.Sprintf("%s/%s-%s-%s/terraform.tfstate", vineyardID, projectName, environment, region)
+func (c *S3BackendConfig) WriteBackendHCL(dir, zoneID, projectName, environment, region string) (string, error) {
+	key := fmt.Sprintf("%s/%s-%s-%s/terraform.tfstate", zoneID, projectName, environment, region)
 	return c.writeHCL(dir, key)
 }
 
-// WriteWorkerBackendHCL writes a backend.hcl for worker self-deploy state.
-func (c *S3BackendConfig) WriteWorkerBackendHCL(dir, workerID string) (string, error) {
-	key := fmt.Sprintf("workers/%s/terraform.tfstate", workerID)
+// WriteRunnerBackendHCL writes a backend.hcl for runner self-deploy state.
+func (c *S3BackendConfig) WriteRunnerBackendHCL(dir, runnerID string) (string, error) {
+	key := fmt.Sprintf("runners/%s/terraform.tfstate", runnerID)
 	return c.writeHCL(dir, key)
 }
 

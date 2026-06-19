@@ -8,7 +8,7 @@ import "time"
 type ConfigurationSummary struct {
 	ID                   string    `json:"id"`
 	ProjectName          string    `json:"project_name"`
-	VineyardID           *string   `json:"vineyard_id"`
+	ZoneID               *string   `json:"zone_id"`
 	EnvironmentStage     string    `json:"environment_stage"`
 	Status               string    `json:"status"`
 	Region               string    `json:"region"`
@@ -45,11 +45,11 @@ type Configuration struct {
 	GitopsDestinationsRepo  *string   `json:"gitops_destinations_repo"`
 	GitopsRepository        *string   `json:"gitops_repository"`
 
-	ID                      string    `json:"id"`
-	LastDownloadedAt        *string   `json:"last_downloaded_at"`
+	ID               string  `json:"id"`
+	LastDownloadedAt *string `json:"last_downloaded_at"`
 	// Name                    string    `json:"name"`
 	ProjectName            string    `json:"project_name"`
-	VineyardID             *string   `json:"vineyard_id"`
+	ZoneID                 *string   `json:"zone_id"`
 	RedisAllowedCidrBlocks *string   `json:"redis_allowed_cidr_blocks"`
 	SesQueuesTopics        *string   `json:"ses_queues_topics"`
 	Status                 *string   `json:"status"`
@@ -62,12 +62,12 @@ type Configuration struct {
 }
 
 type Harvest struct {
-	ID                string     `json:"id"`
-	ClusterID         string     `json:"cluster_id"`
-	ConfigurationID   string     `json:"configuration_id"`
-	Status            string     `json:"status"`
-	CreatedAt         time.Time  `json:"created_at"`
-	StartedAt         *time.Time `json:"started_at,omitempty"`
-	CompletedAt       *time.Time `json:"completed_at,omitempty"`
-	ErrorMessage      *string    `json:"error_message,omitempty"`
+	ID              string     `json:"id"`
+	ClusterID       string     `json:"cluster_id"`
+	ConfigurationID string     `json:"configuration_id"`
+	Status          string     `json:"status"`
+	CreatedAt       time.Time  `json:"created_at"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	ErrorMessage    *string    `json:"error_message,omitempty"`
 }

@@ -9,9 +9,9 @@ import (
 	"io"
 	"os"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
-	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 type awsProvider struct{}
@@ -22,7 +22,7 @@ func (p *awsProvider) RequiredCLIs() []string {
 	return []string{"aws-iam-authenticator", "kubectl", "helm"}
 }
 
-func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interface{} {
+func (p *awsProvider) ProviderTfvars(config *types.SpecConfig) map[string]interface{} {
 	enableKarpenter := false
 	if v, ok := config.Cluster.ProviderConfig["enable_karpenter"]; ok {
 		if b, ok := v.(bool); ok {
@@ -61,7 +61,7 @@ func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		"aws_account_id": config.CloudAccountID,
 
 		// VPC
-		"provision_vpc":           provisionVPC,
+		"provision_vpc":          provisionVPC,
 		"vpc_cidr":               orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
 		"vpc_single_nat_gateway": config.Network.SingleNatGateway,
 
@@ -101,14 +101,14 @@ func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		"custom_secrets": buildSecrets(config.Secrets),
 
 		// DynamoDB
-		"ddb_create":                      len(config.NosqlTables) > 0,
-		"ddb_global_create":               hasGlobalTables(config.NosqlTables),
-		"ddb_table_configuration":         buildDDBTables(config.NosqlTables, "standard"),
-		"ddb_global_table_configuration":  buildDDBTables(config.NosqlTables, "global"),
+		"ddb_create":                     len(config.NosqlTables) > 0,
+		"ddb_global_create":              hasGlobalTables(config.NosqlTables),
+		"ddb_table_configuration":        buildDDBTables(config.NosqlTables, "standard"),
+		"ddb_global_table_configuration": buildDDBTables(config.NosqlTables, "global"),
 
 		// S3
-		"s3_create":             len(config.StorageBuckets) > 0,
-		"bucket_configuration":  buildS3Buckets(config.StorageBuckets),
+		"s3_create":            len(config.StorageBuckets) > 0,
+		"bucket_configuration": buildS3Buckets(config.StorageBuckets),
 
 		// RDS
 		"create_rds": len(config.Databases) > 0,
@@ -186,7 +186,7 @@ func derefIntOr(p *int, def int) int {
 	return def
 }
 
-func buildSQSQueues(queues []types.VineQueueConfig, topics []types.VineTopicConfig) map[string]interface{} {
+func buildSQSQueues(queues []types.SpecQueueConfig, topics []types.SpecTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, q := range queues {
 		cfg := map[string]interface{}{
@@ -210,7 +210,7 @@ func buildSQSQueues(queues []types.VineQueueConfig, topics []types.VineTopicConf
 	return result
 }
 
-func buildSNSTopics(topics []types.VineTopicConfig) map[string]interface{} {
+func buildSNSTopics(topics []types.SpecTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
 		subs := []map[string]string{}
@@ -227,7 +227,7 @@ func buildSNSTopics(topics []types.VineTopicConfig) map[string]interface{} {
 	return result
 }
 
-func (p *awsProvider) ConfigureKubeconfig(ctx context.Context, config *types.VineConfig, outputs map[string]interface{}, stdout io.Writer) error {
+func (p *awsProvider) ConfigureKubeconfig(ctx context.Context, config *types.SpecConfig, outputs map[string]interface{}, stdout io.Writer) error {
 	clusterName := ExtractClusterName(outputs)
 	if clusterName == "" {
 		return fmt.Errorf("no EKS cluster name in outputs")
@@ -281,7 +281,7 @@ users:
 	return nil
 }
 
-func buildSecrets(secrets []types.VineSecretConfig) []map[string]interface{} {
+func buildSecrets(secrets []types.SpecSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
 		entry := map[string]interface{}{
@@ -298,7 +298,7 @@ func buildSecrets(secrets []types.VineSecretConfig) []map[string]interface{} {
 	return result
 }
 
-func hasGlobalTables(tables []types.VineNosqlConfig) bool {
+func hasGlobalTables(tables []types.SpecNosqlConfig) bool {
 	for _, t := range tables {
 		if t.TableType == "global" {
 			return true
@@ -307,7 +307,7 @@ func hasGlobalTables(tables []types.VineNosqlConfig) bool {
 	return false
 }
 
-func buildDDBTables(tables []types.VineNosqlConfig, tableType string) []map[string]interface{} {
+func buildDDBTables(tables []types.SpecNosqlConfig, tableType string) []map[string]interface{} {
 	result := []map[string]interface{}{}
 	for _, t := range tables {
 		if t.TableType != tableType {
@@ -327,7 +327,7 @@ func buildDDBTables(tables []types.VineNosqlConfig, tableType string) []map[stri
 	return result
 }
 
-func buildS3Buckets(buckets []types.VineStorageBucketConfig) []map[string]interface{} {
+func buildS3Buckets(buckets []types.SpecStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
 		blockPublic := !b.PublicAccess
@@ -359,4 +359,3 @@ func buildS3Buckets(buckets []types.VineStorageBucketConfig) []map[string]interf
 }
 
 var _ CloudProvider = (*awsProvider)(nil)
-

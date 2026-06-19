@@ -15,9 +15,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var openVineInBrowser bool
+var openSpecInBrowser bool
 
-var vineGetCmd = &cobra.Command{
+var specGetCmd = &cobra.Command{
 	Use:   "get [project_name]",
 	Short: "Get a specific spec by project name",
 	Args:  cobra.ExactArgs(1),
@@ -64,7 +64,7 @@ var vineGetCmd = &cobra.Command{
 
 		ui.PrintConfiguration(result.Configuration)
 
-		if !openVineInBrowser {
+		if !openSpecInBrowser {
 			var confirm bool
 			err := huh.NewForm(
 				huh.NewGroup(
@@ -77,11 +77,11 @@ var vineGetCmd = &cobra.Command{
 				),
 			).Run()
 			if err == nil {
-				openVineInBrowser = confirm
+				openSpecInBrowser = confirm
 			}
 		}
 
-		if openVineInBrowser {
+		if openSpecInBrowser {
 			url := fmt.Sprintf("%s/dashboard", webOrigin)
 			fmt.Printf("Opening in browser: %s\n", url)
 			if err := browser.OpenURL(url); err != nil {
@@ -92,6 +92,6 @@ var vineGetCmd = &cobra.Command{
 }
 
 func init() {
-	vineCmd.AddCommand(vineGetCmd)
-	vineGetCmd.Flags().BoolVarP(&openVineInBrowser, "open", "o", false, "Open the spec in the web browser")
+	specCmd.AddCommand(specGetCmd)
+	specGetCmd.Flags().BoolVarP(&openSpecInBrowser, "open", "o", false, "Open the spec in the web browser")
 }

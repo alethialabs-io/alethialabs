@@ -14,21 +14,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type vineyardWithVines struct {
+type zoneWithSpecs struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`
 	Description *string `json:"description"`
 	CreatedAt   string  `json:"created_at"`
-	Vines       []struct {
+	Specs       []struct {
 		ID               string `json:"id"`
 		ProjectName      string `json:"project_name"`
 		EnvironmentStage string `json:"environment_stage"`
 		Status           string `json:"status"`
 		Region           string `json:"region"`
-	} `json:"vines"`
+	} `json:"specs"`
 }
 
-var listVineyardsCmd = &cobra.Command{
+var listZonesCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all zones with their specs",
 	Run: func(cmd *cobra.Command, args []string) {
@@ -42,7 +42,7 @@ var listVineyardsCmd = &cobra.Command{
 		reqClient := req.C()
 
 		var result struct {
-			Vineyards []vineyardWithVines `json:"vineyards"`
+			Zones []zoneWithSpecs `json:"zones"`
 		}
 
 		spinner.New().
@@ -51,7 +51,7 @@ var listVineyardsCmd = &cobra.Command{
 				_, err = reqClient.R().
 					SetBearerAuthToken(token).
 					SetSuccessResult(&result).
-					Get(fmt.Sprintf("%s/api/cli/vineyards", webOrigin))
+					Get(fmt.Sprintf("%s/api/cli/zones", webOrigin))
 			}).Run()
 
 		if err != nil {
@@ -59,39 +59,39 @@ var listVineyardsCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if len(result.Vineyards) == 0 {
+		if len(result.Zones) == 0 {
 			ui.Muted("No zones found. Create one with `alethia zone create`.")
 			return
 		}
 
 		fmt.Println()
-		for i, v := range result.Vineyards {
+		for i, v := range result.Zones {
 			fmt.Printf("  %s", ui.AccentStyle.Render(v.Name))
-			fmt.Println(ui.MutedStyle.Render(fmt.Sprintf(" (%d specs)", len(v.Vines))))
+			fmt.Println(ui.MutedStyle.Render(fmt.Sprintf(" (%d specs)", len(v.Specs))))
 
 			if v.Description != nil && *v.Description != "" {
 				fmt.Printf("  %s\n", ui.MutedStyle.Render(*v.Description))
 			}
 
-			if len(v.Vines) > 0 {
-				for j, vine := range v.Vines {
+			if len(v.Specs) > 0 {
+				for j, spec := range v.Specs {
 					connector := "├─"
-					if j == len(v.Vines)-1 {
+					if j == len(v.Specs)-1 {
 						connector = "└─"
 					}
 
-					status := vine.Status
+					status := spec.Status
 					if status == "" {
 						status = "DRAFT"
 					}
 
-					label := ui.TextStyle.Render(fmt.Sprintf("%s (%s)", vine.ProjectName, vine.EnvironmentStage))
-					region := ui.MutedStyle.Render(vine.Region)
+					label := ui.TextStyle.Render(fmt.Sprintf("%s (%s)", spec.ProjectName, spec.EnvironmentStage))
+					region := ui.MutedStyle.Render(spec.Region)
 					fmt.Printf("  %s %s %s — %s  %s\n",
 						ui.MutedStyle.Render(connector),
 						ui.StatusDot(status),
 						label,
-						formatVineStatus(status),
+						formatSpecStatus(status),
 						region,
 					)
 				}
@@ -99,7 +99,7 @@ var listVineyardsCmd = &cobra.Command{
 				fmt.Printf("  %s\n", ui.MutedStyle.Render("  (no specs)"))
 			}
 
-			if i < len(result.Vineyards)-1 {
+			if i < len(result.Zones)-1 {
 				fmt.Println(ui.MutedStyle.Render(strings.Repeat("─", 50)))
 			}
 		}
@@ -107,7 +107,7 @@ var listVineyardsCmd = &cobra.Command{
 	},
 }
 
-func formatVineStatus(status string) string {
+func formatSpecStatus(status string) string {
 	switch status {
 	case "ACTIVE":
 		return ui.SuccessStyle.Render("active")
@@ -125,5 +125,5 @@ func formatVineStatus(status string) string {
 }
 
 func init() {
-	vineyardCmd.AddCommand(listVineyardsCmd)
+	zoneCmd.AddCommand(listZonesCmd)
 }

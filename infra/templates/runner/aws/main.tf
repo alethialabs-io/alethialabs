@@ -23,11 +23,11 @@ provider "aws" {
 }
 
 locals {
-  name_prefix = "node-${substr(var.worker_id, 0, 8)}"
+  name_prefix = "runner-${substr(var.runner_id, 0, 8)}"
   tags = {
     ManagedBy = "alethia"
-    WorkerID  = var.worker_id
-    Name      = var.worker_name
+    RunnerID  = var.runner_id
+    Name      = var.runner_name
   }
 }
 
@@ -168,8 +168,8 @@ resource "aws_ecs_task_definition" "worker" {
     essential = true
 
     environment = [
-      { name = "ALETHIA_WORKER_ID", value = var.worker_id },
-      { name = "ALETHIA_WORKER_TOKEN", value = var.worker_token },
+      { name = "ALETHIA_WORKER_ID", value = var.runner_id },
+      { name = "ALETHIA_WORKER_TOKEN", value = var.runner_token },
       { name = "ALETHIA_WEB_ORIGIN", value = var.alethia_url },
       { name = "ALETHIA_WORKER_MODE", value = "self-hosted" },
     ]

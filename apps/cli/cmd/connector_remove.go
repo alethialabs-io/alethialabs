@@ -21,7 +21,7 @@ var connectorRemoveCmd = &cobra.Command{
 	Use:   "remove [provider]",
 	Short: "Disconnect a cloud account",
 	Long: `Disconnect a cloud account, resetting it to a pending state and orphaning
-any vines that referenced it. Pass a provider (aws, gcp, azure) to skip the
+any specs that referenced it. Pass a provider (aws, gcp, azure) to skip the
 picker.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -58,7 +58,7 @@ picker.`,
 			if err := huh.NewForm(huh.NewGroup(
 				huh.NewConfirm().
 					Title(fmt.Sprintf("Disconnect %s?", selected.Label)).
-					Description("Vines using this account will be orphaned.").
+					Description("Specs using this account will be orphaned.").
 					Value(&confirm),
 			)).Run(); err != nil {
 				fmt.Println(err)

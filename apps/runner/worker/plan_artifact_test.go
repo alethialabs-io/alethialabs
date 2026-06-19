@@ -31,7 +31,7 @@ func TestUploadPlanArtifact_Success(t *testing.T) {
 	planData := []byte("fake-terraform-plan-binary-content")
 	os.WriteFile(tmpFile, planData, 0644)
 
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	err := client.UploadPlanArtifact("job-1", tmpFile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -54,7 +54,7 @@ func TestUploadPlanArtifact_FileNotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	err := client.UploadPlanArtifact("job-1", "/nonexistent/path")
 	if err == nil {
 		t.Fatal("expected error for missing file")
@@ -70,7 +70,7 @@ func TestUploadPlanArtifact_ServerError(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "test.plan.out")
 	os.WriteFile(tmpFile, []byte("data"), 0644)
 
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	err := client.UploadPlanArtifact("job-1", tmpFile)
 	if err == nil {
 		t.Fatal("expected error for 500 response")
@@ -92,7 +92,7 @@ func TestDownloadPlanArtifact_Success(t *testing.T) {
 	defer server.Close()
 
 	destPath := filepath.Join(t.TempDir(), "downloaded.plan.out")
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	err := client.DownloadPlanArtifact("plan-1", destPath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -111,7 +111,7 @@ func TestDownloadPlanArtifact_NotFound(t *testing.T) {
 	defer server.Close()
 
 	destPath := filepath.Join(t.TempDir(), "downloaded.plan.out")
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	err := client.DownloadPlanArtifact("plan-1", destPath)
 	if err == nil {
 		t.Fatal("expected error for 404")
@@ -125,7 +125,7 @@ func TestDownloadPlanArtifact_ServerError(t *testing.T) {
 	defer server.Close()
 
 	destPath := filepath.Join(t.TempDir(), "downloaded.plan.out")
-	client := NewWorkerAPIClient(server.URL, "w1", "tok1")
+	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
 	err := client.DownloadPlanArtifact("plan-1", destPath)
 	if err == nil {
 		t.Fatal("expected error for 500")

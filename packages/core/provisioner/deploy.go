@@ -23,19 +23,19 @@ import (
 )
 
 type DeployParams struct {
-	VineConfig      *types.VineConfig
-	Provider        string
-	PlanFile        string
-	DryRun          bool
-	UpdateInfra     bool
-	InfracostToken  string
-	GitAccessToken  string
-	TemplatesDir    string
-	S3Backend       *cloud.S3BackendConfig
-	Stdout          io.Writer
-	Stderr          io.Writer
-	ApiClient       *api.Client
-	DeploymentID    string
+	SpecConfig     *types.SpecConfig
+	Provider       string
+	PlanFile       string
+	DryRun         bool
+	UpdateInfra    bool
+	InfracostToken string
+	GitAccessToken string
+	TemplatesDir   string
+	S3Backend      *cloud.S3BackendConfig
+	Stdout         io.Writer
+	Stderr         io.Writer
+	ApiClient      *api.Client
+	DeploymentID   string
 }
 
 // PlanResult holds structured output from a deployment (dry-run or full apply).
@@ -50,11 +50,11 @@ type PlanResult struct {
 	ArgocdAdminPassword string
 }
 
-// RunDeployV2 executes a deployment using the provider-agnostic VineConfig and CloudProvider interface.
+// RunDeployV2 executes a deployment using the provider-agnostic SpecConfig and CloudProvider interface.
 func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) {
-	vc := params.VineConfig
+	vc := params.SpecConfig
 	if vc == nil {
-		return nil, fmt.Errorf("VineConfig is required for RunDeployV2")
+		return nil, fmt.Errorf("SpecConfig is required for RunDeployV2")
 	}
 
 	provider, err := cloud.NewCloudProvider(params.Provider)
@@ -147,7 +147,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	if err := params.S3Backend.EnsureBucket(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ensure state bucket: %w", err)
 	}
-	backendFile, err := params.S3Backend.WriteBackendHCL(tfDir, vc.VineyardID, vc.ProjectName, vc.EnvironmentStage, vc.Region)
+	backendFile, err := params.S3Backend.WriteBackendHCL(tfDir, vc.ZoneID, vc.ProjectName, vc.EnvironmentStage, vc.Region)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write backend config: %w", err)
 	}
@@ -291,7 +291,7 @@ func resolveArgoTemplatesDir() string {
 	return ""
 }
 
-func installArgoCD(ctx context.Context, vc *types.VineConfig, outputs map[string]interface{}, result *PlanResult, stdout, stderr io.Writer) error {
+func installArgoCD(ctx context.Context, vc *types.SpecConfig, outputs map[string]interface{}, result *PlanResult, stdout, stderr io.Writer) error {
 	fmt.Fprintln(stdout, "Installing ArgoCD...")
 
 	addRepoCmd := "helm repo add argo https://argoproj.github.io/argo-helm && helm repo update"

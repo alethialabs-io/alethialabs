@@ -16,8 +16,8 @@ func main() {
 	cfg := worker.Config{
 		Mode:        envOrDefault("ALETHIA_WORKER_MODE", "self-hosted"),
 		TrellisURL:  envOrDefault("ALETHIA_WEB_ORIGIN", "https://adp.prod.itgix.eu"),
-		WorkerID:    os.Getenv("ALETHIA_WORKER_ID"),
-		WorkerToken: os.Getenv("ALETHIA_WORKER_TOKEN"),
+		RunnerID:    os.Getenv("ALETHIA_WORKER_ID"),
+		RunnerToken: os.Getenv("ALETHIA_WORKER_TOKEN"),
 
 		S3Endpoint:  envOrDefault("ALETHIA_STORAGE_ENDPOINT", ""),
 		S3Region:    envOrDefault("ALETHIA_STORAGE_REGION", ""),
@@ -25,16 +25,16 @@ func main() {
 		S3SecretKey: os.Getenv("ALETHIA_STORAGE_SECRET_ACCESS_KEY"),
 	}
 
-	fmt.Printf("runner-worker %s\n", version.Version)
+	fmt.Printf("runner %s\n", version.Version)
 
-	if cfg.WorkerID == "" || cfg.WorkerToken == "" {
+	if cfg.RunnerID == "" || cfg.RunnerToken == "" {
 		fmt.Fprintln(os.Stderr, "Error: ALETHIA_WORKER_ID and ALETHIA_WORKER_TOKEN environment variables are required.")
 		os.Exit(1)
 	}
 
 	w := worker.New(cfg)
 	if err := w.Run(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "Worker error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Runner error: %v\n", err)
 		os.Exit(1)
 	}
 }

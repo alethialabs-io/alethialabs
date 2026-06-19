@@ -19,9 +19,9 @@ import (
 )
 
 var (
-	jobsListStatus     string
-	jobsListVineyardID string
-	jobsListLimit      int
+	jobsListStatus string
+	jobsListZoneID string
+	jobsListLimit  int
 )
 
 var jobTypeLabels = map[string]string{
@@ -30,9 +30,9 @@ var jobTypeLabels = map[string]string{
 	"DESTROY":         "Destroy",
 	"CONNECTION_TEST": "Test Conn.",
 	"FETCH_RESOURCES": "Fetch Res.",
-	"DEPLOY_WORKER":   "Deploy Tendril",
-	"UPDATE_WORKER":   "Update Tendril",
-	"DESTROY_WORKER":  "Destroy Tendril",
+	"DEPLOY_WORKER":   "Deploy Runner",
+	"UPDATE_WORKER":   "Update Runner",
+	"DESTROY_WORKER":  "Destroy Runner",
 }
 
 var jobsListCmd = &cobra.Command{
@@ -56,7 +56,7 @@ var jobsListCmd = &cobra.Command{
 		spinner.New().
 			Title("Fetching jobs...").
 			Action(func() {
-				page, err = apiClient.GetJobs(jobsListStatus, jobsListVineyardID, pageSize, 0)
+				page, err = apiClient.GetJobs(jobsListStatus, jobsListZoneID, pageSize, 0)
 			}).Run()
 
 		if err != nil {
@@ -79,7 +79,7 @@ var jobsListCmd = &cobra.Command{
 			apiClient:           apiClient,
 			pageSize:            pageSize,
 			status:              jobsListStatus,
-			vineyardID:          jobsListVineyardID,
+			zoneID:              jobsListZoneID,
 		})
 		if _, err := p.Run(); err != nil {
 			ui.Error(fmt.Sprintf("Table error: %v", err))
@@ -90,10 +90,10 @@ var jobsListCmd = &cobra.Command{
 
 type jobsPaginatedModel struct {
 	ui.PaginatedTableModel
-	apiClient  *api.Client
-	pageSize   int
-	status     string
-	vineyardID string
+	apiClient *api.Client
+	pageSize  int
+	status    string
+	zoneID    string
 }
 
 func (m jobsPaginatedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -109,7 +109,7 @@ func (m jobsPaginatedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m jobsPaginatedModel) fetchPage(page int) tea.Cmd {
 	return func() tea.Msg {
 		offset := (page - 1) * m.pageSize
-		result, err := m.apiClient.GetJobs(m.status, m.vineyardID, m.pageSize, offset)
+		result, err := m.apiClient.GetJobs(m.status, m.zoneID, m.pageSize, offset)
 		if err != nil {
 			return nil
 		}
@@ -145,27 +145,27 @@ func jobRows(jobs []api.ProvisionJob) []table.Row {
 			typeLabel = j.JobType
 		}
 
-		vine := j.VineName
-		if vine == "" && j.VineID != "" {
-			vine = truncID(j.VineID)
+		spec := j.SpecName
+		if spec == "" && j.SpecID != "" {
+			spec = truncID(j.SpecID)
 		}
-		if vine == "" {
-			vine = ui.SymbolDash
+		if spec == "" {
+			spec = ui.SymbolDash
 		}
 
-		tendril := j.WorkerName
-		if tendril == "" && j.WorkerID != "" {
-			tendril = truncID(j.WorkerID)
+		runner := j.RunnerName
+		if runner == "" && j.RunnerID != "" {
+			runner = truncID(j.RunnerID)
 		}
-		if tendril == "" {
-			tendril = ui.SymbolDash
+		if runner == "" {
+			runner = ui.SymbolDash
 		}
 
 		rows[i] = table.Row{
 			typeLabel,
 			j.Status,
-			vine,
-			tendril,
+			spec,
+			runner,
 			humanize.Time(j.CreatedAt),
 			formatDuration(j.StartedAt, j.CompletedAt),
 		}
@@ -203,6 +203,6 @@ func formatDuration(started, completed *time.Time) string {
 func init() {
 	jobsCmd.AddCommand(jobsListCmd)
 	jobsListCmd.Flags().StringVar(&jobsListStatus, "status", "", "Filter by status (QUEUED, CLAIMED, PROCESSING, SUCCESS, FAILED, CANCELLED)")
-	jobsListCmd.Flags().StringVar(&jobsListVineyardID, "zone-id", "", "Filter by zone ID")
+	jobsListCmd.Flags().StringVar(&jobsListZoneID, "zone-id", "", "Filter by zone ID")
 	jobsListCmd.Flags().IntVarP(&jobsListLimit, "limit", "n", 20, "Jobs per page")
 }

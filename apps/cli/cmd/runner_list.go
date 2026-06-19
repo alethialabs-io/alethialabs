@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var tendrilListCmd = &cobra.Command{
+var runnerListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all runners",
 	Run: func(cmd *cobra.Command, args []string) {
@@ -27,12 +27,12 @@ var tendrilListCmd = &cobra.Command{
 		}
 
 		apiClient := api.NewClient(token)
-		var workers []api.Worker
+		var runners []api.Runner
 
 		spinner.New().
 			Title("Fetching runners...").
 			Action(func() {
-				workers, err = apiClient.GetWorkers()
+				runners, err = apiClient.GetRunners()
 			}).Run()
 
 		if err != nil {
@@ -40,7 +40,7 @@ var tendrilListCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if len(workers) == 0 {
+		if len(runners) == 0 {
 			ui.Muted("No runners found. Deploy one with `alethia runner deploy`.")
 			return
 		}
@@ -54,8 +54,8 @@ var tendrilListCmd = &cobra.Command{
 			{Title: "Last Heartbeat", Width: 20},
 		}
 
-		rows := make([]table.Row, len(workers))
-		for i, w := range workers {
+		rows := make([]table.Row, len(runners))
+		for i, w := range runners {
 			modeLabel := "cloud"
 			if w.Mode == "self-hosted" {
 				modeLabel = "self"
@@ -95,5 +95,5 @@ var tendrilListCmd = &cobra.Command{
 }
 
 func init() {
-	tendrilCmd.AddCommand(tendrilListCmd)
+	runnerCmd.AddCommand(runnerListCmd)
 }

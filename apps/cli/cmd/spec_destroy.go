@@ -7,19 +7,19 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/spf13/cobra"
 )
 
 var (
-	vineDestroyVineID    string
-	vineDestroyTendrilID string
-	vineDestroyWait      bool
+	specDestroySpecID   string
+	specDestroyRunnerID string
+	specDestroyWait     bool
 )
 
-var vineDestroyCmd = &cobra.Command{
+var specDestroyCmd = &cobra.Command{
 	Use:   "destroy",
 	Short: "Destroy a spec's infrastructure",
 	Long:  `Queues a DESTROY job to tear down all cloud resources for a spec. This cannot be undone.`,
@@ -30,16 +30,16 @@ var vineDestroyCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		vineyardID := ""
+		zoneID := ""
 
-		if vineDestroyVineID == "" {
-			vineyardID, _, err = selectVineyard(token)
+		if specDestroySpecID == "" {
+			zoneID, _, err = selectZone(token)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
 
-			vineDestroyVineID, err = selectVine(token, vineyardID)
+			specDestroySpecID, err = selectSpec(token, zoneID)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -60,8 +60,8 @@ var vineDestroyCmd = &cobra.Command{
 			return
 		}
 
-		if vineDestroyTendrilID == "" {
-			vineDestroyTendrilID, err = selectTendril(token, "")
+		if specDestroyRunnerID == "" {
+			specDestroyRunnerID, err = selectRunner(token, "")
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -72,11 +72,11 @@ var vineDestroyCmd = &cobra.Command{
 
 		params := api.QueueJobParams{
 			JobType:         "DESTROY",
-			VineyardID:      vineyardID,
-			ConfigurationID: vineDestroyVineID,
+			ZoneID:          zoneID,
+			ConfigurationID: specDestroySpecID,
 		}
-		if vineDestroyTendrilID != "" {
-			params.AssignedWorkerID = vineDestroyTendrilID
+		if specDestroyRunnerID != "" {
+			params.AssignedRunnerID = specDestroyRunnerID
 		}
 
 		job, err := apiClient.QueueJobWithParams(params)
@@ -85,7 +85,7 @@ var vineDestroyCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if vineDestroyWait {
+		if specDestroyWait {
 			ui.JobQueued("DESTROY", job.ID)
 			if err := waitForJob(apiClient, job.ID); err != nil {
 				os.Exit(1)
@@ -97,8 +97,8 @@ var vineDestroyCmd = &cobra.Command{
 }
 
 func init() {
-	vineCmd.AddCommand(vineDestroyCmd)
-	vineDestroyCmd.Flags().StringVar(&vineDestroyVineID, "spec-id", "", "ID of the spec to destroy")
-	vineDestroyCmd.Flags().StringVar(&vineDestroyTendrilID, "runner-id", "", "Assign to a specific runner")
-	vineDestroyCmd.Flags().BoolVarP(&vineDestroyWait, "wait", "w", false, "Wait for job completion")
+	specCmd.AddCommand(specDestroyCmd)
+	specDestroyCmd.Flags().StringVar(&specDestroySpecID, "spec-id", "", "ID of the spec to destroy")
+	specDestroyCmd.Flags().StringVar(&specDestroyRunnerID, "runner-id", "", "Assign to a specific runner")
+	specDestroyCmd.Flags().BoolVarP(&specDestroyWait, "wait", "w", false, "Wait for job completion")
 }

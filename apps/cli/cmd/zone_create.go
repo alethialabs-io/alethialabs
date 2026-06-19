@@ -9,15 +9,15 @@ import (
 	"os"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/imroc/req/v3"
 	"github.com/spf13/cobra"
 )
 
-var createVineyardCmd = &cobra.Command{
+var createZoneCmd = &cobra.Command{
 	Use:   "create [name]",
 	Short: "Create a new zone (workspace)",
 	Args:  cobra.MaximumNArgs(1),
@@ -63,7 +63,7 @@ var createVineyardCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		createURL := fmt.Sprintf("%s/api/cli/vineyards", WebOrigin())
+		createURL := fmt.Sprintf("%s/api/cli/zones", WebOrigin())
 
 		payload := map[string]string{
 			"name": name,
@@ -73,7 +73,7 @@ var createVineyardCmd = &cobra.Command{
 		}
 
 		var result struct {
-			Vineyard types.Vineyard `json:"vineyard"`
+			Zone types.Zone `json:"zone"`
 		}
 		var errMsg struct {
 			Error string `json:"error"`
@@ -106,11 +106,11 @@ var createVineyardCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		ui.Success(fmt.Sprintf("Created zone '%s' (ID: %s)", result.Vineyard.Name, result.Vineyard.ID))
+		ui.Success(fmt.Sprintf("Created zone '%s' (ID: %s)", result.Zone.Name, result.Zone.ID))
 	},
 }
 
 func init() {
-	createVineyardCmd.Flags().StringP("description", "d", "", "Description for the zone")
-	vineyardCmd.AddCommand(createVineyardCmd)
+	createZoneCmd.Flags().StringP("description", "d", "", "Description for the zone")
+	zoneCmd.AddCommand(createZoneCmd)
 }

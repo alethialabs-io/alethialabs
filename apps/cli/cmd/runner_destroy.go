@@ -7,19 +7,19 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/spf13/cobra"
 )
 
 var (
-	destroyTendrilID         string
-	destroyTendrilAssignedID string
-	destroyTendrilWait       bool
+	destroyRunnerID         string
+	destroyRunnerAssignedID string
+	destroyRunnerWait       bool
 )
 
-var tendrilDestroyCmd = &cobra.Command{
+var runnerDestroyCmd = &cobra.Command{
 	Use:   "destroy",
 	Short: "Tear down a runner's cloud infrastructure",
 	Long:  `Queues a DESTROY_WORKER job to tear down the runner's cloud resources. Another runner will execute the teardown.`,
@@ -30,13 +30,13 @@ var tendrilDestroyCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if destroyTendrilID == "" {
-			destroyTendrilID, err = selectTendril(token, "")
+		if destroyRunnerID == "" {
+			destroyRunnerID, err = selectRunner(token, "")
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
-			if destroyTendrilID == "" {
+			if destroyRunnerID == "" {
 				fmt.Println("Please select a specific runner to destroy, not 'Any available'.")
 				os.Exit(1)
 			}
@@ -56,8 +56,8 @@ var tendrilDestroyCmd = &cobra.Command{
 			return
 		}
 
-		if destroyTendrilAssignedID == "" {
-			destroyTendrilAssignedID, err = selectTendril(token, destroyTendrilID)
+		if destroyRunnerAssignedID == "" {
+			destroyRunnerAssignedID, err = selectRunner(token, destroyRunnerID)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -67,13 +67,13 @@ var tendrilDestroyCmd = &cobra.Command{
 		apiClient := api.NewClient(token)
 
 		snapshot := map[string]interface{}{
-			"worker_id": destroyTendrilID,
+			"runner_id": destroyRunnerID,
 		}
 
 		params := api.QueueJobParams{
 			JobType:          "DESTROY_WORKER",
 			ConfigSnapshot:   snapshot,
-			AssignedWorkerID: destroyTendrilAssignedID,
+			AssignedRunnerID: destroyRunnerAssignedID,
 		}
 
 		job, err := apiClient.QueueJobWithParams(params)
@@ -82,7 +82,7 @@ var tendrilDestroyCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if destroyTendrilWait {
+		if destroyRunnerWait {
 			ui.JobQueued("DESTROY_WORKER", job.ID)
 			if err := waitForJob(apiClient, job.ID); err != nil {
 				os.Exit(1)
@@ -94,8 +94,8 @@ var tendrilDestroyCmd = &cobra.Command{
 }
 
 func init() {
-	tendrilCmd.AddCommand(tendrilDestroyCmd)
-	tendrilDestroyCmd.Flags().StringVar(&destroyTendrilID, "runner-id", "", "ID of the runner to destroy")
-	tendrilDestroyCmd.Flags().StringVar(&destroyTendrilAssignedID, "assigned-runner-id", "", "Which runner executes the teardown")
-	tendrilDestroyCmd.Flags().BoolVarP(&destroyTendrilWait, "wait", "w", false, "Wait for job completion")
+	runnerCmd.AddCommand(runnerDestroyCmd)
+	runnerDestroyCmd.Flags().StringVar(&destroyRunnerID, "runner-id", "", "ID of the runner to destroy")
+	runnerDestroyCmd.Flags().StringVar(&destroyRunnerAssignedID, "assigned-runner-id", "", "Which runner executes the teardown")
+	runnerDestroyCmd.Flags().BoolVarP(&destroyRunnerWait, "wait", "w", false, "Wait for job completion")
 }

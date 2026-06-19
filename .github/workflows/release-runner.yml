@@ -87,7 +87,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           NOTES=$(gh release view "runner-v${{ steps.meta.outputs.VERSION }}" --json body -q .body 2>/dev/null || echo "")
-          curl -sf -X POST "${TRELLIS_URL}/api/releases/worker" \
+          curl -sf -X POST "${TRELLIS_URL}/api/releases/runner" \
             -H "Authorization: Bearer ${RELEASE_API_SECRET}" \
             -H "Content-Type: application/json" \
             -d "$(jq -n \

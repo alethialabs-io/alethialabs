@@ -27,7 +27,7 @@ var connectorAzureCmd = &cobra.Command{
 	Long: `Connect an Azure subscription using federated identity.
 
 The setup creates an app registration with a federated credential trusting the
-Alethia AWS workers (no client secret) and grants it Contributor on the
+Alethia AWS runners (no client secret) and grants it Contributor on the
 subscription.
 
 By default the setup runs with your local az CLI. Use --manual to run it in

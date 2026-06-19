@@ -55,12 +55,12 @@ type ConfigurationExport struct {
 type ProvisionJob struct {
 	ID                string                  `json:"id"`
 	JobType           string                  `json:"job_type"`
-	VineyardID        string                  `json:"vineyard_id"`
+	ZoneID            string                  `json:"zone_id"`
 	ConfigurationID   string                  `json:"configuration_id,omitempty"`
-	VineID            string                  `json:"vine_id,omitempty"`
+	SpecID            string                  `json:"spec_id,omitempty"`
 	CloudIdentityID   string                  `json:"cloud_identity_id,omitempty"`
-	WorkerID          string                  `json:"worker_id,omitempty"`
-	AssignedWorkerID  string                  `json:"assigned_worker_id,omitempty"`
+	RunnerID          string                  `json:"runner_id,omitempty"`
+	AssignedRunnerID  string                  `json:"assigned_runner_id,omitempty"`
 	PlanJobID         string                  `json:"plan_job_id,omitempty"`
 	Status            string                  `json:"status"`
 	ErrorMessage      *string                 `json:"error_message,omitempty"`
@@ -69,8 +69,8 @@ type ProvisionJob struct {
 	CreatedAt         time.Time               `json:"created_at"`
 	StartedAt         *time.Time              `json:"started_at,omitempty"`
 	CompletedAt       *time.Time              `json:"completed_at,omitempty"`
-	VineName          string                  `json:"vine_name,omitempty"`
-	WorkerName        string                  `json:"worker_name,omitempty"`
+	SpecName          string                  `json:"spec_name,omitempty"`
+	RunnerName        string                  `json:"runner_name,omitempty"`
 }
 
 type JobsPage struct {
@@ -88,7 +88,7 @@ type JobLog struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-type Worker struct {
+type Runner struct {
 	ID            string    `json:"id"`
 	Name          string    `json:"name"`
 	Mode          string    `json:"mode"`
@@ -99,23 +99,23 @@ type Worker struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
-type VineCluster struct {
-	ID                 string   `json:"id"`
-	ClusterName        string   `json:"cluster_name"`
-	ClusterVersion     string   `json:"cluster_version"`
-	InstanceTypes      []string `json:"instance_types"`
-	NodeMinSize        int      `json:"node_min_size"`
-	NodeMaxSize        int      `json:"node_max_size"`
-	NodeDesiredSize    int      `json:"node_desired_size"`
-	Status             string   `json:"status"`
-	StatusMessage      string   `json:"status_message"`
-	ArgocdURL          string   `json:"argocd_url"`
+type SpecCluster struct {
+	ID                   string   `json:"id"`
+	ClusterName          string   `json:"cluster_name"`
+	ClusterVersion       string   `json:"cluster_version"`
+	InstanceTypes        []string `json:"instance_types"`
+	NodeMinSize          int      `json:"node_min_size"`
+	NodeMaxSize          int      `json:"node_max_size"`
+	NodeDesiredSize      int      `json:"node_desired_size"`
+	Status               string   `json:"status"`
+	StatusMessage        string   `json:"status_message"`
+	ArgocdURL            string   `json:"argocd_url"`
 	EstimatedMonthlyCost *float64 `json:"estimated_monthly_cost"`
-	CreatedAt          string   `json:"created_at"`
-	UpdatedAt          string   `json:"updated_at"`
-	VineProjectName    string   `json:"vine_project_name"`
-	VineEnvironment    string   `json:"vine_environment"`
-	VineRegion         string   `json:"vine_region"`
+	CreatedAt            string   `json:"created_at"`
+	UpdatedAt            string   `json:"updated_at"`
+	SpecProjectName      string   `json:"spec_project_name"`
+	SpecEnvironment      string   `json:"spec_environment"`
+	SpecRegion           string   `json:"spec_region"`
 }
 
 type CloudIdentity struct {
@@ -125,11 +125,11 @@ type CloudIdentity struct {
 	CreatedAt string `json:"created_at"`
 }
 
-type DeployTendrilResponse struct {
-	Tendril struct {
+type DeployRunnerResponse struct {
+	Runner struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
-	} `json:"tendril"`
+	} `json:"runner"`
 	Job struct {
 		ID        string `json:"id"`
 		Status    string `json:"status"`
@@ -139,10 +139,10 @@ type DeployTendrilResponse struct {
 
 type QueueJobParams struct {
 	JobType          string
-	VineyardID       string
+	ZoneID           string
 	ConfigurationID  string
 	CloudIdentityID  string
-	AssignedWorkerID string
+	AssignedRunnerID string
 	PlanJobID        string
 	ConfigSnapshot   map[string]interface{}
 }
@@ -292,7 +292,7 @@ func (c *Client) GetRepositories(provider string) ([]Repository, error) {
 	return successResp.Repositories, nil
 }
 
-// --- Configurations (Vines) ---
+// --- Configurations (Specs) ---
 
 func (c *Client) GetConfiguration(projectName string) (*types.Configuration, error) {
 	var successResp struct {
@@ -325,8 +325,8 @@ func (c *Client) ExportConfiguration(projectName, format string) (*Configuration
 func (c *Client) QueueJobWithParams(params QueueJobParams) (*ProvisionJob, error) {
 	endpoint := fmt.Sprintf("%s/jobs", c.baseURL)
 	payload := map[string]interface{}{
-		"job_type":    params.JobType,
-		"vineyard_id": params.VineyardID,
+		"job_type": params.JobType,
+		"zone_id":  params.ZoneID,
 	}
 	if params.ConfigurationID != "" {
 		payload["configuration_id"] = params.ConfigurationID
@@ -334,8 +334,8 @@ func (c *Client) QueueJobWithParams(params QueueJobParams) (*ProvisionJob, error
 	if params.CloudIdentityID != "" {
 		payload["cloud_identity_id"] = params.CloudIdentityID
 	}
-	if params.AssignedWorkerID != "" {
-		payload["assigned_worker_id"] = params.AssignedWorkerID
+	if params.AssignedRunnerID != "" {
+		payload["assigned_runner_id"] = params.AssignedRunnerID
 	}
 	if params.PlanJobID != "" {
 		payload["plan_job_id"] = params.PlanJobID
@@ -353,14 +353,14 @@ func (c *Client) QueueJobWithParams(params QueueJobParams) (*ProvisionJob, error
 	return successResp.Job, nil
 }
 
-func (c *Client) GetJobs(status, vineyardID string, limit, offset int) (*JobsPage, error) {
+func (c *Client) GetJobs(status, zoneID string, limit, offset int) (*JobsPage, error) {
 	endpoint := fmt.Sprintf("%s/jobs", c.baseURL)
 	params := url.Values{}
 	if status != "" {
 		params.Set("status", status)
 	}
-	if vineyardID != "" {
-		params.Set("vineyard_id", vineyardID)
+	if zoneID != "" {
+		params.Set("zone_id", zoneID)
 	}
 	if limit > 0 {
 		params.Set("limit", fmt.Sprintf("%d", limit))
@@ -408,51 +408,51 @@ func (c *Client) CancelJob(jobID string) error {
 	return c.doPost(endpoint, nil, nil)
 }
 
-// --- Workers (Tendrils) ---
+// --- Runners ---
 
-func (c *Client) GetWorkers() ([]Worker, error) {
-	endpoint := fmt.Sprintf("%s/cli/workers", c.baseURL)
+func (c *Client) GetRunners() ([]Runner, error) {
+	endpoint := fmt.Sprintf("%s/cli/runners", c.baseURL)
 	var successResp struct {
-		Workers []Worker `json:"workers"`
+		Runners []Runner `json:"runners"`
 	}
 	if err := c.doGet(endpoint, &successResp); err != nil {
-		return nil, fmt.Errorf("failed to get tendrils: %w", err)
+		return nil, fmt.Errorf("failed to get runners: %w", err)
 	}
-	return successResp.Workers, nil
+	return successResp.Runners, nil
 }
 
-func (c *Client) RemoveWorker(workerID string) error {
-	endpoint := fmt.Sprintf("%s/cli/workers/%s", c.baseURL, workerID)
+func (c *Client) RemoveRunner(runnerID string) error {
+	endpoint := fmt.Sprintf("%s/cli/runners/%s", c.baseURL, runnerID)
 	if err := c.doDelete(endpoint); err != nil {
-		return fmt.Errorf("failed to remove tendril: %w", err)
+		return fmt.Errorf("failed to remove runner: %w", err)
 	}
 	return nil
 }
 
-func (c *Client) DeployTendril(name, cloudIdentityID, region, assignedWorkerID string) (*DeployTendrilResponse, error) {
-	endpoint := fmt.Sprintf("%s/cli/tendrils/deploy", c.baseURL)
+func (c *Client) DeployRunner(name, cloudIdentityID, region, assignedRunnerID string) (*DeployRunnerResponse, error) {
+	endpoint := fmt.Sprintf("%s/cli/runners/deploy", c.baseURL)
 	payload := map[string]string{
 		"name":              name,
 		"cloud_identity_id": cloudIdentityID,
 		"region":            region,
 	}
-	if assignedWorkerID != "" {
-		payload["assigned_worker_id"] = assignedWorkerID
+	if assignedRunnerID != "" {
+		payload["assigned_runner_id"] = assignedRunnerID
 	}
 
-	var resp DeployTendrilResponse
+	var resp DeployRunnerResponse
 	if err := c.doPost(endpoint, payload, &resp); err != nil {
-		return nil, fmt.Errorf("failed to deploy tendril: %w", err)
+		return nil, fmt.Errorf("failed to deploy runner: %w", err)
 	}
 	return &resp, nil
 }
 
-// --- Clusters (Vine Clusters) ---
+// --- Clusters (Spec Clusters) ---
 
-func (c *Client) GetVineClusters() ([]VineCluster, error) {
+func (c *Client) GetSpecClusters() ([]SpecCluster, error) {
 	endpoint := fmt.Sprintf("%s/cli/clusters", c.baseURL)
 	var successResp struct {
-		Clusters []VineCluster `json:"clusters"`
+		Clusters []SpecCluster `json:"clusters"`
 	}
 	if err := c.doGet(endpoint, &successResp); err != nil {
 		return nil, fmt.Errorf("failed to get clusters: %w", err)
@@ -475,15 +475,15 @@ func (c *Client) SendLog(deploymentID string, log LogEntry) error {
 
 type BootstrapJob struct {
 	ID           string    `json:"id"`
-	VineyardID   string    `json:"vineyard_id"`
+	ZoneID       string    `json:"zone_id"`
 	Status       string    `json:"status"`
 	ErrorMessage *string   `json:"error_message,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-func (c *Client) CreateBootstrapJob(vineyardID string) (*BootstrapJob, error) {
+func (c *Client) CreateBootstrapJob(zoneID string) (*BootstrapJob, error) {
 	endpoint := fmt.Sprintf("%s/cli/bootstrap-jobs", c.baseURL)
-	payload := map[string]string{"vineyard_id": vineyardID}
+	payload := map[string]string{"zone_id": zoneID}
 	var successResp struct {
 		Job *BootstrapJob `json:"job"`
 	}
@@ -522,11 +522,11 @@ type ClusterRegistrationResponse struct {
 	AgentToken string `json:"agent_token"`
 }
 
-func (c *Client) RegisterCluster(name, vpcID, vpcCidr, region, vineyardID string) (*ClusterRegistrationResponse, error) {
+func (c *Client) RegisterCluster(name, vpcID, vpcCidr, region, zoneID string) (*ClusterRegistrationResponse, error) {
 	endpoint := fmt.Sprintf("%s/cli/clusters", c.baseURL)
 	payload := map[string]string{
 		"name": name, "vpc_id": vpcID, "vpc_cidr": vpcCidr,
-		"region": region, "vineyard_id": vineyardID,
+		"region": region, "zone_id": zoneID,
 	}
 	var resp ClusterRegistrationResponse
 	if err := c.doPost(endpoint, payload, &resp); err != nil {

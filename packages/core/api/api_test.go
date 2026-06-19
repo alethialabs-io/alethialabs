@@ -28,61 +28,61 @@ func assertAuth(t *testing.T, r *http.Request) {
 	}
 }
 
-// --- GetWorkers ---
+// --- GetRunners ---
 
-func TestGetWorkers_Success(t *testing.T) {
+func TestGetRunners_Success(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertAuth(t, r)
-		if r.URL.Path != "/api/cli/workers" {
+		if r.URL.Path != "/api/cli/runners" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Method != "GET" {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
 		json.NewEncoder(w).Encode(map[string]any{
-			"workers": []map[string]any{
-				{"id": "w1", "name": "tendril-a", "mode": "self-hosted", "status": "ONLINE", "is_default": true},
-				{"id": "w2", "name": "tendril-b", "mode": "cloud-hosted", "status": "OFFLINE", "is_default": false},
+			"runners": []map[string]any{
+				{"id": "w1", "name": "runner-a", "mode": "self-hosted", "status": "ONLINE", "is_default": true},
+				{"id": "w2", "name": "runner-b", "mode": "cloud-hosted", "status": "OFFLINE", "is_default": false},
 			},
 		})
 	}))
 
-	workers, err := client.GetWorkers()
+	runners, err := client.GetRunners()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(workers) != 2 {
-		t.Fatalf("expected 2 workers, got %d", len(workers))
+	if len(runners) != 2 {
+		t.Fatalf("expected 2 runners, got %d", len(runners))
 	}
-	if workers[0].Name != "tendril-a" {
-		t.Errorf("expected tendril-a, got %s", workers[0].Name)
+	if runners[0].Name != "runner-a" {
+		t.Errorf("expected runner-a, got %s", runners[0].Name)
 	}
-	if !workers[0].IsDefault {
-		t.Error("expected first worker to be default")
+	if !runners[0].IsDefault {
+		t.Error("expected first runner to be default")
 	}
-	if workers[1].Mode != "cloud-hosted" {
-		t.Errorf("expected cloud-hosted, got %s", workers[1].Mode)
+	if runners[1].Mode != "cloud-hosted" {
+		t.Errorf("expected cloud-hosted, got %s", runners[1].Mode)
 	}
 }
 
-func TestGetWorkers_ServerError(t *testing.T) {
+func TestGetRunners_ServerError(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "db down"})
 	}))
 
-	_, err := client.GetWorkers()
+	_, err := client.GetRunners()
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
 }
 
-// --- RemoveWorker ---
+// --- RemoveRunner ---
 
-func TestRemoveWorker_Success(t *testing.T) {
+func TestRemoveRunner_Success(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertAuth(t, r)
-		if r.URL.Path != "/api/cli/workers/w1" {
+		if r.URL.Path != "/api/cli/runners/w1" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Method != "DELETE" {
@@ -91,28 +91,28 @@ func TestRemoveWorker_Success(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	if err := client.RemoveWorker("w1"); err != nil {
+	if err := client.RemoveRunner("w1"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestRemoveWorker_NotFound(t *testing.T) {
+func TestRemoveRunner_NotFound(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
 	}))
 
-	if err := client.RemoveWorker("bad-id"); err == nil {
+	if err := client.RemoveRunner("bad-id"); err == nil {
 		t.Fatal("expected error for 404 response")
 	}
 }
 
-// --- DeployTendril ---
+// --- DeployRunner ---
 
-func TestDeployTendril_Success(t *testing.T) {
+func TestDeployRunner_Success(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertAuth(t, r)
-		if r.URL.Path != "/api/cli/tendrils/deploy" {
+		if r.URL.Path != "/api/cli/runners/deploy" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Method != "POST" {
@@ -121,8 +121,8 @@ func TestDeployTendril_Success(t *testing.T) {
 
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["name"] != "my-tendril" {
-			t.Errorf("expected name my-tendril, got %s", body["name"])
+		if body["name"] != "my-runner" {
+			t.Errorf("expected name my-runner, got %s", body["name"])
 		}
 		if body["cloud_identity_id"] != "ci-1" {
 			t.Errorf("expected cloud_identity_id ci-1, got %s", body["cloud_identity_id"])
@@ -133,46 +133,46 @@ func TestDeployTendril_Success(t *testing.T) {
 
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]any{
-			"tendril": map[string]string{"id": "t1", "name": "my-tendril"},
-			"job":     map[string]string{"id": "j1", "status": "QUEUED", "created_at": "2026-01-01T00:00:00Z"},
+			"runner": map[string]string{"id": "t1", "name": "my-runner"},
+			"job":    map[string]string{"id": "j1", "status": "QUEUED", "created_at": "2026-01-01T00:00:00Z"},
 		})
 	}))
 
-	resp, err := client.DeployTendril("my-tendril", "ci-1", "eu-west-1", "")
+	resp, err := client.DeployRunner("my-runner", "ci-1", "eu-west-1", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.Tendril.ID != "t1" {
-		t.Errorf("expected tendril id t1, got %s", resp.Tendril.ID)
+	if resp.Runner.ID != "t1" {
+		t.Errorf("expected runner id t1, got %s", resp.Runner.ID)
 	}
 	if resp.Job.ID != "j1" {
 		t.Errorf("expected job id j1, got %s", resp.Job.ID)
 	}
 }
 
-func TestDeployTendril_WithAssigned(t *testing.T) {
+func TestDeployRunner_WithAssigned(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["assigned_worker_id"] != "w-exec" {
-			t.Errorf("expected assigned_worker_id w-exec, got %s", body["assigned_worker_id"])
+		if body["assigned_runner_id"] != "w-exec" {
+			t.Errorf("expected assigned_runner_id w-exec, got %s", body["assigned_runner_id"])
 		}
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]any{
-			"tendril": map[string]string{"id": "t1", "name": "t"},
-			"job":     map[string]string{"id": "j1", "status": "QUEUED"},
+			"runner": map[string]string{"id": "t1", "name": "t"},
+			"job":    map[string]string{"id": "j1", "status": "QUEUED"},
 		})
 	}))
 
-	_, err := client.DeployTendril("t", "ci", "us-east-1", "w-exec")
+	_, err := client.DeployRunner("t", "ci", "us-east-1", "w-exec")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-// --- GetVineClusters ---
+// --- GetSpecClusters ---
 
-func TestGetVineClusters_Success(t *testing.T) {
+func TestGetSpecClusters_Success(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertAuth(t, r)
 		if r.URL.Path != "/api/cli/clusters" {
@@ -188,15 +188,15 @@ func TestGetVineClusters_Success(t *testing.T) {
 					"node_min_size":     2,
 					"node_max_size":     10,
 					"node_desired_size": 3,
-					"vine_project_name": "my-app",
-					"vine_environment":  "production",
-					"vine_region":       "eu-west-1",
+					"spec_project_name": "my-app",
+					"spec_environment":  "production",
+					"spec_region":       "eu-west-1",
 				},
 			},
 		})
 	}))
 
-	clusters, err := client.GetVineClusters()
+	clusters, err := client.GetSpecClusters()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -206,8 +206,8 @@ func TestGetVineClusters_Success(t *testing.T) {
 	if clusters[0].ClusterName != "prod-eks" {
 		t.Errorf("expected prod-eks, got %s", clusters[0].ClusterName)
 	}
-	if clusters[0].VineProjectName != "my-app" {
-		t.Errorf("expected my-app, got %s", clusters[0].VineProjectName)
+	if clusters[0].SpecProjectName != "my-app" {
+		t.Errorf("expected my-app, got %s", clusters[0].SpecProjectName)
 	}
 }
 
@@ -288,7 +288,7 @@ func TestQueueJob_Plan(t *testing.T) {
 
 	job, err := client.QueueJobWithParams(QueueJobParams{
 		JobType:         "PLAN",
-		VineyardID:      "vy-1",
+		ZoneID:          "vy-1",
 		ConfigurationID: "vine-1",
 	})
 	if err != nil {
@@ -303,8 +303,8 @@ func TestQueueJob_DeployWithAssigned(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["assigned_worker_id"] != "w-1" {
-			t.Errorf("expected assigned_worker_id w-1, got %v", body["assigned_worker_id"])
+		if body["assigned_runner_id"] != "w-1" {
+			t.Errorf("expected assigned_runner_id w-1, got %v", body["assigned_runner_id"])
 		}
 		if body["plan_job_id"] != "plan-1" {
 			t.Errorf("expected plan_job_id plan-1, got %v", body["plan_job_id"])
@@ -318,9 +318,9 @@ func TestQueueJob_DeployWithAssigned(t *testing.T) {
 
 	_, err := client.QueueJobWithParams(QueueJobParams{
 		JobType:          "DEPLOY",
-		VineyardID:       "vy-1",
+		ZoneID:           "vy-1",
 		ConfigurationID:  "vine-1",
-		AssignedWorkerID: "w-1",
+		AssignedRunnerID: "w-1",
 		PlanJobID:        "plan-1",
 	})
 	if err != nil {
@@ -339,14 +339,14 @@ func TestGetJobs_WithFilters(t *testing.T) {
 		if r.URL.Query().Get("status") != "SUCCESS" {
 			t.Errorf("expected status=SUCCESS, got %s", r.URL.Query().Get("status"))
 		}
-		if r.URL.Query().Get("vineyard_id") != "vy-1" {
-			t.Errorf("expected vineyard_id=vy-1, got %s", r.URL.Query().Get("vineyard_id"))
+		if r.URL.Query().Get("zone_id") != "vy-1" {
+			t.Errorf("expected zone_id=vy-1, got %s", r.URL.Query().Get("zone_id"))
 		}
 		if r.URL.Query().Get("limit") != "20" {
 			t.Errorf("expected limit=20, got %s", r.URL.Query().Get("limit"))
 		}
 		json.NewEncoder(w).Encode(map[string]any{
-			"jobs":   []map[string]any{{"id": "j1", "status": "SUCCESS", "job_type": "PLAN", "vine_name": "my-app"}},
+			"jobs":   []map[string]any{{"id": "j1", "status": "SUCCESS", "job_type": "PLAN", "spec_name": "my-app"}},
 			"total":  1,
 			"limit":  20,
 			"offset": 0,
@@ -363,8 +363,8 @@ func TestGetJobs_WithFilters(t *testing.T) {
 	if page.Total != 1 {
 		t.Errorf("expected total 1, got %d", page.Total)
 	}
-	if page.Jobs[0].VineName != "my-app" {
-		t.Errorf("expected vine_name my-app, got %s", page.Jobs[0].VineName)
+	if page.Jobs[0].SpecName != "my-app" {
+		t.Errorf("expected spec_name my-app, got %s", page.Jobs[0].SpecName)
 	}
 }
 
@@ -506,7 +506,7 @@ func TestGetConfiguration_Success(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"configuration": map[string]any{
 				"id":                "cfg-1",
-				"project_name":     "my-app",
+				"project_name":      "my-app",
 				"environment_stage": "production",
 			},
 		})

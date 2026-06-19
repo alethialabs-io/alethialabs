@@ -90,25 +90,25 @@ func skipOnAuthOrNotFound(t *testing.T, err error, endpoint string) {
 	}
 }
 
-func TestIntegration_GetWorkers(t *testing.T) {
+func TestIntegration_GetRunners(t *testing.T) {
 	token := loadTestToken(t)
 	client := NewClient(token)
 
-	workers, err := client.GetWorkers()
-	skipOnAuthOrNotFound(t, err, "GetWorkers")
+	runners, err := client.GetRunners()
+	skipOnAuthOrNotFound(t, err, "GetRunners")
 	if err != nil {
-		t.Fatalf("GetWorkers failed: %v", err)
+		t.Fatalf("GetRunners failed: %v", err)
 	}
 
-	t.Logf("Found %d tendrils", len(workers))
-	for _, w := range workers {
+	t.Logf("Found %d runners", len(runners))
+	for _, w := range runners {
 		t.Logf("  %s (mode=%s, status=%s, default=%v)", w.Name, w.Mode, w.Status, w.IsDefault)
 
 		if w.ID == "" {
-			t.Error("worker ID is empty")
+			t.Error("runner ID is empty")
 		}
 		if w.Name == "" {
-			t.Error("worker name is empty")
+			t.Error("runner name is empty")
 		}
 
 		validModes := map[string]bool{"self-hosted": true, "cloud-hosted": true}
@@ -123,19 +123,19 @@ func TestIntegration_GetWorkers(t *testing.T) {
 	}
 }
 
-func TestIntegration_GetVineClusters(t *testing.T) {
+func TestIntegration_GetSpecClusters(t *testing.T) {
 	token := loadTestToken(t)
 	client := NewClient(token)
 
-	clusters, err := client.GetVineClusters()
-	skipOnAuthOrNotFound(t, err, "GetVineClusters")
+	clusters, err := client.GetSpecClusters()
+	skipOnAuthOrNotFound(t, err, "GetSpecClusters")
 	if err != nil {
-		t.Fatalf("GetVineClusters failed: %v", err)
+		t.Fatalf("GetSpecClusters failed: %v", err)
 	}
 
 	t.Logf("Found %d clusters", len(clusters))
 	for _, c := range clusters {
-		t.Logf("  %s — %s (%s) [%s]", c.VineProjectName, c.ClusterName, c.ClusterVersion, c.Status)
+		t.Logf("  %s — %s (%s) [%s]", c.SpecProjectName, c.ClusterName, c.ClusterVersion, c.Status)
 
 		validStatuses := map[string]bool{
 			"PENDING": true, "CREATING": true, "ACTIVE": true,

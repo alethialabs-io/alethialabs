@@ -15,33 +15,33 @@ import (
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
 )
 
-type WorkerAPIClient struct {
-	baseURL    string
-	workerID   string
-	workerToken string
-	httpClient *http.Client
+type RunnerAPIClient struct {
+	baseURL     string
+	runnerID    string
+	runnerToken string
+	httpClient  *http.Client
 }
 
 type Job struct {
-	ID                string                 `json:"id"`
-	UserID            string                 `json:"user_id"`
-	VineyardID        string                 `json:"vineyard_id"`
-	CloudIdentityID   *string                `json:"cloud_identity_id"`
-	JobType           string                 `json:"job_type"`
-	ClusterID         *string                `json:"cluster_id"`
-	ConfigurationID   *string                `json:"configuration_id"`
-	PlanJobID         *string                `json:"plan_job_id"`
-	ConfigSnapshot    map[string]any         `json:"config_snapshot"`
-	ConfigurationHash *string                `json:"configuration_hash"`
-	Status            string                 `json:"status"`
-	WorkerID          *string                `json:"worker_id"`
-	ClaimedAt         *time.Time             `json:"claimed_at"`
-	StartedAt         *time.Time             `json:"started_at"`
-	CompletedAt       *time.Time             `json:"completed_at"`
-	ErrorMessage      *string                `json:"error_message"`
-	ExecutionMetadata map[string]any         `json:"execution_metadata"`
-	CreatedAt         time.Time              `json:"created_at"`
-	UpdatedAt         time.Time              `json:"updated_at"`
+	ID                string         `json:"id"`
+	UserID            string         `json:"user_id"`
+	ZoneID            string         `json:"zone_id"`
+	CloudIdentityID   *string        `json:"cloud_identity_id"`
+	JobType           string         `json:"job_type"`
+	ClusterID         *string        `json:"cluster_id"`
+	ConfigurationID   *string        `json:"configuration_id"`
+	PlanJobID         *string        `json:"plan_job_id"`
+	ConfigSnapshot    map[string]any `json:"config_snapshot"`
+	ConfigurationHash *string        `json:"configuration_hash"`
+	Status            string         `json:"status"`
+	RunnerID          *string        `json:"runner_id"`
+	ClaimedAt         *time.Time     `json:"claimed_at"`
+	StartedAt         *time.Time     `json:"started_at"`
+	CompletedAt       *time.Time     `json:"completed_at"`
+	ErrorMessage      *string        `json:"error_message"`
+	ExecutionMetadata map[string]any `json:"execution_metadata"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
 }
 
 type CloudIdentity struct {
@@ -62,32 +62,32 @@ type ClaimResponse struct {
 	CloudIdentity *CloudIdentity `json:"cloud_identity"`
 }
 
-func NewWorkerAPIClient(baseURL, workerID, workerToken string) *WorkerAPIClient {
-	return &WorkerAPIClient{
+func NewRunnerAPIClient(baseURL, runnerID, runnerToken string) *RunnerAPIClient {
+	return &RunnerAPIClient{
 		baseURL:     fmt.Sprintf("%s/api", baseURL),
-		workerID:    workerID,
-		workerToken: workerToken,
+		runnerID:    runnerID,
+		runnerToken: runnerToken,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
 }
 
-func (c *WorkerAPIClient) setWorkerHeaders(req *http.Request) {
-	req.Header.Set("X-Worker-ID", c.workerID)
-	req.Header.Set("X-Worker-Token", c.workerToken)
+func (c *RunnerAPIClient) setRunnerHeaders(req *http.Request) {
+	req.Header.Set("X-Runner-ID", c.runnerID)
+	req.Header.Set("X-Runner-Token", c.runnerToken)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", fmt.Sprintf("runner-worker/%s", version.Version))
+	req.Header.Set("User-Agent", fmt.Sprintf("runner/%s", version.Version))
 	req.Header.Set("ngrok-skip-browser-warning", "true")
 }
 
-func (c *WorkerAPIClient) Heartbeat() error {
+func (c *RunnerAPIClient) Heartbeat() error {
 	payload, _ := json.Marshal(map[string]string{"version": version.Version})
-	req, err := http.NewRequest("POST", c.baseURL+"/workers/heartbeat", bytes.NewBuffer(payload))
+	req, err := http.NewRequest("POST", c.baseURL+"/runners/heartbeat", bytes.NewBuffer(payload))
 	if err != nil {
 		return err
 	}
-	c.setWorkerHeaders(req)
+	c.setRunnerHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -101,12 +101,12 @@ func (c *WorkerAPIClient) Heartbeat() error {
 	return nil
 }
 
-func (c *WorkerAPIClient) ClaimJob() (*ClaimResponse, error) {
+func (c *RunnerAPIClient) ClaimJob() (*ClaimResponse, error) {
 	req, err := http.NewRequest("POST", c.baseURL+"/jobs/claim", nil)
 	if err != nil {
 		return nil, err
 	}
-	c.setWorkerHeaders(req)
+	c.setRunnerHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -126,7 +126,7 @@ func (c *WorkerAPIClient) ClaimJob() (*ClaimResponse, error) {
 	return &result, nil
 }
 
-func (c *WorkerAPIClient) UpdateJobStatus(jobID, status, errorMessage string, executionMetadata map[string]any) error {
+func (c *RunnerAPIClient) UpdateJobStatus(jobID, status, errorMessage string, executionMetadata map[string]any) error {
 	payload := map[string]any{
 		"status": status,
 	}
@@ -146,7 +146,7 @@ func (c *WorkerAPIClient) UpdateJobStatus(jobID, status, errorMessage string, ex
 	if err != nil {
 		return err
 	}
-	c.setWorkerHeaders(req)
+	c.setRunnerHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -160,7 +160,7 @@ func (c *WorkerAPIClient) UpdateJobStatus(jobID, status, errorMessage string, ex
 	return nil
 }
 
-func (c *WorkerAPIClient) SendLog(jobID, logChunk, streamType string) error {
+func (c *RunnerAPIClient) SendLog(jobID, logChunk, streamType string) error {
 	payload := map[string]string{
 		"log_chunk":   logChunk,
 		"stream_type": streamType,
@@ -175,7 +175,7 @@ func (c *WorkerAPIClient) SendLog(jobID, logChunk, streamType string) error {
 	if err != nil {
 		return err
 	}
-	c.setWorkerHeaders(req)
+	c.setRunnerHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -189,7 +189,7 @@ func (c *WorkerAPIClient) SendLog(jobID, logChunk, streamType string) error {
 	return nil
 }
 
-func (c *WorkerAPIClient) UploadPlanArtifact(jobID, filePath string) error {
+func (c *RunnerAPIClient) UploadPlanArtifact(jobID, filePath string) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read plan file: %w", err)
@@ -199,7 +199,7 @@ func (c *WorkerAPIClient) UploadPlanArtifact(jobID, filePath string) error {
 	if err != nil {
 		return err
 	}
-	c.setWorkerHeaders(req)
+	c.setRunnerHeaders(req)
 	req.Header.Set("Content-Type", "application/octet-stream")
 
 	resp, err := c.httpClient.Do(req)
@@ -214,12 +214,12 @@ func (c *WorkerAPIClient) UploadPlanArtifact(jobID, filePath string) error {
 	return nil
 }
 
-func (c *WorkerAPIClient) DownloadPlanArtifact(jobID, destPath string) error {
+func (c *RunnerAPIClient) DownloadPlanArtifact(jobID, destPath string) error {
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s/jobs/%s/plan-artifact", c.baseURL, jobID), nil)
 	if err != nil {
 		return err
 	}
-	c.setWorkerHeaders(req)
+	c.setRunnerHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -246,12 +246,12 @@ func (c *WorkerAPIClient) DownloadPlanArtifact(jobID, destPath string) error {
 	return nil
 }
 
-func (c *WorkerAPIClient) FetchGitToken(jobID string) (string, error) {
+func (c *RunnerAPIClient) FetchGitToken(jobID string) (string, error) {
 	req, err := http.NewRequest("POST", fmt.Sprintf("%s/jobs/%s/git-token", c.baseURL, jobID), nil)
 	if err != nil {
 		return "", err
 	}
-	c.setWorkerHeaders(req)
+	c.setRunnerHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -276,55 +276,55 @@ func (c *WorkerAPIClient) FetchGitToken(jobID string) (string, error) {
 	return *result.Token, nil
 }
 
-func (c *WorkerAPIClient) UpdateWorkerMetadata(workerID string, metadata map[string]any) error {
+func (c *RunnerAPIClient) UpdateRunnerMetadata(runnerID string, metadata map[string]any) error {
 	body, err := json.Marshal(metadata)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequest("PATCH", fmt.Sprintf("%s/workers/%s/metadata", c.baseURL, workerID), bytes.NewBuffer(body))
+	req, err := http.NewRequest("PATCH", fmt.Sprintf("%s/runners/%s/metadata", c.baseURL, runnerID), bytes.NewBuffer(body))
 	if err != nil {
 		return err
 	}
-	c.setWorkerHeaders(req)
+	c.setRunnerHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("update worker metadata failed: %w", err)
+		return fmt.Errorf("update runner metadata failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("update worker metadata returned status %d", resp.StatusCode)
+		return fmt.Errorf("update runner metadata returned status %d", resp.StatusCode)
 	}
 	return nil
 }
 
-func (c *WorkerAPIClient) DeleteWorker(workerID string) error {
-	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/workers/%s", c.baseURL, workerID), nil)
+func (c *RunnerAPIClient) DeleteRunner(runnerID string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/runners/%s", c.baseURL, runnerID), nil)
 	if err != nil {
 		return err
 	}
-	c.setWorkerHeaders(req)
+	c.setRunnerHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("delete worker failed: %w", err)
+		return fmt.Errorf("delete runner failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("delete worker returned status %d", resp.StatusCode)
+		return fmt.Errorf("delete runner returned status %d", resp.StatusCode)
 	}
 	return nil
 }
 
-func (c *WorkerAPIClient) GetJob(jobID string) (*Job, error) {
+func (c *RunnerAPIClient) GetJob(jobID string) (*Job, error) {
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s/jobs/%s", c.baseURL, jobID), nil)
 	if err != nil {
 		return nil, err
 	}
-	c.setWorkerHeaders(req)
+	c.setRunnerHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
