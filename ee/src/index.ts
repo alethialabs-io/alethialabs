@@ -79,15 +79,27 @@ export function register(core: CoreContext): EnterpriseModule {
 		// users with no org membership fall back to their personal org (orgId == userId).
 		// STANDUP follow-up: honor session.activeOrganizationId for active-org switching
 		// (needs the session/headers threaded into getActiveScope).
-		resolveScope: async (userId: string): Promise<Actor> => {
+		resolveScope: async (
+			userId: string,
+			activeOrgId?: string,
+		): Promise<Actor> => {
+			// Honor the session's selected org, but only if the user is a member of it.
+			if (activeOrgId) {
+				const selected = await core.db.execute<{ id: string }>(sql`
+					select organization_id as id from member
+					where user_id = ${userId}::uuid and organization_id = ${activeOrgId}::uuid
+					limit 1
+				`);
+				if (selected[0]) return { userId, orgId: activeOrgId };
+			}
+			// Else the primary (earliest) membership; else the personal org.
 			const rows = await core.db.execute<{ organization_id: string }>(sql`
 				select organization_id from member
 				where user_id = ${userId}::uuid
 				order by created_at asc
 				limit 1
 			`);
-			const orgId = rows[0]?.organization_id ?? userId;
-			return { userId, orgId };
+			return { userId, orgId: rows[0]?.organization_id ?? userId };
 		},
 
 		entitlements: (_actor: Actor): Entitlements => entitlements,

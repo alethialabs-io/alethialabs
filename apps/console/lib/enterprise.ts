@@ -28,8 +28,12 @@ export interface CoreContext {
 export interface EnterpriseModule {
 	/** Engine override (e.g. OpenFgaPdp). Community uses the default PostgresRbacPDP. */
 	pdp?: Pdp;
-	/** Resolves a user's active tenancy scope (multi-org). Community = personal org. */
-	resolveScope?: (userId: string) => Promise<Actor>;
+	/**
+	 * Resolves a user's active tenancy scope (multi-org). `activeOrgId` is the org the
+	 * session selected (validate membership before honoring it); fall back to the
+	 * user's primary org, then the personal org. Community = personal org.
+	 */
+	resolveScope?: (userId: string, activeOrgId?: string) => Promise<Actor>;
 	/** Extra Better Auth plugins (organization, SSO). Community = none. */
 	authPlugins?: NonNullable<BetterAuthOptions["plugins"]>;
 	/** Feature entitlements for a scope, gated by a signed license. */

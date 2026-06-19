@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { requireOwner } from "@/lib/auth/owner";
+import { getOwnerScope } from "@/lib/auth/owner";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import type { Action, Resource } from "@/lib/authz/registry";
@@ -13,7 +13,8 @@ import { verifyCliToken } from "@/lib/cli/auth";
  * Use for list views, which then call getPdp().listAccessible(...) for the id-set.
  */
 export async function currentActor(): Promise<Actor> {
-	return getActiveScope(await requireOwner());
+	const { userId, activeOrgId } = await getOwnerScope();
+	return getActiveScope(userId, activeOrgId);
 }
 
 /**
