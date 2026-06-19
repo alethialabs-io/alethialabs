@@ -26,7 +26,7 @@ locals {
     Environment = var.environment
     ManagedBy   = "Alethia"
   }
-  
+
   create_vpc = var.vpc_id == ""
 }
 
@@ -39,9 +39,9 @@ module "vpc" {
   name = "${local.name}-vpc"
   cidr = var.vpc_cidr
 
-  azs             = ["${var.region}a", "${var.region}b"]
-  private_subnets = [cidrsubnet(var.vpc_cidr, 8, 1), cidrsubnet(var.vpc_cidr, 8, 2)]
-  public_subnets  = [cidrsubnet(var.vpc_cidr, 8, 101), cidrsubnet(var.vpc_cidr, 8, 102)]
+  azs                     = ["${var.region}a", "${var.region}b"]
+  private_subnets         = [cidrsubnet(var.vpc_cidr, 8, 1), cidrsubnet(var.vpc_cidr, 8, 2)]
+  public_subnets          = [cidrsubnet(var.vpc_cidr, 8, 101), cidrsubnet(var.vpc_cidr, 8, 102)]
   map_public_ip_on_launch = true
 
   enable_nat_gateway = true
@@ -87,7 +87,7 @@ module "eks" {
 
       instance_types = var.instance_types
       capacity_type  = "SPOT"
-      
+
       # Explicitly set subnets for the node group
       subnet_ids = local.subnet_ids
 
@@ -107,21 +107,21 @@ module "eks" {
   tags        = local.tags
 }
 
-# 3. Tendril Agent IAM Role (IRSA)
-module "tendril_role" {
-  source    = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version   = "~> 5.0"
+# 3. Runner Agent IAM Role (IRSA)
+module "runner_role" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.0"
 
-  role_name = "${local.name}-tendril-role"
+  role_name = "${local.name}-runner-role"
 
   oidc_providers = {
     main = {
       provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["tendril-system:tendril"]
+      namespace_service_accounts = ["runner-system:runner"]
     }
   }
 
-  # For the prototype, we grant AdministratorAccess so Tendril can provision any resource
+  # For the prototype, we grant AdministratorAccess so Runner can provision any resource
   # In production, this should be scoped down to the specific resources managed by Alethia
   role_policy_arns = {
     admin = "arn:aws:iam::aws:policy/AdministratorAccess"
@@ -130,8 +130,8 @@ module "tendril_role" {
   tags = local.tags
 }
 
-output "tendril_role_arn" {
-  value = module.tendril_role.iam_role_arn
+output "runner_role_arn" {
+  value = module.runner_role.iam_role_arn
 }
 
 output "cluster_endpoint" {

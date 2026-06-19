@@ -5,19 +5,19 @@ project_name = "runner"
 environment  = "dev"
 
 # Each entry creates a runner: VPC, ECS cluster, auto-registration.
-# Key = runner name, region = AWS region, trellis_url = which Trellis it serves.
+# Key = runner name, region = AWS region, alethia_url = which Alethia it serves.
 runners = {
   "prod-eu-west-1" = {
     region      = "eu-west-1"
-    trellis_url = "https://adp.prod.itgix.eu"
+    alethia_url = "https://adp.prod.itgix.eu"
   }
   "beta-eu-west-1" = {
     region      = "eu-west-1"
-    trellis_url = "https://beta.adp.itgix.com"
+    alethia_url = "https://beta.adp.itgix.com"
   }
   "dev-eu-west-1" = {
     region      = "eu-west-1"
-    trellis_url = "https://your-ngrok-url.ngrok-free.dev"
+    alethia_url = "https://your-ngrok-url.ngrok-free.dev"
   }
 }
 
@@ -26,9 +26,9 @@ runner_version = "latest"
 
 # Platform API secret — used by runners to auto-register and by the Lambda
 # scaler to probe each runner's /api/platform/queue (console RELEASE_API_SECRET).
-trellis_api_secret = ""
+alethia_api_secret = ""
 
-# S3-compatible state storage for provisioned vines (SeaweedFS / Garage / S3 / R2).
+# S3-compatible state storage for provisioned specs (SeaweedFS / Garage / S3 / R2).
 storage_endpoint          = "https://YOUR_S3_ENDPOINT"
 storage_region            = "us-east-1"
 storage_access_key_id     = ""

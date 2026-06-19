@@ -80,14 +80,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Publish release metadata to Trellis
+      - name: Publish release metadata to Alethia
         env:
-          TRELLIS_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          ALETHIA_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
           RELEASE_API_SECRET: ${{ secrets.RELEASE_API_SECRET }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           NOTES=$(gh release view "runner-v${{ steps.meta.outputs.VERSION }}" --json body -q .body 2>/dev/null || echo "")
-          curl -sf -X POST "${TRELLIS_URL}/api/releases/runner" \
+          curl -sf -X POST "${ALETHIA_URL}/api/releases/runner" \
             -H "Authorization: Bearer ${RELEASE_API_SECRET}" \
             -H "Content-Type: application/json" \
             -d "$(jq -n \
@@ -104,4 +104,4 @@ jobs:
             --service ${{ env.ECS_SERVICE }} \
             --force-new-deployment \
             --region ${{ env.AWS_REGION }}
-          echo "Deployment triggered for tendril v${{ steps.meta.outputs.VERSION }}"
+          echo "Deployment triggered for runner v${{ steps.meta.outputs.VERSION }}"

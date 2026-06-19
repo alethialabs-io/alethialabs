@@ -7,8 +7,8 @@
 @import 'fumadocs-ui/css/preset.css';
 
 :root {
-  --trellis-color: oklch(0.6 0.15 150); /* Green */
+  --console-color: oklch(0.6 0.15 150); /* Green */
   --cli-color: oklch(0.6 0.15 280);   /* Purple */
-  --tendril-color: oklch(0.6 0.15 240); /* Blue */
+  --runner-color: oklch(0.6 0.15 240); /* Blue */
   --concepts-color: oklch(0.6 0.12 60); /* Amber */
 }

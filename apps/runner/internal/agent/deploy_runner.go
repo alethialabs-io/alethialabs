@@ -20,7 +20,7 @@ type runnerDeployConfig struct {
 	ImageTag        string `json:"image_tag"`
 	Region          string `json:"region"`
 	CloudProvider   string `json:"cloud_provider"`
-	TrellisURL      string `json:"trellis_url"`
+	AlethiaURL      string `json:"alethia_url"`
 	CPU             int    `json:"cpu"`
 	Memory          int    `json:"memory"`
 	ImageRepository string `json:"image_repository"`
@@ -47,11 +47,11 @@ func (w *Runner) executeDeployRunner(ctx context.Context, job *Job, provider str
 	if cfg.Memory == 0 {
 		cfg.Memory = 1024
 	}
-	if cfg.TrellisURL == "" {
-		cfg.TrellisURL = "https://adp.prod.itgix.eu"
+	if cfg.AlethiaURL == "" {
+		cfg.AlethiaURL = "https://adp.prod.itgix.eu"
 	}
 	if cfg.ImageRepository == "" {
-		cfg.ImageRepository = "787587782604.dkr.ecr.eu-west-1.amazonaws.com/tendril-dev-tendril"
+		cfg.ImageRepository = "787587782604.dkr.ecr.eu-west-1.amazonaws.com/runner-dev-runner"
 	}
 
 	templatesDir := resolveRunnerTemplatesDir()
@@ -81,7 +81,7 @@ func (w *Runner) executeDeployRunner(ctx context.Context, job *Job, provider str
 		"runner_id":        cfg.RunnerID,
 		"runner_token":     cfg.RunnerToken,
 		"runner_name":      cfg.RunnerName,
-		"trellis_url":      cfg.TrellisURL,
+		"alethia_url":      cfg.AlethiaURL,
 		"image_tag":        cfg.ImageTag,
 		"region":           cfg.Region,
 		"cpu":              cfg.CPU,
@@ -140,7 +140,7 @@ func (w *Runner) executeDeployRunner(ctx context.Context, job *Job, provider str
 			"region":           cfg.Region,
 			"cloud_provider":   cfg.CloudProvider,
 			"image_tag":        cfg.ImageTag,
-			"trellis_url":      cfg.TrellisURL,
+			"alethia_url":      cfg.AlethiaURL,
 			"cpu":              cfg.CPU,
 			"memory":           cfg.Memory,
 			"image_repository": cfg.ImageRepository,

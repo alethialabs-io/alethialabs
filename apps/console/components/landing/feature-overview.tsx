@@ -73,7 +73,7 @@ const DEMO_TABS = [
 		id: "plan",
 		label: "Plan & Apply",
 		code: [
-			{ text: "$ alethia harvest", color: "muted" as const },
+			{ text: "$ alethia spec apply", color: "muted" as const },
 			{ text: "" },
 			{ text: "  ? Select zone: production" },
 			{ text: "  ? Select spec: api-backend" },

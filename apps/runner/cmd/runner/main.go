@@ -15,7 +15,7 @@ import (
 func main() {
 	cfg := agent.Config{
 		Mode:        envOrDefault("ALETHIA_RUNNER_MODE", "self-hosted"),
-		TrellisURL:  envOrDefault("ALETHIA_WEB_ORIGIN", "https://adp.prod.itgix.eu"),
+		AlethiaURL:  envOrDefault("ALETHIA_WEB_ORIGIN", "https://adp.prod.itgix.eu"),
 		RunnerID:    os.Getenv("ALETHIA_RUNNER_ID"),
 		RunnerToken: os.Getenv("ALETHIA_RUNNER_TOKEN"),
 

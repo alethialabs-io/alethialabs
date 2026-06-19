@@ -52,7 +52,7 @@ func (w *Runner) executeDestroyRunner(ctx context.Context, job *Job, provider st
 		"runner_id":        cfg.RunnerID,
 		"runner_token":     "destroy-placeholder",
 		"runner_name":      cfg.RunnerName,
-		"trellis_url":      cfg.TrellisURL,
+		"alethia_url":      cfg.AlethiaURL,
 		"image_tag":        cfg.ImageTag,
 		"region":           cfg.Region,
 		"cpu":              cfg.CPU,

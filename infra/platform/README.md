@@ -216,7 +216,7 @@ From the CLI:
 alethia bootstrap --queue
 
 # Or queue a deploy job
-alethia harvest
+alethia spec apply
 ```
 
 From the Alethia dashboard:

@@ -196,7 +196,7 @@ export async function deployRunner(params: {
 			image_tag: params.imageTag || "latest",
 			region: params.region,
 			cloud_provider: identity?.provider ?? "aws",
-			trellis_url:
+			alethia_url:
 				process.env.NEXT_PUBLIC_APP_URL || "https://adp.prod.itgix.eu",
 		};
 
@@ -271,8 +271,8 @@ function buildRunnerConfigSnapshot(
 		region: deployConfig.region,
 		cloud_provider: provider ?? deployConfig.cloud_provider ?? "aws",
 		image_tag: overrides?.image_tag ?? deployConfig.image_tag ?? "latest",
-		trellis_url:
-			deployConfig.trellis_url ??
+		alethia_url:
+			deployConfig.alethia_url ??
 			process.env.NEXT_PUBLIC_APP_URL ??
 			"https://adp.prod.itgix.eu",
 		cpu: deployConfig.cpu ?? 512,

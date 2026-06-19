@@ -175,7 +175,7 @@ export interface RunnerDeployConfig {
 	region: string;
 	cloud_provider: string;
 	image_tag: string;
-	trellis_url: string;
+	alethia_url: string;
 	cpu: number;
 	memory: number;
 	image_repository: string;

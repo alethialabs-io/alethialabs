@@ -59,7 +59,7 @@ type Configuration struct {
 	CIDRBlock              *string   `json:"cidr_block"`
 }
 
-type Harvest struct {
+type DeployJob struct {
 	ID              string     `json:"id"`
 	ClusterID       string     `json:"cluster_id"`
 	ConfigurationID string     `json:"configuration_id"`

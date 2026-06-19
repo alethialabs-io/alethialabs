@@ -1,5 +1,5 @@
 image:
-  repository: lowkeyfaint/tendril
+  repository: lowkeyfaint/runner
   pullPolicy: Always
   tag: "latest"
 
@@ -11,7 +11,7 @@ config:
 serviceAccount:
   create: true
   annotations: {}
-  name: "tendril-sa"
+  name: "runner-sa"
 
 # IAM Role ARN for Service Account (IRSA)
 # This is critical for the agent to create AWS resources

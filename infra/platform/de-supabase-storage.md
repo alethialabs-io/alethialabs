@@ -1,18 +1,18 @@
 # Migrating an existing Supabase install off Supabase Storage
 
-> **Fresh self-hosters do not need this doc.** Setup is codified: `cp .env.example .env && docker compose up -d` brings up SeaweedFS, and the console/runner **auto-create their buckets on first use** (`plan-artifacts`, `vine-terraform-state`) — no manual `aws s3 mb`, no hand-set env. See the repo-root `docker-compose.yml` and `.env.example`.
+> **Fresh self-hosters do not need this doc.** Setup is codified: `cp .env.example .env && docker compose up -d` brings up SeaweedFS, and the console/runner **auto-create their buckets on first use** (`plan-artifacts`, `spec-terraform-state`) — no manual `aws s3 mb`, no hand-set env. See the repo-root `docker-compose.yml` and `.env.example`.
 
 This note covers the **one-time data migration** for an *already-running* Supabase-hosted instance, plus storage items still pointing at Supabase that are deferred to later phases.
 
 ## 1. One-time state migration (do BEFORE cutover)
 
-Terraform/OpenTofu state in `vine-terraform-state` is the only **un-regenerable**
+Terraform/OpenTofu state in `spec-terraform-state` is the only **un-regenerable**
 data — plan artifacts are ephemeral and regenerate on the next plan. Sync it from
 the old Supabase Storage endpoint to the new S3 endpoint:
 
 ```bash
-aws --endpoint-url "$SUPABASE_S3_ENDPOINT" s3 sync s3://vine-terraform-state ./vts-backup
-aws --endpoint-url "$ALETHIA_STORAGE_ENDPOINT"      s3 sync ./vts-backup s3://vine-terraform-state
+aws --endpoint-url "$SUPABASE_S3_ENDPOINT" s3 sync s3://spec-terraform-state ./vts-backup
+aws --endpoint-url "$ALETHIA_STORAGE_ENDPOINT"      s3 sync ./vts-backup s3://spec-terraform-state
 ```
 
 Keep the Supabase bucket warm until the acid test passes: `tofu init` + `tofu plan`
@@ -55,7 +55,7 @@ Keep the Supabase bucket warm until the plan is clean.
 ## 4. GitHub repo secrets
 
 CI reads `ALETHIA_STORAGE_ACCESS_KEY_ID`, `ALETHIA_STORAGE_SECRET_ACCESS_KEY`,
-`ALETHIA_STORAGE_ENDPOINT`, `ALETHIA_STORAGE_REGION` for **both** vine state and the
+`ALETHIA_STORAGE_ENDPOINT`, `ALETHIA_STORAGE_REGION` for **both** spec state and the
 platform-state backend, and `RELEASE_API_SECRET` for the scaler. After the §3 cutover,
 delete the now-unused `SUPABASE_STORAGE_*`, `NEXT_PUBLIC_SUPABASE_URL`, and
 `SERVICE_ROLE_SECRET` repo secrets. Also drop the stale `supabase_*` lines from your

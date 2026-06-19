@@ -25,7 +25,7 @@ import (
 
 type Config struct {
 	Mode        string // "self-hosted" or "cloud-hosted"
-	TrellisURL  string
+	AlethiaURL  string
 	RunnerID    string
 	RunnerToken string
 
@@ -43,7 +43,7 @@ type Runner struct {
 func New(cfg Config) *Runner {
 	return &Runner{
 		config: cfg,
-		api:    NewRunnerAPIClient(cfg.TrellisURL, cfg.RunnerID, cfg.RunnerToken),
+		api:    NewRunnerAPIClient(cfg.AlethiaURL, cfg.RunnerID, cfg.RunnerToken),
 	}
 }
 
@@ -81,7 +81,7 @@ func (w *Runner) Run(ctx context.Context) error {
 	go w.heartbeatLoop(ctx)
 
 	fmt.Printf("Runner started (id=%s, mode=%s, version=%s)\n", w.config.RunnerID, w.config.Mode, version.Version)
-	fmt.Printf("Polling %s for jobs...\n", w.config.TrellisURL)
+	fmt.Printf("Polling %s for jobs...\n", w.config.AlethiaURL)
 
 	return w.pollLoop(ctx, &draining)
 }

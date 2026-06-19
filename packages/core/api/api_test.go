@@ -273,8 +273,8 @@ func TestQueueJob_Plan(t *testing.T) {
 		if body["job_type"] != "PLAN" {
 			t.Errorf("expected PLAN, got %v", body["job_type"])
 		}
-		if body["configuration_id"] != "vine-1" {
-			t.Errorf("expected vine-1, got %v", body["configuration_id"])
+		if body["configuration_id"] != "spec-1" {
+			t.Errorf("expected spec-1, got %v", body["configuration_id"])
 		}
 		if _, ok := body["plan_job_id"]; ok {
 			t.Error("plan_job_id should not be sent when empty")
@@ -289,7 +289,7 @@ func TestQueueJob_Plan(t *testing.T) {
 	job, err := client.QueueJobWithParams(QueueJobParams{
 		JobType:         "PLAN",
 		ZoneID:          "vy-1",
-		ConfigurationID: "vine-1",
+		ConfigurationID: "spec-1",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -319,7 +319,7 @@ func TestQueueJob_DeployWithAssigned(t *testing.T) {
 	_, err := client.QueueJobWithParams(QueueJobParams{
 		JobType:          "DEPLOY",
 		ZoneID:           "vy-1",
-		ConfigurationID:  "vine-1",
+		ConfigurationID:  "spec-1",
 		AssignedRunnerID: "w-1",
 		PlanJobID:        "plan-1",
 	})

@@ -8,7 +8,7 @@ GHCR_IMAGE="ghcr.io/alethialabs-io/runner"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GIT_SHA=$(git -C "${REPO_ROOT}" rev-parse --short HEAD)
 
-declare -A TENDRILS=(
+declare -A RUNNERS=(
   ["prod-eu-west-1"]="eu-west-1"
   ["beta-eu-west-1"]="eu-west-1"
   ["dev-eu-west-1"]="eu-west-1"
@@ -49,10 +49,10 @@ docker push "${GHCR_IMAGE}:${GIT_SHA}"
 FAILED=0
 DEPLOYED=0
 
-for KEY in "${!TENDRILS[@]}"; do
+for KEY in "${!RUNNERS[@]}"; do
   should_deploy "$KEY" || continue
 
-  REGION="${TENDRILS[$KEY]}"
+  REGION="${RUNNERS[$KEY]}"
   CLUSTER="runner-dev-${KEY}-cluster"
   SERVICE="runner-dev-${KEY}-service"
 

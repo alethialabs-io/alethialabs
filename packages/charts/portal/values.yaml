@@ -48,7 +48,7 @@ secrets:
     ALETHIA_DATABASE_URL: ""
     BETTER_AUTH_SECRET: ""
     CLI_JWT_SECRET: ""
-    VINTNER_URL: "http://docs:3001"
+    DOCS_URL: "http://docs:3001"
 
   # For ExternalSecrets
   externalSecret:

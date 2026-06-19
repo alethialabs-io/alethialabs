@@ -81,7 +81,7 @@ export async function POST(req: Request) {
 			image_tag: imageTag,
 			region,
 			cloud_provider: identity.provider ?? "aws",
-			trellis_url:
+			alethia_url:
 				process.env.NEXT_PUBLIC_APP_URL || "https://adp.prod.itgix.eu",
 		};
 
