@@ -53,12 +53,15 @@ function readEntitlements(): Entitlements {
 export function register(core: CoreContext): EnterpriseModule {
 	const entitlements = readEntitlements();
 	const fgaClient = buildFgaClient(core);
+	const tupleSync = fgaClient ? new FgaTupleSync(core, fgaClient) : undefined;
 
 	return {
 		// Better Auth organization plugin: orgs / teams / members / invitations.
 		authPlugins: [
 			organization({
 				creatorRole: "owner",
+				// Group-based grants: a grant can target a team (grants.principal_type='team').
+				teams: { enabled: true },
 				// Membership roles = the PDP roles (owner/admin/operator/viewer), injected
 				// from core so the org-plugin role vocabulary matches end-to-end.
 				ac: core.orgAc,
@@ -88,6 +91,15 @@ export function register(core: CoreContext): EnterpriseModule {
 					},
 					afterRemoveMember: async ({ organization: org, user }) => {
 						await core.revokeMemberGrant(org.id, user.id);
+					},
+					// Team membership → OpenFGA group tuples (team:T#member@user:U), so
+					// team-scoped grants reach members. Postgres resolves team_member at
+					// query time; this keeps the FGA store in step.
+					afterAddTeamMember: async ({ teamMember, user }) => {
+						await tupleSync?.syncTeamMember(teamMember.teamId, user.id);
+					},
+					afterRemoveTeamMember: async ({ teamMember, user }) => {
+						await tupleSync?.removeTeamMember(teamMember.teamId, user.id);
 					},
 				},
 			}),
@@ -138,6 +150,6 @@ export function register(core: CoreContext): EnterpriseModule {
 		// OpenFGA engine + dual-write, both only when OpenFGA is configured; otherwise
 		// undefined ⇒ the community PostgresRbacPDP + no-op seam stay in place.
 		pdp: fgaClient ? new OpenFgaPdp(core, fgaClient) : undefined,
-		tupleSync: fgaClient ? new FgaTupleSync(core, fgaClient) : undefined,
+		tupleSync,
 	};
 }

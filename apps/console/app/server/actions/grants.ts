@@ -20,6 +20,7 @@ import {
 	role,
 	runners,
 	specs,
+	team,
 	user,
 	zones,
 } from "@/lib/db/schema";
@@ -50,9 +51,10 @@ export interface GrantOptions {
 export async function getGrantOptions(): Promise<GrantOptions> {
 	const actor = await currentActor();
 	const db = getServiceDb();
-	const [members, zoneRows, specRows, runnerRows, idRows, custom] =
+	const [members, teamRows, zoneRows, specRows, runnerRows, idRows, custom] =
 		await Promise.all([
 			getMembers(),
+			db.select({ id: team.id, label: team.name }).from(team).where(eq(team.organizationId, actor.orgId)),
 			db.select({ id: zones.id, label: zones.name }).from(zones).where(eq(zones.org_id, actor.orgId)),
 			db.select({ id: specs.id, label: specs.project_name }).from(specs).where(eq(specs.org_id, actor.orgId)),
 			db.select({ id: runners.id, label: runners.name }).from(runners).where(eq(runners.org_id, actor.orgId)),
@@ -67,11 +69,14 @@ export async function getGrantOptions(): Promise<GrantOptions> {
 	}));
 
 	return {
-		principals: members.map((m) => ({
-			id: m.userId,
-			label: m.name ?? m.email,
-			type: "user",
-		})),
+		principals: [
+			...members.map((m) => ({
+				id: m.userId,
+				label: m.name ?? m.email,
+				type: "user" as const,
+			})),
+			...teamRows.map((t) => ({ id: t.id, label: t.label, type: "team" as const })),
+		],
 		roles: [...builtin, ...custom.map((r) => ({ id: r.id, name: r.name, builtin: false }))],
 		permissions: PERMISSIONS.map((p) => ({ key: p.key, resource: p.resource, action: p.action })),
 		resources: { zone: zoneRows, spec: specRows, runner: runnerRows, cloud_identity: idRows },

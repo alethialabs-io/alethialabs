@@ -88,8 +88,9 @@ export function GrantAccessDialog({ onGranted }: { onGranted?: () => void }) {
 
 	const onSubmit = async (d: Data) => {
 		try {
+			const principal = options?.principals.find((p) => p.id === d.principalId);
 			await assignGrant({
-				principalType: "user",
+				principalType: principal?.type ?? "user",
 				principalId: d.principalId,
 				effect: d.effect,
 				roleId: d.mode === "role" ? d.roleId : null,
@@ -107,7 +108,10 @@ export function GrantAccessDialog({ onGranted }: { onGranted?: () => void }) {
 	};
 
 	const principalOpts =
-		options?.principals.map((p) => ({ value: p.id, label: p.label })) ?? [];
+		options?.principals.map((p) => ({
+			value: p.id,
+			label: p.type === "team" ? `${p.label} · team` : p.label,
+		})) ?? [];
 	const permissionOpts =
 		options?.permissions.map((p) => ({ value: p.key, label: p.key })) ?? [];
 	const resourceOpts =

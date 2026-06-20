@@ -33,14 +33,19 @@ export class PostgresRbacPDP implements Pdp {
 		actor: Actor,
 		permKey: string,
 	): Promise<{ resource_id: string | null; effect: string }[]> {
+		// The actor's own grants PLUS grants to any team they belong to.
 		return db.execute<{ resource_id: string | null; effect: string }>(sql`
 			select g.resource_id, g.effect
 			from grants g
 			left join role_permission rp on rp.role_id = g.role_id
 			where g.org_id = ${actor.orgId}
-			  and g.principal_type = 'user'
-			  and g.principal_id = ${actor.userId}
 			  and (rp.permission_key = ${permKey} or g.permission_key = ${permKey})
+			  and (
+			    (g.principal_type = 'user' and g.principal_id = ${actor.userId})
+			    or (g.principal_type = 'team' and g.principal_id in (
+			      select team_id from team_member where user_id = ${actor.userId}
+			    ))
+			  )
 		`);
 	}
 

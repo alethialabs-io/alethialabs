@@ -21,6 +21,8 @@ import {
 	organization,
 	session,
 	ssoProvider,
+	team,
+	teamMember,
 	user,
 	verification,
 } from "@/lib/db/schema";
@@ -118,6 +120,8 @@ export const auth = betterAuth({
 			organization,
 			member,
 			invitation,
+			team,
+			teamMember,
 			ssoProvider,
 		},
 	}),
