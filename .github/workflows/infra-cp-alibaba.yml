@@ -15,7 +15,7 @@ permissions:
 
 env:
   TF_DIR: infra/cp-alibaba
-  TOFU_VERSION: "1.9.0"
+  TOFU_VERSION: "1.10.10"
 
   # Alibaba Cloud provider auth (RAM access key).
   ALICLOUD_ACCESS_KEY: ${{ secrets.ALICLOUD_ACCESS_KEY }}

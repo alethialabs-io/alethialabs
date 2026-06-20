@@ -15,7 +15,7 @@ permissions:
 
 env:
   TF_DIR: infra/cp-hetzner
-  TOFU_VERSION: "1.9.0"
+  TOFU_VERSION: "1.10.10"
 
   # S3-compatible state backend credentials (read by the s3 backend).
   # Dedicated TF_STATE_S3_* names — NOT the app's ALETHIA_STORAGE_* object store.

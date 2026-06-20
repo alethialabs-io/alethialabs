@@ -15,7 +15,7 @@ permissions:
 
 env:
   TF_DIR: infra/fleet-aws
-  TOFU_VERSION: "1.9.0"
+  TOFU_VERSION: "1.10.10"
 
   # AWS provider credentials (manages ECR / ECS / Lambda).
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}

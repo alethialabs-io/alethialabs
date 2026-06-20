@@ -15,7 +15,7 @@ permissions:
 
 env:
   TF_DIR: infra/cp-gcp
-  TOFU_VERSION: "1.9.0"
+  TOFU_VERSION: "1.10.10"
 
   # GCP provider auth (service-account JSON key).
   GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
