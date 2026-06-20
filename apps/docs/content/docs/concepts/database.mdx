@@ -18,7 +18,8 @@ Workspace grouping for infrastructure configurations.
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `user_id` | uuid (FK → auth.users) | Owner |
+| `user_id` | uuid (FK → user) | Owner |
+| `org_id` | uuid | Coarse tenancy scope for the RLS blast wall (community: `org_id = user_id`) |
 | `name` | text | Unique per user |
 | `description` | text | Optional |
 | `created_at` | timestamptz | |
@@ -34,6 +35,7 @@ Infrastructure configuration — the central entity.
 |--------|------|-------------|
 | `id` | uuid (PK) | |
 | `user_id` | uuid (FK) | Owner |
+| `org_id` | uuid | Coarse tenancy scope for the RLS blast wall (community: `org_id = user_id`) |
 | `zone_id` | uuid (FK → zones) | Parent zone |
 | `cloud_identity_id` | uuid (FK → cloud_identities) | Cloud account to provision in |
 | `project_name` | text | Infrastructure project name |
@@ -60,18 +62,11 @@ Cloud provider connections (AWS, GCP, Azure).
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | |
 
-### `provider_tokens`
+### Auth tables (Better Auth)
 
-OAuth tokens for Git providers.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | uuid (PK) | |
-| `user_id` | uuid (FK) | Owner |
-| `provider` | text | github / gitlab / bitbucket |
-| `access_token` | text | Encrypted at rest |
-| `refresh_token` | text | Encrypted at rest |
-| `expires_at` | timestamptz | Token expiry |
+Authentication is owned by [Better Auth](/concepts/authentication), which manages the `user`, `session`,
+`account`, and `verification` tables. Git-provider OAuth tokens (`accessToken`, `refreshToken`, `scope`,
+and the expiry columns) live on the **`account`** table — there is no separate `provider_tokens` table.
 
 ## Spec Component Tables (Singleton — 1:1 per Spec)
 
@@ -131,21 +126,15 @@ Route53 / Cloud DNS / Azure DNS configuration.
 
 ### `spec_repositories`
 
-Git repository references for infra, GitOps, and application code.
+Application deployment repository reference.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
 | `spec_id` | uuid (UNIQUE FK) | |
-| `env_template_repo` | text | Infrastructure template source |
-| `env_template_branch` | text | |
-| `env_destination_repo` | text | Infrastructure output destination |
-| `gitops_template_repo` | text | GitOps template source |
-| `gitops_template_branch` | text | |
-| `gitops_destination_repo` | text | GitOps output destination |
-| `apps_template_repo` | text | Application template source |
-| `apps_template_branch` | text | |
-| `apps_destination_repo` | text | Application output destination |
+| `apps_destination_repo` | text | Application output destination repo |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz | |
 
 ## Spec Component Tables (Multi-Instance — 1:N per Spec)
 
@@ -263,6 +252,37 @@ Secrets Manager / Secret Manager / Key Vault entries.
 | `special_chars` | boolean | Include special characters |
 | `status` | component_status enum | |
 
+### `spec_storage_buckets`
+
+S3 / Cloud Storage / Blob Storage buckets.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `spec_id` | uuid (FK) | |
+| `name` | text | |
+| `versioning` | boolean | Object versioning |
+| `encryption_enabled` | boolean | At-rest encryption (the algorithm is a provider-specific knob in `provider_config`) |
+| `public_access` | boolean | |
+| `cors_origins` | text[] | Allowed CORS origins |
+| `provider_config` | jsonb | Provider-specific knobs |
+| `status` | component_status enum | |
+| `estimated_monthly_cost` | numeric | |
+
+### `spec_git_credentials`
+
+Git credentials for the GitOps / app-deployment repos.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `spec_id` | uuid (FK) | |
+| `purpose` | git_credential_purpose enum | What the credential is for |
+| `method` | git_credential_method enum | Auth method (e.g. token / SSH) |
+| `provider_identity_id` | uuid | Source provider identity (if reusing a linked OAuth account) |
+| `secret_ref` | text | Reference to the stored secret |
+| `created_at` | timestamptz | |
+
 ## Job Tables
 
 ### `jobs`
@@ -340,6 +360,83 @@ Release catalog for Runner versions.
 | `component_id` | uuid | |
 | `changes` | jsonb | Before/after diff |
 | `created_at` | timestamptz | |
+
+## Authorization Tables
+
+These back the Policy Decision Point (PDP) and the role/permission model. See
+[Access Control](/access-control) for how they're used (the community PDP reads these directly; the
+enterprise tier can compile the same model into OpenFGA).
+
+### `permission`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `key` | text (PK) | e.g. `spec:deploy` |
+| `resource` | text | Resource type the permission acts on |
+| `action` | text | Action granted |
+| `description` | text | |
+
+### `role`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `organization_id` | uuid | Null for built-in roles |
+| `name` | text | e.g. owner / admin / member |
+| `is_builtin` | boolean | Built-in vs custom role |
+
+### `role_permission`
+
+Join table — which permissions a role bundles.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `role_id` | uuid (FK → role) | |
+| `permission_key` | text (FK → permission) | |
+
+### `grants`
+
+An actor (or principal) holding a role or permission, optionally scoped to a resource.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `org_id` | uuid | Tenancy scope |
+| `principal_type` | text | user / group / … |
+| `principal_id` | uuid | |
+| `effect` | text | allow / deny (default allow) |
+| `role_id` | uuid (FK → role) | Role grant (or…) |
+| `permission_key` | text (FK → permission) | …direct permission grant |
+| `resource_type` | text | Resource the grant is scoped to |
+| `resource_id` | uuid | Specific resource (null = type-wide) |
+| `created_at` | timestamptz | |
+
+### `resource_hierarchy`
+
+Parent/child resource edges (e.g. zone → spec) so a grant on a parent cascades.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `child_type` | text | |
+| `child_id` | uuid | |
+| `parent_type` | text | |
+| `parent_id` | uuid | |
+
+### `authz_audit_log`
+
+Every PDP decision, for audit.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `org_id` | uuid | |
+| `actor_id` | uuid | Who was checked |
+| `action` | text | Action requested |
+| `resource_type` | text | |
+| `resource_id` | uuid | |
+| `decision` | boolean | Allowed / denied |
+| `reason` | text | Why |
+| `ts` | timestamptz | |
 
 ## Key Enums
 

@@ -78,9 +78,9 @@
   <line x1="700" y1="230" x2="700" y2="234" stroke="none"/>
   <path d="M660,210 Q670,145 675,145" stroke="#52525B" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
 
-  <!-- Supabase Realtime feedback loop -->
+  <!-- Postgres LISTEN/NOTIFY feedback loop -->
   <rect x="370" y="370" width="140" height="56" rx="8" fill="#27272A" stroke="#8B5CF6" stroke-dasharray="4 4"/>
-  <text x="440" y="394" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#8B5CF6">Supabase Realtime</text>
+  <text x="440" y="394" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#8B5CF6">Postgres LISTEN/NOTIFY</text>
   <text x="440" y="412" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">WebSocket · postgres_changes</text>
 
   <!-- Arrow: Runner → Realtime (logs) -->

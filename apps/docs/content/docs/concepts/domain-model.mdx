@@ -114,7 +114,6 @@ QUEUED ──► CLAIMED ──► PROCESSING ──► SUCCESS
 |------|---------|
 | `CONNECTION_TEST` | Verify cloud credentials work, cache discovered resources |
 | `FETCH_RESOURCES` | Discover existing cloud resources (VPCs, subnets, hosted zones) |
-| `BOOTSTRAP` | Initialize infrastructure workspace |
 | `PLAN` | Run `terraform plan` + optional Infracost analysis |
 | `DEPLOY` | Run `terraform apply` + install ArgoCD |
 | `DESTROY` | Run `terraform destroy` with graceful cleanup |

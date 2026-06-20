@@ -33,12 +33,12 @@
   <text x="321" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Function URL</text>
   <text x="321" y="132" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Python 3.12 / ARM64</text>
 
-  <!-- Lambda to Supabase (query) -->
+  <!-- Lambda to Postgres (query) -->
   <line x1="321" y1="148" x2="321" y2="172" stroke="#8B5CF6" stroke-width="1.5" marker-end="url(#arrow-accent)"/>
 
-  <!-- Supabase -->
+  <!-- Postgres -->
   <rect x="241" y="180" width="160" height="48" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="321" y="200" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">Supabase</text>
+  <text x="321" y="200" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">Postgres</text>
   <text x="321" y="216" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">SELECT count(QUEUED)</text>
 
   <!-- Lambda to ECS (scale) -->

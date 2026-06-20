@@ -5,12 +5,12 @@
   </defs>
   <rect width="820" height="400" rx="12" fill="#18181B"/>
   <rect x="0.5" y="0.5" width="819" height="399" rx="12" fill="none" stroke="#3F3F46"/>
-  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Terraform State Management — Supabase S3 Backend</text>
+  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Terraform State Management — S3 Backend</text>
 
   <!-- S3 Bucket -->
   <rect x="260" y="60" width="300" height="200" rx="8" fill="#27272A" stroke="#8B5CF6" stroke-width="1.5"/>
   <text x="410" y="84" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#8B5CF6">spec-terraform-state (S3)</text>
-  <text x="410" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Supabase S3-compatible storage</text>
+  <text x="410" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">S3-compatible storage</text>
 
   <!-- Path tree -->
   <text x="290" y="128" font-family="Inter, monospace, sans-serif" font-size="11" fill="#FAFAFA">my-zone/</text>

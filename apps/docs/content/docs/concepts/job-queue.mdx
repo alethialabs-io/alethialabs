@@ -126,4 +126,4 @@ When a Runner dies mid-job:
 
 ## Real-time Status Updates
 
-Job status changes are broadcast via [Postgres LISTEN/NOTIFY → SSE](/concepts/realtime). The UI subscribes to `jobs` UPDATE events and updates the jobs store in real-time. The job detail page also subscribes to `provision_job_logs` INSERT events for live log streaming.
+Job status changes are broadcast via [Postgres LISTEN/NOTIFY → SSE](/concepts/realtime). The UI subscribes to `jobs` UPDATE events and updates the jobs store in real-time. The job detail page also subscribes to `job_logs` INSERT events for live log streaming.

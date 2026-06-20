@@ -31,10 +31,10 @@ The most latency-sensitive use case. When a Runner executes Terraform, stdout/st
 The `JobLogger` buffers Terraform output and flushes every 2 seconds (or when the buffer exceeds 10KB) via `POST /api/jobs/{id}/logs`.
 
 ### Console inserts into database
-The API route inserts the log chunk into `provision_job_logs` with a stream type (STDOUT, STDERR, or SYSTEM).
+The API route inserts the log chunk into `job_logs` with a stream type (STDOUT, STDERR, or SYSTEM).
 
 ### Postgres emits NOTIFY
-An `AFTER INSERT` trigger on `provision_job_logs` fires `NOTIFY` on the log channel. The console's LISTEN connection receives it immediately.
+An `AFTER INSERT` trigger on `job_logs` fires `NOTIFY` on the log channel. The console's LISTEN connection receives it immediately.
 
 ### Browser receives chunk
 The job detail page holds an SSE connection scoped to its `job_id`. The console relays the matching notification down the stream and the chunk appears in the log viewer within milliseconds.

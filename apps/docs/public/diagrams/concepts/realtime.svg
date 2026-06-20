@@ -8,7 +8,7 @@
   <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Real-time Architecture — Log Streaming Pipeline</text>
 
   <!-- Main pipeline - WebSocket path -->
-  <text x="410" y="66" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#A1A1AA">Browser Path (WebSocket — Supabase Realtime)</text>
+  <text x="410" y="66" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#A1A1AA">Browser Path (SSE — LISTEN/NOTIFY)</text>
 
   <!-- Terraform -->
   <rect x="20" y="84" width="90" height="50" rx="6" fill="#27272A" stroke="#3F3F46"/>

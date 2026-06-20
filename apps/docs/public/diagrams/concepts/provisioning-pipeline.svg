@@ -19,7 +19,7 @@
   <rect x="218" y="58" width="150" height="70" rx="8" fill="#27272A" stroke="#3F3F46"/>
   <text x="293" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">Database</text>
   <text x="293" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">specs + component tables</text>
-  <text x="293" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">PostgreSQL (Supabase)</text>
+  <text x="293" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">PostgreSQL</text>
 
   <!-- Arrow 2→3 -->
   <line x1="368" y1="93" x2="398" y2="93" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
