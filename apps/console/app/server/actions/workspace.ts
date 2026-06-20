@@ -7,13 +7,23 @@ import { getOwnerScope } from "@/lib/auth/owner";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import type { Entitlements } from "@/lib/authz/types";
+import { isBillingActive } from "@/lib/billing/plan";
 import { getServiceDb } from "@/lib/db";
-import { member, organization, session as sessionTable } from "@/lib/db/schema";
+import type { BillingPlan } from "@/lib/db/schema/enums";
+import {
+	member,
+	organization,
+	organizationBilling,
+	session as sessionTable,
+} from "@/lib/db/schema";
 
 export interface WorkspaceOrg {
 	id: string;
 	name: string;
 	role: string;
+	/** Effective billing plan — the org's plan while its subscription is live, else
+	 * `community`. Drives the plan badge in the switcher. */
+	plan: BillingPlan;
 }
 
 export interface WorkspaceContext {
@@ -36,15 +46,32 @@ export async function getWorkspaceContext(): Promise<WorkspaceContext> {
 	const entitlements = getEntitlements(actor);
 
 	const rows = await getServiceDb()
-		.select({ id: organization.id, name: organization.name, role: member.role })
+		.select({
+			id: organization.id,
+			name: organization.name,
+			role: member.role,
+			plan: organizationBilling.plan,
+			status: organizationBilling.status,
+		})
 		.from(member)
 		.innerJoin(organization, eq(member.organizationId, organization.id))
+		.leftJoin(
+			organizationBilling,
+			eq(organization.id, organizationBilling.organizationId),
+		)
 		.where(eq(member.userId, userId));
 
 	const organizations: WorkspaceOrg[] =
 		rows.length > 0
-			? rows
-			: [{ id: userId, name: "Personal", role: "owner" }];
+			? rows.map((r) => ({
+					id: r.id,
+					name: r.name,
+					role: r.role,
+					// Effective plan: the paid plan only while the subscription is live.
+					plan:
+						r.plan && r.status && isBillingActive(r.status) ? r.plan : "community",
+				}))
+			: [{ id: userId, name: "Personal", role: "owner", plan: "community" }];
 
 	return { activeOrgId: actor.orgId, organizations, entitlements };
 }

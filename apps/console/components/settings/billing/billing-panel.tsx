@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -12,33 +11,14 @@ import {
 	createCheckoutSession,
 	getBillingSummary,
 } from "@/app/server/actions/billing";
+import { PlanPicker } from "@/components/billing/plan-picker";
+import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { planMeta } from "@/lib/billing/plan-catalog";
 import type { BillingPlan } from "@/lib/db/schema/enums";
-
-/** Paid plans, in upgrade order, with the value each unlocks (the entitlement ladder). */
-const PLANS: { id: Exclude<BillingPlan, "community">; name: string; price: string; unlocks: string[] }[] = [
-	{
-		id: "team",
-		name: "Team",
-		price: "per seat",
-		unlocks: ["Organizations & teams", "Invite teammates", "Shared workspace"],
-	},
-	{
-		id: "business",
-		name: "Business",
-		price: "per workspace",
-		unlocks: ["Everything in Team", "Custom roles (granular RBAC)", "Audit log export"],
-	},
-	{
-		id: "enterprise",
-		name: "Enterprise",
-		price: "annual",
-		unlocks: ["Everything in Business", "SSO / SAML", "Priority support & SLA"],
-	},
-];
 
 const STATUS_LABEL: Record<BillingSummary["status"], string> = {
 	none: "No subscription",
@@ -51,6 +31,8 @@ const STATUS_LABEL: Record<BillingSummary["status"], string> = {
 export function BillingPanel() {
 	const [summary, setSummary] = useState<BillingSummary | null>(null);
 	const [pending, startTransition] = useTransition();
+	const [pendingPlan, setPendingPlan] = useState<BillingPlan | null>(null);
+	const [createOpen, setCreateOpen] = useState(false);
 	const params = useSearchParams();
 
 	useEffect(() => {
@@ -69,10 +51,26 @@ export function BillingPanel() {
 		}
 	}, [params]);
 
-	function redirectTo(action: () => Promise<{ url: string }>) {
+	/** Upgrade the active org to a paid plan via Stripe Checkout. */
+	function handleUpgrade(plan: BillingPlan) {
+		if (plan === "community") return;
+		setPendingPlan(plan);
 		startTransition(async () => {
 			try {
-				const { url } = await action();
+				const { url } = await createCheckoutSession(plan);
+				window.location.href = url;
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : "Something went wrong.");
+				setPendingPlan(null);
+			}
+		});
+	}
+
+	/** Open the Stripe Customer Portal. */
+	function openPortal() {
+		startTransition(async () => {
+			try {
+				const { url } = await createBillingPortalSession();
 				window.location.href = url;
 			} catch (err) {
 				toast.error(err instanceof Error ? err.message : "Something went wrong.");
@@ -93,7 +91,9 @@ export function BillingPanel() {
 	if (!summary.hosted) {
 		return (
 			<Card className="p-6">
-				<h2 className="text-sm font-semibold text-foreground">Self-managed deployment</h2>
+				<h2 className="text-sm font-semibold text-foreground">
+					Self-managed deployment
+				</h2>
 				<p className="mt-1 text-sm text-muted-foreground">
 					This instance is not connected to hosted billing. Enterprise features are
 					unlocked by your license key. See the docs for self-managed licensing.
@@ -102,19 +102,24 @@ export function BillingPanel() {
 		);
 	}
 
-	// Free user with no workspace yet: create one before subscribing.
+	// Free user with no org yet: an org is the paid, shared workspace — create one.
 	if (!summary.hasOrg) {
 		return (
-			<Card className="p-6">
-				<h2 className="text-sm font-semibold text-foreground">Create a workspace</h2>
-				<p className="mt-1 max-w-prose text-sm text-muted-foreground">
-					Your account is a personal workspace — your Zones and Specs are all yours.
-					Create a shared workspace to invite teammates and manage a subscription.
-				</p>
-				<Button asChild className="mt-4">
-					<Link href="/dashboard/settings/general">Create a workspace</Link>
-				</Button>
-			</Card>
+			<>
+				<Card className="p-6">
+					<h2 className="text-sm font-semibold text-foreground">
+						Create an organization
+					</h2>
+					<p className="mt-1 max-w-prose text-sm text-muted-foreground">
+						Your account is a personal workspace — your Zones and Specs are all
+						yours. Create an organization to collaborate with teammates on a paid plan.
+					</p>
+					<Button className="mt-4" onClick={() => setCreateOpen(true)}>
+						Create organization
+					</Button>
+				</Card>
+				<CreateOrgSheet open={createOpen} onOpenChange={setCreateOpen} />
+			</>
 		);
 	}
 
@@ -124,10 +129,16 @@ export function BillingPanel() {
 			<Card className="flex flex-wrap items-center justify-between gap-4 p-6">
 				<div className="space-y-1">
 					<div className="flex items-center gap-2">
-						<span className="text-sm font-semibold capitalize text-foreground">
-							{summary.plan} plan
+						<span className="text-sm font-semibold text-foreground">
+							{planMeta(summary.plan).name} plan
 						</span>
-						<Badge variant={summary.status === "active" || summary.status === "trialing" ? "default" : "secondary"}>
+						<Badge
+							variant={
+								summary.status === "active" || summary.status === "trialing"
+									? "default"
+									: "secondary"
+							}
+						>
 							{STATUS_LABEL[summary.status]}
 						</Badge>
 					</div>
@@ -138,43 +149,21 @@ export function BillingPanel() {
 					)}
 				</div>
 				{summary.canManage && (
-					<Button
-						variant="outline"
-						disabled={pending}
-						onClick={() => redirectTo(createBillingPortalSession)}
-					>
+					<Button variant="outline" disabled={pending} onClick={openPortal}>
 						Manage subscription
 					</Button>
 				)}
 			</Card>
 
-			{/* Upgrade options */}
-			<div className="grid gap-4 md:grid-cols-3">
-				{PLANS.map((plan) => {
-					const isCurrent = summary.plan === plan.id;
-					return (
-						<Card key={plan.id} className="flex flex-col p-5">
-							<div className="flex items-baseline justify-between">
-								<h3 className="text-sm font-semibold text-foreground">{plan.name}</h3>
-								<span className="text-xs text-muted-foreground">{plan.price}</span>
-							</div>
-							<ul className="mt-3 flex-1 space-y-1.5 text-sm text-muted-foreground">
-								{plan.unlocks.map((f) => (
-									<li key={f}>• {f}</li>
-								))}
-							</ul>
-							<Button
-								className="mt-4"
-								variant={isCurrent ? "outline" : "default"}
-								disabled={isCurrent || pending}
-								onClick={() => redirectTo(() => createCheckoutSession(plan.id))}
-							>
-								{isCurrent ? "Current plan" : "Upgrade"}
-							</Button>
-						</Card>
-					);
-				})}
-			</div>
+			{/* Upgrade / change plan */}
+			<PlanPicker
+				currentPlan={summary.plan}
+				paidOnly
+				pendingPlan={pendingPlan}
+				disabled={pending}
+				ctaLabel="Upgrade"
+				onSelect={handleUpgrade}
+			/>
 		</div>
 	);
 }
