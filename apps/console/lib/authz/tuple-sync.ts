@@ -23,7 +23,8 @@ export interface ScopedGrant {
 	principalId: string;
 	effect: "allow" | "deny";
 	resourceType: string;
-	resourceId: string;
+	/** null ⇒ org-wide; otherwise scoped to this resource. */
+	resourceId: string | null;
 	/** A role bundle XOR a single permission key. */
 	roleId: string | null;
 	permissionKey: string | null;

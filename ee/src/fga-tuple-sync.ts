@@ -21,6 +21,22 @@ function chunk<T>(items: T[], size: number): T[][] {
 	return out;
 }
 
+/** The OpenFGA subject string for a grant principal. */
+function grantSubject(g: { principalType: "user" | "team"; principalId: string }): string {
+	return g.principalType === "team"
+		? `team:${g.principalId}#member`
+		: `user:${g.principalId}`;
+}
+
+/** The OpenFGA object a grant targets — the resource instance, or the org if org-wide. */
+function grantObject(g: {
+	orgId: string;
+	resourceType: string;
+	resourceId: string | null;
+}): string {
+	return g.resourceId ? `${g.resourceType}:${g.resourceId}` : `org:${g.orgId}`;
+}
+
 export class FgaTupleSync implements TupleSync {
 	constructor(
 		private readonly core: CoreContext,
@@ -107,23 +123,15 @@ export class FgaTupleSync implements TupleSync {
 			},
 			keys,
 		);
-		const subject =
-			grant.principalType === "team"
-				? `team:${grant.principalId}#member`
-				: `user:${grant.principalId}`;
 		await this.deleteTuples(
-			await this.existingFor(subject, `${grant.resourceType}:${grant.resourceId}`),
+			await this.existingFor(grantSubject(grant), grantObject(grant)),
 		);
 		await this.writeTuples(tuples);
 	}
 
 	async removeScopedGrant(grant: ScopedGrant): Promise<void> {
-		const subject =
-			grant.principalType === "team"
-				? `team:${grant.principalId}#member`
-				: `user:${grant.principalId}`;
 		await this.deleteTuples(
-			await this.existingFor(subject, `${grant.resourceType}:${grant.resourceId}`),
+			await this.existingFor(grantSubject(grant), grantObject(grant)),
 		);
 	}
 

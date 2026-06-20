@@ -30,6 +30,7 @@ const SEGMENT_LABELS: Record<string, string> = {
 	general: "General",
 	members: "Members",
 	roles: "Roles",
+	access: "Access",
 	sso: "Single Sign-On",
 	audit: "Audit Log",
 };
