@@ -284,8 +284,11 @@ export function parseWifConfig(wifConfigJson: string) {
 	}
 	const serviceAccountEmail = saEmailMatch[1];
 
-	const projectIdMatch = serviceAccountEmail.match(/@([^.]+)\./);
-	const projectId = projectIdMatch ? projectIdMatch[1] : undefined;
+	// Project id = the SA email domain's first label. Parsed with split() rather
+	// than a regex to avoid polynomial backtracking on attacker-controlled input.
+	const saDomain = serviceAccountEmail.split("@")[1];
+	const projectId =
+		saDomain && saDomain.includes(".") ? saDomain.split(".")[0] : undefined;
 
 	return { parsed, projectNumber, serviceAccountEmail, projectId };
 }
