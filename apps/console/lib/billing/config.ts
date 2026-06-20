@@ -40,6 +40,16 @@ export function isStripeConfigured(): boolean {
 	return Boolean(process.env.STRIPE_SECRET_KEY);
 }
 
+/**
+ * Whether to compute tax + collect VAT/Tax IDs at checkout (Stripe Tax). OFF by
+ * default: `automatic_tax` requires the account's Tax origin address + registrations
+ * to be configured first, or Checkout errors. Flip `STRIPE_TAX_ENABLED=true` once
+ * Stripe Tax is set up in the dashboard.
+ */
+export function isStripeTaxEnabled(): boolean {
+	return process.env.STRIPE_TAX_ENABLED === "true";
+}
+
 let cached: StripeConfig | null = null;
 
 /** The validated Stripe config (cached). Throws if billing is used but misconfigured. */

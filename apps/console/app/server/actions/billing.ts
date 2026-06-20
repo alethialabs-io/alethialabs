@@ -9,10 +9,12 @@
 // organization_billing record through the webhook; entitlements follow.
 
 import { eq } from "drizzle-orm";
+import type Stripe from "stripe";
 import {
 	deploymentMode,
 	getStripeConfig,
 	isStripeConfigured,
+	isStripeTaxEnabled,
 	type PaidPlan,
 	priceIdForPlan,
 } from "@/lib/billing/config";
@@ -115,12 +117,22 @@ export async function createCheckoutSession(
 
 	const cfg = getStripeConfig();
 	const customerId = await ensureCustomer(actor.orgId, actor.userId);
+	// Stripe Tax: compute VAT/sales tax + collect the customer's Tax/VAT id (EU B2B
+	// reverse-charge). Gated until the account's Tax settings are configured.
+	const tax: Partial<Stripe.Checkout.SessionCreateParams> = isStripeTaxEnabled()
+		? {
+				automatic_tax: { enabled: true },
+				tax_id_collection: { enabled: true },
+				customer_update: { name: "auto", address: "auto" },
+			}
+		: {};
 	const session = await getStripe().checkout.sessions.create({
 		mode: "subscription",
 		customer: customerId,
 		line_items: [{ price: priceIdForPlan(plan), quantity: 1 }],
 		subscription_data: { metadata: { organization_id: actor.orgId } },
 		allow_promotion_codes: true,
+		...tax,
 		success_url: `${cfg.appUrl}/dashboard/settings/billing?checkout=success`,
 		cancel_url: `${cfg.appUrl}/dashboard/settings/billing?checkout=cancelled`,
 	});
