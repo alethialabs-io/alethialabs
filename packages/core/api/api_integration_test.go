@@ -47,7 +47,7 @@ func loadTestToken(t *testing.T) string {
 func refreshIfNeeded(creds types.ExchangeResponse, credsPath string) (string, error) {
 	webOrigin := os.Getenv("ALETHIA_WEB_ORIGIN")
 	if webOrigin == "" {
-		webOrigin = "https://adp.prod.itgix.eu"
+		webOrigin = "http://localhost"
 	}
 
 	payload, _ := json.Marshal(map[string]string{"refresh_token": creds.RefreshToken})

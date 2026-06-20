@@ -16,7 +16,6 @@ variable "runner_name" {
 
 variable "alethia_url" {
   type        = string
-  default     = "https://adp.prod.itgix.eu"
   description = "Alethia API base URL"
 }
 

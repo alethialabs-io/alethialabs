@@ -57,9 +57,19 @@ type CloudIdentity struct {
 	SubscriptionID      string `json:"subscription_id"`
 }
 
+// IntegrationCredential is a decrypted api_key credential for a pluggable
+// provider (Cloudflare, Vault, …), attached at claim time only — never in the
+// config_snapshot.
+type IntegrationCredential struct {
+	Category    string            `json:"category"`
+	Slug        string            `json:"slug"`
+	Credentials map[string]string `json:"credentials"`
+}
+
 type ClaimResponse struct {
-	Job           *Job           `json:"job"`
-	CloudIdentity *CloudIdentity `json:"cloud_identity"`
+	Job                    *Job                    `json:"job"`
+	CloudIdentity          *CloudIdentity          `json:"cloud_identity"`
+	IntegrationCredentials []IntegrationCredential `json:"integration_credentials"`
 }
 
 func NewRunnerAPIClient(baseURL, runnerID, runnerToken string) *RunnerAPIClient {
@@ -78,7 +88,6 @@ func (c *RunnerAPIClient) setRunnerHeaders(req *http.Request) {
 	req.Header.Set("X-Runner-Token", c.runnerToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", fmt.Sprintf("runner/%s", version.Version))
-	req.Header.Set("ngrok-skip-browser-warning", "true")
 }
 
 func (c *RunnerAPIClient) Heartbeat() error {

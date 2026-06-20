@@ -47,20 +47,22 @@ It helps you automate, manage, and scale your cloud infrastructure easily.`,
 		fmt.Println()
 		fmt.Println(textStyle.Render("This tool is open source and I'd love collaboration."))
 		fmt.Println(textStyle.Render("Alethia is designed to manage, provision, and automate complex cloud infrastructure effortlessly."))
-		fmt.Println(textStyle.Render("You can also set up things through our web platform: ") + linkStyle.Render("https://adp.prod.itgix.eu"))
+		fmt.Println(textStyle.Render("You can also set up things through our web platform: ") + linkStyle.Render("https://alethialabs.io"))
 		fmt.Println()
 
 		cmd.Help()
 	},
 }
 
-const defaultWebOrigin = "https://beta.adp.itgix.com"
-
+// WebOrigin returns the Alethia control-plane URL from ALETHIA_WEB_ORIGIN. It is
+// required (no default) — the CLI exits with a clear message when it is unset.
 func WebOrigin() string {
-	if v := os.Getenv("ALETHIA_WEB_ORIGIN"); v != "" {
-		return v
+	v := os.Getenv("ALETHIA_WEB_ORIGIN")
+	if v == "" {
+		fmt.Fprintln(os.Stderr, "Error: ALETHIA_WEB_ORIGIN is required (set it to your Alethia control-plane URL).")
+		os.Exit(1)
 	}
-	return defaultWebOrigin
+	return v
 }
 
 func Execute() {

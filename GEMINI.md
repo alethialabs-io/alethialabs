@@ -145,7 +145,7 @@ apps/console/
 
 ### Environment Variables
 
-- `ALETHIA_WEB_ORIGIN` — API server URL (default: `https://adp.prod.itgix.eu`)
+- `ALETHIA_WEB_ORIGIN` — Alethia control-plane URL (required; no default)
 - `ALETHIA_RUNNER_MODE` — Runner mode (`self-hosted` or `cloud-hosted`)
 - `ALETHIA_RUNNER_ID` / `ALETHIA_RUNNER_TOKEN` — Runner registration credentials
 - `ALETHIA_STORAGE_ENDPOINT`, `ALETHIA_STORAGE_REGION`, `ALETHIA_STORAGE_ACCESS_KEY_ID`, `ALETHIA_STORAGE_SECRET_ACCESS_KEY` — Artifact / state storage (S3-compatible)

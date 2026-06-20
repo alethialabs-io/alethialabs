@@ -15,7 +15,7 @@ import (
 func main() {
 	cfg := agent.Config{
 		Mode:        envOrDefault("ALETHIA_RUNNER_MODE", "self-hosted"),
-		AlethiaURL:  envOrDefault("ALETHIA_WEB_ORIGIN", "https://adp.prod.itgix.eu"),
+		AlethiaURL:  os.Getenv("ALETHIA_WEB_ORIGIN"),
 		RunnerID:    os.Getenv("ALETHIA_RUNNER_ID"),
 		RunnerToken: os.Getenv("ALETHIA_RUNNER_TOKEN"),
 
@@ -27,6 +27,10 @@ func main() {
 
 	fmt.Printf("runner %s\n", version.Version)
 
+	if cfg.AlethiaURL == "" {
+		fmt.Fprintln(os.Stderr, "Error: ALETHIA_WEB_ORIGIN is required (set it to your Alethia control-plane URL).")
+		os.Exit(1)
+	}
 	if cfg.RunnerID == "" || cfg.RunnerToken == "" {
 		fmt.Fprintln(os.Stderr, "Error: ALETHIA_RUNNER_ID and ALETHIA_RUNNER_TOKEN environment variables are required.")
 		os.Exit(1)

@@ -25,7 +25,8 @@ type Client struct {
 func NewClient(authToken string) *Client {
 	webOrigin := os.Getenv("ALETHIA_WEB_ORIGIN")
 	if webOrigin == "" {
-		webOrigin = "https://adp.prod.itgix.eu"
+		fmt.Fprintln(os.Stderr, "Error: ALETHIA_WEB_ORIGIN is required (set it to your Alethia control-plane URL).")
+		os.Exit(1)
 	}
 	return &Client{
 		baseURL:    fmt.Sprintf("%s/api", webOrigin),

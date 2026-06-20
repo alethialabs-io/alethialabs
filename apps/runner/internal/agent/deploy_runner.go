@@ -47,13 +47,6 @@ func (w *Runner) executeDeployRunner(ctx context.Context, job *Job, provider str
 	if cfg.Memory == 0 {
 		cfg.Memory = 1024
 	}
-	if cfg.AlethiaURL == "" {
-		cfg.AlethiaURL = "https://adp.prod.itgix.eu"
-	}
-	if cfg.ImageRepository == "" {
-		cfg.ImageRepository = "787587782604.dkr.ecr.eu-west-1.amazonaws.com/runner-dev-runner"
-	}
-
 	templatesDir := resolveRunnerTemplatesDir()
 	if templatesDir == "" {
 		return fmt.Errorf("runner templates directory not found")

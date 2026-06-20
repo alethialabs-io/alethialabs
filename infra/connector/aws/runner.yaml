@@ -47,7 +47,6 @@ Parameters:
 
   AlethiaUrl:
     Type: String
-    Default: 'https://adp.prod.itgix.eu'
     Description: 'URL of the Alethia control plane.'
 
   RunnerVersion:
