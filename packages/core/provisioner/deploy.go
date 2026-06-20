@@ -261,30 +261,43 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	}
 
 	if !params.DryRun && result.ClusterName != "" {
+		// GitOps bootstrap. The cluster is provisioned; ArgoCD + the infra-services
+		// (external-dns, karpenter, ALB controller, …) and the user's apps-repo
+		// connection are the "GitOps, wired — not just installed" promise. These steps
+		// FAIL the job rather than logging a buried warning: a half-wired cluster that
+		// reports success is worse than an honest failure the operator can act on.
+		gitopsRequested := vc.Repositories.AppsDestinationRepo != ""
+
 		if err := installArgoCD(ctx, vc, result.Outputs, &result, stdout, stderr); err != nil {
+			if gitopsRequested {
+				return nil, fmt.Errorf("ArgoCD install failed (GitOps requested for repo %s): %w", vc.Repositories.AppsDestinationRepo, err)
+			}
 			fmt.Fprintf(stderr, "Warning: ArgoCD installation failed: %v\n", err)
 		}
 
-		if vc.Repositories.AppsDestinationRepo != "" && params.GitAccessToken != "" {
+		if gitopsRequested {
+			if params.GitAccessToken == "" {
+				return nil, fmt.Errorf("GitOps requested (apps repo %s) but no git access token is available — reconnect the git provider for this spec", vc.Repositories.AppsDestinationRepo)
+			}
 			if err := argocd.ConfigureRepoCredentials(vc.Repositories.AppsDestinationRepo, params.GitAccessToken, stdout, stderr); err != nil {
-				fmt.Fprintf(stderr, "Warning: failed to configure ArgoCD repo credentials: %v\n", err)
+				return nil, fmt.Errorf("failed to connect ArgoCD to apps repo %s: %w", vc.Repositories.AppsDestinationRepo, err)
 			}
 		}
 
 		argoTemplatesDir := resolveArgoTemplatesDir()
-		if argoTemplatesDir != "" {
-			facts := argocd.BuildFromOutputs(result.Outputs, vc)
-			renderedDir, renderErr := argocd.RenderApplications(argoTemplatesDir, facts)
-			if renderErr != nil {
-				fmt.Fprintf(stderr, "Warning: failed to render ArgoCD applications: %v\n", renderErr)
-			} else {
-				defer os.RemoveAll(renderedDir)
-				if applyErr := argocd.ApplyApplications(renderedDir, stdout, stderr); applyErr != nil {
-					fmt.Fprintf(stderr, "Warning: failed to apply ArgoCD applications: %v\n", applyErr)
-				}
-			}
-		} else {
-			fmt.Fprintln(stdout, "No ArgoCD application templates found, skipping infra-services.")
+		if argoTemplatesDir == "" {
+			// Templates are baked into the runner image; their absence is a build defect,
+			// not a user error. Silently skipping infra-services left clusters half-wired.
+			return nil, fmt.Errorf("ArgoCD application templates not found (looked in /home/runner/argocd-templates, argocd-templates, ../../infra/templates/argocd) — the runner image is missing its baked templates")
+		}
+		facts := argocd.BuildFromOutputs(result.Outputs, vc)
+		renderedDir, renderErr := argocd.RenderApplications(argoTemplatesDir, facts)
+		if renderErr != nil {
+			return nil, fmt.Errorf("failed to render ArgoCD applications: %w", renderErr)
+		}
+		defer os.RemoveAll(renderedDir)
+		if applyErr := argocd.ApplyApplications(renderedDir, stdout, stderr); applyErr != nil {
+			return nil, fmt.Errorf("failed to apply ArgoCD infrastructure applications: %w", applyErr)
 		}
 	}
 
