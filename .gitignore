@@ -11,6 +11,8 @@ node_modules
 .env.development.local
 .env.test.local
 .env.production.local
+# Local secret env produced when generating the ALETHIA_DOTENV value
+alethia.env
 
 # Testing
 coverage
@@ -55,15 +57,18 @@ yarn-error.log*
 # Incomplete-transfer placeholder stubs (Cyberduck / Mountain Duck etc.)
 .!*
 *.pem
+# OpenTofu/Terraform state + vars across ALL infra dirs (cp-*, fleet-*, status, platform, …)
 terraform/.terraform/
 terraform/terraform.tfvars
 terraform/backend.hcl
 terraform/*.auto.tfvars
-infra/platform/.terraform/
-infra/platform/backend.hcl
-infra/platform/terraform.tfvars
-infra/platform/*.auto.tfvars
-infra/platform/tfplan
+infra/**/.terraform/
+infra/**/*.tfstate
+infra/**/*.tfstate.*
+infra/**/terraform.tfvars
+infra/**/*.auto.tfvars
+infra/**/backend.hcl
+infra/**/tfplan
 infra/platform/scaler/lambda.zip
 
 # Node runtime template copies (source: packages/core/assets/)
