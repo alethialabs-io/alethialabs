@@ -5,15 +5,13 @@
 	"description": "Alethia Enterprise Edition — orgs, SSO, OpenFGA-backed RBAC. Commercial license (see ./LICENSE). Imports the AGPL core via its seams; the core never imports this.",
 	"license": "LicenseRef-Alethia-Commercial",
 	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
 	"exports": {
 		".": {
-			"types": "./dist/index.d.ts",
 			"default": "./dist/index.js"
 		}
 	},
 	"scripts": {
-		"build": "tsc -p tsconfig.json",
+		"build": "esbuild src/index.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/index.js",
 		"check-types": "tsc -p tsconfig.json --noEmit"
 	},
 	"peerDependencies": {
@@ -25,6 +23,7 @@
 		"samlify": "^2.0.0"
 	},
 	"devDependencies": {
+		"esbuild": "^0.21.5",
 		"typescript": "^5"
 	}
 }
