@@ -14,10 +14,11 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
+	"github.com/alethialabs-io/alethialabs/packages/core/categories"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	alethiaAws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
 	"github.com/alethialabs-io/alethialabs/packages/core/infracost"
-	"github.com/alethialabs-io/alethialabs/packages/core/terraform"
+	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 )
@@ -31,11 +32,15 @@ type DeployParams struct {
 	InfracostToken string
 	GitAccessToken string
 	TemplatesDir   string
-	S3Backend      *cloud.S3BackendConfig
-	Stdout         io.Writer
-	Stderr         io.Writer
-	ApiClient      *api.Client
-	DeploymentID   string
+	// CategoriesDir is the root of the composable per-category modules
+	// (infra/templates/categories). When set, pluggable providers selected on the
+	// Spec are composed into the plan; native resources are guarded off via tfvars.
+	CategoriesDir string
+	S3Backend     *cloud.S3BackendConfig
+	Stdout        io.Writer
+	Stderr        io.Writer
+	ApiClient     *api.Client
+	DeploymentID  string
 }
 
 // PlanResult holds structured output from a deployment (dry-run or full apply).
@@ -101,9 +106,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		return nil, fmt.Errorf("git-based deployment not yet supported in V2; use TemplatesDir")
 	}
 
-	tf, err := terraform.NewTerraformCLI(ctx, vc.TerraformVersion, tfDir, stdout, stderr)
+	tf, err := tofu.NewTofuCLI(ctx, vc.TerraformVersion, tfDir, stdout, stderr)
 	if err != nil {
-		return nil, fmt.Errorf("terraform init failed: %w", err)
+		return nil, fmt.Errorf("tofu init failed: %w", err)
 	}
 
 	tfvars := provider.ProviderTfvars(vc)
@@ -156,12 +161,22 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	fmt.Fprintf(stdout, "DEBUG provider=%s, project=%v, region=%v, provision_network=%v, network_id=%q, cidr=%q\n",
 		provider.Name(), tfvars["project_name"], vc.Region, vc.Network.ProvisionNetwork, vc.Network.NetworkID, vc.Network.CIDRBlock)
 
-	varFile, err := terraform.OverrideTfvarsFromMap(tfDir, tfvars)
+	// Compose pluggable per-category integration modules (Cloudflare DNS, Vault,
+	// Docker Hub, observability). This merges their tfvars (including decrypted
+	// secrets resolved at claim time), copies the modules into the work dir, and
+	// sets the native-guard vars so the cluster cloud skips its native resource.
+	if composed, composeErr := categories.Compose(tfDir, params.CategoriesDir, vc, tfvars, stdout); composeErr != nil {
+		return nil, fmt.Errorf("integration composition failed: %w", composeErr)
+	} else if composed > 0 {
+		fmt.Fprintf(stdout, "Composed %d pluggable integration module(s).\n", composed)
+	}
+
+	varFile, err := tofu.OverrideTfvarsFromMap(tfDir, tfvars)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write tfvars: %w", err)
 	}
 
-	planFile, err := filepath.Abs(filepath.Join(tfDir, "terraform.plan.out"))
+	planFile, err := filepath.Abs(filepath.Join(tfDir, "tofu.plan.out"))
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +186,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	savedCreds := suspendAWSEnvCreds()
 	if err := tf.InitWithBackendFile(ctx, backendFile, false); err != nil {
 		restoreAWSEnvCreds(savedCreds)
-		return nil, fmt.Errorf("terraform init failed: %w", err)
+		return nil, fmt.Errorf("tofu init failed: %w", err)
 	}
 	restoreAWSEnvCreds(savedCreds)
 
@@ -180,7 +195,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		planFile = params.PlanFile
 	} else {
 		if _, err := tf.Plan(ctx, varFile, planFile); err != nil {
-			return nil, fmt.Errorf("terraform plan failed: %w", err)
+			return nil, fmt.Errorf("tofu plan failed: %w", err)
 		}
 	}
 
@@ -189,10 +204,10 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	planJSON, showErr := tf.ShowPlanJSON(ctx, planFile)
 	planJSONFile := ""
 	if showErr != nil {
-		fmt.Fprintf(stdout, "Warning: terraform show -json failed: %v\n", showErr)
+		fmt.Fprintf(stdout, "Warning: tofu show -json failed: %v\n", showErr)
 	}
 	if planJSON != nil {
-		planJSONFile = filepath.Join(tmpRoot, "terraform.plan.json")
+		planJSONFile = filepath.Join(tmpRoot, "tofu.plan.json")
 		if jsonBytes, marshalErr := json.Marshal(planJSON); marshalErr == nil {
 			os.WriteFile(planJSONFile, jsonBytes, 0644)
 			var parsed map[string]interface{}
@@ -225,14 +240,14 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		return &result, nil
 	}
 
-	fmt.Fprintln(stdout, "Applying Terraform changes...")
+	fmt.Fprintln(stdout, "Applying OpenTofu changes...")
 	if err := tf.Apply(ctx, planFile); err != nil {
-		return nil, fmt.Errorf("terraform apply failed: %w", err)
+		return nil, fmt.Errorf("tofu apply failed: %w", err)
 	}
 
 	outputs, err := tf.Output(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get terraform outputs: %w", err)
+		return nil, fmt.Errorf("failed to get tofu outputs: %w", err)
 	}
 
 	result.Outputs = outputs

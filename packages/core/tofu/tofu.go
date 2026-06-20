@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-package terraform
+package tofu
 
 import (
 	"archive/zip"
@@ -29,12 +29,12 @@ import (
 // it unchanged.
 const DefaultIaCVersion = "1.9.0"
 
-type TerraformCLI struct {
+type TofuCLI struct {
 	tf      *tfexec.Terraform
 	version string
 }
 
-func NewTerraformCLI(ctx context.Context, tfVersion, workDir string, stdout, stderr io.Writer) (*TerraformCLI, error) {
+func NewTofuCLI(ctx context.Context, tfVersion, workDir string, stdout, stderr io.Writer) (*TofuCLI, error) {
 	if tfVersion == "" {
 		tfVersion = DefaultIaCVersion
 	}
@@ -45,7 +45,7 @@ func NewTerraformCLI(ctx context.Context, tfVersion, workDir string, stdout, std
 
 	tf, err := tfexec.NewTerraform(workDir, execPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize terraform: %w", err)
+		return nil, fmt.Errorf("failed to initialize OpenTofu: %w", err)
 	}
 
 	if stdout != nil {
@@ -59,11 +59,11 @@ func NewTerraformCLI(ctx context.Context, tfVersion, workDir string, stdout, std
 		tf.SetStderr(os.Stderr)
 	}
 
-	return &TerraformCLI{tf: tf, version: tfVersion}, nil
+	return &TofuCLI{tf: tf, version: tfVersion}, nil
 }
 
-func (t *TerraformCLI) Init(ctx context.Context, backendConfig map[string]string, upgrade bool) error {
-	fmt.Println("Initializing Terraform...")
+func (t *TofuCLI) Init(ctx context.Context, backendConfig map[string]string, upgrade bool) error {
+	fmt.Println("Initializing OpenTofu...")
 	opts := []tfexec.InitOption{tfexec.Reconfigure(true)}
 	for k, v := range backendConfig {
 		opts = append(opts, tfexec.BackendConfig(k+"="+v))
@@ -74,9 +74,9 @@ func (t *TerraformCLI) Init(ctx context.Context, backendConfig map[string]string
 	return t.tf.Init(ctx, opts...)
 }
 
-// InitWithBackendFile runs terraform init using a backend config file (e.g. backend.hcl).
-func (t *TerraformCLI) InitWithBackendFile(ctx context.Context, backendFile string, upgrade bool) error {
-	fmt.Println("Initializing Terraform...")
+// InitWithBackendFile runs tofu init using a backend config file (e.g. backend.hcl).
+func (t *TofuCLI) InitWithBackendFile(ctx context.Context, backendFile string, upgrade bool) error {
+	fmt.Println("Initializing OpenTofu...")
 	opts := []tfexec.InitOption{
 		tfexec.Reconfigure(true),
 		tfexec.BackendConfig(backendFile),
@@ -87,8 +87,8 @@ func (t *TerraformCLI) InitWithBackendFile(ctx context.Context, backendFile stri
 	return t.tf.Init(ctx, opts...)
 }
 
-func (t *TerraformCLI) Plan(ctx context.Context, varFile, planOutFile string) (bool, error) {
-	fmt.Println("Running Terraform plan...")
+func (t *TofuCLI) Plan(ctx context.Context, varFile, planOutFile string) (bool, error) {
+	fmt.Println("Running OpenTofu plan...")
 	opts := []tfexec.PlanOption{
 		tfexec.Out(planOutFile),
 	}
@@ -98,13 +98,13 @@ func (t *TerraformCLI) Plan(ctx context.Context, varFile, planOutFile string) (b
 	return t.tf.Plan(ctx, opts...)
 }
 
-func (t *TerraformCLI) Apply(ctx context.Context, planFile string) error {
-	fmt.Println("Applying Terraform plan...")
+func (t *TofuCLI) Apply(ctx context.Context, planFile string) error {
+	fmt.Println("Applying OpenTofu plan...")
 	return t.tf.Apply(ctx, tfexec.DirOrPlan(planFile))
 }
 
-func (t *TerraformCLI) Destroy(ctx context.Context, varFile string) error {
-	fmt.Println("Running Terraform destroy...")
+func (t *TofuCLI) Destroy(ctx context.Context, varFile string) error {
+	fmt.Println("Running OpenTofu destroy...")
 	var opts []tfexec.DestroyOption
 	if varFile != "" {
 		opts = append(opts, tfexec.VarFile(varFile))
@@ -112,11 +112,11 @@ func (t *TerraformCLI) Destroy(ctx context.Context, varFile string) error {
 	return t.tf.Destroy(ctx, opts...)
 }
 
-func (t *TerraformCLI) Output(ctx context.Context) (map[string]interface{}, error) {
-	fmt.Println("Getting Terraform outputs...")
+func (t *TofuCLI) Output(ctx context.Context) (map[string]interface{}, error) {
+	fmt.Println("Getting OpenTofu outputs...")
 	outputMap, err := t.tf.Output(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get terraform output: %w", err)
+		return nil, fmt.Errorf("failed to get OpenTofu output: %w", err)
 	}
 
 	outputs := make(map[string]interface{})
@@ -131,13 +131,13 @@ func (t *TerraformCLI) Output(ctx context.Context) (map[string]interface{}, erro
 	return outputs, nil
 }
 
-func (t *TerraformCLI) ShowPlanJSON(ctx context.Context, planFile string) (*tfjson.Plan, error) {
+func (t *TofuCLI) ShowPlanJSON(ctx context.Context, planFile string) (*tfjson.Plan, error) {
 	fmt.Println("Generating plan JSON...")
 	return t.tf.ShowPlanFile(ctx, planFile)
 }
 
 func OverrideTfvarsFromMap(dir string, tfvars map[string]interface{}) (string, error) {
-	tfvarsPath := filepath.Join(dir, "terraform.tfvars.json")
+	tfvarsPath := filepath.Join(dir, "tofu.tfvars.json")
 
 	tfvarsData, err := json.MarshalIndent(tfvars, "", "  ")
 	if err != nil {

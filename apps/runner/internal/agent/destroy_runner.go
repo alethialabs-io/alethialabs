@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/alethialabs-io/alethialabs/packages/core/terraform"
+	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 )
 
 func (w *Runner) executeDestroyRunner(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
@@ -48,7 +48,7 @@ func (w *Runner) executeDestroyRunner(ctx context.Context, job *Job, provider st
 		return fmt.Errorf("failed to copy runner templates: %w", err)
 	}
 
-	varFile, err := terraform.OverrideTfvarsFromMap(workDir, map[string]any{
+	varFile, err := tofu.OverrideTfvarsFromMap(workDir, map[string]any{
 		"runner_id":        cfg.RunnerID,
 		"runner_token":     "destroy-placeholder",
 		"runner_name":      cfg.RunnerName,
@@ -74,19 +74,19 @@ func (w *Runner) executeDestroyRunner(ctx context.Context, job *Job, provider st
 	fmt.Fprintf(stdout, "State backend: S3 (runners/%s)\n", cfg.RunnerID[:8])
 
 	tfVersion := "1.15.5"
-	tf, err := terraform.NewTerraformCLI(ctx, tfVersion, workDir, stdout, stderr)
+	tf, err := tofu.NewTofuCLI(ctx, tfVersion, workDir, stdout, stderr)
 	if err != nil {
-		return fmt.Errorf("terraform setup failed: %w", err)
+		return fmt.Errorf("tofu setup failed: %w", err)
 	}
 
-	fmt.Fprintln(stdout, "Running terraform init...")
+	fmt.Fprintln(stdout, "Running tofu init...")
 	if err := tf.InitWithBackendFile(ctx, backendFile, false); err != nil {
-		return fmt.Errorf("terraform init failed: %w", err)
+		return fmt.Errorf("tofu init failed: %w", err)
 	}
 
-	fmt.Fprintln(stdout, "Running terraform destroy...")
+	fmt.Fprintln(stdout, "Running tofu destroy...")
 	if err := tf.Destroy(ctx, varFile); err != nil {
-		return fmt.Errorf("terraform destroy failed: %w", err)
+		return fmt.Errorf("tofu destroy failed: %w", err)
 	}
 
 	fmt.Fprintln(stdout, "Deleting runner record...")

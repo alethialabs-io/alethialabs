@@ -32,7 +32,7 @@ export async function POST(
 			);
 		}
 
-		const path = `${jobId}/terraform.plan.out`;
+		const path = `${jobId}/tofu.plan.out`;
 
 		try {
 			await storage.put(
@@ -71,7 +71,7 @@ export async function GET(
 	const { id: jobId } = await params;
 
 	try {
-		const path = `${jobId}/terraform.plan.out`;
+		const path = `${jobId}/tofu.plan.out`;
 
 		const data = await storage.get(BUCKET, path);
 		if (!data) {
@@ -89,7 +89,7 @@ export async function GET(
 			status: 200,
 			headers: {
 				"Content-Type": "application/octet-stream",
-				"Content-Disposition": `attachment; filename="terraform.plan.out"`,
+				"Content-Disposition": `attachment; filename="tofu.plan.out"`,
 			},
 		});
 	} catch (err: unknown) {

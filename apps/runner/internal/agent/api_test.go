@@ -106,7 +106,7 @@ func TestUpdateJobStatus_WithMetadata(t *testing.T) {
 	defer server.Close()
 
 	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
-	meta := map[string]any{"phase": "terraform_plan"}
+	meta := map[string]any{"phase": "tofu_plan"}
 	err := client.UpdateJobStatus("job-123", "PROCESSING", "", meta)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -115,8 +115,8 @@ func TestUpdateJobStatus_WithMetadata(t *testing.T) {
 	if !ok {
 		t.Fatal("expected execution_metadata in payload")
 	}
-	if execMeta["phase"] != "terraform_plan" {
-		t.Errorf("expected terraform_plan, got %v", execMeta["phase"])
+	if execMeta["phase"] != "tofu_plan" {
+		t.Errorf("expected tofu_plan, got %v", execMeta["phase"])
 	}
 }
 
@@ -129,11 +129,11 @@ func TestUpdateJobStatus_WithError(t *testing.T) {
 	defer server.Close()
 
 	client := NewRunnerAPIClient(server.URL, "w1", "tok1")
-	err := client.UpdateJobStatus("job-123", "FAILED", "terraform crashed", nil)
+	err := client.UpdateJobStatus("job-123", "FAILED", "tofu crashed", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if receivedPayload["error_message"] != "terraform crashed" {
+	if receivedPayload["error_message"] != "tofu crashed" {
 		t.Errorf("expected error message in payload")
 	}
 }

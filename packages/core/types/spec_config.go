@@ -14,10 +14,11 @@ type SpecConfig struct {
 	CloudIdentityID  string `json:"cloud_identity_id"`
 	Provider         string `json:"provider"`
 
-	Network      SpecNetworkConfig      `json:"network"`
-	Cluster      SpecClusterConfig      `json:"cluster"`
-	DNS          SpecDNSConfig          `json:"dns"`
-	Repositories SpecRepositoriesConfig `json:"repositories"`
+	Network       SpecNetworkConfig       `json:"network"`
+	Cluster       SpecClusterConfig       `json:"cluster"`
+	DNS           SpecDNSConfig           `json:"dns"`
+	Observability SpecObservabilityConfig `json:"observability"`
+	Repositories  SpecRepositoriesConfig  `json:"repositories"`
 
 	Databases           []SpecDatabaseConfig          `json:"databases"`
 	Caches              []SpecCacheConfig             `json:"caches"`
@@ -32,6 +33,29 @@ type SpecConfig struct {
 
 	// Populated at runtime from CloudIdentity, not from snapshot
 	CloudAccountID string `json:"-"`
+
+	// Populated at runtime from the claim response (decrypted), not from snapshot.
+	// Keyed lookups happen via IntegrationCredentialFor.
+	IntegrationCredentials []IntegrationCredential `json:"-"`
+}
+
+// IntegrationCredential carries a decrypted api_key credential for a pluggable
+// provider, attached to the job at claim time (never stored in config_snapshot).
+type IntegrationCredential struct {
+	Category    string            `json:"category"`
+	Slug        string            `json:"slug"`
+	Credentials map[string]string `json:"credentials"`
+}
+
+// IntegrationCredentialFor returns the decrypted credential fields for a given
+// (category, slug), or nil if none was attached.
+func (c *SpecConfig) IntegrationCredentialFor(category, slug string) map[string]string {
+	for _, ic := range c.IntegrationCredentials {
+		if ic.Category == category && ic.Slug == slug {
+			return ic.Credentials
+		}
+	}
+	return nil
 }
 
 type SpecNetworkConfig struct {
@@ -52,9 +76,18 @@ type SpecClusterConfig struct {
 }
 
 type SpecDNSConfig struct {
-	Enabled        bool           `json:"enabled"`
+	Enabled bool `json:"enabled"`
+	// Pluggable provider slug (connectors.slug); "" / "native" = cloud-native DNS.
+	Provider       string         `json:"provider"`
 	ZoneID         string         `json:"zone_id"`
 	DomainName     string         `json:"domain_name"`
+	ProviderConfig map[string]any `json:"provider_config"`
+}
+
+// SpecObservabilityConfig — pluggable-only component (no cloud-native default).
+type SpecObservabilityConfig struct {
+	Enabled        bool           `json:"enabled"`
+	Provider       string         `json:"provider"`
 	ProviderConfig map[string]any `json:"provider_config"`
 }
 
@@ -115,10 +148,15 @@ type SpecSecretConfig struct {
 	Generate     bool   `json:"generate"`
 	Length       int    `json:"length"`
 	SpecialChars bool   `json:"special_chars"`
+	// Pluggable provider slug (connectors.slug); "" / "native" = cloud-native store.
+	Provider       string         `json:"provider"`
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 type SpecContainerRegistryConfig struct {
-	Name           string         `json:"name"`
+	Name string `json:"name"`
+	// Pluggable provider slug (connectors.slug); "" / "native" = cloud-native registry.
+	Provider       string         `json:"provider"`
 	ProviderConfig map[string]any `json:"provider_config"`
 }
 

@@ -151,7 +151,7 @@ func (i *InfracostCLI) download(binDir string) error {
 
 // RunInfracost executes infracost breakdown and returns structured cost data.
 // Also writes the JSON and table files to temp/ for backward compatibility.
-func (i *InfracostCLI) RunInfracost(terraformPlanFile string, env []string) (*CostBreakdown, error) {
+func (i *InfracostCLI) RunInfracost(planFile string, env []string) (*CostBreakdown, error) {
 	if !i.CheckToken() {
 		return nil, nil
 	}
@@ -168,7 +168,7 @@ func (i *InfracostCLI) RunInfracost(terraformPlanFile string, env []string) (*Co
 	}
 	breakdownJSONPath := filepath.Join(tempDir, "infracost_breakdown.json")
 
-	breakdownCmd := fmt.Sprintf("%s breakdown --path %s --format json --out-file %s", i.binaryPath, terraformPlanFile, breakdownJSONPath)
+	breakdownCmd := fmt.Sprintf("%s breakdown --path %s --format json --out-file %s", i.binaryPath, planFile, breakdownJSONPath)
 	if err := utils.ExecuteCommand(breakdownCmd, ".", env, nil, nil); err != nil {
 		return nil, fmt.Errorf("infracost breakdown failed: %w", err)
 	}

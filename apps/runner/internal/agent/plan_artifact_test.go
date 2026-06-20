@@ -23,12 +23,12 @@ func TestUploadPlanArtifact_Success(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		receivedBody = body
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"key":"job-1/terraform.plan.out"}`))
+		w.Write([]byte(`{"key":"job-1/tofu.plan.out"}`))
 	}))
 	defer server.Close()
 
 	tmpFile := filepath.Join(t.TempDir(), "test.plan.out")
-	planData := []byte("fake-terraform-plan-binary-content")
+	planData := []byte("fake-tofu-plan-binary-content")
 	os.WriteFile(tmpFile, planData, 0644)
 
 	client := NewRunnerAPIClient(server.URL, "w1", "tok1")

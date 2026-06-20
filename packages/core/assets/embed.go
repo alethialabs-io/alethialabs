@@ -7,12 +7,12 @@ import (
 	"embed"
 )
 
-//go:embed all:terraform/seed
+//go:embed all:tofu/seed
 //go:embed all:helm/runner
 var Assets embed.FS
 
-// GetTerraformSeed returns the embedded filesystem for the seed terraform
-func GetTerraformSeed() embed.FS {
+// GetTofuSeed returns the embedded filesystem for the seed OpenTofu
+func GetTofuSeed() embed.FS {
 	return Assets
 }
 

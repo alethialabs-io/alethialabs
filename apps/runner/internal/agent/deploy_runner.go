@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/alethialabs-io/alethialabs/packages/core/terraform"
+	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 )
 
 type runnerDeployConfig struct {
@@ -82,7 +82,7 @@ func (w *Runner) executeDeployRunner(ctx context.Context, job *Job, provider str
 		"image_repository": cfg.ImageRepository,
 	}
 
-	varFile, err := terraform.OverrideTfvarsFromMap(workDir, tfvars)
+	varFile, err := tofu.OverrideTfvarsFromMap(workDir, tfvars)
 	if err != nil {
 		return fmt.Errorf("failed to write tfvars: %w", err)
 	}
@@ -97,31 +97,30 @@ func (w *Runner) executeDeployRunner(ctx context.Context, job *Job, provider str
 	}
 	fmt.Fprintf(stdout, "State backend: S3 (runners/%s)\n", cfg.RunnerID[:8])
 
-	tfVersion := "1.15.5"
-	tf, err := terraform.NewTerraformCLI(ctx, tfVersion, workDir, stdout, stderr)
+	tf, err := tofu.NewTofuCLI(ctx, tofu.DefaultIaCVersion, workDir, stdout, stderr)
 	if err != nil {
-		return fmt.Errorf("terraform setup failed: %w", err)
+		return fmt.Errorf("tofu setup failed: %w", err)
 	}
 
-	fmt.Fprintln(stdout, "Running terraform init...")
+	fmt.Fprintln(stdout, "Running tofu init...")
 	if err := tf.InitWithBackendFile(ctx, backendFile, false); err != nil {
-		return fmt.Errorf("terraform init failed: %w", err)
+		return fmt.Errorf("tofu init failed: %w", err)
 	}
 
-	planFile := filepath.Join(workDir, "terraform.plan.out")
-	fmt.Fprintln(stdout, "Running terraform plan...")
+	planFile := filepath.Join(workDir, "tofu.plan.out")
+	fmt.Fprintln(stdout, "Running tofu plan...")
 	if _, err := tf.Plan(ctx, varFile, planFile); err != nil {
-		return fmt.Errorf("terraform plan failed: %w", err)
+		return fmt.Errorf("tofu plan failed: %w", err)
 	}
 
-	fmt.Fprintln(stdout, "Running terraform apply...")
+	fmt.Fprintln(stdout, "Running tofu apply...")
 	if err := tf.Apply(ctx, planFile); err != nil {
-		return fmt.Errorf("terraform apply failed: %w", err)
+		return fmt.Errorf("tofu apply failed: %w", err)
 	}
 
 	outputs, err := tf.Output(ctx)
 	if err != nil {
-		fmt.Fprintf(stderr, "Warning: could not read terraform outputs: %v\n", err)
+		fmt.Fprintf(stderr, "Warning: could not read tofu outputs: %v\n", err)
 	} else if len(outputs) > 0 {
 		w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
 			"runner_outputs": outputs,

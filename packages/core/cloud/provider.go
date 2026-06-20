@@ -31,7 +31,7 @@ func NewCloudProvider(provider string) (CloudProvider, error) {
 	}
 }
 
-// ExtractClusterName reads the K8s cluster name from Terraform outputs,
+// ExtractClusterName reads the K8s cluster name from OpenTofu outputs,
 // checking provider-specific output keys.
 func ExtractClusterName(outputs map[string]interface{}) string {
 	keys := []string{"eks_cluster_name", "gke_cluster_name", "aks_cluster_name"}
@@ -50,7 +50,7 @@ func ExtractClusterName(outputs map[string]interface{}) string {
 	return ""
 }
 
-// ExtractClusterEndpoint reads the K8s cluster endpoint from Terraform outputs.
+// ExtractClusterEndpoint reads the K8s cluster endpoint from OpenTofu outputs.
 func ExtractClusterEndpoint(outputs map[string]interface{}) string {
 	keys := []string{"eks_cluster_endpoint", "gke_cluster_endpoint", "aks_cluster_endpoint"}
 	for _, key := range keys {

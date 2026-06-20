@@ -7,15 +7,15 @@ describe("Plan artifact storage", () => {
 	describe("file key generation", () => {
 		it("generates correct storage path from job ID", () => {
 			const jobId = "abc123-def456";
-			const path = `${jobId}/terraform.plan.out`;
-			expect(path).toBe("abc123-def456/terraform.plan.out");
+			const path = `${jobId}/tofu.plan.out`;
+			expect(path).toBe("abc123-def456/tofu.plan.out");
 		});
 
 		it("handles UUID-format job IDs", () => {
 			const jobId = "24b2941a-b6de-4a3f-b0f9-d11630d60b56";
-			const path = `${jobId}/terraform.plan.out`;
+			const path = `${jobId}/tofu.plan.out`;
 			expect(path).toContain(jobId);
-			expect(path).toMatch(/\/terraform\.plan\.out$/);
+			expect(path).toMatch(/\/tofu\.plan\.out$/);
 		});
 	});
 
@@ -44,11 +44,11 @@ describe("Plan artifact storage", () => {
 			const metadata = {
 				plan_completed: true,
 				plan_result: { resource_changes: [] },
-				plan_file_key: `${jobId}/terraform.plan.out`,
+				plan_file_key: `${jobId}/tofu.plan.out`,
 			};
 
 			expect(metadata.plan_file_key).toBe(
-				"plan-job-123/terraform.plan.out",
+				"plan-job-123/tofu.plan.out",
 			);
 		});
 
@@ -57,9 +57,9 @@ describe("Plan artifact storage", () => {
 				id: "deploy-job-456",
 				plan_job_id: "plan-job-123",
 			};
-			const downloadPath = `${deployJob.plan_job_id}/terraform.plan.out`;
+			const downloadPath = `${deployJob.plan_job_id}/tofu.plan.out`;
 			expect(downloadPath).toBe(
-				"plan-job-123/terraform.plan.out",
+				"plan-job-123/tofu.plan.out",
 			);
 		});
 

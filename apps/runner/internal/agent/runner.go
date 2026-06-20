@@ -278,9 +278,9 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			}
 		}
 	case "PLAN":
-		execErr = w.executePlan(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
+		execErr = w.executePlan(ctx, job, provider, claim.CloudIdentity, claim.IntegrationCredentials, stdoutLogger, stderrLogger)
 	case "DEPLOY":
-		execErr = w.executeDeploy(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
+		execErr = w.executeDeploy(ctx, job, provider, claim.CloudIdentity, claim.IntegrationCredentials, stdoutLogger, stderrLogger)
 	case "DESTROY":
 		execErr = w.executeDestroy(ctx, job, stdoutLogger, stderrLogger)
 	case "DEPLOY_RUNNER", "UPDATE_RUNNER":
@@ -490,7 +490,40 @@ func resolveSpecTemplatesDir() string {
 	return ""
 }
 
-func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
+// resolveCategoriesTemplatesDir locates the composable per-category modules
+// (infra/templates/categories) — a sibling of the spec templates dir.
+func resolveCategoriesTemplatesDir() string {
+	candidates := []string{
+		"/home/runner/category-templates",
+		"category-templates",
+		"../../infra/templates/categories",
+	}
+	for _, d := range candidates {
+		if info, err := os.Stat(d); err == nil && info.IsDir() {
+			return d
+		}
+	}
+	return ""
+}
+
+// toCoreIntegrationCreds converts the runner's claim-response credentials into
+// the core types used by the provisioner/composer.
+func toCoreIntegrationCreds(creds []IntegrationCredential) []types.IntegrationCredential {
+	if len(creds) == 0 {
+		return nil
+	}
+	out := make([]types.IntegrationCredential, 0, len(creds))
+	for _, c := range creds {
+		out = append(out, types.IntegrationCredential{
+			Category:    c.Category,
+			Slug:        c.Slug,
+			Credentials: c.Credentials,
+		})
+	}
+	return out
+}
+
+func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, identity *CloudIdentity, integrationCreds []IntegrationCredential, stdout, stderr *JobLogger) error {
 	vc, err := snapshotToSpecConfig(job.ConfigSnapshot)
 	if err != nil {
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
@@ -504,6 +537,7 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	if identity != nil {
 		vc.CloudAccountID = resolveAccountID(identity)
 	}
+	vc.IntegrationCredentials = toCoreIntegrationCreds(integrationCreds)
 
 	if job.PlanJobID != nil && *job.PlanJobID != "" {
 		fmt.Fprintf(stdout, "Validating against plan job %s...\n", *job.PlanJobID)
@@ -536,6 +570,7 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		SpecConfig:     vc,
 		Provider:       provider,
 		TemplatesDir:   filepath.Join(resolveSpecTemplatesDir(), provider),
+		CategoriesDir:  resolveCategoriesTemplatesDir(),
 		GitAccessToken: gitToken,
 		S3Backend:      w.s3Backend(),
 		Stdout:         stdout,
@@ -583,7 +618,7 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	return nil
 }
 
-func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
+func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, identity *CloudIdentity, integrationCreds []IntegrationCredential, stdout, stderr *JobLogger) error {
 	vc, err := snapshotToSpecConfig(job.ConfigSnapshot)
 	if err != nil {
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
@@ -597,6 +632,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 	if identity != nil {
 		vc.CloudAccountID = resolveAccountID(identity)
 	}
+	vc.IntegrationCredentials = toCoreIntegrationCreds(integrationCreds)
 
 	infracostKey := os.Getenv("INFRACOST_API_KEY")
 
@@ -614,6 +650,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 		Provider:       provider,
 		DryRun:         true,
 		TemplatesDir:   filepath.Join(resolveSpecTemplatesDir(), provider),
+		CategoriesDir:  resolveCategoriesTemplatesDir(),
 		InfracostToken: infracostKey,
 		GitAccessToken: planGitToken,
 		S3Backend:      w.s3Backend(),
@@ -622,7 +659,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 	}
 
 	w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
-		"phase": "terraform_plan", "progress": "Running terraform plan...",
+		"phase": "tofu_plan", "progress": "Running OpenTofu plan...",
 	})
 
 	result, err := provisioner.RunDeployV2(ctx, params)
@@ -640,7 +677,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 				metadata["plan_result"] = result.PlanJSON
 			}
 		} else {
-			fmt.Fprintln(stdout, "Warning: PlanJSON is nil — terraform show may have failed")
+			fmt.Fprintln(stdout, "Warning: PlanJSON is nil — tofu show may have failed")
 		}
 		if result.CostBreakdown != nil {
 			metadata["cost_breakdown"] = result.CostBreakdown
@@ -657,7 +694,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 				fmt.Fprintf(stderr, "Warning: failed to upload plan artifact: %v\n", uploadErr)
 			} else {
 				fmt.Fprintln(stdout, "Plan artifact uploaded to storage.")
-				metadata["plan_file_key"] = fmt.Sprintf("%s/terraform.plan.out", job.ID)
+				metadata["plan_file_key"] = fmt.Sprintf("%s/tofu.plan.out", job.ID)
 			}
 			os.Remove(tmpPlan)
 		}
