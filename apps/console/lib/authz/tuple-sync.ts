@@ -41,6 +41,8 @@ export interface TupleSync {
 	removeHierarchyEdge(edge: HierarchyEdge): Promise<void>;
 	syncTeamMember(teamId: string, userId: string): Promise<void>;
 	removeTeamMember(teamId: string, userId: string): Promise<void>;
+	/** Re-expand every grant referencing a role (after its permissions changed). */
+	resyncRole(roleId: string): Promise<void>;
 	/** Write the model + backfill all tuples from Postgres (idempotent). */
 	backfill(): Promise<void>;
 }
@@ -54,6 +56,7 @@ const NOOP: TupleSync = {
 	async removeHierarchyEdge() {},
 	async syncTeamMember() {},
 	async removeTeamMember() {},
+	async resyncRole() {},
 	async backfill() {},
 };
 

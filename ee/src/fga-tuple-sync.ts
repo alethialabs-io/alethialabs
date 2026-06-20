@@ -143,6 +143,44 @@ export class FgaTupleSync implements TupleSync {
 		await this.deleteTuples([this.core.fga.teamMemberTuple(teamId, userId)]);
 	}
 
+	async resyncRole(roleId: string): Promise<void> {
+		const keys = await this.core.fga.rolePermissionKeys(roleId);
+		const grants = await this.core.db.execute<{
+			org_id: string;
+			principal_type: "user" | "team";
+			principal_id: string;
+			effect: "allow" | "deny";
+			resource_type: string;
+			resource_id: string | null;
+		}>(sql`
+			select org_id, principal_type, principal_id, effect, resource_type, resource_id
+			from grants where role_id = ${roleId}
+		`);
+		for (const g of grants) {
+			const subject =
+				g.principal_type === "team"
+					? `team:${g.principal_id}#member`
+					: `user:${g.principal_id}`;
+			const object = g.resource_id
+				? `${g.resource_type}:${g.resource_id}`
+				: `org:${g.org_id}`;
+			await this.deleteTuples(await this.existingFor(subject, object));
+			await this.writeTuples(
+				this.core.fga.expandGrant(
+					{
+						orgId: g.org_id,
+						principalType: g.principal_type,
+						principalId: g.principal_id,
+						effect: g.effect,
+						resourceType: g.resource_id ? g.resource_type : "org",
+						resourceId: g.resource_id,
+					},
+					keys,
+				),
+			);
+		}
+	}
+
 	async backfill(): Promise<void> {
 		// 1. Write (or refresh) the authorization model.
 		await this.client.writeAuthorizationModel(this.core.fga.buildModel());

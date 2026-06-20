@@ -4,6 +4,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { EnterpriseGate } from "@/components/settings/enterprise-gate";
+import { CustomRoles } from "@/components/settings/roles/custom-roles";
 import { SettingsCard } from "@/components/settings/settings-card";
 import { SettingsHeader } from "@/components/settings/settings-header";
 import {
@@ -69,8 +70,7 @@ export default function RolesPage() {
 					title="Custom roles"
 					description="Define your own roles with a tailored permission matrix, scoped to your organization."
 				>
-					{/* Custom-role editor lands with the enterprise build. */}
-					<div />
+					<CustomRoles />
 				</EnterpriseGate>
 			</div>
 		</>
