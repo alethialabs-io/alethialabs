@@ -2,7 +2,7 @@
 #
 # This file grows phase-by-phase toward the full ~4-container deliverable
 # (app · postgres · s3 · runner). Today it bundles the storage tier (SeaweedFS)
-# and the app database (Postgres) so the de-Supabase swap runs with zero manual
+# and the app database (Postgres) so a fresh checkout runs with zero manual
 # setup:
 #
 #   cp .env.example .env && docker compose up -d
@@ -37,7 +37,7 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # Application database (replaces Supabase Postgres). Drizzle connects here
+  # Application database (Postgres). Drizzle connects here
   # directly; the console auto-runs migrations on boot. Self-host default — point
   # ALETHIA_DATABASE_URL at a managed Postgres to swap.
   postgres:

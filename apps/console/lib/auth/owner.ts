@@ -7,8 +7,7 @@ import { auth } from "@/lib/auth";
 /**
  * Returns the authenticated user's id — the owner scope passed to
  * withOwnerScope() for the per-owner RLS backstop. Identity comes from Better
- * Auth (Phase D); the contract (a uuid string or throw) is unchanged from the
- * Supabase era so every caller stays the same. Throws on no session.
+ * Auth (Phase D); the contract (a uuid string or throw) is stable so every caller stays the same. Throws on no session.
  */
 export async function requireOwner(): Promise<string> {
 	const session = await auth.api.getSession({ headers: await headers() });

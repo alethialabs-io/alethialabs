@@ -93,7 +93,7 @@ export const useCloudProviderStore = create<CloudProviderStore>()(
 		},
 
 		subscribe: () => {
-			// Supabase Realtime retired. cloud_identities.cached_resources refreshes
+			// cloud_identities.cached_resources refreshes
 			// via the explicit FETCH_RESOURCES job flow (refreshCloudResources →
 			// poll → completeResourceRefresh → updateResources), so no live channel.
 			return () => {};

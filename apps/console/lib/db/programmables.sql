@@ -168,7 +168,7 @@ BEGIN
 END;
 $$;
 
--- set_default_runner: owner passed as a parameter (no auth.uid() off Supabase).
+-- set_default_runner: owner passed as a parameter (no implicit session-user lookup).
 CREATE OR REPLACE FUNCTION public.set_default_runner(p_user_id UUID, p_runner_id UUID DEFAULT NULL)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN

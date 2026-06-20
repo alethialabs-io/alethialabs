@@ -13,8 +13,7 @@ export interface JobLogEntry {
 }
 
 /**
- * Streams a job's logs over SSE (/api/stream/jobs/:id), replacing the Supabase
- * Realtime job_logs subscription. The server sends the backlog on connect; the
+ * Streams a job's logs over SSE (/api/stream/jobs/:id). The server sends the backlog on connect; the
  * browser's EventSource auto-reconnects and resumes from the last id (Last-Event-ID).
  */
 export function useJobLogStream(jobId: string | null): { logs: JobLogEntry[] } {

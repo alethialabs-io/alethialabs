@@ -10,8 +10,7 @@ import { Server } from "lucide-react";
 import Link from "next/link";
 import { useEffect } from "react";
 
-// Interim reconciliation cadence while the data layer is off Supabase Realtime.
-// Phase E replaces this poll with an SSE stream (Postgres LISTEN/NOTIFY).
+// Interim reconciliation cadence; an SSE stream (Postgres LISTEN/NOTIFY) will replace this poll.
 const CLUSTERS_POLL_INTERVAL_MS = 5000;
 
 export default function ClustersPage() {

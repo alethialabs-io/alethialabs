@@ -3,8 +3,7 @@
 
 import { pgEnum } from "drizzle-orm/pg-core";
 
-// Postgres enums in active use. (The generated Supabase types also list dead
-// enums from dropped tables — cluster_status, deployment_*, iac_tool, logs_level
+// Postgres enums in active use. (Some dropped tables left dead enums in the DB — cluster_status, deployment_*, iac_tool, logs_level
 // — which are intentionally omitted.)
 
 export const cloudProvider = pgEnum("cloud_provider", ["aws", "azure", "gcp"]);

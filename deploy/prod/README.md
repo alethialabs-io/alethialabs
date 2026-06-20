@@ -46,8 +46,6 @@ credits). Pick one; both target the same `DEPLOY_HOST`.
 - → Hetzner is ~3× cheaper for the always-on box; chosen for the MVP.
 
 ## Gating / next
-- Auth runs on Better Auth and data on Postgres/Drizzle — no Supabase vars needed. For an existing
-  Supabase install, migrate `spec-terraform-state` with `aws s3 sync` before cutover (see
-  `infra/platform/de-supabase-storage.md`).
+- Auth runs on Better Auth and data on Postgres/Drizzle.
 - Multi-cloud **runner fleet** + per-provider autoscaling is designed in
   `spec/mvp/08-runner-fleet-autoscaling.md` (built incrementally).

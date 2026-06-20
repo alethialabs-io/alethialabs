@@ -9,7 +9,7 @@ import { NextResponse } from "next/server";
 /**
  * Queue-depth probe for the ECS scaler. Requeues stale jobs, then reports how
  * many jobs are QUEUED so the scaler can scale this node's runner service up or
- * down. Replaces the scaler's former Supabase REST calls. Authenticated with the
+ * down. Authenticated with the
  * shared platform secret (Bearer RELEASE_API_SECRET).
  */
 export async function POST(req: Request) {

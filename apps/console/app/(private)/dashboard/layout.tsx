@@ -58,8 +58,7 @@ export default function DashboardLayout({
 	const { notifications, unreadCount, markAsRead, markAllRead } = useJobNotifications();
 
 	// Initial jobs load once a session is present. Live updates come from the
-	// jobs store + useJobNotifications polling (Supabase Realtime is gone; SSE
-	// replaces the poll in Phase E).
+	// jobs store + useJobNotifications polling (an SSE stream will replace the poll).
 	useEffect(() => {
 		if (user) useJobsStore.getState().fetchJobs(true);
 	}, [user]);

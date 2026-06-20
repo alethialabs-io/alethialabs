@@ -12,7 +12,7 @@ import { getStorageConfig } from "@/lib/config/storage";
 
 /**
  * Thin S3-compatible storage wrapper so "which S3" (SeaweedFS / Garage / AWS
- * S3 / R2) is pure configuration. Replaces the Supabase Storage client; the
+ * S3 / R2) is pure configuration. The
  * hosted tier later points the same wrapper at AWS S3 or R2 by env alone.
  */
 export interface StorageBackend {

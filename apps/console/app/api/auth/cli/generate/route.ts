@@ -29,7 +29,7 @@ export async function POST(req: Request) {
 	}
 
 	// Best-effort: stash the user's first linked git provider token for the CLI
-	// (temporarily held in verification_code, as in the Supabase device flow).
+	// (temporarily held in verification_code, during the device-code flow).
 	let providerToken: string | null = null;
 	try {
 		const accounts = await auth.api.listUserAccounts({ headers: hdrs });

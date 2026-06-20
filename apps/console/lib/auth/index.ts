@@ -50,7 +50,7 @@ if (cfg.providers.google) {
 }
 
 // Self-hosted GitLab + Bitbucket via the generic OAuth plugin (registered only
-// when configured). Scopes mirror the pre-cutover Supabase link scopes.
+// when configured). Scopes mirror the git provider link scopes.
 const genericOAuthConfigs = [];
 if (cfg.providers.gitlab) {
 	genericOAuthConfigs.push({

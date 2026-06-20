@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Typed JSONB shapes for the Drizzle schema's `.$type<>()` columns (lib/db/schema).
-// Formerly also overlaid onto the Supabase-generated `Database` type via MergeDeep;
-// that generated type + the supabase clients are gone, so only the interfaces remain.
 
 // ── Typed JSONB interfaces ─────────────────────────────────────────
 

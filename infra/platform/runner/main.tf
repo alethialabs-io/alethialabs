@@ -160,11 +160,11 @@ resource "aws_ecs_task_definition" "runner" {
         },
         {
           name      = "ALETHIA_STORAGE_ACCESS_KEY_ID"
-          valueFrom = aws_secretsmanager_secret.supabase_storage_key_id.arn
+          valueFrom = aws_secretsmanager_secret.storage_key_id.arn
         },
         {
           name      = "ALETHIA_STORAGE_SECRET_ACCESS_KEY"
-          valueFrom = aws_secretsmanager_secret.supabase_storage_secret_key.arn
+          valueFrom = aws_secretsmanager_secret.storage_secret_key.arn
         }
       ]
 
@@ -252,25 +252,25 @@ resource "aws_secretsmanager_secret_version" "infracost_key" {
   secret_string = coalesce(var.infracost_api_key, "not-set")
 }
 
-resource "aws_secretsmanager_secret" "supabase_storage_key_id" {
-  name                    = "${local.name_prefix}-supabase-s3-key-id"
-  description             = "Supabase Storage S3 access key ID for Terraform state"
+resource "aws_secretsmanager_secret" "storage_key_id" {
+  name                    = "${local.name_prefix}-storage-s3-key-id"
+  description             = "S3-compatible storage access key ID for Terraform state"
   recovery_window_in_days = var.secrets_recovery_window_days
 }
 
-resource "aws_secretsmanager_secret_version" "supabase_storage_key_id" {
-  secret_id     = aws_secretsmanager_secret.supabase_storage_key_id.id
+resource "aws_secretsmanager_secret_version" "storage_key_id" {
+  secret_id     = aws_secretsmanager_secret.storage_key_id.id
   secret_string = var.storage_access_key_id
 }
 
-resource "aws_secretsmanager_secret" "supabase_storage_secret_key" {
-  name                    = "${local.name_prefix}-supabase-s3-secret-key"
-  description             = "Supabase Storage S3 secret access key for Terraform state"
+resource "aws_secretsmanager_secret" "storage_secret_key" {
+  name                    = "${local.name_prefix}-storage-s3-secret-key"
+  description             = "S3-compatible storage secret access key for Terraform state"
   recovery_window_in_days = var.secrets_recovery_window_days
 }
 
-resource "aws_secretsmanager_secret_version" "supabase_storage_secret_key" {
-  secret_id     = aws_secretsmanager_secret.supabase_storage_secret_key.id
+resource "aws_secretsmanager_secret_version" "storage_secret_key" {
+  secret_id     = aws_secretsmanager_secret.storage_secret_key.id
   secret_string = var.storage_secret_access_key
 }
 
@@ -311,8 +311,8 @@ resource "aws_iam_role_policy" "execution_secrets" {
         Resource = [
           aws_secretsmanager_secret.runner_token.arn,
           aws_secretsmanager_secret.infracost_key.arn,
-          aws_secretsmanager_secret.supabase_storage_key_id.arn,
-          aws_secretsmanager_secret.supabase_storage_secret_key.arn,
+          aws_secretsmanager_secret.storage_key_id.arn,
+          aws_secretsmanager_secret.storage_secret_key.arn,
         ]
       }
     ]

@@ -21,7 +21,7 @@ type LogRow = {
 /**
  * SSE stream of a job's logs. Sends the backlog since the client's Last-Event-ID,
  * then streams new rows as the runner writes them (Postgres LISTEN/NOTIFY via the
- * RealtimeTransport). Replaces the Supabase Realtime job_logs subscription.
+ * RealtimeTransport).
  */
 export async function GET(
 	req: Request,

@@ -43,7 +43,7 @@ Once a term is defined in the glossary, use the abbreviation consistently throug
 
 ### Database Schema Pipeline (Drizzle)
 
-The DB tier is **Drizzle ORM + postgres-js** on self-hosted Postgres (no Supabase). Schema changes
+The DB tier is **Drizzle ORM + postgres-js** on self-hosted Postgres. Schema changes
 follow a strict pipeline. **Never edit generated migration files manually.**
 
 1. Edit the schema in `lib/db/schema/*.ts` (one file per domain: jobs, runners, specs, zones, …).
@@ -56,7 +56,7 @@ follow a strict pipeline. **Never edit generated migration files manually.**
 ### How JSONB typing works
 
 - Column types are inferred straight from the Drizzle schema (`typeof table.$inferSelect` /
-  `$inferInsert`) — there is **no** generated `database.types.ts` and no Supabase CLI.
+  `$inferInsert`) — there is **no** generated `database.types.ts`.
 - For JSONB columns with a known shape, type them on the column with
   `jsonb().$type<SomeInterface>()`; the interface lives in `types/database-custom.types.ts`
   (CloudCredentials, CachedResources, ClusterAdmin, TopicSubscription, etc.).

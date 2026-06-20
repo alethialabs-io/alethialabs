@@ -27,8 +27,7 @@ function makeClient(url: string) {
 
 /**
  * Service connection — bypasses RLS (superuser / BYPASSRLS role). Backs the
- * runner + CLI API routes and the SECURITY DEFINER RPC calls (replaces the
- * Supabase service-role client). Never use for user-facing reads/writes.
+ * runner + CLI API routes and the SECURITY DEFINER RPC calls. Never use for user-facing reads/writes.
  */
 export function getServiceDb(): Db {
 	if (!globalForDb.__alethiaServiceDb) {
