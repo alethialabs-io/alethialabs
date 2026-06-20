@@ -53,6 +53,10 @@ For password-less email sign-in, the user enters their email, receives a **6-dig
 - Data access runs through the app's Policy Decision Point (PDP), which sets the active org via `set_config('app.current_org', …)` before queries
 - Coarse Postgres RLS keyed on `org_id` enforces per-organization data isolation (not `auth.uid()`)
 
+Authentication is *who you are*; **authorization** is *what you can do*. Once you're signed in, the PDP decides
+every action — see [**Access Control**](/access-control) for roles, permissions, grants (allow/deny), and the
+org/team model.
+
 ## CLI Authentication (alethia)
 
 alethia uses the **Device Authorization Grant** (RFC 8628) — the same pattern used by GitHub CLI, Azure CLI, and AWS SSO.
