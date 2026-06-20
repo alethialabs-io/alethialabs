@@ -22,7 +22,7 @@ variable "runner_version" {
 
 variable "alethia_url" {
   type        = string
-  default     = "https://adp.prod.itgix.eu"
+  default     = "https://alethialabs.io"
   description = "Alethia web origin URL."
 }
 

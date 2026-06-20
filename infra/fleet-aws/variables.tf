@@ -2,7 +2,7 @@
 
 variable "project_name" {
   type    = string
-  default = "runner"
+  default = "alethia-runner"
 }
 
 variable "environment" {
@@ -19,7 +19,7 @@ variable "runners" {
   default = {
     "prod-eu-west-1" = {
       region      = "eu-west-1"
-      alethia_url = "https://adp.prod.itgix.eu"
+      alethia_url = "https://alethialabs.io"
     }
   }
 }

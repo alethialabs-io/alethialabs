@@ -120,9 +120,9 @@ cp terraform.tfvars.example terraform.tfvars
 Apply:
 
 ```bash
-terraform init -backend-config=backend.hcl
-terraform plan
-terraform apply
+tofu init -backend-config=backend.hcl
+tofu plan
+tofu apply
 ```
 
 #### Migrating from an existing AWS S3 backend
@@ -139,7 +139,7 @@ cp backend.hcl.example backend.hcl
 # 3. Set storage credentials and migrate
 export AWS_ACCESS_KEY_ID="$ALETHIA_STORAGE_ACCESS_KEY_ID"
 export AWS_SECRET_ACCESS_KEY="$ALETHIA_STORAGE_SECRET_ACCESS_KEY"
-terraform init -migrate-state -backend-config=backend.hcl
+tofu init -migrate-state -backend-config=backend.hcl
 
 # 4. Verify
 terraform state list
@@ -204,7 +204,7 @@ You should see:
 
 ```
 Runner started (id=a1b2c3d4-..., mode=self-hosted)
-Polling https://adp.prod.itgix.eu for jobs...
+Polling https://alethialabs.io for jobs...
 ```
 
 ### 7. Test the full loop
@@ -231,7 +231,7 @@ From the Alethia dashboard:
 3. **Postgres RPC** `claim_next_job()` atomically assigns the oldest queued job (uses `SELECT FOR UPDATE SKIP LOCKED` to prevent double-claims)
 4. **Runner** updates status to `PROCESSING`, starts executing:
    - **BOOTSTRAP**: Terraform → VPC + EKS, then Helm → ArgoCD
-   - **DEPLOY**: Clone repos → Terraform apply → Helm install → ArgoCD manifests
+   - **DEPLOY**: Clone repos → OpenTofu apply → Helm install → ArgoCD manifests
    - **DESTROY**: Terraform destroy → cleanup
 5. **Logs** stream via `POST /api/jobs/{id}/logs` → `job_logs` table → Postgres LISTEN/NOTIFY → SSE → Alethia log viewer
 6. **Runner** sets final status (`SUCCESS` or `FAILED`)

@@ -1,7 +1,7 @@
 # Runner multi-environment deployment configuration
 # Copy to terraform.tfvars and fill in secrets.
 
-project_name = "runner"
+project_name = "alethia-runner"
 environment  = "dev"
 
 # Each entry creates a runner: VPC, ECS cluster, auto-registration.
@@ -9,15 +9,15 @@ environment  = "dev"
 runners = {
   "prod-eu-west-1" = {
     region      = "eu-west-1"
-    alethia_url = "https://adp.prod.itgix.eu"
+    alethia_url = "https://alethialabs.io"
   }
   "beta-eu-west-1" = {
     region      = "eu-west-1"
-    alethia_url = "https://beta.adp.itgix.com"
+    alethia_url = "https://beta.alethialabs.io"
   }
   "dev-eu-west-1" = {
     region      = "eu-west-1"
-    alethia_url = "https://your-ngrok-url.ngrok-free.dev"
+    alethia_url = "https://dev.alethialabs.io"
   }
 }
 

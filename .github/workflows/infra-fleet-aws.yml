@@ -1,34 +1,34 @@
-name: Terraform Platform
+name: Infra - Fleet AWS
 
 on:
   pull_request:
     paths:
-      - 'infra/platform/**'
+      - 'infra/fleet-aws/**'
   push:
     branches: [main]
     paths:
-      - 'infra/platform/**'
+      - 'infra/fleet-aws/**'
 
 permissions:
   contents: read
   pull-requests: write
 
 env:
-  TF_DIR: infra/platform
-  TF_VERSION: "1.10.3"
+  TF_DIR: infra/fleet-aws
+  TOFU_VERSION: "1.9.0"
 
   # AWS provider credentials (manages ECR / ECS / Lambda).
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-  # Terraform variables.
+  # OpenTofu variables.
   TF_VAR_alethia_api_secret: ${{ secrets.RELEASE_API_SECRET }}
   TF_VAR_storage_access_key_id: ${{ secrets.ALETHIA_STORAGE_ACCESS_KEY_ID }}
   TF_VAR_storage_secret_access_key: ${{ secrets.ALETHIA_STORAGE_SECRET_ACCESS_KEY }}
   TF_VAR_storage_endpoint: ${{ secrets.ALETHIA_STORAGE_ENDPOINT }}
   TF_VAR_storage_region: ${{ secrets.ALETHIA_STORAGE_REGION }}
   TF_VAR_infracost_api_key: ${{ secrets.INFRACOST_API_KEY }}
-  TF_VAR_nodes: '{"prod-eu-west-1":{"region":"eu-west-1","alethia_url":"https://adp.prod.itgix.eu"},"beta-eu-west-1":{"region":"eu-west-1","alethia_url":"https://beta.adp.itgix.com"},"dev-eu-west-1":{"region":"eu-west-1","alethia_url":"https://summer-disconsolate-jaquelyn.ngrok-free.dev"},"dev-eu-central-1":{"region":"eu-central-1","alethia_url":"https://summer-disconsolate-jaquelyn.ngrok-free.dev"}}'
+  TF_VAR_runners: ${{ secrets.RUNNER_FLEET_NODES }}
 
 jobs:
   plan:
@@ -37,14 +37,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: opentofu/setup-opentofu@v1
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          tofu_version: ${{ env.TOFU_VERSION }}
 
-      - name: Terraform Init
+      - name: OpenTofu Init
         working-directory: ${{ env.TF_DIR }}
         run: |
-          terraform init \
+          tofu init -upgrade \
             -backend-config="bucket=terraform-state" \
             -backend-config="key=platform/terraform.tfstate" \
             -backend-config="endpoint=${{ secrets.ALETHIA_STORAGE_ENDPOINT }}" \
@@ -58,10 +58,10 @@ jobs:
             -backend-config="skip_s3_checksum=true" \
             -backend-config="force_path_style=true"
 
-      - name: Terraform Plan
+      - name: OpenTofu Plan
         id: plan
         working-directory: ${{ env.TF_DIR }}
-        run: terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
+        run: tofu plan -no-color -out=tfplan 2>&1 | tee plan.txt
         continue-on-error: true
 
       - name: Comment Plan on PR
@@ -72,7 +72,7 @@ jobs:
             const plan = fs.readFileSync('${{ env.TF_DIR }}/plan.txt', 'utf8');
             const truncated = plan.length > 60000 ? plan.substring(0, 60000) + '\n\n... truncated ...' : plan;
             const outcome = '${{ steps.plan.outcome }}';
-            const body = `### Terraform Plan \`${outcome}\`
+            const body = `### OpenTofu Plan \`${outcome}\`
 
             <details><summary>Show plan</summary>
 
@@ -101,14 +101,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: opentofu/setup-opentofu@v1
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          tofu_version: ${{ env.TOFU_VERSION }}
 
-      - name: Terraform Init
+      - name: OpenTofu Init
         working-directory: ${{ env.TF_DIR }}
         run: |
-          terraform init \
+          tofu init -upgrade \
             -backend-config="bucket=terraform-state" \
             -backend-config="key=platform/terraform.tfstate" \
             -backend-config="endpoint=${{ secrets.ALETHIA_STORAGE_ENDPOINT }}" \
@@ -122,6 +122,6 @@ jobs:
             -backend-config="skip_s3_checksum=true" \
             -backend-config="force_path_style=true"
 
-      - name: Terraform Apply
+      - name: OpenTofu Apply
         working-directory: ${{ env.TF_DIR }}
-        run: terraform apply -auto-approve
+        run: tofu apply -auto-approve

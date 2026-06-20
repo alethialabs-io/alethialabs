@@ -24,7 +24,7 @@ provider "aws" {
       Project     = var.project_name
       Environment = title(var.environment)
       Service     = "Runner"
-      ManagedBy   = "terraform"
+      ManagedBy   = "opentofu"
     }
   }
 }
@@ -37,7 +37,7 @@ provider "aws" {
       Project     = var.project_name
       Environment = title(var.environment)
       Service     = "Runner"
-      ManagedBy   = "terraform"
+      ManagedBy   = "opentofu"
     }
   }
 }

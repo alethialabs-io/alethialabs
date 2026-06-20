@@ -1,4 +1,4 @@
-name: Deploy runner (dev)
+name: Deploy Fleet AWS (dev)
 
 # Manual escape hatch for dev/hotfix deploys. For production releases,
 # use conventional commits → release-please → release-runner.yml.
@@ -20,14 +20,14 @@ permissions:
 
 env:
   AWS_REGION: eu-west-1
-  ECR_REPOSITORY: runner-dev-runner
-  ECS_CLUSTER: runner-dev-eu-west-1-cluster
-  ECS_SERVICE: runner-dev-eu-west-1-service
+  ECR_REPOSITORY: alethia-runner-dev-runner
+  ECS_CLUSTER: alethia-runner-dev-eu-west-1-cluster
+  ECS_SERVICE: alethia-runner-dev-eu-west-1-service
   GHCR_IMAGE: ghcr.io/alethialabs-io/runner
 
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-24.04-arm64
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
