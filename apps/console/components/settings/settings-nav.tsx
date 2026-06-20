@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import {
+	CreditCard,
 	KeyRound,
 	Lock,
 	ScrollText,
@@ -47,6 +48,11 @@ const GROUPS: NavGroup[] = [
 			{ label: "Single Sign-On", href: `${BASE}/sso`, icon: KeyRound, entitlement: "sso" },
 			{ label: "Audit Log", href: `${BASE}/audit`, icon: ScrollText, entitlement: "auditExport" },
 		],
+	},
+	{
+		heading: "Plan",
+		// Billing is always visible — it's how an unentitled user upgrades.
+		items: [{ label: "Billing", href: `${BASE}/billing`, icon: CreditCard }],
 	},
 ];
 

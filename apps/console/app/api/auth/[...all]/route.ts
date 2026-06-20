@@ -6,16 +6,16 @@
 // plugin's HTTP surface (/api/auth/organization/*). Provider tokens persist to the
 // `account` table.
 //
-// Server-side entitlement gate (spec 14 / billing foundation F1): the organization
-// plugin's UI hides "create team" for unentitled users, but the HTTP endpoints
-// underneath accept any authenticated request. This is the single choke point, so we
-// wrap POST: any org-creation / membership-mutation call is rejected with 403 unless
-// the actor's scope is entitled to `organizations`. The check consumes the existing
-// entitlement seam (getEntitlements → ee/ per-org resolution), so it enforces "an
-// unsubscribed user cannot create a team" the moment the seam resolves per-org —
-// today it follows the ee/ license flag, after F2 it follows the org's subscription.
-// Read/accept/leave flows stay open so a user invited into someone else's PAID org
-// can still participate.
+// Server-side entitlement gate (spec 14 / billing foundation F1). Pricing model:
+// creating a workspace (org) is FREE — a single-member community org — but TEAMS and
+// MEMBERS are the paid feature ("free org, pay to unlock teams"). The org plugin's UI
+// hides team/member actions for unentitled users, but the HTTP endpoints underneath
+// accept any authenticated request, so we wrap POST: team/member-mutation calls return
+// 403 unless the actor's scope has the `organizations` entitlement. Org create/update
+// is intentionally NOT gated. The check consumes the existing entitlement seam
+// (getEntitlements → ee/ per-org resolution from the billing record), so an
+// unsubscribed org gets the community baseline and the gate bites. Read/accept/leave
+// flows stay open so a user invited into someone else's PAID org can still participate.
 
 import { auth } from "@/lib/auth";
 import { getEntitlements } from "@/lib/authz/entitlements";
@@ -27,14 +27,13 @@ const handlers = toNextJsHandler(auth);
 export const { GET } = handlers;
 
 /**
- * Organization-plugin actions that *consume* the paid orgs/teams feature (create an
- * org, manage teams, manage members). Gated on the `organizations` entitlement.
- * Deliberately excludes invitee/read/exit actions (accept-invitation, set-active,
- * list*, leave, …) — those are how a user joins/uses an org someone else pays for.
+ * Organization-plugin actions that *consume* the paid TEAMS feature (manage teams,
+ * add/manage members). Gated on the `organizations` entitlement. Deliberately
+ * EXCLUDES org create/update (a free workspace) and invitee/read/exit actions
+ * (accept-invitation, set-active, list*, leave, …) — those are how a user creates a
+ * free workspace or joins/uses an org someone else pays for.
  */
 const GATED_ORG_ACTIONS = new Set([
-	"create",
-	"update",
 	"create-team",
 	"update-team",
 	"remove-team",
