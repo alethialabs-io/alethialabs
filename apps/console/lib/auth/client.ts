@@ -26,7 +26,7 @@ export const authClient = createAuthClient({
 	plugins: [
 		emailOTPClient(),
 		genericOAuthClient(),
-		organizationClient({ ac: orgAc, roles: orgRoles }),
+		organizationClient({ ac: orgAc, roles: orgRoles, teams: { enabled: true } }),
 	],
 });
 

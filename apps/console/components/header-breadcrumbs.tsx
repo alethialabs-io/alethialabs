@@ -29,6 +29,7 @@ const SEGMENT_LABELS: Record<string, string> = {
 	settings: "Settings",
 	general: "General",
 	members: "Members",
+	teams: "Teams",
 	roles: "Roles",
 	access: "Access",
 	sso: "Single Sign-On",

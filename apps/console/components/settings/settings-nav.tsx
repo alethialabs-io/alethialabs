@@ -9,6 +9,7 @@ import {
 	Settings2,
 	ShieldCheck,
 	Users,
+	UsersRound,
 	type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -40,6 +41,7 @@ const GROUPS: NavGroup[] = [
 		items: [
 			{ label: "General", href: `${BASE}/general`, icon: Settings2, entitlement: "organizations" },
 			{ label: "Members", href: `${BASE}/members`, icon: Users, entitlement: "organizations" },
+			{ label: "Teams", href: `${BASE}/teams`, icon: UsersRound, entitlement: "organizations" },
 			{ label: "Roles", href: `${BASE}/roles`, icon: ShieldCheck },
 			{ label: "Access", href: `${BASE}/access`, icon: Lock, entitlement: "customRoles" },
 			{ label: "Single Sign-On", href: `${BASE}/sso`, icon: KeyRound, entitlement: "sso" },
