@@ -1,0 +1,115 @@
+---
+title: Enterprise setup
+description: The end-to-end runbook for turning on the licensed Enterprise edition — packages, migrations, OpenFGA, and the license.
+---
+
+# Enterprise setup
+
+<Enterprise />
+
+The ordered checklist to take a deployment from <Community>Community</Community> to
+<Enterprise>Enterprise</Enterprise>. None of this is needed for the open-source edition — see
+[Licensing](/editions/licensing) for the mechanism this turns on.
+
+<Callout type="info">
+  Everything below is **additive and reversible.** If the license is removed, the deployment degrades back to
+  Community behavior without data loss.
+</Callout>
+
+## Prerequisites
+
+- A commercial **license key** for Alethia Enterprise.
+- The Enterprise package `@alethia/ee` (ships with the Enterprise distribution; absent from the open-source build).
+
+## Steps
+
+<Steps>
+
+<Step>
+### Install the Enterprise dependencies
+
+`@alethia/ee` and its peers add the organization/SSO/OpenFGA machinery:
+
+```bash
+pnpm install
+# brings in @alethia/ee, @openfga/sdk, @better-auth/sso (+ samlify, jose)
+```
+
+The core never imports these — they're loaded only through the `lib/enterprise.ts` seam at runtime.
+</Step>
+
+<Step>
+### Run the database migrations
+
+The org/team/SSO/authz tables ship as ordinary migrations (inert in Community — never written without the
+plugins). Apply them:
+
+```bash
+pnpm -F console db:migrate   # applies migrations 0001–0018 + programmables (RLS, triggers)
+```
+
+Then reconcile the Better Auth org/team/SSO tables against the plugin's expected shape:
+
+```bash
+npx @better-auth/cli generate
+```
+</Step>
+
+<Step>
+### (Optional) Bring up OpenFGA
+
+Enterprise runs fine on the Postgres engine. To use the [OpenFGA fine-grained engine](/access-control/openfga),
+start the `enterprise` compose profile (OpenFGA + its own datastore):
+
+```bash
+docker compose --profile enterprise up -d openfga
+```
+
+Create a store, then point the app at it:
+
+```bash
+OPENFGA_API_URL=http://openfga:8080
+OPENFGA_STORE_ID=<the store id you created>
+```
+
+On boot the app writes the authorization model (generated from the registry) and backfills tuples from your
+existing grants and hierarchy. Leaving `OPENFGA_*` unset keeps `PostgresRbacPDP` as the engine.
+</Step>
+
+<Step>
+### Activate the license
+
+Provide the license so the entitlements (`organizations`, `sso`, `customRoles`, `auditExport`) resolve to
+`true`:
+
+```bash
+ALETHIA_LICENSE_ACTIVE=true   # see your license materials for the exact variable/key
+```
+
+Restart the console. The org switcher, Members, Teams, Roles (custom), Access, SSO, and audit export now light
+up.
+</Step>
+
+<Step>
+### (Optional) Register an SSO provider
+
+In **Settings → Single Sign-On**, register your IdP over [OIDC or SAML](/access-control/sso). Members signing
+in with a matching email domain are routed to it and provisioned into the org.
+</Step>
+
+<Step>
+### Verify
+
+- Create an organization, invite a second member, and confirm the [invite lifecycle](/access-control/members-and-invitations).
+- In **Settings → Access**, grant a role to a member or team, then add a **deny** exception
+  ([grants & scopes](/access-control/grants-and-scopes)) and confirm it takes effect.
+- If OpenFGA is on, run the parity check — the two engines must agree across roles, scopes, and actions.
+
+</Step>
+
+</Steps>
+
+## What you get
+
+Once the license is active, the full Enterprise surface is available — see the
+[feature matrix](/editions/feature-matrix) and the [Access Control](/access-control) reference.

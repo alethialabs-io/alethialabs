@@ -9,6 +9,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
 import { File, Folder, Files } from 'fumadocs-ui/components/files';
 import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Community, Enterprise } from './components/edition-badge';
 
 export function getMDXComponents(components?: MDXComponents): MDXComponents {
   return {
@@ -25,6 +26,8 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     Files,
     Card,
     Cards,
+    Enterprise,
+    Community,
     img: (props: React.ComponentProps<'img'>) => {
       if (typeof props.src === 'string' && props.src.endsWith('.svg')) {
         return <img {...props} style={{ width: '100%', borderRadius: '0.5rem' }} />;
