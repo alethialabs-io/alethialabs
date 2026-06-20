@@ -15,7 +15,7 @@ The Spec form in Console (or `alethia plan` in the CLI) calls `createSpec()`, wh
 
 | Table | Data |
 |-------|------|
-| `specs` | Project name, region, environment, cloud_identity_id, terraform_version |
+| `specs` | Project name, region, environment, cloud_identity_id, iac_version |
 | `spec_network` | CIDR block, provision_network flag, existing network_id |
 | `spec_cluster` | K8s version, instance types, node min/max/desired, cluster_admins, provider_config |
 | `spec_dns` | Enabled flag, zone_id, domain_name, WAF settings (in provider_config) |
@@ -130,4 +130,4 @@ When a DEPLOY job references a prior PLAN job, the platform validates that the c
 | Azure tfvars mapping | `packages/core/cloud/azure_provider.go` — `ProviderTfvars()` |
 | Deploy orchestration | `packages/core/provisioner/deploy.go` — `RunDeployV2()` |
 | Snapshot deserialization | `apps/runner/internal/agent/runner.go` — `snapshotToSpecConfig()` |
-| Terraform CLI wrapper | `packages/core/terraform/terraform.go` |
+| OpenTofu CLI wrapper | `packages/core/tofu/tofu.go` |

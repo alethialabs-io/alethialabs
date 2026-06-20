@@ -82,7 +82,7 @@ export async function POST(req: Request) {
 			region,
 			cloud_provider: identity.provider ?? "aws",
 			alethia_url:
-				process.env.NEXT_PUBLIC_APP_URL || "https://adp.prod.itgix.eu",
+				process.env.NEXT_PUBLIC_APP_URL || "https://alethialabs.io",
 		};
 
 		const [job] = await db

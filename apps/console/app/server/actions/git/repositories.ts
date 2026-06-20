@@ -4,6 +4,7 @@
 
 
 import { getOwner } from "@/lib/auth/owner";
+import { getGitlabBaseUrl } from "@/lib/config/auth";
 import { getLinkedProviders, getValidProviderToken } from "../identities";
 import {
 	BitbucketRepo,
@@ -58,7 +59,7 @@ export async function fetchAllRepositories(): Promise<{
 						}
 					} else if (provider === "gitlab") {
 						const res = await fetch(
-							"https://gitlab.itgix.com/api/v4/projects?membership=true&per_page=100&order_by=updated_at",
+							`${getGitlabBaseUrl()}/api/v4/projects?membership=true&per_page=100&order_by=updated_at`,
 							{
 								headers: {
 									Authorization: `Bearer ${token}`,
@@ -173,7 +174,7 @@ export async function createRepository(
 			if (!data.name) return { error: "Repository name is required." };
 
 			const res = await fetch(
-				"https://gitlab.itgix.com/api/v4/projects",
+				`${getGitlabBaseUrl()}/api/v4/projects`,
 				{
 					method: "POST",
 					headers: {
@@ -301,7 +302,7 @@ export async function fetchRepositoriesByProvider(
 			}
 		} else if (provider === "gitlab") {
 			const res = await fetch(
-				"https://gitlab.itgix.com/api/v4/projects?membership=true&per_page=100&order_by=updated_at",
+				`${getGitlabBaseUrl()}/api/v4/projects?membership=true&per_page=100&order_by=updated_at`,
 				{
 					headers: {
 						Authorization: `Bearer ${token}`,

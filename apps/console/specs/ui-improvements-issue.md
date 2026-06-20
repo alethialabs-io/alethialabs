@@ -9,9 +9,9 @@ Use new format for users:
 
 
 eks_cluster_admins:
-  - username: "mihail.vukadinoff@itgix.com"
+  - username: "mihail.vukadinoff@example.com"
     path: /
-  - username: "hristiyan.tonev@itgix.com"
+  - username: "hristiyan.tonev@example.com"
     path: /
 
 Db should be able to provide decimal for ACUs - e.g 0.5, 1.5 are valid

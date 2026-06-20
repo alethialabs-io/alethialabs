@@ -33,10 +33,18 @@ function provider(idKey: string, secretKey: string): ProviderCredentials | null 
 	return clientId && clientSecret ? { clientId, clientSecret } : null;
 }
 
+/**
+ * Base URL of the GitLab instance used for OAuth + the v4 API. Defaults to the
+ * public gitlab.com; set GITLAB_BASE_URL to point at a self-hosted GitLab.
+ */
+export function getGitlabBaseUrl(): string {
+	return (env("GITLAB_BASE_URL") || "https://gitlab.com").replace(/\/+$/, "");
+}
+
 export interface AuthProviders {
 	github: ProviderCredentials | null;
 	google: ProviderCredentials | null;
-	/** Self-hosted GitLab (gitlab.itgix.com) — wired via the genericOAuth plugin. */
+	/** GitLab (public gitlab.com by default; GITLAB_BASE_URL for self-hosted) — wired via the genericOAuth plugin. */
 	gitlab: ProviderCredentials | null;
 	bitbucket: ProviderCredentials | null;
 }

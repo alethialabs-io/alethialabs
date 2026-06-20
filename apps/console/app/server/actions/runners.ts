@@ -197,7 +197,7 @@ export async function deployRunner(params: {
 			region: params.region,
 			cloud_provider: identity?.provider ?? "aws",
 			alethia_url:
-				process.env.NEXT_PUBLIC_APP_URL || "https://adp.prod.itgix.eu",
+				process.env.NEXT_PUBLIC_APP_URL || "https://alethialabs.io",
 		};
 
 		const [job] = await tx
@@ -274,7 +274,7 @@ function buildRunnerConfigSnapshot(
 		alethia_url:
 			deployConfig.alethia_url ??
 			process.env.NEXT_PUBLIC_APP_URL ??
-			"https://adp.prod.itgix.eu",
+			"https://alethialabs.io",
 		cpu: deployConfig.cpu ?? 512,
 		memory: deployConfig.memory ?? 1024,
 		image_repository:

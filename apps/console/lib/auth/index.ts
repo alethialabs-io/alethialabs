@@ -10,7 +10,7 @@ import type {
 	SocialProviders,
 } from "better-auth";
 import { sql } from "drizzle-orm";
-import { getAuthConfig } from "@/lib/config/auth";
+import { getAuthConfig, getGitlabBaseUrl } from "@/lib/config/auth";
 import { getAuthPlugins } from "@/lib/auth/plugins";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { getServiceDb } from "@/lib/db";
@@ -59,9 +59,9 @@ if (cfg.providers.gitlab) {
 		providerId: "gitlab",
 		clientId: cfg.providers.gitlab.clientId,
 		clientSecret: cfg.providers.gitlab.clientSecret,
-		authorizationUrl: "https://gitlab.itgix.com/oauth/authorize",
-		tokenUrl: "https://gitlab.itgix.com/oauth/token",
-		userInfoUrl: "https://gitlab.itgix.com/api/v4/user",
+		authorizationUrl: `${getGitlabBaseUrl()}/oauth/authorize`,
+		tokenUrl: `${getGitlabBaseUrl()}/oauth/token`,
+		userInfoUrl: `${getGitlabBaseUrl()}/api/v4/user`,
 		scopes: [
 			"read_api",
 			"read_user",

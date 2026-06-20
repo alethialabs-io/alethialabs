@@ -41,7 +41,7 @@ Infrastructure configuration — the central entity.
 | `project_name` | text | Infrastructure project name |
 | `environment_stage` | environment_stage enum | development / staging / production |
 | `region` | text | Cloud region (e.g., eu-west-1) |
-| `terraform_version` | text | Default: 1.11.4 |
+| `iac_version` | text | no default (required) |
 | `status` | spec_status enum | DRAFT → ACTIVE → DESTROYED |
 | `estimated_monthly_cost` | numeric | Calculated cost estimate |
 | `created_at` | timestamptz | |

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { verifyCliToken } from "@/lib/cli/auth";
+import { getGitlabBaseUrl } from "@/lib/config/auth";
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
@@ -23,7 +24,7 @@ export async function GET(req: Request) {
 
 	try {
 		const response = await fetch(
-			"https://gitlab.itgix.com/api/v4/projects?membership=true&per_page=100&order_by=updated_at",
+			`${getGitlabBaseUrl()}/api/v4/projects?membership=true&per_page=100&order_by=updated_at`,
 			{
 				headers: {
 					Authorization: `Bearer ${providerToken}`,
