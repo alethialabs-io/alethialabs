@@ -268,21 +268,32 @@ export function parseWifConfig(wifConfigJson: string) {
 		throw new Error("Missing credential_source in the configuration.");
 	}
 
-	const projectNumberMatch = audience.match(/projects\/(\d+)\//);
-	if (!projectNumberMatch) {
+	// Parsed with indexOf/split rather than regexes to avoid polynomial backtracking
+	// on attacker-controlled input (same rationale as the SA-domain parse below).
+	const projMarker = "projects/";
+	const projStart = audience.indexOf(projMarker);
+	const projectNumber =
+		projStart === -1
+			? ""
+			: audience.slice(projStart + projMarker.length).split("/")[0];
+	if (!projectNumber || !/^\d+$/.test(projectNumber)) {
 		throw new Error("Could not extract project number from audience.");
 	}
-	const projectNumber = projectNumberMatch[1];
 
-	const saEmailMatch = impersonationUrl.match(
-		/serviceAccounts\/([^:]+):generateAccessToken/,
-	);
-	if (!saEmailMatch) {
+	const saMarker = "serviceAccounts/";
+	const saStart = impersonationUrl.indexOf(saMarker);
+	const serviceAccountEmail =
+		saStart === -1
+			? ""
+			: impersonationUrl
+					.slice(saStart + saMarker.length)
+					.split(":generateAccessToken")[0]
+					.split(":")[0];
+	if (!serviceAccountEmail) {
 		throw new Error(
 			"Could not extract service account email from impersonation URL.",
 		);
 	}
-	const serviceAccountEmail = saEmailMatch[1];
 
 	// Project id = the SA email domain's first label. Parsed with split() rather
 	// than a regex to avoid polynomial backtracking on attacker-controlled input.

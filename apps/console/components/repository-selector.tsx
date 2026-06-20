@@ -45,6 +45,26 @@ interface RepositorySelectorProps {
 	required?: boolean;
 }
 
+const PROVIDER_HOSTS: Record<string, PublicGitProvider> = {
+	"github.com": "github",
+	"gitlab.com": "gitlab",
+	"bitbucket.org": "bitbucket",
+};
+
+/** Maps a saved repo URL to its git provider by exact host match; null for
+ *  non-URLs (e.g. an `owner/repo` slug) or unrecognized hosts. */
+function providerFromRepoUrl(url: string): PublicGitProvider | null {
+	try {
+		const host = new URL(url).hostname.toLowerCase();
+		for (const [h, p] of Object.entries(PROVIDER_HOSTS)) {
+			if (host === h || host.endsWith(`.${h}`)) return p;
+		}
+	} catch {
+		// not a URL — fall through to null
+	}
+	return null;
+}
+
 export function RepositorySelector({
 	value,
 	onChange,
@@ -77,11 +97,8 @@ export function RepositorySelector({
 
 		if (sharedCtx.linkedProviders.length > 0 && !selectedProvider) {
 			let provider = sharedCtx.linkedProviders[0];
-			if (initialValue) {
-				if (initialValue.includes("github.com")) provider = "github";
-				else if (initialValue.includes("gitlab.com")) provider = "gitlab";
-				else if (initialValue.includes("bitbucket.org")) provider = "bitbucket";
-			}
+			const detected = initialValue ? providerFromRepoUrl(initialValue) : null;
+			if (detected) provider = detected;
 			if (sharedCtx.linkedProviders.includes(provider)) {
 				setSelectedProvider(provider);
 			} else {
@@ -112,14 +129,10 @@ export function RepositorySelector({
 
 			if (providers.length > 0) {
 				let initialProvider = providers[0];
-				if (initialValue) {
-					if (initialValue.includes("github.com"))
-						initialProvider = "github";
-					else if (initialValue.includes("gitlab.com"))
-						initialProvider = "gitlab";
-					else if (initialValue.includes("bitbucket.org"))
-						initialProvider = "bitbucket";
-				}
+				const detected = initialValue
+					? providerFromRepoUrl(initialValue)
+					: null;
+				if (detected) initialProvider = detected;
 
 				if (providers.includes(initialProvider)) {
 					setSelectedProvider(initialProvider as PublicGitProvider);
@@ -207,7 +220,7 @@ export function RepositorySelector({
 
 			if (error) throw new Error(error.message);
 		} catch (err) {
-			console.error(`Error linking ${providerName}:`, err);
+			console.error("Error linking provider:", providerName, err);
 			setError(
 				`Failed to link ${providerName} account. Please try signing out and back in.`,
 			);
