@@ -57,11 +57,16 @@ The control plane is **fixed and shared across all hosted customers**, so per-cu
 | **Business** (hosted, orgs/RBAC) | ~$999/mo | ~$5 | **~99%** |
 | **Enterprise** (`ee/`, SSO/audit/multi-tenant + SLA) | from ~$2,500/mo | ~$30 (incl. amortized support) | **~95%+** |
 | **AI premium** (per-scan, metered) | cost-plus | token cost | ~70–85% (token-bound) |
-| **Usage** (runner-minutes overage) | metered, marked up | ~$0.001/min | ~80–95% |
+| **Usage** (runner-minutes overage — *expansion meter, not the floor*) | metered, marked up | ~$0.001/min | ~80–95% |
+| **FinOps / cost-governance** (add-on) | flat add-on | ~$0 (reuses Infracost + cost data already gathered) | **~99%** |
 
 **Headline: ~90–99% software gross margin** on the hosted/enterprise tiers — top-decile SaaS — because the customer bears the cloud-infra cost. The only margin-compressing lines are the **AI tier** (pass-through token cost + margin) and **enterprise support** (priced in).
 
-## Pricing tiers (proposed — validated by COGS + comparables)
+## Pricing tiers (COGS-anchoring illustration)
+
+> **Canonical model = [14-gtm-pricing](14-gtm-pricing.md)** (hybrid: per-seat **Team** + flat **Enterprise**
+> + **FinOps** & usage add-ons; the engine is governance + hosting + FinOps, with usage as expansion). The
+> flat tier prices below are illustrative anchors for the COGS/margin math — the *shape* is per-seat.
 
 Anchored to comparables (Qovery $899 / $1,999; Porter metered) and our COGS:
 
@@ -69,7 +74,7 @@ Anchored to comparables (Qovery $899 / $1,999; Porter metered) and our COGS:
 - **Team — ~$299/mo (hosted).** We operate the control plane; a small team / few Zones; standard support. Sells *operational relief* (don't run 4 containers + Postgres + a runner fleet yourself).
 - **Business — ~$999/mo (hosted).** Organizations/teams, RBAC, more seats/Zones, basic audit, priority support. *(This is the "hosted team" in the GTM mix.)*
 - **Enterprise — from ~$2,500/mo (annual).** `ee/` SSO/SAML, full audit + retention, multi-tenancy, SLA, white-glove onboarding. **Self-managed license** option for AGPL-averse / air-gapped buyers.
-- **Add-ons:** **runner-minutes** beyond plan (metered) · **AI premium** (repo-scan, metered per scan/token).
+- **Add-ons:** **FinOps / cost-governance module** (flat, ~99% margin — our whitespace) · **runner-minutes** beyond plan (metered, *expansion*) · **AI premium** (repo-scan, metered per scan/token).
 
 Free self-hosters pay $0 (funnel); revenue = **hosting + `ee/` + usage + support — never the core** (the "free-management-layer floor," see [14-gtm-pricing](14-gtm-pricing.md)). The mix to **$15k MRR** ([16-market-and-fundraising](16-market-and-fundraising.md)): ~2 Enterprise + ~7 Business/Team + usage/AI ≈ 12–15 paying orgs.
 

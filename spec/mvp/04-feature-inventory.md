@@ -41,6 +41,9 @@ Honest **SHIPPED vs TO-BUILD**, re-grounded on the real code (the old inventory 
 ## 🛣️ Roadmap (post-MVP)
 - **AI repo-scanner + MCP** (repo → Spec; one tool layer for Claude + dashboard) — **scope TBC** ([11](11-ai-scanner-mcp.md)).
 - Enterprise SSO/SAML/SCIM + audit export + multi-tenancy (the `ee/` tier).
+- **Billing & monetization** — Stripe subscriptions (org = billing entity) + usage metering (runner-minutes, AI scans) + signed self-managed license key; drives entitlements ([14](14-gtm-pricing.md), [07](07-auth-rbac-sso.md)).
+- **FinOps / cost-governance module** — spend per spec/team, chargeback/showback, drift-to-cost, right-sizing recommendations (builds on the existing Infracost + cloud-resource data). A differentiated paid add-on and a key revenue stream ([14](14-gtm-pricing.md)).
+- **Compliance / zero-trust package** — SOC2-aligned audit + a "the control plane never stores your cloud keys" attestation/report for regulated buyers (`ee/` enterprise). Unique whitespace from the zero-credential model.
 - pg-boss-backed Next-side background jobs (emails/cleanup/scheduled scale-down).
 
 ## 🗑️ Deprecated

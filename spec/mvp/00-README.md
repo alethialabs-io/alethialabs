@@ -40,7 +40,7 @@ The four pillars: zero-trust remote provisioning (shipped) · self-hostability (
 | 11 | [11-ai-scanner-mcp](11-ai-scanner-mcp.md) | Repo→Spec scanner + MCP layer (roadmap; scope TBC) | ✅ |
 | 12 | [12-licensing-open-core](12-licensing-open-core.md) | AGPLv3 ADR + the `ee/` open-core mechanism | ✅ |
 | 13 | [13-user-flows](13-user-flows.md) | Hero flow + self-host install + integrations | ✅ |
-| 14 | [14-gtm-pricing](14-gtm-pricing.md) | Open-core revenue, pricing, channels | ✅ |
+| 14 | [14-gtm-pricing](14-gtm-pricing.md) | Open-core revenue model (5 ranked streams: governance · hosting · FinOps · usage · license/compliance), hybrid pricing, channels | ✅ |
 | 15 | [15-mvp-scope-milestones](15-mvp-scope-milestones.md) | Scope, milestones, risk register | ✅ |
 | 16 | [16-market-and-fundraising](16-market-and-fundraising.md) | TAM/SAM/SOM, comparables, the raise + GTM | ✅ |
 | 17 | [17-cost-model-and-pricing](17-cost-model-and-pricing.md) | Infra-grounded COGS, unit economics, pricing tiers | ✅ |
