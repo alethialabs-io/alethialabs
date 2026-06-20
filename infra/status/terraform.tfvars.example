@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in CI.
+# Tokens are also commonly provided as TF_VAR_hcloud_token.
+
+hcloud_token = "YOUR_HCLOUD_TOKEN"
+domain       = "alethialabs.io"
+acme_email   = "you@alethialabs.io"
+
+# Public half of the deploy key.
+ssh_public_key = "ssh-ed25519 AAAA... deploy@alethia"
+
+# Cheapest viable footprint — this box runs only Gatus + Caddy.
+server_type = "cax11" # Ampere ARM64, 2 vCPU / 4 GB (~EUR 4/mo)
+location    = "fsn1"

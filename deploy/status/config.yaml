@@ -1,0 +1,48 @@
+# Gatus — Alethia public status page (https://status.alethialabs.io)
+# Docs: https://github.com/TwiN/gatus
+#
+# IMPORTANT: run this on infra SEPARATE from production. A status page that
+# shares a host/network with the thing it monitors goes dark exactly when you
+# need it (during a prod outage). Use a small standalone VPS / a different cloud
+# / a distinct Hetzner box — never the prod cluster.
+
+ui:
+  title: Alethia Status
+  header: Alethia
+  description: Live status of the Alethia control plane.
+
+# Persist uptime history so the page shows trends across restarts.
+storage:
+  type: sqlite
+  path: /data/data.db
+
+endpoints:
+  - name: Console
+    group: Alethia
+    url: "https://alethialabs.io"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+      - "[RESPONSE_TIME] < 800"
+
+  - name: API
+    group: Alethia
+    url: "https://alethialabs.io/api/health"
+    interval: 60s
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].status == ok"
+
+  - name: Sign-in
+    group: Alethia
+    url: "https://alethialabs.io/auth/signin"
+    interval: 120s
+    conditions:
+      - "[STATUS] == 200"
+
+  - name: Documentation
+    group: Alethia
+    url: "https://alethialabs.io/docs"
+    interval: 300s
+    conditions:
+      - "[STATUS] == 200"
