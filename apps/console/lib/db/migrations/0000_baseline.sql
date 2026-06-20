@@ -10,18 +10,18 @@ CREATE TYPE "public"."git_credential_method" AS ENUM('oauth', 'pat', 'deploy_key
 CREATE TYPE "public"."git_credential_purpose" AS ENUM('argocd', 'applications', 'infrastructure');--> statement-breakpoint
 CREATE TYPE "public"."git_provider" AS ENUM('github', 'bitbucket', 'gitlab');--> statement-breakpoint
 CREATE TYPE "public"."log_stream_type" AS ENUM('STDOUT', 'STDERR', 'SYSTEM');--> statement-breakpoint
-CREATE TYPE "public"."nosql_billing_mode" AS ENUM('PAY_PER_REQUEST', 'PROVISIONED');--> statement-breakpoint
+CREATE TYPE "public"."nosql_capacity_mode" AS ENUM('on_demand', 'provisioned');--> statement-breakpoint
 CREATE TYPE "public"."nosql_key_type" AS ENUM('S', 'N', 'B');--> statement-breakpoint
 CREATE TYPE "public"."nosql_table_type" AS ENUM('standard', 'global');--> statement-breakpoint
 CREATE TYPE "public"."provision_job_status" AS ENUM('QUEUED', 'CLAIMED', 'PROCESSING', 'SUCCESS', 'FAILED', 'CANCELLED');--> statement-breakpoint
-CREATE TYPE "public"."provision_job_type" AS ENUM('DESTROY_WORKER', 'DEPLOY', 'DESTROY', 'CONNECTION_TEST', 'FETCH_RESOURCES', 'PLAN', 'DEPLOY_WORKER', 'UPDATE_WORKER');--> statement-breakpoint
-CREATE TYPE "public"."registry_tag_mutability" AS ENUM('MUTABLE', 'IMMUTABLE');--> statement-breakpoint
+CREATE TYPE "public"."provision_job_type" AS ENUM('DESTROY_RUNNER', 'DEPLOY', 'DESTROY', 'CONNECTION_TEST', 'FETCH_RESOURCES', 'PLAN', 'DEPLOY_RUNNER', 'UPDATE_RUNNER');--> statement-breakpoint
+CREATE TYPE "public"."runner_mode" AS ENUM('self-hosted', 'cloud-hosted');--> statement-breakpoint
+CREATE TYPE "public"."runner_status" AS ENUM('ONLINE', 'OFFLINE', 'DRAINING');--> statement-breakpoint
 CREATE TYPE "public"."spec_status" AS ENUM('DRAFT', 'QUEUED', 'PROVISIONING', 'ACTIVE', 'FAILED', 'DESTROYING', 'DESTROYED');--> statement-breakpoint
-CREATE TYPE "public"."worker_mode" AS ENUM('self-hosted', 'cloud-hosted');--> statement-breakpoint
-CREATE TYPE "public"."worker_status" AS ENUM('ONLINE', 'OFFLINE', 'DRAINING');--> statement-breakpoint
 CREATE TABLE "zones" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
+	"org_id" uuid,
 	"name" text NOT NULL,
 	"description" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -32,6 +32,7 @@ CREATE TABLE "zones" (
 CREATE TABLE "cloud_identities" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
+	"org_id" uuid,
 	"provider" "cloud_provider" NOT NULL,
 	"name" text DEFAULT 'My Cloud Account' NOT NULL,
 	"credentials" jsonb DEFAULT '{}'::jsonb NOT NULL,
@@ -42,27 +43,28 @@ CREATE TABLE "cloud_identities" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "provider_tokens" (
+CREATE TABLE "connector_credentials" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
-	"provider" "git_provider" NOT NULL,
-	"access_token" text NOT NULL,
-	"refresh_token" text,
-	"expires_at" timestamp with time zone,
+	"org_id" uuid,
+	"connector_id" uuid NOT NULL,
+	"credentials" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"is_verified" boolean DEFAULT false,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "provider_tokens_user_id_provider_key" UNIQUE("user_id","provider")
+	CONSTRAINT "connector_credentials_user_connector_key" UNIQUE("user_id","connector_id")
 );
 --> statement-breakpoint
 CREATE TABLE "specs" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
+	"org_id" uuid,
 	"zone_id" uuid,
 	"cloud_identity_id" uuid,
 	"project_name" text NOT NULL,
 	"environment_stage" "environment_stage" DEFAULT 'development' NOT NULL,
 	"region" text NOT NULL,
-	"terraform_version" text NOT NULL,
+	"iac_version" text NOT NULL,
 	"status" "spec_status" DEFAULT 'DRAFT' NOT NULL,
 	"estimated_monthly_cost" numeric(12, 2),
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -85,11 +87,12 @@ CREATE TABLE "spec_caches" (
 	"spec_id" uuid NOT NULL,
 	"name" text NOT NULL,
 	"engine" "cache_engine" DEFAULT 'redis',
-	"node_type" text DEFAULT 'cache.t3.medium',
+	"node_type" text,
 	"num_cache_nodes" integer DEFAULT 1,
 	"multi_az" boolean DEFAULT false,
 	"allowed_cidr_blocks" text[] DEFAULT '{}',
 	"endpoint" text,
+	"reader_endpoint" text,
 	"status" "component_status" DEFAULT 'PENDING' NOT NULL,
 	"status_message" text,
 	"estimated_monthly_cost" numeric(12, 2),
@@ -101,18 +104,18 @@ CREATE TABLE "spec_caches" (
 CREATE TABLE "spec_cluster" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"spec_id" uuid NOT NULL,
-	"cluster_version" text DEFAULT '1.32',
+	"cluster_version" text,
 	"cluster_admins" jsonb DEFAULT '[]'::jsonb,
-	"instance_types" text[] DEFAULT '{"t3.medium"}',
+	"instance_types" text[],
 	"node_min_size" integer DEFAULT 2,
 	"node_max_size" integer DEFAULT 5,
 	"node_desired_size" integer DEFAULT 2,
 	"provider_config" jsonb DEFAULT '{}'::jsonb,
 	"cluster_name" text,
 	"cluster_endpoint" text,
-	"cluster_arn" text,
 	"argocd_url" text,
 	"argocd_admin_password" text,
+	"provider_outputs" jsonb DEFAULT '{}'::jsonb,
 	"status" "component_status" DEFAULT 'PENDING' NOT NULL,
 	"status_message" text,
 	"estimated_monthly_cost" numeric(12, 2),
@@ -125,8 +128,7 @@ CREATE TABLE "spec_container_registries" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"spec_id" uuid NOT NULL,
 	"name" text NOT NULL,
-	"image_tag_mutability" "registry_tag_mutability" DEFAULT 'MUTABLE',
-	"scan_on_push" boolean DEFAULT true,
+	"provider" text,
 	"repository_url" text,
 	"provider_config" jsonb DEFAULT '{}'::jsonb,
 	"status" "component_status" DEFAULT 'PENDING' NOT NULL,
@@ -140,8 +142,8 @@ CREATE TABLE "spec_databases" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"spec_id" uuid NOT NULL,
 	"name" text NOT NULL,
-	"engine" text DEFAULT 'aurora-postgresql',
-	"engine_version" text DEFAULT '14.5',
+	"engine" text,
+	"engine_version" text,
 	"min_capacity" numeric(6, 2) DEFAULT 0.5,
 	"max_capacity" numeric(6, 2) DEFAULT 4,
 	"port" integer DEFAULT 5432,
@@ -149,11 +151,7 @@ CREATE TABLE "spec_databases" (
 	"iam_auth" boolean DEFAULT false,
 	"endpoint" text,
 	"reader_endpoint" text,
-	"cluster_identifier" text,
-	"cluster_arn" text,
-	"master_credentials_secret_arn" text,
-	"extra_credentials_secret_arn" text,
-	"credentials_kms_key_arn" text,
+	"provider_outputs" jsonb DEFAULT '{}'::jsonb,
 	"status" "component_status" DEFAULT 'PENDING' NOT NULL,
 	"status_message" text,
 	"estimated_monthly_cost" numeric(12, 2),
@@ -166,6 +164,7 @@ CREATE TABLE "spec_dns" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"spec_id" uuid NOT NULL,
 	"enabled" boolean DEFAULT false NOT NULL,
+	"provider" text,
 	"zone_id" text,
 	"domain_name" text,
 	"managed_certificate" boolean DEFAULT false,
@@ -211,11 +210,11 @@ CREATE TABLE "spec_nosql_tables" (
 	"spec_id" uuid NOT NULL,
 	"name" text NOT NULL,
 	"table_type" "nosql_table_type" DEFAULT 'standard',
-	"hash_key" text NOT NULL,
-	"hash_key_type" "nosql_key_type" DEFAULT 'S',
-	"range_key" text,
-	"range_key_type" "nosql_key_type",
-	"billing_mode" "nosql_billing_mode" DEFAULT 'PAY_PER_REQUEST',
+	"partition_key" text NOT NULL,
+	"partition_key_type" "nosql_key_type" DEFAULT 'S',
+	"sort_key" text,
+	"sort_key_type" "nosql_key_type",
+	"capacity_mode" "nosql_capacity_mode" DEFAULT 'on_demand',
 	"point_in_time_recovery" boolean DEFAULT true,
 	"global_replicas" text[] DEFAULT '{}',
 	"provider_config" jsonb DEFAULT '{}'::jsonb,
@@ -227,14 +226,28 @@ CREATE TABLE "spec_nosql_tables" (
 	CONSTRAINT "spec_nosql_tables_spec_id_name_key" UNIQUE("spec_id","name")
 );
 --> statement-breakpoint
+CREATE TABLE "spec_observability" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"spec_id" uuid NOT NULL,
+	"enabled" boolean DEFAULT false NOT NULL,
+	"provider" text,
+	"provider_config" jsonb DEFAULT '{}'::jsonb,
+	"status" "component_status" DEFAULT 'PENDING' NOT NULL,
+	"status_message" text,
+	"estimated_monthly_cost" numeric(12, 2),
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "spec_observability_spec_id_unique" UNIQUE("spec_id")
+);
+--> statement-breakpoint
 CREATE TABLE "spec_queues" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"spec_id" uuid NOT NULL,
 	"name" text NOT NULL,
-	"fifo" boolean DEFAULT false,
+	"ordered" boolean DEFAULT false,
 	"visibility_timeout" integer DEFAULT 30,
 	"message_retention" integer DEFAULT 345600,
-	"delay_seconds" integer DEFAULT 0,
+	"provider_config" jsonb DEFAULT '{}'::jsonb,
 	"status" "component_status" DEFAULT 'PENDING' NOT NULL,
 	"status_message" text,
 	"estimated_monthly_cost" numeric(12, 2),
@@ -256,9 +269,11 @@ CREATE TABLE "spec_secrets" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"spec_id" uuid NOT NULL,
 	"name" text NOT NULL,
+	"provider" text,
 	"generate" boolean DEFAULT true,
 	"length" integer DEFAULT 32,
 	"special_chars" boolean DEFAULT true,
+	"provider_config" jsonb DEFAULT '{}'::jsonb,
 	"status" "component_status" DEFAULT 'PENDING' NOT NULL,
 	"status_message" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -271,9 +286,10 @@ CREATE TABLE "spec_storage_buckets" (
 	"spec_id" uuid NOT NULL,
 	"name" text NOT NULL,
 	"versioning" boolean DEFAULT false,
-	"encryption" text DEFAULT 'AES256',
+	"encryption_enabled" boolean DEFAULT true,
 	"public_access" boolean DEFAULT false,
 	"cors_origins" text[] DEFAULT '{}',
+	"provider_config" jsonb DEFAULT '{}'::jsonb,
 	"status" "component_status" DEFAULT 'PENDING' NOT NULL,
 	"status_message" text,
 	"estimated_monthly_cost" numeric(12, 2),
@@ -309,11 +325,12 @@ CREATE TABLE "runner_releases" (
 CREATE TABLE "runners" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid,
+	"org_id" uuid,
 	"name" text NOT NULL,
-	"mode" "worker_mode" NOT NULL,
+	"mode" "runner_mode" NOT NULL,
 	"cloud_identity_id" uuid,
 	"token_hash" text NOT NULL,
-	"status" "worker_status" DEFAULT 'OFFLINE',
+	"status" "runner_status" DEFAULT 'OFFLINE',
 	"last_heartbeat" timestamp with time zone,
 	"version" text,
 	"release_id" uuid,
@@ -334,7 +351,8 @@ CREATE TABLE "job_logs" (
 CREATE TABLE "jobs" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
-	"zone_id" uuid NOT NULL,
+	"org_id" uuid,
+	"zone_id" uuid,
 	"spec_id" uuid,
 	"cloud_identity_id" uuid,
 	"job_type" "provision_job_type" NOT NULL,
@@ -389,6 +407,167 @@ CREATE TABLE "profiles" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "account" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"user_id" uuid NOT NULL,
+	"account_id" text NOT NULL,
+	"provider_id" text NOT NULL,
+	"access_token" text,
+	"refresh_token" text,
+	"id_token" text,
+	"access_token_expires_at" timestamp with time zone,
+	"refresh_token_expires_at" timestamp with time zone,
+	"scope" text,
+	"password" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "session" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"user_id" uuid NOT NULL,
+	"token" text NOT NULL,
+	"expires_at" timestamp with time zone NOT NULL,
+	"ip_address" text,
+	"user_agent" text,
+	"active_organization_id" uuid,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "session_token_unique" UNIQUE("token")
+);
+--> statement-breakpoint
+CREATE TABLE "user" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"name" text,
+	"email" text NOT NULL,
+	"email_verified" boolean DEFAULT false NOT NULL,
+	"image" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "user_email_unique" UNIQUE("email")
+);
+--> statement-breakpoint
+CREATE TABLE "verification" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"identifier" text NOT NULL,
+	"value" text NOT NULL,
+	"expires_at" timestamp with time zone NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "authz_audit_log" (
+	"id" bigint PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY (sequence name "authz_audit_log_id_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1),
+	"org_id" uuid NOT NULL,
+	"actor_id" uuid NOT NULL,
+	"action" text NOT NULL,
+	"resource_type" text NOT NULL,
+	"resource_id" uuid,
+	"decision" boolean NOT NULL,
+	"reason" text,
+	"ts" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "grants" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"org_id" uuid NOT NULL,
+	"principal_type" text NOT NULL,
+	"principal_id" uuid NOT NULL,
+	"effect" text DEFAULT 'allow' NOT NULL,
+	"role_id" uuid,
+	"permission_key" text,
+	"resource_type" text NOT NULL,
+	"resource_id" uuid,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "permission" (
+	"key" text PRIMARY KEY NOT NULL,
+	"resource" text NOT NULL,
+	"action" text NOT NULL,
+	"description" text NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "resource_hierarchy" (
+	"child_type" text NOT NULL,
+	"child_id" uuid NOT NULL,
+	"parent_type" text NOT NULL,
+	"parent_id" uuid NOT NULL,
+	CONSTRAINT "resource_hierarchy_child_type_child_id_parent_type_parent_id_pk" PRIMARY KEY("child_type","child_id","parent_type","parent_id")
+);
+--> statement-breakpoint
+CREATE TABLE "role" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"organization_id" uuid,
+	"name" text NOT NULL,
+	"is_builtin" boolean DEFAULT false NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "role_permission" (
+	"role_id" uuid NOT NULL,
+	"permission_key" text NOT NULL,
+	CONSTRAINT "role_permission_role_id_permission_key_pk" PRIMARY KEY("role_id","permission_key")
+);
+--> statement-breakpoint
+CREATE TABLE "invitation" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"organization_id" uuid NOT NULL,
+	"email" text NOT NULL,
+	"role" text,
+	"status" text DEFAULT 'pending' NOT NULL,
+	"expires_at" timestamp with time zone NOT NULL,
+	"inviter_id" uuid NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "member" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"organization_id" uuid NOT NULL,
+	"user_id" uuid NOT NULL,
+	"role" text DEFAULT 'member' NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "organization" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"name" text NOT NULL,
+	"slug" text,
+	"logo" text,
+	"metadata" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "organization_slug_unique" UNIQUE("slug")
+);
+--> statement-breakpoint
+CREATE TABLE "team" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"name" text NOT NULL,
+	"organization_id" uuid NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone
+);
+--> statement-breakpoint
+CREATE TABLE "team_member" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"team_id" uuid NOT NULL,
+	"user_id" uuid NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "sso_provider" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"issuer" text NOT NULL,
+	"domain" text NOT NULL,
+	"provider_id" text NOT NULL,
+	"oidc_config" text,
+	"saml_config" text,
+	"user_id" uuid NOT NULL,
+	"organization_id" uuid,
+	"domain_verified" boolean DEFAULT false NOT NULL,
+	CONSTRAINT "sso_provider_providerId_unique" UNIQUE("provider_id")
+);
+--> statement-breakpoint
+ALTER TABLE "connector_credentials" ADD CONSTRAINT "connector_credentials_connector_id_connectors_id_fk" FOREIGN KEY ("connector_id") REFERENCES "public"."connectors"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "specs" ADD CONSTRAINT "specs_zone_id_zones_id_fk" FOREIGN KEY ("zone_id") REFERENCES "public"."zones"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "specs" ADD CONSTRAINT "specs_cloud_identity_id_cloud_identities_id_fk" FOREIGN KEY ("cloud_identity_id") REFERENCES "public"."cloud_identities"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "audit_log" ADD CONSTRAINT "audit_log_spec_id_specs_id_fk" FOREIGN KEY ("spec_id") REFERENCES "public"."specs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -400,6 +579,7 @@ ALTER TABLE "spec_dns" ADD CONSTRAINT "spec_dns_spec_id_specs_id_fk" FOREIGN KEY
 ALTER TABLE "spec_git_credentials" ADD CONSTRAINT "spec_git_credentials_spec_id_specs_id_fk" FOREIGN KEY ("spec_id") REFERENCES "public"."specs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "spec_network" ADD CONSTRAINT "spec_network_spec_id_specs_id_fk" FOREIGN KEY ("spec_id") REFERENCES "public"."specs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "spec_nosql_tables" ADD CONSTRAINT "spec_nosql_tables_spec_id_specs_id_fk" FOREIGN KEY ("spec_id") REFERENCES "public"."specs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "spec_observability" ADD CONSTRAINT "spec_observability_spec_id_specs_id_fk" FOREIGN KEY ("spec_id") REFERENCES "public"."specs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "spec_queues" ADD CONSTRAINT "spec_queues_spec_id_specs_id_fk" FOREIGN KEY ("spec_id") REFERENCES "public"."specs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "spec_repositories" ADD CONSTRAINT "spec_repositories_spec_id_specs_id_fk" FOREIGN KEY ("spec_id") REFERENCES "public"."specs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "spec_secrets" ADD CONSTRAINT "spec_secrets_spec_id_specs_id_fk" FOREIGN KEY ("spec_id") REFERENCES "public"."specs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -408,25 +588,51 @@ ALTER TABLE "spec_topics" ADD CONSTRAINT "spec_topics_spec_id_specs_id_fk" FOREI
 ALTER TABLE "runners" ADD CONSTRAINT "runners_cloud_identity_id_cloud_identities_id_fk" FOREIGN KEY ("cloud_identity_id") REFERENCES "public"."cloud_identities"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "runners" ADD CONSTRAINT "runners_release_id_runner_releases_id_fk" FOREIGN KEY ("release_id") REFERENCES "public"."runner_releases"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "job_logs" ADD CONSTRAINT "job_logs_job_id_jobs_id_fk" FOREIGN KEY ("job_id") REFERENCES "public"."jobs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "jobs" ADD CONSTRAINT "jobs_zone_id_zones_id_fk" FOREIGN KEY ("zone_id") REFERENCES "public"."zones"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "jobs" ADD CONSTRAINT "jobs_zone_id_zones_id_fk" FOREIGN KEY ("zone_id") REFERENCES "public"."zones"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "jobs" ADD CONSTRAINT "jobs_spec_id_specs_id_fk" FOREIGN KEY ("spec_id") REFERENCES "public"."specs"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "jobs" ADD CONSTRAINT "jobs_cloud_identity_id_cloud_identities_id_fk" FOREIGN KEY ("cloud_identity_id") REFERENCES "public"."cloud_identities"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "jobs" ADD CONSTRAINT "jobs_runner_id_runners_id_fk" FOREIGN KEY ("runner_id") REFERENCES "public"."runners"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "jobs" ADD CONSTRAINT "jobs_assigned_runner_id_runners_id_fk" FOREIGN KEY ("assigned_runner_id") REFERENCES "public"."runners"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "jobs" ADD CONSTRAINT "jobs_plan_job_id_jobs_id_fk" FOREIGN KEY ("plan_job_id") REFERENCES "public"."jobs"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "cli_logins" ADD CONSTRAINT "cli_logins_profile_id_profiles_id_fk" FOREIGN KEY ("profile_id") REFERENCES "public"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "account" ADD CONSTRAINT "account_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "session" ADD CONSTRAINT "session_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "grants" ADD CONSTRAINT "grants_role_id_role_id_fk" FOREIGN KEY ("role_id") REFERENCES "public"."role"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "grants" ADD CONSTRAINT "grants_permission_key_permission_key_fk" FOREIGN KEY ("permission_key") REFERENCES "public"."permission"("key") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "role_permission" ADD CONSTRAINT "role_permission_role_id_role_id_fk" FOREIGN KEY ("role_id") REFERENCES "public"."role"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "role_permission" ADD CONSTRAINT "role_permission_permission_key_permission_key_fk" FOREIGN KEY ("permission_key") REFERENCES "public"."permission"("key") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "invitation" ADD CONSTRAINT "invitation_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "invitation" ADD CONSTRAINT "invitation_inviter_id_user_id_fk" FOREIGN KEY ("inviter_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "member" ADD CONSTRAINT "member_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "member" ADD CONSTRAINT "member_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "team" ADD CONSTRAINT "team_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "team_member" ADD CONSTRAINT "team_member_team_id_team_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."team"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "team_member" ADD CONSTRAINT "team_member_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "sso_provider" ADD CONSTRAINT "sso_provider_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "sso_provider" ADD CONSTRAINT "sso_provider_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "idx_zones_user" ON "zones" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "idx_zones_org" ON "zones" USING btree ("org_id");--> statement-breakpoint
 CREATE INDEX "idx_cloud_identities_user" ON "cloud_identities" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "idx_cloud_identities_org" ON "cloud_identities" USING btree ("org_id");--> statement-breakpoint
+CREATE INDEX "idx_connector_credentials_user" ON "connector_credentials" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "idx_connector_credentials_org" ON "connector_credentials" USING btree ("org_id");--> statement-breakpoint
 CREATE INDEX "idx_specs_user" ON "specs" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "idx_specs_org" ON "specs" USING btree ("org_id");--> statement-breakpoint
 CREATE INDEX "idx_specs_zone" ON "specs" USING btree ("zone_id");--> statement-breakpoint
 CREATE INDEX "idx_specs_cloud_identity" ON "specs" USING btree ("cloud_identity_id");--> statement-breakpoint
 CREATE INDEX "idx_audit_log_spec" ON "audit_log" USING btree ("spec_id");--> statement-breakpoint
 CREATE INDEX "idx_runners_user" ON "runners" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "idx_runners_org" ON "runners" USING btree ("org_id");--> statement-breakpoint
 CREATE INDEX "idx_runners_token_hash" ON "runners" USING btree ("id","token_hash");--> statement-breakpoint
 CREATE UNIQUE INDEX "idx_runners_one_default_per_user" ON "runners" USING btree ("user_id") WHERE is_default = true;--> statement-breakpoint
 CREATE UNIQUE INDEX "idx_runners_unique_cloud_name" ON "runners" USING btree ("name") WHERE mode = 'cloud-hosted';--> statement-breakpoint
 CREATE INDEX "idx_job_logs_job_id" ON "job_logs" USING btree ("job_id");--> statement-breakpoint
 CREATE INDEX "idx_jobs_user" ON "jobs" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "idx_jobs_org" ON "jobs" USING btree ("org_id");--> statement-breakpoint
 CREATE INDEX "idx_jobs_zone" ON "jobs" USING btree ("zone_id");--> statement-breakpoint
 CREATE INDEX "idx_jobs_queue" ON "jobs" USING btree ("status","created_at") WHERE status = 'QUEUED';--> statement-breakpoint
-CREATE INDEX "idx_jobs_assigned_runner" ON "jobs" USING btree ("assigned_runner_id") WHERE assigned_runner_id IS NOT NULL;
+CREATE INDEX "idx_jobs_assigned_runner" ON "jobs" USING btree ("assigned_runner_id") WHERE assigned_runner_id IS NOT NULL;--> statement-breakpoint
+CREATE INDEX "idx_authz_audit_org" ON "authz_audit_log" USING btree ("org_id");--> statement-breakpoint
+CREATE INDEX "idx_grants_org_principal" ON "grants" USING btree ("org_id","principal_id");--> statement-breakpoint
+CREATE INDEX "idx_grants_effect" ON "grants" USING btree ("org_id","principal_id","effect");--> statement-breakpoint
+CREATE INDEX "idx_resource_hierarchy_child" ON "resource_hierarchy" USING btree ("child_type","child_id");

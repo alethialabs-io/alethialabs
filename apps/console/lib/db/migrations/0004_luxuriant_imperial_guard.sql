@@ -1,1 +1,0 @@
-DROP TABLE "provider_tokens" CASCADE;

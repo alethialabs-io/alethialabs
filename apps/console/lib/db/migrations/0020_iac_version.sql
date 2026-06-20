@@ -1,1 +1,0 @@
-ALTER TABLE "specs" RENAME COLUMN "terraform_version" TO "iac_version";
