@@ -35,8 +35,10 @@ export interface BillingSummary {
 	status: BillingStatus;
 	/** ISO timestamp the current paid period ends, if subscribed. */
 	currentPeriodEnd: string | null;
-	/** A Stripe customer exists → the Customer Portal can be opened. */
+	/** A Stripe customer exists → cards/invoices are available. */
 	canManage: boolean;
+	/** The subscription is set to cancel at period end (show "resume"). */
+	cancelAtPeriodEnd: boolean;
 }
 
 /** Resolves the active org's billing state for display (read-only; any member). */
@@ -44,6 +46,19 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 	const actor = await currentActor();
 	const hasOrg = actor.orgId !== actor.userId;
 	const billing = hasOrg ? await getOrgBilling(actor.orgId) : null;
+
+	let cancelAtPeriodEnd = false;
+	if (billing?.stripeSubscriptionId && isStripeConfigured()) {
+		try {
+			const sub = await getStripe().subscriptions.retrieve(
+				billing.stripeSubscriptionId,
+			);
+			cancelAtPeriodEnd = sub.cancel_at_period_end;
+		} catch {
+			// Subscription unreadable (deleted upstream) — treat as not pending-cancel.
+		}
+	}
+
 	return {
 		hosted: isStripeConfigured(),
 		hasOrg,
@@ -51,6 +66,7 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 		status: billing?.status ?? "none",
 		currentPeriodEnd: billing?.currentPeriodEnd?.toISOString() ?? null,
 		canManage: Boolean(billing?.stripeCustomerId),
+		cancelAtPeriodEnd,
 	};
 }
 
@@ -140,9 +156,350 @@ export async function createCheckoutSession(
 	return { url: session.url };
 }
 
+/** A subscription awaiting its first payment, for the embedded Payment Element. */
+export interface SubscriptionIntent {
+	clientSecret: string;
+	subscriptionId: string;
+}
+
+/**
+ * Creates an incomplete subscription for the active org and returns the client secret
+ * of its first invoice's payment — the embedded (in-app) alternative to hosted
+ * Checkout. The <PaymentForm> confirms it (card + 3-D Secure inline); the webhook then
+ * activates the org. Owner-gated; org-scoped; refuses if a live subscription already
+ * exists (use changeSubscriptionPlan instead).
+ */
+export async function createSubscriptionIntent(
+	plan: PaidPlan,
+): Promise<SubscriptionIntent> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	if (actor.orgId === actor.userId) {
+		throw new Error("Create a workspace before subscribing to a plan.");
+	}
+	const existing = await getOrgBilling(actor.orgId);
+	if (
+		existing?.stripeSubscriptionId &&
+		(existing.status === "active" || existing.status === "trialing")
+	) {
+		throw new Error(
+			"This organization already has an active subscription — change the plan instead.",
+		);
+	}
+
+	const customerId = await ensureCustomer(actor.orgId, actor.userId);
+	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
+		? { automatic_tax: { enabled: true } }
+		: {};
+	const sub = await getStripe().subscriptions.create({
+		customer: customerId,
+		items: [{ price: priceIdForPlan(plan) }],
+		payment_behavior: "default_incomplete",
+		payment_settings: { save_default_payment_method: "on_subscription" },
+		expand: ["latest_invoice.confirmation_secret"],
+		metadata: { organization_id: actor.orgId },
+		...taxParam,
+	});
+
+	const invoice = sub.latest_invoice;
+	if (!invoice || typeof invoice === "string") {
+		throw new Error("Stripe did not return an invoice for the subscription.");
+	}
+	const clientSecret = invoice.confirmation_secret?.client_secret;
+	if (!clientSecret) {
+		throw new Error("Stripe did not return a payment client secret.");
+	}
+	return { clientSecret, subscriptionId: sub.id };
+}
+
+// ── Payment methods (embedded card management) ──────────────────────────────
+
+/** A saved card for the active org's billing UI. */
+export interface PaymentMethodInfo {
+	id: string;
+	brand: string;
+	last4: string;
+	expMonth: number;
+	expYear: number;
+	isDefault: boolean;
+}
+
+/** Creates a SetupIntent to add/save a card via the embedded Payment Element. */
+export async function createSetupIntent(): Promise<{ clientSecret: string }> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	if (actor.orgId === actor.userId) {
+		throw new Error("Create a workspace before adding a card.");
+	}
+	const customerId = await ensureCustomer(actor.orgId, actor.userId);
+	const si = await getStripe().setupIntents.create({
+		customer: customerId,
+		usage: "off_session",
+		payment_method_types: ["card"],
+	});
+	if (!si.client_secret) {
+		throw new Error("Stripe did not return a setup client secret.");
+	}
+	return { clientSecret: si.client_secret };
+}
+
+/** Lists the active org's saved cards (with which one is the default). */
+export async function listPaymentMethods(): Promise<PaymentMethodInfo[]> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	const billing = await getOrgBilling(actor.orgId);
+	if (!billing?.stripeCustomerId) return [];
+
+	const stripe = getStripe();
+	const customer = await stripe.customers.retrieve(billing.stripeCustomerId);
+	const defaultRef =
+		"deleted" in customer
+			? null
+			: customer.invoice_settings.default_payment_method;
+	const defaultId =
+		typeof defaultRef === "string" ? defaultRef : (defaultRef?.id ?? null);
+
+	const pms = await stripe.paymentMethods.list({
+		customer: billing.stripeCustomerId,
+		type: "card",
+	});
+	return pms.data.map((pm) => ({
+		id: pm.id,
+		brand: pm.card?.brand ?? "card",
+		last4: pm.card?.last4 ?? "••••",
+		expMonth: pm.card?.exp_month ?? 0,
+		expYear: pm.card?.exp_year ?? 0,
+		isDefault: pm.id === defaultId,
+	}));
+}
+
+/** Makes a saved card the default for invoices + the active subscription. */
+export async function setDefaultPaymentMethod(
+	pmId: string,
+): Promise<{ ok: true }> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	const billing = await getOrgBilling(actor.orgId);
+	if (!billing?.stripeCustomerId) throw new Error("No billing account yet.");
+
+	const stripe = getStripe();
+	await stripe.customers.update(billing.stripeCustomerId, {
+		invoice_settings: { default_payment_method: pmId },
+	});
+	if (billing.stripeSubscriptionId) {
+		await stripe.subscriptions.update(billing.stripeSubscriptionId, {
+			default_payment_method: pmId,
+		});
+	}
+	return { ok: true };
+}
+
+/** Removes a saved card (after verifying it belongs to the active org's customer). */
+export async function detachPaymentMethod(pmId: string): Promise<{ ok: true }> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	const billing = await getOrgBilling(actor.orgId);
+	if (!billing?.stripeCustomerId) throw new Error("No billing account yet.");
+
+	const stripe = getStripe();
+	const pm = await stripe.paymentMethods.retrieve(pmId);
+	const ownerId =
+		typeof pm.customer === "string" ? pm.customer : (pm.customer?.id ?? null);
+	if (ownerId !== billing.stripeCustomerId) {
+		throw new Error("Payment method not found.");
+	}
+	await stripe.paymentMethods.detach(pmId);
+	return { ok: true };
+}
+
+// ── Subscription management (embedded — replaces the Customer Portal) ────────
+
+/** Loads the active org's subscription, or throws if there isn't one. */
+async function requireSubscriptionId(orgId: string): Promise<string> {
+	const billing = await getOrgBilling(orgId);
+	if (!billing?.stripeSubscriptionId) {
+		throw new Error("No active subscription.");
+	}
+	return billing.stripeSubscriptionId;
+}
+
+/** Schedules cancellation at the end of the current paid period. */
+export async function cancelSubscription(): Promise<{ ok: true }> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	const subId = await requireSubscriptionId(actor.orgId);
+	await getStripe().subscriptions.update(subId, { cancel_at_period_end: true });
+	return { ok: true };
+}
+
+/** Un-schedules a pending cancellation. */
+export async function resumeSubscription(): Promise<{ ok: true }> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	const subId = await requireSubscriptionId(actor.orgId);
+	await getStripe().subscriptions.update(subId, { cancel_at_period_end: false });
+	return { ok: true };
+}
+
+/** Switches the active subscription to a different paid plan, prorated. */
+export async function changeSubscriptionPlan(
+	plan: PaidPlan,
+): Promise<{ ok: true }> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	const subId = await requireSubscriptionId(actor.orgId);
+	const stripe = getStripe();
+	const sub = await stripe.subscriptions.retrieve(subId);
+	const itemId = sub.items.data[0]?.id;
+	if (!itemId) throw new Error("Subscription has no line item.");
+	await stripe.subscriptions.update(subId, {
+		items: [{ id: itemId, price: priceIdForPlan(plan) }],
+		proration_behavior: "create_prorations",
+	});
+	return { ok: true };
+}
+
+// ── Invoices + billing details / VAT ────────────────────────────────────────
+
+/** An invoice row for the billing UI. */
+export interface InvoiceInfo {
+	id: string;
+	number: string | null;
+	/** Total in the smallest currency unit (e.g. cents). */
+	total: number;
+	currency: string;
+	status: string;
+	created: string;
+	invoicePdf: string | null;
+	hostedInvoiceUrl: string | null;
+}
+
+/** Lists the active org's recent invoices (with PDF links). */
+export async function listInvoices(): Promise<InvoiceInfo[]> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	const billing = await getOrgBilling(actor.orgId);
+	if (!billing?.stripeCustomerId) return [];
+
+	const invoices = await getStripe().invoices.list({
+		customer: billing.stripeCustomerId,
+		limit: 24,
+	});
+	return invoices.data.map((inv) => ({
+		id: inv.id ?? "",
+		number: inv.number ?? null,
+		total: inv.total,
+		currency: inv.currency,
+		status: inv.status ?? "draft",
+		created: new Date(inv.created * 1000).toISOString(),
+		invoicePdf: inv.invoice_pdf ?? null,
+		hostedInvoiceUrl: inv.hosted_invoice_url ?? null,
+	}));
+}
+
+/** The active org's billing contact + address + VAT id (for Stripe Tax). */
+export interface BillingDetails {
+	name: string;
+	email: string;
+	line1: string;
+	line2: string;
+	city: string;
+	state: string;
+	postalCode: string;
+	country: string;
+	taxId: string | null;
+}
+
+/** Reads the active org's billing details, or null if there's no customer yet. */
+export async function getBillingDetails(): Promise<BillingDetails | null> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	const billing = await getOrgBilling(actor.orgId);
+	if (!billing?.stripeCustomerId) return null;
+
+	const stripe = getStripe();
+	const customer = await stripe.customers.retrieve(billing.stripeCustomerId);
+	if ("deleted" in customer) return null;
+	const addr = customer.address;
+	const taxIds = await stripe.customers.listTaxIds(billing.stripeCustomerId, {
+		limit: 1,
+	});
+	return {
+		name: customer.name ?? "",
+		email: customer.email ?? "",
+		line1: addr?.line1 ?? "",
+		line2: addr?.line2 ?? "",
+		city: addr?.city ?? "",
+		state: addr?.state ?? "",
+		postalCode: addr?.postal_code ?? "",
+		country: addr?.country ?? "",
+		taxId: taxIds.data[0]?.value ?? null,
+	};
+}
+
+/** Billing contact + address (required for Stripe Tax to compute VAT). */
+export interface BillingAddressInput {
+	name: string;
+	line1: string;
+	line2?: string;
+	city: string;
+	state?: string;
+	postalCode: string;
+	/** ISO 3166-1 alpha-2 (e.g. "DE", "EE"). */
+	country: string;
+}
+
+/** Saves the active org's billing name + address on its Stripe customer. */
+export async function updateBillingAddress(
+	input: BillingAddressInput,
+): Promise<{ ok: true }> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	const billing = await getOrgBilling(actor.orgId);
+	if (!billing?.stripeCustomerId) throw new Error("No billing account yet.");
+
+	await getStripe().customers.update(billing.stripeCustomerId, {
+		name: input.name,
+		address: {
+			line1: input.line1,
+			line2: input.line2,
+			city: input.city,
+			state: input.state,
+			postal_code: input.postalCode,
+			country: input.country,
+		},
+	});
+	return { ok: true };
+}
+
+/** Sets (or clears) the active org's EU VAT id — one per customer for our UI. */
+export async function saveTaxId(value: string): Promise<{ ok: true }> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	const billing = await getOrgBilling(actor.orgId);
+	if (!billing?.stripeCustomerId) throw new Error("No billing account yet.");
+
+	const stripe = getStripe();
+	const existing = await stripe.customers.listTaxIds(billing.stripeCustomerId, {
+		limit: 5,
+	});
+	for (const t of existing.data) {
+		await stripe.customers.deleteTaxId(billing.stripeCustomerId, t.id);
+	}
+	const trimmed = value.trim();
+	if (trimmed) {
+		await stripe.customers.createTaxId(billing.stripeCustomerId, {
+			type: "eu_vat",
+			value: trimmed,
+		});
+	}
+	return { ok: true };
+}
+
 /**
  * Opens the Stripe Customer Portal for the active org (manage/cancel the subscription,
  * update payment method). Requires an existing Stripe customer. Returns the URL.
+ * Retained as a fallback alongside the embedded flow.
  */
 export async function createBillingPortalSession(): Promise<{ url: string }> {
 	const actor = await authorize("manage_billing", { type: "billing" });

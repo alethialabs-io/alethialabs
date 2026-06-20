@@ -2,19 +2,24 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The "create an organization" flow (pay-to-create model): name the org, choose a paid
-// plan, and we create the org then send you to Stripe Checkout. On payment the webhook
-// flips it to paid/active. A right Sheet so it can be opened from the org switcher or
-// the billing page; it reuses the self-contained <PlanPicker>.
+// The "create an organization" flow (pay-to-create), fully embedded: name the org, pick
+// a paid plan, then pay with the in-sheet Payment Element (no Stripe redirect). We
+// create the org, open an incomplete subscription, and confirm its first payment inline;
+// the webhook then activates the org. A right Sheet, opened from the org switcher or the
+// billing page.
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
-import { createCheckoutSession } from "@/app/server/actions/billing";
+import { createSubscriptionIntent } from "@/app/server/actions/billing";
 import { setActiveOrganization } from "@/app/server/actions/workspace";
+import { PaymentForm } from "@/components/billing/payment-form";
 import { PlanPicker } from "@/components/billing/plan-picker";
+import { StripeElementsProvider } from "@/components/billing/stripe-elements";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -25,6 +30,7 @@ import {
 	SheetTitle,
 } from "@/components/ui/sheet";
 import { authClient } from "@/lib/auth/client";
+import { planMeta } from "@/lib/billing/plan-catalog";
 import type { BillingPlan } from "@/lib/db/schema/enums";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 
@@ -50,15 +56,36 @@ interface CreateOrgSheetProps {
 }
 
 export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
+	const router = useRouter();
 	const fetchWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
 	const [pendingPlan, setPendingPlan] = useState<BillingPlan | null>(null);
+	const [step, setStep] = useState<"details" | "payment">("details");
+	const [clientSecret, setClientSecret] = useState<string | null>(null);
+	const [selectedPlan, setSelectedPlan] = useState<BillingPlan | null>(null);
+	// The org is created once (on first plan-continue); kept so going Back never
+	// creates a duplicate org.
+	const [createdOrgId, setCreatedOrgId] = useState<string | null>(null);
 	const form = useForm<FormData>({
 		resolver: zodResolver(schema),
 		defaultValues: { name: "" },
 	});
 
-	/** Create the org, make it active, then start Checkout for the chosen plan. */
-	const handleSelect = async (plan: BillingPlan) => {
+	function reset() {
+		setStep("details");
+		setClientSecret(null);
+		setSelectedPlan(null);
+		setPendingPlan(null);
+		setCreatedOrgId(null);
+		form.reset();
+	}
+
+	function handleOpenChange(next: boolean) {
+		if (!next) reset();
+		onOpenChange(next);
+	}
+
+	/** Create the org (once), open a subscription, and move to the in-sheet payment step. */
+	async function handleSelect(plan: BillingPlan) {
 		if (plan === "community") return; // paidOnly — defensive
 		const valid = await form.trigger("name");
 		if (!valid) return;
@@ -66,64 +93,114 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 
 		setPendingPlan(plan);
 		try {
-			const { data, error } = await authClient.organization.create({
-				name,
-				slug: toSlug(name),
-			});
-			if (error || !data) {
-				throw new Error(error?.message ?? "Couldn't create the organization");
+			let orgId = createdOrgId;
+			if (!orgId) {
+				const { data, error } = await authClient.organization.create({
+					name,
+					slug: toSlug(name),
+				});
+				if (error || !data) {
+					throw new Error(error?.message ?? "Couldn't create the organization");
+				}
+				orgId = data.id;
+				setCreatedOrgId(orgId);
+				await setActiveOrganization(orgId);
+				await fetchWorkspace();
 			}
-			// Scope the session to the new org so checkout bills it, then go to Stripe.
-			await setActiveOrganization(data.id);
-			await fetchWorkspace();
-			const { url } = await createCheckoutSession(plan);
-			window.location.href = url;
+			const intent = await createSubscriptionIntent(plan);
+			setSelectedPlan(plan);
+			setClientSecret(intent.clientSecret);
+			setStep("payment");
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Something went wrong");
+		} finally {
 			setPendingPlan(null);
 		}
-	};
+	}
+
+	function handlePaid() {
+		toast.success("Subscription active — your organization is ready.");
+		fetchWorkspace();
+		handleOpenChange(false);
+		router.refresh();
+	}
+
+	const planLabel = selectedPlan ? planMeta(selectedPlan) : null;
 
 	return (
-		<Sheet open={open} onOpenChange={onOpenChange}>
-			<SheetContent
-				side="right"
-				className="w-full overflow-y-auto sm:max-w-xl"
-			>
+		<Sheet open={open} onOpenChange={handleOpenChange}>
+			<SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
 				<SheetHeader>
 					<SheetTitle>Create an organization</SheetTitle>
 					<SheetDescription>
-						Collaborate with your team in a shared workspace — pooled Zones &amp;
-						Specs, teammates, and role-based access. Pick a plan to get started.
+						{step === "details"
+							? "Collaborate with your team in a shared workspace — pooled Zones & Specs, teammates, and role-based access. Pick a plan to get started."
+							: `Enter your card to start the ${planLabel?.name ?? ""} plan.`}
 					</SheetDescription>
 				</SheetHeader>
 
 				<div className="space-y-6 px-4 pb-8">
-					<div className="space-y-2">
-						<Label htmlFor="org-name">Organization name</Label>
-						<Input
-							id="org-name"
-							placeholder="Acme Inc."
-							autoComplete="off"
-							{...form.register("name")}
-						/>
-						{form.formState.errors.name && (
-							<p className="text-xs text-destructive">
-								{form.formState.errors.name.message}
-							</p>
-						)}
-					</div>
+					{step === "details" && (
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="org-name">Organization name</Label>
+								<Input
+									id="org-name"
+									placeholder="Acme Inc."
+									autoComplete="off"
+									{...form.register("name")}
+								/>
+								{form.formState.errors.name && (
+									<p className="text-xs text-destructive">
+										{form.formState.errors.name.message}
+									</p>
+								)}
+							</div>
 
-					<div className="space-y-3">
-						<p className="text-sm font-medium text-foreground">Choose a plan</p>
-						<PlanPicker
-							paidOnly
-							pendingPlan={pendingPlan}
-							disabled={pendingPlan !== null}
-							ctaLabel="Continue to payment"
-							onSelect={handleSelect}
-						/>
-					</div>
+							<div className="space-y-3">
+								<p className="text-sm font-medium text-foreground">Choose a plan</p>
+								<PlanPicker
+									paidOnly
+									pendingPlan={pendingPlan}
+									disabled={pendingPlan !== null}
+									ctaLabel="Continue"
+									onSelect={handleSelect}
+								/>
+							</div>
+						</>
+					)}
+
+					{step === "payment" && clientSecret && planLabel && (
+						<div className="space-y-4">
+							<div className="flex items-center justify-between border-b border-border/40 pb-3">
+								<div>
+									<p className="text-sm font-semibold text-foreground">
+										{planLabel.name}
+									</p>
+									<p className="text-xs text-muted-foreground">
+										{planLabel.priceLabel}
+									</p>
+								</div>
+								<Button
+									variant="ghost"
+									size="sm"
+									onClick={() => {
+										setStep("details");
+										setClientSecret(null);
+									}}
+								>
+									Back
+								</Button>
+							</div>
+							<StripeElementsProvider clientSecret={clientSecret}>
+								<PaymentForm
+									mode="payment"
+									submitLabel={`Subscribe — ${planLabel.priceLabel}`}
+									onSuccess={handlePaid}
+								/>
+							</StripeElementsProvider>
+						</div>
+					)}
 				</div>
 			</SheetContent>
 		</Sheet>

@@ -2,23 +2,42 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useSearchParams } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+// The billing panel — fully embedded (no Stripe redirect). Shows the current plan +
+// cancel/resume, lets you change/subscribe to a plan (PlanPicker → embedded
+// <PaymentForm> for a new subscription, or changeSubscriptionPlan when already
+// subscribed), and manages saved cards, invoices, and billing details/VAT.
+
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
 	type BillingSummary,
-	createBillingPortalSession,
-	createCheckoutSession,
+	cancelSubscription,
+	changeSubscriptionPlan,
+	createSubscriptionIntent,
 	getBillingSummary,
+	resumeSubscription,
 } from "@/app/server/actions/billing";
+import { BillingDetails } from "@/components/billing/billing-details";
+import { InvoicesList } from "@/components/billing/invoices-list";
+import { PaymentForm } from "@/components/billing/payment-form";
 import { PlanPicker } from "@/components/billing/plan-picker";
+import { SavedCards } from "@/components/billing/saved-cards";
+import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+	Dialog,
+	DialogContent,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { planMeta } from "@/lib/billing/plan-catalog";
 import type { BillingPlan } from "@/lib/db/schema/enums";
+import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 
 const STATUS_LABEL: Record<BillingSummary["status"], string> = {
 	none: "No subscription",
@@ -29,51 +48,74 @@ const STATUS_LABEL: Record<BillingSummary["status"], string> = {
 };
 
 export function BillingPanel() {
+	const fetchWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
 	const [summary, setSummary] = useState<BillingSummary | null>(null);
 	const [pending, startTransition] = useTransition();
 	const [pendingPlan, setPendingPlan] = useState<BillingPlan | null>(null);
 	const [createOpen, setCreateOpen] = useState(false);
-	const params = useSearchParams();
 
-	useEffect(() => {
+	// Embedded subscribe dialog (for an org with no live subscription).
+	const [payOpen, setPayOpen] = useState(false);
+	const [paySecret, setPaySecret] = useState<string | null>(null);
+	const [payPlan, setPayPlan] = useState<BillingPlan | null>(null);
+
+	const refresh = useCallback(() => {
 		getBillingSummary()
 			.then(setSummary)
 			.catch(() => toast.error("Couldn't load billing details."));
-	}, []);
-
-	// Surface the Checkout return state once.
+		fetchWorkspace();
+	}, [fetchWorkspace]);
 	useEffect(() => {
-		const checkout = params.get("checkout");
-		if (checkout === "success") {
-			toast.success("Subscription updated — your plan is active.");
-		} else if (checkout === "cancelled") {
-			toast.info("Checkout cancelled — no changes made.");
-		}
-	}, [params]);
+		refresh();
+	}, [refresh]);
 
-	/** Upgrade the active org to a paid plan via Stripe Checkout. */
-	function handleUpgrade(plan: BillingPlan) {
-		if (plan === "community") return;
+	const liveSub =
+		summary?.status === "active" || summary?.status === "trialing";
+
+	/** Change plan (live sub) or open the embedded subscribe dialog (no sub). */
+	function handleSelectPlan(plan: BillingPlan) {
+		if (plan === "community" || !summary) return;
 		setPendingPlan(plan);
 		startTransition(async () => {
 			try {
-				const { url } = await createCheckoutSession(plan);
-				window.location.href = url;
-			} catch (err) {
-				toast.error(err instanceof Error ? err.message : "Something went wrong.");
+				if (liveSub) {
+					await changeSubscriptionPlan(plan);
+					toast.success("Plan updated.");
+					refresh();
+				} else {
+					const intent = await createSubscriptionIntent(plan);
+					setPaySecret(intent.clientSecret);
+					setPayPlan(plan);
+					setPayOpen(true);
+				}
+			} catch (e) {
+				toast.error(e instanceof Error ? e.message : "Something went wrong.");
+			} finally {
 				setPendingPlan(null);
 			}
 		});
 	}
 
-	/** Open the Stripe Customer Portal. */
-	function openPortal() {
+	function onSubscribed() {
+		setPayOpen(false);
+		setPaySecret(null);
+		toast.success("Subscription active.");
+		refresh();
+	}
+
+	function toggleCancel() {
 		startTransition(async () => {
 			try {
-				const { url } = await createBillingPortalSession();
-				window.location.href = url;
-			} catch (err) {
-				toast.error(err instanceof Error ? err.message : "Something went wrong.");
+				if (summary?.cancelAtPeriodEnd) {
+					await resumeSubscription();
+					toast.success("Subscription resumed.");
+				} else {
+					await cancelSubscription();
+					toast.success("Subscription will cancel at the period end.");
+				}
+				refresh();
+			} catch (e) {
+				toast.error(e instanceof Error ? e.message : "Something went wrong.");
 			}
 		});
 	}
@@ -132,38 +174,75 @@ export function BillingPanel() {
 						<span className="text-sm font-semibold text-foreground">
 							{planMeta(summary.plan).name} plan
 						</span>
-						<Badge
-							variant={
-								summary.status === "active" || summary.status === "trialing"
-									? "default"
-									: "secondary"
-							}
-						>
+						<Badge variant={liveSub ? "default" : "secondary"}>
 							{STATUS_LABEL[summary.status]}
 						</Badge>
 					</div>
 					{summary.currentPeriodEnd && (
 						<p className="text-sm text-muted-foreground">
-							Renews {new Date(summary.currentPeriodEnd).toLocaleDateString()}
+							{summary.cancelAtPeriodEnd ? "Cancels" : "Renews"}{" "}
+							{new Date(summary.currentPeriodEnd).toLocaleDateString()}
 						</p>
 					)}
 				</div>
-				{summary.canManage && (
-					<Button variant="outline" disabled={pending} onClick={openPortal}>
-						Manage subscription
+				{liveSub && (
+					<Button
+						variant="outline"
+						disabled={pending}
+						onClick={toggleCancel}
+						className={summary.cancelAtPeriodEnd ? "" : "text-destructive"}
+					>
+						{summary.cancelAtPeriodEnd ? "Resume subscription" : "Cancel subscription"}
 					</Button>
 				)}
 			</Card>
 
-			{/* Upgrade / change plan */}
-			<PlanPicker
-				currentPlan={summary.plan}
-				paidOnly
-				pendingPlan={pendingPlan}
-				disabled={pending}
-				ctaLabel="Upgrade"
-				onSelect={handleUpgrade}
-			/>
+			{/* Change / subscribe */}
+			<div className="space-y-3">
+				<p className="text-sm font-medium text-foreground">
+					{liveSub ? "Change plan" : "Choose a plan"}
+				</p>
+				<PlanPicker
+					currentPlan={summary.plan}
+					paidOnly
+					pendingPlan={pendingPlan}
+					disabled={pending}
+					ctaLabel={liveSub ? "Switch" : "Subscribe"}
+					onSelect={handleSelectPlan}
+				/>
+			</div>
+
+			{/* Payment methods, invoices, billing details — once a customer exists */}
+			{summary.canManage && (
+				<>
+					<Separator />
+					<SavedCards />
+					<Separator />
+					<InvoicesList />
+					<Separator />
+					<BillingDetails />
+				</>
+			)}
+
+			{/* Embedded subscribe dialog */}
+			<Dialog open={payOpen} onOpenChange={setPayOpen}>
+				<DialogContent className="sm:max-w-md">
+					<DialogHeader>
+						<DialogTitle>
+							Subscribe to {payPlan ? planMeta(payPlan).name : ""}
+						</DialogTitle>
+					</DialogHeader>
+					{paySecret && (
+						<StripeElementsProvider clientSecret={paySecret}>
+							<PaymentForm
+								mode="payment"
+								submitLabel="Subscribe"
+								onSuccess={onSubscribed}
+							/>
+						</StripeElementsProvider>
+					)}
+				</DialogContent>
+			</Dialog>
 		</div>
 	);
 }

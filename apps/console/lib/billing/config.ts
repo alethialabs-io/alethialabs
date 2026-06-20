@@ -41,6 +41,14 @@ export function isStripeConfigured(): boolean {
 }
 
 /**
+ * The Stripe publishable key for the embedded Payment Element (client-side). Safe to
+ * expose — it only identifies the account. Empty string when billing isn't configured.
+ */
+export function getPublishableKey(): string {
+	return process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "";
+}
+
+/**
  * Whether to compute tax + collect VAT/Tax IDs at checkout (Stripe Tax). OFF by
  * default: `automatic_tax` requires the account's Tax origin address + registrations
  * to be configured first, or Checkout errors. Flip `STRIPE_TAX_ENABLED=true` once

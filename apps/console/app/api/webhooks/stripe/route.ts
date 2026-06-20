@@ -102,6 +102,17 @@ export async function POST(req: Request): Promise<Response> {
 				}
 				break;
 			}
+			case "invoice.payment_succeeded":
+			case "invoice.payment_failed": {
+				// Embedded first-payment / renewal / dunning: re-sync from the invoice's
+				// subscription so status (active / past_due) stays accurate.
+				const subRef = event.data.object.parent?.subscription_details?.subscription;
+				const subId = typeof subRef === "string" ? subRef : subRef?.id;
+				if (subId) {
+					await applySubscription(await getStripe().subscriptions.retrieve(subId));
+				}
+				break;
+			}
 			default:
 				// Unhandled event types are acknowledged (200) so Stripe stops retrying.
 				break;
