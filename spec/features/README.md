@@ -6,6 +6,7 @@ Organized by product surface. The goal is to make the Alethia/Alethia platform t
 
 | Folder | Purpose |
 | --- | --- |
+| `mvp-roadmap/` | **Active** — Epic roadmap to a launchable MVP, grounded in the current 85–95%-built state (E1 hero-flow hardening, cost, self-host, fleet, licensing; orgs/SSO + connectors are in-flight lanes). |
 | `spec-schema-redesign/` | **Active** — Normalize configurations into modular component tables with per-component status. |
 | `runner-provisioning/` | **Active** — MVP design: cloud-hosted runner, AWS connection, job queue, E2E test plan. |
 | `architecture/` | Platform architecture: ArgoCD pivot, bootstrap logging, GitOps wiring, and the system overview. |
