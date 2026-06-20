@@ -1,46 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
+import { enforceDecision } from "@/lib/authz/audit";
+import { listOrgResourceIds } from "@/lib/authz/resource-tables";
 import { getServiceDb } from "@/lib/db";
-import {
-	authzAuditLog,
-	cloudIdentities,
-	jobs,
-	runners,
-	specs,
-	zones,
-} from "@/lib/db/schema";
 import { coversResource, permissionKey } from "./evaluate";
 import type { Action, Resource } from "./registry";
-import {
-	type Actor,
-	type BulkCheck,
-	type Decision,
-	ForbiddenError,
-	type Pdp,
-	type ResourceRef,
+import type {
+	Actor,
+	BulkCheck,
+	Decision,
+	Pdp,
+	ResourceRef,
 } from "./types";
-
-// Actions we always audit on ALLOW (denials are always audited). Keeps the audit
-// log meaningful without a row per read. Mirrors the spec's sensitive-action set.
-const SENSITIVE: ReadonlySet<Action> = new Set<Action>([
-	"destroy",
-	"manage_identities",
-	"manage_members",
-	"manage_integrations",
-	"manage_billing",
-	"export_audit",
-]);
-
-/** Resource types that back a listable table (for listAccessible's org-wide path). */
-const RESOURCE_TABLE = {
-	zone: zones,
-	spec: specs,
-	job: jobs,
-	runner: runners,
-	cloud_identity: cloudIdentities,
-} as const;
 
 type Db = ReturnType<typeof getServiceDb>;
 
@@ -109,11 +82,7 @@ export class PostgresRbacPDP implements Pdp {
 		resource: ResourceRef,
 	): Promise<void> {
 		const decision = await this.can(actor, action, resource);
-		if (!decision.allowed) {
-			this.audit(actor, action, resource, false, decision.reason);
-			throw new ForbiddenError(action, resource, decision.reason);
-		}
-		if (SENSITIVE.has(action)) this.audit(actor, action, resource, true);
+		enforceDecision(actor, action, resource, decision);
 	}
 
 	async bulkCheck(actor: Actor, checks: BulkCheck[]): Promise<Decision[]> {
@@ -135,13 +104,7 @@ export class PostgresRbacPDP implements Pdp {
 
 		// Org-wide grant ⇒ every resource of this type in the org.
 		if (grantIds.some((id) => id === null)) {
-			const table = RESOURCE_TABLE[resourceType as keyof typeof RESOURCE_TABLE];
-			if (!table) return [];
-			const rows = await db
-				.select({ id: table.id })
-				.from(table)
-				.where(eq(table.org_id, actor.orgId));
-			return rows.map((r) => r.id);
+			return listOrgResourceIds(resourceType, actor.orgId);
 		}
 
 		// Scoped grants ⇒ the granted resources of this type plus their descendants.
@@ -163,27 +126,5 @@ export class PostgresRbacPDP implements Pdp {
 			)
 		`);
 		return rows.map((r) => r.id);
-	}
-
-	/** Fire-and-forget decision record; never blocks the request. */
-	private audit(
-		actor: Actor,
-		action: Action,
-		resource: ResourceRef,
-		decision: boolean,
-		reason?: string,
-	): void {
-		void getServiceDb()
-			.insert(authzAuditLog)
-			.values({
-				org_id: actor.orgId,
-				actor_id: actor.userId,
-				action,
-				resource_type: resource.type,
-				resource_id: resource.id ?? null,
-				decision,
-				reason: reason ?? null,
-			})
-			.catch((err) => console.error("[authz] audit write failed:", err));
 	}
 }

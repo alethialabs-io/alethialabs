@@ -55,3 +55,25 @@ export function toCheck(
 	}
 	return { object: `${resourceType}:${opts.id}`, relation: `can_${action}` };
 }
+
+/**
+ * The OpenFGA checks to OR for an authorization question. Org-level/create/no-id ⇒
+ * just the org capability. A per-instance action ⇒ the instance's `can_<action>` (a
+ * scoped grant on it, or container inheritance) OR the org-wide `<type>_<action>`
+ * capability — so org-wide grants authorize per-instance checks without leaf edges.
+ */
+export function checksFor(
+	resourceType: Resource,
+	action: Action,
+	opts: { id?: string; orgId: string },
+): FgaCheck[] {
+	const orgCheck: FgaCheck = {
+		object: `org:${opts.orgId}`,
+		relation: `${resourceType}_${action}`,
+	};
+	if (isOrgLevel(resourceType, action) || !opts.id) return [orgCheck];
+	return [
+		{ object: `${resourceType}:${opts.id}`, relation: `can_${action}` },
+		orgCheck,
+	];
+}

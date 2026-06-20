@@ -10,12 +10,15 @@
 
 import { createRequire } from "node:module";
 import type { BetterAuthOptions } from "better-auth";
+import { enforceDecision } from "@/lib/authz/audit";
+import { checksFor } from "@/lib/authz/fga-mapping";
 import { buildAuthorizationModel } from "@/lib/authz/fga-model";
 import {
 	expandGrant,
 	hierarchyTuple,
 	teamMemberTuple,
 } from "@/lib/authz/fga-tuples";
+import { listOrgResourceIds } from "@/lib/authz/resource-tables";
 import { orgAc, orgRoles } from "@/lib/authz/org-access-control";
 import { ensureMemberGrant, revokeMemberGrant } from "@/lib/authz/grants";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
@@ -47,6 +50,9 @@ export interface CoreContext {
 		hierarchyTuple: typeof hierarchyTuple;
 		teamMemberTuple: typeof teamMemberTuple;
 		rolePermissionKeys: typeof rolePermissionKeys;
+		checksFor: typeof checksFor;
+		enforceDecision: typeof enforceDecision;
+		listOrgResourceIds: typeof listOrgResourceIds;
 		isEnabled: typeof isOpenFgaEnabled;
 		getConfig: typeof getOpenFgaConfig;
 	};
@@ -104,6 +110,9 @@ function loadEnterprise(): void {
 				hierarchyTuple,
 				teamMemberTuple,
 				rolePermissionKeys,
+				checksFor,
+				enforceDecision,
+				listOrgResourceIds,
 				isEnabled: isOpenFgaEnabled,
 				getConfig: getOpenFgaConfig,
 			},
