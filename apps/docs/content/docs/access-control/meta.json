@@ -5,8 +5,16 @@
   "pages": [
     "index",
     "roles-and-permissions",
+    "grants-and-scopes",
+    "custom-roles",
+    "access-portal",
     "organizations",
-    "open-core",
-    "architecture"
+    "members-and-invitations",
+    "teams",
+    "sso",
+    "audit-log",
+    "architecture",
+    "openfga",
+    "open-core"
   ]
 }

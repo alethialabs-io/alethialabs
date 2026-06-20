@@ -1,0 +1,80 @@
+---
+title: Grants & scopes
+description: How access is actually assigned — grants of a role or a single permission to a user or team, scoped to the org or a resource, as an allow or an explicit deny.
+---
+
+# Grants & scopes
+
+A **grant** is the unit of access. Every grant answers four questions:
+
+| | |
+|---|---|
+| **Who** | a principal — a **user**, or a **team** <Enterprise /> (everyone on the team) |
+| **What** | a **role** (a bundle of permissions) **or** a **single permission** (e.g. `spec:deploy`) |
+| **Where** | a **scope** — the whole organization, or one specific resource (a zone, spec, runner, …) |
+| **Effect** | **allow** (the default) or an explicit **deny** |
+
+This is the same shape as an AWS IAM statement, and you create them through the
+[Access portal](/access-portal) <Enterprise /> (or, in Community, the single owner already holds everything).
+
+## Scope and inheritance
+
+Resources form a hierarchy: **Org → Zone → Spec** (runners, cloud identities, and connectors hang directly off
+the org). A grant flows *down* that hierarchy:
+
+- A grant on the **organization** applies to every resource in it.
+- A grant on a **zone** applies to that zone *and the specs inside it*.
+- A grant on a single **spec** applies to just that spec.
+
+So "let Dana view this one zone" automatically lets Dana view the specs in it — you grant once, at the right
+level, instead of enumerating children.
+
+<Callout type="info">
+  This inheritance is the same in both editions and in both engines. Community resolves it by walking the
+  `resource_hierarchy` table; the OpenFGA engine resolves it through relationship tuples. The decision is
+  identical.
+</Callout>
+
+## Explicit deny — the exception you actually need
+
+Inheritance is convenient until you need an *exception*: "Dana can view this zone's specs — **except this one
+spec**." That's an **explicit deny**.
+
+Deny has AWS-IAM semantics:
+
+- A **deny always wins** over an allow, no matter how the allow was granted (directly or inherited). There's no
+  "most specific wins" tie-breaking — if any deny covers the resource, access is refused.
+- A deny **inherits down** the hierarchy just like an allow. A deny on a *zone* excludes all of its specs; a
+  deny on a single *spec* excludes just that one.
+
+### Worked example
+
+Give Dana read access to a zone, then carve out one spec:
+
+<Steps>
+<Step>**Allow** the `viewer` role on **zone `Z`**. Dana can now view `Z` and all of its specs.</Step>
+<Step>**Deny** the `spec:view` permission on **spec `S`** (one of the specs in `Z`).</Step>
+<Step>Result: Dana sees zone `Z` and its *other* specs, but **not `S`**. The deny on `S` overrides the inherited allow.</Step>
+</Steps>
+
+The decision rule, in one line:
+
+> **allowed ⟺ an allow covers the resource (directly or via an ancestor) AND no deny covers it.**
+
+## Role grants vs single-permission grants
+
+Two ways to say "what":
+
+- **Grant a role** — the managed-policy model. Roles bundle permissions; assign the whole bundle. Use built-in
+  roles, or author a [custom role](/access-control/custom-roles) <Enterprise /> for an exact set.
+- **Grant a single permission** — the inline model. Attach one `resource:action` (e.g. `spec:deploy`) without a
+  role. Handy for one-off exceptions, and for denies (deny exactly `spec:view` on `S`, nothing more).
+
+Editing a role's permissions instantly re-derives every grant that uses it — there's no need to re-assign.
+
+## Where this lives
+
+- Create and revoke grants in the [**Access portal**](/access-portal). <Enterprise />
+- The permissions you can pick come from the [**roles & permissions**](/access-control/roles-and-permissions)
+  registry.
+- How the two engines evaluate all of the above: [**architecture**](/access-control/architecture).

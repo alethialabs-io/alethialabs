@@ -5,21 +5,30 @@ description: What's free in the AGPL Community edition vs the commercial Enterpr
 
 # Open-Core Model
 
-Alethia is **open-core**. The entire product — including the authorization engine, roles, grants, hierarchy, and tenant isolation — is free and open source under the **AGPL-3.0**. A separate **Enterprise edition** adds organization-scale features under a commercial license. This page explains the split and the engineering that keeps it honest.
+Alethia is **open-core**. The entire product — including the authorization engine, roles, grants, hierarchy, and tenant isolation — is free and open source under the **AGPL-3.0**. A separate **Enterprise edition** adds organization-scale features under a commercial license. This page explains the **engineering** that keeps the split honest.
+
+<Callout type="info">
+  Looking for the *feature* comparison or how licensing works? That's the [**Editions**](/editions) section —
+  the [feature matrix](/editions/feature-matrix) and [licensing](/editions/licensing). This page is the
+  contributor-facing view: the dependency boundary and the CI guards that enforce it.
+</Callout>
 
 ## What's free vs licensed
+
+The summary below is a quick reference; the [Editions feature matrix](/editions/feature-matrix) is authoritative.
 
 | Capability | Community (AGPL) | Enterprise (commercial) |
 |---|:--:|:--:|
 | Policy Decision Point + `enforce` / `listAccessible` | ✅ | ✅ |
 | Built-in roles (owner / admin / operator / viewer) | ✅ | ✅ |
 | Per-resource grants + Org → Zone → Spec inheritance | ✅ | ✅ |
+| Explicit deny + single-permission grants | ✅ | ✅ |
 | Row-Level Security tenant isolation | ✅ | ✅ |
 | Audit log of authorization decisions | ✅ | ✅ |
 | Single-user personal organization | ✅ | ✅ |
 | **Multi-member organizations, teams, invitations** | — | ✅ |
-| **SSO (SAML / OIDC)** | — | _on the roadmap_ |
-| **Custom roles** (org copies of templates) | — | ✅ |
+| **SSO (SAML / OIDC)** | — | ✅ |
+| **Custom roles + the access portal** | — | ✅ |
 | **Audit export** | — | ✅ |
 | **OpenFGA-backed policy engine at scale** | — | ✅ (optional) |
 
@@ -55,4 +64,4 @@ The payoff: the Enterprise edition can evolve independently, and the open-source
 
 If you self-host the Community edition you get the full single-tenant product: roles, grants, hierarchy, audit, and database-level tenant isolation, all under the AGPL. You can run it indefinitely with no license. Adding the Enterprise edition is what unlocks shared organizations and the features in the table above.
 
-See [Self-Hosting](/docs/self-hosting) for deployment, and [Architecture](/docs/access-control/architecture) for exactly how the seams and the loader work.
+See [Self-Hosting](/self-hosting) for deployment, and [Architecture](/access-control/architecture) for exactly how the seams and the loader work.

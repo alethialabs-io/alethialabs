@@ -1,0 +1,61 @@
+---
+title: OpenFGA engine
+description: The optional relationship-based authorization engine — what it is, how the model is generated, and how to stand it up.
+---
+
+# OpenFGA engine
+
+<Enterprise />
+
+Alethia's authorization runs behind one interface (the [Policy Decision Point](/access-control/architecture)),
+so the **engine** underneath can be swapped without touching a single call site. The default engine,
+`PostgresRbacPDP`, is open-source and handles everything described in this section. The **OpenFGA engine** is an
+optional Enterprise alternative — a dedicated [OpenFGA](https://openfga.dev) relationship-graph server (ReBAC)
+for fine-grained authorization at scale.
+
+<Callout type="info">
+  OpenFGA is **optional even with a license.** Enterprise works perfectly on the Postgres engine; turn OpenFGA
+  on when you want a purpose-built relationship engine. Leaving `OPENFGA_*` unset keeps the Postgres engine.
+</Callout>
+
+## How it stays in sync with everything you've read
+
+The key design choice: **Postgres stays the source of truth.** You author roles, grants, and exceptions exactly
+as documented elsewhere — they're stored in Postgres — and every change is *also* mirrored into OpenFGA as
+relationship **tuples**. The OpenFGA engine reads those tuples to decide.
+
+Two consequences:
+
+- **Custom roles need zero model changes.** A role is a Postgres bundle of permissions that *expands to tuples*
+  when granted. Add or edit a role and the tuples update — the OpenFGA model itself never changes.
+- **The model is generated from the registry.** The authorization model (types, relations, the deny
+  exclusions, the hierarchy inheritance) is produced directly from the same `resource × action` registry that
+  drives everything else — so it covers every permission by construction.
+
+The Postgres and OpenFGA engines are kept in **parity**: for any (actor, action, resource), they return the
+same decision — including the allow/deny precedence and hierarchy inheritance from
+[grants & scopes](/access-control/grants-and-scopes).
+
+## Standing it up
+
+The high-level operator steps (the full runbook is in
+[Enterprise setup](/editions/enterprise-setup)):
+
+<Steps>
+<Step>Bring up the `enterprise` compose profile — the OpenFGA server and its own datastore.</Step>
+<Step>Create a store and point the app at it (`OPENFGA_API_URL`, `OPENFGA_STORE_ID`).</Step>
+<Step>On boot the app writes the generated model and backfills tuples from your existing grants + hierarchy.</Step>
+<Step>From then on, every grant/role/team change dual-writes to OpenFGA; the engine answers all checks.</Step>
+</Steps>
+
+## When to use it
+
+The Postgres engine is the right default for most deployments. Reach for OpenFGA when you want a dedicated
+authorization service — very large tenancies, cross-service authorization, or a relationship graph you'll grow
+beyond Alethia. Because the swap is a binding flip, you can start on Postgres and move later with a tuple
+backfill, no application changes.
+
+## Next
+
+- The engine interface and the binding flip: [**architecture**](/access-control/architecture).
+- Turning it on: [**Enterprise setup**](/editions/enterprise-setup).

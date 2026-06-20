@@ -114,10 +114,10 @@ grant: dana → operator → zone "staging"
   ⇒ dana CANNOT touch spec "production/api"   (different zone, no grant)
 ```
 
-This is why a handful of grants covers an entire estate: assign at the highest scope that makes sense and let inheritance do the rest. The decision engine resolves this by walking up from the target resource to see whether any of your grants cover it or an ancestor — see [Architecture](/docs/access-control/architecture).
+This is why a handful of grants covers an entire estate: assign at the highest scope that makes sense and let inheritance do the rest. The decision engine resolves this by walking up from the target resource to see whether any of your grants cover it or an ancestor — see [Architecture](/access-control/architecture).
 
 ## How this shows up
 
 - **List views** only show resources you can `view` — the list itself is filtered by your grants, not just hidden in the UI.
 - **Actions** (deploy, destroy, invite, …) are checked the instant you trigger them; if you lack the permission you get a clear *Forbidden*, and the attempt is recorded in the audit log.
-- **Community**: with a single org-wide `owner` grant, you can do everything in your own workspace — the role machinery is invisible until you add teammates under [Enterprise organizations](/docs/access-control/organizations).
+- **Community**: with a single org-wide `owner` grant, you can do everything in your own workspace — the role machinery is invisible until you add teammates under [Enterprise organizations](/access-control/organizations).

@@ -5,7 +5,7 @@ description: How tenancy works — the personal organization in Community, and m
 
 # Organizations & Teams
 
-An **organization** is the tenancy boundary: every zone, spec, runner, cloud identity, and job belongs to exactly one organization, and members of that organization see only its resources. Your **active organization** is half of your [actor](/docs/access-control) identity — it's the scope every permission check runs against.
+An **organization** is the tenancy boundary: every zone, spec, runner, cloud identity, and job belongs to exactly one organization, and members of that organization see only its resources. Your **active organization** is half of your [actor](/access-control) identity — it's the scope every permission check runs against.
 
 ## Community: your personal organization
 
@@ -64,16 +64,20 @@ member: carol, role = operator, in org "Acme"
   ⇒ operator does NOT include member:manage_members → FORBIDDEN
 ```
 
-Roles compose with the [Org → Zone → Spec hierarchy](/docs/access-control/roles-and-permissions#inheritance-the-org--zone--spec-hierarchy): you can give someone `operator` org-wide, or narrow them to just one zone.
+Roles compose with the [Org → Zone → Spec hierarchy](/access-control/roles-and-permissions#inheritance-the-org--zone--spec-hierarchy): you can give someone `operator` org-wide, or narrow them to just one zone.
 
 ## Tenancy isolation
 
-Organization isolation isn't only an application-level check. The database enforces it too: every query runs with the active organization in scope, and PostgreSQL Row-Level Security only returns rows for that organization. So even a flaw in the application layer cannot surface another organization's data. See [Security → Row-Level Security](/docs/concepts/security).
+Organization isolation isn't only an application-level check. The database enforces it too: every query runs with the active organization in scope, and PostgreSQL Row-Level Security only returns rows for that organization. So even a flaw in the application layer cannot surface another organization's data. See [Security → Row-Level Security](/concepts/security).
 
-<Callout type="warn">
-**Current scope of the Enterprise org support (evolving):** members resolve to their **primary organization**. A live *active-organization switcher* (belonging to several orgs and toggling between them in one session) and **SSO** sign-in are on the roadmap — the building blocks (the org/member/invitation model, per-org roles, isolation) are already in place.
+<Callout type="info">
+A member can belong to **several organizations** and switch between them with the **organization switcher** in
+the dashboard header; the active organization scopes everything the PDP and Row-Level Security enforce.
+[**SSO**](/access-control/sso) sign-in, [**teams**](/access-control/teams), the
+[**invitation flow**](/access-control/members-and-invitations), and the [**access portal**](/access-portal)
+are all part of the Enterprise edition.
 </Callout>
 
 ## Relationship to roles
 
-Organizations are *where* you have access; [roles](/docs/access-control/roles-and-permissions) are *what* that access is. A member always has both: an organization (the scope) and a role within it (the capability). Changing someone from `viewer` to `operator` changes what they can do; moving them between organizations changes what they can see.
+Organizations are *where* you have access; [roles](/access-control/roles-and-permissions) are *what* that access is. A member always has both: an organization (the scope) and a role within it (the capability). Changing someone from `viewer` to `operator` changes what they can do; moving them between organizations changes what they can see.

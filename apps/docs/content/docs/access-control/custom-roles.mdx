@@ -1,0 +1,54 @@
+---
+title: Custom roles
+description: Author your own roles with a tailored permission set — the permission-matrix editor, grouped per resource, like an AWS IAM policy.
+---
+
+# Custom roles
+
+<Enterprise />
+
+The four [built-in roles](/access-control/roles-and-permissions) cover the common cases. When you need
+something exact — "can plan and deploy specs, but never destroy, and nothing else" — author a **custom role**.
+
+Custom roles are **organization-scoped**: they live in your org, alongside the built-ins, and can be granted
+just like them through the [Access portal](/access-portal).
+
+## The permission matrix
+
+Open **Settings → Roles → New role**. The editor groups every permission **per resource** ("per service",
+like AWS IAM), so you toggle exactly what the role can do:
+
+| Group | Example permissions |
+|---|---|
+| Zones | `zone:view` · `zone:create` · `zone:edit` · `zone:destroy` |
+| Specs | `spec:view` · `spec:create` · `spec:edit` · `spec:plan` · `spec:deploy` · `spec:destroy` |
+| Runners | `runner:view` · `runner:create` · `runner:edit` · `runner:deploy` · `runner:destroy` |
+| Cloud identities | `cloud_identity:view` · `cloud_identity:manage_identities` · `cloud_identity:test` · `cloud_identity:fetch_resources` |
+| Jobs · Connectors · Org · Members · Audit · Billing | … |
+
+Because the provisioning operations are themselves distinct permissions, you get **job-type granularity**: a
+role can grant `spec:plan` without `spec:deploy`, or `runner:deploy` without `runner:destroy`. Every job type a
+member can trigger is independently grantable.
+
+<Callout type="info">
+  The permission catalog is **registry-as-code** — one typed list of resources × actions. New capabilities
+  appear in the editor automatically when the registry grows; see
+  [architecture](/access-control/architecture).
+</Callout>
+
+## Editing re-derives access instantly
+
+Change a role's permissions and **every grant that uses it updates immediately** — no re-assigning. Under the
+hood the change re-expands the role into the underlying permission set (and, when OpenFGA is enabled,
+re-syncs the relationship tuples).
+
+## Roles vs single permissions
+
+A custom role is a reusable *bundle*. For a one-off — grant or deny a single `resource:action` to one person —
+you don't need a role at all; grant the [single permission](/access-control/grants-and-scopes) directly in the
+Access portal.
+
+## Next
+
+- Assign roles in the [**Access portal**](/access-portal).
+- The full permission catalog: [**roles & permissions**](/access-control/roles-and-permissions).
