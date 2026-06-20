@@ -57,7 +57,7 @@ try {
 	console.log("→ applying programmables (functions, triggers, RLS)…");
 	await sql.unsafe(readFileSync(programmablesPath, "utf8"));
 
-	console.log("→ seeding connectors catalog (pluggable integrations)…");
+	console.log("→ seeding connectors catalog (pluggable connectors)…");
 	await sql.unsafe(readFileSync(connectorsSeedPath, "utf8"));
 
 	const appPassword = process.env.ALETHIA_APP_DB_PASSWORD;

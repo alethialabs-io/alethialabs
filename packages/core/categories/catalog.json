@@ -1,5 +1,5 @@
 {
-  "$comment": "SSOT — declarative registry of pluggable per-category integration providers. Consumed by Go (go:embed, packages/core/categories) and by the console codegen (apps/console/scripts/gen-integrations.mjs → lib/integrations/registry.generated.ts + lib/db/seed/connectors.generated.sql). Behavior (Tfvars/Validate) lives in the Go impls keyed by slug. Native cloud-native defaults are NOT listed here — the form derives the 'native' option from lib/cloud-providers/registry.ts. Adding a provider = a row here + a Go impl + an OpenTofu module under infra/templates/<module_path>.",
+  "$comment": "SSOT — declarative registry of pluggable per-category connector providers. Consumed by Go (go:embed, packages/core/categories) and by the console codegen (apps/console/scripts/gen-connectors.mjs → lib/connectors/registry.generated.ts + lib/db/seed/connectors.generated.sql). Behavior (Tfvars/Validate) lives in the Go impls keyed by slug. Native cloud-native defaults are NOT listed here — the form derives the 'native' option from lib/cloud-providers/registry.ts. Adding a provider = a row here + a Go impl + an OpenTofu module under infra/templates/<module_path>.",
   "providers": [
     {
       "category": "dns",

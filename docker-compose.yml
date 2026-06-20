@@ -158,6 +158,8 @@ services:
       ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
       ALETHIA_APP_DATABASE_URL: "postgres://alethia_app:${ALETHIA_APP_DB_PASSWORD:-alethia-app-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
       ALETHIA_STORAGE_ENDPOINT: "http://seaweedfs:8333"
+      # AES-256-GCM key for api_key connector secrets (connector_credentials).
+      ALETHIA_CRED_ENCRYPTION_KEY: "${ALETHIA_CRED_ENCRYPTION_KEY:-/MkbZwf3J4Wv++DQILEGzBChaVvow+x7U1fv5f9HZpU=}"
       # OpenFGA (Enterprise engine). Empty unless set in .env → OpenFGA disabled,
       # community PostgresRbacPDP stays the engine. Set both to enable.
       OPENFGA_API_URL: "${OPENFGA_API_URL-}"

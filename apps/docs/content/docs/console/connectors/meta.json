@@ -5,6 +5,7 @@
     "aws",
     "gcp",
     "azure",
-    "git-providers"
+    "git-providers",
+    "pluggable"
   ]
 }

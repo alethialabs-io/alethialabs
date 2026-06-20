@@ -12,8 +12,17 @@ The container registry section creates managed Docker image registries for your 
 | Field | Type | Description |
 |-------|------|-------------|
 | **Name** | Text input | Repository name (e.g., `api`, `frontend`, `worker`) |
+| **Provider** | Select | Cloud-native registry or a [pluggable connector](/console/connectors/pluggable) |
 | **Tag Mutability** | Select | `MUTABLE` (tags can be overwritten) or `IMMUTABLE` (once pushed, a tag is permanent) |
 | **Scan on Push** | Toggle | Automatically scan images for vulnerabilities on push |
+
+## Registry Provider
+
+By default a cloud-native registry (ECR / Artifact Registry / ACR) is created. Select **Docker Hub** to use a Docker Hub repository instead:
+
+- Requires a connected [Docker Hub connector](/console/connectors/pluggable) (username + access token).
+- Optional **namespace / organization** (defaults to the username).
+- Instead of creating cloud registry repos, the composed module wires a Kubernetes `imagePullSecret` so workloads can pull from Docker Hub; the cloud-native registry is skipped.
 
 ## Services by Provider
 

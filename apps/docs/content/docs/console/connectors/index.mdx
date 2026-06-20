@@ -5,16 +5,20 @@ description: Connect cloud providers and Git accounts to enable infrastructure p
 
 # Connectors
 
-The Connectors page manages connections to cloud providers (AWS, GCP, Azure) and Git providers (GitHub, GitLab, Bitbucket). All connections must be established before provisioning infrastructure.
+The Connectors page manages connections to cloud providers (AWS, GCP, Azure), Git providers (GitHub, GitLab, Bitbucket), and **pluggable per-category providers** (DNS, secrets, registry, observability). Cloud and Git connections must be established before provisioning; pluggable connectors are optional — they let a Spec use a tool you already run instead of the cloud-native default.
 
 ## How It Works
 
 Connectors are displayed as cards organized by category:
 
-| Category | Providers |
-|----------|-----------|
-| **Cloud Providers** | AWS, GCP, Azure |
-| **Git Providers** | GitHub, GitLab, Bitbucket |
+| Category | Providers | Auth |
+|----------|-----------|------|
+| **Cloud Providers** | AWS, GCP, Azure | cloud federation (no stored keys) |
+| **Git Providers** | GitHub, GitLab, Bitbucket | OAuth |
+| **DNS** | Cloudflare | API key |
+| **Secrets** | HashiCorp Vault | API key |
+| **Registry** | Docker Hub | API key |
+| **Observability** | Datadog, Grafana Cloud, Prometheus | API key |
 
 Each card shows:
 - Provider icon and name
@@ -47,7 +51,16 @@ After connecting, Alethia queues a `CONNECTION_TEST` job to verify the credentia
 
 Git connections use standard OAuth. See [Git Providers](/console/connectors/git-providers) for details.
 
+## Pluggable Connectors
+
+DNS, secrets, registry, and observability providers authenticate with an **API key / token**. Secret fields are encrypted at rest (`ALETHIA_CRED_ENCRYPTION_KEY`) and only decrypted on the runner at provision time — never stored in a Spec snapshot. After connecting, a verification ping confirms the credential works.
+
+<Cards>
+  <Card title="Pluggable Connectors" href="/console/connectors/pluggable">Cloudflare · Vault · Docker Hub · Datadog · Grafana · Prometheus</Card>
+</Cards>
+
 ## Disconnecting
 
 - **Cloud providers**: Removes the `cloud_identities` record. Existing specs referencing that identity can no longer run jobs.
-- **Git providers**: Removes the `provider_tokens` record and revokes the OAuth grant.
+- **Git providers**: Removes the Better Auth `account` record and revokes the OAuth grant.
+- **Pluggable connectors**: Removes the `connector_credentials` record. Specs referencing that provider fall back to failing validation until reconnected.

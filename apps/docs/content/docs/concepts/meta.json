@@ -11,6 +11,7 @@
     "job-queue",
     "runner-scaling",
     "cloud-abstraction",
+    "connectors",
     "provisioning-pipeline",
     "realtime",
     "cost-estimation",

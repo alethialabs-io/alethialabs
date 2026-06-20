@@ -100,7 +100,7 @@ export async function POST(req: Request) {
 		// spec references. Secrets live only here (claim time) — never in the
 		// snapshot. Decryption failures degrade gracefully (the runner's Validate
 		// surfaces the missing credential) rather than failing the whole claim.
-		const integration_credentials: Array<{
+		const connector_credentials: Array<{
 			category: string;
 			slug: string;
 			credentials: Record<string, string>;
@@ -138,7 +138,7 @@ export async function POST(req: Request) {
 					);
 					continue;
 				}
-				integration_credentials.push({
+				connector_credentials.push({
 					category: row.category,
 					slug: row.slug,
 					credentials: fields,
@@ -146,7 +146,7 @@ export async function POST(req: Request) {
 			}
 		}
 
-		return NextResponse.json({ job, cloud_identity, integration_credentials });
+		return NextResponse.json({ job, cloud_identity, connector_credentials });
 	} catch (err) {
 		console.error("Claim error:", err);
 		return NextResponse.json(

@@ -3,8 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 
-function mergeIntegrationsWithConnections(
-	integrations: Array<{
+function mergeConnectorsWithConnections(
+	connectors: Array<{
 		slug: string;
 		category: string;
 		name: string;
@@ -19,13 +19,13 @@ function mergeIntegrationsWithConnections(
 		{ username?: string; avatar_url?: string; id?: string }
 	>,
 ) {
-	return integrations.map((integration) => {
+	return connectors.map((connector) => {
 		let connected = false;
 		let connection_details: Record<string, unknown> | null = null;
 
-		if (integration.category === "git") {
-			connected = gitTokens.has(integration.slug);
-			const identity = identityMap.get(integration.slug);
+		if (connector.category === "git") {
+			connected = gitTokens.has(connector.slug);
+			const identity = identityMap.get(connector.slug);
 			if (connected && identity) {
 				connection_details = {
 					username: identity.username,
@@ -33,9 +33,9 @@ function mergeIntegrationsWithConnections(
 					identity_id: identity.id,
 				};
 			}
-		} else if (integration.category === "cloud") {
+		} else if (connector.category === "cloud") {
 			const cloudIdentity = cloudIdentities.find(
-				(ci) => ci.provider === integration.slug,
+				(ci) => ci.provider === connector.slug,
 			);
 			if (cloudIdentity) {
 				connected = true;
@@ -46,12 +46,12 @@ function mergeIntegrationsWithConnections(
 			}
 		}
 
-		return { ...integration, connected, connection_details };
+		return { ...connector, connected, connection_details };
 	});
 }
 
-describe("Integration status merging", () => {
-	const integrations = [
+describe("Connector status merging", () => {
+	const connectors = [
 		{ slug: "github", category: "git", name: "GitHub" },
 		{ slug: "gitlab", category: "git", name: "GitLab" },
 		{ slug: "aws", category: "cloud", name: "AWS" },
@@ -59,8 +59,8 @@ describe("Integration status merging", () => {
 	];
 
 	it("marks git providers as connected when token exists", () => {
-		const result = mergeIntegrationsWithConnections(
-			integrations,
+		const result = mergeConnectorsWithConnections(
+			connectors,
 			new Set(["github"]),
 			[],
 			new Map([
@@ -77,8 +77,8 @@ describe("Integration status merging", () => {
 	});
 
 	it("marks cloud providers as connected when identity exists", () => {
-		const result = mergeIntegrationsWithConnections(
-			integrations,
+		const result = mergeConnectorsWithConnections(
+			connectors,
 			new Set(),
 			[
 				{
@@ -98,8 +98,8 @@ describe("Integration status merging", () => {
 	});
 
 	it("handles no connections", () => {
-		const result = mergeIntegrationsWithConnections(
-			integrations,
+		const result = mergeConnectorsWithConnections(
+			connectors,
 			new Set(),
 			[],
 			new Map(),
@@ -110,8 +110,8 @@ describe("Integration status merging", () => {
 	});
 
 	it("handles all connected", () => {
-		const result = mergeIntegrationsWithConnections(
-			integrations,
+		const result = mergeConnectorsWithConnections(
+			connectors,
 			new Set(["github", "gitlab"]),
 			[
 				{ provider: "aws", credentials: { account_id: "123" } },

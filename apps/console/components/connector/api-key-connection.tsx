@@ -14,7 +14,7 @@ import {
 	FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import type { IntegrationProviderMeta } from "@/lib/integrations/registry.generated";
+import type { ConnectorProviderMeta } from "@/lib/connectors/registry.generated";
 import { AlertCircle, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -22,7 +22,7 @@ import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
 interface ApiKeyConnectionProps {
-	provider: IntegrationProviderMeta;
+	provider: ConnectorProviderMeta;
 	onConnected?: () => void;
 }
 
@@ -33,7 +33,7 @@ type SubmitState =
 	| { phase: "failed"; error: string };
 
 /**
- * Generic credential form for any api_key integration provider — fields are
+ * Generic credential form for any api_key connector provider — fields are
  * rendered from the provider's registry credential spec, so adding a new provider
  * needs no new component. Submits to saveConnectorCredential (which encrypts the
  * secret fields and pings the provider to verify).

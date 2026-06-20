@@ -1,6 +1,6 @@
 module "cloud_dns" {
   source = "./modules/cloud-dns"
-  count  = var.cloud_dns_enabled ? 1 : 0
+  count  = var.cloud_dns_enabled && var.dns_provider == "native" ? 1 : 0
 
   project_id   = var.project_id
   environment  = var.environment

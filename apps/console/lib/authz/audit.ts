@@ -21,7 +21,7 @@ export const SENSITIVE: ReadonlySet<Action> = new Set<Action>([
 	"destroy",
 	"manage_identities",
 	"manage_members",
-	"manage_integrations",
+	"manage_connectors",
 	"manage_billing",
 	"export_audit",
 ]);

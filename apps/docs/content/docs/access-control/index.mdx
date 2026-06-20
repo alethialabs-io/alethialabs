@@ -20,7 +20,7 @@ Every action in Alethia — viewing a spec, deploying infrastructure, destroying
 
 - **Actor** — a verified user plus their **active organization** (the tenancy scope). In the free Community edition there is exactly one organization per user — your *personal organization* — so "actor" is effectively just "you".
 - **Resource** — a thing you act on: an organization, a **zone** (workspace), a **spec** (an infrastructure definition), a **runner**, a **cloud identity**, a job, a connector, a member, audit logs, or billing.
-- **Action** — what you're trying to do: `view`, `create`, `edit`, `plan`, `deploy`, `destroy`, and the management actions (`manage_identities`, `manage_members`, `manage_integrations`, `view_audit`, `export_audit`, `manage_billing`).
+- **Action** — what you're trying to do: `view`, `create`, `edit`, `plan`, `deploy`, `destroy`, and the management actions (`manage_identities`, `manage_members`, `manage_connectors`, `view_audit`, `export_audit`, `manage_billing`).
 - **Permission** — a single `resource:action` pair, e.g. `spec:deploy`. The complete, exhaustive list is fixed in code (see [Roles & Permissions](/access-control/roles-and-permissions)).
 - **Role** — a named bundle of permissions (`owner`, `admin`, `operator`, `viewer`). You don't grant permissions one by one; you grant a role.
 - **Grant** — "this actor gets this role, at this scope." The scope can be the whole organization, a single zone, or a single spec.

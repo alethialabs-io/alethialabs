@@ -1,6 +1,6 @@
 module "azure_dns" {
   source = "./modules/azure-dns"
-  count  = var.azure_dns_enabled ? 1 : 0
+  count  = var.azure_dns_enabled && var.dns_provider == "native" ? 1 : 0
 
   environment         = var.environment
   project_name        = var.project_name

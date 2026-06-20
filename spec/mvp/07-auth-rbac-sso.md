@@ -97,8 +97,8 @@ authz_audit_log(id, org_id, actor_id, action, resource_type, resource_id, decisi
 
 ## Part E — Permission taxonomy & avoiding role explosion
 
-**Resources:** `org · zone · spec · node · cloud_identity · job · integration · member · audit · billing`.
-**Actions:** `view · create · edit · plan · deploy · destroy · manage_identities · manage_members · manage_integrations · view_audit · export_audit · manage_billing`.
+**Resources:** `org · zone · spec · node · cloud_identity · job · connector · member · audit · billing`.
+**Actions:** `view · create · edit · plan · deploy · destroy · manage_identities · manage_members · manage_connectors · view_audit · export_audit · manage_billing`.
 
 Keeping "tons of permissions" manageable:
 - **Registry as code** — one typed TS file is the source of the `resource × action` matrix (seeds the `permission` table); `Action`/`Resource` are exhaustive unions so a new action can't be silently unhandled.

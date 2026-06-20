@@ -24,6 +24,7 @@ URLs (Postgres, SeaweedFS) are wired by compose — you don't set those.
 | `CLI_JWT_SECRET` | `openssl rand -hex 32` — signs CLI/runner tokens (shared with the runner). |
 | `BETTER_AUTH_SECRET` | `openssl rand -hex 32` — signs sessions/cookies. |
 | `ALETHIA_DB_PASSWORD` / `ALETHIA_APP_DB_PASSWORD` | strong random — bundled Postgres roles. |
+| `ALETHIA_CRED_ENCRYPTION_KEY` | `openssl rand -base64 32` — AES-256-GCM key encrypting api-key [connector](/console/connectors/pluggable) secrets (Cloudflare/Vault/Docker Hub/…). Required to connect pluggable connectors. |
 
 ## Database & storage
 

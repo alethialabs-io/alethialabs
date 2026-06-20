@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// App-level encryption for api_key integration secrets (Cloudflare token, Vault
+// App-level encryption for api_key connector secrets (Cloudflare token, Vault
 // token, Docker Hub PAT, …) stored in connector_credentials. Cloud identities and
 // git tokens hold non-secret material (role ARNs, WIF config) and stay plaintext;
 // these are real secrets, so we AEAD them at rest. Self-hosted has no guaranteed
@@ -32,7 +32,7 @@ function getKey(): Buffer {
 	const raw = process.env.ALETHIA_CRED_ENCRYPTION_KEY;
 	if (!raw) {
 		throw new Error(
-			"ALETHIA_CRED_ENCRYPTION_KEY is not set — required to store integration credentials. " +
+			"ALETHIA_CRED_ENCRYPTION_KEY is not set — required to store connector credentials. " +
 				"Generate one with: openssl rand -base64 32",
 		);
 	}

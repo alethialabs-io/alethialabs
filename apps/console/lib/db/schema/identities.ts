@@ -50,7 +50,7 @@ export const cloudIdentities = pgTable(
 // (the provider_tokens table is dropped). The gitProvider enum lives on in
 // enums.ts — its GitProvider type still names the git providers app-wide.
 
-// api_key credential anchor for pluggable per-category integrations (Cloudflare,
+// api_key credential anchor for pluggable per-category connectors (Cloudflare,
 // Vault, Docker Hub, Datadog, …) — the analogue of cloud_identities (cloud) and
 // Better Auth `account` (git). Secret fields in `credentials` are encrypted at
 // rest (lib/crypto/secrets.ts); non-secret fields are plaintext. RLS-scoped like

@@ -12,9 +12,9 @@ import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
 import { useCloudProvider, useProviderMeta, useProviderSlug, WAF_OPTIONS, CERT_OPTIONS } from "@/lib/cloud-providers";
 import {
-	getIntegrationProvider,
+	getConnectorProvider,
 	getProvidersForCategory,
-} from "@/lib/integrations/registry.generated";
+} from "@/lib/connectors/registry.generated";
 import type {
 	CachedResources,
 	GcpCachedResources,
@@ -70,7 +70,7 @@ export function SectionDns() {
 	// default. Empty / "native" selects the cluster cloud's native DNS.
 	const dnsProviders = getProvidersForCategory("dns");
 	const selectedDnsProvider = watch("dns.provider") || "native";
-	const pluggable = getIntegrationProvider("dns", selectedDnsProvider);
+	const pluggable = getConnectorProvider("dns", selectedDnsProvider);
 
 	const handleZoneChange = (zoneId: string) => {
 		setValue("dns.zone_id", zoneId);

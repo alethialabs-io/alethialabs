@@ -1,6 +1,6 @@
 module "acr" {
   source = "./modules/acr"
-  count  = var.provision_acr ? 1 : 0
+  count  = var.provision_acr && var.registry_provider == "native" ? 1 : 0
 
   location            = var.location
   environment         = var.environment

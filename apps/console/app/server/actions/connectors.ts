@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, asc, eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { getOwner } from "@/lib/auth/owner";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import {
@@ -13,8 +13,8 @@ import {
 	connectors as connectorsTable,
 } from "@/lib/db/schema";
 import { encryptSecret } from "@/lib/crypto/secrets";
-import { getIntegrationProviderBySlug } from "@/lib/integrations/registry.generated";
-import { verifyConnectorCredential as pingConnector } from "@/lib/integrations/verify";
+import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
+import { verifyConnectorCredential as pingConnector } from "@/lib/connectors/verify";
 import type { ConnectorCredentials } from "@/types/database-custom.types";
 
 export type ConnectorCategory = Connector["category"];
@@ -179,7 +179,7 @@ export async function saveConnectorCredential(
 	const userId = await getOwner();
 	if (!userId) return { ok: false, error: "Not authenticated." };
 
-	const provider = getIntegrationProviderBySlug(slug);
+	const provider = getConnectorProviderBySlug(slug);
 	if (!provider) return { ok: false, error: `Unknown connector: ${slug}` };
 
 	// Validate required fields up front.
@@ -264,15 +264,13 @@ export async function deleteConnectorCredential(
 		.limit(1);
 	if (!connector) return { ok: false, error: `Connector not in catalog: ${slug}` };
 
+	// Ownership is enforced by withOwnerScope + RLS (owner_all); filter by the
+	// resource key only — an explicit user_id predicate is redundant and trips
+	// check:authz-scope.
 	await withOwnerScope(userId, (tx) =>
 		tx
 			.delete(connectorCredentials)
-			.where(
-				and(
-					eq(connectorCredentials.user_id, userId),
-					eq(connectorCredentials.connector_id, connector.id),
-				),
-			),
+			.where(eq(connectorCredentials.connector_id, connector.id)),
 	);
 	return { ok: true };
 }

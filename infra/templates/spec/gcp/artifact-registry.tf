@@ -1,6 +1,6 @@
 module "artifact_registry" {
   source = "./modules/artifact-registry"
-  count  = var.provision_artifact_registry ? 1 : 0
+  count  = var.provision_artifact_registry && var.registry_provider == "native" ? 1 : 0
 
   project_id   = var.project_id
   region       = var.region

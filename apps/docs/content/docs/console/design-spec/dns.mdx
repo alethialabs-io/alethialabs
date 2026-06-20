@@ -12,10 +12,20 @@ The DNS section is optional (controlled by a master toggle). When enabled, it co
 | Field | Type | Description |
 |-------|------|-------------|
 | **Enabled** | Toggle | Master switch for DNS configuration |
+| **DNS Provider** | Select | Cloud-native (Route 53 / Cloud DNS / Azure DNS) or a [pluggable connector](/console/connectors/pluggable) |
 | **Zone ID** | Select or text | Existing DNS hosted zone |
 | **Domain Name** | Text input | Auto-filled from zone, or manually entered |
-| **Managed Certificate** | Toggle | Auto-provision SSL/TLS certificate |
-| **WAF Options** | Toggles | Provider-specific WAF configuration |
+| **Managed Certificate** | Toggle | Auto-provision SSL/TLS certificate (cloud-native only) |
+| **WAF Options** | Toggles | Provider-specific WAF configuration (cloud-native only) |
+
+## DNS Provider
+
+The **DNS Provider** selector decouples *what* the Spec needs (a managed zone) from *who* provides it:
+
+- **Cloud-native** (default) — uses the cluster cloud's DNS service; the managed-certificate and WAF toggles apply.
+- **Cloudflare** — manages records on Cloudflare instead. Requires a connected [Cloudflare connector](/console/connectors/pluggable); set the **Zone ID** and the **Proxied** option (orange-cloud). The cloud-native DNS/cert resources are skipped at provision time.
+
+When a pluggable provider is selected, its credential is pulled from `connector_credentials` on the runner at provision time — never stored in the Spec.
 
 ## DNS Zones
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Lightweight credential verifiers for pluggable integration providers — a cheap
+// Lightweight credential verifiers for pluggable connector providers — a cheap
 // API ping that confirms the supplied credential actually works before we mark it
 // verified (mirrors the CONNECTION_TEST job for cloud identities). Keyed by
 // connector slug; providers without a cheap validation endpoint default to OK.

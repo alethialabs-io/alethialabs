@@ -1,6 +1,6 @@
 module "ecr" {
   source                = "./modules/ecr"
-  ecr_create_repository = var.provision_ecr
+  ecr_create_repository = var.provision_ecr && var.registry_provider == "native"
 
   aws_region   = var.region
   environment  = var.environment

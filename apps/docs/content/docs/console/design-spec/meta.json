@@ -12,6 +12,7 @@
     "dns",
     "secrets",
     "container-registry",
+    "observability",
     "repositories",
     "cost-sidebar"
   ]

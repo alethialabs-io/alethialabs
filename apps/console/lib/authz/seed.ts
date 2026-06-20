@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { sql } from "drizzle-orm";
+import { notInArray, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { permission, role, rolePermission } from "@/lib/db/schema";
 import {
@@ -62,6 +62,13 @@ export async function seedAuthz(): Promise<void> {
 	});
 
 	await db.insert(rolePermission).values(rolePerms).onConflictDoNothing();
+
+	// Prune permissions no longer in the registry (e.g. renamed actions) so the DB
+	// never drifts from registry.ts. ON DELETE CASCADE on role_permission.permission_key
+	// and grants.permission_key removes any rows referencing the dropped key.
+	if (allKeys.length > 0) {
+		await db.delete(permission).where(notInArray(permission.key, allKeys));
+	}
 
 	// Backfill: every existing user owns their personal org (org-wide owner grant).
 	// New users get this in the Better Auth user-create hook (lib/auth/index.ts).

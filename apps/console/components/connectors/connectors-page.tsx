@@ -30,7 +30,7 @@ import { ApiKeyConnection } from "@/components/connector/api-key-connection";
 import { AwsConnection } from "@/components/connector/aws-connection";
 import { AzureConnection } from "@/components/connector/azure-connection";
 import { GcpConnection } from "@/components/connector/gcp-connection";
-import { getIntegrationProviderBySlug } from "@/lib/integrations/registry.generated";
+import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -382,7 +382,7 @@ export function ConnectorsPage({
 				>
 					{apiKeySlug &&
 						(() => {
-							const provider = getIntegrationProviderBySlug(apiKeySlug);
+							const provider = getConnectorProviderBySlug(apiKeySlug);
 							if (!provider) return null;
 							return (
 								<>
