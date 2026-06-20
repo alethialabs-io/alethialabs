@@ -38,6 +38,7 @@ export interface Userset {
 		computedUserset: { relation: string };
 	};
 	union?: { child: Userset[] };
+	difference?: { base: Userset; subtract: Userset };
 }
 interface RelationMetadata {
 	directly_related_user_types?: DirectlyRelatedUserType[];
@@ -58,6 +59,10 @@ const ttu = (tupleset: string, relation: string): Userset => ({
 	tupleToUserset: { tupleset: { relation: tupleset }, computedUserset: { relation } },
 });
 const union = (...child: Userset[]): Userset => ({ union: { child } });
+/** `base but not subtract` — for explicit-deny exclusions. */
+const difference = (base: Userset, subtract: Userset): Userset => ({
+	difference: { base, subtract },
+});
 
 /** Grantable principals: a user directly, or every member of a team. */
 const PRINCIPALS: DirectlyRelatedUserType[] = [
@@ -83,6 +88,10 @@ export function buildAuthorizationModel(): AuthorizationModel {
 		const rel = `${p.resource}_${p.action}`;
 		orgRelations[rel] = THIS;
 		orgMeta[rel] = { directly_related_user_types: PRINCIPALS };
+		// Parallel org-wide DENY capability (an explicit deny scoped to the org).
+		const denyRel = `${p.resource}_deny_${p.action}`;
+		orgRelations[denyRel] = THIS;
+		orgMeta[denyRel] = { directly_related_user_types: PRINCIPALS };
 	}
 
 	const relations = new Map<Resource, Record<string, Userset>>();
@@ -107,7 +116,18 @@ export function buildAuthorizationModel(): AuthorizationModel {
 		for (const a of instanceActions(r)) {
 			rels[`perm_${a}`] = THIS;
 			meta[`perm_${a}`] = { directly_related_user_types: PRINCIPALS };
-			rels[`can_${a}`] = union(computed(`perm_${a}`), ttu("parent", `${r}_${a}`));
+			rels[`perm_deny_${a}`] = THIS;
+			meta[`perm_deny_${a}`] = { directly_related_user_types: PRINCIPALS };
+			// deny inherits down the hierarchy like allow.
+			rels[`deny_${a}`] = union(
+				computed(`perm_deny_${a}`),
+				ttu("parent", `${r}_deny_${a}`),
+			);
+			// effective allow, MINUS any deny (explicit deny overrides, IAM-style).
+			rels[`can_${a}`] = difference(
+				union(computed(`perm_${a}`), ttu("parent", `${r}_${a}`)),
+				computed(`deny_${a}`),
+			);
 		}
 	}
 
@@ -124,6 +144,9 @@ export function buildAuthorizationModel(): AuthorizationModel {
 				const cap = `${d}_${a}`;
 				rels[cap] = union(THIS, ttu("parent", cap));
 				meta[cap] = { directly_related_user_types: PRINCIPALS };
+				const denyCap = `${d}_deny_${a}`;
+				rels[denyCap] = union(THIS, ttu("parent", denyCap));
+				meta[denyCap] = { directly_related_user_types: PRINCIPALS };
 			}
 		}
 	}

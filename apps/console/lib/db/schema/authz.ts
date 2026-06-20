@@ -46,7 +46,13 @@ export const rolePermission = pgTable(
 	(t) => [primaryKey({ columns: [t.role_id, t.permission_key] })],
 );
 
-/** A grant: principal gets a role at a scope. resource_id NULL = org-wide (wildcard). */
+/**
+ * A grant: a principal gets a role OR a single permission at a scope, as an ALLOW or
+ * an explicit DENY. resource_id NULL = org-wide (wildcard). A grant references EXACTLY
+ * one of role_id / permission_key. Explicit deny overrides allow (IAM semantics) and
+ * inherits down the hierarchy, so "view this zone's specs EXCEPT spec S" = an allow on
+ * the zone + a deny scoped to S.
+ */
 export const grants = pgTable(
 	"grants",
 	{
@@ -55,14 +61,22 @@ export const grants = pgTable(
 		// 'user' | 'team' (text; the principal kind).
 		principal_type: text().notNull(),
 		principal_id: uuid().notNull(),
-		role_id: uuid()
-			.notNull()
-			.references(() => role.id, { onDelete: "cascade" }),
+		// 'allow' | 'deny'. Deny wins over allow at any covered scope.
+		effect: text().notNull().default("allow"),
+		// A role bundle (XOR with permission_key) …
+		role_id: uuid().references(() => role.id, { onDelete: "cascade" }),
+		// … or a single permission key (XOR with role_id), for fine-grained grants/denies.
+		permission_key: text().references(() => permission.key, {
+			onDelete: "cascade",
+		}),
 		resource_type: text().notNull(),
 		resource_id: uuid(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
-	(t) => [index("idx_grants_org_principal").on(t.org_id, t.principal_id)],
+	(t) => [
+		index("idx_grants_org_principal").on(t.org_id, t.principal_id),
+		index("idx_grants_effect").on(t.org_id, t.principal_id, t.effect),
+	],
 );
 
 /** Org→Zone→Spec edges the PDP walks (recursive CTE) so a higher grant flows down. */

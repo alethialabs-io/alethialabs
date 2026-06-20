@@ -66,7 +66,14 @@ export class FgaTupleSync implements TupleSync {
 		if (!roleId) return;
 		const keys = await this.core.fga.rolePermissionKeys(roleId);
 		const tuples = this.core.fga.expandGrant(
-			{ orgId, principalType: "user", principalId: userId, resourceType: "org", resourceId: null },
+			{
+				orgId,
+				principalType: "user",
+				principalId: userId,
+				effect: "allow",
+				resourceType: "org",
+				resourceId: null,
+			},
 			keys,
 		);
 		// Replace: drop the user's existing org-wide tuples, then write the new set.
@@ -84,12 +91,17 @@ export class FgaTupleSync implements TupleSync {
 	}
 
 	async syncScopedGrant(grant: ScopedGrant): Promise<void> {
-		const keys = await this.core.fga.rolePermissionKeys(grant.roleId);
+		const keys = grant.permissionKey
+			? [grant.permissionKey]
+			: grant.roleId
+				? await this.core.fga.rolePermissionKeys(grant.roleId)
+				: [];
 		const tuples = this.core.fga.expandGrant(
 			{
 				orgId: grant.orgId,
 				principalType: grant.principalType,
 				principalId: grant.principalId,
+				effect: grant.effect,
 				resourceType: grant.resourceType,
 				resourceId: grant.resourceId,
 			},
@@ -140,22 +152,30 @@ export class FgaTupleSync implements TupleSync {
 			org_id: string;
 			principal_type: "user" | "team";
 			principal_id: string;
-			role_id: string;
+			effect: "allow" | "deny";
+			role_id: string | null;
+			permission_key: string | null;
 			resource_type: string;
 			resource_id: string | null;
 		}>(sql`
-			select org_id, principal_type, principal_id, role_id, resource_type, resource_id
+			select org_id, principal_type, principal_id, effect, role_id, permission_key,
+			       resource_type, resource_id
 			from grants
 		`);
 		const tuples: FgaTuple[] = [];
 		for (const g of grants) {
-			const keys = await this.core.fga.rolePermissionKeys(g.role_id);
+			const keys = g.permission_key
+				? [g.permission_key]
+				: g.role_id
+					? await this.core.fga.rolePermissionKeys(g.role_id)
+					: [];
 			tuples.push(
 				...this.core.fga.expandGrant(
 					{
 						orgId: g.org_id,
 						principalType: g.principal_type,
 						principalId: g.principal_id,
+						effect: g.effect,
 						resourceType: g.resource_type,
 						resourceId: g.resource_id,
 					},

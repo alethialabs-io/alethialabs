@@ -26,6 +26,8 @@ export interface GrantScope {
 	orgId: string;
 	principalType: "user" | "team";
 	principalId: string;
+	/** allow grants confer access; deny grants write exclusion tuples. */
+	effect: "allow" | "deny";
 	resourceType: string;
 	/** null / "org" resourceType ⇒ org-wide; otherwise scoped to this resource. */
 	resourceId: string | null;
@@ -54,6 +56,8 @@ export function expandGrant(
 	permissionKeys: readonly string[],
 ): FgaTuple[] {
 	const user = principalRef(scope);
+	const deny = scope.effect === "deny";
+	const d = deny ? "deny_" : ""; // relation infix for explicit-deny tuples
 	const orgWide = scope.resourceId === null || scope.resourceType === "org";
 	const scopedType: Resource | null =
 		!orgWide && isResource(scope.resourceType) ? scope.resourceType : null;
@@ -68,7 +72,7 @@ export function expandGrant(
 		if (orgWide) {
 			tuples.push({
 				user,
-				relation: `${resource}_${action}`,
+				relation: `${resource}_${d}${action}`,
 				object: `org:${scope.orgId}`,
 			});
 			continue;
@@ -80,9 +84,9 @@ export function expandGrant(
 			isInstanceType(resource) &&
 			!isOrgLevel(resource, action)
 		) {
-			tuples.push({ user, relation: `perm_${action}`, object: objectRef });
+			tuples.push({ user, relation: `perm_${d}${action}`, object: objectRef });
 		} else if (descendants?.has(resource) && !isOrgLevel(resource, action)) {
-			tuples.push({ user, relation: `${resource}_${action}`, object: objectRef });
+			tuples.push({ user, relation: `${resource}_${d}${action}`, object: objectRef });
 		}
 		// else: org-level / create / unrelated → not conferred by a scoped grant.
 	}

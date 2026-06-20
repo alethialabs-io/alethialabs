@@ -30,3 +30,20 @@ export function coversResource(
 	const covering = new Set<string>([resourceId, ...ancestorIds]);
 	return grantResourceIds.some((id) => id !== null && covering.has(id));
 }
+
+/**
+ * The final allow/deny decision for a permission on a resource. Allow grants and
+ * explicit-deny grants are evaluated with the SAME coverage rule (a grant covers the
+ * resource itself or any ancestor — so a deny scoped to a zone OR to one spec both
+ * exclude correctly). Explicit deny ALWAYS wins (no specificity ranking, IAM-style):
+ * allowed ⇔ an allow covers AND no deny covers.
+ */
+export function decide(
+	allowResourceIds: ReadonlyArray<string | null>,
+	denyResourceIds: ReadonlyArray<string | null>,
+	resourceId: string | undefined,
+	ancestorIds: ReadonlyArray<string>,
+): boolean {
+	if (coversResource(denyResourceIds, resourceId, ancestorIds)) return false;
+	return coversResource(allowResourceIds, resourceId, ancestorIds);
+}

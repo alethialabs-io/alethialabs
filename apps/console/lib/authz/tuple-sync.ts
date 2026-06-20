@@ -21,9 +21,12 @@ export interface ScopedGrant {
 	orgId: string;
 	principalType: "user" | "team";
 	principalId: string;
+	effect: "allow" | "deny";
 	resourceType: string;
 	resourceId: string;
-	roleId: string;
+	/** A role bundle XOR a single permission key. */
+	roleId: string | null;
+	permissionKey: string | null;
 }
 
 export interface TupleSync {

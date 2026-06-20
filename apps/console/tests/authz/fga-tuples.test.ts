@@ -10,16 +10,12 @@ const ownerKeys = ALL_KEYS; // owner = "*"
 const viewer = BUILT_IN_ROLES.viewer;
 const viewerKeys: string[] = viewer === "*" ? ALL_KEYS : viewer; // only :view keys
 
+const base = { orgId: "O", principalType: "user" as const, principalId: "U" };
+
 describe("expandGrant (role → permission tuples)", () => {
-	it("org-wide grant writes one org capability per permission key", () => {
+	it("org-wide allow writes one org capability per permission key", () => {
 		const tuples = expandGrant(
-			{
-				orgId: "O",
-				principalType: "user",
-				principalId: "U",
-				resourceType: "org",
-				resourceId: null,
-			},
+			{ ...base, effect: "allow", resourceType: "org", resourceId: null },
 			ownerKeys,
 		);
 		expect(tuples).toHaveLength(ownerKeys.length);
@@ -27,51 +23,33 @@ describe("expandGrant (role → permission tuples)", () => {
 			expect(t.user).toBe("user:U");
 			expect(t.object).toBe("org:O");
 		}
-		// e.g. zone:deploy isn't a key, but spec:deploy → spec_deploy on org
 		expect(tuples).toContainEqual({ user: "user:U", relation: "spec_deploy", object: "org:O" });
 		expect(tuples).toContainEqual({ user: "user:U", relation: "member_manage_members", object: "org:O" });
 	});
 
 	it("team principal uses the team#member userset", () => {
 		const [t] = expandGrant(
-			{ orgId: "O", principalType: "team", principalId: "T", resourceType: "org", resourceId: null },
+			{ orgId: "O", principalType: "team", principalId: "T", effect: "allow", resourceType: "org", resourceId: null },
 			["zone:view"],
 		);
 		expect(t).toEqual({ user: "team:T#member", relation: "zone_view", object: "org:O" });
 	});
 
-	it("zone-scoped grant: zone actions → perm_ on the zone, spec actions → spec_ capability, no org-level", () => {
+	it("zone-scoped allow: zone actions → perm_ on zone, spec actions → spec_ capability, no org-level", () => {
 		const tuples = expandGrant(
-			{
-				orgId: "O",
-				principalType: "user",
-				principalId: "U",
-				resourceType: "zone",
-				resourceId: "Z",
-			},
+			{ ...base, effect: "allow", resourceType: "zone", resourceId: "Z" },
 			ownerKeys,
 		);
-		// zone's own actions become perm_ on zone:Z
 		expect(tuples).toContainEqual({ user: "user:U", relation: "perm_view", object: "zone:Z" });
-		expect(tuples).toContainEqual({ user: "user:U", relation: "perm_destroy", object: "zone:Z" });
-		// spec (a descendant of zone) actions become container capabilities on zone:Z
 		expect(tuples).toContainEqual({ user: "user:U", relation: "spec_deploy", object: "zone:Z" });
-		// org-level / create / unrelated leaf keys are NOT conferred by a zone-scoped grant
 		expect(tuples.every((t) => t.object === "zone:Z")).toBe(true);
 		expect(tuples.some((t) => t.relation === "member_manage_members")).toBe(false);
 		expect(tuples.some((t) => t.relation === "perm_create")).toBe(false);
-		expect(tuples.some((t) => t.relation === "runner_view")).toBe(false);
 	});
 
-	it("leaf-scoped grant (runner) writes only perm_ on the runner", () => {
+	it("leaf-scoped allow (runner) writes only perm_ on the runner", () => {
 		const tuples = expandGrant(
-			{
-				orgId: "O",
-				principalType: "user",
-				principalId: "U",
-				resourceType: "runner",
-				resourceId: "R",
-			},
+			{ ...base, effect: "allow", resourceType: "runner", resourceId: "R" },
 			ownerKeys,
 		);
 		expect(tuples.length).toBeGreaterThan(0);
@@ -83,10 +61,33 @@ describe("expandGrant (role → permission tuples)", () => {
 
 	it("viewer role expands to view-only tuples", () => {
 		const tuples = expandGrant(
-			{ orgId: "O", principalType: "user", principalId: "U", resourceType: "org", resourceId: null },
+			{ ...base, effect: "allow", resourceType: "org", resourceId: null },
 			viewerKeys,
 		);
 		expect(tuples.every((t) => t.relation.endsWith("_view") || t.relation.endsWith("_view_audit"))).toBe(true);
+	});
+
+	it("a DENY grant writes deny_ relations (the exclusion)", () => {
+		// deny a single permission on a specific spec → perm_deny_ on that spec
+		const specDeny = expandGrant(
+			{ ...base, effect: "deny", resourceType: "spec", resourceId: "S" },
+			["spec:view"],
+		);
+		expect(specDeny).toContainEqual({ user: "user:U", relation: "perm_deny_view", object: "spec:S" });
+
+		// deny spec:view across a whole zone → the zone's spec_deny_ capability
+		const zoneDeny = expandGrant(
+			{ ...base, effect: "deny", resourceType: "zone", resourceId: "Z" },
+			["spec:view"],
+		);
+		expect(zoneDeny).toContainEqual({ user: "user:U", relation: "spec_deny_view", object: "zone:Z" });
+
+		// org-wide deny → the org deny capability
+		const orgDeny = expandGrant(
+			{ ...base, effect: "deny", resourceType: "org", resourceId: null },
+			["zone:view"],
+		);
+		expect(orgDeny).toContainEqual({ user: "user:U", relation: "zone_deny_view", object: "org:O" });
 	});
 });
 

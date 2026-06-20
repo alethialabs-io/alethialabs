@@ -120,6 +120,13 @@
       "when": 1782000600000,
       "tag": "0016_queue_provider_config",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1781943979054,
+      "tag": "0017_steep_nemesis",
+      "breakpoints": true
     }
   ]
 }
