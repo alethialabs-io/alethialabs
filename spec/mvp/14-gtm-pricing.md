@@ -57,11 +57,19 @@ The data-room competitor scan (`competitors/`) shows where money is actually mad
 | Tier | Who | What | Shape |
 |---|---|---|---|
 | **Community** | self-hosters, solo, homelab | full provisioning + integrations + community RBAC + RLS + SSE; single-tenant | **free** (AGPL, self-host) |
-| **Team** (hosted) | scale-ups, growing teams | orgs/teams, RBAC, basic audit, hosted convenience, **generous included runner-minutes** | **per-seat** (~$20–40/seat/mo) + included usage allowance |
-| **Enterprise** | regulated / large | SSO/SAML/SCIM, full audit + retention/export, multi-tenant, SLA, priority security, dedicated support; self-managed or hosted | **flat annual** (land ~$1k–$2.5k/mo; undercut the $1,999 incumbent governance floor) |
+| **Team** (hosted) | scale-ups, growing teams | orgs/teams, hosted convenience, **generous included runner-minutes** | **per-seat** (~$20–40/seat/mo) + included usage allowance |
+| **Business** (hosted) | governance-conscious mid-market | + **custom roles** + **audit export/retention**, priority support | **per-seat** (higher) or flat (~$999/mo) |
+| **Enterprise** | regulated / large | + **SSO/SAML/SCIM**, multi-tenant, SLA, priority security, dedicated support; self-managed or hosted | **flat annual** (land ~$1k–$2.5k/mo; undercut the $1,999 incumbent governance floor) |
 | **Add-ons** | any paid org | **FinOps / cost-governance module**; runner-minutes & AI-scan overage | flat (FinOps) + metered (usage) |
 
-A generous hosted **Starter/individual** mirrors the self-host core as a funnel into Team/Enterprise.
+A generous hosted **Starter/individual** mirrors the self-host core as a funnel into the paid tiers.
+
+**These four tiers are the `billing_plan` enum and the entitlement ladder enforced in
+code** (each tier additive over the one below):
+`community` → all off (single-tenant: own Zones/Specs only) · `team` → **organizations/teams** ·
+`business` → **+ custom roles + audit export** · `enterprise` → **+ SSO/SAML**. The mapping lives in
+`lib/billing/plan.ts` (`planEntitlements`); an org's plan is resolved per-org from its
+`organization_billing` record, replacing the dev-only `ALETHIA_LICENSE_ACTIVE` env flag.
 
 **Why this shape wins** (vs the competitor failure modes in `competitors/`): per-seat scales with team
 value the Vercel way without the per-vCPU "double-billing" resentment (Porter's churn); flat Enterprise is

@@ -17,5 +17,6 @@ export * from "./accounts";
 export * from "./auth";
 export * from "./authz";
 export * from "./organizations";
+export * from "./organization-billing";
 export * from "./teams";
 export * from "./sso";

@@ -126,6 +126,26 @@ export const connectorStatus = pgEnum("connector_status", [
 	"coming_soon",
 ]);
 
+// Billing plan an organization is subscribed to. Drives entitlements via the
+// granular ladder in lib/billing/plan.ts (community → all off; team → orgs/teams;
+// business → + custom roles + audit export; enterprise → + SSO). `community` is
+// also the implicit plan for any org with no billing row.
+export const billingPlan = pgEnum("billing_plan", [
+	"community",
+	"team",
+	"business",
+	"enterprise",
+]);
+// Subscription lifecycle state (mirrors Stripe). Only `trialing`/`active` grant the
+// plan's paid entitlements; anything else falls back to the community baseline.
+export const billingStatus = pgEnum("billing_status", [
+	"none",
+	"trialing",
+	"active",
+	"past_due",
+	"canceled",
+]);
+
 // TS unions derived from the pg enums — the Drizzle-native replacement for the
 // supazod-generated `Public*` enum types. Use these everywhere app code needs the
 // string-literal union of an enum's values.
@@ -140,3 +160,5 @@ export type ComponentStatus = (typeof componentStatus.enumValues)[number];
 export type EnvironmentStage = (typeof environmentStage.enumValues)[number];
 export type CacheEngine = (typeof cacheEngine.enumValues)[number];
 export type LogStreamType = (typeof logStreamType.enumValues)[number];
+export type BillingPlan = (typeof billingPlan.enumValues)[number];
+export type BillingStatus = (typeof billingStatus.enumValues)[number];
