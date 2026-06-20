@@ -14,6 +14,13 @@ export interface Actor {
 	userId: string;
 	/** Active tenancy scope. Community = the user's personal org (orgId === userId). */
 	orgId: string;
+	/**
+	 * Feature entitlements for this actor's active org, resolved once (async) when the
+	 * scope is built so call sites can read them synchronously via getEntitlements().
+	 * Optional on the type because enterprise resolveScope returns the {userId, orgId}
+	 * pair; getActiveScope is the single place that guarantees this is populated.
+	 */
+	entitlements?: Entitlements;
 }
 
 /** What an action targets. `id` is omitted for create/list; `orgId` for cross-checks. */

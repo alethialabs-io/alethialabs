@@ -1,23 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { getEnterprise } from "@/lib/enterprise";
 import type { Actor, Entitlements } from "@/lib/authz/types";
-
-/** Community baseline — every enterprise feature off. */
-const COMMUNITY: Entitlements = {
-	organizations: false,
-	sso: false,
-	customRoles: false,
-	auditExport: false,
-};
+import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 
 /**
- * Feature entitlements for a scope (spec 07 Part F, seam 5). The gate lives in
- * `ee/` (it reads a signed license); core has no `if (licensed)` anywhere — it just
- * asks. Community always returns the all-off baseline.
+ * Feature entitlements for a scope (spec 07 Part F, seam 5). Entitlements are
+ * resolved once — asynchronously — when the actor's scope is built (getActiveScope →
+ * the ee/ per-org resolver, which reads the org's billing record / signed license),
+ * and attached to the actor. This accessor just reads them synchronously, so call
+ * sites (server actions, the org-creation gate) stay sync. Core has no
+ * `if (licensed)` anywhere — an actor with no resolved entitlements (community build,
+ * or a scope built outside getActiveScope) falls back to the all-off baseline.
  */
 export function getEntitlements(actor: Actor): Entitlements {
-	const fn = getEnterprise()?.entitlements;
-	return fn ? fn(actor) : COMMUNITY;
+	return actor.entitlements ?? COMMUNITY_ENTITLEMENTS;
 }

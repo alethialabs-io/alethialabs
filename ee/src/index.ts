@@ -27,31 +27,26 @@ function buildFgaClient(core: CoreContext): OpenFgaClient | null {
 	});
 }
 
-const NO_ENTITLEMENTS: Entitlements = {
-	organizations: false,
-	sso: false,
-	customRoles: false,
-	auditExport: false,
+/** Every enterprise feature on — the grant for a licensed instance / a paid org. */
+const ALL_ENTITLEMENTS: Entitlements = {
+	organizations: true,
+	sso: true, // OIDC + SAML via @better-auth/sso
+	customRoles: true,
+	auditExport: true,
 };
 
 /**
- * Feature entitlements for this deployment. The seam is synchronous, so we resolve
- * once at registration from the environment (set by the licensing service after it
- * verifies the signed license key). STANDUP: replace with signed-license (JWT)
- * verification against a public key.
+ * Whether a signed license unlocks every feature for the WHOLE instance (self-managed
+ * / air-gapped enterprise, and the local dev flag). When false, entitlements are
+ * resolved per-org from the billing record instead (the hosted path).
+ * STANDUP: replace the env flag with signed-license (JWT) verification against a
+ * public key.
  */
-function readEntitlements(): Entitlements {
-	if (process.env.ALETHIA_LICENSE_ACTIVE !== "true") return NO_ENTITLEMENTS;
-	return {
-		organizations: true,
-		sso: true, // OIDC + SAML via @better-auth/sso
-		customRoles: true,
-		auditExport: true,
-	};
+function licensedInstanceWide(): boolean {
+	return process.env.ALETHIA_LICENSE_ACTIVE === "true";
 }
 
 export function register(core: CoreContext): EnterpriseModule {
-	const entitlements = readEntitlements();
 	const fgaClient = buildFgaClient(core);
 	const tupleSync = fgaClient ? new FgaTupleSync(core, fgaClient) : undefined;
 
@@ -145,7 +140,14 @@ export function register(core: CoreContext): EnterpriseModule {
 			return { userId, orgId: rows[0]?.organization_id ?? userId };
 		},
 
-		entitlements: (_actor: Actor): Entitlements => entitlements,
+		// Per-org entitlement resolution (replaces the old global env flag). A licensed
+		// instance unlocks everything; otherwise the org's plan + subscription status
+		// (from its billing record, via core) decides — so an unsubscribed org falls
+		// back to the community baseline and the org-creation gate bites.
+		resolveEntitlements: async (orgId: string): Promise<Entitlements> => {
+			if (licensedInstanceWide()) return ALL_ENTITLEMENTS;
+			return core.resolveOrgEntitlements(orgId);
+		},
 
 		// OpenFGA engine + dual-write, both only when OpenFGA is configured; otherwise
 		// undefined ⇒ the community PostgresRbacPDP + no-op seam stay in place.

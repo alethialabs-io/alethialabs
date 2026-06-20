@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { getEnterprise } from "@/lib/enterprise";
+import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 import type { Actor } from "@/lib/authz/types";
 
 /**
@@ -11,12 +12,21 @@ import type { Actor } from "@/lib/authz/types";
  * ignored — there is only the personal org). The `ee/` Teams build registers a
  * resolver that maps the user to their selected organization (validating membership)
  * — without touching any call site.
+ *
+ * Entitlements for the resolved org are resolved here too (once per request, async),
+ * so call sites read them synchronously via getEntitlements(). The ee/ resolver
+ * decides per-org from the billing record / signed license; community is all-off.
  */
 export async function getActiveScope(
 	userId: string,
 	activeOrgId?: string,
 ): Promise<Actor> {
-	const resolve = getEnterprise()?.resolveScope;
-	if (resolve) return resolve(userId, activeOrgId);
-	return { userId, orgId: userId };
+	const enterprise = getEnterprise();
+	const base: Actor = enterprise?.resolveScope
+		? await enterprise.resolveScope(userId, activeOrgId)
+		: { userId, orgId: userId };
+	const entitlements = enterprise?.resolveEntitlements
+		? await enterprise.resolveEntitlements(base.orgId)
+		: COMMUNITY_ENTITLEMENTS;
+	return { ...base, entitlements };
 }

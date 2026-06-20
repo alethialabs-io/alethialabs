@@ -11,7 +11,7 @@ import { SettingsNav } from "./settings-nav";
  */
 export function SettingsShell({ children }: { children: ReactNode }) {
 	return (
-		<div className="mx-auto flex w-full max-w-[1100px] flex-col gap-8 lg:flex-row lg:gap-12">
+		<div className="flex w-full flex-col gap-8 lg:flex-row lg:gap-12">
 			<aside className="lg:w-56 lg:shrink-0">
 				<div className="lg:sticky lg:top-4">
 					<SettingsNav />

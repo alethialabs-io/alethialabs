@@ -24,6 +24,7 @@ import { ensureMemberGrant, revokeMemberGrant } from "@/lib/authz/grants";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import type { TupleSync } from "@/lib/authz/tuple-sync";
 import type { Actor, Entitlements, Pdp } from "@/lib/authz/types";
+import { resolveOrgEntitlements } from "@/lib/billing/queries";
 import { getOpenFgaConfig, isOpenFgaEnabled } from "@/lib/config/openfga";
 import { getServiceDb } from "@/lib/db";
 import { sendInviteEmail } from "@/lib/email/notify-email";
@@ -44,6 +45,13 @@ export interface CoreContext {
 	ensureMemberGrant: typeof ensureMemberGrant;
 	revokeMemberGrant: typeof revokeMemberGrant;
 	sendInviteEmail: typeof sendInviteEmail;
+	/**
+	 * Resolves an org's entitlements from its billing record (plan + subscription
+	 * status). Injected so the ee/ entitlement resolver decides per-org from billing
+	 * without importing core runtime — the hosted path. (A signed license / dev flag
+	 * can still short-circuit to an instance-wide grant.)
+	 */
+	resolveOrgEntitlements: typeof resolveOrgEntitlements;
 	fga: {
 		buildModel: typeof buildAuthorizationModel;
 		expandGrant: typeof expandGrant;
@@ -71,8 +79,12 @@ export interface EnterpriseModule {
 	resolveScope?: (userId: string, activeOrgId?: string) => Promise<Actor>;
 	/** Extra Better Auth plugins (organization, SSO). Community = none. */
 	authPlugins?: NonNullable<BetterAuthOptions["plugins"]>;
-	/** Feature entitlements for a scope, gated by a signed license. */
-	entitlements?: (actor: Actor) => Entitlements;
+	/**
+	 * Feature entitlements for an org, resolved per-org (async) when the scope is
+	 * built: a signed license / dev flag grants instance-wide (self-managed); else the
+	 * org's billing record drives it (hosted). Community (no ee/) = all-off baseline.
+	 */
+	resolveEntitlements?: (orgId: string) => Promise<Entitlements>;
 }
 
 /** `@alethia/ee`'s entry point: receives core capabilities, returns its module. */
@@ -104,6 +116,7 @@ function loadEnterprise(): void {
 			ensureMemberGrant,
 			revokeMemberGrant,
 			sendInviteEmail,
+			resolveOrgEntitlements,
 			fga: {
 				buildModel: buildAuthorizationModel,
 				expandGrant,
