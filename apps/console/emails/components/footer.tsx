@@ -8,8 +8,8 @@ import { colors, fonts } from "./theme";
 
 const FOOT_LINKS = [
 	{ label: "Documentation", href: "https://alethialabs.io/docs" },
-	{ label: "Console", href: "https://console.alethialabs.io" },
-	{ label: "GitHub", href: "https://github.com/alethialabs" },
+	{ label: "Console", href: "https://alethialabs.io" },
+	{ label: "GitHub", href: "https://github.com/alethialabs-io" },
 	{ label: "Status", href: "https://status.alethialabs.io" },
 ] as const;
 

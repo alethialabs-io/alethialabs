@@ -33,11 +33,14 @@ export async function sendWelcomeEmail(
 	to: string,
 	consoleUrl?: string,
 ): Promise<void> {
+	// Point the CTA at the actual deployment origin (alethialabs.io in prod, the
+	// operator's own origin when self-hosted); fall back to the template default.
+	const url = consoleUrl ?? getAuthConfig().baseURL;
 	await sendEmail({
 		from: getEmailConfig().from.general,
 		to,
 		subject: welcomeSubject,
-		react: WelcomeEmail(consoleUrl ? { consoleUrl } : {}),
+		react: WelcomeEmail(url ? { consoleUrl: url } : {}),
 	});
 }
 

@@ -32,7 +32,7 @@ const STEPS = [
 
 /** Post-signup welcome / onboarding email. */
 export function WelcomeEmail({
-	consoleUrl = "https://console.alethialabs.io",
+	consoleUrl = "https://alethialabs.io",
 }: WelcomeEmailProps) {
 	return (
 		<EmailLayout
@@ -159,7 +159,7 @@ export function WelcomeEmail({
 }
 
 WelcomeEmail.PreviewProps = {
-	consoleUrl: "https://console.alethialabs.io",
+	consoleUrl: "https://alethialabs.io",
 } satisfies WelcomeEmailProps;
 
 export default WelcomeEmail;

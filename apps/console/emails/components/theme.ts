@@ -4,60 +4,27 @@
 import type { CSSProperties } from "react";
 
 /**
- * Grayscale palette mapped from the Alethia design system's dark theme
- * (OKLCH zero-chroma ramp → email-safe hex, since clients don't support
- * `oklch()` or CSS variables).
+ * Light grayscale palette from the Alethia design system (OKLCH zero-chroma ramp
+ * → email-safe hex, since clients don't support `oklch()` or CSS variables).
+ * Email is intentionally **light-only**: a dark default renders badly in
+ * light-mode Gmail (which ignores `prefers-color-scheme` and partially inverts),
+ * so every client gets the same clean light card.
  */
 export const colors = {
-	canvas: "#121214", // --gray-1050 (page background)
-	surface: "#18181a", // --gray-1000 (email card)
-	surfaceRaised: "#1f1f21", // --gray-950
-	surfaceSunken: "#0e0e10", // --gray-1100 (code block, terminal)
-	surfaceMuted: "#1f1f21", // --gray-950 (avatar fill)
-	textPrimary: "#fafafa", // --gray-50
-	textSecondary: "#8b8b8e", // --gray-500
-	textTertiary: "#6e6e72", // --gray-600
-	textDisabled: "#525255", // --gray-700
-	border: "#2a2a2d", // ~ white / 0.10 on dark
-	borderStrong: "#3a3a3e", // ~ white / 0.17 on dark
-	ink: "#fafafa", // dark-theme solid action = light
-	inkForeground: "#18181a", // text on the light action
-} as const;
-
-/** Light-mode Alethia grayscale (mirrors the dark ramp). */
-export const lightColors = {
-	canvas: "#f4f4f5",
-	surface: "#ffffff",
+	canvas: "#f4f4f5", // page background
+	surface: "#ffffff", // email card
 	surfaceRaised: "#fafafa",
-	surfaceSunken: "#f4f4f5",
-	surfaceMuted: "#f0f0f1",
+	surfaceSunken: "#f4f4f5", // code block, terminal
+	surfaceMuted: "#f0f0f1", // avatar fill
 	textPrimary: "#18181a",
 	textSecondary: "#52525b",
 	textTertiary: "#71717a",
 	textDisabled: "#a1a1aa",
 	border: "#e4e4e7",
 	borderStrong: "#d4d4d8",
-	ink: "#18181a",
-	inkForeground: "#fafafa",
+	ink: "#18181a", // solid action = dark ink
+	inkForeground: "#fafafa", // text on the ink action
 } as const;
-
-/** prefers-color-scheme:light overrides, keyed on the class hooks below. */
-export const lightModeCss = `
-@media (prefers-color-scheme: light) {
-  .a-canvas { background-color: ${lightColors.canvas} !important; }
-  .a-surface { background-color: ${lightColors.surface} !important; }
-  .a-sunken { background-color: ${lightColors.surfaceSunken} !important; }
-  .a-muted { background-color: ${lightColors.surfaceMuted} !important; }
-  .a-text { color: ${lightColors.textPrimary} !important; }
-  .a-text-2 { color: ${lightColors.textSecondary} !important; }
-  .a-text-3 { color: ${lightColors.textTertiary} !important; }
-  .a-border { border-color: ${lightColors.border} !important; }
-  .a-border-strong { border-color: ${lightColors.borderStrong} !important; }
-  .a-btn { background-color: ${lightColors.ink} !important; color: ${lightColors.inkForeground} !important; border-color: ${lightColors.ink} !important; }
-  .a-mark { color: ${lightColors.ink} !important; }
-  .a-mark path { stroke: ${lightColors.ink} !important; }
-  .a-mark circle { fill: ${lightColors.ink} !important; }
-}`;
 
 /** Type voices. Geist first, system fallback (web fonts are unreliable in email). */
 export const fonts = {

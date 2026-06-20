@@ -32,7 +32,7 @@ export function InviteEmail({
 	inviterInitials = "DO",
 	workspaceName = "platform-core",
 	role = "Maintainer",
-	acceptUrl = "https://console.alethialabs.io/invites/accept?token=inv_9f31a0",
+	acceptUrl = "https://alethialabs.io/invites/accept?token=inv_9f31a0",
 	expiresInDays = 7,
 }: InviteEmailProps) {
 	return (
@@ -184,7 +184,7 @@ InviteEmail.PreviewProps = {
 	inviterInitials: "DO",
 	workspaceName: "platform-core",
 	role: "Maintainer",
-	acceptUrl: "https://console.alethialabs.io/invites/accept?token=inv_9f31a0",
+	acceptUrl: "https://alethialabs.io/invites/accept?token=inv_9f31a0",
 	expiresInDays: 7,
 } satisfies InviteEmailProps;
 

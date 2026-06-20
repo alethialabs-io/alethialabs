@@ -12,7 +12,7 @@ import {
 import type { ReactNode } from "react";
 import { EmailFooter } from "./footer";
 import { EmailHeader } from "./header";
-import { colors, fonts, lightModeCss } from "./theme";
+import { colors, fonts } from "./theme";
 
 interface EmailLayoutProps {
 	/** Inbox preheader text. */
@@ -22,14 +22,13 @@ interface EmailLayoutProps {
 	children: ReactNode;
 }
 
-/** Shared shell: dark canvas, 600px card, shared header + footer. */
+/** Shared shell: light canvas, 600px card, shared header + footer. */
 export function EmailLayout({ preview, legal, children }: EmailLayoutProps) {
 	return (
 		<Html lang="en">
 			<Head>
-				<meta name="color-scheme" content="light dark" />
-				<meta name="supported-color-schemes" content="light dark" />
-				<style dangerouslySetInnerHTML={{ __html: lightModeCss }} />
+				<meta name="color-scheme" content="light" />
+				<meta name="supported-color-schemes" content="light" />
 			</Head>
 			<Preview>{preview}</Preview>
 			<Body
