@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Package categories implements the pluggable per-category integration providers
+// Package categories implements the pluggable per-category connector providers
 // (DNS / secrets / registry / observability) that decouple WHAT a Spec needs from
 // WHO provides it. It mirrors packages/core/cloud one level down: declarative data
 // (slug, category, module path, credential shape) lives in catalog.json — the SAME
@@ -112,11 +112,11 @@ func Get(category, slug string) (*CategoryProvider, error) {
 	key := category + "/" + slug
 	meta, okMeta := metaIndex[key]
 	if !okMeta {
-		return nil, fmt.Errorf("unknown integration provider %q for category %q", slug, category)
+		return nil, fmt.Errorf("unknown connector provider %q for category %q", slug, category)
 	}
 	b, okBehavior := behaviors[key]
 	if !okBehavior {
-		return nil, fmt.Errorf("integration provider %q has no registered behavior (impl missing)", key)
+		return nil, fmt.Errorf("connector provider %q has no registered behavior (impl missing)", key)
 	}
 	return &CategoryProvider{meta: meta, b: b}, nil
 }

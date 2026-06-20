@@ -163,7 +163,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			if err := AssumeRole(ctx, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID, sessionName); err != nil {
 				errMsg := fmt.Sprintf("Failed to assume role: %v", err)
 				fmt.Fprintln(stderrLogger, errMsg)
-				w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+				_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
 				return err
 			}
 			defer ClearAssumedCredentials()
@@ -173,7 +173,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			if err != nil {
 				errMsg := fmt.Sprintf("Failed to activate GCP WIF: %v", err)
 				fmt.Fprintln(stderrLogger, errMsg)
-				w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+				_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
 				return err
 			}
 			defer cleanup()
@@ -183,7 +183,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			if err != nil {
 				errMsg := fmt.Sprintf("Failed to activate Azure federated identity: %v", err)
 				fmt.Fprintln(stderrLogger, errMsg)
-				w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+				_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
 				return err
 			}
 			defer cleanup()
@@ -205,7 +205,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			if fetchErr != nil {
 				fmt.Fprintf(stderrLogger, "Warning: failed to cache GCP resources: %v\n", fetchErr)
 			} else {
-				w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+				_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
 					"cached_resources": resources,
 				})
 				fmt.Fprintln(stdoutLogger, "GCP resources cached successfully.")
@@ -216,7 +216,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			if fetchErr != nil {
 				fmt.Fprintf(stderrLogger, "Warning: failed to cache Azure resources: %v\n", fetchErr)
 			} else {
-				w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+				_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
 					"cached_resources": resources,
 				})
 				fmt.Fprintln(stdoutLogger, "Azure resources cached successfully.")
@@ -227,7 +227,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			if fetchErr != nil {
 				fmt.Fprintf(stderrLogger, "Warning: failed to cache AWS resources: %v\n", fetchErr)
 			} else {
-				w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+				_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
 					"cached_resources": resources,
 				})
 				fmt.Fprintln(stdoutLogger, "AWS resources cached successfully.")
@@ -245,7 +245,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			if fetchErr != nil {
 				execErr = fmt.Errorf("failed to fetch GCP resources: %w", fetchErr)
 			} else {
-				w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+				_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
 					"cached_resources": resources,
 				})
 				fmt.Fprintln(stdoutLogger, "GCP resources fetched successfully.")
@@ -260,7 +260,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			if fetchErr != nil {
 				execErr = fmt.Errorf("failed to fetch Azure resources: %w", fetchErr)
 			} else {
-				w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+				_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
 					"cached_resources": resources,
 				})
 				fmt.Fprintln(stdoutLogger, "Azure resources fetched successfully.")
@@ -271,16 +271,16 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			if fetchErr != nil {
 				execErr = fmt.Errorf("failed to fetch AWS resources: %w", fetchErr)
 			} else {
-				w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+				_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
 					"cached_resources": resources,
 				})
 				fmt.Fprintln(stdoutLogger, "AWS resources fetched successfully.")
 			}
 		}
 	case "PLAN":
-		execErr = w.executePlan(ctx, job, provider, claim.CloudIdentity, claim.IntegrationCredentials, stdoutLogger, stderrLogger)
+		execErr = w.executePlan(ctx, job, provider, claim.CloudIdentity, claim.ConnectorCredentials, stdoutLogger, stderrLogger)
 	case "DEPLOY":
-		execErr = w.executeDeploy(ctx, job, provider, claim.CloudIdentity, claim.IntegrationCredentials, stdoutLogger, stderrLogger)
+		execErr = w.executeDeploy(ctx, job, provider, claim.CloudIdentity, claim.ConnectorCredentials, stdoutLogger, stderrLogger)
 	case "DESTROY":
 		execErr = w.executeDestroy(ctx, job, stdoutLogger, stderrLogger)
 	case "DEPLOY_RUNNER", "UPDATE_RUNNER":
@@ -294,11 +294,11 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	if execErr != nil {
 		fmt.Fprintf(stderrLogger, "Error: %v\n", execErr)
 		stderrLogger.Close()
-		w.api.UpdateJobStatus(job.ID, "FAILED", execErr.Error(), nil)
+		_ = w.api.UpdateJobStatus(job.ID, "FAILED", execErr.Error(), nil)
 		return execErr
 	}
 
-	w.api.UpdateJobStatus(job.ID, "SUCCESS", "", nil)
+	_ = w.api.UpdateJobStatus(job.ID, "SUCCESS", "", nil)
 	fmt.Printf("Job %s completed successfully\n", job.ID)
 	return nil
 }
@@ -506,15 +506,15 @@ func resolveCategoriesTemplatesDir() string {
 	return ""
 }
 
-// toCoreIntegrationCreds converts the runner's claim-response credentials into
+// toCoreConnectorCreds converts the runner's claim-response credentials into
 // the core types used by the provisioner/composer.
-func toCoreIntegrationCreds(creds []IntegrationCredential) []types.IntegrationCredential {
+func toCoreConnectorCreds(creds []ConnectorCredential) []types.ConnectorCredential {
 	if len(creds) == 0 {
 		return nil
 	}
-	out := make([]types.IntegrationCredential, 0, len(creds))
+	out := make([]types.ConnectorCredential, 0, len(creds))
 	for _, c := range creds {
-		out = append(out, types.IntegrationCredential{
+		out = append(out, types.ConnectorCredential{
 			Category:    c.Category,
 			Slug:        c.Slug,
 			Credentials: c.Credentials,
@@ -523,7 +523,7 @@ func toCoreIntegrationCreds(creds []IntegrationCredential) []types.IntegrationCr
 	return out
 }
 
-func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, identity *CloudIdentity, integrationCreds []IntegrationCredential, stdout, stderr *JobLogger) error {
+func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, identity *CloudIdentity, connectorCreds []ConnectorCredential, stdout, stderr *JobLogger) error {
 	vc, err := snapshotToSpecConfig(job.ConfigSnapshot)
 	if err != nil {
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
@@ -537,7 +537,7 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	if identity != nil {
 		vc.CloudAccountID = resolveAccountID(identity)
 	}
-	vc.IntegrationCredentials = toCoreIntegrationCreds(integrationCreds)
+	vc.ConnectorCredentials = toCoreConnectorCreds(connectorCreds)
 
 	if job.PlanJobID != nil && *job.PlanJobID != "" {
 		fmt.Fprintf(stdout, "Validating against plan job %s...\n", *job.PlanJobID)
@@ -611,14 +611,14 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 			metadata["outputs"] = result.Outputs
 		}
 		if len(metadata) > 0 {
-			w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
+			_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
 		}
 	}
 
 	return nil
 }
 
-func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, identity *CloudIdentity, integrationCreds []IntegrationCredential, stdout, stderr *JobLogger) error {
+func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, identity *CloudIdentity, connectorCreds []ConnectorCredential, stdout, stderr *JobLogger) error {
 	vc, err := snapshotToSpecConfig(job.ConfigSnapshot)
 	if err != nil {
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
@@ -632,7 +632,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 	if identity != nil {
 		vc.CloudAccountID = resolveAccountID(identity)
 	}
-	vc.IntegrationCredentials = toCoreIntegrationCreds(integrationCreds)
+	vc.ConnectorCredentials = toCoreConnectorCreds(connectorCreds)
 
 	infracostKey := os.Getenv("INFRACOST_API_KEY")
 
@@ -658,7 +658,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 		Stderr:         stderr,
 	}
 
-	w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+	_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
 		"phase": "tofu_plan", "progress": "Running OpenTofu plan...",
 	})
 
@@ -700,7 +700,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 		}
 	}
 
-	w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
+	_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
 
 	return nil
 }

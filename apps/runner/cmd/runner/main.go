@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/agent"
+	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
 )
 
 func main() {

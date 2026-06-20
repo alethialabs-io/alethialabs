@@ -83,7 +83,7 @@ func (h *HelmCLI) UpgradeInstall(releaseName, chartDir, namespace string, values
 				logger.Warn(fmt.Sprintf("Install failed: %v", err), "helm")
 				continue // Retry
 			}
-			
+
 			return nil // Success
 		}
 	}

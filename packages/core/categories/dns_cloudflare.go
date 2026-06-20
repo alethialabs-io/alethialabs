@@ -26,14 +26,14 @@ func init() {
 		},
 		validate: func(ctx ComponentContext) error {
 			if cred(ctx.Credentials, "api_token", "") == "" {
-				return fmt.Errorf("Cloudflare credential not connected (missing api_token)")
+				return fmt.Errorf("missing Cloudflare api_token (credential not connected)")
 			}
 			if pcString(ctx.ProviderConfig, "zone_id", "") == "" &&
 				(ctx.Spec == nil || ctx.Spec.DNS.ZoneID == "") {
-				return fmt.Errorf("Cloudflare DNS requires a zone_id")
+				return fmt.Errorf("zone_id required for Cloudflare DNS")
 			}
 			if ctx.Spec == nil || ctx.Spec.DNS.DomainName == "" {
-				return fmt.Errorf("Cloudflare DNS requires a domain_name")
+				return fmt.Errorf("domain_name required for Cloudflare DNS")
 			}
 			return nil
 		},

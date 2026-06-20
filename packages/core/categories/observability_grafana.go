@@ -17,10 +17,10 @@ func init() {
 		},
 		validate: func(ctx ComponentContext) error {
 			if cred(ctx.Credentials, "instance_id", "") == "" || cred(ctx.Credentials, "api_token", "") == "" {
-				return fmt.Errorf("Grafana Cloud credential not connected (missing instance_id or api_token)")
+				return fmt.Errorf("missing Grafana Cloud instance_id or api_token (credential not connected)")
 			}
 			if pcString(ctx.ProviderConfig, "remote_write_url", "") == "" {
-				return fmt.Errorf("Grafana Cloud requires a remote_write_url")
+				return fmt.Errorf("remote_write_url required for Grafana Cloud")
 			}
 			return nil
 		},

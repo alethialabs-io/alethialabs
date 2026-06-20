@@ -42,7 +42,7 @@ func (l *JobLogger) Write(p []byte) (n int, err error) {
 	shouldFlush := l.buf.Len() >= 10*1024
 	l.mu.Unlock()
 
-	os.Stdout.Write(p)
+	_, _ = os.Stdout.Write(p)
 
 	if shouldFlush {
 		l.Flush()

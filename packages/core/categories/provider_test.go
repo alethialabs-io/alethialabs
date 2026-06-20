@@ -90,7 +90,7 @@ func TestComposeWritesGuardsAndModuleFile(t *testing.T) {
 		DomainName:     "example.com",
 		ProviderConfig: map[string]any{"zone_id": "z1"},
 	}
-	vc.IntegrationCredentials = []types.IntegrationCredential{
+	vc.ConnectorCredentials = []types.ConnectorCredential{
 		{Category: "dns", Slug: "cloudflare", Credentials: map[string]string{"api_token": "tok"}},
 	}
 

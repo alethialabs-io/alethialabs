@@ -48,10 +48,10 @@ type CostComponent struct {
 }
 
 type CostSummary struct {
-	TotalMonthly       float64 `json:"total_monthly"`
-	TotalHourly        float64 `json:"total_hourly"`
-	DiffMonthly        float64 `json:"diff_monthly"`
-	ResourcesWithCost  int     `json:"resources_with_cost"`
-	ResourcesFree      int     `json:"resources_free"`
-	TotalResources     int     `json:"total_resources"`
+	TotalMonthly      float64 `json:"total_monthly"`
+	TotalHourly       float64 `json:"total_hourly"`
+	DiffMonthly       float64 `json:"diff_monthly"`
+	ResourcesWithCost int     `json:"resources_with_cost"`
+	ResourcesFree     int     `json:"resources_free"`
+	TotalResources    int     `json:"total_resources"`
 }

@@ -68,7 +68,7 @@ func Compose(
 		}
 		ctx := ComponentContext{
 			Spec:           vc,
-			Credentials:    vc.IntegrationCredentialFor("dns", vc.DNS.Provider),
+			Credentials:    vc.ConnectorCredentialFor("dns", vc.DNS.Provider),
 			ProviderConfig: vc.DNS.ProviderConfig,
 		}
 		if err := add("dns", p, ctx); err != nil {
@@ -85,7 +85,7 @@ func Compose(
 		}
 		ctx := ComponentContext{
 			Spec:           vc,
-			Credentials:    vc.IntegrationCredentialFor("observability", vc.Observability.Provider),
+			Credentials:    vc.ConnectorCredentialFor("observability", vc.Observability.Provider),
 			ProviderConfig: vc.Observability.ProviderConfig,
 		}
 		if err := add("observability", p, ctx); err != nil {
@@ -101,7 +101,7 @@ func Compose(
 		}
 		ctx := ComponentContext{
 			Spec:        vc,
-			Credentials: vc.IntegrationCredentialFor("secrets", slug),
+			Credentials: vc.ConnectorCredentialFor("secrets", slug),
 			Items:       items,
 		}
 		if err := add("secrets", p, ctx); err != nil {
@@ -118,7 +118,7 @@ func Compose(
 		}
 		ctx := ComponentContext{
 			Spec:        vc,
-			Credentials: vc.IntegrationCredentialFor("registry", slug),
+			Credentials: vc.ConnectorCredentialFor("registry", slug),
 			Items:       items,
 		}
 		if err := add("registry", p, ctx); err != nil {

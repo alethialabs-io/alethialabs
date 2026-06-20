@@ -39,7 +39,7 @@ It helps you automate, manage, and scale your cloud infrastructure easily.`,
 		fmt.Println(logoStyle.Render(logo))
 		fmt.Println(titleStyle.Render("Welcome to the Alethia CLI!"))
 		fmt.Println()
-		
+
 		fmt.Println(textStyle.Render("Developed by: ") + accentStyle.Render("Borislav Borisov"))
 		fmt.Println(textStyle.Render("Email:        ") + linkStyle.Render("borislav@tovr.eu"))
 		fmt.Println(textStyle.Render("GitHub:       ") + linkStyle.Render("https://github.com/bobikenobi12"))

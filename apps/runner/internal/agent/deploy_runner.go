@@ -122,7 +122,7 @@ func (w *Runner) executeDeployRunner(ctx context.Context, job *Job, provider str
 	if err != nil {
 		fmt.Fprintf(stderr, "Warning: could not read tofu outputs: %v\n", err)
 	} else if len(outputs) > 0 {
-		w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+		_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
 			"runner_outputs": outputs,
 		})
 	}

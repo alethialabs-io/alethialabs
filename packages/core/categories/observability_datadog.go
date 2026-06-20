@@ -17,7 +17,7 @@ func init() {
 		},
 		validate: func(ctx ComponentContext) error {
 			if cred(ctx.Credentials, "api_key", "") == "" || cred(ctx.Credentials, "app_key", "") == "" {
-				return fmt.Errorf("Datadog credential not connected (missing api_key or app_key)")
+				return fmt.Errorf("missing Datadog api_key or app_key (credential not connected)")
 			}
 			return nil
 		},

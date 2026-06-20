@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -42,7 +42,7 @@ func loadPreferences() cliPreferences {
 	if err == nil {
 		data, err := os.ReadFile(path)
 		if err == nil {
-			json.Unmarshal(data, &prefs)
+			_ = json.Unmarshal(data, &prefs)
 		}
 	}
 	return prefs
@@ -51,9 +51,9 @@ func loadPreferences() cliPreferences {
 func savePreferences(prefs cliPreferences) {
 	path, err := getPreferencesPath()
 	if err == nil {
-		os.MkdirAll(filepath.Dir(path), 0755)
+		_ = os.MkdirAll(filepath.Dir(path), 0755)
 		data, _ := json.MarshalIndent(prefs, "", "  ")
-		os.WriteFile(path, data, 0644)
+		_ = os.WriteFile(path, data, 0644)
 	}
 }
 
@@ -154,8 +154,6 @@ func pollForToken(deviceCode, exchangeURL string) tea.Cmd {
 	}
 }
 
-
-
 func saveTokens(tokens *types.ExchangeResponse) {
 	credsPath, err := getCredentialsPath()
 	if err != nil {
@@ -251,9 +249,9 @@ var loginCmd = &cobra.Command{
 				credsPath, _ := getCredentialsPath()
 				file, _ := os.ReadFile(credsPath)
 				var creds types.ExchangeResponse
-				json.Unmarshal(file, &creds)
-				
-					fmt.Println(ui.TextStyle.Render(fmt.Sprintf("You are already logged in as: %s", ui.CyanStyle.Render(creds.UserEmail))))
+				_ = json.Unmarshal(file, &creds)
+
+				fmt.Println(ui.TextStyle.Render(fmt.Sprintf("You are already logged in as: %s", ui.CyanStyle.Render(creds.UserEmail))))
 				fmt.Println(ui.TextStyle.Render("Use --force to log in again."))
 				return
 			}

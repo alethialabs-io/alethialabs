@@ -9,7 +9,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/eks v1.76.4
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.93.1
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.4 // indirect
-	github.com/flosch/pongo2/v6 v6.0.0
 	github.com/go-git/go-git/v5 v5.18.0
 	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect

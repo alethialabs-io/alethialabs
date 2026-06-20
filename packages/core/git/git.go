@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
-	"github.com/flosch/pongo2/v6"
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -113,12 +112,6 @@ func getSSHAuthMethod() (transport.AuthMethod, error) {
 	return auth, nil
 }
 
-// getAuthMethod creates an SSH authentication method from the default SSH agent.
-// Deprecated: use g.getAuth() instead.
-func getAuthMethod() (transport.AuthMethod, error) {
-	return getSSHAuthMethod()
-}
-
 // Clone clones a repository or opens an existing one.
 func (g *GIT) Clone(branch string, force bool) error {
 	fmt.Printf("Cloning %s into %s...\n", g.RepoURL, g.LocalPath)
@@ -138,13 +131,13 @@ func (g *GIT) Clone(branch string, force bool) error {
 				return fmt.Errorf("failed to get worktree: %w", err)
 			}
 			err = w.Checkout(&gogit.CheckoutOptions{
-				Branch:  plumbing.NewBranchReferenceName(branch),
+				Branch: plumbing.NewBranchReferenceName(branch),
 			})
 			if err != nil {
 				// If branch checkout fails, try to fetch it first
 				fetchOptions := &gogit.FetchOptions{
 					RemoteName: "origin",
-					RefSpecs: []config.RefSpec{config.RefSpec(fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", branch, branch))},
+					RefSpecs:   []config.RefSpec{config.RefSpec(fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", branch, branch))},
 					Auth:       nil,
 				}
 				auth, authErr := g.getAuth()
@@ -154,14 +147,14 @@ func (g *GIT) Clone(branch string, force bool) error {
 				_ = g.Repo.Fetch(fetchOptions)
 
 				err = w.Checkout(&gogit.CheckoutOptions{
-					Branch:  plumbing.NewBranchReferenceName(branch),
+					Branch: plumbing.NewBranchReferenceName(branch),
 				})
 				if err != nil {
 					return fmt.Errorf("failed to checkout branch '%s' after fetch attempt: %w", branch, err)
 				}
 			}
 		}
-		g.ResetAndRestoreChanges() // Discard local changes and untracked files
+		_ = g.ResetAndRestoreChanges() // Discard local changes and untracked files
 		return g.Pull()
 	} else {
 		// Remove existing directory if not correct repo or force is true
@@ -525,35 +518,3 @@ func (g *GIT) copyFile(src, dst string) error {
 	_, err = io.Copy(dstFile, srcFile)
 	return err
 }
-
-func (g *GIT) fileExistsAbs(path string) bool {
-	_, err := os.Stat(path)
-	return !os.IsNotExist(err)
-}
-
-func (g *GIT) containsPlaceholders(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(data), "{{")
-}
-
-func (g *GIT) renderTemplate(srcPath string, dstPath string, context map[string]interface{}) error {
-	tpl, err := pongo2.FromFile(srcPath)
-	if err != nil {
-		return fmt.Errorf("failed to load template %s: %w", srcPath, err)
-	}
-
-	out, err := tpl.Execute(pongo2.Context(context))
-	if err != nil {
-		return fmt.Errorf("failed to execute template %s: %w", srcPath, err)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
-		return fmt.Errorf("failed to create directory for %s: %w", dstPath, err)
-	}
-
-	return os.WriteFile(dstPath, []byte(out), 0644)
-}
-

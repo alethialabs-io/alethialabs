@@ -28,7 +28,7 @@ func RenderStepper(steps []string, current int) string {
 
 	for i, step := range steps {
 		var icon, label string
-		
+
 		if i < current {
 			// Completed
 			icon = "◆" // Solid diamond
@@ -59,4 +59,3 @@ func PrintStepper(steps []string, current int) {
 	fmt.Println(RenderStepper(steps, current))
 	fmt.Println()
 }
-

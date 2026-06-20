@@ -35,24 +35,24 @@ type SpecConfig struct {
 	CloudAccountID string `json:"-"`
 
 	// Populated at runtime from the claim response (decrypted), not from snapshot.
-	// Keyed lookups happen via IntegrationCredentialFor.
-	IntegrationCredentials []IntegrationCredential `json:"-"`
+	// Keyed lookups happen via ConnectorCredentialFor.
+	ConnectorCredentials []ConnectorCredential `json:"-"`
 }
 
-// IntegrationCredential carries a decrypted api_key credential for a pluggable
-// provider, attached to the job at claim time (never stored in config_snapshot).
-type IntegrationCredential struct {
+// ConnectorCredential carries a decrypted api_key credential for a pluggable
+// connector, attached to the job at claim time (never stored in config_snapshot).
+type ConnectorCredential struct {
 	Category    string            `json:"category"`
 	Slug        string            `json:"slug"`
 	Credentials map[string]string `json:"credentials"`
 }
 
-// IntegrationCredentialFor returns the decrypted credential fields for a given
+// ConnectorCredentialFor returns the decrypted credential fields for a given
 // (category, slug), or nil if none was attached.
-func (c *SpecConfig) IntegrationCredentialFor(category, slug string) map[string]string {
-	for _, ic := range c.IntegrationCredentials {
-		if ic.Category == category && ic.Slug == slug {
-			return ic.Credentials
+func (c *SpecConfig) ConnectorCredentialFor(category, slug string) map[string]string {
+	for _, cc := range c.ConnectorCredentials {
+		if cc.Category == category && cc.Slug == slug {
+			return cc.Credentials
 		}
 	}
 	return nil

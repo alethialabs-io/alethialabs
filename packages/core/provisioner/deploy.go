@@ -161,14 +161,14 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	fmt.Fprintf(stdout, "DEBUG provider=%s, project=%v, region=%v, provision_network=%v, network_id=%q, cidr=%q\n",
 		provider.Name(), tfvars["project_name"], vc.Region, vc.Network.ProvisionNetwork, vc.Network.NetworkID, vc.Network.CIDRBlock)
 
-	// Compose pluggable per-category integration modules (Cloudflare DNS, Vault,
+	// Compose pluggable per-category connector modules (Cloudflare DNS, Vault,
 	// Docker Hub, observability). This merges their tfvars (including decrypted
 	// secrets resolved at claim time), copies the modules into the work dir, and
 	// sets the native-guard vars so the cluster cloud skips its native resource.
 	if composed, composeErr := categories.Compose(tfDir, params.CategoriesDir, vc, tfvars, stdout); composeErr != nil {
-		return nil, fmt.Errorf("integration composition failed: %w", composeErr)
+		return nil, fmt.Errorf("connector composition failed: %w", composeErr)
 	} else if composed > 0 {
-		fmt.Fprintf(stdout, "Composed %d pluggable integration module(s).\n", composed)
+		fmt.Fprintf(stdout, "Composed %d pluggable connector module(s).\n", composed)
 	}
 
 	varFile, err := tofu.OverrideTfvarsFromMap(tfDir, tfvars)
@@ -209,7 +209,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	if planJSON != nil {
 		planJSONFile = filepath.Join(tmpRoot, "tofu.plan.json")
 		if jsonBytes, marshalErr := json.Marshal(planJSON); marshalErr == nil {
-			os.WriteFile(planJSONFile, jsonBytes, 0644)
+			_ = os.WriteFile(planJSONFile, jsonBytes, 0644)
 			var parsed map[string]interface{}
 			if json.Unmarshal(jsonBytes, &parsed) == nil {
 				result.PlanJSON = parsed

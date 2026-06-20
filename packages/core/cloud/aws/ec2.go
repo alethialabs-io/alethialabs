@@ -73,8 +73,8 @@ func (c *EC2Client) ListSubnets(ctx context.Context, vpcID string) ([]SubnetInfo
 	return subnets, nil
 }
 
-func strPtr(s string) *string  { return &s }
-func boolPtr(b bool) *bool     { return &b }
+func strPtr(s string) *string { return &s }
+func boolPtr(b bool) *bool    { return &b }
 
 type VPCInfo struct {
 	ID        string

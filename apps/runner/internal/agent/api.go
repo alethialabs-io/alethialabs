@@ -57,19 +57,19 @@ type CloudIdentity struct {
 	SubscriptionID      string `json:"subscription_id"`
 }
 
-// IntegrationCredential is a decrypted api_key credential for a pluggable
-// provider (Cloudflare, Vault, …), attached at claim time only — never in the
+// ConnectorCredential is a decrypted api_key credential for a pluggable
+// connector (Cloudflare, Vault, …), attached at claim time only — never in the
 // config_snapshot.
-type IntegrationCredential struct {
+type ConnectorCredential struct {
 	Category    string            `json:"category"`
 	Slug        string            `json:"slug"`
 	Credentials map[string]string `json:"credentials"`
 }
 
 type ClaimResponse struct {
-	Job                    *Job                    `json:"job"`
-	CloudIdentity          *CloudIdentity          `json:"cloud_identity"`
-	IntegrationCredentials []IntegrationCredential `json:"integration_credentials"`
+	Job                  *Job                  `json:"job"`
+	CloudIdentity        *CloudIdentity        `json:"cloud_identity"`
+	ConnectorCredentials []ConnectorCredential `json:"connector_credentials"`
 }
 
 func NewRunnerAPIClient(baseURL, runnerID, runnerToken string) *RunnerAPIClient {
