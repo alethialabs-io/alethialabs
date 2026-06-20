@@ -129,7 +129,7 @@ apps/console/
 
 - **Location**: `apps/runner/`
 - **Structure**: `cmd/` (entry point), `internal/` (business logic), `internal/agent/` (job execution engine)
-- **Purpose**: Long-running daemon that polls Alethia for queued provisioning jobs, claims them, executes Terraform operations, and streams logs back.
+- **Purpose**: Long-running daemon that polls Alethia for queued provisioning jobs, claims them, executes OpenTofu operations, and streams logs back.
 - **Deployment**: Docker image on ECS Fargate, auto-registered with Alethia via HTTP on startup.
 - **Runner modes**: `self-hosted` (runs in customer's cloud with native permissions) or `cloud-hosted` (runs in platform account, assumes role into customer account).
 
@@ -138,8 +138,8 @@ apps/console/
 ## core (Shared Go Library)
 
 - **Location**: `packages/core/`
-- **Purpose**: Shared types, cloud provider interfaces, and embedded Terraform templates used by both alethia and Node.
-- **Terraform templates**: Embedded in `assets/terraform/seed/` — spec provisioning templates for AWS, GCP, Azure.
+- **Purpose**: Shared types, cloud provider interfaces, and embedded OpenTofu templates used by both alethia and Node.
+- **OpenTofu templates**: Embedded in `assets/terraform/seed/` — spec provisioning templates for AWS, GCP, Azure.
 - **Key packages**: Config types (SpecConfig), cloud provider abstraction (CloudProvider interface), template rendering (pongo2).
 
 ---
@@ -157,7 +157,7 @@ apps/console/
 
 ### Platform (`infra/platform/`)
 
-Core infrastructure managed by Terraform:
+Core infrastructure managed by OpenTofu:
 - **ECR** (eu-west-1): Container registry for Alethia and Runner Docker images
 - **ECS Fargate** (multi-region): Runner tasks in VPC, auto-registered with Alethia
 - **Lambda scaler** (eu-west-1): EventBridge triggers every 1 minute, scales ECS tasks based on job queue depth
@@ -182,8 +182,8 @@ Cloud account bootstrap scripts:
 
 - **`deploy-node.yml`** — Manual hotfix: build Node Docker image → push to ECR + GHCR → deploy to ECS
 - **`release-node.yml`** — Release-please driven: tag, build, publish Node binary releases
-- **`release-alethia.yml`** — GoReleaser: build alethia CLI binaries, publish Homebrew tap
-- **`terraform-platform.yml`** — Validate, plan, and apply platform Terraform
+- **`release-cli.yml`** — GoReleaser: build alethia CLI binaries, publish Homebrew tap
+- **`infra-fleet-aws.yml`** — Plan and apply the AWS runner fleet (OpenTofu)
 
 ---
 

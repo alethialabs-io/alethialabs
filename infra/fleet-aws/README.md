@@ -1,6 +1,6 @@
 # Alethia Runner — Fargate Infrastructure
 
-Terraform configuration that deploys the node provisioning runner as an AWS Fargate service. The runner polls the Alethia control plane for queued jobs (BOOTSTRAP, DEPLOY, DESTROY), executes them, and streams logs back in real time.
+OpenTofu configuration that deploys the node provisioning runner as an AWS Fargate service. The runner polls the Alethia control plane for queued jobs (BOOTSTRAP, DEPLOY, DESTROY), executes them, and streams logs back in real time.
 
 ## Architecture
 
@@ -19,7 +19,7 @@ Terraform configuration that deploys the node provisioning runner as an AWS Farg
 │  ┌────────────────────────────────────────────────────┐  │
 │  │  Fargate Runner                                    │  │
 │  │  · Claims jobs atomically (SELECT FOR UPDATE)      │  │
-│  │  · Runs Terraform / Helm / kubectl                 │  │
+│  │  · Runs OpenTofu / Helm / kubectl                 │  │
 │  │  · Streams log chunks back to Alethia              │  │
 │  │  · Heartbeat every 30s                             │  │
 │  └────────────────────────────────────────────────────┘  │
@@ -42,7 +42,7 @@ Terraform configuration that deploys the node provisioning runner as an AWS Farg
 ## Prerequisites
 
 - AWS CLI configured with credentials for the target account
-- Terraform >= 1.10
+- OpenTofu >= 1.9
 - Docker
 - Alethia CLI installed (`brew install alethia` or build from source)
 - Alethia running and accessible (local or deployed) with its database migrated
@@ -84,7 +84,7 @@ Runner registered successfully!
 Save these values - the token cannot be recovered.
 ```
 
-**Save both values.** You'll need them for Terraform.
+**Save both values.** You'll need them for OpenTofu.
 
 ### 3. Provision the Fargate infrastructure
 
@@ -131,7 +131,7 @@ If you previously used an AWS S3 bucket for state:
 
 ```bash
 # 1. Back up current state
-terraform state pull > terraform.tfstate.backup
+tofu state pull > terraform.tfstate.backup
 
 # 2. Create the new backend.hcl with your S3-compatible config
 cp backend.hcl.example backend.hcl
@@ -142,7 +142,7 @@ export AWS_SECRET_ACCESS_KEY="$ALETHIA_STORAGE_SECRET_ACCESS_KEY"
 tofu init -migrate-state -backend-config=backend.hcl
 
 # 4. Verify
-terraform state list
+tofu state list
 ```
 
 This creates:
@@ -157,8 +157,8 @@ This creates:
 ### 4. Build and push the Docker image to ECR
 
 ```bash
-# Get the ECR repo URL from Terraform output
-ECR_URL=$(terraform output -raw ecr_repository_url)
+# Get the ECR repo URL from OpenTofu output
+ECR_URL=$(tofu output -raw ecr_repository_url)
 
 # Authenticate Docker with ECR
 aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin $ECR_URL
@@ -177,8 +177,8 @@ ECS won't pull the new image automatically if the tag is the same (`latest`). Fo
 
 ```bash
 aws ecs update-service \
-  --cluster $(terraform output -raw cluster_arn | xargs basename) \
-  --service $(terraform output -raw service_name) \
+  --cluster $(tofu output -raw cluster_arn | xargs basename) \
+  --service $(tofu output -raw service_name) \
   --force-new-deployment \
   --region eu-west-1
 ```
@@ -230,9 +230,9 @@ From the Alethia dashboard:
 2. **Runner** polls `POST /api/jobs/claim` every 10 seconds
 3. **Postgres RPC** `claim_next_job()` atomically assigns the oldest queued job (uses `SELECT FOR UPDATE SKIP LOCKED` to prevent double-claims)
 4. **Runner** updates status to `PROCESSING`, starts executing:
-   - **BOOTSTRAP**: Terraform → VPC + EKS, then Helm → ArgoCD
+   - **BOOTSTRAP**: OpenTofu → VPC + EKS, then Helm → ArgoCD
    - **DEPLOY**: Clone repos → OpenTofu apply → Helm install → ArgoCD manifests
-   - **DESTROY**: Terraform destroy → cleanup
+   - **DESTROY**: OpenTofu destroy → cleanup
 5. **Logs** stream via `POST /api/jobs/{id}/logs` → `job_logs` table → Postgres LISTEN/NOTIFY → SSE → Alethia log viewer
 6. **Runner** sets final status (`SUCCESS` or `FAILED`)
 7. **Stale recovery**: If a runner dies, `recover_stale_jobs()` resets orphaned jobs to `QUEUED` after 15 minutes with no heartbeat
@@ -244,7 +244,7 @@ From the Alethia dashboard:
 docker build -t alethia:latest apps/cli/
 
 # Push to ECR
-ECR_URL=$(cd terraform && terraform output -raw ecr_repository_url)
+ECR_URL=$(cd terraform && tofu output -raw ecr_repository_url)
 docker tag alethia:latest $ECR_URL:latest
 docker push $ECR_URL:latest
 
@@ -260,7 +260,7 @@ aws ecs update-service \
 
 ```bash
 cd terraform
-terraform destroy
+tofu destroy
 ```
 
 This removes all Fargate resources, the ECR repository, Secrets Manager secret, and IAM roles. It does **not** touch the database tables or the runner registration (those live in Postgres).

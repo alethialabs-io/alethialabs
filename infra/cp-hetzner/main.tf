@@ -9,7 +9,7 @@ locals {
   labels = {
     project = "alethia"
     role    = "control-plane"
-    managed = "terraform"
+    managed = "opentofu"
   }
 }
 

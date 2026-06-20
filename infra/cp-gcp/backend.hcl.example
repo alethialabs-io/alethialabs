@@ -1,5 +1,5 @@
-# S3-compatible backend for Terraform state. Copy to backend.hcl (gitignored).
-#   terraform init -backend-config=backend.hcl
+# S3-compatible backend for OpenTofu state. Copy to backend.hcl (gitignored).
+#   tofu init -backend-config=backend.hcl
 
 bucket = "terraform-state"
 key    = "gcp-cp/terraform.tfstate"

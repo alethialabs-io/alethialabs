@@ -13,7 +13,7 @@ provider "aws" {
     tags = {
       Environment = title(var.environment)
       Service     = var.project_name
-      ManagedBy   = "terraform"
+      ManagedBy   = "opentofu"
     }
   }
 }

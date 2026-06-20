@@ -16,7 +16,7 @@ locals {
   common_tags = merge(var.labels, {
     Environment = var.environment
     Project     = var.project_name
-    ManagedBy   = "terraform"
+    ManagedBy   = "opentofu"
   })
 }
 

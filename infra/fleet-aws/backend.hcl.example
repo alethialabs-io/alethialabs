@@ -1,4 +1,4 @@
-# S3-compatible backend for Terraform state (SeaweedFS / Garage / MinIO / S3 / R2).
+# S3-compatible backend for OpenTofu state (SeaweedFS / Garage / MinIO / S3 / R2).
 # Copy to backend.hcl and fill in credentials.
 # NEVER commit backend.hcl — it contains secrets.
 

@@ -32,7 +32,7 @@ variable "ssh_public_key" {
 variable "server_type" {
   # CAX = Ampere ARM64 (matches the runner image's arm64 build). CAX21
   # (4 vCPU / 8 GB) is the cheapest tier with enough headroom to run the bundle
-  # plus a Terraform job; bump to cax31 if it gets busy. CAX11 (4 GB) is too
+  # plus an OpenTofu job; bump to cax31 if it gets busy. CAX11 (4 GB) is too
   # tight when the runner executes.
   description = "Hetzner server type."
   type        = string
@@ -53,7 +53,7 @@ variable "image" {
 
 variable "data_volume_size" {
   # Separate volume so app data (Postgres + object storage) survives a server
-  # replacement on `terraform apply`.
+  # replacement on `tofu apply`.
   description = "Size (GB) of the attached data volume."
   type        = number
   default     = 25

@@ -254,7 +254,7 @@ resource "aws_secretsmanager_secret_version" "infracost_key" {
 
 resource "aws_secretsmanager_secret" "storage_key_id" {
   name                    = "${local.name_prefix}-storage-s3-key-id"
-  description             = "S3-compatible storage access key ID for Terraform state"
+  description             = "S3-compatible storage access key ID for OpenTofu state"
   recovery_window_in_days = var.secrets_recovery_window_days
 }
 
@@ -265,7 +265,7 @@ resource "aws_secretsmanager_secret_version" "storage_key_id" {
 
 resource "aws_secretsmanager_secret" "storage_secret_key" {
   name                    = "${local.name_prefix}-storage-s3-secret-key"
-  description             = "S3-compatible storage secret access key for Terraform state"
+  description             = "S3-compatible storage secret access key for OpenTofu state"
   recovery_window_in_days = var.secrets_recovery_window_days
 }
 

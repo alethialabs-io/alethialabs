@@ -17,7 +17,7 @@ provider "aws" {
     tags = {
       Environment = "Prod"
       Service     = "runner"
-      ManagedBy   = "terraform"
+      ManagedBy   = "opentofu"
     }
   }
 }

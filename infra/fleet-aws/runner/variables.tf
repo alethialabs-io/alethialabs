@@ -53,7 +53,7 @@ variable "infracost_api_key" {
 variable "storage_endpoint" {
   type        = string
   default     = ""
-  description = "S3-compatible endpoint for Terraform state storage."
+  description = "S3-compatible endpoint for OpenTofu state storage."
 }
 
 variable "storage_region" {
@@ -65,13 +65,13 @@ variable "storage_region" {
 variable "storage_access_key_id" {
   type        = string
   sensitive   = true
-  description = "S3 access key ID for Terraform state."
+  description = "S3 access key ID for OpenTofu state."
 }
 
 variable "storage_secret_access_key" {
   type        = string
   sensitive   = true
-  description = "S3 secret access key for Terraform state."
+  description = "S3 secret access key for OpenTofu state."
 }
 
 variable "secrets_recovery_window_days" {

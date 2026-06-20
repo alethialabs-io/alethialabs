@@ -10,7 +10,7 @@ locals {
   labels = {
     project = "alethia"
     role    = "status"
-    managed = "terraform"
+    managed = "opentofu"
   }
 }
 
