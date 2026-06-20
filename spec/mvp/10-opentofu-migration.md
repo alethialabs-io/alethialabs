@@ -33,7 +33,7 @@ Recommendation: define one `DefaultIaCVersion` constant and reference it everywh
 
 ## State compatibility
 
-State format is **identical** across the TF 1.5/1.6 fork line → this is a binary swap, **not** a state migration. The Supabase S3 backend (`packages/core/cloud/supabase_backend.go`) emits a generic `s3` backend block read identically by `tofu`. No backend change.
+State format is **identical** across the TF 1.5/1.6 fork line → this is a binary swap, **not** a state migration. The S3 backend (`packages/core/cloud/s3_backend.go`) emits a generic `s3` backend block read identically by `tofu`. No backend change.
 
 ## Provider lock files (the real risk)
 

@@ -127,7 +127,7 @@ pre.diagram{font-family:var(--font-mono);font-size:.72rem;line-height:1.45;color
   </div>
   <div class="grid g2" style="margin-top:.4rem">
     <p class="faint" style="font-size:.82rem"><span class="status"><span class="dot dot-ring"></span>Optional</span> &nbsp;<span class="mono">redis</span> is a scale-out profile only — the default profile never starts it.</p>
-    <p class="faint" style="font-size:.82rem">Replaces Supabase's ~10 containers (GoTrue, PostgREST, Realtime, Storage, Kong, Studio…) across four independent subsystems.</p>
+    <p class="faint" style="font-size:.82rem">Four independent subsystems — database, auth, realtime, storage — each a permissive, self-hostable component.</p>
   </div>
 </section>
 
@@ -312,7 +312,7 @@ pre.diagram{font-family:var(--font-mono);font-size:.72rem;line-height:1.45;color
     <div class="card">
       <div class="eyebrow">To build for V1</div>
       <ul style="margin-top:.6rem;font-size:.92rem">
-        <li>De-Supabase self-host (~4 containers)</li>
+        <li>Self-host (~4 containers)</li>
         <li>PDP + community RBAC; Better Auth + SSO seam</li>
         <li>Integration backends · OpenTofu cutover</li>
         <li>More clouds · open-core <span class="mono">ee/</span></li>

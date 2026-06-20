@@ -57,11 +57,11 @@ Closest analogs: **Porter** (PaaS-in-your-cloud, proprietary), **Kubefirst** (OS
 
 $180k ARR sits **above the pre-seed bar, below the median seed bar on revenue alone** — but a genuine PMF signal that materially de-risks the round.
 
-- **Recommended (the founder's "small % at high valuation"):** **~$1.5M on a post-money SAFE at a ~$12–15M cap → ~10–12% dilution.** Enough to make the key hires + ship de-Supabase + `ee/` + V2; well under the ~18% dilution guardrail; clean cap table for Series A.
+- **Recommended (the founder's "small % at high valuation"):** **~$1.5M on a post-money SAFE at a ~$12–15M cap → ~10–12% dilution.** Enough to make the key hires + ship self-hosting + `ee/` + V2; well under the ~18% dilution guardrail; clean cap table for Series A.
 - *Faster alternative:* ~$3–4M at ~$18–20M post → ~18–20% — only if pushing hard for category dominance with a plan to deploy $3M.
 - **Instrument:** post-money SAFE, valuation-cap only, no discount stack (2025 default). **Incorporate first** (Delaware C-corp) — gating action item.
 
-**Use of funds:** de-Supabase self-host **25%** · enterprise auth + `ee/` **20%** · integration backends **15%** · V2 day-2 console **15%** · GTM / community / devrel (first non-eng hire) **15%** · first infra engineer + buffer **10%**.
+**Use of funds:** self-host **25%** · enterprise auth + `ee/` **20%** · integration backends **15%** · V2 day-2 console **15%** · GTM / community / devrel (first non-eng hire) **15%** · first infra engineer + buffer **10%**.
 **First hires:** founding devrel/GTM (feeds the only funnel you have), then a senior infra/platform engineer (de-risk the bus-factor-of-one).
 
 ## GTM — the path to $15k MRR
@@ -81,12 +81,12 @@ The model is **open-core**, bound by the **free-management-layer floor**: you *c
 - **The COSS premium compounds** — bootstrapping matures the community metric that unlocks it.
 
 **Trade-offs:** slower (9–18 mo of unfunded grind, est.); founder-runway risk; under-resourced exactly when speed matters.
-**When NOT to wait:** a credible competitor races to the "open-EKS-platform" narrative · a hard wall (de-Supabase/auth) blocks *already-sourced* paying deals · pre-emptive inbound from a fund you'd want, at a thesis-reflecting valuation · personal runway < ~3 months.
+**When NOT to wait:** a credible competitor races to the "open-EKS-platform" narrative · a hard wall (self-hosting/auth) blocks *already-sourced* paying deals · pre-emptive inbound from a fund you'd want, at a thesis-reflecting valuation · personal runway < ~3 months.
 
 ## Milestones that unlock the raise
 
 - **Revenue:** ~$15k MRR / $180k ARR · ≥10–12 paying accounts (none >~20%) · ≥1–2 enterprise on `ee/` SSO/RBAC/audit · NRR trending >100% · visible free→paid in/above the 1–3% band.
-- **Product:** AGPL-clean self-host shipped (de-Supabase "~4 containers" works for strangers — *this legitimizes the OSS metrics*) · `ee/` enterprise auth in production with a paying customer · multi-cloud real (AWS solid + a credible 2nd) · tight time-to-first-cluster.
+- **Product:** AGPL-clean self-host shipped (self-host "~4 containers" works for strangers — *this legitimizes the OSS metrics*) · `ee/` enterprise auth in production with a paying customer · multi-cloud real (AWS solid + a credible 2nd) · tight time-to-first-cluster.
 - **Community:** GitHub *trajectory* (slope > absolute), installs, contributors, active community.
 
 **The narrative at that point:** *"A solo founder bootstrapped a zero-trust, open-source EKS platform to $180k ARR with a real community, capital-efficiently, and is raising a small round to pour fuel on a fire that's already lit."* — the profile that commands the top of valuation, bottom of dilution.

@@ -31,7 +31,7 @@ A single deploy provisions and wires the whole platform:
 ## The four pillars
 
 1. **Zero-trust remote provisioning.** The runner assumes cloud roles at execution time; the control plane never sees or stores your keys.
-2. **Own it / self-hostable.** You own the cluster — and you can self-host the Alethia control plane itself as ~4 containers (no Supabase, no SaaS dependency). ([06-self-hosting-architecture](06-self-hosting-architecture.md))
+2. **Own it / self-hostable.** You own the cluster — and you can self-host the Alethia control plane itself as ~4 containers (no SaaS dependency). ([06-self-hosting-architecture](06-self-hosting-architecture.md))
 3. **GitOps app-delivery.** A real cluster + ArgoCD wired to your repo, using standard Kustomize/Helm — not a proprietary deploy pipeline you can't leave.
 4. **Pluggable integrations + multi-cloud.** Bring your own tools per category (Cloudflare DNS, Vault, Datadog/Grafana/Prometheus, Docker Hub) across many clouds. ([08-integrations-extensibility](08-integrations-extensibility.md), [09-multi-cloud-cluster-strategies](09-multi-cloud-cluster-strategies.md))
 

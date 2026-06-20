@@ -14,7 +14,7 @@ The core journeys, in the Alethia lexicon. The hero flow is **provision infrastr
 
 1. `git clone` + `cp .env.example .env` (Postgres URL, S3 endpoint+keys, OAuth secrets).
 2. `docker compose up` → **web · postgres · s3 (SeaweedFS) · node**. `drizzle-kit migrate` + seed run on first boot.
-3. First login via **Better Auth** (email/social). You now run the entire control plane — no Supabase, no SaaS. ([06](06-self-hosting-architecture.md))
+3. First login via **Better Auth** (email/social). You now run the entire control plane — no SaaS dependency. ([06](06-self-hosting-architecture.md))
 4. Connect a cloud + register a runner → provision (Flow 1). Optional `redis` profile only at scale.
 
 ## Flow 3 — Mix-and-match integrations

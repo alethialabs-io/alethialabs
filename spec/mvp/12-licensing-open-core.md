@@ -31,7 +31,7 @@ Precedent (the defensive-copyleft playbook):
 
 | Layer | License | Notes |
 |---|---|---|
-| **Free, self-hostable core** | AGPL-3.0 | Zero-trust remote provisioning, the integrations catalog ([08](08-integrations-extensibility.md)), single-tenant. Runs without Supabase or any single SaaS (see [06-self-hosting-architecture](06-self-hosting-architecture.md)). |
+| **Free, self-hostable core** | AGPL-3.0 | Zero-trust remote provisioning, the integrations catalog ([08](08-integrations-extensibility.md)), single-tenant. Runs without any single SaaS (see [06-self-hosting-architecture](06-self-hosting-architecture.md)). |
 | **Commercial / paid** | proprietary | Enterprise auth — SSO/SAML, RBAC, audit ([07-auth-rbac-sso](07-auth-rbac-sso.md)); multi-tenancy/orgs; the hosted/managed control plane; AI premium ([11](11-ai-scanner-mcp.md)). |
 
 The paid boundary is deliberately the **self-host line**: everything needed to run Alethia yourself is AGPL; the things a team pays Alethia Labs to *not* operate themselves (identity at enterprise grade, multi-tenancy, hosting) are commercial. Pricing detail lives in [14-gtm-pricing](14-gtm-pricing.md).

@@ -28,12 +28,12 @@ Everything heavy lives in the customer's bill. That's the whole margin story.
 | — per `DESTROY` | 10–20 min | ~$0.008–0.015 |
 | — `CONNECTION_TEST` / `FETCH` | <3 min | ~$0.002 |
 | — idle hold (scale-to-zero overhead) | ~5 min/job | ~$0.004/job |
-| **Control plane** (de-Supabase, ~4 containers) | ECS app + Postgres + SeaweedFS/S3 | **~$120/mo FIXED** (multi-tenant) |
+| **Control plane** (self-hosted, ~4 containers) | ECS app + Postgres + SeaweedFS/S3 | **~$120/mo FIXED** (multi-tenant) |
 | **Object storage** | ~10 MB TF state + artifacts + logs/cust | ~$0.02–0.10/cust/mo |
 | **AI premium** (repo scan) | ~50–200k tokens/scan (Claude) | ~$0.05–0.50/scan (model-dependent) |
 | **Support** | human time | priced into Enterprise |
 
-*(Control plane is ~$25/mo today on Supabase Pro; the ~$120/mo figure is the conservative de-Supabase target substrate — see [06-self-hosting-architecture](06-self-hosting-architecture.md).)*
+*(Control plane is ~$25/mo on the prior managed stack; the ~$120/mo figure is the conservative self-hosted target substrate — see [06-self-hosting-architecture](06-self-hosting-architecture.md).)*
 
 ## Per-customer COGS — amortization is the story
 
@@ -85,7 +85,7 @@ Our control plane + runners can run anywhere — runners only need network + the
 
 ## Caveats
 
-Cloud/API prices as of 2026 (verify). Runner durations are infra-grounded; per-customer op-counts and support time are assumptions to validate against real usage. COGS **excludes one-time engineering/build cost** (that's the raise, not COGS) and assumes the de-Supabase ~4-container control plane as the hosted substrate.
+Cloud/API prices as of 2026 (verify). Runner durations are infra-grounded; per-customer op-counts and support time are assumptions to validate against real usage. COGS **excludes one-time engineering/build cost** (that's the raise, not COGS) and assumes the self-hosted ~4-container control plane as the hosted substrate.
 
 ## Sources
 

@@ -21,7 +21,7 @@ Self-host footprint ≈ **4 containers** (web · postgres · s3 · node). See [0
 ## Control plane vs execution plane (the zero-trust split)
 
 - **Control plane** (Alethia web + Postgres): designs Specs, queues jobs, stores config and *identifiers* — never cloud secrets.
-- **Execution plane**: runs in/against the user's cloud, **assumes roles at execution time**, executes OpenTofu, streams logs back over plain HTTP. The control plane and runner share only an HTTP/S3/Postgres contract (`packages/core/api/api.go`) — which is why the runner is unaffected by the de-Supabase migration.
+- **Execution plane**: runs in/against the user's cloud, **assumes roles at execution time**, executes OpenTofu, streams logs back over plain HTTP. The control plane and runner share only an HTTP/S3/Postgres contract (`packages/core/api/api.go`) — which is why the runner is unaffected by the self-host architecture.
 
 ## The two-axis provider model
 

@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- [x] Supabase with `20260520_provision_broker.sql` migration applied
+- [x] Postgres with the `20260520_provision_broker.sql` migration applied
 - [x] Alethia deployed and accessible
 - [ ] Central runner deployed in Alethia's account (787587782604) via `terraform apply`
 - [ ] Central runner registered as cloud-hosted in Alethia

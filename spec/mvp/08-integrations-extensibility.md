@@ -4,7 +4,7 @@
 
 ## Why
 
-The catalog already exists; the backends don't. The `integrations` table (`supabase/migrations/20260528000200_create_integrations.sql`) is **data-driven** and already seeds six providers as `coming_soon`: **Cloudflare** (dns), **HashiCorp Vault** (secrets), **Datadog / Grafana Cloud / Prometheus** (observability), **Docker Hub** (registry). Component tables (`vine_dns`, `vine_secrets`, `vine_container_registries`) already gained a **`provider_config` JSONB** hook in the multi-cloud refactor (`20260531000100_multi_cloud_schema.sql`). So "implement integrations" = build **per-category provider backends** behind the existing card UI — not new plumbing.
+The catalog already exists; the backends don't. The `integrations` table (`lib/db/migrations`) is **data-driven** and already seeds six providers as `coming_soon`: **Cloudflare** (dns), **HashiCorp Vault** (secrets), **Datadog / Grafana Cloud / Prometheus** (observability), **Docker Hub** (registry). Component tables (`spec_dns`, `spec_secrets`, `spec_container_registries`) already gained a **`provider_config` JSONB** hook in the multi-cloud refactor (`20260531000100_multi_cloud_schema.sql`). So "implement integrations" = build **per-category provider backends** behind the existing card UI — not new plumbing.
 
 ## Today (the starting point)
 
@@ -51,7 +51,7 @@ A **category registry** (`map[category]map[slug]CategoryProvider`) is the single
    integration_credentials(id, user_id/org_id, integration_id FK, credentials JSONB, is_verified, created_at)
    ```
    (Subject to the same PDP/RLS scoping as everything else — [07](07-auth-rbac-sso.md).)
-2. **`provider` selector per component** — add a `provider` (slug) column to `vine_dns`, `vine_secrets`, `vine_container_registries` (default = the cluster cloud's native provider). Provider-specific options ride in the **existing `provider_config` JSONB**.
+2. **`provider` selector per component** — add a `provider` (slug) column to `spec_dns`, `spec_secrets`, `spec_container_registries` (default = the cluster cloud's native provider). Provider-specific options ride in the **existing `provider_config` JSONB**.
 3. **`vine_observability`** (new) — the missing component table; `enabled`, `provider` (datadog/grafana/prometheus/cloud-native), `provider_config`.
 
 ## Credential flow to the runner

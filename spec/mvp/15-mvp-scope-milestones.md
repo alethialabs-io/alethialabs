@@ -7,7 +7,7 @@
 Alethia MVP = an **open-source, self-hostable, multi-cloud, zero-trust** Kubernetes infrastructure control plane. The MVP proves the four pillars from [01-product-vision](01-product-vision.md):
 
 1. **Zero-trust remote provisioning** (already shipped — hardened, not built).
-2. **Self-hostable** — runs without Supabase or any single SaaS ([06](06-self-hosting-architecture.md)).
+2. **Self-hostable** — runs without any single SaaS ([06](06-self-hosting-architecture.md)).
 3. **Pluggable integrations** — at least one real provider per category from the existing catalog ([08](08-integrations-extensibility.md)).
 4. **Multi-cloud breadth** — more than the current 3 clouds, user's choice ([09](09-multi-cloud-cluster-strategies.md)).
 
@@ -24,7 +24,7 @@ Plus the foundation: rename, OpenTofu, AGPL/LICENSE.
 
 The technical milestones below ladder up to two product releases:
 
-- **V1 — "Provision & Own"** (launch). The complete, GitOps-wired cluster you own (already provisions + wires ArgoCD to your repo today), made **self-hostable + multi-tenant-ready + open-core** via the MVP work — plus a thin day-2 **visibility** layer (sync/cost/health) and the integration breadth. The wedge: be the *anti-Porter*. Spans **M0–M4** (rename + OpenTofu + de-Supabase + auth/RBAC + integrations + more clouds).
+- **V1 — "Provision & Own"** (launch). The complete, GitOps-wired cluster you own (already provisions + wires ArgoCD to your repo today), made **self-hostable + multi-tenant-ready + open-core** via the MVP work — plus a thin day-2 **visibility** layer (sync/cost/health) and the integration breadth. The wedge: be the *anti-Porter*. Spans **M0–M4** (rename + OpenTofu + self-hosting + auth/RBAC + integrations + more clouds).
 - **V2 — "Provision & Operate."** An Alethia-native day-2/app experience — deploys, logs, rollbacks, preview envs, ongoing cluster management — rivaling Porter/Qovery's DX while staying self-hostable + zero-trust. Net-new surface beyond the MVP. (AI repo-scanner/MCP — **M5** — can land in V1.5 or V2.)
 
 ## Milestone waves (dependency-ordered)
@@ -37,8 +37,8 @@ Each milestone: 1-line goal + concrete exit criteria. Cross-references the ownin
 - [ ] Root `LICENSE` (AGPL-3.0) + SPDX headers + license-scan CI ([12](12-licensing-open-core.md)).
 - [ ] OpenTofu swap validated by the no-spurious-diff test ([10](10-opentofu-migration.md)).
 
-### M1 — Self-hosting / de-Supabase  *(long pole)*
-**Goal:** the control plane runs on commodity infra (Postgres + S3-compatible + an identity layer), no Supabase.
+### M1 — Self-hosting  *(long pole)*
+**Goal:** the control plane runs on commodity infra (Postgres + S3-compatible + an identity layer), no managed BaaS.
 - [ ] DB authz strategy implemented (RLS-via-JWT or app-layer) for the 16 `auth.uid()` policies.
 - [ ] Realtime replacement shipped (decision in [06](06-self-hosting-architecture.md)).
 - [ ] Storage/TF-state on any S3-compatible store (MinIO verified).
@@ -47,7 +47,7 @@ Each milestone: 1-line goal + concrete exit criteria. Cross-references the ownin
 ### M2 — Enterprise auth  *(long pole)*
 **Goal:** SSO/RBAC/orgs; the paid open-core boundary.
 - [ ] Identity layer chosen (build-vs-adopt, [07](07-auth-rbac-sso.md)) and integrated.
-- [ ] OIDC/SAML SSO; RBAC model; git-provider OAuth survives de-Supabase.
+- [ ] OIDC/SAML SSO; RBAC model; git-provider OAuth survives the self-host cutover.
 - [ ] Orgs/multi-tenancy data model.
 
 ### M3 — Integrations catalog
@@ -66,13 +66,13 @@ Each milestone: 1-line goal + concrete exit criteria. Cross-references the ownin
 
 ## Timeline caveat (honest)
 
-This is a **broad** MVP. **M1 (de-Supabase) and M2 (identity) are the long poles** — both are large refactors (the architecture is settled in 06/07, so the risk is execution, not design). M3/M4 can partially parallelize once the de-Supabase boundary is stable. Sequencing M0 first de-risks everything downstream (clean engine + license before heavy refactors).
+This is a **broad** MVP. **M1 (self-hosting) and M2 (identity) are the long poles** — both are large refactors (the architecture is settled in 06/07, so the risk is execution, not design). M3/M4 can partially parallelize once the self-host boundary is stable. Sequencing M0 first de-risks everything downstream (clean engine + license before heavy refactors).
 
 ## Risk register
 
 | Risk | Likelihood / Impact | Mitigation |
 |---|---|---|
-| De-Supabase migration drags (4 subsystems) | High / High | Runner boundary already HTTP — scope to web tier + storage; tackle subsystems independently ([06](06-self-hosting-architecture.md)). |
+| Self-host migration drags (4 subsystems) | High / High | Runner boundary already HTTP — scope to web tier + storage; tackle subsystems independently ([06](06-self-hosting-architecture.md)). |
 | Identity build-vs-buy wrong call | Med / High | Decision doc with options + reversible adapter seam ([07](07-auth-rbac-sso.md)). |
 | Integration breadth scope-creep | High / Med | Ship one backend per category; catalog stays data-driven; rest stay `coming_soon`. |
 | Single-vendor / single-distro concentration | Med / Med | Multi-cloud + multi-strategy by design; no Hetzner/Talos lock-in. |

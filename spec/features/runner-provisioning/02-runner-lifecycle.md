@@ -46,18 +46,18 @@ After registration, the CLI deploys infrastructure:
 ## Job Execution
 
 1. Runner polls `POST /api/jobs/claim` every **10 seconds**
-2. Supabase RPC `claim_next_job()` atomically assigns the oldest `QUEUED` job
+2. `claim_next_job()` RPC atomically assigns the oldest `QUEUED` job
    - Uses `SELECT FOR UPDATE SKIP LOCKED` to prevent double-claims
    - For cloud-hosted: filters by `cloud_identity_id`
 3. Runner updates status to `PROCESSING`
 4. Executes: BOOTSTRAP, DEPLOY, or DESTROY via provisioner functions
-5. Logs streamed via `POST /api/jobs/{id}/logs` → `job_logs` table → Supabase Realtime
+5. Logs streamed via `POST /api/jobs/{id}/logs` → `job_logs` table → LISTEN/NOTIFY
 6. Final status: `SUCCESS` or `FAILED` with error message
 
 ## Stale Job Recovery
 
 The `recover_stale_jobs()` RPC handles orphaned jobs:
-- Runs periodically (should be called by a Supabase cron or from the Alethia backend)
+- Runs periodically (should be called by a scheduled job or from the Alethia backend)
 - Resets jobs to `QUEUED` if:
   - Status is `CLAIMED` or `PROCESSING`
   - `claimed_at` > 15 minutes ago

@@ -20,7 +20,7 @@ Alethia uses this lexicon throughout. Full standard + migration map: [A-rename-l
 
 An **open-source, self-hostable, multi-cloud, zero-trust** Kubernetes infrastructure control plane: design a **Spec**, provision any cloud from a remote **runner** with **zero stored credentials**, plug in the tools you already use, and **own the whole stack** — control plane included.
 
-The four pillars: zero-trust remote provisioning (shipped) · self-hostability (no Supabase lock-in) · pluggable integrations · multi-cloud breadth. License: **AGPL-3.0**, open-core.
+The four pillars: zero-trust remote provisioning (shipped) · self-hostability (no SaaS lock-in) · pluggable integrations · multi-cloud breadth. License: **AGPL-3.0**, open-core.
 
 ## Document map
 
@@ -32,7 +32,7 @@ The four pillars: zero-trust remote provisioning (shipped) · self-hostability (
 | 03 | [03-competitive-positioning](03-competitive-positioning.md) | vs TFC/Spacelift, Qovery/Porter/Northflank, Crossplane, Cloudfleet/Syself, DIY | ✅ |
 | 04 | [04-feature-inventory](04-feature-inventory.md) | SHIPPED vs TO-BUILD, grounded on real code | ✅ |
 | 05 | [05-architecture-overview](05-architecture-overview.md) | Topology, zero-trust split, two-axis model, data model | ✅ |
-| 06 | [06-self-hosting-architecture](06-self-hosting-architecture.md) ⭐ | The de-Supabase plan (DB/RLS, Auth, Realtime, Storage) | ✅ |
+| 06 | [06-self-hosting-architecture](06-self-hosting-architecture.md) ⭐ | The self-hosting architecture (DB/RLS, Auth, Realtime, Storage) | ✅ |
 | 07 | [07-auth-rbac-sso](07-auth-rbac-sso.md) ⭐ | PDP → OpenFGA, RLS backstop, orgs/SSO, open-core seams | ✅ |
 | 08 | [08-integrations-extensibility](08-integrations-extensibility.md) ⭐ | Pluggable per-category providers | ✅ |
 | 09 | [09-multi-cloud-cluster-strategies](09-multi-cloud-cluster-strategies.md) | Provider breadth; managed vs self-managed strategies | ✅ |

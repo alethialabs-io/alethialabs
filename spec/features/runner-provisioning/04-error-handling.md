@@ -93,7 +93,7 @@
 - Click to open log viewer
 
 **Log viewer:**
-- Real-time log streaming via Supabase Realtime
+- Real-time log streaming via SSE (Postgres LISTEN/NOTIFY)
 - STDOUT in normal text, STDERR in red
 - Line numbers and timestamps
 

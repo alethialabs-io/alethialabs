@@ -2,7 +2,7 @@
 
 **Status:** Accepted (architecture). This doc defines Alethia's identity and authorization, which is **both** the security foundation **and** the open-core paid boundary (orgs/RBAC/SSO are the commercial `ee/` tier — see [12-licensing-open-core](12-licensing-open-core.md)).
 
-Framing that drives every choice: today there is **no real authorization system** — just single-user Supabase RLS (`auth.uid() = user_id`), no org/role/permission/membership tables. So this is *introducing the first authorization layer while removing the only one that exists* ([06-self-hosting-architecture](06-self-hosting-architecture.md)). RBAC/orgs is 100% net-new → the paywall is net-new work, not a clawback.
+Framing that drives every choice: today there is **no real authorization system** — just single-user RLS (`user_id`-scoped), no org/role/permission/membership tables. So this is *introducing the first authorization layer while removing the only one that exists* ([06-self-hosting-architecture](06-self-hosting-architecture.md)). RBAC/orgs is 100% net-new → the paywall is net-new work, not a clawback.
 
 ---
 

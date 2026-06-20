@@ -29,9 +29,9 @@ Two capabilities, one tool layer:
 
 ## Why demoted (and the case to pull it forward)
 
-- **Demoted because:** the thesis is *ownership* (self-host + zero-trust + integrations + multi-cloud). AI is a differentiator best built on a stable, de-Supabased, authz'd base — not before it.
+- **Demoted because:** the thesis is *ownership* (self-host + zero-trust + integrations + multi-cloud). AI is a differentiator best built on a stable, self-hosted, authz'd base — not before it.
 - **Pull-forward case:** the repo→Spec scanner is the most demoable, "wow" feature and a strong funnel. If launch needs a headline beyond ownership, a *minimal* scanner (scan → propose → cost) can ship in the MVP with the full MCP layer as fast-follow.
 
 ## Dependencies
 
-Sits on the stable, versioned API/PDP from [07](07-auth-rbac-sso.md) and the integration/provider registries ([08](08-integrations-extensibility.md)/[09](09-multi-cloud-cluster-strategies.md)). Build after the de-Supabase + auth milestones unless explicitly pulled forward.
+Sits on the stable, versioned API/PDP from [07](07-auth-rbac-sso.md) and the integration/provider registries ([08](08-integrations-extensibility.md)/[09](09-multi-cloud-cluster-strategies.md)). Build after the self-hosting + auth milestones unless explicitly pulled forward.

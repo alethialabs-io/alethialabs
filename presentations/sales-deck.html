@@ -217,7 +217,7 @@ td{color:var(--text-2)}td:first-child,th:first-child{padding-left:0}td strong{co
     <tbody>
       <tr><td><strong>Is this lock-in?</strong></td><td>No. You get real EKS + ArgoCD + standard Kustomize/Helm, wired to your repo. There's nothing proprietary to be trapped in — leaving means nothing, because it's already yours.</td></tr>
       <tr><td><strong>Do you hold our keys?</strong></td><td>Never. The runner runs in your account and assumes scoped, short-lived roles at execution time. The control plane never sees or stores cloud credentials. Pluggable-provider secrets flow to the runner at runtime only — never in the config snapshot.</td></tr>
-      <tr><td><strong>Can we self-host?</strong></td><td>Yes — the entire control plane self-hosts as ~4 containers (Postgres + S3 + app + runner), AGPL-licensed. Run it air-gapped, in-region, under your own audit. No Supabase, no SaaS dependency.</td></tr>
+      <tr><td><strong>Can we self-host?</strong></td><td>Yes — the entire control plane self-hosts as ~4 containers (Postgres + S3 + app + runner), AGPL-licensed. Run it air-gapped, in-region, under your own audit. No SaaS dependency.</td></tr>
       <tr><td><strong>Is it real Terraform / real k8s?</strong></td><td>Yes. The Spec generates real OpenTofu you own and a real managed Kubernetes cluster. Not an abstraction over Terraform you can't see — the actual artifacts, in your account.</td></tr>
     </tbody>
   </table>

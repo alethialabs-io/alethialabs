@@ -31,7 +31,7 @@ Provisioning runs               ← Terraform (VPC, EKS, RDS, etc.)
     │                              Helm (ArgoCD install)
     │                              kubectl (ArgoCD manifests)
     ▼
-Logs stream in real time        ← job_logs table → Supabase Realtime → Alethia log viewer
+Logs stream in real time        ← job_logs table → LISTEN/NOTIFY → SSE → log viewer
     │
     ▼
 Infrastructure ready            ← User has EKS + ArgoCD + GitOps in their AWS account
@@ -41,7 +41,7 @@ Infrastructure ready            ← User has EKS + ArgoCD + GitOps in their AWS 
 
 ### 1. Sign Up / Login
 
-User creates account on Alethia (Supabase Auth). From CLI: `alethia login`.
+User creates account on Alethia (Better Auth). From CLI: `alethia login`.
 
 ### 2. Connect AWS Account
 

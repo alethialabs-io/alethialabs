@@ -32,7 +32,7 @@ User's AWS Account                     Alethia's AWS Account (787587782604)
 └─────────────────────┘                           │ HTTPS
                                                   ▼
                                        ┌─────────────────────────────────┐
-                                       │ Alethia (Vercel + Supabase)     │
+                                       │ Alethia (console + Postgres + S3)     │
                                        │ - provision_jobs queue          │
                                        │ - job_logs (Realtime)           │
                                        │ - cloud_identities              │

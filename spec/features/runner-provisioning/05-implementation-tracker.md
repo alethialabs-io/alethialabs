@@ -12,7 +12,7 @@ ONE cloud-hosted runner in Alethia's AWS account (`787587782604`) serves all use
 
 ---
 
-## Backend (Supabase)
+## Backend (Postgres)
 
 - [x] `cloud_identities` table with RLS
 - [x] `runners` table with RLS

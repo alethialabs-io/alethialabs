@@ -11,7 +11,7 @@ Honest **SHIPPED vs TO-BUILD**, re-grounded on the real code (the old inventory 
 **`alethia` CLI** (`apps/cli/cmd/`, distributed via Homebrew)
 - `spec apply` / `spec plan`, `zone`, `jobs` (list/get/logs/cancel/wait), `runner` (runner lifecycle), `clusters`. Device-code auth (custom JWT). Charmbracelet TUI. *(No `deploy`/`bootstrap`/`config` — those are gone.)*
 
-**Web control plane** (Next.js + Supabase today)
+**Web control plane** (Next.js + Postgres)
 - Visual **Spec** designer (multi-section form) with per-component infra tables; real-time **cost sidebar** (Infracost); live **job-log viewer**; runners dashboard; plan viewer; audit log.
 
 **Multi-cloud schema + templates**
@@ -30,7 +30,7 @@ Honest **SHIPPED vs TO-BUILD**, re-grounded on the real code (the old inventory 
 ## 🔨 To build — MVP (this spec set)
 | Area | Doc |
 |---|---|
-| De-Supabase: Better Auth + Drizzle + Postgres + SeaweedFS + SSE; RLS backstop | [06](06-self-hosting-architecture.md) |
+| Self-hosted stack: Better Auth + Drizzle + Postgres + SeaweedFS + SSE; RLS backstop | [06](06-self-hosting-architecture.md) |
 | Auth/RBAC/SSO: PDP + community RBAC → OpenFGA, orgs | [07](07-auth-rbac-sso.md) |
 | Integration backends: the 6 `coming_soon` providers + `integration_credentials` + `vine_observability` | [08](08-integrations-extensibility.md) |
 | Terraform → OpenTofu | [10](10-opentofu-migration.md) |
