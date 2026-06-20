@@ -1,21 +1,21 @@
-name: Terraform Azure Control Plane
+name: Infra - CP Azure
 
 on:
   pull_request:
     paths:
-      - 'infra/azure-cp/**'
+      - 'infra/cp-azure/**'
   push:
     branches: [main]
     paths:
-      - 'infra/azure-cp/**'
+      - 'infra/cp-azure/**'
 
 permissions:
   contents: read
   pull-requests: write
 
 env:
-  TF_DIR: infra/azure-cp
-  TF_VERSION: "1.10.3"
+  TF_DIR: infra/cp-azure
+  TOFU_VERSION: "1.9.0"
 
   # Azure provider auth (service principal).
   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
@@ -23,7 +23,7 @@ env:
   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
   ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
-  # Terraform variables.
+  # OpenTofu variables.
   TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
   TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
   TF_VAR_ssh_public_key: ${{ secrets.DEPLOY_SSH_PUBLIC_KEY }}
@@ -34,16 +34,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: opentofu/setup-opentofu@v1
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          tofu_version: ${{ env.TOFU_VERSION }}
 
-      - name: Terraform Init
+      - name: OpenTofu Init
         working-directory: ${{ env.TF_DIR }}
         # Backend creds passed explicitly (TF_STATE_S3_*) so they don't clash
         # with the Azure provider creds.
         run: |
-          terraform init \
+          tofu init -upgrade \
             -backend-config="bucket=terraform-state" \
             -backend-config="key=azure-cp/terraform.tfstate" \
             -backend-config="endpoint=${{ secrets.TF_STATE_S3_ENDPOINT }}" \
@@ -57,10 +57,10 @@ jobs:
             -backend-config="skip_s3_checksum=true" \
             -backend-config="force_path_style=true"
 
-      - name: Terraform Plan
+      - name: OpenTofu Plan
         id: plan
         working-directory: ${{ env.TF_DIR }}
-        run: terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
+        run: tofu plan -no-color -out=tfplan 2>&1 | tee plan.txt
         continue-on-error: true
 
       - name: Comment Plan on PR
@@ -70,7 +70,7 @@ jobs:
             const fs = require('fs');
             const plan = fs.readFileSync('${{ env.TF_DIR }}/plan.txt', 'utf8');
             const truncated = plan.length > 60000 ? plan.substring(0, 60000) + '\n\n... truncated ...' : plan;
-            const body = `### Terraform Plan (Azure control plane) \`${{ steps.plan.outcome }}\`
+            const body = `### OpenTofu Plan (Azure control plane) \`${{ steps.plan.outcome }}\`
 
             <details><summary>Show plan</summary>
 
@@ -97,14 +97,14 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: opentofu/setup-opentofu@v1
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          tofu_version: ${{ env.TOFU_VERSION }}
 
-      - name: Terraform Init
+      - name: OpenTofu Init
         working-directory: ${{ env.TF_DIR }}
         run: |
-          terraform init \
+          tofu init -upgrade \
             -backend-config="bucket=terraform-state" \
             -backend-config="key=azure-cp/terraform.tfstate" \
             -backend-config="endpoint=${{ secrets.TF_STATE_S3_ENDPOINT }}" \
@@ -118,6 +118,6 @@ jobs:
             -backend-config="skip_s3_checksum=true" \
             -backend-config="force_path_style=true"
 
-      - name: Terraform Apply
+      - name: OpenTofu Apply
         working-directory: ${{ env.TF_DIR }}
-        run: terraform apply -auto-approve
+        run: tofu apply -auto-approve

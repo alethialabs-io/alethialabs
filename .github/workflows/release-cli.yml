@@ -1,4 +1,4 @@
-name: Release alethia CLI
+name: Release CLI
 
 on:
   workflow_call:

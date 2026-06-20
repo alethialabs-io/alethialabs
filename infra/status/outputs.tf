@@ -13,7 +13,7 @@ output "server_ipv6" {
 
 # Reminder of the Cloudflare records to add by hand (DNS-only / grey cloud so
 # Caddy's ACME HTTP-01 challenge reaches the box). DNS is intentionally not
-# managed by this Terraform.
+# managed by this OpenTofu config.
 output "dns_records_to_add" {
   description = "Cloudflare records to create manually in the alethialabs.io zone."
   value       = <<-EOT

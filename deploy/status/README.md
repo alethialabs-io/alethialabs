@@ -14,7 +14,7 @@ production cluster.
 
 The bundled `docker-compose.yml` runs **Gatus** behind **Caddy**, which terminates
 HTTPS automatically (Let's Encrypt). Normally this is provisioned for you by
-`infra/status/` (Terraform → tiny Hetzner box + cloud-init). To run it by hand on
+`infra/status/` (OpenTofu → tiny Hetzner box + cloud-init). To run it by hand on
 any separate host:
 
 1. Copy this `deploy/status/` directory to the separate host (or `git clone` the repo).

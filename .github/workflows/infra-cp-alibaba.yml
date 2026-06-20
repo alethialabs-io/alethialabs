@@ -1,29 +1,27 @@
-name: Terraform Hetzner
+name: Infra - CP Alibaba
 
 on:
   pull_request:
     paths:
-      - 'infra/hetzner/**'
+      - 'infra/cp-alibaba/**'
   push:
     branches: [main]
     paths:
-      - 'infra/hetzner/**'
+      - 'infra/cp-alibaba/**'
 
 permissions:
   contents: read
   pull-requests: write
 
 env:
-  TF_DIR: infra/hetzner
-  TF_VERSION: "1.10.3"
+  TF_DIR: infra/cp-alibaba
+  TOFU_VERSION: "1.9.0"
 
-  # S3-compatible state backend credentials (read by the s3 backend).
-  # Dedicated TF_STATE_S3_* names — NOT the app's ALETHIA_STORAGE_* object store.
-  AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_S3_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_S3_SECRET_ACCESS_KEY }}
+  # Alibaba Cloud provider auth (RAM access key).
+  ALICLOUD_ACCESS_KEY: ${{ secrets.ALICLOUD_ACCESS_KEY }}
+  ALICLOUD_SECRET_KEY: ${{ secrets.ALICLOUD_SECRET_KEY }}
 
-  # Terraform variables.
-  TF_VAR_hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+  # OpenTofu variables.
   TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
   TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
   TF_VAR_ssh_public_key: ${{ secrets.DEPLOY_SSH_PUBLIC_KEY }}
@@ -34,18 +32,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: opentofu/setup-opentofu@v1
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          tofu_version: ${{ env.TOFU_VERSION }}
 
-      - name: Terraform Init
+      - name: OpenTofu Init
         working-directory: ${{ env.TF_DIR }}
+        # Backend creds passed explicitly (TF_STATE_S3_*) so they don't clash
+        # with the Alibaba provider creds.
         run: |
-          terraform init \
+          tofu init -upgrade \
             -backend-config="bucket=terraform-state" \
-            -backend-config="key=hetzner/terraform.tfstate" \
+            -backend-config="key=alibaba-cp/terraform.tfstate" \
             -backend-config="endpoint=${{ secrets.TF_STATE_S3_ENDPOINT }}" \
             -backend-config="region=${{ secrets.TF_STATE_S3_REGION }}" \
+            -backend-config="access_key=${{ secrets.TF_STATE_S3_ACCESS_KEY_ID }}" \
+            -backend-config="secret_key=${{ secrets.TF_STATE_S3_SECRET_ACCESS_KEY }}" \
             -backend-config="skip_credentials_validation=true" \
             -backend-config="skip_metadata_api_check=true" \
             -backend-config="skip_region_validation=true" \
@@ -53,10 +55,10 @@ jobs:
             -backend-config="skip_s3_checksum=true" \
             -backend-config="force_path_style=true"
 
-      - name: Terraform Plan
+      - name: OpenTofu Plan
         id: plan
         working-directory: ${{ env.TF_DIR }}
-        run: terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
+        run: tofu plan -no-color -out=tfplan 2>&1 | tee plan.txt
         continue-on-error: true
 
       - name: Comment Plan on PR
@@ -66,7 +68,7 @@ jobs:
             const fs = require('fs');
             const plan = fs.readFileSync('${{ env.TF_DIR }}/plan.txt', 'utf8');
             const truncated = plan.length > 60000 ? plan.substring(0, 60000) + '\n\n... truncated ...' : plan;
-            const body = `### Terraform Plan (Hetzner) \`${{ steps.plan.outcome }}\`
+            const body = `### OpenTofu Plan (Alibaba control plane) \`${{ steps.plan.outcome }}\`
 
             <details><summary>Show plan</summary>
 
@@ -93,18 +95,20 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: opentofu/setup-opentofu@v1
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          tofu_version: ${{ env.TOFU_VERSION }}
 
-      - name: Terraform Init
+      - name: OpenTofu Init
         working-directory: ${{ env.TF_DIR }}
         run: |
-          terraform init \
+          tofu init -upgrade \
             -backend-config="bucket=terraform-state" \
-            -backend-config="key=hetzner/terraform.tfstate" \
+            -backend-config="key=alibaba-cp/terraform.tfstate" \
             -backend-config="endpoint=${{ secrets.TF_STATE_S3_ENDPOINT }}" \
             -backend-config="region=${{ secrets.TF_STATE_S3_REGION }}" \
+            -backend-config="access_key=${{ secrets.TF_STATE_S3_ACCESS_KEY_ID }}" \
+            -backend-config="secret_key=${{ secrets.TF_STATE_S3_SECRET_ACCESS_KEY }}" \
             -backend-config="skip_credentials_validation=true" \
             -backend-config="skip_metadata_api_check=true" \
             -backend-config="skip_region_validation=true" \
@@ -112,6 +116,6 @@ jobs:
             -backend-config="skip_s3_checksum=true" \
             -backend-config="force_path_style=true"
 
-      - name: Terraform Apply
+      - name: OpenTofu Apply
         working-directory: ${{ env.TF_DIR }}
-        run: terraform apply -auto-approve
+        run: tofu apply -auto-approve

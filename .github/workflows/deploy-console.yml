@@ -1,4 +1,4 @@
-name: Deploy App
+name: Deploy Console
 
 # Continuous deploy of the alethialabs.io self-host bundle to the control-plane
 # VM (Hetzner or AWS — host-agnostic via DEPLOY_HOST): build the images → push
@@ -13,7 +13,7 @@ on:
       - 'apps/runner/**'
       - 'packages/**'
       - 'docker-compose.yml'
-      - 'deploy/hetzner/**'
+      - 'deploy/prod/**'
   workflow_dispatch:
 
 permissions:
@@ -27,7 +27,7 @@ env:
 jobs:
   build:
     # Native arm64 — the box is Hetzner CAX (Ampere) and the runner image is arm64.
-    runs-on: ubuntu-24.04-arm64
+    runs-on: ubuntu-24.04-arm
     strategy:
       matrix:
         include:
