@@ -26,9 +26,11 @@ import type {
 	ClusterProviderConfig,
 	DnsProviderConfig,
 	NosqlProviderConfig,
+	ObservabilityProviderConfig,
 	ProviderOutputs,
 	QueueProviderConfig,
 	RegistryProviderConfig,
+	SecretsProviderConfig,
 	StorageProviderConfig,
 	TopicSubscription,
 } from "@/types/database-custom.types";
@@ -98,11 +100,29 @@ export const specDns = pgTable("spec_dns", {
 	id: uuid().primaryKey().defaultRandom(),
 	spec_id: specRef().unique(),
 	enabled: boolean().default(false).notNull(),
+	// Pluggable provider selector (connectors.slug). NULL / "native" = the cluster
+	// cloud's native DNS (Route 53 / Cloud DNS / Azure DNS).
+	provider: text(),
 	zone_id: text(),
 	domain_name: text(),
 	managed_certificate: boolean().default(false),
 	waf_enabled: boolean().default(false),
 	provider_config: jsonb().$type<DnsProviderConfig>().default({}),
+	status: componentStatus().default("PENDING").notNull(),
+	status_message: text(),
+	estimated_monthly_cost: cost(),
+	created_at: ts(),
+	updated_at: ts(),
+});
+
+// Observability component — no cloud-native default today; provider chooses the
+// backend (datadog / grafana / prometheus). Singleton per spec like DNS.
+export const specObservability = pgTable("spec_observability", {
+	id: uuid().primaryKey().defaultRandom(),
+	spec_id: specRef().unique(),
+	enabled: boolean().default(false).notNull(),
+	provider: text(),
+	provider_config: jsonb().$type<ObservabilityProviderConfig>().default({}),
 	status: componentStatus().default("PENDING").notNull(),
 	status_message: text(),
 	estimated_monthly_cost: cost(),
@@ -242,6 +262,9 @@ export const specContainerRegistries = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		spec_id: specRef(),
 		name: text().notNull(),
+		// Pluggable provider selector (connectors.slug). NULL / "native" = the
+		// cluster cloud's native registry (ECR / Artifact Registry / ACR).
+		provider: text(),
 		repository_url: text(),
 		// Provider-specific knobs (immutable_tags, vulnerability_scanning) — neutral JSONB.
 		provider_config: jsonb().$type<RegistryProviderConfig>().default({}),
@@ -261,9 +284,14 @@ export const specSecrets = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		spec_id: specRef(),
 		name: text().notNull(),
+		// Pluggable provider selector (connectors.slug). NULL / "native" = the
+		// cluster cloud's native secrets store (Secrets Manager / Secret Manager / Key Vault).
+		provider: text(),
 		generate: boolean().default(true),
 		length: integer().default(32),
 		special_chars: boolean().default(true),
+		// Pluggable-provider knobs (Vault mount_path / kv_version) — neutral JSONB.
+		provider_config: jsonb().$type<SecretsProviderConfig>().default({}),
 		status: componentStatus().default("PENDING").notNull(),
 		status_message: text(),
 		created_at: ts(),

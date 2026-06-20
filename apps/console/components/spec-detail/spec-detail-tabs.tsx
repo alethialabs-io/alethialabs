@@ -38,7 +38,7 @@ export type SpecDetail = {
 		project_name: string;
 		status: string;
 		region: string;
-		terraform_version: string;
+		iac_version: string;
 		environment_stage: string;
 		estimated_monthly_cost: number | null;
 		[key: string]: unknown;

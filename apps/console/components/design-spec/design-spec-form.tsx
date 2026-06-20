@@ -89,7 +89,7 @@ function DesignSpecFormInner({ cloudIdentities, sourceSpec }: DesignSpecFormProp
 			environment_stage: "development",
 			region: "",
 			cloud_identity_id: "",
-			terraform_version: "1.11.4",
+			iac_version: "1.11.4",
 			zone_id: "",
 		},
 		network: {

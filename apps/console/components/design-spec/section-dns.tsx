@@ -11,6 +11,10 @@ import { Switch } from "@/components/ui/switch";
 import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
 import { useCloudProvider, useProviderMeta, useProviderSlug, WAF_OPTIONS, CERT_OPTIONS } from "@/lib/cloud-providers";
+import {
+	getIntegrationProvider,
+	getProvidersForCategory,
+} from "@/lib/integrations/registry.generated";
 import type {
 	CachedResources,
 	GcpCachedResources,
@@ -62,6 +66,12 @@ export function SectionDns() {
 	const wafOptions = WAF_OPTIONS[provider];
 	const certOption = CERT_OPTIONS[provider];
 
+	// Pluggable DNS providers (Cloudflare, …) offered alongside the cloud-native
+	// default. Empty / "native" selects the cluster cloud's native DNS.
+	const dnsProviders = getProvidersForCategory("dns");
+	const selectedDnsProvider = watch("dns.provider") || "native";
+	const pluggable = getIntegrationProvider("dns", selectedDnsProvider);
+
 	const handleZoneChange = (zoneId: string) => {
 		setValue("dns.zone_id", zoneId);
 		const zone = dnsZones.find((z) => z.id === zoneId);
@@ -84,6 +94,32 @@ export function SectionDns() {
 			</CardHeader>
 			{enabled && (
 				<CardContent className="space-y-4">
+					{dnsProviders.length > 0 && (
+						<div className="space-y-1.5">
+							<div className="flex items-center gap-1.5">
+								<Label className="text-xs">DNS Provider</Label>
+								<HelpTooltip topic="hosted-zone" />
+							</div>
+							<FormField control={control} name="dns.provider" render={({ field }) => (
+								<FormItem>
+									<Select value={field.value || "native"} onValueChange={field.onChange}>
+										<FormControl><SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger></FormControl>
+										<SelectContent>
+											<SelectItem value="native">Cloud-native ({meta.dnsService})</SelectItem>
+											{dnsProviders.map((p) => (
+												<SelectItem key={p.slug} value={p.slug}>{p.name}</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</FormItem>
+							)} />
+							{pluggable && (
+								<p className="text-[11px] text-muted-foreground">
+									Requires a connected {pluggable.name} credential in Connectors.
+								</p>
+							)}
+						</div>
+					)}
 					<div className="grid md:grid-cols-2 gap-4">
 						<div className="space-y-1.5">
 							<div className="flex items-center gap-1.5">

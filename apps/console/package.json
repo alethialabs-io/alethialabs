@@ -11,6 +11,7 @@
 		"check:no-supabase": "node scripts/check-no-supabase-data.mjs",
 		"check:ee-boundary": "node scripts/check-ee-boundary.mjs",
 		"check:authz-scope": "node scripts/check-authz-scope.mjs",
+		"gen:integrations": "node scripts/gen-integrations.mjs",
 		"db:generate": "drizzle-kit generate",
 		"db:migrate": "node scripts/migrate.mjs",
 		"db:studio": "drizzle-kit studio",

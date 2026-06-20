@@ -13,7 +13,7 @@ function buildValidFormData(overrides?: Partial<SpecFormData>): SpecFormData {
 			environment_stage: "development",
 			region: "eu-west-1",
 			cloud_identity_id: "660e8400-e29b-41d4-a716-446655440000",
-			terraform_version: "1.11.4",
+			iac_version: "1.11.4",
 		},
 		network: { provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true },
 		cluster: {
@@ -130,7 +130,7 @@ describe("CreateSpecInput → server action mapping", () => {
 		expect(parsed.spec.project_name).toBe("test-project");
 		expect(parsed.spec.environment_stage).toBe("development");
 		expect(parsed.spec.region).toBe("eu-west-1");
-		expect(parsed.spec.terraform_version).toBe("1.11.4");
+		expect(parsed.spec.iac_version).toBe("1.11.4");
 		expect(parsed.spec.zone_id).toBe("550e8400-e29b-41d4-a716-446655440000");
 		expect(parsed.spec.cloud_identity_id).toBe("660e8400-e29b-41d4-a716-446655440000");
 	});

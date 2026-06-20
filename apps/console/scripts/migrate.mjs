@@ -16,6 +16,7 @@ import postgres from "postgres";
 const here = dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = join(here, "../lib/db/migrations");
 const programmablesPath = join(here, "../lib/db/programmables.sql");
+const connectorsSeedPath = join(here, "../lib/db/seed/connectors.generated.sql");
 
 const url = process.env.ALETHIA_DATABASE_URL;
 if (!url) {
@@ -55,6 +56,9 @@ try {
 
 	console.log("→ applying programmables (functions, triggers, RLS)…");
 	await sql.unsafe(readFileSync(programmablesPath, "utf8"));
+
+	console.log("→ seeding connectors catalog (pluggable integrations)…");
+	await sql.unsafe(readFileSync(connectorsSeedPath, "utf8"));
 
 	const appPassword = process.env.ALETHIA_APP_DB_PASSWORD;
 	if (appPassword) {

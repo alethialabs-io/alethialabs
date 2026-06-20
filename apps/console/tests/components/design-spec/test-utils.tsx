@@ -15,7 +15,7 @@ const DEFAULT_VALUES: SpecFormData = {
 		region: "",
 		cloud_identity_id: "",
 		zone_id: "",
-		terraform_version: "1.11.4",
+		iac_version: "1.11.4",
 	},
 	network: { provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true },
 	cluster: {

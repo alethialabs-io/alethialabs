@@ -16,16 +16,21 @@ import {
 	saveGcpIdentity,
 } from "@/app/(private)/dashboard/providers/gcp-actions";
 import { deleteProviderToken } from "@/app/server/actions/identities";
-import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
+import {
+	deleteConnectorCredential,
+	type ConnectorWithConnection,
+} from "@/app/server/actions/connectors";
 import { ConnectorDetailSheet } from "@/components/connectors/connector-detail-sheet";
 import { ConnectorsList } from "@/components/connectors/connectors-list";
 import {
 	ConnectorsSidebar,
 	type CategoryFilter,
 } from "@/components/connectors/connectors-sidebar";
+import { ApiKeyConnection } from "@/components/connector/api-key-connection";
 import { AwsConnection } from "@/components/connector/aws-connection";
 import { AzureConnection } from "@/components/connector/azure-connection";
 import { GcpConnection } from "@/components/connector/gcp-connection";
+import { getIntegrationProviderBySlug } from "@/lib/integrations/registry.generated";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -74,6 +79,7 @@ export function ConnectorsPage({
 	const [awsSheetOpen, setAwsSheetOpen] = useState(false);
 	const [gcpSheetOpen, setGcpSheetOpen] = useState(false);
 	const [azureSheetOpen, setAzureSheetOpen] = useState(false);
+	const [apiKeySlug, setApiKeySlug] = useState<string | null>(null);
 	const [disconnectTarget, setDisconnectTarget] =
 		useState<ConnectorWithConnection | null>(null);
 	const [isDisconnecting, setIsDisconnecting] = useState(false);
@@ -138,6 +144,8 @@ export function ConnectorsPage({
 			setGcpSheetOpen(true);
 		} else if (integration.slug === "azure") {
 			setAzureSheetOpen(true);
+		} else if (integration.auth_method === "api_key") {
+			setApiKeySlug(integration.slug);
 		}
 		setDetailOpen(false);
 	};
@@ -180,6 +188,12 @@ export function ConnectorsPage({
 				if (!cloudIdentityId) throw new Error("Missing identity ID");
 				await disconnectAzureIdentity(cloudIdentityId);
 				toast.success("Azure subscription disconnected.");
+			} else if (disconnectTarget.auth_method === "api_key") {
+				const result = await deleteConnectorCredential(
+					disconnectTarget.slug,
+				);
+				if (!result.ok) throw new Error(result.error);
+				toast.success(`Disconnected ${disconnectTarget.name}.`);
 			}
 
 			setDisconnectTarget(null);
@@ -349,6 +363,45 @@ export function ConnectorsPage({
 							<AzureConnection onComplete={handleAzureConnect} />
 						)}
 					</div>
+				</SheetContent>
+			</Sheet>
+
+			{/* api_key Connection Sheet (Cloudflare, Vault, Docker Hub, …) */}
+			<Sheet
+				open={!!apiKeySlug}
+				onOpenChange={(open) => {
+					if (!open) {
+						setApiKeySlug(null);
+						router.refresh();
+					}
+				}}
+			>
+				<SheetContent
+					side="right"
+					className="w-full sm:max-w-md overflow-y-auto p-0"
+				>
+					{apiKeySlug &&
+						(() => {
+							const provider = getIntegrationProviderBySlug(apiKeySlug);
+							if (!provider) return null;
+							return (
+								<>
+									<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
+										<SheetTitle>Connect {provider.name}</SheetTitle>
+										<SheetDescription>
+											Provide an API credential. It is encrypted at rest
+											and only used by the runner at provision time.
+										</SheetDescription>
+									</SheetHeader>
+									<div className="px-6 py-6">
+										<ApiKeyConnection
+											provider={provider}
+											onConnected={() => setApiKeySlug(null)}
+										/>
+									</div>
+								</>
+							);
+						})()}
 				</SheetContent>
 			</Sheet>
 

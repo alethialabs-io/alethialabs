@@ -14,7 +14,7 @@ import { cloudIdentities } from "./identities";
 import { zones } from "./zones";
 
 // Spec — a declarative infrastructure config a user writes, inside a Zone.
-// region / terraform_version carry NO default: multi-cloud means the provider
+// region / iac_version carry NO default: multi-cloud means the provider
 // dictates valid regions, and the IaC version is chosen explicitly.
 export const specs = pgTable(
 	"specs",
@@ -30,7 +30,7 @@ export const specs = pgTable(
 		project_name: text().notNull(),
 		environment_stage: environmentStage().default("development").notNull(),
 		region: text().notNull(),
-		terraform_version: text().notNull(),
+		iac_version: text().notNull(),
 		status: specStatus().default("DRAFT").notNull(),
 		estimated_monthly_cost: numeric({ precision: 12, scale: 2, mode: "number" }),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),

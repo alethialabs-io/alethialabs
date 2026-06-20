@@ -197,7 +197,7 @@ SELECT
   s.region,
   ci.provider AS cloud_provider,
   ci.credentials->>'account_id' AS cloud_account_id,
-  s.terraform_version,
+  s.iac_version,
   s.status::text AS status,
   s.estimated_monthly_cost::float8 AS estimated_monthly_cost,
   s.created_at, s.updated_at,
@@ -259,7 +259,7 @@ $$ LANGUAGE plpgsql;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['zones', 'specs', 'cloud_identities', 'jobs', 'runners']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['zones', 'specs', 'cloud_identities', 'connector_credentials', 'jobs', 'runners']) LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS %1$s_set_org_id ON public.%1$I', tbl);
     EXECUTE format(
       'CREATE TRIGGER %1$s_set_org_id BEFORE INSERT ON public.%1$I
@@ -279,7 +279,7 @@ END $$;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['zones', 'specs', 'cloud_identities', 'jobs']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['zones', 'specs', 'cloud_identities', 'connector_credentials', 'jobs']) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(
@@ -317,7 +317,7 @@ DO $$
 DECLARE tbl TEXT;
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
-    'spec_network', 'spec_cluster', 'spec_dns', 'spec_repositories', 'spec_databases',
+    'spec_network', 'spec_cluster', 'spec_dns', 'spec_observability', 'spec_repositories', 'spec_databases',
     'spec_caches', 'spec_queues', 'spec_topics', 'spec_nosql_tables',
     'spec_container_registries', 'spec_secrets', 'spec_git_credentials', 'spec_storage_buckets'
   ]) LOOP

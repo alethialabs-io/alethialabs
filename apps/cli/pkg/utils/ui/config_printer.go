@@ -101,7 +101,7 @@ func PrintConfiguration(config types.Configuration) {
 
 	doc.WriteString(subHeaderStyle.Render("Advanced"))
 	doc.WriteString("\n")
-	doc.WriteString(kv("Terraform Version:", config.TerraformVersion))
+	doc.WriteString(kv("IaC Version:", config.IacVersion))
 	doc.WriteString("\n")
 
 	fmt.Println(doc.String())

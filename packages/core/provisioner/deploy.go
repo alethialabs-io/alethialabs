@@ -106,7 +106,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		return nil, fmt.Errorf("git-based deployment not yet supported in V2; use TemplatesDir")
 	}
 
-	tf, err := tofu.NewTofuCLI(ctx, vc.TerraformVersion, tfDir, stdout, stderr)
+	tf, err := tofu.NewTofuCLI(ctx, vc.IacVersion, tfDir, stdout, stderr)
 	if err != nil {
 		return nil, fmt.Errorf("tofu init failed: %w", err)
 	}

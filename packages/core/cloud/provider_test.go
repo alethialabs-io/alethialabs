@@ -61,7 +61,7 @@ func TestAWSProvider_ProviderTfvars(t *testing.T) {
 		ProjectName:      "test",
 		Region:           "us-east-1",
 		EnvironmentStage: "prod",
-		TerraformVersion: "1.11.4",
+		IacVersion:       "1.11.4",
 		Network: types.SpecNetworkConfig{
 			ProvisionNetwork: true,
 			CIDRBlock:        "10.0.0.0/16",

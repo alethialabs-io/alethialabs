@@ -7,7 +7,7 @@ import type { CloudProviderMeta } from "@/lib/cloud-providers";
 import { GitBranch, Globe, Network, Server, Settings2, type LucideIcon } from "lucide-react";
 
 interface InfrastructureTabProps {
-	spec: { region: string; terraform_version: string; environment_stage: string };
+	spec: { region: string; iac_version: string; environment_stage: string };
 	components: {
 		network: {
 			provision_network: boolean | null;
@@ -77,7 +77,7 @@ export function InfrastructureTab({ spec, components, providerMeta }: Infrastruc
 				</InfraRow>
 			)}
 			<InfraRow icon={Settings2} label="General">
-				Terraform v{spec.terraform_version} · {spec.region} · {spec.environment_stage}
+				OpenTofu v{spec.iac_version} · {spec.region} · {spec.environment_stage}
 			</InfraRow>
 		</div>
 	);

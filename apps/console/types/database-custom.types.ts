@@ -127,6 +127,9 @@ export interface DnsProviderConfig {
 	application_waf?: boolean;
 	cloud_armor?: boolean;
 	azure_waf?: boolean;
+	// Cloudflare (pluggable DNS provider)
+	zone_id?: string;
+	proxied?: boolean;
 }
 
 export interface NosqlProviderConfig {
@@ -136,6 +139,41 @@ export interface NosqlProviderConfig {
 export interface RegistryProviderConfig {
 	vulnerability_scanning?: boolean;
 	immutable_tags?: boolean;
+	// Docker Hub (pluggable registry provider)
+	namespace?: string;
+}
+
+// Vault (pluggable secrets provider) — non-secret knobs only; the address/token
+// credential lives in connector_credentials, never here.
+export interface SecretsProviderConfig {
+	mount_path?: string;
+	kv_version?: string;
+}
+
+// Datadog / Grafana Cloud / Prometheus — non-secret knobs only.
+export interface ObservabilityProviderConfig {
+	// Datadog
+	site?: string;
+	// Grafana Cloud / Prometheus remote-write
+	remote_write_url?: string;
+	// Prometheus (in-cluster)
+	retention_days?: string;
+}
+
+// AES-256-GCM envelope for the secret fields of a connector credential
+// (lib/crypto/secrets.ts). The plaintext is a JSON map of {fieldKey: value}.
+export interface EncryptedSecret {
+	v: number;
+	iv: string;
+	tag: string;
+	data: string;
+}
+
+// connector_credentials.credentials — non-secret fields (e.g. Vault address,
+// Docker Hub username) stored plaintext; secret fields encrypted into `secret`.
+export interface ConnectorCredentials {
+	fields?: Record<string, string>;
+	secret?: EncryptedSecret | null;
 }
 
 export interface StorageProviderConfig {

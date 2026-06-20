@@ -75,7 +75,7 @@ export function SectionCluster() {
 					</div>
 					<div className="space-y-1.5">
 						<Label className="text-xs">Terraform Version</Label>
-						<FormField control={control} name="spec.terraform_version" render={({ field }) => (
+						<FormField control={control} name="spec.iac_version" render={({ field }) => (
 							<FormItem>
 								<Select value={field.value || "1.11.4"} onValueChange={field.onChange}>
 									<FormControl><SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger></FormControl>

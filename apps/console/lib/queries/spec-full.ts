@@ -31,7 +31,7 @@ export type SpecFull = {
 	region: string;
 	cloud_provider: string | null;
 	cloud_account_id: string | null;
-	terraform_version: string;
+	iac_version: string;
 	status: string;
 	estimated_monthly_cost: number | null;
 	created_at: string;

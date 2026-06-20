@@ -51,7 +51,7 @@ type Configuration struct {
 	RedisAllowedCidrBlocks *string   `json:"redis_allowed_cidr_blocks"`
 	SesQueuesTopics        *string   `json:"ses_queues_topics"`
 	Status                 *string   `json:"status"`
-	TerraformVersion       string    `json:"terraform_version"`
+	IacVersion             string    `json:"iac_version"`
 	UiPositionX            *float64  `json:"ui_position_x"`
 	UiPositionY            *float64  `json:"ui_position_y"`
 	UpdatedAt              time.Time `json:"updated_at"`

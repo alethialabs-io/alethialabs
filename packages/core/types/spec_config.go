@@ -10,7 +10,7 @@ type SpecConfig struct {
 	ProjectName      string `json:"project_name"`
 	EnvironmentStage string `json:"environment_stage"`
 	Region           string `json:"region"`
-	TerraformVersion string `json:"terraform_version"`
+	IacVersion       string `json:"iac_version"`
 	CloudIdentityID  string `json:"cloud_identity_id"`
 	Provider         string `json:"provider"`
 

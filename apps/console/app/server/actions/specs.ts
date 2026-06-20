@@ -14,10 +14,12 @@ import {
 	type Spec,
 	specCaches,
 	specCluster,
+	specContainerRegistries,
 	specDatabases,
 	specDns,
 	specNetwork,
 	specNosqlTables,
+	specObservability,
 	specQueues,
 	specRepositories,
 	specSecrets,
@@ -54,7 +56,7 @@ export interface CreateSpecInput {
 		environment_stage: Spec["environment_stage"];
 		region: string;
 		cloud_identity_id?: string | null;
-		terraform_version: string;
+		iac_version: string;
 		zone_id?: string | null;
 	};
 	network: ComponentInsert<typeof specNetwork.$inferInsert>;
@@ -343,6 +345,15 @@ async function buildConfigSnapshot(owner: string, specId: string) {
 			.select()
 			.from(specSecrets)
 			.where(eq(specSecrets.spec_id, specId));
+		const containerRegistries = await tx
+			.select()
+			.from(specContainerRegistries)
+			.where(eq(specContainerRegistries.spec_id, specId));
+		const [observability] = await tx
+			.select()
+			.from(specObservability)
+			.where(eq(specObservability.spec_id, specId))
+			.limit(1);
 
 		if (network?.provision_network === false && !network?.network_id) {
 			const netLabel =
@@ -376,9 +387,16 @@ async function buildConfigSnapshot(owner: string, specId: string) {
 			},
 			dns: {
 				enabled: dns?.enabled ?? false,
+				// Pluggable DNS provider slug ("" / "native" = cloud-native).
+				provider: dns?.provider ?? "",
 				zone_id: dns?.zone_id,
 				domain_name: dns?.domain_name,
 				provider_config: dns?.provider_config ?? {},
+			},
+			observability: {
+				enabled: observability?.enabled ?? false,
+				provider: observability?.provider ?? "",
+				provider_config: observability?.provider_config ?? {},
 			},
 			repositories: {
 				apps_destination_repo: repos?.apps_destination_repo,
@@ -389,6 +407,7 @@ async function buildConfigSnapshot(owner: string, specId: string) {
 			topics,
 			nosql_tables: nosqlTables,
 			secrets,
+			container_registries: containerRegistries,
 			// Token is fetched at runtime by the runner via POST /api/jobs/[id]/git-token.
 			git_access_token: "",
 		};
@@ -517,7 +536,7 @@ export async function getSpecAsFormData(
 			environment_stage: source.spec.environment_stage,
 			region: source.spec.region,
 			cloud_identity_id: source.spec.cloud_identity_id ?? "",
-			terraform_version: source.spec.terraform_version,
+			iac_version: source.spec.iac_version,
 			zone_id: source.spec.zone_id ?? "",
 		},
 		network: source.components.network

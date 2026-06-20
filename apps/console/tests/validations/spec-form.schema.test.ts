@@ -11,7 +11,7 @@ const validSpec = {
 		environment_stage: "development" as const,
 		region: "eu-west-1",
 		cloud_identity_id: "660e8400-e29b-41d4-a716-446655440000",
-		terraform_version: "1.11.4",
+		iac_version: "1.11.4",
 	},
 	network: { provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true },
 	cluster: { cluster_version: "1.32", provider_config: { enable_karpenter: true }, instance_types: ["t3.medium"], node_min_size: 2, node_max_size: 5, node_desired_size: 2 },
