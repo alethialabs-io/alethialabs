@@ -48,6 +48,11 @@ function sqlLiteral(value) {
 
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 const providers = manifest.providers ?? [];
+// Built-in cloud/git connectors are catalog rows only (no module/credential
+// schema): seeded into the `connectors` table but NOT emitted to the TS registry.
+const builtin = manifest.builtin ?? [];
+// Full catalog (all rows) for the SQL seed; providers alone drive the TS registry.
+const catalogRows = [...builtin, ...providers];
 
 // ── registry.generated.ts ─────────────────────────────────────────────────────
 const ts = `${HEADER_TS}
@@ -129,7 +134,7 @@ mkdirSync(dirname(registryOut), { recursive: true });
 writeFileSync(registryOut, ts);
 
 // ── connectors.generated.sql ──────────────────────────────────────────────────
-const rows = providers
+const rows = catalogRows
 	.map((p) => {
 		const cols = [
 			sqlLiteral(p.slug),
@@ -168,5 +173,5 @@ mkdirSync(dirname(seedOut), { recursive: true });
 writeFileSync(seedOut, sqlText);
 
 console.log(
-	`✓ generated registry (${providers.length} providers) → lib/connectors/registry.generated.ts + lib/db/seed/connectors.generated.sql`,
+	`✓ generated registry (${providers.length} pluggable) + seed (${catalogRows.length} connectors) → lib/connectors/registry.generated.ts + lib/db/seed/connectors.generated.sql`,
 );
