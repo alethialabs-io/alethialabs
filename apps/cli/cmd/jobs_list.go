@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"math"
-	"os"
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -41,8 +40,7 @@ var jobsListCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
 		apiClient := api.NewClient(token)
@@ -60,8 +58,7 @@ var jobsListCmd = &cobra.Command{
 			}).Run()
 
 		if err != nil {
-			ui.Error(fmt.Sprintf("Failed to fetch jobs: %v", err))
-			os.Exit(1)
+			failf("Failed to fetch jobs: %v", err)
 		}
 
 		if page.Total == 0 {
@@ -82,8 +79,7 @@ var jobsListCmd = &cobra.Command{
 			zoneID:              jobsListZoneID,
 		})
 		if _, err := p.Run(); err != nil {
-			ui.Error(fmt.Sprintf("Table error: %v", err))
-			os.Exit(1)
+			failf("Table error: %v", err)
 		}
 	},
 }

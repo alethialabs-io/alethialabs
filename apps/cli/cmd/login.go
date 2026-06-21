@@ -157,27 +157,23 @@ func pollForToken(deviceCode, exchangeURL string) tea.Cmd {
 func saveTokens(tokens *types.ExchangeResponse) {
 	credsPath, err := getCredentialsPath()
 	if err != nil {
-		fmt.Printf("Error getting credentials path: %v\n", err)
-		os.Exit(1)
+		failf("Error getting credentials path: %v", err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(credsPath), 0755); err != nil {
-		fmt.Printf("Error creating config directory: %v\n", err)
-		os.Exit(1)
+		failf("Error creating config directory: %v", err)
 	}
 
 	file, err := os.Create(credsPath)
 	if err != nil {
-		fmt.Printf("Error creating credentials file: %v\n", err)
-		os.Exit(1)
+		failf("Error creating credentials file: %v", err)
 	}
 	defer file.Close()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(tokens); err != nil {
-		fmt.Printf("Error writing tokens to file: %v\n", err)
-		os.Exit(1)
+		failf("Error writing tokens to file: %v", err)
 	}
 }
 
@@ -187,7 +183,7 @@ func performLoginFlow() error {
 	prefs := loadPreferences()
 
 	if !prefs.HideLoginWarning {
-		infoBox := lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorText)).Border(lipgloss.RoundedBorder()).Padding(1, 2).BorderForeground(lipgloss.Color(ui.ColorAccent))
+		infoBox := lipgloss.NewStyle().Foreground(ui.InkPrimary).Border(lipgloss.RoundedBorder()).Padding(1, 2).BorderForeground(ui.InkMuted)
 
 		msg := fmt.Sprintf("To use the Alethia CLI, you must have an account on the Alethia.\nIf you don't have one, register at:\n%s", ui.LinkStyle.Render(WebOrigin()+"/auth/signin"))
 		fmt.Println(infoBox.Render(msg))
@@ -259,8 +255,7 @@ var loginCmd = &cobra.Command{
 
 		// 2. Proceed with login flow
 		if err := performLoginFlow(); err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 	},
 }

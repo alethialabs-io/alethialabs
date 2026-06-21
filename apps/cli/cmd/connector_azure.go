@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/cloudshell"
@@ -35,8 +34,7 @@ Azure Cloud Shell and paste back the tenant, client, and subscription IDs.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 		apiClient := api.NewClient(token)
 		steps := []string{"Subscription", "Create app registration", "Connection test"}
@@ -49,20 +47,17 @@ Azure Cloud Shell and paste back the tenant, client, and subscription IDs.`,
 					Description("The subscription Alethia should provision into").
 					Value(&connectorAzureSubscription),
 			)).Run(); err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				fail(err)
 			}
 		}
 		connectorAzureSubscription = strings.TrimSpace(connectorAzureSubscription)
 		if connectorAzureSubscription == "" {
-			ui.Error("A subscription ID is required")
-			os.Exit(1)
+			failf("A subscription ID is required")
 		}
 
 		initResp, err := initProviderIdentity(apiClient, "azure")
 		if err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 
 		ui.PrintStepper(steps, 1)
@@ -73,8 +68,7 @@ Azure Cloud Shell and paste back the tenant, client, and subscription IDs.`,
 			ids, err = azureLocalFlow(connectorAzureSubscription)
 		}
 		if err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 
 		ui.PrintStepper(steps, 2)
@@ -84,8 +78,7 @@ Azure Cloud Shell and paste back the tenant, client, and subscription IDs.`,
 			"subscription_id": ids.SubscriptionID,
 		}
 		if err := finalizeConnection(apiClient, "azure", initResp.IdentityID, creds); err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 
 		ui.Success(fmt.Sprintf("Azure subscription %q connected", ids.SubscriptionID))

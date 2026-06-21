@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/imroc/req/v3"
 )
@@ -94,8 +94,7 @@ func getAuthTokenInternal(promptLogin bool) (string, error) {
 			return "", fmt.Errorf("authentication required. Please run `alethia login`")
 		}
 
-		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-		fmt.Println(errorStyle.Render("✗ You are not logged in or your session has expired."))
+		fmt.Println(ui.ErrorStyle.Render(ui.SymbolError + " You are not logged in or your session has expired."))
 		fmt.Println()
 
 		var confirmLogin bool

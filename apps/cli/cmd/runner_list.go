@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -22,8 +21,7 @@ var runnerListCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
 		apiClient := api.NewClient(token)
@@ -36,8 +34,7 @@ var runnerListCmd = &cobra.Command{
 			}).Run()
 
 		if err != nil {
-			ui.Error(fmt.Sprintf("Failed to fetch runners: %v", err))
-			os.Exit(1)
+			failf("Failed to fetch runners: %v", err)
 		}
 
 		if len(runners) == 0 {
@@ -47,7 +44,7 @@ var runnerListCmd = &cobra.Command{
 
 		columns := []table.Column{
 			{Title: "Name", Width: 24},
-			{Title: "Mode", Width: 8},
+			{Title: "Operator", Width: 16},
 			{Title: "Status", Width: 12},
 			{Title: "Version", Width: 12},
 			{Title: "Default", Width: 8},
@@ -56,10 +53,7 @@ var runnerListCmd = &cobra.Command{
 
 		rows := make([]table.Row, len(runners))
 		for i, w := range runners {
-			modeLabel := "cloud"
-			if w.Mode == "self-hosted" {
-				modeLabel = "self"
-			}
+			opLabel := runnerOperatorLabel(w)
 
 			defaultLabel := ""
 			if w.IsDefault {
@@ -78,7 +72,7 @@ var runnerListCmd = &cobra.Command{
 
 			rows[i] = table.Row{
 				w.Name,
-				modeLabel,
+				opLabel,
 				fmt.Sprintf("%s %s", ui.PlainStatusDot(w.Status), strings.ToLower(w.Status)),
 				version,
 				defaultLabel,
@@ -88,8 +82,7 @@ var runnerListCmd = &cobra.Command{
 
 		m := ui.NewTableModel(columns, rows, "runners", "name", 0)
 		if _, err := tea.NewProgram(m).Run(); err != nil {
-			ui.Error(fmt.Sprintf("Table error: %v", err))
-			os.Exit(1)
+			failf("Table error: %v", err)
 		}
 	},
 }

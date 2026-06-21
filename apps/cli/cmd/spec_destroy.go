@@ -4,12 +4,10 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
-	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -26,45 +24,29 @@ var specDestroyCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
 		zoneID := ""
 
 		if specDestroySpecID == "" {
-			zoneID, _, err = selectZone(token)
+			zoneID, specDestroySpecID, err = selectZoneAndSpec(token)
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
-			}
-
-			specDestroySpecID, err = selectSpec(token, zoneID)
-			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				fail(err)
 			}
 		}
 
-		var confirm bool
-		confirmForm := huh.NewForm(
-			huh.NewGroup(
-				huh.NewConfirm().
-					Title("Are you sure you want to destroy this spec?").
-					Description("This will tear down all cloud resources. It cannot be undone.").
-					Value(&confirm),
-			),
-		)
-		if err := confirmForm.Run(); err != nil || !confirm {
-			fmt.Println("Operation cancelled.")
+		if !confirm(
+			"Are you sure you want to destroy this spec?",
+			"This will tear down all cloud resources. It cannot be undone.",
+		) {
 			return
 		}
 
 		if specDestroyRunnerID == "" {
 			specDestroyRunnerID, err = selectRunner(token, "")
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				fail(err)
 			}
 		}
 
@@ -81,8 +63,7 @@ var specDestroyCmd = &cobra.Command{
 
 		job, err := apiClient.QueueJobWithParams(params)
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			failf("Error: %v", err)
 		}
 
 		if specDestroyWait {

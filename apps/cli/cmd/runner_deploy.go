@@ -28,15 +28,13 @@ var runnerDeployCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
 		if deployCloudIdentityID == "" {
 			deployCloudIdentityID, err = selectCloudIdentity(token)
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				fail(err)
 			}
 		}
 
@@ -53,8 +51,7 @@ var runnerDeployCmd = &cobra.Command{
 				),
 			).Run()
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				fail(err)
 			}
 
 			if deployRunnerName == "" {
@@ -73,8 +70,7 @@ var runnerDeployCmd = &cobra.Command{
 				),
 			).Run()
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				fail(err)
 			}
 
 			if deployRegion == "" {
@@ -85,8 +81,7 @@ var runnerDeployCmd = &cobra.Command{
 		if deployAssignedID == "" {
 			deployAssignedID, err = selectRunner(token, "")
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				fail(err)
 			}
 		}
 
@@ -94,8 +89,7 @@ var runnerDeployCmd = &cobra.Command{
 
 		resp, err := apiClient.DeployRunner(deployRunnerName, deployCloudIdentityID, deployRegion, deployAssignedID)
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			failf("Error: %v", err)
 		}
 
 		ui.Success(fmt.Sprintf("Runner %q created (ID: %s)", resp.Runner.Name, resp.Runner.ID))

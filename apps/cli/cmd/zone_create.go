@@ -10,10 +10,10 @@ import (
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
-	"github.com/imroc/req/v3"
 	"github.com/spf13/cobra"
 )
 
@@ -49,8 +49,7 @@ var createZoneCmd = &cobra.Command{
 					fmt.Println("Aborted.")
 					os.Exit(0)
 				}
-				fmt.Printf("Error: %v\n", err)
-				os.Exit(1)
+				failf("Error: %v", err)
 			}
 		} else {
 			name = args[0]
@@ -59,54 +58,22 @@ var createZoneCmd = &cobra.Command{
 
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
-		createURL := fmt.Sprintf("%s/api/cli/zones", WebOrigin())
+		var zone *types.Zone
 
-		payload := map[string]string{
-			"name": name,
-		}
-		if desc != "" {
-			payload["description"] = desc
-		}
-
-		var result struct {
-			Zone types.Zone `json:"zone"`
-		}
-		var errMsg struct {
-			Error string `json:"error"`
-		}
-
-		var resp *req.Response
-		client := req.C()
-
-		action := func() {
-			resp, err = client.R().
-				SetBearerAuthToken(token).
-				SetBody(payload).
-				SetSuccessResult(&result).
-				SetErrorResult(&errMsg).
-				Post(createURL)
-		}
-
-		err = spinner.New().
+		spinner.New().
 			Title(fmt.Sprintf("Creating zone '%s'...", name)).
-			Action(action).
-			Run()
+			Action(func() {
+				zone, err = api.NewClient(token).CreateZone(name, desc)
+			}).Run()
 
 		if err != nil {
-			fmt.Printf("Error connecting to server: %v\n", err)
-			os.Exit(1)
+			failf("Error creating zone: %v", err)
 		}
 
-		if resp.IsErrorState() {
-			fmt.Printf("Error creating zone (HTTP %d): %s\n", resp.StatusCode, errMsg.Error)
-			os.Exit(1)
-		}
-
-		ui.Success(fmt.Sprintf("Created zone '%s' (ID: %s)", result.Zone.Name, result.Zone.ID))
+		ui.Success(fmt.Sprintf("Created zone '%s' (ID: %s)", zone.Name, zone.ID))
 	},
 }
 

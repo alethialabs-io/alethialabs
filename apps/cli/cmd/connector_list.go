@@ -4,8 +4,6 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -24,8 +22,7 @@ var connectorListCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 		apiClient := api.NewClient(token)
 
@@ -36,8 +33,7 @@ var connectorListCmd = &cobra.Command{
 				identities, err = apiClient.GetCloudIdentities()
 			}).Run()
 		if err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 
 		if len(identities) == 0 {
@@ -61,8 +57,7 @@ var connectorListCmd = &cobra.Command{
 
 		m := ui.NewTableModel(columns, rows, "connections", "provider", 0)
 		if _, err := tea.NewProgram(m).Run(); err != nil {
-			ui.Error(fmt.Sprintf("Table error: %v", err))
-			os.Exit(1)
+			failf("Table error: %v", err)
 		}
 	},
 }

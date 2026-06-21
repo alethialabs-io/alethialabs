@@ -4,7 +4,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -17,8 +16,7 @@ var logoutCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		credsPath, err := getCredentialsPath()
 		if err != nil {
-			ui.Error(fmt.Sprintf("Error getting credentials path: %v", err))
-			os.Exit(1)
+			failf("Error getting credentials path: %v", err)
 		}
 
 		if _, err := os.Stat(credsPath); os.IsNotExist(err) {
@@ -27,8 +25,7 @@ var logoutCmd = &cobra.Command{
 		}
 
 		if err := os.Remove(credsPath); err != nil {
-			ui.Error(fmt.Sprintf("Error logging out: %v", err))
-			os.Exit(1)
+			failf("Error logging out: %v", err)
 		}
 
 		ui.Success("Successfully logged out.")

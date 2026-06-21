@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/cloudshell"
@@ -38,8 +37,7 @@ it from the AWS console and paste back the role ARN.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 		apiClient := api.NewClient(token)
 		steps := []string{"Initialize", "Create IAM role", "Connection test"}
@@ -47,12 +45,10 @@ it from the AWS console and paste back the role ARN.`,
 		ui.PrintStepper(steps, 0)
 		initResp, err := initProviderIdentity(apiClient, "aws")
 		if err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 		if initResp.ExternalID == "" {
-			ui.Error("Backend did not return an external id")
-			os.Exit(1)
+			failf("Backend did not return an external id")
 		}
 
 		ui.PrintStepper(steps, 1)
@@ -63,15 +59,13 @@ it from the AWS console and paste back the role ARN.`,
 			roleArn, err = awsLocalFlow(initResp.ExternalID)
 		}
 		if err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 
 		ui.PrintStepper(steps, 2)
 		if err := finalizeConnection(apiClient, "aws", initResp.IdentityID,
 			map[string]interface{}{"role_arn": roleArn}); err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 
 		ui.Success(fmt.Sprintf("AWS account connected (role %s)", roleArn))

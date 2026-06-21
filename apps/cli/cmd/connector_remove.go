@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -27,8 +26,7 @@ picker.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 		apiClient := api.NewClient(token)
 
@@ -39,8 +37,7 @@ picker.`,
 				identities, err = apiClient.GetCloudIdentities()
 			}).Run()
 		if err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 		if len(identities) == 0 {
 			ui.Muted("No cloud accounts connected.")
@@ -49,30 +46,18 @@ picker.`,
 
 		selected, err := pickIdentity(identities, args)
 		if err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 
-		if !connectorRemoveYes {
-			confirm := false
-			if err := huh.NewForm(huh.NewGroup(
-				huh.NewConfirm().
-					Title(fmt.Sprintf("Disconnect %s?", selected.Label)).
-					Description("Specs using this account will be orphaned.").
-					Value(&confirm),
-			)).Run(); err != nil {
-				fmt.Println(err)
-				os.Exit(1)
-			}
-			if !confirm {
-				ui.Muted("Cancelled.")
-				return
-			}
+		if !connectorRemoveYes && !confirm(
+			fmt.Sprintf("Disconnect %s?", selected.Label),
+			"Specs using this account will be orphaned.",
+		) {
+			return
 		}
 
 		if err := apiClient.DisconnectProviderIdentity(selected.Provider, selected.ID); err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 		ui.Success(fmt.Sprintf("Disconnected %s", selected.Label))
 	},

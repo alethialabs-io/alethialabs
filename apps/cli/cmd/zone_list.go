@@ -5,28 +5,13 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh/spinner"
-	"github.com/imroc/req/v3"
 	"github.com/spf13/cobra"
 )
-
-type zoneWithSpecs struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Description *string `json:"description"`
-	CreatedAt   string  `json:"created_at"`
-	Specs       []struct {
-		ID               string `json:"id"`
-		ProjectName      string `json:"project_name"`
-		EnvironmentStage string `json:"environment_stage"`
-		Status           string `json:"status"`
-		Region           string `json:"region"`
-	} `json:"specs"`
-}
 
 var listZonesCmd = &cobra.Command{
 	Use:   "list",
@@ -34,38 +19,28 @@ var listZonesCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
-		webOrigin := getWebOrigin()
-		reqClient := req.C()
-
-		var result struct {
-			Zones []zoneWithSpecs `json:"zones"`
-		}
+		var zones []api.ZoneWithSpecs
 
 		spinner.New().
 			Title("Fetching zones...").
 			Action(func() {
-				_, err = reqClient.R().
-					SetBearerAuthToken(token).
-					SetSuccessResult(&result).
-					Get(fmt.Sprintf("%s/api/cli/zones", webOrigin))
+				zones, err = api.NewClient(token).GetZones()
 			}).Run()
 
 		if err != nil {
-			ui.Error(fmt.Sprintf("Failed to fetch zones: %v", err))
-			os.Exit(1)
+			failf("Failed to fetch zones: %v", err)
 		}
 
-		if len(result.Zones) == 0 {
+		if len(zones) == 0 {
 			ui.Muted("No zones found. Create one with `alethia zone create`.")
 			return
 		}
 
 		fmt.Println()
-		for i, v := range result.Zones {
+		for i, v := range zones {
 			fmt.Printf("  %s", ui.AccentStyle.Render(v.Name))
 			fmt.Println(ui.MutedStyle.Render(fmt.Sprintf(" (%d specs)", len(v.Specs))))
 
@@ -99,7 +74,7 @@ var listZonesCmd = &cobra.Command{
 				fmt.Printf("  %s\n", ui.MutedStyle.Render("  (no specs)"))
 			}
 
-			if i < len(result.Zones)-1 {
+			if i < len(zones)-1 {
 				fmt.Println(ui.MutedStyle.Render(strings.Repeat("─", 50)))
 			}
 		}

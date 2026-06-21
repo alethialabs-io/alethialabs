@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -22,8 +21,7 @@ var jobsCancelCmd = &cobra.Command{
 
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
 		apiClient := api.NewClient(token)
@@ -35,8 +33,7 @@ var jobsCancelCmd = &cobra.Command{
 			}).Run()
 
 		if err != nil {
-			ui.Error(fmt.Sprintf("Failed to cancel job: %v", err))
-			os.Exit(1)
+			failf("Failed to cancel job: %v", err)
 		}
 
 		ui.Success(fmt.Sprintf("Job %s cancelled", jobID))

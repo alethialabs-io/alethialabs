@@ -8,10 +8,9 @@ import (
 	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
-	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
-	"github.com/imroc/req/v3"
 	"github.com/spf13/cobra"
 )
 
@@ -23,53 +22,29 @@ var deleteZoneCmd = &cobra.Command{
 		var id string
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
-		webOrigin := WebOrigin()
-
 		if len(args) == 0 {
-			var result struct {
-				Zones []types.Zone `json:"zones"`
-			}
-			var errMsg struct {
-				Error string `json:"error"`
-			}
+			var zones []api.ZoneWithSpecs
 
-			client := req.C()
-			listURL := fmt.Sprintf("%s/api/cli/zones", webOrigin)
-
-			var resp *req.Response
-			action := func() {
-				resp, err = client.R().
-					SetBearerAuthToken(token).
-					SetSuccessResult(&result).
-					SetErrorResult(&errMsg).
-					Get(listURL)
-			}
-
-			err = spinner.New().
+			spinner.New().
 				Title("Fetching zones...").
-				Action(action).
-				Run()
+				Action(func() {
+					zones, err = api.NewClient(token).GetZones()
+				}).Run()
 
 			if err != nil {
-				fmt.Printf("Error connecting to server: %v\n", err)
-				os.Exit(1)
-			}
-			if resp.IsErrorState() {
-				fmt.Printf("Error fetching zones (HTTP %d): %s\n", resp.StatusCode, errMsg.Error)
-				os.Exit(1)
+				failf("Error fetching zones: %v", err)
 			}
 
-			if len(result.Zones) == 0 {
+			if len(zones) == 0 {
 				fmt.Println("No zones found to delete.")
 				os.Exit(0)
 			}
 
-			options := make([]huh.Option[string], len(result.Zones))
-			for i, v := range result.Zones {
+			options := make([]huh.Option[string], len(zones))
+			for i, v := range zones {
 				options[i] = huh.NewOption(fmt.Sprintf("%s (%s)", v.Name, v.ID), v.ID)
 			}
 
@@ -88,57 +63,27 @@ var deleteZoneCmd = &cobra.Command{
 					fmt.Println("Aborted.")
 					os.Exit(0)
 				}
-				fmt.Printf("Error: %v\n", err)
-				os.Exit(1)
+				failf("Error: %v", err)
 			}
 		} else {
 			id = args[0]
 		}
 
-		var confirm bool
-		err = huh.NewForm(
-			huh.NewGroup(
-				huh.NewConfirm().
-					Title(fmt.Sprintf("Are you sure you want to delete zone %s?", id)).
-					Description("This action cannot be undone.").
-					Value(&confirm),
-			),
-		).Run()
-
-		if err != nil || !confirm {
-			fmt.Println("Aborted.")
-			os.Exit(0)
+		if !confirm(
+			fmt.Sprintf("Are you sure you want to delete zone %s?", id),
+			"This action cannot be undone.",
+		) {
+			return
 		}
 
-		deleteURL := fmt.Sprintf("%s/api/cli/zones/%s", webOrigin, id)
-
-		var errMsg struct {
-			Error string `json:"error"`
-		}
-
-		var resp *req.Response
-		client := req.C()
-
-		deleteAction := func() {
-			resp, err = client.R().
-				SetBearerAuthToken(token).
-				SetErrorResult(&errMsg).
-				Delete(deleteURL)
-		}
-
-		err = spinner.New().
+		spinner.New().
 			Title(fmt.Sprintf("Deleting zone %s...", id)).
-			Action(deleteAction).
-			Run()
+			Action(func() {
+				err = api.NewClient(token).DeleteZone(id)
+			}).Run()
 
 		if err != nil {
-			fmt.Printf("Error connecting to server: %v\n", err)
-			os.Exit(1)
-		}
-
-		if resp.IsErrorState() {
-			fmt.Printf("Error deleting zone (HTTP %d): %s\n", resp.StatusCode, errMsg.Error)
-			os.Exit(1)
+			failf("Error deleting zone: %v", err)
 		}
 
 		ui.Success(fmt.Sprintf("Deleted zone (ID: %s)", id))

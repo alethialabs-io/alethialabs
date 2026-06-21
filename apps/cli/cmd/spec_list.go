@@ -5,17 +5,16 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh/spinner"
 	"github.com/dustin/go-humanize"
-	"github.com/imroc/req/v3"
 	"github.com/spf13/cobra"
 )
 
@@ -25,31 +24,22 @@ var listSpecsCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
-		webOrigin := getWebOrigin()
-		client := req.C()
-		var result struct {
-			Configurations []types.ConfigurationSummary `json:"configurations"`
-		}
+		var configs []types.ConfigurationSummary
 
 		spinner.New().
 			Title("Fetching specs...").
 			Action(func() {
-				_, err = client.R().
-					SetBearerAuthToken(token).
-					SetSuccessResult(&result).
-					Get(fmt.Sprintf("%s/api/cli/configurations", webOrigin))
+				configs, err = api.NewClient(token).GetConfigurations()
 			}).Run()
 
 		if err != nil {
-			ui.Error(fmt.Sprintf("Failed to fetch specs: %v", err))
-			os.Exit(1)
+			failf("Failed to fetch specs: %v", err)
 		}
 
-		if len(result.Configurations) == 0 {
+		if len(configs) == 0 {
 			ui.Muted("No specs found. Create one through Alethia.")
 			return
 		}
@@ -64,8 +54,8 @@ var listSpecsCmd = &cobra.Command{
 			{Title: "Updated", Width: 14},
 		}
 
-		rows := make([]table.Row, len(result.Configurations))
-		for i, v := range result.Configurations {
+		rows := make([]table.Row, len(configs))
+		for i, v := range configs {
 			provider := strings.ToUpper(v.CloudProvider)
 			if provider == "" {
 				provider = ui.SymbolDash
@@ -99,8 +89,7 @@ var listSpecsCmd = &cobra.Command{
 
 		m := ui.NewTableModel(columns, rows, "specs", "project", 0)
 		if _, err := tea.NewProgram(m).Run(); err != nil {
-			ui.Error(fmt.Sprintf("Table error: %v", err))
-			os.Exit(1)
+			failf("Table error: %v", err)
 		}
 	},
 }

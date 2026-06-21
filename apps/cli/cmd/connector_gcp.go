@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/cloudshell"
@@ -37,8 +36,7 @@ installer in the browser Cloud Shell and paste the result.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 		apiClient := api.NewClient(token)
 		steps := []string{"Project", "Cloud Shell setup", "Connection test"}
@@ -51,20 +49,17 @@ installer in the browser Cloud Shell and paste the result.`,
 					Description("The project Alethia should provision into").
 					Value(&connectorGcpProject),
 			)).Run(); err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				fail(err)
 			}
 		}
 		connectorGcpProject = strings.TrimSpace(connectorGcpProject)
 		if connectorGcpProject == "" {
-			ui.Error("A project ID is required")
-			os.Exit(1)
+			failf("A project ID is required")
 		}
 
 		initResp, err := initProviderIdentity(apiClient, "gcp")
 		if err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 
 		ui.PrintStepper(steps, 1)
@@ -75,21 +70,18 @@ installer in the browser Cloud Shell and paste the result.`,
 			wifJSON, err = gcpCloudShellFlow(connectorGcpProject)
 		}
 		if err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 
 		var wif interface{}
 		if err := json.Unmarshal([]byte(wifJSON), &wif); err != nil {
-			ui.Error("Captured WIF config is not valid JSON: " + err.Error())
-			os.Exit(1)
+			failf("%s", "Captured WIF config is not valid JSON: "+err.Error())
 		}
 
 		ui.PrintStepper(steps, 2)
 		if err := finalizeConnection(apiClient, "gcp", initResp.IdentityID,
 			map[string]interface{}{"wif_config": wif}); err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 
 		ui.Success(fmt.Sprintf("GCP project %q connected", connectorGcpProject))

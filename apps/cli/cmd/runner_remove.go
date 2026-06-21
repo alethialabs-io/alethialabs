@@ -9,7 +9,6 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
-	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
@@ -21,8 +20,7 @@ var runnerRemoveCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
 		runnerID := ""
@@ -31,8 +29,7 @@ var runnerRemoveCmd = &cobra.Command{
 		} else {
 			runnerID, err = selectRunner(token, "")
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				fail(err)
 			}
 			if runnerID == "" {
 				fmt.Println("Please select a specific runner, not 'Any available'.")
@@ -40,17 +37,10 @@ var runnerRemoveCmd = &cobra.Command{
 			}
 		}
 
-		var confirm bool
-		confirmForm := huh.NewForm(
-			huh.NewGroup(
-				huh.NewConfirm().
-					Title("Remove this runner record?").
-					Description("This only removes the database record. Cloud resources will NOT be torn down.").
-					Value(&confirm),
-			),
-		)
-		if err := confirmForm.Run(); err != nil || !confirm {
-			fmt.Println("Operation cancelled.")
+		if !confirm(
+			"Remove this runner record?",
+			"This only removes the database record. Cloud resources will NOT be torn down.",
+		) {
 			return
 		}
 
@@ -63,8 +53,7 @@ var runnerRemoveCmd = &cobra.Command{
 			}).Run()
 
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			failf("Error: %v", err)
 		}
 
 		ui.Success(fmt.Sprintf("Runner record removed (ID: %s)", runnerID))

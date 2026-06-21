@@ -5,17 +5,13 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
-	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
-	"github.com/imroc/req/v3"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )
-
-var openSpecInBrowser bool
 
 var specGetCmd = &cobra.Command{
 	Use:   "get [project_name]",
@@ -26,45 +22,24 @@ var specGetCmd = &cobra.Command{
 
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
-		webOrigin := getWebOrigin()
-		getURL := fmt.Sprintf("%s/api/cli/configurations/by-project-name/%s", webOrigin, projectName)
+		openInBrowser, _ := cmd.Flags().GetBool("open")
 
-		client := req.C()
-		var result struct {
-			Configuration types.Configuration `json:"configuration"`
-		}
-		var errMsg struct {
-			Error string `json:"error"`
-		}
-
-		resp, err := client.R().
-			SetBearerAuthToken(token).
-			SetSuccessResult(&result).
-			SetErrorResult(&errMsg).
-			Get(getURL)
-
+		config, err := api.NewClient(token).GetConfiguration(projectName)
 		if err != nil {
-			ui.Error(fmt.Sprintf("Failed to connect to server: %v", err))
-			os.Exit(1)
+			failf("Failed to fetch spec: %v", err)
 		}
 
-		if resp.IsErrorState() {
-			ui.Error(fmt.Sprintf("Failed to fetch spec (HTTP %d): %s", resp.StatusCode, errMsg.Error))
-			os.Exit(1)
-		}
-
-		if result.Configuration.ID == "" {
+		if config == nil || config.ID == "" {
 			ui.Muted(fmt.Sprintf("No spec found for project: %s", projectName))
 			return
 		}
 
-		ui.PrintConfiguration(result.Configuration)
+		ui.PrintConfiguration(*config)
 
-		if !openSpecInBrowser {
+		if !openInBrowser {
 			var confirm bool
 			err := huh.NewForm(
 				huh.NewGroup(
@@ -77,12 +52,12 @@ var specGetCmd = &cobra.Command{
 				),
 			).Run()
 			if err == nil {
-				openSpecInBrowser = confirm
+				openInBrowser = confirm
 			}
 		}
 
-		if openSpecInBrowser {
-			url := fmt.Sprintf("%s/dashboard", webOrigin)
+		if openInBrowser {
+			url := fmt.Sprintf("%s/dashboard", WebOrigin())
 			fmt.Printf("Opening in browser: %s\n", url)
 			if err := browser.OpenURL(url); err != nil {
 				ui.Error(fmt.Sprintf("Failed to open browser: %v", err))
@@ -93,5 +68,5 @@ var specGetCmd = &cobra.Command{
 
 func init() {
 	specCmd.AddCommand(specGetCmd)
-	specGetCmd.Flags().BoolVarP(&openSpecInBrowser, "open", "o", false, "Open the spec in the web browser")
+	specGetCmd.Flags().BoolP("open", "o", false, "Open the spec in the web browser")
 }

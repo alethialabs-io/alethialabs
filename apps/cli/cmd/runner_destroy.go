@@ -9,7 +9,6 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
-	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -26,15 +25,13 @@ var runnerDestroyCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
 		if destroyRunnerID == "" {
 			destroyRunnerID, err = selectRunner(token, "")
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				fail(err)
 			}
 			if destroyRunnerID == "" {
 				fmt.Println("Please select a specific runner to destroy, not 'Any available'.")
@@ -42,25 +39,17 @@ var runnerDestroyCmd = &cobra.Command{
 			}
 		}
 
-		var confirm bool
-		confirmForm := huh.NewForm(
-			huh.NewGroup(
-				huh.NewConfirm().
-					Title("Are you sure you want to destroy this runner?").
-					Description("This will tear down the runner's cloud infrastructure. It cannot be undone.").
-					Value(&confirm),
-			),
-		)
-		if err := confirmForm.Run(); err != nil || !confirm {
-			fmt.Println("Operation cancelled.")
+		if !confirm(
+			"Are you sure you want to destroy this runner?",
+			"This will tear down the runner's cloud infrastructure. It cannot be undone.",
+		) {
 			return
 		}
 
 		if destroyRunnerAssignedID == "" {
 			destroyRunnerAssignedID, err = selectRunner(token, destroyRunnerID)
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				fail(err)
 			}
 		}
 
@@ -78,8 +67,7 @@ var runnerDestroyCmd = &cobra.Command{
 
 		job, err := apiClient.QueueJobWithParams(params)
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			failf("Error: %v", err)
 		}
 
 		if destroyRunnerWait {

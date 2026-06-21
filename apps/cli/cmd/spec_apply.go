@@ -4,7 +4,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -26,31 +25,22 @@ var specApplyCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
 		zoneID := ""
 
 		if specApplySpecID == "" {
-			zoneID, _, err = selectZone(token)
+			zoneID, specApplySpecID, err = selectZoneAndSpec(token)
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
-			}
-
-			specApplySpecID, err = selectSpec(token, zoneID)
-			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				fail(err)
 			}
 		}
 
 		if specApplyRunnerID == "" {
 			specApplyRunnerID, err = selectRunner(token, "")
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				fail(err)
 			}
 		}
 
@@ -70,8 +60,7 @@ var specApplyCmd = &cobra.Command{
 
 		job, err := apiClient.QueueJobWithParams(params)
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			failf("Error: %v", err)
 		}
 
 		if specApplyWait {

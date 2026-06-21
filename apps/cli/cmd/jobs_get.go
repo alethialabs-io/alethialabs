@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -23,8 +22,7 @@ var jobsGetCmd = &cobra.Command{
 
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
 		apiClient := api.NewClient(token)
@@ -37,8 +35,7 @@ var jobsGetCmd = &cobra.Command{
 			}).Run()
 
 		if err != nil {
-			ui.Error(fmt.Sprintf("Failed to fetch job: %v", err))
-			os.Exit(1)
+			failf("Failed to fetch job: %v", err)
 		}
 
 		printJob(job)
@@ -70,8 +67,8 @@ func printJob(job *api.ProvisionJob) {
 	if job.ZoneID != "" {
 		kv("Zone ID:", job.ZoneID)
 	}
-	if job.ConfigurationID != "" {
-		kv("Spec ID:", job.ConfigurationID)
+	if job.SpecID != "" {
+		kv("Spec ID:", job.SpecID)
 	}
 	if job.RunnerID != "" {
 		kv("Runner ID:", job.RunnerID)

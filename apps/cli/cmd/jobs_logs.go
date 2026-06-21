@@ -5,9 +5,9 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
@@ -24,20 +24,18 @@ var jobsLogsCmd = &cobra.Command{
 
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
 		apiClient := api.NewClient(token)
-		stderrStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-		systemStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Italic(true)
+		stderrStyle := lipgloss.NewStyle().Foreground(ui.InkPrimary).Bold(true)
+		systemStyle := lipgloss.NewStyle().Foreground(ui.InkMuted).Italic(true)
 
 		lastID := 0
 		for {
 			logs, err := apiClient.GetJobLogs(jobID, lastID)
 			if err != nil {
-				fmt.Printf("Error fetching logs: %v\n", err)
-				os.Exit(1)
+				failf("Error fetching logs: %v", err)
 			}
 
 			for _, log := range logs {
