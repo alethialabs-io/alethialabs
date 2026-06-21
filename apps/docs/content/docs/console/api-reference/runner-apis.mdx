@@ -105,13 +105,12 @@ Downloads the plan artifact for apply execution.
 
 ### `POST /api/runners/register`
 
-Registers a new Runner. Returns the plaintext runner token (shown once).
+Registers a new Runner. Returns the plaintext runner token (shown once). Used by Terraform during deployment; always creates an `operator=managed` runner — the request no longer takes a `mode` field.
 
 **Body:**
 ```json
 {
-  "name": "eu-west-1-runner",
-  "mode": "self-hosted"
+  "name": "eu-west-1-runner"
 }
 ```
 

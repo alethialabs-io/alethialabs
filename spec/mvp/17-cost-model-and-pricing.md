@@ -76,6 +76,17 @@ Anchored to comparables (Qovery $899 / $1,999; Porter metered) and our COGS:
 - **Enterprise — from ~$2,500/mo (annual).** `ee/` SSO/SAML, full audit + retention, multi-tenancy, SLA, white-glove onboarding. **Self-managed license** option for AGPL-averse / air-gapped buyers.
 - **Add-ons:** **FinOps / cost-governance module** (flat, ~99% margin — our whitespace) · **runner-minutes** beyond plan (metered, *expansion*) · **AI premium** (repo-scan, metered per scan/token).
 
+### Decided & shipped (Phase 6 metering)
+
+The metered axis is now concrete (implemented; see [24](24-runner-rebuild-roadmap.md) Phase 6):
+- **Unit = job-minutes** (managed-runner execution time). Self-hosted runners are **never** metered; we
+  never bill the customer's own cloud compute (the resented "double-billing" model).
+- **Included / month:** community **200** · team **500** · business **5,000** · enterprise **20,000**.
+- **Overage = $0.012/min** (vs GitHub Actions $0.006/min; our cost ~$0.00075/min → ~**94% margin**).
+- **Community** has no card → **hard-stops** at 200 min (upgrade prompt), never a surprise charge. Paid
+  orgs can opt into a **hard cap** (pause at included) instead of overage. Stripe **graduated** meter
+  prices encode included→overage; the app surfaces a live used/included meter with an 80% heads-up.
+
 Free self-hosters pay $0 (funnel); revenue = **hosting + `ee/` + usage + support — never the core** (the "free-management-layer floor," see [14-gtm-pricing](14-gtm-pricing.md)). The mix to **$15k MRR** ([16-market-and-fundraising](16-market-and-fundraising.md)): ~2 Enterprise + ~7 Business/Team + usage/AI ≈ 12–15 paying orgs.
 
 ## "Host on AWS vs cheap" — a margin lever (sensitivity)

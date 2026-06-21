@@ -88,7 +88,7 @@ The job detail page renders logs in a terminal-like viewer:
 
 ## Local Echo
 
-All log output is also written to the container's stdout, which goes to CloudWatch Logs (for cloud-hosted Runners) or the local terminal (for self-hosted Runners). This provides a secondary log source for debugging.
+All log output is also written to the container's stdout, which goes to CloudWatch Logs (for managed and deployed Runners running on Fargate) or the local terminal (for registered Runners). This provides a secondary log source for debugging.
 
 ## Timing
 

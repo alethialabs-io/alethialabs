@@ -1,6 +1,11 @@
 # 08 — Runner Fleet & Multi-Cloud Autoscaling
 
-**Status:** Design (accepted direction). Built incrementally — AWS → Hetzner → GCP → Azure.
+**Status:** Built (the [runner rebuild](24-runner-rebuild-roadmap.md) Phase 7). The in-app scaler + the
+**Hetzner `FleetProvider`** + **bootstrap self-registration** are implemented; the legacy AWS ECS/Lambda
+fleet is retired. GCP MIG / Azure VMSS providers slot in behind the same seam when needed. (Originally
+AWS-first; flipped to Hetzner-first because the hosted fleet now runs an always-warm pool — see
+[20 — Managed Fleet Scheduler & Metering](20-managed-fleet-scheduler-and-metering.md) §1, where idle
+per-hour price dominates and the multi-tenant scheduler/QoS layer is specced.)
 
 ## Why
 
@@ -58,10 +63,14 @@ cloud-hosted mode, pointed at `ALETHIA_WEB_ORIGIN` with the bootstrap token. IaC
 fine-grained scaling between the IaC-defined bounds.
 
 ## Sequencing
-1. Auto-registration + `FleetProvider` interface + the in-app scaler loop.
-2. AWS module (modernize `infra/platform`; retire the Lambda).
-3. Hetzner module (cheapest fleet).
-4. GCP, then Azure.
+1. Auto-registration + `FleetProvider` interface + the in-app scaler loop (retire the Lambda).
+2. Hetzner module (cheapest fleet; warm-pool host — see [20](20-managed-fleet-scheduler-and-metering.md)).
+3. GCP, then Azure.
+4. Fargate kept as a fallback `FleetProvider` for cutover/rollback.
+
+The multi-tenant **scheduler** that rides on top of this fleet (priority, fairness, per-tier
+concurrency caps, concurrent slots, metering) is specced separately in
+[20 — Managed Fleet Scheduler & Metering](20-managed-fleet-scheduler-and-metering.md).
 
 ## Non-goals (for now)
 - Bin-packing / spot orchestration, cross-region balancing — start with simple queue-depth scaling.

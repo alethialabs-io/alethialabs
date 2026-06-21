@@ -34,7 +34,7 @@ Runner receives its configuration via environment variables:
 | `ALETHIA_WEB_ORIGIN` | Base URL of the Alethia instance |
 | `ALETHIA_RUNNER_ID` | Unique Runner identifier (assigned at registration) |
 | `ALETHIA_RUNNER_TOKEN` | Authentication token for API calls |
-| `ALETHIA_RUNNER_MODE` | `cloud-hosted` or `self-hosted` |
+| `ALETHIA_RUNNER_OPERATOR` | `managed` or `self` (the legacy `ALETHIA_RUNNER_MODE` with `cloud-hosted`/`self-hosted` still works as a back-compat fallback) |
 | `ALETHIA_STORAGE_ENDPOINT` | S3 endpoint for Terraform state |
 | `ALETHIA_STORAGE_REGION` | S3 region |
 | `ALETHIA_STORAGE_ACCESS_KEY_ID` | S3 access key |

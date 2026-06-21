@@ -5,7 +5,7 @@ description: Lambda-based auto-scaler that scales Runner ECS services to zero wh
 
 # Scale-to-Zero
 
-Cloud-hosted Runners support automatic scale-to-zero. When no jobs are queued, the Lambda scaler scales ECS services down to 0 desired tasks. When a job arrives, it scales back to 1. This eliminates Fargate costs during idle periods.
+Runners that run on ECS Fargate (managed and self-operated **deployed** Runners) support automatic scale-to-zero. When no jobs are queued, the Lambda scaler scales ECS services down to 0 desired tasks. When a job arrives, it scales back to 1. This eliminates Fargate costs during idle periods.
 
 ## How It Works
 

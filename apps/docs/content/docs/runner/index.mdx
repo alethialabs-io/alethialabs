@@ -19,12 +19,15 @@ Runner is the execution engine. It's a Go binary packaged as a Docker container 
 | Heartbeat interval | 30 seconds |
 | Idle scale-down | After 5 minutes ([Scale-to-Zero](/runner/scale-to-zero)) |
 
-## Two Modes
+## Operator & Provisioning
 
-| Mode | Description |
-|------|-------------|
-| **Cloud-hosted** | ECS Fargate task, managed by the platform. Automatic scaling, no user setup. |
-| **Self-hosted** | User runs the binary on their own machine. For on-prem or air-gapped environments. |
+A Runner is described by two orthogonal fields: **operator** (`managed` | `self`) and, for self runners, **provisioning** (`deployed` | `registered`). This yields three effective categories:
+
+| Category | Operator | Provisioning | Description |
+|----------|----------|--------------|-------------|
+| **Managed** | `managed` | — | Alethia operates the runner in our own account (ECS Fargate) and bills it by provisioned hours. Automatic scaling, no user setup. |
+| **Self · Deployed** | `self` | `deployed` | Provisioned into the customer's cloud account by an existing runner running Terraform (console "Deploy" tab / `alethia runner deploy`). |
+| **Self · Registered** | `self` | `registered` | Customer brings their own runner — their own Terraform or just `alethia runner start` — and registers it for a token. For on-prem or air-gapped environments. |
 
 ## What Runner Does
 
@@ -37,7 +40,7 @@ Every 10 seconds, calls `POST /api/jobs/claim`. See [Job Queue Pattern](/concept
 PostgreSQL `claim_next_job()` with `FOR UPDATE SKIP LOCKED` prevents double-execution.
 
 ### Assumes credentials
-STS AssumeRole (AWS), WIF token exchange (GCP), or OIDC federated identity (Azure). See [Cloud Credentials](/runner/cloud-credentials).
+STS AssumeRole (AWS), RAM AssumeRole (Alibaba), WIF token exchange (GCP), or OIDC federated identity (Azure) — all zero stored credentials. Token clouds (DigitalOcean / Hetzner / Civo) use an API token, either stored encrypted or kept entirely in your own self-hosted runner. See [Cloud Credentials](/runner/cloud-credentials).
 
 ### Executes Terraform
 `init` → `plan` → `apply` or `destroy`. See [Job Execution](/runner/job-execution).
@@ -80,7 +83,7 @@ The Docker image (Alpine 3.21, ARM64, non-root user) includes:
   <Card title="Cloud Credentials" href="/runner/cloud-credentials">Temporary credential assumption</Card>
   <Card title="Log Streaming" href="/runner/log-streaming">Real-time log delivery</Card>
   <Card title="Scale-to-Zero" href="/runner/scale-to-zero">Lambda scaler for cost optimization</Card>
-  <Card title="Self-Hosted" href="/runner/self-hosted">Running outside Fargate</Card>
+  <Card title="Self-Operated Runners" href="/runner/self-hosted">Running a runner you operate yourself</Card>
   <Card title="Infrastructure Templates" href="/runner/infrastructure-templates">Terraform modules for all providers</Card>
   <Card title="core Library" href="/runner/core">Shared Go packages</Card>
 </Cards>
