@@ -42,6 +42,22 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  /* ---- Alethia semantic tokens as utilities (bg-surface, text-text-tertiary,
+     border-border-strong, bg-ink, …) — so authored designs port to Tailwind
+     directly, no bespoke CSS modules. Names mirror the design vocabulary. ---- */
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-muted: var(--surface-muted);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-text-disabled: var(--text-disabled);
+  --color-ink: var(--ink);
+  --color-ink-hover: var(--ink-hover);
+  --color-ink-foreground: var(--ink-foreground);
+  --color-border-strong: var(--border-strong);
+  --color-border-faint: var(--border-faint);
   /* Radii — squared controls (0), surfaces only a whisper of a corner */
   --radius-xs: 0;
   --radius-sm: 2px;
