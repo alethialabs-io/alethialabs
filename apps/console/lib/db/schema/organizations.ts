@@ -34,6 +34,9 @@ export const member = pgTable("member", {
 		.notNull()
 		.references(() => user.id, { onDelete: "cascade" }),
 	role: text().default("member").notNull(),
+	// 'active' | 'suspended'. Suspending keeps the member row + role but revokes the
+	// PDP grant (no access); reactivating restores it. Drives the Members status column.
+	status: text().default("active").notNull(),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });
 

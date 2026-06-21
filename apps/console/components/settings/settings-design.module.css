@@ -122,6 +122,8 @@ select.control { -webkit-appearance: none; appearance: none; cursor: pointer; ba
 .mstatus .s { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .mstatus.active .s { background: var(--text-primary); }
 .mstatus.pending .s { background: transparent; border: 1.5px solid var(--text-tertiary); box-shadow: 0 0 0 2.5px var(--surface-muted); }
+.mstatus.suspended { color: var(--text-tertiary); }
+.mstatus.suspended .s { background: transparent; border: 1.5px solid var(--text-disabled); }
 
 .last { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); white-space: nowrap; }
 .kebab { width: 28px; height: 28px; border: 0; background: transparent; color: var(--text-disabled); border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; transition: all 0.13s; cursor: pointer; }

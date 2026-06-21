@@ -11,11 +11,13 @@
 import { formatDistanceToNow } from "date-fns";
 import { MoreHorizontal, Plus, Search, Shield } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import {
 	getInvitations,
 	getMembers,
 	type InvitationRow,
 	type MemberRow,
+	setMemberSuspended,
 } from "@/app/server/actions/members";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
@@ -31,7 +33,7 @@ import { toOrgRole } from "@/lib/authz/org-access-control";
 import styles from "@/components/settings/settings-design.module.css";
 
 const ROLE_OPTIONS = ["admin", "operator", "viewer"] as const;
-type Tab = "all" | "active" | "pending";
+type Tab = "all" | "active" | "pending" | "suspended";
 
 interface RowView {
 	key: string;
@@ -42,8 +44,8 @@ interface RowView {
 	avatar: string;
 	role: string;
 	teams: string[];
-	status: "active" | "pending";
-	joined: string;
+	status: "active" | "pending" | "suspended";
+	activity: string;
 	isYou: boolean;
 }
 
@@ -98,6 +100,17 @@ export function MembersTable() {
 		},
 		[load],
 	);
+	const suspend = useCallback(
+		async (memberId: string, next: boolean) => {
+			try {
+				await setMemberSuspended(memberId, next);
+				load();
+			} catch (e) {
+				toast.error(e instanceof Error ? e.message : "Couldn't update the member.");
+			}
+		},
+		[load],
+	);
 
 	const rows = useMemo<RowView[]>(() => {
 		if (!members) return [];
@@ -110,8 +123,10 @@ export function MembersTable() {
 			avatar: initials(m.name?.trim() || m.email),
 			role: m.role,
 			teams: m.teams,
-			status: "active",
-			joined: formatDistanceToNow(new Date(m.joinedAt), { addSuffix: true }),
+			status: m.status === "suspended" ? "suspended" : "active",
+			activity: m.lastActiveAt
+				? formatDistanceToNow(new Date(m.lastActiveAt), { addSuffix: true })
+				: "—",
 			isYou: m.userId === myId,
 		}));
 		const inviteRows: RowView[] = invites.map((i) => ({
@@ -124,7 +139,7 @@ export function MembersTable() {
 			role: i.role,
 			teams: [],
 			status: "pending",
-			joined: "— invited",
+			activity: "— invited",
 			isYou: false,
 		}));
 		return [...memberRows, ...inviteRows];
@@ -133,16 +148,19 @@ export function MembersTable() {
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
 		return rows.filter((r) => {
-			if (tab === "active" && r.status !== "active") return false;
-			if (tab === "pending" && r.status !== "pending") return false;
+			if (tab !== "all" && r.status !== tab) return false;
 			if (roleFilter !== "all" && r.role !== roleFilter) return false;
 			if (q && !`${r.name} ${r.meta}`.toLowerCase().includes(q)) return false;
 			return true;
 		});
 	}, [rows, tab, roleFilter, search]);
 
-	const activeCount = members?.length ?? 0;
+	const activeCount =
+		members?.filter((m) => m.status !== "suspended").length ?? 0;
+	const suspendedCount =
+		members?.filter((m) => m.status === "suspended").length ?? 0;
 	const pendingCount = invites.length;
+	const seatCount = (members?.length ?? 0) + pendingCount;
 
 	function toggle(key: string) {
 		setSelected((prev) => {
@@ -164,6 +182,20 @@ export function MembersTable() {
 				}
 			} catch {
 				/* best-effort */
+			}
+		}
+		setSelected(new Set());
+		load();
+	}
+
+	async function bulkSuspend() {
+		for (const r of filtered.filter((x) => selected.has(x.key))) {
+			if (r.kind === "member" && r.role !== "owner" && r.status === "active") {
+				try {
+					await setMemberSuspended(r.refId, true);
+				} catch {
+					/* best-effort */
+				}
 			}
 		}
 		setSelected(new Set());
@@ -195,7 +227,7 @@ export function MembersTable() {
 				<div className={styles.mStat}>
 					<div className={styles.k}>Seats</div>
 					<div className={styles.v}>
-						<span className={styles.big}>{activeCount + pendingCount}</span>
+						<span className={styles.big}>{seatCount}</span>
 						<span className={styles.sub}>used</span>
 					</div>
 				</div>
@@ -213,28 +245,39 @@ export function MembersTable() {
 						<span className={styles.sub}>awaiting</span>
 					</div>
 				</div>
+				<div className={styles.mStat}>
+					<div className={styles.k}>Suspended</div>
+					<div className={styles.v}>
+						<span className={styles.big}>{suspendedCount}</span>
+						<span className={styles.sub}>no access</span>
+					</div>
+				</div>
 			</div>
 
 			{/* toolbar */}
 			<div className={styles.mToolbar}>
 				<div className={styles.tabs}>
-					{(["all", "active", "pending"] as Tab[]).map((t) => (
-						<button
-							type="button"
-							key={t}
-							className={tab === t ? styles.on : undefined}
-							onClick={() => setTab(t)}
-						>
-							<span className="capitalize">{t}</span>
-							<span className={styles.ct}>
-								{t === "all"
-									? activeCount + pendingCount
-									: t === "active"
-										? activeCount
-										: pendingCount}
-							</span>
-						</button>
-					))}
+					{(["all", "active", "pending", "suspended"] as Tab[]).map((t) => {
+						const count =
+							t === "all"
+								? seatCount
+								: t === "active"
+									? activeCount
+									: t === "pending"
+										? pendingCount
+										: suspendedCount;
+						return (
+							<button
+								type="button"
+								key={t}
+								className={tab === t ? styles.on : undefined}
+								onClick={() => setTab(t)}
+							>
+								<span className="capitalize">{t}</span>
+								<span className={styles.ct}>{count}</span>
+							</button>
+						);
+					})}
 				</div>
 				<div className={styles.tools}>
 					<div className={styles.search}>
@@ -293,6 +336,13 @@ export function MembersTable() {
 					<div className={styles.r}>
 						<button
 							type="button"
+							className={`${styles.btn} ${styles.sm}`}
+							onClick={() => void bulkSuspend()}
+						>
+							Suspend
+						</button>
+						<button
+							type="button"
 							className={`${styles.btn} ${styles.sm} ${styles.ghost}`}
 							onClick={() => void bulkRemove()}
 						>
@@ -313,7 +363,7 @@ export function MembersTable() {
 								<th>Role</th>
 								<th>Teams</th>
 								<th>Status</th>
-								<th>Joined</th>
+								<th>Last active</th>
 								<th />
 							</tr>
 						</thead>
@@ -354,6 +404,7 @@ export function MembersTable() {
 												className={styles.roleSel}
 												aria-label="Role"
 												value={r.role}
+												disabled={r.status === "suspended"}
 												onChange={(e) => void changeRole(r.refId, e.target.value)}
 											>
 												{ROLE_OPTIONS.map((ro) => (
@@ -389,7 +440,7 @@ export function MembersTable() {
 											<span className="capitalize">{r.status}</span>
 										</span>
 									</td>
-									<td className={styles.last}>{r.joined}</td>
+									<td className={styles.last}>{r.activity}</td>
 									<td>
 										{canManage && !(r.kind === "member" && r.role === "owner") && (
 											<DropdownMenu>
@@ -404,12 +455,27 @@ export function MembersTable() {
 												</DropdownMenuTrigger>
 												<DropdownMenuContent align="end" className="w-44">
 													{r.kind === "member" ? (
-														<DropdownMenuItem
-															className="text-destructive focus:text-destructive"
-															onClick={() => void removeMember(r.refId)}
-														>
-															Remove from organization
-														</DropdownMenuItem>
+														<>
+															{r.status === "suspended" ? (
+																<DropdownMenuItem
+																	onClick={() => void suspend(r.refId, false)}
+																>
+																	Reactivate
+																</DropdownMenuItem>
+															) : (
+																<DropdownMenuItem
+																	onClick={() => void suspend(r.refId, true)}
+																>
+																	Suspend
+																</DropdownMenuItem>
+															)}
+															<DropdownMenuItem
+																className="text-destructive focus:text-destructive"
+																onClick={() => void removeMember(r.refId)}
+															>
+																Remove from organization
+															</DropdownMenuItem>
+														</>
 													) : (
 														<DropdownMenuItem
 															className="text-destructive focus:text-destructive"

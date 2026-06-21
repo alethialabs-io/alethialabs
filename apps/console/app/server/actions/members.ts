@@ -2,10 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, eq, inArray } from "drizzle-orm";
-import { currentActor } from "@/lib/authz/guard";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { ensureMemberGrant, revokeMemberGrant } from "@/lib/authz/grants";
+import { authorize, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { invitation, member, team, teamMember, user } from "@/lib/db/schema";
+import {
+	invitation,
+	member,
+	session,
+	team,
+	teamMember,
+	user,
+} from "@/lib/db/schema";
 
 export interface MemberRow {
 	/** member-row id (or the user id when synthesizing the personal owner). */
@@ -18,6 +26,10 @@ export interface MemberRow {
 	joinedAt: string;
 	/** Names of the teams this member belongs to in the active org. */
 	teams: string[];
+	/** 'active' | 'suspended'. */
+	status: string;
+	/** ISO timestamp of the member's most recent session, or null if never. */
+	lastActiveAt: string | null;
 }
 
 /**
@@ -37,6 +49,7 @@ export async function getMembers(): Promise<MemberRow[]> {
 			email: user.email,
 			image: user.image,
 			role: member.role,
+			status: member.status,
 			joinedAt: member.createdAt,
 		})
 		.from(member)
@@ -65,8 +78,10 @@ export async function getMembers(): Promise<MemberRow[]> {
 				email: u.email,
 				image: u.image,
 				role: "owner",
+				status: "active",
 				joinedAt: u.createdAt.toISOString(),
 				teams: [],
+				lastActiveAt: new Date().toISOString(),
 			},
 		];
 	}
@@ -90,10 +105,25 @@ export async function getMembers(): Promise<MemberRow[]> {
 		teamsByUser.set(t.userId, arr);
 	}
 
+	// Last-active = the most recent session per user.
+	const lastRows = await db
+		.select({
+			userId: session.userId,
+			last: sql<string>`max(${session.updatedAt})`,
+		})
+		.from(session)
+		.where(inArray(session.userId, userIds))
+		.groupBy(session.userId);
+	const lastByUser = new Map<string, string>();
+	for (const r of lastRows) {
+		if (r.last) lastByUser.set(r.userId, new Date(r.last).toISOString());
+	}
+
 	return rows.map((r) => ({
 		...r,
 		joinedAt: r.joinedAt.toISOString(),
 		teams: teamsByUser.get(r.userId) ?? [],
+		lastActiveAt: lastByUser.get(r.userId) ?? null,
 	}));
 }
 
@@ -137,4 +167,41 @@ export async function getInvitations(): Promise<InvitationRow[]> {
 		inviterName: r.inviterName ?? r.inviterEmail ?? "—",
 		createdAt: r.createdAt.toISOString(),
 	}));
+}
+
+/**
+ * Suspends or reactivates a member. Suspending keeps the member row + role but revokes
+ * their PDP grant (no access); reactivating restores the grant. Owner-gated; refuses on
+ * the org owner and on members from a different org.
+ */
+export async function setMemberSuspended(
+	memberId: string,
+	suspended: boolean,
+): Promise<{ ok: true }> {
+	const actor = await authorize("manage_members", { type: "member" });
+	const db = getServiceDb();
+
+	const [m] = await db
+		.select({
+			orgId: member.organizationId,
+			userId: member.userId,
+			role: member.role,
+		})
+		.from(member)
+		.where(eq(member.id, memberId))
+		.limit(1);
+	if (!m || m.orgId !== actor.orgId) throw new Error("Member not found.");
+	if (m.role === "owner") throw new Error("The owner can't be suspended.");
+
+	await db
+		.update(member)
+		.set({ status: suspended ? "suspended" : "active" })
+		.where(eq(member.id, memberId));
+
+	if (suspended) {
+		await revokeMemberGrant(m.orgId, m.userId);
+	} else {
+		await ensureMemberGrant(m.orgId, m.userId, m.role);
+	}
+	return { ok: true };
 }
