@@ -19,12 +19,12 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { ReleaseNotesDialog } from "@/components/runners/release-notes-dialog";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
-import { useRunnersStore, type ActiveJob } from "@/lib/stores/use-runners-store";
-import type {
-	RunnerStatus as PublicRunnerStatus,
-	RunnerMode as PublicRunnerMode,
-	Runner as PublicRunnerRow,
-} from "@/lib/db/schema";
+import {
+	useRunnersStore,
+	type ActiveJob,
+	type RunnerWithRelease,
+} from "@/lib/stores/use-runners-store";
+import type { RunnerStatus as PublicRunnerStatus } from "@/lib/db/schema";
 import type { ColumnDef } from "@tanstack/react-table";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -40,9 +40,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
-export type RunnerRow = PublicRunnerRow & {
+export type RunnerRow = RunnerWithRelease & {
 	activeJob: ActiveJob | null;
-	runner_releases: { version: string; release_notes: string; released_at: string } | null;
 };
 
 function RunnerActionsCell({ runner }: { runner: RunnerRow }) {
@@ -52,7 +51,7 @@ function RunnerActionsCell({ runner }: { runner: RunnerRow }) {
 	const [acting, setActing] = useState(false);
 	const [destroying, setDestroying] = useState(false);
 
-	const isCloudHosted = runner.mode === "cloud-hosted";
+	const isManaged = runner.operator === "managed";
 	const isDestroying = runner.activeJob?.job_type === "DESTROY_RUNNER";
 	const isProvisioning = runner.activeJob?.job_type === "DEPLOY_RUNNER";
 	const isUpdating = runner.activeJob?.job_type === "UPDATE_RUNNER";
@@ -156,7 +155,7 @@ function RunnerActionsCell({ runner }: { runner: RunnerRow }) {
 				</Tooltip>
 			</TooltipProvider>
 
-			{!isCloudHosted && hasCloudResources && (
+			{!isManaged && runner.provisioning === "deployed" && hasCloudResources && (
 				<RunnerSelectPopover
 					trigger={
 						<Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive" disabled={destroying}>
@@ -172,7 +171,7 @@ function RunnerActionsCell({ runner }: { runner: RunnerRow }) {
 				/>
 			)}
 
-			{!isCloudHosted && !hasCloudResources && (
+			{!isManaged && !(runner.provisioning === "deployed" && hasCloudResources) && (
 				<>
 					<Button
 						variant="ghost"
@@ -332,16 +331,22 @@ export const runnerColumns: ColumnDef<RunnerRow>[] = [
 		},
 	},
 	{
-		accessorKey: "mode",
-		header: "Mode",
+		id: "operator",
+		header: "Operator",
 		enableSorting: false,
 		cell: ({ row }) => {
-			const mode = row.getValue("mode") as PublicRunnerMode;
-			const ModeIcon = mode === "cloud-hosted" ? Cloud : Server;
+			const runner = row.original;
+			const isManaged = runner.operator === "managed";
+			const OperatorIcon = isManaged ? Cloud : Server;
+			const label = isManaged
+				? "Managed"
+				: runner.provisioning === "deployed"
+					? "Self · Deployed"
+					: "Self · Registered";
 			return (
 				<Badge variant="outline" className="text-[10px] py-0 text-muted-foreground border-border bg-muted">
-					<ModeIcon className="mr-1 h-3 w-3" />
-					{mode === "cloud-hosted" ? "Cloud" : "Self-hosted"}
+					<OperatorIcon className="mr-1 h-3 w-3" />
+					{label}
 				</Badge>
 			);
 		},
@@ -351,6 +356,23 @@ export const runnerColumns: ColumnDef<RunnerRow>[] = [
 		header: "Version",
 		enableSorting: false,
 		cell: ({ row }) => <VersionCell runner={row.original} />,
+	},
+	{
+		id: "provisioned",
+		header: () => <div className="text-right">Provisioned</div>,
+		enableSorting: false,
+		cell: ({ row }) => {
+			const runner = row.original;
+			if (runner.operator !== "managed") {
+				return <div className="text-right text-xs text-muted-foreground">—</div>;
+			}
+			const hours = runner.provisioned_hours ?? 0;
+			return (
+				<div className="text-right text-xs text-muted-foreground tabular-nums">
+					{hours.toFixed(1)} h
+				</div>
+			);
+		},
 	},
 	{
 		id: "activeJob",

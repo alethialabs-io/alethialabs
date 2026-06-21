@@ -67,9 +67,10 @@ const TABS = { deploy: "deploy", register: "register" } as const;
 type Tab = (typeof TABS)[keyof typeof TABS];
 
 const DESCRIPTIONS: Record<Tab, string> = {
-	deploy: "Deploy a self-hosted runner container to your cloud account.",
+	deploy:
+		"Provision a runner into your cloud account through an existing runner. Alethia runs Terraform for you.",
 	register:
-		"Register a self-hosted runner that runs in your own infrastructure.",
+		"Bring your own runner — run `alethia runner start` (or your own Terraform) and register it here.",
 };
 
 export function AddRunnerSheet({ open, onOpenChange }: AddRunnerSheetProps) {
@@ -343,7 +344,6 @@ interface RegisterCredentials {
 	runnerId: string;
 	runnerToken: string;
 	runnerName: string;
-	runnerMode: string;
 }
 
 function CopyField({ label, value }: { label: string; value: string }) {
@@ -398,12 +398,11 @@ function RegisterForm({
 
 		setIsSubmitting(true);
 		try {
-			const result = await registerRunner(name.trim(), "self-hosted");
+			const result = await registerRunner(name.trim());
 			setCredentials({
 				runnerId: result.runner.id,
 				runnerToken: result.runner_token,
 				runnerName: result.runner.name,
-				runnerMode: result.runner.mode,
 			});
 			router.refresh();
 		} catch (error: unknown) {

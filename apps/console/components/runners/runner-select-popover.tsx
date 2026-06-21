@@ -151,7 +151,7 @@ export function RunnerSelectPopover({
 										</span>
 									)}
 									<span className="text-[10px] text-muted-foreground">
-										{w.mode === "self-hosted" ? "self" : "cloud"}
+										{w.operator === "managed" ? "managed" : "self"}
 									</span>
 								</button>
 							);

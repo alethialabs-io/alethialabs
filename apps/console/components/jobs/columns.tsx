@@ -52,7 +52,7 @@ const JOB_TYPES: Record<
 	DEPLOY_RUNNER: {
 		label: "Deploy Runner",
 		icon: Container,
-		description: "Deploy a self-hosted runner container",
+		description: "Provision a runner into your cloud account",
 	},
 	UPDATE_RUNNER: {
 		label: "Update Runner",
@@ -62,7 +62,7 @@ const JOB_TYPES: Record<
 	DESTROY_RUNNER: {
 		label: "Destroy Runner",
 		icon: Trash2,
-		description: "Tear down a self-hosted runner",
+		description: "Tear down a provisioned runner",
 	},
 } as Record<string, { label: string; icon: typeof Rocket; description: string }>;
 

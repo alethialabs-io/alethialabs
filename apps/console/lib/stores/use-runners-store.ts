@@ -10,6 +10,7 @@ import {
 	updateRunner as updateRunnerAction,
 	getRunnersWithReleases,
 	getLatestRunnerRelease,
+	getManagedRunnerUsage,
 	getReleaseNotes,
 } from "@/app/server/actions/runners";
 import type {
@@ -41,6 +42,8 @@ export interface RunnerReleaseInfo {
 
 export type RunnerWithRelease = Runner & {
 	runner_releases: RunnerReleaseInfo | null;
+	// Provisioned hours this calendar month for managed runners; null otherwise.
+	provisioned_hours: number | null;
 };
 
 interface RunnersStore {
@@ -83,13 +86,18 @@ export const useRunnersStore = create<RunnersStore>()((set, get) => ({
 
 		set({ isLoading: true, error: null });
 		try {
-			const [runners, latestRelease] = await Promise.all([
+			const [runners, latestRelease, usage] = await Promise.all([
 				getRunnersWithReleases(),
 				getLatestRunnerRelease(),
+				getManagedRunnerUsage(),
 			]);
 
 			set({
-				runners,
+				runners: runners.map((r) => ({
+					...r,
+					provisioned_hours:
+						r.operator === "managed" ? (usage[r.id] ?? 0) : null,
+				})),
 				latestRelease,
 				lastFetchedAt: Date.now(),
 				isLoading: false,

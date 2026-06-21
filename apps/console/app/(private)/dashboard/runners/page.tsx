@@ -28,6 +28,9 @@ const STATUS_FILTERS: (PublicRunnerStatus | "All")[] = [
 	"All", "ONLINE", "OFFLINE", "DRAINING",
 ];
 
+const OPERATOR_FILTERS = ["All", "Managed", "Self"] as const;
+type OperatorFilter = (typeof OPERATOR_FILTERS)[number];
+
 export default function RunnersPage() {
 	const router = useRouter();
 	const {
@@ -58,6 +61,7 @@ export default function RunnersPage() {
 	);
 
 	const [statusFilter, setStatusFilter] = useState<PublicRunnerStatus | "All">("All");
+	const [operatorFilter, setOperatorFilter] = useState<OperatorFilter>("All");
 	const [searchQuery, setSearchQuery] = useState("");
 	const [isUpdatingAll, setIsUpdatingAll] = useState(false);
 
@@ -99,12 +103,16 @@ export default function RunnersPage() {
 		if (statusFilter !== "All") {
 			result = result.filter((w) => (w.status ?? "OFFLINE") === statusFilter);
 		}
+		if (operatorFilter !== "All") {
+			const op = operatorFilter === "Managed" ? "managed" : "self";
+			result = result.filter((w) => w.operator === op);
+		}
 		if (searchQuery.trim()) {
 			const q = searchQuery.toLowerCase();
 			result = result.filter((w) => w.name.toLowerCase().includes(q));
 		}
 		return result;
-	}, [runnerRows, statusFilter, searchQuery]);
+	}, [runnerRows, statusFilter, operatorFilter, searchQuery]);
 
 	const outdatedRunners = useMemo(() => {
 		if (!latestRelease) return [];
@@ -222,7 +230,7 @@ export default function RunnersPage() {
 					</div>
 					<h3 className="text-sm font-medium text-foreground mb-1">No runners available</h3>
 					<p className="text-xs text-muted-foreground max-w-sm mb-4">
-						Runners execute provisioning jobs for your infrastructure. Cloud runners are managed by the platform. You can also deploy your own.
+						Runners execute provisioning jobs for your infrastructure. Managed runners are operated and billed by Alethia. You can also provision your own (Deploy) or register an existing one (Register).
 					</p>
 					<AddRunnerButton />
 				</div>
@@ -240,6 +248,19 @@ export default function RunnersPage() {
 										onClick={() => setStatusFilter(s)}
 									>
 										{s === "All" ? "All" : s.charAt(0) + s.slice(1).toLowerCase()}
+									</Button>
+								))}
+							</div>
+							<div className="flex gap-1">
+								{OPERATOR_FILTERS.map((o) => (
+									<Button
+										key={o}
+										variant={operatorFilter === o ? "secondary" : "ghost"}
+										size="sm"
+										className="h-7 text-xs px-2.5"
+										onClick={() => setOperatorFilter(o)}
+									>
+										{o}
 									</Button>
 								))}
 							</div>
