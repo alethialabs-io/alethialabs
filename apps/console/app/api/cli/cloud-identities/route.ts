@@ -7,6 +7,8 @@ import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
 import type { CloudCredentials } from "@/types/database-custom.types";
 import { NextResponse } from "next/server";
+import { cliJson } from "@/lib/cli/respond";
+import { cliCloudIdentitiesResponse } from "@/lib/validations/cli-contract";
 
 /** Lists verified cloud identities for the CLI user. */
 export async function GET(req: Request) {
@@ -39,7 +41,7 @@ export async function GET(req: Request) {
 			created_at: i.created_at,
 		}));
 
-		return NextResponse.json({ cloud_identities: result });
+		return cliJson(cliCloudIdentitiesResponse, { cloud_identities: result });
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";

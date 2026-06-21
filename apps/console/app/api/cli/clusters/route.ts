@@ -6,6 +6,8 @@ import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { specCluster, specs } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
+import { cliJson } from "@/lib/cli/respond";
+import { cliClustersResponse } from "@/lib/validations/cli-contract";
 
 /**
  * Lists spec_cluster data joined with the parent spec's project_name for the
@@ -41,7 +43,7 @@ export async function GET(req: Request) {
 			.where(eq(specs.org_id, actor.orgId))
 			.orderBy(desc(specCluster.updated_at));
 
-		return NextResponse.json({ clusters: rows });
+		return cliJson(cliClustersResponse, { clusters: rows });
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";

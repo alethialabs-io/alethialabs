@@ -6,8 +6,10 @@ import { getServiceDb } from "@/lib/db";
 import { runners } from "@/lib/db/schema";
 import { desc, eq, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { cliJson } from "@/lib/cli/respond";
+import { cliRunnersResponse } from "@/lib/validations/cli-contract";
 
-/** Lists runners owned by the CLI user (plus cloud-hosted runners visible to all). */
+/** Lists runners owned by the CLI user (plus managed runners visible to all). */
 export async function GET(req: Request) {
 	const auth = await authorizeCli(req, "view", { type: "runner" });
 	if ("error" in auth) return auth.error;
@@ -19,7 +21,9 @@ export async function GET(req: Request) {
 			.select({
 				id: runners.id,
 				name: runners.name,
-				mode: runners.mode,
+				operator: runners.operator,
+				provisioning: runners.provisioning,
+				supported_providers: runners.supported_providers,
 				status: runners.status,
 				last_heartbeat: runners.last_heartbeat,
 				version: runners.version,
@@ -28,11 +32,11 @@ export async function GET(req: Request) {
 			})
 			.from(runners)
 			.where(
-				or(eq(runners.org_id, actor.orgId), eq(runners.mode, "cloud-hosted")),
+				or(eq(runners.org_id, actor.orgId), eq(runners.operator, "managed")),
 			)
 			.orderBy(desc(runners.is_default), desc(runners.created_at));
 
-		return NextResponse.json({ runners: runnerRows });
+		return cliJson(cliRunnersResponse, { runners: runnerRows });
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";

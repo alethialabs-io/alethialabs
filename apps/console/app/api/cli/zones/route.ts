@@ -6,6 +6,8 @@ import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { specs, zones } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
+import { cliJson } from "@/lib/cli/respond";
+import { cliZoneResponse, cliZonesResponse } from "@/lib/validations/cli-contract";
 
 /**
  * Lists the CLI user's zones with their nested specs. Wire-locked: the CLI
@@ -53,7 +55,7 @@ export async function GET(req: Request) {
 			.map(({ zone_id: _zone_id, ...spec }) => spec),
 	}));
 
-	return NextResponse.json({ zones: zoneList });
+	return cliJson(cliZonesResponse, { zones: zoneList });
 }
 
 /** Creates a new zone for the CLI user. */
@@ -80,7 +82,7 @@ export async function POST(req: Request) {
 			})
 			.returning();
 
-		return NextResponse.json({ zone });
+		return cliJson(cliZoneResponse, { zone });
 	} catch (_e) {
 		return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
 			status: 400,

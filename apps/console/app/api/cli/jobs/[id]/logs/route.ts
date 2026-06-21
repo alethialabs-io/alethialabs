@@ -6,6 +6,8 @@ import { getServiceDb } from "@/lib/db";
 import { jobLogs, jobs } from "@/lib/db/schema";
 import { and, asc, eq, gt } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { cliJson } from "@/lib/cli/respond";
+import { cliJobLogsResponse } from "@/lib/validations/cli-contract";
 
 /** Fetches job logs for a CLI user, with optional pagination via ?after=<id>. */
 export async function GET(
@@ -47,7 +49,7 @@ export async function GET(
 			)
 			.orderBy(asc(jobLogs.id));
 
-		return NextResponse.json({ logs });
+		return cliJson(cliJobLogsResponse, { logs });
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";

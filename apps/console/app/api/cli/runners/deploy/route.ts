@@ -8,6 +8,8 @@ import { notifyScaler } from "@/lib/scaler";
 import { createHash, randomBytes } from "crypto";
 import { desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { cliJson } from "@/lib/cli/respond";
+import { deployRunnerWire } from "@/lib/validations/cli-contract";
 
 /** Deploys a runner by creating a runner record + queuing a DEPLOY_RUNNER job. */
 export async function POST(req: Request) {
@@ -68,7 +70,8 @@ export async function POST(req: Request) {
 			.values({
 				user_id: actor.userId,
 				name,
-				mode: "self-hosted",
+				operator: "self",
+				provisioning: "deployed",
 				token_hash: tokenHash,
 				cloud_identity_id,
 			})
@@ -102,7 +105,7 @@ export async function POST(req: Request) {
 			});
 
 		notifyScaler();
-		return NextResponse.json({ runner, job }, { status: 201 });
+		return cliJson(deployRunnerWire, { runner, job }, { status: 201 });
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";

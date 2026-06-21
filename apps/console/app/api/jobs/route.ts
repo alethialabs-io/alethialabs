@@ -5,10 +5,12 @@ import { createHash } from "crypto";
 import { type SQL, and, count, desc, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { verifyCliToken } from "@/lib/cli/auth";
+import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { jobs, runners, specs } from "@/lib/db/schema";
 import { querySpecFull } from "@/lib/queries/spec-full";
 import { notifyScaler } from "@/lib/scaler";
+import { cliJobResponse, cliJobsPageResponse } from "@/lib/validations/cli-contract";
 
 // Job types the CLI is allowed to queue through this endpoint (a subset of the
 // full provision_job_type enum — runner-lifecycle types are created elsewhere).
@@ -147,7 +149,7 @@ export async function POST(req: Request) {
 		}
 
 		notifyScaler();
-		return NextResponse.json({ job }, { status: 201 });
+		return cliJson(cliJobResponse, { job }, { status: 201 });
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";
@@ -203,5 +205,5 @@ export async function GET(req: Request) {
 		runner_name: r.runner_name ?? null,
 	}));
 
-	return NextResponse.json({ jobs: result, total, limit, offset });
+	return cliJson(cliJobsPageResponse, { jobs: result, total, limit, offset });
 }

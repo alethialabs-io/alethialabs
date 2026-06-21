@@ -3,6 +3,8 @@
 
 import { verifyCliToken } from "@/lib/cli/auth";
 import { NextResponse } from "next/server";
+import { cliJson } from "@/lib/cli/respond";
+import { cliRepositoriesResponse } from "@/lib/validations/cli-contract";
 
 export async function GET(req: Request) {
 	const { error: authError } = await verifyCliToken(req);
@@ -61,7 +63,7 @@ export async function GET(req: Request) {
 			})
 		);
 
-		return NextResponse.json({ repositories });
+		return cliJson(cliRepositoriesResponse, { repositories });
 	} catch (error) {
 		console.error("[CLI] Error fetching GitHub repositories:", error);
 		return NextResponse.json(
