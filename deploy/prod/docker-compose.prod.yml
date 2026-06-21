@@ -17,6 +17,9 @@ services:
   docs:
     image: "ghcr.io/alethialabs-io/docs:${ALETHIA_IMAGE_TAG:-latest}"
     pull_policy: always
+  blog:
+    image: "ghcr.io/alethialabs-io/blog:${ALETHIA_IMAGE_TAG:-latest}"
+    pull_policy: always
   runner:
     image: "ghcr.io/alethialabs-io/runner:${ALETHIA_IMAGE_TAG:-latest}"
     pull_policy: always

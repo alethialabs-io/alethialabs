@@ -10,6 +10,7 @@ on:
     paths:
       - 'apps/console/**'
       - 'apps/docs/**'
+      - 'apps/blog/**'
       - 'apps/runner/**'
       - 'packages/**'
       - 'docker-compose.yml'
@@ -40,8 +41,22 @@ jobs:
           - image: docs
             file: apps/docs/Dockerfile
             target: ""
+          - image: blog
+            file: apps/blog/Dockerfile
+            target: ""
           - image: runner
             file: apps/runner/Dockerfile
+            target: ""
+          # Lean per-cloud runner images (per-cloud routing). Same artifacts, one
+          # cloud's CLI + cache each. Shared leading layers dedup against `runner`.
+          - image: runner-aws
+            file: apps/runner/Dockerfile.aws
+            target: ""
+          - image: runner-gcp
+            file: apps/runner/Dockerfile.gcp
+            target: ""
+          - image: runner-azure
+            file: apps/runner/Dockerfile.azure
             target: ""
     steps:
       - uses: actions/checkout@v4

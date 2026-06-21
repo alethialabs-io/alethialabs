@@ -150,6 +150,8 @@ services:
     build:
       context: .
       dockerfile: apps/console/Dockerfile
+      args:
+        NEXT_PUBLIC_CANVAS_ENABLED: "${NEXT_PUBLIC_CANVAS_ENABLED:-false}"
     env_file: .env
     environment:
       NODE_ENV: production
@@ -184,17 +186,33 @@ services:
       HOSTNAME: 0.0.0.0
     restart: unless-stopped
 
+  # Blog (Next.js + velite). Stateless; served at basePath /blog.
+  blog:
+    build:
+      context: .
+      dockerfile: apps/blog/Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    restart: unless-stopped
+
   # Runner (Go). Talks to the console over HTTP + S3 only; self-registers on
   # boot. Bundles Terraform/cloud CLIs, so the image is large to build.
   runner:
     build:
       context: .
       dockerfile: apps/runner/Dockerfile
+    # init reaps orphaned grandchildren (tofu/kubectl) if a worker subprocess dies —
+    # matters when ALETHIA_RUNNER_SLOTS > 1 makes this a supervisor of N workers.
+    init: true
     env_file: .env
     environment:
       ALETHIA_WEB_ORIGIN: "http://app:3000"
       ALETHIA_STORAGE_ENDPOINT: "http://seaweedfs:8333"
       ALETHIA_RUNNER_MODE: self-hosted
+      # Concurrent jobs per runner (default 1). >1 runs N isolated worker subprocesses.
+      # ALETHIA_RUNNER_SLOTS: "2"
     depends_on:
       app:
         condition: service_started
@@ -214,6 +232,7 @@ services:
     depends_on:
       - app
       - docs
+      - blog
     restart: unless-stopped
 
   # Optional scale-out only (SSE fan-out). Never starts in the default profile.
