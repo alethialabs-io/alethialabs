@@ -24,7 +24,9 @@ that already exists; anything the design wants that the backend lacks is logged 
 - [x] **Roles** — IAM-style master-detail (`roles-manager.tsx`): rail (Built-in + Custom) + detail with
       `permission-matrix` (new `readOnly` prop) + template gallery. Custom CRUD via `roles.ts`, gated on
       `customRoles`. Built-in roles read-only from `registry`. Deleted `custom-roles` + `role-editor-dialog`.
-- [ ] **Access** — Backend: `grants.ts` (`listAccessGrants`/`getGrantOptions`/`revokeGrant`).
+- [x] **Access** — grants design (`access-manager.tsx`): inheritance note + stat strip (Grants/Org/Zone/
+      Spec) + toolbar + **inline grant builder** (live preview) + grants table (Principal/Role/Scope/reach/
+      Granted/revoke). Wired to `grants.ts`; Enterprise-gated. Deleted `access-table` + `grant-access-dialog`.
 - [ ] **SSO** — Backend: `sso.ts` (`getSsoProviders` + register dialog).
 - [ ] **Audit** — Backend: `audit.ts` (`getAuditLog` + export).
 - [ ] **Billing** — refactor off `billing-design.module.css`, then delete the module.
@@ -43,3 +45,6 @@ that already exists; anything the design wants that the backend lacks is logged 
 - **Teams · zone-access chips / role-tag** — design shows each team's Zone grants + a role tag; no
       team→Zone grant read wired here (grants exist in Access, but not surfaced per team). Omitted.
 - **Teams · "Zones covered" stat** — needs team→Zone coverage; not available. Dropped (3 real stats shown).
+- **Access · effective-reach exact counts** — design shows "flows to N Specs"; no zone→spec map wired.
+      Shown qualitatively ("This Zone & its Specs"). **grantedBy** not stored → relative date only.
+      Team principal member-count not surfaced on the row tag (shows "Team").
