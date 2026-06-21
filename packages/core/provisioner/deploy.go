@@ -62,6 +62,13 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		return nil, fmt.Errorf("SpecConfig is required for RunDeployV2")
 	}
 
+	// Enforce placement discipline before anything else: a CORE resource on a
+	// foreign cloud is a hot cross-cloud edge we can't provision yet. Fires on
+	// dry-run (plan) too, so the user never reaches apply.
+	if err := ValidatePlacement(vc); err != nil {
+		return nil, err
+	}
+
 	provider, err := cloud.NewCloudProvider(params.Provider)
 	if err != nil {
 		return nil, err
@@ -379,6 +386,21 @@ func copyDir(src, dst string) error {
 			return err
 		}
 		target := filepath.Join(dst, rel)
+		// Preserve symlinks rather than dereferencing them. The baked, pre-initialized
+		// `.terraform/providers` tree holds symlinks into the shared plugin cache;
+		// reading through them would copy hundreds of MB per job (and fail outright on
+		// links that point at directories). filepath.Walk uses Lstat, so symlinks
+		// arrive here with ModeSymlink set and are not descended into.
+		if info.Mode()&os.ModeSymlink != 0 {
+			linkDest, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			return os.Symlink(linkDest, target)
+		}
 		if info.IsDir() {
 			return os.MkdirAll(target, 0755)
 		}

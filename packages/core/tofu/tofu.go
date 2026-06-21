@@ -43,6 +43,8 @@ func NewTofuCLI(ctx context.Context, tfVersion, workDir string, stdout, stderr i
 		return nil, fmt.Errorf("failed to ensure OpenTofu binary: %w", err)
 	}
 
+	ensurePluginCache()
+
 	tf, err := tfexec.NewTerraform(workDir, execPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize OpenTofu: %w", err)
@@ -149,6 +151,27 @@ func OverrideTfvarsFromMap(dir string, tfvars map[string]interface{}) (string, e
 	}
 
 	return tfvarsPath, nil
+}
+
+// ensurePluginCache makes OpenTofu reuse a shared provider-plugin cache instead of
+// re-downloading providers on every `init` (the dominant job-start cost). It honors an
+// existing TF_PLUGIN_CACHE_DIR — e.g. the cache pre-populated into the runner image —
+// and otherwise defaults to ~/.alethia/plugin-cache so self-host/local runs warm on the
+// first job. The directory must exist or OpenTofu silently skips the cache, so we
+// MkdirAll it. It is published via the process environment (NOT tfexec.SetEnv): the child
+// `tofu` inherits os.Environ() at exec time, and deploy.go suspends/restores AWS creds in
+// os.Environ around init — pinning the env via SetEnv would break that.
+func ensurePluginCache() {
+	dir := os.Getenv("TF_PLUGIN_CACHE_DIR")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return // best-effort: no cache; init still works, just slower
+		}
+		dir = filepath.Join(home, ".alethia", "plugin-cache")
+		_ = os.Setenv("TF_PLUGIN_CACHE_DIR", dir)
+	}
+	_ = os.MkdirAll(dir, 0o755)
 }
 
 // ensureBinary returns a path to a `tofu` binary at the requested version,

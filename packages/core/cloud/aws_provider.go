@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -282,7 +283,15 @@ func (p *awsProvider) ConfigureKubeconfig(ctx context.Context, config *types.Spe
 	}
 
 	cluster := resp.Cluster
-	kubeconfigPath := "temp/kubeconfig"
+	// Write under an absolute, HOME-based path (not the cwd-relative "temp/") so that
+	// concurrent worker subprocesses — which share a cwd but each have a private HOME —
+	// never read each other's kubeconfig. See spec/mvp/21 §5 (concurrent slots).
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.TempDir()
+	}
+	kubeDir := filepath.Join(home, ".alethia")
+	kubeconfigPath := filepath.Join(kubeDir, "kubeconfig")
 	kubeconfig := fmt.Sprintf(`apiVersion: v1
 kind: Config
 clusters:
@@ -307,7 +316,7 @@ users:
 		*cluster.Arn, *cluster.Arn, *cluster.Arn, *cluster.Arn, *cluster.Arn, *cluster.Arn,
 		clusterName, config.Region)
 
-	if err := os.MkdirAll("temp", 0755); err != nil {
+	if err := os.MkdirAll(kubeDir, 0700); err != nil {
 		return err
 	}
 	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfig), 0600); err != nil {
