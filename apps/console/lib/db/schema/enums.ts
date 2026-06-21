@@ -104,6 +104,7 @@ export const provisionJobType = pgEnum("provision_job_type", [
 	"PLAN",
 	"DEPLOY_RUNNER",
 	"UPDATE_RUNNER",
+	"ANALYZE_REPO",
 ]);
 
 export const runnerMode = pgEnum("runner_mode", ["self-hosted", "cloud-hosted"]);
@@ -173,6 +174,17 @@ export const alertDeliveryStatus = pgEnum("alert_delivery_status", [
 	"dead",
 ]);
 
+// Durable connector-credential health (spec/mvp/25 Phase 3): which credential family,
+// and its last point-of-use outcome. Drives the `system.connector.token_failed` alert.
+export const connectorHealthKind = pgEnum("connector_health_kind", [
+	"git",
+	"api_key",
+]);
+export const connectorHealthStatus = pgEnum("connector_health_status", [
+	"healthy",
+	"failed",
+]);
+
 // Billing plan an organization is subscribed to. Drives entitlements via the
 // granular ladder in lib/billing/plan.ts (community → all off; team → orgs/teams;
 // business → + custom roles + audit export; enterprise → + SSO). `community` is
@@ -214,5 +226,9 @@ export type BillingStatus = (typeof billingStatus.enumValues)[number];
 export type AlertChannelType = (typeof alertChannelType.enumValues)[number];
 export type AlertSeverity = (typeof alertSeverity.enumValues)[number];
 export type CredentialScope = (typeof credentialScope.enumValues)[number];
+export type ConnectorHealthKind =
+	(typeof connectorHealthKind.enumValues)[number];
+export type ConnectorHealthStatus =
+	(typeof connectorHealthStatus.enumValues)[number];
 export type AlertDeliveryStatus =
 	(typeof alertDeliveryStatus.enumValues)[number];

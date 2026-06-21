@@ -1,0 +1,1 @@
+ALTER TYPE "public"."provision_job_type" ADD VALUE 'ANALYZE_REPO';

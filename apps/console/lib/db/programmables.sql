@@ -166,11 +166,18 @@ DECLARE
     v_job_id UUID;
     v_operator public.runner_operator;
     v_providers public.cloud_provider[];
+    v_status public.runner_status;
 BEGIN
-    SELECT operator, supported_providers INTO v_operator, v_providers FROM public.runners
+    SELECT operator, supported_providers, status INTO v_operator, v_providers, v_status FROM public.runners
       WHERE id = p_runner_id AND token_hash = p_runner_token_hash;
     IF v_operator IS NULL THEN
         RAISE EXCEPTION 'Unauthorized runner';
+    END IF;
+    -- A DRAINING runner (being retired by the fleet controller for a version roll or
+    -- scale-down) claims nothing — it finishes its current job, goes idle, gets reaped.
+    -- Return before the ONLINE refresh so the drain isn't undone.
+    IF v_status = 'DRAINING' THEN
+        RETURN;
     END IF;
     UPDATE public.runners SET last_heartbeat = now(), status = 'ONLINE'::public.runner_status WHERE id = p_runner_id;
     PERFORM public.open_runner_session(p_runner_id);
@@ -387,30 +394,76 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.sweep_offline_runners()
-RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_count INTEGER;
+-- ── Connection-based presence (instant liveness). The runner holds a persistent SSE
+-- wake connection; the route calls runner_present on connect + each ping (refreshing
+-- the last_heartbeat lease), and runner_lost the instant the connection drops
+-- (req.signal abort). This replaces slow heartbeat-stale polling as the liveness path.
+-- A DRAINING runner stays DRAINING (it's being retired) — presence only refreshes the lease. ──
+CREATE OR REPLACE FUNCTION public.runner_present(p_runner_id UUID)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
-  -- Flip stale ONLINE runners to OFFLINE (mirrors recover_stale_jobs's 5-min
-  -- window) and close their open session at last_heartbeat (last proof-of-life),
-  -- so the staleness grace window is not billed.
+  UPDATE public.runners
+  SET last_heartbeat = now(),
+      status = CASE WHEN status = 'DRAINING' THEN status ELSE 'ONLINE'::public.runner_status END
+  WHERE id = p_runner_id;
+  PERFORM public.open_runner_session(p_runner_id);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.runner_lost(p_runner_id UUID)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  -- Mark gone + close the usage session at the last proof-of-life, and wake the
+  -- controller so it replaces the lost capacity without waiting for the next tick.
+  WITH closed AS (
+    UPDATE public.runners SET status = 'OFFLINE'::public.runner_status
+    WHERE id = p_runner_id AND status <> 'OFFLINE'
+    RETURNING id, last_heartbeat
+  )
+  UPDATE public.runner_usage_sessions s
+  SET ended_at = COALESCE(c.last_heartbeat, s.started_at),
+      duration_seconds = GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(c.last_heartbeat, s.started_at) - s.started_at)))::bigint
+  FROM closed c WHERE s.runner_id = c.id AND s.ended_at IS NULL;
+  PERFORM pg_notify('runner_lost', p_runner_id::text);
+END;
+$$;
+
+-- Flips stale ONLINE runners to OFFLINE (mirrors recover_stale_jobs's 5-min window)
+-- and closes their open session at last_heartbeat (last proof-of-life), so the
+-- staleness grace window is not billed. RETURNS the flipped runners so the caller can
+-- emit `system.runner.offline` alerts (lib/jobs/recovery.ts) — the state change is the
+-- durable signal; emit is best-effort.
+-- DROP first: the return type changed (INTEGER → TABLE), which CREATE OR REPLACE can't do.
+DROP FUNCTION IF EXISTS public.sweep_offline_runners();
+CREATE OR REPLACE FUNCTION public.sweep_offline_runners()
+RETURNS TABLE(runner_id uuid, org_id uuid, runner_name text)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+-- The OUT param `org_id` shares a name with the runners column; prefer the column.
+#variable_conflict use_column
+BEGIN
+  RETURN QUERY
   WITH stale AS (
     UPDATE public.runners
     SET status = 'OFFLINE'::public.runner_status
     WHERE status = 'ONLINE'
-      AND (last_heartbeat IS NULL OR last_heartbeat < now() - INTERVAL '5 minutes')
-    RETURNING id, last_heartbeat
+      -- Tightened lease: the SSE wake connection refreshes last_heartbeat every ~10s
+      -- via runner_present, so a 45s gap means the connection is genuinely gone (hard
+      -- partition). Clean drops are caught instantly by runner_lost.
+      AND (last_heartbeat IS NULL OR last_heartbeat < now() - INTERVAL '45 seconds')
+    RETURNING id, org_id, name, last_heartbeat
+  ),
+  closed AS (
+    UPDATE public.runner_usage_sessions s
+    SET ended_at = COALESCE(st.last_heartbeat, s.started_at),
+        duration_seconds = GREATEST(
+          0,
+          EXTRACT(EPOCH FROM (COALESCE(st.last_heartbeat, s.started_at) - s.started_at))
+        )::bigint
+    FROM stale st
+    WHERE s.runner_id = st.id AND s.ended_at IS NULL
+    RETURNING s.id
   )
-  UPDATE public.runner_usage_sessions s
-  SET ended_at = COALESCE(st.last_heartbeat, s.started_at),
-      duration_seconds = GREATEST(
-        0,
-        EXTRACT(EPOCH FROM (COALESCE(st.last_heartbeat, s.started_at) - s.started_at))
-      )::bigint
-  FROM stale st
-  WHERE s.runner_id = st.id AND s.ended_at IS NULL;
-  GET DIAGNOSTICS v_count = ROW_COUNT;
-  RETURN v_count;
+  SELECT st.id, st.org_id, st.name FROM stale st;
 END;
 $$;
 

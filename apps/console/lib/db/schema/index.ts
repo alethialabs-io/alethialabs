@@ -23,3 +23,4 @@ export * from "./organization-billing";
 export * from "./teams";
 export * from "./sso";
 export * from "./alerts";
+export * from "./connector-health";

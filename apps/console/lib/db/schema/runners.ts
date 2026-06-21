@@ -66,6 +66,12 @@ export const runners = pgTable(
 		last_heartbeat: timestamp({ withTimezone: true }),
 		version: text(),
 		release_id: uuid().references(() => runnerReleases.id),
+		// Cloud location of the VM hosting this managed runner (e.g. Hetzner "fsn1"),
+		// for the fleet controller's per-location placement. Null for self/bundled.
+		location: text(),
+		// Desired release for this runner — the fleet controller drains+replaces runners
+		// whose running version differs (immutable rolling update). Null = no target.
+		target_release_id: uuid().references(() => runnerReleases.id, { onDelete: "set null" }),
 		is_default: boolean().default(false).notNull(),
 		metadata: jsonb().$type<RunnerMetadata>().default({}),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
