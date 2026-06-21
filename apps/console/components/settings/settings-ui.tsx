@@ -6,8 +6,15 @@
 // border-border-strong, …). Every settings page composes these; there is no bespoke
 // CSS module. Presentational only (server-safe — no hooks).
 
-import { ChevronDown, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import type { ReactNode } from "react";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 /** Page header — mono eyebrow + Geist title + description, with an optional action. */
@@ -171,41 +178,43 @@ export const settingsControl =
 /** Height + padding for single-line controls (inputs, selects). */
 export const settingsControlSize = "h-[38px] px-3";
 
-/** A native select styled to the settings design (filled, squared, mono, chevron). */
+/**
+ * A select built on the shadcn `Select` primitive (proper popover, keyboard nav). An
+ * option with an empty-string `value` is treated as the placeholder (Radix forbids
+ * empty item values), so existing call sites that pass a `{ value: "", label: "…" }`
+ * leading option keep working.
+ */
 export function SettingsSelect({
 	value,
 	onChange,
 	options,
 	className,
+	placeholder,
 	"aria-label": ariaLabel,
 }: {
 	value: string;
 	onChange: (value: string) => void;
 	options: { value: string; label: string }[];
-	/** Width/extra classes for the wrapper (e.g. `w-[130px]`). */
+	/** Width/extra classes for the trigger (e.g. `w-[130px]`). Defaults to full width. */
 	className?: string;
+	placeholder?: string;
 	"aria-label"?: string;
 }) {
+	const ph = placeholder ?? options.find((o) => o.value === "")?.label;
+	const items = options.filter((o) => o.value !== "");
 	return (
-		<div className={cn("relative", className)}>
-			<select
-				aria-label={ariaLabel}
-				className={cn(
-					settingsControl,
-					settingsControlSize,
-					"cursor-pointer appearance-none pr-8 font-mono text-[12.5px]",
-				)}
-				value={value}
-				onChange={(e) => onChange(e.target.value)}
-			>
-				{options.map((o) => (
-					<option key={o.value} value={o.value}>
+		<Select value={value || undefined} onValueChange={onChange}>
+			<SelectTrigger aria-label={ariaLabel} className={cn("w-full", className)}>
+				<SelectValue placeholder={ph} />
+			</SelectTrigger>
+			<SelectContent>
+				{items.map((o) => (
+					<SelectItem key={o.value} value={o.value}>
 						{o.label}
-					</option>
+					</SelectItem>
 				))}
-			</select>
-			<ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-3 -translate-y-1/2 text-text-tertiary" />
-		</div>
+			</SelectContent>
+		</Select>
 	);
 }
 
