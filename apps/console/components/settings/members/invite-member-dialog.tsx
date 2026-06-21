@@ -4,7 +4,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { UserPlus } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -40,7 +40,13 @@ const inviteSchema = z.object({
 type InviteData = z.infer<typeof inviteSchema>;
 
 /** Invite a teammate to the active organization (Enterprise). */
-export function InviteMemberDialog({ onInvited }: { onInvited?: () => void }) {
+export function InviteMemberDialog({
+	onInvited,
+	trigger,
+}: {
+	onInvited?: () => void;
+	trigger?: ReactNode;
+}) {
 	const [open, setOpen] = useState(false);
 	const form = useForm<InviteData>({
 		resolver: zodResolver(inviteSchema),
@@ -66,10 +72,12 @@ export function InviteMemberDialog({ onInvited }: { onInvited?: () => void }) {
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
-				<Button size="sm" className="gap-2">
-					<UserPlus className="h-4 w-4" />
-					Invite member
-				</Button>
+				{trigger ?? (
+					<Button size="sm" className="gap-2">
+						<UserPlus className="h-4 w-4" />
+						Invite member
+					</Button>
+				)}
 			</DialogTrigger>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>

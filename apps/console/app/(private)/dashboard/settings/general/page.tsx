@@ -4,22 +4,15 @@
 
 import { EnterpriseGate } from "@/components/settings/enterprise-gate";
 import { OrgGeneral } from "@/components/settings/general/org-general";
-import { SettingsHeader } from "@/components/settings/settings-header";
 
 export default function GeneralPage() {
 	return (
-		<>
-			<SettingsHeader
-				title="General"
-				description="Your organization's name and danger zone."
-			/>
-			<EnterpriseGate
-				entitlement="organizations"
-				title="Organization settings"
-				description="Create an organization to manage its name, members, and settings. Available on Enterprise."
-			>
-				<OrgGeneral />
-			</EnterpriseGate>
-		</>
+		<EnterpriseGate
+			entitlement="organizations"
+			title="Organization settings"
+			description="Create an organization to manage its name, members, and settings."
+		>
+			<OrgGeneral />
+		</EnterpriseGate>
 	);
 }
