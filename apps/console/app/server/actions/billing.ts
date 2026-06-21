@@ -15,16 +15,20 @@ import {
 	getStripeConfig,
 	isStripeConfigured,
 	isStripeTaxEnabled,
+	meterPriceIdForPlan,
 	type PaidPlan,
 	priceIdForPlan,
 } from "@/lib/billing/config";
 import { planMeta } from "@/lib/billing/plan-catalog";
+import { resolvePlanEntitlements } from "@/lib/billing/plan";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { getStripe } from "@/lib/billing/stripe";
+import { computeUsage, type UsageSummary } from "@/lib/billing/usage";
+import { queryJobMinutesByOrg } from "@/lib/queries/runner-usage";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
-import { member, organization, user } from "@/lib/db/schema";
+import { member, organization, organizationBilling, user } from "@/lib/db/schema";
 
 /** Read-only billing state for the active org, for the /settings/billing page. */
 export interface BillingSummary {
@@ -87,6 +91,61 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 	};
 }
 
+/** Managed-runner usage for the active org's current period (read-only; any member). */
+export interface UsageReport extends UsageSummary {
+	periodStart: string;
+	periodEnd: string;
+	plan: BillingPlan;
+	/** "Pause at the included allowance instead of billing overage" is enabled. */
+	hardCap: boolean;
+}
+
+/**
+ * Job-minutes consumed on managed runners this period vs the plan's included
+ * allowance, with the overage estimate. The customer-facing usage meter
+ * (lib/billing/usage). Self-hosted runners never count.
+ */
+export async function getOrgUsage(): Promise<UsageReport> {
+	const actor = await currentActor();
+	const billing = await getOrgBilling(actor.orgId).catch(() => null);
+	const plan = billing?.plan ?? "community";
+	const status = billing?.status ?? "none";
+	const included =
+		resolvePlanEntitlements(plan, status).quotas.includedRunnerMinutes;
+
+	const now = new Date();
+	const from =
+		billing?.currentPeriodStart ??
+		new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+
+	const rows = await queryJobMinutesByOrg(getServiceDb(), {
+		from,
+		to: now,
+		orgId: actor.orgId,
+	});
+	const used = rows[0]?.job_minutes ?? 0;
+
+	return {
+		...computeUsage(used, included),
+		periodStart: from.toISOString(),
+		periodEnd: (billing?.currentPeriodEnd ?? now).toISOString(),
+		plan,
+		hardCap: billing?.usageHardCap ?? false,
+	};
+}
+
+/**
+ * Toggle the active org's "pause at included instead of overage" policy
+ * (owner-gated). A pure usage-policy flag — independent of Stripe.
+ */
+export async function setUsageHardCap(enabled: boolean): Promise<void> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	await getServiceDb()
+		.update(organizationBilling)
+		.set({ usageHardCap: enabled, updatedAt: new Date() })
+		.where(eq(organizationBilling.organizationId, actor.orgId));
+}
+
 /** Guards that billing is actually wired (hosted control plane) before any Stripe call. */
 function requireHostedBilling(): void {
 	if (!isStripeConfigured()) {
@@ -94,6 +153,42 @@ function requireHostedBilling(): void {
 			`Billing is not enabled on this deployment (${deploymentMode()} mode).`,
 		);
 	}
+}
+
+/** New-subscription items: the flat plan item + (if configured) the graduated metered
+ *  runner-minutes item. Metered items carry no quantity. */
+function planCreateItems(
+	plan: PaidPlan,
+	quantity: number,
+): Stripe.SubscriptionCreateParams.Item[] {
+	const items: Stripe.SubscriptionCreateParams.Item[] = [
+		{ price: priceIdForPlan(plan), quantity },
+	];
+	const meter = meterPriceIdForPlan(plan);
+	if (meter) items.push({ price: meter });
+	return items;
+}
+
+/** Checkout line items: flat plan + (if configured) metered runner-minutes. */
+function planCheckoutLineItems(
+	plan: PaidPlan,
+): Stripe.Checkout.SessionCreateParams.LineItem[] {
+	const items: Stripe.Checkout.SessionCreateParams.LineItem[] = [
+		{ price: priceIdForPlan(plan), quantity: 1 },
+	];
+	const meter = meterPriceIdForPlan(plan);
+	if (meter) items.push({ price: meter });
+	return items;
+}
+
+/** All configured metered price IDs — to recognize an existing metered sub item. */
+function configuredMeterPriceIds(): Set<string> {
+	const ids = new Set<string>();
+	for (const p of ["team", "business", "enterprise"] as const) {
+		const id = meterPriceIdForPlan(p);
+		if (id) ids.add(id);
+	}
+	return ids;
 }
 
 /**
@@ -173,7 +268,7 @@ export async function createCheckoutSession(
 	const session = await getStripe().checkout.sessions.create({
 		mode: "subscription",
 		customer: customerId,
-		line_items: [{ price: priceIdForPlan(plan), quantity: 1 }],
+		line_items: planCheckoutLineItems(plan),
 		subscription_data: { metadata: { organization_id: actor.orgId } },
 		allow_promotion_codes: true,
 		...tax,
@@ -229,7 +324,7 @@ export async function createSubscriptionIntent(
 	const quantity = plan === "team" ? Math.max(1, opts?.seats ?? 1) : 1;
 	const sub = await getStripe().subscriptions.create({
 		customer: customerId,
-		items: [{ price: priceIdForPlan(plan), quantity }],
+		items: planCreateItems(plan, quantity),
 		payment_behavior: "default_incomplete",
 		payment_settings: { save_default_payment_method: "on_subscription" },
 		expand: ["latest_invoice.confirmation_secret"],
@@ -386,10 +481,28 @@ export async function changeSubscriptionPlan(
 	const subId = await requireSubscriptionId(actor.orgId);
 	const stripe = getStripe();
 	const sub = await stripe.subscriptions.retrieve(subId);
-	const itemId = sub.items.data[0]?.id;
-	if (!itemId) throw new Error("Subscription has no line item.");
+
+	// Distinguish the flat plan item from the metered runner-minutes item so a plan
+	// change swaps both (their graduated included tiers differ per plan).
+	const meterIds = configuredMeterPriceIds();
+	let flatItemId: string | undefined;
+	let meterItemId: string | undefined;
+	for (const it of sub.items.data) {
+		if (meterIds.has(it.price.id)) meterItemId = it.id;
+		else flatItemId = it.id;
+	}
+	if (!flatItemId) throw new Error("Subscription has no plan line item.");
+
+	const items: Stripe.SubscriptionUpdateParams.Item[] = [
+		{ id: flatItemId, price: priceIdForPlan(plan) },
+	];
+	const meter = meterPriceIdForPlan(plan);
+	if (meter && meterItemId) items.push({ id: meterItemId, price: meter });
+	else if (meter) items.push({ price: meter });
+	else if (meterItemId) items.push({ id: meterItemId, deleted: true });
+
 	await stripe.subscriptions.update(subId, {
-		items: [{ id: itemId, price: priceIdForPlan(plan) }],
+		items,
 		proration_behavior: "create_prorations",
 	});
 	return { ok: true };

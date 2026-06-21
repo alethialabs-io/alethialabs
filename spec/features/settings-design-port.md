@@ -34,7 +34,12 @@ that already exists; anything the design wants that the backend lacks is logged 
 - [x] **Audit** — filter-bar + events-table design (`audit-log.tsx`): search + category/result/range selects
       + CSV export (folded in `export-audit-button`, Enterprise-gated). Wired to `getAuditLog`/
       `getAuditExportCsv`; community-real view. Deleted `export-audit-button.tsx`.
-- [ ] **Billing** — refactor off `billing-design.module.css`, then delete the module.
+- [x] **Billing** — all 6 billing files refactored off `billing-design.module.css` onto the shared
+      primitives; **module deleted** → ZERO `*.module.css` under `components/settings/`. Preserved the other
+      instance's usage meter (Provisioning-minutes via `getOrgUsage`) + hard-cap toggle verbatim. NB: the
+      commit necessarily bundled their usage backend (`billing.ts` `getOrgUsage`/`setUsageHardCap`,
+      `lib/billing/usage.ts`, `lib/queries/runner-usage.ts`, `config.ts`/`plan.ts`) because `billing-panel`
+      imports it — their `meter.ts`/`usage-guard.ts`/`jobs.ts`/`specs.ts` stay in their lane.
 
 ## Design wants X, backend lacks Y (gap log)
 - **General · Logo upload** — design shows Upload/Remove; no avatar storage pipeline. Stubbed (toast).

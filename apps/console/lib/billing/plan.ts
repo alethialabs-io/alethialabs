@@ -17,6 +17,8 @@ export const COMMUNITY_ENTITLEMENTS: Entitlements = {
 	sso: false,
 	customRoles: false,
 	auditExport: false,
+	advancedAlerting: false,
+	quotas: { maxConcurrentJobs: 2, priorityLevel: 0, includedRunnerMinutes: 200 },
 };
 
 /**
@@ -31,20 +33,40 @@ export const COMMUNITY_ENTITLEMENTS: Entitlements = {
 export function planEntitlements(plan: BillingPlan): Entitlements {
 	switch (plan) {
 		case "team":
-			return { ...COMMUNITY_ENTITLEMENTS, organizations: true };
+			return {
+				...COMMUNITY_ENTITLEMENTS,
+				organizations: true,
+				quotas: {
+					maxConcurrentJobs: 8,
+					priorityLevel: 10,
+					includedRunnerMinutes: 500,
+				},
+			};
 		case "business":
 			return {
 				...COMMUNITY_ENTITLEMENTS,
 				organizations: true,
 				customRoles: true,
 				auditExport: true,
+				advancedAlerting: true,
+				quotas: {
+					maxConcurrentJobs: 20,
+					priorityLevel: 20,
+					includedRunnerMinutes: 5_000,
+				},
 			};
 		case "enterprise":
 			return {
 				organizations: true,
 				customRoles: true,
 				auditExport: true,
+				advancedAlerting: true,
 				sso: true,
+				quotas: {
+					maxConcurrentJobs: null,
+					priorityLevel: 30,
+					includedRunnerMinutes: 20_000,
+				},
 			};
 		default:
 			return COMMUNITY_ENTITLEMENTS;

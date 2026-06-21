@@ -22,9 +22,24 @@ const schema = z.object({
 		business: z.string().min(1),
 		enterprise: z.string().min(1),
 	}),
+	/**
+	 * Optional GRADUATED metered Price IDs for runner job-minutes per plan — the
+	 * free tier of each must mirror plan.ts `includedRunnerMinutes`, then $0.012/min.
+	 * Unset → usage is surfaced but not billed through Stripe (metering opt-in).
+	 */
+	meterPrices: z
+		.object({
+			team: z.string().optional(),
+			business: z.string().optional(),
+			enterprise: z.string().optional(),
+		})
+		.optional(),
 	/** Absolute base URL for Checkout/Portal return links. */
 	appUrl: z.string().url(),
 });
+
+/** Stripe meter event name for managed-runner job-minutes (see lib/billing/meter.ts). */
+export const RUNNER_MINUTES_METER_EVENT = "alethia_runner_minutes";
 
 export type StripeConfig = z.infer<typeof schema>;
 
@@ -71,6 +86,11 @@ export function getStripeConfig(): StripeConfig {
 			business: process.env.STRIPE_PRICE_BUSINESS,
 			enterprise: process.env.STRIPE_PRICE_ENTERPRISE,
 		},
+		meterPrices: {
+			team: process.env.STRIPE_PRICE_METER_TEAM,
+			business: process.env.STRIPE_PRICE_METER_BUSINESS,
+			enterprise: process.env.STRIPE_PRICE_METER_ENTERPRISE,
+		},
 		appUrl: process.env.NEXT_PUBLIC_APP_URL ?? process.env.BETTER_AUTH_URL,
 	});
 	if (!parsed.success) {
@@ -83,6 +103,11 @@ export function getStripeConfig(): StripeConfig {
 /** The Stripe Price ID for a paid plan. */
 export function priceIdForPlan(plan: PaidPlan): string {
 	return getStripeConfig().prices[plan];
+}
+
+/** The graduated metered Price ID for a plan's runner-minutes, if configured. */
+export function meterPriceIdForPlan(plan: PaidPlan): string | undefined {
+	return getStripeConfig().meterPrices?.[plan];
 }
 
 /** The paid plan a Stripe Price ID maps to, or null if it isn't one of ours. */

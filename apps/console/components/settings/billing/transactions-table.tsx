@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Transaction history (Billing page) — the org's recent Stripe charges (paid /
-// failed / refunded), with a color-free status badge. Read-only.
+// failed / refunded), composed from the shared settings primitives. Read-only.
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -11,8 +11,16 @@ import {
 	listTransactions,
 	type TransactionInfo,
 } from "@/app/server/actions/billing";
+import {
+	SettingsSection,
+	SettingsTableCard,
+	SettingsTableFoot,
+	settingsTableRows,
+	settingsTd,
+	settingsTh,
+} from "@/components/settings/settings-ui";
 import { Skeleton } from "@/components/ui/skeleton";
-import styles from "./billing-design.module.css";
+import { cn } from "@/lib/utils";
 
 /** Smallest-unit amount → localized currency (negative renders as −$x). */
 function formatAmount(amount: number, currency: string): string {
@@ -32,11 +40,11 @@ function formatDate(iso: string): string {
 	});
 }
 
-const STATUS_LABEL: Record<TransactionInfo["status"], string> = {
-	paid: "Paid",
-	pending: "Pending",
-	failed: "Failed",
-	refunded: "Refunded",
+const STATUS: Record<TransactionInfo["status"], { variant: string; label: string }> = {
+	paid: { variant: "vx-status--active", label: "Paid" },
+	pending: { variant: "vx-status--pending", label: "Pending" },
+	failed: { variant: "vx-status--failed", label: "Failed" },
+	refunded: { variant: "vx-status--idle", label: "Refunded" },
 };
 
 export function TransactionsTable() {
@@ -49,61 +57,77 @@ export function TransactionsTable() {
 	}, []);
 
 	return (
-		<section className={styles.section}>
-			<div className={styles.sectionHead}>
-				<h2>Transaction history</h2>
-				<span className={styles.rule} />
-			</div>
-			<div className={`${styles.card} ${styles.tblWrap}`}>
-				{!rows ? (
-					<div style={{ padding: 18 }}>
-						<Skeleton className="h-24 w-full" />
-					</div>
-				) : rows.length === 0 ? (
-					<div className={styles.empty}>No transactions yet.</div>
-				) : (
-					<>
-						<div className={styles.scrollX}>
-							<table className={styles.table}>
-								<thead>
-									<tr>
-										<th>Date</th>
-										<th>Description</th>
-										<th>Method</th>
-										<th>Status</th>
-										<th className={styles.right}>Amount</th>
-									</tr>
-								</thead>
-								<tbody>
-									{rows.map((t) => (
-										<tr key={t.id}>
-											<td className={styles.date}>{formatDate(t.created)}</td>
-											<td>
-												<div className={styles.desc}>{t.description}</div>
-											</td>
-											<td className={styles.method}>{t.method ?? "—"}</td>
-											<td>
-												<span className={`${styles.status} ${styles[t.status]}`}>
-													<span className={styles.s} />
-													{STATUS_LABEL[t.status]}
-												</span>
-											</td>
-											<td className={`${styles.right} ${styles.amt}`}>
-												{formatAmount(t.amount, t.currency)}
-											</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
-						</div>
-						<div className={styles.tblFoot}>
-							<span className={styles.count}>
+		<SettingsSection title="Transaction history">
+			{!rows ? (
+				<div className="rounded-lg border border-border bg-surface p-[18px] shadow-sm">
+					<Skeleton className="h-24 w-full" />
+				</div>
+			) : rows.length === 0 ? (
+				<div className="rounded-lg border border-border bg-surface px-[18px] py-[18px] text-[13px] text-text-tertiary shadow-sm">
+					No transactions yet.
+				</div>
+			) : (
+				<SettingsTableCard
+					foot={
+						<SettingsTableFoot>
+							<span>
 								{rows.length} transaction{rows.length === 1 ? "" : "s"}
 							</span>
-						</div>
-					</>
-				)}
-			</div>
-		</section>
+						</SettingsTableFoot>
+					}
+				>
+					<table className={settingsTableRows}>
+						<thead>
+							<tr>
+								<th className={settingsTh}>Date</th>
+								<th className={settingsTh}>Description</th>
+								<th className={settingsTh}>Method</th>
+								<th className={settingsTh}>Status</th>
+								<th className={cn(settingsTh, "text-right")}>Amount</th>
+							</tr>
+						</thead>
+						<tbody>
+							{rows.map((t) => {
+								const st = STATUS[t.status];
+								return (
+									<tr key={t.id}>
+										<td
+											className={cn(
+												settingsTd,
+												"whitespace-nowrap font-mono text-[11.5px] text-text-secondary",
+											)}
+										>
+											{formatDate(t.created)}
+										</td>
+										<td className={settingsTd}>
+											<span className="text-text-primary">{t.description}</span>
+										</td>
+										<td
+											className={cn(settingsTd, "font-mono text-[11.5px] text-text-tertiary")}
+										>
+											{t.method ?? "—"}
+										</td>
+										<td className={settingsTd}>
+											<span className={cn("vx-status", st.variant)}>
+												<span className="vx-status__dot" />
+												{st.label}
+											</span>
+										</td>
+										<td
+											className={cn(
+												settingsTd,
+												"text-right font-mono text-[12.5px] text-text-primary",
+											)}
+										>
+											{formatAmount(t.amount, t.currency)}
+										</td>
+									</tr>
+								);
+							})}
+						</tbody>
+					</table>
+				</SettingsTableCard>
+			)}
+		</SettingsSection>
 	);
 }
