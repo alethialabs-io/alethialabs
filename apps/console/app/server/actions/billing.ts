@@ -83,9 +83,20 @@ function requireHostedBilling(): void {
  * Returns the org's Stripe customer id, creating + persisting one on first use. The
  * customer carries organization_id metadata so webhook events resolve back to the org.
  */
-async function ensureCustomer(orgId: string, userId: string): Promise<string> {
+async function ensureCustomer(
+	orgId: string,
+	userId: string,
+	billingEmail?: string,
+): Promise<string> {
 	const billing = await getOrgBilling(orgId);
-	if (billing?.stripeCustomerId) return billing.stripeCustomerId;
+	if (billing?.stripeCustomerId) {
+		if (billingEmail) {
+			await getStripe().customers.update(billing.stripeCustomerId, {
+				email: billingEmail,
+			});
+		}
+		return billing.stripeCustomerId;
+	}
 
 	const db = getServiceDb();
 	const [u] = await db
@@ -100,7 +111,7 @@ async function ensureCustomer(orgId: string, userId: string): Promise<string> {
 		.limit(1);
 
 	const customer = await getStripe().customers.create({
-		email: u?.email,
+		email: billingEmail || u?.email,
 		name: org?.name,
 		metadata: { organization_id: orgId, created_by: userId },
 	});
@@ -171,6 +182,7 @@ export interface SubscriptionIntent {
  */
 export async function createSubscriptionIntent(
 	plan: PaidPlan,
+	opts?: { seats?: number; billingEmail?: string },
 ): Promise<SubscriptionIntent> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
@@ -187,13 +199,20 @@ export async function createSubscriptionIntent(
 		);
 	}
 
-	const customerId = await ensureCustomer(actor.orgId, actor.userId);
+	const customerId = await ensureCustomer(
+		actor.orgId,
+		actor.userId,
+		opts?.billingEmail,
+	);
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
 		: {};
+	// Only the Team price is per-seat (per-unit) — bill the requested seat count.
+	// Business/Enterprise are flat, so their quantity stays 1.
+	const quantity = plan === "team" ? Math.max(1, opts?.seats ?? 1) : 1;
 	const sub = await getStripe().subscriptions.create({
 		customer: customerId,
-		items: [{ price: priceIdForPlan(plan) }],
+		items: [{ price: priceIdForPlan(plan), quantity }],
 		payment_behavior: "default_incomplete",
 		payment_settings: { save_default_payment_method: "on_subscription" },
 		expand: ["latest_invoice.confirmation_secret"],
