@@ -19,7 +19,8 @@ that already exists; anything the design wants that the backend lacks is logged 
 - [x] **Members** — off the module (now deleted). Reusable primitives added: `SettingsTabs`,
       `SettingsSearch`, `SettingsSelect`, `SettingsTableCard`/`Foot`, `settingsTh/Td/TableRows`.
       Backend: `getMembers`/`getInvitations`/`setMemberSuspended` + better-auth role/remove/cancel.
-- [ ] **Teams** — `teams-list.tsx` → design. Backend: `getTeams` + better-auth team CRUD.
+- [x] **Teams** — card-grid design via primitives. `getTeams` extended with `members[]` (avatar stack +
+      grouped count); create/delete/manage via better-auth. Stats: Teams / Members grouped / Largest team.
 - [ ] **Roles** — IAM-style. Backend: `roles.ts` (`listCustomRoles`/`deleteRole`) + built-in roles.
 - [ ] **Access** — Backend: `grants.ts` (`listAccessGrants`/`getGrantOptions`/`revokeGrant`).
 - [ ] **SSO** — Backend: `sso.ts` (`getSsoProviders` + register dialog).
@@ -35,3 +36,8 @@ that already exists; anything the design wants that the backend lacks is logged 
       runner-minute metering. Shown as "metering coming soon".
 - **Billing · Plan history** — design shows a full timeline; no billing event log. Derived minimally
       (org created + current plan).
+- **Teams · description / stored slug** — design shows a per-team description + slug; the `team` table has
+      neither (better-auth team = id/name/orgId). Slug derived from name for display; description omitted.
+- **Teams · zone-access chips / role-tag** — design shows each team's Zone grants + a role tag; no
+      team→Zone grant read wired here (grants exist in Access, but not surfaced per team). Omitted.
+- **Teams · "Zones covered" stat** — needs team→Zone coverage; not available. Dropped (3 real stats shown).

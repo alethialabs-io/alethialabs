@@ -2,32 +2,65 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Plus, Trash2, Users } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+// Settings · Teams — the authored claude.ai/design card grid, composed from the shared
+// settings primitives. Wired to the real backend: getTeams (name + members) + better-auth
+// createTeam/removeTeam + ManageTeamDialog (add/remove members). The design's per-team
+// description, stored slug, zone-access chips and role-tag have no backend yet — omitted
+// and tracked in spec/features/settings-design-port.md.
+
+import { MoreHorizontal, Plus, Users } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { getTeams, type TeamRow } from "@/app/server/actions/teams";
-import { Badge } from "@/components/ui/badge";
+import {
+	SettingsPageHead,
+	SettingsSearch,
+	settingsControl,
+	settingsControlSize,
+	StatCell,
+	StatStrip,
+} from "@/components/settings/settings-ui";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-	DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { authClient } from "@/lib/auth/client";
+import { cn } from "@/lib/utils";
 import { ManageTeamDialog } from "./manage-team-dialog";
+
+function monogram(name: string): string {
+	const parts = name.trim().split(/\s+/).filter(Boolean);
+	if (!parts.length) return "TM";
+	return ((parts[0][0] ?? "") + (parts[1]?.[0] ?? parts[0][1] ?? "")).toUpperCase();
+}
+function slugify(s: string): string {
+	return s
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+}
 
 export function TeamsList() {
 	const [teams, setTeams] = useState<TeamRow[] | null>(null);
 	const [creating, setCreating] = useState(false);
 	const [name, setName] = useState("");
+	const [search, setSearch] = useState("");
 	const [manage, setManage] = useState<TeamRow | null>(null);
+	const [deleting, setDeleting] = useState<TeamRow | null>(null);
 
 	const load = useCallback(() => {
 		getTeams()
@@ -58,80 +91,194 @@ export function TeamsList() {
 			return;
 		}
 		toast.success("Team deleted");
+		setDeleting(null);
 		load();
 	};
 
+	const filtered = useMemo(() => {
+		const q = search.trim().toLowerCase();
+		return (teams ?? []).filter((t) => t.name.toLowerCase().includes(q));
+	}, [teams, search]);
+
+	const stats = useMemo(() => {
+		const list = teams ?? [];
+		const distinct = new Set(list.flatMap((t) => t.members.map((m) => m.userId)));
+		const largest = list.reduce<TeamRow | null>(
+			(a, b) => (a && a.memberCount >= b.memberCount ? a : b),
+			null,
+		);
+		return { count: list.length, grouped: distinct.size, largest };
+	}, [teams]);
+
+	if (teams === null) {
+		return (
+			<div className="space-y-4">
+				<Skeleton className="h-20 w-full" />
+				<Skeleton className="h-48 w-full" />
+			</div>
+		);
+	}
+
 	return (
-		<div className="space-y-3">
-			<div className="flex justify-end">
-				<Dialog open={creating} onOpenChange={setCreating}>
-					<DialogTrigger asChild>
-						<Button size="sm" className="gap-2">
-							<Plus className="h-4 w-4" />
-							New team
-						</Button>
-					</DialogTrigger>
-					<DialogContent className="sm:max-w-sm">
-						<DialogHeader>
-							<DialogTitle>New team</DialogTitle>
-							<DialogDescription>
-								Group members so you can grant access to the whole team at once.
-							</DialogDescription>
-						</DialogHeader>
-						<div className="space-y-1.5">
-							<Label className="text-sm">Team name</Label>
-							<Input
+		<div>
+			<SettingsPageHead
+				eyebrow="Teams"
+				title="Teams"
+				description="Group members into teams and grant access to Zones by team rather than one person at a time. A grant on a team flows to every member."
+			/>
+
+			{teams.length > 0 && (
+				<StatStrip>
+					<StatCell label="Teams" value={stats.count} sub="active" />
+					<StatCell label="Members grouped" value={stats.grouped} sub="across teams" />
+					<StatCell
+						label="Largest team"
+						value={stats.largest?.memberCount ?? 0}
+						sub={stats.largest?.name}
+					/>
+				</StatStrip>
+			)}
+
+			{/* toolbar */}
+			<div className="mb-[14px] flex flex-wrap items-center justify-between gap-4">
+				<SettingsSearch
+					value={search}
+					onChange={setSearch}
+					placeholder="Search teams"
+					className="w-[240px]"
+				/>
+				<Button size="sm" onClick={() => setCreating((v) => !v)}>
+					<Plus size={13} />
+					Create team
+				</Button>
+			</div>
+
+			{/* inline create panel */}
+			{creating && (
+				<div className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-sm">
+					<p className="mb-3 text-[13px] font-medium text-text-primary">New team</p>
+					<div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+						<div className="flex-1">
+							<label
+								htmlFor="team-name"
+								className="mb-1.5 block text-[11.5px] text-text-tertiary"
+							>
+								Team name
+							</label>
+							<input
+								id="team-name"
+								className={cn(settingsControl, settingsControlSize)}
 								value={name}
 								onChange={(e) => setName(e.target.value)}
-								placeholder="platform-team"
+								placeholder="e.g. Networking"
+								autoComplete="off"
 								autoFocus
 							/>
 						</div>
-						<DialogFooter>
-							<Button onClick={() => void create()} disabled={!name.trim()}>
+						<div className="flex gap-2">
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={() => {
+									setCreating(false);
+									setName("");
+								}}
+							>
+								Cancel
+							</Button>
+							<Button size="sm" disabled={!name.trim()} onClick={() => void create()}>
 								Create team
 							</Button>
-						</DialogFooter>
-					</DialogContent>
-				</Dialog>
-			</div>
+						</div>
+					</div>
+				</div>
+			)}
 
-			{teams === null ? (
-				<Skeleton className="h-16 w-full" />
-			) : teams.length === 0 ? (
-				<p className="rounded-lg border border-dashed border-border/60 bg-muted/10 px-4 py-8 text-center text-sm text-muted-foreground">
-					No teams yet. Create one to grant access to a group of members at once.
-				</p>
+			{/* grid */}
+			{filtered.length === 0 ? (
+				<div className="rounded-lg border border-dashed border-border bg-surface-sunken px-6 py-12 text-center">
+					<Users className="mx-auto mb-3 size-5 text-text-tertiary" />
+					<p className="text-[13px] text-text-tertiary">
+						{teams.length === 0
+							? "No teams yet. Create one to grant access to a group of members at once."
+							: "No teams match your search."}
+					</p>
+				</div>
 			) : (
-				<div className="space-y-2">
-					{teams.map((t) => (
+				<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+					{filtered.map((t) => (
 						<div
 							key={t.id}
-							className="flex items-center justify-between rounded-lg border border-border/50 bg-card px-4 py-3"
+							className="flex flex-col gap-4 rounded-lg border border-border bg-surface p-4 shadow-sm"
 						>
-							<div className="flex items-center gap-3">
-								<div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted text-muted-foreground">
-									<Users className="h-4 w-4" />
+							<div className="flex items-start justify-between gap-2">
+								<div className="flex min-w-0 items-center gap-3">
+									<span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-ink font-display text-[13px] font-semibold text-ink-foreground">
+										{monogram(t.name)}
+									</span>
+									<div className="flex min-w-0 flex-col">
+										<span className="truncate text-[14px] font-medium text-text-primary">
+											{t.name}
+										</span>
+										<span className="font-mono text-[10.5px] text-text-tertiary">
+											{slugify(t.name)}
+										</span>
+									</div>
 								</div>
-								<div>
-									<p className="text-sm font-medium text-foreground">{t.name}</p>
-									<Badge variant="secondary" className="text-[10px]">
-										{t.memberCount} member{t.memberCount === 1 ? "" : "s"}
-									</Badge>
-								</div>
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<button
+											type="button"
+											aria-label="Manage team"
+											className="inline-flex size-7 shrink-0 items-center justify-center rounded-sm text-text-disabled transition-colors hover:bg-surface-muted hover:text-text-primary"
+										>
+											<MoreHorizontal size={16} />
+										</button>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent align="end" className="w-44">
+										<DropdownMenuItem onClick={() => setManage(t)}>
+											Manage members
+										</DropdownMenuItem>
+										<DropdownMenuItem
+											className="text-destructive focus:text-destructive"
+											onClick={() => setDeleting(t)}
+										>
+											Delete team
+										</DropdownMenuItem>
+									</DropdownMenuContent>
+								</DropdownMenu>
 							</div>
-							<div className="flex items-center gap-1">
+
+							<div className="flex items-center gap-3">
+								{t.members.length > 0 ? (
+									<div className="flex -space-x-2">
+										{t.members.slice(0, 4).map((m) => (
+											<span
+												key={m.userId}
+												className="flex size-7 items-center justify-center rounded-full border-2 border-surface bg-surface-muted font-mono text-[10px] text-text-secondary"
+											>
+												{m.initials}
+											</span>
+										))}
+										{t.members.length > 4 && (
+											<span className="flex size-7 items-center justify-center rounded-full border-2 border-surface bg-surface-sunken font-mono text-[10px] text-text-tertiary">
+												+{t.members.length - 4}
+											</span>
+										)}
+									</div>
+								) : (
+									<span className="font-mono text-[11px] text-text-disabled">
+										No members yet
+									</span>
+								)}
+							</div>
+
+							<div className="mt-auto flex items-center justify-between border-t border-border pt-3">
+								<span className="font-mono text-[11px] text-text-tertiary">
+									{t.memberCount} member{t.memberCount === 1 ? "" : "s"}
+								</span>
 								<Button variant="outline" size="sm" onClick={() => setManage(t)}>
 									Manage
-								</Button>
-								<Button
-									variant="ghost"
-									size="icon"
-									className="h-8 w-8 text-destructive"
-									onClick={() => void remove(t)}
-								>
-									<Trash2 className="h-4 w-4" />
-									<span className="sr-only">Delete {t.name}</span>
 								</Button>
 							</div>
 						</div>
@@ -148,6 +295,30 @@ export function TeamsList() {
 					onChanged={load}
 				/>
 			)}
+
+			<AlertDialog
+				open={deleting !== null}
+				onOpenChange={(o) => !o && setDeleting(null)}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Delete this team?</AlertDialogTitle>
+						<AlertDialogDescription>
+							This removes the team and its membership. Grants made to the team are
+							revoked. Members keep their own roles. This cannot be undone.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>Cancel</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={() => deleting && void remove(deleting)}
+							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+						>
+							Delete team
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
 	);
 }
