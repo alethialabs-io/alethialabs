@@ -18,8 +18,11 @@ sequences them and records what's done.
 | 5 | Concurrent job slots | ✅ Built (supervisor + N worker subprocesses) |
 | 6 | Metering surfacing + metered billing | ✅ Built |
 | 7 | Hetzner FleetProvider + bootstrap; retire fleet-aws | ✅ Built |
+| 8 | Fleet Controller — always-on (health/version/placement) | ✅ Core built ([26](26-fleet-controller.md); live Hetzner deferred) |
 
-Legend: ✅ Built · 🔨 In progress · ⬜ Designed (not started). **The runner rebuild is complete.**
+Legend: ✅ Built · 🔨 In progress · ⬜ Designed (not started). **The runner rebuild is complete; the
+fleet is now self-managing — see [26 — Fleet Controller](26-fleet-controller.md) for always-on capacity,
+instant connection-based liveness, and immutable rolling updates.**
 
 ## Dependency order
 

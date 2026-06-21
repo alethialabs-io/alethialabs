@@ -6,8 +6,10 @@
 **metering → metered-billing** model (§5 — job-minutes, included allowance, $0.012/min overage, Stripe
 graduated meter) is **implemented** (Phase 6); the first **per-cloud capacity provider** (§3 — Hetzner
 `HcloudFleetProvider` + bootstrap self-registration) is **implemented** (Phase 7), retiring the legacy
-AWS fleet. **The runner rebuild is complete** (GCP MIG / Azure VMSS providers can slot in behind the
-same seam when needed).
+AWS fleet. The count-only scaler (§2–3) has since been superseded by the **Fleet Controller**
+([26](26-fleet-controller.md)) — a declarative reconciler over immutable VMs (health · count · version ·
+placement) with connection-based instant liveness and zero-downtime rolling updates. **The runner rebuild
+is complete** (GCP MIG / Azure VMSS providers slot in behind the same seam when needed).
 Extends [08 — Runner Fleet & Autoscaling](08-runner-fleet-autoscaling.md); references
 [14 — GTM & Pricing](14-gtm-pricing.md) and [17 — Cost Model](17-cost-model-and-pricing.md).
 
