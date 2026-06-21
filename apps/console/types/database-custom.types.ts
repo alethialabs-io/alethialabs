@@ -3,6 +3,8 @@
 
 // Typed JSONB shapes for the Drizzle schema's `.$type<>()` columns (lib/db/schema).
 
+import type { AlertSeverity } from "@/lib/db/schema/enums";
+
 // ── Typed JSONB interfaces ─────────────────────────────────────────
 
 export interface CloudCredentials {
@@ -19,6 +21,15 @@ export interface CloudCredentials {
 	tenant_id?: string | null;
 	client_id?: string | null;
 	subscription_id?: string | null;
+	// DigitalOcean / Hetzner / Civo — no role-federation exists for these clouds, so a
+	// scoped API token is stored ENCRYPTED at rest (decrypted only on the runner at claim).
+	// Alibaba uses role_arn/external_id above (RAM role = zero stored credentials).
+	token?: EncryptedSecret | null;
+	// Self-managed mode (token clouds only): no token is stored in Alethia at all — the
+	// customer's self-hosted runner supplies it from its own environment (HCLOUD_TOKEN,
+	// CIVO_TOKEN, DIGITALOCEAN_ACCESS_TOKEN). The honest zero-trust path for clouds with
+	// no federation: the secret never enters Alethia's database.
+	self_managed?: boolean | null;
 }
 
 export interface VpcInfo {
@@ -220,6 +231,12 @@ export interface RunnerDeployConfig {
 
 export interface RunnerMetadata {
 	deploy_config?: RunnerDeployConfig | null;
+	/**
+	 * Cloud instance id of the VM hosting this managed runner (e.g. a Hetzner server
+	 * id). Set at bootstrap; lets the fleet scaler correlate a DB runner ↔ its server
+	 * for graceful scale-down. Null for non-fleet (bundled/self) runners.
+	 */
+	cloud_instance_id?: string | null;
 }
 
 // jobs.execution_metadata — written by the runner via update_job_status. Known
@@ -234,4 +251,49 @@ export interface ExecutionMetadata {
 		| CachedResources
 		| GcpCachedResources
 		| AzureCachedResources;
+}
+
+// ── Alerting (spec/mvp/25-alerting-notifications.md) ────────────────────────────
+
+// alert_channels.config — non-secret channel settings. The sensitive material
+// (webhook/Slack/RocketChat URL, optional webhook signing secret) lives in the
+// encrypted `secret` column, never here.
+export interface AlertChannelConfig {
+	// email channel: who receives the alert.
+	recipients?: string[];
+}
+
+// alert_rules.match — field-equality narrowing of an event type. Empty = "all
+// events of this type". Compound/boolean expressions are an ee/ capability.
+export interface AlertRuleMatch {
+	job_types?: string[];
+	zone_ids?: string[];
+	spec_ids?: string[];
+	resource_types?: string[];
+	actions?: string[];
+	min_severity?: AlertSeverity;
+}
+
+// alert_deliveries.context — the rendered event payload captured at emit time, so
+// a delivery is replayable and the Activity view is self-describing. Fields are
+// optional because they vary by source (authz vs jobs vs connector health).
+export interface AlertEventContext {
+	title: string;
+	summary?: string;
+	severity?: AlertSeverity;
+	// authz / governance sources
+	actor_id?: string;
+	action?: string;
+	resource_type?: string;
+	resource_id?: string;
+	reason?: string;
+	// job / spec sources
+	job_id?: string;
+	job_type?: string;
+	spec_id?: string;
+	zone_id?: string;
+	// connector source
+	connector_slug?: string;
+	// deep link into the console
+	link?: string;
 }

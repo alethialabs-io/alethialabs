@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { sql } from "drizzle-orm";
 import {
 	boolean,
 	index,
@@ -8,7 +9,7 @@ import {
 	pgTable,
 	text,
 	timestamp,
-	unique,
+	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
 import type {
@@ -19,16 +20,19 @@ import type {
 	GcpCachedResources,
 } from "@/types/database-custom.types";
 import { connectors } from "./connectors";
-import { cloudProvider } from "./enums";
+import { cloudProvider, credentialScope } from "./enums";
 
 // Cloud credential anchors. `credentials`/`cached_resources` are typed JSONB.
 export const cloudIdentities = pgTable(
 	"cloud_identities",
 	{
 		id: uuid().primaryKey().defaultRandom(),
+		// The author of the credential (the user who connected it).
 		user_id: uuid().notNull(),
 		// Coarse tenancy scope (RLS blast wall); community org_id = user_id via trigger.
 		org_id: uuid(),
+		// Visibility: personal (author-only) or org (shared with the org per PDP role).
+		scope: credentialScope().default("personal").notNull(),
 		provider: cloudProvider().notNull(),
 		name: text().default("My Cloud Account").notNull(),
 		credentials: jsonb().$type<CloudCredentials>().default({}).notNull(),
@@ -59,9 +63,12 @@ export const connectorCredentials = pgTable(
 	"connector_credentials",
 	{
 		id: uuid().primaryKey().defaultRandom(),
+		// The author of the credential (the user who connected it).
 		user_id: uuid().notNull(),
 		// Coarse tenancy scope (RLS blast wall); community org_id = user_id via trigger.
 		org_id: uuid(),
+		// Visibility: personal (author-only) or org (shared with the org per PDP role).
+		scope: credentialScope().default("personal").notNull(),
 		connector_id: uuid()
 			.notNull()
 			.references(() => connectors.id, { onDelete: "cascade" }),
@@ -71,10 +78,14 @@ export const connectorCredentials = pgTable(
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
 	(t) => [
-		unique("connector_credentials_user_connector_key").on(
-			t.user_id,
-			t.connector_id,
-		),
+		// One personal credential per author per connector …
+		uniqueIndex("connector_credentials_personal_key")
+			.on(t.user_id, t.connector_id)
+			.where(sql`scope = 'personal'`),
+		// … and one shared credential per org per connector.
+		uniqueIndex("connector_credentials_org_key")
+			.on(t.org_id, t.connector_id)
+			.where(sql`scope = 'org'`),
 		index("idx_connector_credentials_user").on(t.user_id),
 		index("idx_connector_credentials_org").on(t.org_id),
 	],

@@ -44,12 +44,19 @@ import {
 	nosqlKeyType,
 	nosqlTableType,
 } from "./enums";
+import { cloudIdentities } from "./identities";
 import { specs } from "./specs";
 
 const specRef = () =>
 	uuid()
 		.notNull()
 		.references(() => specs.id, { onDelete: "cascade" });
+// Per-resource cloud placement (the "versatile model"): each component may name
+// its own cloud identity instead of inheriting the spec's primary one. NULL means
+// "inherit specs.cloud_identity_id". on delete set null so removing an identity
+// just re-inherits rather than cascading the component away.
+const ownerRef = () =>
+	uuid().references(() => cloudIdentities.id, { onDelete: "set null" });
 const cost = () => numeric({ precision: 12, scale: 2, mode: "number" });
 const ts = () => timestamp({ withTimezone: true }).defaultNow().notNull();
 
@@ -58,6 +65,9 @@ const ts = () => timestamp({ withTimezone: true }).defaultNow().notNull();
 export const specNetwork = pgTable("spec_network", {
 	id: uuid().primaryKey().defaultRandom(),
 	spec_id: specRef().unique(),
+	// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+	cloud_identity_id: ownerRef(),
+	region: text(),
 	provision_network: boolean().default(true).notNull(),
 	network_id: text(),
 	cidr_block: text().default("10.0.0.0/16"),
@@ -73,6 +83,9 @@ export const specNetwork = pgTable("spec_network", {
 export const specCluster = pgTable("spec_cluster", {
 	id: uuid().primaryKey().defaultRandom(),
 	spec_id: specRef().unique(),
+	// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+	cloud_identity_id: ownerRef(),
+	region: text(),
 	// No cloud-specific defaults: the provider mapper resolves the K8s version /
 	// node instance types per cloud at provision time (the form supplies explicit
 	// values for a chosen provider).
@@ -99,6 +112,9 @@ export const specCluster = pgTable("spec_cluster", {
 export const specDns = pgTable("spec_dns", {
 	id: uuid().primaryKey().defaultRandom(),
 	spec_id: specRef().unique(),
+	// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+	cloud_identity_id: ownerRef(),
+	region: text(),
 	enabled: boolean().default(false).notNull(),
 	// Pluggable provider selector (connectors.slug). NULL / "native" = the cluster
 	// cloud's native DNS (Route 53 / Cloud DNS / Azure DNS).
@@ -120,6 +136,9 @@ export const specDns = pgTable("spec_dns", {
 export const specObservability = pgTable("spec_observability", {
 	id: uuid().primaryKey().defaultRandom(),
 	spec_id: specRef().unique(),
+	// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+	cloud_identity_id: ownerRef(),
+	region: text(),
 	enabled: boolean().default(false).notNull(),
 	provider: text(),
 	provider_config: jsonb().$type<ObservabilityProviderConfig>().default({}),
@@ -146,6 +165,9 @@ export const specDatabases = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		spec_id: specRef(),
 		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
 		// Provider-neutral: the mapper translates a generic engine family to the
 		// cloud's managed DB (Aurora / Cloud SQL / Azure DB) at provision time.
 		engine: text(),
@@ -175,6 +197,9 @@ export const specCaches = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		spec_id: specRef(),
 		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
 		engine: cacheEngine().default("redis"),
 		// Provider-neutral: the mapper picks the cloud's cache node type/SKU.
 		node_type: text(),
@@ -201,6 +226,9 @@ export const specQueues = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		spec_id: specRef(),
 		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
 		ordered: boolean().default(false),
 		// Cross-cloud: SQS visibility ≈ Azure lock_duration ≈ Pub/Sub ack deadline.
 		visibility_timeout: integer().default(30),
@@ -222,6 +250,9 @@ export const specTopics = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		spec_id: specRef(),
 		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
 		subscriptions: jsonb().$type<TopicSubscription[]>().default([]),
 		status: componentStatus().default("PENDING").notNull(),
 		status_message: text(),
@@ -238,6 +269,9 @@ export const specNosqlTables = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		spec_id: specRef(),
 		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
 		table_type: nosqlTableType().default("standard"),
 		partition_key: text().notNull(),
 		partition_key_type: nosqlKeyType().default("S"),
@@ -262,6 +296,9 @@ export const specContainerRegistries = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		spec_id: specRef(),
 		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
 		// Pluggable provider selector (connectors.slug). NULL / "native" = the
 		// cluster cloud's native registry (ECR / Artifact Registry / ACR).
 		provider: text(),
@@ -284,6 +321,9 @@ export const specSecrets = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		spec_id: specRef(),
 		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
 		// Pluggable provider selector (connectors.slug). NULL / "native" = the
 		// cluster cloud's native secrets store (Secrets Manager / Secret Manager / Key Vault).
 		provider: text(),
@@ -306,6 +346,9 @@ export const specStorageBuckets = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		spec_id: specRef(),
 		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
 		versioning: boolean().default(false),
 		// Cross-cloud: whether at-rest encryption is on. The specific algorithm
 		// (AES256 / aws:kms / CMEK …) is a provider-specific knob in provider_config.

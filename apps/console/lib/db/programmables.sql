@@ -60,35 +60,167 @@ DROP TRIGGER IF EXISTS jobs_sync_zone ON public.jobs;
 CREATE TRIGGER jobs_sync_zone BEFORE INSERT OR UPDATE OF spec_id ON public.jobs
   FOR EACH ROW EXECUTE FUNCTION public.jobs_sync_zone();
 
+-- ── Push dispatch: wake runners the instant a job becomes claimable, instead of
+-- waiting on their poll. Fires on insert and on requeue (status→QUEUED, e.g.
+-- recover_stale_jobs). Payload carries identifiers only; connected runners react by
+-- calling claim_next_job (FOR UPDATE SKIP LOCKED dedupes the race). ──
+CREATE OR REPLACE FUNCTION public.notify_runner_wake()
+RETURNS TRIGGER AS $$
+BEGIN
+  PERFORM pg_notify('runner_wake', json_build_object(
+    'job_id', NEW.id,
+    'cloud_identity_id', NEW.cloud_identity_id,
+    'assigned_runner_id', NEW.assigned_runner_id
+  )::text);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS jobs_runner_wake ON public.jobs;
+CREATE TRIGGER jobs_runner_wake
+  AFTER INSERT OR UPDATE OF status ON public.jobs
+  FOR EACH ROW WHEN (NEW.status = 'QUEUED')
+  EXECUTE FUNCTION public.notify_runner_wake();
+
 -- ── Queue RPCs (SECURITY DEFINER, token-hash authed). On the renamed
 -- jobs/runners tables; runner_id is clean uuid (no ::text casts). ──
+-- ── Scheduler quotas (ADR 20). Plan → {priority band, concurrency cap}, read from
+-- organization_billing with community as the fallback (no row, or status not live).
+-- Authoritative in SQL so claim_next_job enforces them atomically. ──
+CREATE OR REPLACE FUNCTION public.org_effective_plan(p_org_id uuid)
+RETURNS public.billing_plan LANGUAGE plpgsql STABLE AS $$
+DECLARE v public.billing_plan;
+BEGIN
+  SELECT CASE WHEN ob.status IN ('active', 'trialing') THEN ob.plan
+              ELSE 'community'::public.billing_plan END
+    INTO v FROM public.organization_billing ob WHERE ob.organization_id = p_org_id;
+  RETURN COALESCE(v, 'community'::public.billing_plan);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.plan_priority(p public.billing_plan)
+RETURNS smallint LANGUAGE sql IMMUTABLE AS $$
+  SELECT (CASE p WHEN 'enterprise' THEN 30 WHEN 'business' THEN 20
+                 WHEN 'team' THEN 10 ELSE 0 END)::smallint;
+$$;
+
+-- NULL = unlimited.
+CREATE OR REPLACE FUNCTION public.plan_max_concurrency(p public.billing_plan)
+RETURNS integer LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE p WHEN 'enterprise' THEN NULL WHEN 'business' THEN 20
+                WHEN 'team' THEN 8 ELSE 2 END;
+$$;
+
+-- Interactive job types jump ahead of batch ones, within the plan band (gap = 10).
+CREATE OR REPLACE FUNCTION public.jobtype_priority_bump(jt public.provision_job_type)
+RETURNS smallint LANGUAGE sql IMMUTABLE AS $$
+  SELECT (CASE jt
+    WHEN 'CONNECTION_TEST' THEN 5
+    WHEN 'FETCH_RESOURCES' THEN 5
+    WHEN 'PLAN' THEN 3
+    WHEN 'DEPLOY_RUNNER' THEN 2
+    WHEN 'UPDATE_RUNNER' THEN 2
+    WHEN 'DESTROY_RUNNER' THEN 2
+    ELSE 0 END)::smallint;
+$$;
+
+-- An org's in-flight jobs on the SHARED managed pool (the cap + fairness metric).
+CREATE OR REPLACE FUNCTION public.org_managed_inflight(p_org_id uuid)
+RETURNS integer LANGUAGE sql STABLE AS $$
+  SELECT count(*)::int FROM public.jobs k
+  JOIN public.runners r ON r.id = k.runner_id
+  WHERE k.org_id = p_org_id
+    AND k.status IN ('CLAIMED', 'PROCESSING')
+    AND r.operator = 'managed';
+$$;
+
+-- Derive provider (denormalized) + priority at insert. Named to fire AFTER
+-- jobs_set_org_id (alpha order), so NEW.org_id is populated.
+CREATE OR REPLACE FUNCTION public.jobs_set_scheduling()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.provider IS NULL AND NEW.cloud_identity_id IS NOT NULL THEN
+    SELECT ci.provider INTO NEW.provider
+    FROM public.cloud_identities ci WHERE ci.id = NEW.cloud_identity_id;
+  END IF;
+  NEW.priority := public.plan_priority(public.org_effective_plan(NEW.org_id))
+                  + public.jobtype_priority_bump(NEW.job_type);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS jobs_set_scheduling ON public.jobs;
+CREATE TRIGGER jobs_set_scheduling BEFORE INSERT ON public.jobs
+  FOR EACH ROW EXECUTE FUNCTION public.jobs_set_scheduling();
+
+-- Backfill provider on existing rows (idempotent; old jobs are mostly terminal).
+UPDATE public.jobs j SET provider = ci.provider
+FROM public.cloud_identities ci
+WHERE j.cloud_identity_id = ci.id AND j.provider IS NULL;
+
 CREATE OR REPLACE FUNCTION public.claim_next_job(
     p_runner_id UUID, p_runner_token_hash TEXT, p_cloud_identity_id UUID DEFAULT NULL
 ) RETURNS SETOF public.jobs
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_job_id UUID;
+DECLARE
+    v_job_id UUID;
+    v_operator public.runner_operator;
+    v_providers public.cloud_provider[];
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM public.runners WHERE id = p_runner_id AND token_hash = p_runner_token_hash) THEN
+    SELECT operator, supported_providers INTO v_operator, v_providers FROM public.runners
+      WHERE id = p_runner_id AND token_hash = p_runner_token_hash;
+    IF v_operator IS NULL THEN
         RAISE EXCEPTION 'Unauthorized runner';
     END IF;
     UPDATE public.runners SET last_heartbeat = now(), status = 'ONLINE'::public.runner_status WHERE id = p_runner_id;
+    PERFORM public.open_runner_session(p_runner_id);
+
+    -- Phase A: jobs explicitly assigned to this runner — highest precedence, priority-ordered.
     UPDATE public.jobs
     SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), updated_at = now()
     WHERE id = (
         SELECT j.id FROM public.jobs j
         WHERE j.status = 'QUEUED' AND j.assigned_runner_id = p_runner_id
-        ORDER BY j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
+        ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
     ) RETURNING id INTO v_job_id;
+
+    -- Phase B: unassigned jobs.
     IF v_job_id IS NULL THEN
-        UPDATE public.jobs
-        SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), updated_at = now()
-        WHERE id = (
-            SELECT j.id FROM public.jobs j
-            WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
-              AND (p_cloud_identity_id IS NULL OR j.cloud_identity_id = p_cloud_identity_id)
-            ORDER BY j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
-        ) RETURNING id INTO v_job_id;
+        IF v_operator = 'managed' THEN
+            -- Shared pool: priority, then fair across orgs (fewest in-flight), then
+            -- oldest; skip orgs already at their plan concurrency cap.
+            UPDATE public.jobs
+            SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), updated_at = now()
+            WHERE id = (
+                SELECT j.id FROM public.jobs j
+                WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
+                  -- Self-managed token clouds: only the customer's self-hosted runner
+                  -- has the credential. A managed runner must never claim these.
+                  AND j.requires_self_runner = false
+                  AND (p_cloud_identity_id IS NULL OR j.cloud_identity_id = p_cloud_identity_id)
+                  AND (v_providers IS NULL OR j.provider IS NULL OR j.provider = ANY(v_providers))
+                  AND (
+                    public.plan_max_concurrency(public.org_effective_plan(j.org_id)) IS NULL
+                    OR public.org_managed_inflight(j.org_id)
+                       < public.plan_max_concurrency(public.org_effective_plan(j.org_id))
+                  )
+                ORDER BY j.priority DESC, public.org_managed_inflight(j.org_id) ASC, j.created_at ASC
+                LIMIT 1 FOR UPDATE SKIP LOCKED
+            ) RETURNING id INTO v_job_id;
+        ELSE
+            -- Self/dedicated runner: its own org's jobs; priority then oldest, uncapped.
+            UPDATE public.jobs
+            SET status = 'CLAIMED', runner_id = p_runner_id, claimed_at = now(), updated_at = now()
+            WHERE id = (
+                SELECT j.id FROM public.jobs j
+                WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
+                  AND (p_cloud_identity_id IS NULL OR j.cloud_identity_id = p_cloud_identity_id)
+                  AND (v_providers IS NULL OR j.provider IS NULL OR j.provider = ANY(v_providers))
+                ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
+            ) RETURNING id INTO v_job_id;
+        END IF;
     END IF;
+
     IF v_job_id IS NULL THEN RETURN; END IF;
     RETURN QUERY SELECT * FROM public.jobs WHERE id = v_job_id;
 END;
@@ -153,18 +285,23 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION public.runner_heartbeat(
-    p_runner_id UUID, p_runner_token_hash TEXT, p_version TEXT DEFAULT NULL
+    p_runner_id UUID, p_runner_token_hash TEXT, p_version TEXT DEFAULT NULL,
+    p_providers public.cloud_provider[] DEFAULT NULL
 ) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_release_id UUID;
 BEGIN
     IF p_version IS NOT NULL THEN
         SELECT id INTO v_release_id FROM public.runner_releases WHERE version = p_version;
     END IF;
+    -- supported_providers is image-driven: keep it in sync with what the runner
+    -- reports (NULL = unset = claims any provider).
     UPDATE public.runners
     SET last_heartbeat = now(), status = 'ONLINE'::public.runner_status,
-        version = COALESCE(p_version, version), release_id = COALESCE(v_release_id, release_id)
+        version = COALESCE(p_version, version), release_id = COALESCE(v_release_id, release_id),
+        supported_providers = COALESCE(p_providers, supported_providers)
     WHERE id = p_runner_id AND token_hash = p_runner_token_hash;
     IF NOT FOUND THEN RAISE EXCEPTION 'Unauthorized runner'; END IF;
+    PERFORM public.open_runner_session(p_runner_id);
 END;
 $$;
 
@@ -181,6 +318,101 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.set_default_runner(UUID, UUID) TO alethia_app;
+
+-- ── Runner model backfill (legacy `mode` → operator/provisioning) + the
+-- data-dependent CHECK constraints. Runs here, after the schema migration adds the
+-- columns (operator defaulted to 'self' for all existing rows) and before the
+-- constraints are added, so the invariants hold by the time they are enforced.
+-- Idempotent: the operator/provisioning UPDATEs are guarded and the constraints
+-- are added only if absent. The `mode` column is retained nullable for this
+-- window; a later migration drops it. ──
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'runners' AND column_name = 'mode'
+  ) THEN
+    -- operator: cloud-hosted → managed; self-hosted → self.
+    UPDATE public.runners
+      SET operator = 'managed'::public.runner_operator
+      WHERE mode = 'cloud-hosted' AND operator <> 'managed';
+    UPDATE public.runners
+      SET operator = 'self'::public.runner_operator
+      WHERE mode = 'self-hosted' AND operator <> 'self';
+    -- provisioning: legacy self runners with a completed cloud deploy (cloud
+    -- identity + deploy_config in metadata) → deployed; otherwise registered.
+    -- Managed runners keep NULL.
+    UPDATE public.runners
+      SET provisioning = CASE
+        WHEN cloud_identity_id IS NOT NULL
+             AND (metadata -> 'deploy_config') IS NOT NULL
+             AND (metadata -> 'deploy_config') <> 'null'::jsonb
+          THEN 'deployed'::public.runner_provisioning
+        ELSE 'registered'::public.runner_provisioning
+      END
+      WHERE mode = 'self-hosted' AND provisioning IS NULL;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  -- managed ⇔ platform-owned (no user).
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'runners_operator_owner_ck') THEN
+    ALTER TABLE public.runners ADD CONSTRAINT runners_operator_owner_ck
+      CHECK ((operator = 'managed') = (user_id IS NULL));
+  END IF;
+  -- provisioning is set iff self-operated.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'runners_provisioning_ck') THEN
+    ALTER TABLE public.runners ADD CONSTRAINT runners_provisioning_ck
+      CHECK ((operator = 'self') = (provisioning IS NOT NULL));
+  END IF;
+END $$;
+
+-- ── Runner usage metering. Managed runners are billed by provisioned hours, so
+-- each ONLINE→OFFLINE interval is recorded as a session row. open_runner_session
+-- is called from the ONLINE write paths (claim_next_job, runner_heartbeat);
+-- sweep_offline_runners is the close hook (and the only OFFLINE transition). ──
+CREATE OR REPLACE FUNCTION public.open_runner_session(p_runner_id UUID)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  -- Meter managed runners only; open at most one session per runner. The
+  -- NOT EXISTS guard (backed by idx_usage_one_open_per_runner) makes re-entrant
+  -- claims/heartbeats idempotent.
+  INSERT INTO public.runner_usage_sessions (runner_id, operator, org_id, started_at)
+  SELECT r.id, r.operator, r.org_id, now()
+  FROM public.runners r
+  WHERE r.id = p_runner_id AND r.operator = 'managed'
+    AND NOT EXISTS (
+      SELECT 1 FROM public.runner_usage_sessions s
+      WHERE s.runner_id = r.id AND s.ended_at IS NULL);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.sweep_offline_runners()
+RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_count INTEGER;
+BEGIN
+  -- Flip stale ONLINE runners to OFFLINE (mirrors recover_stale_jobs's 5-min
+  -- window) and close their open session at last_heartbeat (last proof-of-life),
+  -- so the staleness grace window is not billed.
+  WITH stale AS (
+    UPDATE public.runners
+    SET status = 'OFFLINE'::public.runner_status
+    WHERE status = 'ONLINE'
+      AND (last_heartbeat IS NULL OR last_heartbeat < now() - INTERVAL '5 minutes')
+    RETURNING id, last_heartbeat
+  )
+  UPDATE public.runner_usage_sessions s
+  SET ended_at = COALESCE(st.last_heartbeat, s.started_at),
+      duration_seconds = GREATEST(
+        0,
+        EXTRACT(EPOCH FROM (COALESCE(st.last_heartbeat, s.started_at) - s.started_at))
+      )::bigint
+  FROM stale st
+  WHERE s.runner_id = st.id AND s.ended_at IS NULL;
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
+END;
+$$;
 
 -- ── spec_full: denormalized read model for the CLI config + job-create endpoints.
 -- OUTPUT column names match the SpecConfig wire contract (zone_id, create_vpc, …);
@@ -279,7 +511,7 @@ END $$;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['zones', 'specs', 'cloud_identities', 'connector_credentials', 'jobs']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['zones', 'specs', 'jobs', 'agent_threads']) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(
@@ -291,16 +523,36 @@ BEGIN
   END LOOP;
 END $$;
 
--- runners: cloud-hosted rows are public-read; writes are owner/org-scoped.
+-- Credential tables (scope-aware): a `personal` row is visible only to its author
+-- (user_id = current_owner); an `org` row is visible to the whole org
+-- (org_id = current_org). This is the coarse blast wall — the fine-grained role
+-- (view vs manage) is enforced by the PDP at the app layer (spec/mvp/08 + 07).
+DO $$
+DECLARE tbl TEXT;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY['cloud_identities', 'connector_credentials']) LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS scoped_all ON public.%I', tbl);
+    EXECUTE format(
+      'CREATE POLICY scoped_all ON public.%I FOR ALL
+         USING ((scope = ''personal'' AND user_id = current_setting(''app.current_owner'', true)::uuid)
+                OR (scope = ''org'' AND org_id = current_setting(''app.current_org'', true)::uuid))
+         WITH CHECK ((scope = ''personal'' AND user_id = current_setting(''app.current_owner'', true)::uuid)
+                OR (scope = ''org'' AND org_id = current_setting(''app.current_org'', true)::uuid))', tbl);
+  END LOOP;
+END $$;
+
+-- runners: managed rows are public-read; writes are owner/org-scoped self runners.
 ALTER TABLE public.runners ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS runners_select ON public.runners;
 CREATE POLICY runners_select ON public.runners FOR SELECT
-  USING (mode = 'cloud-hosted'::public.runner_mode
+  USING (operator = 'managed'::public.runner_operator
          OR user_id = current_setting('app.current_owner', true)::uuid
          OR org_id = current_setting('app.current_org', true)::uuid);
 DROP POLICY IF EXISTS runners_insert ON public.runners;
 CREATE POLICY runners_insert ON public.runners FOR INSERT
-  WITH CHECK (mode = 'self-hosted'::public.runner_mode
+  WITH CHECK (operator = 'self'::public.runner_operator
          AND (user_id = current_setting('app.current_owner', true)::uuid
               OR org_id = current_setting('app.current_org', true)::uuid));
 DROP POLICY IF EXISTS runners_update ON public.runners;
@@ -359,6 +611,11 @@ CREATE POLICY profile_self ON public.profiles FOR ALL
 
 -- cli_logins: service-role only — RLS enabled with no app policy denies the app role.
 ALTER TABLE public.cli_logins ENABLE ROW LEVEL SECURITY;
+
+-- runner_usage_sessions: platform billing data — service-role only (RLS enabled
+-- with no app policy denies the app role; access via getServiceDb + the SECURITY
+-- DEFINER session functions).
+ALTER TABLE public.runner_usage_sessions ENABLE ROW LEVEL SECURITY;
 
 -- Public catalogs: readable by anyone; writes only via service role.
 ALTER TABLE public.connectors ENABLE ROW LEVEL SECURITY;

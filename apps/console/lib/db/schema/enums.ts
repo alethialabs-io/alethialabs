@@ -6,7 +6,15 @@ import { pgEnum } from "drizzle-orm/pg-core";
 // Postgres enums in active use. (Some dropped tables left dead enums in the DB — cluster_status, deployment_*, iac_tool, logs_level
 // — which are intentionally omitted.)
 
-export const cloudProvider = pgEnum("cloud_provider", ["aws", "azure", "gcp"]);
+export const cloudProvider = pgEnum("cloud_provider", [
+	"aws",
+	"azure",
+	"gcp",
+	"alibaba",
+	"digitalocean",
+	"hetzner",
+	"civo",
+]);
 
 export const logStreamType = pgEnum("log_stream_type", [
 	"STDOUT",
@@ -99,6 +107,18 @@ export const provisionJobType = pgEnum("provision_job_type", [
 ]);
 
 export const runnerMode = pgEnum("runner_mode", ["self-hosted", "cloud-hosted"]);
+// Who operates & bills a runner. `managed` = Alethia runs it in our account and
+// bills it by provisioned hours (platform-owned, no user); `self` = the customer
+// runs it. Replaces the location-flavoured `runner_mode`.
+export const runnerOperator = pgEnum("runner_operator", ["managed", "self"]);
+// How a self-operated runner came to exist. `deployed` = provisioned into the
+// customer's cloud by an existing runner running Terraform (the "Deploy" flow);
+// `registered` = the customer brought their own (own Terraform or
+// `alethia runner start`) and registered it. Null for `managed` runners.
+export const runnerProvisioning = pgEnum("runner_provisioning", [
+	"deployed",
+	"registered",
+]);
 export const runnerStatus = pgEnum("runner_status", [
 	"ONLINE",
 	"OFFLINE",
@@ -124,6 +144,33 @@ export const connectorAuthMethod = pgEnum("connector_auth_method", [
 export const connectorStatus = pgEnum("connector_status", [
 	"active",
 	"coming_soon",
+]);
+
+// Visibility/ownership of a stored credential (cloud_identities / connector_credentials).
+// `personal` = author-only (the creating user); `org` = shared with the whole org, access
+// governed by the PDP connector/cloud_identity grants + roles. See spec/mvp/08 + 07.
+export const credentialScope = pgEnum("credential_scope", ["personal", "org"]);
+
+// Alerting (spec/mvp/25-alerting-notifications.md). Delivery channels, event
+// sources, severity, and the deliveries-ledger lifecycle.
+export const alertChannelType = pgEnum("alert_channel_type", [
+	"webhook",
+	"email",
+	"slack",
+	"rocketchat",
+]);
+// Event keys are TEXT, not a DB enum — the catalog is code-derived from the PDP
+// registry (lib/alerts/catalog.ts) so a new alertable action/event is code-only.
+export const alertSeverity = pgEnum("alert_severity", [
+	"info",
+	"warning",
+	"critical",
+]);
+export const alertDeliveryStatus = pgEnum("alert_delivery_status", [
+	"pending",
+	"sent",
+	"failed",
+	"dead",
 ]);
 
 // Billing plan an organization is subscribed to. Drives entitlements via the
@@ -154,6 +201,8 @@ export type GitProvider = (typeof gitProvider.enumValues)[number];
 export type ProvisionJobType = (typeof provisionJobType.enumValues)[number];
 export type ProvisionJobStatus = (typeof provisionJobStatus.enumValues)[number];
 export type RunnerMode = (typeof runnerMode.enumValues)[number];
+export type RunnerOperator = (typeof runnerOperator.enumValues)[number];
+export type RunnerProvisioning = (typeof runnerProvisioning.enumValues)[number];
 export type RunnerStatus = (typeof runnerStatus.enumValues)[number];
 export type SpecStatus = (typeof specStatus.enumValues)[number];
 export type ComponentStatus = (typeof componentStatus.enumValues)[number];
@@ -162,3 +211,8 @@ export type CacheEngine = (typeof cacheEngine.enumValues)[number];
 export type LogStreamType = (typeof logStreamType.enumValues)[number];
 export type BillingPlan = (typeof billingPlan.enumValues)[number];
 export type BillingStatus = (typeof billingStatus.enumValues)[number];
+export type AlertChannelType = (typeof alertChannelType.enumValues)[number];
+export type AlertSeverity = (typeof alertSeverity.enumValues)[number];
+export type CredentialScope = (typeof credentialScope.enumValues)[number];
+export type AlertDeliveryStatus =
+	(typeof alertDeliveryStatus.enumValues)[number];

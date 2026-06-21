@@ -13,6 +13,7 @@
 // Stripe webhook (F2) or a signed self-managed license (F3).
 
 import {
+	boolean,
 	integer,
 	pgTable,
 	text,
@@ -36,9 +37,15 @@ export const organizationBilling = pgTable("organization_billing", {
 	stripeSubscriptionId: text().unique(),
 	// Purchased seats (per-seat Team tier); null for flat tiers / no subscription.
 	seats: integer(),
+	// Start of the current paid period — the window start for usage metering
+	// (job-minutes this period). Null → meter by calendar month.
+	currentPeriodStart: timestamp({ withTimezone: true }),
 	// End of the current paid period — entitlements lapse to community after this
 	// if the subscription isn't renewed (defence-in-depth alongside `status`).
 	currentPeriodEnd: timestamp({ withTimezone: true }),
+	// When true, the org pauses new jobs at its included allowance instead of
+	// billing overage (user-controlled "never surprise me"). Default off.
+	usageHardCap: boolean().default(false).notNull(),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });

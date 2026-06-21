@@ -5,15 +5,22 @@ import { sql } from "drizzle-orm";
 import {
 	type AnyPgColumn,
 	bigint,
+	boolean,
 	index,
 	jsonb,
 	pgTable,
+	smallint,
 	text,
 	timestamp,
 	uuid,
 } from "drizzle-orm/pg-core";
 import type { ExecutionMetadata } from "@/types/database-custom.types";
-import { logStreamType, provisionJobStatus, provisionJobType } from "./enums";
+import {
+	cloudProvider,
+	logStreamType,
+	provisionJobStatus,
+	provisionJobType,
+} from "./enums";
 import { cloudIdentities } from "./identities";
 import { runners } from "./runners";
 import { specs } from "./specs";
@@ -49,6 +56,16 @@ export const jobs = pgTable(
 			.notNull(),
 		configuration_hash: text(),
 		status: provisionJobStatus().default("QUEUED").notNull(),
+		// Scheduler claim order (higher first): plan band + job-type bump, derived at
+		// insert by the jobs_set_scheduling trigger. See programmables.sql.
+		priority: smallint().notNull().default(0),
+		// Denormalized from cloud_identities.provider (via the same trigger) so the
+		// scheduler + per-cloud routing can filter without a join.
+		provider: cloudProvider(),
+		// Self-managed token clouds: the credential lives only in the customer's
+		// self-hosted runner env, never in Alethia. Managed runners must NOT claim
+		// these (they'd lack the token) — claim_next_job filters them out.
+		requires_self_runner: boolean().notNull().default(false),
 		runner_id: uuid().references(() => runners.id, { onDelete: "set null" }),
 		assigned_runner_id: uuid().references(() => runners.id, {
 			onDelete: "set null",
@@ -59,6 +76,9 @@ export const jobs = pgTable(
 		claimed_at: timestamp({ withTimezone: true }),
 		started_at: timestamp({ withTimezone: true }),
 		completed_at: timestamp({ withTimezone: true }),
+		// When this job's managed-runner minutes were reported to the billing meter
+		// (Stripe). Set once on terminal status → idempotent (never double-billed).
+		usage_reported_at: timestamp({ withTimezone: true }),
 		error_message: text(),
 		execution_metadata: jsonb().$type<ExecutionMetadata>(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
@@ -68,9 +88,10 @@ export const jobs = pgTable(
 		index("idx_jobs_user").on(t.user_id),
 		index("idx_jobs_org").on(t.org_id),
 		index("idx_jobs_zone").on(t.zone_id),
-		// FIFO claim index — the hot path for claim_next_job.
+		// Claim index — the hot path for claim_next_job: highest priority first, then
+		// oldest. (Cross-org fairness is layered on in the RPC.)
 		index("idx_jobs_queue")
-			.on(t.status, t.created_at)
+			.on(t.status, t.priority.desc(), t.created_at)
 			.where(sql`status = 'QUEUED'`),
 		index("idx_jobs_assigned_runner")
 			.on(t.assigned_runner_id)

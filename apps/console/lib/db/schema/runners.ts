@@ -3,8 +3,8 @@
 
 import { sql } from "drizzle-orm";
 import {
+	bigint,
 	boolean,
-	check,
 	index,
 	jsonb,
 	pgTable,
@@ -14,7 +14,13 @@ import {
 	uuid,
 } from "drizzle-orm/pg-core";
 import type { RunnerMetadata } from "@/types/database-custom.types";
-import { runnerMode, runnerStatus } from "./enums";
+import {
+	cloudProvider,
+	runnerMode,
+	runnerOperator,
+	runnerProvisioning,
+	runnerStatus,
+} from "./enums";
 import { cloudIdentities } from "./identities";
 
 export const runnerReleases = pgTable("runner_releases", {
@@ -28,17 +34,30 @@ export const runnerReleases = pgTable("runner_releases", {
 });
 
 // Runner — the runner that executes provisioning. `user_id` is null for
-// cloud-hosted runners (platform-owned, public-read); set for self-hosted.
+// managed runners (Alethia-operated, platform-owned, public-read); set for
+// self-operated runners.
 export const runners = pgTable(
 	"runners",
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		user_id: uuid(),
-		// Coarse tenancy scope; null for cloud-hosted (platform-owned, public-read),
-		// org_id = user_id for self-hosted (trigger backfill).
+		// Coarse tenancy scope; null for managed runners (platform-owned,
+		// public-read), org_id = user_id for self-operated (trigger backfill).
 		org_id: uuid(),
 		name: text().notNull(),
-		mode: runnerMode().notNull(),
+		// Who operates & bills the runner. `managed` ⇔ user_id IS NULL (enforced by
+		// runners_operator_owner_ck in programmables.sql).
+		operator: runnerOperator().notNull().default("self"),
+		// How a self-operated runner was provisioned. Null for managed (enforced by
+		// runners_provisioning_ck in programmables.sql).
+		provisioning: runnerProvisioning(),
+		// Cloud providers this runner can execute jobs for (per-cloud routing). NULL =
+		// claims any provider (the full/self-host image); a lean per-cloud image
+		// declares just its one. Reported image-driven via the heartbeat.
+		supported_providers: cloudProvider().array(),
+		// @deprecated superseded by operator/provisioning; retained nullable for the
+		// backfill window, dropped in a later migration.
+		mode: runnerMode(),
 		cloud_identity_id: uuid().references(() => cloudIdentities.id, {
 			onDelete: "set null",
 		}),
@@ -58,17 +77,48 @@ export const runners = pgTable(
 		uniqueIndex("idx_runners_one_default_per_user")
 			.on(t.user_id)
 			.where(sql`is_default = true`),
-		uniqueIndex("idx_runners_unique_cloud_name")
+		// Managed (platform-owned) runner names are globally unique.
+		uniqueIndex("idx_runners_unique_managed_name")
 			.on(t.name)
-			.where(sql`mode = 'cloud-hosted'`),
-		// Cloud-hosted runners are platform-owned (no user); self-hosted have an owner.
-		check(
-			"runners_mode_owner_ck",
-			sql`(${t.mode} = 'cloud-hosted') = (${t.user_id} IS NULL)`,
-		),
+			.where(sql`operator = 'managed'`),
+		// NB: the operator↔owner and provisioning invariants are CHECK constraints
+		// added in programmables.sql after the backfill, since they would not hold
+		// against pre-backfill rows.
+	],
+);
+
+// Usage ledger for managed-runner billing. One row per ONLINE→OFFLINE interval;
+// managed runners scale-to-zero and cycle many times per billing period, so a
+// pair of columns on `runners` cannot represent the history. `operator` is
+// snapshotted at open so reclassifying a runner never rewrites past billing.
+export const runnerUsageSessions = pgTable(
+	"runner_usage_sessions",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		runner_id: uuid()
+			.notNull()
+			.references(() => runners.id, { onDelete: "cascade" }),
+		operator: runnerOperator().notNull(),
+		org_id: uuid(),
+		started_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
+		ended_at: timestamp({ withTimezone: true }),
+		// Provisioned seconds, set when the session closes. Null while open.
+		duration_seconds: bigint({ mode: "number" }),
+		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
+	},
+	(t) => [
+		// At most one open session per runner — open/close logic relies on this.
+		uniqueIndex("idx_usage_one_open_per_runner")
+			.on(t.runner_id)
+			.where(sql`ended_at IS NULL`),
+		index("idx_usage_runner_started").on(t.runner_id, t.started_at),
+		index("idx_usage_operator_started")
+			.on(t.operator, t.started_at)
+			.where(sql`operator = 'managed'`),
 	],
 );
 
 export type Runner = typeof runners.$inferSelect;
 export type NewRunner = typeof runners.$inferInsert;
 export type RunnerRelease = typeof runnerReleases.$inferSelect;
+export type RunnerUsageSession = typeof runnerUsageSessions.$inferSelect;

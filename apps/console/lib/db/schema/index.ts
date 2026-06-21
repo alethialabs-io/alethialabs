@@ -6,6 +6,7 @@
 // trailing migration. Populated in B1.
 //
 export * from "./enums";
+export * from "./agent";
 export * from "./zones";
 export * from "./identities";
 export * from "./specs";
@@ -21,3 +22,4 @@ export * from "./organizations";
 export * from "./organization-billing";
 export * from "./teams";
 export * from "./sso";
+export * from "./alerts";
