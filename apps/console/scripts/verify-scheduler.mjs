@@ -204,6 +204,31 @@ async function main() {
 		const bcnt = await sql`select count(*)::int n, max(token_hash) th from runners where name = ${bname}`;
 		check("one row, token rotated to the latest", bcnt[0].n === 1 && bcnt[0].th === "boot-hash-2");
 		await sql`delete from runners where name = ${bname}`;
+
+		// === Test 9: DRAINING runner claims nothing (Phase 7 — drain protocol) ===
+		console.log("Test 9 — DRAINING runner claims nothing:");
+		const drainId = randomUUID();
+		await sql`insert into runners (id, name, operator, token_hash, status)
+		          values (${drainId}::uuid, ${`${MARK}-drain`}, 'managed', ${tokenHash}, 'DRAINING')`;
+		ctx.runnerIds.push(drainId);
+		await queueJob(commA, "DEPLOY", null, "aws");
+		check("draining runner claims nothing", (await claim(drainId)) === undefined);
+		const [drow] = await sql`select status from runners where id = ${drainId}`;
+		check("claim did not revive a draining runner", drow.status === "DRAINING");
+		await sql`delete from jobs where org_id = any(${ctx.orgIds})`;
+
+		// === Test 10: connection presence (runner_present / runner_lost) ===
+		console.log("Test 10 — connection presence:");
+		await sql`update runners set status='OFFLINE', last_heartbeat=null where id = ${managedId}`;
+		await sql`select runner_present(${managedId}::uuid)`;
+		const [p1] = await sql`select status, last_heartbeat from runners where id = ${managedId}`;
+		check("runner_present brings a runner ONLINE + refreshes the lease", p1.status === "ONLINE" && p1.last_heartbeat !== null);
+		await sql`select runner_present(${drainId}::uuid)`;
+		const [p2] = await sql`select status from runners where id = ${drainId}`;
+		check("runner_present keeps a DRAINING runner draining", p2.status === "DRAINING");
+		await sql`select runner_lost(${managedId}::uuid)`;
+		const [p3] = await sql`select status from runners where id = ${managedId}`;
+		check("runner_lost marks a runner OFFLINE", p3.status === "OFFLINE");
 	} finally {
 		await cleanup(ctx);
 		await sql.end();

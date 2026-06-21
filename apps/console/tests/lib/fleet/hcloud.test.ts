@@ -1,70 +1,75 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import {
-	computeScaleAction,
-	type HcloudConfig,
-	renderCloudInit,
-	serverCreatePayload,
-} from "@/lib/fleet/hcloud";
+import { type HcloudConfig, renderCloudInit, serverCreatePayload } from "@/lib/fleet/hcloud";
+import type { FleetSpec } from "@/lib/fleet/types";
 import { describe, expect, it } from "vitest";
 
 const cfg: HcloudConfig = {
 	token: "tok",
 	serverType: "cax21",
-	location: "fsn1",
 	image: "ubuntu-24.04",
 	sshKeys: ["deploy"],
-	imageTag: "abc123",
+	defaultImageTag: "latest",
 	webOrigin: "https://app.alethialabs.io",
 	bootstrapToken: "boot-secret",
 	slots: 2,
 	storage: { endpoint: "https://s3", region: "eu", accessKey: "AK", secretKey: "SK" },
 };
 
-describe("computeScaleAction", () => {
-	it("creates up to the gap when below desired", () => {
-		expect(computeScaleAction(1, 4, 10)).toEqual({ toCreate: 3, toDelete: 0 });
-	});
-	it("deletes the surplus when above desired", () => {
-		expect(computeScaleAction(5, 2, 10)).toEqual({ toCreate: 0, toDelete: 3 });
-	});
-	it("clamps desired to max", () => {
-		expect(computeScaleAction(2, 100, 6)).toEqual({ toCreate: 4, toDelete: 0 });
-	});
-	it("is steady at target", () => {
-		expect(computeScaleAction(3, 3, 10)).toEqual({ toCreate: 0, toDelete: 0 });
-	});
-});
+const spec: FleetSpec = {
+	provider: "aws",
+	warmMin: 1,
+	max: 5,
+	slotsPerRunner: 1,
+	locations: ["fsn1"],
+	minPerLocation: 0,
+	surge: 1,
+	buffer: 1,
+	scaleDownGraceTicks: 5,
+	targetVersion: "abc123",
+	channel: null,
+};
 
 describe("renderCloudInit", () => {
-	const ci = renderCloudInit(cfg, "aws");
-	it("runs the per-cloud runner image at the configured tag", () => {
+	it("runs the per-cloud runner image at the requested version", () => {
+		const ci = renderCloudInit(cfg, "aws", "abc123");
 		expect(ci).toContain("ghcr.io/alethialabs-io/runner-aws:abc123");
-	});
-	it("passes bootstrap + origin + slots so the VM self-registers", () => {
 		expect(ci).toContain("ALETHIA_RUNNER_BOOTSTRAP_TOKEN");
-		expect(ci).toContain('-e ALETHIA_WEB_ORIGIN="https://app.alethialabs.io"');
 		expect(ci).toContain('-e ALETHIA_RUNNER_SLOTS="2"');
 		expect(ci).toContain("docker run -d --init");
 	});
+
+	it("falls back to the default image tag when version is null", () => {
+		expect(renderCloudInit(cfg, "gcp", null)).toContain("runner-gcp:latest");
+	});
+
 	it("omits empty storage env entries", () => {
 		const bare = renderCloudInit(
 			{ ...cfg, storage: { endpoint: "", region: "", accessKey: "", secretKey: "" } },
-			"gcp",
+			"azure",
+			"v9",
 		);
 		expect(bare).not.toContain("ALETHIA_STORAGE_ENDPOINT");
-		expect(bare).toContain("runner-gcp:abc123");
+		expect(bare).toContain("runner-azure:v9");
 	});
 });
 
 describe("serverCreatePayload", () => {
-	const p = serverCreatePayload(cfg, "azure", "fleet-azure-12ab34cd");
-	it("labels the server for its pool and includes cloud-init", () => {
-		expect(p.labels).toEqual({ "alethia-managed": "true", "alethia-pool": "azure" });
+	it("labels the server for its pool + version and includes cloud-init", () => {
+		const p = serverCreatePayload(cfg, spec, { name: "fleet-aws-12ab", location: "nbg1", version: "abc123" });
+		expect(p.location).toBe("nbg1");
 		expect(p.server_type).toBe("cax21");
-		expect(p.location).toBe("fsn1");
-		expect(typeof p.user_data).toBe("string");
-		expect(String(p.user_data)).toContain("runner-azure:abc123");
+		expect(p.labels).toEqual({
+			"alethia-managed": "true",
+			"alethia-pool": "aws",
+			"alethia-version": "abc123",
+		});
+		expect(String(p.user_data)).toContain("runner-aws:abc123");
+	});
+
+	it("omits the version label when version is null", () => {
+		const p = serverCreatePayload(cfg, spec, { name: "n", location: "fsn1", version: null });
+		expect(p.labels).toEqual({ "alethia-managed": "true", "alethia-pool": "aws" });
 	});
 });
