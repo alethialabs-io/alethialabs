@@ -16,7 +16,9 @@ that already exists; anything the design wants that the backend lacks is logged 
 ## Pages
 - [x] **General** — `components/settings/general/org-general.tsx`. Off the module. Backend: `getOrgSettings`
       + `authClient.organization.update/delete`.
-- [ ] **Members** — refactor off `settings-design.module.css`, then delete the module.
+- [x] **Members** — off the module (now deleted). Reusable primitives added: `SettingsTabs`,
+      `SettingsSearch`, `SettingsSelect`, `SettingsTableCard`/`Foot`, `settingsTh/Td/TableRows`.
+      Backend: `getMembers`/`getInvitations`/`setMemberSuspended` + better-auth role/remove/cancel.
 - [ ] **Teams** — `teams-list.tsx` → design. Backend: `getTeams` + better-auth team CRUD.
 - [ ] **Roles** — IAM-style. Backend: `roles.ts` (`listCustomRoles`/`deleteRole`) + built-in roles.
 - [ ] **Access** — Backend: `grants.ts` (`listAccessGrants`/`getGrantOptions`/`revokeGrant`).

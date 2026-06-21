@@ -6,6 +6,7 @@
 // border-border-strong, …). Every settings page composes these; there is no bespoke
 // CSS module. Presentational only (server-safe — no hooks).
 
+import { ChevronDown, Search } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
@@ -169,6 +170,157 @@ export const settingsControl =
 
 /** Height + padding for single-line controls (inputs, selects). */
 export const settingsControlSize = "h-[38px] px-3";
+
+/** A native select styled to the settings design (filled, squared, mono, chevron). */
+export function SettingsSelect({
+	value,
+	onChange,
+	options,
+	className,
+	"aria-label": ariaLabel,
+}: {
+	value: string;
+	onChange: (value: string) => void;
+	options: { value: string; label: string }[];
+	/** Width/extra classes for the wrapper (e.g. `w-[130px]`). */
+	className?: string;
+	"aria-label"?: string;
+}) {
+	return (
+		<div className={cn("relative", className)}>
+			<select
+				aria-label={ariaLabel}
+				className={cn(
+					settingsControl,
+					settingsControlSize,
+					"cursor-pointer appearance-none pr-8 font-mono text-[12.5px]",
+				)}
+				value={value}
+				onChange={(e) => onChange(e.target.value)}
+			>
+				{options.map((o) => (
+					<option key={o.value} value={o.value}>
+						{o.label}
+					</option>
+				))}
+			</select>
+			<ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-3 -translate-y-1/2 text-text-tertiary" />
+		</div>
+	);
+}
+
+/** A segmented count-tabs control (the design's `.tabs`). */
+export function SettingsTabs<T extends string>({
+	value,
+	onChange,
+	tabs,
+}: {
+	value: T;
+	onChange: (value: T) => void;
+	tabs: { value: T; label: string; count?: number }[];
+}) {
+	return (
+		<div className="inline-flex gap-0.5 rounded-sm border border-border-strong bg-surface-sunken p-[3px]">
+			{tabs.map((t) => {
+				const on = t.value === value;
+				return (
+					<button
+						key={t.value}
+						type="button"
+						onClick={() => onChange(t.value)}
+						className={cn(
+							"inline-flex items-center gap-[7px] rounded-[4px] px-3 py-1.5 text-[12.5px] font-medium capitalize transition-colors",
+							on
+								? "bg-surface text-text-primary shadow-sm"
+								: "text-text-tertiary hover:text-text-secondary",
+						)}
+					>
+						{t.label}
+						{t.count !== undefined && (
+							<span className="font-mono text-[10px] text-text-tertiary">
+								{t.count}
+							</span>
+						)}
+					</button>
+				);
+			})}
+		</div>
+	);
+}
+
+/** A search box (icon + borderless input) matching the design's `.search`. */
+export function SettingsSearch({
+	value,
+	onChange,
+	placeholder,
+	className,
+}: {
+	value: string;
+	onChange: (value: string) => void;
+	placeholder?: string;
+	className?: string;
+}) {
+	return (
+		<div
+			className={cn(
+				"flex h-9 items-center gap-2 rounded-sm border border-border-strong bg-surface-sunken px-[11px] focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15",
+				className,
+			)}
+		>
+			<Search className="size-[15px] shrink-0 text-text-tertiary" />
+			<input
+				className="w-full border-0 bg-transparent text-[13px] text-text-primary outline-none placeholder:text-text-disabled"
+				placeholder={placeholder}
+				autoComplete="off"
+				value={value}
+				onChange={(e) => onChange(e.target.value)}
+			/>
+		</div>
+	);
+}
+
+/** Header-cell classes for a settings table (mono uppercase, sunken band). */
+export const settingsTh =
+	"border-b border-border bg-surface-sunken px-4 py-[11px] text-left font-mono text-[9.5px] font-normal uppercase tracking-[0.12em] text-text-tertiary whitespace-nowrap";
+
+/** Body-cell classes for a settings table. */
+export const settingsTd = "border-b border-border px-4 py-[11px] align-middle text-text-secondary";
+
+/** Row-level classes for a `<table>`: last-row borderless + hover band. Compose on the element. */
+export const settingsTableRows =
+	"w-full border-collapse text-[13px] [&_tbody_tr:last-child>td]:border-b-0 [&_tbody_tr:hover>td]:bg-surface-muted";
+
+/** A bordered, horizontally-scrollable table card with an optional footer band. */
+export function SettingsTableCard({
+	children,
+	foot,
+	className,
+}: {
+	children: ReactNode;
+	foot?: ReactNode;
+	className?: string;
+}) {
+	return (
+		<div
+			className={cn(
+				"overflow-hidden rounded-lg border border-border bg-surface shadow-sm",
+				className,
+			)}
+		>
+			<div className="overflow-x-auto">{children}</div>
+			{foot}
+		</div>
+	);
+}
+
+/** A table footer band (e.g. "Showing N of M"). */
+export function SettingsTableFoot({ children }: { children: ReactNode }) {
+	return (
+		<div className="flex items-center justify-between border-t border-border px-4 py-3 text-[12px] text-text-tertiary">
+			{children}
+		</div>
+	);
+}
 
 /** A horizontal strip of summary stats (the design's `m-stats`). */
 export function StatStrip({ children }: { children: ReactNode }) {

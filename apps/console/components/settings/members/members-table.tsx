@@ -2,14 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Settings · Members — a faithful port of the authored claude.ai/design panel (stats +
-// toolbar + table), wired to our stack: real members (getMembers, with team names) +
-// pending invitations (getInvitations); inline role change, remove, invite, cancel.
-// Tabs / search / role-filter are client-side. Suspended status + last-active are
-// dropped (no backend); bulk = Remove only.
+// Settings · Members — the authored claude.ai/design panel (stats + toolbar + table),
+// composed from the shared settings primitives (shadcn + Tailwind tokens; no CSS module).
+// Real members (getMembers, with team names) + pending invitations (getInvitations);
+// inline role change, suspend/reactivate (real PDP grant revoke), remove, invite, cancel.
+// Tabs / search / role-filter are client-side. Last-active = real session activity.
 
 import { formatDistanceToNow } from "date-fns";
-import { MoreHorizontal, Plus, Search, Shield } from "lucide-react";
+import { ChevronDown, MoreHorizontal, Plus, Shield } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -22,6 +22,20 @@ import {
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
 import {
+	SettingsPageHead,
+	SettingsSearch,
+	SettingsSelect,
+	SettingsTableCard,
+	SettingsTableFoot,
+	SettingsTabs,
+	settingsTableRows,
+	settingsTd,
+	settingsTh,
+	StatCell,
+	StatStrip,
+} from "@/components/settings/settings-ui";
+import { Button } from "@/components/ui/button";
+import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
@@ -30,7 +44,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { authClient } from "@/lib/auth/client";
 import { toOrgRole } from "@/lib/authz/org-access-control";
-import styles from "@/components/settings/settings-design.module.css";
+import { cn } from "@/lib/utils";
 
 const ROLE_OPTIONS = ["admin", "operator", "viewer"] as const;
 type Tab = "all" | "active" | "pending" | "suspended";
@@ -51,6 +65,52 @@ interface RowView {
 
 function initials(s: string): string {
 	return s.slice(0, 2).toUpperCase();
+}
+
+/** The status dot+label, mapped onto the global `.vx-status` device. */
+function StatusBadge({ status }: { status: RowView["status"] }) {
+	const variant =
+		status === "active"
+			? "vx-status--active"
+			: status === "pending"
+				? "vx-status--pending"
+				: "vx-status--idle";
+	return (
+		<span className={cn("vx-status", variant)}>
+			<span className="vx-status__dot" />
+			<span className="capitalize">{status}</span>
+		</span>
+	);
+}
+
+/** An inline, borderless pill `<select>` for a member's role. */
+function RoleSelect({
+	value,
+	disabled,
+	onChange,
+}: {
+	value: string;
+	disabled?: boolean;
+	onChange: (value: string) => void;
+}) {
+	return (
+		<div className="relative inline-flex">
+			<select
+				aria-label="Role"
+				disabled={disabled}
+				value={value}
+				onChange={(e) => onChange(e.target.value)}
+				className="cursor-pointer appearance-none rounded-full border border-transparent bg-transparent py-[5px] pl-[10px] pr-6 text-[12px] font-medium text-text-primary transition-colors hover:border-border-strong hover:bg-surface-muted disabled:cursor-default disabled:opacity-50"
+			>
+				{ROLE_OPTIONS.map((ro) => (
+					<option key={ro} value={ro}>
+						{ro[0].toUpperCase() + ro.slice(1)}
+					</option>
+				))}
+			</select>
+			<ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-[11px] -translate-y-1/2 text-text-tertiary" />
+		</div>
+	);
 }
 
 export function MembersTable() {
@@ -155,8 +215,7 @@ export function MembersTable() {
 		});
 	}, [rows, tab, roleFilter, search]);
 
-	const activeCount =
-		members?.filter((m) => m.status !== "suspended").length ?? 0;
+	const activeCount = members?.filter((m) => m.status !== "suspended").length ?? 0;
 	const suspendedCount =
 		members?.filter((m) => m.status === "suspended").length ?? 0;
 	const pendingCount = invites.length;
@@ -213,105 +272,60 @@ export function MembersTable() {
 
 	return (
 		<div>
-			<div className={styles.pageHead}>
-				<span className="vx-eyebrow">Members</span>
-				<h1>Members</h1>
-				<p>
-					People with access to this organization. Each member holds a built-in
-					role; fine-grained grants are managed under Access.
-				</p>
-			</div>
+			<SettingsPageHead
+				eyebrow="Members"
+				title="Members"
+				description="People with access to this organization. Each member holds a built-in role; fine-grained grants are managed under Access."
+			/>
 
 			{/* stats */}
-			<div className={styles.mStats}>
-				<div className={styles.mStat}>
-					<div className={styles.k}>Seats</div>
-					<div className={styles.v}>
-						<span className={styles.big}>{seatCount}</span>
-						<span className={styles.sub}>used</span>
-					</div>
-				</div>
-				<div className={styles.mStat}>
-					<div className={styles.k}>Active</div>
-					<div className={styles.v}>
-						<span className={styles.big}>{activeCount}</span>
-						<span className={styles.sub}>members</span>
-					</div>
-				</div>
-				<div className={styles.mStat}>
-					<div className={styles.k}>Pending invites</div>
-					<div className={styles.v}>
-						<span className={styles.big}>{pendingCount}</span>
-						<span className={styles.sub}>awaiting</span>
-					</div>
-				</div>
-				<div className={styles.mStat}>
-					<div className={styles.k}>Suspended</div>
-					<div className={styles.v}>
-						<span className={styles.big}>{suspendedCount}</span>
-						<span className={styles.sub}>no access</span>
-					</div>
-				</div>
-			</div>
+			<StatStrip>
+				<StatCell label="Seats" value={seatCount} sub="used" />
+				<StatCell label="Active" value={activeCount} sub="members" />
+				<StatCell label="Pending invites" value={pendingCount} sub="awaiting" />
+				<StatCell label="Suspended" value={suspendedCount} sub="no access" />
+			</StatStrip>
 
 			{/* toolbar */}
-			<div className={styles.mToolbar}>
-				<div className={styles.tabs}>
-					{(["all", "active", "pending", "suspended"] as Tab[]).map((t) => {
-						const count =
-							t === "all"
-								? seatCount
-								: t === "active"
-									? activeCount
-									: t === "pending"
-										? pendingCount
-										: suspendedCount;
-						return (
-							<button
-								type="button"
-								key={t}
-								className={tab === t ? styles.on : undefined}
-								onClick={() => setTab(t)}
-							>
-								<span className="capitalize">{t}</span>
-								<span className={styles.ct}>{count}</span>
-							</button>
-						);
-					})}
-				</div>
-				<div className={styles.tools}>
-					<div className={styles.search}>
-						<Search size={15} />
-						<input
-							placeholder="Search name or email"
-							autoComplete="off"
-							value={search}
-							onChange={(e) => setSearch(e.target.value)}
-						/>
-					</div>
-					<select
-						className={`${styles.control} ${styles.mroleFilter} ${styles.mono}`}
-						style={{ fontSize: "12px" }}
+			<div className="mb-[14px] flex flex-wrap items-center justify-between gap-4">
+				<SettingsTabs
+					value={tab}
+					onChange={setTab}
+					tabs={[
+						{ value: "all", label: "All", count: seatCount },
+						{ value: "active", label: "Active", count: activeCount },
+						{ value: "pending", label: "Pending", count: pendingCount },
+						{ value: "suspended", label: "Suspended", count: suspendedCount },
+					]}
+				/>
+				<div className="flex items-center gap-[10px]">
+					<SettingsSearch
+						value={search}
+						onChange={setSearch}
+						placeholder="Search name or email"
+						className="w-[218px]"
+					/>
+					<SettingsSelect
+						aria-label="Filter by role"
+						className="w-[130px]"
 						value={roleFilter}
-						onChange={(e) => setRoleFilter(e.target.value)}
-					>
-						<option value="all">All roles</option>
-						<option value="owner">Owner</option>
-						<option value="admin">Admin</option>
-						<option value="operator">Operator</option>
-						<option value="viewer">Viewer</option>
-					</select>
+						onChange={setRoleFilter}
+						options={[
+							{ value: "all", label: "All roles" },
+							{ value: "owner", label: "Owner" },
+							{ value: "admin", label: "Admin" },
+							{ value: "operator", label: "Operator" },
+							{ value: "viewer", label: "Viewer" },
+						]}
+					/>
 					{canManage && (
 						<InviteMemberDialog
 							onInvited={load}
 							trigger={
-								<button
-									type="button"
-									className={`${styles.btn} ${styles.primary} ${styles.sm}`}
-								>
+								<Button size="sm">
 									<Plus size={13} />
 									Invite member
-								</button>
+								</Button>
 							}
 						/>
 					)}
@@ -320,191 +334,192 @@ export function MembersTable() {
 
 			{/* bulk bar */}
 			{canManage && selected.size > 0 && (
-				<div className={styles.bulkbar}>
-					<div className={styles.l}>
+				<div className="mb-3 flex items-center justify-between gap-4 rounded-md border border-text-primary bg-surface-muted py-[9px] pl-4 pr-[14px]">
+					<div className="flex items-center gap-3 text-[12.5px] text-text-primary">
 						<span>
-							<b style={{ fontWeight: 600 }}>{selected.size}</b> selected
+							<b className="font-semibold">{selected.size}</b> selected
 						</span>
-						<span
-							className={styles.clr}
+						<button
+							type="button"
+							className="font-mono text-[11px] text-text-tertiary hover:text-text-primary"
 							onClick={() => setSelected(new Set())}
-							onKeyDown={() => setSelected(new Set())}
 						>
 							Clear
-						</span>
+						</button>
 					</div>
-					<div className={styles.r}>
-						<button
-							type="button"
-							className={`${styles.btn} ${styles.sm}`}
-							onClick={() => void bulkSuspend()}
-						>
+					<div className="flex gap-2">
+						<Button variant="outline" size="sm" onClick={() => void bulkSuspend()}>
 							Suspend
-						</button>
-						<button
-							type="button"
-							className={`${styles.btn} ${styles.sm} ${styles.ghost}`}
-							onClick={() => void bulkRemove()}
-						>
+						</Button>
+						<Button variant="ghost" size="sm" onClick={() => void bulkRemove()}>
 							Remove
-						</button>
+						</Button>
 					</div>
 				</div>
 			)}
 
 			{/* table */}
-			<div className={`${styles.card} ${styles.mtable}`}>
-				<div className={styles.scrollX}>
-					<table className={styles.members}>
-						<thead>
-							<tr>
-								{canManage && <th className={styles.checkcell} />}
-								<th>Member</th>
-								<th>Role</th>
-								<th>Teams</th>
-								<th>Status</th>
-								<th>Last active</th>
-								<th />
-							</tr>
-						</thead>
-						<tbody>
-							{filtered.map((r) => (
-								<tr key={r.key}>
-									{canManage && (
-										<td className={styles.checkcell}>
-											<input
-												type="checkbox"
-												className={styles.cbx}
-												aria-label="Select"
-												checked={selected.has(r.key)}
-												onChange={() => toggle(r.key)}
-											/>
-										</td>
-									)}
-									<td>
-										<div className={styles.member}>
-											<span className={styles.av}>{r.avatar}</span>
-											<div className={styles.who}>
-												<span className={styles.nm}>
-													{r.name}
-													{r.isYou && <span className={styles.me}>You</span>}
-												</span>
-												<span className={styles.em}>{r.meta}</span>
-											</div>
-										</div>
+			<SettingsTableCard
+				foot={
+					<SettingsTableFoot>
+						<span>
+							Showing{" "}
+							<b className="font-medium text-text-secondary">{filtered.length}</b> of{" "}
+							{rows.length}
+						</span>
+					</SettingsTableFoot>
+				}
+			>
+				<table className={settingsTableRows}>
+					<thead>
+						<tr>
+							{canManage && <th className={cn(settingsTh, "w-[18px]")} />}
+							<th className={settingsTh}>Member</th>
+							<th className={settingsTh}>Role</th>
+							<th className={settingsTh}>Teams</th>
+							<th className={settingsTh}>Status</th>
+							<th className={settingsTh}>Last active</th>
+							<th className={settingsTh} />
+						</tr>
+					</thead>
+					<tbody>
+						{filtered.map((r) => (
+							<tr key={r.key}>
+								{canManage && (
+									<td className={cn(settingsTd, "w-[18px]")}>
+										<input
+											type="checkbox"
+											aria-label="Select"
+											className="size-4 cursor-pointer accent-ink align-middle"
+											checked={selected.has(r.key)}
+											onChange={() => toggle(r.key)}
+										/>
 									</td>
-									<td>
-										{r.kind === "member" && r.role === "owner" ? (
-											<span className={styles.roleStatic}>
-												<Shield size={13} />
-												Owner
+								)}
+								<td className={settingsTd}>
+									<div className="flex items-center gap-[11px]">
+										<span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-border-strong bg-surface-muted font-mono text-[11px] text-text-secondary">
+											{r.avatar}
+										</span>
+										<div className="flex min-w-0 flex-col gap-0.5">
+											<span className="flex items-center gap-[7px] text-[13px] text-text-primary">
+												{r.name}
+												{r.isYou && (
+													<span className="rounded-full border border-border px-[5px] py-px font-mono text-[8.5px] uppercase tracking-[0.08em] text-text-tertiary">
+														You
+													</span>
+												)}
 											</span>
-										) : r.kind === "member" && canManage ? (
-											<select
-												className={styles.roleSel}
-												aria-label="Role"
-												value={r.role}
-												disabled={r.status === "suspended"}
-												onChange={(e) => void changeRole(r.refId, e.target.value)}
-											>
-												{ROLE_OPTIONS.map((ro) => (
-													<option key={ro} value={ro} className="capitalize">
-														{ro[0].toUpperCase() + ro.slice(1)}
-													</option>
-												))}
-											</select>
+											<span className="font-mono text-[10.5px] text-text-tertiary">
+												{r.meta}
+											</span>
+										</div>
+									</div>
+								</td>
+								<td className={settingsTd}>
+									{r.kind === "member" && r.role === "owner" ? (
+										<span className="inline-flex items-center gap-[7px] px-[10px] py-[5px] text-[12px] font-medium text-text-primary">
+											<Shield size={13} className="text-text-tertiary" />
+											Owner
+										</span>
+									) : r.kind === "member" && canManage ? (
+										<RoleSelect
+											value={r.role}
+											disabled={r.status === "suspended"}
+											onChange={(v) => void changeRole(r.refId, v)}
+										/>
+									) : (
+										<span className="px-[10px] py-[5px] text-[12px] font-medium capitalize text-text-primary">
+											{r.role}
+										</span>
+									)}
+								</td>
+								<td className={settingsTd}>
+									<div className="flex flex-wrap gap-[5px]">
+										{r.teams.length > 0 ? (
+											r.teams.map((t) => (
+												<span
+													key={t}
+													className="whitespace-nowrap rounded-full border border-border px-[7px] py-0.5 font-mono text-[10px] text-text-secondary"
+												>
+													{t}
+												</span>
+											))
 										) : (
-											<span className={`${styles.roleStatic} capitalize`}>
-												{r.role}
+											<span className="rounded-full border border-dashed border-border px-[7px] py-0.5 font-mono text-[10px] text-text-disabled">
+												No team
 											</span>
 										)}
-									</td>
-									<td>
-										<div className={styles.teamChips}>
-											{r.teams.length > 0 ? (
-												r.teams.map((t) => (
-													<span key={t} className={styles.chip}>
-														{t}
-													</span>
-												))
-											) : (
-												<span className={`${styles.chip} ${styles.none}`}>
-													No team
-												</span>
-											)}
-										</div>
-									</td>
-									<td>
-										<span className={`${styles.mstatus} ${styles[r.status]}`}>
-											<span className={styles.s} />
-											<span className="capitalize">{r.status}</span>
-										</span>
-									</td>
-									<td className={styles.last}>{r.activity}</td>
-									<td>
-										{canManage && !(r.kind === "member" && r.role === "owner") && (
-											<DropdownMenu>
-												<DropdownMenuTrigger asChild>
-													<button
-														type="button"
-														className={styles.kebab}
-														aria-label="Manage"
-													>
-														<MoreHorizontal size={16} />
-													</button>
-												</DropdownMenuTrigger>
-												<DropdownMenuContent align="end" className="w-44">
-													{r.kind === "member" ? (
-														<>
-															{r.status === "suspended" ? (
-																<DropdownMenuItem
-																	onClick={() => void suspend(r.refId, false)}
-																>
-																	Reactivate
-																</DropdownMenuItem>
-															) : (
-																<DropdownMenuItem
-																	onClick={() => void suspend(r.refId, true)}
-																>
-																	Suspend
-																</DropdownMenuItem>
-															)}
+									</div>
+								</td>
+								<td className={settingsTd}>
+									<StatusBadge status={r.status} />
+								</td>
+								<td
+									className={cn(
+										settingsTd,
+										"whitespace-nowrap font-mono text-[11px] text-text-tertiary",
+									)}
+								>
+									{r.activity}
+								</td>
+								<td className={settingsTd}>
+									{canManage && !(r.kind === "member" && r.role === "owner") && (
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild>
+												<button
+													type="button"
+													aria-label="Manage"
+													className="inline-flex size-7 items-center justify-center rounded-sm text-text-disabled transition-colors hover:bg-surface-muted hover:text-text-primary"
+												>
+													<MoreHorizontal size={16} />
+												</button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent align="end" className="w-44">
+												{r.kind === "member" ? (
+													<>
+														{r.status === "suspended" ? (
 															<DropdownMenuItem
-																className="text-destructive focus:text-destructive"
-																onClick={() => void removeMember(r.refId)}
+																onClick={() => void suspend(r.refId, false)}
 															>
-																Remove from organization
+																Reactivate
 															</DropdownMenuItem>
-														</>
-													) : (
+														) : (
+															<DropdownMenuItem
+																onClick={() => void suspend(r.refId, true)}
+															>
+																Suspend
+															</DropdownMenuItem>
+														)}
 														<DropdownMenuItem
 															className="text-destructive focus:text-destructive"
-															onClick={() => void cancelInvite(r.refId)}
+															onClick={() => void removeMember(r.refId)}
 														>
-															Cancel invitation
+															Remove from organization
 														</DropdownMenuItem>
-													)}
-												</DropdownMenuContent>
-											</DropdownMenu>
-										)}
-									</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-				</div>
+													</>
+												) : (
+													<DropdownMenuItem
+														className="text-destructive focus:text-destructive"
+														onClick={() => void cancelInvite(r.refId)}
+													>
+														Cancel invitation
+													</DropdownMenuItem>
+												)}
+											</DropdownMenuContent>
+										</DropdownMenu>
+									)}
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
 				{filtered.length === 0 && (
-					<div className={styles.empty}>No members match these filters.</div>
+					<div className="px-5 py-10 text-center text-[13px] text-text-tertiary">
+						No members match these filters.
+					</div>
 				)}
-				<div className={styles.mfoot}>
-					<span className={styles.count}>
-						Showing <b style={{ color: "var(--text-secondary)", fontWeight: 500 }}>
-							{filtered.length}
-						</b>{" "}
-						of {rows.length}
-					</span>
-				</div>
-			</div>
+			</SettingsTableCard>
 		</div>
 	);
 }

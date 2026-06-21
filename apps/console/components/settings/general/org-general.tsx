@@ -8,7 +8,6 @@
 // description/region/default-env/terraform-version live in org metadata; delete is real.
 // Logo upload + ownership transfer are stubbed (tracked in spec/features/settings-design-port.md).
 
-import { ChevronDown } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -23,6 +22,7 @@ import {
 	SettingsPageHead,
 	SettingsPanel,
 	SettingsSection,
+	SettingsSelect,
 	settingsControl,
 	settingsControlSize,
 } from "@/components/settings/settings-ui";
@@ -228,7 +228,7 @@ export function OrgGeneral() {
 							label="Data region"
 							hint="Residency for the control plane and Spec state."
 						>
-							<SelectControl
+							<SettingsSelect
 								value={s.region}
 								onChange={(v) => set("region", v)}
 								options={REGIONS.map((r) => ({ value: r.split(" ")[0], label: r }))}
@@ -241,7 +241,7 @@ export function OrgGeneral() {
 							label="Default Spec environment"
 							hint="Pre-selected stage for newly planted Specs."
 						>
-							<SelectControl
+							<SettingsSelect
 								value={s.defaultEnv}
 								onChange={(v) => set("defaultEnv", v)}
 								options={ENVS.map((en) => ({ value: en, label: en }))}
@@ -308,38 +308,6 @@ export function OrgGeneral() {
 					</SettingsDangerRow>
 				</SettingsPanel>
 			</SettingsSection>
-		</div>
-	);
-}
-
-/** A native select styled to the settings design (filled, squared, mono, chevron). */
-function SelectControl({
-	value,
-	onChange,
-	options,
-}: {
-	value: string;
-	onChange: (value: string) => void;
-	options: { value: string; label: string }[];
-}) {
-	return (
-		<div className="relative">
-			<select
-				className={cn(
-					settingsControl,
-					settingsControlSize,
-					"cursor-pointer appearance-none pr-8 font-mono text-[12.5px]",
-				)}
-				value={value}
-				onChange={(e) => onChange(e.target.value)}
-			>
-				{options.map((o) => (
-					<option key={o.value} value={o.value}>
-						{o.label}
-					</option>
-				))}
-			</select>
-			<ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-3 -translate-y-1/2 text-text-tertiary" />
 		</div>
 	);
 }
