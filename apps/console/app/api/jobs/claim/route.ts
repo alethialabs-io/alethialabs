@@ -11,7 +11,7 @@ import {
 } from "@/lib/db/schema";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import { verifyRunnerToken } from "@/lib/runners/auth";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 /**
@@ -81,6 +81,19 @@ export async function POST(req: Request) {
 
 			if (identity) {
 				const c = identity.credentials;
+				// Token clouds (DigitalOcean/Hetzner/Civo) store the token encrypted;
+				// decrypt it here so the plaintext only ever leaves to the runner.
+				let apiToken = "";
+				if (c.token) {
+					try {
+						apiToken = decryptSecret(c.token).api_token ?? "";
+					} catch (e) {
+						console.error(
+							`Failed to decrypt cloud token for identity ${job.cloud_identity_id}:`,
+							e,
+						);
+					}
+				}
 				cloud_identity = {
 					provider: identity.provider,
 					role_arn: c.role_arn ?? "",
@@ -92,6 +105,10 @@ export async function POST(req: Request) {
 					tenant_id: c.tenant_id ?? "",
 					client_id: c.client_id ?? "",
 					subscription_id: c.subscription_id ?? "",
+					api_token: apiToken,
+					// Self-managed: no token stored here; the self-hosted runner reads it
+					// from its own env (HCLOUD_TOKEN / CIVO_TOKEN / DIGITALOCEAN_ACCESS_TOKEN).
+					self_managed: c.self_managed ?? false,
 				};
 			}
 		}
@@ -107,11 +124,14 @@ export async function POST(req: Request) {
 		}> = [];
 		const slugs = referencedConnectorSlugs(job.config_snapshot);
 		if (slugs.length > 0 && job.user_id) {
+			// The runner may use the job creator's PERSONAL credential or one shared with
+			// the job's ORG. Fetch both; dedupe per slug preferring the creator's personal.
 			const rows = await db
 				.select({
 					slug: connectors.slug,
 					category: connectors.category,
 					credentials: connectorCredentials.credentials,
+					scope: connectorCredentials.scope,
 				})
 				.from(connectorCredentials)
 				.innerJoin(
@@ -120,12 +140,33 @@ export async function POST(req: Request) {
 				)
 				.where(
 					and(
-						eq(connectorCredentials.user_id, job.user_id),
 						inArray(connectors.slug, slugs),
+						// Creator's personal credential, plus the org's shared one when the job
+						// carries an org (org_id is nullable on legacy/community rows).
+						job.org_id
+							? or(
+									and(
+										eq(connectorCredentials.user_id, job.user_id),
+										eq(connectorCredentials.scope, "personal"),
+									),
+									and(
+										eq(connectorCredentials.org_id, job.org_id),
+										eq(connectorCredentials.scope, "org"),
+									),
+								)
+							: and(
+									eq(connectorCredentials.user_id, job.user_id),
+									eq(connectorCredentials.scope, "personal"),
+								),
 					),
 				);
 
+			// Personal first so a creator's own credential wins over the shared one.
+			rows.sort((a, b) => (a.scope === "personal" ? -1 : 1));
+			const seen = new Set<string>();
 			for (const row of rows) {
+				if (seen.has(row.slug)) continue;
+				seen.add(row.slug);
 				const fields = { ...(row.credentials?.fields ?? {}) };
 				try {
 					if (row.credentials?.secret) {

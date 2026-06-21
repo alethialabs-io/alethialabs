@@ -20,22 +20,17 @@ export async function POST(req: Request) {
 	}
 
 	try {
-		const { name, mode, cloud_identity_id, metadata } = await req.json();
+		const { name, cloud_identity_id, metadata } = await req.json();
 
-		if (!name || !mode) {
+		if (!name) {
 			return NextResponse.json(
-				{ error: "name and mode are required" },
+				{ error: "name is required" },
 				{ status: 400 },
 			);
 		}
 
-		if (mode !== "self-hosted") {
-			return NextResponse.json(
-				{ error: "Only self-hosted runners can be registered by users" },
-				{ status: 400 },
-			);
-		}
-
+		// User-registered runners are always self-operated and brought by the
+		// user (no DEPLOY_RUNNER job), i.e. provisioning=registered.
 		const runnerToken = randomBytes(32).toString("hex");
 		const tokenHash = createHash("sha256").update(runnerToken).digest("hex");
 
@@ -45,7 +40,8 @@ export async function POST(req: Request) {
 			.values({
 				user_id: userId,
 				name,
-				mode,
+				operator: "self",
+				provisioning: "registered",
 				cloud_identity_id: cloud_identity_id || null,
 				token_hash: tokenHash,
 				metadata: metadata || {},
@@ -53,7 +49,8 @@ export async function POST(req: Request) {
 			.returning({
 				id: runners.id,
 				name: runners.name,
-				mode: runners.mode,
+				operator: runners.operator,
+				provisioning: runners.provisioning,
 				status: runners.status,
 				// snake_case key preserves the Go CLI's Runner wire contract.
 				created_at: runners.created_at,

@@ -4,6 +4,8 @@
 import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { finalizeDeployment } from "@/app/server/actions/deployments";
+import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { reportJobUsageOnce } from "@/lib/billing/meter";
 import { getServiceDb } from "@/lib/db";
 import { jobs, specs } from "@/lib/db/schema";
 import { verifyRunnerToken } from "@/lib/runners/auth";
@@ -44,10 +46,46 @@ export async function PUT(
 
 		if (status === "PROCESSING" || status === "SUCCESS" || status === "FAILED") {
 			const [job] = await db
-				.select({ job_type: jobs.job_type, spec_id: jobs.spec_id })
+				.select({
+					job_type: jobs.job_type,
+					spec_id: jobs.spec_id,
+					org_id: jobs.org_id,
+					zone_id: jobs.zone_id,
+				})
 				.from(jobs)
 				.where(eq(jobs.id, jobId))
 				.limit(1);
+
+			// Ops alerts (free in core): job terminal state + spec destroy.
+			if (job?.org_id && (status === "SUCCESS" || status === "FAILED")) {
+				const base = {
+					job_id: jobId,
+					job_type: job.job_type,
+					spec_id: job.spec_id ?? undefined,
+					zone_id: job.zone_id ?? undefined,
+				};
+				if (status === "FAILED") {
+					emitAlertEventSafe(job.org_id, "system.job.failed", {
+						title: `Job failed: ${job.job_type}`,
+						summary: error_message || undefined,
+						severity: "critical",
+						...base,
+					});
+				} else {
+					emitAlertEventSafe(job.org_id, "system.job.succeeded", {
+						title: `Job succeeded: ${job.job_type}`,
+						severity: "info",
+						...base,
+					});
+					if (job.job_type === "DESTROY") {
+						emitAlertEventSafe(job.org_id, "system.spec.destroyed", {
+							title: "Spec destroyed",
+							severity: "warning",
+							...base,
+						});
+					}
+				}
+			}
 
 			if (job?.spec_id) {
 				const specId = job.spec_id;
@@ -86,6 +124,16 @@ export async function PUT(
 							.where(eq(specs.id, specId));
 					}
 				}
+			}
+		}
+
+		// Bill managed-runner job-minutes once the job is terminal (best-effort; a
+		// metering failure must never fail the runner's status update).
+		if (status === "SUCCESS" || status === "FAILED") {
+			try {
+				await reportJobUsageOnce(jobId);
+			} catch (err) {
+				console.error("Usage metering failed:", err);
 			}
 		}
 

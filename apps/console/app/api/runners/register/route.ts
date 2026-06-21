@@ -8,19 +8,19 @@ import { createHash, randomBytes } from "crypto";
 import { sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
-/** Terraform calls this to register a cloud-hosted runner. */
+/** Terraform calls this to register a managed (Alethia-operated) fleet runner. */
 export async function POST(req: Request) {
 	const unauthorized = verifyPlatformSecret(req);
 	if (unauthorized) return unauthorized;
 
-	let body: { name?: string; mode?: "self-hosted" | "cloud-hosted" };
+	let body: { name?: string };
 	try {
 		body = await req.json();
 	} catch {
 		return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
 	}
 
-	const { name, mode } = body;
+	const { name } = body;
 	if (!name || typeof name !== "string") {
 		return NextResponse.json(
 			{ error: "Missing required field: name" },
@@ -35,10 +35,10 @@ export async function POST(req: Request) {
 		const db = getServiceDb();
 		const [row] = await db
 			.insert(runners)
-			.values({ name, mode: mode ?? "cloud-hosted", token_hash: tokenHash })
+			.values({ name, operator: "managed", token_hash: tokenHash })
 			.onConflictDoUpdate({
 				target: runners.name,
-				targetWhere: sql`mode = 'cloud-hosted'`,
+				targetWhere: sql`operator = 'managed'`,
 				set: { token_hash: tokenHash },
 			})
 			.returning({ id: runners.id });

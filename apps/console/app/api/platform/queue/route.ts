@@ -24,6 +24,14 @@ export async function POST(req: Request) {
 	);
 	const recovered = Number(recoveredRows[0]?.recover_stale_jobs ?? 0);
 
+	// sweep_offline_runners() flips dead runners to OFFLINE and closes their open
+	// usage sessions so managed-runner provisioned hours stop accruing promptly.
+	await db
+		.execute(sql`SELECT public.sweep_offline_runners()`)
+		.catch((err) => {
+			console.error("[platform/queue] sweep_offline_runners failed:", err);
+		});
+
 	const queuedRows = await db.execute<{ queued: number }>(
 		sql`SELECT count(*)::int AS queued FROM jobs WHERE status = 'QUEUED'`,
 	);
