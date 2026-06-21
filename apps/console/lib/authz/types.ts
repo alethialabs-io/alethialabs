@@ -65,6 +65,30 @@ export interface Entitlements {
 	sso: boolean;
 	customRoles: boolean;
 	auditExport: boolean;
+	/**
+	 * Security/governance alerting (spec/mvp/25-alerting-notifications.md): alert rules
+	 * sourced from PDP audit events (denials, sensitive allows, grant/role changes) plus
+	 * advanced match/escalation. Basic infra/ops alerting is free in core and ungated;
+	 * this flag only gates the PDP-sourced half. Granted on business+.
+	 */
+	advancedAlerting: boolean;
+	/**
+	 * Runner-scheduling quotas (ADR 20). Mirrors the authoritative SQL mapping in
+	 * programmables.sql (plan_max_concurrency / plan_priority) for UI + insert-time
+	 * "at your limit" UX. The claim_next_job RPC is the source of truth.
+	 */
+	quotas: {
+		/** Max in-flight jobs on the shared managed pool; null = unlimited. */
+		maxConcurrentJobs: number | null;
+		/** Base claim priority band (community 0 … enterprise 30). */
+		priorityLevel: number;
+		/**
+		 * Included managed-runner **job-minutes** per billing period (ADR 17/20 §5).
+		 * Usage above this bills overage on paid tiers; community hard-stops here.
+		 * Self-hosted runners are never metered.
+		 */
+		includedRunnerMinutes: number;
+	};
 }
 
 /** Thrown by enforce() on denial; mapped to 403 at route/action boundaries. */
