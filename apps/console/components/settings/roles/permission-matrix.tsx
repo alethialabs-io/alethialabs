@@ -26,46 +26,50 @@ const GROUPS = RESOURCES.map((resource) => ({
 	permissions: PERMISSIONS.filter((p) => p.resource === resource),
 })).filter((g) => g.permissions.length > 0);
 
-/** Controlled permission picker: the chosen `resource:action` keys. */
+/**
+ * Controlled permission picker (the chosen `resource:action` keys), grouped per
+ * service. `readOnly` renders it as a disabled, view-only matrix (built-in roles).
+ */
 export function PermissionMatrix({
 	value,
 	onChange,
+	readOnly,
 }: {
 	value: string[];
-	onChange: (keys: string[]) => void;
+	onChange?: (keys: string[]) => void;
+	readOnly?: boolean;
 }) {
 	const selected = new Set(value);
 	const toggle = (key: string, on: boolean) => {
 		const next = new Set(selected);
 		if (on) next.add(key);
 		else next.delete(key);
-		onChange([...next]);
+		onChange?.([...next]);
 	};
 
 	return (
 		<div className="space-y-5">
 			{GROUPS.map((g) => (
 				<div key={g.resource}>
-					<p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-						{g.label}
-					</p>
-					<div className="space-y-2">
+					<p className="vx-eyebrow mb-2">{g.label}</p>
+					<div className="overflow-hidden rounded-lg border border-border">
 						{g.permissions.map((p) => (
 							<div
 								key={p.key}
-								className="flex items-center justify-between gap-3 rounded-md border border-border/40 px-3 py-2"
+								className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5 last:border-b-0"
 							>
 								<div className="min-w-0">
-									<p className="text-sm capitalize text-foreground">
+									<p className="text-[13px] capitalize text-text-primary">
 										{p.action.replace(/_/g, " ")}
 									</p>
-									<p className="truncate font-mono text-[11px] text-muted-foreground">
+									<p className="truncate font-mono text-[10.5px] text-text-tertiary">
 										{p.key}
 									</p>
 								</div>
 								<Switch
 									checked={selected.has(p.key)}
-									onCheckedChange={(on) => toggle(p.key, on)}
+									disabled={readOnly}
+									onCheckedChange={readOnly ? undefined : (on) => toggle(p.key, on)}
 								/>
 							</div>
 						))}

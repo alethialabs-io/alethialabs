@@ -21,7 +21,9 @@ that already exists; anything the design wants that the backend lacks is logged 
       Backend: `getMembers`/`getInvitations`/`setMemberSuspended` + better-auth role/remove/cancel.
 - [x] **Teams** — card-grid design via primitives. `getTeams` extended with `members[]` (avatar stack +
       grouped count); create/delete/manage via better-auth. Stats: Teams / Members grouped / Largest team.
-- [ ] **Roles** — IAM-style. Backend: `roles.ts` (`listCustomRoles`/`deleteRole`) + built-in roles.
+- [x] **Roles** — IAM-style master-detail (`roles-manager.tsx`): rail (Built-in + Custom) + detail with
+      `permission-matrix` (new `readOnly` prop) + template gallery. Custom CRUD via `roles.ts`, gated on
+      `customRoles`. Built-in roles read-only from `registry`. Deleted `custom-roles` + `role-editor-dialog`.
 - [ ] **Access** — Backend: `grants.ts` (`listAccessGrants`/`getGrantOptions`/`revokeGrant`).
 - [ ] **SSO** — Backend: `sso.ts` (`getSsoProviders` + register dialog).
 - [ ] **Audit** — Backend: `audit.ts` (`getAuditLog` + export).
