@@ -6,6 +6,12 @@ export async function register() {
 	if (process.env.NEXT_RUNTIME !== "nodejs") return;
 	const { startStaleJobRecovery } = await import("@/lib/jobs/recovery");
 	startStaleJobRecovery();
+	// In-app fleet scaler (sibling loop). No-op unless FLEET_POOLS is configured.
+	const { startFleetScaler } = await import("@/lib/fleet/scaler");
+	startFleetScaler();
+	// In-app alert-delivery retry sweep (self-hostable; no external cron).
+	const { startAlertScheduler } = await import("@/lib/alerts/scheduler");
+	startAlertScheduler();
 	// Sync the static authz registry (permissions + built-in roles) — idempotent.
 	const { seedAuthz } = await import("@/lib/authz/seed");
 	await seedAuthz().catch((err) => console.error("[authz] seed failed:", err));

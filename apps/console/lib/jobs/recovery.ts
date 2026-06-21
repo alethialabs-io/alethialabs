@@ -15,16 +15,26 @@ const globalForRecovery = globalThis as unknown as {
 	__alethiaJobRecovery?: ReturnType<typeof setInterval>;
 };
 
-/** Starts the periodic stale-job recovery sweep (idempotent across HMR/instances). */
+/**
+ * Starts the periodic stale-job recovery + offline-runner sweep (idempotent
+ * across HMR/instances). sweep_offline_runners() flips dead runners to OFFLINE
+ * and closes their open usage sessions (managed-runner metering).
+ */
 export function startStaleJobRecovery(): void {
 	if (globalForRecovery.__alethiaJobRecovery) return;
 	if (!process.env.ALETHIA_DATABASE_URL) return; // no DB configured yet
 
 	globalForRecovery.__alethiaJobRecovery = setInterval(() => {
-		void getServiceDb()
+		const db = getServiceDb();
+		void db
 			.execute(sql`select recover_stale_jobs()`)
 			.catch((err) => {
 				console.error("[job-recovery] recover_stale_jobs failed:", err);
+			});
+		void db
+			.execute(sql`select sweep_offline_runners()`)
+			.catch((err) => {
+				console.error("[job-recovery] sweep_offline_runners failed:", err);
 			});
 	}, RECOVERY_INTERVAL_MS);
 }
