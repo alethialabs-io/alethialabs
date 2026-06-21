@@ -12,6 +12,7 @@
 		"check:ee-boundary": "node scripts/check-ee-boundary.mjs",
 		"check:authz-scope": "node scripts/check-authz-scope.mjs",
 		"gen:connectors": "node scripts/gen-connectors.mjs",
+		"gen:cli-fixtures": "tsx scripts/gen-cli-fixtures.ts",
 		"db:generate": "drizzle-kit generate",
 		"db:migrate": "node scripts/migrate.mjs",
 		"db:studio": "drizzle-kit studio",
