@@ -65,6 +65,11 @@ jobs:
         run: pnpm -F console check:no-supabase
       - name: Authz scope (PDP, not ad-hoc user_id)
         run: pnpm -F console check:authz-scope
+      - name: CLI contract fixtures are in sync with the Zod contract
+        run: |
+          pnpm -F console gen:cli-fixtures
+          git diff --exit-code -- packages/core/api/testdata \
+            || { echo "::error::CLI fixtures are stale — run 'pnpm -F console gen:cli-fixtures' and commit (the Go contract test will then name any struct field to update)."; exit 1; }
 
   go:
     name: Go (build · vet · test · lint)

@@ -70,3 +70,20 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap_token.outputs.token }}
           GORELEASER_CURRENT_TAG: ${{ env.CLI_TAG }}
+
+      - name: Publish release metadata to Alethia
+        env:
+          ALETHIA_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          RELEASE_API_SECRET: ${{ secrets.RELEASE_API_SECRET }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NOTES=$(gh release view "${CLI_TAG}" --json body -q .body 2>/dev/null || echo "")
+          curl -sf -X POST "${ALETHIA_URL}/api/releases/cli" \
+            -H "Authorization: Bearer ${RELEASE_API_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg v "${{ inputs.version }}" \
+              --arg n "$NOTES" \
+              --arg u "https://github.com/${{ github.repository }}/releases/tag/${CLI_TAG}" \
+              --arg s "${{ github.sha }}" \
+              '{version: $v, release_notes: $n, github_release_url: $u, commit_sha: $s}')"
