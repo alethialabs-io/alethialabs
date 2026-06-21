@@ -7,9 +7,15 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/internal/update"
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/version"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/spf13/cobra"
+)
+
+const (
+	websiteURL = "https://alethialabs.io"
+	docsURL    = "https://alethialabs.io/docs"
 )
 
 func init() {
@@ -18,40 +24,41 @@ func init() {
 
 var rootCmd = &cobra.Command{
 	Use:   "alethia",
-	Short: "alethia is a CLI for managing your infrastructure",
-	Long: `Alethia encompasses a CLI (alethia) and a Web Control Plane (console).
-It helps you automate, manage, and scale your cloud infrastructure easily.`,
+	Short: "alethia — multi-cloud Kubernetes control plane, from the terminal",
+	Long: `alethia is the command-line interface to the Alethia control plane.
+Configure infrastructure visually, then plan, deploy, and tear it down across
+AWS, GCP, and Azure from the terminal.`,
+	// Runs after any subcommand that doesn't override it — surfaces the upgrade
+	// notice once per day without ever blocking the command.
+	PersistentPostRun: func(cmd *cobra.Command, args []string) {
+		update.CheckAndNotify(version.Version)
+	},
 	Run: func(cmd *cobra.Command, args []string) {
-		logo := `
-   ______                           
-  / ____/________ _____  ___        
- / / __/ ___/ __ ` + "`" + `/ __ \/ _ \       
-/ /_/ / /  / /_/ / /_/ /  __/       
-\____/_/   \__,_/ .___/\___/        
-               /_/                  
-`
-		logoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Bold(true)
-		titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
-		linkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Underline(true)
-		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-		accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
-
-		fmt.Println(logoStyle.Render(logo))
-		fmt.Println(titleStyle.Render("Welcome to the Alethia CLI!"))
+		printBanner()
 		fmt.Println()
-
-		fmt.Println(textStyle.Render("Developed by: ") + accentStyle.Render("Borislav Borisov"))
-		fmt.Println(textStyle.Render("Email:        ") + linkStyle.Render("borislav@tovr.eu"))
-		fmt.Println(textStyle.Render("GitHub:       ") + linkStyle.Render("https://github.com/bobikenobi12"))
-		fmt.Println(textStyle.Render("LinkedIn:     ") + linkStyle.Render("https://www.linkedin.com/in/bborisov1/"))
-		fmt.Println()
-		fmt.Println(textStyle.Render("This tool is open source and I'd love collaboration."))
-		fmt.Println(textStyle.Render("Alethia is designed to manage, provision, and automate complex cloud infrastructure effortlessly."))
-		fmt.Println(textStyle.Render("You can also set up things through our web platform: ") + linkStyle.Render("https://alethialabs.io"))
-		fmt.Println()
-
 		cmd.Help()
 	},
+}
+
+// printBanner renders the grayscale Alethia lockup shown for a bare `alethia`.
+func printBanner() {
+	ver := version.Version
+
+	fmt.Println()
+	fmt.Printf("  %s %s   %s\n",
+		ui.RenderMark(),
+		ui.StrongStyle.Render("alethia"),
+		ui.Eyebrow("control plane"),
+	)
+	fmt.Printf("  %s\n", ui.SecondaryStyle.Render("Configure infrastructure visually. Deploy from the terminal."))
+	fmt.Println()
+
+	row := func(label, value string) {
+		fmt.Printf("  %s  %s\n", ui.MutedStyle.Render(fmt.Sprintf("%-9s", label)), value)
+	}
+	row("version", ui.TextStyle.Render(ver))
+	row("website", ui.LinkStyle.Render(websiteURL))
+	row("docs", ui.LinkStyle.Render(docsURL))
 }
 
 // WebOrigin returns the Alethia control-plane URL from ALETHIA_WEB_ORIGIN. It is
@@ -67,7 +74,6 @@ func WebOrigin() string {
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		fail(err)
 	}
 }
