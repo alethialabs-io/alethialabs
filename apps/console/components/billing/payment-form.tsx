@@ -2,15 +2,22 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// THE reusable embedded checkout. Renders Stripe's Payment Element (card data stays in
-// Stripe's iframe — PCI SAQ-A) and confirms it. `mode="payment"` confirms a
-// subscription's first PaymentIntent (create-org / upgrade); `mode="setup"` confirms a
-// SetupIntent (save a card). `redirect: "if_required"` keeps 3-D Secure inline — only
-// payment methods that force a redirect leave the page (return_url is the fallback).
-// Must be rendered inside <StripeElementsProvider clientSecret=…>.
+// THE reusable embedded checkout. Renders Stripe's native Address Element (billing
+// address) + Payment Element (card data stays in Stripe's iframe — PCI SAQ-A), both
+// themed to the app via the <StripeElementsProvider> appearance (light/dark). On
+// submit it saves the billing address to the Stripe customer (so `automatic_tax`
+// computes) then confirms. `mode="payment"` confirms a subscription's first
+// PaymentIntent; `mode="setup"` confirms a SetupIntent (no address). `redirect:
+// "if_required"` keeps 3-D Secure inline. Render inside <StripeElementsProvider>.
 
-import { PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
+import {
+	AddressElement,
+	PaymentElement,
+	useElements,
+	useStripe,
+} from "@stripe/react-stripe-js";
 import { type FormEvent, useState } from "react";
+import { updateBillingAddress } from "@/app/server/actions/billing";
 import { Button } from "@/components/ui/button";
 
 interface PaymentFormProps {
@@ -35,11 +42,35 @@ export function PaymentForm({
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
+	/** Persist the Address Element's value to the Stripe customer (best-effort) so
+	 * `automatic_tax` can compute VAT/sales tax from the billing country. */
+	async function saveBillingAddress() {
+		const addressEl = elements?.getElement("address");
+		if (!addressEl) return;
+		const { complete, value } = await addressEl.getValue();
+		if (!complete || !value.address) return;
+		try {
+			await updateBillingAddress({
+				name: value.name ?? "",
+				line1: value.address.line1,
+				line2: value.address.line2 || undefined,
+				city: value.address.city,
+				state: value.address.state || undefined,
+				postalCode: value.address.postal_code,
+				country: value.address.country,
+			});
+		} catch {
+			// Non-fatal — Stripe still attaches the address to the payment method.
+		}
+	}
+
 	async function handleSubmit(e: FormEvent) {
 		e.preventDefault();
 		if (!stripe || !elements) return;
 		setSubmitting(true);
 		setError(null);
+
+		if (mode === "payment") await saveBillingAddress();
 
 		const confirmParams = { return_url: returnUrl ?? window.location.href };
 		const result =
@@ -68,6 +99,11 @@ export function PaymentForm({
 
 	return (
 		<form onSubmit={handleSubmit} className="space-y-4">
+			{mode === "payment" && (
+				<AddressElement
+					options={{ mode: "billing", display: { name: "organization" } }}
+				/>
+			)}
 			<PaymentElement />
 			{error && <p className="text-xs text-destructive">{error}</p>}
 			<Button type="submit" disabled={!stripe || submitting} className="w-full">

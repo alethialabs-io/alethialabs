@@ -50,9 +50,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { planMeta } from "@/lib/billing/plan-catalog";
 import type { BillingPlan } from "@/lib/db/schema/enums";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
-import { BillingDetailsCard } from "./billing-details-card";
 import { InvoicesTable } from "./invoices-table";
-import { PaymentMethodsCard } from "./payment-methods-card";
+import { ManageBillingCard } from "./manage-billing-card";
 import { PlanHistoryTimeline } from "./plan-history-timeline";
 import { TransactionsTable } from "./transactions-table";
 
@@ -449,13 +448,8 @@ export function BillingPanel() {
 				</div>
 			</SettingsSection>
 
-			{/* payment + billing details — only once a Stripe customer exists */}
-			{summary.canManage && (
-				<div className="mb-[34px] grid grid-cols-1 gap-5 md:grid-cols-2">
-					<PaymentMethodsCard />
-					<BillingDetailsCard />
-				</div>
-			)}
+			{/* payment + billing details → Stripe Customer Portal (once a customer exists) */}
+			{summary.canManage && <ManageBillingCard />}
 
 			{/* plan history */}
 			<PlanHistoryTimeline />
