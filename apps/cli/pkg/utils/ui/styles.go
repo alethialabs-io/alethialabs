@@ -5,42 +5,62 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
-// --- Colors ---
+// Alethia Labs is a strictly grayscale brand: zero chroma, dark-first. Meaning
+// is carried by ink weight and glyph shape, never by hue. The palette below is
+// a terminal projection of the OKLCH neutral ink ramp; AdaptiveColor keeps it
+// legible on both dark (signature) and light terminals.
 
-const (
-	ColorSuccess = "42"  // green
-	ColorError   = "196" // red
-	ColorWarning = "214" // amber
-	ColorAccent  = "63"  // purple
-	ColorCyan    = "86"  // cyan
-	ColorLink    = "39"  // blue
-	ColorText    = "252" // light grey
-	ColorMuted   = "240" // dim grey
-	ColorValue   = "255" // white
-	ColorKey     = "244" // mid grey
-	ColorSelect  = "229" // yellow (selected row text)
+// --- Palette (grayscale ink ramp) ---
+
+var (
+	// InkPrimary is the strongest foreground — headings, values, emphasis.
+	InkPrimary = lipgloss.AdaptiveColor{Light: "#161616", Dark: "#FAFAFA"}
+	// InkSecondary is standard body text.
+	InkSecondary = lipgloss.AdaptiveColor{Light: "#3D3D3D", Dark: "#B3B3B3"}
+	// InkMuted is secondary/labels/borders.
+	InkMuted = lipgloss.AdaptiveColor{Light: "#757575", Dark: "#808080"}
+	// InkFaint is the dimmest readable ink — disabled, hints, rules.
+	InkFaint = lipgloss.AdaptiveColor{Light: "#A3A3A3", Dark: "#595959"}
+	// InkInverse is foreground for text rendered on an inverted (ink) surface.
+	InkInverse = lipgloss.AdaptiveColor{Light: "#FAFAFA", Dark: "#161616"}
 )
 
 // --- Styles ---
+//
+// The semantic names are kept stable for call sites. Success and error share the
+// same strong ink — they are distinguished by their glyph (✓ vs ✗), not color,
+// per the brand's "status by shape, never hue" rule.
 
 var (
-	SuccessStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorSuccess)).Bold(true)
-	ErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorError)).Bold(true)
-	WarningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorWarning)).Bold(true)
-	AccentStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorAccent)).Bold(true)
-	CyanStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorCyan)).Bold(true)
-	TextStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorText))
-	MutedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted))
-	LinkStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorLink)).Underline(true)
-	KeyStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorKey)).Padding(0, 2, 0, 2)
-	ValueStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorValue))
+	StrongStyle    = lipgloss.NewStyle().Foreground(InkPrimary).Bold(true)
+	SuccessStyle   = lipgloss.NewStyle().Foreground(InkPrimary).Bold(true)
+	ErrorStyle     = lipgloss.NewStyle().Foreground(InkPrimary).Bold(true)
+	WarningStyle   = lipgloss.NewStyle().Foreground(InkSecondary)
+	AccentStyle    = lipgloss.NewStyle().Foreground(InkPrimary).Bold(true)
+	CyanStyle      = lipgloss.NewStyle().Foreground(InkPrimary).Bold(true)
+	TextStyle      = lipgloss.NewStyle().Foreground(InkPrimary)
+	SecondaryStyle = lipgloss.NewStyle().Foreground(InkSecondary)
+	MutedStyle     = lipgloss.NewStyle().Foreground(InkMuted)
+	FaintStyle     = lipgloss.NewStyle().Foreground(InkFaint)
+	LinkStyle      = lipgloss.NewStyle().Foreground(InkPrimary).Underline(true)
+	KeyStyle       = lipgloss.NewStyle().Foreground(InkMuted).Padding(0, 2, 0, 2)
+	ValueStyle     = lipgloss.NewStyle().Foreground(InkPrimary)
+	// EyebrowStyle renders the uppercase mono label device (tracked via Eyebrow).
+	EyebrowStyle = lipgloss.NewStyle().Foreground(InkMuted)
+	// MarkStyle renders the [·] brand mark.
+	MarkStyle = lipgloss.NewStyle().Foreground(InkPrimary).Bold(true)
 )
 
 // --- Symbols ---
+//
+// Geometric, monochrome glyphs only — no colorful emoji. Status reads by fill
+// and shape: solid (●) active, half (◐) in-progress, hollow (○) idle, dash (—)
+// gone, ✗ failed.
 
 const (
 	SymbolSuccess = "✓"
@@ -48,10 +68,30 @@ const (
 	SymbolOnline  = "●"
 	SymbolOffline = "○"
 	SymbolPending = "◐"
-	SymbolDefault = "★"
+	SymbolDefault = "◆"
 	SymbolDash    = "—"
-	SymbolWaiting = "⏳"
+	SymbolBullet  = "·"
+	SymbolArrow   = "→"
+	SymbolPoint   = "▸"
 )
+
+// Mark is the Alethia bracketed-point brand mark.
+const Mark = "[·]"
+
+// --- Brand helpers ---
+
+// RenderMark returns the [·] mark in strong ink.
+func RenderMark() string {
+	return MarkStyle.Render(Mark)
+}
+
+// Eyebrow renders an uppercase, letter-spaced mono label — the brand's eyebrow
+// device (e.g. "CONTROL PLANE").
+func Eyebrow(label string) string {
+	upper := strings.ToUpper(label)
+	spaced := strings.Join(strings.Split(upper, ""), " ")
+	return EyebrowStyle.Render(spaced)
+}
 
 // --- Message Helpers ---
 
@@ -64,7 +104,7 @@ func Error(msg string) {
 }
 
 func Warning(msg string) {
-	fmt.Printf("\n%s\n", WarningStyle.Render(msg))
+	fmt.Printf("\n%s\n", WarningStyle.Render(SymbolPoint+" "+msg))
 }
 
 func Info(msg string) {
@@ -93,13 +133,13 @@ func FormatError(msg string) string {
 func StatusDot(status string) string {
 	switch status {
 	case "ONLINE", "ACTIVE":
-		return SuccessStyle.Render(SymbolOnline)
+		return StrongStyle.Render(SymbolOnline)
 	case "DRAINING", "CREATING", "UPDATING", "PROVISIONING", "QUEUED":
-		return WarningStyle.Render(SymbolPending)
+		return SecondaryStyle.Render(SymbolPending)
 	case "FAILED":
-		return ErrorStyle.Render(SymbolError)
+		return StrongStyle.Render(SymbolError)
 	case "DESTROYED":
-		return MutedStyle.Render(SymbolDash)
+		return FaintStyle.Render(SymbolDash)
 	default:
 		return MutedStyle.Render(SymbolOffline)
 	}
@@ -123,5 +163,5 @@ func PlainStatusDot(status string) string {
 }
 
 func DefaultBadge() string {
-	return CyanStyle.Render(" " + SymbolDefault)
+	return FaintStyle.Render(" " + SymbolDefault)
 }

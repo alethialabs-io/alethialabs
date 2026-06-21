@@ -13,8 +13,8 @@ import (
 )
 
 var (
-	subHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ColorMuted)).Padding(0, 0, 0, 2)
-	printKeyStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorKey)).Padding(0, 2, 0, 4)
+	subHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(InkMuted).Padding(0, 0, 0, 2)
+	printKeyStyle  = lipgloss.NewStyle().Foreground(InkMuted).Padding(0, 2, 0, 4)
 )
 
 func PrintConfiguration(config types.Configuration) {

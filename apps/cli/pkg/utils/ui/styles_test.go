@@ -84,10 +84,10 @@ func TestStatusDot_Unknown(t *testing.T) {
 	}
 }
 
-func TestDefaultBadge_ContainsStar(t *testing.T) {
+func TestDefaultBadge_ContainsMark(t *testing.T) {
 	result := DefaultBadge()
 	if !strings.Contains(result, SymbolDefault) {
-		t.Errorf("expected star symbol, got: %s", result)
+		t.Errorf("expected default mark, got: %s", result)
 	}
 }
 

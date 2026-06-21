@@ -14,18 +14,20 @@ import (
 var (
 	tableHeaderStyle = lipgloss.NewStyle().
 				BorderStyle(lipgloss.NormalBorder()).
-				BorderForeground(lipgloss.Color(ColorMuted)).
+				BorderForeground(InkMuted).
 				BorderBottom(true).
+				Foreground(InkMuted).
 				Bold(true)
 
+	// Selection reads as an inverted ink block — no hue, just contrast.
 	tableSelectedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(ColorSelect)).
-				Background(lipgloss.Color(ColorAccent)).
-				Bold(false)
+				Foreground(InkInverse).
+				Background(InkPrimary).
+				Bold(true)
 
 	tableBorderStyle = lipgloss.NewStyle().
 				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color(ColorMuted))
+				BorderForeground(InkMuted)
 )
 
 func NewStyledTable(columns []table.Column, rows []table.Row) table.Model {

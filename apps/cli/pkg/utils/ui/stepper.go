@@ -6,51 +6,36 @@ package ui
 import (
 	"fmt"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 // RenderStepper returns a visual progress stepper string.
 // steps: list of step names
 // current: 0-based index of the current step
 func RenderStepper(steps []string, current int) string {
-	var (
-		activeColor    = lipgloss.Color("86")  // Cyan
-		inactiveColor  = lipgloss.Color("240") // Grey
-		completedColor = lipgloss.Color("42")  // Green
-
-		activeStyle    = lipgloss.NewStyle().Foreground(activeColor).Bold(true)
-		inactiveStyle  = lipgloss.NewStyle().Foreground(inactiveColor)
-		completedStyle = lipgloss.NewStyle().Foreground(completedColor)
-	)
-
+	// Grayscale: progress reads from glyph fill and ink weight, not color.
+	// Completed → solid diamond, faint ink. Current → solid diamond, strong ink.
+	// Future → hollow diamond, muted ink.
 	var renderedSteps []string
 
 	for i, step := range steps {
 		var icon, label string
 
-		if i < current {
-			// Completed
-			icon = "◆" // Solid diamond
-			label = completedStyle.Render(step)
-			icon = completedStyle.Render(icon)
-		} else if i == current {
-			// Current
-			icon = "◈" // Diamond with dot
-			label = activeStyle.Render(step)
-			icon = activeStyle.Render(icon)
-		} else {
-			// Future
-			icon = "◇" // Outline diamond
-			label = inactiveStyle.Render(step)
-			icon = inactiveStyle.Render(icon)
+		switch {
+		case i < current: // Completed
+			icon = FaintStyle.Render("◆")
+			label = FaintStyle.Render(step)
+		case i == current: // Current
+			icon = StrongStyle.Render("◆")
+			label = StrongStyle.Render(step)
+		default: // Future
+			icon = MutedStyle.Render("◇")
+			label = MutedStyle.Render(step)
 		}
 
 		renderedSteps = append(renderedSteps, fmt.Sprintf("%s %s", icon, label))
 	}
 
-	// Join with a connector
-	connector := inactiveStyle.Render(" ── ")
+	connector := FaintStyle.Render(" ── ")
 	return strings.Join(renderedSteps, connector)
 }
 
