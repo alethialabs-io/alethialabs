@@ -70,7 +70,7 @@ export function PlanPicker({
 						</div>
 
 						<ul className="flex-1 space-y-1.5 text-sm text-muted-foreground">
-							{plan.features.map((f) => (
+							{plan.highlights.map((f) => (
 								<li key={f} className="flex items-start gap-2">
 									<Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground" />
 									<span>{f}</span>

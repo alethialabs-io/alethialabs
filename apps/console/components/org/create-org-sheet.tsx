@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The "create an organization" flow (pay-to-create), fully embedded: name the org, pick
-// a paid plan, then pay with the in-sheet Payment Element (no Stripe redirect). We
-// create the org, open an incomplete subscription, and confirm its first payment inline;
-// the webhook then activates the org. A right Sheet, opened from the org switcher or the
-// billing page.
+// The "create an organization" flow (pay-to-create), fully embedded. Name-first: you
+// name the org, then the plan chooser + prices reveal; pick a plan, Continue, and pay
+// with the in-sheet Payment Element (no Stripe redirect). We create the org, open an
+// incomplete subscription, and confirm its first payment inline; the webhook activates
+// the org. A right Sheet, opened from the org switcher or the billing page.
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
@@ -17,7 +17,7 @@ import { z } from "zod";
 import { createSubscriptionIntent } from "@/app/server/actions/billing";
 import { setActiveOrganization } from "@/app/server/actions/workspace";
 import { PaymentForm } from "@/components/billing/payment-form";
-import { PlanPicker } from "@/components/billing/plan-picker";
+import { PlanChooser } from "@/components/billing/plan-chooser";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,7 +30,7 @@ import {
 	SheetTitle,
 } from "@/components/ui/sheet";
 import { authClient } from "@/lib/auth/client";
-import { planMeta } from "@/lib/billing/plan-catalog";
+import { PAID_PLANS, planMeta } from "@/lib/billing/plan-catalog";
 import type { BillingPlan } from "@/lib/db/schema/enums";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 
@@ -58,24 +58,26 @@ interface CreateOrgSheetProps {
 export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const router = useRouter();
 	const fetchWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
-	const [pendingPlan, setPendingPlan] = useState<BillingPlan | null>(null);
+	const [busy, setBusy] = useState(false);
 	const [step, setStep] = useState<"details" | "payment">("details");
+	const [selectedPlan, setSelectedPlan] = useState<BillingPlan>("team");
 	const [clientSecret, setClientSecret] = useState<string | null>(null);
-	const [selectedPlan, setSelectedPlan] = useState<BillingPlan | null>(null);
-	// The org is created once (on first plan-continue); kept so going Back never
-	// creates a duplicate org.
+	// The org is created once (on first Continue); kept so going Back never duplicates it.
 	const [createdOrgId, setCreatedOrgId] = useState<string | null>(null);
 	const form = useForm<FormData>({
 		resolver: zodResolver(schema),
 		defaultValues: { name: "" },
 	});
 
+	const nameValid = form.watch("name").trim().length >= 2;
+	const planLabel = planMeta(selectedPlan);
+
 	function reset() {
 		setStep("details");
+		setSelectedPlan("team");
 		setClientSecret(null);
-		setSelectedPlan(null);
-		setPendingPlan(null);
 		setCreatedOrgId(null);
+		setBusy(false);
 		form.reset();
 	}
 
@@ -85,13 +87,13 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	}
 
 	/** Create the org (once), open a subscription, and move to the in-sheet payment step. */
-	async function handleSelect(plan: BillingPlan) {
-		if (plan === "community") return; // paidOnly — defensive
+	async function handleContinue() {
+		if (selectedPlan === "community") return; // chooser is paid-only — defensive
 		const valid = await form.trigger("name");
 		if (!valid) return;
 		const name = form.getValues("name").trim();
 
-		setPendingPlan(plan);
+		setBusy(true);
 		try {
 			let orgId = createdOrgId;
 			if (!orgId) {
@@ -107,14 +109,13 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				await setActiveOrganization(orgId);
 				await fetchWorkspace();
 			}
-			const intent = await createSubscriptionIntent(plan);
-			setSelectedPlan(plan);
+			const intent = await createSubscriptionIntent(selectedPlan);
 			setClientSecret(intent.clientSecret);
 			setStep("payment");
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Something went wrong");
 		} finally {
-			setPendingPlan(null);
+			setBusy(false);
 		}
 	}
 
@@ -125,8 +126,6 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		router.refresh();
 	}
 
-	const planLabel = selectedPlan ? planMeta(selectedPlan) : null;
-
 	return (
 		<Sheet open={open} onOpenChange={handleOpenChange}>
 			<SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
@@ -134,8 +133,8 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 					<SheetTitle>Create an organization</SheetTitle>
 					<SheetDescription>
 						{step === "details"
-							? "Collaborate with your team in a shared workspace — pooled Zones & Specs, teammates, and role-based access. Pick a plan to get started."
-							: `Enter your card to start the ${planLabel?.name ?? ""} plan.`}
+							? "Name your organization, then choose a plan to collaborate with your team."
+							: `Enter your card to start the ${planLabel.name} plan.`}
 					</SheetDescription>
 				</SheetHeader>
 
@@ -157,20 +156,27 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 								)}
 							</div>
 
-							<div className="space-y-3">
-								<p className="text-sm font-medium text-foreground">Choose a plan</p>
-								<PlanPicker
-									paidOnly
-									pendingPlan={pendingPlan}
-									disabled={pendingPlan !== null}
-									ctaLabel="Continue"
-									onSelect={handleSelect}
-								/>
-							</div>
+							{/* Plans + prices reveal once the org has a name. */}
+							{nameValid && (
+								<div className="space-y-5">
+									<PlanChooser
+										plans={PAID_PLANS}
+										value={selectedPlan}
+										onChange={setSelectedPlan}
+									/>
+									<Button
+										className="w-full"
+										disabled={busy}
+										onClick={handleContinue}
+									>
+										{busy ? "Setting up…" : `Continue · ${planLabel.priceLabel}`}
+									</Button>
+								</div>
+							)}
 						</>
 					)}
 
-					{step === "payment" && clientSecret && planLabel && (
+					{step === "payment" && clientSecret && (
 						<div className="space-y-4">
 							<div className="flex items-center justify-between border-b border-border/40 pb-3">
 								<div>
