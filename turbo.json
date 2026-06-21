@@ -21,8 +21,7 @@
 				"GITLAB_SECRET",
 				"BITBUCKET_KEY",
 				"BITBUCKET_SECRET",
-				"RELEASE_API_SECRET",
-				"SCALER_FUNCTION_URL"
+				"RELEASE_API_SECRET"
 			]
 		},
 		"lint": {

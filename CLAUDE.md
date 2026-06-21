@@ -119,7 +119,7 @@ apps/console/
 ### Environment Variables
 
 - `ALETHIA_WEB_ORIGIN` — Alethia control-plane URL (required; no default)
-- `ALETHIA_RUNNER_MODE` — Runner mode (`self-hosted` or `cloud-hosted`)
+- `ALETHIA_RUNNER_OPERATOR` — Runner operator (`managed` or `self`). Legacy `ALETHIA_RUNNER_MODE` (`cloud-hosted`/`self-hosted`) still works as a back-compat fallback (cloud-hosted→managed, self-hosted→self).
 - `ALETHIA_RUNNER_ID` / `ALETHIA_RUNNER_TOKEN` — Runner registration credentials
 - `ALETHIA_STORAGE_ENDPOINT`, `ALETHIA_STORAGE_REGION`, `ALETHIA_STORAGE_ACCESS_KEY_ID`, `ALETHIA_STORAGE_SECRET_ACCESS_KEY` — Artifact / state storage (S3-compatible)
 
@@ -131,7 +131,7 @@ apps/console/
 - **Structure**: `cmd/` (entry point), `internal/` (business logic), `internal/agent/` (job execution engine)
 - **Purpose**: Long-running daemon that polls Alethia for queued provisioning jobs, claims them, executes OpenTofu operations, and streams logs back.
 - **Deployment**: Docker image on ECS Fargate, auto-registered with Alethia via HTTP on startup.
-- **Runner modes**: `self-hosted` (runs in customer's cloud with native permissions) or `cloud-hosted` (runs in platform account, assumes role into customer account).
+- **Runner operator/provisioning**: `operator=managed` (Alethia runs it in the platform account, assumes role into customer accounts, billed by provisioned hours via the `runner_usage_sessions` ledger) or `operator=self` (runs in the customer's cloud with native permissions). Self runners are further split by `provisioning`: `deployed` (provisioned into the customer's cloud by an existing runner running Terraform) or `registered` (customer brought their own — own Terraform or `alethia runner start`).
 
 ---
 
@@ -155,12 +155,13 @@ apps/console/
 
 ## Infrastructure (`infra/`)
 
-### Platform (`infra/platform/`)
+### Managed fleet (in-app scaler)
 
-Core infrastructure managed by OpenTofu:
-- **ECR** (eu-west-1): Container registry for Alethia and Runner Docker images
-- **ECS Fargate** (multi-region): Runner tasks in VPC, auto-registered with Alethia
-- **Lambda scaler** (eu-west-1): EventBridge triggers every 1 minute, scales ECS tasks based on job queue depth
+The hosted managed runner fleet is driven by the **in-app scaler** (`apps/console/lib/fleet/`): a 60s
+loop sizes per-provider warm pools by queue depth and converges them through a `FleetProvider`. The
+**Hetzner** provider (`FLEET_PROVIDER=hcloud`) creates/destroys cheap VMs whose cloud-init runs a
+per-cloud runner image (from GHCR) that **self-registers** via `ALETHIA_RUNNER_BOOTSTRAP_TOKEN`. The
+legacy AWS ECS fleet + Lambda scaler (`infra/fleet-aws`) was retired.
 
 ### Templates (`infra/templates/`)
 
@@ -183,7 +184,6 @@ Cloud account bootstrap scripts:
 - **`deploy-node.yml`** — Manual hotfix: build Node Docker image → push to ECR + GHCR → deploy to ECS
 - **`release-node.yml`** — Release-please driven: tag, build, publish Node binary releases
 - **`release-cli.yml`** — GoReleaser: build alethia CLI binaries, publish Homebrew tap
-- **`infra-fleet-aws.yml`** — Plan and apply the AWS runner fleet (OpenTofu)
 
 ---
 
