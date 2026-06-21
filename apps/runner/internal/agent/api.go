@@ -4,12 +4,15 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
@@ -19,6 +22,7 @@ type RunnerAPIClient struct {
 	baseURL     string
 	runnerID    string
 	runnerToken string
+	providers   []string // cloud providers this runner can run; reported via heartbeat
 	httpClient  *http.Client
 }
 
@@ -55,6 +59,11 @@ type CloudIdentity struct {
 	TenantID            string `json:"tenant_id"`
 	ClientID            string `json:"client_id"`
 	SubscriptionID      string `json:"subscription_id"`
+	// DigitalOcean / Hetzner / Civo — scoped API token (decrypted at claim time).
+	APIToken            string `json:"api_token"`
+	// Self-managed: no token was stored in Alethia; this (self-hosted) runner supplies
+	// it from its own environment (HCLOUD_TOKEN / CIVO_TOKEN / DIGITALOCEAN_ACCESS_TOKEN).
+	SelfManaged         bool   `json:"self_managed"`
 }
 
 // ConnectorCredential is a decrypted api_key credential for a pluggable
@@ -91,7 +100,10 @@ func (c *RunnerAPIClient) setRunnerHeaders(req *http.Request) {
 }
 
 func (c *RunnerAPIClient) Heartbeat() error {
-	payload, _ := json.Marshal(map[string]string{"version": version.Version})
+	payload, _ := json.Marshal(map[string]any{
+		"version":   version.Version,
+		"providers": c.providers, // nil → JSON null → server keeps existing (claims any)
+	})
 	req, err := http.NewRequest("POST", c.baseURL+"/runners/heartbeat", bytes.NewBuffer(payload))
 	if err != nil {
 		return err
@@ -133,6 +145,38 @@ func (c *RunnerAPIClient) ClaimJob() (*ClaimResponse, error) {
 	}
 
 	return &result, nil
+}
+
+// StreamWake holds an SSE connection to the push-dispatch endpoint and invokes
+// onWake for every wake event (a job became claimable). It blocks until the stream
+// ends or ctx is cancelled, then returns — the caller reconnects with backoff. Uses
+// a no-timeout client (the connection is long-lived); ctx governs its lifetime.
+func (c *RunnerAPIClient) StreamWake(ctx context.Context, onWake func()) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/runners/wake", nil)
+	if err != nil {
+		return err
+	}
+	c.setRunnerHeaders(req)
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := (&http.Client{Timeout: 0}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("wake stream returned status %d", resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		// SSE: "data: …" lines are wakes; ":" comments are heartbeats (ignored).
+		if strings.HasPrefix(scanner.Text(), "data:") {
+			onWake()
+		}
+	}
+	return scanner.Err()
 }
 
 func (c *RunnerAPIClient) UpdateJobStatus(jobID, status, errorMessage string, executionMetadata map[string]any) error {

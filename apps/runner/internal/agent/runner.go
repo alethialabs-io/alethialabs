@@ -24,7 +24,8 @@ import (
 )
 
 type Config struct {
-	Mode        string // "self-hosted" or "cloud-hosted"
+	Operator    string   // "managed" or "self"
+	Providers   []string // cloud providers this runner can run (per-cloud routing); empty = any
 	AlethiaURL  string
 	RunnerID    string
 	RunnerToken string
@@ -41,10 +42,9 @@ type Runner struct {
 }
 
 func New(cfg Config) *Runner {
-	return &Runner{
-		config: cfg,
-		api:    NewRunnerAPIClient(cfg.AlethiaURL, cfg.RunnerID, cfg.RunnerToken),
-	}
+	client := NewRunnerAPIClient(cfg.AlethiaURL, cfg.RunnerID, cfg.RunnerToken)
+	client.providers = cfg.Providers
+	return &Runner{config: cfg, api: client}
 }
 
 func NewWithAPI(cfg Config, api JobAPI) *Runner {
@@ -80,10 +80,10 @@ func (w *Runner) Run(ctx context.Context) error {
 
 	go w.heartbeatLoop(ctx)
 
-	fmt.Printf("Runner started (id=%s, mode=%s, version=%s)\n", w.config.RunnerID, w.config.Mode, version.Version)
-	fmt.Printf("Polling %s for jobs...\n", w.config.AlethiaURL)
+	fmt.Printf("Runner started (id=%s, operator=%s, version=%s)\n", w.config.RunnerID, w.config.Operator, version.Version)
+	fmt.Printf("Connected to %s; waiting for jobs (push wake + safety poll)...\n", w.config.AlethiaURL)
 
-	return w.pollLoop(ctx, &draining)
+	return w.claimLoop(ctx, &draining)
 }
 
 func (w *Runner) heartbeatLoop(ctx context.Context) {
@@ -106,40 +106,85 @@ func (w *Runner) heartbeatLoop(ctx context.Context) {
 	}
 }
 
-func (w *Runner) pollLoop(ctx context.Context, draining *atomic.Bool) error {
-	pollInterval := 10 * time.Second
+// claimLoop reacts to push wakes (and a slow safety poll) by draining claimable
+// jobs. The wake stream gives sub-second pickup; the safety poll is the fallback if
+// the stream drops. Each tick drains the queue until nothing is left for this runner.
+func (w *Runner) claimLoop(ctx context.Context, draining *atomic.Bool) error {
+	const safetyInterval = 30 * time.Second
+
+	wakeCh := make(chan struct{}, 1)
+	trigger := func() {
+		select {
+		case wakeCh <- struct{}{}:
+		default: // a wake is already pending; coalesce
+		}
+	}
+
+	go w.wakeLoop(ctx, trigger)
+
+	safety := time.NewTicker(safetyInterval)
+	defer safety.Stop()
+
+	trigger() // drain any backlog on startup
 
 	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-		}
-
 		if draining.Load() {
 			fmt.Println("Draining: no more jobs will be claimed. Exiting.")
 			return nil
 		}
 
-		claim, err := w.api.ClaimJob()
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-safety.C:
+		case <-wakeCh:
+		}
+
+		// Drain: claim and run jobs until the queue has nothing for us.
+		for !draining.Load() {
+			if ctx.Err() != nil {
+				return nil
+			}
+			claim, err := w.api.ClaimJob()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to claim job: %v\n", err)
+				break
+			}
+			if claim.Job == nil {
+				break
+			}
+
+			fmt.Printf("Claimed job %s (type=%s)\n", claim.Job.ID, claim.Job.JobType)
+			jobCtx, jobCancel := context.WithTimeout(ctx, 2*time.Hour)
+			if err := w.executeJob(jobCtx, claim); err != nil {
+				fmt.Fprintf(os.Stderr, "Job %s failed: %v\n", claim.Job.ID, err)
+			}
+			jobCancel()
+		}
+	}
+}
+
+// wakeLoop maintains the push-dispatch SSE connection, reconnecting with backoff.
+// Each wake event triggers a claim attempt in claimLoop.
+func (w *Runner) wakeLoop(ctx context.Context, trigger func()) {
+	backoff := time.Second
+	const maxBackoff = 30 * time.Second
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		err := w.api.StreamWake(ctx, trigger)
+		if ctx.Err() != nil {
+			return
+		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to claim job: %v\n", err)
-			sleepCtx(ctx, pollInterval)
-			continue
+			fmt.Fprintf(os.Stderr, "Wake stream disconnected (%v); reconnecting in %s\n", err, backoff)
 		}
-
-		if claim.Job == nil {
-			sleepCtx(ctx, pollInterval)
-			continue
+		sleepCtx(ctx, backoff)
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
 		}
-
-		fmt.Printf("Claimed job %s (type=%s)\n", claim.Job.ID, claim.Job.JobType)
-
-		jobCtx, jobCancel := context.WithTimeout(ctx, 2*time.Hour)
-		if err := w.executeJob(jobCtx, claim); err != nil {
-			fmt.Fprintf(os.Stderr, "Job %s failed: %v\n", claim.Job.ID, err)
-		}
-		jobCancel()
 	}
 }
 
@@ -150,6 +195,10 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	stderrLogger := NewJobLogger(w.api, job.ID, "STDERR")
 	defer stdoutLogger.Close()
 	defer stderrLogger.Close()
+
+	// Emit immediately so the user sees activity within ~100ms of claim — before
+	// credential setup and tofu init — instead of waiting on the first real step.
+	fmt.Fprintln(stdoutLogger, "▸ Job claimed — preparing workspace…")
 
 	if err := w.api.UpdateJobStatus(job.ID, "PROCESSING", "", nil); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to update job status to PROCESSING: %v\n", err)
@@ -182,6 +231,27 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			cleanup, err := ActivateAzureFederated(claim.CloudIdentity.TenantID, claim.CloudIdentity.ClientID, claim.CloudIdentity.SubscriptionID)
 			if err != nil {
 				errMsg := fmt.Sprintf("Failed to activate Azure federated identity: %v", err)
+				fmt.Fprintln(stderrLogger, errMsg)
+				_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+				return err
+			}
+			defer cleanup()
+		case "digitalocean", "hetzner", "civo":
+			fmt.Fprintf(stdoutLogger, "Activating %s API token...\n", claim.CloudIdentity.Provider)
+			cleanup, err := ActivateTokenCloud(claim.CloudIdentity.Provider, claim.CloudIdentity.APIToken, claim.CloudIdentity.SelfManaged)
+			if err != nil {
+				errMsg := fmt.Sprintf("Failed to activate %s token: %v", claim.CloudIdentity.Provider, err)
+				fmt.Fprintln(stderrLogger, errMsg)
+				_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+				return err
+			}
+			defer cleanup()
+		case "alibaba":
+			fmt.Fprintf(stdoutLogger, "Assuming Alibaba RAM role %s...\n", claim.CloudIdentity.RoleArn)
+			sessionName := fmt.Sprintf("runner-%s", job.ID[:8])
+			cleanup, err := ActivateAlibabaRole(ctx, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID, sessionName)
+			if err != nil {
+				errMsg := fmt.Sprintf("Failed to assume Alibaba RAM role: %v", err)
 				fmt.Fprintln(stderrLogger, errMsg)
 				_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
 				return err
@@ -221,6 +291,16 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 				})
 				fmt.Fprintln(stdoutLogger, "Azure resources cached successfully.")
 			}
+		case "digitalocean", "hetzner", "civo":
+			if err := VerifyTokenCloud(ctx, provider, claim.CloudIdentity.APIToken, claim.CloudIdentity.SelfManaged); err != nil {
+				execErr = fmt.Errorf("connection test failed: %w", err)
+			} else {
+				fmt.Fprintf(stdoutLogger, "Connection test passed — %s token authenticated.\n", provider)
+			}
+		case "alibaba":
+			// Activation above already performed a real STS AssumeRole; reaching here
+			// means the customer's RAM role is assumable with zero stored credentials.
+			fmt.Fprintln(stdoutLogger, "Connection test passed — Alibaba RAM role assumption succeeded.")
 		default:
 			fmt.Fprintln(stdoutLogger, "Connection test passed — role assumption succeeded.")
 			resources, fetchErr := w.fetchAwsResources(ctx, stdoutLogger)

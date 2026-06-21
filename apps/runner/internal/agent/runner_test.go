@@ -4,9 +4,13 @@
 package agent
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type mockAPI struct {
@@ -16,6 +20,7 @@ type mockAPI struct {
 	heartbeatCount int
 	claimResponse  *ClaimResponse
 	claimErr       error
+	claimCount     int
 	jobs           map[string]*Job
 }
 
@@ -35,7 +40,22 @@ type logEntry struct {
 func (m *mockAPI) ClaimJob() (*ClaimResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.claimResponse, m.claimErr
+	if m.claimErr != nil {
+		return nil, m.claimErr
+	}
+	m.claimCount++
+	if m.claimCount == 1 {
+		return m.claimResponse, nil
+	}
+	return &ClaimResponse{Job: nil}, nil // queue drained after the first claim
+}
+
+// StreamWake fires one wake immediately (simulating an enqueue), then holds until
+// the context is cancelled.
+func (m *mockAPI) StreamWake(ctx context.Context, onWake func()) error {
+	onWake()
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func (m *mockAPI) UpdateJobStatus(jobID, status, errMsg string, metadata map[string]any) error {
@@ -95,6 +115,14 @@ func (m *mockAPI) getStatusUpdates() []statusUpdate {
 	defer m.mu.Unlock()
 	result := make([]statusUpdate, len(m.statusUpdates))
 	copy(result, m.statusUpdates)
+	return result
+}
+
+func (m *mockAPI) getLogChunks() []logEntry {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]logEntry, len(m.logChunks))
+	copy(result, m.logChunks)
 	return result
 }
 
@@ -167,7 +195,7 @@ func TestGetSnapshotString(t *testing.T) {
 
 func TestExecuteJob_SetsProcessingFirst(t *testing.T) {
 	api := &mockAPI{}
-	w := NewWithAPI(Config{Mode: "self-hosted"}, api)
+	w := NewWithAPI(Config{Operator: "self"}, api)
 
 	claim := &ClaimResponse{
 		Job: &Job{
@@ -188,9 +216,42 @@ func TestExecuteJob_SetsProcessingFirst(t *testing.T) {
 	}
 }
 
+// TestExecuteJob_EmitsClaimBannerFirst asserts the user sees activity immediately:
+// the "Job claimed" banner is the first STDOUT line, emitted before credential setup
+// and any provisioning work.
+func TestExecuteJob_EmitsClaimBannerFirst(t *testing.T) {
+	api := &mockAPI{}
+	w := NewWithAPI(Config{Operator: "self"}, api)
+
+	claim := &ClaimResponse{
+		Job: &Job{
+			ID:             "job-banner",
+			JobType:        "BOGUS_TYPE",
+			ConfigSnapshot: map[string]any{},
+		},
+	}
+
+	// Deferred logger.Close() inside executeJob flushes remaining buffered output.
+	_ = w.executeJob(t.Context(), claim)
+
+	var firstStdout string
+	for _, c := range api.getLogChunks() {
+		if c.streamType == "STDOUT" {
+			firstStdout = c.chunk
+			break
+		}
+	}
+	if firstStdout == "" {
+		t.Fatal("expected at least one STDOUT log chunk")
+	}
+	if !strings.Contains(firstStdout, "Job claimed") {
+		t.Errorf("expected first STDOUT chunk to be the claim banner, got %q", firstStdout)
+	}
+}
+
 func TestExecuteJob_UnknownType(t *testing.T) {
 	api := &mockAPI{}
-	w := NewWithAPI(Config{Mode: "self-hosted"}, api)
+	w := NewWithAPI(Config{Operator: "self"}, api)
 
 	claim := &ClaimResponse{
 		Job: &Job{
@@ -218,6 +279,46 @@ func TestExecuteJob_UnknownType(t *testing.T) {
 	}
 }
 
+// TestClaimLoop_DrainsOnWake proves push dispatch: a wake event drives claimLoop to
+// claim and execute a queued job (no 10s poll wait). Uses an unknown job type so
+// executeJob fails fast and records a FAILED status we can assert on.
+func TestClaimLoop_DrainsOnWake(t *testing.T) {
+	api := &mockAPI{
+		claimResponse: &ClaimResponse{
+			Job: &Job{ID: "wake-job", JobType: "BOGUS_TYPE", ConfigSnapshot: map[string]any{}},
+		},
+	}
+	w := NewWithAPI(Config{Operator: "self"}, api)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var draining atomic.Bool
+	done := make(chan error, 1)
+	go func() { done <- w.claimLoop(ctx, &draining) }()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("job was not claimed + executed within 2s of wake")
+		default:
+		}
+		claimed := false
+		for _, u := range api.getStatusUpdates() {
+			if u.jobID == "wake-job" && u.status == "FAILED" {
+				claimed = true
+			}
+		}
+		if claimed {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	<-done
+}
+
 func TestDeployValidation_PlanNotSuccess(t *testing.T) {
 	planHash := "abc123"
 	planJobID := "plan-1"
@@ -230,7 +331,7 @@ func TestDeployValidation_PlanNotSuccess(t *testing.T) {
 			},
 		},
 	}
-	w := NewWithAPI(Config{Mode: "self-hosted"}, api)
+	w := NewWithAPI(Config{Operator: "self"}, api)
 
 	claim := &ClaimResponse{
 		Job: &Job{
@@ -278,7 +379,7 @@ func TestDeployValidation_HashMismatch(t *testing.T) {
 			},
 		},
 	}
-	w := NewWithAPI(Config{Mode: "self-hosted"}, api)
+	w := NewWithAPI(Config{Operator: "self"}, api)
 
 	claim := &ClaimResponse{
 		Job: &Job{

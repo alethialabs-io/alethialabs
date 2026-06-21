@@ -3,8 +3,13 @@
 
 package agent
 
+import "context"
+
 type JobAPI interface {
 	ClaimJob() (*ClaimResponse, error)
+	// StreamWake holds the push-dispatch SSE connection, calling onWake per wake
+	// event; blocks until the stream ends or ctx is cancelled.
+	StreamWake(ctx context.Context, onWake func()) error
 	UpdateJobStatus(jobID, status, errorMessage string, executionMetadata map[string]any) error
 	SendLog(jobID, logChunk, streamType string) error
 	Heartbeat() error

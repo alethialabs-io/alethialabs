@@ -21,6 +21,7 @@ type JobLogger struct {
 	streamType string
 	buf        strings.Builder
 	mu         sync.Mutex
+	notify     chan struct{}
 	done       chan struct{}
 	closeOnce  sync.Once
 }
@@ -30,6 +31,7 @@ func NewJobLogger(client LogSender, jobID, streamType string) *JobLogger {
 		client:     client,
 		jobID:      jobID,
 		streamType: streamType,
+		notify:     make(chan struct{}, 1),
 		done:       make(chan struct{}),
 	}
 	go l.flushLoop()
@@ -46,6 +48,15 @@ func (l *JobLogger) Write(p []byte) (n int, err error) {
 
 	if shouldFlush {
 		l.Flush()
+	} else {
+		// Wake the flush loop so the first bytes reach the console within a tick
+		// (sub-100ms) instead of waiting for the backstop interval. The single-slot
+		// channel coalesces bursts: writes that arrive during an in-flight flush
+		// collapse into one pending wake.
+		select {
+		case l.notify <- struct{}{}:
+		default:
+		}
 	}
 
 	return n, err
@@ -67,11 +78,15 @@ func (l *JobLogger) Flush() {
 }
 
 func (l *JobLogger) flushLoop() {
-	ticker := time.NewTicker(2 * time.Second)
+	// Backstop only — most flushes are notify-driven (sub-100ms after a write). The
+	// ticker catches anything that slipped past a coalesced wake.
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
+		case <-l.notify:
+			l.Flush()
 		case <-ticker.C:
 			l.Flush()
 		case <-l.done:
