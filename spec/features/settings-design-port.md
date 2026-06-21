@@ -27,7 +27,10 @@ that already exists; anything the design wants that the backend lacks is logged 
 - [x] **Access** — grants design (`access-manager.tsx`): inheritance note + stat strip (Grants/Org/Zone/
       Spec) + toolbar + **inline grant builder** (live preview) + grants table (Principal/Role/Scope/reach/
       Granted/revoke). Wired to `grants.ts`; Enterprise-gated. Deleted `access-table` + `grant-access-dialog`.
-- [ ] **SSO** — Backend: `sso.ts` (`getSsoProviders` + register dialog).
+- [x] **SSO** — multi-card IdP design (`sso-manager.tsx`): status card + SP details (derived URLs + copy) +
+      IdP details (issuer/SSO URL/cert fingerprint — `getSsoProviders` extended to parse saml/oidc config) +
+      attribute mapping + register dialog. SCIM + enforcement rendered as honest "coming soon" cards.
+      Deleted `sso-providers.tsx`.
 - [ ] **Audit** — Backend: `audit.ts` (`getAuditLog` + export).
 - [ ] **Billing** — refactor off `billing-design.module.css`, then delete the module.
 
@@ -48,3 +51,10 @@ that already exists; anything the design wants that the backend lacks is logged 
 - **Access · effective-reach exact counts** — design shows "flows to N Specs"; no zone→spec map wired.
       Shown qualitatively ("This Zone & its Specs"). **grantedBy** not stored → relative date only.
       Team principal member-count not surfaced on the row tag (shows "Team").
+- **SSO · SCIM provisioning** — design shows base URL + bearer token + last-sync; **no SCIM backend**.
+      Rendered as a "coming soon" card.
+- **SSO · Enforcement** (require-SSO toggle, auto-assign role) — **no backend**; "coming soon" (disabled).
+- **SSO · Test connection / Re-upload metadata / Rotate token** — no backend → toast stubs.
+- **SSO · SP detail URLs** — derived from org slug + `NEXT_PUBLIC_APP_URL` on the better-auth SSO convention;
+      verify against the deployed SSO plugin routes when enterprise SSO is stood up. No `connected` date
+      (no `createdAt` on `sso_provider`).
