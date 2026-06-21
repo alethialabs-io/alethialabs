@@ -12,6 +12,7 @@ export * from "./specs";
 export * from "./spec-components";
 export * from "./runners";
 export * from "./jobs";
+export * from "./cli";
 export * from "./connectors";
 export * from "./accounts";
 export * from "./auth";
