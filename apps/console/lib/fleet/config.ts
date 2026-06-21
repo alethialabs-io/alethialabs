@@ -2,22 +2,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { cloudProvider } from "@/lib/db/schema";
-import type { Pool } from "@/lib/fleet/provider";
+import type { FleetSpec } from "@/lib/fleet/types";
 import { z } from "zod";
 
-// Pools are configured via FLEET_POOLS (a JSON array). Cloud-specific addressing
-// (ECS cluster/service, hcloud server type) belongs to the provider impl, not here.
+// Declarative pool specs via FLEET_POOLS (a JSON array). Cloud-specific addressing
+// (hcloud server type, image) belongs to the provider impl, not here. Default [] = the
+// controller is a no-op. `version` pins an exact image; `channel` (e.g. "stable") is
+// resolved to the newest runner_releases by the controller each tick.
 const poolSchema = z.object({
 	provider: z.enum(cloudProvider.enumValues),
-	warmMin: z.number().int().min(0).default(0),
+	warmMin: z.number().int().min(0).default(1),
 	max: z.number().int().min(0).default(10),
 	slotsPerRunner: z.number().int().min(1).default(1),
+	locations: z.array(z.string().min(1)).min(1).default(["fsn1"]),
+	minPerLocation: z.number().int().min(0).default(0),
+	surge: z.number().int().min(1).default(1),
+	buffer: z.number().int().min(0).default(1),
 	scaleDownGraceTicks: z.number().int().min(1).default(5),
+	version: z.string().min(1).optional(),
+	channel: z.string().min(1).optional(),
 });
 const poolsSchema = z.array(poolSchema);
 
-/** Parse FLEET_POOLS. Default (unset/invalid) → [] → the scaler is a no-op. */
-export function getFleetPools(): Pool[] {
+/** Parse FLEET_POOLS into specs. Default (unset/invalid) → [] → the controller is a no-op. */
+export function getFleetPools(): FleetSpec[] {
 	const raw = process.env.FLEET_POOLS;
 	if (!raw) return [];
 	let json: unknown;
@@ -32,5 +40,18 @@ export function getFleetPools(): Pool[] {
 		console.error("[fleet] invalid FLEET_POOLS:", parsed.error.message);
 		return [];
 	}
-	return parsed.data;
+	return parsed.data.map((p) => ({
+		provider: p.provider,
+		warmMin: p.warmMin,
+		max: p.max,
+		slotsPerRunner: p.slotsPerRunner,
+		locations: p.locations,
+		minPerLocation: p.minPerLocation,
+		surge: p.surge,
+		buffer: p.buffer,
+		scaleDownGraceTicks: p.scaleDownGraceTicks,
+		// A pinned version wins; otherwise the controller resolves `channel` → latest.
+		targetVersion: p.version ?? null,
+		channel: p.version ? null : (p.channel ?? null),
+	}));
 }
