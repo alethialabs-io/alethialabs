@@ -288,49 +288,6 @@ export function SettingsSearch({
 	);
 }
 
-/** Header-cell classes for a settings table (mono uppercase, sunken band). */
-export const settingsTh =
-	"border-b border-border bg-surface-sunken px-4 py-[11px] text-left font-mono text-[9.5px] font-normal uppercase tracking-[0.12em] text-text-tertiary whitespace-nowrap";
-
-/** Body-cell classes for a settings table. */
-export const settingsTd = "border-b border-border px-4 py-[11px] align-middle text-text-secondary";
-
-/** Row-level classes for a `<table>`: last-row borderless + hover band. Compose on the element. */
-export const settingsTableRows =
-	"w-full border-collapse text-[13px] [&_tbody_tr:last-child>td]:border-b-0 [&_tbody_tr:hover>td]:bg-surface-muted";
-
-/** A bordered, horizontally-scrollable table card with an optional footer band. */
-export function SettingsTableCard({
-	children,
-	foot,
-	className,
-}: {
-	children: ReactNode;
-	foot?: ReactNode;
-	className?: string;
-}) {
-	return (
-		<div
-			className={cn(
-				"overflow-hidden rounded-lg border border-border bg-surface shadow-sm",
-				className,
-			)}
-		>
-			<div className="overflow-x-auto">{children}</div>
-			{foot}
-		</div>
-	);
-}
-
-/** A table footer band (e.g. "Showing N of M"). */
-export function SettingsTableFoot({ children }: { children: ReactNode }) {
-	return (
-		<div className="flex items-center justify-between border-t border-border px-4 py-3 text-[12px] text-text-tertiary">
-			{children}
-		</div>
-	);
-}
-
 /** A horizontal strip of summary stats (the design's `m-stats`). */
 export function StatStrip({ children }: { children: ReactNode }) {
 	return (

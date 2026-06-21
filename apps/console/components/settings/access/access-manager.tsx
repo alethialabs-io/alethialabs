@@ -2,12 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Settings · Access — the authored grants design: an inheritance info-note, a stat strip
-// (Grants / Org-wide / Zone-scoped / Spec-scoped), a toolbar (search · scope filter · Add
-// grant), an inline grant builder with a live preview, and the grants table. Composed
-// from the shared settings primitives; wired to grants.ts (listAccessGrants /
-// getGrantOptions / assignGrant / revokeGrant). Enterprise-gated on customRoles.
+// Settings · Access — an inheritance info-note, a stat strip (Grants / Org-wide /
+// Zone-scoped / Spec-scoped), a toolbar (search · scope filter · Add grant), an inline
+// grant builder with a live preview, and the grants table on the shared DataTable
+// (sortable + paginated). Wired to grants.ts (listAccessGrants / getGrantOptions /
+// assignGrant / revokeGrant). The page header + Enterprise gate live in access/page.tsx.
 
+import type { ColumnDef } from "@tanstack/react-table";
 import { formatDistanceToNow } from "date-fns";
 import { Info, MoreHorizontal, Plus, Shield } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -20,15 +21,11 @@ import {
 	listAccessGrants,
 	revokeGrant,
 } from "@/app/server/actions/grants";
+import { DataTable } from "@/components/data-table";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import {
 	SettingsSearch,
 	SettingsSelect,
-	SettingsTableCard,
-	SettingsTableFoot,
-	settingsTableRows,
-	settingsTd,
-	settingsTh,
 	StatCell,
 	StatStrip,
 } from "@/components/settings/settings-ui";
@@ -156,199 +153,201 @@ export function AccessManager() {
 		});
 	}, [all, scopeFilter, search, resourceLabel]);
 
+	const columns = useMemo<ColumnDef<AccessGrantRow>[]>(
+		() => [
+			{
+				id: "principal",
+				header: "Principal",
+				enableSorting: false,
+				cell: ({ row }) => {
+					const g = row.original;
+					return (
+						<div className="flex items-center gap-2.5">
+							<span className="flex size-8 shrink-0 items-center justify-center rounded-full border bg-muted font-mono text-[11px] text-muted-foreground">
+								{initials(g.principalLabel)}
+							</span>
+							<div className="flex min-w-0 flex-col">
+								<span className="truncate text-foreground">{g.principalLabel}</span>
+								<span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+									{g.principalType === "team" ? "Team" : "Member"}
+								</span>
+							</div>
+						</div>
+					);
+				},
+			},
+			{
+				id: "role",
+				header: "Role",
+				enableSorting: false,
+				cell: ({ row }) => {
+					const g = row.original;
+					return (
+						<div className="flex items-center gap-2">
+							{g.roleName ? (
+								<span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium capitalize text-foreground">
+									<Shield size={12} className="text-muted-foreground" />
+									{g.roleName}
+								</span>
+							) : (
+								<code className="font-mono text-xs text-foreground">
+									{g.permissionKey ?? "—"}
+								</code>
+							)}
+							{g.effect === "deny" && (
+								<span className="rounded-full border border-foreground px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide text-foreground">
+									Deny
+								</span>
+							)}
+						</div>
+					);
+				},
+			},
+			{
+				id: "scope",
+				header: "Scope",
+				enableSorting: false,
+				cell: ({ row }) => {
+					const g = row.original;
+					return (
+						<div className="flex flex-col">
+							<span className="text-foreground">
+								{g.resourceType === "org"
+									? "Organization"
+									: resourceLabel(g.resourceType, g.resourceId)}
+							</span>
+							<span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+								{SCOPE_LEVEL[g.resourceType] ?? g.resourceType}
+							</span>
+						</div>
+					);
+				},
+			},
+			{
+				id: "reach",
+				header: "Effective reach",
+				enableSorting: false,
+				cell: ({ row }) => (
+					<span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+						{reachLabel(row.original.resourceType)}
+					</span>
+				),
+			},
+			{
+				accessorKey: "createdAt",
+				header: "Granted",
+				cell: ({ row }) => (
+					<span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+						{formatDistanceToNow(new Date(row.original.createdAt), {
+							addSuffix: true,
+						})}
+					</span>
+				),
+			},
+			{
+				id: "actions",
+				header: "",
+				enableSorting: false,
+				cell: ({ row }) => (
+					<div className="text-right">
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<Button
+									variant="ghost"
+									size="icon"
+									className="size-7"
+									aria-label="Manage grant"
+								>
+									<MoreHorizontal size={16} />
+								</Button>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="end" className="w-40">
+								<DropdownMenuItem
+									className="text-destructive focus:text-destructive"
+									onClick={() => setDeleting(row.original)}
+								>
+									Revoke access
+								</DropdownMenuItem>
+							</DropdownMenuContent>
+						</DropdownMenu>
+					</div>
+				),
+			},
+		],
+		[resourceLabel],
+	);
+
 	return (
 		<div>
 			{/* inheritance note */}
-				<div className="mb-[18px] flex gap-3 rounded-lg border border-border bg-surface-sunken p-4">
-					<Info size={16} className="mt-0.5 shrink-0 text-text-tertiary" />
-					<p className="text-[12.5px] leading-relaxed text-text-secondary">
-						<b className="font-medium text-text-primary">
-							Org → Zone → Spec inheritance.
-						</b>{" "}
-						A grant on the org applies everywhere; a grant on a Zone applies to it and
-						every Spec it contains; a grant on a single Spec is exact. Lower scopes can
-						add access, never remove it.
-					</p>
+			<div className="mb-[18px] flex gap-3 rounded-lg border border-border bg-surface-sunken p-4">
+				<Info size={16} className="mt-0.5 shrink-0 text-text-tertiary" />
+				<p className="text-[12.5px] leading-relaxed text-text-secondary">
+					<b className="font-medium text-text-primary">Org → Zone → Spec inheritance.</b>{" "}
+					A grant on the org applies everywhere; a grant on a Zone applies to it and every
+					Spec it contains; a grant on a single Spec is exact. Lower scopes can add access,
+					never remove it.
+				</p>
+			</div>
+
+			{grants === null ? (
+				<div className="space-y-3">
+					<Skeleton className="h-20 w-full" />
+					<Skeleton className="h-64 w-full" />
 				</div>
+			) : (
+				<>
+					<StatStrip>
+						<StatCell label="Grants" value={stats.total} sub="active" />
+						<StatCell label="Org-wide" value={stats.org} sub="grants" />
+						<StatCell label="Zone-scoped" value={stats.zone} sub="grants" />
+						<StatCell label="Spec-scoped" value={stats.spec} sub="grants" />
+					</StatStrip>
 
-				{grants === null ? (
-					<div className="space-y-3">
-						<Skeleton className="h-20 w-full" />
-						<Skeleton className="h-64 w-full" />
-					</div>
-				) : (
-					<>
-						<StatStrip>
-							<StatCell label="Grants" value={stats.total} sub="active" />
-							<StatCell label="Org-wide" value={stats.org} sub="grants" />
-							<StatCell label="Zone-scoped" value={stats.zone} sub="grants" />
-							<StatCell label="Spec-scoped" value={stats.spec} sub="grants" />
-						</StatStrip>
-
-						{/* toolbar */}
-						<div className="mb-[14px] flex flex-wrap items-center justify-between gap-4">
-							<div className="flex items-center gap-3">
-								<SettingsSearch
-									value={search}
-									onChange={setSearch}
-									placeholder="Search principal or scope"
-									className="w-[230px]"
-								/>
-								<SettingsSelect
-									aria-label="Filter by scope"
-									className="w-[150px]"
-									value={scopeFilter}
-									onChange={setScopeFilter}
-									options={[
-										{ value: "all", label: "All scopes" },
-										{ value: "org", label: "Org-wide" },
-										{ value: "zone", label: "Zone" },
-										{ value: "spec", label: "Spec" },
-									]}
-								/>
-							</div>
-							<Button size="sm" onClick={() => setCreating((v) => !v)}>
-								<Plus size={13} />
-								Add grant
-							</Button>
-						</div>
-
-						{/* inline grant builder */}
-						{creating && options && (
-							<GrantBuilder
-								options={options}
-								resourceLabel={resourceLabel}
-								onCancel={() => setCreating(false)}
-								onGranted={() => {
-									setCreating(false);
-									load();
-								}}
+					{/* toolbar */}
+					<div className="mb-[14px] flex flex-wrap items-center justify-between gap-4">
+						<div className="flex items-center gap-3">
+							<SettingsSearch
+								value={search}
+								onChange={setSearch}
+								placeholder="Search principal or scope"
+								className="w-[230px]"
 							/>
-						)}
+							<SettingsSelect
+								aria-label="Filter by scope"
+								className="w-[150px]"
+								value={scopeFilter}
+								onChange={setScopeFilter}
+								options={[
+									{ value: "all", label: "All scopes" },
+									{ value: "org", label: "Org-wide" },
+									{ value: "zone", label: "Zone" },
+									{ value: "spec", label: "Spec" },
+								]}
+							/>
+						</div>
+						<Button size="sm" onClick={() => setCreating((v) => !v)}>
+							<Plus size={13} />
+							Add grant
+						</Button>
+					</div>
 
-						{/* grants table */}
-						<SettingsTableCard
-							foot={
-								<SettingsTableFoot>
-									<span>
-										Showing{" "}
-										<b className="font-medium text-text-secondary">{filtered.length}</b>{" "}
-										of {all.length}
-									</span>
-								</SettingsTableFoot>
-							}
-						>
-							<table className={settingsTableRows}>
-								<thead>
-									<tr>
-										<th className={settingsTh}>Principal</th>
-										<th className={settingsTh}>Role</th>
-										<th className={settingsTh}>Scope</th>
-										<th className={settingsTh}>Effective reach</th>
-										<th className={settingsTh}>Granted</th>
-										<th className={settingsTh} />
-									</tr>
-								</thead>
-								<tbody>
-									{filtered.map((g) => (
-										<tr key={g.id}>
-											<td className={settingsTd}>
-												<div className="flex items-center gap-[11px]">
-													<span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-border-strong bg-surface-muted font-mono text-[11px] text-text-secondary">
-														{initials(g.principalLabel)}
-													</span>
-													<div className="flex min-w-0 flex-col gap-0.5">
-														<span className="truncate text-[13px] text-text-primary">
-															{g.principalLabel}
-														</span>
-														<span className="font-mono text-[10px] uppercase tracking-[0.08em] text-text-tertiary">
-															{g.principalType === "team" ? "Team" : "Member"}
-														</span>
-													</div>
-												</div>
-											</td>
-											<td className={settingsTd}>
-												<div className="flex items-center gap-2">
-													{g.roleName ? (
-														<span className="inline-flex items-center gap-1.5 rounded-full border border-border-strong px-2.5 py-1 text-[12px] font-medium capitalize text-text-primary">
-															<Shield size={12} className="text-text-tertiary" />
-															{g.roleName}
-														</span>
-													) : (
-														<code className="font-mono text-[11.5px] text-text-primary">
-															{g.permissionKey ?? "—"}
-														</code>
-													)}
-													{g.effect === "deny" && (
-														<span className="rounded-full border border-text-primary px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.1em] text-text-primary">
-															Deny
-														</span>
-													)}
-												</div>
-											</td>
-											<td className={settingsTd}>
-												<div className="flex flex-col gap-0.5">
-													<span className="text-[13px] text-text-primary">
-														{g.resourceType === "org"
-															? "Organization"
-															: resourceLabel(g.resourceType, g.resourceId)}
-													</span>
-													<span className="font-mono text-[10px] uppercase tracking-[0.08em] text-text-tertiary">
-														{SCOPE_LEVEL[g.resourceType] ?? g.resourceType}
-													</span>
-												</div>
-											</td>
-											<td
-												className={cn(
-													settingsTd,
-													"whitespace-nowrap font-mono text-[11px] text-text-tertiary",
-												)}
-											>
-												{reachLabel(g.resourceType)}
-											</td>
-											<td
-												className={cn(
-													settingsTd,
-													"whitespace-nowrap font-mono text-[11px] text-text-tertiary",
-												)}
-											>
-												{formatDistanceToNow(new Date(g.createdAt), { addSuffix: true })}
-											</td>
-											<td className={settingsTd}>
-												<DropdownMenu>
-													<DropdownMenuTrigger asChild>
-														<button
-															type="button"
-															aria-label="Manage grant"
-															className="inline-flex size-7 items-center justify-center rounded-sm text-text-disabled transition-colors hover:bg-surface-muted hover:text-text-primary"
-														>
-															<MoreHorizontal size={16} />
-														</button>
-													</DropdownMenuTrigger>
-													<DropdownMenuContent align="end" className="w-40">
-														<DropdownMenuItem
-															className="text-destructive focus:text-destructive"
-															onClick={() => setDeleting(g)}
-														>
-															Revoke access
-														</DropdownMenuItem>
-													</DropdownMenuContent>
-												</DropdownMenu>
-											</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
-							{filtered.length === 0 && (
-								<div className="px-5 py-10 text-center text-[13px] text-text-tertiary">
-									{all.length === 0
-										? "No access grants yet. Use “Add grant” to assign a role or permission."
-										: "No grants match these filters."}
-								</div>
-							)}
-						</SettingsTableCard>
-					</>
-				)}
+					{/* inline grant builder */}
+					{creating && options && (
+						<GrantBuilder
+							options={options}
+							resourceLabel={resourceLabel}
+							onCancel={() => setCreating(false)}
+							onGranted={() => {
+								setCreating(false);
+								load();
+							}}
+						/>
+					)}
+
+					<DataTable columns={columns} data={filtered} pageSize={15} />
+				</>
+			)}
 
 			<AlertDialog
 				open={deleting !== null}
@@ -425,9 +424,7 @@ function GrantBuilder({
 				? (options.roles.find((r) => r.id === roleId)?.name ?? "—")
 				: permissionKey;
 		const sName =
-			scopeType === "org"
-				? "the organization"
-				: resourceLabel(scopeType, resourceId);
+			scopeType === "org" ? "the organization" : resourceLabel(scopeType, resourceId);
 		return { pName, wName, sName, reach: reachLabel(scopeType) };
 	}, [
 		valid,
@@ -468,8 +465,8 @@ function GrantBuilder({
 		<div className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-sm">
 			<p className="text-[13px] font-medium text-text-primary">New grant</p>
 			<p className="mb-3 text-[11.5px] text-text-tertiary">
-				Bind a principal to a role or permission on a scope. Inheritance is computed
-				from the scope you pick.
+				Bind a principal to a role or permission on a scope. Inheritance is computed from
+				the scope you pick.
 			</p>
 
 			<div className="grid gap-3 sm:grid-cols-3">
@@ -556,8 +553,8 @@ function GrantBuilder({
 				<div className="mt-3 flex items-start gap-2 rounded-md border border-border bg-surface-sunken px-3 py-2.5">
 					<Info size={13} className="mt-0.5 shrink-0 text-text-tertiary" />
 					<span className="text-[12px] text-text-secondary">
-						<b className="font-medium text-text-primary">{preview.pName}</b> will{" "}
-						{effect} <b className="font-medium text-text-primary">{preview.wName}</b> on{" "}
+						<b className="font-medium text-text-primary">{preview.pName}</b> will {effect}{" "}
+						<b className="font-medium text-text-primary">{preview.wName}</b> on{" "}
 						<b className="font-medium text-text-primary">{preview.sName}</b> —{" "}
 						{preview.reach.toLowerCase()}.
 					</span>

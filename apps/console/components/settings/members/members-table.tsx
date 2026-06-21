@@ -2,14 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Settings · Members — the authored claude.ai/design panel (stats + toolbar + table),
-// composed from the shared settings primitives (shadcn + Tailwind tokens; no CSS module).
-// Real members (getMembers, with team names) + pending invitations (getInvitations);
-// inline role change, suspend/reactivate (real PDP grant revoke), remove, invite, cancel.
-// Tabs / search / role-filter are client-side. Last-active = real session activity.
+// Settings · Members — stats + toolbar (tabs / search / role filter / invite) + a bulk
+// bar, over the shared DataTable (sortable + paginated). Real members (getMembers, with
+// team names) + pending invitations (getInvitations); inline role change, suspend/
+// reactivate (real PDP grant revoke), remove, invite, cancel. The page header + gate
+// live in members/page.tsx.
 
+import type { ColumnDef } from "@tanstack/react-table";
 import { formatDistanceToNow } from "date-fns";
-import { ChevronDown, MoreHorizontal, Plus, Shield } from "lucide-react";
+import { MoreHorizontal, Plus, Shield } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -19,17 +20,13 @@ import {
 	type MemberRow,
 	setMemberSuspended,
 } from "@/app/server/actions/members";
+import { DataTable } from "@/components/data-table";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
 import {
 	SettingsSearch,
 	SettingsSelect,
-	SettingsTableCard,
-	SettingsTableFoot,
 	SettingsTabs,
-	settingsTableRows,
-	settingsTd,
-	settingsTh,
 	StatCell,
 	StatStrip,
 } from "@/components/settings/settings-ui";
@@ -40,6 +37,13 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { authClient } from "@/lib/auth/client";
 import { toOrgRole } from "@/lib/authz/org-access-control";
@@ -49,6 +53,8 @@ const ROLE_OPTIONS = ["admin", "operator", "viewer"] as const;
 type Tab = "all" | "active" | "pending" | "suspended";
 
 interface RowView {
+	/** Unique row id (= key) — satisfies DataTable's `{ id?: string }` constraint. */
+	id: string;
 	key: string;
 	kind: "member" | "invite";
 	refId: string;
@@ -82,7 +88,7 @@ function StatusBadge({ status }: { status: RowView["status"] }) {
 	);
 }
 
-/** An inline, borderless pill `<select>` for a member's role. */
+/** A compact, borderless shadcn Select for a member's role. */
 function RoleSelect({
 	value,
 	disabled,
@@ -93,22 +99,22 @@ function RoleSelect({
 	onChange: (value: string) => void;
 }) {
 	return (
-		<div className="relative inline-flex">
-			<select
+		<Select value={value} onValueChange={onChange} disabled={disabled}>
+			<SelectTrigger
+				size="sm"
 				aria-label="Role"
-				disabled={disabled}
-				value={value}
-				onChange={(e) => onChange(e.target.value)}
-				className="cursor-pointer appearance-none rounded-full border border-transparent bg-transparent py-[5px] pl-[10px] pr-6 text-[12px] font-medium text-text-primary transition-colors hover:border-border-strong hover:bg-surface-muted disabled:cursor-default disabled:opacity-50"
+				className="h-7 w-auto gap-1 border-0 bg-transparent px-2 text-xs font-medium capitalize shadow-none hover:bg-muted focus-visible:ring-0"
 			>
+				<SelectValue />
+			</SelectTrigger>
+			<SelectContent>
 				{ROLE_OPTIONS.map((ro) => (
-					<option key={ro} value={ro}>
-						{ro[0].toUpperCase() + ro.slice(1)}
-					</option>
+					<SelectItem key={ro} value={ro} className="text-xs capitalize">
+						{ro}
+					</SelectItem>
 				))}
-			</select>
-			<ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-[11px] -translate-y-1/2 text-text-tertiary" />
-		</div>
+			</SelectContent>
+		</Select>
 	);
 }
 
@@ -174,6 +180,7 @@ export function MembersTable() {
 	const rows = useMemo<RowView[]>(() => {
 		if (!members) return [];
 		const memberRows: RowView[] = members.map((m) => ({
+			id: `m:${m.id}`,
 			key: `m:${m.id}`,
 			kind: "member",
 			refId: m.id,
@@ -189,6 +196,7 @@ export function MembersTable() {
 			isYou: m.userId === myId,
 		}));
 		const inviteRows: RowView[] = invites.map((i) => ({
+			id: `i:${i.id}`,
 			key: `i:${i.id}`,
 			kind: "invite",
 			refId: i.id,
@@ -220,14 +228,14 @@ export function MembersTable() {
 	const pendingCount = invites.length;
 	const seatCount = (members?.length ?? 0) + pendingCount;
 
-	function toggle(key: string) {
+	const toggle = useCallback((key: string) => {
 		setSelected((prev) => {
 			const next = new Set(prev);
 			if (next.has(key)) next.delete(key);
 			else next.add(key);
 			return next;
 		});
-	}
+	}, []);
 
 	async function bulkRemove() {
 		for (const r of filtered.filter((x) => selected.has(x.key))) {
@@ -259,6 +267,183 @@ export function MembersTable() {
 		setSelected(new Set());
 		load();
 	}
+
+	const selectCols: ColumnDef<RowView>[] = canManage
+		? [
+				{
+					id: "select",
+					header: "",
+					enableSorting: false,
+					cell: ({ row }) => (
+						<input
+							type="checkbox"
+							aria-label="Select"
+							className="size-4 cursor-pointer accent-ink align-middle"
+							checked={selected.has(row.original.key)}
+							onChange={() => toggle(row.original.key)}
+						/>
+					),
+				},
+			]
+		: [];
+	const actionCols: ColumnDef<RowView>[] = canManage
+		? [
+				{
+					id: "actions",
+					header: "",
+					enableSorting: false,
+					cell: ({ row }) => {
+						const r = row.original;
+						if (r.kind === "member" && r.role === "owner") return null;
+						return (
+							<div className="text-right">
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<Button
+											variant="ghost"
+											size="icon"
+											className="size-7"
+											aria-label="Manage"
+										>
+											<MoreHorizontal size={16} />
+										</Button>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent align="end" className="w-44">
+										{r.kind === "member" ? (
+											<>
+												{r.status === "suspended" ? (
+													<DropdownMenuItem onClick={() => void suspend(r.refId, false)}>
+														Reactivate
+													</DropdownMenuItem>
+												) : (
+													<DropdownMenuItem onClick={() => void suspend(r.refId, true)}>
+														Suspend
+													</DropdownMenuItem>
+												)}
+												<DropdownMenuItem
+													className="text-destructive focus:text-destructive"
+													onClick={() => void removeMember(r.refId)}
+												>
+													Remove from organization
+												</DropdownMenuItem>
+											</>
+										) : (
+											<DropdownMenuItem
+												className="text-destructive focus:text-destructive"
+												onClick={() => void cancelInvite(r.refId)}
+											>
+												Cancel invitation
+											</DropdownMenuItem>
+										)}
+									</DropdownMenuContent>
+								</DropdownMenu>
+							</div>
+						);
+					},
+				},
+			]
+		: [];
+
+	const columns: ColumnDef<RowView>[] = [
+		...selectCols,
+		{
+			id: "member",
+			header: "Member",
+			enableSorting: false,
+			cell: ({ row }) => {
+				const r = row.original;
+				return (
+					<div className="flex items-center gap-2.5">
+						<span className="flex size-8 shrink-0 items-center justify-center rounded-full border bg-muted font-mono text-[11px] text-muted-foreground">
+							{r.avatar}
+						</span>
+						<div className="flex min-w-0 flex-col">
+							<span className="flex items-center gap-1.5 text-foreground">
+								{r.name}
+								{r.isYou && (
+									<span className="rounded-full border px-1.5 py-px font-mono text-[8.5px] uppercase tracking-wide text-muted-foreground">
+										You
+									</span>
+								)}
+							</span>
+							<span className="font-mono text-[10.5px] text-muted-foreground">
+								{r.meta}
+							</span>
+						</div>
+					</div>
+				);
+			},
+		},
+		{
+			id: "role",
+			header: "Role",
+			enableSorting: false,
+			cell: ({ row }) => {
+				const r = row.original;
+				if (r.kind === "member" && r.role === "owner") {
+					return (
+						<span className="inline-flex items-center gap-1.5 px-2 text-xs font-medium text-foreground">
+							<Shield size={13} className="text-muted-foreground" />
+							Owner
+						</span>
+					);
+				}
+				if (r.kind === "member" && canManage) {
+					return (
+						<RoleSelect
+							value={r.role}
+							disabled={r.status === "suspended"}
+							onChange={(v) => void changeRole(r.refId, v)}
+						/>
+					);
+				}
+				return (
+					<span className="px-2 text-xs font-medium capitalize text-foreground">
+						{r.role}
+					</span>
+				);
+			},
+		},
+		{
+			id: "teams",
+			header: "Teams",
+			enableSorting: false,
+			cell: ({ row }) => (
+				<div className="flex flex-wrap gap-1.5">
+					{row.original.teams.length > 0 ? (
+						row.original.teams.map((t) => (
+							<span
+								key={t}
+								className="whitespace-nowrap rounded-full border px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
+							>
+								{t}
+							</span>
+						))
+					) : (
+						<span className="rounded-full border border-dashed px-2 py-0.5 font-mono text-[10px] text-muted-foreground/60">
+							No team
+						</span>
+					)}
+				</div>
+			),
+		},
+		{
+			accessorKey: "status",
+			header: "Status",
+			cell: ({ row }) => <StatusBadge status={row.original.status} />,
+		},
+		{
+			accessorKey: "activity",
+			header: "Last active",
+			enableSorting: false,
+			cell: ({ row }) => (
+				<span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+					{row.original.activity}
+				</span>
+			),
+		},
+		...actionCols,
+	];
 
 	if (members === null) {
 		return (
@@ -327,14 +512,14 @@ export function MembersTable() {
 
 			{/* bulk bar */}
 			{canManage && selected.size > 0 && (
-				<div className="mb-3 flex items-center justify-between gap-4 rounded-md border border-text-primary bg-surface-muted py-[9px] pl-4 pr-[14px]">
-					<div className="flex items-center gap-3 text-[12.5px] text-text-primary">
+				<div className="mb-3 flex items-center justify-between gap-4 rounded-md border border-foreground bg-muted py-[9px] pl-4 pr-[14px]">
+					<div className="flex items-center gap-3 text-[12.5px] text-foreground">
 						<span>
 							<b className="font-semibold">{selected.size}</b> selected
 						</span>
 						<button
 							type="button"
-							className="font-mono text-[11px] text-text-tertiary hover:text-text-primary"
+							className="font-mono text-[11px] text-muted-foreground hover:text-foreground"
 							onClick={() => setSelected(new Set())}
 						>
 							Clear
@@ -351,168 +536,7 @@ export function MembersTable() {
 				</div>
 			)}
 
-			{/* table */}
-			<SettingsTableCard
-				foot={
-					<SettingsTableFoot>
-						<span>
-							Showing{" "}
-							<b className="font-medium text-text-secondary">{filtered.length}</b> of{" "}
-							{rows.length}
-						</span>
-					</SettingsTableFoot>
-				}
-			>
-				<table className={settingsTableRows}>
-					<thead>
-						<tr>
-							{canManage && <th className={cn(settingsTh, "w-[18px]")} />}
-							<th className={settingsTh}>Member</th>
-							<th className={settingsTh}>Role</th>
-							<th className={settingsTh}>Teams</th>
-							<th className={settingsTh}>Status</th>
-							<th className={settingsTh}>Last active</th>
-							<th className={settingsTh} />
-						</tr>
-					</thead>
-					<tbody>
-						{filtered.map((r) => (
-							<tr key={r.key}>
-								{canManage && (
-									<td className={cn(settingsTd, "w-[18px]")}>
-										<input
-											type="checkbox"
-											aria-label="Select"
-											className="size-4 cursor-pointer accent-ink align-middle"
-											checked={selected.has(r.key)}
-											onChange={() => toggle(r.key)}
-										/>
-									</td>
-								)}
-								<td className={settingsTd}>
-									<div className="flex items-center gap-[11px]">
-										<span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-border-strong bg-surface-muted font-mono text-[11px] text-text-secondary">
-											{r.avatar}
-										</span>
-										<div className="flex min-w-0 flex-col gap-0.5">
-											<span className="flex items-center gap-[7px] text-[13px] text-text-primary">
-												{r.name}
-												{r.isYou && (
-													<span className="rounded-full border border-border px-[5px] py-px font-mono text-[8.5px] uppercase tracking-[0.08em] text-text-tertiary">
-														You
-													</span>
-												)}
-											</span>
-											<span className="font-mono text-[10.5px] text-text-tertiary">
-												{r.meta}
-											</span>
-										</div>
-									</div>
-								</td>
-								<td className={settingsTd}>
-									{r.kind === "member" && r.role === "owner" ? (
-										<span className="inline-flex items-center gap-[7px] px-[10px] py-[5px] text-[12px] font-medium text-text-primary">
-											<Shield size={13} className="text-text-tertiary" />
-											Owner
-										</span>
-									) : r.kind === "member" && canManage ? (
-										<RoleSelect
-											value={r.role}
-											disabled={r.status === "suspended"}
-											onChange={(v) => void changeRole(r.refId, v)}
-										/>
-									) : (
-										<span className="px-[10px] py-[5px] text-[12px] font-medium capitalize text-text-primary">
-											{r.role}
-										</span>
-									)}
-								</td>
-								<td className={settingsTd}>
-									<div className="flex flex-wrap gap-[5px]">
-										{r.teams.length > 0 ? (
-											r.teams.map((t) => (
-												<span
-													key={t}
-													className="whitespace-nowrap rounded-full border border-border px-[7px] py-0.5 font-mono text-[10px] text-text-secondary"
-												>
-													{t}
-												</span>
-											))
-										) : (
-											<span className="rounded-full border border-dashed border-border px-[7px] py-0.5 font-mono text-[10px] text-text-disabled">
-												No team
-											</span>
-										)}
-									</div>
-								</td>
-								<td className={settingsTd}>
-									<StatusBadge status={r.status} />
-								</td>
-								<td
-									className={cn(
-										settingsTd,
-										"whitespace-nowrap font-mono text-[11px] text-text-tertiary",
-									)}
-								>
-									{r.activity}
-								</td>
-								<td className={settingsTd}>
-									{canManage && !(r.kind === "member" && r.role === "owner") && (
-										<DropdownMenu>
-											<DropdownMenuTrigger asChild>
-												<button
-													type="button"
-													aria-label="Manage"
-													className="inline-flex size-7 items-center justify-center rounded-sm text-text-disabled transition-colors hover:bg-surface-muted hover:text-text-primary"
-												>
-													<MoreHorizontal size={16} />
-												</button>
-											</DropdownMenuTrigger>
-											<DropdownMenuContent align="end" className="w-44">
-												{r.kind === "member" ? (
-													<>
-														{r.status === "suspended" ? (
-															<DropdownMenuItem
-																onClick={() => void suspend(r.refId, false)}
-															>
-																Reactivate
-															</DropdownMenuItem>
-														) : (
-															<DropdownMenuItem
-																onClick={() => void suspend(r.refId, true)}
-															>
-																Suspend
-															</DropdownMenuItem>
-														)}
-														<DropdownMenuItem
-															className="text-destructive focus:text-destructive"
-															onClick={() => void removeMember(r.refId)}
-														>
-															Remove from organization
-														</DropdownMenuItem>
-													</>
-												) : (
-													<DropdownMenuItem
-														className="text-destructive focus:text-destructive"
-														onClick={() => void cancelInvite(r.refId)}
-													>
-														Cancel invitation
-													</DropdownMenuItem>
-												)}
-											</DropdownMenuContent>
-										</DropdownMenu>
-									)}
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-				{filtered.length === 0 && (
-					<div className="px-5 py-10 text-center text-[13px] text-text-tertiary">
-						No members match these filters.
-					</div>
-				)}
-			</SettingsTableCard>
+			<DataTable columns={columns} data={filtered} pageSize={20} />
 		</div>
 	);
 }

@@ -2,14 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Settings · Audit Log — the authored design (filter bar + access-events table),
-// composed from the shared settings primitives. Every PDP access decision is recorded;
-// this shows the most recent slice with client-side search / category / result / range
-// filters and a server-gated CSV export. The design's Source/IP column and friendly
-// resource names aren't stored — omitted (tracked in the gap log).
+// Settings · Audit Log — a filter bar (search / category / result / range / export)
+// above the shared DataTable (sortable + paginated). Every PDF access decision the PDP
+// recorded; client-side filters over the loaded slice; CSV export is Enterprise-gated.
+// The design's Source/IP column and friendly resource names aren't stored — omitted.
 
+import type { ColumnDef } from "@tanstack/react-table";
 import { formatDistanceToNow } from "date-fns";
-import { Download, ScrollText } from "lucide-react";
+import { Download } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -17,16 +17,11 @@ import {
 	getAuditExportCsv,
 	getAuditLog,
 } from "@/app/server/actions/audit";
+import { DataTable } from "@/components/data-table";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import {
-	SettingsPageHead,
 	SettingsSearch,
 	SettingsSelect,
-	SettingsTableCard,
-	SettingsTableFoot,
-	settingsTableRows,
-	settingsTd,
-	settingsTh,
 } from "@/components/settings/settings-ui";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -64,6 +59,76 @@ function categoryOf(resourceType: string): string {
 function initials(name: string | null, email: string | null): string {
 	return (name?.trim() || email || "?").slice(0, 2).toUpperCase();
 }
+
+const columns: ColumnDef<AuditRow>[] = [
+	{
+		accessorKey: "ts",
+		header: "Time",
+		cell: ({ row }) => (
+			<span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+				{formatDistanceToNow(new Date(row.original.ts), { addSuffix: true })}
+			</span>
+		),
+	},
+	{
+		id: "actor",
+		header: "Actor",
+		enableSorting: false,
+		cell: ({ row }) => {
+			const e = row.original;
+			return (
+				<div className="flex items-center gap-2.5">
+					<span className="flex size-7 shrink-0 items-center justify-center rounded-full border bg-muted font-mono text-[10px] text-muted-foreground">
+						{initials(e.actorName, e.actorEmail)}
+					</span>
+					<span className="truncate text-foreground">
+						{e.actorName ?? e.actorEmail ?? `${e.actorId.slice(0, 8)}…`}
+					</span>
+				</div>
+			);
+		},
+	},
+	{
+		id: "event",
+		header: "Event",
+		enableSorting: false,
+		cell: ({ row }) => (
+			<div className="flex flex-col gap-0.5">
+				<span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+					{categoryOf(row.original.resourceType)}
+				</span>
+				<span className="capitalize text-foreground">
+					{row.original.action.replace(/_/g, " ")}
+				</span>
+			</div>
+		),
+	},
+	{
+		accessorKey: "resourceType",
+		header: "Resource",
+		cell: ({ row }) => (
+			<span className="font-mono text-xs text-muted-foreground">
+				{row.original.resourceType}
+				{row.original.resourceId ? ` · ${row.original.resourceId.slice(0, 8)}` : ""}
+			</span>
+		),
+	},
+	{
+		accessorKey: "decision",
+		header: "Result",
+		cell: ({ row }) => (
+			<span
+				className={cn(
+					"vx-status",
+					row.original.decision ? "vx-status--active" : "vx-status--failed",
+				)}
+			>
+				<span className="vx-status__dot" />
+				{row.original.decision ? "Allowed" : "Denied"}
+			</span>
+		),
+	},
+];
 
 export function AuditLog() {
 	const canExport = useEntitlement("auditExport");
@@ -139,14 +204,8 @@ export function AuditLog() {
 
 	return (
 		<div>
-			<SettingsPageHead
-				eyebrow="Audit Log"
-				title="Audit Log"
-				description="Every access decision is recorded by the policy engine — it can't be forgotten at a call site. Each entry is the actor, the action, the resource and the outcome."
-			/>
-
 			{/* filter bar */}
-			<div className="mb-[14px] flex flex-wrap items-center gap-2.5">
+			<div className="mb-3 flex flex-wrap items-center gap-2.5">
 				<SettingsSearch
 					value={search}
 					onChange={setSearch}
@@ -201,93 +260,7 @@ export function AuditLog() {
 				</Button>
 			</div>
 
-			{/* table */}
-			<SettingsTableCard
-				foot={
-					<SettingsTableFoot>
-						<span>
-							Showing{" "}
-							<b className="font-medium text-text-secondary">{filtered.length}</b> of{" "}
-							{events.length}
-						</span>
-					</SettingsTableFoot>
-				}
-			>
-				<table className={settingsTableRows}>
-					<thead>
-						<tr>
-							<th className={settingsTh}>Time</th>
-							<th className={settingsTh}>Actor</th>
-							<th className={settingsTh}>Event</th>
-							<th className={settingsTh}>Resource</th>
-							<th className={settingsTh}>Result</th>
-						</tr>
-					</thead>
-					<tbody>
-						{filtered.map((e) => (
-							<tr key={e.id}>
-								<td
-									className={cn(
-										settingsTd,
-										"whitespace-nowrap font-mono text-[11px] text-text-tertiary",
-									)}
-								>
-									{formatDistanceToNow(new Date(e.ts), { addSuffix: true })}
-								</td>
-								<td className={settingsTd}>
-									<div className="flex items-center gap-2.5">
-										<span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border-strong bg-surface-muted font-mono text-[10px] text-text-secondary">
-											{initials(e.actorName, e.actorEmail)}
-										</span>
-										<span className="truncate text-[13px] text-text-primary">
-											{e.actorName ?? e.actorEmail ?? `${e.actorId.slice(0, 8)}…`}
-										</span>
-									</div>
-								</td>
-								<td className={settingsTd}>
-									<div className="flex flex-col gap-0.5">
-										<span className="font-mono text-[10px] uppercase tracking-[0.08em] text-text-tertiary">
-											{categoryOf(e.resourceType)}
-										</span>
-										<span className="text-[13px] capitalize text-text-primary">
-											{e.action.replace(/_/g, " ")}
-										</span>
-									</div>
-								</td>
-								<td
-									className={cn(settingsTd, "font-mono text-[11.5px] text-text-secondary")}
-								>
-									{e.resourceType}
-									{e.resourceId ? (
-										<span className="text-text-tertiary"> · {e.resourceId.slice(0, 8)}</span>
-									) : null}
-								</td>
-								<td className={settingsTd}>
-									<span
-										className={cn(
-											"vx-status",
-											e.decision ? "vx-status--active" : "vx-status--failed",
-										)}
-									>
-										<span className="vx-status__dot" />
-										{e.decision ? "Allowed" : "Denied"}
-									</span>
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-				{filtered.length === 0 && (
-					<div className="flex flex-col items-center px-6 py-14 text-center">
-						<ScrollText className="mb-3 size-5 text-text-tertiary" />
-						<p className="text-[13px] text-text-tertiary">
-							{events.length === 0
-								? "No access events yet. Denied attempts and sensitive actions appear here as they happen."
-								: "No events match these filters."}
-						</p>
-					</div>
-				)}
-			</SettingsTableCard>
+			<DataTable columns={columns} data={filtered} pageSize={15} />
 		</div>
 	);
 }
