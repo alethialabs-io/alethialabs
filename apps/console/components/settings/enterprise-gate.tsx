@@ -8,14 +8,19 @@ import { Button } from "@/components/ui/button";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import type { Entitlements } from "@/lib/authz/types";
 
+/** The boolean feature-flag keys of Entitlements (excludes the `quotas` object). */
+export type FeatureFlag = {
+	[K in keyof Entitlements]: Entitlements[K] extends boolean ? K : never;
+}[keyof Entitlements];
+
 /** Returns whether a given entitlement is active for the current workspace. */
-export function useEntitlement(key: keyof Entitlements): boolean {
+export function useEntitlement(key: FeatureFlag): boolean {
 	return useWorkspaceStore((s) => s.entitlements?.[key] ?? false);
 }
 
 interface EnterpriseGateProps {
 	/** The entitlement that unlocks this surface. */
-	entitlement: keyof Entitlements;
+	entitlement: FeatureFlag;
 	/** What this section is, for the locked-state copy (e.g. "Member management"). */
 	title: string;
 	description: string;

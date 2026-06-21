@@ -13,8 +13,6 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { getOrgSettings } from "@/app/server/actions/org-settings";
 import { getSsoProviders, type SsoProviderRow } from "@/app/server/actions/sso";
-import { EnterpriseGate } from "@/components/settings/enterprise-gate";
-import { SettingsPageHead } from "@/components/settings/settings-ui";
 import { RegisterProviderDialog } from "@/components/settings/sso/register-provider-dialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -132,45 +130,33 @@ export function SsoManager() {
 
 	return (
 		<div>
-			<SettingsPageHead
-				eyebrow="Single Sign-On"
-				title="Single Sign-On"
-				description="Connect your identity provider over OIDC or SAML and route members signing in with a matching email domain to it. Sign-in is brokered by your IdP — Alethia never stores passwords."
-			/>
-
-			<EnterpriseGate
-				entitlement="sso"
-				title="Single Sign-On"
-				description="Connect your IdP (Okta, Entra ID, AWS IAM Identity Center, Google Workspace, …) over OIDC or SAML. Available on Enterprise."
-			>
-				{providers === null ? (
-					<div className="space-y-4">
-						<Skeleton className="h-20 w-full" />
-						<Skeleton className="h-48 w-full" />
+			{providers === null ? (
+				<div className="space-y-4">
+					<Skeleton className="h-20 w-full" />
+					<Skeleton className="h-48 w-full" />
+				</div>
+			) : providers.length === 0 ? (
+				<div className="rounded-lg border border-dashed border-border bg-surface-sunken px-6 py-12 text-center">
+					<KeyRound className="mx-auto mb-3 size-5 text-text-tertiary" />
+					<p className="mb-1 text-[14px] font-medium text-text-primary">
+						No identity provider connected
+					</p>
+					<p className="mx-auto mb-4 max-w-prose text-[12.5px] text-text-tertiary">
+						Register an OIDC or SAML provider to let your team sign in through your IdP.
+						Members with a matching email domain are routed to it.
+					</p>
+					<div className="flex justify-center">
+						<RegisterProviderDialog onRegistered={load} />
 					</div>
-				) : providers.length === 0 ? (
-					<div className="rounded-lg border border-dashed border-border bg-surface-sunken px-6 py-12 text-center">
-						<KeyRound className="mx-auto mb-3 size-5 text-text-tertiary" />
-						<p className="mb-1 text-[14px] font-medium text-text-primary">
-							No identity provider connected
-						</p>
-						<p className="mx-auto mb-4 max-w-prose text-[12.5px] text-text-tertiary">
-							Register an OIDC or SAML provider to let your team sign in through your
-							IdP. Members with a matching email domain are routed to it.
-						</p>
-						<div className="flex justify-center">
-							<RegisterProviderDialog onRegistered={load} />
-						</div>
-					</div>
-				) : (
-					<SsoDetail
-						providers={providers}
-						origin={origin}
-						tenant={tenant}
-						onChanged={load}
-					/>
-				)}
-			</EnterpriseGate>
+				</div>
+			) : (
+				<SsoDetail
+					providers={providers}
+					origin={origin}
+					tenant={tenant}
+					onChanged={load}
+				/>
+			)}
 		</div>
 	);
 }

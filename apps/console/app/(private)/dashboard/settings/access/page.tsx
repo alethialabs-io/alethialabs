@@ -3,8 +3,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { AccessManager } from "@/components/settings/access/access-manager";
+import { SettingsGate } from "@/components/settings/settings-gate";
+import { SettingsPageHead } from "@/components/settings/settings-ui";
 
-/** Access — fine-grained grants (member/team → role or permission, scoped). Enterprise. */
 export default function AccessPage() {
-	return <AccessManager />;
+	return (
+		<div>
+			<SettingsPageHead
+				eyebrow="Access"
+				title="Access"
+				description="Grants bind a member or team to a role on a scope. Grant at the highest level that fits and inheritance flows it down — a Zone grant reaches every Spec inside."
+			/>
+			<SettingsGate entitlement="customRoles" feature="Access management">
+				<AccessManager />
+			</SettingsGate>
+		</div>
+	);
 }

@@ -13,7 +13,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { getTeams, type TeamRow } from "@/app/server/actions/teams";
 import {
-	SettingsPageHead,
 	SettingsSearch,
 	settingsControl,
 	settingsControlSize,
@@ -121,12 +120,6 @@ export function TeamsList() {
 
 	return (
 		<div>
-			<SettingsPageHead
-				eyebrow="Teams"
-				title="Teams"
-				description="Group members into teams and grant access to Zones by team rather than one person at a time. A grant on a team flows to every member."
-			/>
-
 			{teams.length > 0 && (
 				<StatStrip>
 					<StatCell label="Teams" value={stats.count} sub="active" />

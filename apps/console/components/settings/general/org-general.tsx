@@ -19,13 +19,13 @@ import {
 	SettingsCardFoot,
 	SettingsDangerRow,
 	SettingsField,
-	SettingsPageHead,
 	SettingsPanel,
 	SettingsSection,
 	SettingsSelect,
 	settingsControl,
 	settingsControlSize,
 } from "@/components/settings/settings-ui";
+// NB: the page header lives in general/page.tsx (outside the gate) so it stays visible.
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -137,18 +137,6 @@ export function OrgGeneral() {
 
 	return (
 		<div>
-			<SettingsPageHead
-				eyebrow="General"
-				title="General"
-				description={
-					<>
-						Your organization&apos;s identity and defaults. These apply across every
-						Zone, Spec, and team in{" "}
-						<b className="font-medium text-text-primary">{s.name}</b>.
-					</>
-				}
-			/>
-
 			<SettingsSection title="Organization profile">
 				<SettingsPanel>
 					<div className="py-1">

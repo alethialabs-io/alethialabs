@@ -20,12 +20,8 @@ import {
 	listAccessGrants,
 	revokeGrant,
 } from "@/app/server/actions/grants";
+import { useEntitlement } from "@/components/settings/enterprise-gate";
 import {
-	EnterpriseGate,
-	useEntitlement,
-} from "@/components/settings/enterprise-gate";
-import {
-	SettingsPageHead,
 	SettingsSearch,
 	SettingsSelect,
 	SettingsTableCard,
@@ -162,18 +158,7 @@ export function AccessManager() {
 
 	return (
 		<div>
-			<SettingsPageHead
-				eyebrow="Access"
-				title="Access"
-				description="Grants bind a member or team to a role on a scope. Grant at the highest level that fits and inheritance flows it down — a Zone grant reaches every Spec inside."
-			/>
-
-			<EnterpriseGate
-				entitlement="customRoles"
-				title="Access management"
-				description="Assign fine-grained access — a role or an individual permission, allow or deny, scoped to the org or a specific resource. Available on Enterprise."
-			>
-				{/* inheritance note */}
+			{/* inheritance note */}
 				<div className="mb-[18px] flex gap-3 rounded-lg border border-border bg-surface-sunken p-4">
 					<Info size={16} className="mt-0.5 shrink-0 text-text-tertiary" />
 					<p className="text-[12.5px] leading-relaxed text-text-secondary">
@@ -364,7 +349,6 @@ export function AccessManager() {
 						</SettingsTableCard>
 					</>
 				)}
-			</EnterpriseGate>
 
 			<AlertDialog
 				open={deleting !== null}

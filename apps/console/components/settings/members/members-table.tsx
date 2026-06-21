@@ -22,7 +22,6 @@ import {
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
 import {
-	SettingsPageHead,
 	SettingsSearch,
 	SettingsSelect,
 	SettingsTableCard,
@@ -272,12 +271,6 @@ export function MembersTable() {
 
 	return (
 		<div>
-			<SettingsPageHead
-				eyebrow="Members"
-				title="Members"
-				description="People with access to this organization. Each member holds a built-in role; fine-grained grants are managed under Access."
-			/>
-
 			{/* stats */}
 			<StatStrip>
 				<StatCell label="Seats" value={seatCount} sub="used" />
