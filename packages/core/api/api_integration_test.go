@@ -102,7 +102,7 @@ func TestIntegration_GetRunners(t *testing.T) {
 
 	t.Logf("Found %d runners", len(runners))
 	for _, w := range runners {
-		t.Logf("  %s (mode=%s, status=%s, default=%v)", w.Name, w.Mode, w.Status, w.IsDefault)
+		t.Logf("  %s (operator=%s, provisioning=%s, status=%s, default=%v)", w.Name, w.Operator, w.Provisioning, w.Status, w.IsDefault)
 
 		if w.ID == "" {
 			t.Error("runner ID is empty")
@@ -111,9 +111,13 @@ func TestIntegration_GetRunners(t *testing.T) {
 			t.Error("runner name is empty")
 		}
 
-		validModes := map[string]bool{"self-hosted": true, "cloud-hosted": true}
-		if !validModes[w.Mode] {
-			t.Errorf("unexpected mode: %s", w.Mode)
+		validOperators := map[string]bool{"managed": true, "self": true}
+		if !validOperators[w.Operator] {
+			t.Errorf("unexpected operator: %s", w.Operator)
+		}
+		validProvisioning := map[string]bool{"deployed": true, "registered": true, "": true}
+		if !validProvisioning[w.Provisioning] {
+			t.Errorf("unexpected provisioning: %s", w.Provisioning)
 		}
 
 		validStatuses := map[string]bool{"ONLINE": true, "OFFLINE": true, "DRAINING": true, "": true}

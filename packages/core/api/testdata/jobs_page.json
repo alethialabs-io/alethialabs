@@ -1,0 +1,33 @@
+{
+	"jobs": [
+		{
+			"id": "00000000-0000-4000-8000-000000000000",
+			"user_id": "00000000-0000-4000-8000-000000000000",
+			"org_id": "00000000-0000-4000-8000-000000000000",
+			"zone_id": "00000000-0000-4000-8000-000000000000",
+			"spec_id": "00000000-0000-4000-8000-000000000000",
+			"cloud_identity_id": "00000000-0000-4000-8000-000000000000",
+			"job_type": "DESTROY_RUNNER",
+			"config_snapshot": {},
+			"configuration_hash": "string",
+			"status": "QUEUED",
+			"priority": 0,
+			"provider": "aws",
+			"runner_id": "00000000-0000-4000-8000-000000000000",
+			"assigned_runner_id": "00000000-0000-4000-8000-000000000000",
+			"plan_job_id": "00000000-0000-4000-8000-000000000000",
+			"claimed_at": "2026-01-01T00:00:00.000Z",
+			"started_at": "2026-01-01T00:00:00.000Z",
+			"completed_at": "2026-01-01T00:00:00.000Z",
+			"error_message": "string",
+			"execution_metadata": {},
+			"created_at": "2026-01-01T00:00:00.000Z",
+			"updated_at": "2026-01-01T00:00:00.000Z",
+			"spec_name": "string",
+			"runner_name": "string"
+		}
+	],
+	"total": 0,
+	"limit": 0,
+	"offset": 0
+}

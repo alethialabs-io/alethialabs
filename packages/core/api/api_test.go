@@ -41,8 +41,8 @@ func TestGetRunners_Success(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(map[string]any{
 			"runners": []map[string]any{
-				{"id": "w1", "name": "runner-a", "mode": "self-hosted", "status": "ONLINE", "is_default": true},
-				{"id": "w2", "name": "runner-b", "mode": "cloud-hosted", "status": "OFFLINE", "is_default": false},
+				{"id": "w1", "name": "runner-a", "operator": "self", "provisioning": "registered", "status": "ONLINE", "is_default": true},
+				{"id": "w2", "name": "runner-b", "operator": "managed", "status": "OFFLINE", "is_default": false},
 			},
 		})
 	}))
@@ -60,8 +60,8 @@ func TestGetRunners_Success(t *testing.T) {
 	if !runners[0].IsDefault {
 		t.Error("expected first runner to be default")
 	}
-	if runners[1].Mode != "cloud-hosted" {
-		t.Errorf("expected cloud-hosted, got %s", runners[1].Mode)
+	if runners[1].Operator != "managed" {
+		t.Errorf("expected managed, got %s", runners[1].Operator)
 	}
 }
 

@@ -53,25 +53,37 @@ type ConfigurationExport struct {
 	Format   string `json:"format"`
 }
 
+// ProvisionJob mirrors the `jobs` wire contract (see
+// apps/console/lib/validations/cli-contract.ts → jobWire). Every column the
+// backend returns has a field here; the list endpoint additionally populates
+// SpecName/RunnerName. Nullable columns arrive as JSON null, which Go decodes to
+// the zero value, so scalar nullables stay as plain strings.
 type ProvisionJob struct {
 	ID                string                  `json:"id"`
+	UserID            string                  `json:"user_id"`
+	OrgID             string                  `json:"org_id"`
 	JobType           string                  `json:"job_type"`
 	ZoneID            string                  `json:"zone_id"`
-	ConfigurationID   string                  `json:"configuration_id,omitempty"`
-	SpecID            string                  `json:"spec_id,omitempty"`
-	CloudIdentityID   string                  `json:"cloud_identity_id,omitempty"`
-	RunnerID          string                  `json:"runner_id,omitempty"`
-	AssignedRunnerID  string                  `json:"assigned_runner_id,omitempty"`
-	PlanJobID         string                  `json:"plan_job_id,omitempty"`
+	SpecID            string                  `json:"spec_id"`
+	CloudIdentityID   string                  `json:"cloud_identity_id"`
+	RunnerID          string                  `json:"runner_id"`
+	AssignedRunnerID  string                  `json:"assigned_runner_id"`
+	PlanJobID         string                  `json:"plan_job_id"`
+	ConfigurationHash string                  `json:"configuration_hash"`
 	Status            string                  `json:"status"`
-	ErrorMessage      *string                 `json:"error_message,omitempty"`
-	ExecutionMetadata *map[string]interface{} `json:"execution_metadata,omitempty"`
-	ConfigSnapshot    map[string]interface{}  `json:"config_snapshot,omitempty"`
+	Priority          int                     `json:"priority"`
+	Provider          string                  `json:"provider"`
+	ErrorMessage      *string                 `json:"error_message"`
+	ExecutionMetadata *map[string]interface{} `json:"execution_metadata"`
+	ConfigSnapshot    map[string]interface{}  `json:"config_snapshot"`
+	ClaimedAt         *time.Time              `json:"claimed_at"`
+	StartedAt         *time.Time              `json:"started_at"`
+	CompletedAt       *time.Time              `json:"completed_at"`
 	CreatedAt         time.Time               `json:"created_at"`
-	StartedAt         *time.Time              `json:"started_at,omitempty"`
-	CompletedAt       *time.Time              `json:"completed_at,omitempty"`
-	SpecName          string                  `json:"spec_name,omitempty"`
-	RunnerName        string                  `json:"runner_name,omitempty"`
+	UpdatedAt         time.Time               `json:"updated_at"`
+	// List-only display fields (GET /api/jobs); absent on the single-job GET.
+	SpecName   string `json:"spec_name,omitempty"`
+	RunnerName string `json:"runner_name,omitempty"`
 }
 
 type JobsPage struct {
@@ -90,14 +102,16 @@ type JobLog struct {
 }
 
 type Runner struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	Mode          string    `json:"mode"`
-	Status        string    `json:"status"`
-	LastHeartbeat string    `json:"last_heartbeat"`
-	Version       string    `json:"version"`
-	IsDefault     bool      `json:"is_default"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID                 string    `json:"id"`
+	Name               string    `json:"name"`
+	Operator           string    `json:"operator"`            // "managed" | "self"
+	Provisioning       string    `json:"provisioning"`        // "deployed" | "registered" | "" (managed)
+	SupportedProviders []string  `json:"supported_providers"` // null/empty = any cloud
+	Status             string    `json:"status"`
+	LastHeartbeat      string    `json:"last_heartbeat"`
+	Version            string    `json:"version"`
+	IsDefault          bool      `json:"is_default"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 type SpecCluster struct {
@@ -124,6 +138,26 @@ type CloudIdentity struct {
 	Provider  string `json:"provider"`
 	Label     string `json:"label"`
 	CreatedAt string `json:"created_at"`
+}
+
+// ZoneSpec is a spec as nested under a zone (GET /api/cli/zones).
+type ZoneSpec struct {
+	ID               string `json:"id"`
+	ProjectName      string `json:"project_name"`
+	EnvironmentStage string `json:"environment_stage"`
+	Status           string `json:"status"`
+	Region           string `json:"region"`
+}
+
+// ZoneWithSpecs mirrors the zoneWire contract — a zone plus its nested specs.
+type ZoneWithSpecs struct {
+	ID          string     `json:"id"`
+	UserID      string     `json:"user_id"`
+	Name        string     `json:"name"`
+	Description *string    `json:"description"`
+	CreatedAt   string     `json:"created_at"`
+	UpdatedAt   string     `json:"updated_at"`
+	Specs       []ZoneSpec `json:"specs"`
 }
 
 type DeployRunnerResponse struct {
@@ -294,6 +328,17 @@ func (c *Client) GetRepositories(provider string) ([]Repository, error) {
 }
 
 // --- Configurations (Specs) ---
+
+func (c *Client) GetConfigurations() ([]types.ConfigurationSummary, error) {
+	endpoint := fmt.Sprintf("%s/cli/configurations", c.baseURL)
+	var successResp struct {
+		Configurations []types.ConfigurationSummary `json:"configurations"`
+	}
+	if err := c.doGet(endpoint, &successResp); err != nil {
+		return nil, fmt.Errorf("failed to get configurations: %w", err)
+	}
+	return successResp.Configurations, nil
+}
 
 func (c *Client) GetConfiguration(projectName string) (*types.Configuration, error) {
 	var successResp struct {
@@ -569,6 +614,42 @@ func (c *Client) SendBootstrapLog(jobID string, logChunk string, streamType stri
 		"stream_type": streamType,
 	}
 	return c.doPost(endpoint, payload, nil)
+}
+
+// --- Zones ---
+
+func (c *Client) GetZones() ([]ZoneWithSpecs, error) {
+	endpoint := fmt.Sprintf("%s/cli/zones", c.baseURL)
+	var successResp struct {
+		Zones []ZoneWithSpecs `json:"zones"`
+	}
+	if err := c.doGet(endpoint, &successResp); err != nil {
+		return nil, fmt.Errorf("failed to get zones: %w", err)
+	}
+	return successResp.Zones, nil
+}
+
+func (c *Client) CreateZone(name, description string) (*types.Zone, error) {
+	endpoint := fmt.Sprintf("%s/cli/zones", c.baseURL)
+	payload := map[string]string{"name": name}
+	if description != "" {
+		payload["description"] = description
+	}
+	var successResp struct {
+		Zone *types.Zone `json:"zone"`
+	}
+	if err := c.doPost(endpoint, payload, &successResp); err != nil {
+		return nil, fmt.Errorf("failed to create zone: %w", err)
+	}
+	return successResp.Zone, nil
+}
+
+func (c *Client) DeleteZone(id string) error {
+	endpoint := fmt.Sprintf("%s/cli/zones/%s", c.baseURL, id)
+	if err := c.doDelete(endpoint); err != nil {
+		return fmt.Errorf("failed to delete zone: %w", err)
+	}
+	return nil
 }
 
 // --- Cloud Identities ---
