@@ -8,7 +8,7 @@
 // active org — never a client-supplied org id. Stripe then drives the
 // organization_billing record through the webhook; entitlements follow.
 
-import { eq } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import type Stripe from "stripe";
 import {
 	deploymentMode,
@@ -18,12 +18,13 @@ import {
 	type PaidPlan,
 	priceIdForPlan,
 } from "@/lib/billing/config";
+import { planMeta } from "@/lib/billing/plan-catalog";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { getStripe } from "@/lib/billing/stripe";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
-import { organization, user } from "@/lib/db/schema";
+import { member, organization, user } from "@/lib/db/schema";
 
 /** Read-only billing state for the active org, for the /settings/billing page. */
 export interface BillingSummary {
@@ -39,6 +40,10 @@ export interface BillingSummary {
 	canManage: boolean;
 	/** The subscription is set to cancel at period end (show "resume"). */
 	cancelAtPeriodEnd: boolean;
+	/** Subscribed seat count (Team's per-seat quantity), or null for flat plans. */
+	seats: number | null;
+	/** Current members in the org — the "used" side of the seats meter. */
+	memberCount: number;
 }
 
 /** Resolves the active org's billing state for display (read-only; any member). */
@@ -46,6 +51,16 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 	const actor = await currentActor();
 	const hasOrg = actor.orgId !== actor.userId;
 	const billing = hasOrg ? await getOrgBilling(actor.orgId) : null;
+
+	// Member count seeds the seats meter; only meaningful in a real org.
+	let memberCount = 0;
+	if (hasOrg) {
+		const [c] = await getServiceDb()
+			.select({ n: count() })
+			.from(member)
+			.where(eq(member.organizationId, actor.orgId));
+		memberCount = c?.n ?? 0;
+	}
 
 	let cancelAtPeriodEnd = false;
 	if (billing?.stripeSubscriptionId && isStripeConfigured()) {
@@ -67,6 +82,8 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 		currentPeriodEnd: billing?.currentPeriodEnd?.toISOString() ?? null,
 		canManage: Boolean(billing?.stripeCustomerId),
 		cancelAtPeriodEnd,
+		seats: billing?.seats ?? null,
+		memberCount,
 	};
 }
 
@@ -414,6 +431,118 @@ export async function listInvoices(): Promise<InvoiceInfo[]> {
 		invoicePdf: inv.invoice_pdf ?? null,
 		hostedInvoiceUrl: inv.hosted_invoice_url ?? null,
 	}));
+}
+
+// ── Transactions (Stripe charges) ───────────────────────────────────────────
+
+/** A charge row for the transaction-history table. */
+export interface TransactionInfo {
+	id: string;
+	/** What the charge was for (Stripe description, or a sensible fallback). */
+	description: string;
+	/** Normalized outcome driving the status badge. */
+	status: "paid" | "pending" | "failed" | "refunded";
+	/** Smallest-unit amount; negative for refunds. */
+	amount: number;
+	currency: string;
+	created: string;
+	/** "Visa ···· 4242", or null when the method isn't a card. */
+	method: string | null;
+}
+
+/** Maps a Stripe charge to our normalized transaction shape. */
+function toTransaction(charge: Stripe.Charge): TransactionInfo {
+	const card = charge.payment_method_details?.card;
+	const method = card
+		? `${card.brand ?? "card"} ···· ${card.last4 ?? "••••"}`
+		: null;
+	const refunded = charge.refunded || charge.amount_refunded > 0;
+	const status: TransactionInfo["status"] = refunded
+		? "refunded"
+		: charge.status === "succeeded"
+			? "paid"
+			: charge.status === "failed"
+				? "failed"
+				: "pending";
+	return {
+		id: charge.id,
+		description: charge.description ?? "Subscription payment",
+		status,
+		amount: refunded ? -charge.amount_refunded : charge.amount,
+		currency: charge.currency,
+		created: new Date(charge.created * 1000).toISOString(),
+		method,
+	};
+}
+
+/** Lists the active org's recent charges (paid / failed / refunded) for the ledger. */
+export async function listTransactions(): Promise<TransactionInfo[]> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	const billing = await getOrgBilling(actor.orgId);
+	if (!billing?.stripeCustomerId) return [];
+
+	const charges = await getStripe().charges.list({
+		customer: billing.stripeCustomerId,
+		limit: 24,
+	});
+	return charges.data.map(toTransaction);
+}
+
+// ── Plan history (minimal — derived, no event log yet) ──────────────────────
+
+/** A plan-history timeline entry. */
+export interface PlanHistoryEntry {
+	when: string;
+	title: string;
+	detail: string;
+	/** The current (most recent) entry — rendered as the active node. */
+	current: boolean;
+}
+
+/**
+ * A best-effort plan-history timeline for the active org. We don't keep a billing
+ * event log yet, so this is derived honestly from what we know: when the org was
+ * created, and the plan it's on now. (A real ledger is future work.)
+ */
+export async function getPlanHistory(): Promise<PlanHistoryEntry[]> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	if (actor.orgId === actor.userId) return [];
+
+	const [org] = await getServiceDb()
+		.select({ name: organization.name, createdAt: organization.createdAt })
+		.from(organization)
+		.where(eq(organization.id, actor.orgId))
+		.limit(1);
+	if (!org) return [];
+
+	const billing = await getOrgBilling(actor.orgId);
+	const entries: PlanHistoryEntry[] = [
+		{
+			when: org.createdAt.toISOString(),
+			title: "Organization created",
+			detail: `${org.name} started on the Free plan.`,
+			current: false,
+		},
+	];
+	const isLive =
+		billing && (billing.status === "active" || billing.status === "trialing");
+	if (isLive && billing.plan !== "community") {
+		const meta = planMeta(billing.plan);
+		const since =
+			billing.currentPeriodEnd?.toISOString() ?? new Date().toISOString();
+		entries.push({
+			when: since,
+			title: `On the ${meta.name} plan`,
+			detail: meta.tagline,
+			current: true,
+		});
+	} else {
+		// No live paid plan → the "created" entry is the current state.
+		entries[0].current = true;
+	}
+	return entries.reverse(); // newest first
 }
 
 /** The active org's billing contact + address + VAT id (for Stripe Tax). */

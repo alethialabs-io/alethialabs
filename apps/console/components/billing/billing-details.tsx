@@ -63,7 +63,7 @@ function Field({
 	);
 }
 
-export function BillingDetails() {
+export function BillingDetails({ onSaved }: { onSaved?: () => void } = {}) {
 	const [loaded, setLoaded] = useState(false);
 	const [pending, startTransition] = useTransition();
 	const form = useForm<FormData>({
@@ -105,6 +105,7 @@ export function BillingDetails() {
 				});
 				await saveTaxId(data.taxId ?? "");
 				toast.success("Billing details saved.");
+				onSaved?.();
 			} catch (e) {
 				toast.error(e instanceof Error ? e.message : "Couldn't save billing details.");
 			}

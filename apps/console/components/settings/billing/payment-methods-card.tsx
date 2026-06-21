@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Saved-cards manager for the billing panel: list the org's cards, add one via the
-// embedded Payment Element (SetupIntent), set a default, or remove. Reuses
-// <PaymentForm mode="setup"> inside a dialog.
+// Payment methods card (Billing page) — re-skinned to the authored design. Lists the
+// org's saved cards, adds one via the embedded Payment Element (SetupIntent), sets a
+// default, or removes one. Reuses <PaymentForm mode="setup"> inside a dialog.
 
-import { CreditCard } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
@@ -18,9 +18,6 @@ import {
 } from "@/app/server/actions/billing";
 import { PaymentForm } from "@/components/billing/payment-form";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import {
 	Dialog,
 	DialogContent,
@@ -28,8 +25,9 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import styles from "./billing-design.module.css";
 
-export function SavedCards() {
+export function PaymentMethodsCard() {
 	const [cards, setCards] = useState<PaymentMethodInfo[] | null>(null);
 	const [pending, startTransition] = useTransition();
 	const [addOpen, setAddOpen] = useState(false);
@@ -38,7 +36,7 @@ export function SavedCards() {
 	function load() {
 		listPaymentMethods()
 			.then(setCards)
-			.catch(() => toast.error("Couldn't load cards."));
+			.catch(() => toast.error("Couldn't load payment methods."));
 	}
 	useEffect(load, []);
 
@@ -83,66 +81,65 @@ export function SavedCards() {
 	}
 
 	return (
-		<div className="space-y-3">
-			<div className="flex items-center justify-between">
-				<h3 className="text-sm font-semibold text-foreground">Payment methods</h3>
-				<Button variant="outline" size="sm" onClick={openAdd}>
-					Add card
-				</Button>
+		<section className={styles.section} style={{ marginBottom: 0 }}>
+			<div className={styles.sectionHead}>
+				<h2>Payment methods</h2>
+				<span className={styles.rule} />
 			</div>
-
-			{!cards ? (
-				<Skeleton className="h-16 w-full" />
-			) : cards.length === 0 ? (
-				<Card className="p-4 text-sm text-muted-foreground">
-					No cards on file yet.
-				</Card>
-			) : (
-				<div className="space-y-2">
-					{cards.map((c) => (
-						<Card
-							key={c.id}
-							className="flex flex-wrap items-center justify-between gap-3 p-4"
-						>
-							<div className="flex items-center gap-3">
-								<CreditCard className="h-4 w-4 text-muted-foreground" />
-								<span className="text-sm font-medium capitalize text-foreground">
-									{c.brand} •••• {c.last4}
-								</span>
-								<span className="text-xs text-muted-foreground">
-									{String(c.expMonth).padStart(2, "0")}/{c.expYear}
-								</span>
-								{c.isDefault && (
-									<Badge variant="outline" className="text-[10px] uppercase">
-										Default
-									</Badge>
-								)}
-							</div>
-							<div className="flex items-center gap-2">
+			<div className={styles.card}>
+				{!cards ? (
+					<div style={{ padding: 18 }}>
+						<Skeleton className="h-12 w-full" />
+					</div>
+				) : cards.length === 0 ? (
+					<div className={styles.empty}>No cards on file yet.</div>
+				) : (
+					<div className={styles.pmList}>
+						{cards.map((c) => (
+							<div key={c.id} className={styles.pm}>
+								<span className={styles.brandmark}>{c.brand}</span>
+								<div className={styles.info}>
+									<span className={styles.num}>
+										<span className={styles.dots}>•••• •••• ••••</span> {c.last4}
+									</span>
+									<span className={styles.exp}>
+										expires {String(c.expMonth).padStart(2, "0")} / {c.expYear}
+									</span>
+								</div>
+								{c.isDefault && <span className={styles.tag}>Default</span>}
 								{!c.isDefault && (
-									<Button
-										variant="ghost"
-										size="sm"
+									<button
+										type="button"
+										className={styles.pmAction}
 										disabled={pending}
 										onClick={() => makeDefault(c.id)}
 									>
 										Make default
-									</Button>
+									</button>
 								)}
-								<Button
-									variant="ghost"
-									size="sm"
+								<button
+									type="button"
+									className={styles.pmAction}
 									disabled={pending}
 									onClick={() => remove(c.id)}
-									className="text-destructive hover:text-destructive"
 								>
 									Remove
-								</Button>
+								</button>
 							</div>
-						</Card>
-					))}
+						))}
+					</div>
+				)}
+				<div className={styles.cardFoot}>
+					<button
+						type="button"
+						className={`${styles.btn} ${styles.sm}`}
+						onClick={openAdd}
+					>
+						<Plus size={13} />
+						Add payment method
+					</button>
 				</div>
-			)}
+			</div>
 
 			<Dialog open={addOpen} onOpenChange={setAddOpen}>
 				<DialogContent className="sm:max-w-md">
@@ -156,6 +153,6 @@ export function SavedCards() {
 					)}
 				</DialogContent>
 			</Dialog>
-		</div>
+		</section>
 	);
 }
