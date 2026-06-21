@@ -3,18 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { AuditLog } from "@/components/settings/audit/audit-log";
-import { ExportAuditButton } from "@/components/settings/audit/export-audit-button";
-import { SettingsHeader } from "@/components/settings/settings-header";
 
+/** Audit Log — the PDP's recorded access decisions (community-real; export is Enterprise). */
 export default function AuditPage() {
-	return (
-		<>
-			<SettingsHeader
-				title="Audit Log"
-				description="Denied access attempts and sensitive actions in your organization."
-				action={<ExportAuditButton />}
-			/>
-			<AuditLog />
-		</>
-	);
+	return <AuditLog />;
 }

@@ -31,7 +31,9 @@ that already exists; anything the design wants that the backend lacks is logged 
       IdP details (issuer/SSO URL/cert fingerprint — `getSsoProviders` extended to parse saml/oidc config) +
       attribute mapping + register dialog. SCIM + enforcement rendered as honest "coming soon" cards.
       Deleted `sso-providers.tsx`.
-- [ ] **Audit** — Backend: `audit.ts` (`getAuditLog` + export).
+- [x] **Audit** — filter-bar + events-table design (`audit-log.tsx`): search + category/result/range selects
+      + CSV export (folded in `export-audit-button`, Enterprise-gated). Wired to `getAuditLog`/
+      `getAuditExportCsv`; community-real view. Deleted `export-audit-button.tsx`.
 - [ ] **Billing** — refactor off `billing-design.module.css`, then delete the module.
 
 ## Design wants X, backend lacks Y (gap log)
@@ -58,3 +60,7 @@ that already exists; anything the design wants that the backend lacks is logged 
 - **SSO · SP detail URLs** — derived from org slug + `NEXT_PUBLIC_APP_URL` on the better-auth SSO convention;
       verify against the deployed SSO plugin routes when enterprise SSO is stood up. No `connected` date
       (no `createdAt` on `sso_provider`).
+- **Audit · Source column** (CLI/Console/Web · IP) — not stored on `authz_audit_log` → column dropped.
+      Friendly resource names — `resourceId` is a uuid, no resolver → shows `resourceType · short-id`.
+      Range filter is client-side over the most-recent 500-row slice (not a server range query). Event
+      category/name derived from `resourceType`/`action` (the log is PDP decisions, not a rich taxonomy).
