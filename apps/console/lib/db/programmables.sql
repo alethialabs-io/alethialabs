@@ -31,8 +31,8 @@ DO $$
 DECLARE tbl TEXT;
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
-    'specs', 'spec_network', 'spec_cluster', 'spec_dns', 'spec_repositories',
-    'spec_databases', 'spec_caches', 'spec_queues', 'spec_topics',
+    'specs', 'spec_environments', 'spec_network', 'spec_cluster', 'spec_dns',
+    'spec_repositories', 'spec_databases', 'spec_caches', 'spec_queues', 'spec_topics',
     'spec_nosql_tables', 'spec_container_registries', 'spec_secrets',
     'spec_storage_buckets', 'jobs'
   ]) LOOP
@@ -478,12 +478,16 @@ CREATE VIEW public.spec_full AS
 SELECT
   s.id, s.user_id, s.zone_id AS zone_id, s.cloud_identity_id,
   s.project_name,
-  s.environment_stage::text AS environment_stage,
+  -- M1: environment identity + provisioning status now live on the spec's default
+  -- environment (was specs.environment_stage / specs.status). The wire keeps the
+  -- `environment_stage` name + emits the env's name (= the old stage for backfilled
+  -- specs, so the SpecConfig.EnvironmentStage → tofu state path is unchanged).
+  env.name AS environment_stage,
   s.region,
   ci.provider AS cloud_provider,
   ci.credentials->>'account_id' AS cloud_account_id,
   s.iac_version,
-  s.status::text AS status,
+  env.status::text AS status,
   s.estimated_monthly_cost::float8 AS estimated_monthly_cost,
   s.created_at, s.updated_at,
 
@@ -522,6 +526,7 @@ SELECT
   EXISTS(SELECT 1 FROM public.spec_caches c WHERE c.spec_id = s.id AND c.status != 'DESTROYED') AS has_cache
 
 FROM public.specs s
+LEFT JOIN public.spec_environments env ON env.spec_id = s.id AND env.is_default = true
 LEFT JOIN public.cloud_identities ci ON ci.id = s.cloud_identity_id
 LEFT JOIN public.spec_network net ON net.spec_id = s.id
 LEFT JOIN public.spec_cluster cl ON cl.spec_id = s.id
@@ -622,7 +627,7 @@ DO $$
 DECLARE tbl TEXT;
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
-    'spec_network', 'spec_cluster', 'spec_dns', 'spec_observability', 'spec_repositories', 'spec_databases',
+    'spec_environments', 'spec_network', 'spec_cluster', 'spec_dns', 'spec_observability', 'spec_repositories', 'spec_databases',
     'spec_caches', 'spec_queues', 'spec_topics', 'spec_nosql_tables',
     'spec_container_registries', 'spec_secrets', 'spec_git_credentials', 'spec_storage_buckets'
   ]) LOOP

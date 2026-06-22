@@ -63,7 +63,6 @@ const specSchema = specsInsert
 		...autoFields,
 		user_id: true,
 		zone_id: true,
-		status: true,
 		estimated_monthly_cost: true,
 	})
 	.extend({
@@ -72,6 +71,9 @@ const specSchema = specsInsert
 		region: z.string().min(1, "Region is required"),
 		cloud_identity_id: z.string().min(1, "Cloud account is required"),
 		container_platform: z.string().optional(),
+		// M1: environment_stage moved off the specs table; the form still captures the
+		// spec's INITIAL environment (createSpec turns it into the default env row).
+		environment_stage: z.enum(["development", "staging", "production"]),
 	});
 
 const networkSchema = networkInsert

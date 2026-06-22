@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 import { verifyCliToken } from "@/lib/cli/auth";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
-import { jobs, runners, specs } from "@/lib/db/schema";
+import { jobs, runners, specEnvironments, specs } from "@/lib/db/schema";
 import { querySpecFull } from "@/lib/queries/spec-full";
 import { notifyScaler } from "@/lib/scaler";
 import { cliJobResponse, cliJobsPageResponse } from "@/lib/validations/cli-contract";
@@ -88,6 +88,8 @@ export async function POST(req: Request) {
 		let configHash: string | null = null;
 		let resolvedCloudIdentityId: string | null = cloud_identity_id || null;
 		let resolvedZoneId: string | null = zone_id || null;
+		// M1: the CLI job targets the spec's default environment (status + identity).
+		let resolvedEnvironmentId: string | null = null;
 
 		if (
 			(jobType === "DEPLOY" || jobType === "PLAN" || jobType === "DESTROY") &&
@@ -116,6 +118,18 @@ export async function POST(req: Request) {
 			if (!resolvedZoneId && config.zone_id) {
 				resolvedZoneId = config.zone_id;
 			}
+
+			const [defEnv] = await db
+				.select({ id: specEnvironments.id })
+				.from(specEnvironments)
+				.where(
+					and(
+						eq(specEnvironments.spec_id, configuration_id),
+						eq(specEnvironments.is_default, true),
+					),
+				)
+				.limit(1);
+			resolvedEnvironmentId = defEnv?.id ?? null;
 		}
 
 		const [job] = await db
@@ -123,6 +137,7 @@ export async function POST(req: Request) {
 			.values({
 				user_id: userId,
 				zone_id: resolvedZoneId,
+				environment_id: resolvedEnvironmentId,
 				cloud_identity_id: resolvedCloudIdentityId,
 				job_type: jobType,
 				spec_id: configuration_id || null,
@@ -134,18 +149,22 @@ export async function POST(req: Request) {
 			})
 			.returning();
 
-		if ((jobType === "DEPLOY" || jobType === "PLAN") && configuration_id) {
+		// M1: provisioning status lives on the targeted environment.
+		if (
+			(jobType === "DEPLOY" || jobType === "PLAN") &&
+			resolvedEnvironmentId
+		) {
 			await db
-				.update(specs)
+				.update(specEnvironments)
 				.set({ status: "QUEUED" })
-				.where(eq(specs.id, configuration_id));
+				.where(eq(specEnvironments.id, resolvedEnvironmentId));
 		}
 
-		if (jobType === "DESTROY" && configuration_id) {
+		if (jobType === "DESTROY" && resolvedEnvironmentId) {
 			await db
-				.update(specs)
+				.update(specEnvironments)
 				.set({ status: "DESTROYING" })
-				.where(eq(specs.id, configuration_id));
+				.where(eq(specEnvironments.id, resolvedEnvironmentId));
 		}
 
 		notifyScaler();

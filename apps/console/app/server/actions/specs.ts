@@ -9,14 +9,17 @@ import { withOwnerScope } from "@/lib/db";
 import {
 	auditLog,
 	cloudIdentities,
+	type EnvironmentStage,
 	jobs,
 	resourceHierarchy,
 	type Spec,
+	type SpecEnvironment,
 	specCaches,
 	specCluster,
 	specContainerRegistries,
 	specDatabases,
 	specDns,
+	specEnvironments,
 	specNetwork,
 	specNosqlTables,
 	specObservability,
@@ -33,7 +36,7 @@ import {
 } from "@/lib/cloud-providers";
 import { notifyScaler } from "@/lib/scaler";
 import type { SpecFormData } from "@/lib/validations/spec-form.schema";
-import { eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 // ============================================================
 // Types — form-facing shapes mapped to the spec/zone DB columns below.
@@ -53,7 +56,9 @@ type ComponentInsert<T> = Omit<
 export interface CreateSpecInput {
 	spec: {
 		project_name: string;
-		environment_stage: Spec["environment_stage"];
+		// M1: the spec's INITIAL environment — createSpec turns this into the spec's
+		// default `spec_environments` row (name + stage), not a column on `specs`.
+		environment_stage: EnvironmentStage;
 		region: string;
 		cloud_identity_id?: string | null;
 		iac_version: string;
@@ -90,7 +95,8 @@ export async function createSpec(data: CreateSpecInput) {
 	const owner = actor.userId;
 
 	return withOwnerScope(owner, async (tx) => {
-		const { zone_id, ...specFields } = data.spec;
+		// M1: environment_stage is no longer a spec column — it seeds the default env.
+		const { zone_id, environment_stage, ...specFields } = data.spec;
 
 		const [spec] = await tx
 			.insert(specs)
@@ -98,6 +104,19 @@ export async function createSpec(data: CreateSpecInput) {
 			.returning();
 
 		if (!spec) throw new Error("Failed to create spec");
+
+		// The spec's default (and, for now, only) environment. `name` = the chosen
+		// stage value so the tofu/S3 state path matches the legacy single-env path.
+		await tx.insert(specEnvironments).values({
+			spec_id: spec.id,
+			user_id: owner,
+			org_id: spec.org_id,
+			name: environment_stage,
+			stage: environment_stage,
+			status: "DRAFT",
+			is_default: true,
+			region: specFields.region,
+		});
 
 		// Authz hierarchy edge: spec → its zone (or → org when zone-less), so a
 		// higher-scope grant flows down to this spec.
@@ -241,6 +260,17 @@ export async function getSpec(specId: string) {
 			.from(specSecrets)
 			.where(eq(specSecrets.spec_id, specId));
 
+		// M1: the spec's environments (default first). The default env's name + status
+		// surface as `spec.environment_stage` / `spec.status` so existing single-value
+		// reads keep working; the full list drives the Environments management UI.
+		const environments = await tx
+			.select()
+			.from(specEnvironments)
+			.where(eq(specEnvironments.spec_id, specId))
+			.orderBy(desc(specEnvironments.is_default), specEnvironments.created_at);
+		const defaultEnv =
+			environments.find((e) => e.is_default) ?? environments[0] ?? null;
+
 		let cloudProvider = "aws";
 		if (spec.cloud_identity_id) {
 			const [ci] = await tx
@@ -252,7 +282,13 @@ export async function getSpec(specId: string) {
 		}
 
 		return {
-			spec,
+			spec: {
+				...spec,
+				environment_stage: defaultEnv?.name ?? "development",
+				status: defaultEnv?.status ?? "DRAFT",
+				default_environment_id: defaultEnv?.id ?? null,
+			},
+			environments,
 			cloudProvider,
 			components: {
 				network: network ?? null,
@@ -274,7 +310,11 @@ export async function getSpec(specId: string) {
 // Provision
 // ============================================================
 
-async function buildConfigSnapshot(owner: string, specId: string) {
+async function buildConfigSnapshot(
+	owner: string,
+	specId: string,
+	environmentId?: string | null,
+) {
 	return withOwnerScope(owner, async (tx) => {
 		const [spec] = await tx
 			.select()
@@ -282,6 +322,11 @@ async function buildConfigSnapshot(owner: string, specId: string) {
 			.where(eq(specs.id, specId))
 			.limit(1);
 		if (!spec) throw new Error("Spec not found");
+
+		// M1: resolve which environment this job provisions (the given one, else the
+		// spec's default). Its `name` feeds the frozen snapshot `environment_stage`
+		// key → the Go provisioner's tofu/S3 state path, unchanged.
+		const environment = await resolveTargetEnvironment(tx, specId, environmentId);
 
 		if (!spec.cloud_identity_id) {
 			throw new Error(
@@ -369,6 +414,10 @@ async function buildConfigSnapshot(owner: string, specId: string) {
 
 		const configSnapshot = {
 			...spec,
+			// M1: the Go provisioner reads `environment_stage` (frozen wire key) for the
+			// tofu state path + the `environment` tfvar — feed it the environment's name.
+			environment_stage: environment.name,
+			region: environment.region ?? spec.region,
 			provider: identity.provider,
 			network: {
 				provision_network: network?.provision_network ?? true,
@@ -412,17 +461,56 @@ async function buildConfigSnapshot(owner: string, specId: string) {
 			git_access_token: "",
 		};
 
-		return { spec, identity, configSnapshot };
+		return { spec, identity, environment, configSnapshot };
 	});
 }
 
-export async function planSpec(specId: string, runnerId?: string | null) {
+/**
+ * Resolves the environment a provisioning job targets: the explicitly-passed one
+ * (verified to belong to the spec), else the spec's default environment.
+ */
+async function resolveTargetEnvironment(
+	tx: Parameters<Parameters<typeof withOwnerScope>[1]>[0],
+	specId: string,
+	environmentId?: string | null,
+): Promise<SpecEnvironment> {
+	if (environmentId) {
+		const [env] = await tx
+			.select()
+			.from(specEnvironments)
+			.where(
+				and(
+					eq(specEnvironments.id, environmentId),
+					eq(specEnvironments.spec_id, specId),
+				),
+			)
+			.limit(1);
+		if (!env) throw new Error("Environment not found for this spec");
+		return env;
+	}
+	const [env] = await tx
+		.select()
+		.from(specEnvironments)
+		.where(
+			and(
+				eq(specEnvironments.spec_id, specId),
+				eq(specEnvironments.is_default, true),
+			),
+		)
+		.limit(1);
+	if (!env) throw new Error("Spec has no default environment");
+	return env;
+}
+
+export async function planSpec(
+	specId: string,
+	runnerId?: string | null,
+	environmentId?: string | null,
+) {
 	const actor = await authorize("plan", { type: "spec", id: specId });
 	const owner = actor.userId;
-	const { spec, identity, configSnapshot } = await buildConfigSnapshot(
-		owner,
-		specId,
-	);
+	const { spec, identity, environment, configSnapshot } =
+		await buildConfigSnapshot(owner, specId, environmentId);
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
@@ -430,6 +518,7 @@ export async function planSpec(specId: string, runnerId?: string | null) {
 			.values({
 				user_id: owner,
 				spec_id: specId,
+				environment_id: environment.id,
 				zone_id: spec.zone_id ?? null,
 				cloud_identity_id: identity.id,
 				job_type: "PLAN",
@@ -439,7 +528,10 @@ export async function planSpec(specId: string, runnerId?: string | null) {
 			})
 			.returning({ id: jobs.id });
 
-		await tx.update(specs).set({ status: "QUEUED" }).where(eq(specs.id, specId));
+		await tx
+			.update(specEnvironments)
+			.set({ status: "QUEUED" })
+			.where(eq(specEnvironments.id, environment.id));
 		return { jobId: job.id };
 	});
 
@@ -451,13 +543,12 @@ export async function provisionSpec(
 	specId: string,
 	planJobId?: string,
 	runnerId?: string | null,
+	environmentId?: string | null,
 ) {
 	const actor = await authorize("deploy", { type: "spec", id: specId });
 	const owner = actor.userId;
-	const { spec, identity, configSnapshot } = await buildConfigSnapshot(
-		owner,
-		specId,
-	);
+	const { spec, identity, environment, configSnapshot } =
+		await buildConfigSnapshot(owner, specId, environmentId);
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
@@ -465,6 +556,7 @@ export async function provisionSpec(
 			.values({
 				user_id: owner,
 				spec_id: specId,
+				environment_id: environment.id,
 				zone_id: spec.zone_id ?? null,
 				cloud_identity_id: identity.id,
 				job_type: "DEPLOY",
@@ -475,13 +567,16 @@ export async function provisionSpec(
 			})
 			.returning({ id: jobs.id });
 
-		await tx.update(specs).set({ status: "QUEUED" }).where(eq(specs.id, specId));
+		await tx
+			.update(specEnvironments)
+			.set({ status: "QUEUED" })
+			.where(eq(specEnvironments.id, environment.id));
 
 		await tx.insert(auditLog).values({
 			spec_id: specId,
 			user_id: owner,
 			action: "PROVISIONED",
-			changes: { job_id: job.id },
+			changes: { job_id: job.id, environment_id: environment.id },
 		});
 
 		return { jobId: job.id };
@@ -682,4 +777,90 @@ export async function duplicateSpecForProvider(
 		zoneId: converted.spec.zone_id,
 		warnings,
 	};
+}
+
+// ============================================================
+// Environments (M1) — a spec owns N independently-provisionable environments.
+// ============================================================
+
+/** Lists a spec's environments (default first, then by creation). */
+export async function getSpecEnvironments(specId: string) {
+	const actor = await authorize("view", { type: "spec", id: specId });
+	const owner = actor.userId;
+	return withOwnerScope(owner, async (tx) => {
+		const environments = await tx
+			.select()
+			.from(specEnvironments)
+			.where(eq(specEnvironments.spec_id, specId))
+			.orderBy(desc(specEnvironments.is_default), specEnvironments.created_at);
+		return { environments };
+	});
+}
+
+/**
+ * Adds an environment to a spec. The `name` is slugified (it feeds the tofu state
+ * path + the URL); it inherits the spec's region unless one is given. Never default.
+ */
+export async function addEnvironment(
+	specId: string,
+	input: { name: string; stage: EnvironmentStage; region?: string | null },
+) {
+	const actor = await authorize("edit", { type: "spec", id: specId });
+	const owner = actor.userId;
+	const name = slugifyEnvName(input.name);
+	if (!name) throw new Error("Environment name is required");
+	return withOwnerScope(owner, async (tx) => {
+		const [spec] = await tx
+			.select({ org_id: specs.org_id })
+			.from(specs)
+			.where(eq(specs.id, specId))
+			.limit(1);
+		if (!spec) throw new Error("Spec not found");
+		const [env] = await tx
+			.insert(specEnvironments)
+			.values({
+				spec_id: specId,
+				user_id: owner,
+				org_id: spec.org_id,
+				name,
+				stage: input.stage,
+				status: "DRAFT",
+				is_default: false,
+				region: input.region ?? null,
+			})
+			.returning();
+		return { environment: env };
+	});
+}
+
+/** Deletes a non-default environment (the default is the spec's anchor). */
+export async function deleteEnvironment(specId: string, environmentId: string) {
+	const actor = await authorize("edit", { type: "spec", id: specId });
+	const owner = actor.userId;
+	return withOwnerScope(owner, async (tx) => {
+		const [env] = await tx
+			.select()
+			.from(specEnvironments)
+			.where(
+				and(
+					eq(specEnvironments.id, environmentId),
+					eq(specEnvironments.spec_id, specId),
+				),
+			)
+			.limit(1);
+		if (!env) throw new Error("Environment not found for this spec");
+		if (env.is_default)
+			throw new Error("Cannot delete the spec's default environment");
+		await tx.delete(specEnvironments).where(eq(specEnvironments.id, environmentId));
+		return { success: true };
+	});
+}
+
+/** Lowercases + slugifies an environment name (a-z0-9 and single dashes). */
+function slugifyEnvName(raw: string): string {
+	return raw
+		.toLowerCase()
+		.trim()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");
 }

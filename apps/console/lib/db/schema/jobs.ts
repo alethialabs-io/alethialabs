@@ -24,6 +24,7 @@ import {
 import { cloudIdentities } from "./identities";
 import { runners } from "./runners";
 import { specs } from "./specs";
+import { specEnvironments } from "./spec-environments";
 import { zones } from "./zones";
 
 // Unified provisioning job queue. Claimed atomically by runners via the
@@ -43,6 +44,12 @@ export const jobs = pgTable(
 		// spec jobs only (kept in sync by the jobs_sync_zone trigger).
 		zone_id: uuid().references(() => zones.id, { onDelete: "set null" }),
 		spec_id: uuid().references(() => specs.id, { onDelete: "set null" }),
+		// M1: which environment of the spec this job provisions. NULL for
+		// runner-lifecycle / connection-test jobs (no spec). On delete set null so
+		// removing an environment doesn't cascade away its job history.
+		environment_id: uuid().references(() => specEnvironments.id, {
+			onDelete: "set null",
+		}),
 		cloud_identity_id: uuid().references(() => cloudIdentities.id, {
 			onDelete: "set null",
 		}),

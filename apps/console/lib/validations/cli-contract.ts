@@ -52,14 +52,19 @@ export const runnerWire = createSelectSchema(runners, {
 	created_at: true,
 });
 
-/** A spec as nested under a zone in GET /api/cli/zones. */
-export const zoneSpecWire = createSelectSchema(specs).pick({
-	id: true,
-	project_name: true,
-	environment_stage: true,
-	status: true,
-	region: true,
-});
+/** A spec as nested under a zone in GET /api/cli/zones. M1: environment_stage +
+ * status now come from the spec's default environment (the wire shape is frozen,
+ * so they're declared explicitly rather than picked from the specs columns). */
+export const zoneSpecWire = createSelectSchema(specs)
+	.pick({
+		id: true,
+		project_name: true,
+		region: true,
+	})
+	.extend({
+		environment_stage: z.string(),
+		status: z.string(),
+	});
 
 /** A zone with its nested specs (GET /api/cli/zones). */
 export const zoneWire = createSelectSchema(zones, {

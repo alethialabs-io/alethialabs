@@ -11,6 +11,7 @@ export * from "./zones";
 export * from "./identities";
 export * from "./specs";
 export * from "./spec-components";
+export * from "./spec-environments";
 export * from "./runners";
 export * from "./jobs";
 export * from "./cli";

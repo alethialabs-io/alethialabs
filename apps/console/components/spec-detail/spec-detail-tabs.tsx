@@ -27,7 +27,9 @@ import {
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo } from "react";
+import { Boxes } from "lucide-react";
 import { ClusterAccess } from "./cluster-access";
+import { EnvironmentsTab } from "./environments-tab";
 import { InfrastructureTab } from "./infrastructure-tab";
 import { ServicesTab } from "./services-tab";
 import type { ServiceInstance } from "./service-card";
@@ -43,6 +45,15 @@ export type SpecDetail = {
 		estimated_monthly_cost: number | null;
 		[key: string]: unknown;
 	};
+	// M1: the spec's environments (the default + any added). Drives the Environments tab.
+	environments?: {
+		id: string;
+		name: string;
+		stage: string;
+		status: string;
+		region: string | null;
+		is_default: boolean;
+	}[];
 	cloudProvider: string;
 	components: {
 		network: Record<string, unknown> | null;
@@ -184,6 +195,13 @@ export function SpecDetailTabs({ detail, specId, plan, onApplied }: SpecDetailTa
 					<Settings2 className="h-3.5 w-3.5 mr-1.5" />
 					Configuration
 				</TabsTrigger>
+				<TabsTrigger
+					value="environments"
+					className="rounded-none border-b-2 border-transparent px-3 py-2 text-xs data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+				>
+					<Boxes className="h-3.5 w-3.5 mr-1.5" />
+					Environments
+				</TabsTrigger>
 								<TabsTrigger
 						value="plan"
 						className="rounded-none border-b-2 border-transparent px-3 py-2 text-xs data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none"
@@ -254,6 +272,10 @@ export function SpecDetailTabs({ detail, specId, plan, onApplied }: SpecDetailTa
 						</section>
 					)}
 				</div>
+			</TabsContent>
+
+			<TabsContent value="environments" className="mt-6">
+				<EnvironmentsTab specId={specId} environments={detail.environments ?? []} />
 			</TabsContent>
 
 			<TabsContent value="plan" className="mt-6">

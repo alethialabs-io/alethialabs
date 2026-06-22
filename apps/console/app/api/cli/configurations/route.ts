@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { cloudIdentities, specs } from "@/lib/db/schema";
+import { cloudIdentities, specEnvironments, specs } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 
 /**
@@ -23,8 +23,9 @@ export async function GET(req: Request) {
 				id: specs.id,
 				project_name: specs.project_name,
 				zone_id: specs.zone_id,
-				environment_stage: specs.environment_stage,
-				status: specs.status,
+				// M1: environment + status from the spec's default environment.
+				environment_stage: specEnvironments.name,
+				status: specEnvironments.status,
 				region: specs.region,
 				cloud_provider: cloudIdentities.provider,
 				estimated_monthly_cost: specs.estimated_monthly_cost,
@@ -33,11 +34,20 @@ export async function GET(req: Request) {
 			})
 			.from(specs)
 			.leftJoin(cloudIdentities, eq(specs.cloud_identity_id, cloudIdentities.id))
+			.leftJoin(
+				specEnvironments,
+				and(
+					eq(specEnvironments.spec_id, specs.id),
+					eq(specEnvironments.is_default, true),
+				),
+			)
 			.where(eq(specs.org_id, actor.orgId))
 			.orderBy(desc(specs.created_at));
 
 		const configurations = rows.map((r) => ({
 			...r,
+			environment_stage: r.environment_stage ?? "development",
+			status: r.status ?? "DRAFT",
 			cloud_provider: r.cloud_provider ?? "",
 		}));
 

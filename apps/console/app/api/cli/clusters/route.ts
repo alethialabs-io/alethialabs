@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { specCluster, specs } from "@/lib/db/schema";
+import { specCluster, specEnvironments, specs } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliClustersResponse } from "@/lib/validations/cli-contract";
@@ -35,15 +35,28 @@ export async function GET(req: Request) {
 				created_at: specCluster.created_at,
 				updated_at: specCluster.updated_at,
 				spec_project_name: specs.project_name,
-				spec_environment: specs.environment_stage,
+				// M1: the cluster's environment = the spec's default environment name.
+				spec_environment: specEnvironments.name,
 				spec_region: specs.region,
 			})
 			.from(specCluster)
 			.innerJoin(specs, eq(specCluster.spec_id, specs.id))
+			.leftJoin(
+				specEnvironments,
+				and(
+					eq(specEnvironments.spec_id, specs.id),
+					eq(specEnvironments.is_default, true),
+				),
+			)
 			.where(eq(specs.org_id, actor.orgId))
 			.orderBy(desc(specCluster.updated_at));
 
-		return cliJson(cliClustersResponse, { clusters: rows });
+		const clusters = rows.map((r) => ({
+			...r,
+			spec_environment: r.spec_environment ?? "development",
+		}));
+
+		return cliJson(cliClustersResponse, { clusters });
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";

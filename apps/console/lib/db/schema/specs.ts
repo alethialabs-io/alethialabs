@@ -9,13 +9,14 @@ import {
 	timestamp,
 	uuid,
 } from "drizzle-orm/pg-core";
-import { environmentStage, specStatus } from "./enums";
 import { cloudIdentities } from "./identities";
 import { zones } from "./zones";
 
-// Spec — a declarative infrastructure config a user writes, inside a Zone.
-// region / iac_version carry NO default: multi-cloud means the provider
-// dictates valid regions, and the IaC version is chosen explicitly.
+// Spec — a declarative infrastructure config a user writes, inside a Zone. M1: a
+// spec is an *app* that owns N environments (spec_environments) — the environment
+// identity (name/stage) and the per-environment provisioning `status` moved off this
+// table into spec_environments. region / iac_version carry NO default: multi-cloud
+// means the provider dictates valid regions, and the IaC version is chosen explicitly.
 export const specs = pgTable(
 	"specs",
 	{
@@ -28,10 +29,8 @@ export const specs = pgTable(
 			onDelete: "set null",
 		}),
 		project_name: text().notNull(),
-		environment_stage: environmentStage().default("development").notNull(),
 		region: text().notNull(),
 		iac_version: text().notNull(),
-		status: specStatus().default("DRAFT").notNull(),
 		estimated_monthly_cost: numeric({ precision: 12, scale: 2, mode: "number" }),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),

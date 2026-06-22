@@ -5,7 +5,13 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
-import { jobs, specCaches, specCluster, specDatabases, specs } from "@/lib/db/schema";
+import {
+	jobs,
+	specCaches,
+	specCluster,
+	specDatabases,
+	specEnvironments,
+} from "@/lib/db/schema";
 import type { ProviderOutputs } from "@/types/database-custom.types";
 
 // execution_metadata is JSONB written by the runner. Parse the fields we read
@@ -29,6 +35,7 @@ export async function finalizeDeployment(jobId: string) {
 		.select({
 			status: jobs.status,
 			spec_id: jobs.spec_id,
+			environment_id: jobs.environment_id,
 			job_type: jobs.job_type,
 			execution_metadata: jobs.execution_metadata,
 		})
@@ -120,7 +127,13 @@ export async function finalizeDeployment(jobId: string) {
 		}
 	}
 
-	await db.update(specs).set({ status: "ACTIVE" }).where(eq(specs.id, specId));
+	// M1: mark the targeted environment ACTIVE (status moved off specs).
+	if (job.environment_id) {
+		await db
+			.update(specEnvironments)
+			.set({ status: "ACTIVE" })
+			.where(eq(specEnvironments.id, job.environment_id));
+	}
 }
 
 /** Extracts a string from a terraform output entry (raw string or { value }). */

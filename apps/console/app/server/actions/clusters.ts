@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getOwner } from "@/lib/auth/owner";
 import { withOwnerScope } from "@/lib/db";
 import {
@@ -11,6 +11,7 @@ import {
 	specCluster,
 	specDatabases,
 	specDns,
+	specEnvironments,
 	specs,
 } from "@/lib/db/schema";
 
@@ -59,8 +60,9 @@ export async function getClusters(): Promise<ClusterData[]> {
 				id: specs.id,
 				project_name: specs.project_name,
 				region: specs.region,
-				environment_stage: specs.environment_stage,
-				status: specs.status,
+				// M1: environment + status from the spec's default environment.
+				environment_stage: specEnvironments.name,
+				status: specEnvironments.status,
 				provider: cloudIdentities.provider,
 				cluster_name: specCluster.cluster_name,
 				cluster_endpoint: specCluster.cluster_endpoint,
@@ -74,9 +76,16 @@ export async function getClusters(): Promise<ClusterData[]> {
 			})
 			.from(specs)
 			.leftJoin(cloudIdentities, eq(specs.cloud_identity_id, cloudIdentities.id))
+			.leftJoin(
+				specEnvironments,
+				and(
+					eq(specEnvironments.spec_id, specs.id),
+					eq(specEnvironments.is_default, true),
+				),
+			)
 			.leftJoin(specCluster, eq(specCluster.spec_id, specs.id))
 			.leftJoin(specDns, eq(specDns.spec_id, specs.id))
-			.where(eq(specs.status, "ACTIVE"))
+			.where(eq(specEnvironments.status, "ACTIVE"))
 			.orderBy(desc(specs.created_at));
 
 		if (baseRows.length === 0) return [];
@@ -113,8 +122,8 @@ export async function getClusters(): Promise<ClusterData[]> {
 			id: r.id,
 			project_name: r.project_name,
 			region: r.region,
-			environment_stage: r.environment_stage,
-			status: r.status,
+			environment_stage: r.environment_stage ?? "development",
+			status: r.status ?? "ACTIVE",
 			cloud_identities: r.provider ? { provider: r.provider } : null,
 			spec_cluster: r.cluster_status
 				? {

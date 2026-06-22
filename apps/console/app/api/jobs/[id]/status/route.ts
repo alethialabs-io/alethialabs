@@ -7,7 +7,7 @@ import { finalizeDeployment } from "@/app/server/actions/deployments";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { reportJobUsageOnce } from "@/lib/billing/meter";
 import { getServiceDb } from "@/lib/db";
-import { jobs, specs } from "@/lib/db/schema";
+import { jobs, specEnvironments } from "@/lib/db/schema";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 
 export async function PUT(
@@ -49,6 +49,7 @@ export async function PUT(
 				.select({
 					job_type: jobs.job_type,
 					spec_id: jobs.spec_id,
+					environment_id: jobs.environment_id,
 					org_id: jobs.org_id,
 					zone_id: jobs.zone_id,
 				})
@@ -87,41 +88,33 @@ export async function PUT(
 				}
 			}
 
-			if (job?.spec_id) {
-				const specId = job.spec_id;
+			// M1: provisioning status lives on the targeted environment (the job carries
+			// environment_id). Legacy / non-spec jobs without one simply skip the update.
+			if (job?.spec_id && job.environment_id) {
+				const environmentId = job.environment_id;
+				const setEnvStatus = (s: "PROVISIONING" | "FAILED" | "DRAFT") =>
+					db
+						.update(specEnvironments)
+						.set({ status: s })
+						.where(eq(specEnvironments.id, environmentId));
 				if (job.job_type === "DEPLOY") {
 					if (status === "PROCESSING") {
-						await db
-							.update(specs)
-							.set({ status: "PROVISIONING" })
-							.where(eq(specs.id, specId));
+						await setEnvStatus("PROVISIONING");
 					} else if (status === "FAILED") {
-						await db
-							.update(specs)
-							.set({ status: "FAILED" })
-							.where(eq(specs.id, specId));
+						await setEnvStatus("FAILED");
 					} else if (status === "SUCCESS") {
 						try {
 							await finalizeDeployment(jobId);
 						} catch (err) {
 							console.error("Finalize deployment error:", err);
-							await db
-								.update(specs)
-								.set({ status: "FAILED" })
-								.where(eq(specs.id, specId));
+							await setEnvStatus("FAILED");
 						}
 					}
 				} else if (job.job_type === "PLAN") {
 					if (status === "FAILED") {
-						await db
-							.update(specs)
-							.set({ status: "FAILED" })
-							.where(eq(specs.id, specId));
+						await setEnvStatus("FAILED");
 					} else if (status === "SUCCESS") {
-						await db
-							.update(specs)
-							.set({ status: "DRAFT" })
-							.where(eq(specs.id, specId));
+						await setEnvStatus("DRAFT");
 					}
 				}
 			}

@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { specs, zones } from "@/lib/db/schema";
+import { specEnvironments, specs, zones } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliZoneResponse, cliZonesResponse } from "@/lib/validations/cli-contract";
@@ -33,12 +33,20 @@ export async function GET(req: Request) {
 				.select({
 					id: specs.id,
 					project_name: specs.project_name,
-					environment_stage: specs.environment_stage,
-					status: specs.status,
+					// M1: environment + status from the spec's default environment.
+					environment_stage: specEnvironments.name,
+					status: specEnvironments.status,
 					region: specs.region,
 					zone_id: specs.zone_id,
 				})
 				.from(specs)
+				.leftJoin(
+					specEnvironments,
+					and(
+						eq(specEnvironments.spec_id, specs.id),
+						eq(specEnvironments.is_default, true),
+					),
+				)
 				.where(inArray(specs.zone_id, zoneIds))
 		: [];
 
@@ -52,7 +60,11 @@ export async function GET(req: Request) {
 		updated_at: z.updated_at,
 		specs: specRows
 			.filter((s) => s.zone_id === z.id)
-			.map(({ zone_id: _zone_id, ...spec }) => spec),
+			.map(({ zone_id: _zone_id, ...spec }) => ({
+				...spec,
+				environment_stage: spec.environment_stage ?? "development",
+				status: spec.status ?? "DRAFT",
+			})),
 	}));
 
 	return cliJson(cliZonesResponse, { zones: zoneList });

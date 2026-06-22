@@ -9,14 +9,22 @@ import {
 	cloudIdentities,
 	resourceHierarchy,
 	type Spec,
+	specEnvironments,
 	specs,
 	type Zone,
 	zones,
 } from "@/lib/db/schema";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
+// M1: the environment identity (name) + provisioning status moved off specs into
+// spec_environments. These derived fields surface the spec's DEFAULT environment so
+// single-value UI (zone list, sidebar, dashboard) reads `spec.environment_stage` /
+// `spec.status` unchanged. `default_environment_id` lets actions target that env.
 export type SpecWithProvider = Spec & {
 	cloud_provider: string | null;
+	environment_stage: string;
+	status: string;
+	default_environment_id: string | null;
 };
 
 export type ZoneWithSpecs = Zone & {
@@ -36,11 +44,24 @@ export async function getZones() {
 			.orderBy(desc(zones.created_at));
 
 		const specRows = await tx
-			.select({ spec: specs, cloud_provider: cloudIdentities.provider })
+			.select({
+				spec: specs,
+				cloud_provider: cloudIdentities.provider,
+				env_id: specEnvironments.id,
+				env_name: specEnvironments.name,
+				env_status: specEnvironments.status,
+			})
 			.from(specs)
 			.leftJoin(
 				cloudIdentities,
 				eq(specs.cloud_identity_id, cloudIdentities.id),
+			)
+			.leftJoin(
+				specEnvironments,
+				and(
+					eq(specEnvironments.spec_id, specs.id),
+					eq(specEnvironments.is_default, true),
+				),
 			);
 
 		const byZone = new Map<string, SpecWithProvider[]>();
@@ -48,6 +69,9 @@ export async function getZones() {
 			const spec: SpecWithProvider = {
 				...r.spec,
 				cloud_provider: r.cloud_provider ?? null,
+				environment_stage: r.env_name ?? "development",
+				status: r.env_status ?? "DRAFT",
+				default_environment_id: r.env_id ?? null,
 			};
 			const key = r.spec.zone_id ?? "";
 			const arr = byZone.get(key) ?? [];
@@ -78,17 +102,33 @@ export async function getZoneById(id: string) {
 		if (!zone) throw new Error("Zone not found");
 
 		const specRows = await tx
-			.select({ spec: specs, cloud_provider: cloudIdentities.provider })
+			.select({
+				spec: specs,
+				cloud_provider: cloudIdentities.provider,
+				env_id: specEnvironments.id,
+				env_name: specEnvironments.name,
+				env_status: specEnvironments.status,
+			})
 			.from(specs)
 			.leftJoin(
 				cloudIdentities,
 				eq(specs.cloud_identity_id, cloudIdentities.id),
+			)
+			.leftJoin(
+				specEnvironments,
+				and(
+					eq(specEnvironments.spec_id, specs.id),
+					eq(specEnvironments.is_default, true),
+				),
 			)
 			.where(eq(specs.zone_id, id));
 
 		const specList: SpecWithProvider[] = specRows.map((r) => ({
 			...r.spec,
 			cloud_provider: r.cloud_provider ?? null,
+			environment_stage: r.env_name ?? "development",
+			status: r.env_status ?? "DRAFT",
+			default_environment_id: r.env_id ?? null,
 		}));
 
 		return { zone: { ...zone, specs: specList } };
