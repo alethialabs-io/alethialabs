@@ -113,10 +113,10 @@ export function OrgSwitcher() {
 							<Button
 								variant="ghost"
 								onClick={startCreate}
-								className="h-auto w-full justify-start gap-2 px-2 py-2 text-left"
+								className="h-auto w-full justify-start gap-2 whitespace-normal px-2 py-2 text-left"
 							>
 								<Plus className="h-4 w-4 shrink-0 text-muted-foreground" />
-								<span className="flex flex-col">
+								<span className="flex min-w-0 flex-col">
 									<span className="text-sm font-medium">Create organization</span>
 									<span className="text-xs text-muted-foreground">
 										Collaborate with others in a shared workspace

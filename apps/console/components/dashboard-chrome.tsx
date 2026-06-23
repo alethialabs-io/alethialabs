@@ -30,6 +30,7 @@ import { SidebarZones } from "@/components/sidebar-zones";
 import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { ZoneSwitcher } from "@/components/zone-switcher";
+import { SpecSwitcher } from "@/components/spec-switcher";
 import { EnvSwitcher } from "@/components/env-switcher";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref, orgHref } from "@/lib/routing";
@@ -115,6 +116,7 @@ export function DashboardChrome({
 						{/* Org → zone → env switchers, then the breadcrumb trail. */}
 						<OrgSwitcher />
 						<ZoneSwitcher />
+						<SpecSwitcher />
 						<EnvSwitcher />
 						<HeaderBreadcrumbs />
 					</div>
