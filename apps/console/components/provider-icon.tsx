@@ -14,13 +14,25 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
 	aws: "AWS",
 	gcp: "GCP",
 	azure: "Azure",
+	alibaba: "Alibaba Cloud",
+	digitalocean: "DigitalOcean",
+	hetzner: "Hetzner",
+	civo: "Civo",
 	github: "GitHub",
 	gitlab: "GitLab",
 	bitbucket: "Bitbucket",
 	google: "Google",
 };
 
-const CLOUD_PROVIDERS: Set<string> = new Set(["aws", "gcp", "azure"]);
+const CLOUD_PROVIDERS: Set<string> = new Set([
+	"aws",
+	"gcp",
+	"azure",
+	"alibaba",
+	"digitalocean",
+	"hetzner",
+	"civo",
+]);
 const GIT_PROVIDERS: Set<string> = new Set(["github", "gitlab", "bitbucket"]);
 
 function cloudIconPath(slug: string, size: number): string {
