@@ -44,7 +44,7 @@ locals {
   gcp_default_labels = {
     "environment" = var.environment
     "service"     = var.project_name
-    "managed-by"  = "terraform"
+    "managed-by"  = "opentofu"
   }
 
   # Naming conventions

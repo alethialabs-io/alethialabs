@@ -43,7 +43,7 @@ resource "google_pubsub_topic" "this" {
 
   labels = merge(var.labels, {
     environment = var.environment
-    managed-by  = "terraform"
+    managed-by  = "opentofu"
     topic       = each.key
   })
 }
@@ -69,7 +69,7 @@ resource "google_pubsub_subscription" "this" {
 
   labels = merge(var.labels, {
     environment  = var.environment
-    managed-by   = "terraform"
+    managed-by   = "opentofu"
     topic        = each.value.topic_key
     subscription = each.value.subscription_name
   })

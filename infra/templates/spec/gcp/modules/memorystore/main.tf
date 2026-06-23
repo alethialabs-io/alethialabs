@@ -40,7 +40,7 @@ resource "google_redis_instance" "this" {
 
   labels = merge(var.labels, {
     environment = var.environment
-    managed-by  = "terraform"
+    managed-by  = "opentofu"
   })
 
   lifecycle {

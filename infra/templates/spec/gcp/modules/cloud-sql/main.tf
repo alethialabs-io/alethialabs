@@ -118,7 +118,7 @@ resource "google_sql_database_instance" "this" {
 
     user_labels = merge(var.labels, {
       environment = var.environment
-      managed-by  = "terraform"
+      managed-by  = "opentofu"
     })
   }
 }
@@ -160,7 +160,7 @@ resource "google_secret_manager_secret" "db_credentials" {
 
   labels = merge(var.labels, {
     environment = var.environment
-    managed-by  = "terraform"
+    managed-by  = "opentofu"
   })
 
   replication {

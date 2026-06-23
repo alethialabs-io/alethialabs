@@ -11,7 +11,7 @@ Use this module by adding a `module` configuration block, setting the `source` p
 ```hcl
 module "local_module_name" {
     
-  source  = "git::git@gitlab.itgix.com:rnd/app-platform/iac-modules/aws-elasticache-redis"
+  source  = "git::git@gitlab.alethia.com:rnd/app-platform/iac-modules/aws-elasticache-redis"
   version = "<latest_version>" # e.g "1.0.1"
 
   aws_region                 = var.aws_region
