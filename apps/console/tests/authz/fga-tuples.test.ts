@@ -64,7 +64,14 @@ describe("expandGrant (role → permission tuples)", () => {
 			{ ...base, effect: "allow", resourceType: "org", resourceId: null },
 			viewerKeys,
 		);
-		expect(tuples.every((t) => t.relation.endsWith("_view") || t.relation.endsWith("_view_audit"))).toBe(true);
+		expect(
+			tuples.every(
+				(t) =>
+					t.relation.endsWith("_view") ||
+					t.relation.endsWith("_view_audit") ||
+					t.relation.endsWith("_view_alerts"),
+			),
+		).toBe(true);
 	});
 
 	it("a DENY grant writes deny_ relations (the exclusion)", () => {

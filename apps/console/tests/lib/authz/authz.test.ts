@@ -83,7 +83,10 @@ describe("built-in role templates", () => {
 	it("viewer is read-only", () => {
 		const viewer = BUILT_IN_ROLES.viewer;
 		if (viewer === "*") throw new Error("viewer should be an explicit set");
-		expect(viewer.every((k) => k.endsWith(":view"))).toBe(true);
+		// Read-only = every action is a `view*` action (view, view_alerts).
+		expect(viewer.every((k) => (k.split(":")[1] ?? "").startsWith("view"))).toBe(
+			true,
+		);
 	});
 
 	it("has a stable UUID per built-in role", () => {

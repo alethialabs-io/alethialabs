@@ -89,6 +89,26 @@ export interface Entitlements {
 		 */
 		includedRunnerMinutes: number;
 	};
+	/**
+	 * AI entitlements (repo-scanner + agent + Ask AI). All AI spends **AI credits** from
+	 * one budget (a scan is heavy, a message is light). Two fixed windows scaled by the
+	 * plan's multiplier `tier`: a short **window** (burn-it-all-then-wait) and a **weekly**
+	 * cap. Burn freely until empty, then upgrade or buy top-up credits (NO silent overage).
+	 * Numbers are never shown to users — only a usage bar + the multiplier tier. Enforced
+	 * only when hosted billing is configured; self-host with a BYO gateway key is unlimited
+	 * (the operator pays their own model tokens — the open-core deal).
+	 */
+	ai: {
+		enabled: boolean;
+		/** Display multiplier tier — never raw numbers (trial / standard / 5× / 20×). */
+		tier: "trial" | "standard" | "plus" | "max";
+		/** Included credits per short window. */
+		windowCredits: number;
+		/** Length of the short window, hours. */
+		windowHours: number;
+		/** Included credits per 7-day week (the headline cap). */
+		weeklyCredits: number;
+	};
 }
 
 /** Thrown by enforce() on denial; mapped to 403 at route/action boundaries. */

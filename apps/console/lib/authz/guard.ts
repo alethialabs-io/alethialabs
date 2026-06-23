@@ -4,6 +4,7 @@
 import { getOwnerScope } from "@/lib/auth/owner";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
+import { getInjectedActor } from "@/lib/authz/actor-context";
 import type { Action, Resource } from "@/lib/authz/registry";
 import { type Actor, ForbiddenError, type ResourceRef } from "@/lib/authz/types";
 import { verifyCliToken } from "@/lib/cli/auth";
@@ -11,8 +12,13 @@ import { verifyCliToken } from "@/lib/cli/auth";
 /**
  * Resolves the verified caller into an Actor (identity → active tenancy scope).
  * Use for list views, which then call getPdp().listAccessible(...) for the id-set.
+ *
+ * An actor bound via runWithActor() (the MCP server's token path) takes precedence
+ * over the session — already PDP-scoped, so no re-resolution is needed.
  */
 export async function currentActor(): Promise<Actor> {
+	const injected = getInjectedActor();
+	if (injected) return injected;
 	const { userId, activeOrgId } = await getOwnerScope();
 	return getActiveScope(userId, activeOrgId);
 }

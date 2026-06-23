@@ -564,7 +564,7 @@ END $$;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['zones', 'specs', 'jobs', 'agent_threads']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['zones', 'specs', 'jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant']) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(

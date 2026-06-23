@@ -5,6 +5,7 @@
 // PostgresRbacPDP and the enterprise OpenFgaPdp), so the access log is engine-agnostic
 // and a single ForbiddenError class flows to the call-site guards.
 
+import { emitActionEvent } from "@/lib/alerts/emit";
 import { getServiceDb } from "@/lib/db";
 import { authzAuditLog } from "@/lib/db/schema";
 import type { Action } from "@/lib/authz/registry";
@@ -60,7 +61,11 @@ export function enforceDecision(
 ): void {
 	if (!decision.allowed) {
 		writeAuthzAudit(actor, action, resource, false, decision.reason);
+		// Universal action seam: every PDP decision is alertable by config. A cached
+		// no-op unless the org has a rule whose pattern matches this event key.
+		emitActionEvent(actor, action, resource, false);
 		throw new ForbiddenError(action, resource, decision.reason);
 	}
 	if (SENSITIVE.has(action)) writeAuthzAudit(actor, action, resource, true);
+	emitActionEvent(actor, action, resource, true);
 }
