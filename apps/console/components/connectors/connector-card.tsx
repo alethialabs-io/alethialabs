@@ -4,13 +4,20 @@
 
 
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
+import type { CredentialScope } from "@/lib/db/schema/enums";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
+import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { cn } from "@/lib/utils";
-import { Loader2, RefreshCw, Unlink } from "lucide-react";
-import Image from "next/image";
+import { Loader2, Lock, MoreVertical, RefreshCw, Unlink, Users } from "lucide-react";
 
 const AUTH_METHOD_LABELS: Record<string, string> = {
 	oauth: "OAuth",
@@ -25,6 +32,8 @@ interface ConnectorCardProps {
 	onClick: () => void;
 	onConnect: () => void;
 	onDisconnect: () => void;
+	/** Share with the org / pull back to personal (cloud + api_key only). */
+	onShare?: (target: CredentialScope) => void;
 	isConnecting?: boolean;
 }
 
@@ -33,6 +42,7 @@ export function ConnectorCard({
 	onClick,
 	onConnect,
 	onDisconnect,
+	onShare,
 	isConnecting,
 }: ConnectorCardProps) {
 	const isComingSoon = integration.status === "coming_soon";
@@ -41,6 +51,9 @@ export function ConnectorCard({
 	const needsReconnection =
 		integration.token_health === "expired" ||
 		integration.token_health === "refresh_failed";
+	// Git OAuth tokens are personal; cloud + api_key credentials can be org-shared.
+	const canShare = isConnected && !isGit && !isComingSoon && Boolean(onShare);
+	const isShared = integration.scope === "org";
 
 	return (
 		<div
@@ -56,12 +69,10 @@ export function ConnectorCard({
 				{isGit ? (
 					<GitProviderIcon provider={integration.slug} size={24} />
 				) : (
-					<Image
+					<ConnectorIcon
 						src={integration.icon_url}
-						alt={integration.name}
-						width={28}
-						height={28}
-						className="object-contain"
+						name={integration.name}
+						size={28}
 					/>
 				)}
 			</div>
@@ -76,6 +87,15 @@ export function ConnectorCard({
 					)}
 					{isConnected && !needsReconnection && (
 						<StatusBadge status="connected" label="Connected" />
+					)}
+					{isConnected && isShared && (
+						<Badge
+							variant="outline"
+							className="text-[10px] py-0 text-muted-foreground border-border/50"
+						>
+							<Users className="w-2.5 h-2.5 mr-1" />
+							Shared
+						</Badge>
 					)}
 					{isComingSoon && (
 						<Badge
@@ -169,6 +189,43 @@ export function ConnectorCard({
 						)}
 						Connect
 					</Button>
+				)}
+				{canShare && (
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<Button
+								variant="ghost"
+								size="sm"
+								className="h-8 w-8 p-0 text-muted-foreground"
+								onClick={(e) => e.stopPropagation()}
+							>
+								<MoreVertical className="h-4 w-4" />
+							</Button>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end">
+							{isShared ? (
+								<DropdownMenuItem
+									onClick={(e) => {
+										e.stopPropagation();
+										onShare?.("personal");
+									}}
+								>
+									<Lock className="h-3.5 w-3.5 mr-2" />
+									Make personal
+								</DropdownMenuItem>
+							) : (
+								<DropdownMenuItem
+									onClick={(e) => {
+										e.stopPropagation();
+										onShare?.("org");
+									}}
+								>
+									<Users className="h-3.5 w-3.5 mr-2" />
+									Share with org
+								</DropdownMenuItem>
+							)}
+						</DropdownMenuContent>
+					</DropdownMenu>
 				)}
 			</div>
 		</div>

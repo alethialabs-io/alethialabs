@@ -15,11 +15,20 @@ import {
 	disconnectGcpIdentity,
 	saveGcpIdentity,
 } from "@/app/(private)/dashboard/providers/gcp-actions";
+import {
+	disconnectExtraCloud,
+	saveAlibaba,
+	saveSelfManagedTokenCloud,
+	saveTokenCloud,
+} from "@/app/(private)/dashboard/providers/extra-cloud-actions";
 import { deleteProviderToken } from "@/app/server/actions/identities";
 import {
 	deleteConnectorCredential,
+	setCloudIdentityScope,
+	setConnectorCredentialScope,
 	type ConnectorWithConnection,
 } from "@/app/server/actions/connectors";
+import type { CredentialScope } from "@/lib/db/schema/enums";
 import { ConnectorDetailSheet } from "@/components/connectors/connector-detail-sheet";
 import { ConnectorsList } from "@/components/connectors/connectors-list";
 import {
@@ -30,6 +39,10 @@ import { ApiKeyConnection } from "@/components/connector/api-key-connection";
 import { AwsConnection } from "@/components/connector/aws-connection";
 import { AzureConnection } from "@/components/connector/azure-connection";
 import { GcpConnection } from "@/components/connector/gcp-connection";
+import {
+	AlibabaConnection,
+	TokenCloudConnection,
+} from "@/components/connector/extra-cloud-connection";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import {
 	AlertDialog,
@@ -61,13 +74,44 @@ interface ConnectorsPageProps {
 	awsSetup: { externalId: string; identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
 	azureSetup: { identityId: string } | null;
+	extraSetup?: Record<string, { identityId: string; externalId?: string }>;
 }
+
+/** Clouds connected by a scoped API token (no role-federation). */
+const TOKEN_CLOUDS = ["digitalocean", "hetzner", "civo"] as const;
+type TokenCloud = (typeof TOKEN_CLOUDS)[number];
+const EXTRA_CLOUDS = [...TOKEN_CLOUDS, "alibaba"] as const;
+
+const TOKEN_CLOUD_META: Record<
+	TokenCloud,
+	{ name: string; docsUrl: string; tokenHelp: string; envVar: string }
+> = {
+	digitalocean: {
+		name: "DigitalOcean",
+		docsUrl: "https://cloud.digitalocean.com/account/api/tokens",
+		tokenHelp: "Create a Personal Access Token with read + write scopes.",
+		envVar: "DIGITALOCEAN_ACCESS_TOKEN",
+	},
+	hetzner: {
+		name: "Hetzner Cloud",
+		docsUrl: "https://console.hetzner.cloud/",
+		tokenHelp: "Create a project-scoped API token (Security → API Tokens).",
+		envVar: "HCLOUD_TOKEN",
+	},
+	civo: {
+		name: "Civo",
+		docsUrl: "https://dashboard.civo.com/security",
+		tokenHelp: "Copy your API key from the Security page.",
+		envVar: "CIVO_TOKEN",
+	},
+};
 
 export function ConnectorsPage({
 	integrations,
 	awsSetup,
 	gcpSetup,
 	azureSetup,
+	extraSetup,
 }: ConnectorsPageProps) {
 	const router = useRouter();
 	const [selectedCategory, setSelectedCategory] =
@@ -79,6 +123,7 @@ export function ConnectorsPage({
 	const [awsSheetOpen, setAwsSheetOpen] = useState(false);
 	const [gcpSheetOpen, setGcpSheetOpen] = useState(false);
 	const [azureSheetOpen, setAzureSheetOpen] = useState(false);
+	const [extraCloudSlug, setExtraCloudSlug] = useState<string | null>(null);
 	const [apiKeySlug, setApiKeySlug] = useState<string | null>(null);
 	const [disconnectTarget, setDisconnectTarget] =
 		useState<ConnectorWithConnection | null>(null);
@@ -144,6 +189,8 @@ export function ConnectorsPage({
 			setGcpSheetOpen(true);
 		} else if (integration.slug === "azure") {
 			setAzureSheetOpen(true);
+		} else if ((EXTRA_CLOUDS as readonly string[]).includes(integration.slug)) {
+			setExtraCloudSlug(integration.slug);
 		} else if (integration.auth_method === "api_key") {
 			setApiKeySlug(integration.slug);
 		}
@@ -153,6 +200,33 @@ export function ConnectorsPage({
 	const handleDisconnect = (integration: ConnectorWithConnection) => {
 		setDisconnectTarget(integration);
 		setDetailOpen(false);
+	};
+
+	/** Share a cloud / api_key credential with the org, or pull it back to personal. */
+	const handleShare = async (
+		integration: ConnectorWithConnection,
+		target: CredentialScope,
+	) => {
+		try {
+			const result =
+				integration.category === "cloud"
+					? await setCloudIdentityScope(
+							integration.connection_details?.cloud_identity_id ?? "",
+							target,
+						)
+					: await setConnectorCredentialScope(integration.slug, target);
+			if (!result.ok) throw new Error(result.error);
+			toast.success(
+				target === "org"
+					? `Shared ${integration.name} with your org`
+					: `${integration.name} is now personal`,
+			);
+			router.refresh();
+		} catch (err) {
+			toast.error(
+				err instanceof Error ? err.message : "Failed to change sharing",
+			);
+		}
 	};
 
 	const confirmDisconnect = async () => {
@@ -188,6 +262,15 @@ export function ConnectorsPage({
 				if (!cloudIdentityId) throw new Error("Missing identity ID");
 				await disconnectAzureIdentity(cloudIdentityId);
 				toast.success("Azure subscription disconnected.");
+			} else if ((EXTRA_CLOUDS as readonly string[]).includes(disconnectTarget.slug)) {
+				const cloudIdentityId =
+					disconnectTarget.connection_details?.cloud_identity_id;
+				if (!cloudIdentityId) throw new Error("Missing identity ID");
+				await disconnectExtraCloud(
+					cloudIdentityId,
+					disconnectTarget.slug as (typeof EXTRA_CLOUDS)[number],
+				);
+				toast.success(`${disconnectTarget.name} disconnected.`);
 			} else if (disconnectTarget.auth_method === "api_key") {
 				const result = await deleteConnectorCredential(
 					disconnectTarget.slug,
@@ -233,6 +316,24 @@ export function ConnectorsPage({
 		);
 	};
 
+	const handleTokenCloudConnect = (provider: TokenCloud) => async (token: string) => {
+		const setup = extraSetup?.[provider];
+		if (!setup) throw new Error(`${provider} setup not initialized`);
+		return await saveTokenCloud(setup.identityId, provider, token);
+	};
+
+	const handleSelfManagedConnect = (provider: TokenCloud) => async () => {
+		const setup = extraSetup?.[provider];
+		if (!setup) throw new Error(`${provider} setup not initialized`);
+		return await saveSelfManagedTokenCloud(setup.identityId, provider);
+	};
+
+	const handleAlibabaConnect = async (roleArn: string) => {
+		const setup = extraSetup?.alibaba;
+		if (!setup) throw new Error("Alibaba setup not initialized");
+		return await saveAlibaba(setup.identityId, roleArn);
+	};
+
 	const openDetail = (integration: ConnectorWithConnection) => {
 		setSelectedIntegration(integration);
 		setDetailOpen(true);
@@ -263,6 +364,7 @@ export function ConnectorsPage({
 						onCardClick={openDetail}
 						onConnect={handleConnect}
 						onDisconnect={handleDisconnect}
+						onShare={handleShare}
 						connectingSlug={connectingSlug}
 					/>
 				</div>
@@ -363,6 +465,65 @@ export function ConnectorsPage({
 							<AzureConnection onComplete={handleAzureConnect} />
 						)}
 					</div>
+				</SheetContent>
+			</Sheet>
+
+			{/* Extra-cloud Connection Sheet (DigitalOcean / Hetzner / Civo token, Alibaba RAM role) */}
+			<Sheet
+				open={!!extraCloudSlug}
+				onOpenChange={(open) => {
+					if (!open) {
+						setExtraCloudSlug(null);
+						router.refresh();
+					}
+				}}
+			>
+				<SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto p-0">
+					{extraCloudSlug === "alibaba" ? (
+						<>
+							<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
+								<SheetTitle>Connect Alibaba Cloud</SheetTitle>
+								<SheetDescription>
+									Connect via a RAM role — Alethia stores no Alibaba credentials.
+								</SheetDescription>
+							</SheetHeader>
+							<div className="px-6 py-6">
+								{extraSetup?.alibaba && (
+									<AlibabaConnection
+										externalId={extraSetup.alibaba.externalId}
+										onSave={handleAlibabaConnect}
+									/>
+								)}
+							</div>
+						</>
+					) : extraCloudSlug ? (
+						(() => {
+							const slug = extraCloudSlug as TokenCloud;
+							const m = TOKEN_CLOUD_META[slug];
+							return (
+								<>
+									<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
+										<SheetTitle>Connect {m.name}</SheetTitle>
+										<SheetDescription>
+											Connect with a scoped API token (encrypted at rest).
+										</SheetDescription>
+									</SheetHeader>
+									<div className="px-6 py-6">
+										{extraSetup?.[slug] && (
+											<TokenCloudConnection
+												providerName={m.name}
+												tokenHelp={m.tokenHelp}
+												docsUrl={m.docsUrl}
+												envVar={m.envVar}
+												onSave={handleTokenCloudConnect(slug)}
+												onSaveSelfManaged={handleSelfManagedConnect(slug)}
+											/>
+										)}
+									</div>
+								</>
+							);
+						})()
+					) : null}
 				</SheetContent>
 			</Sheet>
 

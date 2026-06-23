@@ -23,6 +23,13 @@ interface CloudIdentitySelectorProps {
 	identities: CloudIdentityOption[];
 	value: string | null;
 	onChange: (id: string, provider: CloudProviderSlug) => void;
+	/**
+	 * When true (default, the form's behavior) selecting an identity updates the
+	 * global cloud-provider store (loads cached resources, drives provider-keyed
+	 * defaults). Set false for node-scoped use on the canvas, where each node owns
+	 * its provider and must not clobber the shared/global selection.
+	 */
+	manageGlobalStore?: boolean;
 }
 
 /** Renders a dropdown of all verified cloud identities across providers. */
@@ -30,6 +37,7 @@ export function CloudIdentitySelector({
 	identities,
 	value,
 	onChange,
+	manageGlobalStore = true,
 }: CloudIdentitySelectorProps) {
 	const { setIdentity, isLoading: loading } = useCloudProviderStore();
 	const onChangeRef = useRef(onChange);
@@ -38,9 +46,9 @@ export function CloudIdentitySelector({
 	const selectIdentity = useCallback(
 		async (id: string, provider: CloudProviderSlug) => {
 			onChangeRef.current(id, provider);
-			await setIdentity(id, provider);
+			if (manageGlobalStore) await setIdentity(id, provider);
 		},
-		[setIdentity],
+		[setIdentity, manageGlobalStore],
 	);
 
 	useEffect(() => {

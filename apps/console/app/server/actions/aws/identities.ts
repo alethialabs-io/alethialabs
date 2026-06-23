@@ -3,9 +3,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, eq } from "drizzle-orm";
-import { getOwner } from "@/lib/auth/owner";
-import { withOwnerScope } from "@/lib/db";
+import { currentActor } from "@/lib/authz/guard";
+import { type Scope, withScope } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
+
+/** Resolves the active tenancy scope, or null when there is no session. */
+async function activeScope(): Promise<Scope | null> {
+	try {
+		const actor = await currentActor();
+		return { ownerId: actor.userId, orgId: actor.orgId };
+	} catch {
+		return null;
+	}
+}
 
 export type CloudIdentityOption = {
 	id: string;
@@ -42,10 +52,11 @@ const identityColumns = {
 export async function getVerifiedCloudIdentities(): Promise<
 	CloudIdentityOption[]
 > {
-	const userId = await getOwner();
-	if (!userId) return [];
+	const scope = await activeScope();
+	if (!scope) return [];
 
-	const rows = await withOwnerScope(userId, (tx) =>
+	// RLS returns the member's personal identities + the org's shared ones.
+	const rows = await withScope(scope, (tx) =>
 		tx
 			.select(identityColumns)
 			.from(cloudIdentities)
@@ -58,10 +69,10 @@ export async function getVerifiedCloudIdentities(): Promise<
 export async function getVerifiedCloudIdentitiesByProvider(
 	provider: "aws" | "gcp" | "azure",
 ): Promise<CloudIdentityOption[]> {
-	const userId = await getOwner();
-	if (!userId) return [];
+	const scope = await activeScope();
+	if (!scope) return [];
 
-	const rows = await withOwnerScope(userId, (tx) =>
+	const rows = await withScope(scope, (tx) =>
 		tx
 			.select(identityColumns)
 			.from(cloudIdentities)
