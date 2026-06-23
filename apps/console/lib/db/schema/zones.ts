@@ -22,12 +22,17 @@ export const zones = pgTable(
 		// (a trigger backfills it). The ee/ Teams build sets a real organization id.
 		org_id: uuid(),
 		name: text().notNull(),
+		// URL slug (C2), unique per org. Nullable at the column level so it can be
+		// added to existing rows + backfilled (migration 0023); the app always sets it
+		// on create. Adding the UNIQUE on an all-NULL column is safe (NULLs are distinct).
+		slug: text(),
 		description: text(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
 	(t) => [
 		unique("zones_user_id_name_key").on(t.user_id, t.name),
+		unique("zones_org_id_slug_key").on(t.org_id, t.slug),
 		index("idx_zones_user").on(t.user_id),
 		index("idx_zones_org").on(t.org_id),
 	],

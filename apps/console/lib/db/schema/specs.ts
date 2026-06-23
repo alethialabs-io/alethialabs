@@ -7,6 +7,7 @@ import {
 	pgTable,
 	text,
 	timestamp,
+	unique,
 	uuid,
 } from "drizzle-orm/pg-core";
 import { cloudIdentities } from "./identities";
@@ -29,6 +30,9 @@ export const specs = pgTable(
 			onDelete: "set null",
 		}),
 		project_name: text().notNull(),
+		// URL slug (C2), unique per zone. Nullable for the additive add + backfill
+		// (migration 0023); the app always sets it on create.
+		slug: text(),
 		region: text().notNull(),
 		iac_version: text().notNull(),
 		estimated_monthly_cost: numeric({ precision: 12, scale: 2, mode: "number" }),
@@ -36,6 +40,7 @@ export const specs = pgTable(
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
 	(t) => [
+		unique("specs_zone_id_slug_key").on(t.zone_id, t.slug),
 		index("idx_specs_user").on(t.user_id),
 		index("idx_specs_org").on(t.org_id),
 		index("idx_specs_zone").on(t.zone_id),

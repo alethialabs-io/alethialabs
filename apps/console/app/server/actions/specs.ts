@@ -36,7 +36,8 @@ import {
 } from "@/lib/cloud-providers";
 import { notifyScaler } from "@/lib/scaler";
 import type { SpecFormData } from "@/lib/validations/spec-form.schema";
-import { and, desc, eq } from "drizzle-orm";
+import { pickFreeSlug, slugify } from "@/lib/routing";
+import { and, desc, eq, isNull } from "drizzle-orm";
 
 // ============================================================
 // Types — form-facing shapes mapped to the spec/zone DB columns below.
@@ -98,9 +99,24 @@ export async function createSpec(data: CreateSpecInput) {
 		// M1: environment_stage is no longer a spec column — it seeds the default env.
 		const { zone_id, environment_stage, ...specFields } = data.spec;
 
+		// C2: derive a unique-per-zone URL slug from the project name.
+		const zoneScope = zone_id ?? null;
+		const existing = await tx
+			.select({ slug: specs.slug })
+			.from(specs)
+			.where(
+				zoneScope === null
+					? isNull(specs.zone_id)
+					: eq(specs.zone_id, zoneScope),
+			);
+		const slug = pickFreeSlug(
+			slugify(specFields.project_name) || "spec",
+			existing.map((r) => r.slug),
+		);
+
 		const [spec] = await tx
 			.insert(specs)
-			.values({ ...specFields, zone_id: zone_id ?? null, user_id: owner })
+			.values({ ...specFields, slug, zone_id: zone_id ?? null, user_id: owner })
 			.returning();
 
 		if (!spec) throw new Error("Failed to create spec");

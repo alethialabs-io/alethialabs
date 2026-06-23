@@ -8,6 +8,7 @@ import { getActiveScope } from "@/lib/auth/scope";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import type { Entitlements } from "@/lib/authz/types";
 import { isBillingActive } from "@/lib/billing/plan";
+import { PERSONAL_ORG_SLUG } from "@/lib/routing";
 import { getServiceDb } from "@/lib/db";
 import type { BillingPlan } from "@/lib/db/schema/enums";
 import {
@@ -20,6 +21,8 @@ import {
 export interface WorkspaceOrg {
 	id: string;
 	name: string;
+	/** URL slug for C2 routing (`/{slug}/…`). Personal scope uses the reserved `~`. */
+	slug: string;
 	role: string;
 	/** Effective billing plan — the org's plan while its subscription is live, else
 	 * `community`. Drives the plan badge in the switcher. */
@@ -49,6 +52,7 @@ export async function getWorkspaceContext(): Promise<WorkspaceContext> {
 		.select({
 			id: organization.id,
 			name: organization.name,
+			slug: organization.slug,
 			role: member.role,
 			plan: organizationBilling.plan,
 			status: organizationBilling.status,
@@ -66,12 +70,22 @@ export async function getWorkspaceContext(): Promise<WorkspaceContext> {
 			? rows.map((r) => ({
 					id: r.id,
 					name: r.name,
+					// Fall back to the reserved personal slug if an org somehow has none.
+					slug: r.slug ?? PERSONAL_ORG_SLUG,
 					role: r.role,
 					// Effective plan: the paid plan only while the subscription is live.
 					plan:
 						r.plan && r.status && isBillingActive(r.status) ? r.plan : "community",
 				}))
-			: [{ id: userId, name: "Personal", role: "owner", plan: "community" }];
+			: [
+					{
+						id: userId,
+						name: "Personal",
+						slug: PERSONAL_ORG_SLUG,
+						role: "owner",
+						plan: "community",
+					},
+				];
 
 	return { activeOrgId: actor.orgId, organizations, entitlements };
 }

@@ -15,6 +15,7 @@ import {
 	zones,
 } from "@/lib/db/schema";
 import { and, desc, eq } from "drizzle-orm";
+import { pickFreeSlug, slugify } from "@/lib/routing";
 
 // M1: the environment identity (name) + provisioning status moved off specs into
 // spec_environments. These derived fields surface the spec's DEFAULT environment so
@@ -141,9 +142,18 @@ export async function createZone(
 	const actor = await authorize("create", { type: "zone" });
 	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
+		// C2: derive a unique-per-org URL slug from the name.
+		const existing = await tx
+			.select({ slug: zones.slug })
+			.from(zones)
+			.where(eq(zones.org_id, body.org_id ?? owner));
+		const slug = pickFreeSlug(
+			slugify(body.name) || "zone",
+			existing.map((r) => r.slug),
+		);
 		const [zone] = await tx
 			.insert(zones)
-			.values({ ...body, user_id: owner })
+			.values({ ...body, slug, user_id: owner })
 			.returning();
 		// Authz hierarchy edge: zone → org (community org_id == owner). Lets an
 		// org/zone-scoped grant flow down to this zone's specs.
