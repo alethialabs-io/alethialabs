@@ -8,6 +8,7 @@ import {
 	type WorkspaceOrg,
 } from "@/app/server/actions/workspace";
 import type { Entitlements } from "@/lib/authz/types";
+import { PERSONAL_ORG_SLUG } from "@/lib/routing";
 
 interface WorkspaceStore {
 	/** The org the session is scoped to (drives the PDP + RLS); null until loaded. */
@@ -47,3 +48,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
 		set({ activeOrgId: orgId });
 	},
 }));
+
+/**
+ * The active organization's URL slug (for building `/{org}/…` drilldown hrefs).
+ * Falls back to the reserved personal `~` segment while loading or in personal scope.
+ */
+export function useActiveOrgSlug(): string {
+	return useWorkspaceStore(
+		(s) =>
+			s.organizations.find((o) => o.id === s.activeOrgId)?.slug ??
+			PERSONAL_ORG_SLUG,
+	);
+}

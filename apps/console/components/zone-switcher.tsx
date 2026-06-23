@@ -21,6 +21,8 @@ import {
 } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { useZonesStore } from "@/lib/stores/use-zones-store";
+import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+import { zoneHref } from "@/lib/routing";
 
 /**
  * Header zone (workspace) switcher — the Vercel "project" combobox sitting next to
@@ -32,6 +34,7 @@ import { useZonesStore } from "@/lib/stores/use-zones-store";
 export function ZoneSwitcher() {
 	const router = useRouter();
 	const pathname = usePathname();
+	const orgSlug = useActiveOrgSlug();
 	const [open, setOpen] = useState(false);
 	const { zones, fetchZones } = useZonesStore();
 
@@ -39,13 +42,19 @@ export function ZoneSwitcher() {
 		fetchZones();
 	}, [fetchZones]);
 
-	// Active zone = the one whose id prefixes the current dashboard path.
+	// Active zone = the slug in the drilldown path `/{org}/{zone}/…` (or the legacy
+	// `/dashboard/zones/{id}` path during the transition).
+	const segs = pathname.split("/").filter(Boolean);
 	const active =
-		zones.find((z) => pathname.startsWith(`/dashboard/zones/${z.id}`)) ?? null;
+		zones.find(
+			(z) =>
+				(segs[0] !== "dashboard" && z.slug && z.slug === segs[1]) ||
+				pathname.startsWith(`/dashboard/zones/${z.id}`),
+		) ?? null;
 
-	const handleSelect = (zoneId: string) => {
+	const handleSelect = (zoneSlug: string | null, zoneId: string) => {
 		setOpen(false);
-		router.push(`/dashboard/zones/${zoneId}`);
+		router.push(zoneSlug ? zoneHref(orgSlug, zoneSlug) : `/dashboard/zones/${zoneId}`);
 	};
 
 	const startCreate = () => {
@@ -87,7 +96,7 @@ export function ZoneSwitcher() {
 									<CommandItem
 										key={z.id}
 										value={z.name}
-										onSelect={() => handleSelect(z.id)}
+										onSelect={() => handleSelect(z.slug, z.id)}
 										className="gap-2"
 									>
 										<Box className="h-4 w-4 text-muted-foreground" />

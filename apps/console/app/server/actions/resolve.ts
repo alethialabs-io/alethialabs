@@ -113,3 +113,45 @@ export async function resolveEnvironmentId(
 		return env.id;
 	});
 }
+
+export interface SwitcherEnv {
+	id: string;
+	name: string;
+	stage: string;
+	is_default: boolean;
+}
+
+/**
+ * Lists a spec's environments resolved by zone+spec slug (for the EnvSwitcher).
+ * Returns [] if the slugs don't resolve in the active scope (the switcher hides).
+ */
+export async function getEnvironmentsForSlug(
+	zoneSlug: string,
+	specSlug: string,
+): Promise<SwitcherEnv[]> {
+	const { userId } = await getOwnerScope();
+	return withOwnerScope(userId, async (tx) => {
+		const [zone] = await tx
+			.select({ id: zones.id })
+			.from(zones)
+			.where(eq(zones.slug, zoneSlug))
+			.limit(1);
+		if (!zone) return [];
+		const [spec] = await tx
+			.select({ id: specs.id })
+			.from(specs)
+			.where(and(eq(specs.zone_id, zone.id), eq(specs.slug, specSlug)))
+			.limit(1);
+		if (!spec) return [];
+		return tx
+			.select({
+				id: specEnvironments.id,
+				name: specEnvironments.name,
+				stage: specEnvironments.stage,
+				is_default: specEnvironments.is_default,
+			})
+			.from(specEnvironments)
+			.where(eq(specEnvironments.spec_id, spec.id))
+			.orderBy(specEnvironments.created_at);
+	});
+}

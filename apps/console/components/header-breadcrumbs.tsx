@@ -50,6 +50,30 @@ export function HeaderBreadcrumbs() {
 	const { jobs } = useJobsStore();
 
 	const crumbs = useMemo(() => {
+		// C2 slug drilldown `/{org}/{zone}/{spec}/{env}` — resolve names from the store
+		// (the OrgSwitcher already shows the org, so the trail starts at the zone).
+		const segs = pathname.split("/").filter(Boolean);
+		if (segs.length >= 1 && segs[0] !== "dashboard") {
+			const [orgSeg, zoneSlug, specSlug, envSeg] = segs;
+			const out: Crumb[] = [];
+			const z = zones.find((v) => v.slug === zoneSlug);
+			if (zoneSlug) {
+				out.push({
+					label: z?.name ?? zoneSlug,
+					href: specSlug ? `/${orgSeg}/${zoneSlug}` : undefined,
+				});
+			}
+			if (specSlug) {
+				const sp = z?.specs.find((v) => v.slug === specSlug);
+				out.push({
+					label: sp?.project_name ?? specSlug,
+					href: envSeg ? `/${orgSeg}/${zoneSlug}/${specSlug}` : undefined,
+				});
+			}
+			if (envSeg) out.push({ label: envSeg });
+			return out;
+		}
+
 		const raw = pathname.replace(/^\/dashboard\/?/, "").split("/").filter(Boolean);
 		if (raw.length === 0) return [];
 
