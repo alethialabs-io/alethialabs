@@ -71,6 +71,12 @@ export function register(core: CoreContext): EnterpriseModule {
 						role: typeof data.role === "string" ? data.role : data.role[0],
 						token: data.id,
 					});
+					core.emitAlertEvent(data.organization.id, "system.member.invited", {
+						title: `Member invited: ${data.email}`,
+						severity: "info",
+						actor_id: data.inviter.user.id,
+						resource_type: "member",
+					});
 				},
 				// Sync org membership → PDP grants on every lifecycle event, so the PDP
 				// (which authorizes from grants, not member.role) actually grants access.
@@ -80,12 +86,26 @@ export function register(core: CoreContext): EnterpriseModule {
 					},
 					afterAddMember: async ({ organization: org, user, member }) => {
 						await core.ensureMemberGrant(org.id, user.id, member.role);
+						core.emitAlertEvent(org.id, "system.member.joined", {
+							title: `Member joined: ${user.email ?? user.id}`,
+							severity: "info",
+							actor_id: user.id,
+							resource_type: "member",
+							resource_id: user.id,
+						});
 					},
 					afterUpdateMemberRole: async ({ organization: org, user, member }) => {
 						await core.ensureMemberGrant(org.id, user.id, member.role);
 					},
 					afterRemoveMember: async ({ organization: org, user }) => {
 						await core.revokeMemberGrant(org.id, user.id);
+						core.emitAlertEvent(org.id, "system.member.removed", {
+							title: `Member removed: ${user.email ?? user.id}`,
+							severity: "warning",
+							actor_id: user.id,
+							resource_type: "member",
+							resource_id: user.id,
+						});
 					},
 					// Team membership → OpenFGA group tuples (team:T#member@user:U), so
 					// team-scoped grants reach members. Postgres resolves team_member at

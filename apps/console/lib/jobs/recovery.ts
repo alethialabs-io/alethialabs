@@ -2,7 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { sql } from "drizzle-orm";
+import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getServiceDb } from "@/lib/db";
+
+/** A runner flipped to OFFLINE by the sweep (the durable alert signal). */
+type SweptRunner = {
+	runner_id: string;
+	org_id: string | null;
+	runner_name: string;
+};
 
 // In-app replacement for the AWS-Lambda cron that requeued stale jobs. Each app
 // instance runs the interval; recover_stale_jobs() is idempotent (FOR UPDATE
@@ -32,7 +40,20 @@ export function startStaleJobRecovery(): void {
 				console.error("[job-recovery] recover_stale_jobs failed:", err);
 			});
 		void db
-			.execute(sql`select sweep_offline_runners()`)
+			.execute<SweptRunner>(sql`select * from sweep_offline_runners()`)
+			.then((rows) => {
+				// Emit a `system.runner.offline` alert per flipped runner (best-effort;
+				// the rule throttle collapses repeats if instances race).
+				for (const r of rows) {
+					if (!r.org_id) continue;
+					emitAlertEventSafe(r.org_id, "system.runner.offline", {
+						title: `Runner offline: ${r.runner_name}`,
+						severity: "warning",
+						resource_type: "runner",
+						resource_id: r.runner_id,
+					});
+				}
+			})
 			.catch((err) => {
 				console.error("[job-recovery] sweep_offline_runners failed:", err);
 			});

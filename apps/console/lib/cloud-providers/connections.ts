@@ -3,6 +3,7 @@
 
 import { randomUUID } from "crypto";
 import { and, eq, sql } from "drizzle-orm";
+import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, jobs, specs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
@@ -440,6 +441,26 @@ export async function verifyIdentity(
 			);
 	}
 
+	// Ops alert (free): a cloud identity is now verified/connected. org_id is the
+	// authoritative tenancy value on the identity row.
+	const [verified] = await db
+		.select({
+			org_id: cloudIdentities.org_id,
+			provider: cloudIdentities.provider,
+		})
+		.from(cloudIdentities)
+		.where(eq(cloudIdentities.id, identityId))
+		.limit(1);
+	if (verified?.org_id) {
+		emitAlertEventSafe(verified.org_id, "system.identity.connected", {
+			title: `Cloud identity connected: ${verified.provider}`,
+			severity: "info",
+			actor_id: userId,
+			resource_type: "cloud_identity",
+			resource_id: identityId,
+		});
+	}
+
 	return { success: true };
 }
 
@@ -469,7 +490,7 @@ export async function disconnectIdentity(
 		credentials = { external_id: identity?.credentials?.external_id };
 	}
 
-	await db
+	const [disconnected] = await db
 		.update(cloudIdentities)
 		.set({
 			name: PENDING_NAME[provider],
@@ -484,12 +505,24 @@ export async function disconnectIdentity(
 				eq(cloudIdentities.id, identityId),
 				eq(cloudIdentities.user_id, userId),
 			),
-		);
+		)
+		.returning({ org_id: cloudIdentities.org_id });
 
 	await db
 		.update(specs)
 		.set({ cloud_identity_id: null })
 		.where(eq(specs.cloud_identity_id, identityId));
+
+	// Ops alert (free): a cloud identity was revoked/disconnected.
+	if (disconnected?.org_id) {
+		emitAlertEventSafe(disconnected.org_id, "system.identity.revoked", {
+			title: `Cloud identity disconnected: ${provider}`,
+			severity: "warning",
+			actor_id: userId,
+			resource_type: "cloud_identity",
+			resource_id: identityId,
+		});
+	}
 
 	return { success: true };
 }

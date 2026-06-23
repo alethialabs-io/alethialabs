@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, eq, inArray } from "drizzle-orm";
+import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { currentActor } from "@/lib/authz/guard";
 import { PERMISSIONS } from "@/lib/authz/registry";
@@ -71,6 +72,14 @@ export async function createRole(
 			.insert(rolePermission)
 			.values(keys.map((permission_key) => ({ role_id: created.id, permission_key })));
 	}
+	emitAlertEventSafe(actor.orgId, "authz.role.create", {
+		title: `Role created: ${created.name}`,
+		severity: "info",
+		actor_id: actor.userId,
+		action: "create",
+		resource_type: "role",
+		resource_id: created.id,
+	});
 	return { id: created.id, name: created.name, permissionKeys: keys };
 }
 
@@ -107,6 +116,15 @@ export async function updateRole(
 	void getTupleSync()
 		.resyncRole(id)
 		.catch((err) => console.error("[authz] role resync failed:", err));
+
+	emitAlertEventSafe(actor.orgId, "authz.role.edit", {
+		title: `Role permissions changed: ${name}`,
+		severity: "warning",
+		actor_id: actor.userId,
+		action: "edit",
+		resource_type: "role",
+		resource_id: id,
+	});
 }
 
 export async function deleteRole(id: string): Promise<void> {
@@ -122,4 +140,12 @@ export async function deleteRole(id: string): Promise<void> {
 				eq(role.is_builtin, false),
 			),
 		);
+	emitAlertEventSafe(actor.orgId, "authz.role.delete", {
+		title: "Role deleted",
+		severity: "warning",
+		actor_id: actor.userId,
+		action: "delete",
+		resource_type: "role",
+		resource_id: id,
+	});
 }

@@ -5,6 +5,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { getMembers } from "@/app/server/actions/members";
 import { listCustomRoles } from "@/app/server/actions/roles";
+import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { currentActor } from "@/lib/authz/guard";
 import {
@@ -132,6 +133,16 @@ export async function assignGrant(input: AssignGrantInput): Promise<void> {
 			permissionKey: input.permissionKey ?? null,
 		})
 		.catch((err) => console.error("[authz] grant tuple sync failed:", err));
+
+	// Security event: an access grant was assigned (gated to advancedAlerting in emit).
+	emitAlertEventSafe(actor.orgId, "authz.grant.assign", {
+		title: `Grant assigned: ${input.effect} ${input.permissionKey ?? "role"} on ${resourceType}`,
+		severity: "warning",
+		actor_id: actor.userId,
+		action: "assign",
+		resource_type: resourceType,
+		resource_id: resourceId ?? undefined,
+	});
 }
 
 export async function revokeGrant(id: string): Promise<void> {
@@ -157,6 +168,16 @@ export async function revokeGrant(id: string): Promise<void> {
 			permissionKey: g.permission_key,
 		})
 		.catch((err) => console.error("[authz] grant tuple removal failed:", err));
+
+	// Security event: an access grant was revoked (gated to advancedAlerting in emit).
+	emitAlertEventSafe(actor.orgId, "authz.grant.revoke", {
+		title: `Grant revoked: ${g.effect} ${g.permission_key ?? "role"} on ${g.resource_type}`,
+		severity: "warning",
+		actor_id: actor.userId,
+		action: "revoke",
+		resource_type: g.resource_type,
+		resource_id: g.resource_id ?? undefined,
+	});
 }
 
 export interface AccessGrantRow {
