@@ -11,6 +11,7 @@
     "jobs",
     "runners",
     "clusters",
+    "alerts",
     "api-reference"
   ]
 }
