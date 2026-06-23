@@ -5,8 +5,37 @@
 import { eq, sql } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { withOwnerScope } from "@/lib/db";
-import { jobs } from "@/lib/db/schema";
+import { cloudIdentities, jobs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
+
+/**
+ * Returns a cloud identity's last-cached discovered resources (VPCs/subnets/zones)
+ * for read consumers like the AI assistant — so it can suggest an existing VPC or
+ * avoid CIDR clashes. PDP-gated on the identity. Never returns credentials.
+ */
+export async function getCloudIdentityResources(cloudIdentityId: string) {
+	const actor = await authorize("view", {
+		type: "cloud_identity",
+		id: cloudIdentityId,
+	});
+	return withOwnerScope(actor.userId, async (tx) => {
+		const [row] = await tx
+			.select({
+				provider: cloudIdentities.provider,
+				cached_resources: cloudIdentities.cached_resources,
+				cached_at: cloudIdentities.cached_at,
+			})
+			.from(cloudIdentities)
+			.where(eq(cloudIdentities.id, cloudIdentityId))
+			.limit(1);
+		if (!row) return { provider: null, resources: null, cachedAt: null };
+		return {
+			provider: row.provider,
+			resources: row.cached_resources ?? null,
+			cachedAt: row.cached_at,
+		};
+	});
+}
 
 /** Queues a FETCH_RESOURCES job for any cloud identity, regardless of provider. */
 export async function refreshCloudResources(cloudIdentityId: string) {

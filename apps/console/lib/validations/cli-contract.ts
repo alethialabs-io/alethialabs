@@ -132,6 +132,10 @@ export const jobWire = createSelectSchema(jobs, {
 	updated_at: iso,
 	config_snapshot: jsonObject,
 	execution_metadata: jsonObject.nullable(),
+}).omit({
+	// Internal scheduling/billing columns — stripped by cliJson, never on the CLI wire.
+	requires_self_runner: true,
+	usage_reported_at: true,
 });
 
 /** A job as returned in the list (GET /api/jobs) — adds joined display names. */

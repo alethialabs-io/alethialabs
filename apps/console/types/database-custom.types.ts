@@ -251,6 +251,37 @@ export interface ExecutionMetadata {
 		| CachedResources
 		| GcpCachedResources
 		| AzureCachedResources;
+	// PLAN jobs: the runner stores the raw OpenTofu plan JSON + Infracost breakdown
+	// here (opaque payloads parsed by lib/plan/parse-plan.ts / parse-cost.ts).
+	plan_result?: Record<string, unknown>;
+	cost_breakdown?: Record<string, unknown>;
+	// ANALYZE_REPO jobs: the runner's static repo analysis (packages/core/scanner).
+	repo_digest?: RepoDigest;
+}
+
+// One captured (truncated) file from a scanned repo. Mirrors packages/core/types RepoFile.
+export interface RepoFile {
+	path: string;
+	content: string;
+	truncated?: boolean;
+}
+
+// Deterministic static analysis of a repository (ANALYZE_REPO job). Mirrors the Go
+// `RepoDigest` (packages/core/types/repo_digest.go); fed to the model to infer a Spec.
+export interface RepoDigest {
+	repo_url: string;
+	ref?: string;
+	scanned_at: string;
+	file_count: number;
+	truncated?: boolean;
+	languages?: Record<string, number>;
+	manifests?: RepoFile[];
+	dockerfiles?: RepoFile[];
+	compose?: RepoFile[];
+	k8s_manifests?: RepoFile[];
+	ci_configs?: RepoFile[];
+	env_examples?: RepoFile[];
+	signals?: string[];
 }
 
 // ── Alerting (spec/mvp/25-alerting-notifications.md) ────────────────────────────
