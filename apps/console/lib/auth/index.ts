@@ -4,7 +4,7 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies } from "better-auth/next-js";
-import { emailOTP, genericOAuth } from "better-auth/plugins";
+import { emailOTP, genericOAuth, mcp } from "better-auth/plugins";
 import type {
 	BetterAuthOptions,
 	SocialProviders,
@@ -18,6 +18,9 @@ import {
 	account,
 	invitation,
 	member,
+	oauthAccessToken,
+	oauthApplication,
+	oauthConsent,
 	organization,
 	session,
 	ssoProvider,
@@ -93,6 +96,20 @@ const plugins: BetterAuthOptions["plugins"] = [
 			await sendSignInCodeEmail(email, otp);
 		},
 	}),
+	// OAuth 2.1 authorization server for the MCP endpoint (B7): lets remote MCP
+	// clients (Claude / claude.ai connectors) register dynamically and obtain an
+	// access token that the /api/mcp route resolves into a PDP-scoped actor. No new
+	// authority — the token's user drives getActiveScope() like any other caller.
+	mcp({
+		loginPage: "/auth/signin",
+		oidcConfig: {
+			loginPage: "/auth/signin",
+			// Shown when a client requests prompt=consent (e.g. a re-auth/scope grant);
+			// clients that omit it are issued a code directly (documented MVP posture).
+			consentPage: "/auth/oauth/consent",
+			allowDynamicClientRegistration: true,
+		},
+	}),
 ];
 if (genericOAuthConfigs.length > 0) {
 	plugins.push(genericOAuth({ config: genericOAuthConfigs }));
@@ -123,6 +140,10 @@ export const auth = betterAuth({
 			team,
 			teamMember,
 			ssoProvider,
+			// MCP OAuth authorization-server tables (mcp() plugin → OIDC provider).
+			oauthApplication,
+			oauthAccessToken,
+			oauthConsent,
 		},
 	}),
 	// UUID ids so user.id populates every `user_id uuid` column + the RLS
