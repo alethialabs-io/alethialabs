@@ -19,6 +19,8 @@ export const COMMUNITY_ENTITLEMENTS: Entitlements = {
 	auditExport: false,
 	advancedAlerting: false,
 	quotas: { maxConcurrentJobs: 2, priorityLevel: 0, includedRunnerMinutes: 200 },
+	// Free trial: a taste of AI (illustrative credits; scan ~20, message ~1 — tune later).
+	ai: { enabled: true, tier: "trial", windowCredits: 30, windowHours: 5, weeklyCredits: 100 },
 };
 
 /**
@@ -41,6 +43,8 @@ export function planEntitlements(plan: BillingPlan): Entitlements {
 					priorityLevel: 10,
 					includedRunnerMinutes: 500,
 				},
+				// AI "Standard" (×1).
+				ai: { enabled: true, tier: "standard", windowCredits: 300, windowHours: 5, weeklyCredits: 3_000 },
 			};
 		case "business":
 			return {
@@ -54,6 +58,8 @@ export function planEntitlements(plan: BillingPlan): Entitlements {
 					priorityLevel: 20,
 					includedRunnerMinutes: 5_000,
 				},
+				// AI "5×".
+				ai: { enabled: true, tier: "plus", windowCredits: 1_500, windowHours: 5, weeklyCredits: 15_000 },
 			};
 		case "enterprise":
 			return {
@@ -66,6 +72,14 @@ export function planEntitlements(plan: BillingPlan): Entitlements {
 					maxConcurrentJobs: null,
 					priorityLevel: 30,
 					includedRunnerMinutes: 20_000,
+				},
+				// AI "20×".
+				ai: {
+					enabled: true,
+					tier: "max",
+					windowCredits: 6_000,
+					windowHours: 5,
+					weeklyCredits: 60_000,
 				},
 			};
 		default:

@@ -19,6 +19,7 @@ import {
 	type PaidPlan,
 	priceIdForPlan,
 } from "@/lib/billing/config";
+import { creditPack } from "@/lib/billing/ai-credits";
 import { planMeta } from "@/lib/billing/plan-catalog";
 import { resolvePlanEntitlements } from "@/lib/billing/plan";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
@@ -341,6 +342,48 @@ export async function createSubscriptionIntent(
 		throw new Error("Stripe did not return a payment client secret.");
 	}
 	return { clientSecret, subscriptionId: sub.id };
+}
+
+/** A one-time credit-pack payment awaiting confirmation, for the embedded Payment Element. */
+export interface CreditPackIntent {
+	clientSecret: string;
+	paymentIntentId: string;
+}
+
+/**
+ * Creates a one-time PaymentIntent for an AI credit pack (a top-up beyond the plan's
+ * included usage). The embedded <PaymentForm mode="payment"> confirms it inline; the
+ * webhook's `payment_intent.succeeded` branch grants the credits (idempotent on the
+ * intent id). Owner-gated; org-scoped; hosted billing only.
+ */
+export async function createCreditPackIntent(
+	packId: string,
+): Promise<CreditPackIntent> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	if (actor.orgId === actor.userId) {
+		throw new Error("Create a workspace before buying AI credits.");
+	}
+	const pack = creditPack(packId);
+	if (!pack) throw new Error("Unknown credit pack.");
+
+	const customerId = await ensureCustomer(actor.orgId, actor.userId);
+	const intent = await getStripe().paymentIntents.create({
+		customer: customerId,
+		amount: pack.amountCents,
+		currency: "usd",
+		automatic_payment_methods: { enabled: true },
+		metadata: {
+			organization_id: actor.orgId,
+			user_id: actor.userId,
+			product_type: "ai_credits",
+			credits: String(pack.credits),
+		},
+	});
+	if (!intent.client_secret) {
+		throw new Error("Stripe did not return a payment client secret.");
+	}
+	return { clientSecret: intent.client_secret, paymentIntentId: intent.id };
 }
 
 // ── Payment methods (embedded card management) ──────────────────────────────
