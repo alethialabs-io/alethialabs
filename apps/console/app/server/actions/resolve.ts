@@ -114,6 +114,49 @@ export async function resolveEnvironmentId(
 	});
 }
 
+/** The active org's URL slug (server side) — `~` for personal scope. */
+export async function getActiveOrgSlug(): Promise<string> {
+	const { userId, activeOrgId } = await getOwnerScope();
+	if (!activeOrgId || activeOrgId === userId) return PERSONAL_ORG_SLUG;
+	const db = getServiceDb();
+	const [org] = await db
+		.select({ slug: organization.slug })
+		.from(organization)
+		.where(eq(organization.id, activeOrgId))
+		.limit(1);
+	return org?.slug ?? PERSONAL_ORG_SLUG;
+}
+
+/** A zone's slug by id (within the active scope), or null. */
+export async function getZoneSlug(zoneId: string): Promise<string | null> {
+	const { userId } = await getOwnerScope();
+	return withOwnerScope(userId, async (tx) => {
+		const [zone] = await tx
+			.select({ slug: zones.slug })
+			.from(zones)
+			.where(eq(zones.id, zoneId))
+			.limit(1);
+		return zone?.slug ?? null;
+	});
+}
+
+/** A spec's slug path `{ zoneSlug, specSlug }` by spec id, or null if either is missing. */
+export async function getSpecSlugPath(
+	specId: string,
+): Promise<{ zoneSlug: string; specSlug: string } | null> {
+	const { userId } = await getOwnerScope();
+	return withOwnerScope(userId, async (tx) => {
+		const [row] = await tx
+			.select({ specSlug: specs.slug, zoneSlug: zones.slug })
+			.from(specs)
+			.leftJoin(zones, eq(specs.zone_id, zones.id))
+			.where(eq(specs.id, specId))
+			.limit(1);
+		if (!row?.specSlug || !row.zoneSlug) return null;
+		return { zoneSlug: row.zoneSlug, specSlug: row.specSlug };
+	});
+}
+
 export interface SwitcherEnv {
 	id: string;
 	name: string;
