@@ -17,7 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { JOB_TYPES } from "@/components/jobs/columns";
-import { ReleaseNotesDialog } from "@/components/runners/release-notes-dialog";
+import { ReleaseNotesPopover } from "@/components/runners/release-notes-popover";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
 import {
 	useRunnersStore,
@@ -215,7 +215,6 @@ function RunnerActionsCell({ runner }: { runner: RunnerRow }) {
 
 function VersionCell({ runner }: { runner: RunnerRow }) {
 	const { latestRelease } = useRunnersStore();
-	const [dialogVersion, setDialogVersion] = useState<string | null>(null);
 
 	const release = runner.runner_releases;
 	const displayVersion = release?.version ?? runner.version;
@@ -224,36 +223,36 @@ function VersionCell({ runner }: { runner: RunnerRow }) {
 		latestRelease && isRelease && displayVersion !== latestRelease.version;
 
 	return (
-		<>
-			<div className="flex items-center gap-1.5">
-				{displayVersion ? (
-					<button
-						type="button"
-						onClick={(e) => {
-							e.stopPropagation();
-							if (isRelease) setDialogVersion(displayVersion);
-						}}
-						className={`text-xs font-mono text-muted-foreground transition-colors ${isRelease ? "hover:text-foreground hover:underline cursor-pointer" : "cursor-default"}`}
-					>
-						{isRelease ? `v${displayVersion}` : displayVersion}
-					</button>
+		<div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+			{displayVersion ? (
+				isRelease ? (
+					<ReleaseNotesPopover version={displayVersion}>
+						<button
+							type="button"
+							className="cursor-pointer font-mono text-xs text-muted-foreground transition-colors hover:text-foreground hover:underline"
+						>
+							v{displayVersion}
+						</button>
+					</ReleaseNotesPopover>
 				) : (
-					<span className="text-xs font-mono text-muted-foreground">Unknown</span>
-				)}
-				{isOutdated && (
+					<span className="font-mono text-xs text-muted-foreground">{displayVersion}</span>
+				)
+			) : (
+				<span className="font-mono text-xs text-muted-foreground">Unknown</span>
+			)}
+			{isOutdated && (
+				<ReleaseNotesPopover
+					version={latestRelease.version}
+					runnerId={runner.id}
+					isOutdated
+				>
 					<TooltipProvider delayDuration={300}>
 						<Tooltip>
 							<TooltipTrigger asChild>
-								<button
-									type="button"
-									onClick={(e) => {
-										e.stopPropagation();
-										setDialogVersion(latestRelease.version);
-									}}
-								>
+								<button type="button">
 									<Badge
 										variant="outline"
-										className="text-[10px] py-0 gap-1 cursor-pointer text-muted-foreground border-border bg-muted hover:bg-muted/80"
+										className="gap-1 cursor-pointer border-border bg-muted py-0 text-[10px] text-muted-foreground hover:bg-muted/80"
 									>
 										<ArrowUpCircle className="h-3 w-3" />
 										v{latestRelease.version}
@@ -265,16 +264,9 @@ function VersionCell({ runner }: { runner: RunnerRow }) {
 							</TooltipContent>
 						</Tooltip>
 					</TooltipProvider>
-				)}
-			</div>
-			<ReleaseNotesDialog
-				open={dialogVersion !== null}
-				onOpenChange={(open) => !open && setDialogVersion(null)}
-				version={dialogVersion}
-				runnerId={runner.id}
-				isOutdated={!!isOutdated && dialogVersion === latestRelease?.version}
-			/>
-		</>
+				</ReleaseNotesPopover>
+			)}
+		</div>
 	);
 }
 
@@ -297,13 +289,22 @@ export const runnerColumns: ColumnDef<RunnerRow>[] = [
 					: isUpdating
 						? "UPDATING"
 						: status;
+			const instanceId =
+				runner.operator === "managed" ? runner.metadata?.cloud_instance_id : null;
 			return (
 				<div className={`flex items-center gap-2.5 ${isBusy ? "opacity-60" : ""}`}>
 					<StatusBadge status={dotStatus} showLabel={false} className="shrink-0" />
-					<span className="text-xs font-medium">{runner.name}</span>
-					{runner.is_default && (
-						<Star className="h-3 w-3 fill-foreground text-foreground shrink-0" />
-					)}
+					<div className="min-w-0">
+						<div className="flex items-center gap-1.5">
+							<span className="text-xs font-medium">{runner.name}</span>
+							{runner.is_default && (
+								<Star className="h-3 w-3 shrink-0 fill-foreground text-foreground" />
+							)}
+						</div>
+						{instanceId && (
+							<span className="font-mono text-[10px] text-muted-foreground">{instanceId}</span>
+						)}
+					</div>
 				</div>
 			);
 		},
@@ -348,6 +349,19 @@ export const runnerColumns: ColumnDef<RunnerRow>[] = [
 					<OperatorIcon className="mr-1 h-3 w-3" />
 					{label}
 				</Badge>
+			);
+		},
+	},
+	{
+		id: "location",
+		header: "Location",
+		enableSorting: false,
+		cell: ({ row }) => {
+			// Cloud placement of a managed runner (persisted by the fleet controller's
+			// observed-view reconcile). Self-operated runners have no fleet location.
+			const loc = row.original.operator === "managed" ? row.original.location : null;
+			return (
+				<span className="font-mono text-xs text-muted-foreground">{loc ?? "—"}</span>
 			);
 		},
 	},

@@ -9,7 +9,7 @@ import { z } from "zod";
 // (hcloud server type, image) belongs to the provider impl, not here. Default [] = the
 // controller is a no-op. `version` pins an exact image; `channel` (e.g. "stable") is
 // resolved to the newest runner_releases by the controller each tick.
-const poolSchema = z.object({
+export const poolSchema = z.object({
 	provider: z.enum(cloudProvider.enumValues),
 	warmMin: z.number().int().min(0).default(1),
 	max: z.number().int().min(0).default(10),

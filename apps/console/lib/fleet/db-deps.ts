@@ -12,6 +12,7 @@ import {
 	managedRunnersByInstance,
 	markRunnerDraining,
 	retireRunner,
+	setRunnerObserved,
 } from "@/lib/fleet/queue";
 
 const BOOT_GRACE_SECONDS =
@@ -26,6 +27,8 @@ export function makeDbDeps(): ControllerDeps {
 		resolveChannel: () => latestReleaseVersion(),
 		drain: (runnerId) => markRunnerDraining(runnerId),
 		retire: (runnerId) => retireRunner(runnerId),
+		persistObserved: (runnerId, patch) =>
+			setRunnerObserved(runnerId, patch.location, patch.version),
 		bootGraceSeconds: BOOT_GRACE_SECONDS,
 	};
 }

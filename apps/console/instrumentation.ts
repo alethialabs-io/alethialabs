@@ -6,7 +6,12 @@ export async function register() {
 	if (process.env.NEXT_RUNTIME !== "nodejs") return;
 	const { startStaleJobRecovery } = await import("@/lib/jobs/recovery");
 	startStaleJobRecovery();
-	// In-app fleet scaler (sibling loop). No-op unless FLEET_POOLS is configured.
+	// In-app fleet controller (sibling loop). Pools live in the DB; import any legacy
+	// FLEET_POOLS env config once, then run the loop (a no-op tick when no pools exist).
+	const { seedFleetPoolsFromEnv } = await import("@/lib/fleet/pools-db");
+	await seedFleetPoolsFromEnv().catch((err) =>
+		console.error("[fleet] pool seed failed:", err),
+	);
 	const { startFleetScaler } = await import("@/lib/fleet/scaler");
 	startFleetScaler();
 	// In-app alert-delivery retry sweep (self-hostable; no external cron).
