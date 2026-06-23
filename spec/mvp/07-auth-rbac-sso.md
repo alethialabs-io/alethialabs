@@ -97,8 +97,8 @@ authz_audit_log(id, org_id, actor_id, action, resource_type, resource_id, decisi
 
 ## Part E — Permission taxonomy & avoiding role explosion
 
-**Resources:** `org · zone · spec · node · cloud_identity · job · connector · member · audit · billing`.
-**Actions:** `view · create · edit · plan · deploy · destroy · manage_identities · manage_members · manage_connectors · view_audit · export_audit · manage_billing`.
+**Resources:** `org · zone · spec · runner · cloud_identity · job · connector · member · audit · billing · alert`.
+**Actions:** `view · create · edit · plan · deploy · destroy · manage_identities · manage_members · manage_connectors · view_audit · export_audit · manage_billing · view_alerts · manage_alerts · test · fetch_resources`.
 
 Keeping "tons of permissions" manageable:
 - **Registry as code** — one typed TS file is the source of the `resource × action` matrix (seeds the `permission` table); `Action`/`Resource` are exhaustive unions so a new action can't be silently unhandled.
@@ -106,6 +106,7 @@ Keeping "tons of permissions" manageable:
 - **Hierarchy beats assignment** — assign at the highest sensible scope; Org→Zone→Spec inheritance flows it down. The single biggest lever against grant explosion; identical in both engines (SQL CTE vs OpenFGA `from parent`).
 - **Scoped/wildcard grants** — `grant.resource_id = NULL` = org-wide; a Zone id = that subtree; a Spec id = that object. Three rows cover what naive systems need hundreds for.
 - **Sensitive resources are narrowed, not widened** — `cloud_identity`, `manage_members`, `billing` are *not* implied by broad Zone roles; they need explicit higher grants. **Default-deny** everywhere.
+- **Credential ownership has a `scope`** — `cloud_identities` / `connector_credentials` are `personal` (author-only) or `org` (shared with the org). Creation is `personal`; sharing is an explicit `manage_connectors` / `manage_identities` action. RLS is the coarse wall; the PDP enforces the role. See [08](08-integrations-extensibility.md).
 
 ---
 

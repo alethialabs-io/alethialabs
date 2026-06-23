@@ -36,6 +36,7 @@ Honest **SHIPPED vs TO-BUILD**, re-grounded on the real code (the old inventory 
 | Terraform → OpenTofu | [10](10-opentofu-migration.md) |
 | More clouds + managed/self-managed (Talos/k3s) cluster strategies | [09](09-multi-cloud-cluster-strategies.md) |
 | Open-core `ee/` boundary + license hygiene | [12](12-licensing-open-core.md) |
+| Alerting: PDP-sourced security events + infra/ops events → webhook/email/Slack/RocketChat (ops free, security `ee/`) | [25](25-alerting-notifications.md) |
 | Rename to the Alethia lexicon | [A-rename-lexicon](A-rename-lexicon.md) |
 
 ## 🛣️ Roadmap (post-MVP)
