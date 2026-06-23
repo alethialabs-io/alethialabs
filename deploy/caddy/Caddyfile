@@ -11,6 +11,9 @@
 	handle /docs* {
 		reverse_proxy docs:3000
 	}
+	handle /blog* {
+		reverse_proxy blog:3000
+	}
 	handle {
 		reverse_proxy app:3000
 	}
