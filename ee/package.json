@@ -23,6 +23,7 @@
 		"samlify": "^2.0.0"
 	},
 	"devDependencies": {
+		"@types/node": "^20",
 		"esbuild": "^0.21.5",
 		"typescript": "^5"
 	}

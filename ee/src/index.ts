@@ -33,6 +33,10 @@ const ALL_ENTITLEMENTS: Entitlements = {
 	sso: true, // OIDC + SAML via @better-auth/sso
 	customRoles: true,
 	auditExport: true,
+	advancedAlerting: true,
+	// A licensed instance gets the enterprise tier's quotas (mirrors the ladder in
+	// core's planEntitlements("enterprise"); inlined to keep this package type-only on core).
+	quotas: { maxConcurrentJobs: null, priorityLevel: 30, includedRunnerMinutes: 20_000 },
 };
 
 /**
@@ -128,7 +132,9 @@ export function register(core: CoreContext): EnterpriseModule {
 			// (algorithms.onDeprecated: "reject", enable InResponseTo validation).
 			sso({
 				organizationProvisioning: {
-					defaultRole: "viewer",
+					// better-auth's org role (owner/admin/member) — least-privileged
+					// "member"; the PDP then maps it to Alethia's viewer-scoped access.
+					defaultRole: "member",
 				},
 			}),
 		],
