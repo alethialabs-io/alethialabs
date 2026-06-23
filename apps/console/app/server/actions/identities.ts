@@ -4,6 +4,8 @@
 
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
+import { currentActor } from "@/lib/authz/guard";
+import { markFailed, markHealthy } from "@/lib/connectors/health";
 import { auth } from "@/lib/auth";
 import { getOwner } from "@/lib/auth/owner";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
@@ -41,15 +43,30 @@ export async function getLinkedProviders(): Promise<PublicGitProvider[]> {
 export async function getValidProviderToken(
 	provider: PublicGitProvider,
 ): Promise<string | null> {
-	const userId = await getOwner();
-	if (!userId) return null;
+	let scope: { userId: string; orgId: string };
+	try {
+		const actor = await currentActor();
+		scope = { userId: actor.userId, orgId: actor.orgId };
+	} catch {
+		return null;
+	}
 	try {
 		const res = await auth.api.getAccessToken({
-			body: { providerId: provider, userId },
+			body: { providerId: provider, userId: scope.userId },
 			headers: await headers(),
 		});
-		return res.accessToken ?? null;
-	} catch {
+		const token = res.accessToken ?? null;
+		// Point-of-use connector health: success clears, failure emits once (durable, no poll).
+		if (token) void markHealthy(scope, "git", provider);
+		else void markFailed(scope, "git", provider, "no access token returned");
+		return token;
+	} catch (err) {
+		void markFailed(
+			scope,
+			"git",
+			provider,
+			err instanceof Error ? err.message : "token refresh failed",
+		);
 		return null;
 	}
 }
