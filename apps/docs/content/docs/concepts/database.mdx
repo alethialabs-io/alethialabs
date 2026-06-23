@@ -325,14 +325,30 @@ Registered Runner agents.
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `user_id` | uuid (FK) | Owner (null for cloud-hosted) |
+| `user_id` | uuid (FK) | Owner (null for managed) |
 | `name` | text | Display name |
-| `mode` | runner_mode enum | self-hosted / cloud-hosted |
+| `operator` | runner_operator enum (not null) | `managed` (Alethia-operated fleet) / `self` (customer-operated) |
+| `provisioning` | runner_provisioning enum (nullable) | `deployed` / `registered` — only meaningful when `operator=self`; null for managed |
 | `status` | runner_status enum | ONLINE / OFFLINE / DRAINING |
 | `token_hash` | text | Hashed authentication token |
 | `version` | text | Runner version string |
 | `release_id` | uuid (FK → runner_releases) | Current release |
 | `last_heartbeat` | timestamptz | Last heartbeat timestamp |
+| `created_at` | timestamptz | |
+
+### `runner_usage_sessions`
+
+Ledger of ONLINE→OFFLINE intervals, used to bill **managed** runners by provisioned hours.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | uuid (PK) | |
+| `runner_id` | uuid (FK → runners) | Runner the session belongs to |
+| `operator` | runner_operator enum | Operator at the time of the session (typically `managed`) |
+| `org_id` | uuid | Tenancy / billing scope |
+| `started_at` | timestamptz | When the runner went ONLINE |
+| `ended_at` | timestamptz | When the runner went OFFLINE (null while still online) |
+| `duration_seconds` | integer | Provisioned duration of the interval |
 | `created_at` | timestamptz | |
 
 ### `runner_releases`
@@ -460,8 +476,9 @@ CREATE TYPE provision_job_status AS ENUM (
   'SUCCESS', 'FAILED', 'CANCELLED'
 );
 
--- Runner status
-CREATE TYPE runner_mode AS ENUM ('self-hosted', 'cloud-hosted');
+-- Runner operator & provisioning
+CREATE TYPE runner_operator AS ENUM ('managed', 'self');
+CREATE TYPE runner_provisioning AS ENUM ('deployed', 'registered');
 CREATE TYPE runner_status AS ENUM ('ONLINE', 'OFFLINE', 'DRAINING');
 
 -- Environment

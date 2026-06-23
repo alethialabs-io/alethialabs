@@ -70,10 +70,10 @@ Cancel a QUEUED or PROCESSING job.
 List all registered Runners.
 
 ### `POST /api/cli/runners/register`
-Register a self-hosted Runner.
+Register a self-operated Runner. Always creates `operator=self`, `provisioning=registered` (no `mode` body field).
 
 ### `POST /api/cli/runners/deploy`
-Deploy a new cloud-hosted Runner.
+Deploy a new self-operated Runner into the customer's cloud (`operator=self`, `provisioning=deployed`).
 
 ### `DELETE /api/cli/runners/{id}`
 Remove a Runner's database record.
@@ -103,4 +103,4 @@ Publish a new Runner release (CI/CD only, requires `RELEASE_API_SECRET`).
 ```
 
 ### `POST /api/runners/register`
-Register a cloud-hosted Runner (CI/CD only, requires `RELEASE_API_SECRET`). Used by Terraform during Runner deployment.
+Register a Runner (CI/CD only, requires `RELEASE_API_SECRET`). Used by Terraform during Runner deployment; always creates an `operator=managed` runner (no `mode` body field).

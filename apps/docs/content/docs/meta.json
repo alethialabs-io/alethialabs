@@ -4,6 +4,7 @@
   "pages": [
     "index",
     "editions",
+    "compare",
     "console",
     "cli",
     "runner",

@@ -52,7 +52,7 @@ alethia spec destroy [--spec-id <id>] [--runner-id <id>] [--wait]
 Queues a DESTROY job. The Runner runs `terraform destroy` to tear down all resources. Terraform state is preserved, so accidental destroys can be recovered by re-applying.
 
 <Callout type="info">
-To tear down a cloud-hosted **Runner** (not a Spec), use [`alethia runner destroy`](/cli/commands/runners). To delete a **zone** record, use `alethia zone delete`.
+To tear down a deployed **Runner** (not a Spec), use [`alethia runner destroy`](/cli/commands/runners). To delete a **zone** record, use `alethia zone delete`.
 </Callout>
 
 ## Interactive Selection
