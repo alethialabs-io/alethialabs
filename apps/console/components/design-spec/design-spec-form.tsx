@@ -5,7 +5,7 @@
 
 import { createSpec, type CreateSpecInput } from "@/app/server/actions/specs";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
-import { specFormSchema, type SpecFormData, type SpecFormInput } from "@/lib/validations/spec-form.schema";
+import type { SpecFormData, SpecFormInput } from "@/lib/validations/spec-form.schema";
 import {
 	useCloudProvider,
 	DEFAULT_INSTANCE_TYPE,
@@ -17,7 +17,6 @@ import { convertSpecConfig, type ConversionWarning } from "@/lib/cloud-providers
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useSpecStore } from "@/lib/stores/use-spec-store";
-import { RepositoryProvider } from "./repository-context";
 import { ProviderRibbon } from "./provider-ribbon";
 import { CostSidebar } from "./cost-sidebar";
 import { SectionProjectBasics } from "./section-project-basics";
@@ -33,8 +32,7 @@ import { SectionRepositories } from "./section-repositories";
 import { ReviewTab } from "./review-tab";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { FormProvider, useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { useFormContext } from "react-hook-form";
 import { toast } from "sonner";
 import { AlertTriangle, CheckCircle2, ChevronsUpDown, Info, Loader2, Rocket } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -44,17 +42,54 @@ export interface SourceSpecData {
 	provider: CloudProviderSlug;
 }
 
-interface DesignSpecFormProps {
+interface DesignSpecFormBodyProps {
 	cloudIdentities: CloudIdentityOption[];
 	sourceSpec?: SourceSpecData;
 }
 
-/** Outer wrapper that provides the CloudProvider context. */
-export function DesignSpecForm({ cloudIdentities, sourceSpec }: DesignSpecFormProps) {
+/**
+ * Default form values for a fresh spec (or a source spec being duplicated). Lifted
+ * out so the workbench can seed its shared RHF FormProvider with the same shape the
+ * form uses.
+ */
+export function buildDefaultFormValues(sourceSpec?: SourceSpecData): SpecFormData {
 	return (
-		<RepositoryProvider>
-			<DesignSpecFormInner cloudIdentities={cloudIdentities} sourceSpec={sourceSpec} />
-		</RepositoryProvider>
+		sourceSpec?.formData ?? {
+			spec: {
+				project_name: "",
+				environment_stage: "development",
+				region: "",
+				cloud_identity_id: "",
+				iac_version: "1.11.4",
+				zone_id: "",
+			},
+			network: {
+				provision_network: true,
+				cidr_block: "10.0.0.0/16",
+				single_nat_gateway: true,
+			},
+			cluster: {
+				cluster_version: DEFAULT_K8S_VERSION.aws,
+				provider_config: { enable_karpenter: true },
+				instance_types: [DEFAULT_INSTANCE_TYPE.aws],
+				node_min_size: 2,
+				node_max_size: 5,
+				node_desired_size: 2,
+			},
+			dns: {
+				enabled: false,
+				managed_certificate: false,
+				waf_enabled: false,
+				provider_config: {},
+			},
+			repositories: {},
+			databases: [],
+			caches: [],
+			queues: [],
+			topics: [],
+			nosql_tables: [],
+			secrets: [],
+		}
 	);
 }
 
@@ -72,8 +107,14 @@ const fieldToSectionId: Record<string, string> = {
 	repositories: "section-repositories",
 };
 
-/** Inner form component with access to CloudProvider context. */
-function DesignSpecFormInner({ cloudIdentities, sourceSpec }: DesignSpecFormProps) {
+/**
+ * The form UI + logic. Consumes the RHF context provided by its parent (the
+ * workbench), so the canvas and form share one form instance / one set of data.
+ */
+export function DesignSpecFormBody({
+	cloudIdentities,
+	sourceSpec,
+}: DesignSpecFormBodyProps) {
 	const router = useRouter();
 	const storeError = useSpecStore((s) => s.error);
 	const isLoading = useSpecStore((s) => s.isLoading);
@@ -83,48 +124,7 @@ function DesignSpecFormInner({ cloudIdentities, sourceSpec }: DesignSpecFormProp
 	const setError = useSpecStore((s) => s.setError);
 	const [conversionWarnings, setConversionWarnings] = useState<ConversionWarning[]>([]);
 
-	const defaultFormValues: SpecFormData = sourceSpec?.formData ?? {
-		spec: {
-			project_name: "",
-			environment_stage: "development",
-			region: "",
-			cloud_identity_id: "",
-			iac_version: "1.11.4",
-			zone_id: "",
-		},
-		network: {
-			provision_network: true,
-			cidr_block: "10.0.0.0/16",
-			single_nat_gateway: true,
-		},
-		cluster: {
-			cluster_version: DEFAULT_K8S_VERSION.aws,
-			provider_config: { enable_karpenter: true },
-			instance_types: [DEFAULT_INSTANCE_TYPE.aws],
-			node_min_size: 2,
-			node_max_size: 5,
-			node_desired_size: 2,
-		},
-		dns: {
-			enabled: false,
-			managed_certificate: false,
-			waf_enabled: false,
-			provider_config: {},
-		},
-		repositories: {},
-		databases: [],
-		caches: [],
-		queues: [],
-		topics: [],
-		nosql_tables: [],
-		secrets: [],
-	};
-
-	const form = useForm<SpecFormInput, unknown, SpecFormData>({
-		resolver: zodResolver(specFormSchema),
-		defaultValues: defaultFormValues,
-		mode: "onChange",
-	});
+	const form = useFormContext<SpecFormInput, unknown, SpecFormData>();
 
 	useEffect(() => {
 		reset();
@@ -198,7 +198,6 @@ function DesignSpecFormInner({ cloudIdentities, sourceSpec }: DesignSpecFormProp
 	};
 
 	return (
-		<FormProvider {...form}>
 			<form onSubmit={form.handleSubmit(onSubmit, onError)} className="space-y-6">
 				<ProviderRibbon identities={cloudIdentities} />
 
@@ -297,6 +296,5 @@ function DesignSpecFormInner({ cloudIdentities, sourceSpec }: DesignSpecFormProp
 					</div>
 				</div>
 			</form>
-		</FormProvider>
 	);
 }

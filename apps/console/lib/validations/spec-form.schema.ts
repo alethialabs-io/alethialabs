@@ -157,4 +157,10 @@ export {
 	topicItemSchema,
 	nosqlItemSchema,
 	secretItemSchema,
+	// Singleton sub-schemas — consumed by the canvas for per-node validation.
+	specSchema,
+	networkSchema,
+	clusterSchema,
+	dnsSchema,
+	repositoriesSchema,
 };
