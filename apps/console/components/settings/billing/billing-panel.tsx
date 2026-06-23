@@ -24,10 +24,7 @@ import {
 	changeSubscriptionPlan,
 	createSubscriptionIntent,
 	getBillingSummary,
-	getOrgUsage,
 	resumeSubscription,
-	setUsageHardCap,
-	type UsageReport,
 } from "@/app/server/actions/billing";
 import { getOrgSettings, type OrgSettings } from "@/app/server/actions/org-settings";
 import { PaymentForm } from "@/components/billing/payment-form";
@@ -81,45 +78,12 @@ function formatDate(iso: string): string {
 	});
 }
 
-/** One usage meter cell of the current-plan card (key, value, fill %, sub note). */
-function Meter({
-	label,
-	value,
-	sub,
-	fill,
-}: {
-	label: string;
-	value: ReactNode;
-	sub: ReactNode;
-	/** 0–100 fill percentage. */
-	fill: number;
-}) {
-	return (
-		<div className="border-r border-border px-6 py-4 last:border-r-0">
-			<div className="mb-[9px] flex items-baseline justify-between">
-				<span className="font-mono text-[10px] uppercase tracking-[0.1em] text-text-tertiary">
-					{label}
-				</span>
-				<span className="text-[12.5px] text-text-secondary">{value}</span>
-			</div>
-			<div className="h-[5px] overflow-hidden rounded-full border border-border bg-surface-sunken">
-				<div
-					className="h-full rounded-full bg-text-primary"
-					style={{ width: `${fill}%` }}
-				/>
-			</div>
-			<div className="mt-2 font-mono text-[10px] text-text-tertiary">{sub}</div>
-		</div>
-	);
-}
-
 export function BillingPanel() {
 	const activeOrgId = useWorkspaceStore((s) => s.activeOrgId);
 	const organizations = useWorkspaceStore((s) => s.organizations);
 	const fetchWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
 
 	const [summary, setSummary] = useState<BillingSummary | null>(null);
-	const [usage, setUsage] = useState<UsageReport | null>(null);
 	const [org, setOrg] = useState<OrgSettings | null>(null);
 	const [pending, startTransition] = useTransition();
 	const [pendingPlan, setPendingPlan] = useState<BillingPlan | null>(null);
@@ -135,11 +99,6 @@ export function BillingPanel() {
 		getBillingSummary()
 			.then(setSummary)
 			.catch(() => toast.error("Couldn't load billing details."));
-		getOrgUsage()
-			.then(setUsage)
-			.catch(() => {
-				/* usage is best-effort; the meter just shows a dash */
-			});
 		getOrgSettings()
 			.then(setOrg)
 			.catch(() => {
@@ -258,11 +217,6 @@ export function BillingPanel() {
 		? `${summary.cancelAtPeriodEnd ? "Cancels" : "Renews"} ${formatDate(summary.currentPeriodEnd)}`
 		: null;
 
-	const seatFill =
-		summary.seats != null && summary.seats > 0
-			? Math.min(100, (summary.memberCount / summary.seats) * 100)
-			: 100;
-
 	return (
 		<div>
 			<SettingsPageHead
@@ -342,83 +296,6 @@ export function BillingPanel() {
 							)}
 						</div>
 					</div>
-
-					{/* usage meters — Seats + Provisioning-minutes are real; Zones isn't metered yet */}
-					<div className="grid grid-cols-1 border-t border-border sm:grid-cols-3">
-						<Meter
-							label="Seats"
-							value={
-								<>
-									<b className="font-medium text-text-primary">
-										{summary.memberCount}
-									</b>
-									{summary.seats != null ? ` / ${summary.seats}` : ""}
-								</>
-							}
-							fill={seatFill}
-							sub={
-								summary.seats != null
-									? `${Math.max(0, summary.seats - summary.memberCount)} seats available`
-									: "members in this organization"
-							}
-						/>
-						<Meter
-							label="Zones"
-							value={<b className="font-medium text-text-primary">—</b>}
-							fill={0}
-							sub="usage metering coming soon"
-						/>
-						<Meter
-							label="Provisioning minutes"
-							value={
-								usage ? (
-									<>
-										<b className="font-medium text-text-primary">
-											{Math.round(usage.usedMinutes)}
-										</b>
-										{` / ${usage.includedMinutes}`}
-									</>
-								) : (
-									<b className="font-medium text-text-primary">—</b>
-								)
-							}
-							fill={usage ? Math.min(100, usage.pct * 100) : 0}
-							sub={
-								!usage
-									? "managed runner usage this period"
-									: usage.overLimit
-										? `${Math.round(usage.overageMinutes)} min over included · ~$${usage.overageCost.toFixed(2)} overage`
-										: usage.approaching
-											? `${Math.round(usage.pct * 100)}% used — approaching your included minutes`
-											: `${Math.round(usage.pct * 100)}% of included used · self-hosted runners are free`
-							}
-						/>
-					</div>
-
-					{/* Spend control: pause at the included allowance instead of overage. */}
-					{summary.hasOrg && usage && usage.plan !== "community" && (
-						<label className="flex cursor-pointer items-center gap-2 border-t border-border px-6 py-3 text-[12px] text-text-tertiary">
-							<input
-								type="checkbox"
-								className="accent-ink"
-								checked={usage.hardCap}
-								disabled={pending}
-								onChange={(e) => {
-									const next = e.target.checked;
-									setUsage((u) => (u ? { ...u, hardCap: next } : u));
-									startTransition(async () => {
-										try {
-											await setUsageHardCap(next);
-										} catch {
-											toast.error("Couldn't update the usage cap.");
-											setUsage((u) => (u ? { ...u, hardCap: !next } : u));
-										}
-									});
-								}}
-							/>
-							Pause new jobs at my included minutes instead of billing overage
-						</label>
-					)}
 
 					<div className="flex flex-wrap items-center justify-between gap-4 border-t border-border bg-surface-sunken px-6 py-[14px]">
 						<div className="flex items-center gap-2 text-[12px] text-text-tertiary">

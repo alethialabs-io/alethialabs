@@ -35,6 +35,8 @@ const SEGMENT_LABELS: Record<string, string> = {
 	access: "Access",
 	sso: "Single Sign-On",
 	audit: "Audit Log",
+	billing: "Billing",
+	usage: "Usage",
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
