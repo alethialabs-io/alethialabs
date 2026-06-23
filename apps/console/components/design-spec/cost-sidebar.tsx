@@ -5,25 +5,13 @@
 
 import { useSpecStore } from "@/lib/stores/use-spec-store";
 import { useProviderMeta } from "@/lib/cloud-providers";
+import { computeCostItems } from "@/lib/cost/compute-cost-items";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DollarSign, Loader2 } from "lucide-react";
 import { useMemo } from "react";
 import { useFormContext } from "react-hook-form";
 import type { SpecFormData } from "@/lib/validations/spec-form.schema";
-
-const HOURS_PER_MONTH = 730;
-
-const FALLBACK_EC2: Record<string, number> = {
-	"t3.medium": 0.0456, "t3.large": 0.0912, "t3.xlarge": 0.1824,
-	"m5a.large": 0.096, "m5a.xlarge": 0.192, "m5a.2xlarge": 0.384, "m5a.4xlarge": 0.768,
-	"c5.large": 0.096, "c5.xlarge": 0.192, "r5.large": 0.141, "r5.xlarge": 0.282,
-	"g4dn.xlarge": 0.526, "p3.2xlarge": 3.06,
-};
-
-const FALLBACK_CACHE: Record<string, number> = {
-	"cache.t3.micro": 0.014, "cache.t3.small": 0.029, "cache.t3.medium": 0.058, "cache.r6g.large": 0.183,
-};
 
 export function CostSidebar() {
 	const { watch } = useFormContext<SpecFormData>();
@@ -40,48 +28,25 @@ export function CostSidebar() {
 	const nosqlTables = watch("nosql_tables") || [];
 	const secrets = watch("secrets") || [];
 
-	const items = useMemo(() => {
-		const p = prices;
-		const result: Array<{ label: string; cost: number; detail?: string }> = [];
-
-		result.push({ label: `${meta.clusterService} Control Plane`, cost: (p?.eksControlPlane ?? 0.10) * HOURS_PER_MONTH });
-
-		const avgHr = instanceTypes.length > 0
-			? instanceTypes.reduce((sum: number, t: string) => sum + (p?.ec2[t] ?? FALLBACK_EC2[t] ?? 0.0456), 0) / instanceTypes.length
-			: 0.0456;
-		const nodeLabel = instanceTypes.length > 0
-			? `${nodeDesiredSize}x ${instanceTypes[0]}${instanceTypes.length > 1 ? ` +${instanceTypes.length - 1}` : ""}`
-			: `${nodeDesiredSize} nodes`;
-		result.push({ label: `${meta.clusterService} Nodes`, cost: avgHr * nodeDesiredSize * HOURS_PER_MONTH, detail: nodeLabel });
-
-		const natCount = singleNatGateway ? 1 : 3;
-		result.push({ label: "NAT Gateway", cost: (p?.natGateway ?? 0.048) * HOURS_PER_MONTH * natCount, detail: singleNatGateway ? "single" : "per-AZ" });
-
-		for (const db of databases) {
-			const cost = (db.min_capacity ?? 0.5) * (p?.auroraACU ?? 0.14) * HOURS_PER_MONTH;
-			result.push({ label: `DB: ${db.name || "unnamed"}`, cost, detail: `${db.min_capacity ?? 0.5}-${db.max_capacity ?? 4} ACU` });
-		}
-
-		for (const cache of caches) {
-			const cacheHr = p?.cache[cache.node_type || "cache.t3.medium"] ?? FALLBACK_CACHE[cache.node_type || "cache.t3.medium"] ?? 0.058;
-			result.push({ label: `Cache: ${cache.name || "unnamed"}`, cost: cacheHr * (cache.num_cache_nodes ?? 1) * HOURS_PER_MONTH, detail: `${cache.num_cache_nodes ?? 1}x ${(cache.node_type || "cache.t3.medium").replace("cache.", "")}` });
-		}
-
-		if (cloudfrontWaf) result.push({ label: "CDN WAF", cost: p?.wafWebACL ?? 5.0 });
-		if (applicationWaf) result.push({ label: "Application WAF", cost: p?.wafWebACL ?? 5.0 });
-
-		if (nosqlTables.length > 0) {
-			result.push({ label: "NoSQL", cost: 0, detail: `${nosqlTables.length} table${nosqlTables.length > 1 ? "s" : ""} (on-demand)` });
-		}
-
-		if (secrets.length > 0) {
-			result.push({ label: `${meta.secretsService}`, cost: secrets.length * 0.40, detail: `${secrets.length} secret${secrets.length > 1 ? "s" : ""}` });
-		}
-
-		return result;
-	}, [databases, caches, cloudfrontWaf, applicationWaf, instanceTypes, nodeDesiredSize, singleNatGateway, prices, nosqlTables, secrets]);
-
-	const total = items.reduce((sum, item) => sum + item.cost, 0);
+	const { items, total } = useMemo(
+		() =>
+			computeCostItems(
+				{
+					instanceTypes,
+					nodeDesiredSize,
+					singleNatGateway,
+					databases,
+					caches,
+					cloudfrontWaf,
+					applicationWaf,
+					nosqlCount: nosqlTables.length,
+					secretsCount: secrets.length,
+				},
+				prices,
+				meta,
+			),
+		[databases, caches, cloudfrontWaf, applicationWaf, instanceTypes, nodeDesiredSize, singleNatGateway, prices, nosqlTables, secrets, meta],
+	);
 
 	return (
 		<div className="sticky top-20">
