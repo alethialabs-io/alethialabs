@@ -25,17 +25,24 @@ import { cn } from "@/lib/utils";
 import { SidebarZones } from "@/components/sidebar-zones";
 import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
 import { OrgSwitcher } from "@/components/org-switcher";
+import { ZoneSwitcher } from "@/components/zone-switcher";
+import { SettingsSidebar } from "@/components/settings/settings-sidebar";
+import { AlethiaLogo } from "@/components/alethia-logo";
+import { DownloadCliButton } from "@/components/download-cli-button";
+import { ThemeMenu } from "@/components/theme-menu";
 import {
 	Bell,
+	BookOpen,
 	Blocks,
 	ClipboardList,
 	LayoutDashboard,
+	LifeBuoy,
 	LogOut,
 	Menu,
 	Plus,
 	Server,
 	Settings,
-	User,
+	Sparkles,
 	Workflow,
 	X,
 } from "lucide-react";
@@ -52,6 +59,9 @@ export default function DashboardLayout({
 }) {
 	const pathname = usePathname();
 	const router = useRouter();
+	// Settings is a Vercel-style section: under it, the sidebar swaps its nav for the
+	// settings section nav (with a "← Dashboard" back link) instead of the global nav.
+	const inSettings = pathname.startsWith("/dashboard/settings");
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const { data: session } = authClient.useSession();
 	const user = session?.user ?? null;
@@ -69,11 +79,13 @@ export default function DashboardLayout({
 	};
 
 	const navigation = [
+		{ name: "Agent", href: "/dashboard/agent", icon: Sparkles },
 		{ name: "Overview", href: "/dashboard", icon: LayoutDashboard },
 		{ name: "Create a Spec", href: "/dashboard/design-spec", icon: Plus },
 		{ name: "Clusters", href: "/dashboard/clusters", icon: Server },
 		{ name: "Jobs", href: "/dashboard/jobs", icon: ClipboardList },
 		{ name: "Connectors", href: "/dashboard/connectors", icon: Blocks },
+		{ name: "Alerts", href: "/dashboard/alerts", icon: Bell },
 		{ name: "Runners", href: "/dashboard/runners", icon: Workflow },
 		{ name: "Settings", href: "/dashboard/settings", icon: Settings },
 	];
@@ -101,15 +113,26 @@ export default function DashboardLayout({
 								<Menu className="h-5 w-5" />
 							)}
 						</Button>
-						{/* Active workspace (org/team) switcher, then the breadcrumb trail. */}
-						<OrgSwitcher />
+						{/* Mark → org switcher → breadcrumb trail. */}
+						<Link
+							href="/dashboard"
+							aria-label="Alethia home"
+							className="shrink-0 text-foreground"
+						>
+							<AlethiaLogo className="h-7 w-7" />
+						</Link>
 						<span className="text-border/70 select-none" aria-hidden>
 							/
 						</span>
+						<OrgSwitcher />
+						<ZoneSwitcher />
 						<HeaderBreadcrumbs />
 					</div>
 
 					<div className="flex items-center gap-2 sm:gap-4">
+						{/* Download the alethia CLI */}
+						<DownloadCliButton />
+
 						{/* Notifications */}
 						<Popover>
 							<PopoverTrigger asChild>
@@ -197,15 +220,26 @@ export default function DashboardLayout({
 									</Avatar>
 								</Button>
 							</DropdownMenuTrigger>
-							<DropdownMenuContent className="w-56" align="end">
-								<DropdownMenuLabel className="font-normal px-2 py-1.5">
-									<div className="flex flex-col space-y-1">
-										<p className="text-sm font-medium leading-none">
-											Account
-										</p>
-										<p className="text-xs text-muted-foreground leading-none">
-											{user?.email || "Loading..."}
-										</p>
+							<DropdownMenuContent className="w-64" align="end">
+								<DropdownMenuLabel className="font-normal px-2 py-2">
+									<div className="flex items-center gap-2.5">
+										<Avatar className="h-9 w-9 border border-border/50">
+											<AvatarImage
+												src="/generic-user-avatar.png"
+												alt="User"
+											/>
+											<AvatarFallback className="bg-muted text-muted-foreground text-xs font-medium">
+												{getUserInitials()}
+											</AvatarFallback>
+										</Avatar>
+										<div className="flex min-w-0 flex-col">
+											<p className="truncate text-sm font-medium leading-tight text-foreground">
+												{user?.name || "User"}
+											</p>
+											<p className="truncate text-xs text-muted-foreground leading-tight">
+												{user?.email || "Loading..."}
+											</p>
+										</div>
 									</div>
 								</DropdownMenuLabel>
 								<DropdownMenuSeparator />
@@ -214,26 +248,35 @@ export default function DashboardLayout({
 										href="/dashboard/profile"
 										className="cursor-pointer"
 									>
-										<User className="mr-2 h-4 w-4 text-muted-foreground" />
-										Profile Settings
+										<Settings className="h-4 w-4 text-muted-foreground" />
+										Account settings
+									</Link>
+								</DropdownMenuItem>
+								{/* Theme — hover submenu (System / Light / Dark) */}
+								<ThemeMenu />
+								<DropdownMenuSeparator />
+								<DropdownMenuItem asChild>
+									<Link href="/docs" className="cursor-pointer">
+										<BookOpen className="h-4 w-4 text-muted-foreground" />
+										Docs
 									</Link>
 								</DropdownMenuItem>
 								<DropdownMenuItem asChild>
-									<Link
-										href="/dashboard/design-spec"
+									<a
+										href="mailto:support@alethialabs.io"
 										className="cursor-pointer"
 									>
-										<Settings className="mr-2 h-4 w-4 text-muted-foreground" />
-										Create a Spec
-									</Link>
+										<LifeBuoy className="h-4 w-4 text-muted-foreground" />
+										Help
+									</a>
 								</DropdownMenuItem>
 								<DropdownMenuSeparator />
 								<DropdownMenuItem
 									onClick={handleLogout}
 									className="cursor-pointer text-destructive focus:text-destructive"
 								>
-									<LogOut className="mr-2 h-4 w-4" />
-									Sign out
+									<LogOut className="h-4 w-4" />
+									Logout
 								</DropdownMenuItem>
 							</DropdownMenuContent>
 						</DropdownMenu>
@@ -246,40 +289,46 @@ export default function DashboardLayout({
 				{/* Desktop Sidebar - Fixed Width */}
 				<aside className="hidden lg:flex w-64 xl:w-72 shrink-0 flex-col overflow-y-auto border-r border-border/40 bg-background/50">
 					<nav className="flex-1 space-y-1 p-4 lg:p-6 overflow-y-auto">
-						{navigation.map((item) => {
-							const isActive = item.href === "/dashboard"
-								? pathname === "/dashboard"
-								: pathname.startsWith(item.href);
-							return (
-								<Link key={item.name} href={item.href}>
-									<Button
-										variant={
-											isActive ? "secondary" : "ghost"
-										}
-										className={cn(
-											"w-full justify-start gap-3 h-9 px-3 text-sm font-medium transition-colors",
-											isActive
-												? "bg-muted/80 text-foreground"
-												: "text-muted-foreground hover:text-foreground hover:bg-muted/40",
-										)}
-									>
-										<item.icon
-											className={cn(
-												"h-4 w-4",
-												isActive
-													? "text-foreground"
-													: "text-muted-foreground",
-											)}
-										/>
-										<span>{item.name}</span>
-									</Button>
-								</Link>
-							);
-						})}
+						{inSettings ? (
+							<SettingsSidebar />
+						) : (
+							<>
+								{navigation.map((item) => {
+									const isActive = item.href === "/dashboard"
+										? pathname === "/dashboard"
+										: pathname.startsWith(item.href);
+									return (
+										<Link key={item.name} href={item.href}>
+											<Button
+												variant={
+													isActive ? "secondary" : "ghost"
+												}
+												className={cn(
+													"w-full justify-start gap-3 h-9 px-3 text-sm font-medium transition-colors",
+													isActive
+														? "bg-muted/80 text-foreground"
+														: "text-muted-foreground hover:text-foreground hover:bg-muted/40",
+												)}
+											>
+												<item.icon
+													className={cn(
+														"h-4 w-4",
+														isActive
+															? "text-foreground"
+															: "text-muted-foreground",
+													)}
+												/>
+												<span>{item.name}</span>
+											</Button>
+										</Link>
+									);
+								})}
 
-						<Suspense fallback={null}>
-							<SidebarZones />
-						</Suspense>
+								<Suspense fallback={null}>
+									<SidebarZones />
+								</Suspense>
+							</>
+						)}
 					</nav>
 
 					<div className="p-4 lg:p-6 mt-auto">
@@ -331,48 +380,56 @@ export default function DashboardLayout({
 								</Button>
 							</div>
 							<nav className="flex-1 overflow-y-auto p-4 space-y-1">
-								{navigation.map((item) => {
-									const isActive = item.href === "/dashboard"
-								? pathname === "/dashboard"
-								: pathname.startsWith(item.href);
-									return (
-										<Link
-											key={item.name}
-											href={item.href}
-											onClick={() =>
-												setSidebarOpen(false)
-											}
-										>
-											<Button
-												variant={
-													isActive
-														? "secondary"
-														: "ghost"
-												}
-												className={cn(
-													"w-full justify-start gap-3 h-10 px-3 text-sm font-medium",
-													isActive
-														? "bg-muted text-foreground"
-														: "text-muted-foreground hover:text-foreground",
-												)}
-											>
-												<item.icon
-													className={cn(
-														"h-4 w-4",
-														isActive
-															? "text-foreground"
-															: "text-muted-foreground",
-													)}
-												/>
-												<span>{item.name}</span>
-											</Button>
-										</Link>
-									);
-								})}
+								{inSettings ? (
+									<div onClick={() => setSidebarOpen(false)}>
+										<SettingsSidebar />
+									</div>
+								) : (
+									<>
+										{navigation.map((item) => {
+											const isActive = item.href === "/dashboard"
+										? pathname === "/dashboard"
+										: pathname.startsWith(item.href);
+											return (
+												<Link
+													key={item.name}
+													href={item.href}
+													onClick={() =>
+														setSidebarOpen(false)
+													}
+												>
+													<Button
+														variant={
+															isActive
+																? "secondary"
+																: "ghost"
+														}
+														className={cn(
+															"w-full justify-start gap-3 h-10 px-3 text-sm font-medium",
+															isActive
+																? "bg-muted text-foreground"
+																: "text-muted-foreground hover:text-foreground",
+														)}
+													>
+														<item.icon
+															className={cn(
+																"h-4 w-4",
+																isActive
+																	? "text-foreground"
+																	: "text-muted-foreground",
+															)}
+														/>
+														<span>{item.name}</span>
+													</Button>
+												</Link>
+											);
+										})}
 
-								<Suspense fallback={null}>
-									<SidebarZones />
-								</Suspense>
+										<Suspense fallback={null}>
+											<SidebarZones />
+										</Suspense>
+									</>
+								)}
 							</nav>
 						</aside>
 					</div>

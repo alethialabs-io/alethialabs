@@ -4,6 +4,7 @@
 
 import {
 	CreditCard,
+	Gauge,
 	KeyRound,
 	Lock,
 	ScrollText,
@@ -41,6 +42,7 @@ const ITEMS: NavItem[] = [
 	{ label: "Single Sign-On", href: `${BASE}/sso`, icon: KeyRound, entitlement: "sso" },
 	{ label: "Audit Log", href: `${BASE}/audit`, icon: ScrollText, entitlement: "auditExport" },
 	{ label: "Billing", href: `${BASE}/billing`, icon: CreditCard },
+	{ label: "AI Usage", href: `${BASE}/usage`, icon: Gauge },
 ];
 
 /** Left section-nav for the settings two-pane shell. */
