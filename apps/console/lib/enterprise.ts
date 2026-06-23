@@ -10,6 +10,7 @@
 
 import { createRequire } from "node:module";
 import type { BetterAuthOptions } from "better-auth";
+import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { enforceDecision } from "@/lib/authz/audit";
 import { checksFor } from "@/lib/authz/fga-mapping";
 import { buildAuthorizationModel } from "@/lib/authz/fga-model";
@@ -45,6 +46,12 @@ export interface CoreContext {
 	ensureMemberGrant: typeof ensureMemberGrant;
 	revokeMemberGrant: typeof revokeMemberGrant;
 	sendInviteEmail: typeof sendInviteEmail;
+	/**
+	 * Emits an alert event (best-effort, fire-and-forget) so ee/ membership hooks can
+	 * raise `system.member.*` alerts without importing core's alerting runtime — only
+	 * this core-provided method. Keeps the ee→core boundary clean.
+	 */
+	emitAlertEvent: typeof emitAlertEventSafe;
 	/**
 	 * Resolves an org's entitlements from its billing record (plan + subscription
 	 * status). Injected so the ee/ entitlement resolver decides per-org from billing
@@ -116,6 +123,7 @@ function loadEnterprise(): void {
 			ensureMemberGrant,
 			revokeMemberGrant,
 			sendInviteEmail,
+			emitAlertEvent: emitAlertEventSafe,
 			resolveOrgEntitlements,
 			fga: {
 				buildModel: buildAuthorizationModel,

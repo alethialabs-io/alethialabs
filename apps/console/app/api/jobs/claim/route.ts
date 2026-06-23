@@ -9,6 +9,7 @@ import {
 	type Job,
 	runners,
 } from "@/lib/db/schema";
+import { markFailed } from "@/lib/connectors/health";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
@@ -177,6 +178,16 @@ export async function POST(req: Request) {
 						`Failed to decrypt credential for ${row.slug}:`,
 						decErr,
 					);
+					// Durable connector health: a credential the runner can't use is a
+					// real, point-of-use failure → emit system.connector.token_failed once.
+					if (job.user_id) {
+						void markFailed(
+							{ userId: job.user_id, orgId: job.org_id ?? job.user_id },
+							"api_key",
+							row.slug,
+							"credential could not be decrypted",
+						);
+					}
 					continue;
 				}
 				connector_credentials.push({

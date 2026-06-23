@@ -4,6 +4,7 @@
 import { createHash } from "crypto";
 import { type SQL, and, count, desc, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { verifyCliToken } from "@/lib/cli/auth";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
@@ -165,6 +166,18 @@ export async function POST(req: Request) {
 				.update(specEnvironments)
 				.set({ status: "DESTROYING" })
 				.where(eq(specEnvironments.id, resolvedEnvironmentId));
+		}
+
+		// Ops alert (free): a teardown was requested. org_id is trigger-populated on insert.
+		if (jobType === "DESTROY" && job.org_id) {
+			emitAlertEventSafe(job.org_id, "system.job.destroy_requested", {
+				title: "Destroy requested",
+				severity: "warning",
+				job_id: job.id,
+				job_type: "DESTROY",
+				spec_id: configuration_id,
+				zone_id: job.zone_id ?? undefined,
+			});
 		}
 
 		notifyScaler();

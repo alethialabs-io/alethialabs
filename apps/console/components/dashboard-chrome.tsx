@@ -86,6 +86,7 @@ export function DashboardChrome({
 		{ name: "Clusters", href: globalHref(orgSlug, "clusters"), icon: Server },
 		{ name: "Jobs", href: globalHref(orgSlug, "jobs"), icon: ClipboardList },
 		{ name: "Connectors", href: globalHref(orgSlug, "connectors"), icon: Blocks },
+		{ name: "Alerts", href: globalHref(orgSlug, "alerts"), icon: Bell },
 		{ name: "Runners", href: globalHref(orgSlug, "runners"), icon: Workflow },
 		{ name: "Settings", href: globalHref(orgSlug, "settings"), icon: Settings },
 	];

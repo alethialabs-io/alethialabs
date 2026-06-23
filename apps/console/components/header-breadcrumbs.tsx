@@ -24,6 +24,7 @@ const SEGMENT_LABELS: Record<string, string> = {
 	clusters: "Clusters",
 	jobs: "Jobs",
 	connectors: "Connectors",
+	alerts: "Alerts",
 	runners: "Runners",
 	profile: "Profile",
 	settings: "Settings",

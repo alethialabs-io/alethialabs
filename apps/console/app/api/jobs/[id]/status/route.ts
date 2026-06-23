@@ -57,7 +57,17 @@ export async function PUT(
 				.where(eq(jobs.id, jobId))
 				.limit(1);
 
-			// Ops alerts (free in core): job terminal state + spec destroy.
+			// Ops alerts (free in core): job start, terminal state, spec destroy.
+			if (job?.org_id && status === "PROCESSING") {
+				emitAlertEventSafe(job.org_id, "system.job.started", {
+					title: `Job started: ${job.job_type}`,
+					severity: "info",
+					job_id: jobId,
+					job_type: job.job_type,
+					spec_id: job.spec_id ?? undefined,
+					zone_id: job.zone_id ?? undefined,
+				});
+			}
 			if (job?.org_id && (status === "SUCCESS" || status === "FAILED")) {
 				const base = {
 					job_id: jobId,
