@@ -23,6 +23,12 @@ export function orgHref(orgSlug: string): string {
 	return `/${orgSlug}`;
 }
 
+/** `/{org}/~/{sub}` — an org-global page (jobs, runners, settings/…). The `~`
+ * segment separates org-global routes from the `/{org}/{zone}` project drilldown. */
+export function globalHref(orgSlug: string, sub: string): string {
+	return `/${orgSlug}/~/${sub}`;
+}
+
 /** `/{org}/{zone}` — zone detail (its specs). */
 export function zoneHref(orgSlug: string, zoneSlug: string): string {
 	return `/${orgSlug}/${zoneSlug}`;

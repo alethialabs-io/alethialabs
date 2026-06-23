@@ -54,7 +54,40 @@ export function HeaderBreadcrumbs() {
 		// (the OrgSwitcher already shows the org, so the trail starts at the zone).
 		const segs = pathname.split("/").filter(Boolean);
 		if (segs.length >= 1 && segs[0] !== "dashboard") {
-			const [orgSeg, zoneSlug, specSlug, envSeg] = segs;
+			const [orgSeg, second] = segs;
+
+			// `/{org}/~/{page}[/…]` — an org-global page. Label from SEGMENT_LABELS
+			// (jobs/runners/settings/general/…), resolving job UUIDs by type.
+			if (second === "~") {
+				const rest = segs.slice(2);
+				const out: Crumb[] = [];
+				for (let j = 0; j < rest.length; j++) {
+					const s = rest[j];
+					const isLast = j === rest.length - 1;
+					if (SEGMENT_LABELS[s]) {
+						out.push({
+							label: SEGMENT_LABELS[s],
+							href: isLast
+								? undefined
+								: `/${orgSeg}/~/${rest.slice(0, j + 1).join("/")}`,
+						});
+					} else if (UUID_RE.test(s) && rest[j - 1] === "jobs") {
+						const job = jobs.find((v) => v.id === s);
+						const jt = job?.job_type as string | undefined;
+						out.push({
+							label:
+								jt && JOB_TYPES[jt as keyof typeof JOB_TYPES]
+									? JOB_TYPES[jt as keyof typeof JOB_TYPES].label
+									: `${s.slice(0, 8)}…`,
+						});
+					} else {
+						out.push({ label: s });
+					}
+				}
+				return out;
+			}
+
+			const [, zoneSlug, specSlug, envSeg] = segs;
 			const out: Crumb[] = [];
 			const z = zones.find((v) => v.slug === zoneSlug);
 			if (zoneSlug) {

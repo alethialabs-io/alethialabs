@@ -19,6 +19,8 @@ import {
 } from "@/components/settings/enterprise-gate";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { Button } from "@/components/ui/button";
+import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+import { globalHref } from "@/lib/routing";
 
 function GatePanel({
 	icon,
@@ -59,6 +61,7 @@ export function SettingsGate({
 	const enabled = useEntitlement(entitlement);
 	// "organizations" is the floor — holding it means there's a real paid org.
 	const hasOrg = useEntitlement("organizations");
+	const orgSlug = useActiveOrgSlug();
 	const [createOpen, setCreateOpen] = useState(false);
 
 	if (enabled) return <>{children}</>;
@@ -86,7 +89,7 @@ export function SettingsGate({
 			description={`Your organization's current plan doesn't include ${feature.toLowerCase()}. Upgrade to unlock it.`}
 			cta={
 				<Button asChild>
-					<Link href="/dashboard/settings/billing">Upgrade plan</Link>
+					<Link href={globalHref(orgSlug, "settings/billing")}>Upgrade plan</Link>
 				</Button>
 			}
 		/>

@@ -4,6 +4,8 @@
 
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
+import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+import { orgHref } from "@/lib/routing";
 import { SettingsNav } from "./settings-nav";
 
 /**
@@ -14,10 +16,11 @@ import { SettingsNav } from "./settings-nav";
  * sidebar's width, scroll, and footer.
  */
 export function SettingsSidebar() {
+	const orgSlug = useActiveOrgSlug();
 	return (
 		<div className="space-y-4">
 			<Link
-				href="/dashboard"
+				href={orgHref(orgSlug)}
 				className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
 			>
 				<ArrowLeft className="h-4 w-4 shrink-0" />

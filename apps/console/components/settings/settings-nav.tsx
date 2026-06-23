@@ -15,7 +15,11 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
+import {
+	useActiveOrgSlug,
+	useWorkspaceStore,
+} from "@/lib/stores/use-workspace-store";
+import { globalHref } from "@/lib/routing";
 import type { Entitlements } from "@/lib/authz/types";
 import { cn } from "@/lib/utils";
 
@@ -27,38 +31,39 @@ interface NavItem {
 	entitlement?: keyof Entitlements;
 }
 
-const BASE = "/dashboard/settings";
-
 // The settings information architecture — one flat list. Roles is community-real
 // (built-in roles come from the registry); the rest are Enterprise org-scoped surfaces.
-// Billing is always visible — it's how an unentitled user upgrades.
-const ITEMS: NavItem[] = [
-	{ label: "General", href: `${BASE}/general`, icon: Settings2, entitlement: "organizations" },
-	{ label: "Members", href: `${BASE}/members`, icon: Users, entitlement: "organizations" },
-	{ label: "Teams", href: `${BASE}/teams`, icon: UsersRound, entitlement: "organizations" },
-	{ label: "Roles", href: `${BASE}/roles`, icon: ShieldCheck },
-	{ label: "Access", href: `${BASE}/access`, icon: Lock, entitlement: "customRoles" },
-	{ label: "Single Sign-On", href: `${BASE}/sso`, icon: KeyRound, entitlement: "sso" },
-	{ label: "Audit Log", href: `${BASE}/audit`, icon: ScrollText, entitlement: "auditExport" },
-	{ label: "Billing", href: `${BASE}/billing`, icon: CreditCard },
+// Billing is always visible — it's how an unentitled user upgrades. C2c: each `sub`
+// is resolved under the active org → `/{org}/~/settings/{sub}`.
+const ITEMS: (Omit<NavItem, "href"> & { sub: string })[] = [
+	{ label: "General", sub: "general", icon: Settings2, entitlement: "organizations" },
+	{ label: "Members", sub: "members", icon: Users, entitlement: "organizations" },
+	{ label: "Teams", sub: "teams", icon: UsersRound, entitlement: "organizations" },
+	{ label: "Roles", sub: "roles", icon: ShieldCheck },
+	{ label: "Access", sub: "access", icon: Lock, entitlement: "customRoles" },
+	{ label: "Single Sign-On", sub: "sso", icon: KeyRound, entitlement: "sso" },
+	{ label: "Audit Log", sub: "audit", icon: ScrollText, entitlement: "auditExport" },
+	{ label: "Billing", sub: "billing", icon: CreditCard },
 ];
 
 /** Left section-nav for the settings two-pane shell. */
 export function SettingsNav() {
 	const pathname = usePathname();
+	const orgSlug = useActiveOrgSlug();
 	const entitlements = useWorkspaceStore((s) => s.entitlements);
 
 	return (
 		<nav className="space-y-1">
 			{ITEMS.map((item) => {
-				const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+				const href = globalHref(orgSlug, `settings/${item.sub}`);
+				const active = pathname === href || pathname.startsWith(`${href}/`);
 				// A subtle lock when the section needs an entitlement the workspace lacks.
 				const locked =
 					item.entitlement != null && !(entitlements?.[item.entitlement] ?? false);
 				return (
 					<Link
-						key={item.href}
-						href={item.href}
+						key={item.sub}
+						href={href}
 						className={cn(
 							"flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
 							active

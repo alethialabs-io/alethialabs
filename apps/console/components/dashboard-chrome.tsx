@@ -31,6 +31,8 @@ import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { ZoneSwitcher } from "@/components/zone-switcher";
 import { EnvSwitcher } from "@/components/env-switcher";
+import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+import { globalHref, orgHref } from "@/lib/routing";
 import {
 	Bell,
 	Blocks,
@@ -58,6 +60,7 @@ export function DashboardChrome({
 }) {
 	const pathname = usePathname();
 	const router = useRouter();
+	const orgSlug = useActiveOrgSlug();
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const { data: session } = authClient.useSession();
 	const user = session?.user ?? null;
@@ -74,14 +77,16 @@ export function DashboardChrome({
 		router.push("/");
 	};
 
+	// C2c: nav lives under the org slug — Overview = `/{org}`, the rest under `/{org}/~/…`.
+	const overviewHref = orgHref(orgSlug);
 	const navigation = [
-		{ name: "Overview", href: "/dashboard", icon: LayoutDashboard },
-		{ name: "Create a Spec", href: "/dashboard/design-spec", icon: Plus },
-		{ name: "Clusters", href: "/dashboard/clusters", icon: Server },
-		{ name: "Jobs", href: "/dashboard/jobs", icon: ClipboardList },
-		{ name: "Connectors", href: "/dashboard/connectors", icon: Blocks },
-		{ name: "Runners", href: "/dashboard/runners", icon: Workflow },
-		{ name: "Settings", href: "/dashboard/settings", icon: Settings },
+		{ name: "Overview", href: overviewHref, icon: LayoutDashboard },
+		{ name: "Create a Spec", href: globalHref(orgSlug, "design-spec"), icon: Plus },
+		{ name: "Clusters", href: globalHref(orgSlug, "clusters"), icon: Server },
+		{ name: "Jobs", href: globalHref(orgSlug, "jobs"), icon: ClipboardList },
+		{ name: "Connectors", href: globalHref(orgSlug, "connectors"), icon: Blocks },
+		{ name: "Runners", href: globalHref(orgSlug, "runners"), icon: Workflow },
+		{ name: "Settings", href: globalHref(orgSlug, "settings"), icon: Settings },
 	];
 
 	const getUserInitials = () => {
@@ -216,7 +221,7 @@ export function DashboardChrome({
 								<DropdownMenuSeparator />
 								<DropdownMenuItem asChild>
 									<Link
-										href="/dashboard/profile"
+										href={globalHref(orgSlug, "profile")}
 										className="cursor-pointer"
 									>
 										<User className="mr-2 h-4 w-4 text-muted-foreground" />
@@ -225,7 +230,7 @@ export function DashboardChrome({
 								</DropdownMenuItem>
 								<DropdownMenuItem asChild>
 									<Link
-										href="/dashboard/design-spec"
+										href={globalHref(orgSlug, "design-spec")}
 										className="cursor-pointer"
 									>
 										<Settings className="mr-2 h-4 w-4 text-muted-foreground" />
@@ -252,8 +257,8 @@ export function DashboardChrome({
 				<aside className="hidden lg:flex w-64 xl:w-72 shrink-0 flex-col overflow-y-auto border-r border-border/40 bg-background/50">
 					<nav className="flex-1 space-y-1 p-4 lg:p-6 overflow-y-auto">
 						{navigation.map((item) => {
-							const isActive = item.href === "/dashboard"
-								? pathname === "/dashboard"
+							const isActive = item.href === overviewHref
+								? pathname === overviewHref
 								: pathname.startsWith(item.href);
 							return (
 								<Link key={item.name} href={item.href}>
@@ -288,7 +293,7 @@ export function DashboardChrome({
 					</nav>
 
 					<div className="p-4 lg:p-6 mt-auto">
-						<Link href="/dashboard/profile">
+						<Link href={globalHref(orgSlug, "profile")}>
 							<div className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer group border border-transparent hover:border-border/50">
 								<Avatar className="h-8 w-8 border border-border/50">
 									<AvatarImage
@@ -337,8 +342,8 @@ export function DashboardChrome({
 							</div>
 							<nav className="flex-1 overflow-y-auto p-4 space-y-1">
 								{navigation.map((item) => {
-									const isActive = item.href === "/dashboard"
-								? pathname === "/dashboard"
+									const isActive = item.href === overviewHref
+								? pathname === overviewHref
 								: pathname.startsWith(item.href);
 									return (
 										<Link
