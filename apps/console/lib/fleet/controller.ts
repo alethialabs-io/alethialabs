@@ -35,6 +35,10 @@ export interface ControllerDeps {
 	drain(runnerId: string): Promise<void>;
 	/** Mark a removed runner OFFLINE + close its usage session. */
 	retire(runnerId: string): Promise<void>;
+	/** Persist the cloud-observed placement (location) + launch version onto the runner row,
+	 *  so the Fleet cockpit can show where each managed runner runs. Version only backfills
+	 *  when unset (the runner's own heartbeat-reported version wins). */
+	persistObserved(runnerId: string, patch: { location: string; version: string | null }): Promise<void>;
 	/** A registration-less instance younger than this is "booting", not dead. */
 	bootGraceSeconds: number;
 }
@@ -77,6 +81,18 @@ export async function reconcilePool(
 			busy: r?.busy ?? false,
 		};
 	});
+
+	// Persist the cloud-observed placement onto correlated runner rows (best-effort, so a
+	// write hiccup never blocks reconciliation). Lets the Fleet cockpit show where runners run.
+	await Promise.all(
+		observedInstances
+			.filter((o) => o.runnerId !== null && o.location)
+			.map((o) =>
+				deps
+					.persistObserved(o.runnerId as string, { location: o.location, version: o.version })
+					.catch((err) => console.error(`[fleet] persistObserved ${o.instanceId} failed:`, err)),
+			),
+	);
 
 	const target = targetCount(resolved, backlog, recentPeak);
 	const onlineNow = observedInstances.filter((i) => i.status === "online").length;

@@ -12,7 +12,9 @@ import { Switch } from "@/components/ui/switch";
 import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
 import { useProviderMeta } from "@/lib/cloud-providers";
+import { useConnectedProviders } from "./connectors-context";
 import { KeyRound, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { useFormContext, useFieldArray } from "react-hook-form";
 import type { SpecFormData } from "@/lib/validations/spec-form.schema";
 
@@ -26,8 +28,24 @@ const SECRET_PRESETS = [
 
 export function SectionSecrets() {
 	const meta = useProviderMeta();
-	const { control } = useFormContext<SpecFormData>();
+	const { control, setValue, getValues } = useFormContext<SpecFormData>();
 	const { fields, append, remove } = useFieldArray({ control, name: "secrets" });
+
+	// Connected secret stores (e.g. HashiCorp Vault). "native" = the cluster cloud's
+	// own secrets service. The model is homogeneous, so the choice applies to every
+	// secret in the spec.
+	const secretsProviders = useConnectedProviders("secrets");
+	const [secretsProvider, setSecretsProvider] = useState<string>(
+		() => getValues("secrets")?.[0]?.provider || "native",
+	);
+
+	const applyProvider = (value: string) => {
+		setSecretsProvider(value);
+		const next = value === "native" ? null : value;
+		(getValues("secrets") ?? []).forEach((_, i) =>
+			setValue(`secrets.${i}.provider`, next),
+		);
+	};
 
 	const addFromPreset = (presetLabel: string) => {
 		const preset = SECRET_PRESETS.find((p) => p.label === presetLabel);
@@ -35,7 +53,13 @@ export function SectionSecrets() {
 		const baseName = preset.name || `secret-${fields.length + 1}`;
 		const existingNames = fields.map((f) => f.name);
 		const finalName = existingNames.includes(baseName) ? `${baseName}-${fields.length + 1}` : baseName;
-		append({ name: finalName, generate: true, length: preset.length, special_chars: preset.special_chars });
+		append({
+			name: finalName,
+			generate: true,
+			length: preset.length,
+			special_chars: preset.special_chars,
+			provider: secretsProvider === "native" ? null : secretsProvider,
+		});
 	};
 
 	return (
@@ -61,6 +85,27 @@ export function SectionSecrets() {
 				<CardDescription className="text-xs">{meta.secretsService}. Auto-generated passwords and tokens.</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
+				{secretsProviders.length > 0 && (
+					<div className="space-y-1.5">
+						<Label className="text-xs">Secrets Store</Label>
+						<Select value={secretsProvider} onValueChange={applyProvider}>
+							<SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+							<SelectContent>
+								<SelectItem value="native">Cloud-native ({meta.secretsService})</SelectItem>
+								{secretsProviders.map((p) => (
+									<SelectItem key={p.slug} value={p.slug}>{p.name}</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+						{secretsProvider !== "native" && (
+							<p className="text-[11px] text-muted-foreground">
+								Secrets are stored in your connected{" "}
+								{secretsProviders.find((p) => p.slug === secretsProvider)?.name ?? secretsProvider}{" "}
+								instead of {meta.secretsService}.
+							</p>
+						)}
+					</div>
+				)}
 				{fields.length === 0 ? (
 					<div className="text-center py-8 text-muted-foreground">
 						<KeyRound className="h-8 w-8 mx-auto mb-2 opacity-20" />

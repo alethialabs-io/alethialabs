@@ -476,7 +476,7 @@ variable "custom_secret_keepers" {
 ##                   Custom Terraform Variables                        ##
 #########################################################################
 
-variable "custom_terraform_vars" {
+variable "custom_iac_vars" {
   type        = any
   default     = {}
   description = "Object of custom values that can be used for extra terraform files outside of the template"

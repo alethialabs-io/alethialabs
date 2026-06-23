@@ -95,7 +95,7 @@ variable "eks_cluster_version" {
 }
 
 variable "cluster_endpoint_public_access_cidrs" {
-  description = "CIDRs with access to the EKS cluster. Restricted to customer and ITGix"
+  description = "CIDRs with access to the EKS cluster. Restricted to customer and Alethia"
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
@@ -562,7 +562,7 @@ variable "dns_hosted_zone" {
 variable "dns_main_domain" {
   type        = string
   description = "Domain Managed under the R53 Zone"
-  default     = "itgix.eu"
+  default     = "example.com"
 }
 
 ################################################################################
@@ -582,7 +582,7 @@ variable "ec2_spot_service_role" {
 }
 
 ################################################################################
-# Custom Secrets Variables - ITGix tf-module-awssm-passgen
+# Custom Secrets Variables - Alethia tf-module-awssm-passgen
 ################################################################################
 
 
@@ -749,7 +749,7 @@ variable "bucket_configuration" {
   }]
 }
 
-variable "custom_terraform_vars" {
+variable "custom_iac_vars" {
   type        = any
   default     = {}
   description = "Object of custom values that can be used for extra terraform files outside of the template"

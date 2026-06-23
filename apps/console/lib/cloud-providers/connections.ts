@@ -7,6 +7,7 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, jobs, specs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
+import { encryptSecret } from "@/lib/crypto/secrets";
 import type { CloudCredentials } from "@/types/database-custom.types";
 
 /**
@@ -15,12 +16,32 @@ import type { CloudCredentials } from "@/types/database-custom.types";
  * by `userId` explicitly so it stays owner-scoped without relying on RLS.
  */
 
-export type CloudProvider = "aws" | "gcp" | "azure";
+export type CloudProvider =
+	| "aws"
+	| "gcp"
+	| "azure"
+	| "alibaba"
+	| "digitalocean"
+	| "hetzner"
+	| "civo";
+
+/** Clouds that assume a role with an ExternalId condition (zero stored credentials). */
+const ROLE_CLOUDS: ReadonlySet<CloudProvider> = new Set(["aws", "alibaba"]);
+/** Clouds with no role-federation — connected via a scoped API token (encrypted at rest). */
+const TOKEN_CLOUDS: ReadonlySet<CloudProvider> = new Set([
+	"digitalocean",
+	"hetzner",
+	"civo",
+]);
 
 const PENDING_NAME: Record<CloudProvider, string> = {
 	aws: "AWS Connection (Pending)",
 	gcp: "GCP Connection (Pending)",
 	azure: "Azure Connection (Pending)",
+	alibaba: "Alibaba Cloud Connection (Pending)",
+	digitalocean: "DigitalOcean Connection (Pending)",
+	hetzner: "Hetzner Connection (Pending)",
+	civo: "Civo Connection (Pending)",
 };
 
 export type InitResult = { identityId: string; externalId?: string };
@@ -39,6 +60,10 @@ export type ConnectionStatus = {
 	tenantId?: string;
 	clientId?: string;
 	subscriptionId?: string;
+	// DigitalOcean / Hetzner / Civo (token clouds) — token is encrypted, never returned
+	apiTokenSet?: boolean;
+	// Self-managed: no token stored in Alethia; a self-hosted runner supplies it from its env
+	selfManaged?: boolean;
 };
 
 /**
@@ -62,7 +87,7 @@ export async function initIdentity(
 		.limit(1);
 
 	if (existing) {
-		if (provider !== "aws") return { identityId: existing.id };
+		if (!ROLE_CLOUDS.has(provider)) return { identityId: existing.id };
 
 		const externalId = existing.credentials?.external_id ?? undefined;
 		if (externalId) return { identityId: existing.id, externalId };
@@ -82,7 +107,7 @@ export async function initIdentity(
 		return { identityId: existing.id, externalId: newExternalId };
 	}
 
-	const externalId = provider === "aws" ? randomUUID() : undefined;
+	const externalId = ROLE_CLOUDS.has(provider) ? randomUUID() : undefined;
 	const [created] = await db
 		.insert(cloudIdentities)
 		.values({
@@ -142,6 +167,23 @@ export async function getStatus(
 				clientId: c.client_id ?? undefined,
 				subscriptionId: c.subscription_id ?? undefined,
 			};
+		case "alibaba":
+			return {
+				connected: true,
+				identityId: identity.id,
+				accountId: c.account_id ?? undefined,
+				roleArn: c.role_arn ?? undefined,
+				externalId: c.external_id ?? undefined,
+			};
+		case "digitalocean":
+		case "hetzner":
+		case "civo":
+			return {
+				connected: true,
+				identityId: identity.id,
+				apiTokenSet: !!c.token,
+				selfManaged: !!c.self_managed,
+			};
 	}
 }
 
@@ -150,6 +192,7 @@ async function queueConnectionTest(
 	userId: string,
 	identityId: string,
 	configSnapshot: Record<string, unknown>,
+	opts?: { requiresSelfRunner?: boolean },
 ): Promise<string> {
 	const db = getServiceDb();
 	const [job] = await db
@@ -160,6 +203,7 @@ async function queueConnectionTest(
 			cloud_identity_id: identityId,
 			config_snapshot: configSnapshot,
 			status: "QUEUED",
+			requires_self_runner: opts?.requiresSelfRunner ?? false,
 		})
 		.returning({ id: jobs.id });
 
@@ -398,6 +442,121 @@ export async function saveAzureIdentity(
 	return { jobId, identityId };
 }
 
+// --- Alibaba (RAM role — zero stored credentials, like AWS) ---
+
+const ALIBABA_ARN_REGEX = /^acs:ram::(\d+):role\/[\w+=,.@-]+$/;
+
+/** Validates an Alibaba RAM role ARN, persists it, and queues a connection test. */
+export async function saveAlibabaIdentity(
+	userId: string,
+	identityId: string,
+	roleArn: string,
+): Promise<{ jobId: string; identityId: string }> {
+	const match = roleArn.match(ALIBABA_ARN_REGEX);
+	if (!match) {
+		throw new Error("Invalid format. Expected: acs:ram::5123456789012345:role/RoleName");
+	}
+	const accountId = match[1];
+	const identity = await loadIdentity(userId, identityId);
+
+	await getServiceDb()
+		.update(cloudIdentities)
+		.set({
+			name: `Alibaba Cloud (${accountId})`,
+			credentials: { ...identity.credentials, role_arn: roleArn, account_id: accountId },
+			is_verified: false,
+			updated_at: new Date(),
+		})
+		.where(
+			and(eq(cloudIdentities.id, identityId), eq(cloudIdentities.user_id, userId)),
+		);
+
+	const jobId = await queueConnectionTest(userId, identityId, {
+		role_arn: roleArn,
+		account_id: accountId,
+	});
+	return { jobId, identityId };
+}
+
+// --- Token clouds (DigitalOcean / Hetzner / Civo) — scoped API token, encrypted at rest ---
+
+/**
+ * Stores a scoped API token (encrypted via AES-GCM; decrypted only on the runner)
+ * and queues a connection test. The plaintext token is NEVER placed in the job
+ * config_snapshot — the claim route decrypts `credentials.token` and hands it to the
+ * runner directly, mirroring the pluggable-connector credential flow.
+ */
+export async function saveTokenCloudIdentity(
+	userId: string,
+	identityId: string,
+	provider: CloudProvider,
+	apiToken: string,
+): Promise<{ jobId: string; identityId: string }> {
+	if (!TOKEN_CLOUDS.has(provider)) {
+		throw new Error(`${provider} is not a token-authenticated cloud`);
+	}
+	const token = apiToken.trim();
+	if (token.length < 16) {
+		throw new Error("Invalid API token format");
+	}
+	const identity = await loadIdentity(userId, identityId);
+
+	await getServiceDb()
+		.update(cloudIdentities)
+		.set({
+			name: `${PENDING_NAME[provider].replace(" (Pending)", "")}`,
+			credentials: { ...identity.credentials, token: encryptSecret({ api_token: token }) },
+			is_verified: false,
+			updated_at: new Date(),
+		})
+		.where(
+			and(eq(cloudIdentities.id, identityId), eq(cloudIdentities.user_id, userId)),
+		);
+
+	// No secret in the snapshot — only a marker that a token connection test is requested.
+	const jobId = await queueConnectionTest(userId, identityId, { token_connection_test: true });
+	return { jobId, identityId };
+}
+
+/**
+ * Connects a token cloud in SELF-MANAGED mode: Alethia stores NO token. The
+ * customer's self-hosted runner supplies it from its own environment (HCLOUD_TOKEN,
+ * CIVO_TOKEN, DIGITALOCEAN_ACCESS_TOKEN). The connection test is pinned to a
+ * self-hosted runner (requires_self_runner) so a managed runner — which lacks the
+ * token — never claims it. The honest zero-trust path for clouds with no federation.
+ */
+export async function saveSelfManagedTokenIdentity(
+	userId: string,
+	identityId: string,
+	provider: CloudProvider,
+): Promise<{ jobId: string; identityId: string }> {
+	if (!TOKEN_CLOUDS.has(provider)) {
+		throw new Error(`${provider} is not a token-authenticated cloud`);
+	}
+	const identity = await loadIdentity(userId, identityId);
+
+	await getServiceDb()
+		.update(cloudIdentities)
+		.set({
+			name: `${PENDING_NAME[provider].replace(" (Pending)", "")}`,
+			// No token — drop any previously stored one and mark self-managed.
+			credentials: { ...identity.credentials, token: null, self_managed: true },
+			is_verified: false,
+			updated_at: new Date(),
+		})
+		.where(
+			and(eq(cloudIdentities.id, identityId), eq(cloudIdentities.user_id, userId)),
+		);
+
+	const jobId = await queueConnectionTest(
+		userId,
+		identityId,
+		{ token_connection_test: true, self_managed: true },
+		{ requiresSelfRunner: true },
+	);
+	return { jobId, identityId };
+}
+
 // --- Shared verify / disconnect ---
 
 /**
@@ -476,7 +635,7 @@ export async function disconnectIdentity(
 	const db = getServiceDb();
 
 	let credentials: CloudCredentials = {};
-	if (provider === "aws") {
+	if (ROLE_CLOUDS.has(provider)) {
 		const [identity] = await db
 			.select({ credentials: cloudIdentities.credentials })
 			.from(cloudIdentities)

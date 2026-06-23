@@ -2,9 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
+import { authorize, currentActor } from "@/lib/authz/guard";
 import { getOwner } from "@/lib/auth/owner";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
 import {
 	account,
 	cloudIdentities,
@@ -12,6 +13,7 @@ import {
 	connectorCredentials,
 	connectors as connectorsTable,
 } from "@/lib/db/schema";
+import type { CredentialScope } from "@/lib/db/schema/enums";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import { verifyConnectorCredential as pingConnector } from "@/lib/connectors/verify";
@@ -40,13 +42,24 @@ export type ConnectorWithConnection = Connector & {
 	connected: boolean;
 	connection_details: ConnectorConnectionDetails | null;
 	token_health?: GitTokenHealth;
+	/** Visibility of the backing credential (cloud / api_key). Undefined for git. */
+	scope?: CredentialScope;
 };
 
 /** Connectors catalog + the current user's connection status per connector. */
 export async function getConnectorsWithStatus(): Promise<
 	ConnectorWithConnection[]
 > {
-	const userId = await getOwner();
+	// Resolve the active tenancy scope so org-shared credentials (scope='org') show up
+	// for every member, not just the author. Git tokens stay per-user (account table).
+	let scope: { userId: string; orgId: string } | null = null;
+	try {
+		const actor = await currentActor();
+		scope = { userId: actor.userId, orgId: actor.orgId };
+	} catch {
+		scope = null;
+	}
+	const userId = scope?.userId ?? null;
 
 	// Public catalog — service connection (no owner scope).
 	const catalog = await getServiceDb()
@@ -66,13 +79,14 @@ export async function getConnectorsWithStatus(): Promise<
 				.from(account)
 				.where(eq(account.userId, userId))
 		: [];
-	const cloudIdentityRows = userId
-		? await withOwnerScope(userId, (tx) =>
+	const cloudIdentityRows = scope
+		? await withScope({ ownerId: scope.userId, orgId: scope.orgId }, (tx) =>
 				tx
 					.select({
 						id: cloudIdentities.id,
 						provider: cloudIdentities.provider,
 						credentials: cloudIdentities.credentials,
+						scope: cloudIdentities.scope,
 					})
 					.from(cloudIdentities)
 					.where(eq(cloudIdentities.is_verified, true)),
@@ -81,12 +95,14 @@ export async function getConnectorsWithStatus(): Promise<
 
 	// api_key connector credentials (dns/secrets/registry/observability), keyed by
 	// connector slug. Secrets stay encrypted here — only `is_verified` is needed.
-	const credentialRows = userId
-		? await withOwnerScope(userId, (tx) =>
+	// RLS returns the member's personal creds + the org's shared creds.
+	const credentialRows = scope
+		? await withScope({ ownerId: scope.userId, orgId: scope.orgId }, (tx) =>
 				tx
 					.select({
 						slug: connectorsTable.slug,
 						is_verified: connectorCredentials.is_verified,
+						scope: connectorCredentials.scope,
 					})
 					.from(connectorCredentials)
 					.innerJoin(
@@ -96,7 +112,10 @@ export async function getConnectorsWithStatus(): Promise<
 			)
 		: [];
 	const credentialBySlug = new Map(
-		credentialRows.map((c) => [c.slug, c.is_verified ?? false]),
+		credentialRows.map((c) => [
+			c.slug,
+			{ verified: c.is_verified ?? false, scope: c.scope },
+		]),
 	);
 
 	const tokens = new Set<string>(tokenRows.map((t) => t.provider));
@@ -133,6 +152,7 @@ export async function getConnectorsWithStatus(): Promise<
 				return {
 					...connector,
 					connected: true,
+					scope: cloud.scope,
 					connection_details: {
 						account_id: creds?.account_id ?? undefined,
 						role_arn: creds?.role_arn ?? undefined,
@@ -148,13 +168,13 @@ export async function getConnectorsWithStatus(): Promise<
 
 		// api_key pluggable providers (dns/secrets/registry/observability).
 		if (connector.auth_method === "api_key" && credentialBySlug.has(slug)) {
+			const cred = credentialBySlug.get(slug);
 			return {
 				...connector,
 				connected: true,
+				scope: cred?.scope,
 				connection_details: null,
-				token_health: credentialBySlug.get(slug)
-					? "healthy"
-					: "refresh_failed",
+				token_health: cred?.verified ? "healthy" : "refresh_failed",
 			};
 		}
 
@@ -225,12 +245,16 @@ export async function saveConnectorCredential(
 		};
 	}
 
+	// New credentials are created `personal` (author-only). Sharing with the org is an
+	// explicit, PDP-guarded action (setConnectorCredentialScope). The conflict target is
+	// the personal partial-unique index, so the targetWhere mirrors its predicate.
 	await withOwnerScope(userId, (tx) =>
 		tx
 			.insert(connectorCredentials)
 			.values({
 				user_id: userId,
 				connector_id: connector.id,
+				scope: "personal",
 				credentials,
 				is_verified: verdict.ok,
 			})
@@ -239,6 +263,7 @@ export async function saveConnectorCredential(
 					connectorCredentials.user_id,
 					connectorCredentials.connector_id,
 				],
+				targetWhere: sql`scope = 'personal'`,
 				set: {
 					credentials,
 					is_verified: verdict.ok,
@@ -264,7 +289,7 @@ export async function deleteConnectorCredential(
 		.limit(1);
 	if (!connector) return { ok: false, error: `Connector not in catalog: ${slug}` };
 
-	// Ownership is enforced by withOwnerScope + RLS (owner_all); filter by the
+	// Ownership is enforced by withOwnerScope + RLS (scoped_all); filter by the
 	// resource key only — an explicit user_id predicate is redundant and trips
 	// check:authz-scope.
 	await withOwnerScope(userId, (tx) =>
@@ -273,4 +298,126 @@ export async function deleteConnectorCredential(
 			.where(eq(connectorCredentials.connector_id, connector.id)),
 	);
 	return { ok: true };
+}
+
+/**
+ * Shares an api_key connector credential with the whole org (scope='org') or pulls it
+ * back to personal. Managing org credentials is a PDP `manage_connectors` action — so
+ * it also flows through the audit/alert chokepoint. Promotes the caller's personal row;
+ * demotes the org row back to its author.
+ */
+export async function setConnectorCredentialScope(
+	slug: string,
+	scope: CredentialScope,
+): Promise<{ ok: boolean; error?: string }> {
+	const actor = await authorize("manage_connectors", { type: "connector" });
+	const db = getServiceDb();
+
+	const [connector] = await db
+		.select({ id: connectorsTable.id })
+		.from(connectorsTable)
+		.where(eq(connectorsTable.slug, slug))
+		.limit(1);
+	if (!connector) return { ok: false, error: `Connector not in catalog: ${slug}` };
+
+	try {
+		const updated =
+			scope === "org"
+				? await db
+						.update(connectorCredentials)
+						.set({ scope: "org", org_id: actor.orgId, updated_at: new Date() })
+						.where(
+							and(
+								eq(connectorCredentials.connector_id, connector.id),
+								eq(connectorCredentials.user_id, actor.userId),
+								eq(connectorCredentials.scope, "personal"),
+							),
+						)
+						.returning({ id: connectorCredentials.id })
+				: await db
+						.update(connectorCredentials)
+						// Back to personal: org_id follows the author so personal RLS holds.
+						.set({
+							scope: "personal",
+							org_id: sql`user_id`,
+							updated_at: new Date(),
+						})
+						.where(
+							and(
+								eq(connectorCredentials.connector_id, connector.id),
+								eq(connectorCredentials.org_id, actor.orgId),
+								eq(connectorCredentials.scope, "org"),
+							),
+						)
+						.returning({ id: connectorCredentials.id });
+
+		if (updated.length === 0) {
+			return {
+				ok: false,
+				error:
+					scope === "org"
+						? "No personal credential to share."
+						: "No shared credential to make personal.",
+			};
+		}
+		return { ok: true };
+	} catch {
+		return {
+			ok: false,
+			error: `An ${scope === "org" ? "org" : "personal"} credential already exists for this connector.`,
+		};
+	}
+}
+
+/**
+ * Shares a cloud identity with the org (scope='org') or pulls it back to personal.
+ * Guarded by the PDP `manage_identities` action.
+ */
+export async function setCloudIdentityScope(
+	identityId: string,
+	scope: CredentialScope,
+): Promise<{ ok: boolean; error?: string }> {
+	const actor = await authorize("manage_identities", {
+		type: "cloud_identity",
+		id: identityId,
+	});
+	const db = getServiceDb();
+
+	try {
+		const updated =
+			scope === "org"
+				? await db
+						.update(cloudIdentities)
+						.set({ scope: "org", org_id: actor.orgId, updated_at: new Date() })
+						.where(
+							and(
+								eq(cloudIdentities.id, identityId),
+								eq(cloudIdentities.user_id, actor.userId),
+								eq(cloudIdentities.scope, "personal"),
+							),
+						)
+						.returning({ id: cloudIdentities.id })
+				: await db
+						.update(cloudIdentities)
+						.set({
+							scope: "personal",
+							org_id: sql`user_id`,
+							updated_at: new Date(),
+						})
+						.where(
+							and(
+								eq(cloudIdentities.id, identityId),
+								eq(cloudIdentities.org_id, actor.orgId),
+								eq(cloudIdentities.scope, "org"),
+							),
+						)
+						.returning({ id: cloudIdentities.id });
+
+		if (updated.length === 0) {
+			return { ok: false, error: "Cloud identity not found for this action." };
+		}
+		return { ok: true };
+	} catch {
+		return { ok: false, error: "Could not change the credential's scope." };
+	}
 }

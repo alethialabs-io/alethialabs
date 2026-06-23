@@ -11,10 +11,8 @@ import { Switch } from "@/components/ui/switch";
 import { FormControl, FormField, FormItem } from "@/components/ui/form";
 import { HelpTooltip } from "./help-tooltip";
 import { useCloudProvider, useProviderMeta, useProviderSlug, WAF_OPTIONS, CERT_OPTIONS } from "@/lib/cloud-providers";
-import {
-	getConnectorProvider,
-	getProvidersForCategory,
-} from "@/lib/connectors/registry.generated";
+import { getConnectorProvider } from "@/lib/connectors/registry.generated";
+import { useConnectedProviders } from "./connectors-context";
 import type {
 	CachedResources,
 	GcpCachedResources,
@@ -66,9 +64,11 @@ export function SectionDns() {
 	const wafOptions = WAF_OPTIONS[provider];
 	const certOption = CERT_OPTIONS[provider];
 
-	// Pluggable DNS providers (Cloudflare, …) offered alongside the cloud-native
-	// default. Empty / "native" selects the cluster cloud's native DNS.
-	const dnsProviders = getProvidersForCategory("dns");
+	// Pluggable DNS providers (Cloudflare, …) the user has CONNECTED, offered
+	// alongside the cloud-native default. Empty / "native" = the cluster cloud's
+	// own DNS. Unconnected providers are dropped so you can't pick one that would
+	// fail at provision time.
+	const dnsProviders = useConnectedProviders("dns");
 	const selectedDnsProvider = watch("dns.provider") || "native";
 	const pluggable = getConnectorProvider("dns", selectedDnsProvider);
 

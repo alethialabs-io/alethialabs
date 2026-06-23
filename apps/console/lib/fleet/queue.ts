@@ -16,6 +16,31 @@ type RunnerByInstanceRow = {
 	busy: boolean;
 };
 
+/** One managed runner enriched for the Fleet observability view (per-pool table + stats). */
+export interface ManagedRunnerRow {
+	runnerId: string;
+	instanceId: string | null;
+	location: string | null;
+	version: string | null;
+	status: "online" | "draining" | "offline";
+	busy: boolean;
+	/** Seconds since the runner row was created (uptime); null if unknown. */
+	ageSeconds: number | null;
+	/** Seconds since the last heartbeat (last seen); null if never. */
+	lastSeenSeconds: number | null;
+}
+
+type ManagedRunnerRawRow = {
+	runner_id: string;
+	instance_id: string | null;
+	location: string | null;
+	version: string | null;
+	status: string;
+	busy: boolean;
+	age_seconds: number | null;
+	last_seen_seconds: number | null;
+};
+
 /** QUEUED job counts grouped by target provider. Provider-less lifecycle jobs land
  *  under the "any" key (claimable by any runner; not attributed to a cloud pool). */
 export async function backlogByProvider(): Promise<Map<string, number>> {
@@ -63,6 +88,36 @@ export async function managedRunnersByInstance(
 	return m;
 }
 
+/** Managed runners that can serve a provider, enriched with location/version/uptime/last-seen
+ *  for the Fleet view. Same provider filter as {@link managedRunnersByInstance} (NULL
+ *  supported_providers = any). Ordered newest-first. */
+export async function managedRunnerRowsForProvider(
+	provider: string,
+): Promise<ManagedRunnerRow[]> {
+	const rows = await getServiceDb().execute<ManagedRunnerRawRow>(sql`
+		select r.id::text as runner_id, r.metadata->>'cloud_instance_id' as instance_id,
+		       r.location, r.version, lower(r.status::text) as status,
+		       exists(select 1 from public.jobs j
+		              where j.runner_id = r.id and j.status in ('CLAIMED','PROCESSING')) as busy,
+		       extract(epoch from (now() - r.created_at))::int as age_seconds,
+		       extract(epoch from (now() - r.last_heartbeat))::int as last_seen_seconds
+		from public.runners r
+		where r.operator = 'managed'
+		  and (r.supported_providers is null or ${provider}::cloud_provider = any(r.supported_providers))
+		order by r.created_at desc
+	`);
+	return rows.map((r) => ({
+		runnerId: r.runner_id,
+		instanceId: r.instance_id,
+		location: r.location,
+		version: r.version,
+		status: r.status === "draining" ? "draining" : r.status === "online" ? "online" : "offline",
+		busy: r.busy,
+		ageSeconds: r.age_seconds == null ? null : Number(r.age_seconds),
+		lastSeenSeconds: r.last_seen_seconds == null ? null : Number(r.last_seen_seconds),
+	}));
+}
+
 /** Current in-flight (CLAIMED/PROCESSING) managed jobs for a provider — the auto-grow signal. */
 export async function countInflightForProvider(provider: string): Promise<number> {
 	const rows = await getServiceDb().execute<CountRow>(sql`
@@ -80,6 +135,24 @@ export async function latestReleaseVersion(): Promise<string | null> {
 		select version from public.runner_releases order by released_at desc nulls last limit 1
 	`);
 	return rows[0]?.version ?? null;
+}
+
+/** Persist the cloud-observed placement (location) + launch version onto a runner row.
+ *  Only writes when something changed (no per-tick churn); `version` backfills via coalesce
+ *  so the runner's own heartbeat-reported version always wins. */
+export async function setRunnerObserved(
+	runnerId: string,
+	location: string,
+	version: string | null,
+): Promise<void> {
+	await getServiceDb().execute(sql`
+		update public.runners
+		set location = ${location},
+		    version = coalesce(version, ${version}),
+		    updated_at = now()
+		where id = ${runnerId}::uuid
+		  and (location is distinct from ${location} or version is null)
+	`);
 }
 
 /** Mark an ONLINE runner DRAINING so it stops claiming and drains to idle. */

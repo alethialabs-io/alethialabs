@@ -1,0 +1,11 @@
+# Next.js
+/.next/
+/out/
+next-env.d.ts
+
+# velite generated content
+/.velite/
+
+# build / deps
+/node_modules/
+*.tsbuildinfo

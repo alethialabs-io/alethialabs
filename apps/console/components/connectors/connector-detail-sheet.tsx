@@ -5,6 +5,7 @@
 
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
+import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -25,7 +26,6 @@ import {
 	Shield,
 	Unlink,
 } from "lucide-react";
-import Image from "next/image";
 
 const AUTH_METHOD_LABELS: Record<string, string> = {
 	oauth: "OAuth",
@@ -76,12 +76,10 @@ export function ConnectorDetailSheet({
 									size={28}
 								/>
 							) : (
-								<Image
+								<ConnectorIcon
 									src={integration.icon_url}
-									alt={integration.name}
-									width={32}
-									height={32}
-									className="object-contain"
+									name={integration.name}
+									size={32}
 								/>
 							)}
 						</div>

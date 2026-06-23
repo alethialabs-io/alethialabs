@@ -28,6 +28,7 @@ export async function POST(
 				user_id: jobs.user_id,
 				spec_id: jobs.spec_id,
 				runner_id: jobs.runner_id,
+				config_snapshot: jobs.config_snapshot,
 			})
 			.from(jobs)
 			.where(eq(jobs.id, jobId))
@@ -55,7 +56,12 @@ export async function POST(
 					.limit(1)
 			: [];
 
-		const repoUrl = repos?.apps_destination_repo || "";
+		// ANALYZE_REPO jobs have no spec — the target repo is in config_snapshot.
+		const scanRepoUrl =
+			typeof job.config_snapshot?.repo_url === "string"
+				? job.config_snapshot.repo_url
+				: "";
+		const repoUrl = repos?.apps_destination_repo || scanRepoUrl || "";
 		const gitProvider: PublicGitProvider = repoUrl.includes("gitlab")
 			? "gitlab"
 			: repoUrl.includes("bitbucket")

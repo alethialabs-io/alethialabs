@@ -34,10 +34,26 @@ import {
 	type ConversionWarning,
 	convertSpecConfig,
 } from "@/lib/cloud-providers";
+import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { notifyScaler } from "@/lib/scaler";
 import type { SpecFormData } from "@/lib/validations/spec-form.schema";
 import { pickFreeSlug, slugify } from "@/lib/routing";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+
+/**
+ * Mirrors the Go provisioner gate (packages/core/provisioner/placement.go):
+ * a CORE resource placed on a cloud account other than the spec's primary one is
+ * a hot cross-cloud data-plane edge we can't provision yet. Thrown before a job is
+ * queued so the user fails fast.
+ */
+function placementGateError(resourceType: string, name: string): Error {
+	return new Error(
+		`Cross-cloud ${resourceType} "${name}" targets a different cloud account than this stack's core. ` +
+			"Hot cross-cloud data-plane edges (compute reaching a primary datastore in another cloud) are on " +
+			"the roadmap and require cross-cloud networking that isn't available yet — move this resource onto " +
+			"the stack's primary cloud, or model it as an independent per-cloud stack.",
+	);
+}
 
 // ============================================================
 // Types — form-facing shapes mapped to the spec/zone DB columns below.
@@ -85,6 +101,8 @@ export interface CreateSpecInput {
 	>[];
 	queues?: ComponentInsert<typeof specQueues.$inferInsert>[];
 	topics?: ComponentInsert<typeof specTopics.$inferInsert>[];
+	nosql_tables?: ComponentInsert<typeof specNosqlTables.$inferInsert>[];
+	secrets?: ComponentInsert<typeof specSecrets.$inferInsert>[];
 }
 
 // ============================================================
@@ -189,6 +207,16 @@ export async function createSpec(data: CreateSpecInput) {
 				.insert(specTopics)
 				.values(data.topics.map((t) => ({ spec_id: spec.id, ...t })));
 		}
+		if (data.nosql_tables?.length) {
+			await tx
+				.insert(specNosqlTables)
+				.values(data.nosql_tables.map((n) => ({ spec_id: spec.id, ...n })));
+		}
+		if (data.secrets?.length) {
+			await tx
+				.insert(specSecrets)
+				.values(data.secrets.map((s) => ({ spec_id: spec.id, ...s })));
+		}
 
 		await tx.insert(auditLog).values({
 			spec_id: spec.id,
@@ -212,10 +240,28 @@ export async function getSpecs() {
 	const actor = await authorize("view", { type: "spec" });
 	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
-		const specList = await tx
-			.select()
+		// M1: surface each spec's default-environment name + status (the columns moved
+		// off `specs` into spec_environments) so list consumers keep reading them.
+		const rows = await tx
+			.select({
+				spec: specs,
+				env_name: specEnvironments.name,
+				env_status: specEnvironments.status,
+			})
 			.from(specs)
+			.leftJoin(
+				specEnvironments,
+				and(
+					eq(specEnvironments.spec_id, specs.id),
+					eq(specEnvironments.is_default, true),
+				),
+			)
 			.orderBy(specs.created_at);
+		const specList = rows.map((r) => ({
+			...r.spec,
+			environment_stage: r.env_name ?? "development",
+			status: r.env_status ?? "DRAFT",
+		}));
 		return { specs: specList };
 	});
 }
@@ -416,6 +462,102 @@ async function buildConfigSnapshot(
 			.where(eq(specObservability.spec_id, specId))
 			.limit(1);
 
+		// ── Resolve per-resource placement ("versatile model") ───────────────
+		// Each component may carry its own cloud_identity_id/region; NULL inherits
+		// the spec's primary identity. Resolve every component to a concrete
+		// placement and enforce the provisioning gate (mirrors the Go
+		// ValidatePlacement): CORE resources must colocate on the primary cloud;
+		// PERIPHERY (dns/observability/secrets/registries/storage) may diverge.
+		const core = {
+			cloud_provider: identity.provider,
+			cloud_identity_id: identity.id,
+			region: spec.region,
+		};
+
+		const foreignIds = Array.from(
+			new Set(
+				[
+					network?.cloud_identity_id,
+					cluster?.cloud_identity_id,
+					dns?.cloud_identity_id,
+					observability?.cloud_identity_id,
+					...databases.map((d) => d.cloud_identity_id),
+					...caches.map((c) => c.cloud_identity_id),
+					...queues.map((q) => q.cloud_identity_id),
+					...topics.map((t) => t.cloud_identity_id),
+					...nosqlTables.map((n) => n.cloud_identity_id),
+					...secrets.map((s) => s.cloud_identity_id),
+					...containerRegistries.map((r) => r.cloud_identity_id),
+				].filter(
+					(id): id is string => typeof id === "string" && id !== identity.id,
+				),
+			),
+		);
+
+		const providerById = new Map<string, string>([
+			[identity.id, identity.provider],
+		]);
+		if (foreignIds.length > 0) {
+			const rows = await tx
+				.select({ id: cloudIdentities.id, provider: cloudIdentities.provider })
+				.from(cloudIdentities)
+				.where(inArray(cloudIdentities.id, foreignIds));
+			for (const r of rows) providerById.set(r.id, r.provider);
+		}
+
+		/** Concrete { cloud_provider, cloud_identity_id, region } for a component row. */
+		const resolvePlacement = (row?: {
+			cloud_identity_id?: string | null;
+			region?: string | null;
+		}) => {
+			const cid = row?.cloud_identity_id ?? core.cloud_identity_id;
+			return {
+				cloud_provider: providerById.get(cid) ?? core.cloud_provider,
+				cloud_identity_id: cid,
+				region: row?.region ?? core.region,
+			};
+		};
+
+		// Gate: CORE resources must stay on the primary cloud identity.
+		const coreChecks: Array<{
+			type: string;
+			name: string;
+			cid?: string | null;
+		}> = [
+			{ type: "network", name: "network", cid: network?.cloud_identity_id },
+			{ type: "cluster", name: "cluster", cid: cluster?.cloud_identity_id },
+			...databases.map((d) => ({
+				type: "database",
+				name: d.name,
+				cid: d.cloud_identity_id,
+			})),
+			...caches.map((c) => ({
+				type: "cache",
+				name: c.name,
+				cid: c.cloud_identity_id,
+			})),
+			...queues.map((q) => ({
+				type: "queue",
+				name: q.name,
+				cid: q.cloud_identity_id,
+			})),
+			...topics.map((t) => ({
+				type: "topic",
+				name: t.name,
+				cid: t.cloud_identity_id,
+			})),
+			...nosqlTables.map((n) => ({
+				type: "nosql table",
+				name: n.name,
+				cid: n.cloud_identity_id,
+			})),
+		];
+		for (const c of coreChecks) {
+			if (c.cid && c.cid !== identity.id) {
+				throw placementGateError(c.type, c.name);
+			}
+		}
+
 		if (network?.provision_network === false && !network?.network_id) {
 			const netLabel =
 				identity.provider === "azure"
@@ -436,12 +578,14 @@ async function buildConfigSnapshot(
 			region: environment.region ?? spec.region,
 			provider: identity.provider,
 			network: {
+				...resolvePlacement(network),
 				provision_network: network?.provision_network ?? true,
 				cidr_block: network?.cidr_block ?? "10.0.0.0/16",
 				network_id: network?.network_id,
 				single_nat_gateway: network?.single_nat_gateway ?? true,
 			},
 			cluster: {
+				...resolvePlacement(cluster),
 				cluster_version: cluster?.cluster_version,
 				instance_types: cluster?.instance_types ?? [],
 				node_min_size: cluster?.node_min_size ?? 2,
@@ -451,6 +595,7 @@ async function buildConfigSnapshot(
 				provider_config: cluster?.provider_config ?? {},
 			},
 			dns: {
+				...resolvePlacement(dns),
 				enabled: dns?.enabled ?? false,
 				// Pluggable DNS provider slug ("" / "native" = cloud-native).
 				provider: dns?.provider ?? "",
@@ -459,6 +604,7 @@ async function buildConfigSnapshot(
 				provider_config: dns?.provider_config ?? {},
 			},
 			observability: {
+				...resolvePlacement(observability),
 				enabled: observability?.enabled ?? false,
 				provider: observability?.provider ?? "",
 				provider_config: observability?.provider_config ?? {},
@@ -466,13 +612,16 @@ async function buildConfigSnapshot(
 			repositories: {
 				apps_destination_repo: repos?.apps_destination_repo,
 			},
-			databases,
-			caches,
-			queues,
-			topics,
-			nosql_tables: nosqlTables,
-			secrets,
-			container_registries: containerRegistries,
+			databases: databases.map((d) => ({ ...d, ...resolvePlacement(d) })),
+			caches: caches.map((c) => ({ ...c, ...resolvePlacement(c) })),
+			queues: queues.map((q) => ({ ...q, ...resolvePlacement(q) })),
+			topics: topics.map((t) => ({ ...t, ...resolvePlacement(t) })),
+			nosql_tables: nosqlTables.map((n) => ({ ...n, ...resolvePlacement(n) })),
+			secrets: secrets.map((s) => ({ ...s, ...resolvePlacement(s) })),
+			container_registries: containerRegistries.map((r) => ({
+				...r,
+				...resolvePlacement(r),
+			})),
 			// Token is fetched at runtime by the runner via POST /api/jobs/[id]/git-token.
 			git_access_token: "",
 		};
@@ -524,6 +673,7 @@ export async function planSpec(
 	environmentId?: string | null,
 ) {
 	const actor = await authorize("plan", { type: "spec", id: specId });
+	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { spec, identity, environment, configSnapshot } =
 		await buildConfigSnapshot(owner, specId, environmentId);
@@ -562,6 +712,7 @@ export async function provisionSpec(
 	environmentId?: string | null,
 ) {
 	const actor = await authorize("deploy", { type: "spec", id: specId });
+	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { spec, identity, environment, configSnapshot } =
 		await buildConfigSnapshot(owner, specId, environmentId);

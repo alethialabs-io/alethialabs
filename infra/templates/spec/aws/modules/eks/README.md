@@ -15,14 +15,14 @@ Already a pro? Just edit this README.md and make it your own. Want to make it ea
 
 ```
 cd existing_repo
-git remote add origin https://gitlab.itgix.com/rnd/app-platform/iac-modules/elastic-kubernetes-service.git
+git remote add origin https://gitlab.alethia.com/rnd/app-platform/iac-modules/elastic-kubernetes-service.git
 git branch -M main
 git push -uf origin main
 ```
 
 ## Integrate with your tools
 
-- [ ] [Set up project integrations](https://gitlab.itgix.com/rnd/app-platform/iac-modules/elastic-kubernetes-service/-/settings/integrations)
+- [ ] [Set up project integrations](https://gitlab.alethia.com/rnd/app-platform/iac-modules/elastic-kubernetes-service/-/settings/integrations)
 
 ## Collaborate with your team
 

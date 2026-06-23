@@ -17,7 +17,9 @@ WORKDIR /app
 # ---- build: install workspace deps + produce the standalone bundle ----
 FROM base AS build
 COPY . .
-RUN pnpm install --frozen-lockfile --filter console...
+# Include @alethia/ee so its build toolchain (esbuild) + deps install — it's a
+# workspace dependency of console but `console...` alone doesn't pull its devDeps.
+RUN pnpm install --frozen-lockfile --filter console... --filter @alethia/ee
 # Placeholder env so the strict zod config modules (auth/database/storage) pass
 # validation while `next build` collects page data — importing route modules
 # constructs the auth instance, which builds the Drizzle client + reads config at
@@ -31,6 +33,16 @@ ENV BETTER_AUTH_SECRET=build-time-placeholder \
     ALETHIA_STORAGE_ENDPOINT=http://localhost:8333 \
     ALETHIA_STORAGE_ACCESS_KEY_ID=build \
     ALETHIA_STORAGE_SECRET_ACCESS_KEY=build
+# Canvas is gated by a NEXT_PUBLIC_ flag that Next inlines at build time. Default
+# off; pass --build-arg NEXT_PUBLIC_CANVAS_ENABLED=true (or via compose build.args)
+# to bake the design-spec canvas into the image.
+ARG NEXT_PUBLIC_CANVAS_ENABLED=false
+ENV NEXT_PUBLIC_CANVAS_ENABLED=$NEXT_PUBLIC_CANVAS_ENABLED
+# Build the enterprise package (esbuild → ee/dist/index.js) BEFORE next build, so
+# next's serverExternalPackages trace pulls @alethia/ee + its deps into the
+# standalone bundle. Without dist/, the loader's tolerant require falls back to the
+# community build (no orgs/teams/SSO).
+RUN pnpm --filter @alethia/ee build
 RUN pnpm --filter console build
 
 # ---- migrate: one-shot DB migrate (drizzle migrator lives in full node_modules) ----

@@ -83,7 +83,7 @@ resource "google_storage_bucket" "this" {
 
   labels = merge(var.labels, {
     environment = var.environment
-    managed-by  = "terraform"
+    managed-by  = "opentofu"
     bucket      = each.key
   })
 }

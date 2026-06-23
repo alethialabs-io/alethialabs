@@ -1,0 +1,103 @@
+---
+title: Cutting cold provisioning from two minutes to two seconds
+description: The real latency in a provisioning job wasn't the queue — it was tofu init re-downloading providers and modules on every run. Here's how pre-warming took it from 57–123 s to ~2.1 s.
+date: 2026-06-21
+author: Alethia Labs Engineering
+tags: [architecture, performance, runner]
+excerpt: The real latency wasn't the queue — it was tofu init re-downloading providers and modules every run. Here's the pre-warming that took it to ~2.1 s.
+---
+
+When you click **Provision**, a runner picks up the job and starts building your
+infrastructure. The work itself takes minutes — that's expected. What is not
+acceptable is *waiting before anything happens*. If a user stares at a spinner for a
+minute wondering whether they're stuck in a queue, they leave. The metric that matters
+is **time-to-first-log**, not time-to-done.
+
+We thought our latency lived in the queue. It didn't.
+
+## Anatomy of the latency
+
+We profiled a real job end to end. "Time until you see it running" breaks into four
+independent parts:
+
+| Part | Cost | Cause |
+|---|---|---|
+| Claim | 0–10 s | the runner polled for work every 10 s |
+| Cold start | 20–30 s | scale-to-zero meant pulling the image first |
+| **`tofu init` — providers** | **30–120 s** | every job re-downloaded ~300–700 MB of provider plugins |
+| **`tofu init` — modules** | **30–60 s** | every job re-downloaded 30+ registry modules |
+| First-log lag | 1–3 s | logs were buffered and flushed on a 2 s timer |
+
+The two that dominate are both inside `tofu init`, and both are **substrate-independent**:
+no fancier execution engine — microVMs, serverless, fresh containers — fixes a missing
+cache. Only caching does.
+
+The provider download was the obvious one. The module download was the surprise: our
+templates compose dozens of registry modules, and OpenTofu has no module cache the way
+it has a provider cache. So even after we cached providers, init still spent ~a minute
+re-fetching modules.
+
+## The fix: pre-warm the whole workspace
+
+Instead of letting every job rebuild its workspace from the network, we **bake a
+fully-initialized `.terraform` into the runner image at build time** — both halves:
+
+<Steps>
+<Step>
+**Provider cache.** Build once with a shared `TF_PLUGIN_CACHE_DIR`; each template's
+`.terraform/providers` becomes symlinks into that cache instead of fresh downloads.
+</Step>
+<Step>
+**Vendored modules.** The same build step resolves every module into
+`.terraform/modules`, so no module is fetched at job time.
+</Step>
+<Step>
+**Symlink-preserving copy.** Each job runs in its own workspace, copied from the baked
+template. The copy preserves the provider symlinks rather than dereferencing them — so a
+job gets a ready workspace in milliseconds, not a 700 MB duplicate.
+</Step>
+<Step>
+**Instant first log.** We replaced the fixed 2 s flush with a notify-driven flush and
+emit a line the moment the job is claimed, so the stream lights up immediately.
+</Step>
+</Steps>
+
+At job time, `tofu init` now finds providers and modules already present and only
+re-runs the remote-state step.
+
+## The numbers
+
+We measured the AWS template — the heaviest one, with EKS, networking, and a long list
+of modules:
+
+| Run | `tofu init` | Network fetches |
+|---|---|---|
+| Cold (nothing cached) | **123 s** | all providers + all modules |
+| Provider cache only, fresh workspace | 57 s | modules still re-downloaded |
+| **Pre-initialized workspace** | **~2.1 s** | **zero** |
+
+<Callout type="info">
+  **~123 s → ~2.1 s**, with zero network fetches at job time. Combined with a warm pool
+  (no cold start) and push-based dispatch (no poll wait), a job now starts streaming
+  logs in under a second.
+</Callout>
+
+## The next problem: image size
+
+Pre-warming trades size for speed. A workspace baked with every cloud's CLI and provider
+cache is a large image — and it grows every time we add a cloud. Most of that weight is
+dead for any single job: an AWS job never touches the Google or Azure providers.
+
+The direction we're taking: **don't build one worker that does everything — build small
+per-cloud workers and route each job to the right one.** Each cloud gets a lean image
+(shared base + only that cloud's tools and cache), kept warm where demand justifies it.
+Adding a cloud adds an image and a pool; it never bloats the others. Because the control
+plane already knows each job's target cloud, routing is a scheduling decision, not a
+packaging one.
+
+## Why this was possible
+
+None of this required new infrastructure. The runner stays a portable container; the
+control plane stays Postgres-native; jobs run with credentials assumed at runtime into
+your own cloud — the zero-credential model is untouched. The win was finding the real
+bottleneck and pre-warming it, not rebuilding the engine.

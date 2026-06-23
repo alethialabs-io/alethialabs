@@ -3,13 +3,19 @@
 
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
+import { getInjectedActor } from "@/lib/authz/actor-context";
 
 /**
  * Returns the authenticated user's id — the owner scope passed to
  * withOwnerScope() for the per-owner RLS backstop. Identity comes from Better
  * Auth (Phase D); the contract (a uuid string or throw) is stable so every caller stays the same. Throws on no session.
+ *
+ * An actor bound via runWithActor() (the MCP token path) short-circuits the session
+ * read — its userId is the owner.
  */
 export async function requireOwner(): Promise<string> {
+	const injected = getInjectedActor();
+	if (injected) return injected.userId;
 	const session = await auth.api.getSession({ headers: await headers() });
 	if (!session?.user) throw new Error("Unauthorized");
 	return session.user.id;
@@ -35,6 +41,16 @@ export interface OwnerScope {
  * enterprise organization plugin; absent in community → read defensively.
  */
 export async function getOwnerScope(): Promise<OwnerScope> {
+	const injected = getInjectedActor();
+	if (injected) {
+		// MCP token path: no Better Auth session row exists. Synthesize a scope from
+		// the already-resolved actor (sessionId is unused on this path).
+		return {
+			userId: injected.userId,
+			sessionId: "",
+			activeOrgId: injected.orgId === injected.userId ? undefined : injected.orgId,
+		};
+	}
 	const session = await auth.api.getSession({ headers: await headers() });
 	if (!session?.user) throw new Error("Unauthorized");
 	return {

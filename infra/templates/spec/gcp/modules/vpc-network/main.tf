@@ -25,7 +25,7 @@ locals {
   merged_labels = merge(var.labels, {
     environment = var.environment
     project     = var.project_name
-    managed-by  = "terraform"
+    managed-by  = "opentofu"
   })
 }
 

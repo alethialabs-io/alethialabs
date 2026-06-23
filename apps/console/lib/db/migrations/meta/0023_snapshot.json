@@ -1,6 +1,6 @@
 {
-  "id": "74bc6ce5-1d33-4a42-b14f-90c11c75f1da",
-  "prevId": "1e789cf8-b8fa-4ca9-9496-75f482e829a1",
+  "id": "310b5cbd-f11b-43fb-a95b-49631af23f46",
+  "prevId": "9ea21284-febb-4faa-ab0b-f291d2d0fb04",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -130,12 +130,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "slug": {
-          "name": "slug",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "description": {
           "name": "description",
           "type": "text",
@@ -198,14 +192,6 @@
           "columns": [
             "user_id",
             "name"
-          ]
-        },
-        "zones_org_id_slug_key": {
-          "name": "zones_org_id_slug_key",
-          "nullsNotDistinct": false,
-          "columns": [
-            "org_id",
-            "slug"
           ]
         }
       },
@@ -542,11 +528,13 @@
           "primaryKey": false,
           "notNull": true
         },
-        "slug": {
-          "name": "slug",
-          "type": "text",
+        "environment_stage": {
+          "name": "environment_stage",
+          "type": "environment_stage",
+          "typeSchema": "public",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true,
+          "default": "'development'"
         },
         "region": {
           "name": "region",
@@ -559,6 +547,14 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "spec_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'DRAFT'"
         },
         "estimated_monthly_cost": {
           "name": "estimated_monthly_cost",
@@ -672,16 +668,7 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "specs_zone_id_slug_key": {
-          "name": "specs_zone_id_slug_key",
-          "nullsNotDistinct": false,
-          "columns": [
-            "zone_id",
-            "slug"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

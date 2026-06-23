@@ -14,7 +14,7 @@ module "local_module_name" {
 
   aws_region  = var.aws_region
   environment = var.environment
-  assume_role_arn = "arn:aws:iam::${var.aws_account_id}:role/role-terraform-deployment"
+  assume_role_arn = "arn:aws:iam::${var.aws_account_id}:role/role-alethia-deployment"
 
   # general table configuration
   table_configuration = var.table_configuration

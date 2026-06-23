@@ -11,7 +11,6 @@ import {
 	BreadcrumbPage,
 	BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { AlethiaLogo } from "@/components/alethia-logo";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { useZonesStore } from "@/lib/stores/use-zones-store";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
@@ -174,42 +173,13 @@ export function HeaderBreadcrumbs() {
 		return result;
 	}, [pathname, zones, jobs]);
 
-	const isHome = crumbs.length === 0;
+	// On /dashboard there are no route crumbs — the bar is just "[·] / Org".
+	if (crumbs.length === 0) return null;
 
 	return (
 		<Breadcrumb>
 			<BreadcrumbList className="flex-nowrap">
-				{/* Logo + "Alethia" — links to /dashboard */}
-				<BreadcrumbItem className="shrink-0">
-					{isHome ? (
-						<BreadcrumbPage className="flex items-center gap-1.5">
-							<AlethiaLogo className="h-5 w-5" />
-							<span className="font-semibold">Alethia</span>
-						</BreadcrumbPage>
-					) : (
-						<BreadcrumbLink asChild>
-							<Link href="/dashboard" className="flex items-center gap-1.5">
-								<AlethiaLogo className="h-5 w-5" />
-								<span className="font-semibold text-foreground">Alethia</span>
-							</Link>
-						</BreadcrumbLink>
-					)}
-				</BreadcrumbItem>
-
-				{/* "by Borislav Borisov" — separate from the Link to avoid nested <a> */}
-				<li className="hidden sm:inline-flex items-center gap-1.5 text-sm">
-					<span className="text-muted-foreground">by</span>
-					<a
-						href="https://www.linkedin.com/in/bborisov1/"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="text-muted-foreground hover:text-foreground transition-colors"
-					>
-						Borislav Borisov
-					</a>
-				</li>
-
-				{/* Route segments */}
+				{/* Route segments. The leading separator divides the org switcher from the trail. */}
 				{crumbs.map((crumb, i) => (
 					<Fragment key={crumb.href ?? crumb.label}>
 						<BreadcrumbSeparator />

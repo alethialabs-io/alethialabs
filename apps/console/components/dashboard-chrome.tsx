@@ -32,6 +32,9 @@ import { OrgSwitcher } from "@/components/org-switcher";
 import { ZoneSwitcher } from "@/components/zone-switcher";
 import { SpecSwitcher } from "@/components/spec-switcher";
 import { EnvSwitcher } from "@/components/env-switcher";
+import { AlethiaLogo } from "@/components/alethia-logo";
+import { DownloadCliButton } from "@/components/download-cli-button";
+import { ThemeMenu } from "@/components/theme-menu";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref, orgHref } from "@/lib/routing";
 import {
@@ -44,6 +47,7 @@ import {
 	Plus,
 	Server,
 	Settings,
+	Sparkles,
 	User,
 	Workflow,
 	X,
@@ -81,6 +85,7 @@ export function DashboardChrome({
 	// C2c: nav lives under the org slug — Overview = `/{org}`, the rest under `/{org}/~/…`.
 	const overviewHref = orgHref(orgSlug);
 	const navigation = [
+		{ name: "Agent", href: globalHref(orgSlug, "agent"), icon: Sparkles },
 		{ name: "Overview", href: overviewHref, icon: LayoutDashboard },
 		{ name: "Create a Spec", href: globalHref(orgSlug, "design-spec"), icon: Plus },
 		{ name: "Clusters", href: globalHref(orgSlug, "clusters"), icon: Server },
@@ -114,7 +119,17 @@ export function DashboardChrome({
 								<Menu className="h-5 w-5" />
 							)}
 						</Button>
-						{/* Org → zone → env switchers, then the breadcrumb trail. */}
+						{/* Mark → org → zone → spec → env switchers, then the breadcrumb trail. */}
+						<Link
+							href={overviewHref}
+							aria-label="Alethia home"
+							className="shrink-0 text-foreground"
+						>
+							<AlethiaLogo className="h-7 w-7" />
+						</Link>
+						<span className="text-border/70 select-none" aria-hidden>
+							/
+						</span>
 						<OrgSwitcher />
 						<ZoneSwitcher />
 						<SpecSwitcher />
@@ -123,6 +138,9 @@ export function DashboardChrome({
 					</div>
 
 					<div className="flex items-center gap-2 sm:gap-4">
+						{/* Download the alethia CLI + theme toggle */}
+						<DownloadCliButton />
+						<ThemeMenu />
 						{/* Notifications */}
 						<Popover>
 							<PopoverTrigger asChild>

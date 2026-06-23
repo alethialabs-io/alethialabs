@@ -15,6 +15,10 @@ import {
 	getAzureConnectionStatus,
 	initAzureIdentity,
 } from "@/app/(private)/dashboard/providers/azure-actions";
+import {
+	getExtraCloudStatus,
+	initExtraCloudIdentity,
+} from "@/app/(private)/dashboard/providers/extra-cloud-actions";
 import { ConnectorsPage } from "@/components/connectors/connectors-page";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 
@@ -63,24 +67,31 @@ export default async function ConnectorsRoute() {
 		} catch {}
 	}
 
-	return (
-		<div className="space-y-8">
-			<div>
-				<h1 className="text-2xl font-semibold tracking-tight text-foreground">
-					Connectors
-				</h1>
-				<p className="text-sm text-muted-foreground mt-1">
-					Connect your cloud and Git accounts to manage
-					infrastructure and repositories.
-				</p>
-			</div>
+	// Initialise pending identities for the extra clouds (so the connect sheet has an
+	// identityId / Alibaba external_id to bind to). Only for clouds not yet connected.
+	const EXTRA = ["alibaba", "digitalocean", "hetzner", "civo"] as const;
+	const extraSetup: Record<string, { identityId: string; externalId?: string }> = {};
+	await Promise.all(
+		EXTRA.map(async (slug) => {
+			try {
+				const status = await getExtraCloudStatus(slug);
+				if (status.connected) return;
+				const init = await initExtraCloudIdentity(slug);
+				extraSetup[slug] = {
+					identityId: init.identityId,
+					externalId: init.externalId,
+				};
+			} catch {}
+		}),
+	);
 
-			<ConnectorsPage
-				integrations={integrations}
-				awsSetup={awsSetup}
-				gcpSetup={gcpSetup}
-				azureSetup={azureSetup}
-			/>
-		</div>
+	return (
+		<ConnectorsPage
+			integrations={integrations}
+			awsSetup={awsSetup}
+			gcpSetup={gcpSetup}
+			azureSetup={azureSetup}
+			extraSetup={extraSetup}
+		/>
 	);
 }

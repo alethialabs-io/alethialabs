@@ -26,6 +26,8 @@ export class FakeFleet implements FleetProvider {
 	recentPeak = 0;
 	channelVersion: string | null = null;
 	bootGraceSeconds = 180;
+	/** Records persistObserved calls so tests can assert location was written back. */
+	readonly persisted = new Map<string, { location: string; version: string | null }>();
 
 	/** Seed an already-running instance (for mid-state tests). */
 	seed(over: Partial<FakeInstance> & { version: string | null; location: string }): string {
@@ -91,6 +93,9 @@ export class FakeFleet implements FleetProvider {
 			},
 			retire: async (runnerId) => {
 				for (const i of this.instances.values()) if (i.runnerId === runnerId) i.status = "offline";
+			},
+			persistObserved: async (runnerId, patch) => {
+				this.persisted.set(runnerId, patch);
 			},
 			bootGraceSeconds: this.bootGraceSeconds,
 		};

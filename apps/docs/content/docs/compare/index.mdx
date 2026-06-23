@@ -1,0 +1,34 @@
+---
+title: How Alethia compares
+description: Where Alethia sits between IaC orchestrators and BYOC app-PaaSes — and the honest tradeoffs versus Porter, Qovery, and Spacelift.
+---
+
+# How Alethia compares
+
+Most infrastructure tools fall into two camps, and Alethia deliberately sits in the gap
+between them:
+
+- **IaC orchestrators** (Terraform Cloud, Spacelift) run the IaC *you* write. Powerful, but
+  they hand you plumbing — you still author and operate everything.
+- **BYOC app-PaaSes** (Porter, Qovery, Northflank) give you a product, but the control plane
+  is *their* hosted SaaS, the deploy pipeline is proprietary, and pricing meters your compute.
+
+**Alethia is a self-hostable control plane that designs and provisions real infrastructure
+with zero stored credentials, and hands you standard EKS + ArgoCD + OpenTofu you own.**
+
+| | Alethia | IaC orchestrators | BYOC app-PaaS |
+|---|---|---|---|
+| Self-host the control plane | **Yes** (~4 containers, AGPL) | Top tier only | No |
+| Stores your cloud credentials | **No** (role assumed at run time) | N/A (you run IaC) | Usually yes / privileged |
+| App delivery | **Real ArgoCD, GitOps, portable** | CI apply on push | Proprietary pipeline |
+| What you own when you leave | Cluster + OpenTofu + GitOps | Your IaC | The cluster (not the pipeline) |
+| Open source | **AGPL core** | Worker only | No |
+
+<Callout type="info">
+We keep these comparisons honest — each page has a **"where they win"** section. These are
+mature, well-funded products; Alethia's edge is **ownership**, not feature-count.
+</Callout>
+
+- [vs Porter](/compare/vs-porter) — the BYOC "Heroku in your cloud."
+- [vs Qovery](/compare/vs-qovery) — the closest structural analog (BYOC K8s control plane).
+- [vs Spacelift](/compare/vs-spacelift) — IaC orchestration (TACOS).

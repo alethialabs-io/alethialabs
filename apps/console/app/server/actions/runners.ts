@@ -5,11 +5,10 @@
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
+import { queryProvisionedHours } from "@/lib/queries/runner-usage";
 import { notifyScaler } from "@/lib/scaler";
 import { createHash, randomBytes } from "crypto";
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
-
-type RunnerMode = "self-hosted" | "cloud-hosted";
 
 const RELEASE_FIELDS = {
 	version: runnerReleases.version,
@@ -52,7 +51,7 @@ export async function getRunnersWithReleases() {
 			.leftJoin(runnerReleases, eq(runners.release_id, runnerReleases.id))
 			.orderBy(
 				desc(runners.is_default),
-				asc(runners.mode),
+				asc(runners.operator),
 				asc(runners.created_at),
 			);
 		return rows.map((r) => ({
@@ -60,6 +59,23 @@ export async function getRunnersWithReleases() {
 			runner_releases: r.release ? toReleaseInfo(r.release) : null,
 		}));
 	});
+}
+
+/**
+ * Provisioned hours per managed runner for the current calendar month (UTC),
+ * keyed by runner id. Reads the platform billing ledger via the service path
+ * (RLS-denied to the app role); still-open sessions are billed up to now.
+ */
+export async function getManagedRunnerUsage(): Promise<Record<string, number>> {
+	await authorize("view", { type: "runner" });
+	const now = new Date();
+	const from = new Date(
+		Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+	);
+	const rows = await queryProvisionedHours(getServiceDb(), { from, to: now });
+	return Object.fromEntries(
+		rows.map((r) => [r.runner_id, r.provisioned_hours]),
+	);
 }
 
 /** The most recent runner release, or null. */
@@ -105,7 +121,12 @@ export async function getOnlineRunnerCount(): Promise<number> {
 	});
 }
 
-export async function registerRunner(name: string, mode: RunnerMode) {
+/**
+ * Registers a self-operated runner the user brings themselves (own Terraform or
+ * `alethia runner start`), returning the one-time token. Always
+ * operator=self, provisioning=registered.
+ */
+export async function registerRunner(name: string) {
 	const actor = await authorize("create", { type: "runner" });
 	const owner = actor.userId;
 	const runnerToken = randomBytes(32).toString("hex");
@@ -114,11 +135,18 @@ export async function registerRunner(name: string, mode: RunnerMode) {
 	const runner = await withOwnerScope(owner, async (tx) => {
 		const [r] = await tx
 			.insert(runners)
-			.values({ user_id: owner, name, mode, token_hash: tokenHash })
+			.values({
+				user_id: owner,
+				name,
+				operator: "self",
+				provisioning: "registered",
+				token_hash: tokenHash,
+			})
 			.returning({
 				id: runners.id,
 				name: runners.name,
-				mode: runners.mode,
+				operator: runners.operator,
+				provisioning: runners.provisioning,
 				status: runners.status,
 				created_at: runners.created_at,
 			});
@@ -149,7 +177,8 @@ export async function getAvailableRunners() {
 			.select({
 				id: runners.id,
 				name: runners.name,
-				mode: runners.mode,
+				operator: runners.operator,
+				provisioning: runners.provisioning,
 				status: runners.status,
 				is_default: runners.is_default,
 			})
@@ -158,7 +187,10 @@ export async function getAvailableRunners() {
 	);
 }
 
-/** Deploys a self-hosted runner container to the user's cloud account. */
+/**
+ * Deploys a runner into the user's cloud account through an existing runner that
+ * runs Terraform. The new runner is operator=self, provisioning=deployed.
+ */
 export async function deployRunner(params: {
 	name: string;
 	cloudIdentityId: string;
@@ -177,7 +209,8 @@ export async function deployRunner(params: {
 			.values({
 				user_id: owner,
 				name: params.name,
-				mode: "self-hosted",
+				operator: "self",
+				provisioning: "deployed",
 				token_hash: tokenHash,
 				cloud_identity_id: params.cloudIdentityId,
 			})
@@ -282,7 +315,7 @@ function buildRunnerConfigSnapshot(
 	};
 }
 
-/** Queues a DESTROY_RUNNER job for a self-hosted runner with cloud resources. */
+/** Queues a DESTROY_RUNNER job for a self-operated, deployed runner with cloud resources. */
 export async function destroyRunner(
 	runnerId: string,
 	assignedRunnerId?: string | null,

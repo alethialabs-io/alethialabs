@@ -4,6 +4,7 @@
 
 
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
+import type { CredentialScope } from "@/lib/db/schema/enums";
 import { ConnectorCard } from "@/components/connectors/connector-card";
 import {
 	Collapsible,
@@ -18,6 +19,7 @@ interface ConnectorsListProps {
 	onCardClick: (integration: ConnectorWithConnection) => void;
 	onConnect: (integration: ConnectorWithConnection) => void;
 	onDisconnect: (integration: ConnectorWithConnection) => void;
+	onShare: (integration: ConnectorWithConnection, target: CredentialScope) => void;
 	connectingSlug?: string | null;
 }
 
@@ -26,6 +28,7 @@ export function ConnectorsList({
 	onCardClick,
 	onConnect,
 	onDisconnect,
+	onShare,
 	connectingSlug,
 }: ConnectorsListProps) {
 	const [activeOpen, setActiveOpen] = useState(true);
@@ -68,6 +71,7 @@ export function ConnectorsList({
 									onDisconnect={() =>
 										onDisconnect(integration)
 									}
+									onShare={(target) => onShare(integration, target)}
 									isConnecting={
 										connectingSlug === integration.slug
 									}
@@ -103,6 +107,7 @@ export function ConnectorsList({
 									onDisconnect={() =>
 										onDisconnect(integration)
 									}
+									onShare={(target) => onShare(integration, target)}
 									isConnecting={
 										connectingSlug === integration.slug
 									}

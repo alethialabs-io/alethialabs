@@ -1,6 +1,6 @@
 # Terraform Infrastructure Deployment
 
-This is the standard template for the cloud infrastructure of **ITGix ADP - Application Development Container Platform**.  
+This is the standard template for the cloud infrastructure of **Alethia - Application Development Container Platform**.  
 It's meant to be used with the **idp-installer** bootstrapping script.
 
 Variables can be passed via the main YAML configuration file of **idp-installer**, and they will override the provided defaults in the `variable-template` directory.
@@ -26,29 +26,29 @@ Variables can be passed via the main YAML configuration file of **idp-installer*
 
 | Name | Source | Version |
 |------|--------|---------|
-| <a name="module_acm"></a> [acm](#module\_acm) | git::git@github.com:itgix/tf-module-acm.git | v1.0.1 |
+| <a name="module_acm"></a> [acm](#module\_acm) | git::git@github.com:alethia/tf-module-acm.git | v1.0.1 |
 | <a name="module_common_vpc"></a> [common\_vpc](#module\_common\_vpc) | terraform-aws-modules/vpc/aws | ~> 5.5.1 |
-| <a name="module_custom_secrets_password_module"></a> [custom\_secrets\_password\_module](#module\_custom\_secrets\_password\_module) | git@github.com:itgix/tf-module-awssm-passgen.git | v1.0.0 |
-| <a name="module_dynamodb"></a> [dynamodb](#module\_dynamodb) | git@github.com:itgix/tf-module-dynamodb.git | n/a |
-| <a name="module_ecr"></a> [ecr](#module\_ecr) | git::git@github.com:itgix/tf-module-ecr.git | v1.0.0 |
-| <a name="module_eks"></a> [eks](#module\_eks) | git::git@github.com:itgix/tf-module-eks.git | v1.0.0 |
-| <a name="module_elasticache"></a> [elasticache](#module\_elasticache) | git::git@github.com:itgix/tf-module-redis.git | v1.0.0 |
-| <a name="module_global_dynamodb"></a> [global\_dynamodb](#module\_global\_dynamodb) | git@github.com:itgix/tf-module-dynamodb.git | n/a |
+| <a name="module_custom_secrets_password_module"></a> [custom\_secrets\_password\_module](#module\_custom\_secrets\_password\_module) | git@github.com:alethia/tf-module-awssm-passgen.git | v1.0.0 |
+| <a name="module_dynamodb"></a> [dynamodb](#module\_dynamodb) | git@github.com:alethia/tf-module-dynamodb.git | n/a |
+| <a name="module_ecr"></a> [ecr](#module\_ecr) | git::git@github.com:alethia/tf-module-ecr.git | v1.0.0 |
+| <a name="module_eks"></a> [eks](#module\_eks) | git::git@github.com:alethia/tf-module-eks.git | v1.0.0 |
+| <a name="module_elasticache"></a> [elasticache](#module\_elasticache) | git::git@github.com:alethia/tf-module-redis.git | v1.0.0 |
+| <a name="module_global_dynamodb"></a> [global\_dynamodb](#module\_global\_dynamodb) | git@github.com:alethia/tf-module-dynamodb.git | n/a |
 | <a name="module_irsa_fluentbit_cloudwatch"></a> [irsa\_fluentbit\_cloudwatch](#module\_irsa\_fluentbit\_cloudwatch) | terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks | 5.34.0 |
-| <a name="module_irsa_itgix_adp_agent"></a> [irsa\_itgix\_adp\_agent](#module\_irsa\_itgix\_adp\_agent) | terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks | 5.34.0 |
+| <a name="module_irsa_alethia_agent"></a> [irsa\_alethia\_adp\_agent](#module\_irsa\_alethia\_adp\_agent) | terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks | 5.34.0 |
 | <a name="module_irsa_karpenter"></a> [irsa\_karpenter](#module\_irsa\_karpenter) | terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks | 5.34.0 |
 | <a name="module_karpenter"></a> [karpenter](#module\_karpenter) | terraform-aws-modules/eks/aws//modules/karpenter | 19.21.0 |
 | <a name="module_rds_iam_auth"></a> [rds\_iam\_auth](#module\_rds\_iam\_auth) | terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks | 5.34.0 |
-| <a name="module_rds_maindb"></a> [rds\_maindb](#module\_rds\_maindb) | git::git@github.com:itgix/tf-module-rds.git | v1.0.1 |
-| <a name="module_sqs_dev"></a> [sqs\_dev](#module\_sqs\_dev) | git::git@github.com:itgix/tf-module-sqs-sns.git | v1.0.0 |
-| <a name="module_wafv2_application"></a> [wafv2\_application](#module\_wafv2\_application) | git::git@github.com:itgix/tf-module-wafv2.git | v1 |
-| <a name="module_wafv2_cloudfront"></a> [wafv2\_cloudfront](#module\_wafv2\_cloudfront) | git::git@github.com:itgix/tf-module-wafv2.git | v1 |
+| <a name="module_rds_maindb"></a> [rds\_maindb](#module\_rds\_maindb) | git::git@github.com:alethia/tf-module-rds.git | v1.0.1 |
+| <a name="module_sqs_dev"></a> [sqs\_dev](#module\_sqs\_dev) | git::git@github.com:alethia/tf-module-sqs-sns.git | v1.0.0 |
+| <a name="module_wafv2_application"></a> [wafv2\_application](#module\_wafv2\_application) | git::git@github.com:alethia/tf-module-wafv2.git | v1 |
+| <a name="module_wafv2_cloudfront"></a> [wafv2\_cloudfront](#module\_wafv2\_cloudfront) | git::git@github.com:alethia/tf-module-wafv2.git | v1 |
 
 ## Resources
 
 | Name | Type |
 |------|------|
-| [aws_iam_policy.irsa_itgix_adp_agent](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
+| [aws_iam_policy.irsa_alethia_agent](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_policy.irsa_karpenter](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_policy.rds_iam_auth](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_service_linked_role.spot](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_service_linked_role) | resource |
@@ -66,7 +66,7 @@ Variables can be passed via the main YAML configuration file of **idp-installer*
 | <a name="input_aws_account_id"></a> [aws\_account\_id](#input\_aws\_account\_id) | AWS account to deploy resources | `string` | n/a | yes |
 | <a name="input_aws_managed_waf_rule_groups"></a> [aws\_managed\_waf\_rule\_groups](#input\_aws\_managed\_waf\_rule\_groups) | n/a | `list(any)` | <pre>[<br>  {<br>    "action": "none",<br>    "name": "AWSManagedRulesAdminProtectionRuleSet",<br>    "priority": 1,<br>    "rules_override_to_count": []<br>  }<br>]</pre> | no |
 | <a name="input_cloudfront_waf_enabled"></a> [cloudfront\_waf\_enabled](#input\_cloudfront\_waf\_enabled) | Specifies whether cloudfront for the WAF should be provisioned | `bool` | `false` | no |
-| <a name="input_cluster_endpoint_public_access_cidrs"></a> [cluster\_endpoint\_public\_access\_cidrs](#input\_cluster\_endpoint\_public\_access\_cidrs) | CIDRs with access to the EKS cluster. Restricted to customer and ITGix | `list(string)` | <pre>[<br>  "0.0.0.0/0"<br>]</pre> | no |
+| <a name="input_cluster_endpoint_public_access_cidrs"></a> [cluster\_endpoint\_public\_access\_cidrs](#input\_cluster\_endpoint\_public\_access\_cidrs) | CIDRs with access to the EKS cluster. Restricted to customer and Alethia | `list(string)` | <pre>[<br>  "0.0.0.0/0"<br>]</pre> | no |
 | <a name="input_cluster_log_retention_in_days"></a> [cluster\_log\_retention\_in\_days](#input\_cluster\_log\_retention\_in\_days) | Cluster log retention in days | `number` | `14` | no |
 | <a name="input_create_elasticache_redis"></a> [create\_elasticache\_redis](#input\_create\_elasticache\_redis) | If a new Elasticache Redis instance needs to be created | `bool` | n/a | yes |
 | <a name="input_create_rds"></a> [create\_rds](#input\_create\_rds) | If a new RDS and Proxy needs to be created | `bool` | `false` | no |
@@ -77,7 +77,7 @@ Variables can be passed via the main YAML configuration file of **idp-installer*
 | <a name="input_ddb_global_table_configuration"></a> [ddb\_global\_table\_configuration](#input\_ddb\_global\_table\_configuration) | List of objects to pass to the module for the creation of the global table. | <pre>list(object({<br>    table_type        = optional(string, "regional")<br>    table_name_suffix = string<br>    hash_key          = string<br>    range_key         = string<br>    hash_key_type     = string<br>    range_key_type    = string<br>    enable_autoscaler = optional(bool, false)<br>    dynamodb_attributes = optional(list(object({<br>      name = string<br>      type = string<br>    })), [])<br>    global_secondary_index_map = optional(list(object({<br>      hash_key           = string<br>      name               = string<br>      projection_type    = string<br>      range_key          = string<br>      non_key_attributes = optional(list(string), [])<br>      read_capacity      = optional(number, 0)<br>      write_capacity     = optional(number, 0)<br>    })), [])<br>    local_secondary_index_map = optional(list(object({<br>      name               = string<br>      projection_type    = string<br>      range_key          = string<br>      non_key_attributes = optional(list(string), [])<br>    })), [])<br>    replicas                      = optional(list(string), [])<br>    tags_enabled                  = optional(bool, true)<br>    billing_mode                  = optional(string, "PAY_PER_REQUEST")<br>    enable_point_in_time_recovery = optional(bool, false)<br>    ttl_enabled                   = optional(bool, false)<br>    ttl_attribute                 = optional(string, "")<br>    deletion_protection_enabled   = optional(bool, true)<br>  }))</pre> | n/a | yes |
 | <a name="input_ddb_table_configuration"></a> [ddb\_table\_configuration](#input\_ddb\_table\_configuration) | List of objects to pass to the module for the creation of the table. | <pre>list(object({<br>    table_name_suffix = string<br>    hash_key          = string<br>    range_key         = string<br>    hash_key_type     = string<br>    range_key_type    = string<br>    enable_autoscaler = optional(bool, false)<br>    dynamodb_attributes = optional(list(object({<br>      name = string<br>      type = string<br>    })), [])<br>    global_secondary_index_map = optional(list(object({<br>      hash_key           = string<br>      name               = string<br>      projection_type    = string<br>      range_key          = string<br>      non_key_attributes = optional(list(string), [])<br>      read_capacity      = optional(number, 0)<br>      write_capacity     = optional(number, 0)<br>    })), [])<br>    local_secondary_index_map = optional(list(object({<br>      name               = string<br>      projection_type    = string<br>      range_key          = string<br>      non_key_attributes = optional(list(string), [])<br>    })), [])<br>    replicas                      = optional(list(string), [])<br>    tags_enabled                  = optional(bool, true)<br>    billing_mode                  = optional(string, "PAY_PER_REQUEST")<br>    enable_point_in_time_recovery = optional(bool, false)<br>    ttl_enabled                   = optional(bool, false)<br>    ttl_attribute                 = optional(string, "")<br>    deletion_protection_enabled   = optional(bool, true)<br>  }))</pre> | n/a | yes |
 | <a name="input_dns_hosted_zone"></a> [dns\_hosted\_zone](#input\_dns\_hosted\_zone) | Managed R53 Zone ID | `string` | `"Z2INQZ6AA9H9SI"` | no |
-| <a name="input_dns_main_domain"></a> [dns\_main\_domain](#input\_dns\_main\_domain) | Domain Managed under the R53 Zone | `string` | `"itgix.eu"` | no |
+| <a name="input_dns_main_domain"></a> [dns\_main\_domain](#input\_dns\_main\_domain) | Domain Managed under the R53 Zone | `string` | `"alethia.eu"` | no |
 | <a name="input_ec2_spot_service_role"></a> [ec2\_spot\_service\_role](#input\_ec2\_spot\_service\_role) | Configure EC2 spot service role provisioning. | `bool` | `false` | no |
 | <a name="input_ecr_create_lifecycle_policy"></a> [ecr\_create\_lifecycle\_policy](#input\_ecr\_create\_lifecycle\_policy) | Determines whether a lifecycle policy will be created | `bool` | `true` | no |
 | <a name="input_ecr_manage_registry_scanning_configuration"></a> [ecr\_manage\_registry\_scanning\_configuration](#input\_ecr\_manage\_registry\_scanning\_configuration) | Determines whether the registry scanning configuration will be managed | `bool` | `false` | no |

@@ -3,12 +3,10 @@
 
 import type { BaseLayoutProps, LinkItemType } from "fumadocs-ui/layouts/shared";
 
+// A single "Blog" top-nav link to the separate blog app. `external` renders a plain
+// anchor so it bypasses this app's `/docs` basePath (the blog is its own app at /blog).
 export const linkItems: LinkItemType[] = [
-	{
-		text: "Documentation",
-		url: "/",
-		active: "nested-url",
-	},
+	{ type: "main", text: "Blog", url: "/blog", external: true },
 ];
 
 export const logo = (

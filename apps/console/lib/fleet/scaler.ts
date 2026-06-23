@@ -6,11 +6,10 @@
 // safe). Also runs on demand (wakeFleetController) when a job is enqueued. Default
 // (no FLEET_POOLS) → no-op. See spec/mvp/26.
 
-import { getFleetPools } from "@/lib/fleet/config";
 import { reconcileAll, type SurplusState } from "@/lib/fleet/controller";
 import { makeDbDeps } from "@/lib/fleet/db-deps";
+import { loadFleetPools } from "@/lib/fleet/pools-db";
 import { getFleetProvider } from "@/lib/fleet/provider";
-import type { FleetSpec } from "@/lib/fleet/types";
 
 const TICK_INTERVAL_MS = 60_000;
 
@@ -19,26 +18,26 @@ const globalForScaler = globalThis as unknown as {
 };
 
 const surplus: SurplusState = new Map();
-let activeSpecs: FleetSpec[] = [];
 
-/** Starts the periodic fleet controller. No pools configured → no-op (default). */
+/** Starts the periodic fleet controller. Pools now live in the DB (read fresh each tick),
+ *  so the loop runs whenever a database is configured — a tick with zero enabled pools is
+ *  a cheap no-op, but newly-created pools converge without a restart. */
 export function startFleetScaler(): void {
 	if (globalForScaler.__alethiaFleetScaler) return;
 	if (!process.env.ALETHIA_DATABASE_URL) return;
-	activeSpecs = getFleetPools();
-	if (activeSpecs.length === 0) return;
 
 	globalForScaler.__alethiaFleetScaler = setInterval(() => {
 		void tick();
 	}, TICK_INTERVAL_MS);
 }
 
-/** Run one reconcile pass immediately (enqueue wake / presence events → fast scale-up). */
+/** Run one reconcile pass immediately (enqueue wake / presence / pool edit → fast converge). */
 export function wakeFleetScaler(): void {
 	if (!globalForScaler.__alethiaFleetScaler) return;
 	void tick();
 }
 
 async function tick(): Promise<void> {
-	await reconcileAll(activeSpecs, getFleetProvider(), makeDbDeps(), surplus);
+	const specs = await loadFleetPools();
+	await reconcileAll(specs, getFleetProvider(), makeDbDeps(), surplus);
 }

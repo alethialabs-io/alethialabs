@@ -29,8 +29,8 @@ locals {
     "Project"              = "${var.project_name}"
     "Environment"          = "${var.environment}"
     "CostCenter"           = "n/a"
-    "Application"          = "adp"
-    "ManagedBy"            = "Terraform"
+    "Application"          = "alethia"
+    "ManagedBy"            = "opentofu"
   }
 
 

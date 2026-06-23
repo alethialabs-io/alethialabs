@@ -1,0 +1,38 @@
+---
+title: Alethia vs Spacelift
+description: Spacelift orchestrates the IaC you write. Alethia delivers the outcome — a complete cluster + ArgoCD + data services — and still hands you OpenTofu you own.
+---
+
+# Alethia vs Spacelift
+
+**Spacelift** is an IaC orchestration platform (a "TACOS" — Terraform Automation and
+Collaboration Software): point it at a repo of Terraform / OpenTofu / Pulumi / etc. and it runs
+plan/apply pipelines with policy-as-code, drift detection, and state management. It does **not**
+ship you a cluster — it orchestrates whatever IaC *you* author.
+
+| Dimension | Alethia | Spacelift |
+|---|---|---|
+| What you get | **A complete production cluster** (EKS + Aurora/ElastiCache/DynamoDB/SQS-SNS/ECR/S3/Secrets/Route53/WAF) + ArgoCD + operators | A runner for **IaC you write & maintain** |
+| App delivery | **Real ArgoCD/GitOps wired to your repo** | CI apply-on-push; not a live GitOps loop, not an app platform |
+| Effort to first cluster | Design a Spec → provision | Author all the IaC yourself first |
+| Self-host the control plane | **Yes — AGPL, a handful of containers** | Self-hosted edition only on the top Enterprise+ tier |
+| Open source | **AGPL core** | Proprietary SaaS (only the worker is OSS) |
+| Credentials | Runner assumes roles at run time | You wire cloud creds into the runner |
+
+## Where Alethia wins
+- **Delivers an outcome, not plumbing** — one Spec → a batteries-included cluster, handed to you.
+  Spacelift only runs IaC you must author and maintain.
+- **Real GitOps app-delivery** wired to your repo — Spacelift is a CI runner, not ArgoCD.
+- **Self-hostable for everyone** (AGPL), and you still **own the OpenTofu** it generates.
+
+## Where Spacelift wins (honest)
+- **Best-in-class for orchestrating existing, complex IaC** at scale — multi-tool (Terraform,
+  Pulumi, CloudFormation, Ansible), policy-as-code (OPA/Rego), drift detection, mature collaboration.
+- **Established, well-funded**, OpenTofu founding member; deep governance for large IaC estates.
+- If you already have a big hand-written IaC codebase, Spacelift manages it; Alethia generates a new one.
+
+<Callout type="info">
+Bottom line: Spacelift orchestrates IaC you own and operate. Alethia gives you the cluster +
+GitOps as a product *and* hands you portable OpenTofu — choose it when you want the outcome,
+not just the pipeline.
+</Callout>

@@ -33,10 +33,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Type-check (console + docs)
+      - name: Type-check (console + docs + ee)
         run: |
           pnpm -F console check-types
           pnpm -F docs types:check
+          pnpm -F @alethia/ee check-types
       - name: Lint (console + docs)
         run: |
           pnpm -F console lint

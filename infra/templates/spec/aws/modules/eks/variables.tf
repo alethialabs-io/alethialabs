@@ -60,7 +60,7 @@ variable "eks_cluster_version" {
 }
 
 variable "cluster_endpoint_public_access_cidrs" {
-  description = "CIDRs with access to the EKS cluster. Restricted to customer and ITGix"
+  description = "CIDRs with access to the EKS cluster. Restricted to customer and Alethia"
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }

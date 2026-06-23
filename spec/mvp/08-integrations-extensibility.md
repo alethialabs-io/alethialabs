@@ -51,6 +51,15 @@ A **category registry** (`map[category]map[slug]CategoryProvider`) is the single
    integration_credentials(id, user_id/org_id, integration_id FK, credentials JSONB, is_verified, created_at)
    ```
    (Subject to the same PDP/RLS scoping as everything else — [07](07-auth-rbac-sso.md).)
+   **Credential visibility — `scope`:** every stored credential (`cloud_identities`,
+   `connector_credentials`) carries a `scope` of `personal` (author-only) or `org` (shared with the
+   whole org). A new credential is created `personal`; a `manage_connectors` / `manage_identities`
+   holder promotes it to `org` via the explicit "share with org" action. RLS is the coarse wall
+   (`scope='personal' AND user_id=current_owner` OR `scope='org' AND org_id=current_org`); the PDP
+   enforces the fine-grained role. A provisioning job claims its creator's personal credential, falling
+   back to the org-shared one (`job.org_id`). **Git OAuth stays personal** this phase — true org git
+   tokens are GitHub-App installations, a later step. Implemented as `credential_scope` +
+   per-scope partial-unique indexes; see migration `0011`.
 2. **`provider` selector per component** — add a `provider` (slug) column to `spec_dns`, `spec_secrets`, `spec_container_registries` (default = the cluster cloud's native provider). Provider-specific options ride in the **existing `provider_config` JSONB**.
 3. **`vine_observability`** (new) — the missing component table; `enabled`, `provider` (datadog/grafana/prometheus/cloud-native), `provider_config`.
 

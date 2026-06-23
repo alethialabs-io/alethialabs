@@ -1,0 +1,178 @@
+/* SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+ * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * Alethia design system — grayscale, light default, squared (no border-radius),
+ * Geist. Mirrors .claude/skills/alethia-design/tokens/colors.css.
+ */
+
+@import "tailwindcss";
+
+@theme inline {
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-border: var(--border);
+	--color-border-strong: var(--border-strong);
+	--color-ink: var(--ink);
+	--color-ink-foreground: var(--ink-foreground);
+	--font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+	--font-mono: var(--font-geist-mono), ui-monospace, monospace;
+	--radius: 0px;
+}
+
+:root {
+	/* Grayscale ink ramp (zero chroma). */
+	--gray-0: oklch(1 0 0);
+	--gray-50: oklch(0.985 0 0);
+	--gray-100: oklch(0.967 0 0);
+	--gray-200: oklch(0.928 0 0);
+	--gray-300: oklch(0.882 0 0);
+	--gray-400: oklch(0.788 0 0);
+	--gray-500: oklch(0.664 0 0);
+	--gray-600: oklch(0.556 0 0);
+	--gray-700: oklch(0.44 0 0);
+	--gray-900: oklch(0.268 0 0);
+	--gray-950: oklch(0.205 0 0);
+	--gray-1000: oklch(0.165 0 0);
+	--gray-1050: oklch(0.13 0 0);
+
+	/* Semantic — light theme (default). */
+	--background: var(--gray-50);
+	--foreground: var(--gray-1000);
+	--card: var(--gray-0);
+	--card-foreground: var(--gray-1000);
+	--muted: var(--gray-100);
+	--muted-foreground: var(--gray-700);
+	--border: var(--gray-200);
+	--border-strong: var(--gray-300);
+	--ink: var(--gray-950);
+	--ink-foreground: var(--gray-50);
+}
+
+.dark {
+	--background: var(--gray-1050);
+	--foreground: var(--gray-50);
+	--card: var(--gray-1000);
+	--card-foreground: var(--gray-50);
+	--muted: var(--gray-950);
+	--muted-foreground: var(--gray-500);
+	--border: oklch(1 0 0 / 0.1);
+	--border-strong: oklch(1 0 0 / 0.17);
+	--ink: var(--gray-50);
+	--ink-foreground: var(--gray-1000);
+}
+
+* {
+	border-color: var(--border);
+}
+
+html {
+	background: var(--background);
+	color: var(--foreground);
+}
+
+body {
+	font-family: var(--font-sans);
+	-webkit-font-smoothing: antialiased;
+}
+
+/* Squared everywhere — the brand rejects rounding. */
+* {
+	border-radius: 0 !important;
+}
+
+h1, h2, h3, h4 {
+	font-weight: 800;
+	letter-spacing: -0.02em;
+}
+
+/* Article body — hand-rolled prose (no typography plugin). */
+.prose {
+	line-height: 1.7;
+	color: var(--foreground);
+}
+.prose > * + * {
+	margin-top: 1.1rem;
+}
+.prose h2 {
+	margin-top: 2.5rem;
+	font-size: 1.5rem;
+	font-weight: 800;
+	letter-spacing: -0.02em;
+}
+.prose h3 {
+	margin-top: 2rem;
+	font-size: 1.2rem;
+	font-weight: 700;
+}
+.prose p,
+.prose li {
+	color: var(--foreground);
+}
+.prose a {
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+.prose ul,
+.prose ol {
+	padding-left: 1.3rem;
+}
+.prose ul {
+	list-style: disc;
+}
+.prose ol {
+	list-style: decimal;
+}
+.prose li + li {
+	margin-top: 0.4rem;
+}
+.prose code {
+	font-family: var(--font-mono);
+	font-size: 0.85em;
+	background: var(--muted);
+	border: 1px solid var(--border);
+	padding: 0.1em 0.35em;
+}
+.prose pre {
+	background: var(--muted);
+	border: 1px solid var(--border);
+	padding: 1rem;
+	overflow-x: auto;
+	font-size: 0.85rem;
+}
+.prose pre code {
+	background: transparent;
+	border: 0;
+	padding: 0;
+}
+.prose blockquote {
+	border-left: 2px solid var(--border-strong);
+	padding-left: 1rem;
+	color: var(--muted-foreground);
+}
+.prose table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.9rem;
+}
+.prose th,
+.prose td {
+	border-bottom: 1px solid var(--border);
+	padding: 0.5rem 0.7rem;
+	text-align: left;
+	vertical-align: top;
+}
+.prose th {
+	font-family: var(--font-mono);
+	font-size: 0.7rem;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--muted-foreground);
+	font-weight: 500;
+}
+.prose strong {
+	font-weight: 700;
+}

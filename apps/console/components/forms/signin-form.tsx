@@ -36,6 +36,16 @@ export function SignInForm() {
 	const router = useRouter();
 	const next = searchParams.get("next");
 
+	// OAuth-resume context: Better Auth's mcp() plugin redirects an unauthenticated
+	// /api/auth/mcp/authorize request here with the original authorize query appended
+	// (client_id, response_type, redirect_uri, …). After we sign the user in, the flow
+	// must return to the authorize endpoint to mint the code. Social login resumes
+	// automatically (the callback is a full-page nav the plugin's after-hook catches);
+	// email-OTP verifies over XHR, so we must navigate back ourselves.
+	const isOAuthResume =
+		searchParams.has("client_id") && searchParams.has("response_type");
+	const resumeUrl = `/api/auth/mcp/authorize?${searchParams.toString()}`;
+
 	const handleOAuthLogin = async (provider: AuthProvider) => {
 		setIsLoading(true);
 		setLoadingProvider(provider);
@@ -44,7 +54,7 @@ export function SignInForm() {
 		// Native providers go through signIn.social; self-hosted GitLab +
 		// Bitbucket are wired via the genericOAuth plugin (signIn.oauth2). Both
 		// redirect the browser, so control only returns here on error.
-		const callbackURL = next ?? "/dashboard";
+		const callbackURL = isOAuthResume ? resumeUrl : (next ?? "/dashboard");
 		const { error } =
 			provider === "github" || provider === "google"
 				? await authClient.signIn.social({ provider, callbackURL })
@@ -95,6 +105,12 @@ export function SignInForm() {
 			setCode("");
 			setIsLoading(false);
 			setLoadingProvider(null);
+			return;
+		}
+		// Resume the OAuth authorize flow with a full-page navigation (the user now
+		// has a session) so the redirect to the connector lands in the browser.
+		if (isOAuthResume) {
+			window.location.href = resumeUrl;
 			return;
 		}
 		router.push(next ?? "/dashboard");

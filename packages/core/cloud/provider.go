@@ -26,6 +26,10 @@ func NewCloudProvider(provider string) (CloudProvider, error) {
 		return &gcpProvider{}, nil
 	case "azure":
 		return &azureProvider{}, nil
+	case "alibaba", "digitalocean", "hetzner", "civo":
+		// Connectable today (identity + connection test); OpenTofu provisioning
+		// templates land in a later pass.
+		return nil, fmt.Errorf("provisioning for %s is coming soon (the account can be connected, but clusters can't be provisioned on it yet)", provider)
 	default:
 		return nil, fmt.Errorf("unsupported cloud provider: %s", provider)
 	}

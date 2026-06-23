@@ -23,7 +23,7 @@ locals {
     "us-west-2"      = "uw2"
   }
 
-  namespace   = "itgix"
+  namespace   = "alethia"
   environment = local.aws_regions_short[var.aws_region]
   stage       = var.environment
   name        = var.product_name

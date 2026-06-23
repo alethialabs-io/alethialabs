@@ -50,18 +50,18 @@ EOT
 
 
 ##########################
-#IRSA for ITGix ADP agent   #
+#IRSA for Alethia agent   #
 ##########################
-module "irsa_itgix_adp_agent" {
+module "irsa_alethia_agent" {
 
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
   version = "5.34.0"
 
   assume_role_condition_test = "StringLike"
   create_role                = true
-  role_name                  = "irsa-itgix-adp-${local.eks_name}"
+  role_name                  = "irsa-alethia-${local.eks_name}"
   role_policy_arns = {
-    itgix_adp_agent_policy = aws_iam_policy.irsa_itgix_adp_agent.arn
+    alethia_agent_policy = aws_iam_policy.irsa_alethia_agent.arn
   }
   oidc_providers = {
     main = {
@@ -71,9 +71,9 @@ module "irsa_itgix_adp_agent" {
   }
 }
 
-resource "aws_iam_policy" "irsa_itgix_adp_agent" {
+resource "aws_iam_policy" "irsa_alethia_agent" {
 
-  name_prefix = "irsa_itgix_adp_agent"
+  name_prefix = "irsa_alethia_agent"
   description = "Policy for ServiceAccounts allowing calls to AWS metering API for cluster ${local.eks_name}"
   policy      = <<EOT
 {
@@ -233,7 +233,7 @@ module "irsa_karpenter" {
   create_role                = true
   role_name                  = "KarpenterIRSA-${local.eks_name}"
   role_policy_arns = {
-    itgix_adp_agent_policy = aws_iam_policy.irsa_karpenter.arn
+    alethia_agent_policy = aws_iam_policy.irsa_karpenter.arn
   }
   oidc_providers = {
     main = {

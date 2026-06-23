@@ -14,6 +14,8 @@ type ConnectBody = {
 		tenant_id?: string;
 		client_id?: string;
 		subscription_id?: string;
+		api_token?: string;
+		self_managed?: boolean;
 	};
 };
 
@@ -105,6 +107,49 @@ export async function POST(
 					creds.subscription_id,
 				);
 				break;
+			case "alibaba":
+				if (!creds.role_arn) {
+					return NextResponse.json(
+						{ error: "Missing credentials.role_arn" },
+						{ status: 400 },
+					);
+				}
+				result = await conn.saveAlibabaIdentity(
+					userId,
+					identityId,
+					creds.role_arn,
+				);
+				break;
+			case "digitalocean":
+			case "hetzner":
+			case "civo":
+				if (creds.self_managed) {
+					// Self-hosted runner supplies the token from its env — store nothing.
+					result = await conn.saveSelfManagedTokenIdentity(
+						userId,
+						identityId,
+						provider,
+					);
+					break;
+				}
+				if (!creds.api_token) {
+					return NextResponse.json(
+						{ error: "Missing credentials.api_token (or set self_managed: true)" },
+						{ status: 400 },
+					);
+				}
+				result = await conn.saveTokenCloudIdentity(
+					userId,
+					identityId,
+					provider,
+					creds.api_token,
+				);
+				break;
+			default:
+				return NextResponse.json(
+					{ error: `Unsupported provider: ${provider}` },
+					{ status: 400 },
+				);
 		}
 
 		return NextResponse.json({

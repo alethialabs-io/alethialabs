@@ -45,6 +45,13 @@ The four pillars: zero-trust remote provisioning (shipped) · self-hostability (
 | 16 | [16-market-and-fundraising](16-market-and-fundraising.md) | TAM/SAM/SOM, comparables, the raise + GTM | ✅ |
 | 17 | [17-cost-model-and-pricing](17-cost-model-and-pricing.md) | Infra-grounded COGS, unit economics, pricing tiers | ✅ |
 | 18 | [18-repo-structure-and-naming](18-repo-structure-and-naming.md) | Repo structure + the lexicon↔code mapping | ✅ |
+| 19 | [19-launch-sprint](19-launch-sprint.md) | The 30-day launch sprint tracker (stars · self-host users · first MRR) | ✅ |
+| 20 | [20-managed-fleet-scheduler-and-metering](20-managed-fleet-scheduler-and-metering.md) | Managed fleet: Hetzner-first warm pool, in-app scaler, multi-tenant QoS scheduler (priority/fairness/concurrency), metering mechanics | ✅ |
+| 21 | [21-instant-provisioning-execution-model](21-instant-provisioning-execution-model.md) ⭐ | ADR: sub-second job start — plugin cache (the real bottleneck) + warm pool + push dispatch; keep container runner over Firecracker/Lambda/Fly; shared + dedicated-in-VPC tiers | ✅ |
+| 22 | [22-per-cloud-worker-images](22-per-cloud-worker-images.md) | ADR: per-cloud worker images + cloud-routed warm pools — keep images lean/flat as clouds grow; route by provider; internal mirror; dedicated-VPC fit | ✅ |
+| 23 | [23-web-surfaces](23-web-surfaces.md) | ADR: console `/` + docs `/docs` (Fumadocs) + blog `/blog` (velite) as separate apps behind Caddy; why standalone blog + velite; future www extraction | ✅ |
+| 24 | [24-runner-rebuild-roadmap](24-runner-rebuild-roadmap.md) ⭐ | Living tracker: the 6-phase runner rebuild (push dispatch · scheduler · per-cloud · scaler · slots · metering) sequencing ADRs 20/21/22 | ✅ |
+| 25 | [25-alerting-notifications](25-alerting-notifications.md) | Alerting: PDP-sourced security events + infra/ops events → webhook/email/Slack/RocketChat; deliveries ledger; ops free / security paid | ✅ |
 | A | [A-rename-lexicon](A-rename-lexicon.md) | Terminology standard + rename migration map | ✅ |
 
 ⭐ = the three docs carrying the core thesis (self-hostability, enterprise auth, integrations).

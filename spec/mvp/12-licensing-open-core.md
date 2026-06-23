@@ -32,7 +32,7 @@ Precedent (the defensive-copyleft playbook):
 | Layer | License | Notes |
 |---|---|---|
 | **Free, self-hostable core** | AGPL-3.0 | Zero-trust remote provisioning, the integrations catalog ([08](08-integrations-extensibility.md)), single-tenant, **basic cost visibility** (Infracost estimate). Runs without any single SaaS (see [06-self-hosting-architecture](06-self-hosting-architecture.md)). |
-| **Commercial / paid** | proprietary | Enterprise auth — SSO/SAML, RBAC, audit ([07-auth-rbac-sso](07-auth-rbac-sso.md)); multi-tenancy/orgs; the hosted/managed control plane; **billing/usage metering**; **advanced FinOps / cost-governance** (chargeback, right-sizing — basic estimate stays in core); the **compliance / zero-trust package** (SOC2-aligned audit, zero-key attestation); AI premium ([11](11-ai-scanner-mcp.md)). |
+| **Commercial / paid** | proprietary | Enterprise auth — SSO/SAML, RBAC, audit ([07-auth-rbac-sso](07-auth-rbac-sso.md)); multi-tenancy/orgs; the hosted/managed control plane; **billing/usage metering**; **advanced FinOps / cost-governance** (chargeback, right-sizing — basic estimate stays in core); **security/governance alerting** (PDP-sourced events — basic ops alerting stays in core, [25](25-alerting-notifications.md)); the **compliance / zero-trust package** (SOC2-aligned audit, zero-key attestation); AI premium ([11](11-ai-scanner-mcp.md)). |
 
 The paid boundary is deliberately the **self-host line**: everything needed to run Alethia yourself is AGPL; the things a team pays Alethia Labs to *not* operate themselves (identity at enterprise grade, multi-tenancy, hosting) are commercial. Pricing detail lives in [14-gtm-pricing](14-gtm-pricing.md).
 

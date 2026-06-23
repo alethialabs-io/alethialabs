@@ -58,6 +58,13 @@ describe("controller — convergence against the fake fleet", () => {
 		expect(online).toHaveLength(2);
 		expect(new Set(online.map((i) => i.location))).toEqual(new Set(["fsn1", "nbg1"]));
 		expect(online.every((i) => i.version === "v2")).toBe(true);
+		// the controller writes each correlated runner's observed placement back (Phase 2 cockpit)
+		for (const i of online) {
+			expect(fake.persisted.get(i.runnerId as string)).toEqual({
+				location: i.location,
+				version: i.version,
+			});
+		}
 	});
 
 	it("rolls v1 → v2 without ever dropping online below warmMin", async () => {

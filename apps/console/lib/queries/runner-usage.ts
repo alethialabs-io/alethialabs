@@ -94,6 +94,70 @@ export async function idleManagedRunnersForProvider(
 	`);
 }
 
+/** Provisioned-hours rolled up per cloud provider — the per-pool COGS input for the Fleet
+ *  economics view. Managed runners are per-cloud, so a runner's provider is its first
+ *  `supported_providers` entry (NULL → "any", surfaced only in totals). Same clamped-session
+ *  sum as {@link queryProvisionedHours}. Service path. */
+export type ProvisionedHoursByProviderRow = {
+	provider: string;
+	provisioned_hours: number;
+	runner_count: number;
+};
+
+export async function provisionedHoursByProvider(
+	db: ServiceDb,
+	filters: { from: Date; to: Date },
+): Promise<ProvisionedHoursByProviderRow[]> {
+	const clamped = sql`extract(epoch from (
+		least(coalesce(s.ended_at, ${filters.to}), ${filters.to})
+		- greatest(s.started_at, ${filters.from})
+	))`;
+	return db.execute<ProvisionedHoursByProviderRow>(sql`
+		select
+			coalesce(r.supported_providers[1]::text, 'any') as provider,
+			(sum(${clamped}) / 3600.0)::float8 as provisioned_hours,
+			count(distinct s.runner_id)::int as runner_count
+		from public.runner_usage_sessions s
+		join public.runners r on r.id = s.runner_id
+		where s.operator = 'managed'
+		  and s.started_at < ${filters.to}
+		  and coalesce(s.ended_at, ${filters.to}) > ${filters.from}
+		group by 1
+		order by provisioned_hours desc
+	`);
+}
+
+/** Job-minutes rolled up per cloud provider — the per-pool utilization numerator. Like
+ *  {@link queryJobMinutesByOrg} but grouped by the job's target provider (NULL lifecycle
+ *  jobs → "any"). Service path. */
+export type JobMinutesByProviderRow = {
+	provider: string;
+	job_minutes: number;
+	job_count: number;
+};
+
+export async function jobMinutesByProvider(
+	db: ServiceDb,
+	filters: { from: Date; to: Date },
+): Promise<JobMinutesByProviderRow[]> {
+	const minutes = sql`extract(epoch from (j.completed_at - j.started_at)) / 60.0`;
+	return db.execute<JobMinutesByProviderRow>(sql`
+		select
+			coalesce(j.provider::text, 'any') as provider,
+			coalesce(sum(greatest(${minutes}, 0)), 0)::float8 as job_minutes,
+			count(*)::int as job_count
+		from public.jobs j
+		join public.runners r on r.id = j.runner_id
+		where r.operator = 'managed'
+		  and j.started_at is not null
+		  and j.completed_at is not null
+		  and j.completed_at >= ${filters.from}
+		  and j.completed_at < ${filters.to}
+		group by 1
+		order by job_minutes desc
+	`);
+}
+
 /**
  * Per-org **job-minutes** rollup — the customer-facing billable unit (ADR 20 §5):
  * the wall-clock execution time of jobs that ran on a **managed** runner, summed

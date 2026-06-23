@@ -5,6 +5,7 @@
 import { authorize } from "@/lib/authz/guard";
 import { withOwnerScope } from "@/lib/db";
 import { cloudIdentities, jobs, runners, specs } from "@/lib/db/schema";
+import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { notifyScaler } from "@/lib/scaler";
 import { desc, eq } from "drizzle-orm";
 
@@ -100,6 +101,7 @@ export async function getSpecJobs(specId: string) {
 
 export async function rerunJob(jobId: string) {
 	const actor = await authorize("create", { type: "job" });
+	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const [original] = await tx

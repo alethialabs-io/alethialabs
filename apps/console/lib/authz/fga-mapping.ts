@@ -18,6 +18,10 @@ const ORG_LEVEL: ReadonlySet<Resource> = new Set<Resource>([
 	"audit",
 	"billing",
 	"job",
+	// Alert policies are org-scoped config — no per-instance object, resolved org-wide.
+	"alert",
+	// Fleet pools are global operator config — no per-instance object, resolved org-wide.
+	"fleet",
 ]);
 
 export interface FgaCheck {

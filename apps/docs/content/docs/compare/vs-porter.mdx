@@ -1,0 +1,40 @@
+---
+title: Alethia vs Porter
+description: Porter is a BYOC app-PaaS with a hosted control plane and a proprietary deploy pipeline. Alethia is self-hostable, GitOps-native, and open source — same ownership of your cloud, opposite ownership of the platform.
+---
+
+# Alethia vs Porter
+
+**Porter** ("Heroku in your own cloud") points at a GitHub repo and builds, deploys, and
+autoscales your app on a managed cluster in your cloud account. It's a mature, YC-backed
+BYOC PaaS. The key difference is **who owns the platform layer**.
+
+| Dimension | Alethia | Porter |
+|---|---|---|
+| Own / self-host the **control plane** | **Yes** — ~4 containers (Postgres + S3 + app + runner) | No — control plane is Porter's hosted SaaS |
+| Zero stored cloud credentials | **Yes** — runner assumes roles at run time | Yes for AWS/GCP (AssumeRole / WIF); Azure SP is the exception |
+| App delivery | **Real ArgoCD wired to your repo** (GitOps, portable) | Proprietary build+deploy pipeline (`porter.yaml`) |
+| Lock-in if you leave | Cluster + OpenTofu + ArgoCD keep working | Cluster keeps working; the deploy pipeline + console don't |
+| Open source | **AGPL core** + small commercial `ee/` | Closed product (launched MIT, monorepo since pulled) |
+| Pricing | Free self-host; commercial for orgs/SSO | Usage-based per vCPU/GB-RAM on top of your cloud bill; no free tier |
+| Multi-cloud | EKS today; GKE/AKS in progress | AWS/GCP/Azure all GA |
+| Day-2 ops (logs/metrics/rollbacks) | Thinner today | Mature, SRE-monitored |
+
+## Where Alethia wins
+- **You can own the entire control plane** — self-host with no SaaS dependency. Porter's
+  control plane is irreducibly their hosted service (self-host was promised in 2021, never shipped).
+- **Standard, portable GitOps** — real ArgoCD wired to your Git; if Alethia disappears, apps
+  still deploy from a `git push`. Porter's pipeline is proprietary.
+- **Open source + no compute meter** — no per-vCPU/GB markup on top of your cloud bill.
+
+## Where Porter wins (honest)
+- **Maturity of day-2 ops** — logs, metrics, autoscaling, preview environments, rollbacks,
+  alerting, all SRE-monitored.
+- **Multi-cloud is GA today** across AWS/GCP/Azure; Alethia leads with AWS.
+- **Polished app-deploy UX** for the "push a repo, get a running app" path.
+
+<Callout type="info">
+Bottom line: pick Porter if you want a managed, batteries-included app-deploy experience and
+don't mind a hosted control plane + usage pricing. Pick Alethia if you must **own the control
+plane**, keep **standard portable GitOps**, and avoid a compute meter.
+</Callout>

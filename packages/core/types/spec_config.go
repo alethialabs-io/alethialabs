@@ -58,7 +58,21 @@ func (c *SpecConfig) ConnectorCredentialFor(category, slug string) map[string]st
 	return nil
 }
 
+// Placement is the resolved cloud placement of a single resource ("versatile
+// model"). It is embedded in every component config so each resource can name its
+// own cloud independently of the spec's primary one. Empty fields mean "inherit the
+// spec's primary placement" — buildConfigSnapshot resolves them to concrete values
+// before they reach the runner. CloudProvider is intentionally NOT named "provider":
+// several components already carry a pluggable connector slug under json:"provider"
+// (cloudflare/vault/…), which is an orthogonal concern from the cloud account.
+type Placement struct {
+	CloudProvider   string `json:"cloud_provider"`
+	CloudIdentityID string `json:"cloud_identity_id"`
+	Region          string `json:"region"`
+}
+
 type SpecNetworkConfig struct {
+	Placement
 	ProvisionNetwork bool   `json:"provision_network"`
 	CIDRBlock        string `json:"cidr_block"`
 	NetworkID        string `json:"network_id"`
@@ -66,6 +80,7 @@ type SpecNetworkConfig struct {
 }
 
 type SpecClusterConfig struct {
+	Placement
 	ClusterVersion  string         `json:"cluster_version"`
 	InstanceTypes   []string       `json:"instance_types"`
 	NodeMinSize     int            `json:"node_min_size"`
@@ -76,6 +91,7 @@ type SpecClusterConfig struct {
 }
 
 type SpecDNSConfig struct {
+	Placement
 	Enabled bool `json:"enabled"`
 	// Pluggable provider slug (connectors.slug); "" / "native" = cloud-native DNS.
 	Provider       string         `json:"provider"`
@@ -86,6 +102,7 @@ type SpecDNSConfig struct {
 
 // SpecObservabilityConfig — pluggable-only component (no cloud-native default).
 type SpecObservabilityConfig struct {
+	Placement
 	Enabled        bool           `json:"enabled"`
 	Provider       string         `json:"provider"`
 	ProviderConfig map[string]any `json:"provider_config"`
@@ -96,6 +113,7 @@ type SpecRepositoriesConfig struct {
 }
 
 type SpecDatabaseConfig struct {
+	Placement
 	Name                string   `json:"name"`
 	Engine              string   `json:"engine"`
 	EngineVersion       string   `json:"engine_version"`
@@ -107,6 +125,7 @@ type SpecDatabaseConfig struct {
 }
 
 type SpecCacheConfig struct {
+	Placement
 	Name          string `json:"name"`
 	Engine        string `json:"engine"`
 	NodeType      string `json:"node_type"`
@@ -115,6 +134,7 @@ type SpecCacheConfig struct {
 }
 
 type SpecQueueConfig struct {
+	Placement
 	Name              string         `json:"name"`
 	Ordered           *bool          `json:"ordered"`
 	VisibilityTimeout *int           `json:"visibility_timeout"`
@@ -123,6 +143,7 @@ type SpecQueueConfig struct {
 }
 
 type SpecTopicConfig struct {
+	Placement
 	Name          string              `json:"name"`
 	Subscriptions []TopicSubscription `json:"subscriptions"`
 }
@@ -133,6 +154,7 @@ type TopicSubscription struct {
 }
 
 type SpecNosqlConfig struct {
+	Placement
 	Name                string `json:"name"`
 	PartitionKey        string `json:"partition_key"`
 	PartitionKeyType    string `json:"partition_key_type"`
@@ -144,6 +166,7 @@ type SpecNosqlConfig struct {
 }
 
 type SpecSecretConfig struct {
+	Placement
 	Name         string `json:"name"`
 	Generate     bool   `json:"generate"`
 	Length       int    `json:"length"`
@@ -154,6 +177,7 @@ type SpecSecretConfig struct {
 }
 
 type SpecContainerRegistryConfig struct {
+	Placement
 	Name string `json:"name"`
 	// Pluggable provider slug (connectors.slug); "" / "native" = cloud-native registry.
 	Provider       string         `json:"provider"`
@@ -161,6 +185,7 @@ type SpecContainerRegistryConfig struct {
 }
 
 type SpecStorageBucketConfig struct {
+	Placement
 	Name              string         `json:"name"`
 	Versioning        bool           `json:"versioning"`
 	EncryptionEnabled bool           `json:"encryption_enabled"`

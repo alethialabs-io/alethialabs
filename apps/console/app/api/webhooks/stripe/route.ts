@@ -11,6 +11,7 @@
 // stray Stripe object can never mutate the wrong tenant.
 
 import type Stripe from "stripe";
+import { grantAiCredits } from "@/lib/billing/ai-quota";
 import { getStripeConfig, isStripeConfigured, planForPriceId } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
 import { upsertOrgBilling } from "@/lib/billing/queries";
@@ -110,6 +111,19 @@ export async function POST(req: Request): Promise<Response> {
 				const subId = typeof subRef === "string" ? subRef : subRef?.id;
 				if (subId) {
 					await applySubscription(await getStripe().subscriptions.retrieve(subId));
+				}
+				break;
+			}
+			case "payment_intent.succeeded": {
+				// One-time AI credit-pack purchase → grant rollover credits (idempotent).
+				const intent = event.data.object;
+				if (intent.metadata?.product_type === "ai_credits") {
+					const orgId = intent.metadata.organization_id;
+					const userId = intent.metadata.user_id;
+					const credits = Number(intent.metadata.credits ?? 0);
+					if (orgId && userId && credits > 0) {
+						await grantAiCredits({ orgId, userId, credits, stripeRef: intent.id });
+					}
 				}
 				break;
 			}
