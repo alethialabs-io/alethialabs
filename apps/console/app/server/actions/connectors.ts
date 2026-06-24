@@ -329,7 +329,7 @@ export async function setConnectorCredentialScope(
 						.where(
 							and(
 								eq(connectorCredentials.connector_id, connector.id),
-								eq(connectorCredentials.user_id, actor.userId),
+								eq(connectorCredentials.user_id, actor.userId), // authz-scope-ok: actor's own personal credential (personal→org promotion)
 								eq(connectorCredentials.scope, "personal"),
 							),
 						)
@@ -392,7 +392,7 @@ export async function setCloudIdentityScope(
 						.where(
 							and(
 								eq(cloudIdentities.id, identityId),
-								eq(cloudIdentities.user_id, actor.userId),
+								eq(cloudIdentities.user_id, actor.userId), // authz-scope-ok: actor's own personal cloud identity (personal→org promotion)
 								eq(cloudIdentities.scope, "personal"),
 							),
 						)

@@ -17,6 +17,11 @@ const ROOTS = ["app/server/actions", "app/api/cli", "app/api/stream"];
 // `eq(<table>.user_id, …)` filters and `x.user_id !== / ===` ownership compares.
 const PATTERNS = [/\beq\(\s*\w+\.user_id\b/, /\.user_id\s*[!=]==/];
 
+// Escape hatch for justified exceptions: a flagged line carrying a trailing
+// `// authz-scope-ok: <reason>` comment is intentionally scoping the actor's own
+// personal resource (already authorized upstream), not doing ad-hoc authz.
+const ALLOW = /authz-scope-ok/;
+
 function walk(dir, out) {
 	for (const entry of readdirSync(dir)) {
 		const full = join(dir, entry);
@@ -39,6 +44,7 @@ for (const file of files) {
 	const rel = relative(".", file);
 	const lines = readFileSync(file, "utf8").split("\n");
 	lines.forEach((line, i) => {
+		if (ALLOW.test(line)) return;
 		if (PATTERNS.some((p) => p.test(line))) {
 			violations.push(`${rel}:${i + 1}: ${line.trim()}`);
 		}
