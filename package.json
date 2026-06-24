@@ -5,11 +5,17 @@
 	"scripts": {
 		"build": "turbo run build",
 		"dev": "turbo run dev",
+		"dev:console": "turbo run dev --filter=console",
 		"lint": "turbo run lint",
 		"format": "prettier --write \"**/*.{ts,tsx,md}\"",
 		"check-types": "turbo run check-types",
 		"db:up": "bash scripts/db-bootstrap.sh",
 		"db:reset": "docker compose down -v && bash scripts/db-bootstrap.sh",
+		"compose:up": "bash scripts/compose-up.sh",
+		"compose:up:full": "bash scripts/compose-up.sh caddy app docs blog runner",
+		"compose:ps": "docker compose ps",
+		"compose:logs": "docker compose logs -f --tail=100",
+		"compose:down": "docker compose down",
 		"dataroom": "node scripts/build-dataroom.mjs"
 	},
 	"devDependencies": {

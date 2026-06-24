@@ -9,6 +9,42 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
 - **Go workspaces**: `go.work` links `apps/cli`, `apps/runner`, and `packages/core`
 - **Releases**: release-please for automated versioning; GoReleaser for alethia CLI binaries and Homebrew tap
 
+## Local stack (multi-instance rule)
+
+The compose project name is hardcoded (`name: alethia` in `docker-compose.yml`), so **every
+terminal / Claude window shares one stack** — there is never a duplicate app. The only hazard is
+two `docker compose up --build` racing the same builder at once.
+
+- **Only ever bring the stack up via `pnpm compose:up`.** It is guarded by an atomic lock
+  (`scripts/compose-up.sh`): a second concurrent call no-ops and prints status instead of starting
+  a duplicate build.
+- **Never run `docker compose up --build` directly, and never in parallel across windows.**
+- Other windows inspect the running stack with `pnpm compose:ps` / `pnpm compose:logs`.
+- Default `compose:up` is the **lite** stack (`caddy app docs blog` + auto postgres/seaweedfs/migrate),
+  served at `http://localhost`. The heavy `runner` (~3–5 GB, ~10–20 min build; only useful with real
+  cloud creds) is opt-in via `pnpm compose:up:full`.
+- `pnpm compose:down` stops the stack (keeps data); `db:reset` / `compose:down -v` wipe volumes.
+
+### Two run modes — prefer the light one for daily work
+
+The full dockerized stack builds heavy production images (Next.js build pegs CPU). Use it only for
+end-to-end / "does the deploy work" checks. For everyday development, run the backends in Docker and
+the console natively (hot-reload, no image builds, far less CPU/RAM):
+
+- **Dev (default):** `pnpm db:up` (postgres up + migrated) then `pnpm dev:console`
+  (`next dev --turbopack` on `http://localhost:3000`). `.env` already targets `localhost:5433` /
+  `localhost:8333`, so no env changes are needed. Start `seaweedfs` too if you exercise storage.
+- **E2E / deploy check:** `pnpm compose:up` (lite, production images at `http://localhost`).
+
+Note: `pnpm dev` (unfiltered) runs *every* app and is heavy — use `pnpm dev:console`.
+
+### Local resource hygiene
+
+- Don't leave unrelated Docker stacks running (e.g. a `supabase start` instance) — they idle at high
+  CPU. Stop with `docker stop $(docker ps -q --filter label=com.docker.compose.project=<name>)`.
+- The OrbStack VM is capped at 6 GB / 6 cores (`orb config show`) to keep macOS responsive during
+  builds; changing it needs an `orb stop` to apply.
+
 ---
 
 ## Alethia (Web Control Plane)
