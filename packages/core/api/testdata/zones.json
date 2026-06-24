@@ -11,9 +11,9 @@
 				{
 					"id": "00000000-0000-4000-8000-000000000000",
 					"project_name": "string",
-					"environment_stage": "development",
-					"status": "DRAFT",
-					"region": "string"
+					"region": "string",
+					"environment_stage": "string",
+					"status": "string"
 				}
 			]
 		}
