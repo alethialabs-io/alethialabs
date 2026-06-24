@@ -1,12 +1,25 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { index, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+	bigint,
+	index,
+	integer,
+	pgTable,
+	text,
+	timestamp,
+	uuid,
+} from "drizzle-orm/pg-core";
 
 // Append-only AI usage ledger — one row per metered AI action (a repo scan or an
 // agent/Ask AI message), carrying the credits it cost and whether they came from the
 // plan's included budget or purchased top-ups. Summed per window/week to enforce the
 // credit budget. Owner-scoped (user_id + org_id) for the RLS backstop.
+//
+// The model/token/cost columns snapshot what the action actually cost us (token usage
+// from the AI Gateway × current model price at write time), so real AI cost-of-serve
+// is queryable per org — independent of the user-facing credit price. Nullable for
+// back-compat with rows written before instrumentation.
 export const aiUsageLedger = pgTable(
 	"ai_usage_ledger",
 	{
@@ -21,6 +34,14 @@ export const aiUsageLedger = pgTable(
 		source: text().default("included").notNull(),
 		// jobId (scan) / threadId (agent), for traceability.
 		ref_id: text(),
+		// Gateway model id that served the action (e.g. "anthropic/claude-sonnet-4.6").
+		model: text(),
+		// Token usage reported by the gateway for this action.
+		input_tokens: integer(),
+		output_tokens: integer(),
+		cached_input_tokens: integer(),
+		// Our snapshotted USD cost-of-serve in micros (1e-6 USD), priced at write time.
+		cost_micros: bigint({ mode: "number" }),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
 	(t) => [

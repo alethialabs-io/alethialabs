@@ -47,16 +47,33 @@ function digestToPrompt(d: RepoDigest): string {
 	return text;
 }
 
+/** Inference result: the validated stack plus the model + token usage it cost. */
+export interface InferStackResult {
+	stack: InferredStack;
+	model: string;
+	inputTokens?: number;
+	outputTokens?: number;
+	cachedInputTokens?: number;
+}
+
 /**
  * Infer a structured InferredStack from a repo digest via the model (structured
- * output). The digest is fenced as untrusted data. Returns validated output.
+ * output). The digest is fenced as untrusted data. Returns the validated output
+ * plus the model + token usage so the caller can record real cost-of-serve.
  */
-export async function inferStack(digest: RepoDigest): Promise<InferredStack> {
-	const { object } = await generateObject({
-		model: getAiModel(),
+export async function inferStack(digest: RepoDigest): Promise<InferStackResult> {
+	const model = getAiModel();
+	const { object, usage } = await generateObject({
+		model,
 		schema: inferredStackSchema,
 		system: SYSTEM,
 		prompt: `<repo-digest>\n${digestToPrompt(digest)}\n</repo-digest>`,
 	});
-	return object;
+	return {
+		stack: object,
+		model,
+		inputTokens: usage.inputTokens,
+		outputTokens: usage.outputTokens,
+		cachedInputTokens: usage.cachedInputTokens,
+	};
 }

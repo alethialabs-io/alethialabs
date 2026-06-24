@@ -5,6 +5,7 @@ import "server-only";
 import { and, eq, gte, sum } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { aiCreditGrant, aiUsageLedger } from "@/lib/db/schema";
+import { aiCostMicros } from "@/lib/billing/model-costs";
 
 export type AiUsageKind = "scan" | "agent";
 export type CreditSource = "included" | "purchased";
@@ -56,7 +57,14 @@ export async function grantAiCredits(input: {
 		.onConflictDoNothing({ target: aiCreditGrant.stripe_ref });
 }
 
-/** Append one metered AI action to the ledger (no-op for free/self-host 0-credit calls). */
+/**
+ * Append one metered AI action to the ledger. Records the user-facing `credits` and,
+ * when token usage is supplied, the real cost-of-serve (model + tokens + snapshotted
+ * USD micros via `aiCostMicros`). No-ops only when there is nothing to record — a
+ * 0-credit call with no model (e.g. a legacy/self-host call before token capture).
+ * A 0-credit call WITH a model is still recorded (cost row) so self-hosters and the
+ * FinOps rollup get real cost visibility without affecting the credit budget.
+ */
 export async function recordAiUsage(input: {
 	orgId: string;
 	userId: string;
@@ -64,8 +72,20 @@ export async function recordAiUsage(input: {
 	credits: number;
 	source: CreditSource;
 	refId?: string;
+	model?: string;
+	inputTokens?: number;
+	outputTokens?: number;
+	cachedInputTokens?: number;
 }): Promise<void> {
-	if (input.credits <= 0) return;
+	if (input.credits <= 0 && !input.model) return;
+	const costMicros = input.model
+		? aiCostMicros({
+				model: input.model,
+				inputTokens: input.inputTokens,
+				outputTokens: input.outputTokens,
+				cachedInputTokens: input.cachedInputTokens,
+			})
+		: null;
 	await getServiceDb()
 		.insert(aiUsageLedger)
 		.values({
@@ -75,5 +95,10 @@ export async function recordAiUsage(input: {
 			credits: input.credits,
 			source: input.source,
 			ref_id: input.refId ?? null,
+			model: input.model ?? null,
+			input_tokens: input.inputTokens ?? null,
+			output_tokens: input.outputTokens ?? null,
+			cached_input_tokens: input.cachedInputTokens ?? null,
+			cost_micros: costMicros,
 		});
 }
