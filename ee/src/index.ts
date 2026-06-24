@@ -37,6 +37,14 @@ const ALL_ENTITLEMENTS: Entitlements = {
 	// A licensed instance gets the enterprise tier's quotas (mirrors the ladder in
 	// core's planEntitlements("enterprise"); inlined to keep this package type-only on core).
 	quotas: { maxConcurrentJobs: null, priorityLevel: 30, includedRunnerMinutes: 20_000 },
+	// Enterprise "20×" AI tier (mirrors core's planEntitlements("enterprise").ai).
+	ai: {
+		enabled: true,
+		tier: "max",
+		windowCredits: 6_000,
+		windowHours: 5,
+		weeklyCredits: 60_000,
+	},
 };
 
 /**

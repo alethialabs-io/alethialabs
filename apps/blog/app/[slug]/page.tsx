@@ -11,14 +11,14 @@ export function generateStaticParams() {
 	return getPublishedPosts().map((post) => ({ slug: post.slug }));
 }
 
-export async function generateMetadata(props: PageProps<"/[slug]">): Promise<Metadata> {
+export async function generateMetadata(props: { params: Promise<{ slug: string }> }): Promise<Metadata> {
 	const { slug } = await props.params;
 	const post = getPost(slug);
 	if (!post) return {};
 	return { title: post.title, description: post.description };
 }
 
-export default async function Page(props: PageProps<"/[slug]">) {
+export default async function Page(props: { params: Promise<{ slug: string }> }) {
 	const { slug } = await props.params;
 	const post = getPost(slug);
 	if (!post) notFound();
