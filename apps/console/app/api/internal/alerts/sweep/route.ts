@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Internal retry sweeper for alert deliveries (spec/mvp/25-alerting-notifications.md).
+// Internal retry sweeper for alert deliveries (dataroom/spec/mvp/25-alerting-notifications.md).
 // Hit on a minute cadence by a platform cron (the EventBridge→Lambda shape used by the
 // fleet scaler). Guarded by a shared bearer secret (ALETHIA_CRON_SECRET); fails closed
 // when unset so it can never be invoked anonymously.

@@ -15,7 +15,7 @@ type SweptRunner = {
 // In-app replacement for the AWS-Lambda cron that requeued stale jobs. Each app
 // instance runs the interval; recover_stale_jobs() is idempotent (FOR UPDATE
 // SKIP LOCKED semantics make concurrent runs across instances safe), so the
-// self-host bundle needs no Lambda. See spec/mvp/06-self-hosting-architecture.md.
+// self-host bundle needs no Lambda. See dataroom/spec/mvp/06-self-hosting-architecture.md.
 
 const RECOVERY_INTERVAL_MS = 60_000;
 

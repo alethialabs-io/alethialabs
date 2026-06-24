@@ -21,7 +21,7 @@ import (
 // credentials never collide) and its own private HOME (~/.kube, ~/.config/{gcloud,
 // helm}, ~/.aws are per-worker). All workers share one ALETHIA_RUNNER_ID — one
 // logical runner with N slots — and claims are atomic (SKIP LOCKED), so they never
-// double-claim. See spec/mvp/21 §5.
+// double-claim. See dataroom/spec/mvp/21 §5.
 
 // WorkerProc is a spawned worker the supervisor can signal and wait on.
 type WorkerProc interface {

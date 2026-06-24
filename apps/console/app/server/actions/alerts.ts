@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Server actions for the Alerts page (spec/mvp/25-alerting-notifications.md). A "policy"
+// Server actions for the Alerts page (dataroom/spec/mvp/25-alerting-notifications.md). A "policy"
 // (table `alert_rules`) binds a SET of event-key patterns to channels + shared routing.
 // Every mutation is PDP-guarded on the `alert` resource; reads use `view_alerts`. Channel
 // secrets are AES-encrypted at rest and never returned. `authz.*` patterns are gated on

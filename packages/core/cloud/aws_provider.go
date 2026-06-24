@@ -285,7 +285,7 @@ func (p *awsProvider) ConfigureKubeconfig(ctx context.Context, config *types.Spe
 	cluster := resp.Cluster
 	// Write under an absolute, HOME-based path (not the cwd-relative "temp/") so that
 	// concurrent worker subprocesses — which share a cwd but each have a private HOME —
-	// never read each other's kubeconfig. See spec/mvp/21 §5 (concurrent slots).
+	// never read each other's kubeconfig. See dataroom/spec/mvp/21 §5 (concurrent slots).
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		home = os.TempDir()

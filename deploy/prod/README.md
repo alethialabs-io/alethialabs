@@ -48,4 +48,4 @@ credits). Pick one; both target the same `DEPLOY_HOST`.
 ## Gating / next
 - Auth runs on Better Auth and data on Postgres/Drizzle.
 - Multi-cloud **runner fleet** + per-provider autoscaling is designed in
-  `spec/mvp/08-runner-fleet-autoscaling.md` (built incrementally).
+  `dataroom/spec/mvp/08-runner-fleet-autoscaling.md` (built incrementally).

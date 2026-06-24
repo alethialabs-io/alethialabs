@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// DB-backed pool config (spec/mvp/26). The Fleet Controller reads enabled `fleet_pools`
+// DB-backed pool config (dataroom/spec/mvp/26). The Fleet Controller reads enabled `fleet_pools`
 // rows every tick, so edits made in the console go live without a redeploy. `FLEET_POOLS`
 // (env) is deprecated — kept only as a one-time seed for existing deployments.
 

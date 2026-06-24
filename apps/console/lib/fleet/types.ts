@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Shared types for the Fleet Controller (spec/mvp/26). One declarative pool spec is
+// Shared types for the Fleet Controller (dataroom/spec/mvp/26). One declarative pool spec is
 // reconciled against observed reality across four axes — count, version, health,
 // placement — by the pure planner (plan.ts), over immutable VMs driven through the
 // FleetProvider primitives.
@@ -78,7 +78,7 @@ export type FleetAction =
 /**
  * Cloud capacity primitives. The controller owns all diff logic; the provider just
  * lists/creates/destroys VMs. Real clouds (Hetzner) + the manual no-op + the test fake
- * implement this. See spec/mvp/26.
+ * implement this. See dataroom/spec/mvp/26.
  */
 export interface FleetProvider {
 	list(spec: FleetSpec): Promise<ProviderInstance[]>;

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Alerting (spec/mvp/25-alerting-notifications.md). An alert_rule binds an event-key
+// Alerting (dataroom/spec/mvp/25-alerting-notifications.md). An alert_rule binds an event-key
 // pattern (e.g. `authz.spec.destroy.denied`, `authz.*.denied`, `system.job.failed`) —
 // optionally narrowed by `match` — to one or more alert_channels; when a source emits
 // an event, each matching rule produces one alert_delivery per bound channel. Event

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The curated event catalog (spec/mvp/25-alerting-notifications.md), modelled on the
+// The curated event catalog (dataroom/spec/mvp/25-alerting-notifications.md), modelled on the
 // Claude alerts design: human-friendly events grouped into categories, each mapped to a
 // real underlying emit KEY (or `*`-glob pattern) that a policy stores and emit matches.
 // Keys are TEXT, not a DB enum, so the alertable surface grows with the product — no

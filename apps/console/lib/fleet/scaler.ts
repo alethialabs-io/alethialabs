@@ -4,7 +4,7 @@
 // The Fleet Controller's loop host. A sibling to the stale-job recovery loop: each app
 // instance runs the 60s tick (idempotent + convergent, so concurrent replicas are
 // safe). Also runs on demand (wakeFleetController) when a job is enqueued. Default
-// (no FLEET_POOLS) → no-op. See spec/mvp/26.
+// (no FLEET_POOLS) → no-op. See dataroom/spec/mvp/26.
 
 import { reconcileAll, type SurplusState } from "@/lib/fleet/controller";
 import { makeDbDeps } from "@/lib/fleet/db-deps";

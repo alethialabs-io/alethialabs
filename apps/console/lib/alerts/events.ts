@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Pure rule-evaluation helpers (spec/mvp/25-alerting-notifications.md): severity
+// Pure rule-evaluation helpers (dataroom/spec/mvp/25-alerting-notifications.md): severity
 // ordering and the field-equality `match` evaluation. Event-key identity, the catalog,
 // glob matching, and labels live in lib/alerts/catalog.ts. No I/O — unit-testable.
 

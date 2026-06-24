@@ -149,10 +149,10 @@ export const connectorStatus = pgEnum("connector_status", [
 
 // Visibility/ownership of a stored credential (cloud_identities / connector_credentials).
 // `personal` = author-only (the creating user); `org` = shared with the whole org, access
-// governed by the PDP connector/cloud_identity grants + roles. See spec/mvp/08 + 07.
+// governed by the PDP connector/cloud_identity grants + roles. See dataroom/spec/mvp/08 + 07.
 export const credentialScope = pgEnum("credential_scope", ["personal", "org"]);
 
-// Alerting (spec/mvp/25-alerting-notifications.md). Delivery channels, event
+// Alerting (dataroom/spec/mvp/25-alerting-notifications.md). Delivery channels, event
 // sources, severity, and the deliveries-ledger lifecycle.
 export const alertChannelType = pgEnum("alert_channel_type", [
 	"webhook",
@@ -174,7 +174,7 @@ export const alertDeliveryStatus = pgEnum("alert_delivery_status", [
 	"dead",
 ]);
 
-// Durable connector-credential health (spec/mvp/25 Phase 3): which credential family,
+// Durable connector-credential health (dataroom/spec/mvp/25 Phase 3): which credential family,
 // and its last point-of-use outcome. Drives the `system.connector.token_failed` alert.
 export const connectorHealthKind = pgEnum("connector_health_kind", [
 	"git",

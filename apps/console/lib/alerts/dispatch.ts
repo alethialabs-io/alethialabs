@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Delivery dispatch + retry (spec/mvp/25-alerting-notifications.md). A delivery row
+// Delivery dispatch + retry (dataroom/spec/mvp/25-alerting-notifications.md). A delivery row
 // is the unit of work: deliverOne() CLAIMS the row (so the inline dispatch and the
 // sweep never double-send across instances), loads its channel, sends, and advances the
 // ledger (sent | failed+backoff | dead). startAlertScheduler() runs sweepDueDeliveries()

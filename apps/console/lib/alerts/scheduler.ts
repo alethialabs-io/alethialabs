@@ -5,7 +5,7 @@
 // recovery loop (lib/jobs/recovery.ts), NOT an external cron / EventBridge. Each app
 // instance runs the interval; deliverOne claims rows atomically so concurrent instances
 // never double-send. Inline dispatch (emit.ts) handles first-attempt latency; this just
-// retries the ones that failed or were left pending. See spec/mvp/25-alerting-notifications.md.
+// retries the ones that failed or were left pending. See dataroom/spec/mvp/25-alerting-notifications.md.
 
 import { sweepDueDeliveries } from "@/lib/alerts/dispatch";
 

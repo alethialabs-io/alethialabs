@@ -5,7 +5,7 @@
 // API (fetch, no SDK). A Hetzner VM is cheap host compute; cloud-init runs the per-cloud
 // runner image (Phase 3) which self-registers via the bootstrap token. The controller
 // (plan.ts) owns all diff logic. Live-tested when HCLOUD_TOKEN + a deploy exist;
-// pure helpers are unit-tested + the controller is tested via the fake. See spec/mvp/26.
+// pure helpers are unit-tested + the controller is tested via the fake. See dataroom/spec/mvp/26.
 
 import { randomUUID } from "crypto";
 import type { FleetProvider, FleetSpec, ProviderInstance } from "@/lib/fleet/types";

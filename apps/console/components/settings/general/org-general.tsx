@@ -6,7 +6,7 @@
 // Defaults / Danger zone), composed from the shared settings primitives (shadcn +
 // Tailwind tokens; no CSS module). Name + slug save via better-auth organization.update;
 // description/region/default-env/terraform-version live in org metadata; delete is real.
-// Logo upload + ownership transfer are stubbed (tracked in spec/features/settings-design-port.md).
+// Logo upload + ownership transfer are stubbed (tracked in dataroom/spec/features/settings-design-port.md).
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";

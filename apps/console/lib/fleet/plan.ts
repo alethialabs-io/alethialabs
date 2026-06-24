@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The Fleet Controller's brain: a PURE function that diffs a pool spec against observed
-// reality and returns the minimal, safe set of actions to advance toward it (spec/mvp/26).
+// reality and returns the minimal, safe set of actions to advance toward it (dataroom/spec/mvp/26).
 // Reconciles four axes in priority order — health → count → placement → version — under
 // one hard invariant: never plan the claimable (online) count below the warm floor.
 // Convergent: each call advances rollout/heal/rebalance one safe step; idempotent.

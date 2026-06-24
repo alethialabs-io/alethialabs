@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Registry-as-code (spec/mvp/07-auth-rbac-sso.md Part E): the single source of the
+// Registry-as-code (dataroom/spec/mvp/07-auth-rbac-sso.md Part E): the single source of the
 // resource × action matrix + the built-in role templates. Adding a capability is a
 // one-line edit here; the exhaustive unions make a new action a compile error until
 // it's handled, and the DB `permission`/`role` tables are seeded FROM this file
@@ -20,7 +20,7 @@ export const RESOURCES = [
 	"audit",
 	"billing",
 	"alert",
-	// Managed warm-pool config (spec/mvp/26-fleet-controller.md). Provisions real cloud
+	// Managed warm-pool config (dataroom/spec/mvp/26-fleet-controller.md). Provisions real cloud
 	// VMs (cost), so it is an owner/admin-only operator capability — excluded from operators.
 	"fleet",
 ] as const;
@@ -40,7 +40,7 @@ export const ACTIONS = [
 	"view_audit",
 	"export_audit",
 	"manage_billing",
-	// Alerting config (spec/mvp/25-alerting-notifications.md): read the alert
+	// Alerting config (dataroom/spec/mvp/25-alerting-notifications.md): read the alert
 	// channels/rules/deliveries vs mutate them.
 	"view_alerts",
 	"manage_alerts",

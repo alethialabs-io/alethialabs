@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  * jobs_runner_wake trigger → pg_notify → getWakeTransport fan-out), and the connection
  * itself IS the liveness signal: runner_present refreshes the lease on connect + every
  * ~10s ping, and runner_lost fires the instant the connection drops (req.signal abort)
- * — sub-second failure detection for the fleet controller (spec/mvp/26). Worker stays
+ * — sub-second failure detection for the fleet controller (dataroom/spec/mvp/26). Worker stays
  * HTTPS-only (no DB access).
  */
 export async function GET(req: Request) {

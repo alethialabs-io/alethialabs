@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 # Alethia AI — Tool Catalog
 
 The agent's capabilities map 1:1 onto existing **PDP-gated server actions** (`app/server/actions/*`).
-**No new authority model** (`spec/mvp/11-ai-scanner-mcp.md`): every tool calls an action that runs
+**No new authority model** (`dataroom/spec/mvp/11-ai-scanner-mcp.md`): every tool calls an action that runs
 `authorize(verb, {type, id?})` / `requireOwner()`, so the agent is bounded by the actor's grants. This
 catalog is the source for `lib/ai/tools.ts` (the in-app agent) and, later, the MCP server (same defs).
 

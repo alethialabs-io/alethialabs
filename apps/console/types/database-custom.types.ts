@@ -284,7 +284,7 @@ export interface RepoDigest {
 	signals?: string[];
 }
 
-// ── Alerting (spec/mvp/25-alerting-notifications.md) ────────────────────────────
+// ── Alerting (dataroom/spec/mvp/25-alerting-notifications.md) ────────────────────────────
 
 // alert_channels.config — non-secret channel settings. The sensitive material
 // (webhook/Slack/RocketChat URL, optional webhook signing secret) lives in the

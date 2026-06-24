@@ -584,7 +584,7 @@ END $$;
 -- Credential tables (scope-aware): a `personal` row is visible only to its author
 -- (user_id = current_owner); an `org` row is visible to the whole org
 -- (org_id = current_org). This is the coarse blast wall — the fine-grained role
--- (view vs manage) is enforced by the PDP at the app layer (spec/mvp/08 + 07).
+-- (view vs manage) is enforced by the PDP at the app layer (dataroom/spec/mvp/08 + 07).
 DO $$
 DECLARE tbl TEXT;
 BEGIN

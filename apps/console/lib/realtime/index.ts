@@ -8,7 +8,7 @@ import { getDatabaseConfig } from "@/lib/config/database";
 // insert_job_log() RPC does pg_notify('job_logs', {jobId, logId}); each app instance
 // holds ONE dedicated LISTEN connection and dispatches to its SSE subscribers — so it
 // scales to multiple instances with no Redis. The ee/ tier swaps a Redis-backed impl
-// in behind this interface (RealtimeTransport seam, see spec/mvp/07-auth-rbac-sso.md).
+// in behind this interface (RealtimeTransport seam, see dataroom/spec/mvp/07-auth-rbac-sso.md).
 
 export interface RealtimeTransport {
 	/** Subscribe to new log ids for a job. Returns an unsubscribe function. */

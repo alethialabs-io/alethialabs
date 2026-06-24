@@ -4,7 +4,7 @@
 // The FleetProvider seam: cloud capacity primitives (list/create/destroy). The
 // controller owns ALL diff logic (plan.ts); a provider just lists/creates/destroys
 // VMs. `FLEET_PROVIDER=hcloud` provisions real Hetzner VMs; the default `manual`
-// provider is a DB-backed no-op for self-host / bring-your-own. See spec/mvp/26.
+// provider is a DB-backed no-op for self-host / bring-your-own. See dataroom/spec/mvp/26.
 
 import { getServiceDb } from "@/lib/db";
 import type { CloudProvider } from "@/lib/db/schema";

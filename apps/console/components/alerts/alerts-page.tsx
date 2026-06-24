@@ -4,7 +4,7 @@
 
 // The Alerts surface (ported from the Claude alerts design, primitives only): a
 // policy-centric master-detail — stats, a template gallery, a policy rail + the policy
-// detail editor — plus secondary Channels and Activity tabs. See spec/mvp/25.
+// detail editor — plus secondary Channels and Activity tabs. See dataroom/spec/mvp/25.
 
 import { Plus, Search } from "lucide-react";
 import { useRouter } from "next/navigation";

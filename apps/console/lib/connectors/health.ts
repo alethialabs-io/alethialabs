@@ -5,7 +5,7 @@
 // records the failure and emits `system.connector.token_failed` ONCE per transition (and
 // re-alerts after a window) via an atomic claim on `alerted_at` — race-safe across
 // instances. markHealthy clears on recovery. Both are best-effort: they never throw into
-// the caller. See spec/mvp/25-alerting-notifications.md.
+// the caller. See dataroom/spec/mvp/25-alerting-notifications.md.
 
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";

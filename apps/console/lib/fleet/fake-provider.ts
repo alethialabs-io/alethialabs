@@ -4,7 +4,7 @@
 // An in-memory fleet world for testing the controller end-to-end without Postgres or
 // Hetzner. It implements the FleetProvider primitives AND the ControllerDeps, modelling
 // the runner lifecycle (create→booting→online, drain, crash). Tests drive it through
-// reconcile ticks and assert convergence + the warmMin invariant. See spec/mvp/26.
+// reconcile ticks and assert convergence + the warmMin invariant. See dataroom/spec/mvp/26.
 
 import type { ControllerDeps, RunnerState } from "@/lib/fleet/controller";
 import type { FleetProvider, FleetSpec, ProviderInstance } from "@/lib/fleet/types";

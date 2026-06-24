@@ -5,7 +5,7 @@
 // The policy detail panel (ported from the Claude alerts design, primitives only): a
 // view/edit surface for one policy — header + enable, a category-grouped event matrix,
 // and shared routing (channels + conditions). Edits are staged locally and persisted via
-// the policy server actions. See spec/mvp/25-alerting-notifications.md.
+// the policy server actions. See dataroom/spec/mvp/25-alerting-notifications.md.
 
 import {
 	Bell,

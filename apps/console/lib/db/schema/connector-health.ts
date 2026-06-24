@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Durable connector-credential health (spec/mvp/25-alerting-notifications.md Phase 3).
+// Durable connector-credential health (dataroom/spec/mvp/25-alerting-notifications.md Phase 3).
 // Updated at POINT OF USE (git token refresh in getValidProviderToken, api-key decrypt
 // in the job-claim path) — NOT a poll. `alerted_at` powers a once-per-transition emit of
 // `system.connector.token_failed` (lib/connectors/health.ts). One row per

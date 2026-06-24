@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The ingest seam (spec/mvp/25-alerting-notifications.md). `emitActionEvent` is called
+// The ingest seam (dataroom/spec/mvp/25-alerting-notifications.md). `emitActionEvent` is called
 // from the single PDP chokepoint (enforceDecision) for EVERY decision, so any action is
 // alertable by config; system sources call `emitAlertEvent` with a `system.*` key.
 // emitAlertEvent matches the org's enabled rules (cached) by event-key glob + field

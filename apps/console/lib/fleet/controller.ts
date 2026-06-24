@@ -4,7 +4,7 @@
 // The impure half of the Fleet Controller: gather observed reality, call the pure
 // planner (plan.ts), apply the resulting actions. All DB/cloud access is injected via
 // `ControllerDeps` so the whole reconcile is unit-testable in-memory against a fake
-// world (no Postgres, no Hetzner). See spec/mvp/26.
+// world (no Postgres, no Hetzner). See dataroom/spec/mvp/26.
 
 import { plan, targetCount } from "@/lib/fleet/plan";
 import type {

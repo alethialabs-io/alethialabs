@@ -6,7 +6,7 @@
 // settings primitives. Wired to the real backend: getTeams (name + members) + better-auth
 // createTeam/removeTeam + ManageTeamDialog (add/remove members). The design's per-team
 // description, stored slug, zone-access chips and role-tag have no backend yet — omitted
-// and tracked in spec/features/settings-design-port.md.
+// and tracked in dataroom/spec/features/settings-design-port.md.
 
 import { MoreHorizontal, Plus, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";

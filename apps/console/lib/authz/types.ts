@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The authorization contract (spec/mvp/07-auth-rbac-sso.md Part B). One Policy
+// The authorization contract (dataroom/spec/mvp/07-auth-rbac-sso.md Part B). One Policy
 // Decision Point (PDP) interface backs every access decision; the engine behind it
 // is swappable (community PostgresRbacPDP → enterprise OpenFgaPDP) with no call-site
 // changes. Resource/Action are exhaustive unions (registry.ts) so a new capability
@@ -66,7 +66,7 @@ export interface Entitlements {
 	customRoles: boolean;
 	auditExport: boolean;
 	/**
-	 * Security/governance alerting (spec/mvp/25-alerting-notifications.md): alert rules
+	 * Security/governance alerting (dataroom/spec/mvp/25-alerting-notifications.md): alert rules
 	 * sourced from PDP audit events (denials, sensitive allows, grant/role changes) plus
 	 * advanced match/escalation. Basic infra/ops alerting is free in core and ungated;
 	 * this flag only gates the PDP-sourced half. Granted on business+.

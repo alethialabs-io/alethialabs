@@ -230,5 +230,5 @@ Cloud account bootstrap scripts:
 - Use `react-hook-form` for all form handling. Never use raw `useState` for form state.
 - Use `zod` schema validation for all user inputs. No manual string matching.
 - Use Tailwind CSS with shadcn/ui components. Vercel-like aesthetic: minimalist, monochrome, no excessive gradients.
-- Feature planning goes in `spec/features/` with checkable task lists.
+- Feature planning goes in `dataroom/spec/features/` (the private `alethialabs-io/dataroom` repo) with checkable task lists.
 - Never start coding without a plan and explicit approval.
