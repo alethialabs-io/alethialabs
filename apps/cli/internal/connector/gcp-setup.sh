@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERTEX_AWS_ACCOUNT_ID="787587782604"
+ALETHIA_AWS_ACCOUNT_ID="787587782604"
 POOL_ID="alethia-pool"
 PROVIDER_ID="alethia-aws-provider"
 SA_NAME="alethia-provisioner"
@@ -75,7 +75,7 @@ else
   gcloud iam workload-identity-pools providers create-aws "${PROVIDER_ID}" \
     --location="global" \
     --workload-identity-pool="${POOL_ID}" \
-    --account-id="${VERTEX_AWS_ACCOUNT_ID}" \
+    --account-id="${ALETHIA_AWS_ACCOUNT_ID}" \
     --display-name="Alethia AWS Provider"
 fi
 

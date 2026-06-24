@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERTEX_AWS_ACCOUNT_ID="787587782604"
+ALETHIA_AWS_ACCOUNT_ID="787587782604"
 APP_NAME="alethia-provisioner"
 
 if [ -z "${1:-}" ]; then
@@ -60,7 +60,7 @@ else
   az ad app federated-credential create --id "${CLIENT_ID}" --parameters '{
     "name": "alethia-aws-federation",
     "issuer": "https://sts.amazonaws.com",
-    "subject": "'"${VERTEX_AWS_ACCOUNT_ID}"'",
+    "subject": "'"${ALETHIA_AWS_ACCOUNT_ID}"'",
     "audiences": ["api://AzureADTokenExchange"],
     "description": "Trust Alethia AWS runners to authenticate as this app"
   }' -o none
