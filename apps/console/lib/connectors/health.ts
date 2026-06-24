@@ -88,7 +88,7 @@ export async function markFailed(
 			});
 		}
 	} catch (err) {
-		console.error(`[connector-health] markFailed(${provider}) failed:`, err);
+		console.error("[connector-health] markFailed failed for provider:", provider, err);
 	}
 }
 
@@ -117,6 +117,6 @@ export async function markHealthy(
 				),
 			);
 	} catch (err) {
-		console.error(`[connector-health] markHealthy(${provider}) failed:`, err);
+		console.error("[connector-health] markHealthy failed for provider:", provider, err);
 	}
 }

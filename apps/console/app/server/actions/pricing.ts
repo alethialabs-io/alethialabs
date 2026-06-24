@@ -30,7 +30,12 @@ const CACHE_NODE_TYPES = [
 	"cache.t3.micro", "cache.t3.small", "cache.t3.medium", "cache.r6g.large",
 ];
 
+// AWS region slug, e.g. "us-east-1", "ap-southeast-2". Validates the only
+// caller-supplied URL segment so it cannot redirect the request (SSRF guard).
+const AWS_REGION_RE = /^[a-z]{2}-[a-z]+-\d+$/;
+
 async function fetchAwsPricingJson(service: string, region: string): Promise<AwsPricingResponse> {
+	if (!AWS_REGION_RE.test(region)) throw new Error(`Invalid AWS region: ${region}`);
 	const url = `https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/${service}/current/${region}/index.json`;
 	const res = await fetch(url, { next: { revalidate: 86400 } });
 	if (!res.ok) throw new Error(`Failed to fetch ${service} pricing`);

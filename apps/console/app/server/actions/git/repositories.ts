@@ -211,7 +211,7 @@ export async function createRepository(
 			}
 
 			const res = await fetch(
-				`https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.name}`,
+				`https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(data.workspace)}/${encodeURIComponent(data.name)}`,
 				{
 					method: "POST",
 					headers: {
@@ -247,7 +247,7 @@ export async function createRepository(
 
 		return { repository };
 	} catch (error) {
-		console.error(`Error creating ${provider} repository:`, error);
+		console.error("Error creating repository for provider:", provider, error);
 		return { error: "Failed to create repository" };
 	}
 }
@@ -373,7 +373,7 @@ export async function fetchRepositoriesByProvider(
 
 		return { repositories: allRepos };
 	} catch (error) {
-		console.error(`Error fetching ${provider} repositories:`, error);
+		console.error("Error fetching repositories for provider:", provider, error);
 		return {
 			repositories: [],
 			error:
