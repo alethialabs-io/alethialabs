@@ -145,14 +145,12 @@ curl -fsSL https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/dep
 ```
 
 See the [Self-Hosting guide](./apps/docs/content/docs/self-hosting/) (quickstart, configuration,
-per-cloud Terraform, upgrading) and the distribution roadmap in
-[`spec/mvp/09-self-host-distribution.md`](./spec/mvp/09-self-host-distribution.md).
+per-cloud Terraform, upgrading).
 
 ## Documentation
 
 - [Docs site](./apps/docs/) — hosted documentation portal
-- [Feature specs](./spec/features/) — active project documentation
-- [Thesis chapters](./spec/thesis/) — academic reference
+- Product, GTM and feature specs live in the private `alethialabs-io/dataroom` repo.
 
 ## Licensing
 
