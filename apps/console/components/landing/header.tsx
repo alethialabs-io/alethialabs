@@ -22,6 +22,7 @@ const NAV_LINKS: NavLink[] = [
 	{ label: "Features", href: "#features" },
 	{ label: "CLI", href: "#cli" },
 	{ label: "Ecosystem", href: "#ecosystem" },
+	{ label: "Pricing", href: "/pricing" },
 	{ label: "Docs", href: "/docs" },
 ];
 
