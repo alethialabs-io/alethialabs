@@ -60,10 +60,10 @@ type CloudIdentity struct {
 	ClientID            string `json:"client_id"`
 	SubscriptionID      string `json:"subscription_id"`
 	// DigitalOcean / Hetzner / Civo — scoped API token (decrypted at claim time).
-	APIToken            string `json:"api_token"`
+	APIToken string `json:"api_token"`
 	// Self-managed: no token was stored in Alethia; this (self-hosted) runner supplies
 	// it from its own environment (HCLOUD_TOKEN / CIVO_TOKEN / DIGITALOCEAN_ACCESS_TOKEN).
-	SelfManaged         bool   `json:"self_managed"`
+	SelfManaged bool `json:"self_managed"`
 }
 
 // ConnectorCredential is a decrypted api_key credential for a pluggable

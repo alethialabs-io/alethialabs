@@ -10,14 +10,14 @@ func TestRunnerSlots(t *testing.T) {
 		val  string
 		want int
 	}{
-		{"", 1},        // unset → single slot (today's behavior)
-		{"1", 1},       //
-		{"4", 4},       //
-		{" 3 ", 3},     // trimmed
-		{"0", 1},       // invalid (<1) → clamp to 1
-		{"-2", 1},      // negative → 1
-		{"abc", 1},     // non-numeric → 1
-		{"2.5", 1},     // not an int → 1
+		{"", 1},    // unset → single slot (today's behavior)
+		{"1", 1},   //
+		{"4", 4},   //
+		{" 3 ", 3}, // trimmed
+		{"0", 1},   // invalid (<1) → clamp to 1
+		{"-2", 1},  // negative → 1
+		{"abc", 1}, // non-numeric → 1
+		{"2.5", 1}, // not an int → 1
 	}
 	for _, c := range cases {
 		t.Setenv("ALETHIA_RUNNER_SLOTS", c.val)

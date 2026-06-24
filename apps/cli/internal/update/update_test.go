@@ -21,10 +21,10 @@ func TestCompareSemver(t *testing.T) {
 		{"1.2.3", "1.2.4", -1},
 		{"1.3.0", "1.2.9", 1},
 		{"2.0.0", "1.9.9", 1},
-		{"1.2.0", "1.2.0-next", 0},   // pre-release suffix ignored
-		{"v1.2.3", "1.2.3", 0},       // leading v stripped
-		{"1.2", "1.2.0", 0},          // missing patch treated as 0
-		{"1.10.0", "1.9.0", 1},       // numeric, not lexical
+		{"1.2.0", "1.2.0-next", 0}, // pre-release suffix ignored
+		{"v1.2.3", "1.2.3", 0},     // leading v stripped
+		{"1.2", "1.2.0", 0},        // missing patch treated as 0
+		{"1.10.0", "1.9.0", 1},     // numeric, not lexical
 		{"0.1.0", "0.2.0", -1},
 	}
 	for _, c := range cases {
