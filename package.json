@@ -15,11 +15,9 @@
 		"compose:up:full": "bash scripts/compose-up.sh caddy app docs blog runner",
 		"compose:ps": "docker compose ps",
 		"compose:logs": "docker compose logs -f --tail=100",
-		"compose:down": "docker compose down",
-		"dataroom": "node scripts/build-dataroom.mjs"
+		"compose:down": "docker compose down"
 	},
 	"devDependencies": {
-		"marked": "^18.0.5",
 		"prettier": "^3.6.2",
 		"turbo": "^2.6.3",
 		"typescript": "5.9.2"
