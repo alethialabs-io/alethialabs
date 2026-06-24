@@ -3,6 +3,7 @@
 
 import { LegalShell } from "@/components/legal/legal-shell";
 import type { Metadata } from "next";
+import Link from "next/link";
 
 export const metadata: Metadata = {
 	title: "Cookie Policy · Alethia",
@@ -21,7 +22,7 @@ export default function CookiesPage() {
 				This Cookie Policy explains how <strong>Alethia Labs OÜ</strong> uses
 				cookies and similar technologies on the Alethia control plane and
 				related websites (the “Service”). It should be read together with our{" "}
-				<a href="/privacy">Privacy Policy</a>.
+				<Link href="/privacy">Privacy Policy</Link>.
 			</p>
 
 			<h2>1. What cookies are</h2>

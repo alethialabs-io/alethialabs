@@ -3,6 +3,7 @@
 
 import { LegalShell } from "@/components/legal/legal-shell";
 import type { Metadata } from "next";
+import Link from "next/link";
 
 export const metadata: Metadata = {
 	title: "Terms of Service · Alethia",
@@ -54,7 +55,7 @@ export default function TermsPage() {
 			<h2>3. Acceptable use</h2>
 			<p>
 				Your use of the Service is subject to our{" "}
-				<a href="/acceptable-use">Acceptable Use Policy</a>, which is
+				<Link href="/acceptable-use">Acceptable Use Policy</Link>, which is
 				incorporated into these Terms by reference. You must not misuse the
 				Service, attempt to bypass tenant isolation, or use it to provision
 				unlawful infrastructure.
