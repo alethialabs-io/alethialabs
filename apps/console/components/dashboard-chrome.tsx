@@ -140,7 +140,6 @@ export function DashboardChrome({
 					<div className="flex items-center gap-2 sm:gap-4">
 						{/* Download the alethia CLI + theme toggle */}
 						<DownloadCliButton />
-						<ThemeMenu />
 						{/* Notifications */}
 						<Popover>
 							<PopoverTrigger asChild>
@@ -258,6 +257,8 @@ export function DashboardChrome({
 										Create a Spec
 									</Link>
 								</DropdownMenuItem>
+								<DropdownMenuSeparator />
+								<ThemeMenu />
 								<DropdownMenuSeparator />
 								<DropdownMenuItem
 									onClick={handleLogout}
