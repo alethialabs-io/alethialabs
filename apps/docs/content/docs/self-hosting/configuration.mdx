@@ -58,4 +58,26 @@ Only the providers you configure appear on the sign-in screen.
 
 Set each provider's callback to `https://<your-domain>/api/auth/callback/<provider>`.
 
+## Managed runner fleet (optional)
+
+By default, runners are static — you register them yourself (see [Runners](/console/runners)).
+Set `FLEET_PROVIDER=hcloud` to let the in-app scaler provision warm runner VMs on Hetzner Cloud and
+scale them by queue depth. Unset / `manual` → no managed fleet (the scaler is a no-op).
+
+| Key | Default | Notes |
+|---|---|---|
+| `FLEET_PROVIDER` | `manual` | `hcloud` provisions real Hetzner VMs; `manual` = no-op. |
+| `HCLOUD_TOKEN` | — | Hetzner Cloud API token. Required when `FLEET_PROVIDER=hcloud`. |
+| `ALETHIA_RUNNER_BOOTSTRAP_TOKEN` | — | Low-privilege shared token fleet VMs present to self-register. |
+| `ALETHIA_WEB_ORIGIN` | — | Console URL the VMs call back to (must be reachable from them). |
+| `HCLOUD_SERVER_TYPE` | `cax21` | Hetzner server type (ARM CAX recommended for runner workloads). |
+| `HCLOUD_IMAGE` | `ubuntu-24.04` | Base OS image for fleet VMs. |
+| `HCLOUD_SSH_KEYS` | — | Comma-separated Hetzner SSH key IDs. |
+| `FLEET_RUNNER_IMAGE_TAG` | `latest` | Runner image tag pulled from GHCR. |
+| `FLEET_RUNNER_SLOTS` | `1` | Concurrent job slots per fleet runner. |
+| `FLEET_BOOT_GRACE_SECONDS` | `180` | Seconds a freshly-booted VM is exempt from scale-down (cloud-init grace). |
+
+Warm pools are managed in the console **Fleet** page (DB-backed). `FLEET_POOLS` is **deprecated** —
+imported once into an empty pools table on first boot, then ignored.
+
 > A complete production template lives at `deploy/prod/.env.production.example`.
