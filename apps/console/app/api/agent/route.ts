@@ -104,21 +104,29 @@ export async function POST(req: Request) {
 	}
 
 	const { messages, threadId, mode = "ask", model }: AgentBody = await req.json();
-	void recordAiUsage({
-		orgId: actor.orgId,
-		userId: actor.userId,
-		kind: "agent",
-		credits: charge.credits,
-		source: charge.source,
-		refId: threadId,
-	});
+	const modelId = getAiModel(model);
 
 	const result = streamText({
-		model: getAiModel(model),
+		model: modelId,
 		system: systemPrompt(mode),
 		messages: await convertToModelMessages(messages),
 		tools: buildAgentTools({ mode }),
 		stopWhen: stepCountIs(8),
+		// Record once the run completes, with the real token usage for cost-of-serve.
+		onFinish: ({ usage }) => {
+			void recordAiUsage({
+				orgId: actor.orgId,
+				userId: actor.userId,
+				kind: "agent",
+				credits: charge.credits,
+				source: charge.source,
+				refId: threadId,
+				model: modelId,
+				inputTokens: usage.inputTokens,
+				outputTokens: usage.outputTokens,
+				cachedInputTokens: usage.cachedInputTokens,
+			});
+		},
 	});
 
 	return result.toUIMessageStreamResponse({

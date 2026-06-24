@@ -101,20 +101,28 @@ export async function POST(req: Request) {
 	}
 
 	const { messages, canvas }: AskAiBody = await req.json();
-	void recordAiUsage({
-		orgId: actor.orgId,
-		userId: actor.userId,
-		kind: "agent",
-		credits: charge.credits,
-		source: charge.source,
-	});
+	const modelId = getAiModel();
 
 	const result = streamText({
-		model: getAiModel(),
+		model: modelId,
 		system: systemPrompt(canvas),
 		messages: await convertToModelMessages(messages),
 		tools: buildSpecAssistantTools(canvas),
 		stopWhen: stepCountIs(8),
+		// Record once the run completes, with the real token usage for cost-of-serve.
+		onFinish: ({ usage }) => {
+			void recordAiUsage({
+				orgId: actor.orgId,
+				userId: actor.userId,
+				kind: "agent",
+				credits: charge.credits,
+				source: charge.source,
+				model: modelId,
+				inputTokens: usage.inputTokens,
+				outputTokens: usage.outputTokens,
+				cachedInputTokens: usage.cachedInputTokens,
+			});
+		},
 	});
 
 	return result.toUIMessageStreamResponse();

@@ -123,7 +123,23 @@ export async function getScanProposal(jobId: string): Promise<
 			? job.config_snapshot.repo_url
 			: "";
 
-	const stack = await inferStack(digest);
+	const inferred = await inferStack(digest);
+	const stack = inferred.stack;
+	// Record the inference's real token cost (credits were already charged at queue
+	// time in scanRepo; this 0-credit row carries cost-of-serve only).
+	const scanActor = await currentActor();
+	void recordAiUsage({
+		orgId: scanActor.orgId,
+		userId: scanActor.userId,
+		kind: "scan",
+		credits: 0,
+		source: "included",
+		refId: jobId,
+		model: inferred.model,
+		inputTokens: inferred.inputTokens,
+		outputTokens: inferred.outputTokens,
+		cachedInputTokens: inferred.cachedInputTokens,
+	});
 
 	const identities = await getVerifiedCloudIdentities();
 	const { zones } = await getZones();
