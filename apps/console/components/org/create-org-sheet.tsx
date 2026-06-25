@@ -15,7 +15,11 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
-import { createSubscriptionIntent } from "@/app/server/actions/billing";
+import {
+	createNewOrgSubscriptionIntent,
+	isOrgSlugAvailable,
+	linkSubscriptionToNewOrg,
+} from "@/app/server/actions/billing";
 import { setActiveOrganization } from "@/app/server/actions/workspace";
 import { PaymentForm } from "@/components/billing/payment-form";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
@@ -79,19 +83,12 @@ const CARDS: {
 		price: "$29",
 		per: "/seat·mo",
 		billed: "Hosted · billed per seat",
-	},
-	{
-		id: "business",
-		who: "Growing orgs that need roles, teams & audit",
-		price: "$999",
-		per: "/mo",
-		billed: "Hosted · billed monthly",
 		recommended: true,
 	},
 	{
 		id: "enterprise",
 		who: "Regulated & large teams needing SSO, audit & SLA",
-		price: "From $2,500",
+		price: "Let's talk",
 		per: null,
 		custom: true,
 		billed: "Annual contract · self-managed option",
@@ -161,26 +158,26 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 
 	const [slugTouched, setSlugTouched] = useState(false);
 	const [step, setStep] = useState<"details" | "payment">("details");
-	const [plan, setPlan] = useState<BillingPlan>("business");
+	const [plan, setPlan] = useState<BillingPlan>("team");
 	const [invites, setInvites] = useState<Invite[]>([]);
 	const [inviteEmail, setInviteEmail] = useState("");
 	const [inviteRole, setInviteRole] = useState<Role>("operator");
 	const [busy, setBusy] = useState(false);
 	const [clientSecret, setClientSecret] = useState<string | null>(null);
 	const [createdOrgId, setCreatedOrgId] = useState<string | null>(null);
+	const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
+	const [customerId, setCustomerId] = useState<string | null>(null);
+	// Set when payment succeeded but org create / link / invites then failed — the org
+	// isn't set up yet but the customer HAS paid, so we offer a retry (no second charge)
+	// instead of the payment form.
+	const [needsSetupRetry, setNeedsSetupRetry] = useState(false);
 
 	const effSlug = slug || "org";
 	const seats = 1 + invites.length;
 	const meta = planMeta(plan);
 
 	const monthly =
-		plan === "community"
-			? 0
-			: plan === "team"
-				? seats * 29
-				: plan === "business"
-					? 999
-					: -1;
+		plan === "community" ? 0 : plan === "team" ? seats * 29 : -1;
 	const totalLabel =
 		plan === "community" ? "Free" : monthly < 0 ? "Custom" : `$${monthly}`;
 	const totalSub =
@@ -195,13 +192,16 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		form.reset({ name: "", slug: "" });
 		setSlugTouched(false);
 		setStep("details");
-		setPlan("business");
+		setPlan("team");
 		setInvites([]);
 		setInviteEmail("");
 		setInviteRole("operator");
 		setBusy(false);
 		setClientSecret(null);
 		setCreatedOrgId(null);
+		setSubscriptionId(null);
+		setCustomerId(null);
+		setNeedsSetupRetry(false);
 	}
 	function handleOpenChange(next: boolean) {
 		if (!next) reset();
@@ -218,12 +218,16 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		setInviteEmail("");
 	}
 
-	/** Create the org; for paid plans open the in-app payment step. */
+	/**
+	 * Community: create the org now (it's free). Paid: nothing is persisted yet — we
+	 * validate the slug, open a subscription intent for an org that doesn't exist, and
+	 * move to payment. The org is only created once the charge succeeds (handlePaid), so
+	 * a Stripe failure here can never leave an orphan org behind.
+	 */
 	async function onCreate(data: FormData) {
 		setBusy(true);
 		try {
-			let orgId = createdOrgId;
-			if (!orgId) {
+			if (plan === "community") {
 				const { data: org, error } = await authClient.organization.create({
 					name: data.name,
 					slug: data.slug,
@@ -235,21 +239,34 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 					}
 					throw new Error(error?.message ?? "Couldn't create the organization");
 				}
-				orgId = org.id;
-				setCreatedOrgId(orgId);
-				await setActiveOrganization(orgId);
+				await setActiveOrganization(org.id);
 				await fetchWorkspace();
-			}
-
-			if (plan === "community") {
 				toast.success("Organization created.");
 				finishAndClose();
 				return;
 			}
+			if (plan === "enterprise") {
+				contactSales();
+				return;
+			}
 
-			const intent = await createSubscriptionIntent(plan, {
-				seats: plan === "team" ? seats : undefined,
+			// Paid (team): make sure the slug is free BEFORE charging, so a collision
+			// surfaces inline rather than after the customer has paid.
+			if (!(await isOrgSlugAvailable(data.slug))) {
+				form.setError("slug", { message: "That slug is taken — try another." });
+				return;
+			}
+
+			// Reuse the customer / replace the prior incomplete sub on a Back→retry or a
+			// seat change, so neither piles up in Stripe.
+			const intent = await createNewOrgSubscriptionIntent(plan, {
+				seats,
+				orgName: data.name,
+				priorSubscriptionId: subscriptionId ?? undefined,
+				customerId: customerId ?? undefined,
 			});
+			setSubscriptionId(intent.subscriptionId);
+			setCustomerId(intent.customerId);
 			setClientSecret(intent.clientSecret);
 			setStep("payment");
 		} catch (e) {
@@ -270,18 +287,41 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	}
 
 	/**
-	 * After payment: invites can only be sent once the org's `organizations` entitlement
-	 * is active, which lands on the Stripe webhook (a moment after confirmation). Poll the
-	 * workspace until it's active, then send the queued invites.
+	 * Payment has succeeded — now do the deferred setup: create the org, link the paid
+	 * subscription to it (which writes the billing record synchronously, so the
+	 * `organizations` entitlement is live immediately — no webhook race), then send the
+	 * queued invites. Idempotent on retry via `createdOrgId`: if any step fails after the
+	 * charge, we keep the payment refs and offer a retry rather than re-charging.
 	 */
 	async function handlePaid() {
-		toast.success("Subscription active — your organization is ready.");
-		if (invites.length > 0) {
-			for (let i = 0; i < 8; i++) {
-				await fetchWorkspace();
-				if (useWorkspaceStore.getState().entitlements?.organizations) break;
-				await new Promise((r) => setTimeout(r, 1000));
+		setBusy(true);
+		setNeedsSetupRetry(false);
+		try {
+			if (!subscriptionId || !customerId) {
+				throw new Error("Missing payment reference — please retry.");
 			}
+
+			let orgId = createdOrgId;
+			if (!orgId) {
+				const values = form.getValues();
+				const { data: org, error } = await authClient.organization.create({
+					name: values.name,
+					slug: values.slug,
+				});
+				if (error || !org) {
+					throw new Error(error?.message ?? "Couldn't create the organization");
+				}
+				orgId = org.id;
+				setCreatedOrgId(orgId);
+				await setActiveOrganization(orgId);
+			}
+
+			await linkSubscriptionToNewOrg({ orgId, subscriptionId, customerId });
+			await fetchWorkspace();
+			toast.success("Subscription active — your organization is ready.");
+
+			// Entitlement is already active — send queued invites and report any misses once.
+			const failed: string[] = [];
 			for (const inv of invites) {
 				try {
 					await authClient.organization.inviteMember({
@@ -289,11 +329,26 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 						role: inv.role,
 					});
 				} catch {
-					toast.error(`Couldn't invite ${inv.email} — finish from Members.`);
+					failed.push(inv.email);
 				}
 			}
+			if (failed.length > 0) {
+				toast.error(
+					`Couldn't invite ${failed.join(", ")} — finish from the Members page.`,
+				);
+			}
+			finishAndClose();
+		} catch (e) {
+			// Payment went through but setup didn't — let the user retry without re-paying.
+			setNeedsSetupRetry(true);
+			toast.error(
+				e instanceof Error
+					? e.message
+					: "Payment succeeded but setup failed — retry, you won't be charged again.",
+			);
+		} finally {
+			setBusy(false);
 		}
-		finishAndClose();
 	}
 
 	const submit = form.handleSubmit(onCreate);
@@ -628,30 +683,53 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				) : (
 					/* payment step */
 					<div className="mx-auto flex h-full w-full max-w-md flex-col justify-center gap-5 p-7">
-						<button
-							type="button"
-							onClick={() => {
-								setStep("details");
-								setClientSecret(null);
-							}}
-							className="self-start text-[12.5px] text-text-tertiary hover:text-text-primary"
-						>
-							← Back
-						</button>
+						{!needsSetupRetry && (
+							<button
+								type="button"
+								onClick={() => {
+									// Keep the sub/customer refs so the next attempt reuses the
+									// customer and cancels this incomplete sub instead of leaking it.
+									setStep("details");
+									setClientSecret(null);
+								}}
+								className="self-start text-[12.5px] text-text-tertiary hover:text-text-primary"
+							>
+								← Back
+							</button>
+						)}
 						<div className="flex items-center justify-between rounded-lg border border-border bg-surface-sunken px-4 py-3">
 							<span className="text-[13px] font-medium text-text-primary">
 								{meta.name} plan
 							</span>
 							<span className="font-mono text-[13px] text-text-primary">{totalLabel}</span>
 						</div>
-						{clientSecret && (
-							<StripeElementsProvider clientSecret={clientSecret}>
-								<PaymentForm
-									mode="payment"
-									submitLabel={`Subscribe — ${totalLabel}`}
-									onSuccess={handlePaid}
-								/>
-							</StripeElementsProvider>
+						{needsSetupRetry ? (
+							/* Paid, but org create / link failed — finish setup without re-charging. */
+							<div className="space-y-3">
+								<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-[12.5px] text-text-secondary">
+									Your payment went through, but we couldn&apos;t finish setting up the
+									organization. You won&apos;t be charged again — retry to complete
+									setup.
+								</p>
+								<Button
+									className="w-full"
+									disabled={busy}
+									onClick={() => void handlePaid()}
+								>
+									{busy ? "Finishing…" : "Complete setup"}
+									<ArrowRight size={15} />
+								</Button>
+							</div>
+						) : (
+							clientSecret && (
+								<StripeElementsProvider clientSecret={clientSecret}>
+									<PaymentForm
+										mode="payment"
+										submitLabel={`Subscribe — ${totalLabel}`}
+										onSuccess={handlePaid}
+									/>
+								</StripeElementsProvider>
+							)
 						)}
 					</div>
 				)}

@@ -24,6 +24,7 @@ import { planMeta } from "@/lib/billing/plan-catalog";
 import { resolvePlanEntitlements } from "@/lib/billing/plan";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { getStripe } from "@/lib/billing/stripe";
+import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 import { computeUsage, type UsageSummary } from "@/lib/billing/usage";
 import { queryJobMinutesByOrg } from "@/lib/queries/runner-usage";
 import { authorize, currentActor } from "@/lib/authz/guard";
@@ -185,7 +186,7 @@ function planCheckoutLineItems(
 /** All configured metered price IDs — to recognize an existing metered sub item. */
 function configuredMeterPriceIds(): Set<string> {
 	const ids = new Set<string>();
-	for (const p of ["team", "business", "enterprise"] as const) {
+	for (const p of ["team", "enterprise"] as const) {
 		const id = meterPriceIdForPlan(p);
 		if (id) ids.add(id);
 	}
@@ -270,7 +271,12 @@ export async function createCheckoutSession(
 		mode: "subscription",
 		customer: customerId,
 		line_items: planCheckoutLineItems(plan),
-		subscription_data: { metadata: { organization_id: actor.orgId } },
+		subscription_data: {
+			metadata: { organization_id: actor.orgId },
+			// Team gets a one-month free trial (the public "Start free trial" CTA).
+			// Flat tiers subscribe immediately.
+			...(plan === "team" ? { trial_period_days: 30 } : {}),
+		},
 		allow_promotion_codes: true,
 		...tax,
 		success_url: `${cfg.appUrl}/dashboard/settings/billing?checkout=success`,
@@ -321,7 +327,7 @@ export async function createSubscriptionIntent(
 		? { automatic_tax: { enabled: true } }
 		: {};
 	// Only the Team price is per-seat (per-unit) — bill the requested seat count.
-	// Business/Enterprise are flat, so their quantity stays 1.
+	// Enterprise is flat, so its quantity stays 1.
 	const quantity = plan === "team" ? Math.max(1, opts?.seats ?? 1) : 1;
 	const sub = await getStripe().subscriptions.create({
 		customer: customerId,
@@ -342,6 +348,160 @@ export async function createSubscriptionIntent(
 		throw new Error("Stripe did not return a payment client secret.");
 	}
 	return { clientSecret, subscriptionId: sub.id };
+}
+
+/**
+ * Whether an org slug is still free. Used by the create-org sheet to validate the slug
+ * BEFORE taking payment (the org itself isn't created until the charge succeeds), so a
+ * collision surfaces inline instead of after the customer has paid. Authenticated only.
+ */
+export async function isOrgSlugAvailable(slug: string): Promise<boolean> {
+	await currentActor();
+	const normalized = slug.trim().toLowerCase();
+	if (!normalized) return false;
+	const [row] = await getServiceDb()
+		.select({ id: organization.id })
+		.from(organization)
+		.where(eq(organization.slug, normalized))
+		.limit(1);
+	return !row;
+}
+
+/** A new-org subscription intent: the awaiting-payment sub plus the bare customer it
+ *  hangs off, both carried back to the client so the org can be linked post-payment. */
+export interface NewOrgSubscriptionIntent extends SubscriptionIntent {
+	customerId: string;
+}
+
+/**
+ * Creates an incomplete subscription for an org that doesn't exist yet — the deferred
+ * create-org flow: take payment first, then create + link the org (linkSubscriptionToNewOrg).
+ * The customer/sub carry `created_by` (not `organization_id`) so they can't be claimed by
+ * another user, and the webhook ignores them until the link step stamps the org id.
+ *
+ * Idempotent across retries: pass the prior `customerId` to reuse it and `priorSubscriptionId`
+ * to cancel the previous incomplete sub (e.g. after "← Back" or a seat change), so a Stripe
+ * customer is never duplicated and incomplete subscriptions don't pile up.
+ */
+export async function createNewOrgSubscriptionIntent(
+	plan: PaidPlan,
+	opts: {
+		seats?: number;
+		orgName: string;
+		priorSubscriptionId?: string;
+		customerId?: string;
+	},
+): Promise<NewOrgSubscriptionIntent> {
+	const actor = await currentActor();
+	requireHostedBilling();
+
+	// Reuse the customer from a prior attempt only if this user owns it; otherwise mint
+	// a fresh bare customer (no organization_id until the org exists and is linked).
+	let customerId: string | null = null;
+	if (opts.customerId) {
+		const existing = await getStripe().customers.retrieve(opts.customerId);
+		if (
+			!existing.deleted &&
+			existing.metadata?.created_by === actor.userId
+		) {
+			customerId = existing.id;
+		}
+	}
+	if (!customerId) {
+		const [u] = await getServiceDb()
+			.select({ email: user.email, name: user.name })
+			.from(user)
+			.where(eq(user.id, actor.userId))
+			.limit(1);
+		const customer = await getStripe().customers.create({
+			email: u?.email,
+			name: opts.orgName,
+			metadata: { created_by: actor.userId },
+		});
+		customerId = customer.id;
+	}
+
+	// Cancel the previous incomplete sub from this attempt so it doesn't leak.
+	if (opts.priorSubscriptionId) {
+		try {
+			await getStripe().subscriptions.cancel(opts.priorSubscriptionId);
+		} catch {
+			// Already gone / expired — nothing to clean up.
+		}
+	}
+
+	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
+		? { automatic_tax: { enabled: true } }
+		: {};
+	const quantity = plan === "team" ? Math.max(1, opts.seats ?? 1) : 1;
+	const sub = await getStripe().subscriptions.create({
+		customer: customerId,
+		items: planCreateItems(plan, quantity),
+		payment_behavior: "default_incomplete",
+		payment_settings: { save_default_payment_method: "on_subscription" },
+		expand: ["latest_invoice.confirmation_secret"],
+		metadata: { created_by: actor.userId },
+		...taxParam,
+	});
+
+	const invoice = sub.latest_invoice;
+	if (!invoice || typeof invoice === "string") {
+		throw new Error("Stripe did not return an invoice for the subscription.");
+	}
+	const clientSecret = invoice.confirmation_secret?.client_secret;
+	if (!clientSecret) {
+		throw new Error("Stripe did not return a payment client secret.");
+	}
+	return { clientSecret, subscriptionId: sub.id, customerId };
+}
+
+/**
+ * Links a just-paid subscription (from createNewOrgSubscriptionIntent) to the org the
+ * client created after payment, then writes the billing record synchronously so the
+ * org's entitlements are live immediately (no webhook race). Owner-gated on the new org;
+ * verifies the sub/customer were minted by this actor and aren't already linked.
+ */
+export async function linkSubscriptionToNewOrg(input: {
+	orgId: string;
+	subscriptionId: string;
+	customerId: string;
+}): Promise<void> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	if (actor.orgId !== input.orgId) {
+		throw new Error("The new organization must be the active organization.");
+	}
+
+	const sub = await getStripe().subscriptions.retrieve(input.subscriptionId);
+	const subCustomerId =
+		typeof sub.customer === "string" ? sub.customer : sub.customer.id;
+	if (subCustomerId !== input.customerId) {
+		throw new Error("Subscription does not match the expected customer.");
+	}
+	if (sub.metadata?.organization_id) {
+		throw new Error("Subscription is already linked to an organization.");
+	}
+	const customer = await getStripe().customers.retrieve(input.customerId);
+	if (customer.deleted || customer.metadata?.created_by !== actor.userId) {
+		throw new Error("Not allowed to link this subscription.");
+	}
+
+	const [org] = await getServiceDb()
+		.select({ name: organization.name })
+		.from(organization)
+		.where(eq(organization.id, input.orgId))
+		.limit(1);
+
+	await getStripe().customers.update(input.customerId, {
+		name: org?.name,
+		metadata: { created_by: actor.userId, organization_id: input.orgId },
+	});
+	const linked = await getStripe().subscriptions.update(input.subscriptionId, {
+		metadata: { created_by: actor.userId, organization_id: input.orgId },
+	});
+
+	// Deterministic activation — don't wait for the (already-fired) webhook.
+	await syncSubscriptionToBilling(linked);
 }
 
 /** A one-time credit-pack payment awaiting confirmation, for the embedded Payment Element. */
