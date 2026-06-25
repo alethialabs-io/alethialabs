@@ -1,11 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { redirect } from "next/navigation";
 import { SignInForm } from "@/components/forms/signin-form";
 import { AlethiaLogo } from "@/components/alethia-logo";
 import Link from "next/link";
+import { getOwner } from "@/lib/auth/owner";
 
-export default function SignInPage() {
+export default async function SignInPage() {
+	// Already signed in (validated — a stale/expired cookie resolves to null and falls
+	// through to the form) → skip the form and land in the console.
+	if (await getOwner()) redirect("/dashboard");
+
 	return (
 		<div className="relative min-h-screen bg-background">
 			<div className="absolute top-10 left-10">

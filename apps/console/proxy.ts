@@ -28,11 +28,12 @@ export async function proxy(request: NextRequest) {
 		return NextResponse.redirect(url);
 	}
 
-	if (hasSession && isAuthRoute) {
-		const url = request.nextUrl.clone();
-		url.pathname = "/dashboard";
-		return NextResponse.redirect(url);
-	}
+	// NOTE: we deliberately do NOT bounce `hasSession && isAuthRoute` here. This cookie
+	// check is optimistic (presence only, no DB hit), so a stale/expired cookie would
+	// otherwise trap the user — /auth/signin → /dashboard → the server throws
+	// Unauthorized → 500, with no way back to the sign-in form. The "already logged in →
+	// dashboard" redirect lives in the sign-in page instead, gated on a *validated*
+	// session (getOwner()).
 
 	return NextResponse.next();
 }
