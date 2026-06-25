@@ -69,7 +69,7 @@ export interface Entitlements {
 	 * Security/governance alerting (dataroom/spec/mvp/25-alerting-notifications.md): alert rules
 	 * sourced from PDP audit events (denials, sensitive allows, grant/role changes) plus
 	 * advanced match/escalation. Basic infra/ops alerting is free in core and ungated;
-	 * this flag only gates the PDP-sourced half. Granted on business+.
+	 * this flag only gates the PDP-sourced half. Granted on enterprise.
 	 */
 	advancedAlerting: boolean;
 	/**

@@ -65,7 +65,6 @@ const STATUS_LABEL: Record<BillingSummary["status"], string> = {
 const MONTHLY: Record<BillingPlan, number> = {
 	community: 0,
 	team: 29,
-	business: 999,
 	enterprise: 2500,
 };
 

@@ -19,7 +19,6 @@ const schema = z.object({
 	/** Stripe Price IDs per paid plan (test or live, matching the secret key). */
 	prices: z.object({
 		team: z.string().min(1),
-		business: z.string().min(1),
 		enterprise: z.string().min(1),
 	}),
 	/**
@@ -30,7 +29,6 @@ const schema = z.object({
 	meterPrices: z
 		.object({
 			team: z.string().optional(),
-			business: z.string().optional(),
 			enterprise: z.string().optional(),
 		})
 		.optional(),
@@ -83,12 +81,10 @@ export function getStripeConfig(): StripeConfig {
 		webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
 		prices: {
 			team: process.env.STRIPE_PRICE_TEAM,
-			business: process.env.STRIPE_PRICE_BUSINESS,
 			enterprise: process.env.STRIPE_PRICE_ENTERPRISE,
 		},
 		meterPrices: {
 			team: process.env.STRIPE_PRICE_METER_TEAM,
-			business: process.env.STRIPE_PRICE_METER_BUSINESS,
 			enterprise: process.env.STRIPE_PRICE_METER_ENTERPRISE,
 		},
 		appUrl: process.env.NEXT_PUBLIC_APP_URL ?? process.env.BETTER_AUTH_URL,

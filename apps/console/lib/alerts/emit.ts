@@ -56,7 +56,7 @@ export async function emitAlertEvent(
 	);
 	if (matched.length === 0) return 0;
 
-	// Open-core gate: PDP-sourced (authz.*) events require business+ (advancedAlerting).
+	// Open-core gate: PDP-sourced (authz.*) events require enterprise (advancedAlerting).
 	if (isSecurityKey(eventKey)) {
 		const entitlements = await resolveOrgEntitlements(orgId);
 		if (!entitlements.advancedAlerting) return 0;

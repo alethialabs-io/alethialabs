@@ -36,7 +36,7 @@ export interface PlanCatalogEntry {
 export const PLAN_CATALOG: PlanCatalogEntry[] = [
 	{
 		id: "community",
-		name: "Free",
+		name: "Hobby",
 		priceLabel: "Free",
 		tagline: "Your own Zones & Specs — just you.",
 		paid: false,
@@ -95,44 +95,24 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 		],
 	},
 	{
-		id: "business",
-		name: "Business",
-		priceLabel: "$999 / mo",
-		tagline: "Governance for a growing team.",
+		id: "enterprise",
+		name: "Enterprise",
+		priceLabel: "Let's talk",
+		tagline: "Governance, security & scale for the whole org.",
 		paid: true,
 		inheritsFrom: "team",
 		highlights: [
 			"Everything in Team",
 			"Custom roles (granular RBAC)",
+			"SSO / SAML",
 			"Audit log export",
-			"Priority support",
+			"SLA + dedicated support",
 		],
 		included: [
 			{
 				label: "Governance",
 				items: ["Custom roles (granular RBAC)", "Fine-grained access policies"],
 			},
-			{
-				label: "Compliance",
-				items: ["Audit log + export", "Activity history"],
-			},
-			{ label: "Support", items: ["Priority support"] },
-		],
-	},
-	{
-		id: "enterprise",
-		name: "Enterprise",
-		priceLabel: "$2,500 / mo",
-		tagline: "Security & scale for the whole org.",
-		paid: true,
-		inheritsFrom: "business",
-		highlights: [
-			"Everything in Business",
-			"SSO / SAML",
-			"SLA + dedicated support",
-			"Self-managed license",
-		],
-		included: [
 			{
 				label: "Identity",
 				items: [
@@ -142,12 +122,24 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 				],
 			},
 			{
+				label: "Compliance",
+				items: [
+					"Audit log + export",
+					"Activity history",
+					"Compliance package (SOC2-aligned)",
+				],
+			},
+			{
 				label: "Security & compliance",
-				items: ["Zero-key attestation", "Compliance package (SOC2-aligned)"],
+				items: ["Zero-key attestation"],
 			},
 			{
 				label: "Support",
-				items: ["SLA + dedicated support", "Self-managed license option"],
+				items: [
+					"Priority support",
+					"SLA + dedicated support",
+					"Self-managed license option",
+				],
 			},
 		],
 	},

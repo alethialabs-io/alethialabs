@@ -342,7 +342,7 @@ function assertPatternsAllowed(
 ): void {
 	if (patterns.some(isSecurityKey) && !advancedAlerting) {
 		throw new Error(
-			"Security events (PDP audit) require a Business plan or higher.",
+			"Security events (PDP audit) require an Enterprise plan.",
 		);
 	}
 }

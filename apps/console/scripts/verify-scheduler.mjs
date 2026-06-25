@@ -85,10 +85,10 @@ async function main() {
 		          values (${awsRunnerId}::uuid, ${`${MARK}-aws`}, 'managed', ${tokenHash}, 'ONLINE', '{aws}'::cloud_provider[])`;
 		ctx.runnerIds.push(awsRunnerId);
 
-		// ── Orgs: business (active billing) + two community (no billing row) ──
+		// ── Orgs: enterprise (active billing) + two community (no billing row) ──
 		const [bizOrg] = await sql`insert into organization (name) values (${`${MARK}-biz`}) returning id`;
 		await sql`insert into organization_billing (organization_id, plan, status)
-		          values (${bizOrg.id}::uuid, 'business', 'active')`;
+		          values (${bizOrg.id}::uuid, 'enterprise', 'active')`;
 		ctx.billingOrgId = bizOrg.id;
 		ctx.orgIds.push(bizOrg.id);
 
@@ -96,15 +96,15 @@ async function main() {
 		const commB = randomUUID();
 		ctx.orgIds.push(commA, commB);
 
-		// === Test 1: priority — business beats community even when newer ===
-		console.log("Test 1 — priority (business > community):");
+		// === Test 1: priority — enterprise beats community even when newer ===
+		console.log("Test 1 — priority (enterprise > community):");
 		await sql`delete from jobs where org_id = any(${ctx.orgIds})`;
 		const old = new Date(Date.now() - 60_000).toISOString();
 		await queueJob(commA, "DEPLOY", old); // community, older
-		const biz = await queueJob(bizOrg.id, "DEPLOY"); // business, newer
-		check("business job has higher priority band", biz.priority === 20);
+		const biz = await queueJob(bizOrg.id, "DEPLOY"); // enterprise, newer
+		check("enterprise job has higher priority band", biz.priority === 30);
 		const first = await claim(managedId);
-		check("managed runner claims the business job first", first?.org_id === bizOrg.id);
+		check("managed runner claims the enterprise job first", first?.org_id === bizOrg.id);
 		await sql`delete from jobs where org_id = any(${ctx.orgIds})`;
 
 		// === Test 2: fairness — a burst doesn't starve a peer of equal tier ===

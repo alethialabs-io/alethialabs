@@ -187,12 +187,11 @@ export const connectorHealthStatus = pgEnum("connector_health_status", [
 
 // Billing plan an organization is subscribed to. Drives entitlements via the
 // granular ladder in lib/billing/plan.ts (community → all off; team → orgs/teams;
-// business → + custom roles + audit export; enterprise → + SSO). `community` is
-// also the implicit plan for any org with no billing row.
+// enterprise → + custom roles + audit export + SSO). `community` is also the
+// implicit plan for any org with no billing row.
 export const billingPlan = pgEnum("billing_plan", [
 	"community",
 	"team",
-	"business",
 	"enterprise",
 ]);
 // Subscription lifecycle state (mirrors Stripe). Only `trialing`/`active` grant the

@@ -27,8 +27,7 @@ export const COMMUNITY_ENTITLEMENTS: Entitlements = {
  * The granular ladder (each tier is additive over the one below it):
  *  - community  → all off (single-tenant: own zones/specs only, no teams)
  *  - team       → organizations/teams
- *  - business   → + custom roles + audit export
- *  - enterprise → + SSO/SAML
+ *  - enterprise → + custom roles + audit export + SSO/SAML
  *
  * Adjusting what a tier grants is a one-line edit here.
  */
@@ -45,21 +44,6 @@ export function planEntitlements(plan: BillingPlan): Entitlements {
 				},
 				// AI "Standard" (×1).
 				ai: { enabled: true, tier: "standard", windowCredits: 300, windowHours: 5, weeklyCredits: 3_000 },
-			};
-		case "business":
-			return {
-				...COMMUNITY_ENTITLEMENTS,
-				organizations: true,
-				customRoles: true,
-				auditExport: true,
-				advancedAlerting: true,
-				quotas: {
-					maxConcurrentJobs: 20,
-					priorityLevel: 20,
-					includedRunnerMinutes: 5_000,
-				},
-				// AI "5×".
-				ai: { enabled: true, tier: "plus", windowCredits: 1_500, windowHours: 5, weeklyCredits: 15_000 },
 			};
 		case "enterprise":
 			return {

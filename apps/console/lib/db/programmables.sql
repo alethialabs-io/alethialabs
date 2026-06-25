@@ -100,14 +100,14 @@ $$;
 
 CREATE OR REPLACE FUNCTION public.plan_priority(p public.billing_plan)
 RETURNS smallint LANGUAGE sql IMMUTABLE AS $$
-  SELECT (CASE p WHEN 'enterprise' THEN 30 WHEN 'business' THEN 20
+  SELECT (CASE p WHEN 'enterprise' THEN 30
                  WHEN 'team' THEN 10 ELSE 0 END)::smallint;
 $$;
 
 -- NULL = unlimited.
 CREATE OR REPLACE FUNCTION public.plan_max_concurrency(p public.billing_plan)
 RETURNS integer LANGUAGE sql IMMUTABLE AS $$
-  SELECT CASE p WHEN 'enterprise' THEN NULL WHEN 'business' THEN 20
+  SELECT CASE p WHEN 'enterprise' THEN NULL
                 WHEN 'team' THEN 8 ELSE 2 END;
 $$;
 

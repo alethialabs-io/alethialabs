@@ -169,7 +169,7 @@ export function PolicyDetail({
 		if (draft.channelIds.size === 0) return toast.error("Bind at least one channel.");
 		if (securitySelected && !advancedAlerting) {
 			return toast.error(
-				"Security events require a Business plan or higher.",
+				"Security events require an Enterprise plan.",
 			);
 		}
 		setSaving(true);
@@ -557,7 +557,7 @@ function Condition({
 					{locked && <Lock className="h-3 w-3 text-muted-foreground" />}
 				</div>
 				<div className="max-w-prose text-muted-foreground text-xs">
-					{locked ? `${hint} (Business plan)` : hint}
+					{locked ? `${hint} (Enterprise plan)` : hint}
 				</div>
 			</div>
 			{children}
