@@ -17,6 +17,9 @@ export const user = pgTable("user", {
 	email: text().notNull().unique(),
 	emailVerified: boolean().default(false).notNull(),
 	image: text(),
+	// Provider handle captured at signup (GitHub/GitLab/Bitbucket `username`/`login`;
+	// null for providers without one, e.g. Google). Seeds the auto-created org slug.
+	username: text(),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });

@@ -114,17 +114,35 @@ export async function resolveEnvironmentId(
 	});
 }
 
-/** The active org's URL slug (server side) — `~` for personal scope. */
+/**
+ * The active org's URL slug (server side). Prefers the session's selected org;
+ * otherwise falls back to the user's earliest org membership (so a freshly
+ * signed-up user lands on their auto-created org), and finally `~` (personal).
+ */
 export async function getActiveOrgSlug(): Promise<string> {
 	const { userId, activeOrgId } = await getOwnerScope();
-	if (!activeOrgId || activeOrgId === userId) return PERSONAL_ORG_SLUG;
 	const db = getServiceDb();
-	const [org] = await db
+
+	if (activeOrgId && activeOrgId !== userId) {
+		const [org] = await db
+			.select({ slug: organization.slug })
+			.from(organization)
+			.where(eq(organization.id, activeOrgId))
+			.limit(1);
+		if (org?.slug) return org.slug;
+	}
+
+	// No explicit selection → land on the user's primary (earliest) org if any.
+	const [primary] = await db
 		.select({ slug: organization.slug })
 		.from(organization)
-		.where(eq(organization.id, activeOrgId))
+		.innerJoin(
+			member,
+			and(eq(member.organizationId, organization.id), eq(member.userId, userId)),
+		)
+		.orderBy(member.createdAt)
 		.limit(1);
-	return org?.slug ?? PERSONAL_ORG_SLUG;
+	return primary?.slug ?? PERSONAL_ORG_SLUG;
 }
 
 /** A zone's slug by id (within the active scope), or null. */

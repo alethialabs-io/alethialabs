@@ -9,10 +9,10 @@ import type {
 	BetterAuthOptions,
 	SocialProviders,
 } from "better-auth";
-import { sql } from "drizzle-orm";
 import { getAuthConfig, getGitlabBaseUrl } from "@/lib/config/auth";
 import { getAuthPlugins } from "@/lib/auth/plugins";
-import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
+import { ensureMemberGrant } from "@/lib/authz/grants";
+import { provisionPrimaryOrg } from "@/lib/auth/onboarding";
 import { getServiceDb } from "@/lib/db";
 import {
 	account,
@@ -45,6 +45,10 @@ if (cfg.providers.github) {
 		// (full consolidation — the login account token IS the integration token).
 		// Better Auth merges its read:user/user:email defaults, so only add repo.
 		scope: ["repo"],
+		// Capture the GitHub login (e.g. "bobikenobi12") → seeds the org slug.
+		mapProfileToUser: (profile: { login?: string }) => ({
+			username: profile.login,
+		}),
 	};
 }
 if (cfg.providers.google) {
@@ -74,6 +78,14 @@ if (cfg.providers.gitlab) {
 			"profile",
 			"email",
 		],
+		// GitLab returns `username` → seeds the org slug. Return type carries an
+		// (unset) `name` so it isn't a "weak type" mismatch against Partial<User>;
+		// `username` is persisted at runtime (the column is registered).
+		mapProfileToUser: (
+			profile: Record<string, unknown>,
+		): { name?: string; username?: string } => ({
+			username: typeof profile.username === "string" ? profile.username : undefined,
+		}),
 	});
 }
 if (cfg.providers.bitbucket) {
@@ -85,6 +97,13 @@ if (cfg.providers.bitbucket) {
 		tokenUrl: "https://bitbucket.org/site/oauth2/access_token",
 		userInfoUrl: "https://api.bitbucket.org/2.0/user",
 		scopes: ["account", "repository"],
+		// Bitbucket returns `username` (legacy `nickname`) → seeds the org slug.
+		mapProfileToUser: (
+			profile: Record<string, unknown>,
+		): { name?: string; username?: string } => {
+			const handle = profile.username ?? profile.nickname;
+			return { username: typeof handle === "string" ? handle : undefined };
+		},
 	});
 }
 
@@ -151,6 +170,13 @@ export const auth = betterAuth({
 	advanced: { database: { generateId: "uuid" } },
 	emailAndPassword: { enabled: false },
 	socialProviders,
+	// `username` is populated server-side from the OAuth profile (mapProfileToUser),
+	// never from client input — it seeds the auto-created org slug.
+	user: {
+		additionalFields: {
+			username: { type: "string", required: false, input: false },
+		},
+	},
 	account: {
 		accountLinking: {
 			enabled: true,
@@ -162,7 +188,15 @@ export const auth = betterAuth({
 			create: {
 				after: async (u) => {
 					await upsertProfile(u);
-					await ensurePersonalOrgOwner(u.id);
+					// Owner of the personal scope (org_id == user.id) — grant + FGA tuple.
+					await ensureMemberGrant(u.id, u.id, "owner");
+					// Auto-create a real, named org (slug = username) and make it primary.
+					await provisionPrimaryOrg({
+						id: u.id,
+						email: u.email,
+						name: u.name ?? null,
+						username: readUsername(u),
+					}).catch((e) => console.error("[onboarding] org provision failed:", e));
 					// Best-effort welcome (general stream); never block signup on email.
 					void sendWelcomeEmail(u.email).catch((e) =>
 						console.error("[email] welcome send failed:", e),
@@ -203,20 +237,8 @@ async function upsertProfile(u: {
 		});
 }
 
-/**
- * Grants a new user the org-wide `owner` role over their personal org (org_id ==
- * user.id). This is the single grant the community PDP needs — the user can do
- * everything in their own org. Idempotent (NOT EXISTS); existing users are
- * backfilled by seedAuthz().
- */
-async function ensurePersonalOrgOwner(userId: string): Promise<void> {
-	await getServiceDb().execute(sql`
-		insert into grants (org_id, principal_type, principal_id, role_id, resource_type)
-		select ${userId}::uuid, 'user', ${userId}::uuid, ${BUILTIN_ROLE_IDS.owner}::uuid, 'org'
-		where not exists (
-			select 1 from grants g
-			where g.org_id = ${userId}::uuid and g.principal_id = ${userId}::uuid
-			  and g.role_id = ${BUILTIN_ROLE_IDS.owner}::uuid and g.resource_type = 'org'
-		)
-	`);
+/** Reads the optional `username` additional field off the created user, if present. */
+function readUsername(u: object): string | null {
+	if ("username" in u && typeof u.username === "string") return u.username;
+	return null;
 }
