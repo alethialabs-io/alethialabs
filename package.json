@@ -6,6 +6,8 @@
 		"build": "turbo run build",
 		"dev": "turbo run dev",
 		"dev:console": "turbo run dev --filter=console",
+		"dev:up": "bash scripts/dev-up.sh",
+		"dev:logs": "touch /tmp/alethia-dev-console.log && tail -n +1 -f /tmp/alethia-dev-console.log",
 		"lint": "turbo run lint",
 		"format": "prettier --write \"**/*.{ts,tsx,md}\"",
 		"check-types": "turbo run check-types",

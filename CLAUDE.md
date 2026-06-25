@@ -31,12 +31,26 @@ The full dockerized stack builds heavy production images (Next.js build pegs CPU
 end-to-end / "does the deploy work" checks. For everyday development, run the backends in Docker and
 the console natively (hot-reload, no image builds, far less CPU/RAM):
 
-- **Dev (default):** `pnpm db:up` (postgres up + migrated) then `pnpm dev:console`
-  (`next dev --turbopack` on `http://localhost:3000`). `.env` already targets `localhost:5433` /
-  `localhost:8333`, so no env changes are needed. Start `seaweedfs` too if you exercise storage.
+- **Dev (default): `pnpm dev:up`** — one command. Brings up Postgres + SeaweedFS + OpenFGA in
+  Docker, migrates, auto-provisions an OpenFGA store, then runs the console via `next dev --turbopack`
+  on `http://localhost:3000` (hot reload). It **sources the root `.env`** into the console process
+  (DB → `localhost:5433`, storage → `localhost:8333`, `BETTER_AUTH_SECRET`, the ngrok auth URL) and
+  points `OPENFGA_API_URL` at `localhost:8082`. The OpenFGA model + tuples are written on boot by
+  `instrumentation.ts` (tuple-sync `backfill()`); the store id is persisted to a gitignored
+  `apps/console/.env.local`.
+- **`dev:up` is lock-guarded like `compose:up`** (atomic lock at `/tmp/alethia-dev-console.lock`):
+  the console is a single shared `next dev` on `:3000` across all windows/worktrees. A second
+  `pnpm dev:up` **no-ops and prints the running pid + URL** instead of racing a duplicate. Follow the
+  shared session from any window with **`pnpm dev:logs`** (tails `/tmp/alethia-dev-console.log`).
+  Force a fresh restart (stop the old server, take over) with **`FORCE=1 pnpm dev:up`**.
+- **Why not bare `pnpm dev:console`?** Next reads the app-local `apps/console/.env` (stale, no DB /
+  auth / storage vars), **not** the monorepo-root `.env` — so authed pages (incl. the home page,
+  which now redirects logged-in users) 500 without the wiring `dev:up` does. Use `dev:console` only
+  when backends are already up *and* the env is sourced; otherwise prefer `dev:up`.
+- **Backends only:** `pnpm db:up` (postgres + migrate, no seaweedfs/openfga).
 - **E2E / deploy check:** `pnpm compose:up` (lite, production images at `http://localhost`).
 
-Note: `pnpm dev` (unfiltered) runs *every* app and is heavy — use `pnpm dev:console`.
+Note: `pnpm dev` (unfiltered) runs *every* app and is heavy — use `pnpm dev:up` / `pnpm dev:console`.
 
 ### Local resource hygiene
 
