@@ -12,56 +12,9 @@
 
 import type Stripe from "stripe";
 import { grantAiCredits } from "@/lib/billing/ai-quota";
-import { getStripeConfig, isStripeConfigured, planForPriceId } from "@/lib/billing/config";
+import { getStripeConfig, isStripeConfigured } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
-import { upsertOrgBilling } from "@/lib/billing/queries";
-import type { BillingStatus } from "@/lib/db/schema/enums";
-
-/** Stripe subscription.status → our billing_status. */
-function mapStatus(s: Stripe.Subscription.Status): BillingStatus {
-	switch (s) {
-		case "active":
-			return "active";
-		case "trialing":
-			return "trialing";
-		case "past_due":
-		case "unpaid":
-			return "past_due";
-		case "canceled":
-		case "incomplete_expired":
-			return "canceled";
-		default:
-			return "none";
-	}
-}
-
-/** Applies a subscription's current state to its org's billing record. */
-async function applySubscription(sub: Stripe.Subscription): Promise<void> {
-	const orgId = sub.metadata?.organization_id;
-	if (!orgId) {
-		console.warn(
-			`[stripe] subscription ${sub.id} has no organization_id metadata — ignored`,
-		);
-		return;
-	}
-	const item = sub.items.data[0];
-	const priceId = item?.price.id;
-	const plan = priceId ? planForPriceId(priceId) : null;
-	const status = mapStatus(sub.status);
-	await upsertOrgBilling({
-		organizationId: orgId,
-		// An unknown/removed price (or a fully canceled sub) drops the org to community.
-		plan: plan && status !== "canceled" ? plan : "community",
-		status,
-		stripeCustomerId:
-			typeof sub.customer === "string" ? sub.customer : sub.customer.id,
-		stripeSubscriptionId: sub.id,
-		seats: item?.quantity ?? null,
-		currentPeriodEnd: sub.items.data[0]?.current_period_end
-			? new Date(sub.items.data[0].current_period_end * 1000)
-			: null,
-	});
-}
+import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 
 export async function POST(req: Request): Promise<Response> {
 	if (!isStripeConfigured()) {
@@ -90,7 +43,7 @@ export async function POST(req: Request): Promise<Response> {
 			case "customer.subscription.created":
 			case "customer.subscription.updated":
 			case "customer.subscription.deleted":
-				await applySubscription(event.data.object);
+				await syncSubscriptionToBilling(event.data.object);
 				break;
 			case "checkout.session.completed": {
 				// First purchase: pull the full subscription, then apply.
@@ -99,7 +52,7 @@ export async function POST(req: Request): Promise<Response> {
 					const sub = await getStripe().subscriptions.retrieve(
 						session.subscription,
 					);
-					await applySubscription(sub);
+					await syncSubscriptionToBilling(sub);
 				}
 				break;
 			}
@@ -110,7 +63,7 @@ export async function POST(req: Request): Promise<Response> {
 				const subRef = event.data.object.parent?.subscription_details?.subscription;
 				const subId = typeof subRef === "string" ? subRef : subRef?.id;
 				if (subId) {
-					await applySubscription(await getStripe().subscriptions.retrieve(subId));
+					await syncSubscriptionToBilling(await getStripe().subscriptions.retrieve(subId));
 				}
 				break;
 			}
