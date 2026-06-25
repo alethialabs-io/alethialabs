@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Check, ChevronsUpDown, Component, Plus } from "lucide-react";
+import { Check, ChevronDown, ChevronsUpDown, Component, Plus } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -31,7 +31,9 @@ import { globalHref, specHref } from "@/lib/routing";
  * (`/{org}/{zone}[/…]`, never the legacy `/dashboard` tree or the `~` global tree);
  * hidden when the zone has no specs.
  */
-export function SpecSwitcher() {
+export function SpecSwitcher({
+	variant = "header",
+}: { variant?: "header" | "topbar" } = {}) {
 	const router = useRouter();
 	const pathname = usePathname();
 	const orgSlug = useActiveOrgSlug();
@@ -76,19 +78,41 @@ export function SpecSwitcher() {
 			</span>
 			<Popover open={open} onOpenChange={setOpen}>
 				<PopoverTrigger asChild>
-					<Button
-						variant="ghost"
-						size="sm"
-						role="combobox"
-						aria-expanded={open}
-						className="gap-2 px-2 text-sm font-medium"
-					>
-						<Component className="h-4 w-4 text-muted-foreground" />
-						<span className="max-w-[12rem] truncate">
-							{active?.project_name ?? "Select a spec"}
-						</span>
-						<ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-					</Button>
+					{variant === "topbar" ? (
+						<Button
+							variant="ghost"
+							role="combobox"
+							aria-expanded={open}
+							className="h-auto gap-2 px-2 py-1.5"
+						>
+							<span className="flex h-5 w-5 shrink-0 items-center justify-center rounded border text-muted-foreground">
+								<Component className="h-3 w-3" />
+							</span>
+							<span className="flex flex-col items-start leading-tight">
+								<span className="font-mono text-[8px] uppercase tracking-wider text-muted-foreground/70">
+									Spec
+								</span>
+								<span className="max-w-[10rem] truncate text-[13px] font-medium text-foreground">
+									{active?.project_name ?? "Select a spec"}
+								</span>
+							</span>
+							<ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+						</Button>
+					) : (
+						<Button
+							variant="ghost"
+							size="sm"
+							role="combobox"
+							aria-expanded={open}
+							className="gap-2 px-2 text-sm font-medium"
+						>
+							<Component className="h-4 w-4 text-muted-foreground" />
+							<span className="max-w-[12rem] truncate">
+								{active?.project_name ?? "Select a spec"}
+							</span>
+							<ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+						</Button>
+					)}
 				</PopoverTrigger>
 				<PopoverContent className="w-72 p-0" align="start">
 					<Command>

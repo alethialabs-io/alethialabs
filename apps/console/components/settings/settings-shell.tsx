@@ -4,9 +4,9 @@
 import type { ReactNode } from "react";
 
 /**
- * Settings content wrapper. The section nav lives in the main dashboard sidebar,
- * which swaps to the settings nav (with a "← Dashboard" back link) while under
- * `/dashboard/settings` — Vercel-style — so this shell is just the content column.
+ * Settings content wrapper. The section nav lives in the app sidebar, which drills
+ * into the settings sub-nav (with a back link to the overview) while under
+ * `/{org}/~/settings` — Vercel-style — so this shell is just the content column.
  */
 export function SettingsShell({ children }: { children: ReactNode }) {
 	return <div className="min-w-0 flex-1">{children}</div>;

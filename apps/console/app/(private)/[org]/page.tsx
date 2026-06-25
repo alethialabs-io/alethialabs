@@ -2,239 +2,193 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+// The org root — a Vercel-projects-style grid of the org's zones. Each card opens the zone
+// (whose detail view lists its specs); the topbar zone picker handles quick-switching once
+// inside. This replaced the old stats dashboard when the sidebar zone tree was removed.
 
-import { getConnectorsWithStatus, type ConnectorWithConnection } from "@/app/server/actions/connectors";
-import { getOnlineRunnerCount } from "@/app/server/actions/runners";
-import { useJobsStore } from "@/lib/stores/use-jobs-store";
-import { useZonesStore } from "@/lib/stores/use-zones-store";
-import { DataTable } from "@/components/data-table";
-import { jobColumns } from "@/components/jobs/columns";
-import { Skeleton } from "@/components/ui/skeleton";
-import type { JobWithMeta } from "@/app/server/actions/jobs";
-import { Button } from "@/components/ui/button";
-import {
-	ArrowRight,
-	CheckCircle2,
-	ClipboardList,
-	Box,
-	Plus,
-	Workflow,
-} from "lucide-react";
+import { Boxes, Plus, Search } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import type { ZoneWithSpecs } from "@/app/server/actions/zones";
+import { ProviderIcon } from "@/components/provider-icon";
+import { SidebarZoneActions } from "@/components/sidebar-zone-actions";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { globalHref, zoneHref } from "@/lib/routing";
+import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+import { useZonesStore } from "@/lib/stores/use-zones-store";
 
-export default function DashboardPage() {
-	const router = useRouter();
-	const jobsStore = useJobsStore();
-	const zonesStore = useZonesStore();
-
-	const [integrations, setIntegrations] = useState<ConnectorWithConnection[]>([]);
-	const [onlineRunners, setOnlineRunners] = useState(0);
+export default function OrgOverviewPage() {
+	const orgSlug = useActiveOrgSlug();
+	const { zones, isLoading, fetchZones } = useZonesStore();
+	const [query, setQuery] = useState("");
 
 	useEffect(() => {
-		jobsStore.fetchJobs();
-		zonesStore.fetchZones();
-		getConnectorsWithStatus().then(setIntegrations).catch(() => {});
-		getOnlineRunnerCount().then(setOnlineRunners).catch(() => {});
-	}, []);
+		fetchZones();
+	}, [fetchZones]);
 
-	const allSpecs = useMemo(
-		() => zonesStore.zones.flatMap((z) => z.specs ?? []),
-		[zonesStore.zones],
-	);
-	const activeSpecs = allSpecs.filter((v) => v.status === "ACTIVE").length;
-
-	const recentJobs = useMemo(
-		() => jobsStore.jobs.slice(0, 5),
-		[jobsStore.jobs],
-	);
-
-	const connectedIntegrations = integrations.filter((i) => i.connected);
-	const disconnectedIntegrations = integrations.filter(
-		(i) => !i.connected && i.status !== "coming_soon",
-	);
-
-	const handleJobClick = (job: JobWithMeta) => {
-		router.push(`/dashboard/jobs/${job.id}`);
-	};
-
-	if (jobsStore.isLoading && zonesStore.isLoading) {
-		return (
-			<div className="space-y-8 w-full">
-				<div className="flex items-center justify-between">
-					<div className="space-y-1">
-						<Skeleton className="h-7 w-28" />
-						<Skeleton className="h-4 w-52" />
-					</div>
-					<Skeleton className="h-8 w-28 rounded-md" />
-				</div>
-
-				<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-					{[1, 2, 3, 4].map((i) => (
-						<div key={i} className="flex items-center gap-3 rounded-lg border border-border/40 px-3 py-2.5">
-							<Skeleton className="h-7 w-7 rounded-md" />
-							<div className="space-y-1">
-								<Skeleton className="h-5 w-8" />
-								<Skeleton className="h-2.5 w-14" />
-							</div>
-						</div>
-					))}
-				</div>
-
-				<div className="space-y-3">
-					<div className="flex items-center justify-between">
-						<Skeleton className="h-3 w-24" />
-						<Skeleton className="h-6 w-16" />
-					</div>
-					<div className="flex flex-wrap gap-2">
-						{[1, 2, 3, 4].map((i) => (
-							<Skeleton key={i} className="h-7 w-28 rounded-full" />
-						))}
-					</div>
-				</div>
-
-				<div className="space-y-3">
-					<div className="flex items-center justify-between">
-						<Skeleton className="h-3 w-24" />
-						<Skeleton className="h-6 w-16" />
-					</div>
-					<div className="rounded-lg border border-border/40">
-						<div className="flex gap-4 border-b border-border/40 p-3">
-							{[1, 2, 3, 4, 5].map((i) => (
-								<Skeleton key={i} className="h-3 w-20" />
-							))}
-						</div>
-						{[1, 2, 3, 4, 5].map((i) => (
-							<div key={i} className="flex gap-4 border-b border-border/20 p-3">
-								<Skeleton className="h-3 w-16" />
-								<Skeleton className="h-3 w-20" />
-								<Skeleton className="h-3 w-14 rounded-full" />
-								<Skeleton className="h-3 w-24" />
-								<Skeleton className="h-3 w-28" />
-							</div>
-						))}
-					</div>
-				</div>
-			</div>
-		);
-	}
+	const filtered = useMemo(() => {
+		const q = query.trim().toLowerCase();
+		if (!q) return zones;
+		return zones.filter((z) => z.name.toLowerCase().includes(q));
+	}, [zones, query]);
 
 	return (
-		<div className="space-y-8 w-full">
+		<div className="mx-auto w-full max-w-5xl space-y-6">
 			{/* Header */}
-			<div className="flex items-center justify-between">
+			<div className="flex items-end justify-between gap-4">
 				<div>
 					<h1 className="text-2xl font-semibold tracking-tight text-foreground">
-						Overview
+						Zones
 					</h1>
-					<p className="text-sm text-muted-foreground mt-1">
-						Your infrastructure at a glance.
+					<p className="mt-1 text-sm text-muted-foreground">
+						Infrastructure workspaces in this organization.
 					</p>
 				</div>
-				<Link href="/dashboard/design-spec">
-					<Button size="sm" className="h-8 text-xs">
-						<Plus className="mr-1.5 h-3.5 w-3.5" />
+				<Link href={globalHref(orgSlug, "design-spec")}>
+					<Button size="sm" className="h-8 gap-1.5 text-xs">
+						<Plus className="h-3.5 w-3.5" />
 						Create a Spec
 					</Button>
 				</Link>
 			</div>
 
-			{/* Stats Strip */}
-			<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-				<StatChip icon={<Box className="h-3.5 w-3.5" />} value={allSpecs.length} label="Specs" />
-				<StatChip icon={<CheckCircle2 className="h-3.5 w-3.5" />} value={activeSpecs} label="Active" />
-				<StatChip icon={<Workflow className="h-3.5 w-3.5" />} value={onlineRunners} label={`Runner${onlineRunners !== 1 ? "s" : ""} Online`} />
-				<StatChip icon={<ClipboardList className="h-3.5 w-3.5" />} value={jobsStore.jobs.length} label="Total Jobs" />
-			</div>
-
-			{/* Connectors */}
-			<section>
-				<SectionHeader title="Connectors" href="/dashboard/connectors" linkText="Manage" />
-				<div className="flex flex-wrap gap-2 mt-3">
-					{connectedIntegrations.map((i) => (
-						<div
-							key={i.slug}
-							className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-border/40 bg-background text-xs"
-						>
-							<span className="h-1.5 w-1.5 rounded-full bg-foreground shrink-0" />
-							<span className="font-medium">{i.name}</span>
-							<span className="text-muted-foreground">
-								{i.connection_details?.username
-									? `@${i.connection_details.username}`
-									: i.connection_details?.account_id
-										?? i.connection_details?.project_id
-										?? i.connection_details?.subscription_id
-										?? ""}
-							</span>
-						</div>
-					))}
-					{disconnectedIntegrations.map((i) => (
-						<Link
-							key={i.slug}
-							href="/dashboard/connectors"
-							className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-dashed border-border/50 text-xs text-muted-foreground hover:border-border hover:text-foreground transition-colors"
-						>
-							<span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30 shrink-0" />
-							<span>{i.name}</span>
-							<span className="text-[10px]">Connect</span>
-						</Link>
-					))}
-					{connectedIntegrations.length === 0 && disconnectedIntegrations.length === 0 && (
-						<p className="text-xs text-muted-foreground">No connectors available.</p>
-					)}
+			{/* Toolbar */}
+			{zones.length > 0 && (
+				<div className="relative max-w-sm">
+					<Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+					<Input
+						value={query}
+						onChange={(e) => setQuery(e.target.value)}
+						placeholder="Search zones…"
+						className="h-9 pl-9"
+					/>
 				</div>
-			</section>
+			)}
 
-			{/* Recent Jobs */}
-			<section>
-				<SectionHeader title="Recent Jobs" href="/dashboard/jobs" linkText="View all" />
-				<div className="mt-3">
-					{recentJobs.length === 0 ? (
-						<div className="flex flex-col items-center justify-center py-10 text-center border border-dashed border-border/50 rounded-lg">
-							<ClipboardList className="h-6 w-6 text-muted-foreground/30 mb-2" />
-							<p className="text-xs text-muted-foreground">
-								No jobs yet. Create a spec to get started.
-							</p>
-						</div>
-					) : (
-						<DataTable
-							columns={jobColumns}
-							data={recentJobs}
-							onRowClick={handleJobClick}
-							pageSize={5}
-						/>
-					)}
+			{/* Content */}
+			{isLoading && zones.length === 0 ? (
+				<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+					{[1, 2, 3].map((i) => (
+						<Skeleton key={i} className="h-32 w-full rounded-lg" />
+					))}
 				</div>
-			</section>
+			) : zones.length === 0 ? (
+				<EmptyState orgSlug={orgSlug} />
+			) : filtered.length === 0 ? (
+				<p className="py-10 text-center text-sm text-muted-foreground">
+					No zones match &ldquo;{query}&rdquo;.
+				</p>
+			) : (
+				<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+					{filtered.map((zone) => (
+						<ZoneCard key={zone.id} zone={zone} orgSlug={orgSlug} />
+					))}
+				</div>
+			)}
 		</div>
 	);
 }
 
-function SectionHeader({ title, href, linkText }: { title: string; href: string; linkText: string }) {
+/** A single clickable zone card with an overlaid link and a corner actions menu. */
+function ZoneCard({ zone, orgSlug }: { zone: ZoneWithSpecs; orgSlug: string }) {
+	const specs = zone.specs ?? [];
+	const activeCount = specs.filter((s) => s.status === "ACTIVE").length;
+	const providers = Array.from(
+		new Set(
+			specs
+				.map((s) => s.cloud_provider)
+				.filter((p): p is string => p != null),
+		),
+	);
+	const href = zone.slug
+		? zoneHref(orgSlug, zone.slug)
+		: `/dashboard/zones/${zone.id}`;
+
 	return (
-		<div className="flex items-center justify-between">
-			<h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</h2>
-			<Link href={href}>
-				<Button variant="ghost" size="sm" className="h-6 text-[10px] text-muted-foreground hover:text-foreground">
-					{linkText}
-					<ArrowRight className="ml-1 h-3 w-3" />
+		<div className="group/zone relative rounded-lg border bg-card p-4 transition-colors hover:border-foreground/20 hover:bg-muted/20">
+			{/* Full-card click target (sits behind the content + menu). */}
+			<Link
+				href={href}
+				aria-label={`Open ${zone.name}`}
+				className="absolute inset-0 z-0 rounded-lg"
+			/>
+
+			<div className="pointer-events-none relative z-10 flex flex-col gap-3">
+				<div className="flex items-center gap-2.5">
+					<span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
+						<Boxes className="h-4 w-4" />
+					</span>
+					<span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+						{zone.name}
+					</span>
+				</div>
+
+				<div className="flex h-5 items-center gap-1.5">
+					{providers.length > 0 ? (
+						providers.map((p) => (
+							<ProviderIcon
+								key={p}
+								provider={p}
+								size={16}
+								className="opacity-70 grayscale"
+							/>
+						))
+					) : (
+						<span className="font-mono text-[11px] text-muted-foreground/70">
+							Empty zone
+						</span>
+					)}
+				</div>
+
+				<div className="flex items-center justify-between border-t pt-3 font-mono text-[11px] text-muted-foreground">
+					<span>
+						{specs.length} spec{specs.length === 1 ? "" : "s"}
+					</span>
+					<span className="flex items-center gap-1.5">
+						<span
+							className={
+								activeCount > 0
+									? "h-1.5 w-1.5 rounded-full bg-foreground"
+									: "h-1.5 w-1.5 rounded-full border border-border"
+							}
+						/>
+						{activeCount} active
+					</span>
+				</div>
+			</div>
+
+			{/* Corner actions — above the link so its dropdown is clickable. */}
+			<div className="absolute right-3 top-3 z-20">
+				<SidebarZoneActions
+					zoneId={zone.id}
+					zoneName={zone.name}
+					specCount={specs.length}
+				/>
+			</div>
+		</div>
+	);
+}
+
+/** First-run state when the org has no zones at all. */
+function EmptyState({ orgSlug }: { orgSlug: string }) {
+	return (
+		<div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center">
+			<div className="mb-4 rounded-full bg-muted/50 p-3">
+				<Boxes className="h-7 w-7 text-muted-foreground" />
+			</div>
+			<h3 className="mb-1 text-sm font-medium text-foreground">No zones yet</h3>
+			<p className="mb-4 max-w-sm text-xs text-muted-foreground">
+				Create your first spec to provision infrastructure — it lands in a zone you
+				can manage here.
+			</p>
+			<Link href={globalHref(orgSlug, "design-spec")}>
+				<Button size="sm" className="h-8 gap-1.5 text-xs">
+					<Plus className="h-3.5 w-3.5" />
+					Create a Spec
 				</Button>
 			</Link>
-		</div>
-	);
-}
-
-function StatChip({ icon, value, label }: { icon: React.ReactNode; value: number; label: string }) {
-	return (
-		<div className="flex items-center gap-3 rounded-lg border border-border/40 px-3 py-2.5">
-			<div className="flex h-7 w-7 items-center justify-center rounded-md bg-muted/50 text-muted-foreground shrink-0">
-				{icon}
-			</div>
-			<div>
-				<p className="text-lg font-semibold tracking-tight leading-none">{value}</p>
-				<p className="text-[10px] text-muted-foreground mt-0.5">{label}</p>
-			</div>
 		</div>
 	);
 }

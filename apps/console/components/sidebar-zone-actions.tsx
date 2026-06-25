@@ -44,7 +44,7 @@ interface SidebarZoneActionsProps {
 	specCount: number;
 }
 
-/** Dropdown with rename/delete actions for a sidebar zone row. */
+/** Dropdown with rename/delete actions for a zone (zone card on the overview). */
 export function SidebarZoneActions({ zoneId, zoneName, specCount }: SidebarZoneActionsProps) {
 	const router = useRouter();
 	const pathname = usePathname();

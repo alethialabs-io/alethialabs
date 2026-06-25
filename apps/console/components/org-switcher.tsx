@@ -32,7 +32,20 @@ import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
  * creating an org is the pay-to-collaborate path. The personal scope shows as
  * "Personal" (Free). Active org → "Create" opens the create sheet (name + plan → checkout).
  */
-export function OrgSwitcher() {
+/** Compact initials for an org avatar — first letters of up to two words. */
+function orgInitials(name: string): string {
+	const parts = name.trim().split(/\s+/).filter(Boolean);
+	if (parts.length === 0) return "?";
+	if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+	return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+/** Where the switcher renders — `header` (compact inline) or `sidebar` (full-width row). */
+type OrgSwitcherVariant = "header" | "sidebar";
+
+export function OrgSwitcher({
+	variant = "header",
+}: { variant?: OrgSwitcherVariant } = {}) {
 	const router = useRouter();
 	const [open, setOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
@@ -45,6 +58,7 @@ export function OrgSwitcher() {
 
 	const active =
 		organizations.find((o) => o.id === activeOrgId) ?? organizations[0] ?? null;
+	const meta = planMeta(active?.plan ?? "community");
 
 	const handleSelect = async (orgId: string) => {
 		setOpen(false);
@@ -62,19 +76,39 @@ export function OrgSwitcher() {
 		<>
 			<Popover open={open} onOpenChange={setOpen}>
 				<PopoverTrigger asChild>
-					<Button
-						variant="ghost"
-						size="sm"
-						role="combobox"
-						aria-expanded={open}
-						className="gap-2 px-2 text-sm font-medium"
-					>
-						<Building2 className="h-4 w-4 text-muted-foreground" />
-						<span className="max-w-[12rem] truncate">
-							{active?.name ?? "Personal"}
-						</span>
-						<ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-					</Button>
+					{variant === "sidebar" ? (
+						<Button
+							variant="ghost"
+							role="combobox"
+							aria-expanded={open}
+							className="h-auto w-full justify-start gap-2.5 px-2.5 py-2"
+						>
+							<span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-foreground/20 to-foreground/5 text-[10px] font-semibold text-foreground">
+								{orgInitials(active?.name ?? "Personal")}
+							</span>
+							<span className="min-w-0 flex-1 truncate text-left text-[13.5px] font-medium">
+								{active?.name ?? "Personal"}
+							</span>
+							<span className="shrink-0 rounded-full border px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-muted-foreground">
+								{meta.name}
+							</span>
+							<ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+						</Button>
+					) : (
+						<Button
+							variant="ghost"
+							size="sm"
+							role="combobox"
+							aria-expanded={open}
+							className="gap-2 px-2 text-sm font-medium"
+						>
+							<Building2 className="h-4 w-4 text-muted-foreground" />
+							<span className="max-w-[12rem] truncate">
+								{active?.name ?? "Personal"}
+							</span>
+							<ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+						</Button>
+					)}
 				</PopoverTrigger>
 				<PopoverContent className="w-72 p-0" align="start">
 					<Command>
