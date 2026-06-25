@@ -13,6 +13,9 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        // Single-use: the "Start free trial" conversion CTA only. The one
+        // sanctioned hue on an otherwise grayscale system — do not reuse.
+        cta: "bg-cta text-cta-foreground hover:bg-cta-hover focus-visible:ring-cta/40",
         destructive:
           "border border-border bg-transparent text-foreground shadow-xs hover:border-foreground hover:bg-[var(--signal-critical-surface)] focus-visible:ring-ring/50",
         outline:

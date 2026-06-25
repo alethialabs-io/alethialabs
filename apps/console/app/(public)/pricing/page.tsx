@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { Metadata } from "next";
-import { Header } from "@/components/landing/header";
+import { Header } from "@/components/landing/home/header";
 import { Pricing } from "@/components/landing/pricing";
-import { Footer } from "@/components/landing/footer";
+import { Footer } from "@/components/landing/home/footer";
+import { getGitHubStars } from "@/lib/github-stars";
+import { getTeamPriceLabel } from "@/lib/billing/pricing-display";
 
 export const metadata: Metadata = {
 	title: "Pricing · Alethia",
@@ -14,15 +16,19 @@ export const metadata: Metadata = {
 
 /**
  * Public pricing page. Mirrors the home page chrome (landing Header + Footer) and
- * renders the four tiers from PLAN_CATALOG so it stays in lockstep with the in-app
- * billing picker. Served at /pricing inside the console app.
+ * renders the three tiers from PLAN_CATALOG so it stays in lockstep with the in-app
+ * billing picker. The Pricing body renders its own hero. Served at /pricing.
  */
-export default function PricingPage() {
+export default async function PricingPage() {
+	const [stars, teamPriceLabel] = await Promise.all([
+		getGitHubStars(),
+		getTeamPriceLabel(),
+	]);
 	return (
 		<div className="min-h-screen bg-background text-foreground selection:bg-primary selection:text-primary-foreground">
-			<Header />
-			<main className="pt-24">
-				<Pricing />
+			<Header stars={stars} />
+			<main>
+				<Pricing teamPriceLabel={teamPriceLabel} />
 			</main>
 			<Footer />
 		</div>
