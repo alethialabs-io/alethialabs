@@ -8,6 +8,7 @@
 		"dev:console": "turbo run dev --filter=console",
 		"dev:up": "bash scripts/dev-up.sh",
 		"dev:logs": "touch /tmp/alethia-dev-console.log && tail -n +1 -f /tmp/alethia-dev-console.log",
+		"dev:tunnel": "bash scripts/cf-tunnel.sh",
 		"lint": "turbo run lint",
 		"format": "prettier --write \"**/*.{ts,tsx,md}\"",
 		"check-types": "turbo run check-types",
@@ -15,6 +16,7 @@
 		"db:reset": "docker compose down -v && bash scripts/db-bootstrap.sh",
 		"compose:up": "bash scripts/compose-up.sh",
 		"compose:up:full": "bash scripts/compose-up.sh caddy app docs blog runner",
+		"compose:up:site": "COMPOSE_PROFILES=marketing bash scripts/compose-up.sh caddy app docs blog marketing",
 		"compose:ps": "docker compose ps",
 		"compose:logs": "docker compose logs -f --tail=100",
 		"compose:down": "docker compose down"
@@ -27,5 +29,14 @@
 	"packageManager": "pnpm@9.15.0",
 	"engines": {
 		"node": ">=22"
+	},
+	"pnpm": {
+		"overrides": {
+			"react": "19.2.3",
+			"react-dom": "19.2.3",
+			"@types/react": "19.2.8",
+			"@types/react-dom": "19.2.3",
+			"zod": "4.4.3"
+		}
 	}
 }
