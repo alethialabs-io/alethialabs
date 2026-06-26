@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { ProviderIcon } from "@/components/provider-icon";
+import { Button } from "@repo/ui/button";
+import { Badge } from "@repo/ui/badge";
+import { ProviderIcon } from "@repo/ui/provider-icon";
 import {
 	disp,
 	eyebrow,
@@ -15,8 +15,7 @@ import {
 	SecMark,
 	Wrap,
 } from "@/components/landing/home/primitives";
-import { PLAN_CATALOG } from "@/lib/billing/plan-catalog";
-import type { BillingPlan } from "@/lib/db/schema/enums";
+import { PLAN_CATALOG, type PlanId } from "@repo/plan-catalog";
 
 const SALES = "/contact/sales";
 
@@ -30,15 +29,15 @@ interface Cta {
  * CTA(s) per tier. Hobby drops into the app; Team starts a one-month trial via the
  * /start intent carrier; Enterprise is contact-only (demo + self-serve trial).
  */
-function ctasFor(plan: BillingPlan): Cta[] {
+function ctasFor(plan: PlanId): Cta[] {
 	switch (plan) {
 		case "community":
-			return [{ label: "Start provisioning", href: "/auth/signin", variant: "outline" }];
+			return [{ label: "Start provisioning", href: "/signup", variant: "outline" }];
 		case "team":
 			return [
 				{
 					label: "Start free trial",
-					href: "/auth/signin?next=%2Fstart%3Fplan%3Dteam%26trial%3D1",
+					href: "/signup?next=%2Fstart%3Fplan%3Dteam%26trial%3D1",
 					variant: "cta",
 				},
 			];
@@ -48,7 +47,7 @@ function ctasFor(plan: BillingPlan): Cta[] {
 				{ label: "Request trial", href: "/contact/enterprise", variant: "outline" },
 			];
 		default:
-			return [{ label: "Get started", href: "/auth/signin", variant: "outline" }];
+			return [{ label: "Get started", href: "/signup", variant: "outline" }];
 	}
 }
 
@@ -68,7 +67,7 @@ function PricingHero() {
 					The core is open source and free to self-host. Hosted plans add organizations, governance, and SSO — billed for the convenience, never for the cloud you already pay for.
 				</p>
 				<div style={{ display: "flex", alignItems: "center", gap: 13, flexWrap: "wrap", justifyContent: "center" }}>
-					<Link href="/auth/signin"><Button>Get started <Icon k="arrow" size={15} /></Button></Link>
+					<Link href="/signup"><Button>Get started <Icon k="arrow" size={15} /></Button></Link>
 					<Link href="/docs"><Button variant="outline"><Icon k="book" size={15} />Read the docs</Button></Link>
 				</div>
 				<p style={{ ...mono, fontSize: 11, color: "var(--text-disabled)", letterSpacing: "0.04em", margin: "20px 0 0" }}>
@@ -232,7 +231,7 @@ function MatrixCell({ value, head }: { value: MatrixValue; head: boolean }) {
 /** Vercel-style plan comparison table; the Team column is tinted as popular. */
 function Matrix({ teamPriceLabel }: { teamPriceLabel: string }) {
 	const colBg = (i: number): string => (i === POP_COL ? "var(--surface-muted)" : "transparent");
-	const priceFor = (id: BillingPlan, fallback: string): string => (id === "team" ? teamPriceLabel : fallback);
+	const priceFor = (id: PlanId, fallback: string): string => (id === "team" ? teamPriceLabel : fallback);
 	return (
 		<section style={{ padding: "72px 0", borderTop: "1px solid var(--border)" }}>
 			<Wrap>
@@ -359,7 +358,7 @@ function PricingCTA() {
 					Self-host the open core today, or spin up a hosted organization in minutes.
 				</p>
 				<div style={{ display: "flex", gap: 13, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
-					<Link href="/auth/signin"><Button>Get started <Icon k="arrow" size={15} /></Button></Link>
+					<Link href="/signup"><Button>Get started <Icon k="arrow" size={15} /></Button></Link>
 					<Link href={SALES}><Button variant="outline">Contact sales</Button></Link>
 				</div>
 			</Wrap>

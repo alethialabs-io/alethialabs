@@ -10,6 +10,7 @@
 
 import { count, eq } from "drizzle-orm";
 import type Stripe from "stripe";
+import { RESERVED_SLUGS } from "@/lib/routing";
 import {
 	deploymentMode,
 	getStripeConfig,
@@ -20,7 +21,7 @@ import {
 	priceIdForPlan,
 } from "@/lib/billing/config";
 import { creditPack } from "@/lib/billing/ai-credits";
-import { planMeta } from "@/lib/billing/plan-catalog";
+import { planMeta } from "@repo/plan-catalog";
 import { resolvePlanEntitlements } from "@/lib/billing/plan";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { getStripe } from "@/lib/billing/stripe";
@@ -359,6 +360,9 @@ export async function isOrgSlugAvailable(slug: string): Promise<boolean> {
 	await currentActor();
 	const normalized = slug.trim().toLowerCase();
 	if (!normalized) return false;
+	// Reserved slugs shadow console routes or are owned by the marketing zone /
+	// sibling apps (see RESERVED_SLUGS) — never available even if unused in the DB.
+	if (RESERVED_SLUGS.has(normalized)) return false;
 	const [row] = await getServiceDb()
 		.select({ id: organization.id })
 		.from(organization)

@@ -7,19 +7,19 @@ import Link from "next/link";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Form, FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@repo/ui/button";
+import { Form, FormControl, FormField, FormItem, FormMessage } from "@repo/ui/form";
+import { Input } from "@repo/ui/input";
+import { Textarea } from "@repo/ui/textarea";
 import {
 	Select,
 	SelectContent,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@/components/ui/select";
-import { CountrySelect } from "@/components/ui/country-select";
-import { PhoneInput } from "@/components/ui/phone-input";
+} from "@repo/ui/select";
+import { CountrySelect } from "@repo/ui/country-select";
+import { PhoneInput } from "@repo/ui/phone-input";
 import { submitContactLead } from "@/app/server/actions/contact";
 import { disp, Icon, mono } from "@/components/landing/home/primitives";
 import {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { StatusBadge } from "@/components/ui/status-badge";
+import { StatusBadge } from "@repo/ui/status-badge";
 import { disp, Icon, type IconKey, mono, SecMark, Wrap } from "./primitives";
 
 const POLICIES: [string, string, number][] = [

@@ -5,12 +5,12 @@
 // Stripe (STRIPE_PRICE_TEAM) — we read it at render time so the marketing copy and the
 // billed amount can never drift. Server-only. When Stripe isn't configured (dev /
 // self-managed) or the lookup fails, we fall back to the static PLAN_CATALOG label so
-// the public page always renders.
+// the public page always renders. Self-contained: the marketing app reads Stripe
+// directly (STRIPE_SECRET_KEY / STRIPE_PRICE_TEAM) rather than the console billing config.
 
 import { unstable_cache } from "next/cache";
-import { isStripeConfigured, priceIdForPlan } from "@/lib/billing/config";
-import { planMeta } from "@/lib/billing/plan-catalog";
-import { getStripe } from "@/lib/billing/stripe";
+import Stripe from "stripe";
+import { planMeta } from "@repo/plan-catalog";
 
 /** Minimal currency-symbol map; falls back to the uppercase ISO code. */
 const CURRENCY_SYMBOL: Record<string, string> = {
@@ -18,6 +18,20 @@ const CURRENCY_SYMBOL: Record<string, string> = {
 	eur: "€",
 	gbp: "£",
 };
+
+let client: Stripe | null = null;
+
+/** The lazily-built Stripe client. Returns null when STRIPE_SECRET_KEY is unset. */
+function getStripe(): Stripe | null {
+	const secretKey = process.env.STRIPE_SECRET_KEY;
+	if (!secretKey) return null;
+	if (!client) {
+		client = new Stripe(secretKey, {
+			appInfo: { name: "Alethia", url: "https://alethialabs.io" },
+		});
+	}
+	return client;
+}
 
 /** "month" → "mo", "year" → "yr"; anything else passes through. */
 function shortInterval(interval: string | undefined): string {
@@ -37,8 +51,7 @@ function formatSeatPrice(
 ): string {
 	const symbol = CURRENCY_SYMBOL[currency] ?? `${currency.toUpperCase()} `;
 	const amount = unitAmount / 100;
-	const value =
-		Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
+	const value = Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
 	return `${symbol}${value} / seat / ${shortInterval(interval)}`;
 }
 
@@ -50,9 +63,11 @@ function formatSeatPrice(
 export const getTeamPriceLabel = unstable_cache(
 	async (): Promise<string> => {
 		const fallback = planMeta("team").priceLabel;
-		if (!isStripeConfigured()) return fallback;
+		const stripe = getStripe();
+		const priceId = process.env.STRIPE_PRICE_TEAM;
+		if (!stripe || !priceId) return fallback;
 		try {
-			const price = await getStripe().prices.retrieve(priceIdForPlan("team"));
+			const price = await stripe.prices.retrieve(priceId);
 			if (typeof price.unit_amount !== "number") return fallback;
 			return formatSeatPrice(
 				price.unit_amount,

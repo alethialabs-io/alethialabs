@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { AlethiaLogo } from "@/components/alethia-logo";
+import { AlethiaLogo } from "@repo/brand/alethia-logo";
 import type { ReactNode } from "react";
 import Link from "next/link";
 

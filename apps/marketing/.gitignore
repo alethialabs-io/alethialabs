@@ -1,0 +1,33 @@
+# dependencies
+/node_modules
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+
+# debug
+npm-debug.log*
+
+# env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# Synced from @repo/assets at dev/build (scripts/sync-public-assets.mjs) — do not commit.
+/public/aws/
+/public/gcp/
+/public/azure/
+/public/alibaba/
+/public/civo/
+/public/digitalocean/
+/public/hetzner/
+/public/icons/
+/public/brand/

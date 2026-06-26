@@ -1,0 +1,36 @@
+{
+  "$schema": "https://openapi.vercel.sh/microfrontends.json",
+  "applications": {
+    "console": {
+      "development": {
+        "local": 3000,
+        "fallback": "console.alethialabs.io"
+      }
+    },
+    "marketing": {
+      "assetPrefix": "mkt-assets",
+      "development": {
+        "local": 3010,
+        "fallback": "marketing.alethialabs.io"
+      },
+      "routing": [
+        {
+          "paths": [
+            "/",
+            "/pricing",
+            "/enterprise",
+            "/contact",
+            "/contact/:path*",
+            "/terms",
+            "/privacy",
+            "/cookies",
+            "/acceptable-use",
+            "/mkt-assets/:path*",
+            "/robots.txt",
+            "/sitemap.xml"
+          ]
+        }
+      ]
+    }
+  }
+}

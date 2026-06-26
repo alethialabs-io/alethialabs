@@ -3,9 +3,9 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { Badge } from "@repo/ui/badge";
+import { Button } from "@repo/ui/button";
+import { StatusBadge } from "@repo/ui/status-badge";
 import {
 	disp,
 	eyebrow,
@@ -21,7 +21,7 @@ import {
 
 /* ---------- CTA destinations ---------- */
 const SALES = "/contact/sales"; // matches the site header's "Get a demo"
-const TRIAL = "/auth/signin"; // the site's "Get started"
+const TRIAL = "/signup"; // the site's "Get started"
 const SECURITY = "/docs"; // security / enterprise-setup documentation
 
 /* ---------- shared bits ---------- */

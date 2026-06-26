@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Column, Heading, Link, Row, Section, Text } from "@react-email/components";
-import { EmailLayout } from "./components/layout";
-import { footerLegalLink } from "./components/footer";
-import { colors, fonts, radii, text } from "./components/theme";
-import { countryName } from "@/lib/countries";
+import { EmailLayout } from "@repo/email/components/layout";
+import { footerLegalLink } from "@repo/email/components/footer";
+import { colors, fonts, radii, text } from "@repo/email/components/theme";
+import { countryName } from "@repo/ui/countries";
 
 /** Inbox subject for a new lead — type + who it's from. */
 export const subject = (type: "sales" | "enterprise", who: string) =>

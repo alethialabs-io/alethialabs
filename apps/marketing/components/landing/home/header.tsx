@@ -5,9 +5,9 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Menu } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { ProviderIcon } from "@/components/provider-icon";
+import { Button } from "@repo/ui/button";
+import { Sheet, SheetContent, SheetTrigger } from "@repo/ui/sheet";
+import { ProviderIcon } from "@repo/ui/provider-icon";
 import {
 	disp,
 	eyebrow,
@@ -195,7 +195,7 @@ export function Header({ stars }: { stars?: number | null }) {
 					<Link href="/contact/sales" className="ah-hide-sm">
 						<Button variant="outline" size="sm">Get a demo</Button>
 					</Link>
-					<Link href="/auth/signin">
+					<Link href="/signup">
 						<Button size="sm">Get started <Icon k="arrow" size={14} /></Button>
 					</Link>
 
@@ -226,7 +226,7 @@ export function Header({ stars }: { stars?: number | null }) {
 									<Link href="/contact/sales" onClick={() => setMobile(false)}>
 										<Button variant="outline" size="sm" className="w-full">Get a demo</Button>
 									</Link>
-									<Link href="/auth/signin" onClick={() => setMobile(false)}>
+									<Link href="/signup" onClick={() => setMobile(false)}>
 										<Button size="sm" className="w-full">Get started</Button>
 									</Link>
 								</div>

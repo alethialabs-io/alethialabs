@@ -6,16 +6,35 @@
 // the path shape changes in one place. The personal (no-org) scope uses the reserved
 // `~` segment, which the `[org]` layout maps back to the user's personal scope.
 
+import { MARKETING_RESERVED_SEGMENTS } from "@/lib/marketing-zone";
+
 /** Reserved org segment for the personal (no organization) scope. */
 export const PERSONAL_ORG_SLUG = "~";
 
-/** Org-segment values that must never be a real org/zone slug (they shadow routes). */
-export const RESERVED_SLUGS = new Set([
+/** Console route shadows + sibling apps (docs/blog) that aren't owned by the marketing
+ * zone. The marketing-owned segments (`pricing`, `enterprise`, `contact`, the legal
+ * pages, `mkt-assets`, …) are NOT listed here — they're derived from
+ * microfrontends.json (see RESERVED_SLUGS) so they can never drift from the routing. */
+const STATIC_RESERVED_SLUGS = [
 	PERSONAL_ORG_SLUG,
 	"dashboard",
 	"auth",
 	"api",
+	"start",
+	"cli",
+	"invites",
 	"_next",
+	"blog",
+	"docs",
+];
+
+/** Org-segment values that must never be a real org/zone slug — the static console/sibling
+ * shadows plus the marketing zone's owned segments derived from microfrontends.json. A path
+ * added to microfrontends.json is reserved automatically; scripts/check-marketing-routes.mjs
+ * guards the rest of the chain (the marketing app/ routes + the Caddy mirror). */
+export const RESERVED_SLUGS = new Set([
+	...STATIC_RESERVED_SLUGS,
+	...MARKETING_RESERVED_SEGMENTS,
 ]);
 
 /** `/{org}` — org overview (its zones). */

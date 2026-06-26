@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import { disp, Icon, Mark, Wrap } from "./primitives";
 
 /** Closing CTA — grid backdrop, mark, and the two primary actions. */
@@ -15,7 +15,7 @@ export function CTA() {
 				<h2 style={{ ...disp, fontSize: 44, fontWeight: 600, letterSpacing: "-0.04em", margin: "22px 0 16px", maxWidth: 620, color: "var(--text-primary)", lineHeight: 1.05 }}>Ship your first Spec today.</h2>
 				<p style={{ fontSize: 17, color: "var(--text-secondary)", maxWidth: 500, margin: "0 0 34px", lineHeight: 1.55 }}>Open core. Self-hostable. Configure visually, deploy with zero stored credentials, reconcile with Git.</p>
 				<div style={{ display: "flex", gap: 13, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
-					<Link href="/auth/signin"><Button size="lg">Get started <Icon k="arrow" size={15} /></Button></Link>
+					<Link href="/signup"><Button size="lg">Get started <Icon k="arrow" size={15} /></Button></Link>
 					<Link href="/docs"><Button size="lg" variant="outline"><Icon k="book" size={15} />Read the docs</Button></Link>
 				</div>
 			</Wrap>

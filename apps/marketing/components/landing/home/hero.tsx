@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { type ReactNode, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@repo/ui/button";
+import { Badge } from "@repo/ui/badge";
 import {
 	AgentThread,
 	disp,

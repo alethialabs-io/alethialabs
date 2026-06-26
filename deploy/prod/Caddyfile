@@ -15,6 +15,11 @@
 	handle /blog* {
 		reverse_proxy blog:3000
 	}
+	# Marketing zone (hosted-only — OSS ships none). To serve the marketing app behind
+	# Caddy, run a `marketing` service and drop a `marketing.caddy` beside this file
+	# (copy deploy/caddy/marketing.caddy.example), then uncomment the import below. It
+	# mirrors apps/console/microfrontends.json and must stay before the catch-all.
+	# import marketing*.caddy
 	handle {
 		reverse_proxy app:3000
 	}

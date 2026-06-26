@@ -33,8 +33,8 @@ import {
 	Workflow,
 	Zap,
 } from "lucide-react";
-import { ProviderIcon } from "@/components/provider-icon";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { ProviderIcon } from "@repo/ui/provider-icon";
+import { StatusBadge } from "@repo/ui/status-badge";
 
 /* ---------- shared inline-style tokens (mirror the design's helpers) ---------- */
 export const mono: CSSProperties = { fontFamily: "var(--font-mono)" };
