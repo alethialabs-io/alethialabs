@@ -59,12 +59,13 @@ helm install alethia deploy/helm/alethia \
 ```
 
 ## App secrets (OAuth, email, …)
-Provider client IDs/secrets, `RESEND_API_KEY`, and other app env go under `secrets.extraEnv` as a
+Provider client IDs/secrets, `ALETHIA_SES_*` (email), and other app env go under `secrets.extraEnv` as a
 map — they're merged into the chart-managed Secret and exposed to the console/runner via `envFrom`:
 ```yaml
 secrets:
   extraEnv:
-    RESEND_API_KEY: re_...
+    ALETHIA_SES_REGION: eu-central-1
+    AUTH_EMAIL_FROM: Alethia <no-reply@auth.yourdomain>
     GITHUB_CLIENT_ID: ...
     GITHUB_CLIENT_SECRET: ...
 ```

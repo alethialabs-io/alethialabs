@@ -38,12 +38,17 @@ S3/R2 instead, point `ALETHIA_DATABASE_URL` / `ALETHIA_STORAGE_*` at them and se
 | `ALETHIA_STORAGE_ENDPOINT` | S3 endpoint (bundled SeaweedFS by default) |
 | `ALETHIA_STORAGE_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` | must match `deploy/seaweedfs/s3.json` for the bundle |
 
-## Email (Resend)
+## Email (AWS SES)
+
+Set `ALETHIA_SES_REGION` to enable sending; with none, sign-in/account emails are
+logged to the console instead of sent. From-addresses must be verified SES identities.
 
 | Key | Notes |
 |---|---|
-| `RESEND_API_KEY` | Sends the email sign-in code + account mail. |
-| `AUTH_EMAIL_FROM` | From address, e.g. `Alethia <noreply@yourdomain>` (quote it). |
+| `ALETHIA_SES_REGION` | SES region, e.g. `eu-central-1`. Enables sending. |
+| `ALETHIA_SES_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` | Optional; omit to use the AWS default credential chain (IAM role / `AWS_*`). |
+| `AUTH_EMAIL_FROM` | Auth/security from address, e.g. `Alethia <no-reply@auth.yourdomain>` (quote it). |
+| `EMAIL_FROM` | Product/general from address; falls back to `AUTH_EMAIL_FROM`. |
 
 ## OAuth providers (optional)
 

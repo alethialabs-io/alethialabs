@@ -26,7 +26,7 @@ secrets:
   # Generate with: openssl rand -hex 32
   cliJwtSecret: ""
   betterAuthSecret: ""
-  # Extra app env (OAuth client IDs/secrets, RESEND_API_KEY, etc.) as a map.
+  # Extra app env (OAuth client IDs/secrets, ALETHIA_SES_* email, etc.) as a map.
   extraEnv: {}
 
 # ---------------------------------------------------------------------------

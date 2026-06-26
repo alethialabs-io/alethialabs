@@ -1,6 +1,7 @@
 {
 	"$schema": "https://turborepo.com/schema.json",
 	"ui": "tui",
+	"globalEnv": ["NODE_ENV"],
 	"tasks": {
 		"build": {
 			"dependsOn": ["^build"],
@@ -14,7 +15,6 @@
 				"ALETHIA_STORAGE_REGION",
 				"ALETHIA_STORAGE_ACCESS_KEY_ID",
 				"ALETHIA_STORAGE_SECRET_ACCESS_KEY",
-				"RESEND_API_KEY",
 				"CLI_JWT_SECRET",
 				"INFRACOST_API_KEY",
 				"GITLAB_APPLICATION_ID",

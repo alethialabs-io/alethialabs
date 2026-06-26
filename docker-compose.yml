@@ -144,7 +144,7 @@ services:
     restart: unless-stopped
 
   # Console (Next.js control plane). Internal URLs point at the bundled
-  # postgres/seaweedfs; secrets (OAuth, Resend, CLI_JWT_SECRET, BETTER_AUTH_SECRET)
+  # postgres/seaweedfs; secrets (OAuth, ALETHIA_SES_* email, CLI_JWT_SECRET, BETTER_AUTH_SECRET)
   # come from .env.
   app:
     build:

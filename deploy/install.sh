@@ -85,4 +85,4 @@ else
 	URL="http://$(hostname -I 2>/dev/null | awk '{print $1}')"
 fi
 log "Alethia is starting at ${URL}"
-printf '  Next: edit %s/.env for OAuth + RESEND_API_KEY, then re-run this script (or `docker compose ... up -d`).\n' "$ALETHIA_DIR"
+printf '  Next: edit %s/.env for OAuth + email (ALETHIA_SES_*), then re-run this script (or `docker compose ... up -d`).\n' "$ALETHIA_DIR"
