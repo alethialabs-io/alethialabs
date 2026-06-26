@@ -1,0 +1,33 @@
+{
+  "name": "@repo/brand",
+  "version": "0.0.0",
+  "private": true,
+  "exports": {
+    "./alethia-logo": "./src/alethia-logo.tsx",
+    "./tokens.css": "./src/tokens.css",
+    "./icon": "./src/icon.tsx",
+    "./apple-icon": "./src/apple-icon.tsx",
+    "./opengraph-image": "./src/opengraph-image.tsx",
+    "./twitter-image": "./src/twitter-image.tsx",
+    "./manifest": "./src/manifest.ts",
+    "./robots": "./src/robots.ts",
+    "./sitemap": "./src/sitemap.ts"
+  },
+  "scripts": {
+    "lint": "eslint . --max-warnings 0",
+    "check-types": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "next": ">=15",
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/react": "19.2.8",
+    "eslint": "^9.39.1",
+    "next": "16.0.7",
+    "react": "^19.2.0",
+    "typescript": "5.9.2"
+  }
+}

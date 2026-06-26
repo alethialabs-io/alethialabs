@@ -1,0 +1,31 @@
+{
+  "name": "@repo/email",
+  "version": "0.0.0",
+  "private": true,
+  "exports": {
+    "./send": "./src/send.ts",
+    "./config": "./src/config.ts",
+    "./components/theme": "./src/components/theme.ts",
+    "./components/*": "./src/components/*.tsx"
+  },
+  "scripts": {
+    "lint": "eslint . --max-warnings 0",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sesv2": "^3.1072.0",
+    "@react-email/components": "^1.0.12",
+    "next-runtime-env": "^3.3.0"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/react": "19.2.8",
+    "eslint": "^9.39.1",
+    "react": "^19.2.0",
+    "typescript": "5.9.2"
+  }
+}
