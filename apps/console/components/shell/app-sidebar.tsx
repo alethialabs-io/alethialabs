@@ -19,7 +19,7 @@ import { SidebarProfile } from "./sidebar-profile";
  * local state and reset on any navigation. The off-screen panel is inert so focus and the
  * pointer never reach it.
  */
-export function AppSidebar() {
+export function AppSidebar({ isHosted = false }: { isHosted?: boolean }) {
 	const pathname = usePathname();
 	const orgSlug = useActiveOrgSlug();
 	const drills = useMemo(() => buildDrills(orgSlug), [orgSlug]);
@@ -75,7 +75,7 @@ export function AppSidebar() {
 				</div>
 			</div>
 
-			<SidebarProfile />
+			<SidebarProfile isHosted={isHosted} />
 		</div>
 	);
 }

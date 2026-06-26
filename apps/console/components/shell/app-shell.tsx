@@ -16,7 +16,14 @@ import { AppSidebar } from "./app-sidebar";
 import { Topbar } from "./topbar";
 
 /** The authenticated dashboard chrome: sidebar + topbar + scrolling content canvas. */
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+	children,
+	isHosted = false,
+}: {
+	children: React.ReactNode;
+	/** Hosted control plane → enables the in-app feedback widget in the sidebar. */
+	isHosted?: boolean;
+}) {
 	const [mobileOpen, setMobileOpen] = useState(false);
 	const { data: session } = authClient.useSession();
 	const user = session?.user ?? null;
@@ -36,7 +43,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 		<div className="flex h-dvh w-full overflow-hidden bg-background">
 			{/* Desktop sidebar */}
 			<aside className="hidden w-[252px] shrink-0 border-r lg:block">
-				<AppSidebar />
+				<AppSidebar isHosted={isHosted} />
 			</aside>
 
 			{/* Mobile sidebar */}
@@ -52,7 +59,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 					}}
 				>
 					<SheetTitle className="sr-only">Navigation</SheetTitle>
-					<AppSidebar />
+					<AppSidebar isHosted={isHosted} />
 				</SheetContent>
 			</Sheet>
 

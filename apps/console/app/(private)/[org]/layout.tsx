@@ -5,6 +5,7 @@ import type React from "react";
 import { notFound, redirect } from "next/navigation";
 import { resolveOrgScope } from "@/app/server/actions/resolve";
 import { getOwner } from "@/lib/auth/owner";
+import { deploymentMode } from "@/lib/billing/config";
 import { AppShell } from "@/components/shell/app-shell";
 
 /**
@@ -29,5 +30,8 @@ export default async function OrgLayout({
 		// Authenticated but the org is unknown / not a member → genuine 404.
 		notFound();
 	}
-	return <AppShell>{children}</AppShell>;
+	// Feedback is a hosted-only feature (it emails Alethia Labs); the shell hides it
+	// off the hosted control plane. Resolved server-side and passed to the client shell.
+	const isHosted = deploymentMode() === "hosted";
+	return <AppShell isHosted={isHosted}>{children}</AppShell>;
 }

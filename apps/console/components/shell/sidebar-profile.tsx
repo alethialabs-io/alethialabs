@@ -2,11 +2,29 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { LogOut, Settings, User } from "lucide-react";
+import {
+	ArrowUpRight,
+	BookOpen,
+	History,
+	Home,
+	LifeBuoy,
+	LogOut,
+	MessageSquare,
+	MoreHorizontal,
+	Settings,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ThemeMenu } from "@/components/theme-menu";
+import { env } from "next-runtime-env";
+import { useState } from "react";
+import { useEntitlement } from "@/components/settings/enterprise-gate";
+import { InlineThemeSwitcher } from "@/components/theme-menu";
+import { authClient } from "@/lib/auth/client";
+import { legalUrl } from "@/lib/legal";
+import { globalHref } from "@/lib/routing";
+import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { Avatar, AvatarFallback } from "@repo/ui/avatar";
+import { Button } from "@repo/ui/button";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -15,10 +33,12 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
-import { authClient } from "@/lib/auth/client";
-import { globalHref } from "@/lib/routing";
-import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+import { AccountSettingsDialog } from "./account-settings-dialog";
+import { FeedbackDialog } from "./feedback-dialog";
 import { NotificationsPopover } from "./notifications-popover";
+
+/** Default issue tracker for self-hosted "Report an issue"; override per deployment. */
+const DEFAULT_ISSUES_URL = "https://github.com/alethialabs-io/alethia/issues/new";
 
 /** Two-letter initials for the avatar fallback, from the user's email. */
 function userInitials(email?: string | null): string {
@@ -27,14 +47,26 @@ function userInitials(email?: string | null): string {
 }
 
 /**
- * The pinned bottom bar of the sidebar: the user identity opens an account menu (profile,
- * theme, sign out), a gear links to settings, and the bell opens the notifications popover.
+ * The pinned bottom bar of the sidebar: avatar + username, a three-dot button that opens
+ * the account menu, and the notifications bell. The popover carries the account header
+ * (with a gear → settings), the menu list (Feedback, an inline theme toggle, the
+ * help/docs links, Sign out), an optional "Upgrade to Pro" CTA, and a platform-status
+ * widget. Feedback is hosted-only (a dialog that emails us); self-managed builds link to
+ * GitHub issues instead.
  */
-export function SidebarProfile() {
+export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
 	const router = useRouter();
 	const orgSlug = useActiveOrgSlug();
 	const { data: session } = authClient.useSession();
 	const user = session?.user ?? null;
+	const [menuOpen, setMenuOpen] = useState(false);
+	const [feedbackOpen, setFeedbackOpen] = useState(false);
+	const [settingsOpen, setSettingsOpen] = useState(false);
+
+	// "organizations" is the paid-plan floor; show the upgrade CTA only to free orgs on
+	// the hosted control plane (self-hosters have no Stripe).
+	const onPaidPlan = useEntitlement("organizations");
+	const showUpgrade = isHosted && !onPaidPlan;
 
 	/** Signs out and returns to the marketing root. */
 	const handleLogout = async () => {
@@ -42,67 +74,174 @@ export function SidebarProfile() {
 		router.push("/");
 	};
 
+	const issuesUrl = env("NEXT_PUBLIC_FEEDBACK_REPO_URL") || DEFAULT_ISSUES_URL;
+
 	return (
 		<div className="flex h-14 shrink-0 items-center gap-1.5 border-t px-2.5">
-			<DropdownMenu>
+			<div className="flex min-w-0 flex-1 items-center gap-2.5 px-1.5 py-1.5">
+				<Avatar className="h-7 w-7">
+					<AvatarFallback className="bg-muted text-[10px] font-medium text-muted-foreground">
+						{userInitials(user?.email)}
+					</AvatarFallback>
+				</Avatar>
+				<span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
+					{user?.name ?? "User"}
+				</span>
+			</div>
+
+			<DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
 				<DropdownMenuTrigger asChild>
 					<button
 						type="button"
-						className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-muted/60"
+						aria-label="Account menu"
+						className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
 					>
-						<Avatar className="h-7 w-7">
-							<AvatarFallback className="bg-muted text-[10px] font-medium text-muted-foreground">
-								{userInitials(user?.email)}
-							</AvatarFallback>
-						</Avatar>
-						<span className="min-w-0 flex-1">
-							<span className="block truncate text-[13px] font-medium text-foreground">
-								{user?.name ?? "User"}
-							</span>
-							<span className="block truncate font-mono text-[10px] text-muted-foreground">
-								{user?.email ?? "—"}
-							</span>
-						</span>
+						<MoreHorizontal className="h-4 w-4" />
 					</button>
 				</DropdownMenuTrigger>
-				<DropdownMenuContent align="start" side="top" className="w-56">
+				<DropdownMenuContent align="end" side="top" className="w-64">
 					<DropdownMenuLabel className="font-normal">
-						<div className="flex flex-col space-y-1">
-							<p className="text-sm font-medium leading-none">Account</p>
-							<p className="text-xs leading-none text-muted-foreground">
-								{user?.email ?? "Loading…"}
-							</p>
+						<div className="flex items-center gap-2">
+							<div className="flex min-w-0 flex-1 flex-col space-y-1">
+								<p className="truncate text-sm font-medium leading-none">
+									{user?.name ?? "User"}
+								</p>
+								<p className="truncate text-xs leading-none text-muted-foreground">
+									{user?.email ?? "Loading…"}
+								</p>
+							</div>
+							<button
+								type="button"
+								aria-label="Account settings"
+								onClick={() => {
+									// Close the menu first, then open the dialog (avoids a focus race).
+									setMenuOpen(false);
+									setSettingsOpen(true);
+								}}
+								className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+							>
+								<Settings className="h-4 w-4" />
+							</button>
 						</div>
 					</DropdownMenuLabel>
 					<DropdownMenuSeparator />
+
+					{isHosted ? (
+						<DropdownMenuItem
+							onSelect={(e) => {
+								// Keep the dialog open after the menu dismisses (avoids a focus race).
+								e.preventDefault();
+								setFeedbackOpen(true);
+							}}
+							className="cursor-pointer"
+						>
+							Feedback
+							<MessageSquare className="ml-auto h-4 w-4 text-muted-foreground" />
+						</DropdownMenuItem>
+					) : (
+						<DropdownMenuItem asChild>
+							<a
+								href={issuesUrl}
+								target="_blank"
+								rel="noreferrer"
+								className="cursor-pointer"
+							>
+								Report an issue
+								<ArrowUpRight className="ml-auto h-3.5 w-3.5 text-muted-foreground" />
+							</a>
+						</DropdownMenuItem>
+					)}
+
+					<InlineThemeSwitcher />
+
 					<DropdownMenuItem asChild>
-						<Link href={globalHref(orgSlug, "profile")} className="cursor-pointer">
-							<User className="mr-2 h-4 w-4 text-muted-foreground" />
-							Profile Settings
+						<a
+							href={legalUrl("/")}
+							target="_blank"
+							rel="noreferrer"
+							className="cursor-pointer"
+						>
+							Home Page
+							<Home className="ml-auto h-4 w-4 text-muted-foreground" />
+						</a>
+					</DropdownMenuItem>
+					<DropdownMenuItem asChild>
+						<a
+							href={legalUrl("/changelog")}
+							target="_blank"
+							rel="noreferrer"
+							className="cursor-pointer"
+						>
+							Changelog
+							<History className="ml-auto h-4 w-4 text-muted-foreground" />
+						</a>
+					</DropdownMenuItem>
+					<DropdownMenuItem asChild>
+						<a
+							href={legalUrl("/contact")}
+							target="_blank"
+							rel="noreferrer"
+							className="cursor-pointer"
+						>
+							Help
+							<LifeBuoy className="ml-auto h-4 w-4 text-muted-foreground" />
+						</a>
+					</DropdownMenuItem>
+					<DropdownMenuItem asChild>
+						<Link href="/docs" className="cursor-pointer">
+							Docs
+							<BookOpen className="ml-auto h-4 w-4 text-muted-foreground" />
 						</Link>
 					</DropdownMenuItem>
-					<DropdownMenuSeparator />
-					<ThemeMenu />
+
 					<DropdownMenuSeparator />
 					<DropdownMenuItem
 						onClick={handleLogout}
 						className="cursor-pointer text-destructive focus:text-destructive"
 					>
-						<LogOut className="mr-2 h-4 w-4" />
-						Sign out
+						Log Out
+						<LogOut className="ml-auto h-4 w-4" />
 					</DropdownMenuItem>
+
+					{showUpgrade && (
+						<>
+							<DropdownMenuSeparator />
+							<div className="px-1 py-1">
+								<Button asChild className="w-full">
+									<Link href={globalHref(orgSlug, "settings/billing")}>
+										Upgrade to Pro
+									</Link>
+								</Button>
+							</div>
+						</>
+					)}
+
+					<DropdownMenuSeparator />
+					<a
+						href="https://status.alethialabs.io"
+						target="_blank"
+						rel="noreferrer"
+						className="flex items-center gap-2 px-2 py-1.5"
+					>
+						<span className="min-w-0 flex-1">
+							<span className="block text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+								Platform Status
+							</span>
+							<span className="block text-[13px] text-foreground">
+								All systems normal.
+							</span>
+						</span>
+						<span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-foreground" />
+					</a>
 				</DropdownMenuContent>
 			</DropdownMenu>
 
-			<Link
-				href={globalHref(orgSlug, "settings")}
-				aria-label="Settings"
-				className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-			>
-				<Settings className="h-4 w-4" />
-			</Link>
-
 			<NotificationsPopover />
+
+			{isHosted && (
+				<FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
+			)}
+			<AccountSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 		</div>
 	);
 }
