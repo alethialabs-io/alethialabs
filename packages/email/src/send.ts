@@ -76,6 +76,17 @@ export async function sendEmail({
 		);
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
+		// In dev, don't lose the email when SES fails (e.g. sandbox mode rejects
+		// unverified recipients) — log it (incl. the OTP via devLog) so the code is
+		// still retrievable from `pnpm dev:logs`. Production surfaces the error.
+		if (process.env.NODE_ENV !== "production") {
+			console.warn(
+				`[email] SES send failed (dev) — "${subject}" → ${to}` +
+					(devLog ? ` (${devLog})` : "") +
+					`: ${message}`,
+			);
+			return;
+		}
 		throw new Error(`Failed to send "${subject}" via SES: ${message}`);
 	}
 }

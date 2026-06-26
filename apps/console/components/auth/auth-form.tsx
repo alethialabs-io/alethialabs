@@ -62,6 +62,17 @@ const COPY: Record<
 	},
 };
 
+/** Resend cooldown (seconds) — escalates with each resend (30s → 1m → 2m → 5m);
+ *  the last value repeats. Guards against spamming the code-send endpoint. */
+const RESEND_COOLDOWNS = [30, 60, 120, 300];
+
+/** Formats a remaining-seconds count as `m:ss` (e.g. 29 → "0:29"). */
+function fmtCountdown(seconds: number): string {
+	const m = Math.floor(seconds / 60);
+	const s = String(seconds % 60).padStart(2, "0");
+	return `${m}:${s}`;
+}
+
 /** Allowlisted banner copy keyed by `?error=` / `?message=`. Arbitrary querystring
  *  text is never rendered (anti-phishing) — unknown codes show no banner. */
 const AUTH_MESSAGES: Record<string, string> = {
@@ -100,6 +111,21 @@ export function AuthForm({ mode }: AuthFormProps) {
 		const code = searchParams.get("error") ?? searchParams.get("message");
 		return code ? (AUTH_MESSAGES[code] ?? null) : null;
 	});
+
+	// Resend guard: number of resends so far + seconds left before resend re-enables.
+	const [resendCount, setResendCount] = useState(0);
+	const [cooldown, setCooldown] = useState(0);
+
+	// Tick the cooldown down once per second while it's active.
+	useEffect(() => {
+		if (cooldown <= 0) return;
+		const id = setTimeout(() => setCooldown((s) => s - 1), 1000);
+		return () => clearTimeout(id);
+	}, [cooldown]);
+
+	/** Arms the cooldown for the given (cumulative) resend count, escalating the wait. */
+	const armCooldown = (count: number) =>
+		setCooldown(RESEND_COOLDOWNS[Math.min(count, RESEND_COOLDOWNS.length - 1)]);
 
 	// OAuth-resume context: Better Auth's mcp() plugin redirects an unauthenticated
 	// /api/auth/mcp/authorize request here with the original authorize query appended
@@ -196,6 +222,8 @@ export function AuthForm({ mode }: AuthFormProps) {
 			await sendCode();
 			setCode("");
 			setStep("code");
+			setResendCount(0);
+			armCooldown(0);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to send code");
 		} finally {
@@ -228,15 +256,21 @@ export function AuthForm({ mode }: AuthFormProps) {
 	};
 
 	const handleResend = async () => {
+		if (cooldown > 0 || isLoading) return;
 		setIsLoading(true);
+		setLoadingProvider("resend");
 		setError(null);
 		try {
 			await sendCode();
 			setCode("");
+			const next = resendCount + 1;
+			setResendCount(next);
+			armCooldown(next);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to resend code");
 		} finally {
 			setIsLoading(false);
+			setLoadingProvider(null);
 		}
 	};
 
@@ -315,10 +349,14 @@ export function AuthForm({ mode }: AuthFormProps) {
 						<button
 							type="button"
 							onClick={handleResend}
-							disabled={isLoading}
-							className="text-text-tertiary transition-colors hover:text-text-primary disabled:opacity-50"
+							disabled={isLoading || cooldown > 0}
+							className="text-text-tertiary transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
 						>
-							Resend code
+							{cooldown > 0
+								? `Resend in ${fmtCountdown(cooldown)}`
+								: loadingProvider === "resend"
+									? "Sending…"
+									: "Resend code"}
 						</button>
 					</div>
 				</div>
