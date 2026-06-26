@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - 'apps/console/**'
+      - 'apps/marketing/**'
       - 'apps/docs/**'
       - 'apps/blog/**'
       - 'apps/runner/**'
@@ -43,6 +44,11 @@ jobs:
             target: ""
           - image: blog
             file: apps/blog/Dockerfile
+            target: ""
+          # Marketing public site — pushed for the opt-in self-host path (hosted
+          # alethialabs.io deploys via Vercel, not this image).
+          - image: marketing
+            file: apps/marketing/Dockerfile
             target: ""
           - image: runner
             file: apps/runner/Dockerfile

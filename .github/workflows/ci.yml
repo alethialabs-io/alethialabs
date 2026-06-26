@@ -33,19 +33,27 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Type-check (console + docs + ee)
-        run: |
-          pnpm -F console check-types
-          pnpm -F docs types:check
-          pnpm -F @alethia/ee check-types
-      - name: Lint (console + docs)
-        run: |
-          pnpm -F console lint
-          pnpm -F docs lint
-      - name: Unit tests (console)
-        run: pnpm -F console test
-      - name: Docs build (MDX + links)
-        run: pnpm -F docs build
+      # Turbo fans these out across EVERY workspace project that defines the script
+      # (console, marketing, docs, blog, @alethia/ee, @repo/{ui,brand,plan-catalog}),
+      # so new apps/packages are covered automatically — no hardcoded list to drift.
+      - name: Type-check + lint (all workspace projects)
+        run: pnpm exec turbo run check-types lint
+      - name: Unit tests
+        run: pnpm exec turbo run test
+      # Build smoke for the split-affected apps — catches transpilePackages /
+      # standalone breakage on PRs. Build-only placeholder env so the console's
+      # strict zod config modules pass validation (mirrors apps/console/Dockerfile;
+      # nothing is contacted — postgres-js + the S3 client connect lazily).
+      - name: App build smoke (console · marketing · docs)
+        run: pnpm exec turbo run build --filter=console --filter=marketing --filter=docs
+        env:
+          BETTER_AUTH_SECRET: build-time-placeholder
+          BETTER_AUTH_URL: http://localhost:3000
+          ALETHIA_DATABASE_URL: postgres://build:build@localhost:5432/build
+          ALETHIA_APP_DATABASE_URL: postgres://build:build@localhost:5432/build
+          ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
+          ALETHIA_STORAGE_ACCESS_KEY_ID: build
+          ALETHIA_STORAGE_SECRET_ACCESS_KEY: build
 
   guards:
     name: Authz / open-core guards
@@ -66,6 +74,10 @@ jobs:
         run: pnpm -F console check:no-supabase
       - name: Authz scope (PDP, not ad-hoc user_id)
         run: pnpm -F console check:authz-scope
+      - name: Marketing routes ⇄ reservation ⇄ Caddy in sync
+        run: pnpm -F console check:marketing-routes
+      - name: Drizzle migration history is unforked (linear snapshot chain)
+        run: pnpm -F console check:migrations
       - name: CLI contract fixtures are in sync with the Zod contract
         run: |
           pnpm -F console gen:cli-fixtures

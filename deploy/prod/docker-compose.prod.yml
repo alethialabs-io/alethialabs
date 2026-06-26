@@ -23,6 +23,13 @@ services:
   runner:
     image: "ghcr.io/alethialabs-io/runner:${ALETHIA_IMAGE_TAG:-latest}"
     pull_policy: always
+  # Marketing public site — opt-in self-host (hosted alethialabs.io uses Vercel).
+  # Inactive unless the operator runs with COMPOSE_PROFILES=marketing AND enables
+  # the `import marketing*.caddy` line in deploy/prod/Caddyfile.
+  marketing:
+    profiles: ["marketing"]
+    image: "ghcr.io/alethialabs-io/marketing:${ALETHIA_IMAGE_TAG:-latest}"
+    pull_policy: always
   # One-shot migrate — the console Dockerfile's `migrate` target (shares all
   # build cache with console; the final stage is the only difference).
   migrate:

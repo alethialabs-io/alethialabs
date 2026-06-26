@@ -197,6 +197,22 @@ services:
       HOSTNAME: 0.0.0.0
     restart: unless-stopped
 
+  # Marketing (Next.js public site). OPT-IN self-host path — the hosted
+  # alethialabs.io runs on Vercel. Enable with the `marketing` profile
+  # (e.g. `pnpm compose:up:site`) AND uncomment `import marketing*.caddy` in
+  # deploy/caddy/Caddyfile (copy marketing.caddy.example → marketing.caddy).
+  marketing:
+    profiles: ["marketing"]
+    build:
+      context: .
+      dockerfile: apps/marketing/Dockerfile
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    restart: unless-stopped
+
   # Runner (Go). Talks to the console over HTTP + S3 only; self-registers on
   # boot. Bundles Terraform/cloud CLIs, so the image is large to build.
   runner:
@@ -226,7 +242,10 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Mount the whole config dir (not just the Caddyfile) so the optional
+      # `import marketing*.caddy` can resolve deploy/caddy/marketing.caddy when the
+      # marketing profile is enabled (copy marketing.caddy.example → marketing.caddy).
+      - ./deploy/caddy:/etc/caddy:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
