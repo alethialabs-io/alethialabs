@@ -5,6 +5,8 @@
 import type React from "react";
 
 import { authClient } from "@/lib/auth/client";
+import { requestEmailCode } from "@/app/server/actions/auth";
+import { safeNext } from "@/lib/auth/safe-next";
 import { AuthCard } from "@/components/auth/auth-shell";
 import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
 import { Button } from "@repo/ui/button";
@@ -17,10 +19,10 @@ import {
 import { ArrowRight, KeyRound, Loader2, Lock } from "lucide-react";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type AuthProvider = "github" | "gitlab" | "bitbucket" | "google";
-type Step = "providers" | "email" | "code";
+type Step = "providers" | "email" | "code" | "no-account";
 
 export type AuthMode = "login" | "signup";
 
@@ -60,6 +62,15 @@ const COPY: Record<
 	},
 };
 
+/** Allowlisted banner copy keyed by `?error=` / `?message=`. Arbitrary querystring
+ *  text is never rendered (anti-phishing) — unknown codes show no banner. */
+const AUTH_MESSAGES: Record<string, string> = {
+	oauth: "We couldn’t sign you in with that provider — try again.",
+	access_denied: "Sign-in was cancelled.",
+	session_expired: "Your session expired — please sign in again.",
+	verify_email: "Check your email to finish signing in.",
+};
+
 interface AuthFormProps {
 	mode: AuthMode;
 }
@@ -72,15 +83,23 @@ interface AuthFormProps {
  */
 export function AuthForm({ mode }: AuthFormProps) {
 	const copy = COPY[mode];
-	const [step, setStep] = useState<Step>("providers");
-	const [isLoading, setIsLoading] = useState(false);
-	const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
-	const [email, setEmail] = useState("");
-	const [code, setCode] = useState("");
-	const [error, setError] = useState<string | null>(null);
 	const searchParams = useSearchParams();
 	const router = useRouter();
-	const next = searchParams.get("next");
+
+	// URL params: prefill the email (and skip the provider grid), validate `next`,
+	// and surface an allowlisted banner message.
+	const prefillEmail = searchParams.get("email") ?? "";
+	const next = safeNext(searchParams.get("next"));
+
+	const [step, setStep] = useState<Step>(prefillEmail ? "email" : "providers");
+	const [isLoading, setIsLoading] = useState(false);
+	const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
+	const [email, setEmail] = useState(prefillEmail);
+	const [code, setCode] = useState("");
+	const [error, setError] = useState<string | null>(() => {
+		const code = searchParams.get("error") ?? searchParams.get("message");
+		return code ? (AUTH_MESSAGES[code] ?? null) : null;
+	});
 
 	// OAuth-resume context: Better Auth's mcp() plugin redirects an unauthenticated
 	// /api/auth/mcp/authorize request here with the original authorize query appended
@@ -108,11 +127,29 @@ export function AuthForm({ mode }: AuthFormProps) {
 		// Native providers go through signIn.social; self-hosted GitLab +
 		// Bitbucket are wired via the genericOAuth plugin (signIn.oauth2). Both
 		// redirect the browser, so control only returns here on error.
+		// First-time OAuth users land in onboarding (carrying `next`); existing users
+		// resume `next`/dashboard. Provider failures bounce back with ?error=oauth.
 		const callbackURL = successDestination;
+		const newUserCallbackURL = isOAuthResume
+			? resumeUrl
+			: next
+				? `/onboarding?next=${encodeURIComponent(next)}`
+				: "/onboarding";
+		const errorCallbackURL = `${mode === "signup" ? "/signup" : "/login"}?error=oauth`;
 		const { error } =
 			provider === "github" || provider === "google"
-				? await authClient.signIn.social({ provider, callbackURL })
-				: await authClient.signIn.oauth2({ providerId: provider, callbackURL });
+				? await authClient.signIn.social({
+						provider,
+						callbackURL,
+						newUserCallbackURL,
+						errorCallbackURL,
+					})
+				: await authClient.signIn.oauth2({
+						providerId: provider,
+						callbackURL,
+						newUserCallbackURL,
+						errorCallbackURL,
+					});
 
 		if (error) {
 			setError(error.message ?? `Failed to sign in with ${provider}`);
@@ -120,6 +157,19 @@ export function AuthForm({ mode }: AuthFormProps) {
 			setLoadingProvider(null);
 		}
 	};
+
+	// `?provider=github` (etc.) auto-starts that OAuth provider once — one-click
+	// deep links from marketing/docs. Validated against the allowlist.
+	const providerHintFired = useRef(false);
+	useEffect(() => {
+		if (providerHintFired.current) return;
+		const hinted = searchParams.get("provider");
+		if (hinted && (oauthProviders as string[]).includes(hinted)) {
+			providerHintFired.current = true;
+			void handleOAuthLogin(hinted as AuthProvider);
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
 
 	const sendCode = async () => {
 		const { error } = await authClient.emailOtp.sendVerificationOtp({
@@ -136,6 +186,13 @@ export function AuthForm({ mode }: AuthFormProps) {
 		setError(null);
 
 		try {
+			// Gate the login flow: an unknown email is emailed a "sign up" message
+			// instead of silently creating an account. Signup always proceeds.
+			const { outcome } = await requestEmailCode({ email, mode });
+			if (outcome === "no-account") {
+				setStep("no-account");
+				return;
+			}
 			await sendCode();
 			setCode("");
 			setStep("code");
@@ -213,6 +270,11 @@ export function AuthForm({ mode }: AuthFormProps) {
 						onChange={setCode}
 						onComplete={handleVerify}
 						pattern={REGEXP_ONLY_DIGITS}
+						// Strip spaces/labels so pasting the grouped code from the email
+						// ("418 902") or "code: 418902" fills all six boxes.
+						pasteTransformer={(pasted) =>
+							pasted.replace(/\D/g, "").slice(0, 6)
+						}
 						disabled={isLoading}
 						containerClassName="w-full"
 						autoFocus
@@ -259,6 +321,52 @@ export function AuthForm({ mode }: AuthFormProps) {
 							Resend code
 						</button>
 					</div>
+				</div>
+			</AuthCard>
+		);
+	}
+
+	// No account for this email (login only) — we emailed a sign-up prompt.
+	if (step === "no-account") {
+		const signupParams = new URLSearchParams();
+		if (email) signupParams.set("email", email);
+		if (next) signupParams.set("next", next);
+		const signupHref = signupParams.toString()
+			? `/signup?${signupParams.toString()}`
+			: "/signup";
+		return (
+			<AuthCard>
+				<div className="mb-6 flex flex-col gap-2.5">
+					<p className="vx-eyebrow">No account</p>
+					<h1 className="font-grotesk text-[28px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary">
+						No account for this email
+					</h1>
+					<p className="text-[14.5px] leading-[1.55] text-text-secondary">
+						We couldn’t find an Alethia account for{" "}
+						<span className="font-medium text-text-primary">{email}</span>. We’ve
+						emailed you a link to create one.
+					</p>
+				</div>
+
+				<div className="space-y-4">
+					<PrimaryButton
+						type="button"
+						onClick={() => router.push(signupHref)}
+						loadingLabel="Redirecting…"
+					>
+						Create an account
+					</PrimaryButton>
+
+					<button
+						type="button"
+						onClick={() => {
+							setStep("email");
+							setError(null);
+						}}
+						className="mx-auto block text-[13px] text-text-tertiary transition-colors hover:text-text-primary"
+					>
+						← Use a different email
+					</button>
 				</div>
 			</AuthCard>
 		);
