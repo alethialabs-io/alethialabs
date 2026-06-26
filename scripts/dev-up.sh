@@ -72,6 +72,17 @@ set -a
 source ./.env
 set +a
 
+# Front the console at a public tunnel origin (ngrok / cloudflare). When
+# ALETHIA_PUBLIC_URL is exported by the caller (e.g. scripts/cf-tunnel.sh), it
+# overrides the .env auth base URLs so a browser on that origin is same-origin
+# with Better Auth (client baseURL + server trustedOrigins). Survives the source
+# above because nothing in .env sets ALETHIA_PUBLIC_URL.
+if [[ -n "${ALETHIA_PUBLIC_URL:-}" ]]; then
+  export NEXT_PUBLIC_APP_URL="$ALETHIA_PUBLIC_URL"
+  export BETTER_AUTH_URL="$ALETHIA_PUBLIC_URL"
+  echo "→ public origin override: $ALETHIA_PUBLIC_URL"
+fi
+
 echo "→ starting postgres, seaweedfs, openfga…"
 docker compose --profile enterprise up -d postgres seaweedfs openfga
 
