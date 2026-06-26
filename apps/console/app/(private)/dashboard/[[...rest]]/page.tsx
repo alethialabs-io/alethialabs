@@ -28,5 +28,8 @@ export default async function DashboardLegacyRedirect({
 	if (!(await isOnboardingComplete(userId))) redirect("/onboarding");
 	const org = await getActiveOrgSlug();
 	const sub = (rest ?? []).join("/");
+	// Account settings is now a dialog (no page); send the old `/dashboard/profile`
+	// bookmark to the org root rather than a dead `/{org}/~/profile`.
+	if (sub === "profile") redirect(`/${org}`);
 	redirect(sub ? `/${org}/~/${sub}` : `/${org}`);
 }
