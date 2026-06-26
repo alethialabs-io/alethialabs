@@ -61,7 +61,8 @@ interface InviteArgs {
  * sendInvitationEmail hook via CoreContext (so ee/ never imports this module).
  */
 export async function sendInviteEmail(args: InviteArgs): Promise<void> {
-	const acceptUrl = `${getAuthConfig().baseURL}/invites/accept?token=${encodeURIComponent(args.token)}`;
+	// Carry the recipient email so the accept page can prefill sign-in / sign-up.
+	const acceptUrl = `${getAuthConfig().baseURL}/invites/accept?token=${encodeURIComponent(args.token)}&email=${encodeURIComponent(args.to)}`;
 	await sendEmail({
 		from: getEmailConfig().from.general,
 		to: args.to,

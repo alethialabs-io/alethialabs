@@ -13,6 +13,7 @@ function AcceptInvite() {
 	const router = useRouter();
 	const params = useSearchParams();
 	const token = params.get("token");
+	const invitedEmail = params.get("email");
 	const { data: session, isPending } = authClient.useSession();
 	const [busy, setBusy] = useState<"accept" | "decline" | null>(null);
 	const [error, setError] = useState<string | null>(null);
@@ -22,8 +23,11 @@ function AcceptInvite() {
 	useEffect(() => {
 		if (isPending || session?.user || !token) return;
 		const next = `/invites/accept?token=${encodeURIComponent(token)}`;
-		router.replace(`/login?next=${encodeURIComponent(next)}`);
-	}, [isPending, session, token, router]);
+		const qs = new URLSearchParams({ next });
+		// Prefill the invitee's email on the sign-in/sign-up form.
+		if (invitedEmail && /.+@.+/.test(invitedEmail)) qs.set("email", invitedEmail);
+		router.replace(`/login?${qs.toString()}`);
+	}, [isPending, session, token, invitedEmail, router]);
 
 	if (!token) {
 		return <Message title="Invalid invitation" body="This invite link is missing its token." />;
@@ -61,7 +65,7 @@ function AcceptInvite() {
 					<MailQuestion className="h-5 w-5" />
 				</div>
 				<h1 className="mt-4 text-lg font-semibold text-foreground">
-					You&apos;ve been invited to a workspace
+					You&apos;ve been invited to an organization
 				</h1>
 				<p className="mt-1.5 text-sm text-muted-foreground">
 					Accept to join and start collaborating, signed in as{" "}
