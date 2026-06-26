@@ -43,6 +43,13 @@ the console natively (hot-reload, no image builds, far less CPU/RAM):
   `pnpm dev:up` **no-ops and prints the running pid + URL** instead of racing a duplicate. Follow the
   shared session from any window with **`pnpm dev:logs`** (tails `/tmp/alethia-dev-console.log`).
   Force a fresh restart (stop the old server, take over) with **`FORCE=1 pnpm dev:up`**.
+- **Public tunnel for browser/mobile testing: `pnpm dev:tunnel`** (`scripts/cf-tunnel.sh`). Opens a
+  **Cloudflare quick tunnel** to the microfrontends proxy (`:3024`) — no interstitial / no throttle
+  (vs ngrok-free) — prints a `*.trycloudflare.com` URL, and **restarts the console with that URL as
+  its auth origin** via `ALETHIA_PUBLIC_URL` (dev-up overrides `NEXT_PUBLIC_APP_URL`/`BETTER_AUTH_URL`
+  so Better Auth is same-origin). Open the printed URL (not `localhost`). Caveats: the URL is **random
+  per run** and **social OAuth callbacks won't match** it → sign in with **email-OTP**; for a stable
+  URL + working OAuth use a *named* tunnel (`cloudflared tunnel login` + DNS) to e.g. `dev.alethialabs.io`.
 - **Why not bare `pnpm dev:console`?** Next reads the app-local `apps/console/.env` (stale, no DB /
   auth / storage vars), **not** the monorepo-root `.env` — so authed pages (incl. the home page,
   which now redirects logged-in users) 500 without the wiring `dev:up` does. Use `dev:console` only
@@ -74,6 +81,21 @@ follow a strict pipeline. **Never edit generated migration files manually.**
 3. Migrations apply via `scripts/migrate.mjs` (the `migrate` Docker target / compose one-shot): it runs
    the generated migrations, then `lib/db/programmables.sql` (functions, triggers, RLS), then sets the
    least-privileged app-role password from `ALETHIA_APP_DB_PASSWORD`.
+
+**Generate migrations on ONE up-to-date branch — never in parallel.** drizzle's `meta/*_snapshot.json`
+files are a single **linear chain** (each points at its parent's id) and *cannot be merged*. If two
+branches / worktrees / Claude windows each run `db:generate` off the same base and then merge, two
+snapshots end up with the same `prevId` → a permanent "collision" that jams `db:generate` for everyone
+(and people then hand-author SQL without snapshots, compounding the drift). So:
+- **Always rebase onto the target branch *before* `pnpm -F console db:generate`.** Never generate
+  concurrently across windows/worktrees (the multi-instance rule applies to migrations too).
+- If your branch and the target both added a migration, **delete your generated migration + snapshot,
+  rebase, and re-generate** so it chains off the latest snapshot.
+- `db:generate` self-checks via `scripts/check-migrations.mjs`, and CI runs `pnpm -F console
+  check:migrations` (the guards job) — a forked history fails the build. Run it yourself anytime to
+  verify the chain is linear.
+- The runtime migrator reads only `_journal.json` + the `.sql` files (never the snapshots), so a
+  one-time meta repair can safely rebuild `meta/` without touching applied history.
 
 ### How JSONB typing works
 
@@ -119,7 +141,7 @@ apps/console/
     (public)/auth/        # Sign-in, email confirmation
     api/                  # API routes (auth, jobs, runners, CLI)
     server/actions/       # Server actions (grouped by domain)
-  components/             # UI components (grouped by feature)
+  components/             # App-specific feature components (shadcn primitives are in @repo/ui)
   lib/
     db/                   # Drizzle schema, migrations, client (getServiceDb/withOwnerScope)
     auth/                 # Better Auth config, client, owner/session helpers
@@ -194,12 +216,89 @@ apps/console/
 
 ---
 
+## Shared web packages (`packages/@repo/*`)
+
+Code used by more than one web app (`apps/console`, `apps/marketing`) lives in a workspace package —
+**promote shared web code to `@repo/*`; never duplicate it across the two apps.** This is how the
+marketing extraction kept one source of truth (and how a redo of CI immediately caught drift).
+
+- **`@repo/ui`** — the shared **shadcn/ui design system**: every primitive (`@repo/ui/button`,
+  `@repo/ui/dialog`, …), plus `@repo/ui/utils` (`cn`), `@repo/ui/countries`, `@repo/ui/provider-icon`,
+  `@repo/ui/copy-button`. Import UI from here, **not** `@/components/ui/*` (that path no longer exists).
+  App-specific *feature* components still live in each app's own `components/`.
+- **`@repo/brand`** — `@repo/brand/alethia-logo`, `@repo/brand/tokens.css` (the design-token
+  foundation), and the brand **metadata generators** (`icon`/`apple-icon`/`opengraph-image`/
+  `twitter-image`/`manifest` + `robots`/`sitemap` factories). Each app's `app/<route>` file is a thin
+  re-export of these (Next.js requires one route file per app; the logic is shared).
+- **`@repo/plan-catalog`** — the plan display catalog (`PLAN_CATALOG`, `planMeta`, `PlanId`); shared by
+  console billing and the marketing pricing page so the copy never drifts.
+- **`@repo/assets`** — static files only (`static/`: cloud/git provider icons + brand SVGs). Synced
+  into each app's `public/` by `scripts/sync-public-assets.mjs` (wired into every app's `dev`/`build`,
+  so it runs in local/Docker/Vercel); the synced paths are **gitignored** — the package is the single
+  source. No build scripts (it's a file bundle).
+- **`@repo/email`** — transactional-email infra: `@repo/email/send` (SES `sendEmail`),
+  `@repo/email/config` (`getEmailConfig`), `@repo/email/components/*` (react-email building blocks).
+  Email *templates* (welcome/invite/confirmation-code/alert in console, contact-lead in marketing) stay
+  per-app and import these.
+- **`@repo/eslint-config`, `@repo/typescript-config`** — shared lint/tsconfig presets (packages extend
+  them). The Go shared library is `packages/core` (see *core* above), not a `@repo/*` package.
+
+**Consuming a code package:** add it to the app's `transpilePackages` (`apps/<app>/next.config.ts`)
+**and** `@source "../../../packages/<pkg>/src"` in the app's `app/globals.css` (so Tailwind scans its
+class names). Give any **new** package `lint` + `check-types` scripts (+ `eslint.config.mjs` +
+`tsconfig.json`) so the turbo-fan-out CI type-checks/lints it automatically.
+
+---
+
 ## docs (Documentation)
 
 - **Location**: `apps/docs/`
 - **Framework**: Next.js 16 + Fumadocs + fumadocs-mdx
 - **Content**: `content/docs/` — MDX files organized by topic
 - **Dev**: `turbo dev --filter=docs`
+
+---
+
+## marketing (Public Marketing Site)
+
+- **Location**: `apps/marketing/` (Next.js 16). The **open-source / self-hosted console ships
+  NO marketing** — `apps/console` redirects `/` to sign-in. The hosted alethialabs.io site is
+  `apps/marketing`: landing (`/`), `/pricing`, `/enterprise`, `/contact/*`, and the legal pages
+  (`/terms`, `/privacy`, `/cookies`, `/acceptable-use`).
+- **Stitching (one path map, two backends):**
+  - **Hosted (Vercel):** `@vercel/microfrontends`. Console is the **default zone** (owns the
+    `/{org}` wildcard + everything else); marketing is a **child zone** owning the curated root
+    paths. Source of truth: `apps/console/microfrontends.json`. Console owns the bare root so
+    marketing uses a custom `assetPrefix: mkt-assets` (its `next.config.ts`) to avoid `/_next/*`
+    collisions. `apps/marketing/proxy.ts` bounces an authenticated `/` to the console.
+  - **Off-Vercel (Caddy):** `deploy/caddy/marketing.caddy.example` mirrors the same paths +
+    `mkt-assets` prefix + the authed-root cookie hand-off. Marketing is **opt-in self-host** (the
+    default OSS stack still ships none): there's now an `apps/marketing/Dockerfile` (standalone,
+    listens :3000) + a `marketing` compose service behind the **`marketing` profile**, and CI
+    publishes `ghcr.io/alethialabs-io/marketing`. To enable: `pnpm compose:up:site` (or
+    `COMPOSE_PROFILES=marketing`) **and** copy `marketing.caddy.example` → `marketing.caddy` +
+    uncomment `import marketing*.caddy`. Hosted stays Vercel (native Git integration).
+- **The root-namespace rule (don't hand-maintain the list):** `microfrontends.json` is the source
+  of truth; `lib/marketing-zone.ts` **derives** the reserved marketing segments from it and
+  `RESERVED_SLUGS` (`lib/routing.ts`) `= STATIC ∪ derived`, enforced by `isOrgSlugAvailable` so no org
+  can claim e.g. `/pricing`. `scripts/check-marketing-routes.mjs` (CI `guards` job) fails if a
+  marketing `app/` route isn't registered in `microfrontends.json` or the Caddy mirror drifts. To
+  add/rename a marketing route: edit `microfrontends.json` + `marketing.caddy.example`; the reservation
+  follows automatically.
+- **Vercel project names:** the `microfrontends.json` application keys (`console`/`marketing`) must
+  equal the real Vercel **project names** — adjust them (or add `packageName`) when wiring the projects.
+- **Shared workspace packages:** console + marketing share `@repo/{ui,brand,plan-catalog,assets,email}`
+  — see **Shared web packages** above for the full list + the consuming rules (`transpilePackages` +
+  `@source`). The marketing site pulls UI, brand/logo/metadata, plan catalog, the synced static assets,
+  and the email infra from those packages — no console-vs-marketing duplication.
+- **Shared static assets:** `@repo/assets/static` is the single source for the provider-icon PNGs +
+  brand SVGs. `scripts/sync-public-assets.mjs` copies them into each app's `public/` at `dev`/`build`
+  (runs in local/Docker/Vercel via the app `build` script); the synced paths are **gitignored**.
+- **Env:** `NEXT_PUBLIC_LEGAL_URL` (console legal links → marketing, default `https://alethialabs.io`),
+  `NEXT_PUBLIC_SITE_URL` (marketing robots/sitemap origin), `STRIPE_SECRET_KEY` / `STRIPE_PRICE_TEAM`
+  (live pricing label, falls back to the static catalog). All in `.env.example`.
+- **Dev**: `turbo dev --filter=marketing` (port 3010); use the microfrontends local proxy to
+  serve console + marketing under one origin.
 
 ---
 
@@ -231,9 +330,19 @@ Cloud account bootstrap scripts:
 
 ## CI/CD (`.github/workflows/`)
 
-- **`deploy-node.yml`** — Manual hotfix: build Node Docker image → push to ECR + GHCR → deploy to ECS
-- **`release-node.yml`** — Release-please driven: tag, build, publish Node binary releases
-- **`release-cli.yml`** — GoReleaser: build alethia CLI binaries, publish Homebrew tap
+- **`ci.yml`** — PR + push gate. `check-types` / `lint` / `test` run via **turbo fan-out** across
+  every workspace project that defines the script (console, marketing, docs, blog, `@alethia/ee`,
+  `@repo/{ui,brand,plan-catalog,email}`) — no hardcoded app list — plus a build smoke for console ·
+  marketing · docs, the Go matrix (cli/runner/core), authz/open-core guards, and gitleaks.
+  (`@repo/assets` is a file bundle with no scripts, so it's intentionally not type-checked/linted.)
+- **`deploy-console.yml`** — Push-to-main (path-filtered) + manual: build the self-host images
+  (console, console-migrate, docs, blog, **marketing**, runner + per-cloud runners) → push to GHCR →
+  SSH `compose pull && up -d` (base + `deploy/prod/docker-compose.prod.yml`).
+- **`release-please.yml`** → **`release-cli.yml`** (GoReleaser: CLI binaries + Homebrew tap) and
+  **`release-runner.yml`** (runner image → ECR + GHCR → ECS roll). Versioned components: CLI + runner.
+- **Marketing (hosted)** deploys via **Vercel's native Git integration** (console = default zone,
+  marketing = child zone); `ci.yml` is the merge gate. The `marketing` GHCR image above is the
+  separate opt-in self-host path.
 
 ---
 
@@ -243,6 +352,7 @@ Cloud account bootstrap scripts:
 - Never use `as` type casts (`as any`, `as string`, etc.). Use generated types from `database.schemas.ts`.
 - Use `react-hook-form` for all form handling. Never use raw `useState` for form state.
 - Use `zod` schema validation for all user inputs. No manual string matching.
-- Use Tailwind CSS with shadcn/ui components. Vercel-like aesthetic: minimalist, monochrome, no excessive gradients.
+- Use Tailwind CSS with the shared shadcn/ui design system in **`@repo/ui`** — import `@repo/ui/button` (not `@/components/ui/button`, which no longer exists). Vercel-like aesthetic: minimalist, monochrome, no excessive gradients.
+- Shared code used by more than one app lives in `packages/@repo/*` — **promote, don't duplicate** across `apps/console` ↔ `apps/marketing` (see *Shared web packages*).
 - Feature planning goes in `dataroom/spec/features/` (the private `alethialabs-io/dataroom` repo) with checkable task lists.
 - Never start coding without a plan and explicit approval.
