@@ -7,6 +7,10 @@ import {
 	ConfirmationCodeEmail,
 	subject as confirmationSubject,
 } from "@/emails/confirmation-code";
+import {
+	NoAccountEmail,
+	subject as noAccountSubject,
+} from "@/emails/no-account";
 
 /**
  * Sends the 6-digit sign-in code from the auth/security stream
@@ -24,5 +28,22 @@ export async function sendSignInCodeEmail(
 		subject: confirmationSubject,
 		react: ConfirmationCodeEmail({ code, expiryMinutes }),
 		devLog: `sign-in code: ${code}`,
+	});
+}
+
+/**
+ * Sent when a sign-in code is requested for an address with no account — instead
+ * of silently creating one, we point the person to sign up. Auth/security stream.
+ */
+export async function sendNoAccountEmail(
+	to: string,
+	signupUrl: string,
+): Promise<void> {
+	await sendEmail({
+		from: getEmailConfig().from.auth,
+		to,
+		subject: noAccountSubject,
+		react: NoAccountEmail({ email: to, signupUrl }),
+		devLog: `no account for ${to}`,
 	});
 }
