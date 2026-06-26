@@ -9,7 +9,7 @@ import {
 	CommandInput,
 	CommandItem,
 	CommandList,
-} from "@/components/ui/command";
+} from "@repo/ui/command";
 import {
 	PROVIDERS,
 	getProvider,

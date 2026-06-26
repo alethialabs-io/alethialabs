@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { getZones } from "@/app/server/actions/zones";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import { Box, Plus } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";

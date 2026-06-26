@@ -10,8 +10,8 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { getPlanHistory, type PlanHistoryEntry } from "@/app/server/actions/billing";
 import { SettingsSection } from "@/components/settings/settings-ui";
-import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { Skeleton } from "@repo/ui/skeleton";
+import { cn } from "@repo/ui/utils";
 
 /** "1 Mar 2026" — compact, locale-stable date for the timeline. */
 function formatDate(iso: string): string {

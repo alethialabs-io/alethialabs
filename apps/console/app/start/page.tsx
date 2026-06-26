@@ -25,7 +25,7 @@ export default async function StartPage({ searchParams }: StartPageProps) {
 	const userId = await getOwner();
 	if (!userId) {
 		redirect(
-			`/auth/signin?next=${encodeURIComponent("/start?plan=team&trial=1")}`,
+			`/login?next=${encodeURIComponent("/start?plan=team&trial=1")}`,
 		);
 	}
 

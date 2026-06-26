@@ -36,12 +36,12 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 	AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+} from "@repo/ui/alert-dialog";
+import { Button } from "@repo/ui/button";
+import { Skeleton } from "@repo/ui/skeleton";
 import { authClient } from "@/lib/auth/client";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 
 const REGIONS = [
 	"eu-west-1 · Frankfurt",

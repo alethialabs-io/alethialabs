@@ -4,9 +4,9 @@
 
 
 import { useProviderMeta, useProviderSlug, DB_CAPACITY } from "@/lib/cloud-providers";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
+import { Badge } from "@repo/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@repo/ui/card";
+import { Separator } from "@repo/ui/separator";
 import {
 	Bell,
 	Cloud,

@@ -12,10 +12,10 @@ import {
 	AlertDialogFooter,
 	AlertDialogHeader,
 	AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { StatusBadge } from "@/components/ui/status-badge";
+} from "@repo/ui/alert-dialog";
+import { Badge } from "@repo/ui/badge";
+import { Button } from "@repo/ui/button";
+import { StatusBadge } from "@repo/ui/status-badge";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { ReleaseNotesPopover } from "@/components/runners/release-notes-popover";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
@@ -32,7 +32,7 @@ import {
 	TooltipContent,
 	TooltipProvider,
 	TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@repo/ui/tooltip";
 import type { RunnerMetadata } from "@/types/database-custom.types";
 import { ArrowUpCircle, Cloud, Loader2, Server, Star } from "lucide-react";
 import Link from "next/link";

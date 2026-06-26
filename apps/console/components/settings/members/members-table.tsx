@@ -30,24 +30,24 @@ import {
 	StatCell,
 	StatStrip,
 } from "@/components/settings/settings-ui";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@repo/ui/dropdown-menu";
 import {
 	Select,
 	SelectContent,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
+} from "@repo/ui/select";
+import { Skeleton } from "@repo/ui/skeleton";
 import { authClient } from "@/lib/auth/client";
 import { toOrgRole } from "@/lib/authz/org-access-control";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 
 const ROLE_OPTIONS = ["admin", "operator", "viewer"] as const;
 type Tab = "all" | "active" | "pending" | "suspended";

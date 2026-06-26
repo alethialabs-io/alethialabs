@@ -4,14 +4,14 @@
 
 import Link from "next/link";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Sheet,
 	SheetContent,
 	SheetDescription,
 	SheetHeader,
 	SheetTitle,
-} from "@/components/ui/sheet";
+} from "@repo/ui/sheet";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { ADDABLE_KINDS, NODE_REGISTRY } from "./graph/node-registry";
 import type { NodeKind } from "./graph/types";

@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
+import { Badge } from "@repo/ui/badge";
+import { Button } from "@repo/ui/button";
+import { Separator } from "@repo/ui/separator";
 import type { CloudProviderMeta } from "@/lib/cloud-providers";
 import { Check, Copy } from "lucide-react";
 import { useState } from "react";

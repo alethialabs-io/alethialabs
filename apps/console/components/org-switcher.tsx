@@ -6,8 +6,8 @@ import { Building2, Check, ChevronsUpDown, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@repo/ui/badge";
+import { Button } from "@repo/ui/button";
 import {
 	Command,
 	CommandEmpty,
@@ -15,14 +15,14 @@ import {
 	CommandInput,
 	CommandItem,
 	CommandList,
-} from "@/components/ui/command";
+} from "@repo/ui/command";
 import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
-} from "@/components/ui/popover";
-import { Separator } from "@/components/ui/separator";
-import { planMeta } from "@/lib/billing/plan-catalog";
+} from "@repo/ui/popover";
+import { Separator } from "@repo/ui/separator";
+import { planMeta } from "@repo/plan-catalog";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 
 /**

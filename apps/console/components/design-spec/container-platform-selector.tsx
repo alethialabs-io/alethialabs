@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@repo/ui/badge";
 import { CheckCircle2, Cpu, Settings, Zap } from "lucide-react";
 
 interface ContainerPlatformSelectorProps {

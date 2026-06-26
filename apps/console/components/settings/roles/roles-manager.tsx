@@ -34,11 +34,11 @@ import {
 	AlertDialogFooter,
 	AlertDialogHeader,
 	AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+} from "@repo/ui/alert-dialog";
+import { Button } from "@repo/ui/button";
+import { Skeleton } from "@repo/ui/skeleton";
 import { BUILT_IN_ROLES, type BuiltInRole, PERMISSIONS } from "@/lib/authz/registry";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 import { PermissionMatrix } from "./permission-matrix";
 
 const ROLE_META: Record<BuiltInRole, string> = {

@@ -5,16 +5,16 @@
 
 import { DataTable } from "@/components/data-table";
 import { jobColumns, JOB_TYPES } from "@/components/jobs/columns";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "@repo/ui/skeleton";
 import {
 	useJobsStore,
 	type PublicProvisionJobStatus,
 	type PublicProvisionJobType,
 } from "@/lib/stores/use-jobs-store";
 import type { JobWithMeta } from "@/app/server/actions/jobs";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { Button } from "@repo/ui/button";
+import { Input } from "@repo/ui/input";
+import { TooltipProvider } from "@repo/ui/tooltip";
 import { ClipboardList, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo } from "react";

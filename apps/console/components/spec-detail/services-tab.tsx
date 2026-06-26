@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { StatusBadge } from "@/components/ui/status-badge";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { StatusBadge } from "@repo/ui/status-badge";
+import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 import type { CloudProviderMeta } from "@/lib/cloud-providers";
 import { Layers } from "lucide-react";
 import { ServicePopover } from "./service-popover";

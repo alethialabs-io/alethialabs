@@ -4,22 +4,22 @@
 
 
 import { useRunnersStore } from "@/lib/stores/use-runners-store";
-import { Button } from "@/components/ui/button";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { Button } from "@repo/ui/button";
+import { StatusBadge } from "@repo/ui/status-badge";
 import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@repo/ui/popover";
 import {
 	Tooltip,
 	TooltipContent,
 	TooltipProvider,
 	TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@repo/ui/tooltip";
 import { AlertTriangle, Check, Loader2, Server } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 
 interface RunnerSelectPopoverProps {
 	trigger: React.ReactNode;

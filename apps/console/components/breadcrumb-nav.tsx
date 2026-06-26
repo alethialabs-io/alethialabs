@@ -10,7 +10,7 @@ import {
 	BreadcrumbList,
 	BreadcrumbPage,
 	BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
+} from "@repo/ui/breadcrumb";
 import Link from "next/link";
 import { Fragment } from "react";
 

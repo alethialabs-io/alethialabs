@@ -2,14 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { CopyButton } from "@/components/landing/copy-button";
-import { Button } from "@/components/ui/button";
+import { CopyButton } from "@repo/ui/copy-button";
+import { Button } from "@repo/ui/button";
 import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
-} from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
+} from "@repo/ui/popover";
+import { cn } from "@repo/ui/utils";
 import { ArrowUpRight, SquareTerminal } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";

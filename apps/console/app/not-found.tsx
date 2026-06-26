@@ -4,7 +4,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ErrorState } from "@/components/errors/error-state";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 
 export const metadata: Metadata = { title: "Not found" };
 
@@ -22,7 +22,7 @@ export default function NotFound() {
 						<Link href="/">Go home</Link>
 					</Button>
 					<Button asChild size="sm" variant="outline">
-						<Link href="/auth/signin">Sign in</Link>
+						<Link href="/login">Sign in</Link>
 					</Button>
 				</>
 			}

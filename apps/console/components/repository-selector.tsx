@@ -4,7 +4,7 @@
 
 
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Command,
 	CommandEmpty,
@@ -12,22 +12,22 @@ import {
 	CommandInput,
 	CommandItem,
 	CommandList,
-} from "@/components/ui/command";
-import { Input } from "@/components/ui/input";
+} from "@repo/ui/command";
+import { Input } from "@repo/ui/input";
 import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@repo/ui/popover";
 import {
 	Select,
 	SelectContent,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@/components/ui/select";
+} from "@repo/ui/select";
 import { authClient } from "@/lib/auth/client";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 
 import { fetchRepositoriesByProvider } from "@/app/server/actions/git/repositories";

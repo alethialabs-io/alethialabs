@@ -4,6 +4,7 @@
 import { redirect } from "next/navigation";
 import { getActiveOrgSlug } from "@/app/server/actions/resolve";
 import { getOwner } from "@/lib/auth/owner";
+import { isOnboardingComplete } from "@/lib/auth/onboarding";
 
 /**
  * Legacy `/dashboard/*` catch-all → canonicalizes to the org-scoped tree. After C2c
@@ -20,7 +21,11 @@ export default async function DashboardLegacyRedirect({
 	// The middleware guard is optimistic (cookie presence only), so a stale/expired
 	// cookie can reach here without a valid session — getActiveOrgSlug() would then throw
 	// Unauthorized and 500. Send those to sign-in instead.
-	if (!(await getOwner())) redirect("/auth/signin");
+	const userId = await getOwner();
+	if (!userId) redirect("/login");
+	// Brand-new signups land here post-auth; route them through the /onboarding
+	// flow until they finish it (pre-existing users are backfilled → skip).
+	if (!(await isOnboardingComplete(userId))) redirect("/onboarding");
 	const org = await getActiveOrgSlug();
 	const sub = (rest ?? []).join("/");
 	redirect(sub ? `/${org}/~/${sub}` : `/${org}`);

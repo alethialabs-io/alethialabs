@@ -28,17 +28,17 @@ import {
 	AlertDialogFooter,
 	AlertDialogHeader,
 	AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
+} from "@repo/ui/alert-dialog";
+import { Button } from "@repo/ui/button";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Skeleton } from "@/components/ui/skeleton";
+} from "@repo/ui/dropdown-menu";
+import { Skeleton } from "@repo/ui/skeleton";
 import { authClient } from "@/lib/auth/client";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 import { ManageTeamDialog } from "./manage-team-dialog";
 
 function monogram(name: string): string {

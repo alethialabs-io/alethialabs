@@ -16,15 +16,15 @@ import { usePlan } from "@/components/plan/use-plan";
 import { SpecDetailTabs } from "@/components/spec-detail/spec-detail-tabs";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@repo/ui/button";
+import { Skeleton } from "@repo/ui/skeleton";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@repo/ui/dropdown-menu";
 import {
 	ArrowRightLeft,
 	Copy,
@@ -34,8 +34,8 @@ import {
 	Rocket,
 	Trash2,
 } from "lucide-react";
-import { ProviderIcon } from "@/components/provider-icon";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { ProviderIcon } from "@repo/ui/provider-icon";
+import { StatusBadge } from "@repo/ui/status-badge";
 
 import { toast } from "sonner";
 

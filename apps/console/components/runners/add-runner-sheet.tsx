@@ -14,8 +14,8 @@ import {
 	useCloudProvider,
 	groupRegions,
 } from "@/lib/cloud-providers";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Button } from "@repo/ui/button";
+import { Input } from "@repo/ui/input";
 import {
 	Select,
 	SelectContent,
@@ -24,22 +24,22 @@ import {
 	SelectLabel,
 	SelectTrigger,
 	SelectValue,
-} from "@/components/ui/select";
+} from "@repo/ui/select";
 import {
 	FormControl,
 	FormField,
 	FormItem,
 	FormMessage,
-} from "@/components/ui/form";
-import { Label } from "@/components/ui/label";
+} from "@repo/ui/form";
+import { Label } from "@repo/ui/label";
 import {
 	Sheet,
 	SheetContent,
 	SheetDescription,
 	SheetHeader,
 	SheetTitle,
-} from "@/components/ui/sheet";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+} from "@repo/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
 import { CloudIdentitySelector } from "@/components/design-spec/cloud-identity-selector";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
 import {

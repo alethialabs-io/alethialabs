@@ -35,16 +35,16 @@ import {
 	SettingsPageHead,
 	SettingsSection,
 } from "@/components/settings/settings-ui";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Button } from "@repo/ui/button";
+import { Card } from "@repo/ui/card";
 import {
 	Dialog,
 	DialogContent,
 	DialogHeader,
 	DialogTitle,
-} from "@/components/ui/dialog";
-import { Skeleton } from "@/components/ui/skeleton";
-import { planMeta } from "@/lib/billing/plan-catalog";
+} from "@repo/ui/dialog";
+import { Skeleton } from "@repo/ui/skeleton";
+import { planMeta } from "@repo/plan-catalog";
 import type { BillingPlan } from "@/lib/db/schema/enums";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { InvoicesTable } from "./invoices-table";

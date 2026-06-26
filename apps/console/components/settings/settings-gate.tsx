@@ -18,7 +18,7 @@ import {
 	useEntitlement,
 } from "@/components/settings/enterprise-gate";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref } from "@/lib/routing";
 

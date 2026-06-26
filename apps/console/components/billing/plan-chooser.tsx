@@ -19,13 +19,13 @@ import {
 	ShieldCheck,
 	Users,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@repo/ui/badge";
 import {
 	type PlanCatalogEntry,
 	planMeta,
-} from "@/lib/billing/plan-catalog";
+} from "@repo/plan-catalog";
 import type { BillingPlan } from "@/lib/db/schema/enums";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 
 const GROUP_ICON: Record<string, LucideIcon> = {
 	Platform: Boxes,

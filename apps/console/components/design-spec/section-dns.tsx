@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { FormControl, FormField, FormItem } from "@/components/ui/form";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@repo/ui/card";
+import { Input } from "@repo/ui/input";
+import { Label } from "@repo/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@repo/ui/select";
+import { Switch } from "@repo/ui/switch";
+import { FormControl, FormField, FormItem } from "@repo/ui/form";
 import { HelpTooltip } from "./help-tooltip";
 import { useCloudProvider, useProviderMeta, useProviderSlug, WAF_OPTIONS, CERT_OPTIONS } from "@/lib/cloud-providers";
 import { getConnectorProvider } from "@/lib/connectors/registry.generated";

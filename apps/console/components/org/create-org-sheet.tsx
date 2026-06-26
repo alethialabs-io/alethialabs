@@ -23,26 +23,26 @@ import {
 import { setActiveOrganization } from "@/app/server/actions/workspace";
 import { PaymentForm } from "@/components/billing/payment-form";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Button } from "@repo/ui/button";
+import { Input } from "@repo/ui/input";
 import {
 	Select,
 	SelectContent,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@/components/ui/select";
+} from "@repo/ui/select";
 import {
 	Sheet,
 	SheetContent,
 	SheetDescription,
 	SheetTitle,
-} from "@/components/ui/sheet";
+} from "@repo/ui/sheet";
 import { authClient } from "@/lib/auth/client";
-import { planMeta } from "@/lib/billing/plan-catalog";
+import { planMeta } from "@repo/plan-catalog";
 import type { BillingPlan } from "@/lib/db/schema/enums";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 
 const ROLES = ["admin", "operator", "viewer"] as const;
 type Role = (typeof ROLES)[number];

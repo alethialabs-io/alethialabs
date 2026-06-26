@@ -23,9 +23,9 @@ import {
 	SettingsSearch,
 	SettingsSelect,
 } from "@/components/settings/settings-ui";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { Button } from "@repo/ui/button";
+import { Skeleton } from "@repo/ui/skeleton";
+import { cn } from "@repo/ui/utils";
 
 const DAY = 86_400_000;
 

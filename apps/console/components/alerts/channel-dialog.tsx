@@ -12,7 +12,7 @@ import {
 	createChannel,
 	updateChannel,
 } from "@/app/server/actions/alerts";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Dialog,
 	DialogContent,
@@ -20,17 +20,17 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from "@repo/ui/dialog";
+import { Input } from "@repo/ui/input";
+import { Label } from "@repo/ui/label";
 import {
 	Select,
 	SelectContent,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
+} from "@repo/ui/select";
+import { Switch } from "@repo/ui/switch";
 import type { AlertChannelType } from "@/lib/db/schema/enums";
 
 const CHANNEL_TYPES: { value: AlertChannelType; label: string }[] = [

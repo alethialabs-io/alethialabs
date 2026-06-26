@@ -4,9 +4,9 @@
 
 
 import { RepositorySelector } from "@/components/repository-selector";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { FormControl, FormField, FormItem } from "@/components/ui/form";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@repo/ui/card";
+import { Label } from "@repo/ui/label";
+import { FormControl, FormField, FormItem } from "@repo/ui/form";
 import { GitBranch } from "lucide-react";
 import { useFormContext } from "react-hook-form";
 import type { SpecFormData } from "@/lib/validations/spec-form.schema";

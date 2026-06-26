@@ -4,7 +4,7 @@
 
 import { Check, ChevronsUpDown } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Command,
 	CommandEmpty,
@@ -12,13 +12,13 @@ import {
 	CommandInput,
 	CommandItem,
 	CommandList,
-} from "@/components/ui/command";
+} from "@repo/ui/command";
 import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
-} from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
+} from "@repo/ui/popover";
+import { cn } from "@repo/ui/utils";
 
 export interface ComboOption {
 	value: string;

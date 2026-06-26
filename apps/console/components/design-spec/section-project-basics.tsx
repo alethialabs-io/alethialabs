@@ -5,15 +5,15 @@
 
 import {
 	Card, CardContent, CardDescription, CardHeader, CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from "@repo/ui/card";
+import { Input } from "@repo/ui/input";
+import { Label } from "@repo/ui/label";
 import {
 	Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+} from "@repo/ui/select";
 import {
 	FormControl, FormField, FormItem, FormMessage,
-} from "@/components/ui/form";
+} from "@repo/ui/form";
 import { ZoneSelector } from "@/components/zones/zone-selector";
 import { HelpTooltip } from "./help-tooltip";
 import { Box } from "lucide-react";

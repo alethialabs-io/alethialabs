@@ -4,10 +4,10 @@
 
 
 import type { ClusterData } from "@/app/server/actions/clusters";
-import { ProviderIcon } from "@/components/provider-icon";
+import { ProviderIcon } from "@repo/ui/provider-icon";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
-import { Button } from "@/components/ui/button";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { Button } from "@repo/ui/button";
+import { StatusBadge } from "@repo/ui/status-badge";
 import {
 	Check,
 	Copy,

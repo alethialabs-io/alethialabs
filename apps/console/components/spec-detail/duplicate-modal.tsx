@@ -16,7 +16,7 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
-} from "@/components/ui/dialog";
+} from "@repo/ui/dialog";
 import {
 	Select,
 	SelectContent,
@@ -25,8 +25,8 @@ import {
 	SelectLabel,
 	SelectTrigger,
 	SelectValue,
-} from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
+} from "@repo/ui/select";
+import { Button } from "@repo/ui/button";
 
 import {
 	getVerifiedCloudIdentities,

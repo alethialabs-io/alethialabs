@@ -682,3 +682,13 @@ CREATE POLICY connectors_read ON public.connectors FOR SELECT USING (true);
 ALTER TABLE public.runner_releases ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS runner_releases_read ON public.runner_releases;
 CREATE POLICY runner_releases_read ON public.runner_releases FOR SELECT USING (true);
+
+-- One-time backfill for the post-signup /onboarding gate: mark every user that
+-- predates the onboarding flow as already onboarded, so only brand-new signups
+-- (created after the cutoff, onboarding_completed_at = NULL) are routed through
+-- /onboarding. Cutoff-guarded so this is safe to re-run on every migrate and never
+-- touches accounts created after the feature shipped.
+UPDATE public."user"
+   SET onboarding_completed_at = created_at
+ WHERE onboarding_completed_at IS NULL
+   AND created_at < TIMESTAMPTZ '2026-06-25 00:00:00+00';

@@ -4,7 +4,7 @@
 
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 import type { DrillId, NavBadge, NavItem } from "./nav-config";
 
 /** The small uppercase Beta/Soon tag shown on the right of a nav row. */

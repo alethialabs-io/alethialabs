@@ -22,7 +22,7 @@ import {
 } from "@/lib/stores/use-workspace-store";
 import { globalHref } from "@/lib/routing";
 import type { Entitlements } from "@/lib/authz/types";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 
 interface NavItem {
 	label: string;

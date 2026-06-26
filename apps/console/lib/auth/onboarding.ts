@@ -6,10 +6,10 @@
 // user.create.after hook. The org plugin is EE-gated and not loaded at init, so we
 // write organization/member directly; resolveOrgScope reads these tables anyway.
 
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import { getServiceDb } from "@/lib/db";
-import { member, organization } from "@/lib/db/schema";
+import { member, organization, user } from "@/lib/db/schema";
 import { pickFreeSlug, RESERVED_SLUGS, slugify } from "@/lib/routing";
 
 interface NewUser {
@@ -69,4 +69,55 @@ export async function provisionPrimaryOrg(u: NewUser): Promise<void> {
 
 	// Owner grant for the new org (Postgres grant + OpenFGA tuple mirror).
 	await ensureMemberGrant(org.id, u.id, "owner");
+}
+
+/** The user's primary organization (earliest membership) — the org the /onboarding
+ *  flow configures in place. Provisioned at signup by provisionPrimaryOrg. */
+export interface PrimaryOrg {
+	id: string;
+	name: string;
+	slug: string;
+	role: string;
+}
+
+/** Resolves the user's primary org (earliest membership), or null if none. */
+export async function getPrimaryOrg(userId: string): Promise<PrimaryOrg | null> {
+	const [row] = await getServiceDb()
+		.select({
+			id: organization.id,
+			name: organization.name,
+			slug: organization.slug,
+			role: member.role,
+		})
+		.from(organization)
+		.innerJoin(member, eq(member.organizationId, organization.id))
+		.where(eq(member.userId, userId))
+		.orderBy(asc(member.createdAt))
+		.limit(1);
+	if (!row) return null;
+	// slug is non-null in practice (provisionPrimaryOrg always sets one); coerce
+	// the nullable column type for the consumer.
+	return { ...row, slug: row.slug ?? "" };
+}
+
+/**
+ * Whether the user has finished the post-signup /onboarding setup flow. Drives the
+ * post-login gate: a NULL `onboarding_completed_at` (brand-new signup) routes the
+ * user into /onboarding; pre-existing users are backfilled and skip it.
+ */
+export async function isOnboardingComplete(userId: string): Promise<boolean> {
+	const [row] = await getServiceDb()
+		.select({ at: user.onboardingCompletedAt })
+		.from(user)
+		.where(eq(user.id, userId))
+		.limit(1);
+	return Boolean(row?.at);
+}
+
+/** Marks the current user's onboarding as finished (idempotent). */
+export async function completeOnboarding(userId: string): Promise<void> {
+	await getServiceDb()
+		.update(user)
+		.set({ onboardingCompletedAt: new Date() })
+		.where(eq(user.id, userId));
 }

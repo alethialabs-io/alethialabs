@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Heading, Link, Section, Text } from "@react-email/components";
-import { EmailLayout } from "./components/layout";
-import { footerLegalLink } from "./components/footer";
-import { colors, fonts, radii, text } from "./components/theme";
+import { EmailLayout } from "@repo/email/components/layout";
+import { footerLegalLink } from "@repo/email/components/footer";
+import { colors, fonts, radii, text } from "@repo/email/components/theme";
 
 export const subject = "Your Alethia verification code";
 

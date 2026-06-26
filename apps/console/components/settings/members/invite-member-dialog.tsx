@@ -8,7 +8,7 @@ import { type ReactNode, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Dialog,
 	DialogContent,
@@ -17,17 +17,17 @@ import {
 	DialogHeader,
 	DialogTitle,
 	DialogTrigger,
-} from "@/components/ui/dialog";
-import { FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from "@repo/ui/dialog";
+import { FormControl, FormField, FormItem, FormMessage } from "@repo/ui/form";
+import { Input } from "@repo/ui/input";
+import { Label } from "@repo/ui/label";
 import {
 	Select,
 	SelectContent,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@/components/ui/select";
+} from "@repo/ui/select";
 import { authClient } from "@/lib/auth/client";
 
 // Inviteable roles (owner is the org creator — assigned via ownership transfer, not invite).

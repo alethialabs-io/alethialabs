@@ -7,8 +7,8 @@
 // boundary supplies its own links / reset() buttons.
 
 import type { ReactNode } from "react";
-import { AlethiaLogo } from "@/components/alethia-logo";
-import { cn } from "@/lib/utils";
+import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { cn } from "@repo/ui/utils";
 
 interface ErrorStateProps {
 	/** Big mono status line above the title, e.g. "404" or "500". */

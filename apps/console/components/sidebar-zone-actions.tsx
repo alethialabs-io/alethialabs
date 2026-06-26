@@ -13,7 +13,7 @@ import {
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@repo/ui/dropdown-menu";
 import {
 	Dialog,
 	DialogContent,
@@ -21,7 +21,7 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
-} from "@/components/ui/dialog";
+} from "@repo/ui/dialog";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -31,9 +31,9 @@ import {
 	AlertDialogFooter,
 	AlertDialogHeader,
 	AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+} from "@repo/ui/alert-dialog";
+import { Button } from "@repo/ui/button";
+import { Input } from "@repo/ui/input";
 
 import { updateZone, deleteZone } from "@/app/server/actions/zones";
 import { useZonesStore } from "@/lib/stores/use-zones-store";

@@ -9,14 +9,14 @@ import { useJobLogStream } from "@/hooks/use-job-log-stream";
 import type { Job } from "@/lib/db/schema";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { StatusBadge } from "@repo/ui/status-badge";
+import { Button } from "@repo/ui/button";
+import { ScrollArea } from "@repo/ui/scroll-area";
 import {
 	Collapsible,
 	CollapsibleContent,
 	CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+} from "@repo/ui/collapsible";
 import {
 	Ban,
 	CheckCircle2,

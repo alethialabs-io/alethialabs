@@ -7,16 +7,16 @@ import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import type { CredentialScope } from "@/lib/db/schema/enums";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@repo/ui/badge";
+import { Button } from "@repo/ui/button";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { cn } from "@/lib/utils";
+} from "@repo/ui/dropdown-menu";
+import { StatusBadge } from "@repo/ui/status-badge";
+import { cn } from "@repo/ui/utils";
 import { Loader2, Lock, MoreVertical, RefreshCw, Unlink, Users } from "lucide-react";
 
 const AUTH_METHOD_LABELS: Record<string, string> = {

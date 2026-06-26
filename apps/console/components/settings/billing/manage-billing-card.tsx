@@ -11,7 +11,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { createBillingPortalSession } from "@/app/server/actions/billing";
 import { SettingsSection } from "@/components/settings/settings-ui";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 
 export function ManageBillingCard() {
 	const [loading, setLoading] = useState(false);

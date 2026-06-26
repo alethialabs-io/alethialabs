@@ -13,8 +13,8 @@ import { toast } from "sonner";
 import { type InvoiceInfo, listInvoices } from "@/app/server/actions/billing";
 import { DataTable } from "@/components/data-table";
 import { SettingsSection } from "@/components/settings/settings-ui";
-import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { Skeleton } from "@repo/ui/skeleton";
+import { cn } from "@repo/ui/utils";
 
 /** Maps a Stripe invoice status to the color-free badge variant + label. */
 function invoiceStatus(status: string): { variant: string; label: string } {

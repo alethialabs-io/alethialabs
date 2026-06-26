@@ -10,9 +10,9 @@ import {
 	Section,
 	Text,
 } from "@react-email/components";
-import { EmailLayout } from "./components/layout";
-import { footerLegalLink } from "./components/footer";
-import { colors, fonts, primaryButton, radii, text } from "./components/theme";
+import { EmailLayout } from "@repo/email/components/layout";
+import { footerLegalLink } from "@repo/email/components/footer";
+import { colors, fonts, primaryButton, radii, text } from "@repo/email/components/theme";
 
 export const subject = (inviterName: string) =>
 	`${inviterName} invited you to a workspace on Alethia`;

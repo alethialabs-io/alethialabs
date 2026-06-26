@@ -5,7 +5,7 @@
 
 import { createZone, getZones } from "@/app/server/actions/zones";
 import type { Zone } from "@/lib/db/schema";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Command,
 	CommandEmpty,
@@ -13,13 +13,13 @@ import {
 	CommandInput,
 	CommandItem,
 	CommandList,
-} from "@/components/ui/command";
+} from "@repo/ui/command";
 import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
-} from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
+} from "@repo/ui/popover";
+import { cn } from "@repo/ui/utils";
 import { Check, ChevronsUpDown, Loader2, Map, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 

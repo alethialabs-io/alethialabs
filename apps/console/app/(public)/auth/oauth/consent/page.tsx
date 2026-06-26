@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 import { Suspense } from "react";
-import { AlethiaLogo } from "@/components/alethia-logo";
+import { AlethiaLogo } from "@repo/brand/alethia-logo";
 import { OAuthConsentForm } from "@/components/forms/oauth-consent-form";
 
 /**

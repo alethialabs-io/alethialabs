@@ -20,6 +20,10 @@ export const user = pgTable("user", {
 	// Provider handle captured at signup (GitHub/GitLab/Bitbucket `username`/`login`;
 	// null for providers without one, e.g. Google). Seeds the auto-created org slug.
 	username: text(),
+	// When the user finished the post-signup /onboarding setup flow. NULL = not yet
+	// onboarded (brand-new signups), which gates the post-login landing into /onboarding.
+	// Pre-existing users are backfilled to created_at in programmables.sql.
+	onboardingCompletedAt: timestamp({ withTimezone: true }),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });

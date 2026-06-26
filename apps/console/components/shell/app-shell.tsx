@@ -8,7 +8,7 @@
 
 import type React from "react";
 import { Suspense, useEffect, useState } from "react";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@repo/ui/sheet";
 import { authClient } from "@/lib/auth/client";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";

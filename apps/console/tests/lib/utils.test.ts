@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, expect, it } from "vitest";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 
 describe("cn utility", () => {
 	it("merges class names", () => {

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { getAuthConfig } from "@/lib/config/auth";
-import { getEmailConfig } from "@/lib/config/email";
-import { sendEmail } from "@/lib/email/send";
+import { getEmailConfig } from "@repo/email/config";
+import { sendEmail } from "@repo/email/send";
 import {
 	InviteEmail,
 	subject as inviteSubject,

@@ -3,13 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { FormControl, FormField, FormItem } from "@/components/ui/form";
+import { Button } from "@repo/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@repo/ui/card";
+import { Input } from "@repo/ui/input";
+import { Label } from "@repo/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@repo/ui/select";
+import { Switch } from "@repo/ui/switch";
+import { FormControl, FormField, FormItem } from "@repo/ui/form";
 import { HelpTooltip } from "./help-tooltip";
 import { useProviderSlug, CACHE_NODE_TYPES, DEFAULT_CACHE_NODE } from "@/lib/cloud-providers";
 import { Cpu, Plus, Trash2 } from "lucide-react";

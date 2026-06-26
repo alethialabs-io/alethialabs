@@ -24,7 +24,7 @@ import { ArtifactPanel } from "@/components/agent/artifact-panel";
 import { ChatTopBar } from "@/components/agent/chat-top-bar";
 import { ThreadRail } from "@/components/agent/thread-rail";
 import { useAgentChat } from "@/components/agent/use-agent-chat";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import { operationProposalSchema } from "@/lib/ai/operation";
 import type { AgentMode } from "@/lib/ai/tools";
 import { AI_MODELS } from "@/lib/config/ai";

@@ -4,7 +4,7 @@
 
 
 import { ClusterCard } from "@/components/clusters/cluster-card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "@repo/ui/skeleton";
 import { useClustersStore } from "@/lib/stores/use-clusters-store";
 import { Server } from "lucide-react";
 import Link from "next/link";

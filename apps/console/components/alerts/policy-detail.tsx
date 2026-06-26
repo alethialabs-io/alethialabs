@@ -41,24 +41,24 @@ import {
 } from "@/lib/alerts/catalog";
 import type { AlertSeverity } from "@/lib/db/schema/enums";
 import type { PolicyInput } from "@/lib/validations/alerts";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@repo/ui/badge";
+import { Button } from "@repo/ui/button";
 import {
 	Collapsible,
 	CollapsibleContent,
 	CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { Input } from "@/components/ui/input";
+} from "@repo/ui/collapsible";
+import { Input } from "@repo/ui/input";
 import {
 	Select,
 	SelectContent,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
+} from "@repo/ui/select";
+import { Switch } from "@repo/ui/switch";
+import { Textarea } from "@repo/ui/textarea";
+import { cn } from "@repo/ui/utils";
 
 const CAT_ICON: Record<CategoryIcon, LucideIcon> = {
 	Boxes,

@@ -8,7 +8,7 @@
 
 import { useEffect } from "react";
 import { ErrorState } from "@/components/errors/error-state";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 
 export default function OrgError({
 	error,

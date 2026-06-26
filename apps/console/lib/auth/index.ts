@@ -120,9 +120,9 @@ const plugins: BetterAuthOptions["plugins"] = [
 	// access token that the /api/mcp route resolves into a PDP-scoped actor. No new
 	// authority — the token's user drives getActiveScope() like any other caller.
 	mcp({
-		loginPage: "/auth/signin",
+		loginPage: "/login",
 		oidcConfig: {
-			loginPage: "/auth/signin",
+			loginPage: "/login",
 			// Shown when a client requests prompt=consent (e.g. a re-auth/scope grant);
 			// clients that omit it are issued a code directly (documented MVP posture).
 			consentPage: "/auth/oauth/consent",
@@ -175,6 +175,8 @@ export const auth = betterAuth({
 	user: {
 		additionalFields: {
 			username: { type: "string", required: false, input: false },
+			// Server-managed (input:false) — set when the user finishes /onboarding.
+			onboardingCompletedAt: { type: "date", required: false, input: false },
 		},
 	},
 	account: {

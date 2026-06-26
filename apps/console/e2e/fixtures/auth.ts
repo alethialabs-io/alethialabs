@@ -13,7 +13,7 @@ async function login(page: Page) {
 		);
 	}
 
-	await page.goto("/auth/signin");
+	await page.goto("/login");
 	await page.getByPlaceholder(/email/i).fill(email);
 	await page.getByPlaceholder(/password/i).fill(password);
 	await page.getByRole("button", { name: /sign in/i }).click();

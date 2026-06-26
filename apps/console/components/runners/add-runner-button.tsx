@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import { AddRunnerSheet } from "@/components/runners/add-runner-sheet";
 import { Plus } from "lucide-react";
 import { useState } from "react";

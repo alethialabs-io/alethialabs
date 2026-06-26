@@ -11,9 +11,9 @@ import {
 	TableHead,
 	TableHeader,
 	TableRow,
-} from "@/components/ui/table";
+} from "@repo/ui/table";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 import { AgentToolCard } from "./agent-chat";
 
 /** Tool result types this module renders specially (tables / chips). */

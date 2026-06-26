@@ -14,8 +14,8 @@ import {
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+} from "@repo/ui/select";
+import { cn } from "@repo/ui/utils";
 
 /** Page header — mono eyebrow + Geist title + description, with an optional action. */
 export function SettingsPageHead({

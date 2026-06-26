@@ -14,8 +14,8 @@ import {
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
 import { convertSpecConfig, type ConversionWarning } from "@/lib/cloud-providers/convert";
-import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Button } from "@repo/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@repo/ui/collapsible";
 import { useSpecStore } from "@/lib/stores/use-spec-store";
 import { ProviderRibbon } from "./provider-ribbon";
 import { CostSidebar } from "./cost-sidebar";
@@ -35,7 +35,7 @@ import { useEffect, useRef, useState } from "react";
 import { useFormContext } from "react-hook-form";
 import { toast } from "sonner";
 import { AlertTriangle, CheckCircle2, ChevronsUpDown, Info, Loader2, Rocket } from "lucide-react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription } from "@repo/ui/alert";
 
 export interface SourceSpecData {
 	formData: SpecFormData;

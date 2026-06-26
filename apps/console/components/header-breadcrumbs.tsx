@@ -10,7 +10,7 @@ import {
 	BreadcrumbList,
 	BreadcrumbPage,
 	BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
+} from "@repo/ui/breadcrumb";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { useZonesStore } from "@/lib/stores/use-zones-store";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";

@@ -25,15 +25,15 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@repo/ui/button";
+import { ScrollArea } from "@repo/ui/scroll-area";
 import {
 	Select,
 	SelectContent,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@/components/ui/select";
+} from "@repo/ui/select";
 import {
 	Table,
 	TableBody,
@@ -41,8 +41,8 @@ import {
 	TableHead,
 	TableHeader,
 	TableRow,
-} from "@/components/ui/table";
-import { cn } from "@/lib/utils";
+} from "@repo/ui/table";
+import { cn } from "@repo/ui/utils";
 
 interface DataTableProps<TData extends { id?: string }, TValue> {
 	columns: ColumnDef<TData, TValue>[];

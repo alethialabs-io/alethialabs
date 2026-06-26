@@ -7,9 +7,9 @@ import { type ReactNode, useEffect, useState } from "react";
 import { getRegionPrices } from "@/app/server/actions/pricing";
 import { getPlanResult } from "@/app/server/actions/jobs";
 import { getSpec } from "@/app/server/actions/specs";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@repo/ui/badge";
+import { ScrollArea } from "@repo/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
 import { type CostItem, computeCostItems } from "@/lib/cost/compute-cost-items";
 import { type CostSummary, parseCostBreakdown } from "@/lib/plan/parse-cost";
@@ -19,7 +19,7 @@ import {
 	useArtifactStore,
 } from "@/lib/stores/use-artifact-store";
 import { useJobLogStream } from "@/hooks/use-job-log-stream";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 
 type SpecDetail = Awaited<ReturnType<typeof getSpec>>;
 

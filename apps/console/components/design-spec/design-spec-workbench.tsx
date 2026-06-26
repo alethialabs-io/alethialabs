@@ -9,7 +9,7 @@ import { FormProvider, useForm } from "react-hook-form";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 import {
 	specFormSchema,
 	type SpecFormData,

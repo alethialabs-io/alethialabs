@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { saveConnectorCredential } from "@/app/server/actions/connectors";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Form,
 	FormControl,
@@ -12,8 +12,8 @@ import {
 	FormItem,
 	FormLabel,
 	FormMessage,
-} from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
+} from "@repo/ui/form";
+import { Input } from "@repo/ui/input";
 import type { ConnectorProviderMeta } from "@/lib/connectors/registry.generated";
 import { AlertCircle, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { useRouter } from "next/navigation";

@@ -10,7 +10,7 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { ErrorState } from "@/components/errors/error-state";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 
 export default function AppError({
 	error,

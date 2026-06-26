@@ -22,7 +22,7 @@ export default async function OrgLayout({
 	const { org } = await params;
 	// No valid session (e.g. a stale/expired cookie the optimistic middleware let
 	// through) → sign-in, not a dead-end 404.
-	if (!(await getOwner())) redirect("/auth/signin");
+	if (!(await getOwner())) redirect("/login");
 	try {
 		await resolveOrgScope(org);
 	} catch {

@@ -70,7 +70,7 @@ async function main() {
 
 	try {
 		// ── 1. OTP sign-in ────────────────────────────────────────────────────
-		await page.goto(`${BASE}/auth/signin`);
+		await page.goto(`${BASE}/login`);
 		await page.getByRole("button", { name: /Continue with Email/i }).click();
 		await page.getByPlaceholder(/company.com/i).fill(EMAIL);
 		const logOffset = statSync(DEV_LOG).size;

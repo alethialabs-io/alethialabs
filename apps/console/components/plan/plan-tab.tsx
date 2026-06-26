@@ -3,14 +3,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { Button } from "@/components/ui/button";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Separator } from "@/components/ui/separator";
+import { Button } from "@repo/ui/button";
+import { Alert, AlertDescription } from "@repo/ui/alert";
+import { Separator } from "@repo/ui/separator";
 import {
 	Collapsible,
 	CollapsibleContent,
 	CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+} from "@repo/ui/collapsible";
 import { PlanSummaryBar } from "./plan-summary-bar";
 import { ResourceCard } from "./resource-card";
 import { groupByCategory } from "@/lib/plan/parse-plan";

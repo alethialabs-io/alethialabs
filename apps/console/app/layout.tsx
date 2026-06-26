@@ -6,7 +6,7 @@ import "@xyflow/react/dist/style.css";
 import { PublicEnvScript } from "next-runtime-env";
 import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
 import { ThemeProvider } from "next-themes";
-import { Toaster } from "@/components/ui/sonner";
+import { Toaster } from "@repo/ui/sonner";
 import "./globals.css";
 
 const geistSans = Geist({

@@ -14,9 +14,9 @@ import { toast } from "sonner";
 import { getOrgSettings } from "@/app/server/actions/org-settings";
 import { getSsoProviders, type SsoProviderRow } from "@/app/server/actions/sso";
 import { RegisterProviderDialog } from "@/components/settings/sso/register-provider-dialog";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { Button } from "@repo/ui/button";
+import { Skeleton } from "@repo/ui/skeleton";
+import { cn } from "@repo/ui/utils";
 
 function initials(s: string): string {
 	return s.slice(0, 2).toUpperCase();

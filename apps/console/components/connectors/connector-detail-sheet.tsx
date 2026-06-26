@@ -6,17 +6,17 @@
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { Badge } from "@repo/ui/badge";
+import { Button } from "@repo/ui/button";
+import { Separator } from "@repo/ui/separator";
+import { StatusBadge } from "@repo/ui/status-badge";
 import {
 	Sheet,
 	SheetContent,
 	SheetDescription,
 	SheetHeader,
 	SheetTitle,
-} from "@/components/ui/sheet";
+} from "@repo/ui/sheet";
 import {
 	BookOpen,
 	ExternalLink,

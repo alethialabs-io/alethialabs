@@ -5,7 +5,7 @@
 import { Loader2 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 
 /** Human-readable copy for the OAuth scopes Better Auth's mcp() plugin can request. */
 const SCOPE_LABELS: Record<string, string> = {

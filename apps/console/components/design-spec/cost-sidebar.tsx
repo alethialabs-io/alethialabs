@@ -6,8 +6,8 @@
 import { useSpecStore } from "@/lib/stores/use-spec-store";
 import { useProviderMeta } from "@/lib/cloud-providers";
 import { computeCostItems } from "@/lib/cost/compute-cost-items";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@repo/ui/card";
+import { Badge } from "@repo/ui/badge";
 import { DollarSign, Loader2 } from "lucide-react";
 import { useMemo } from "react";
 import { useFormContext } from "react-hook-form";

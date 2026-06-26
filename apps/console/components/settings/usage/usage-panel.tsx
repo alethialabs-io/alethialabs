@@ -28,9 +28,9 @@ import {
 	SettingsPageHead,
 	SettingsSection,
 } from "@/components/settings/settings-ui";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@repo/ui/button";
+import { Card } from "@repo/ui/card";
+import { Skeleton } from "@repo/ui/skeleton";
 
 /** One usage meter cell (key, value, fill %, sub note). */
 function Meter({

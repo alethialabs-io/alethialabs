@@ -10,7 +10,7 @@ import {
 	Collapsible,
 	CollapsibleContent,
 	CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+} from "@repo/ui/collapsible";
 import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 

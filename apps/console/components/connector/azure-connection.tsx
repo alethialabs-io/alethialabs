@@ -3,14 +3,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Card,
 	CardContent,
 	CardDescription,
 	CardHeader,
 	CardTitle,
-} from "@/components/ui/card";
+} from "@repo/ui/card";
 import {
 	Form,
 	FormControl,
@@ -18,8 +18,8 @@ import {
 	FormItem,
 	FormLabel,
 	FormMessage,
-} from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
+} from "@repo/ui/form";
+import { Input } from "@repo/ui/input";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { getJobStatus } from "@/app/server/actions/jobs";
 import { verifyAzureIdentity } from "@/app/(private)/dashboard/providers/azure-actions";

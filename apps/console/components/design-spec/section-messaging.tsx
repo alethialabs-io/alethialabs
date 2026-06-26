@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { FormControl, FormField, FormItem } from "@/components/ui/form";
+import { Button } from "@repo/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@repo/ui/card";
+import { Input } from "@repo/ui/input";
+import { Label } from "@repo/ui/label";
+import { Switch } from "@repo/ui/switch";
+import { FormControl, FormField, FormItem } from "@repo/ui/form";
 import { HelpTooltip } from "./help-tooltip";
 import { MessageSquare, Plus, Trash2 } from "lucide-react";
 import { useFormContext, useFieldArray } from "react-hook-form";

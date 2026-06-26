@@ -10,7 +10,7 @@
 import { useEffect } from "react";
 import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
 import { ErrorState } from "@/components/errors/error-state";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });

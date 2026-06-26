@@ -9,12 +9,12 @@
 // design system: a plan is signalled by an outline Badge label, never colour.
 
 import { Check } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { PAID_PLANS, PLAN_CATALOG } from "@/lib/billing/plan-catalog";
+import { Badge } from "@repo/ui/badge";
+import { Button } from "@repo/ui/button";
+import { Card } from "@repo/ui/card";
+import { PAID_PLANS, PLAN_CATALOG } from "@repo/plan-catalog";
 import type { BillingPlan } from "@/lib/db/schema/enums";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 
 interface PlanPickerProps {
 	/** The org's current plan — that card shows "Current plan" (disabled). */

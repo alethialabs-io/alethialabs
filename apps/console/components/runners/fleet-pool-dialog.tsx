@@ -10,18 +10,18 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
-} from "@/components/ui/dialog";
+} from "@repo/ui/dialog";
 import {
 	Select,
 	SelectContent,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@/components/provider-icon";
+} from "@repo/ui/select";
+import { Button } from "@repo/ui/button";
+import { Input } from "@repo/ui/input";
+import { Label } from "@repo/ui/label";
+import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
 import { cloudProvider, type FleetPool } from "@/lib/db/schema";
 import { useFleetStore } from "@/lib/stores/use-fleet-store";
 import type { FleetPoolCreateInput } from "@/lib/validations/fleet";

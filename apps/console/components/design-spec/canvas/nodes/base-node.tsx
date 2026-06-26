@@ -4,9 +4,9 @@
 
 import { Handle, Position } from "@xyflow/react";
 import type { ReactNode } from "react";
-import { ProviderIcon } from "@/components/provider-icon";
-import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { ProviderIcon } from "@repo/ui/provider-icon";
+import { Badge } from "@repo/ui/badge";
+import { cn } from "@repo/ui/utils";
 import { NODE_REGISTRY } from "../graph/node-registry";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 

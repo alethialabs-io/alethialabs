@@ -20,14 +20,14 @@ import {
 import { ChannelDialog } from "@/components/alerts/channel-dialog";
 import { PolicyDetail } from "@/components/alerts/policy-detail";
 import { isSecurityKey } from "@/lib/alerts/catalog";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@repo/ui/badge";
+import { Button } from "@repo/ui/button";
 import {
 	Collapsible,
 	CollapsibleContent,
-} from "@/components/ui/collapsible";
-import { Input } from "@/components/ui/input";
-import { StatusBadge, type StatusTier } from "@/components/ui/status-badge";
+} from "@repo/ui/collapsible";
+import { Input } from "@repo/ui/input";
+import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import type { AlertDeliveryStatus } from "@/lib/db/schema/enums";
 import {
 	Table,
@@ -36,9 +36,9 @@ import {
 	TableHead,
 	TableHeader,
 	TableRow,
-} from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { cn } from "@/lib/utils";
+} from "@repo/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
+import { cn } from "@repo/ui/utils";
 
 const DELIVERY_TIER: Record<AlertDeliveryStatus, StatusTier> = {
 	sent: "active",

@@ -18,7 +18,7 @@ import {
 } from "@stripe/react-stripe-js";
 import { type FormEvent, useState } from "react";
 import { updateBillingAddress } from "@/app/server/actions/billing";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 
 interface PaymentFormProps {
 	mode: "payment" | "setup";

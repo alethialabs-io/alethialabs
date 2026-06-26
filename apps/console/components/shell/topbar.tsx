@@ -8,7 +8,7 @@ import { DownloadCliButton } from "@/components/download-cli-button";
 import { EnvSwitcher } from "@/components/env-switcher";
 import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
 import { SpecSwitcher } from "@/components/spec-switcher";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import { ZoneSwitcher } from "@/components/zone-switcher";
 import { globalHref } from "@/lib/routing";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";

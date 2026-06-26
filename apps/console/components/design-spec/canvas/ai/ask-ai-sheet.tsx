@@ -6,14 +6,14 @@ import type { ToolUIPart } from "ai";
 import { Check, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { AgentChat } from "@/components/agent/agent-chat";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Sheet,
 	SheetContent,
 	SheetDescription,
 	SheetHeader,
 	SheetTitle,
-} from "@/components/ui/sheet";
+} from "@repo/ui/sheet";
 import { aiProposalSchema } from "@/lib/ai/proposal";
 import { applyProposal } from "./apply-proposal";
 import { useAskAi } from "./use-ask-ai";

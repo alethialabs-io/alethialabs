@@ -3,12 +3,15 @@
 
 import path from "node:path";
 import type { NextConfig } from "next";
+import { withMicrofrontends } from "@vercel/microfrontends/next/config";
 
 const nextConfig: NextConfig = {
 	output: "standalone",
 	// Monorepo: trace workspace files from the repo root so the standalone
 	// bundle is self-contained inside Docker.
 	outputFileTracingRoot: path.join(__dirname, "../../"),
+	// Shared workspace packages ship raw TS/TSX — Next must transpile them.
+	transpilePackages: ["@repo/ui", "@repo/brand", "@repo/plan-catalog", "@repo/email"],
 	// The enterprise package is loaded at runtime via createRequire (lib/enterprise.ts),
 	// never statically bundled — keep it external so a community build (where the
 	// package is absent) doesn't try to resolve it.
@@ -35,4 +38,8 @@ const nextConfig: NextConfig = {
 	},
 };
 
-export default nextConfig;
+// Console is the microfrontends default zone: it owns the residual (incl. the `/{org}`
+// wildcard) and proxies the marketing-owned root paths to the marketing app per
+// microfrontends.json. The existing get.alethialabs.io / DOCS_URL rewrites are preserved
+// above (withMicrofrontends composes with them).
+export default withMicrofrontends(nextConfig);

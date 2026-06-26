@@ -4,13 +4,13 @@
 
 
 import { ContainerPlatformSelector } from "./container-platform-selector";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { FormControl, FormField, FormItem } from "@/components/ui/form";
+import { Badge } from "@repo/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@repo/ui/card";
+import { Input } from "@repo/ui/input";
+import { Label } from "@repo/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@repo/ui/select";
+import { Switch } from "@repo/ui/switch";
+import { FormControl, FormField, FormItem } from "@repo/ui/form";
 import { HelpTooltip } from "./help-tooltip";
 import { useProviderSlug, useProviderMeta, INSTANCE_TYPES, K8S_VERSIONS, AUTOSCALER } from "@/lib/cloud-providers";
 import { useCloudProviderStore } from "@/lib/stores/use-cloud-provider-store";

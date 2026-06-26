@@ -13,13 +13,13 @@ import type { AiUsageSummary } from "@/app/server/actions/ai-billing";
 import { createCreditPackIntent } from "@/app/server/actions/billing";
 import { PaymentForm } from "@/components/billing/payment-form";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Dialog,
 	DialogContent,
 	DialogHeader,
 	DialogTitle,
-} from "@/components/ui/dialog";
+} from "@repo/ui/dialog";
 import type { CreditPack } from "@/lib/billing/ai-credits";
 
 const TIER_LABEL: Record<AiUsageSummary["tier"], string> = {

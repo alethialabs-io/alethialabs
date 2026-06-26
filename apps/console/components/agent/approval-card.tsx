@@ -5,10 +5,10 @@
 import { Check, ShieldCheck, X } from "lucide-react";
 import { useState } from "react";
 import { planSpec, provisionSpec } from "@/app/server/actions/specs";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import type { OperationProposal } from "@/lib/ai/operation";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 
 type Phase = "idle" | "running" | "done" | "rejected" | "denied";
 

@@ -9,13 +9,13 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { createSpec, type CreateSpecInput } from "@/app/server/actions/specs";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Dialog,
 	DialogContent,
 	DialogHeader,
 	DialogTitle,
-} from "@/components/ui/dialog";
+} from "@repo/ui/dialog";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { specFormSchema } from "@/lib/validations/spec-form.schema";
 import { AskAiSheet } from "./ai/ask-ai-sheet";

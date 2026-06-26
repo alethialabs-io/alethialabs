@@ -52,3 +52,14 @@ tfplan
 # React Email
 .react-email/
 .react-email-out/
+
+# Synced from @repo/assets at dev/build (scripts/sync-public-assets.mjs) — do not commit.
+/public/aws/
+/public/gcp/
+/public/azure/
+/public/alibaba/
+/public/civo/
+/public/digitalocean/
+/public/hetzner/
+/public/icons/
+/public/brand/

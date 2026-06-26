@@ -7,14 +7,14 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { getMembers, type MemberRow } from "@/app/server/actions/members";
 import { Combobox } from "@/components/settings/access/combobox";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
 	DialogHeader,
 	DialogTitle,
-} from "@/components/ui/dialog";
+} from "@repo/ui/dialog";
 import { authClient } from "@/lib/auth/client";
 
 /** Add/remove org members on a team (Enterprise). */

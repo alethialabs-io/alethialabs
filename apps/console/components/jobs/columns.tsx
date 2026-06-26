@@ -3,13 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { StatusBadge } from "@/components/ui/status-badge";
+import { StatusBadge } from "@repo/ui/status-badge";
 import {
 	Tooltip,
 	TooltipContent,
 	TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { ProviderIcon } from "@/components/provider-icon";
+} from "@repo/ui/tooltip";
+import { ProviderIcon } from "@repo/ui/provider-icon";
 import type { JobWithMeta } from "@/app/server/actions/jobs";
 import type { ProvisionJobType } from "@/lib/db/schema";
 import type { ColumnDef } from "@tanstack/react-table";

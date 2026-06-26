@@ -7,7 +7,7 @@ import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@repo/ui/popover";
 import { HelpCircle } from "lucide-react";
 
 const HELP_CONTENT: Record<string, { title: string; description: string }> = {

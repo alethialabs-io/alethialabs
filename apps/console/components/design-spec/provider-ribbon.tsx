@@ -10,11 +10,11 @@ import {
 } from "@/app/server/actions/cloud-resources";
 import { getJobStatus } from "@/app/server/actions/jobs";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
-import { FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form";
+} from "@repo/ui/select";
+import { FormControl, FormField, FormItem, FormMessage } from "@repo/ui/form";
 import { useCloudProvider, useProviderSlug, useProviderMeta, REGION_LABELS, groupRegions } from "@/lib/cloud-providers";
 import type { AnyCachedResources } from "@/lib/cloud-providers";
 import { Loader2, RefreshCw } from "lucide-react";

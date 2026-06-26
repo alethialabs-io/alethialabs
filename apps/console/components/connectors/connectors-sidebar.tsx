@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import { cn } from "@/lib/utils";
+import { Button } from "@repo/ui/button";
+import { Separator } from "@repo/ui/separator";
+import { cn } from "@repo/ui/utils";
 import type { ConnectorCategory } from "@/app/server/actions/connectors";
 import { Activity, Blocks, Cloud, Container, GitBranch, Globe, KeyRound } from "lucide-react";
 

@@ -14,8 +14,8 @@ import {
 } from "@/app/server/actions/billing";
 import { DataTable } from "@/components/data-table";
 import { SettingsSection } from "@/components/settings/settings-ui";
-import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { Skeleton } from "@repo/ui/skeleton";
+import { cn } from "@repo/ui/utils";
 
 /** Smallest-unit amount → localized currency (negative renders as −$x). */
 function formatAmount(amount: number, currency: string): string {

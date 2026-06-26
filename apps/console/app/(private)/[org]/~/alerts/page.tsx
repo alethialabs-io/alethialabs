@@ -6,7 +6,7 @@ import {
 	getAlertsBootstrap,
 } from "@/app/server/actions/alerts";
 import { AlertsPage } from "@/components/alerts/alerts-page";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { ForbiddenError } from "@/lib/authz/types";
 
 /** Alerts surface: notification channels, alert rules, and the delivery activity log. */

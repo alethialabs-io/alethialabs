@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { FleetPoolView, PoolEconomics } from "@/app/server/actions/fleet";
-import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@/components/provider-icon";
+import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -13,17 +13,17 @@ import {
 	AlertDialogFooter,
 	AlertDialogHeader,
 	AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Card } from "@/components/ui/card";
+} from "@repo/ui/alert-dialog";
+import { Card } from "@repo/ui/card";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+} from "@repo/ui/dropdown-menu";
+import { Skeleton } from "@repo/ui/skeleton";
+import { cn } from "@repo/ui/utils";
 import { MoreVertical, Pause, Pencil, Play, Trash2 } from "lucide-react";
 import { useState } from "react";
 

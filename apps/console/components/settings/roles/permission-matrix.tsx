@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Switch } from "@/components/ui/switch";
+import { Switch } from "@repo/ui/switch";
 import { PERMISSIONS, RESOURCES, type Resource } from "@/lib/authz/registry";
 
 // "Per service" grouping — each resource type is its own section, so granting is

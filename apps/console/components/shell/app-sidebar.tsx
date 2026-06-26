@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 import { buildDrills, type DrillId, routeOwnedDrill } from "./nav-config";
 import { SidebarDrill } from "./sidebar-drill";
 import { SidebarNav } from "./sidebar-nav";

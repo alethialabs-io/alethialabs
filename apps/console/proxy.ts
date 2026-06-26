@@ -4,8 +4,12 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { type NextRequest, NextResponse } from "next/server";
 
-// Routes that require a session. Auth UI pages live under /auth.
-const PRIVATE_ROUTES = ["/dashboard", "/cli"];
+// Routes that require a session. The post-signup onboarding flow (/onboarding) is
+// gated too so unauthenticated hits bounce to /login instead of erroring server-side.
+const PRIVATE_ROUTES = ["/dashboard", "/cli", "/onboarding"];
+
+// Public auth UI pages — never bounce these (avoids redirect loops on a stale cookie).
+const AUTH_ROUTES = ["/login", "/signup", "/auth"];
 
 /**
  * Optimistic route guard: checks for the Better Auth session cookie (no DB hit)
@@ -14,14 +18,23 @@ const PRIVATE_ROUTES = ["/dashboard", "/cli"];
  */
 export async function proxy(request: NextRequest) {
 	const path = request.nextUrl.pathname;
-	const isAuthRoute = path.startsWith("/auth");
+
+	// Back-compat: the sign-in page moved from /auth/signin to /login. Redirect old
+	// bookmarks / external links, preserving any query (e.g. ?next, MCP authorize).
+	if (path === "/auth/signin") {
+		const url = request.nextUrl.clone();
+		url.pathname = "/login";
+		return NextResponse.redirect(url);
+	}
+
+	const isAuthRoute = AUTH_ROUTES.some((r) => path.startsWith(r));
 	const isPrivateRoute = PRIVATE_ROUTES.some((r) => path.startsWith(r));
 
 	const hasSession = Boolean(getSessionCookie(request));
 
 	if (!hasSession && !isAuthRoute && isPrivateRoute) {
 		const url = request.nextUrl.clone();
-		url.pathname = "/auth/signin";
+		url.pathname = "/login";
 		// Preserve the original path + query (e.g. ?device_code) for post-login redirect.
 		const next = `${request.nextUrl.pathname}${request.nextUrl.search}`;
 		if (next !== "/") url.searchParams.set("next", next);
@@ -30,10 +43,10 @@ export async function proxy(request: NextRequest) {
 
 	// NOTE: we deliberately do NOT bounce `hasSession && isAuthRoute` here. This cookie
 	// check is optimistic (presence only, no DB hit), so a stale/expired cookie would
-	// otherwise trap the user — /auth/signin → /dashboard → the server throws
-	// Unauthorized → 500, with no way back to the sign-in form. The "already logged in →
-	// dashboard" redirect lives in the sign-in page instead, gated on a *validated*
-	// session (getOwner()).
+	// otherwise trap the user — /login → /dashboard → the server throws Unauthorized →
+	// 500, with no way back to the sign-in form. The "already logged in → dashboard"
+	// redirect lives in the /login page instead, gated on a *validated* session
+	// (getOwner()).
 
 	return NextResponse.next();
 }

@@ -5,8 +5,8 @@
 import { Loader2, MailQuestion } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import { AlethiaLogo } from "@/components/alethia-logo";
-import { Button } from "@/components/ui/button";
+import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { Button } from "@repo/ui/button";
 import { authClient } from "@/lib/auth/client";
 
 function AcceptInvite() {
@@ -22,7 +22,7 @@ function AcceptInvite() {
 	useEffect(() => {
 		if (isPending || session?.user || !token) return;
 		const next = `/invites/accept?token=${encodeURIComponent(token)}`;
-		router.replace(`/auth/signin?next=${encodeURIComponent(next)}`);
+		router.replace(`/login?next=${encodeURIComponent(next)}`);
 	}, [isPending, session, token, router]);
 
 	if (!token) {

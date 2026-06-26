@@ -15,9 +15,9 @@ import {
 import { getProvider } from "@/lib/cloud-providers";
 import { DataTable } from "@/components/data-table";
 import { ZoneEstateMap } from "@/components/zones/zone-estate-map";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@repo/ui/badge";
+import { Button } from "@repo/ui/button";
+import { Skeleton } from "@repo/ui/skeleton";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { specHref } from "@/lib/routing";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -25,7 +25,7 @@ import { Box, LayoutList, Map, Plus } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { StatusBadge } from "@repo/ui/status-badge";
 
 /** Spec table columns for the zone detail list view. */
 const specColumns: ColumnDef<SpecWithProvider, unknown>[] = [

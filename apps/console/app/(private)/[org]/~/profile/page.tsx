@@ -3,19 +3,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@repo/ui/avatar";
+import { Badge } from "@repo/ui/badge";
+import { Button } from "@repo/ui/button";
 import {
 	Card,
 	CardContent,
 	CardDescription,
 	CardHeader,
 	CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
+} from "@repo/ui/card";
+import { Input } from "@repo/ui/input";
+import { Label } from "@repo/ui/label";
+import { Skeleton } from "@repo/ui/skeleton";
 import { authClient } from "@/lib/auth/client";
 import { Calendar, Mail, Shield, User } from "lucide-react";
 import { useEffect, useState } from "react";

@@ -4,7 +4,7 @@
 
 import { Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import type { Entitlements } from "@/lib/authz/types";
 

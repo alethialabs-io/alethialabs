@@ -4,14 +4,14 @@
 
 import { Bell, ClipboardList } from "lucide-react";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@repo/ui/popover";
 import { useJobNotifications } from "@/hooks/use-job-notifications";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 
 /**
  * Job notifications bell + popover for the sidebar profile bar. Derives its feed from the

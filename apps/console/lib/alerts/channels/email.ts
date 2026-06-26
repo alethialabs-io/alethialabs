@@ -8,9 +8,9 @@
 
 import type { AlertEventContext } from "@/types/database-custom.types";
 import { AlertEmail } from "@/emails/alert";
-import { getEmailConfig } from "@/lib/config/email";
+import { getEmailConfig } from "@repo/email/config";
 import type { AlertChannel } from "@/lib/db/schema";
-import { sendEmail } from "@/lib/email/send";
+import { sendEmail } from "@repo/email/send";
 import type { ChannelSender } from "./types";
 import { TEST_CONTEXT } from "./types";
 

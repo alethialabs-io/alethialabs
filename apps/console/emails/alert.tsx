@@ -3,8 +3,8 @@
 
 import { Button, Heading, Section, Text } from "@react-email/components";
 import type { AlertEventContext } from "@/types/database-custom.types";
-import { EmailLayout } from "./components/layout";
-import { colors, fonts, primaryButton, radii, text } from "./components/theme";
+import { EmailLayout } from "@repo/email/components/layout";
+import { colors, fonts, primaryButton, radii, text } from "@repo/email/components/theme";
 
 export const subject = "Alethia alert";
 

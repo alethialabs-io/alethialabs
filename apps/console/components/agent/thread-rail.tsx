@@ -4,11 +4,11 @@
 
 import { Plus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@repo/ui/button";
+import { Input } from "@repo/ui/input";
+import { ScrollArea } from "@repo/ui/scroll-area";
 import type { AgentThread } from "@/lib/db/schema";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 
 interface ThreadRailProps {
 	threads: AgentThread[];

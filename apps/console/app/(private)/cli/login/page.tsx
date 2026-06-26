@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { AlethiaLogo } from '@/components/alethia-logo'
+import { AlethiaLogo } from '@repo/brand/alethia-logo'
 import { useSearchParams } from 'next/navigation'
 import { Suspense, useEffect, useState } from 'react'
 import { CheckCircle, Loader2, XCircle } from 'lucide-react'

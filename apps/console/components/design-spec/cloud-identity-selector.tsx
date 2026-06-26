@@ -4,7 +4,7 @@
 
 
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
-import { ProviderIcon } from "@/components/provider-icon";
+import { ProviderIcon } from "@repo/ui/provider-icon";
 import type { CloudProviderSlug } from "@/lib/cloud-providers/registry";
 import { useCloudProviderStore } from "@/lib/stores/use-cloud-provider-store";
 import {
@@ -13,8 +13,8 @@ import {
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
+} from "@repo/ui/select";
+import { Button } from "@repo/ui/button";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef } from "react";

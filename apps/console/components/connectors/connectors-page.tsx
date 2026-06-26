@@ -53,15 +53,15 @@ import {
 	AlertDialogFooter,
 	AlertDialogHeader,
 	AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Input } from "@/components/ui/input";
+} from "@repo/ui/alert-dialog";
+import { Input } from "@repo/ui/input";
 import {
 	Sheet,
 	SheetContent,
 	SheetDescription,
 	SheetHeader,
 	SheetTitle,
-} from "@/components/ui/sheet";
+} from "@repo/ui/sheet";
 import { authClient } from "@/lib/auth/client";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 import { Loader2, Search, Unplug } from "lucide-react";

@@ -8,10 +8,10 @@ import {
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@repo/ui/dropdown-menu";
 import type { AgentMode } from "@/lib/ai/tools";
 import { AI_MODELS } from "@/lib/config/ai";
-import { cn } from "@/lib/utils";
+import { cn } from "@repo/ui/utils";
 
 interface ChatTopBarProps {
 	title: string;

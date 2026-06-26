@@ -4,7 +4,7 @@
 
 import { DollarSign, Loader2 } from "lucide-react";
 import { useEffect, useMemo } from "react";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@repo/ui/badge";
 import { getProvider } from "@/lib/cloud-providers";
 import { computeCostItems } from "@/lib/cost/compute-cost-items";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";

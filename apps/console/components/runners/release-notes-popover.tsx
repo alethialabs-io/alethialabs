@@ -7,12 +7,12 @@ import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
-} from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { Skeleton } from "@/components/ui/skeleton";
+} from "@repo/ui/popover";
+import { ScrollArea } from "@repo/ui/scroll-area";
+import { Button } from "@repo/ui/button";
+import { Badge } from "@repo/ui/badge";
+import { StatusBadge } from "@repo/ui/status-badge";
+import { Skeleton } from "@repo/ui/skeleton";
 import { useRunnersStore, type RunnerReleaseInfo } from "@/lib/stores/use-runners-store";
 import { formatDistanceToNow } from "date-fns";
 import { ArrowUpCircle, ExternalLink, Loader2 } from "lucide-react";

@@ -5,7 +5,7 @@
 import { Check, ChevronDown, ChevronsUpDown, Component, Plus } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Command,
 	CommandEmpty,
@@ -13,13 +13,13 @@ import {
 	CommandInput,
 	CommandItem,
 	CommandList,
-} from "@/components/ui/command";
+} from "@repo/ui/command";
 import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
-} from "@/components/ui/popover";
-import { Separator } from "@/components/ui/separator";
+} from "@repo/ui/popover";
+import { Separator } from "@repo/ui/separator";
 import { useZonesStore } from "@/lib/stores/use-zones-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref, specHref } from "@/lib/routing";

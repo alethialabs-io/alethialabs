@@ -14,7 +14,7 @@ import {
 } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
-import { Button } from "@/components/ui/button";
+import { Button } from "@repo/ui/button";
 import {
 	Dialog,
 	DialogContent,
@@ -23,12 +23,12 @@ import {
 	DialogHeader,
 	DialogTitle,
 	DialogTrigger,
-} from "@/components/ui/dialog";
-import { FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
+} from "@repo/ui/dialog";
+import { FormControl, FormField, FormItem, FormMessage } from "@repo/ui/form";
+import { Input } from "@repo/ui/input";
+import { Label } from "@repo/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
+import { Textarea } from "@repo/ui/textarea";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 
 const oidcSchema = z.object({
