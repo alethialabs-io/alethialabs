@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Menu } from "lucide-react";
 import { Button } from "@repo/ui/button";
@@ -146,10 +146,53 @@ function GitHubLink({ stars }: { stars?: number | null }) {
 
 const NAV_LINK_STYLE: React.CSSProperties = { padding: "7px 12px", fontSize: 13.5, color: "var(--text-tertiary)", borderRadius: "var(--radius-sm)", textDecoration: "none" };
 
+type BillingPlan = "community" | "team" | "enterprise";
+
+interface NavContext {
+	status: "anon" | "authed";
+	plan?: BillingPlan;
+	/** Console path to the active org (`/{slug}`). */
+	dashboardPath?: string;
+	/** Console path to the active org's billing settings (the upgrade surface). */
+	upgradePath?: string;
+}
+
+/**
+ * Reads the viewer's auth + plan state from the console's `/api/nav-context`. The
+ * marketing zone shares the prod origin with the console, so this same-origin fetch
+ * carries the Better Auth cookie. Defaults to `anon` (the always-redirected landing
+ * page is the common case) and only flips to `authed` once the probe resolves — so
+ * signed-out visitors never flash. Stays `anon` if the probe is unreachable (e.g. a
+ * bare marketing dev server with no console behind it).
+ */
+function useNavContext(): NavContext {
+	const [ctx, setCtx] = useState<NavContext>({ status: "anon" });
+	useEffect(() => {
+		let active = true;
+		fetch("/api/nav-context", { credentials: "same-origin" })
+			.then((r) => (r.ok ? r.json() : null))
+			.then((data) => {
+				if (!active || !data?.authenticated) return;
+				setCtx({
+					status: "authed",
+					plan: data.plan,
+					dashboardPath: data.dashboardPath,
+					upgradePath: data.upgradePath,
+				});
+			})
+			.catch(() => {});
+		return () => {
+			active = false;
+		};
+	}, []);
+	return ctx;
+}
+
 /** Public site header — brand lockup, Product/Resources menus, Enterprise & Pricing links, GitHub, and CTAs. */
 export function Header({ stars }: { stars?: number | null }) {
 	const [open, setOpen] = useState<string | null>(null);
 	const [mobile, setMobile] = useState(false);
+	const nav = useNavContext();
 	return (
 		<header style={{ position: "sticky", top: 0, zIndex: 50, borderBottom: "1px solid var(--border)", background: "color-mix(in oklch, var(--background) 80%, transparent)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)" }}>
 			<Wrap style={{ height: 62, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -192,12 +235,35 @@ export function Header({ stars }: { stars?: number | null }) {
 
 				<div style={{ display: "flex", alignItems: "center", gap: 14 }}>
 					<GitHubLink stars={stars} />
-					<Link href="/contact/sales" className="ah-hide-sm">
-						<Button variant="outline" size="sm">Get a demo</Button>
-					</Link>
-					<Link href="/signup">
-						<Button size="sm">Get started <Icon k="arrow" size={14} /></Button>
-					</Link>
+					{nav.status === "authed" ? (
+						<>
+							{nav.plan === "community" && (
+								<Link href={nav.upgradePath ?? "#"} className="ah-hide-sm">
+									<Button variant="outline" size="sm">Upgrade to Pro</Button>
+								</Link>
+							)}
+							{nav.plan === "team" && (
+								<Link href="/contact/enterprise" className="ah-hide-sm">
+									<Button variant="outline" size="sm">Talk to sales</Button>
+								</Link>
+							)}
+							<Link href={nav.dashboardPath ?? "#"}>
+								<Button size="sm">Dashboard <Icon k="arrow" size={14} /></Button>
+							</Link>
+						</>
+					) : (
+						<>
+							<Link href="/contact/sales" className="ah-hide-sm">
+								<Button variant="outline" size="sm">Get a demo</Button>
+							</Link>
+							<Link href="/login" className="ah-hide-sm">
+								<Button variant="ghost" size="sm">Login</Button>
+							</Link>
+							<Link href="/signup">
+								<Button size="sm">Sign up <Icon k="arrow" size={14} /></Button>
+							</Link>
+						</>
+					)}
 
 					{/* mobile */}
 					<Sheet open={mobile} onOpenChange={setMobile}>
@@ -223,12 +289,35 @@ export function Header({ stars }: { stars?: number | null }) {
 								<Link href="/enterprise" onClick={() => setMobile(false)} className="rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-surface-muted hover:text-text-primary">Enterprise</Link>
 								<Link href="/pricing" onClick={() => setMobile(false)} className="rounded-md px-3 py-2 text-sm text-text-secondary hover:bg-surface-muted hover:text-text-primary">Pricing</Link>
 								<div className="mt-3 flex flex-col gap-2 border-t border-border-faint pt-4">
-									<Link href="/contact/sales" onClick={() => setMobile(false)}>
-										<Button variant="outline" size="sm" className="w-full">Get a demo</Button>
-									</Link>
-									<Link href="/signup" onClick={() => setMobile(false)}>
-										<Button size="sm" className="w-full">Get started</Button>
-									</Link>
+									{nav.status === "authed" ? (
+										<>
+											{nav.plan === "community" && (
+												<Link href={nav.upgradePath ?? "#"} onClick={() => setMobile(false)}>
+													<Button variant="outline" size="sm" className="w-full">Upgrade to Pro</Button>
+												</Link>
+											)}
+											{nav.plan === "team" && (
+												<Link href="/contact/enterprise" onClick={() => setMobile(false)}>
+													<Button variant="outline" size="sm" className="w-full">Talk to sales</Button>
+												</Link>
+											)}
+											<Link href={nav.dashboardPath ?? "#"} onClick={() => setMobile(false)}>
+												<Button size="sm" className="w-full">Dashboard</Button>
+											</Link>
+										</>
+									) : (
+										<>
+											<Link href="/contact/sales" onClick={() => setMobile(false)}>
+												<Button variant="outline" size="sm" className="w-full">Get a demo</Button>
+											</Link>
+											<Link href="/login" onClick={() => setMobile(false)}>
+												<Button variant="ghost" size="sm" className="w-full">Login</Button>
+											</Link>
+											<Link href="/signup" onClick={() => setMobile(false)}>
+												<Button size="sm" className="w-full">Sign up</Button>
+											</Link>
+										</>
+									)}
 								</div>
 							</nav>
 						</SheetContent>
