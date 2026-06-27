@@ -63,8 +63,14 @@ func BootstrapRunner(alethiaURL, bootstrapToken string, providers []string) (str
 }
 
 // resolveInstanceID best-effort reads the Hetzner metadata service so the control
-// plane can dedup one runner per VM; falls back to the hostname.
+// plane can dedup one runner per VM; falls back to the hostname. An explicit
+// ALETHIA_RUNNER_INSTANCE_ID override wins first — it lets several runners on one
+// host (e.g. local dev, where the metadata service is unreachable and the hostname
+// is shared) self-register as distinct rows instead of colliding on one name.
 func resolveInstanceID() string {
+	if v := strings.TrimSpace(os.Getenv("ALETHIA_RUNNER_INSTANCE_ID")); v != "" {
+		return v
+	}
 	req, err := http.NewRequest("GET", "http://169.254.169.254/hetzner/v1/metadata/instance-id", nil)
 	if err == nil {
 		if resp, err := (&http.Client{Timeout: time.Second}).Do(req); err == nil {

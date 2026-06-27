@@ -19,6 +19,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 PORT="${1:-3024}"
+# Port the console actually runs on (the one to kill + restart). Defaults to :3000;
+# override when the console was moved: CONSOLE_PORT=3100 pnpm dev:tunnel 3100
+CONSOLE_PORT="${CONSOLE_PORT:-3000}"
 CF_LOG=/tmp/alethia-cf.log
 URL_FILE=/tmp/alethia-cf-url.txt
 
@@ -50,11 +53,11 @@ echo "✓ tunnel up: $URL  →  http://localhost:$PORT"
 
 # Re-point the console's auth origin at the tunnel (a running process can't be
 # re-pointed, so restart it). Marketing :3010 + proxy :3024 are unaffected.
-echo "→ restarting console with auth origin $URL …"
-lsof -ti tcp:3000 2>/dev/null | xargs kill 2>/dev/null || true
+echo "→ restarting console (:$CONSOLE_PORT) with auth origin $URL …"
+lsof -ti tcp:"$CONSOLE_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
 rm -rf /tmp/alethia-dev-console.lock
 sleep 1
-ALETHIA_PUBLIC_URL="$URL" nohup bash scripts/dev-up.sh \
+PORT="$CONSOLE_PORT" ALETHIA_PUBLIC_URL="$URL" nohup bash scripts/dev-up.sh \
   > /tmp/alethia-devup.boot.log 2>&1 &
 disown
 

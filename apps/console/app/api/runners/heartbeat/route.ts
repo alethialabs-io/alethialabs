@@ -10,7 +10,9 @@ import { z } from "zod";
 
 // Runners report the cloud providers their image can execute (per-cloud routing).
 // Validated against the cloud_provider enum so only real providers reach the column.
-const providersSchema = z.array(z.enum(cloudProvider.enumValues)).optional();
+// `.nullish()` because the full/"any provider" runner sends providers: null (its
+// nil slice) to mean "no update" — distinct from a per-cloud image's ["aws"].
+const providersSchema = z.array(z.enum(cloudProvider.enumValues)).nullish();
 
 export async function POST(req: Request) {
 	const { runnerId, tokenHash, error: authError } =

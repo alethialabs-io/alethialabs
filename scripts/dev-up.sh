@@ -18,7 +18,10 @@ ENV_LOCAL="apps/console/.env.local"
 OPENFGA_URL="http://localhost:8082"
 LOCK=/tmp/alethia-dev-console.lock
 DEV_LOG=/tmp/alethia-dev-console.log
-DEV_URL="http://localhost:3000"
+STRIPE_LOG=/tmp/alethia-stripe.log
+# Console port — override to run off :3000 (e.g. another project owns it): PORT=3100 pnpm dev:up
+PORT="${PORT:-3000}"
+DEV_URL="http://localhost:${PORT}"
 
 if [[ ! -f .env ]]; then
   echo "✗ no .env found — run: cp .env.example .env" >&2
@@ -34,7 +37,9 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     if [ "${FORCE:-}" = "1" ]; then
       echo "↻ FORCE=1 — stopping existing console (pid $holder)…"
       kill "$holder" 2>/dev/null || true
-      lsof -ti tcp:3000 2>/dev/null | xargs kill 2>/dev/null || true
+      # -sTCP:LISTEN: kill only the server, NOT clients connected to it (e.g. a runner's
+      # long-lived /api/runners/wake SSE — a bare `lsof -ti tcp:$PORT` would SIGTERM it too).
+      lsof -ti tcp:"$PORT" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
       sleep 1; rm -rf "$LOCK"; mkdir "$LOCK"
     else
       echo "⏳ Console already running (pid $holder) at $DEV_URL — not starting a duplicate."
@@ -50,8 +55,8 @@ echo $$ > "$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT
 
 # Refuse to clobber a console started outside this script (lock just taken → trap frees it).
-if [ "${FORCE:-}" != "1" ] && lsof -ti tcp:3000 >/dev/null 2>&1; then
-  echo "⏳ :3000 already in use — assuming the console is up. Logs: pnpm dev:logs  (take over: FORCE=1 pnpm dev:up)"
+if [ "${FORCE:-}" != "1" ] && lsof -ti tcp:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "⏳ :$PORT already in use — assuming the console is up. Logs: pnpm dev:logs  (take over: FORCE=1 pnpm dev:up)"
   exit 0
 fi
 
@@ -145,7 +150,35 @@ fi
 export OPENFGA_API_URL="$OPENFGA_URL"
 export OPENFGA_STORE_ID="$STORE_ID"
 
+# ── Stripe webhooks (best-effort): forward TEST-mode events to the local console so
+# billing flows (trial, cancel, invoice paid/failed, AI credit packs) exercise
+# end-to-end. The Stripe CLI's local listener has its OWN signing secret, so we fetch it
+# and export STRIPE_WEBHOOK_SECRET — overriding the .env value for the console process
+# below (an exported var wins over .env in Next). Auto when STRIPE_SECRET_KEY is set and
+# the `stripe` CLI is installed (already logged in); opt out with DEV_STRIPE_LISTEN=0. ──
+STRIPE_PID=""
+if [[ "${DEV_STRIPE_LISTEN:-1}" != "0" && -n "${STRIPE_SECRET_KEY:-}" ]]; then
+  if command -v stripe >/dev/null 2>&1; then
+    WHSEC="$(stripe listen --api-key "$STRIPE_SECRET_KEY" --print-secret 2>/dev/null || true)"
+    if [[ "$WHSEC" == whsec_* ]]; then
+      export STRIPE_WEBHOOK_SECRET="$WHSEC"
+      pkill -f 'stripe listen.*/api/webhooks/stripe' 2>/dev/null || true
+      stripe listen --api-key "$STRIPE_SECRET_KEY" \
+        --forward-to "$DEV_URL/api/webhooks/stripe" --color=off \
+        >> "$STRIPE_LOG" 2>&1 &
+      STRIPE_PID=$!
+      echo "→ Stripe webhooks → $DEV_URL/api/webhooks/stripe  (stripe listen pid $STRIPE_PID, logs: pnpm dev:stripe-logs)"
+    else
+      echo "⚠ Stripe CLI couldn't fetch a listen secret — webhooks won't be delivered (try: stripe login)."
+    fi
+  else
+    echo "⚠ stripe CLI not installed (brew install stripe) — Stripe webhooks won't be delivered locally."
+  fi
+fi
+# Free the lock AND stop the webhook forwarder when the console exits.
+trap 'rm -rf "$LOCK"; [[ -n "${STRIPE_PID:-}" ]] && kill "$STRIPE_PID" 2>/dev/null || true' EXIT
+
 echo "✓ backends up — console hot-reloading on $DEV_URL  (logs: pnpm dev:logs)"
 # No exec: keep this script as the parent so the EXIT trap frees the lock when the
 # server stops, and tee output to a shared logfile other windows can tail.
-pnpm -C apps/console dev 2>&1 | tee "$DEV_LOG"
+PORT="$PORT" pnpm -C apps/console dev 2>&1 | tee "$DEV_LOG"
