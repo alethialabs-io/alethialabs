@@ -29,3 +29,4 @@ export * from "./teams";
 export * from "./sso";
 export * from "./alerts";
 export * from "./connector-health";
+export * from "./email";

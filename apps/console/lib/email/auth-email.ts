@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { getEmailConfig } from "@repo/email/config";
-import { sendEmail } from "@repo/email/send";
+import { sendGuardedEmail } from "./guard";
 import {
 	ConfirmationCodeEmail,
 	subject as confirmationSubject,
@@ -22,8 +22,10 @@ export async function sendSignInCodeEmail(
 	code: string,
 	expiryMinutes = 10,
 ): Promise<void> {
-	await sendEmail({
-		from: getEmailConfig().from.auth,
+	const config = getEmailConfig();
+	await sendGuardedEmail({
+		from: config.from.auth,
+		configurationSetName: config.configSet.auth,
 		to,
 		subject: confirmationSubject,
 		react: ConfirmationCodeEmail({ code, expiryMinutes }),
@@ -39,8 +41,10 @@ export async function sendNoAccountEmail(
 	to: string,
 	signupUrl: string,
 ): Promise<void> {
-	await sendEmail({
-		from: getEmailConfig().from.auth,
+	const config = getEmailConfig();
+	await sendGuardedEmail({
+		from: config.from.auth,
+		configurationSetName: config.configSet.auth,
 		to,
 		subject: noAccountSubject,
 		react: NoAccountEmail({ email: to, signupUrl }),

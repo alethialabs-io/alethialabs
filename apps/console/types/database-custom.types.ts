@@ -328,3 +328,19 @@ export interface AlertEventContext {
 	// deep link into the console
 	link?: string;
 }
+
+// email_suppression.detail — the salient bits of the SES bounce/complaint
+// notification that produced the suppression, kept for audit/debugging.
+export interface EmailSuppressionDetail {
+	// SES feedback id (bounce/complaint) — also the natural idempotency key.
+	feedback_id?: string;
+	// Original outbound message id, when the event carries it.
+	ses_message_id?: string;
+	// Bounce classification (e.g. "Permanent" / "General").
+	bounce_type?: string;
+	bounce_sub_type?: string;
+	// Complaint feedback type (e.g. "abuse").
+	complaint_feedback_type?: string;
+	// Remote MTA diagnostic text, if any.
+	diagnostic?: string;
+}

@@ -3,7 +3,7 @@
 
 import { getAuthConfig } from "@/lib/config/auth";
 import { getEmailConfig } from "@repo/email/config";
-import { sendEmail } from "@repo/email/send";
+import { sendGuardedEmail } from "./guard";
 import {
 	InviteEmail,
 	subject as inviteSubject,
@@ -36,8 +36,10 @@ export async function sendWelcomeEmail(
 	// Point the CTA at the actual deployment origin (alethialabs.io in prod, the
 	// operator's own origin when self-hosted); fall back to the template default.
 	const url = consoleUrl ?? getAuthConfig().baseURL;
-	await sendEmail({
-		from: getEmailConfig().from.general,
+	const config = getEmailConfig();
+	await sendGuardedEmail({
+		from: config.from.general,
+		configurationSetName: config.configSet.general,
 		to,
 		subject: welcomeSubject,
 		react: WelcomeEmail(url ? { consoleUrl: url } : {}),
@@ -63,8 +65,10 @@ interface InviteArgs {
 export async function sendInviteEmail(args: InviteArgs): Promise<void> {
 	// Carry the recipient email so the accept page can prefill sign-in / sign-up.
 	const acceptUrl = `${getAuthConfig().baseURL}/invites/accept?token=${encodeURIComponent(args.token)}&email=${encodeURIComponent(args.to)}`;
-	await sendEmail({
-		from: getEmailConfig().from.general,
+	const config = getEmailConfig();
+	await sendGuardedEmail({
+		from: config.from.general,
+		configurationSetName: config.configSet.general,
 		to: args.to,
 		subject: inviteSubject(args.inviterName),
 		react: InviteEmail({

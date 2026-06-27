@@ -20,10 +20,20 @@ export interface EmailFromAddresses {
 	general: string;
 }
 
+/** Per-stream SES configuration-set names. A send tagged with its set routes
+ * bounce/complaint events to SNS and is counted under that stream's reputation.
+ * Optional — undefined sends with no config set (today's behavior). */
+export interface EmailConfigSets {
+	auth?: string;
+	general?: string;
+}
+
 export interface EmailConfig {
 	/** SES config; null → emails are logged (dev), not sent. */
 	ses: SesConfig | null;
 	from: EmailFromAddresses;
+	/** Per-stream configuration sets (see EmailConfigSets). */
+	configSet: EmailConfigSets;
 }
 
 let cached: EmailConfig | undefined;
@@ -52,6 +62,10 @@ export function getEmailConfig(): EmailConfig {
 				}
 			: null,
 		from: { auth: authFrom, general: generalFrom },
+		configSet: {
+			auth: env("ALETHIA_SES_AUTH_CONFIG_SET") || undefined,
+			general: env("ALETHIA_SES_GENERAL_CONFIG_SET") || undefined,
+		},
 	};
 	return cached;
 }

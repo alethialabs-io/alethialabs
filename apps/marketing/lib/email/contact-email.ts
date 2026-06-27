@@ -16,8 +16,10 @@ type ContactLead = Omit<ContactLeadInput, "honeypot">;
  * form works end-to-end with zero email setup.
  */
 export async function sendContactLeadEmail(lead: ContactLead): Promise<void> {
+	const config = getEmailConfig();
 	await sendEmail({
-		from: getEmailConfig().from.general,
+		from: config.from.general,
+		configurationSetName: config.configSet.general,
 		to: SALES_MAIL,
 		subject: contactSubject(lead.type, lead.name || lead.email),
 		react: ContactLeadEmail({

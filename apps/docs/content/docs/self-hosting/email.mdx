@@ -88,6 +88,10 @@ ALETHIA_SES_SECRET_ACCESS_KEY=...
 
 AUTH_EMAIL_FROM="Alethia <no-reply@auth.alethialabs.io>"
 EMAIL_FROM="Alethia <hello@mail.alethialabs.io>"
+
+# Optional — per-stream configuration sets (see "Bounce & complaint handling").
+ALETHIA_SES_AUTH_CONFIG_SET=alethia-auth
+ALETHIA_SES_GENERAL_CONFIG_SET=alethia-general
 ```
 
 `ALETHIA_SES_REGION` is the switch — set it and SES is used; leave it empty and
@@ -108,6 +112,29 @@ Once per root domain:
 | Record | Host | Type | Value |
 | --- | --- | --- | --- |
 | DMARC | `_dmarc.alethialabs.io` | TXT | `v=DMARC1; p=none; rua=mailto:dmarc@alethialabs.io` |
+
+## Bounce & complaint handling (production)
+
+Optional, but recommended for a hosted deployment: track bounces and complaints
+so the app stops mailing dead or complaining addresses (which protects your
+sending reputation).
+
+How it fits together:
+
+- Each stream sends through an SES **configuration set**
+  (`ALETHIA_SES_AUTH_CONFIG_SET` / `ALETHIA_SES_GENERAL_CONFIG_SET`).
+- The configuration set publishes `Bounce` / `Complaint` events to an **SNS
+  topic**, which posts them to the console at **`/api/webhooks/ses`**.
+- That handler verifies the SNS signature and, on a **permanent** bounce or a
+  **complaint**, adds the recipient to the **suppression list**. Every send then
+  skips suppressed addresses.
+
+For the hosted platform this whole stack — identities, DKIM, MAIL FROM, the
+configuration sets, the SNS topic + subscription, account VDM, and reputation
+alarms — is codified in OpenTofu at **`infra/email-ses/`** (see its `README.md`).
+Self-hosters can either run that stack against their own domain or wire the same
+pieces by hand; leaving the config-set vars unset keeps the simpler send-only
+behavior.
 
 ## Verify
 

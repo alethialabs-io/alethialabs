@@ -10,7 +10,7 @@ import type { AlertEventContext } from "@/types/database-custom.types";
 import { AlertEmail } from "@/emails/alert";
 import { getEmailConfig } from "@repo/email/config";
 import type { AlertChannel } from "@/lib/db/schema";
-import { sendEmail } from "@repo/email/send";
+import { sendGuardedEmail } from "@/lib/email/guard";
 import type { ChannelSender } from "./types";
 import { TEST_CONTEXT } from "./types";
 
@@ -32,13 +32,14 @@ async function send(
 	channel: AlertChannel,
 	context: AlertEventContext,
 ): Promise<void> {
-	const { from } = getEmailConfig();
+	const { from, configSet } = getEmailConfig();
 	const eventLabel = context.title;
 	const subject = `[Alethia] ${context.title}`;
 	await Promise.all(
 		recipients(channel).map((to) =>
-			sendEmail({
+			sendGuardedEmail({
 				from: from.general,
+				configurationSetName: configSet.general,
 				to,
 				subject,
 				react: AlertEmail({ context, eventLabel }),

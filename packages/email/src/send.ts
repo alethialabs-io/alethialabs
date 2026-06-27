@@ -32,6 +32,9 @@ export interface SendEmailArgs {
 	subject: string;
 	/** react-email element, rendered to HTML. */
 	react: ReactElement;
+	/** SES configuration set for this stream — attributes events to SNS and the
+	 * stream's reputation. Optional (getEmailConfig().configSet.*). */
+	configurationSetName?: string;
 	/** Extra context logged in the dev (no-SES) fallback, e.g. an OTP code. */
 	devLog?: string;
 }
@@ -47,6 +50,7 @@ export async function sendEmail({
 	to,
 	subject,
 	react,
+	configurationSetName,
 	devLog,
 }: SendEmailArgs): Promise<void> {
 	const { ses } = getEmailConfig();
@@ -66,6 +70,9 @@ export async function sendEmail({
 			new SendEmailCommand({
 				FromEmailAddress: from,
 				Destination: { ToAddresses: [to] },
+				...(configurationSetName
+					? { ConfigurationSetName: configurationSetName }
+					: {}),
 				Content: {
 					Simple: {
 						Subject: { Data: subject, Charset: "UTF-8" },
