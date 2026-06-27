@@ -58,7 +58,8 @@ resource "cloudflare_record" "dmarc" {
   zone_id = var.cloudflare_zone_id
   name    = "_dmarc"
   type    = "TXT"
-  content = "v=DMARC1; p=${var.dmarc_policy}; rua=${var.dmarc_rua}"
+  # fo=1 → request a failure report when any check fails (matches the live record).
+  content = "v=DMARC1; p=${var.dmarc_policy}; rua=${var.dmarc_rua}; fo=1"
   ttl     = 300
   comment = "DMARC policy for ${var.domain}"
 }
