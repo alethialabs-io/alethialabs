@@ -13,9 +13,9 @@ domain     = "alethialabs.io"
 dmarc_policy = "none"
 dmarc_rua    = "mailto:dmarc@alethialabs.io"
 
-# Ops inbox for reputation alarms (leave "" to skip the email subscription).
-alarm_email = "ops@alethialabs.io"
+# Inbox for reputation alarms (leave "" to skip the email subscription).
+alarm_email = "borislav@alethialabs.io"
 
-# Set once the console /api/webhooks/ses route is deployed, so SNS can confirm
-# the subscription. Leave "" on the first apply.
-events_webhook_url = "" # e.g. https://alethialabs.io/api/webhooks/ses
+# SNS posts bounce/complaint events here. Defaulted in variables.tf; override or
+# set "" for a first apply before the console /api/webhooks/ses route is live.
+events_webhook_url = "https://alethialabs.io/api/webhooks/ses"

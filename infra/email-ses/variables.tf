@@ -56,15 +56,18 @@ variable "dmarc_policy" {
 }
 
 variable "events_webhook_url" {
-  description = "Public HTTPS endpoint SNS posts bounce/complaint events to (the deployed console). Empty → no HTTPS subscription is created (apply it once the app handler is live)."
+  # Apply this only once the console /api/webhooks/ses route is live — SNS posts a
+  # SubscriptionConfirmation the endpoint must confirm. Set "" for a first apply
+  # before the app is deployed.
+  description = "Public HTTPS endpoint SNS posts bounce/complaint events to (the deployed console)."
   type        = string
-  default     = ""
+  default     = "https://alethialabs.io/api/webhooks/ses"
 }
 
 variable "alarm_email" {
-  description = "Ops inbox subscribed to the SES reputation CloudWatch alarms. Empty → no email subscription."
+  description = "Inbox subscribed to the SES reputation CloudWatch alarms. Empty → no email subscription."
   type        = string
-  default     = ""
+  default     = "borislav@alethialabs.io"
 }
 
 variable "bounce_rate_threshold" {
