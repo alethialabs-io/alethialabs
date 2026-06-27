@@ -67,18 +67,6 @@ variable "alarm_email" {
   default     = ""
 }
 
-variable "sender_user_name" {
-  description = "Existing least-privilege runtime IAM user that sends mail (kept as a data source, not managed here)."
-  type        = string
-  default     = "alethia-ses-sender"
-}
-
-variable "create_verifier_user" {
-  description = "Create a scoped IAM user (send + read the events topic) for the verification/spike job."
-  type        = bool
-  default     = true
-}
-
 variable "bounce_rate_threshold" {
   description = "Account bounce-rate alarm threshold (fraction). AWS pauses sending at 0.10."
   type        = number

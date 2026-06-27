@@ -11,16 +11,10 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 env:
   TF_DIR: infra/email-ses
   TOFU_VERSION: "1.10.10"
-
-  # AWS provider creds — ADMIN in the SES account (270587882865). Distinct from
-  # the cp-aws lab account, so its own secret pair.
-  AWS_ACCESS_KEY_ID: ${{ secrets.SES_AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.SES_AWS_SECRET_ACCESS_KEY }}
 
   # OpenTofu variables.
   TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -36,10 +30,10 @@ jobs:
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
 
-      - name: OpenTofu Validate (no backend, no secrets)
+      - name: OpenTofu Validate (no backend, no creds)
         working-directory: ${{ env.TF_DIR }}
-        # PR plans are validate-only: no backend, no cloud/state secrets reach a
-        # PR job (the repo is contributor-facing). Real plan+apply run on main.
+        # PR plans are validate-only: no backend, no cloud/state creds reach a PR
+        # job (the repo is contributor-facing). Real plan+apply run on main.
         run: |
           tofu init -backend=false
           tofu validate
@@ -48,14 +42,27 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      id-token: write # assume the deploy role via GitHub OIDC — no stored AWS keys
     steps:
       - uses: actions/checkout@v4
       - uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
 
+      # Least-privilege deploy role from infra/email-ses/bootstrap (its ARN is a
+      # non-secret Actions variable). Sets AWS_* env for the OpenTofu provider.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.SES_DEPLOYER_ROLE_ARN }}
+          aws-region: eu-central-1
+
       - name: OpenTofu Init
         working-directory: ${{ env.TF_DIR }}
+        # Backend (state store) auth is the TF_STATE_S3_* keys, independent of the
+        # assumed deploy role used for the AWS provider.
         run: |
           tofu init -upgrade \
             -backend-config="bucket=terraform-state" \

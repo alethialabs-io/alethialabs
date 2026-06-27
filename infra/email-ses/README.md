@@ -19,23 +19,39 @@ Production AWS SES for **alethialabs.io** transactional email — codified.
 
 ## Prerequisites
 
-- **Admin AWS creds for account `270587882865`** (the runtime `alethia-ses-sender` key
-  is send-only and cannot create resources).
+- **One-time bootstrap** (`./bootstrap`) applied by an **admin/root identity** in account
+  `270587882865`. It creates the GitHub-OIDC **deploy role** (`alethia-ses-deployer`) + its
+  least-privilege policy + the scoped send policy on `alethia-ses-sender`. This is the **only**
+  step that needs admin — everything below runs as the deploy role, which has **no `iam:*`**.
 - Cloudflare API token with DNS edit on the `alethialabs.io` zone + the zone id.
 - The S3-compatible state backend creds (`TF_STATE_S3_*`, as in `infra/cp-aws`).
 
-Put non-CI creds in a gitignored `infra/email-ses/.env` and source it:
+## 0. Bootstrap once (admin)
+
+```bash
+cd bootstrap
+# admin creds for 270587882865 in env, plus TF_STATE_S3_* for the backend
+tofu init -backend-config=backend.hcl
+tofu apply                 # OIDC provider + alethia-ses-deployer role + send policy
+tofu output -raw deployer_role_arn
+```
+
+Set that ARN as the repo **Actions variable** `SES_DEPLOYER_ROLE_ARN` (it's not a secret) so CI
+can assume it via OIDC — no AWS keys are stored anywhere. To run the steps below locally, add your
+admin ARN to `admin_principal_arns` and assume the deploy role, or just use admin creds directly.
+
+> The Cloudflare token shared during setup was sent in plaintext — **rotate it**.
+
+Local creds for the main stack go in a gitignored `infra/email-ses/.env`:
 
 ```bash
 # infra/email-ses/.env  (gitignored)
-export AWS_ACCESS_KEY_ID=...            # ADMIN in 270587882865
+export AWS_ACCESS_KEY_ID=...            # assumed alethia-ses-deployer (or admin)
 export AWS_SECRET_ACCESS_KEY=...
+export AWS_SESSION_TOKEN=...            # when assuming the role
 export TF_VAR_cloudflare_api_token=...
 export TF_VAR_cloudflare_zone_id=...
 ```
-
-> The Cloudflare token shared during setup was sent in plaintext — **rotate it** once
-> this is applied.
 
 ## 1. Inventory live state first (verify-at-apply)
 
@@ -77,7 +93,7 @@ tofu import 'cloudflare_record.dmarc'                 <zone_id>/<record_id>
 Then:
 
 ```bash
-tofu plan   # expect only additive changes (config sets, SNS, VDM, IAM policy, alarms)
+tofu plan   # expect only additive changes (config sets, SNS, VDM, alarms)
 tofu apply
 ```
 
@@ -114,9 +130,8 @@ AWS reviews in ~24h. Until then sending is sandbox-limited to verified addresses
 `SES_EVENTS_TOPIC_ARN=…`). It checks DKIM, sends a real message (asserts a
 MessageId), then sends a simulator bounce + complaint and asserts both land on
 the events topic — captured via a throwaway SQS queue, so it does not need the
-console webhook deployed. Run it with admin creds or as the scoped
-`alethia-ses-spike` user (its key is `tofu output -raw verifier_access_key_id` /
-`verifier_secret_access_key`).
+console webhook deployed. Run it as the **deploy role** (its policy already grants
+the send + SNS-subscribe + SQS perms verify needs); admin creds work too.
 
 The individual commands, if you want to run them by hand:
 
@@ -140,7 +155,13 @@ aws sesv2 send-email --region eu-central-1 \
 
 ## CI
 
-`.github/workflows/infra-email-ses.yml`: PRs run `tofu validate` (no secrets);
-pushes to `main` apply. Needs repo secrets `SES_AWS_ACCESS_KEY_ID` /
-`SES_AWS_SECRET_ACCESS_KEY` (admin in `270587882865`), reusing
-`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ZONE_ID` / `TF_STATE_S3_*`.
+`.github/workflows/infra-email-ses.yml`: PRs run `tofu validate` (no creds);
+pushes to `main` assume the deploy role via **GitHub OIDC** (`id-token: write`) and
+apply — **no stored AWS keys**. Config:
+
+- Actions **variable** `SES_DEPLOYER_ROLE_ARN` = the bootstrap `deployer_role_arn`.
+- Secrets `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ZONE_ID` (DNS) and `TF_STATE_S3_*`
+  (state backend).
+
+The deploy role trusts `bobikenobi12/bb-thesis-2026@main` — change `github_repo` /
+`github_branch` in the bootstrap stack if that moves.

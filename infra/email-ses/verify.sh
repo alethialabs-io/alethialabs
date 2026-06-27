@@ -10,10 +10,11 @@
 # turns into suppression rows. (The SES simulator never touches SES's own
 # suppression list, so this SNS capture is the meaningful assertion.)
 #
-# Run with admin creds for the SES account, or as the scoped `alethia-ses-spike`
-# user (iam.tf grants it the SES send + SNS subscribe + SQS perms this needs).
+# Run as the deploy role (infra/email-ses/bootstrap) — assume it locally, or in a
+# CI job via OIDC; its policy grants the SES send + SNS subscribe + SQS perms this
+# needs. (An admin identity works too.)
 #
-#   export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
+#   export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...   # assumed deploy role
 #   ./verify.sh            # from infra/email-ses (reads `tofu output`), or
 #   SES_EVENTS_TOPIC_ARN=arn:aws:sns:eu-central-1:270587882865:alethia-ses-events ./verify.sh
 set -euo pipefail

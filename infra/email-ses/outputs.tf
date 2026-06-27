@@ -25,14 +25,3 @@ output "alarms_topic_arn" {
   description = "SNS topic carrying reputation CloudWatch alarms."
   value       = aws_sns_topic.alarms.arn
 }
-
-output "verifier_access_key_id" {
-  description = "Access key id for the verification/spike user (if created)."
-  value       = try(aws_iam_access_key.verifier[0].id, null)
-}
-
-output "verifier_secret_access_key" {
-  description = "Secret for the verification/spike user (if created). Set as a CI secret, then rotate as needed."
-  value       = try(aws_iam_access_key.verifier[0].secret, null)
-  sensitive   = true
-}
