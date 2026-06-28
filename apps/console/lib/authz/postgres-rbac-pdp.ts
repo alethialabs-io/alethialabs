@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { sql } from "drizzle-orm";
-import { enforceDecision } from "@/lib/authz/audit";
+import { enforceDecision } from "@/lib/authz/activity";
 import { listOrgResourceIds } from "@/lib/authz/resource-tables";
 import { getServiceDb } from "@/lib/db";
 import { coversResource, decide, permissionKey } from "./evaluate";
@@ -19,7 +19,7 @@ type Db = ReturnType<typeof getServiceDb>;
 
 /**
  * Community Policy Decision Point: scoped RBAC over plain Postgres. Resolves the
- * actor's grants (org + principal + permission), walks the Org→Zone→Spec hierarchy
+ * actor's grants (org + principal + permission), walks the Org→Project hierarchy
  * for scoped grants, and decides via the pure `coversResource`. Default-deny. The
  * enterprise tier swaps an OpenFgaPdp behind getPdp() with no call-site changes.
  */
@@ -56,17 +56,24 @@ export class PostgresRbacPDP implements Pdp {
 		resourceType: Resource,
 	): Promise<string[]> {
 		if (scoped.length === 0) return [];
+		// drizzle's `sql` tag spreads a JS array into comma-separated scalar params, so
+		// `${scoped}::uuid[]` casts a single scalar → Postgres 22P02. Build a real
+		// `array[$1,$2,…]::uuid[]` literal instead so the uuid[] binds correctly.
+		const ids = sql`array[${sql.join(
+			scoped.map((s) => sql`${s}`),
+			sql`, `,
+		)}]::uuid[]`;
 		const rows = await db.execute<{ id: string }>(sql`
 			with recursive descendants as (
 				select child_id as id, child_type as type
-				from resource_hierarchy where parent_id = any(${scoped}::uuid[])
+				from resource_hierarchy where parent_id = any(${ids})
 				union
 				select rh.child_id, rh.child_type
 				from resource_hierarchy rh join descendants d on rh.parent_id = d.id
 			)
 			select distinct id from descendants where type = ${resourceType}
 			union
-			select id from (select unnest(${scoped}::uuid[]) as id) g
+			select id from (select unnest(${ids}) as id) g
 			where exists (
 				select 1 from resource_hierarchy where child_id = g.id and child_type = ${resourceType}
 			)
@@ -74,7 +81,7 @@ export class PostgresRbacPDP implements Pdp {
 		return rows.map((r) => r.id);
 	}
 
-	/** Ancestor ids of a resource (Org→Zone→Spec, walked upward). */
+	/** Ancestor ids of a resource (Org→Project, walked upward). */
 	private async ancestorIds(db: Db, resourceId: string): Promise<string[]> {
 		const rows = await db.execute<{ id: string }>(sql`
 			with recursive anc as (

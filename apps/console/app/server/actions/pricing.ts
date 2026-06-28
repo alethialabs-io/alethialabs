@@ -47,8 +47,10 @@ function getOnDemandPrice(data: AwsPricingResponse, sku: string): number | null 
 	if (!terms) return null;
 	const term = Object.values(terms)[0];
 	if (!term) return null;
-	const dim = Object.values(term.priceDimensions)[0];
-	if (!dim) return null;
+	// Defensive: a malformed/empty term (no priceDimensions, or a dimension without
+	// pricePerUnit.USD) must yield null, not throw — this parses untrusted AWS API JSON.
+	const dim = Object.values(term.priceDimensions ?? {})[0];
+	if (!dim?.pricePerUnit?.USD) return null;
 	const usd = parseFloat(dim.pricePerUnit.USD);
 	return isNaN(usd) ? null : usd;
 }

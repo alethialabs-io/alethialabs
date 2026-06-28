@@ -227,8 +227,16 @@ export async function createRepository(
 			);
 			if (!res.ok) {
 				const errorData = await res.json();
+				// Bitbucket errors come both nested ({error:{message}}) and flat
+				// ({message} / {error_description}); guard so a flat body doesn't throw
+				// (which would swallow the real message into the generic catch).
+				const detail =
+					errorData?.error?.message ??
+					errorData?.message ??
+					errorData?.error_description ??
+					res.statusText;
 				return {
-					error: `Failed to create Bitbucket repository: ${errorData.error.message}`,
+					error: `Failed to create Bitbucket repository: ${detail}`,
 				};
 			}
 			newRepo = await res.json();
