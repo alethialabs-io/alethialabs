@@ -26,11 +26,11 @@ Pick a **member** or a **team** <Enterprise />. A team grant reaches everyone on
 <Step>
 ### What
 Choose a **Role** (built-in or [custom](/access-control/custom-roles)) **or** a **single permission**
-(e.g. `spec:deploy`).
+(e.g. `project:deploy`).
 </Step>
 <Step>
 ### Scope
-**Entire organization**, or a specific **zone / spec / runner / cloud identity**. A grant on a container flows
+**Entire organization**, or a specific **project / runner / cloud identity**. A grant on a container flows
 down to its children.
 </Step>
 </Steps>
@@ -43,9 +43,9 @@ The grants table lists each entry with its **principal**, **effect** (Allow/Deny
 The portal is where you build the canonical exception — broad access with a precise carve-out:
 
 <Steps>
-<Step>Grant **Allow · viewer · zone `Z`** to Dana.</Step>
-<Step>Grant **Deny · `spec:view` · spec `S`** to Dana.</Step>
-<Step>Dana sees `Z` and its other specs, but not `S`.</Step>
+<Step>Grant **Allow · viewer · organization** to Dana.</Step>
+<Step>Grant **Deny · `project:view` · project `S`** to Dana.</Step>
+<Step>Dana sees the other projects, but not `S`.</Step>
 </Steps>
 
 See [grants & scopes](/access-control/grants-and-scopes) for the precedence rules behind this.
@@ -55,7 +55,7 @@ See [grants & scopes](/access-control/grants-and-scopes) for the precedence rule
 - **Principals** — the org's members and teams.
 - **Roles** — the four built-ins plus your [custom roles](/access-control/custom-roles).
 - **Permissions** — the full `resource:action` catalog for single-permission grants.
-- **Resources** — your zones, specs, runners, and cloud identities, for scoped grants.
+- **Resources** — your projects, runners, and cloud identities, for scoped grants.
 
 <Callout type="info">
   In the open-source <Community>Community</Community> edition there's a single owner who already holds every

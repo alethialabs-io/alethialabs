@@ -5,7 +5,7 @@ description: How tenancy works — the personal organization in Community, and m
 
 # Organizations & Teams
 
-An **organization** is the tenancy boundary: every zone, spec, runner, cloud identity, and job belongs to exactly one organization, and members of that organization see only its resources. Your **active organization** is half of your [actor](/access-control) identity — it's the scope every permission check runs against.
+An **organization** is the tenancy boundary: every project, runner, cloud identity, and job belongs to exactly one organization, and members of that organization see only its resources. Your **active organization** is half of your [actor](/access-control) identity — it's the scope every permission check runs against.
 
 ## Community: your personal organization
 
@@ -57,14 +57,14 @@ When a member makes a request, the system resolves their **active organization**
 
 ```text
 member: carol, role = operator, in org "Acme"
-  request: deploy spec "Acme/payments"
-  ⇒ operator includes spec:deploy  → ALLOWED (and scoped to Acme only)
+  request: deploy project "Acme/payments"
+  ⇒ operator includes project:deploy  → ALLOWED (and scoped to Acme only)
 
   request: invite a new member
   ⇒ operator does NOT include member:manage_members → FORBIDDEN
 ```
 
-Roles compose with the [Org → Zone → Spec hierarchy](/access-control/roles-and-permissions#inheritance-the-org--zone--spec-hierarchy): you can give someone `operator` org-wide, or narrow them to just one zone.
+Roles compose with the [Org → Project hierarchy](/access-control/roles-and-permissions#inheritance-the-org--project-hierarchy): you can give someone `operator` org-wide, or narrow them to just one project.
 
 ## Tenancy isolation
 

@@ -108,16 +108,16 @@ This enables live status indicators:
 - **Yellow** (DRAINING) — finishing current job, not accepting new ones
 - **Red** (OFFLINE) — heartbeat missed
 
-## Spec Status Updates
+## Project Status Updates
 
-The zones store listens for Spec status changes (e.g., DRAFT → PROVISIONING → ACTIVE). A trigger on the `specs` table emits a NOTIFY on update, which the console relays over SSE:
+The projects store listens for Project status changes (e.g., DRAFT → PROVISIONING → ACTIVE). A trigger on the `projects` table emits a NOTIFY on update, which the console relays over SSE:
 
 ```typescript
-events.addEventListener('spec', (event) => {
-  const spec = JSON.parse(event.data);
-  zonesStore.updateSpecInPlace(spec.id, {
-    status: spec.status,
-    estimated_monthly_cost: spec.estimated_monthly_cost
+events.addEventListener('project', (event) => {
+  const project = JSON.parse(event.data);
+  projectsStore.updateProjectInPlace(project.id, {
+    status: project.status,
+    estimated_monthly_cost: project.estimated_monthly_cost
   });
 });
 ```
@@ -131,4 +131,4 @@ All Zustand stores follow the same pattern for real-time updates:
 3. **Optimistic updates** via `addOrUpdate` methods that upsert by ID
 4. **Session persistence** for filters and pagination state (via `sessionStorage`)
 
-This means the UI stays current without polling. Job status changes, Runner heartbeats, and Spec provisioning progress all appear instantly.
+This means the UI stays current without polling. Job status changes, Runner heartbeats, and Project provisioning progress all appear instantly.

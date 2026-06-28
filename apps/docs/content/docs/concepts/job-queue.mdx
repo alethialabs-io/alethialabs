@@ -24,9 +24,9 @@ Infrastructure provisioning is slow (minutes to hours) and must be reliable. A j
 |------|---------|-------------|
 | `CONNECTION_TEST` | Verify cloud credentials, cache discovered resources | Connecting a cloud provider |
 | `FETCH_RESOURCES` | Refresh cached VPCs, subnets, hosted zones | Manual refresh in UI |
-| `PLAN` | Run `terraform plan` + optional Infracost analysis | Clicking "Plan" on a Spec |
-| `DEPLOY` | Run `terraform apply` + install ArgoCD | Clicking "Apply" on a Spec |
-| `DESTROY` | Run `terraform destroy` | Clicking "Destroy" on a Spec |
+| `PLAN` | Run `terraform plan` + optional Infracost analysis | Clicking "Plan" on a Project |
+| `DEPLOY` | Run `terraform apply` + install ArgoCD | Clicking "Apply" on a Project |
+| `DESTROY` | Run `terraform destroy` | Clicking "Destroy" on a Project |
 | `DEPLOY_RUNNER` | Provision Runner infrastructure (ECS task, IAM roles) | Deploying a self-operated Runner |
 | `UPDATE_RUNNER` | Update Runner to latest release | Clicking "Update" on a Runner |
 | `DESTROY_RUNNER` | Tear down Runner infrastructure | Removing a deployed Runner |
@@ -86,9 +86,9 @@ $$ LANGUAGE plpgsql;
 
 ## Config Snapshot
 
-When a job is created, the current Spec configuration is serialized as a **config_snapshot** in the job record. This ensures the Runner executes exactly the configuration that was planned, even if the user modifies the Spec after queuing.
+When a job is created, the current Project configuration is serialized as a **config_snapshot** in the job record. This ensures the Runner executes exactly the configuration that was planned, even if the user modifies the Project after queuing.
 
-For DEPLOY jobs, a **plan hash** is validated: if the Spec config changed since the plan was generated, the deploy fails with a hash mismatch error, forcing the user to re-plan.
+For DEPLOY jobs, a **plan hash** is validated: if the Project config changed since the plan was generated, the deploy fails with a hash mismatch error, forcing the user to re-plan.
 
 ## Job Execution Flow
 
@@ -110,7 +110,7 @@ The Runner runs the job-type-specific logic (Terraform plan/apply/destroy, ArgoC
 On completion, the Runner calls `PUT /api/jobs/{id}/status` with SUCCESS or FAILED, plus execution metadata (Terraform outputs, cost data, cluster info).
 
 ### Finalization
-For DEPLOY jobs, Console calls `finalizeDeployment()` to extract cluster metadata from Terraform outputs and update the Spec's component tables (cluster endpoint, ArgoCD URL, database endpoints, etc.).
+For DEPLOY jobs, Console calls `finalizeDeployment()` to extract cluster metadata from Terraform outputs and update the Project's component tables (cluster endpoint, ArgoCD URL, database endpoints, etc.).
 
 </Steps>
 

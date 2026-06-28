@@ -5,7 +5,7 @@ description: Connect cloud providers and Git accounts to enable infrastructure p
 
 # Connectors
 
-The Connectors page manages connections to cloud providers (AWS, GCP, Azure), Git providers (GitHub, GitLab, Bitbucket), and **pluggable per-category providers** (DNS, secrets, registry, observability). Cloud and Git connections must be established before provisioning; pluggable connectors are optional — they let a Spec use a tool you already run instead of the cloud-native default.
+The Connectors page manages connections to cloud providers (AWS, GCP, Azure), Git providers (GitHub, GitLab, Bitbucket), and **pluggable per-category providers** (DNS, secrets, registry, observability). Cloud and Git connections must be established before provisioning; pluggable connectors are optional — they let a Project use a tool you already run instead of the cloud-native default.
 
 ## How It Works
 
@@ -53,7 +53,7 @@ Git connections use standard OAuth. See [Git Providers](/console/connectors/git-
 
 ## Pluggable Connectors
 
-DNS, secrets, registry, and observability providers authenticate with an **API key / token**. Secret fields are encrypted at rest (`ALETHIA_CRED_ENCRYPTION_KEY`) and only decrypted on the runner at provision time — never stored in a Spec snapshot. After connecting, a verification ping confirms the credential works.
+DNS, secrets, registry, and observability providers authenticate with an **API key / token**. Secret fields are encrypted at rest (`ALETHIA_CRED_ENCRYPTION_KEY`) and only decrypted on the runner at provision time — never stored in a Project snapshot. After connecting, a verification ping confirms the credential works.
 
 <Cards>
   <Card title="Pluggable Connectors" href="/console/connectors/pluggable">Cloudflare · Vault · Docker Hub · Datadog · Grafana · Prometheus</Card>
@@ -61,6 +61,6 @@ DNS, secrets, registry, and observability providers authenticate with an **API k
 
 ## Disconnecting
 
-- **Cloud providers**: Removes the `cloud_identities` record. Existing specs referencing that identity can no longer run jobs.
+- **Cloud providers**: Removes the `cloud_identities` record. Existing projects referencing that identity can no longer run jobs.
 - **Git providers**: Removes the Better Auth `account` record and revokes the OAuth grant.
-- **Pluggable connectors**: Removes the `connector_credentials` record. Specs referencing that provider fall back to failing validation until reconnected.
+- **Pluggable connectors**: Removes the `connector_credentials` record. Projects referencing that provider fall back to failing validation until reconnected.

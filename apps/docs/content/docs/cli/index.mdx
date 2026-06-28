@@ -5,7 +5,7 @@ description: Go command-line tool for managing multi-cloud infrastructure via th
 
 # alethia CLI
 
-alethia is the command-line interface for the platform. It provides terminal-based access to all infrastructure operations — creating zones, planning and deploying Specs, monitoring jobs, and managing Runners.
+alethia is the command-line interface for the platform. It provides terminal-based access to all infrastructure operations — planning and deploying Projects, monitoring jobs, and managing Runners.
 
 ## Overview
 
@@ -21,7 +21,7 @@ alethia is the command-line interface for the platform. It provides terminal-bas
 alethia is a **thin client** that communicates with the Alethia API over HTTPS. It does not run Terraform directly — instead, it queues jobs that [Runners](/runner) execute. The CLI handles:
 
 1. **Authentication** — [Device code flow](/concepts/authentication) with tokens stored locally
-2. **Configuration** — Creating and inspecting zones and Specs
+2. **Configuration** — Creating and inspecting Projects
 3. **Job submission** — Queuing Plan / Deploy / Destroy jobs
 4. **Monitoring** — Streaming logs, checking job status, waiting for completion
 5. **Management** — Listing clusters, managing Runners
@@ -32,10 +32,7 @@ alethia is a **thin client** that communicates with the Alethia API over HTTPS. 
   <Card title="Connector Commands" href="/cli/commands/connector">
     Connect AWS, GCP, and Azure cloud accounts.
   </Card>
-  <Card title="Zone Commands" href="/cli/commands/zone">
-    Create, list, and delete workspaces.
-  </Card>
-  <Card title="Spec Commands" href="/cli/commands/spec">
+  <Card title="Project Commands" href="/cli/commands/project">
     List and inspect infrastructure configurations.
   </Card>
   <Card title="Plan & Apply" href="/cli/commands/plan-and-apply">
@@ -64,15 +61,12 @@ alethia login
 # Connect a cloud account (AWS, GCP, or Azure)
 alethia connector gcp --project my-gcp-project
 
-# List zones
-alethia zone list
-
 # Plan infrastructure
-alethia plan --spec-id <id>
+alethia plan --project-id <id>
 
 # Stream logs
 alethia jobs logs --id <job-id> --follow
 
 # Deploy
-alethia apply --spec-id <id> --plan-job-id <plan-job-id>
+alethia apply --project-id <id> --plan-job-id <plan-job-id>
 ```

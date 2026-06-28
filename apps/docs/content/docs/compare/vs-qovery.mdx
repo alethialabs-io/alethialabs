@@ -15,7 +15,7 @@ divergence is **ownership and the credential model**.
 | Control plane | **Self-hostable** (~4 containers, AGPL) | Qovery-hosted SaaS by default; self-host only on Enterprise |
 | Credential model | **Runner assumes roles at run time; control plane holds nothing** | Hosted control plane is a privileged orchestrator into your account (even with STS) |
 | App delivery | **Real ArgoCD wired to your repo** (portable) | Qovery's engine *is* the delivery layer (remove it → rebuild your pipeline) |
-| Provisioned stack | Cluster **+ Aurora/ElastiCache/DynamoDB/SQS-SNS/ECR/S3/Secrets/Route53/WAF** in one Spec | App-platform-centric; most managed data services left to you |
+| Provisioned stack | Cluster **+ Aurora/ElastiCache/DynamoDB/SQS-SNS/ECR/S3/Secrets/Route53/WAF** in one Project | App-platform-centric; most managed data services left to you |
 | Pricing | Free self-host; commercial for orgs/SSO | Per-org + seats + deploy-minutes; self-host gated to Enterprise |
 | Open source | **AGPL core** | Proprietary |
 
@@ -24,7 +24,7 @@ divergence is **ownership and the credential model**.
   brain is always a privileged orchestrator into your account.
 - **Self-host on day one, for free** — AGPL, ~4 containers. Qovery gates self-host behind Enterprise.
 - **Portable app-delivery** — real ArgoCD; delete Alethia and your cluster + GitOps keep running.
-- **Broader stack in one Spec** + no per-seat / per-deploy-minute meter.
+- **Broader stack in one Project** + no per-seat / per-deploy-minute meter.
 
 ## Where Qovery wins (honest)
 - **Multi-cloud breadth GA** (EKS/GKE/AKS/Scaleway + bring-your-own clusters) today.

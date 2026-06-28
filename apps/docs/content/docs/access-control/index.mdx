@@ -5,7 +5,7 @@ description: How Alethia decides who can do what — the Policy Decision Point, 
 
 # Access Control Overview
 
-Every action in Alethia — viewing a spec, deploying infrastructure, destroying a runner, inviting a teammate — passes through one **authorization layer** before it runs. This page gives you the mental model; the rest of the section is the detail.
+Every action in Alethia — viewing a project, deploying infrastructure, destroying a runner, inviting a teammate — passes through one **authorization layer** before it runs. This page gives you the mental model; the rest of the section is the detail.
 
 <Callout type="info">
 **One sentence:** an **actor** (you, acting in an **organization**) is granted **roles**, each role carries a set of **permissions**, and a permission is the right to take an **action** on a **resource**. A request is allowed only if the actor holds a matching permission — everything else is denied.
@@ -15,15 +15,15 @@ Every action in Alethia — viewing a spec, deploying infrastructure, destroying
 
 ```
  actor ──holds──▶ grant ──of a──▶ role ──bundles──▶ permissions ──gate──▶ actions on resources
- (you + org)              (owner/admin/…)          (spec:deploy, …)
+ (you + org)              (owner/admin/…)          (project:deploy, …)
 ```
 
 - **Actor** — a verified user plus their **active organization** (the tenancy scope). In the free Community edition there is exactly one organization per user — your *personal organization* — so "actor" is effectively just "you".
-- **Resource** — a thing you act on: an organization, a **zone** (workspace), a **spec** (an infrastructure definition), a **runner**, a **cloud identity**, a job, a connector, a member, audit logs, or billing.
-- **Action** — what you're trying to do: `view`, `create`, `edit`, `plan`, `deploy`, `destroy`, and the management actions (`manage_identities`, `manage_members`, `manage_connectors`, `view_audit`, `export_audit`, `manage_billing`).
-- **Permission** — a single `resource:action` pair, e.g. `spec:deploy`. The complete, exhaustive list is fixed in code (see [Roles & Permissions](/access-control/roles-and-permissions)).
+- **Resource** — a thing you act on: an organization, a **project** (an infrastructure definition), a **runner**, a **cloud identity**, a job, a connector, a member, Activity logs, or billing.
+- **Action** — what you're trying to do: `view`, `create`, `edit`, `plan`, `deploy`, `destroy`, and the management actions (`manage_identities`, `manage_members`, `manage_connectors`, `view_activity`, `export_activity`, `manage_billing`).
+- **Permission** — a single `resource:action` pair, e.g. `project:deploy`. The complete, exhaustive list is fixed in code (see [Roles & Permissions](/access-control/roles-and-permissions)).
 - **Role** — a named bundle of permissions (`owner`, `admin`, `operator`, `viewer`). You don't grant permissions one by one; you grant a role.
-- **Grant** — "this actor gets this role, at this scope." The scope can be the whole organization, a single zone, or a single spec.
+- **Grant** — "this actor gets this role, at this scope." The scope can be the whole organization, or a single project.
 
 ## Default-deny
 
@@ -60,12 +60,12 @@ The whole model above ships in the **free, open-source (AGPL) Community edition*
 | | Community (free) | Enterprise |
 |---|---|---|
 | Roles & permissions (owner/admin/operator/viewer) | ✅ | ✅ |
-| Per-zone / per-spec grants + inheritance | ✅ | ✅ |
+| Per-project grants + inheritance | ✅ | ✅ |
 | Row-Level Security tenant isolation | ✅ | ✅ |
-| Audit log of decisions | ✅ | ✅ |
+| Activity log of decisions | ✅ | ✅ |
 | **Organizations, teams, members, invitations** | — (single personal org) | ✅ |
 | **SSO (SAML / OIDC)** | — | ✅ |
-| **Custom roles, the access portal, audit export** | — | ✅ |
+| **Custom roles, the access portal, activity export** | — | ✅ |
 | **OpenFGA fine-grained engine** | — | ✅ (optional) |
 
 For the authoritative, capability-by-capability breakdown, see the [**Editions** feature matrix](/editions/feature-matrix).
@@ -76,7 +76,7 @@ In Community, every user is the sole `owner` of their own personal organization 
 
 <Cards>
   <Card title="Roles & Permissions" href="/access-control/roles-and-permissions">
-    The four built-in roles, the full permission matrix, grants, and how a grant on a zone flows down to its specs.
+    The four built-in roles, the full permission matrix, grants, and how a grant on the organization flows down to its projects.
   </Card>
   <Card title="Organizations & Teams" href="/access-control/organizations">
     Multi-member organizations, invitations, and how a member's role determines what they can do (Enterprise).

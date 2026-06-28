@@ -12,7 +12,7 @@
     "members-and-invitations",
     "teams",
     "sso",
-    "audit-log",
+    "activity-log",
     "architecture",
     "openfga",
     "open-core"

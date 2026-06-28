@@ -15,29 +15,18 @@ alethia uses the [Charmbracelet](https://charm.sh/) suite for rich terminal UI. 
 
 ## Interactive Selectors
 
-When `--spec-id` is omitted from `plan`, `apply`, or `destroy`, alethia launches a two-step TUI selector:
+When `--project-id` is omitted from `plan`, `apply`, or `destroy`, alethia launches a TUI selector:
 
-### Step 1: Zone Selector
-
-```
-? Select a zone:
-  > api-backend (3 Specs)
-    data-platform (1 Spec)
-    internal-tools (2 Specs)
-```
-
-Navigate with arrow keys, confirm with Enter.
-
-### Step 2: Spec Selector
+### Project Selector
 
 ```
-? Select a Spec:
+? Select a Project:
   > production / eu-west-1 (ACTIVE)
     staging / eu-west-1 (DRAFT)
     development / us-east-1 (PROVISIONING)
 ```
 
-Each Spec shows its environment stage, region, and current status.
+Each Project shows its environment stage, region, and current status.
 
 ### Standalone Usage
 
@@ -82,7 +71,7 @@ The spinner animates while polling the exchange endpoint every 2 seconds.
 
 ## Config Printer
 
-Job details and Spec configurations are displayed with formatted JSON output using lipgloss styling:
+Job details and Project configurations are displayed with formatted JSON output using lipgloss styling:
 
 - Monospace font for values
 - Color-coded keys

@@ -20,7 +20,7 @@ description: Shared Go packages used by both Alethia CLI and Runner agent.
 | `k8s/` | Kubernetes kubeconfig management |
 | `git/` | Git clone, checkout, commit, push |
 | `cloud/` | Cloud provider interface + implementations |
-| `types/` | SpecConfig, Zone, CloudIdentity structs |
+| `types/` | ProjectConfig, CloudIdentity structs |
 | `state/` | Terraform state file handling |
 | `utils/` | Logger, CLI execution, file operations |
 | `assets/` | Embedded templates and Helm charts (via `go embed`) |
@@ -32,10 +32,10 @@ description: Shared Go packages used by both Alethia CLI and Runner agent.
 The main orchestration layer. Entry point: `RunDeployV2()`.
 
 ```
-RunDeployV2(specConfig, provider, planFile, installerConfig, apiClient, dryRun)
+RunDeployV2(projectConfig, provider, planFile, installerConfig, apiClient, dryRun)
   → Validate dependencies (terraform, kubectl, helm, cloud CLIs)
   → Download templates from embedded assets
-  → Generate terraform.tfvars from SpecConfig
+  → Generate terraform.tfvars from ProjectConfig
   → terraform init (with S3 backend)
   → terraform plan (if no planFile) or terraform apply (if planFile)
   → Infracost analysis (optional)
@@ -66,7 +66,7 @@ Defines the `CloudProvider` interface:
 type CloudProvider interface {
     Name() string
     RequiredCLIs() []string
-    ProviderTfvars(config SpecConfig) map[string]interface{}
+    ProviderTfvars(config ProjectConfig) map[string]interface{}
     ConfigureKubeconfig(clusterName, region string) error
 }
 ```

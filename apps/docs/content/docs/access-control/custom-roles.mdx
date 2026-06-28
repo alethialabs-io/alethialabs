@@ -8,7 +8,7 @@ description: Author your own roles with a tailored permission set — the permis
 <Enterprise />
 
 The four [built-in roles](/access-control/roles-and-permissions) cover the common cases. When you need
-something exact — "can plan and deploy specs, but never destroy, and nothing else" — author a **custom role**.
+something exact — "can plan and deploy projects, but never destroy, and nothing else" — author a **custom role**.
 
 Custom roles are **organization-scoped**: they live in your org, alongside the built-ins, and can be granted
 just like them through the [Access portal](/access-portal).
@@ -20,14 +20,13 @@ like AWS IAM), so you toggle exactly what the role can do:
 
 | Group | Example permissions |
 |---|---|
-| Zones | `zone:view` · `zone:create` · `zone:edit` · `zone:destroy` |
-| Specs | `spec:view` · `spec:create` · `spec:edit` · `spec:plan` · `spec:deploy` · `spec:destroy` |
+| Projects | `project:view` · `project:create` · `project:edit` · `project:plan` · `project:deploy` · `project:destroy` |
 | Runners | `runner:view` · `runner:create` · `runner:edit` · `runner:deploy` · `runner:destroy` |
 | Cloud identities | `cloud_identity:view` · `cloud_identity:manage_identities` · `cloud_identity:test` · `cloud_identity:fetch_resources` |
-| Jobs · Connectors · Org · Members · Audit · Billing | … |
+| Jobs · Connectors · Org · Members · Activity · Billing | … |
 
 Because the provisioning operations are themselves distinct permissions, you get **job-type granularity**: a
-role can grant `spec:plan` without `spec:deploy`, or `runner:deploy` without `runner:destroy`. Every job type a
+role can grant `project:plan` without `project:deploy`, or `runner:deploy` without `runner:destroy`. Every job type a
 member can trigger is independently grantable.
 
 <Callout type="info">

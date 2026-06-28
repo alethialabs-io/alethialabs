@@ -11,23 +11,7 @@ The platform uses **PostgreSQL via Drizzle ORM** as its sole database. Tenant is
 
 ## Core Tables
 
-### `zones`
-
-Workspace grouping for infrastructure configurations.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | uuid (PK) | |
-| `user_id` | uuid (FK → user) | Owner |
-| `org_id` | uuid | Coarse tenancy scope for the RLS blast wall (community: `org_id = user_id`) |
-| `name` | text | Unique per user |
-| `description` | text | Optional |
-| `created_at` | timestamptz | |
-| `updated_at` | timestamptz | |
-
-Constraint: `UNIQUE(user_id, name)`
-
-### `specs`
+### `projects`
 
 Infrastructure configuration — the central entity.
 
@@ -36,13 +20,12 @@ Infrastructure configuration — the central entity.
 | `id` | uuid (PK) | |
 | `user_id` | uuid (FK) | Owner |
 | `org_id` | uuid | Coarse tenancy scope for the RLS blast wall (community: `org_id = user_id`) |
-| `zone_id` | uuid (FK → zones) | Parent zone |
 | `cloud_identity_id` | uuid (FK → cloud_identities) | Cloud account to provision in |
 | `project_name` | text | Infrastructure project name |
 | `environment_stage` | environment_stage enum | development / staging / production |
 | `region` | text | Cloud region (e.g., eu-west-1) |
 | `iac_version` | text | no default (required) |
-| `status` | spec_status enum | DRAFT → ACTIVE → DESTROYED |
+| `status` | project_status enum | DRAFT → ACTIVE → DESTROYED |
 | `estimated_monthly_cost` | numeric | Calculated cost estimate |
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | |
@@ -68,16 +51,16 @@ Authentication is owned by [Better Auth](/concepts/authentication), which manage
 `account`, and `verification` tables. Git-provider OAuth tokens (`accessToken`, `refreshToken`, `scope`,
 and the expiry columns) live on the **`account`** table — there is no separate `provider_tokens` table.
 
-## Spec Component Tables (Singleton — 1:1 per Spec)
+## Project Component Tables (Singleton — 1:1 per Project)
 
-### `spec_network`
+### `project_network`
 
 VPC / VNet / VPC Network configuration.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `spec_id` | uuid (UNIQUE FK) | |
+| `project_id` | uuid (UNIQUE FK) | |
 | `provision_network` | boolean | Create new or use existing |
 | `network_id` | text | Existing network ID (if not provisioning) |
 | `cidr_block` | text | e.g., 10.0.0.0/16 |
@@ -86,14 +69,14 @@ VPC / VNet / VPC Network configuration.
 | `status` | component_status enum | |
 | `estimated_monthly_cost` | numeric | |
 
-### `spec_cluster`
+### `project_cluster`
 
 EKS / GKE / AKS configuration.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `spec_id` | uuid (UNIQUE FK) | |
+| `project_id` | uuid (UNIQUE FK) | |
 | `cluster_version` | text | e.g., 1.31 |
 | `provider_config` | jsonb | Provider-specific overrides |
 | `cluster_admins` | jsonb | Admin user list |
@@ -108,14 +91,14 @@ EKS / GKE / AKS configuration.
 | `argocd_admin_password` | text | Populated after ArgoCD install |
 | `provider_outputs` | jsonb | Provider-specific identifiers (e.g. `arn`) — populated after provisioning |
 
-### `spec_dns`
+### `project_dns`
 
 Route53 / Cloud DNS / Azure DNS configuration.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `spec_id` | uuid (UNIQUE FK) | |
+| `project_id` | uuid (UNIQUE FK) | |
 | `enabled` | boolean | |
 | `zone_id` | text | Existing hosted zone |
 | `domain_name` | text | |
@@ -124,29 +107,29 @@ Route53 / Cloud DNS / Azure DNS configuration.
 | `provider_config` | jsonb | |
 | `status` | component_status enum | |
 
-### `spec_repositories`
+### `project_repositories`
 
 Application deployment repository reference.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `spec_id` | uuid (UNIQUE FK) | |
+| `project_id` | uuid (UNIQUE FK) | |
 | `apps_destination_repo` | text | Application output destination repo |
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | |
 
-## Spec Component Tables (Multi-Instance — 1:N per Spec)
+## Project Component Tables (Multi-Instance — 1:N per Project)
 
-### `spec_databases`
+### `project_databases`
 
 Aurora / Cloud SQL / Azure Database instances.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `spec_id` | uuid (FK) | |
-| `name` | text | Unique per Spec |
+| `project_id` | uuid (FK) | |
+| `name` | text | Unique per Project |
 | `engine` | text | Provider-specific engine, resolved per cloud (e.g. aurora-postgresql / cloudsql-postgresql) — no default |
 | `engine_version` | text | e.g., 16.4 |
 | `min_capacity` | numeric | Aurora Serverless min ACU |
@@ -159,17 +142,17 @@ Aurora / Cloud SQL / Azure Database instances.
 | `reader_endpoint` | text | Reader endpoint |
 | `provider_outputs` | jsonb | Provider-specific identifiers (`identifier`, `arn`, `secret_ref`, `extra_secret_ref`, `kms_key`) — populated after provisioning |
 
-Constraint: `UNIQUE(spec_id, name)`
+Constraint: `UNIQUE(project_id, name)`
 
-### `spec_caches`
+### `project_caches`
 
 ElastiCache / Memorystore / Azure Cache instances.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `spec_id` | uuid (FK) | |
-| `name` | text | Unique per Spec |
+| `project_id` | uuid (FK) | |
+| `name` | text | Unique per Project |
 | `engine` | cache_engine enum | redis / valkey |
 | `node_type` | text | e.g., cache.r6g.large |
 | `num_cache_nodes` | integer | |
@@ -179,14 +162,14 @@ ElastiCache / Memorystore / Azure Cache instances.
 | `endpoint` | text | Populated after provisioning |
 | `estimated_monthly_cost` | numeric | |
 
-### `spec_nosql_tables`
+### `project_nosql_tables`
 
 DynamoDB / Firestore / Cosmos DB tables.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `spec_id` | uuid (FK) | |
+| `project_id` | uuid (FK) | |
 | `name` | text | |
 | `table_type` | nosql_table_type enum | |
 | `partition_key` | text | Partition key name |
@@ -198,14 +181,14 @@ DynamoDB / Firestore / Cosmos DB tables.
 | `provider_config` | jsonb | |
 | `status` | component_status enum | |
 
-### `spec_queues`
+### `project_queues`
 
 SQS / Pub/Sub / Service Bus queues.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `spec_id` | uuid (FK) | |
+| `project_id` | uuid (FK) | |
 | `name` | text | |
 | `ordered` | boolean | Ordered delivery (SQS FIFO / Service Bus sessions / Pub/Sub ordering) |
 | `visibility_timeout` | integer | Seconds (SQS visibility ≈ Azure lock_duration ≈ Pub/Sub ack deadline) |
@@ -213,53 +196,53 @@ SQS / Pub/Sub / Service Bus queues.
 | `provider_config` | jsonb | Provider-specific knobs (e.g. SQS `delay_seconds`) |
 | `status` | component_status enum | |
 
-### `spec_topics`
+### `project_topics`
 
 SNS / Pub/Sub / Service Bus topics.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `spec_id` | uuid (FK) | |
+| `project_id` | uuid (FK) | |
 | `name` | text | |
 | `subscriptions` | jsonb | Array of subscription configs |
 | `status` | component_status enum | |
 
-### `spec_container_registries`
+### `project_container_registries`
 
 ECR / Artifact Registry / ACR repositories.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `spec_id` | uuid (FK) | |
+| `project_id` | uuid (FK) | |
 | `name` | text | |
 | `repository_url` | text | Populated after provisioning |
 | `provider_config` | jsonb | Provider-specific knobs (`immutable_tags`, `vulnerability_scanning`) |
 | `status` | component_status enum | |
 
-### `spec_secrets`
+### `project_secrets`
 
 Secrets Manager / Secret Manager / Key Vault entries.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `spec_id` | uuid (FK) | |
+| `project_id` | uuid (FK) | |
 | `name` | text | Secret name |
 | `generate` | boolean | Auto-generate a random value |
 | `length` | integer | Generated password length |
 | `special_chars` | boolean | Include special characters |
 | `status` | component_status enum | |
 
-### `spec_storage_buckets`
+### `project_storage_buckets`
 
 S3 / Cloud Storage / Blob Storage buckets.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `spec_id` | uuid (FK) | |
+| `project_id` | uuid (FK) | |
 | `name` | text | |
 | `versioning` | boolean | Object versioning |
 | `encryption_enabled` | boolean | At-rest encryption (the algorithm is a provider-specific knob in `provider_config`) |
@@ -269,14 +252,14 @@ S3 / Cloud Storage / Blob Storage buckets.
 | `status` | component_status enum | |
 | `estimated_monthly_cost` | numeric | |
 
-### `spec_git_credentials`
+### `project_git_credentials`
 
 Git credentials for the GitOps / app-deployment repos.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `spec_id` | uuid (FK) | |
+| `project_id` | uuid (FK) | |
 | `purpose` | git_credential_purpose enum | What the credential is for |
 | `method` | git_credential_method enum | Auth method (e.g. token / SSH) |
 | `provider_identity_id` | uuid | Source provider identity (if reusing a linked OAuth account) |
@@ -291,12 +274,12 @@ Git credentials for the GitOps / app-deployment repos.
 |--------|------|-------------|
 | `id` | uuid (PK) | |
 | `user_id` | uuid (FK) | Owner |
-| `spec_id` | uuid (FK) | Target Spec |
+| `project_id` | uuid (FK) | Target Project |
 | `cloud_identity_id` | uuid (FK) | Cloud account for execution |
 | `job_type` | provision_job_type enum | CONNECTION_TEST, PLAN, DEPLOY, DEPLOY_RUNNER, etc. |
 | `status` | provision_job_status enum | QUEUED → SUCCESS/FAILED |
 | `runner_id` | uuid (FK → runners) | Assigned Runner |
-| `config_snapshot` | jsonb | Frozen Spec config for the job |
+| `config_snapshot` | jsonb | Frozen Project config for the job |
 | `error_message` | text | Failure details |
 | `execution_metadata` | jsonb | Terraform outputs, cost data, timing |
 | `created_at` | timestamptz | |
@@ -369,7 +352,7 @@ Release catalog for Runner versions.
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid (PK) | |
-| `spec_id` | uuid (FK) | |
+| `project_id` | uuid (FK) | |
 | `user_id` | uuid (FK) | Who performed the action |
 | `action` | audit_action enum | CREATED, UPDATED, DELETED, PROVISIONED, DESTROYED |
 | `component_type` | text | Which component was affected |
@@ -388,7 +371,7 @@ authorization at scale.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `key` | text (PK) | e.g. `spec:deploy` |
+| `key` | text (PK) | e.g. `project:deploy` |
 | `resource` | text | Resource type the permission acts on |
 | `action` | text | Action granted |
 | `description` | text | |
@@ -430,7 +413,7 @@ An actor (or principal) holding a role or permission, optionally scoped to a res
 
 ### `resource_hierarchy`
 
-Parent/child resource edges (e.g. zone → spec) so a grant on a parent cascades.
+Parent/child resource edges (e.g. org → project) so a grant on a parent cascades.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -439,9 +422,9 @@ Parent/child resource edges (e.g. zone → spec) so a grant on a parent cascades
 | `parent_type` | text | |
 | `parent_id` | uuid | |
 
-### `authz_audit_log`
+### `authz_activity_log`
 
-Every PDP decision, for audit.
+The Activity log — every recorded action and denial.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -458,8 +441,8 @@ Every PDP decision, for audit.
 ## Key Enums
 
 ```sql
--- Spec lifecycle
-CREATE TYPE spec_status AS ENUM (
+-- Project lifecycle
+CREATE TYPE project_status AS ENUM (
   'DRAFT', 'QUEUED', 'PROVISIONING', 'ACTIVE',
   'FAILED', 'DESTROYING', 'DESTROYED'
 );

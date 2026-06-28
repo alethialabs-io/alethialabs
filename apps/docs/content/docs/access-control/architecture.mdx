@@ -53,13 +53,13 @@ The default implementation answers a check with a single SQL gather followed by 
 **Gather grants.** One query selects the actor's grants that match the org, the principal, and the required permission key (`<resource>:<action>`), returning each grant's `resource_id` (where `NULL` = org-wide).
 </Step>
 <Step>
-**Walk the hierarchy.** A recursive CTE computes the target resource's ancestor ids (spec → zone → org).
+**Walk the hierarchy.** A recursive CTE computes the target resource's ancestor ids (project → org).
 </Step>
 <Step>
 **Decide (pure).** `coversResource(grantResourceIds, resourceId, ancestorIds)`: a grant with `NULL` resource_id (org-wide) covers everything; otherwise a grant covers the resource if its id is the resource itself or one of its ancestors. No matching grant ⇒ **deny**.
 </Step>
 <Step>
-**Enforce & audit.** `enforce` throws `ForbiddenError` (→ 403) on denial and writes the decision to the audit log; allows of sensitive actions (`destroy`, `manage_*`, `export_audit`) are audited too.
+**Enforce & record.** `enforce` throws `ForbiddenError` (→ 403) on denial and writes the decision to the Activity log; every denial and every successful non-read action is recorded (successful reads are skipped).
 </Step>
 </Steps>
 

@@ -14,13 +14,13 @@ ship you a cluster — it orchestrates whatever IaC *you* author.
 |---|---|---|
 | What you get | **A complete production cluster** (EKS + Aurora/ElastiCache/DynamoDB/SQS-SNS/ECR/S3/Secrets/Route53/WAF) + ArgoCD + operators | A runner for **IaC you write & maintain** |
 | App delivery | **Real ArgoCD/GitOps wired to your repo** | CI apply-on-push; not a live GitOps loop, not an app platform |
-| Effort to first cluster | Design a Spec → provision | Author all the IaC yourself first |
+| Effort to first cluster | Design a Project → provision | Author all the IaC yourself first |
 | Self-host the control plane | **Yes — AGPL, a handful of containers** | Self-hosted edition only on the top Enterprise+ tier |
 | Open source | **AGPL core** | Proprietary SaaS (only the worker is OSS) |
 | Credentials | Runner assumes roles at run time | You wire cloud creds into the runner |
 
 ## Where Alethia wins
-- **Delivers an outcome, not plumbing** — one Spec → a batteries-included cluster, handed to you.
+- **Delivers an outcome, not plumbing** — one Project → a batteries-included cluster, handed to you.
   Spacelift only runs IaC you must author and maintain.
 - **Real GitOps app-delivery** wired to your repo — Spacelift is a CI runner, not ArgoCD.
 - **Self-hostable for everyone** (AGPL), and you still **own the OpenTofu** it generates.

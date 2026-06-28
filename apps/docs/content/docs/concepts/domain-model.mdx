@@ -15,43 +15,42 @@ The platform uses a clear, consistent domain model. Each term maps to a distinct
 |------|---------|
 | **Console** | Web platform (control plane) |
 | **alethia** | CLI tool |
-| **Zone** | Workspace / project grouping |
-| **Spec** | A single infrastructure configuration |
+| **Project** | A single infrastructure configuration |
 | **Runner** | Execution agent that runs provisioning jobs |
 | **Apply** | Deployment action (`alethia apply`) |
-| **Design** | Create a new Spec configuration |
+| **Design** | Create a new Project configuration |
 
 ## Entity Relationships
 
 ```
-User
- └── Zones (1:N)
-      └── Specs (1:N)
-           ├── Cloud Identity (N:1) ─── links to AWS/GCP/Azure account
-           ├── spec_network (1:1) ─── VPC / VNet / VPC Network
-           ├── spec_cluster (1:1) ─── EKS / GKE / AKS
-           ├── spec_dns (1:1) ─── Route53 / Cloud DNS / Azure DNS
-           ├── spec_repositories (1:1) ─── Git repo references
-           ├── spec_databases (1:N) ─── Aurora / Cloud SQL / Azure DB
-           ├── spec_caches (1:N) ─── ElastiCache / Memorystore / Azure Cache
-           ├── spec_queues (1:N) ─── SQS / Pub/Sub / Service Bus
-           ├── spec_topics (1:N) ─── SNS / Pub/Sub / Service Bus Topics
-           ├── spec_nosql_tables (1:N) ─── DynamoDB / Firestore / Cosmos DB
-           ├── spec_container_registries (1:N) ─── ECR / Artifact Registry / ACR
-           ├── spec_secrets (1:N) ─── Secrets Manager / Secret Manager / Key Vault
+Org
+ └── Projects (1:N)
+      ├── Environment (1:1) ─── development / staging / production
+      ├── Cloud Identity (N:1) ─── links to AWS/GCP/Azure account
+           ├── project_network (1:1) ─── VPC / VNet / VPC Network
+           ├── project_cluster (1:1) ─── EKS / GKE / AKS
+           ├── project_dns (1:1) ─── Route53 / Cloud DNS / Azure DNS
+           ├── project_repositories (1:1) ─── Git repo references
+           ├── project_databases (1:N) ─── Aurora / Cloud SQL / Azure DB
+           ├── project_caches (1:N) ─── ElastiCache / Memorystore / Azure Cache
+           ├── project_queues (1:N) ─── SQS / Pub/Sub / Service Bus
+           ├── project_topics (1:N) ─── SNS / Pub/Sub / Service Bus Topics
+           ├── project_nosql_tables (1:N) ─── DynamoDB / Firestore / Cosmos DB
+           ├── project_container_registries (1:N) ─── ECR / Artifact Registry / ACR
+           ├── project_secrets (1:N) ─── Secrets Manager / Secret Manager / Key Vault
            └── jobs (1:N) ─── PLAN, DEPLOY, DESTROY, etc.
                 └── provision_job_logs (1:N)
 ```
 
-A **Zone** contains one or more **Specs**, and a **Spec** is provisioned by a **Runner**.
+An **Org** contains one or more **Projects**, and a **Project** is provisioned by a **Runner**.
 
-**Singleton components** (1:1 per Spec): network, cluster, DNS, repositories. Every Spec has exactly one of each (or none if that section is disabled).
+**Singleton components** (1:1 per Project): network, cluster, DNS, repositories. Every Project has exactly one of each (or none if that section is disabled).
 
-**Multi-instance components** (1:N per Spec): databases, caches, queues, topics, NoSQL tables, container registries, secrets. A Spec can have zero or many of each.
+**Multi-instance components** (1:N per Project): databases, caches, queues, topics, NoSQL tables, container registries, secrets. A Project can have zero or many of each.
 
-## Spec Lifecycle
+## Project Lifecycle
 
-A Spec progresses through these states:
+A Project progresses through these states:
 
 ```
 DRAFT ──► QUEUED ──► PROVISIONING ──► ACTIVE
@@ -75,7 +74,7 @@ DRAFT ──► QUEUED ──► PROVISIONING ──► ACTIVE
 
 ## Component Status
 
-Each Spec component (network, cluster, database, etc.) has its own status independent of the parent Spec:
+Each Project component (network, cluster, database, etc.) has its own status independent of the parent Project:
 
 | Status | Meaning |
 |--------|---------|
@@ -122,7 +121,7 @@ QUEUED ──► CLAIMED ──► PROCESSING ──► SUCCESS
 
 ## Environment Stages
 
-Each Spec targets a specific environment:
+Each Project targets a specific environment:
 
 | Stage | Purpose |
 |-------|---------|

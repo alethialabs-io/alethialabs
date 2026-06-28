@@ -68,7 +68,7 @@ Deep dives into the platform's key technical patterns:
 
 <Cards>
   <Card title="Domain Model" href="/concepts/domain-model">
-    Zone/Spec/Runner entities, lifecycles, and relationships.
+    Project/Runner entities, lifecycles, and relationships.
   </Card>
   <Card title="Security Architecture" href="/concepts/security">
     Zero-credential model, RLS, cloud provider federation.
@@ -86,7 +86,7 @@ Deep dives into the platform's key technical patterns:
     Registry, region mapping, instance types, provider_config JSONB.
   </Card>
   <Card title="Provisioning Pipeline" href="/concepts/provisioning-pipeline">
-    Form values → config snapshot → SpecConfig → terraform.tfvars.json → infrastructure.
+    Form values → config snapshot → ProjectConfig → terraform.tfvars.json → infrastructure.
   </Card>
   <Card title="Real-time Architecture" href="/concepts/realtime">
     LISTEN/NOTIFY → SSE, log streaming, store synchronization.
@@ -98,7 +98,7 @@ Deep dives into the platform's key technical patterns:
     OAuth (web), Device Code Grant (CLI), token auth (Runner).
   </Card>
   <Card title="Multi-Cloud Conversion" href="/concepts/multi-cloud-conversion">
-    Cross-provider Spec duplication with mapping and warnings.
+    Cross-provider Project duplication with mapping and warnings.
   </Card>
   <Card title="Terraform State" href="/concepts/terraform-state">
     S3-compatible backend, state paths, plan artifacts.
@@ -127,7 +127,7 @@ bb-thesis-2026/
 │   └── ...config/        # Shared TS/ESLint config
 ├── infra/
 │   ├── platform/         # Runner deployment (ECR, ECS, Lambda scaler)
-│   ├── templates/spec/   # Infrastructure templates (AWS/GCP/Azure)
+│   ├── templates/project/ # Infrastructure templates (AWS/GCP/Azure)
 │   ├── templates/argocd/ # ArgoCD application templates
 │   └── connector/        # Cloud provider federation setup
 ├── apps/console/lib/db/migrations/  # PostgreSQL schema migrations (Drizzle)

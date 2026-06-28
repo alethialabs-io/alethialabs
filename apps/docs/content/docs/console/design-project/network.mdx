@@ -51,7 +51,7 @@ Select from existing networks discovered by the resource refresh job. The dropdo
 - Region
 
 <Callout type="info">
-Existing networks must be in the same region as the spec. The resource refresh job (`FETCH_RESOURCES`) populates the list by querying your cloud account. If you don't see a network, click the refresh button in the Provider Ribbon.
+Existing networks must be in the same region as the project. The resource refresh job (`FETCH_RESOURCES`) populates the list by querying your cloud account. If you don't see a network, click the refresh button in the Provider Ribbon.
 </Callout>
 
 ## CIDR Block Validation
@@ -80,7 +80,7 @@ NAT gateways have significant cost implications:
 | Single | ~$35/mo | One NAT in a single AZ (cost-optimized, single point of failure) |
 | HA | ~$105/mo (3 AZ) | One NAT per AZ (high availability, 3x cost) |
 
-The [cost sidebar](/console/design-spec/cost-sidebar) reflects the NAT gateway choice immediately.
+The [cost sidebar](/console/design-project/cost-sidebar) reflects the NAT gateway choice immediately.
 
 ## Allowed CIDR Blocks
 

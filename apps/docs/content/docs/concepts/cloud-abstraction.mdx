@@ -30,7 +30,7 @@ The registry (`lib/cloud-providers/registry.ts`) maps each provider to its cloud
 
 ## Region Mapping
 
-Regions are mapped across providers for cross-cloud Spec duplication:
+Regions are mapped across providers for cross-cloud Project duplication:
 
 ```
 AWS us-east-1  ←→  GCP us-east4    ←→  Azure eastus
@@ -42,7 +42,7 @@ Each provider has a default region: `us-east-1` (AWS), `us-east4` (GCP), `eastus
 
 ## Instance Type Mapping
 
-Compute instance types are mapped for Spec conversion:
+Compute instance types are mapped for Project conversion:
 
 | AWS | GCP | Azure | Profile |
 |-----|-----|-------|---------|
@@ -73,7 +73,7 @@ This keeps the shared schema clean while allowing provider-specific features.
 
 ## How the Form Adapts
 
-When the user switches providers via the Provider Ribbon in the Design a Spec form:
+When the user switches providers via the Provider Ribbon in the Design a Project form:
 
 1. **Instance types** update to the target provider's catalog
 2. **K8s versions** update (e.g., 1.32 for AWS EKS, 1.31 for GCP GKE)
@@ -84,18 +84,18 @@ When the user switches providers via the Provider Ribbon in the Design a Spec fo
 7. **Autoscaler** toggles change (Karpenter → GKE Autopilot → Cluster Autoscaler)
 8. **Region dropdown** repopulates with the provider's regions
 
-All form fields reset to provider-appropriate defaults. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion) for how existing Specs are converted across providers.
+All form fields reset to provider-appropriate defaults. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion) for how existing Projects are converted across providers.
 
 ## Terraform Templates
 
 Each provider has its own set of Terraform templates:
 
-- `infra/templates/spec/aws/` — EKS, Aurora, ElastiCache, DynamoDB, etc.
-- `infra/templates/spec/gcp/` — GKE, Cloud SQL, Memorystore, Firestore, etc.
-- `infra/templates/spec/azure/` — AKS, Azure Database, Azure Cache, Cosmos DB, etc.
+- `infra/templates/project/aws/` — EKS, Aurora, ElastiCache, DynamoDB, etc.
+- `infra/templates/project/gcp/` — GKE, Cloud SQL, Memorystore, Firestore, etc.
+- `infra/templates/project/azure/` — AKS, Azure Database, Azure Cache, Cosmos DB, etc.
 
-The Runner selects the correct template directory based on the Spec's cloud provider and generates `terraform.tfvars` from the Spec configuration.
+The Runner selects the correct template directory based on the Project's cloud provider and generates `terraform.tfvars` from the Project configuration.
 
 ## Pluggable connectors
 
-The same registry pattern extends one level down to **per-category connectors** — letting a Spec swap the cloud-native default for a tool you already run (Cloudflare DNS, Vault secrets, Docker Hub registry, Datadog/Grafana/Prometheus observability). See [Connectors Architecture](/concepts/connectors).
+The same registry pattern extends one level down to **per-category connectors** — letting a Project swap the cloud-native default for a tool you already run (Cloudflare DNS, Vault secrets, Docker Hub registry, Datadog/Grafana/Prometheus observability). See [Connectors Architecture](/concepts/connectors).

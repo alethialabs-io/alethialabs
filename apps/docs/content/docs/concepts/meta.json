@@ -6,6 +6,7 @@
     "index",
     "domain-model",
     "security",
+    "testing",
     "database",
     "release-system",
     "job-queue",

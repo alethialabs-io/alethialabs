@@ -21,15 +21,15 @@ The summary below is a quick reference; the [Editions feature matrix](/editions/
 |---|:--:|:--:|
 | Policy Decision Point + `enforce` / `listAccessible` | ✅ | ✅ |
 | Built-in roles (owner / admin / operator / viewer) | ✅ | ✅ |
-| Per-resource grants + Org → Zone → Spec inheritance | ✅ | ✅ |
+| Per-resource grants + Org → Project inheritance | ✅ | ✅ |
 | Explicit deny + single-permission grants | ✅ | ✅ |
 | Row-Level Security tenant isolation | ✅ | ✅ |
-| Audit log of authorization decisions | ✅ | ✅ |
+| Activity log of authorization decisions | ✅ | ✅ |
 | Single-user personal organization | ✅ | ✅ |
 | **Multi-member organizations, teams, invitations** | — | ✅ |
 | **SSO (SAML / OIDC)** | — | ✅ |
 | **Custom roles + the access portal** | — | ✅ |
-| **Audit export** | — | ✅ |
+| **Activity export** | — | ✅ |
 | **OpenFGA-backed policy engine at scale** | — | ✅ (optional) |
 
 <Callout type="info">
@@ -62,6 +62,6 @@ The payoff: the Enterprise edition can evolve independently, and the open-source
 
 ## For self-hosters
 
-If you self-host the Community edition you get the full single-tenant product: roles, grants, hierarchy, audit, and database-level tenant isolation, all under the AGPL. You can run it indefinitely with no license. Adding the Enterprise edition is what unlocks shared organizations and the features in the table above.
+If you self-host the Community edition you get the full single-tenant product: roles, grants, hierarchy, the Activity log, and database-level tenant isolation, all under the AGPL. You can run it indefinitely with no license. Adding the Enterprise edition is what unlocks shared organizations and the features in the table above.
 
 See [Self-Hosting](/self-hosting) for deployment, and [Architecture](/access-control/architecture) for exactly how the seams and the loader work.

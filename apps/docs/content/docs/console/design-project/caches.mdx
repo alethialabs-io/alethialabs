@@ -5,13 +5,13 @@ description: Redis and Valkey cache instances — node types, clustering, and mu
 
 # Caches
 
-The caches section configures managed in-memory cache instances. Multiple caches can be added per spec.
+The caches section configures managed in-memory cache instances. Multiple caches can be added per project.
 
 ## Fields Per Cache
 
 | Field | Type | Description |
 |-------|------|-------------|
-| **Name** | Text input | Unique per spec, lowercase |
+| **Name** | Text input | Unique per project, lowercase |
 | **Engine** | Select | `redis` or `valkey` |
 | **Node Type** | Select | Instance size with pricing shown |
 | **Nodes** | Number | 1–6 cache nodes |
@@ -69,7 +69,7 @@ When enabled, the cache replicates data across availability zones for automatic 
 
 ## After Provisioning
 
-The cache card in spec detail shows:
+The cache card in project detail shows:
 - **Primary endpoint** — connection string for writes
 - **Reader endpoint** — connection string for reads (if multi-AZ)
 - **Port** — typically 6379

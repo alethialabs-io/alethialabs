@@ -12,8 +12,8 @@ The dashboard is the landing page after login. It provides a quick summary of yo
 The dashboard shell wraps all authenticated pages with:
 
 - **Header** — breadcrumbs, notifications bell (unread job count), user dropdown (profile, sign out)
-- **Sidebar** — main navigation (Overview, Design a Spec, Clusters, Jobs, Connectors, Runners) plus a dynamic zone list with expandable spec sub-items
-- **Real-time subscriptions** — established on layout mount for job status and spec status updates (see [Real-time Architecture](/concepts/realtime))
+- **Sidebar** — main navigation (Overview, Design a Project, Clusters, Jobs, Connectors, Runners) plus a dynamic project list
+- **Real-time subscriptions** — established on layout mount for job status and project status updates (see [Real-time Architecture](/concepts/realtime))
 
 ## Overview Page
 
@@ -21,8 +21,8 @@ The overview page shows four stat chips at the top:
 
 | Stat | Source |
 |------|--------|
-| Total Specs | Count of all specs across zones |
-| Active Specs | Specs with status `ACTIVE` |
+| Total Projects | Count of all projects |
+| Active Projects | Projects with status `ACTIVE` |
 | Online Runners | Runners with heartbeat within 60 seconds |
 | Total Jobs | Count of all provision jobs |
 
@@ -37,7 +37,7 @@ Shows connected and disconnected integrations as badges. Connected providers sho
 A data table showing the 5 most recent jobs with columns:
 - **Type** — job type with icon (PLAN, DEPLOY, DESTROY, etc.)
 - **Status** — color-coded badge (green=SUCCESS, red=FAILED, yellow=PROCESSING, gray=QUEUED)
-- **Spec** — target spec project name
+- **Project** — target project name
 - **Created** — relative timestamp
 
 Clicking a job row navigates to the [job detail page](/console/jobs/job-detail).
@@ -54,15 +54,14 @@ The sidebar has two sections:
 
 **Main Navigation:**
 - Overview (`/dashboard`)
-- Design a Spec (`/dashboard/design`)
+- Design a Project (`/dashboard/design`)
 - Clusters (`/dashboard/clusters`)
 - Jobs (`/dashboard/jobs`)
 - Connectors (`/dashboard/connectors`)
 - Runners (`/dashboard/runners`)
 
-**Zones List:**
-- Dynamically loaded from the zones store
-- Each zone is expandable to show its specs
-- Specs show status dots (green=ACTIVE, yellow=PROVISIONING, red=FAILED) and provider icons
-- Active spec is highlighted based on current URL
-- "Design a Spec" link shown if no zones exist
+**Projects List:**
+- Dynamically loaded from the projects store
+- Projects show status dots (green=ACTIVE, yellow=PROVISIONING, red=FAILED) and provider icons
+- Active project is highlighted based on current URL
+- "Design a Project" link shown if no projects exist

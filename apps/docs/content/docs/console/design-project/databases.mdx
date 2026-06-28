@@ -5,13 +5,13 @@ description: Managed relational databases — Aurora, Cloud SQL, Azure Database 
 
 # Databases
 
-The databases section configures managed relational database instances. Multiple databases can be added per spec, each with its own engine, version, and capacity settings.
+The databases section configures managed relational database instances. Multiple databases can be added per project, each with its own engine, version, and capacity settings.
 
 ## Fields Per Database
 
 | Field | Type | Description |
 |-------|------|-------------|
-| **Name** | Text input | Unique per spec, lowercase, used in resource naming |
+| **Name** | Text input | Unique per project, lowercase, used in resource naming |
 | **Engine** | Select | Provider-specific engine (see below) |
 | **Engine Version** | Auto-set | Determined by engine selection |
 | **Min Capacity** | Number | Minimum capacity (ACUs for Aurora, vCPUs for Cloud SQL) |
@@ -63,7 +63,7 @@ Common patterns:
 
 ## After Provisioning
 
-Once deployed, the database card in the [spec detail](/console/dashboard/spec-detail) Services tab shows:
+Once deployed, the database card in the [project detail](/console/dashboard/project-detail) Services tab shows:
 - **Writer endpoint** — primary connection string
 - **Reader endpoint** — read replica connection (Aurora only)
 - **Master credentials** — stored in Secrets Manager (ARN shown, copy button)

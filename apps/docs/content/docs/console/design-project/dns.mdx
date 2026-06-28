@@ -20,12 +20,12 @@ The DNS section is optional (controlled by a master toggle). When enabled, it co
 
 ## DNS Provider
 
-The **DNS Provider** selector decouples *what* the Spec needs (a managed zone) from *who* provides it:
+The **DNS Provider** selector decouples *what* the Project needs (a managed zone) from *who* provides it:
 
 - **Cloud-native** (default) — uses the cluster cloud's DNS service; the managed-certificate and WAF toggles apply.
 - **Cloudflare** — manages records on Cloudflare instead. Requires a connected [Cloudflare connector](/console/connectors/pluggable); set the **Zone ID** and the **Proxied** option (orange-cloud). The cloud-native DNS/cert resources are skipped at provision time.
 
-When a pluggable provider is selected, its credential is pulled from `connector_credentials` on the runner at provision time — never stored in the Spec.
+When a pluggable provider is selected, its credential is pulled from `connector_credentials` on the runner at provision time — never stored in the Project.
 
 ## DNS Zones
 
@@ -44,7 +44,7 @@ The zone selector shows existing DNS zones discovered by the resource refresh jo
 </Tabs>
 
 <Callout type="info">
-DNS zones are provider-specific. When duplicating a spec across providers, the zone ID and domain are cleared and must be re-configured. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion).
+DNS zones are provider-specific. When duplicating a project across providers, the zone ID and domain are cleared and must be re-configured. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion).
 </Callout>
 
 ## Managed Certificates
@@ -82,4 +82,4 @@ WAF protects web applications from common attacks (SQL injection, XSS, bot traff
   </Tab>
 </Tabs>
 
-WAF costs are reflected in the [cost sidebar](/console/design-spec/cost-sidebar) immediately when toggled.
+WAF costs are reflected in the [cost sidebar](/console/design-project/cost-sidebar) immediately when toggled.

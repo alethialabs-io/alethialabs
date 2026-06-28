@@ -18,7 +18,7 @@ alethia jobs list
 Output:
 
 ```
-ID            TYPE     STATUS      SPEC            CREATED
+ID            TYPE     STATUS      PROJECT         CREATED
 a1b2...       PLAN     SUCCESS     api-backend     2 min ago
 c3d4...       DEPLOY   PROCESSING  api-backend     30 sec ago
 e5f6...       DESTROY  QUEUED      data-platform   just now
@@ -72,6 +72,6 @@ alethia jobs wait --id <job-id>
 Exits with code 0 on SUCCESS, non-zero on FAILED or CANCELLED. Useful in scripts:
 
 ```bash
-alethia plan --spec-id $ID
+alethia plan --project-id $ID
 alethia jobs wait --id $PLAN_JOB && echo "Plan succeeded"
 ```

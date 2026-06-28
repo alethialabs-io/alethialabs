@@ -50,7 +50,7 @@ This happens transparently whenever a Git operation is needed.
 
 ## What Tokens Are Used For
 
-- **Repository listing** — the Design a Spec form shows repos from your connected provider
+- **Repository listing** — the Design a Project form shows repos from your connected provider
 - **ArgoCD access** — after deploying, ArgoCD uses the token to watch repositories for changes
 - **Template cloning** — infrastructure templates can be sourced from your repositories
 
@@ -63,5 +63,5 @@ Disconnecting a Git provider:
 3. Existing ArgoCD installations that use this token will lose repository access
 
 <Callout type="warn">
-Disconnecting a Git provider affects all specs that use repositories from that provider. ArgoCD will show "sync failed" until a new token is provided.
+Disconnecting a Git provider affects all projects that use repositories from that provider. ArgoCD will show "sync failed" until a new token is provided.
 </Callout>

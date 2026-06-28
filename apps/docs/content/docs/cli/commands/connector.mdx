@@ -302,9 +302,9 @@ If you omit the provider, the CLI shows a picker of connected accounts.
 | `-y`, `--yes` | No | Skip the confirmation prompt. |
 
 <Callout type="warn">
-Disconnecting resets the identity to a pending state and **orphans any specs** that referenced it
+Disconnecting resets the identity to a pending state and **orphans any projects** that referenced it
 (their `cloud_identity_id` is cleared). It does not destroy already-provisioned cloud resources —
-run [`alethia destroy spec`](/cli/commands/plan-and-apply) first to tear those down. You can
+run [`alethia destroy project`](/cli/commands/plan-and-apply) first to tear those down. You can
 reconnect the same provider later.
 </Callout>
 

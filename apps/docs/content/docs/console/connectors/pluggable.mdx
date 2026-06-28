@@ -5,7 +5,7 @@ description: Bring your own DNS, secrets, registry, and observability tools via 
 
 # Pluggable Connectors
 
-Beyond cloud and Git, Alethia supports **pluggable per-category connectors** that let a Spec mix in the tools you already use instead of the cloud-native default — Cloudflare for DNS, HashiCorp Vault for secrets, Docker Hub for a registry, and Datadog / Grafana Cloud / Prometheus for observability.
+Beyond cloud and Git, Alethia supports **pluggable per-category connectors** that let a Project mix in the tools you already use instead of the cloud-native default — Cloudflare for DNS, HashiCorp Vault for secrets, Docker Hub for a registry, and Datadog / Grafana Cloud / Prometheus for observability.
 
 These connectors authenticate with an **API key / token** (`auth_method = api_key`) rather than cloud federation or OAuth.
 
@@ -25,7 +25,7 @@ The catalog is data-driven — each provider is one row in the `connectors` tabl
 ## Connecting a provider
 
 1. Open **Connectors**, pick the provider card, and choose **Connect**.
-2. Fill in the API credential — the form fields are generated from the provider's credential spec.
+2. Fill in the API credential — the form fields are generated from the provider's credential specification.
 3. Alethia runs a lightweight **verification ping** against the provider's API (e.g. Cloudflare's token-verify endpoint, Vault's token lookup, Docker Hub login, Datadog's key-validate endpoint). A verified credential turns the card green; an unverified one is still saved so you can retry.
 
 ## How credentials are stored
@@ -33,17 +33,17 @@ The catalog is data-driven — each provider is one row in the `connectors` tabl
 Secret fields (tokens, passwords) are **encrypted at rest** with AES-256-GCM before being written to the `connector_credentials` table; non-secret fields (a Vault address, a Docker Hub username) are stored in clear. The encryption key comes from `ALETHIA_CRED_ENCRYPTION_KEY` (see [Configuration](/self-hosting/configuration)).
 
 <Callout type="info">
-Secrets are **never** placed in a Spec's `config_snapshot`. They are decrypted and attached to a job only at **claim time**, then injected into the runner's OpenTofu variables in memory — preserving the [zero-credential model](/concepts/security).
+Secrets are **never** placed in a Project's `config_snapshot`. They are decrypted and attached to a job only at **claim time**, then injected into the runner's OpenTofu variables in memory — preserving the [zero-credential model](/concepts/security).
 </Callout>
 
-## Using a connector in a Spec
+## Using a connector in a Project
 
-Once connected, pick the provider per component in the [Spec designer](/console/design-spec):
+Once connected, pick the provider per component in the [Project designer](/console/design-project):
 
-- [DNS & WAF](/console/design-spec/dns) — choose **Cloudflare** instead of cloud-native DNS.
-- [Secrets](/console/design-spec/secrets) — choose **Vault**.
-- [Container Registry](/console/design-spec/container-registry) — choose **Docker Hub**.
-- [Observability](/console/design-spec/observability) — choose **Datadog / Grafana / Prometheus**.
+- [DNS & WAF](/console/design-project/dns) — choose **Cloudflare** instead of cloud-native DNS.
+- [Secrets](/console/design-project/secrets) — choose **Vault**.
+- [Container Registry](/console/design-project/container-registry) — choose **Docker Hub**.
+- [Observability](/console/design-project/observability) — choose **Datadog / Grafana / Prometheus**.
 
 At provision time the runner composes the chosen provider's module into the plan and **skips** the cloud-native resource for that category.
 

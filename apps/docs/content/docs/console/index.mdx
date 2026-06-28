@@ -22,9 +22,9 @@ Alethia is the web-based control plane. It provides a visual interface for confi
 
 <Cards>
   <Card title="Dashboard" href="/console/dashboard">
-    Overview stats, zone management, spec detail with services and infrastructure.
+    Overview stats, project management, project detail with services and infrastructure.
   </Card>
-  <Card title="Design a Spec" href="/console/design-spec">
+  <Card title="Design a Project" href="/console/design-project">
     11-section form for configuring multi-cloud infrastructure with real-time cost estimation.
   </Card>
   <Card title="Connectors" href="/console/connectors">
@@ -58,15 +58,14 @@ All database access goes through Drizzle with org-scoped RLS policies enforcing 
 
 ## State Management
 
-Alethia uses six Zustand stores for client-side state, each with a 30-second stale threshold and real-time event handlers:
+Alethia uses five Zustand stores for client-side state, each with a 30-second stale threshold and real-time event handlers:
 
 | Store | Purpose |
 |-------|---------|
-| `useSpecStore` | Form pricing data during spec creation |
+| `useProjectStore` | Form pricing data during project creation |
 | `useJobsStore` | Job list with filters, pagination, real-time upserts |
 | `useRunnersStore` | Runner list with deploy/update/destroy actions |
-| `useClustersStore` | Active clusters from provisioned specs |
-| `useZonesStore` | Zone hierarchy with spec status updates |
+| `useClustersStore` | Active clusters from provisioned projects |
 | `useCloudProviderStore` | Selected provider, identity, cached resources |
 
 Real-time subscriptions are established on dashboard layout mount and feed updates into these stores. See [Real-time Architecture](/concepts/realtime) for details.

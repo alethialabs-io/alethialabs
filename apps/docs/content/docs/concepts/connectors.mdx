@@ -5,14 +5,14 @@ description: How pluggable per-category connectors are declared, stored, and com
 
 # Connectors Architecture
 
-Connectors decouple **what** a Spec needs (a DNS zone, secrets, a registry, observability) from **who** provides it. Cloud (AWS/GCP/Azure) and Git (GitHub/GitLab/Bitbucket) connectors are first-class; the **pluggable per-category** connectors — Cloudflare, Vault, Docker Hub, Datadog, Grafana Cloud, Prometheus — are added by registration, not by editing call sites.
+Connectors decouple **what** a Project needs (a DNS zone, secrets, a registry, observability) from **who** provides it. Cloud (AWS/GCP/Azure) and Git (GitHub/GitLab/Bitbucket) connectors are first-class; the **pluggable per-category** connectors — Cloudflare, Vault, Docker Hub, Datadog, Grafana Cloud, Prometheus — are added by registration, not by editing call sites.
 
 ## Single source of truth
 
 Every pluggable provider is declared once in a manifest, `packages/core/categories/catalog.json` (slug, category, `auth_method`, icon, credential fields, provider-config fields, module path). That manifest is consumed three ways so the provider set never drifts:
 
 - **Go** loads it with `go:embed` (`packages/core/categories`) to resolve which module to compose and what credential a provider needs.
-- **Codegen** (`pnpm -F console gen:connectors`) emits the typed TS registry (`lib/connectors/registry.generated.ts`) that drives the credential form and the Spec provider selectors, plus the SQL seed of `connectors` catalog rows.
+- **Codegen** (`pnpm -F console gen:connectors`) emits the typed TS registry (`lib/connectors/registry.generated.ts`) that drives the credential form and the Project provider selectors, plus the SQL seed of `connectors` catalog rows.
 - **Behavior** that can't be data — `Tfvars()` and `Validate()` — lives in small per-slug Go impls.
 
 This mirrors the [cloud-provider registry](/concepts/cloud-abstraction) one level down, per category.
@@ -29,8 +29,8 @@ API-key credentials live in the `connector_credentials` table, owner/org-scoped 
 
 The zero-credential model is preserved end to end:
 
-1. A Spec's `config_snapshot` carries only **identifiers** — including each component's chosen provider slug — never secrets.
-2. When a runner **claims** a job, the claim endpoint resolves the connectors the Spec references, decrypts their credentials, and attaches them to the claim response (alongside the cloud identity).
+1. A Project's `config_snapshot` carries only **identifiers** — including each component's chosen provider slug — never secrets.
+2. When a runner **claims** a job, the claim endpoint resolves the connectors the Project references, decrypts their credentials, and attaches them to the claim response (alongside the cloud identity).
 3. The runner injects them into OpenTofu variables **in memory** at provision time.
 
 ## Module composition

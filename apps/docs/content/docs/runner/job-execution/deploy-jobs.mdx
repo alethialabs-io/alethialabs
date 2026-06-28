@@ -18,7 +18,7 @@ Same as PLAN jobs.
 Fetches the binary `plan.tfplan` from the PLAN job's S3-compatible storage upload.
 
 ### Validate config hash
-Compares the spec's current config hash against the plan's config hash. If they differ (spec was modified after planning), the job fails:
+Compares the project's current config hash against the plan's config hash. If they differ (project was modified after planning), the job fails:
 
 > "Configuration has changed since the plan was generated. Please re-plan."
 
@@ -75,9 +75,9 @@ Job status → SUCCESS with execution metadata:
 ## Finalization
 
 On the Alethia side, when the job reaches SUCCESS, the `finalizeDeployment()` server action:
-- Updates `spec_cluster` with cluster metadata and ArgoCD credentials
-- Updates `spec_databases` with writer/reader endpoints and credential ARNs
-- Updates `spec_caches` with primary/reader endpoints
-- Sets spec status to `ACTIVE`
+- Updates `project_cluster` with cluster metadata and ArgoCD credentials
+- Updates `project_databases` with writer/reader endpoints and credential ARNs
+- Updates `project_caches` with primary/reader endpoints
+- Sets project status to `ACTIVE`
 
-This data appears in the [Clusters page](/console/clusters) and spec detail.
+This data appears in the [Clusters page](/console/clusters) and project detail.

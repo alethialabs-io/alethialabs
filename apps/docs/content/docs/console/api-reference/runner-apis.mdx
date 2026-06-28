@@ -20,8 +20,7 @@ Claims the next available job. Uses the `claim_next_job()` PostgreSQL function w
     "id": "uuid",
     "job_type": "PLAN",
     "config_snapshot": { ... },
-    "spec_id": "uuid",
-    "zone_id": "uuid"
+    "project_id": "uuid"
   },
   "cloud_identity": {
     "provider": "aws",
@@ -67,9 +66,9 @@ Updates job status. Valid transitions: PROCESSING, SUCCESS, FAILED, CANCELLED.
 }
 ```
 
-On SUCCESS for DEPLOY jobs, the server automatically calls `finalizeDeployment()` to extract Terraform outputs and update spec component tables.
+On SUCCESS for DEPLOY jobs, the server automatically calls `finalizeDeployment()` to extract Terraform outputs and update project component tables.
 
-On FAILED, the spec status is set to FAILED with the error message.
+On FAILED, the project status is set to FAILED with the error message.
 
 ## Log Streaming
 

@@ -1,0 +1,42 @@
+---
+title: Project Commands
+description: List and inspect infrastructure configurations from the CLI.
+---
+
+# Project Commands
+
+Projects are infrastructure configurations. These commands are read-only — to create Projects, use the [Design a Project](/console/design-project) form in Alethia.
+
+## `alethia project list`
+
+List all Projects.
+
+```bash
+alethia project list
+```
+
+Output:
+
+```
+ID            PROJECT         PROVIDER  REGION      ENV         STATUS
+a1b2...       api-backend     aws       eu-west-1   production  ACTIVE
+c3d4...       data-pipeline   gcp       us-east4    staging     DRAFT
+```
+
+## `alethia project get`
+
+Get detailed information about a specific Project.
+
+```bash
+alethia project get --id <project-id>
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--id` | Yes | Project UUID |
+
+Shows the full Project configuration including:
+- Project name, provider, region, environment
+- Status and estimated monthly cost
+- Component summary (network, cluster, databases, caches, etc.)
+- Cloud identity reference

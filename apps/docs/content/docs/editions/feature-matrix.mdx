@@ -16,11 +16,11 @@ Everything here is **open-source** — the authorization model is the same in bo
 |---|:--:|:--:|
 | Policy Decision Point (`can` / `enforce` / `bulkCheck` / `listAccessible`) | ✅ | ✅ |
 | Built-in roles — owner · admin · operator · viewer | ✅ | ✅ |
-| Per-resource grants + Org → Zone → Spec inheritance | ✅ | ✅ |
+| Per-resource grants + Org → Project inheritance | ✅ | ✅ |
 | Explicit **deny** with hierarchy + exceptions | ✅ | ✅ |
 | Single-permission grants (not just roles) | ✅ | ✅ |
 | Row-Level Security tenant isolation (the blast wall) | ✅ | ✅ |
-| Authorization **audit log** (denials + sensitive actions) | ✅ | ✅ |
+| Full **Activity log** (every action + denials) | ✅ | ✅ |
 | Registry-as-code (resources × actions, exhaustively typed) | ✅ | ✅ |
 
 ## Organizations & teams
@@ -50,12 +50,12 @@ Everything here is **open-source** — the authorization model is the same in bo
 | **SSO — OIDC** (Okta · Entra ID · Google · AWS IAM Identity Center · …) | — | ✅ |
 | **SSO — SAML** | — | ✅ |
 
-## Audit
+## Activity
 
 | Capability | Community | Enterprise |
 |---|:--:|:--:|
-| Browse the access-events log in the console | ✅ | ✅ |
-| **Export** the audit log (CSV) | — | ✅ |
+| Browse the Activity log in the console | ✅ | ✅ |
+| **Export** the Activity log (CSV) | — | ✅ |
 
 ## Engine
 
@@ -73,7 +73,7 @@ Everything here is **open-source** — the authorization model is the same in bo
 
 ## How the line is drawn
 
-Community is a **complete single-tenant product**: roles, grants, hierarchy, deny, the PDP, RLS, and the audit
+Community is a **complete single-tenant product**: roles, grants, hierarchy, deny, the PDP, RLS, and the Activity
 log all ship open-source. Enterprise is about **organizations of people** — inviting and grouping members,
 authenticating them with SSO, authoring fine-grained custom roles, assigning access through the portal, and
 (optionally) deciding it with OpenFGA.

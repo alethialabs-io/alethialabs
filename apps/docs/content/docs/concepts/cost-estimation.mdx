@@ -5,13 +5,13 @@ description: How the platform estimates infrastructure costs in real-time and vi
 
 # Cost Estimation
 
-The platform provides two layers of cost estimation: a **real-time cost sidebar** during Spec configuration, and a **post-plan Infracost analysis** for precise per-resource costs.
+The platform provides two layers of cost estimation: a **real-time cost sidebar** during Project configuration, and a **post-plan Infracost analysis** for precise per-resource costs.
 
 <img src="/docs/diagrams/concepts/cost-estimation.svg" alt="Cost Estimation" />
 
 ## Cost Sidebar (Real-Time)
 
-The cost sidebar appears on the right side of the Design a Spec form. As the user configures infrastructure, the estimated monthly cost updates immediately.
+The cost sidebar appears on the right side of the Design a Project form. As the user configures infrastructure, the estimated monthly cost updates immediately.
 
 ### How Pricing Works
 
@@ -82,7 +82,7 @@ infracost breakdown --path plan.json --format json
 The Infracost output is parsed and stored in the job's `execution_metadata.cost_breakdown` field.
 
 ### UI displays breakdown
-The Plan tab in the Spec detail page shows per-resource costs and a total monthly estimate.
+The Plan tab in the Project detail page shows per-resource costs and a total monthly estimate.
 
 </Steps>
 

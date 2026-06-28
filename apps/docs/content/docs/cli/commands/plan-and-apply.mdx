@@ -5,63 +5,62 @@ description: Queue plan, deploy, and destroy jobs from the CLI.
 
 # Plan & Apply
 
-These `spec` subcommands queue infrastructure operations that [Runners](/runner) execute. They
+These `project` subcommands queue infrastructure operations that [Runners](/runner) execute. They
 implement the Plan-Review-Apply workflow from the terminal.
 
-## `alethia spec plan`
+## `alethia project plan`
 
 Queue a Terraform plan job.
 
 ```bash
-alethia spec plan [--spec-id <id>] [--runner-id <id>] [--wait]
+alethia project plan [--project-id <id>] [--runner-id <id>] [--wait]
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--spec-id` | No | Spec UUID (interactive selector if omitted) |
+| `--project-id` | No | Project UUID (interactive selector if omitted) |
 | `--runner-id` | No | Specific Runner to execute (any available if omitted) |
 | `--wait` | No | Block until the job completes |
 
 On success, prints the job ID. Use `alethia jobs logs <id> --follow` to stream the plan output.
 
-## `alethia spec apply`
+## `alethia project apply`
 
 Queue a deployment (apply) job.
 
 ```bash
-alethia spec apply [--spec-id <id>] [--runner-id <id>] [--plan-job-id <id>] [--wait]
+alethia project apply [--project-id <id>] [--runner-id <id>] [--plan-job-id <id>] [--wait]
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--spec-id` | No | Spec UUID (interactive selector if omitted) |
+| `--project-id` | No | Project UUID (interactive selector if omitted) |
 | `--runner-id` | No | Specific Runner to execute |
 | `--plan-job-id` | No | Reference a specific plan to apply |
 | `--wait` | No | Block until the job completes |
 
-The `--plan-job-id` flag ensures the apply uses the exact plan you reviewed. If the Spec configuration changed since the plan was generated, the job fails with a [config hash mismatch](/console/jobs/plan-and-apply).
+The `--plan-job-id` flag ensures the apply uses the exact plan you reviewed. If the Project configuration changed since the plan was generated, the job fails with a [config hash mismatch](/console/jobs/plan-and-apply).
 
-## `alethia spec destroy`
+## `alethia project destroy`
 
-Destroy a Spec's provisioned infrastructure.
+Destroy a Project's provisioned infrastructure.
 
 ```bash
-alethia spec destroy [--spec-id <id>] [--runner-id <id>] [--wait]
+alethia project destroy [--project-id <id>] [--runner-id <id>] [--wait]
 ```
 
 Queues a DESTROY job. The Runner runs `terraform destroy` to tear down all resources. Terraform state is preserved, so accidental destroys can be recovered by re-applying.
 
 <Callout type="info">
-To tear down a deployed **Runner** (not a Spec), use [`alethia runner destroy`](/cli/commands/runners). To delete a **zone** record, use `alethia zone delete`.
+To tear down a deployed **Runner** (not a Project), use [`alethia runner destroy`](/cli/commands/runners).
 </Callout>
 
 ## Interactive Selection
 
-When `--spec-id` is omitted, alethia launches a TUI selector:
+When `--project-id` is omitted, alethia launches a TUI selector:
 
-1. Select a zone from the list
-2. Select a Spec within that zone
-3. The command proceeds with the selected Spec
+1. Select a Project from the list
+2. The command proceeds with the selected Project
 
 See [TUI Components](/cli/tui) for details on the interactive selectors.
 
@@ -69,9 +68,9 @@ See [TUI Components](/cli/tui) for details on the interactive selectors.
 
 ```bash
 # Plan and wait, then apply
-JOB_ID=$(alethia spec plan --spec-id $SPEC_ID --wait 2>&1 | grep "Job ID" | awk '{print $3}')
-alethia spec apply --spec-id $SPEC_ID --plan-job-id $JOB_ID --wait
+JOB_ID=$(alethia project plan --project-id $PROJECT_ID --wait 2>&1 | grep "Job ID" | awk '{print $3}')
+alethia project apply --project-id $PROJECT_ID --plan-job-id $JOB_ID --wait
 
 # Destroy with wait
-alethia spec destroy --spec-id $SPEC_ID --wait
+alethia project destroy --project-id $PROJECT_ID --wait
 ```

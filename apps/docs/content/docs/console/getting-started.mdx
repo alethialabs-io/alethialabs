@@ -1,6 +1,6 @@
 ---
 title: Getting Started
-description: Quick start guide — sign up, connect a cloud provider, design a Spec, and deploy.
+description: Quick start guide — sign up, connect a cloud provider, design a Project, and deploy.
 ---
 
 # Getting Started
@@ -20,7 +20,7 @@ This guide walks through the complete flow from sign-up to a running Kubernetes 
 
 Navigate to Alethia and sign in with one of the supported OAuth providers (GitHub, GitLab, Bitbucket, or Google). Your account is created automatically on first login.
 
-After sign-in, you'll land on the dashboard — empty, with no zones or jobs.
+After sign-in, you'll land on the dashboard — empty, with no projects or jobs.
 
 ### Connect a Cloud Provider
 
@@ -54,9 +54,9 @@ See [Connectors](/console/connectors) for detailed setup guides per provider.
 
 On the same Connectors page, click **Connect** on GitHub (or GitLab/Bitbucket). This uses standard OAuth — authorize the app, and you're connected.
 
-### Design a Spec
+### Design a Project
 
-Go to **Design a Spec** in the sidebar. Fill out the configuration form:
+Go to **Design a Project** in the sidebar. Fill out the configuration form:
 
 1. **Project Basics** — name your project, select environment (production/staging/dev)
 2. **Network** — create a new VPC or select an existing one
@@ -65,11 +65,11 @@ Go to **Design a Spec** in the sidebar. Fill out the configuration form:
 5. **Cache** — add Redis/Valkey instances
 6. Additional sections for NoSQL, messaging, DNS, secrets, container registries, and repositories
 
-The **cost sidebar** shows estimated monthly costs as you configure. Click **Create Spec** when ready.
+The **cost sidebar** shows estimated monthly costs as you configure. Click **Create Project** when ready.
 
 ### Plan
 
-From the spec detail page, click **Plan**. Select a Runner (or "Any available") to execute. The Runner runs `terraform plan` and streams the output in real-time.
+From the project detail page, click **Plan**. Select a Runner (or "Any available") to execute. The Runner runs `terraform plan` and streams the output in real-time.
 
 Review the plan: how many resources will be created, what they'll cost.
 
@@ -92,7 +92,7 @@ Full cluster provisioning takes ~20 minutes (EKS) due to AWS control plane creat
 
 ## What's Next?
 
-- **[Dashboard](/console/dashboard)** — manage zones and specs
-- **[Design a Spec](/console/design-spec)** — deep dive into each form section
+- **[Dashboard](/console/dashboard)** — manage projects
+- **[Design a Project](/console/design-project)** — deep dive into each form section
 - **[Jobs](/console/jobs)** — understand job types and monitoring
 - **[Concepts](/concepts)** — technical deep dives on security, job queues, real-time, etc.

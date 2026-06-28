@@ -5,7 +5,7 @@ description: How Runner executes DESTROY jobs — terraform destroy with state c
 
 # Destroy Jobs
 
-DESTROY jobs tear down all infrastructure provisioned by a spec.
+DESTROY jobs tear down all infrastructure provisioned by a project.
 
 ## Execution Flow
 
@@ -27,7 +27,7 @@ Removes all resources tracked in the Terraform state. No confirmation prompt —
 The state file in S3-compatible storage is left in place (empty or minimal) for audit purposes.
 
 ### Report results
-Job status → SUCCESS. Spec status is set to `DESTROYED`.
+Job status → SUCCESS. Project status is set to `DESTROYED`.
 
 </Steps>
 
@@ -42,7 +42,7 @@ If the destroy fails mid-way (e.g., resource dependency, timeout):
 
 ## What Gets Destroyed
 
-Everything provisioned by the spec:
+Everything provisioned by the project:
 - VPC/VNet and all networking resources (subnets, NAT gateways, security groups)
 - Kubernetes cluster (EKS/GKE/AKS) and node groups
 - Databases (Aurora/Cloud SQL/Azure Database instances)

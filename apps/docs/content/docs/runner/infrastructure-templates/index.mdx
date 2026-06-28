@@ -11,9 +11,9 @@ Runner provisions infrastructure using pre-built Terraform modules. These templa
 
 | Category | Path | Purpose |
 |----------|------|---------|
-| AWS spec | `infra/templates/spec/aws/` | User infrastructure on AWS |
-| GCP spec | `infra/templates/spec/gcp/` | User infrastructure on GCP |
-| Azure spec | `infra/templates/spec/azure/` | User infrastructure on Azure |
+| AWS project | `infra/templates/project/aws/` | User infrastructure on AWS |
+| GCP project | `infra/templates/project/gcp/` | User infrastructure on GCP |
+| Azure project | `infra/templates/project/azure/` | User infrastructure on Azure |
 | Runner | `infra/templates/runner/aws/` | Runner agent infrastructure |
 | ArgoCD | `infra/templates/argocd/` | ArgoCD applications and components |
 
@@ -29,21 +29,21 @@ Runner provisions infrastructure using pre-built Terraform modules. These templa
 During the [Runner release pipeline](/concepts/release-system), templates are copied into the Docker build context:
 
 ```
-infra/templates/spec/aws     → apps/runner/spec-templates/aws
-infra/templates/spec/gcp     → apps/runner/spec-templates/gcp
-infra/templates/spec/azure   → apps/runner/spec-templates/azure
+infra/templates/project/aws     → apps/runner/project-templates/aws
+infra/templates/project/gcp     → apps/runner/project-templates/gcp
+infra/templates/project/azure   → apps/runner/project-templates/azure
 infra/templates/runner       → apps/runner/runner-templates
 infra/templates/argocd       → apps/runner/argocd-templates
 ```
 
 ## Variable Generation
 
-When executing a job, Runner generates `terraform.tfvars` from the spec's config snapshot. The provisioner in `packages/core/provisioner/` maps each spec component to specific Terraform variables. See [Cloud Provider Abstraction](/concepts/cloud-abstraction) for the mapping layer.
+When executing a job, Runner generates `terraform.tfvars` from the project's config snapshot. The provisioner in `packages/core/provisioner/` maps each project component to specific Terraform variables. See [Cloud Provider Abstraction](/concepts/cloud-abstraction) for the mapping layer.
 
 ## Terraform State
 
 State for all templates is stored in [S3-compatible state](/concepts/terraform-state) with path structure:
 
 ```
-{zone}/{project}/{stage}/{region}/terraform.tfstate
+{project}/{stage}/{region}/terraform.tfstate
 ```

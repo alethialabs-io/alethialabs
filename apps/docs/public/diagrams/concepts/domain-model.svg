@@ -10,22 +10,22 @@
   <rect x="350" y="56" width="120" height="44" rx="8" fill="#27272A" stroke="#8B5CF6" stroke-width="1.5"/>
   <text x="410" y="83" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FAFAFA">User</text>
 
-  <!-- Arrow User → Zone -->
+  <!-- Arrow User → Org -->
   <line x1="410" y1="100" x2="410" y2="124" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
   <text x="430" y="116" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">1:N</text>
 
-  <!-- Zone -->
+  <!-- Org -->
   <rect x="330" y="128" width="160" height="44" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="410" y="148" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FAFAFA">Zone</text>
+  <text x="410" y="148" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FAFAFA">Org</text>
   <text x="410" y="164" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">workspace grouping</text>
 
-  <!-- Arrow Zone → Spec -->
+  <!-- Arrow Org → Project -->
   <line x1="410" y1="172" x2="410" y2="196" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
   <text x="430" y="188" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">1:N</text>
 
-  <!-- Spec (central) -->
+  <!-- Project (central) -->
   <rect x="310" y="200" width="200" height="50" rx="8" fill="#27272A" stroke="#8B5CF6" stroke-width="1.5"/>
-  <text x="410" y="222" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="600" fill="#FAFAFA">Spec</text>
+  <text x="410" y="222" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="600" fill="#FAFAFA">Project</text>
   <text x="410" y="240" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#71717A">infrastructure configuration</text>
 
   <!-- Cloud Identity (side) -->
@@ -36,47 +36,47 @@
 
   <!-- Singleton Components Group -->
   <rect x="24" y="286" width="352" height="210" rx="8" fill="none" stroke="#3F3F46" stroke-dasharray="4 4"/>
-  <text x="200" y="306" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#A1A1AA">Singleton Components (1:1 per spec)</text>
+  <text x="200" y="306" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#A1A1AA">Singleton Components (1:1 per project)</text>
 
   <rect x="40" y="316" width="150" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="115" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_network</text>
+  <text x="115" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">project_network</text>
 
   <rect x="40" y="360" width="150" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="115" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_cluster</text>
+  <text x="115" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">project_cluster</text>
 
   <rect x="210" y="316" width="150" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="285" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_dns</text>
+  <text x="285" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">project_dns</text>
 
   <rect x="210" y="360" width="150" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="285" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_repositories</text>
+  <text x="285" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">project_repositories</text>
 
-  <!-- Arrows Spec → Singletons -->
+  <!-- Arrows Project → Singletons -->
   <path d="M350,250 L200,282" stroke="#52525B" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
 
   <!-- Multi-Instance Components Group -->
   <rect x="394" y="286" width="402" height="210" rx="8" fill="none" stroke="#3F3F46" stroke-dasharray="4 4"/>
-  <text x="595" y="306" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#A1A1AA">Multi-Instance Components (1:N per spec)</text>
+  <text x="595" y="306" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#A1A1AA">Multi-Instance Components (1:N per project)</text>
 
   <rect x="410" y="316" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="470" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_databases</text>
+  <text x="470" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">project_databases</text>
 
   <rect x="410" y="360" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="470" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_caches</text>
+  <text x="470" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">project_caches</text>
 
   <rect x="410" y="404" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="470" y="426" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_queues</text>
+  <text x="470" y="426" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">project_queues</text>
 
   <rect x="410" y="448" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="470" y="470" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_topics</text>
+  <text x="470" y="470" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">project_topics</text>
 
   <rect x="548" y="316" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="608" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_nosql</text>
+  <text x="608" y="338" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">project_nosql</text>
 
   <rect x="548" y="360" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="608" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_registries</text>
+  <text x="608" y="382" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">project_registries</text>
 
   <rect x="548" y="404" width="120" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="608" y="426" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">spec_secrets</text>
+  <text x="608" y="426" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">project_secrets</text>
 
   <rect x="686" y="316" width="96" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
   <text x="734" y="332" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FAFAFA">provision_jobs</text>
@@ -88,6 +88,6 @@
 
   <line x1="734" y1="350" x2="734" y2="358" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
-  <!-- Arrows Spec → Multi-Instance -->
+  <!-- Arrows Project → Multi-Instance -->
   <path d="M470,250 L595,282" stroke="#52525B" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
 </svg>

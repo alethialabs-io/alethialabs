@@ -3,8 +3,7 @@
   "pages": [
     "index",
     "connector",
-    "zone",
-    "spec",
+    "project",
     "plan-and-apply",
     "jobs",
     "runners",

@@ -10,9 +10,9 @@
   <rect x="30" y="58" width="760" height="70" rx="8" fill="#8B5CF610" stroke="#8B5CF6"/>
   <text x="410" y="80" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#8B5CF6">Unified Interface</text>
   <rect x="140" y="92" width="140" height="28" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="210" y="110" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Create a Spec (Web)</text>
+  <text x="210" y="110" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Create a Project (Web)</text>
   <rect x="340" y="92" width="140" height="28" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="410" y="110" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">alethia spec apply (CLI)</text>
+  <text x="410" y="110" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">alethia project apply (CLI)</text>
   <rect x="540" y="92" width="140" height="28" rx="6" fill="#27272A" stroke="#3F3F46"/>
   <text x="610" y="110" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Provider Ribbon</text>
 
@@ -45,13 +45,13 @@
   <text x="410" y="312" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#FAFAFA">Terraform Templates</text>
 
   <rect x="50" y="322" width="220" height="36" rx="6" fill="#27272A" stroke="#FF9900"/>
-  <text x="160" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FF9900">templates/spec/aws/</text>
+  <text x="160" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FF9900">templates/project/aws/</text>
 
   <rect x="290" y="322" width="240" height="36" rx="6" fill="#27272A" stroke="#4285F4"/>
-  <text x="410" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#4285F4">templates/spec/gcp/</text>
+  <text x="410" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#4285F4">templates/project/gcp/</text>
 
   <rect x="550" y="322" width="220" height="36" rx="6" fill="#27272A" stroke="#0078D4"/>
-  <text x="660" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#0078D4">templates/spec/azure/</text>
+  <text x="660" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#0078D4">templates/project/azure/</text>
 
   <!-- provider_config escape hatch -->
   <rect x="600" y="148" width="176" height="36" rx="6" fill="#F59E0B10" stroke="#F59E0B40" stroke-dasharray="3 3"/>
