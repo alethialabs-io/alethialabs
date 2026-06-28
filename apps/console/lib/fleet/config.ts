@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { cloudProvider } from "@/lib/db/schema";
-import type { FleetSpec } from "@/lib/fleet/types";
+import type { FleetTarget } from "@/lib/fleet/types";
 import { z } from "zod";
 
-// Declarative pool specs via FLEET_POOLS (a JSON array). Cloud-specific addressing
+// Declarative pool projects via FLEET_POOLS (a JSON array). Cloud-specific addressing
 // (hcloud server type, image) belongs to the provider impl, not here. Default [] = the
 // controller is a no-op. `version` pins an exact image; `channel` (e.g. "stable") is
 // resolved to the newest runner_releases by the controller each tick.
@@ -24,8 +24,8 @@ export const poolSchema = z.object({
 });
 const poolsSchema = z.array(poolSchema);
 
-/** Parse FLEET_POOLS into specs. Default (unset/invalid) → [] → the controller is a no-op. */
-export function getFleetPools(): FleetSpec[] {
+/** Parse FLEET_POOLS into projects. Default (unset/invalid) → [] → the controller is a no-op. */
+export function getFleetPools(): FleetTarget[] {
 	const raw = process.env.FLEET_POOLS;
 	if (!raw) return [];
 	let json: unknown;

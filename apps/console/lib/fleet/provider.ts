@@ -9,10 +9,10 @@
 import { getServiceDb } from "@/lib/db";
 import type { CloudProvider } from "@/lib/db/schema";
 import { getHcloudFleetProvider } from "@/lib/fleet/hcloud";
-import type { FleetProvider, FleetSpec, ProviderInstance } from "@/lib/fleet/types";
+import type { FleetProvider, FleetTarget, ProviderInstance } from "@/lib/fleet/types";
 import { sql } from "drizzle-orm";
 
-export type { FleetProvider, FleetSpec, ProviderInstance } from "@/lib/fleet/types";
+export type { FleetProvider, FleetTarget, ProviderInstance } from "@/lib/fleet/types";
 
 type ManualRow = { instance_id: string; location: string | null; version: string | null };
 
@@ -21,13 +21,13 @@ type ManualRow = { instance_id: string; location: string | null; version: string
  * managed runners (1:1); create/destroy just log the desired signal (no auto-provision).
  */
 class ManualFleetProvider implements FleetProvider {
-	async list(spec: FleetSpec): Promise<ProviderInstance[]> {
+	async list(project: FleetTarget): Promise<ProviderInstance[]> {
 		const rows = await getServiceDb().execute<ManualRow>(sql`
 			select coalesce(r.metadata->>'cloud_instance_id', r.id::text) as instance_id,
 			       r.location, r.version
 			from public.runners r
 			where r.operator = 'managed' and r.status <> 'OFFLINE'
-			  and (r.supported_providers is null or ${spec.provider}::cloud_provider = any(r.supported_providers))
+			  and (r.supported_providers is null or ${project.provider}::cloud_provider = any(r.supported_providers))
 		`);
 		return rows.map((r) => ({
 			instanceId: r.instance_id,
@@ -37,9 +37,9 @@ class ManualFleetProvider implements FleetProvider {
 		}));
 	}
 
-	async create(spec: FleetSpec, opts: { location: string; version: string | null }): Promise<void> {
+	async create(project: FleetTarget, opts: { location: string; version: string | null }): Promise<void> {
 		console.log(
-			`[fleet] ${spec.provider}: would create a runner (loc=${opts.location} ver=${opts.version}) ` +
+			`[fleet] ${project.provider}: would create a runner (loc=${opts.location} ver=${opts.version}) ` +
 				`— manual provider, run a worker to match.`,
 		);
 	}

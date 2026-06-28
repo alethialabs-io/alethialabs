@@ -8,7 +8,7 @@
 // pure helpers are unit-tested + the controller is tested via the fake. See dataroom/spec/mvp/26.
 
 import { randomUUID } from "crypto";
-import type { FleetProvider, FleetSpec, ProviderInstance } from "@/lib/fleet/types";
+import type { FleetProvider, FleetTarget, ProviderInstance } from "@/lib/fleet/types";
 
 const HCLOUD_API = "https://api.hetzner.cloud/v1";
 
@@ -82,12 +82,12 @@ runcmd:
 /** Pure: the Hetzner POST /servers payload for a fleet VM (labels carry pool + version). */
 export function serverCreatePayload(
 	cfg: HcloudConfig,
-	spec: FleetSpec,
+	project: FleetTarget,
 	opts: { name: string; location: string; version: string | null },
 ): Record<string, unknown> {
 	const labels: Record<string, string> = {
 		"alethia-managed": "true",
-		"alethia-pool": spec.provider,
+		"alethia-pool": project.provider,
 	};
 	if (opts.version) labels["alethia-version"] = opts.version;
 	return {
@@ -98,7 +98,7 @@ export function serverCreatePayload(
 		ssh_keys: cfg.sshKeys,
 		start_after_create: true,
 		labels,
-		user_data: renderCloudInit(cfg, spec.provider, opts.version),
+		user_data: renderCloudInit(cfg, project.provider, opts.version),
 	};
 }
 
@@ -112,10 +112,10 @@ interface HcloudServer {
 class HcloudFleetProvider implements FleetProvider {
 	private readonly cfg = hcloudConfigFromEnv();
 
-	async list(spec: FleetSpec): Promise<ProviderInstance[]> {
+	async list(project: FleetTarget): Promise<ProviderInstance[]> {
 		const res = await this.api(
 			"GET",
-			`/servers?label_selector=${encodeURIComponent(`alethia-pool=${spec.provider}`)}`,
+			`/servers?label_selector=${encodeURIComponent(`alethia-pool=${project.provider}`)}`,
 		);
 		const servers = (res as { servers?: HcloudServer[] } | null)?.servers ?? [];
 		const now = Date.now();
@@ -127,9 +127,9 @@ class HcloudFleetProvider implements FleetProvider {
 		}));
 	}
 
-	async create(spec: FleetSpec, opts: { location: string; version: string | null }): Promise<void> {
-		const name = `fleet-${spec.provider}-${randomUUID().slice(0, 8)}`;
-		await this.api("POST", "/servers", serverCreatePayload(this.cfg, spec, { name, ...opts }));
+	async create(project: FleetTarget, opts: { location: string; version: string | null }): Promise<void> {
+		const name = `fleet-${project.provider}-${randomUUID().slice(0, 8)}`;
+		await this.api("POST", "/servers", serverCreatePayload(this.cfg, project, { name, ...opts }));
 	}
 
 	async destroy(instanceId: string): Promise<void> {

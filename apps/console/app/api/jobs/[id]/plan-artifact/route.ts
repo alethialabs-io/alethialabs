@@ -3,9 +3,13 @@
 
 import { verifyRunnerToken } from "@/lib/runners/auth";
 import { storage } from "@/lib/storage";
+import {
+	MAX_PLAN_ARTIFACT_BYTES,
+	PLAN_ARTIFACT_BUCKET,
+	planArtifactKey,
+	planArtifactSizeError,
+} from "@/lib/storage/plan-artifact";
 import { NextResponse } from "next/server";
-
-const BUCKET = "plan-artifacts";
 
 export async function POST(
 	req: Request,
@@ -18,25 +22,22 @@ export async function POST(
 
 	try {
 		const body = await req.arrayBuffer();
-		if (!body || body.byteLength === 0) {
-			return NextResponse.json(
-				{ error: "Empty body" },
-				{ status: 400 },
-			);
+		const sizeError = planArtifactSizeError(body?.byteLength ?? 0);
+		if (sizeError === "empty") {
+			return NextResponse.json({ error: "Empty body" }, { status: 400 });
 		}
-
-		if (body.byteLength > 50 * 1024 * 1024) {
+		if (sizeError === "too_large") {
 			return NextResponse.json(
-				{ error: "File too large (max 50MB)" },
+				{ error: `File too large (max ${MAX_PLAN_ARTIFACT_BYTES / (1024 * 1024)}MB)` },
 				{ status: 413 },
 			);
 		}
 
-		const path = `${jobId}/tofu.plan.out`;
+		const path = planArtifactKey(jobId);
 
 		try {
 			await storage.put(
-				BUCKET,
+				PLAN_ARTIFACT_BUCKET,
 				path,
 				new Uint8Array(body),
 				"application/octet-stream",
@@ -71,9 +72,9 @@ export async function GET(
 	const { id: jobId } = await params;
 
 	try {
-		const path = `${jobId}/tofu.plan.out`;
+		const path = planArtifactKey(jobId);
 
-		const data = await storage.get(BUCKET, path);
+		const data = await storage.get(PLAN_ARTIFACT_BUCKET, path);
 		if (!data) {
 			return NextResponse.json(
 				{ error: "Plan artifact not found" },

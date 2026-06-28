@@ -11,12 +11,12 @@ import { scannerTools } from "./scanner";
 export type AgentMode = "ask" | "act";
 
 /**
- * The design-spec (canvas) assistant's tool SSOT — canvas-building tools
+ * The design-project (canvas) assistant's tool SSOT — canvas-building tools
  * (compose.ts) + the read surface (read.ts). Every tool wraps a PDP-gated
  * capability; mutations are proposals only. Mutate-via-job tools
  * (plan/deploy/job-control) are deferred — see lib/ai/TOOLS.md.
  */
-export function buildSpecAssistantTools(ctx: CanvasContext | undefined) {
+export function buildProjectAssistantTools(ctx: CanvasContext | undefined) {
 	return {
 		...composeTools(ctx),
 		...readTools(),

@@ -9,7 +9,7 @@
 import { plan, targetCount } from "@/lib/fleet/plan";
 import type {
 	FleetProvider,
-	FleetSpec,
+	FleetTarget,
 	ObservedInstance,
 } from "@/lib/fleet/types";
 
@@ -47,28 +47,28 @@ export interface ControllerDeps {
 export type SurplusState = Map<string, number>;
 
 /**
- * Reconcile one pool toward its spec exactly once: resolve the target version, build
+ * Reconcile one pool toward its project exactly once: resolve the target version, build
  * the observed view (provider.list ⨝ runner state), plan, and apply. Returns the
  * actions taken (for logging/tests).
  */
 export async function reconcilePool(
-	spec: FleetSpec,
+	project: FleetTarget,
 	provider: FleetProvider,
 	deps: ControllerDeps,
 	surplus: SurplusState,
 ): Promise<number> {
-	// Resolve channel → target version (a pin wins; set on the spec the planner sees).
-	let targetVersion = spec.targetVersion;
-	if (targetVersion === null && spec.channel) {
-		targetVersion = await deps.resolveChannel(spec.channel);
+	// Resolve channel → target version (a pin wins; set on the project the planner sees).
+	let targetVersion = project.targetVersion;
+	if (targetVersion === null && project.channel) {
+		targetVersion = await deps.resolveChannel(project.channel);
 	}
-	const resolved: FleetSpec = { ...spec, targetVersion };
+	const resolved: FleetTarget = { ...project, targetVersion };
 
 	const [instances, rmap, backlog, recentPeak] = await Promise.all([
 		provider.list(resolved),
-		deps.runnerMap(spec.provider),
-		deps.backlog(spec.provider),
-		deps.recentPeak(spec.provider),
+		deps.runnerMap(project.provider),
+		deps.backlog(project.provider),
+		deps.recentPeak(project.provider),
 	]);
 
 	const observedInstances: ObservedInstance[] = instances.map((pi) => {
@@ -96,8 +96,8 @@ export async function reconcilePool(
 
 	const target = targetCount(resolved, backlog, recentPeak);
 	const onlineNow = observedInstances.filter((i) => i.status === "online").length;
-	const surplusTicks = onlineNow > target ? (surplus.get(spec.provider) ?? 0) + 1 : 0;
-	surplus.set(spec.provider, surplusTicks);
+	const surplusTicks = onlineNow > target ? (surplus.get(project.provider) ?? 0) + 1 : 0;
+	surplus.set(project.provider, surplusTicks);
 
 	const actions = plan(resolved, {
 		instances: observedInstances,
@@ -124,16 +124,16 @@ export async function reconcilePool(
 
 /** Reconcile every configured pool (one controller tick). */
 export async function reconcileAll(
-	specs: FleetSpec[],
+	projects: FleetTarget[],
 	provider: FleetProvider,
 	deps: ControllerDeps,
 	surplus: SurplusState,
 ): Promise<void> {
-	for (const spec of specs) {
+	for (const project of projects) {
 		try {
-			await reconcilePool(spec, provider, deps, surplus);
+			await reconcilePool(project, provider, deps, surplus);
 		} catch (err) {
-			console.error(`[fleet] reconcile failed for ${spec.provider}:`, err);
+			console.error(`[fleet] reconcile failed for ${project.provider}:`, err);
 		}
 	}
 }

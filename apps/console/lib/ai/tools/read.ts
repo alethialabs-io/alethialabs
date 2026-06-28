@@ -9,8 +9,7 @@ import { getClusters } from "@/app/server/actions/clusters";
 import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
 import { getJob, getJobs, getPlanResult } from "@/app/server/actions/jobs";
 import { getRunnersWithReleases } from "@/app/server/actions/runners";
-import { getSpec, getSpecs } from "@/app/server/actions/specs";
-import { getZones } from "@/app/server/actions/zones";
+import { getProject, getProjects } from "@/app/server/actions/projects";
 
 const names = (a: Array<{ name: string }> | undefined) =>
 	(a ?? []).map((x) => x.name);
@@ -22,41 +21,21 @@ const names = (a: Array<{ name: string }> | undefined) =>
  */
 export function readTools() {
 	return {
-		list_specs: tool({
+		get_project: tool({
 			description:
-				"List the user's infrastructure specs (id, name, status, region). PDP-gated read.",
-			inputSchema: z.object({}),
-			execute: async () => {
-				const { specs } = await getSpecs();
-				return {
-					specs: specs.map((s) => ({
-						id: s.id,
-						name: s.project_name,
-						status: s.status,
-						environment: s.environment_stage,
-						region: s.region,
-						zone_id: s.zone_id,
-					})),
-				};
-			},
-		}),
-
-		get_spec: tool({
-			description:
-				"Get one spec's full configuration (components + sizes) by id. PDP-gated read.",
-			inputSchema: z.object({ specId: z.string() }),
-			execute: async ({ specId }) => {
-				const { spec, cloudProvider, components } = await getSpec(specId);
+				"Get one project's full configuration (components + sizes) by id. PDP-gated read.",
+			inputSchema: z.object({ projectId: z.string() }),
+			execute: async ({ projectId }) => {
+				const { project, cloudProvider, components } = await getProject(projectId);
 				const c = components.cluster;
 				const n = components.network;
 				return {
-					id: spec.id,
-					name: spec.project_name,
-					status: spec.status,
-					region: spec.region,
+					id: project.id,
+					name: project.project_name,
+					status: project.status,
+					region: project.region,
 					provider: cloudProvider,
-					environment: spec.environment_stage,
-					zone_id: spec.zone_id,
+					environment: project.environment_stage,
 					components: {
 						cluster: c
 							? {
@@ -92,22 +71,21 @@ export function readTools() {
 			},
 		}),
 
-		list_zones: tool({
+		list_projects: tool({
 			description:
-				"List the user's zones (workspaces) and the specs in each. PDP-gated read.",
+				"List the user's projects (projects), flat under the org, with cloud provider, region, and status. PDP-gated read.",
 			inputSchema: z.object({}),
 			execute: async () => {
-				const { zones } = await getZones();
+				const projects = await getProjects();
 				return {
-					zones: zones.map((z) => ({
-						id: z.id,
-						name: z.name,
-						description: z.description,
-						specs: (z.specs ?? []).map((s) => ({
-							id: s.id,
-							name: s.project_name,
-							status: s.status,
-						})),
+					projects: projects.map((p) => ({
+						id: p.id,
+						name: p.project_name,
+						slug: p.slug,
+						status: p.status,
+						provider: p.cloud_provider,
+						region: p.region,
+						environment: p.environment_stage,
 					})),
 				};
 			},
@@ -126,7 +104,7 @@ export function readTools() {
 						id: j.id,
 						type: j.job_type,
 						status: j.status,
-						spec: j.spec_name,
+						project: j.project_name,
 						provider: j.cloud_provider,
 						created_at: j.created_at,
 						completed_at: j.completed_at,
@@ -146,7 +124,7 @@ export function readTools() {
 					type: j.job_type,
 					status: j.status,
 					error: j.error_message,
-					spec_id: j.spec_id,
+					project_id: j.project_id,
 					created_at: j.created_at,
 					completed_at: j.completed_at,
 				};
@@ -200,26 +178,26 @@ export function readTools() {
 						environment: c.environment_stage,
 						status: c.status,
 						provider: c.cloud_identities?.provider ?? null,
-						cluster: c.spec_cluster
+						cluster: c.project_cluster
 							? {
-									name: c.spec_cluster.cluster_name,
-									endpoint: c.spec_cluster.cluster_endpoint,
-									version: c.spec_cluster.cluster_version,
-									argocd_url: c.spec_cluster.argocd_url,
-									status: c.spec_cluster.status,
+									name: c.project_cluster.cluster_name,
+									endpoint: c.project_cluster.cluster_endpoint,
+									version: c.project_cluster.cluster_version,
+									argocd_url: c.project_cluster.argocd_url,
+									status: c.project_cluster.status,
 								}
 							: null,
-						databases: (c.spec_databases ?? []).map((d) => ({
+						databases: (c.project_databases ?? []).map((d) => ({
 							name: d.name,
 							engine: d.engine,
 							endpoint: d.endpoint,
 						})),
-						caches: (c.spec_caches ?? []).map((ch) => ({
+						caches: (c.project_caches ?? []).map((ch) => ({
 							name: ch.name,
 							engine: ch.engine,
 						})),
-						dns: c.spec_dns
-							? { domain: c.spec_dns.domain_name, enabled: c.spec_dns.enabled }
+						dns: c.project_dns
+							? { domain: c.project_dns.domain_name, enabled: c.project_dns.enabled }
 							: null,
 					})),
 				};

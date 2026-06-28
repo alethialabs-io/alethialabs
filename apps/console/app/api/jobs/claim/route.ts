@@ -16,7 +16,7 @@ import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 /**
- * Extracts the pluggable provider slugs a job's spec references, from the
+ * Extracts the pluggable provider slugs a job's project references, from the
  * identifier-only config_snapshot (dns/secrets/registry/observability). Returns
  * the unique non-native slugs so we know which credentials to attach.
  */
@@ -115,7 +115,7 @@ export async function POST(req: Request) {
 		}
 
 		// Attach decrypted api_key credentials for the pluggable providers this
-		// spec references. Secrets live only here (claim time) — never in the
+		// project references. Secrets live only here (claim time) — never in the
 		// snapshot. Decryption failures degrade gracefully (the runner's Validate
 		// surfaces the missing credential) rather than failing the whole claim.
 		const connector_credentials: Array<{

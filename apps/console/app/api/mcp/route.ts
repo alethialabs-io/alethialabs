@@ -52,7 +52,7 @@ const handler = withMcpAuth(auth as unknown as McpAuthInstance, async (_req, ses
 		{
 			serverInfo: { name: "alethia", version: "1.0.0" },
 			instructions:
-				"Alethia control-plane tools: read the user's specs/zones/clusters/jobs/runners, browse the service catalog, and scan a git repo to infer the infrastructure it needs. Provisioning is done in the Alethia dashboard with human approval.",
+				"Alethia control-plane tools: read the user's projects/clusters/jobs/runners, browse the service catalog, and scan a git repo to infer the infrastructure it needs. Provisioning is done in the Alethia dashboard with human approval.",
 		},
 		{ basePath: "/api" },
 	);

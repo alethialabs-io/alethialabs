@@ -7,6 +7,13 @@ import type { getServiceDb } from "@/lib/db";
 type ServiceDb = ReturnType<typeof getServiceDb>;
 
 /**
+ * Binds a Date as a timestamptz parameter. drizzle's raw `sql` template doesn't serialize a
+ * JS Date through the postgres-js driver (it reaches the wire as an unparameterised Date and
+ * throws), so we pass the ISO string with an explicit cast. Use for every Date in a raw query.
+ */
+const ts = (d: Date): SQL => sql`${d.toISOString()}::timestamptz`;
+
+/**
  * Provisioned-usage rollup for one managed runner over a billing window.
  * Declared as a `type` so it carries an implicit index signature and stays
  * assignable to `Record<string, unknown>` for `db.execute`.
@@ -43,8 +50,8 @@ export async function queryProvisionedHours(
 ): Promise<ProvisionedHoursRow[]> {
 	const conds: SQL[] = [
 		sql`s.operator = 'managed'`,
-		sql`s.started_at < ${filters.to}`,
-		sql`coalesce(s.ended_at, ${filters.to}) > ${filters.from}`,
+		sql`s.started_at < ${ts(filters.to)}`,
+		sql`coalesce(s.ended_at, ${ts(filters.to)}) > ${ts(filters.from)}`,
 	];
 	if (filters.runnerId !== undefined)
 		conds.push(sql`s.runner_id = ${filters.runnerId}`);
@@ -52,8 +59,8 @@ export async function queryProvisionedHours(
 
 	// Clamped per-session duration, reused for the seconds sum and the hours sum.
 	const clamped = sql`extract(epoch from (
-		least(coalesce(s.ended_at, ${filters.to}), ${filters.to})
-		- greatest(s.started_at, ${filters.from})
+		least(coalesce(s.ended_at, ${ts(filters.to)}), ${ts(filters.to)})
+		- greatest(s.started_at, ${ts(filters.from)})
 	))`;
 
 	return db.execute<ProvisionedHoursRow>(sql`
@@ -109,8 +116,8 @@ export async function provisionedHoursByProvider(
 	filters: { from: Date; to: Date },
 ): Promise<ProvisionedHoursByProviderRow[]> {
 	const clamped = sql`extract(epoch from (
-		least(coalesce(s.ended_at, ${filters.to}), ${filters.to})
-		- greatest(s.started_at, ${filters.from})
+		least(coalesce(s.ended_at, ${ts(filters.to)}), ${ts(filters.to)})
+		- greatest(s.started_at, ${ts(filters.from)})
 	))`;
 	return db.execute<ProvisionedHoursByProviderRow>(sql`
 		select
@@ -120,8 +127,8 @@ export async function provisionedHoursByProvider(
 		from public.runner_usage_sessions s
 		join public.runners r on r.id = s.runner_id
 		where s.operator = 'managed'
-		  and s.started_at < ${filters.to}
-		  and coalesce(s.ended_at, ${filters.to}) > ${filters.from}
+		  and s.started_at < ${ts(filters.to)}
+		  and coalesce(s.ended_at, ${ts(filters.to)}) > ${ts(filters.from)}
 		group by 1
 		order by provisioned_hours desc
 	`);
@@ -151,8 +158,8 @@ export async function jobMinutesByProvider(
 		where r.operator = 'managed'
 		  and j.started_at is not null
 		  and j.completed_at is not null
-		  and j.completed_at >= ${filters.from}
-		  and j.completed_at < ${filters.to}
+		  and j.completed_at >= ${ts(filters.from)}
+		  and j.completed_at < ${ts(filters.to)}
 		group by 1
 		order by job_minutes desc
 	`);
@@ -170,6 +177,41 @@ export type JobMinutesRow = {
 	job_count: number;
 };
 
+/**
+ * Day-bucketed job-minutes for one org over [from, to) — the time-series behind the
+ * Usage page's "over time" chart. Same managed-only, completed-jobs basis as
+ * {@link queryJobMinutesByOrg}, grouped by `completed_at`'s day. Only days with
+ * activity are returned; the caller fills the gaps to a continuous axis. Service path.
+ */
+export type JobMinutesDayRow = {
+	day: string;
+	job_minutes: number;
+	job_count: number;
+};
+
+export async function queryJobMinutesSeries(
+	db: ServiceDb,
+	filters: { from: Date; to: Date; orgId: string },
+): Promise<JobMinutesDayRow[]> {
+	const minutes = sql`extract(epoch from (j.completed_at - j.started_at)) / 60.0`;
+	return db.execute<JobMinutesDayRow>(sql`
+		select
+			to_char(date_trunc('day', j.completed_at), 'YYYY-MM-DD') as day,
+			coalesce(sum(greatest(${minutes}, 0)), 0)::float8 as job_minutes,
+			count(*)::int as job_count
+		from public.jobs j
+		join public.runners r on r.id = j.runner_id
+		where r.operator = 'managed'
+		  and j.started_at is not null
+		  and j.completed_at is not null
+		  and j.completed_at >= ${ts(filters.from)}
+		  and j.completed_at < ${ts(filters.to)}
+		  and j.org_id = ${filters.orgId}
+		group by 1
+		order by 1
+	`);
+}
+
 export async function queryJobMinutesByOrg(
 	db: ServiceDb,
 	filters: { from: Date; to: Date; orgId?: string },
@@ -178,8 +220,8 @@ export async function queryJobMinutesByOrg(
 		sql`r.operator = 'managed'`,
 		sql`j.started_at is not null`,
 		sql`j.completed_at is not null`,
-		sql`j.completed_at >= ${filters.from}`,
-		sql`j.completed_at < ${filters.to}`,
+		sql`j.completed_at >= ${ts(filters.from)}`,
+		sql`j.completed_at < ${ts(filters.to)}`,
 	];
 	if (filters.orgId !== undefined) conds.push(sql`j.org_id = ${filters.orgId}`);
 

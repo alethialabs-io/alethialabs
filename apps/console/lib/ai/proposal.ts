@@ -7,7 +7,7 @@ import { z } from "zod";
  * Zod schema for the assistant's proposed canvas mutations — the single validated
  * contract shared by the `propose_changes` tool (server) and the Ask AI sheet
  * (client parses the tool output before applying). Mirrors the TS types in
- * `components/design-spec/canvas/ai/types.ts`.
+ * `components/design-project/canvas/ai/types.ts`.
  */
 const NODE_KINDS = [
 	"project",

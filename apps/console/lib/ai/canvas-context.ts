@@ -5,7 +5,7 @@ import type { CloudProviderSlug } from "@/lib/cloud-providers";
 
 /**
  * The canvas context the client sends with each Ask AI request: the core cloud
- * provider + the current graph projected to the SpecFormData shape (from
+ * provider + the current graph projected to the ProjectFormData shape (from
  * `graphToForm`). Kept loose — the route reads it defensively.
  */
 export interface CanvasContext {
@@ -19,7 +19,7 @@ export interface CanvasContext {
 export function summarizeCanvas(ctx: CanvasContext | undefined): string {
 	if (!ctx) return "The canvas is empty.";
 	const f = ctx.form ?? {};
-	const spec = (f.spec as Record<string, unknown>) ?? {};
+	const project = (f.project as Record<string, unknown>) ?? {};
 	const arr = (k: string) => (Array.isArray(f[k]) ? (f[k] as unknown[]) : []);
 	const named = (k: string) =>
 		arr(k)
@@ -29,9 +29,9 @@ export function summarizeCanvas(ctx: CanvasContext | undefined): string {
 
 	const lines = [
 		`Core cloud provider: ${ctx.provider}`,
-		`Project: ${(spec.project_name as string) || "(unnamed)"} · region ${
-			(spec.region as string) || "(unset)"
-		} · ${(spec.environment_stage as string) || "development"}`,
+		`Project: ${(project.project_name as string) || "(unnamed)"} · region ${
+			(project.region as string) || "(unset)"
+		} · ${(project.environment_stage as string) || "development"}`,
 		`Cluster: ${f.cluster ? "present" : "none"} · Network: ${
 			f.network ? "present" : "none"
 		} · DNS: ${(f.dns as { enabled?: boolean })?.enabled ? "on" : "off"}`,

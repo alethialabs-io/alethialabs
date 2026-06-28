@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Shared types for the Fleet Controller (dataroom/spec/mvp/26). One declarative pool spec is
+// Shared types for the Fleet Controller (dataroom/spec/mvp/26). One declarative pool project is
 // reconciled against observed reality across four axes — count, version, health,
 // placement — by the pure planner (plan.ts), over immutable VMs driven through the
 // FleetProvider primitives.
@@ -9,7 +9,7 @@
 import type { CloudProvider } from "@/lib/db/schema";
 
 /** Declarative desired state for one managed warm pool. */
-export interface FleetSpec {
+export interface FleetTarget {
 	/** Target cloud the runners provision into (a Hetzner box runs runner-aws to serve AWS). */
 	provider: CloudProvider;
 	/** Always-warm floor (auto-grow lifts the effective floor toward recent peak). */
@@ -69,7 +69,7 @@ export interface Observed {
 	surplusTicks: number;
 }
 
-/** Minimal, idempotent actions the controller applies to converge toward the spec. */
+/** Minimal, idempotent actions the controller applies to converge toward the project. */
 export type FleetAction =
 	| { type: "create"; location: string; version: string | null }
 	| { type: "drain"; runnerId: string; instanceId: string }
@@ -81,7 +81,7 @@ export type FleetAction =
  * implement this. See dataroom/spec/mvp/26.
  */
 export interface FleetProvider {
-	list(spec: FleetSpec): Promise<ProviderInstance[]>;
-	create(spec: FleetSpec, opts: { location: string; version: string | null }): Promise<void>;
+	list(project: FleetTarget): Promise<ProviderInstance[]>;
+	create(project: FleetTarget, opts: { location: string; version: string | null }): Promise<void>;
 	destroy(instanceId: string): Promise<void>;
 }

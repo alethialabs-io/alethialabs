@@ -8,12 +8,12 @@
 import { getServiceDb } from "@/lib/db";
 import { fleetPools, type FleetPool, type NewFleetPool } from "@/lib/db/schema";
 import { getFleetPools } from "@/lib/fleet/config";
-import type { FleetSpec } from "@/lib/fleet/types";
+import type { FleetTarget } from "@/lib/fleet/types";
 import { eq } from "drizzle-orm";
 
-/** Map a stored pool row to the controller's FleetSpec (a pinned `version` wins; else the
+/** Map a stored pool row to the controller's FleetTarget (a pinned `version` wins; else the
  *  controller resolves `channel` → latest release). */
-export function rowToSpec(row: FleetPool): FleetSpec {
+export function rowToProject(row: FleetPool): FleetTarget {
 	return {
 		provider: row.provider,
 		warmMin: row.warm_min,
@@ -29,34 +29,34 @@ export function rowToSpec(row: FleetPool): FleetSpec {
 	};
 }
 
-/** Load the enabled pools as controller specs. Disabled (paused) pools are skipped. */
-export async function loadFleetPools(): Promise<FleetSpec[]> {
+/** Load the enabled pools as controller projects. Disabled (paused) pools are skipped. */
+export async function loadFleetPools(): Promise<FleetTarget[]> {
 	const rows = await getServiceDb()
 		.select()
 		.from(fleetPools)
 		.where(eq(fleetPools.enabled, true));
-	return rows.map(rowToSpec);
+	return rows.map(rowToProject);
 }
 
-/** Map a FleetSpec back to an insert row (for the env → DB seed). */
-function specToRow(spec: FleetSpec): NewFleetPool {
+/** Map a FleetTarget back to an insert row (for the env → DB seed). */
+function projectToRow(project: FleetTarget): NewFleetPool {
 	return {
-		provider: spec.provider,
-		warm_min: spec.warmMin,
-		max: spec.max,
-		slots_per_runner: spec.slotsPerRunner,
-		locations: spec.locations,
-		min_per_location: spec.minPerLocation,
-		surge: spec.surge,
-		buffer: spec.buffer,
-		scale_down_grace_ticks: spec.scaleDownGraceTicks,
-		version: spec.targetVersion,
-		channel: spec.channel,
+		provider: project.provider,
+		warm_min: project.warmMin,
+		max: project.max,
+		slots_per_runner: project.slotsPerRunner,
+		locations: project.locations,
+		min_per_location: project.minPerLocation,
+		surge: project.surge,
+		buffer: project.buffer,
+		scale_down_grace_ticks: project.scaleDownGraceTicks,
+		version: project.targetVersion,
+		channel: project.channel,
 	};
 }
 
 /** One-time migration aid: if `fleet_pools` is empty and `FLEET_POOLS` is set, import the
- *  env specs so existing deployments don't lose their config. Idempotent (no-op once rows
+ *  env projects so existing deployments don't lose their config. Idempotent (no-op once rows
  *  exist; conflicts on the unique provider are ignored). After this the DB is the source
  *  of truth and the env var is ignored. */
 export async function seedFleetPoolsFromEnv(): Promise<void> {
@@ -67,7 +67,7 @@ export async function seedFleetPoolsFromEnv(): Promise<void> {
 	if (existing.length > 0) return;
 	await db
 		.insert(fleetPools)
-		.values(envPools.map(specToRow))
+		.values(envPools.map(projectToRow))
 		.onConflictDoNothing({ target: fleetPools.provider });
 	console.log(`[fleet] seeded ${envPools.length} pool(s) from FLEET_POOLS env`);
 }

@@ -38,6 +38,6 @@ export function wakeFleetScaler(): void {
 }
 
 async function tick(): Promise<void> {
-	const specs = await loadFleetPools();
-	await reconcileAll(specs, getFleetProvider(), makeDbDeps(), surplus);
+	const projects = await loadFleetPools();
+	await reconcileAll(projects, getFleetProvider(), makeDbDeps(), surplus);
 }

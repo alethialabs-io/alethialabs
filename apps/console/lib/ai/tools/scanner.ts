@@ -8,7 +8,7 @@ import { compareProviders } from "@/lib/scanner/compare";
 
 /**
  * Repo-analyzer tools — point the agent at a repo, infer its infrastructure, and
- * hand a guaranteed-valid proposed Spec to the canvas for review. scan_repo queues a
+ * hand a guaranteed-valid proposed Project to the canvas for review. scan_repo queues a
  * runner job (clone + static digest); the model never sees untrusted code, only the
  * structured digest. Every result is HITL — nothing provisions without the user.
  */
@@ -34,12 +34,12 @@ export function scannerTools() {
 
 		get_scan_result: tool({
 			description:
-				"Get a repo scan's status and, when ready, the inferred stack + a summary of the proposed Spec. Tell the user to open it in the canvas to review/edit before deploying.",
+				"Get a repo scan's status and, when ready, the inferred stack + a summary of the proposed Project. Tell the user to open it in the canvas to review/edit before deploying.",
 			inputSchema: z.object({ jobId: z.string() }),
 			execute: async ({ jobId }) => {
 				const res = await getScanProposal(jobId);
 				if (res.status !== "READY") return res;
-				const { stack, proposedSpec, provider } = res.proposal;
+				const { stack, proposedProject, provider } = res.proposal;
 				return {
 					status: "ready",
 					stack: {
@@ -56,15 +56,15 @@ export function scannerTools() {
 					},
 					proposed: {
 						provider,
-						region: proposedSpec.spec.region,
-						project_name: proposedSpec.spec.project_name,
-						databases: proposedSpec.databases.length,
-						caches: proposedSpec.caches.length,
-						queues: proposedSpec.queues.length,
-						nosql: proposedSpec.nosql_tables.length,
-						secrets: proposedSpec.secrets.length,
+						region: proposedProject.project.region,
+						project_name: proposedProject.project.project_name,
+						databases: proposedProject.databases.length,
+						caches: proposedProject.caches.length,
+						queues: proposedProject.queues.length,
+						nosql: proposedProject.nosql_tables.length,
+						secrets: proposedProject.secrets.length,
 					},
-					openInCanvasUrl: `/dashboard/design-spec?scan=${jobId}`,
+					openInCanvasUrl: `/dashboard/design-project?scan=${jobId}`,
 				};
 			},
 		}),

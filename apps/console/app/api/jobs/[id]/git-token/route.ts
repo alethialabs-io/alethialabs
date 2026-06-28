@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getServiceDb } from "@/lib/db";
-import { jobs, specRepositories } from "@/lib/db/schema";
+import { jobs, projectRepositories } from "@/lib/db/schema";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 
@@ -26,7 +26,7 @@ export async function POST(
 		const [job] = await db
 			.select({
 				user_id: jobs.user_id,
-				spec_id: jobs.spec_id,
+				project_id: jobs.project_id,
 				runner_id: jobs.runner_id,
 				config_snapshot: jobs.config_snapshot,
 			})
@@ -45,18 +45,18 @@ export async function POST(
 			);
 		}
 
-		// Determine the git provider from the spec's repository URL.
-		const [repos] = job.spec_id
+		// Determine the git provider from the project's repository URL.
+		const [repos] = job.project_id
 			? await db
 					.select({
-						apps_destination_repo: specRepositories.apps_destination_repo,
+						apps_destination_repo: projectRepositories.apps_destination_repo,
 					})
-					.from(specRepositories)
-					.where(eq(specRepositories.spec_id, job.spec_id))
+					.from(projectRepositories)
+					.where(eq(projectRepositories.project_id, job.project_id))
 					.limit(1)
 			: [];
 
-		// ANALYZE_REPO jobs have no spec — the target repo is in config_snapshot.
+		// ANALYZE_REPO jobs have no project — the target repo is in config_snapshot.
 		const scanRepoUrl =
 			typeof job.config_snapshot?.repo_url === "string"
 				? job.config_snapshot.repo_url

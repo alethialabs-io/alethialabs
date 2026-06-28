@@ -7,7 +7,7 @@
 // reconcile ticks and assert convergence + the warmMin invariant. See dataroom/spec/mvp/26.
 
 import type { ControllerDeps, RunnerState } from "@/lib/fleet/controller";
-import type { FleetProvider, FleetSpec, ProviderInstance } from "@/lib/fleet/types";
+import type { FleetProvider, FleetTarget, ProviderInstance } from "@/lib/fleet/types";
 
 interface FakeInstance {
 	instanceId: string;
@@ -44,7 +44,7 @@ export class FakeFleet implements FleetProvider {
 	}
 
 	// ── FleetProvider primitives ───────────────────────────────────────────────
-	async list(_spec: FleetSpec): Promise<ProviderInstance[]> {
+	async list(_project: FleetTarget): Promise<ProviderInstance[]> {
 		return [...this.instances.values()].map((i) => ({
 			instanceId: i.instanceId,
 			location: i.location,
@@ -52,7 +52,7 @@ export class FakeFleet implements FleetProvider {
 			ageSeconds: i.ageSeconds,
 		}));
 	}
-	async create(_spec: FleetSpec, opts: { location: string; version: string | null }): Promise<void> {
+	async create(_project: FleetTarget, opts: { location: string; version: string | null }): Promise<void> {
 		const id = `f${this.idc++}`;
 		this.instances.set(id, {
 			instanceId: id,

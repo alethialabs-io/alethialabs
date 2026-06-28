@@ -4,18 +4,18 @@
 import { z } from "zod";
 
 /**
- * An agent-proposed operation on an EXISTING spec. Every job-queuing mutation is a
+ * An agent-proposed operation on an EXISTING project. Every job-queuing mutation is a
  * proposal the user approves (HITL) — the agent never runs plan/deploy autonomously.
- * Inline spec creation is intentionally out of scope (build on the canvas instead).
+ * Inline project creation is intentionally out of scope (build on the canvas instead).
  */
 export const operationSchema = z.discriminatedUnion("operation", [
 	z.object({
-		operation: z.literal("plan_spec"),
-		specId: z.string().describe("The spec to plan."),
+		operation: z.literal("plan_project"),
+		projectId: z.string().describe("The project to plan."),
 	}),
 	z.object({
-		operation: z.literal("provision_spec"),
-		specId: z.string().describe("The spec to deploy."),
+		operation: z.literal("provision_project"),
+		projectId: z.string().describe("The project to deploy."),
 		planJobId: z
 			.string()
 			.optional()

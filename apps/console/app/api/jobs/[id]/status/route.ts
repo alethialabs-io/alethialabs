@@ -5,9 +5,10 @@ import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { finalizeDeployment } from "@/app/server/actions/deployments";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { finalizeConnectionTest } from "@/lib/cloud-providers/connections";
 import { reportJobUsageOnce } from "@/lib/billing/meter";
 import { getServiceDb } from "@/lib/db";
-import { jobs, specEnvironments } from "@/lib/db/schema";
+import { jobs, projectEnvironments } from "@/lib/db/schema";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 
 export async function PUT(
@@ -48,32 +49,30 @@ export async function PUT(
 			const [job] = await db
 				.select({
 					job_type: jobs.job_type,
-					spec_id: jobs.spec_id,
+					project_id: jobs.project_id,
 					environment_id: jobs.environment_id,
 					org_id: jobs.org_id,
-					zone_id: jobs.zone_id,
+					cloud_identity_id: jobs.cloud_identity_id,
 				})
 				.from(jobs)
 				.where(eq(jobs.id, jobId))
 				.limit(1);
 
-			// Ops alerts (free in core): job start, terminal state, spec destroy.
+			// Ops alerts (free in core): job start, terminal state, project destroy.
 			if (job?.org_id && status === "PROCESSING") {
 				emitAlertEventSafe(job.org_id, "system.job.started", {
 					title: `Job started: ${job.job_type}`,
 					severity: "info",
 					job_id: jobId,
 					job_type: job.job_type,
-					spec_id: job.spec_id ?? undefined,
-					zone_id: job.zone_id ?? undefined,
+					project_id: job.project_id ?? undefined,
 				});
 			}
 			if (job?.org_id && (status === "SUCCESS" || status === "FAILED")) {
 				const base = {
 					job_id: jobId,
 					job_type: job.job_type,
-					spec_id: job.spec_id ?? undefined,
-					zone_id: job.zone_id ?? undefined,
+					project_id: job.project_id ?? undefined,
 				};
 				if (status === "FAILED") {
 					emitAlertEventSafe(job.org_id, "system.job.failed", {
@@ -89,8 +88,8 @@ export async function PUT(
 						...base,
 					});
 					if (job.job_type === "DESTROY") {
-						emitAlertEventSafe(job.org_id, "system.spec.destroyed", {
-							title: "Spec destroyed",
+						emitAlertEventSafe(job.org_id, "system.project.destroyed", {
+							title: "Project destroyed",
 							severity: "warning",
 							...base,
 						});
@@ -99,14 +98,14 @@ export async function PUT(
 			}
 
 			// M1: provisioning status lives on the targeted environment (the job carries
-			// environment_id). Legacy / non-spec jobs without one simply skip the update.
-			if (job?.spec_id && job.environment_id) {
+			// environment_id). Legacy / non-project jobs without one simply skip the update.
+			if (job?.project_id && job.environment_id) {
 				const environmentId = job.environment_id;
 				const setEnvStatus = (s: "PROVISIONING" | "FAILED" | "DRAFT") =>
 					db
-						.update(specEnvironments)
+						.update(projectEnvironments)
 						.set({ status: s })
-						.where(eq(specEnvironments.id, environmentId));
+						.where(eq(projectEnvironments.id, environmentId));
 				if (job.job_type === "DEPLOY") {
 					if (status === "PROCESSING") {
 						await setEnvStatus("PROVISIONING");
@@ -126,6 +125,28 @@ export async function PUT(
 					} else if (status === "SUCCESS") {
 						await setEnvStatus("DRAFT");
 					}
+				}
+			}
+
+			// CONNECTION_TEST: authoritatively finalize the cloud identity from the
+			// terminal job result, server-side — so a connect sheet closed between
+			// SUCCESS and the client refresh can't strand a passed test as unverified.
+			if (
+				job?.job_type === "CONNECTION_TEST" &&
+				job.cloud_identity_id &&
+				(status === "SUCCESS" || status === "FAILED")
+			) {
+				try {
+					await finalizeConnectionTest(
+						job.cloud_identity_id,
+						status === "SUCCESS",
+						{
+							errorMessage: error_message ?? null,
+							cached: execution_metadata?.cached_resources ?? undefined,
+						},
+					);
+				} catch (err) {
+					console.error("Finalize connection test error:", err);
 				}
 			}
 		}

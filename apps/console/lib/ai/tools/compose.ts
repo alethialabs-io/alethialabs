@@ -29,8 +29,8 @@ import { computeCostItems } from "@/lib/cost/compute-cost-items";
 import {
 	ADDABLE_KINDS,
 	NODE_REGISTRY,
-} from "@/components/design-spec/canvas/graph/node-registry";
-import type { NodeKind } from "@/components/design-spec/canvas/graph/types";
+} from "@/components/design-project/canvas/graph/node-registry";
+import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import type { CanvasContext } from "../canvas-context";
 import { proposeChangesInputSchema } from "../proposal";
 
@@ -140,8 +140,8 @@ export function composeTools(ctx: CanvasContext | undefined) {
 				const cluster = (f.cluster as Loose) ?? {};
 				const network = (f.network as Loose) ?? {};
 				const dns = (f.dns as { provider_config?: Loose }) ?? {};
-				const spec = (f.spec as Loose) ?? {};
-				const region = (spec.region as string) || "";
+				const project = (f.project as Loose) ?? {};
+				const region = (project.region as string) || "";
 				const prices = region ? await getRegionPrices(region) : null;
 				const meta = getProvider(ctx.provider);
 				const { items, total } = computeCostItems(

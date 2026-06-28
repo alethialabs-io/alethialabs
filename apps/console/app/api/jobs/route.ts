@@ -8,8 +8,8 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { verifyCliToken } from "@/lib/cli/auth";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
-import { jobs, runners, specEnvironments, specs } from "@/lib/db/schema";
-import { querySpecFull } from "@/lib/queries/spec-full";
+import { jobs, runners, projectEnvironments, projects } from "@/lib/db/schema";
+import { queryProjectFull } from "@/lib/queries/project-full";
 import { notifyScaler } from "@/lib/scaler";
 import { cliJobResponse, cliJobsPageResponse } from "@/lib/validations/cli-contract";
 
@@ -30,7 +30,7 @@ function parseJobType(v: unknown): CreatableJobType | null {
 	}
 }
 
-/** Queues a provisioning job for the CLI user, snapshotting the spec config. */
+/** Queues a provisioning job for the CLI user, snapshotting the project config. */
 export async function POST(req: Request) {
 	const { payload, error: authError } = await verifyCliToken(req);
 	if (authError) return authError;
@@ -44,7 +44,6 @@ export async function POST(req: Request) {
 		const body = await req.json();
 		const {
 			job_type,
-			zone_id,
 			configuration_id,
 			cloud_identity_id,
 			config_snapshot,
@@ -88,15 +87,14 @@ export async function POST(req: Request) {
 		let snapshot: Record<string, unknown> = config_snapshot || {};
 		let configHash: string | null = null;
 		let resolvedCloudIdentityId: string | null = cloud_identity_id || null;
-		let resolvedZoneId: string | null = zone_id || null;
-		// M1: the CLI job targets the spec's default environment (status + identity).
+		// M1: the CLI job targets the project's default environment (status + identity).
 		let resolvedEnvironmentId: string | null = null;
 
 		if (
 			(jobType === "DEPLOY" || jobType === "PLAN" || jobType === "DESTROY") &&
 			configuration_id
 		) {
-			const [config] = await querySpecFull(db, {
+			const [config] = await queryProjectFull(db, {
 				id: configuration_id,
 				user_id: userId,
 			});
@@ -116,17 +114,14 @@ export async function POST(req: Request) {
 			if (!resolvedCloudIdentityId && config.cloud_identity_id) {
 				resolvedCloudIdentityId = config.cloud_identity_id;
 			}
-			if (!resolvedZoneId && config.zone_id) {
-				resolvedZoneId = config.zone_id;
-			}
 
 			const [defEnv] = await db
-				.select({ id: specEnvironments.id })
-				.from(specEnvironments)
+				.select({ id: projectEnvironments.id })
+				.from(projectEnvironments)
 				.where(
 					and(
-						eq(specEnvironments.spec_id, configuration_id),
-						eq(specEnvironments.is_default, true),
+						eq(projectEnvironments.project_id, configuration_id),
+						eq(projectEnvironments.is_default, true),
 					),
 				)
 				.limit(1);
@@ -137,11 +132,10 @@ export async function POST(req: Request) {
 			.insert(jobs)
 			.values({
 				user_id: userId,
-				zone_id: resolvedZoneId,
 				environment_id: resolvedEnvironmentId,
 				cloud_identity_id: resolvedCloudIdentityId,
 				job_type: jobType,
-				spec_id: configuration_id || null,
+				project_id: configuration_id || null,
 				config_snapshot: snapshot,
 				configuration_hash: configHash,
 				status: "QUEUED",
@@ -156,16 +150,16 @@ export async function POST(req: Request) {
 			resolvedEnvironmentId
 		) {
 			await db
-				.update(specEnvironments)
+				.update(projectEnvironments)
 				.set({ status: "QUEUED" })
-				.where(eq(specEnvironments.id, resolvedEnvironmentId));
+				.where(eq(projectEnvironments.id, resolvedEnvironmentId));
 		}
 
 		if (jobType === "DESTROY" && resolvedEnvironmentId) {
 			await db
-				.update(specEnvironments)
+				.update(projectEnvironments)
 				.set({ status: "DESTROYING" })
-				.where(eq(specEnvironments.id, resolvedEnvironmentId));
+				.where(eq(projectEnvironments.id, resolvedEnvironmentId));
 		}
 
 		// Ops alert (free): a teardown was requested. org_id is trigger-populated on insert.
@@ -175,8 +169,7 @@ export async function POST(req: Request) {
 				severity: "warning",
 				job_id: job.id,
 				job_type: "DESTROY",
-				spec_id: configuration_id,
-				zone_id: job.zone_id ?? undefined,
+				project_id: configuration_id,
 			});
 		}
 
@@ -189,7 +182,7 @@ export async function POST(req: Request) {
 	}
 }
 
-/** Lists the CLI user's jobs with the spec project name + runner name attached. */
+/** Lists the CLI user's jobs with the project project name + runner name attached. */
 export async function GET(req: Request) {
 	const { payload, error: authError } = await verifyCliToken(req);
 	if (authError) return authError;
@@ -201,7 +194,6 @@ export async function GET(req: Request) {
 
 	const { searchParams } = new URL(req.url);
 	const status = searchParams.get("status");
-	const zoneId = searchParams.get("zone_id");
 	const limit = Math.min(parseInt(searchParams.get("limit") || "20", 10), 100);
 	const offset = parseInt(searchParams.get("offset") || "0", 10);
 
@@ -209,17 +201,16 @@ export async function GET(req: Request) {
 
 	const conds: SQL[] = [eq(jobs.user_id, userId)];
 	if (status) conds.push(sql`${jobs.status}::text = ${status}`);
-	if (zoneId) conds.push(eq(jobs.zone_id, zoneId));
 	const whereExpr = and(...conds);
 
 	const rows = await db
 		.select({
 			job: jobs,
-			project_name: specs.project_name,
+			project_name: projects.project_name,
 			runner_name: runners.name,
 		})
 		.from(jobs)
-		.leftJoin(specs, eq(jobs.spec_id, specs.id))
+		.leftJoin(projects, eq(jobs.project_id, projects.id))
 		.leftJoin(runners, eq(jobs.runner_id, runners.id))
 		.where(whereExpr)
 		.orderBy(desc(jobs.created_at))
@@ -233,7 +224,7 @@ export async function GET(req: Request) {
 
 	const result = rows.map((r) => ({
 		...r.job,
-		spec_name: r.project_name ?? null,
+		project_name: r.project_name ?? null,
 		runner_name: r.runner_name ?? null,
 	}));
 
