@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { NODE_REGISTRY } from "@/components/design-spec/canvas/graph/node-registry";
-import type { NodeKind } from "@/components/design-spec/canvas/graph/types";
+import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-registry";
+import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import { DB_ENGINES, DEFAULT_REGION, type CloudProviderSlug } from "@/lib/cloud-providers";
-import { type SpecFormData, specFormSchema } from "@/lib/validations/spec-form.schema";
+import { type ProjectFormData, projectFormSchema } from "@/lib/validations/project-form.schema";
 import type { InferredNeed, InferredStack } from "./schema";
 
 const SERVICE_KINDS: InferredNeed["kind"][] = [
@@ -16,7 +16,7 @@ const SERVICE_KINDS: InferredNeed["kind"][] = [
 	"secret",
 ];
 
-/** Slug → `[a-z0-9-]`, start alnum, ≤25 (the spec project_name regex). */
+/** Slug → `[a-z0-9-]`, start alnum, ≤25 (the project project_name regex). */
 function slugify(name: string, fallback = "app"): string {
 	const s = name
 		.toLowerCase()
@@ -41,22 +41,21 @@ function dbEngine(provider: CloudProviderSlug, hint?: string) {
 }
 
 /**
- * Deterministically map an InferredStack onto a guaranteed-valid SpecFormData:
+ * Deterministically map an InferredStack onto a guaranteed-valid ProjectFormData:
  * clone the canonical `NODE_REGISTRY[kind].defaultData(provider)` for each need +
- * overlay engine/name, set the required spec roots, and ASSERT `specFormSchema`
- * passes. CORE component identities are left to inherit the spec's (placement gate
- * passes). The model can never produce an invalid spec — this code does.
+ * overlay engine/name, set the required project roots, and ASSERT `projectFormSchema`
+ * passes. CORE component identities are left to inherit the project's (placement gate
+ * passes). The model can never produce an invalid project — this code does.
  */
 export function inferredStackToFormData(
 	stack: InferredStack,
 	opts: {
 		identityId: string;
 		provider: CloudProviderSlug;
-		zoneId: string;
 		repoUrl: string;
 		region?: string;
 	},
-): SpecFormData {
+): ProjectFormData {
 	const { provider } = opts;
 	const dd = (k: NodeKind): Record<string, unknown> => ({
 		...NODE_REGISTRY[k].defaultData(provider),
@@ -91,13 +90,12 @@ export function inferredStackToFormData(
 	}
 
 	const candidate = {
-		spec: {
+		project: {
 			project_name: slugify(repoName(opts.repoUrl)),
 			environment_stage: "development",
 			region: opts.region || DEFAULT_REGION[provider],
 			cloud_identity_id: opts.identityId,
 			iac_version: "1.11.4",
-			zone_id: opts.zoneId,
 		},
 		network: dd("network"),
 		cluster: dd("cluster"),
@@ -111,9 +109,9 @@ export function inferredStackToFormData(
 		secrets: byKind.secret,
 	};
 
-	const parsed = specFormSchema.safeParse(candidate);
+	const parsed = projectFormSchema.safeParse(candidate);
 	if (!parsed.success) {
-		throw new Error(`Scanner produced an invalid spec: ${parsed.error.message}`);
+		throw new Error(`Scanner produced an invalid project: ${parsed.error.message}`);
 	}
 	return parsed.data;
 }

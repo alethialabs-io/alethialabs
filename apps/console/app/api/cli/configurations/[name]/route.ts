@@ -3,15 +3,15 @@
 
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { querySpecFull } from "@/lib/queries/spec-full";
+import { queryProjectFull } from "@/lib/queries/project-full";
 import { NextResponse } from "next/server";
 
-/** Returns the full spec_full config for one of the CLI user's specs by project name. */
+/** Returns the full project_full config for one of the CLI user's projects by project name. */
 export async function GET(
 	req: Request,
 	{ params }: { params: Promise<{ name: string }> },
 ) {
-	const auth = await authorizeCli(req, "view", { type: "spec" });
+	const auth = await authorizeCli(req, "view", { type: "project" });
 	if ("error" in auth) return auth.error;
 	const { actor } = auth;
 
@@ -20,8 +20,8 @@ export async function GET(
 		return NextResponse.json({ error: "Project name is required" }, { status: 400 });
 	}
 
-	// querySpecFull still scopes by user_id (community-correct; threaded to org_id in 4.5).
-	const [configuration] = await querySpecFull(getServiceDb(), {
+	// queryProjectFull still scopes by user_id (community-correct; threaded to org_id in 4.5).
+	const [configuration] = await queryProjectFull(getServiceDb(), {
 		user_id: actor.userId,
 		project_name: projectName,
 	});

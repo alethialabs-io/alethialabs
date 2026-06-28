@@ -8,9 +8,8 @@ import {
 	jobLogs,
 	jobs,
 	runners,
-	specCluster,
-	specs,
-	zones,
+	projectCluster,
+	projects,
 } from "@/lib/db/schema";
 import { cloudProvider } from "@/lib/db/schema/enums";
 
@@ -52,51 +51,9 @@ export const runnerWire = createSelectSchema(runners, {
 	created_at: true,
 });
 
-/** A spec as nested under a zone in GET /api/cli/zones. M1: environment_stage +
- * status now come from the spec's default environment (the wire shape is frozen,
- * so they're declared explicitly rather than picked from the specs columns). */
-export const zoneSpecWire = createSelectSchema(specs)
-	.pick({
-		id: true,
-		project_name: true,
-		region: true,
-	})
-	.extend({
-		environment_stage: z.string(),
-		status: z.string(),
-	});
 
-/** A zone with its nested specs (GET /api/cli/zones). */
-export const zoneWire = createSelectSchema(zones, {
-	created_at: iso,
-	updated_at: iso,
-})
-	.pick({
-		id: true,
-		user_id: true,
-		name: true,
-		description: true,
-		created_at: true,
-		updated_at: true,
-	})
-	.extend({ specs: z.array(zoneSpecWire) });
-
-/** A full zone row (POST /api/cli/zones returns the created zone). */
-export const zoneFullWire = createSelectSchema(zones, {
-	created_at: iso,
-	updated_at: iso,
-}).pick({
-	id: true,
-	user_id: true,
-	org_id: true,
-	name: true,
-	description: true,
-	created_at: true,
-	updated_at: true,
-});
-
-/** A spec_cluster row joined with its parent spec (GET /api/cli/clusters). */
-export const clusterWire = createSelectSchema(specCluster, {
+/** A project_cluster row joined with its parent project (GET /api/cli/clusters). */
+export const clusterWire = createSelectSchema(projectCluster, {
 	created_at: iso,
 	updated_at: iso,
 })
@@ -116,9 +73,9 @@ export const clusterWire = createSelectSchema(specCluster, {
 		updated_at: true,
 	})
 	.extend({
-		spec_project_name: z.string(),
-		spec_environment: z.string(),
-		spec_region: z.string(),
+		project_name: z.string(),
+		environment: z.string(),
+		region: z.string(),
 	});
 
 /** A cloud identity (GET /api/cli/cloud-identities). `label` is computed. */
@@ -147,7 +104,7 @@ export const jobWire = createSelectSchema(jobs, {
 
 /** A job as returned in the list (GET /api/jobs) — adds joined display names. */
 export const jobListItemWire = jobWire.extend({
-	spec_name: z.string().nullable(),
+	project_name: z.string().nullable(),
 	runner_name: z.string().nullable(),
 });
 
@@ -222,8 +179,6 @@ export const cliLatestReleaseWire = z.object({
 // --- Response envelopes (what the CLI actually decodes off the wire) ---
 
 export const cliRunnersResponse = z.object({ runners: z.array(runnerWire) });
-export const cliZonesResponse = z.object({ zones: z.array(zoneWire) });
-export const cliZoneResponse = z.object({ zone: zoneFullWire });
 export const cliClustersResponse = z.object({ clusters: z.array(clusterWire) });
 export const cliCloudIdentitiesResponse = z.object({
 	cloud_identities: z.array(cloudIdentityWire),
@@ -247,8 +202,6 @@ export const cliRepositoriesResponse = z.object({
  */
 export const cliContract = {
 	RunnersResponse: cliRunnersResponse,
-	ZonesResponse: cliZonesResponse,
-	ZoneResponse: cliZoneResponse,
 	ClustersResponse: cliClustersResponse,
 	CloudIdentitiesResponse: cliCloudIdentitiesResponse,
 	JobsPageResponse: cliJobsPageResponse,

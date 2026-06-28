@@ -3,23 +3,23 @@
 
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { querySpecFull } from "@/lib/queries/spec-full";
+import { queryProjectFull } from "@/lib/queries/project-full";
 import { NextResponse } from "next/server";
 
-/** Returns the full spec_full config for one of the CLI user's specs by project name. */
+/** Returns the full project_full config for one of the CLI user's projects by project name. */
 export async function GET(
 	req: Request,
 	{ params }: { params: Promise<{ project_name: string }> },
 ) {
 	try {
-		const auth = await authorizeCli(req, "view", { type: "spec" });
+		const auth = await authorizeCli(req, "view", { type: "project" });
 		if ("error" in auth) return auth.error;
 		const { actor } = auth;
 
 		const { project_name } = await params;
 
-		// querySpecFull still scopes by user_id (community-correct; threaded to org in 4.5).
-		const [data] = await querySpecFull(getServiceDb(), {
+		// queryProjectFull still scopes by user_id (community-correct; threaded to org in 4.5).
+		const [data] = await queryProjectFull(getServiceDb(), {
 			user_id: actor.userId,
 			project_name,
 		});

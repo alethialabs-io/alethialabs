@@ -4,56 +4,56 @@
 import { and, desc, eq } from "drizzle-orm";
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { specCluster, specEnvironments, specs } from "@/lib/db/schema";
+import { projectCluster, projectEnvironments, projects } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliClustersResponse } from "@/lib/validations/cli-contract";
 
 /**
- * Lists spec_cluster data joined with the parent spec's project_name for the
- * CLI user. Wire-locked: the flat `spec_*` keys are the frozen CLI contract.
+ * Lists project_cluster data joined with the parent project's project_name for the
+ * CLI user. Wire-locked: the flat `project_*` keys are the frozen CLI contract.
  */
 export async function GET(req: Request) {
-	const auth = await authorizeCli(req, "view", { type: "spec" });
+	const auth = await authorizeCli(req, "view", { type: "project" });
 	if ("error" in auth) return auth.error;
 	const { actor } = auth;
 
 	try {
 		const rows = await getServiceDb()
 			.select({
-				id: specCluster.id,
-				cluster_name: specCluster.cluster_name,
-				cluster_version: specCluster.cluster_version,
-				instance_types: specCluster.instance_types,
-				node_min_size: specCluster.node_min_size,
-				node_max_size: specCluster.node_max_size,
-				node_desired_size: specCluster.node_desired_size,
-				status: specCluster.status,
-				status_message: specCluster.status_message,
-				argocd_url: specCluster.argocd_url,
-				estimated_monthly_cost: specCluster.estimated_monthly_cost,
-				created_at: specCluster.created_at,
-				updated_at: specCluster.updated_at,
-				spec_project_name: specs.project_name,
-				// M1: the cluster's environment = the spec's default environment name.
-				spec_environment: specEnvironments.name,
-				spec_region: specs.region,
+				id: projectCluster.id,
+				cluster_name: projectCluster.cluster_name,
+				cluster_version: projectCluster.cluster_version,
+				instance_types: projectCluster.instance_types,
+				node_min_size: projectCluster.node_min_size,
+				node_max_size: projectCluster.node_max_size,
+				node_desired_size: projectCluster.node_desired_size,
+				status: projectCluster.status,
+				status_message: projectCluster.status_message,
+				argocd_url: projectCluster.argocd_url,
+				estimated_monthly_cost: projectCluster.estimated_monthly_cost,
+				created_at: projectCluster.created_at,
+				updated_at: projectCluster.updated_at,
+				project_name: projects.project_name,
+				// M1: the cluster's environment = the project's default environment name.
+				environment: projectEnvironments.name,
+				region: projects.region,
 			})
-			.from(specCluster)
-			.innerJoin(specs, eq(specCluster.spec_id, specs.id))
+			.from(projectCluster)
+			.innerJoin(projects, eq(projectCluster.project_id, projects.id))
 			.leftJoin(
-				specEnvironments,
+				projectEnvironments,
 				and(
-					eq(specEnvironments.spec_id, specs.id),
-					eq(specEnvironments.is_default, true),
+					eq(projectEnvironments.project_id, projects.id),
+					eq(projectEnvironments.is_default, true),
 				),
 			)
-			.where(eq(specs.org_id, actor.orgId))
-			.orderBy(desc(specCluster.updated_at));
+			.where(eq(projects.org_id, actor.orgId))
+			.orderBy(desc(projectCluster.updated_at));
 
 		const clusters = rows.map((r) => ({
 			...r,
-			spec_environment: r.spec_environment ?? "development",
+			environment: r.environment ?? "development",
 		}));
 
 		return cliJson(cliClustersResponse, { clusters });

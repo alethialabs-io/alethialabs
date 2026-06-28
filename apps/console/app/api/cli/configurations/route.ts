@@ -4,45 +4,44 @@
 import { and, desc, eq } from "drizzle-orm";
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { cloudIdentities, specEnvironments, specs } from "@/lib/db/schema";
+import { cloudIdentities, projectEnvironments, projects } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 
 /**
- * Lists the CLI user's specs as ConfigurationSummary rows. Wire-locked: emits
- * the frozen summary keys (`zone_id`, `cloud_provider`←identity
- * provider) that the CLI `configurations list` command parses.
+ * Lists the CLI user's projects as ConfigurationSummary rows. Wire-locked: emits
+ * the frozen summary keys (e.g. `cloud_provider` ← identity provider) that the CLI
+ * `configurations list` command parses.
  */
 export async function GET(req: Request) {
-	const auth = await authorizeCli(req, "view", { type: "spec" });
+	const auth = await authorizeCli(req, "view", { type: "project" });
 	if ("error" in auth) return auth.error;
 	const { actor } = auth;
 
 	try {
 		const rows = await getServiceDb()
 			.select({
-				id: specs.id,
-				project_name: specs.project_name,
-				zone_id: specs.zone_id,
-				// M1: environment + status from the spec's default environment.
-				environment_stage: specEnvironments.name,
-				status: specEnvironments.status,
-				region: specs.region,
+				id: projects.id,
+				project_name: projects.project_name,
+				// M1: environment + status from the project's default environment.
+				environment_stage: projectEnvironments.name,
+				status: projectEnvironments.status,
+				region: projects.region,
 				cloud_provider: cloudIdentities.provider,
-				estimated_monthly_cost: specs.estimated_monthly_cost,
-				created_at: specs.created_at,
-				updated_at: specs.updated_at,
+				estimated_monthly_cost: projects.estimated_monthly_cost,
+				created_at: projects.created_at,
+				updated_at: projects.updated_at,
 			})
-			.from(specs)
-			.leftJoin(cloudIdentities, eq(specs.cloud_identity_id, cloudIdentities.id))
+			.from(projects)
+			.leftJoin(cloudIdentities, eq(projects.cloud_identity_id, cloudIdentities.id))
 			.leftJoin(
-				specEnvironments,
+				projectEnvironments,
 				and(
-					eq(specEnvironments.spec_id, specs.id),
-					eq(specEnvironments.is_default, true),
+					eq(projectEnvironments.project_id, projects.id),
+					eq(projectEnvironments.is_default, true),
 				),
 			)
-			.where(eq(specs.org_id, actor.orgId))
-			.orderBy(desc(specs.created_at));
+			.where(eq(projects.org_id, actor.orgId))
+			.orderBy(desc(projects.created_at));
 
 		const configurations = rows.map((r) => ({
 			...r,

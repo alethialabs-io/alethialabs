@@ -12,37 +12,37 @@ import {
 	type EnvironmentStage,
 	jobs,
 	resourceHierarchy,
-	type Spec,
-	type SpecEnvironment,
-	specCaches,
-	specCluster,
-	specContainerRegistries,
-	specDatabases,
-	specDns,
-	specEnvironments,
-	specNetwork,
-	specNosqlTables,
-	specObservability,
-	specQueues,
-	specRepositories,
-	specSecrets,
-	specTopics,
-	specs,
+	type Project,
+	type ProjectEnvironment,
+	projectCaches,
+	projectCluster,
+	projectContainerRegistries,
+	projectDatabases,
+	projectDns,
+	projectEnvironments,
+	projectNetwork,
+	projectNosqlTables,
+	projectObservability,
+	projectQueues,
+	projectRepositories,
+	projectSecrets,
+	projectTopics,
+	projects,
 } from "@/lib/db/schema";
 import {
 	type CloudProviderSlug,
 	type ConversionWarning,
-	convertSpecConfig,
+	convertProjectConfig,
 } from "@/lib/cloud-providers";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { notifyScaler } from "@/lib/scaler";
-import type { SpecFormData } from "@/lib/validations/spec-form.schema";
-import { pickFreeSlug, slugify } from "@/lib/routing";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import type { ProjectFormData } from "@/lib/validations/project-form.schema";
+import { pickFreeSlug, RESERVED_PROJECT_CHILD_SLUGS, slugify } from "@/lib/routing";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 /**
  * Mirrors the Go provisioner gate (packages/core/provisioner/placement.go):
- * a CORE resource placed on a cloud account other than the spec's primary one is
+ * a CORE resource placed on a cloud account other than the project's primary one is
  * a hot cross-cloud data-plane edge we can't provision yet. Thrown before a job is
  * queued so the user fails fast.
  */
@@ -56,13 +56,13 @@ function placementGateError(resourceType: string, name: string): Error {
 }
 
 // ============================================================
-// Types — form-facing shapes mapped to the spec/zone DB columns below.
+// Types — form-facing shapes mapped to the project DB columns below.
 // ============================================================
 
 type ComponentInsert<T> = Omit<
 	T,
 	| "id"
-	| "spec_id"
+	| "project_id"
 	| "status"
 	| "status_message"
 	| "estimated_monthly_cost"
@@ -70,165 +70,144 @@ type ComponentInsert<T> = Omit<
 	| "updated_at"
 >;
 
-export interface CreateSpecInput {
-	spec: {
+export interface CreateProjectInput {
+	project: {
 		project_name: string;
-		// M1: the spec's INITIAL environment — createSpec turns this into the spec's
-		// default `spec_environments` row (name + stage), not a column on `specs`.
+		// M1: the project's INITIAL environment — createProject turns this into the project's
+		// default `project_environments` row (name + stage), not a column on `projects`.
 		environment_stage: EnvironmentStage;
 		region: string;
 		cloud_identity_id?: string | null;
 		iac_version: string;
-		zone_id?: string | null;
 	};
-	network: ComponentInsert<typeof specNetwork.$inferInsert>;
+	network: ComponentInsert<typeof projectNetwork.$inferInsert>;
 	cluster: Omit<
-		ComponentInsert<typeof specCluster.$inferInsert>,
+		ComponentInsert<typeof projectCluster.$inferInsert>,
 		"cluster_name" | "cluster_endpoint"
 	>;
-	dns: ComponentInsert<typeof specDns.$inferInsert>;
+	dns: ComponentInsert<typeof projectDns.$inferInsert>;
 	repositories: Omit<
-		typeof specRepositories.$inferInsert,
-		"id" | "spec_id" | "created_at" | "updated_at"
+		typeof projectRepositories.$inferInsert,
+		"id" | "project_id" | "created_at" | "updated_at"
 	>;
 	databases?: Omit<
-		ComponentInsert<typeof specDatabases.$inferInsert>,
+		ComponentInsert<typeof projectDatabases.$inferInsert>,
 		"endpoint" | "reader_endpoint"
 	>[];
 	caches?: Omit<
-		ComponentInsert<typeof specCaches.$inferInsert>,
+		ComponentInsert<typeof projectCaches.$inferInsert>,
 		"endpoint"
 	>[];
-	queues?: ComponentInsert<typeof specQueues.$inferInsert>[];
-	topics?: ComponentInsert<typeof specTopics.$inferInsert>[];
-	nosql_tables?: ComponentInsert<typeof specNosqlTables.$inferInsert>[];
-	secrets?: ComponentInsert<typeof specSecrets.$inferInsert>[];
+	queues?: ComponentInsert<typeof projectQueues.$inferInsert>[];
+	topics?: ComponentInsert<typeof projectTopics.$inferInsert>[];
+	nosql_tables?: ComponentInsert<typeof projectNosqlTables.$inferInsert>[];
+	secrets?: ComponentInsert<typeof projectSecrets.$inferInsert>[];
 }
 
 // ============================================================
 // Create
 // ============================================================
 
-export async function createSpec(data: CreateSpecInput) {
-	const actor = await authorize("create", { type: "spec" });
+export async function createProject(data: CreateProjectInput) {
+	const actor = await authorize("create", { type: "project" });
 	const owner = actor.userId;
 
 	return withOwnerScope(owner, async (tx) => {
-		// M1: environment_stage is no longer a spec column — it seeds the default env.
-		const { zone_id, environment_stage, ...specFields } = data.spec;
+		// M1: environment_stage is no longer a project column — it seeds the default env.
+		const { environment_stage, ...projectFields } = data.project;
 
-		// C2: derive a unique-per-zone URL slug from the project name.
-		const zoneScope = zone_id ?? null;
-		const existing = await tx
-			.select({ slug: specs.slug })
-			.from(specs)
-			.where(
-				zoneScope === null
-					? isNull(specs.zone_id)
-					: eq(specs.zone_id, zoneScope),
-			);
+		// Projects are top-level under the org: derive a unique-per-org URL slug from the name
+		// (RLS scopes this select to the active org).
+		const existing = await tx.select({ slug: projects.slug }).from(projects);
 		const slug = pickFreeSlug(
-			slugify(specFields.project_name) || "spec",
-			existing.map((r) => r.slug),
+			slugify(projectFields.project_name) || "project",
+			// Skip reserved project-child segments (e.g. "settings") so a project slug can never
+			// shadow the project-scoped settings route.
+			[...existing.map((r) => r.slug), ...RESERVED_PROJECT_CHILD_SLUGS],
 		);
 
-		const [spec] = await tx
-			.insert(specs)
-			.values({ ...specFields, slug, zone_id: zone_id ?? null, user_id: owner })
+		const [project] = await tx
+			.insert(projects)
+			.values({ ...projectFields, slug, user_id: owner })
 			.returning();
 
-		if (!spec) throw new Error("Failed to create spec");
+		if (!project) throw new Error("Failed to create project");
 
-		// The spec's default (and, for now, only) environment. `name` = the chosen
+		// The project's default (and, for now, only) environment. `name` = the chosen
 		// stage value so the tofu/S3 state path matches the legacy single-env path.
-		await tx.insert(specEnvironments).values({
-			spec_id: spec.id,
+		await tx.insert(projectEnvironments).values({
+			project_id: project.id,
 			user_id: owner,
-			org_id: spec.org_id,
+			org_id: project.org_id,
 			name: environment_stage,
 			stage: environment_stage,
 			status: "DRAFT",
 			is_default: true,
-			region: specFields.region,
+			region: projectFields.region,
 		});
 
-		// Authz hierarchy edge: spec → its zone (or → org when zone-less), so a
-		// higher-scope grant flows down to this spec.
+		// Authz hierarchy edge: project → org, so an org-wide grant flows down to this project.
 		await tx
 			.insert(resourceHierarchy)
-			.values(
-				zone_id
-					? {
-							child_type: "spec",
-							child_id: spec.id,
-							parent_type: "zone",
-							parent_id: zone_id,
-						}
-					: {
-							child_type: "spec",
-							child_id: spec.id,
-							parent_type: "org",
-							parent_id: owner,
-						},
-			)
+			.values({
+				child_type: "project",
+				child_id: project.id,
+				parent_type: "org",
+				parent_id: owner,
+			})
 			.onConflictDoNothing();
-		mirrorHierarchyEdge(
-			"spec",
-			spec.id,
-			zone_id ? "zone" : "org",
-			zone_id ?? owner,
-		);
+		mirrorHierarchyEdge("project", project.id, "org", owner);
 
 		// Singleton components (tx rolls back automatically on any failure).
-		await tx.insert(specNetwork).values({ spec_id: spec.id, ...data.network });
-		await tx.insert(specCluster).values({ spec_id: spec.id, ...data.cluster });
-		await tx.insert(specDns).values({ spec_id: spec.id, ...data.dns });
+		await tx.insert(projectNetwork).values({ project_id: project.id, ...data.network });
+		await tx.insert(projectCluster).values({ project_id: project.id, ...data.cluster });
+		await tx.insert(projectDns).values({ project_id: project.id, ...data.dns });
 		await tx
-			.insert(specRepositories)
-			.values({ spec_id: spec.id, ...data.repositories });
+			.insert(projectRepositories)
+			.values({ project_id: project.id, ...data.repositories });
 
 		if (data.databases?.length) {
 			await tx
-				.insert(specDatabases)
-				.values(data.databases.map((db) => ({ spec_id: spec.id, ...db })));
+				.insert(projectDatabases)
+				.values(data.databases.map((db) => ({ project_id: project.id, ...db })));
 		}
 		if (data.caches?.length) {
 			await tx
-				.insert(specCaches)
-				.values(data.caches.map((c) => ({ spec_id: spec.id, ...c })));
+				.insert(projectCaches)
+				.values(data.caches.map((c) => ({ project_id: project.id, ...c })));
 		}
 		if (data.queues?.length) {
 			await tx
-				.insert(specQueues)
-				.values(data.queues.map((q) => ({ spec_id: spec.id, ...q })));
+				.insert(projectQueues)
+				.values(data.queues.map((q) => ({ project_id: project.id, ...q })));
 		}
 		if (data.topics?.length) {
 			await tx
-				.insert(specTopics)
-				.values(data.topics.map((t) => ({ spec_id: spec.id, ...t })));
+				.insert(projectTopics)
+				.values(data.topics.map((t) => ({ project_id: project.id, ...t })));
 		}
 		if (data.nosql_tables?.length) {
 			await tx
-				.insert(specNosqlTables)
-				.values(data.nosql_tables.map((n) => ({ spec_id: spec.id, ...n })));
+				.insert(projectNosqlTables)
+				.values(data.nosql_tables.map((n) => ({ project_id: project.id, ...n })));
 		}
 		if (data.secrets?.length) {
 			await tx
-				.insert(specSecrets)
-				.values(data.secrets.map((s) => ({ spec_id: spec.id, ...s })));
+				.insert(projectSecrets)
+				.values(data.secrets.map((s) => ({ project_id: project.id, ...s })));
 		}
 
 		await tx.insert(auditLog).values({
-			spec_id: spec.id,
+			project_id: project.id,
 			user_id: owner,
 			action: "CREATED",
 			changes: {
-				project_name: data.spec.project_name,
-				environment: data.spec.environment_stage,
+				project_name: data.project.project_name,
+				environment: data.project.environment_stage,
 			},
 		});
 
-		return { spec };
+		return { project };
 	});
 }
 
@@ -236,116 +215,116 @@ export async function createSpec(data: CreateSpecInput) {
 // Read
 // ============================================================
 
-export async function getSpecs() {
-	const actor = await authorize("view", { type: "spec" });
+export async function getProjectsList() {
+	const actor = await authorize("view", { type: "project" });
 	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
-		// M1: surface each spec's default-environment name + status (the columns moved
-		// off `specs` into spec_environments) so list consumers keep reading them.
+		// M1: surface each project's default-environment name + status (the columns moved
+		// off `projects` into project_environments) so list consumers keep reading them.
 		const rows = await tx
 			.select({
-				spec: specs,
-				env_name: specEnvironments.name,
-				env_status: specEnvironments.status,
+				project: projects,
+				env_name: projectEnvironments.name,
+				env_status: projectEnvironments.status,
 			})
-			.from(specs)
+			.from(projects)
 			.leftJoin(
-				specEnvironments,
+				projectEnvironments,
 				and(
-					eq(specEnvironments.spec_id, specs.id),
-					eq(specEnvironments.is_default, true),
+					eq(projectEnvironments.project_id, projects.id),
+					eq(projectEnvironments.is_default, true),
 				),
 			)
-			.orderBy(specs.created_at);
-		const specList = rows.map((r) => ({
-			...r.spec,
+			.orderBy(projects.created_at);
+		const projectList = rows.map((r) => ({
+			...r.project,
 			environment_stage: r.env_name ?? "development",
 			status: r.env_status ?? "DRAFT",
 		}));
-		return { specs: specList };
+		return { projects: projectList };
 	});
 }
 
-export async function getSpec(specId: string) {
-	const actor = await authorize("view", { type: "spec", id: specId });
+export async function getProject(projectId: string) {
+	const actor = await authorize("view", { type: "project", id: projectId });
 	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
-		const [spec] = await tx
+		const [project] = await tx
 			.select()
-			.from(specs)
-			.where(eq(specs.id, specId))
+			.from(projects)
+			.where(eq(projects.id, projectId))
 			.limit(1);
-		if (!spec) throw new Error("Spec not found");
+		if (!project) throw new Error("Project not found");
 
 		const [network] = await tx
 			.select()
-			.from(specNetwork)
-			.where(eq(specNetwork.spec_id, specId))
+			.from(projectNetwork)
+			.where(eq(projectNetwork.project_id, projectId))
 			.limit(1);
 		const [cluster] = await tx
 			.select()
-			.from(specCluster)
-			.where(eq(specCluster.spec_id, specId))
+			.from(projectCluster)
+			.where(eq(projectCluster.project_id, projectId))
 			.limit(1);
 		const [dns] = await tx
 			.select()
-			.from(specDns)
-			.where(eq(specDns.spec_id, specId))
+			.from(projectDns)
+			.where(eq(projectDns.project_id, projectId))
 			.limit(1);
 		const [repos] = await tx
 			.select()
-			.from(specRepositories)
-			.where(eq(specRepositories.spec_id, specId))
+			.from(projectRepositories)
+			.where(eq(projectRepositories.project_id, projectId))
 			.limit(1);
 		const databases = await tx
 			.select()
-			.from(specDatabases)
-			.where(eq(specDatabases.spec_id, specId));
+			.from(projectDatabases)
+			.where(eq(projectDatabases.project_id, projectId));
 		const caches = await tx
 			.select()
-			.from(specCaches)
-			.where(eq(specCaches.spec_id, specId));
+			.from(projectCaches)
+			.where(eq(projectCaches.project_id, projectId));
 		const queues = await tx
 			.select()
-			.from(specQueues)
-			.where(eq(specQueues.spec_id, specId));
+			.from(projectQueues)
+			.where(eq(projectQueues.project_id, projectId));
 		const topics = await tx
 			.select()
-			.from(specTopics)
-			.where(eq(specTopics.spec_id, specId));
+			.from(projectTopics)
+			.where(eq(projectTopics.project_id, projectId));
 		const nosqlTables = await tx
 			.select()
-			.from(specNosqlTables)
-			.where(eq(specNosqlTables.spec_id, specId));
+			.from(projectNosqlTables)
+			.where(eq(projectNosqlTables.project_id, projectId));
 		const secrets = await tx
 			.select()
-			.from(specSecrets)
-			.where(eq(specSecrets.spec_id, specId));
+			.from(projectSecrets)
+			.where(eq(projectSecrets.project_id, projectId));
 
-		// M1: the spec's environments (default first). The default env's name + status
-		// surface as `spec.environment_stage` / `spec.status` so existing single-value
+		// M1: the project's environments (default first). The default env's name + status
+		// surface as `project.environment_stage` / `project.status` so existing single-value
 		// reads keep working; the full list drives the Environments management UI.
 		const environments = await tx
 			.select()
-			.from(specEnvironments)
-			.where(eq(specEnvironments.spec_id, specId))
-			.orderBy(desc(specEnvironments.is_default), specEnvironments.created_at);
+			.from(projectEnvironments)
+			.where(eq(projectEnvironments.project_id, projectId))
+			.orderBy(desc(projectEnvironments.is_default), projectEnvironments.created_at);
 		const defaultEnv =
 			environments.find((e) => e.is_default) ?? environments[0] ?? null;
 
 		let cloudProvider = "aws";
-		if (spec.cloud_identity_id) {
+		if (project.cloud_identity_id) {
 			const [ci] = await tx
 				.select({ provider: cloudIdentities.provider })
 				.from(cloudIdentities)
-				.where(eq(cloudIdentities.id, spec.cloud_identity_id))
+				.where(eq(cloudIdentities.id, project.cloud_identity_id))
 				.limit(1);
 			if (ci) cloudProvider = ci.provider;
 		}
 
 		return {
-			spec: {
-				...spec,
+			project: {
+				...project,
 				environment_stage: defaultEnv?.name ?? "development",
 				status: defaultEnv?.status ?? "DRAFT",
 				default_environment_id: defaultEnv?.id ?? null,
@@ -374,32 +353,32 @@ export async function getSpec(specId: string) {
 
 async function buildConfigSnapshot(
 	owner: string,
-	specId: string,
+	projectId: string,
 	environmentId?: string | null,
 ) {
 	return withOwnerScope(owner, async (tx) => {
-		const [spec] = await tx
+		const [project] = await tx
 			.select()
-			.from(specs)
-			.where(eq(specs.id, specId))
+			.from(projects)
+			.where(eq(projects.id, projectId))
 			.limit(1);
-		if (!spec) throw new Error("Spec not found");
+		if (!project) throw new Error("Project not found");
 
 		// M1: resolve which environment this job provisions (the given one, else the
-		// spec's default). Its `name` feeds the frozen snapshot `environment_stage`
+		// project's default). Its `name` feeds the frozen snapshot `environment_stage`
 		// key → the Go provisioner's tofu/S3 state path, unchanged.
-		const environment = await resolveTargetEnvironment(tx, specId, environmentId);
+		const environment = await resolveTargetEnvironment(tx, projectId, environmentId);
 
-		if (!spec.cloud_identity_id) {
+		if (!project.cloud_identity_id) {
 			throw new Error(
-				"No cloud account linked to this spec. Go to Connectors to connect.",
+				"No cloud account linked to this project. Go to Connectors to connect.",
 			);
 		}
 
 		const [identity] = await tx
 			.select({ id: cloudIdentities.id, provider: cloudIdentities.provider })
 			.from(cloudIdentities)
-			.where(eq(cloudIdentities.id, spec.cloud_identity_id))
+			.where(eq(cloudIdentities.id, project.cloud_identity_id))
 			.limit(1);
 
 		if (!identity) {
@@ -410,68 +389,68 @@ async function buildConfigSnapshot(
 
 		const [network] = await tx
 			.select()
-			.from(specNetwork)
-			.where(eq(specNetwork.spec_id, specId))
+			.from(projectNetwork)
+			.where(eq(projectNetwork.project_id, projectId))
 			.limit(1);
 		const [cluster] = await tx
 			.select()
-			.from(specCluster)
-			.where(eq(specCluster.spec_id, specId))
+			.from(projectCluster)
+			.where(eq(projectCluster.project_id, projectId))
 			.limit(1);
 		const [dns] = await tx
 			.select()
-			.from(specDns)
-			.where(eq(specDns.spec_id, specId))
+			.from(projectDns)
+			.where(eq(projectDns.project_id, projectId))
 			.limit(1);
 		const [repos] = await tx
 			.select()
-			.from(specRepositories)
-			.where(eq(specRepositories.spec_id, specId))
+			.from(projectRepositories)
+			.where(eq(projectRepositories.project_id, projectId))
 			.limit(1);
 		const databases = await tx
 			.select()
-			.from(specDatabases)
-			.where(eq(specDatabases.spec_id, specId));
+			.from(projectDatabases)
+			.where(eq(projectDatabases.project_id, projectId));
 		const caches = await tx
 			.select()
-			.from(specCaches)
-			.where(eq(specCaches.spec_id, specId));
+			.from(projectCaches)
+			.where(eq(projectCaches.project_id, projectId));
 		const queues = await tx
 			.select()
-			.from(specQueues)
-			.where(eq(specQueues.spec_id, specId));
+			.from(projectQueues)
+			.where(eq(projectQueues.project_id, projectId));
 		const topics = await tx
 			.select()
-			.from(specTopics)
-			.where(eq(specTopics.spec_id, specId));
+			.from(projectTopics)
+			.where(eq(projectTopics.project_id, projectId));
 		const nosqlTables = await tx
 			.select()
-			.from(specNosqlTables)
-			.where(eq(specNosqlTables.spec_id, specId));
+			.from(projectNosqlTables)
+			.where(eq(projectNosqlTables.project_id, projectId));
 		const secrets = await tx
 			.select()
-			.from(specSecrets)
-			.where(eq(specSecrets.spec_id, specId));
+			.from(projectSecrets)
+			.where(eq(projectSecrets.project_id, projectId));
 		const containerRegistries = await tx
 			.select()
-			.from(specContainerRegistries)
-			.where(eq(specContainerRegistries.spec_id, specId));
+			.from(projectContainerRegistries)
+			.where(eq(projectContainerRegistries.project_id, projectId));
 		const [observability] = await tx
 			.select()
-			.from(specObservability)
-			.where(eq(specObservability.spec_id, specId))
+			.from(projectObservability)
+			.where(eq(projectObservability.project_id, projectId))
 			.limit(1);
 
 		// ── Resolve per-resource placement ("versatile model") ───────────────
 		// Each component may carry its own cloud_identity_id/region; NULL inherits
-		// the spec's primary identity. Resolve every component to a concrete
+		// the project's primary identity. Resolve every component to a concrete
 		// placement and enforce the provisioning gate (mirrors the Go
 		// ValidatePlacement): CORE resources must colocate on the primary cloud;
 		// PERIPHERY (dns/observability/secrets/registries/storage) may diverge.
 		const core = {
 			cloud_provider: identity.provider,
 			cloud_identity_id: identity.id,
-			region: spec.region,
+			region: project.region,
 		};
 
 		const foreignIds = Array.from(
@@ -566,16 +545,16 @@ async function buildConfigSnapshot(
 						? "network"
 						: "VPC";
 			throw new Error(
-				`Cannot plan: no ${netLabel} selected. Edit the spec's network settings or enable network provisioning.`,
+				`Cannot plan: no ${netLabel} selected. Edit the project's network settings or enable network provisioning.`,
 			);
 		}
 
 		const configSnapshot = {
-			...spec,
+			...project,
 			// M1: the Go provisioner reads `environment_stage` (frozen wire key) for the
 			// tofu state path + the `environment` tfvar — feed it the environment's name.
 			environment_stage: environment.name,
-			region: environment.region ?? spec.region,
+			region: environment.region ?? project.region,
 			provider: identity.provider,
 			network: {
 				...resolvePlacement(network),
@@ -626,66 +605,65 @@ async function buildConfigSnapshot(
 			git_access_token: "",
 		};
 
-		return { spec, identity, environment, configSnapshot };
+		return { project, identity, environment, configSnapshot };
 	});
 }
 
 /**
  * Resolves the environment a provisioning job targets: the explicitly-passed one
- * (verified to belong to the spec), else the spec's default environment.
+ * (verified to belong to the project), else the project's default environment.
  */
 async function resolveTargetEnvironment(
 	tx: Parameters<Parameters<typeof withOwnerScope>[1]>[0],
-	specId: string,
+	projectId: string,
 	environmentId?: string | null,
-): Promise<SpecEnvironment> {
+): Promise<ProjectEnvironment> {
 	if (environmentId) {
 		const [env] = await tx
 			.select()
-			.from(specEnvironments)
+			.from(projectEnvironments)
 			.where(
 				and(
-					eq(specEnvironments.id, environmentId),
-					eq(specEnvironments.spec_id, specId),
+					eq(projectEnvironments.id, environmentId),
+					eq(projectEnvironments.project_id, projectId),
 				),
 			)
 			.limit(1);
-		if (!env) throw new Error("Environment not found for this spec");
+		if (!env) throw new Error("Environment not found for this project");
 		return env;
 	}
 	const [env] = await tx
 		.select()
-		.from(specEnvironments)
+		.from(projectEnvironments)
 		.where(
 			and(
-				eq(specEnvironments.spec_id, specId),
-				eq(specEnvironments.is_default, true),
+				eq(projectEnvironments.project_id, projectId),
+				eq(projectEnvironments.is_default, true),
 			),
 		)
 		.limit(1);
-	if (!env) throw new Error("Spec has no default environment");
+	if (!env) throw new Error("Project has no default environment");
 	return env;
 }
 
-export async function planSpec(
-	specId: string,
+export async function planProject(
+	projectId: string,
 	runnerId?: string | null,
 	environmentId?: string | null,
 ) {
-	const actor = await authorize("plan", { type: "spec", id: specId });
+	const actor = await authorize("plan", { type: "project", id: projectId });
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
-	const { spec, identity, environment, configSnapshot } =
-		await buildConfigSnapshot(owner, specId, environmentId);
+	const { project, identity, environment, configSnapshot } =
+		await buildConfigSnapshot(owner, projectId, environmentId);
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
 			.values({
 				user_id: owner,
-				spec_id: specId,
+				project_id: projectId,
 				environment_id: environment.id,
-				zone_id: spec.zone_id ?? null,
 				cloud_identity_id: identity.id,
 				job_type: "PLAN",
 				config_snapshot: configSnapshot,
@@ -695,9 +673,9 @@ export async function planSpec(
 			.returning({ id: jobs.id });
 
 		await tx
-			.update(specEnvironments)
+			.update(projectEnvironments)
 			.set({ status: "QUEUED" })
-			.where(eq(specEnvironments.id, environment.id));
+			.where(eq(projectEnvironments.id, environment.id));
 		return { jobId: job.id };
 	});
 
@@ -705,26 +683,25 @@ export async function planSpec(
 	return result;
 }
 
-export async function provisionSpec(
-	specId: string,
+export async function provisionProject(
+	projectId: string,
 	planJobId?: string,
 	runnerId?: string | null,
 	environmentId?: string | null,
 ) {
-	const actor = await authorize("deploy", { type: "spec", id: specId });
+	const actor = await authorize("deploy", { type: "project", id: projectId });
 	await assertUsageAllowed(actor.orgId);
 	const owner = actor.userId;
-	const { spec, identity, environment, configSnapshot } =
-		await buildConfigSnapshot(owner, specId, environmentId);
+	const { project, identity, environment, configSnapshot } =
+		await buildConfigSnapshot(owner, projectId, environmentId);
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [job] = await tx
 			.insert(jobs)
 			.values({
 				user_id: owner,
-				spec_id: specId,
+				project_id: projectId,
 				environment_id: environment.id,
-				zone_id: spec.zone_id ?? null,
 				cloud_identity_id: identity.id,
 				job_type: "DEPLOY",
 				config_snapshot: configSnapshot,
@@ -735,12 +712,12 @@ export async function provisionSpec(
 			.returning({ id: jobs.id });
 
 		await tx
-			.update(specEnvironments)
+			.update(projectEnvironments)
 			.set({ status: "QUEUED" })
-			.where(eq(specEnvironments.id, environment.id));
+			.where(eq(projectEnvironments.id, environment.id));
 
 		await tx.insert(auditLog).values({
-			spec_id: specId,
+			project_id: projectId,
 			user_id: owner,
 			action: "PROVISIONED",
 			changes: { job_id: job.id, environment_id: environment.id },
@@ -757,12 +734,12 @@ export async function provisionSpec(
 // Delete
 // ============================================================
 
-export async function deleteSpec(specId: string) {
-	const actor = await authorize("destroy", { type: "spec", id: specId });
+export async function deleteProject(projectId: string) {
+	const actor = await authorize("destroy", { type: "project", id: projectId });
 	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		// CASCADE handles all component tables.
-		await tx.delete(specs).where(eq(specs.id, specId));
+		await tx.delete(projects).where(eq(projects.id, projectId));
 		return { success: true };
 	});
 }
@@ -771,20 +748,20 @@ export async function deleteSpec(specId: string) {
 // Duplicate for another provider
 // ============================================================
 
-/** Converts a spec's DB representation to SpecFormData for duplication / pre-populating forms. */
-export async function getSpecAsFormData(
-	specId: string,
-): Promise<{ formData: SpecFormData; provider: CloudProviderSlug }> {
-	const source = await getSpec(specId);
+/** Converts a project's DB representation to ProjectFormData for duplication / pre-populating forms. */
+export async function getProjectAsFormData(
+	projectId: string,
+): Promise<{ formData: ProjectFormData; provider: CloudProviderSlug }> {
+	const source = await getProject(projectId);
 
 	let provider: CloudProviderSlug = "aws";
-	if (source.spec.cloud_identity_id) {
+	if (source.project.cloud_identity_id) {
 		const owner = await requireOwner();
 		const ci = await withOwnerScope(owner, async (tx) => {
 			const [row] = await tx
 				.select({ provider: cloudIdentities.provider })
 				.from(cloudIdentities)
-				.where(eq(cloudIdentities.id, source.spec.cloud_identity_id!))
+				.where(eq(cloudIdentities.id, source.project.cloud_identity_id!))
 				.limit(1);
 			return row;
 		});
@@ -792,14 +769,13 @@ export async function getSpecAsFormData(
 		provider = ci.provider as CloudProviderSlug;
 	}
 
-	const formData: SpecFormData = {
-		spec: {
-			project_name: source.spec.project_name,
-			environment_stage: source.spec.environment_stage,
-			region: source.spec.region,
-			cloud_identity_id: source.spec.cloud_identity_id ?? "",
-			iac_version: source.spec.iac_version,
-			zone_id: source.spec.zone_id ?? "",
+	const formData: ProjectFormData = {
+		project: {
+			project_name: source.project.project_name,
+			environment_stage: source.project.environment_stage,
+			region: source.project.region,
+			cloud_identity_id: source.project.cloud_identity_id ?? "",
+			iac_version: source.project.iac_version,
 		},
 		network: source.components.network
 			? {
@@ -893,26 +869,25 @@ export async function getSpecAsFormData(
 			length: s.length ?? undefined,
 			special_chars: s.special_chars ?? undefined,
 		})),
-	} as SpecFormData;
+	} as ProjectFormData;
 
 	return { formData, provider };
 }
 
-/** Duplicates a spec config for a different cloud provider, mapping provider-specific values. */
-export async function duplicateSpecForProvider(
-	sourceSpecId: string,
+/** Duplicates a project config for a different cloud provider, mapping provider-specific values. */
+export async function duplicateProjectForProvider(
+	sourceProjectId: string,
 	targetCloudIdentityId: string,
 	targetRegion: string,
 ): Promise<{
-	newSpecId: string;
-	zoneId: string;
+	newProjectId: string;
 	warnings: ConversionWarning[];
 }> {
-	const actor = await authorize("create", { type: "spec" });
+	const actor = await authorize("create", { type: "project" });
 	const owner = actor.userId;
 
 	const { formData, provider: sourceProvider } =
-		await getSpecAsFormData(sourceSpecId);
+		await getProjectAsFormData(sourceProjectId);
 
 	const targetIdentity = await withOwnerScope(owner, async (tx) => {
 		const [row] = await tx
@@ -927,68 +902,67 @@ export async function duplicateSpecForProvider(
 
 	const targetProvider = targetIdentity.provider as CloudProviderSlug;
 
-	const { data: converted, warnings } = convertSpecConfig(
+	const { data: converted, warnings } = convertProjectConfig(
 		formData,
 		sourceProvider,
 		targetProvider,
 	);
 
-	converted.spec.region = targetRegion;
-	converted.spec.cloud_identity_id = targetCloudIdentityId;
+	converted.project.region = targetRegion;
+	converted.project.cloud_identity_id = targetCloudIdentityId;
 
-	const input = converted as unknown as CreateSpecInput;
-	const { spec } = await createSpec(input);
+	const input = converted as unknown as CreateProjectInput;
+	const { project } = await createProject(input);
 
 	return {
-		newSpecId: spec.id,
-		zoneId: converted.spec.zone_id,
+		newProjectId: project.id,
 		warnings,
 	};
 }
 
 // ============================================================
-// Environments (M1) — a spec owns N independently-provisionable environments.
+// Environments (M1) — a project owns N independently-provisionable environments.
 // ============================================================
 
-/** Lists a spec's environments (default first, then by creation). */
-export async function getSpecEnvironments(specId: string) {
-	const actor = await authorize("view", { type: "spec", id: specId });
+/** Lists a project's environments (default first, then by creation). */
+export async function getProjectEnvironments(projectId: string) {
+	const actor = await authorize("view", { type: "project", id: projectId });
 	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const environments = await tx
 			.select()
-			.from(specEnvironments)
-			.where(eq(specEnvironments.spec_id, specId))
-			.orderBy(desc(specEnvironments.is_default), specEnvironments.created_at);
+			.from(projectEnvironments)
+			.where(eq(projectEnvironments.project_id, projectId))
+			.orderBy(desc(projectEnvironments.is_default), projectEnvironments.created_at);
 		return { environments };
 	});
 }
 
 /**
- * Adds an environment to a spec. The `name` is slugified (it feeds the tofu state
- * path + the URL); it inherits the spec's region unless one is given. Never default.
+ * Adds an environment to a project. The `name` is slugified (it feeds the tofu state
+ * path + the URL); it inherits the project's region unless one is given. Never default.
  */
 export async function addEnvironment(
-	specId: string,
+	projectId: string,
 	input: { name: string; stage: EnvironmentStage; region?: string | null },
 ) {
-	const actor = await authorize("edit", { type: "spec", id: specId });
+	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
 	const name = slugifyEnvName(input.name);
 	if (!name) throw new Error("Environment name is required");
 	return withOwnerScope(owner, async (tx) => {
-		const [spec] = await tx
-			.select({ org_id: specs.org_id })
-			.from(specs)
-			.where(eq(specs.id, specId))
+		const [project] = await tx
+			.select({ org_id: projects.org_id })
+			.from(projects)
+			.where(eq(projects.id, projectId))
 			.limit(1);
-		if (!spec) throw new Error("Spec not found");
+		if (!project) throw new Error("Project not found");
 		const [env] = await tx
-			.insert(specEnvironments)
+			.insert(projectEnvironments)
 			.values({
-				spec_id: specId,
+				project_id: projectId,
 				user_id: owner,
-				org_id: spec.org_id,
+				org_id: project.org_id,
 				name,
 				stage: input.stage,
 				status: "DRAFT",
@@ -1000,25 +974,25 @@ export async function addEnvironment(
 	});
 }
 
-/** Deletes a non-default environment (the default is the spec's anchor). */
-export async function deleteEnvironment(specId: string, environmentId: string) {
-	const actor = await authorize("edit", { type: "spec", id: specId });
+/** Deletes a non-default environment (the default is the project's anchor). */
+export async function deleteEnvironment(projectId: string, environmentId: string) {
+	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		const [env] = await tx
 			.select()
-			.from(specEnvironments)
+			.from(projectEnvironments)
 			.where(
 				and(
-					eq(specEnvironments.id, environmentId),
-					eq(specEnvironments.spec_id, specId),
+					eq(projectEnvironments.id, environmentId),
+					eq(projectEnvironments.project_id, projectId),
 				),
 			)
 			.limit(1);
-		if (!env) throw new Error("Environment not found for this spec");
+		if (!env) throw new Error("Environment not found for this project");
 		if (env.is_default)
-			throw new Error("Cannot delete the spec's default environment");
-		await tx.delete(specEnvironments).where(eq(specEnvironments.id, environmentId));
+			throw new Error("Cannot delete the project's default environment");
+		await tx.delete(projectEnvironments).where(eq(projectEnvironments.id, environmentId));
 		return { success: true };
 	});
 }
@@ -1030,4 +1004,66 @@ function slugifyEnvName(raw: string): string {
 		.trim()
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "");
+}
+
+// ============================================================
+// Flat project list.
+// ============================================================
+
+// The environment identity (name) + provisioning status live on project_environments. These
+// derived fields surface the project's DEFAULT environment so single-value UI (project cards,
+// switchers, detail header) reads `project.environment_stage` / `project.status` directly.
+export type ProjectWithProvider = Project & {
+	cloud_provider: string | null;
+	environment_stage: string;
+	status: string;
+	default_environment_id: string | null;
+};
+
+/** The project + its default environment + cloud provider, the shape every project surface reads. */
+function projectSelect() {
+	return {
+		project: projects,
+		cloud_provider: cloudIdentities.provider,
+		env_id: projectEnvironments.id,
+		env_name: projectEnvironments.name,
+		env_status: projectEnvironments.status,
+	};
+}
+
+/** Maps a joined project row into the derived ProjectWithProvider shape. */
+function toProject(r: {
+	project: Project;
+	cloud_provider: string | null;
+	env_id: string | null;
+	env_name: string | null;
+	env_status: string | null;
+}): ProjectWithProvider {
+	return {
+		...r.project,
+		cloud_provider: r.cloud_provider ?? null,
+		environment_stage: r.env_name ?? "development",
+		status: r.env_status ?? "DRAFT",
+		default_environment_id: r.env_id ?? null,
+	};
+}
+
+/** All of the active org's projects (projects), newest first, each with its default environment. */
+export async function getProjects(): Promise<ProjectWithProvider[]> {
+	const actor = await authorize("view", { type: "project" });
+	return withOwnerScope(actor.userId, async (tx) => {
+		const rows = await tx
+			.select(projectSelect())
+			.from(projects)
+			.leftJoin(cloudIdentities, eq(projects.cloud_identity_id, cloudIdentities.id))
+			.leftJoin(
+				projectEnvironments,
+				and(
+					eq(projectEnvironments.project_id, projects.id),
+					eq(projectEnvironments.is_default, true),
+				),
+			)
+			.orderBy(desc(projects.created_at));
+		return rows.map(toProject);
+	});
 }
