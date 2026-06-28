@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The single display source of truth for plans — name, price, tagline, the short
-// highlights for compact cards, and the grouped "What's included" breakdown for the
-// rich plan chooser. Shared by the console billing UI and the marketing pricing page so
-// the copy never drifts. Prices are display labels only — the authoritative amounts live
-// in Stripe (STRIPE_PRICE_*).
+// The single source of truth for plans — name, price (label + numeric unit), tagline,
+// the short highlights for compact cards, and the grouped "What's included" breakdown
+// for the rich plan chooser. Shared by the console billing UI and the marketing pricing
+// page so the copy never drifts. `priceLabel` + `priceMonthlyUsd` drive display and
+// in-app math (e.g. seats × unit); the authoritative CHARGE amount still lives in Stripe
+// (STRIPE_PRICE_*). Keep the label and the number in step (they sit in the same entry).
 //
 // `PlanId` is declared here (not imported from the console DB enum) so the package has no
 // app dependencies. It is kept structurally identical to the `billing_plan` pgEnum
@@ -20,11 +21,24 @@ export interface PlanFeatureGroup {
 	items: string[];
 }
 
+/** A checkout "What's included" line — a bold title + a sub-label detail. */
+export interface CheckoutFeature {
+	title: string;
+	detail: string;
+}
+
 export interface PlanCatalogEntry {
 	id: PlanId;
 	name: string;
 	/** Display price (the authoritative amount is the Stripe price). */
 	priceLabel: string;
+	/** Per-period USD unit for in-app math — per **seat** when `perSeat`, flat otherwise.
+	 *  `undefined` = custom / "Let's talk" (Enterprise). Keep in step with `priceLabel`. */
+	priceMonthlyUsd?: number;
+	/** Whether `priceMonthlyUsd` is multiplied by the seat count (per-seat billing). */
+	perSeat?: boolean;
+	/** Monthly usage credit (USD) included with the plan — offsets metered charges. */
+	includedCreditUsd?: number;
 	tagline: string;
 	/** Paid tier (has a Stripe price) vs the free community baseline. */
 	paid: boolean;
@@ -36,6 +50,8 @@ export interface PlanCatalogEntry {
 	highlights: string[];
 	/** Grouped feature breakdown for the rich chooser ("What's included"). */
 	included: PlanFeatureGroup[];
+	/** Title+detail list for the checkout "What's included" rail (purchase flow). */
+	checkoutFeatures?: CheckoutFeature[];
 }
 
 export const PLAN_CATALOG: PlanCatalogEntry[] = [
@@ -43,10 +59,11 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 		id: "community",
 		name: "Hobby",
 		priceLabel: "Free",
-		tagline: "Your own Zones & Specs — just you.",
+		priceMonthlyUsd: 0,
+		tagline: "Your own Projects — just you.",
 		paid: false,
 		highlights: [
-			"Unlimited personal Zones & Specs",
+			"Unlimited personal Projects",
 			"Multi-cloud provisioning",
 			"Community RBAC",
 		],
@@ -54,7 +71,7 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 			{
 				label: "Platform",
 				items: [
-					"Unlimited personal Zones & Specs",
+					"Unlimited personal Projects",
 					"Multi-cloud provisioning (AWS / GCP / Azure)",
 					"Pluggable integrations catalog",
 					"GitOps app delivery",
@@ -68,8 +85,11 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 	},
 	{
 		id: "team",
-		name: "Team",
-		priceLabel: "$29 / seat / mo",
+		name: "Pro",
+		priceLabel: "$20 / seat / mo",
+		priceMonthlyUsd: 20,
+		perSeat: true,
+		includedCreditUsd: 20,
 		tagline: "Collaborate in a shared organization.",
 		paid: true,
 		popular: true,
@@ -77,8 +97,34 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 		highlights: [
 			"Organizations & teams",
 			"Invite teammates",
-			"Shared Zones & Specs",
+			"Shared Projects",
 			"Role-based access",
+		],
+		checkoutFeatures: [
+			{
+				title: "Flexible usage credit",
+				detail: "$20/mo toward metered runner-minutes & AI",
+			},
+			{
+				title: "Organizations & teams",
+				detail: "Invite teammates with role-based access",
+			},
+			{
+				title: "Shared Projects",
+				detail: "Collaborate on infrastructure across the team",
+			},
+			{
+				title: "Included runner-minutes",
+				detail: "500 managed build-minutes / month",
+			},
+			{
+				title: "Standard AI",
+				detail: "3,000 AI credits / week for repo scans & chat",
+			},
+			{
+				title: "Priority provisioning",
+				detail: "Higher concurrency and queue priority",
+			},
 		],
 		included: [
 			{
@@ -86,7 +132,7 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 				items: [
 					"Organizations & teams",
 					"Invite unlimited teammates",
-					"Shared Zones & Specs",
+					"Shared Projects",
 					"Per-team resource grants",
 				],
 			},
@@ -107,7 +153,7 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 		paid: true,
 		inheritsFrom: "team",
 		highlights: [
-			"Everything in Team",
+			"Everything in Pro",
 			"Custom roles (granular RBAC)",
 			"SSO / SAML",
 			"Audit log export",
@@ -160,4 +206,41 @@ export function planMeta(plan: PlanId): PlanCatalogEntry {
 	const [community] = PLAN_CATALOG;
 	if (!community) throw new Error("PLAN_CATALOG is empty");
 	return community;
+}
+
+// ── Live-price formatting ────────────────────────────────────────────────────────
+// The authoritative price amount lives in Stripe; both the console and the marketing
+// site read it live and render it with these shared helpers (so a "$29 / seat / mo"
+// label is formatted identically everywhere). The catalog's priceLabel/priceMonthlyUsd
+// are the FALLBACK used only when Stripe isn't configured / the lookup fails.
+
+/** Minimal currency-symbol map; falls back to the uppercase ISO code + space. */
+const CURRENCY_SYMBOL: Record<string, string> = {
+	usd: "$",
+	eur: "€",
+	gbp: "£",
+};
+
+/** "month" → "mo", "year" → "yr"; anything else passes through (default "mo"). */
+export function shortInterval(interval: string | undefined | null): string {
+	if (interval === "month") return "mo";
+	if (interval === "year") return "yr";
+	return interval ?? "mo";
+}
+
+/** "$29" — whole amounts drop the cents, fractional amounts keep two decimals. */
+export function formatMoney(unitAmountCents: number, currency: string): string {
+	const symbol = CURRENCY_SYMBOL[currency] ?? `${currency.toUpperCase()} `;
+	const amount = unitAmountCents / 100;
+	const value = Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
+	return `${symbol}${value}`;
+}
+
+/** Format a Stripe price into a per-seat label like "$29 / seat / mo". */
+export function formatSeatPrice(
+	unitAmountCents: number,
+	currency: string,
+	interval: string | undefined | null,
+): string {
+	return `${formatMoney(unitAmountCents, currency)} / seat / ${shortInterval(interval)}`;
 }
