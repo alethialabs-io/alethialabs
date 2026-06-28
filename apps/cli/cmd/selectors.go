@@ -25,90 +25,44 @@ func runnerOperatorLabel(w api.Runner) string {
 	return "self"
 }
 
-func selectZone(token string) (zoneID, zoneName string, err error) {
-	var zones []api.ZoneWithSpecs
-
-	spinner.New().
-		Title("Fetching zones...").
-		Action(func() {
-			zones, err = api.NewClient(token).GetZones()
-		}).Run()
-
-	if err != nil {
-		return "", "", fmt.Errorf("failed to fetch zones: %w", err)
-	}
-
-	if len(zones) == 0 {
-		return "", "", fmt.Errorf("no zones found — create one first via Alethia or `alethia zone create`")
-	}
-
-	vOptions := make([]huh.Option[string], len(zones))
-	for i, v := range zones {
-		vOptions[i] = huh.NewOption(v.Name, v.ID)
-	}
-
-	err = huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Select Zone").
-				Description("Which workspace to use").
-				Options(vOptions...).
-				Value(&zoneID),
-		),
-	).Run()
-
-	if err != nil {
-		return "", "", err
-	}
-
-	for _, v := range zones {
-		if v.ID == zoneID {
-			zoneName = v.Name
-			break
-		}
-	}
-
-	return zoneID, zoneName, nil
-}
-
-func selectSpec(token string, zoneID string) (specID string, err error) {
+// selectProject runs the interactive project picker shared by the project
+// plan/apply/destroy commands. Projects are listed flat (top-level projects).
+func selectProject(token string) (projectID string, err error) {
 	var configs []types.ConfigurationSummary
 
 	spinner.New().
-		Title("Fetching specs...").
+		Title("Fetching projects...").
 		Action(func() {
 			configs, err = api.NewClient(token).GetConfigurations()
 		}).Run()
 
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch specs: %w", err)
+		return "", fmt.Errorf("failed to fetch projects: %w", err)
 	}
 
-	specOptions := []huh.Option[string]{}
+	projectOptions := []huh.Option[string]{}
 	for _, c := range configs {
-		if zoneID == "" || (c.ZoneID != nil && *c.ZoneID == zoneID) {
-			specOptions = append(specOptions, huh.NewOption(
-				fmt.Sprintf("%s (%s)", c.ProjectName, c.EnvironmentStage),
-				c.ID,
-			))
-		}
+		projectOptions = append(projectOptions, huh.NewOption(
+			fmt.Sprintf("%s (%s)", c.ProjectName, c.EnvironmentStage),
+			c.ID,
+		))
 	}
 
-	if len(specOptions) == 0 {
-		return "", fmt.Errorf("no specs found in this zone — create one through Alethia")
+	if len(projectOptions) == 0 {
+		return "", fmt.Errorf("no projects found — create one through Alethia")
 	}
 
 	err = huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Select Spec").
-				Description("Which spec to operate on").
-				Options(specOptions...).
-				Value(&specID),
+				Title("Select Project").
+				Description("Which project to operate on").
+				Options(projectOptions...).
+				Value(&projectID),
 		),
 	).Run()
 
-	return specID, err
+	return projectID, err
 }
 
 var (

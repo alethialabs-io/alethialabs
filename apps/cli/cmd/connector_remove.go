@@ -20,7 +20,7 @@ var connectorRemoveCmd = &cobra.Command{
 	Use:   "remove [provider]",
 	Short: "Disconnect a cloud account",
 	Long: `Disconnect a cloud account, resetting it to a pending state and orphaning
-any specs that referenced it. Pass a provider (aws, gcp, azure) to skip the
+any projects that referenced it. Pass a provider (aws, gcp, azure) to skip the
 picker.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -51,7 +51,7 @@ picker.`,
 
 		if !connectorRemoveYes && !confirm(
 			fmt.Sprintf("Disconnect %s?", selected.Label),
-			"Specs using this account will be orphaned.",
+			"Projects using this account will be orphaned.",
 		) {
 			return
 		}

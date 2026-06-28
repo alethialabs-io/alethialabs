@@ -13,9 +13,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var specGetCmd = &cobra.Command{
+var projectGetCmd = &cobra.Command{
 	Use:   "get [project_name]",
-	Short: "Get a specific spec by project name",
+	Short: "Get a projectific project by project name",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		projectName := args[0]
@@ -29,11 +29,11 @@ var specGetCmd = &cobra.Command{
 
 		config, err := api.NewClient(token).GetConfiguration(projectName)
 		if err != nil {
-			failf("Failed to fetch spec: %v", err)
+			failf("Failed to fetch project: %v", err)
 		}
 
 		if config == nil || config.ID == "" {
-			ui.Muted(fmt.Sprintf("No spec found for project: %s", projectName))
+			ui.Muted(fmt.Sprintf("No project found for project: %s", projectName))
 			return
 		}
 
@@ -45,7 +45,7 @@ var specGetCmd = &cobra.Command{
 				huh.NewGroup(
 					huh.NewConfirm().
 						Title("Open in Browser").
-						Description("View this spec in the Alethia web UI").
+						Description("View this project in the Alethia web UI").
 						Affirmative("Yes").
 						Negative("No").
 						Value(&confirm),
@@ -67,6 +67,6 @@ var specGetCmd = &cobra.Command{
 }
 
 func init() {
-	specCmd.AddCommand(specGetCmd)
-	specGetCmd.Flags().BoolP("open", "o", false, "Open the spec in the web browser")
+	projectCmd.AddCommand(projectGetCmd)
+	projectGetCmd.Flags().BoolP("open", "o", false, "Open the project in the web browser")
 }

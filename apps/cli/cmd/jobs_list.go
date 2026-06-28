@@ -19,7 +19,6 @@ import (
 
 var (
 	jobsListStatus string
-	jobsListZoneID string
 	jobsListLimit  int
 )
 
@@ -54,7 +53,7 @@ var jobsListCmd = &cobra.Command{
 		spinner.New().
 			Title("Fetching jobs...").
 			Action(func() {
-				page, err = apiClient.GetJobs(jobsListStatus, jobsListZoneID, pageSize, 0)
+				page, err = apiClient.GetJobs(jobsListStatus, pageSize, 0)
 			}).Run()
 
 		if err != nil {
@@ -76,7 +75,6 @@ var jobsListCmd = &cobra.Command{
 			apiClient:           apiClient,
 			pageSize:            pageSize,
 			status:              jobsListStatus,
-			zoneID:              jobsListZoneID,
 		})
 		if _, err := p.Run(); err != nil {
 			failf("Table error: %v", err)
@@ -89,7 +87,6 @@ type jobsPaginatedModel struct {
 	apiClient *api.Client
 	pageSize  int
 	status    string
-	zoneID    string
 }
 
 func (m jobsPaginatedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -105,7 +102,7 @@ func (m jobsPaginatedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m jobsPaginatedModel) fetchPage(page int) tea.Cmd {
 	return func() tea.Msg {
 		offset := (page - 1) * m.pageSize
-		result, err := m.apiClient.GetJobs(m.status, m.zoneID, m.pageSize, offset)
+		result, err := m.apiClient.GetJobs(m.status, m.pageSize, offset)
 		if err != nil {
 			return nil
 		}
@@ -126,7 +123,7 @@ func jobColumns() []table.Column {
 	return []table.Column{
 		{Title: "Type", Width: 16},
 		{Title: "Status", Width: 12},
-		{Title: "Spec", Width: 18},
+		{Title: "Project", Width: 18},
 		{Title: "Runner", Width: 16},
 		{Title: "Created", Width: 16},
 		{Title: "Duration", Width: 10},
@@ -141,12 +138,12 @@ func jobRows(jobs []api.ProvisionJob) []table.Row {
 			typeLabel = j.JobType
 		}
 
-		spec := j.SpecName
-		if spec == "" && j.SpecID != "" {
-			spec = truncID(j.SpecID)
+		project := j.ProjectName
+		if project == "" && j.ProjectID != "" {
+			project = truncID(j.ProjectID)
 		}
-		if spec == "" {
-			spec = ui.SymbolDash
+		if project == "" {
+			project = ui.SymbolDash
 		}
 
 		runner := j.RunnerName
@@ -160,7 +157,7 @@ func jobRows(jobs []api.ProvisionJob) []table.Row {
 		rows[i] = table.Row{
 			typeLabel,
 			j.Status,
-			spec,
+			project,
 			runner,
 			humanize.Time(j.CreatedAt),
 			formatDuration(j.StartedAt, j.CompletedAt),
@@ -199,6 +196,5 @@ func formatDuration(started, completed *time.Time) string {
 func init() {
 	jobsCmd.AddCommand(jobsListCmd)
 	jobsListCmd.Flags().StringVar(&jobsListStatus, "status", "", "Filter by status (QUEUED, CLAIMED, PROCESSING, SUCCESS, FAILED, CANCELLED)")
-	jobsListCmd.Flags().StringVar(&jobsListZoneID, "zone-id", "", "Filter by zone ID")
 	jobsListCmd.Flags().IntVarP(&jobsListLimit, "limit", "n", 20, "Jobs per page")
 }

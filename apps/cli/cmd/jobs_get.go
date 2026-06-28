@@ -64,11 +64,8 @@ func printJob(job *api.ProvisionJob) {
 	if job.CompletedAt != nil {
 		kv("Completed:", job.CompletedAt.Format("2006-01-02 15:04:05"))
 	}
-	if job.ZoneID != "" {
-		kv("Zone ID:", job.ZoneID)
-	}
-	if job.SpecID != "" {
-		kv("Spec ID:", job.SpecID)
+	if job.ProjectID != "" {
+		kv("Project ID:", job.ProjectID)
 	}
 	if job.RunnerID != "" {
 		kv("Runner ID:", job.RunnerID)

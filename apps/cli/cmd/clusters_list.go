@@ -17,7 +17,7 @@ import (
 
 var clusterListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all spec clusters",
+	Short: "List all project clusters",
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -25,12 +25,12 @@ var clusterListCmd = &cobra.Command{
 		}
 
 		apiClient := api.NewClient(token)
-		var clusters []api.SpecCluster
+		var clusters []api.ClusterSummary
 
 		spinner.New().
 			Title("Fetching clusters...").
 			Action(func() {
-				clusters, err = apiClient.GetSpecClusters()
+				clusters, err = apiClient.GetClusters()
 			}).Run()
 
 		if err != nil {
@@ -38,12 +38,12 @@ var clusterListCmd = &cobra.Command{
 		}
 
 		if len(clusters) == 0 {
-			ui.Muted("No clusters found. Create a spec with a cluster through Alethia.")
+			ui.Muted("No clusters found. Create a project with a cluster through Alethia.")
 			return
 		}
 
 		columns := []table.Column{
-			{Title: "Spec", Width: 22},
+			{Title: "Project", Width: 22},
 			{Title: "Cluster", Width: 20},
 			{Title: "Version", Width: 10},
 			{Title: "Status", Width: 14},
@@ -65,22 +65,22 @@ var clusterListCmd = &cobra.Command{
 
 			nodes := fmt.Sprintf("%d/%d/%d", c.NodeMinSize, c.NodeDesiredSize, c.NodeMaxSize)
 
-			specLabel := c.SpecProjectName
-			if c.SpecEnvironment != "" {
-				specLabel += " (" + c.SpecEnvironment + ")"
+			projectLabel := c.ProjectName
+			if c.Environment != "" {
+				projectLabel += " (" + c.Environment + ")"
 			}
 
 			rows[i] = table.Row{
-				specLabel,
+				projectLabel,
 				clusterName,
 				version,
 				fmt.Sprintf("%s %s", ui.PlainStatusDot(c.Status), strings.ToLower(c.Status)),
 				nodes,
-				c.SpecRegion,
+				c.Region,
 			}
 		}
 
-		m := ui.NewTableModel(columns, rows, "clusters", "spec", 0)
+		m := ui.NewTableModel(columns, rows, "clusters", "project", 0)
 		if _, err := tea.NewProgram(m).Run(); err != nil {
 			failf("Table error: %v", err)
 		}

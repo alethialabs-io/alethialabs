@@ -12,14 +12,14 @@ import (
 )
 
 var (
-	specPlanSpecID   string
-	specPlanRunnerID string
-	specPlanWait     bool
+	projectPlanProjectID string
+	projectPlanRunnerID  string
+	projectPlanWait      bool
 )
 
-var specPlanCmd = &cobra.Command{
+var projectPlanCmd = &cobra.Command{
 	Use:   "plan",
-	Short: "Queue a plan (dry-run) job for a spec",
+	Short: "Queue a plan (dry-run) job for a project",
 	Long:  `Plan runs a Terraform plan with cost analysis without applying changes.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
@@ -27,17 +27,15 @@ var specPlanCmd = &cobra.Command{
 			fail(err)
 		}
 
-		zoneID := ""
-
-		if specPlanSpecID == "" {
-			zoneID, specPlanSpecID, err = selectZoneAndSpec(token)
+		if projectPlanProjectID == "" {
+			projectPlanProjectID, err = selectProject(token)
 			if err != nil {
 				fail(err)
 			}
 		}
 
-		if specPlanRunnerID == "" {
-			specPlanRunnerID, err = selectRunner(token, "")
+		if projectPlanRunnerID == "" {
+			projectPlanRunnerID, err = selectRunner(token, "")
 			if err != nil {
 				fail(err)
 			}
@@ -47,11 +45,10 @@ var specPlanCmd = &cobra.Command{
 
 		params := api.QueueJobParams{
 			JobType:         "PLAN",
-			ZoneID:          zoneID,
-			ConfigurationID: specPlanSpecID,
+			ConfigurationID: projectPlanProjectID,
 		}
-		if specPlanRunnerID != "" {
-			params.AssignedRunnerID = specPlanRunnerID
+		if projectPlanRunnerID != "" {
+			params.AssignedRunnerID = projectPlanRunnerID
 		}
 
 		job, err := apiClient.QueueJobWithParams(params)
@@ -59,7 +56,7 @@ var specPlanCmd = &cobra.Command{
 			failf("Error: %v", err)
 		}
 
-		if specPlanWait {
+		if projectPlanWait {
 			ui.JobQueued("PLAN", job.ID)
 			if err := waitForJob(apiClient, job.ID); err != nil {
 				os.Exit(1)
@@ -71,8 +68,8 @@ var specPlanCmd = &cobra.Command{
 }
 
 func init() {
-	specCmd.AddCommand(specPlanCmd)
-	specPlanCmd.Flags().StringVar(&specPlanSpecID, "spec-id", "", "ID of the spec to plan")
-	specPlanCmd.Flags().StringVar(&specPlanRunnerID, "runner-id", "", "Assign to a specific runner")
-	specPlanCmd.Flags().BoolVarP(&specPlanWait, "wait", "w", false, "Wait for job completion")
+	projectCmd.AddCommand(projectPlanCmd)
+	projectPlanCmd.Flags().StringVar(&projectPlanProjectID, "project-id", "", "ID of the project to plan")
+	projectPlanCmd.Flags().StringVar(&projectPlanRunnerID, "runner-id", "", "Assign to a projectific runner")
+	projectPlanCmd.Flags().BoolVarP(&projectPlanWait, "wait", "w", false, "Wait for job completion")
 }

@@ -18,9 +18,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var listSpecsCmd = &cobra.Command{
+var listProjectsCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all specs",
+	Short: "List all projects",
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -30,17 +30,17 @@ var listSpecsCmd = &cobra.Command{
 		var configs []types.ConfigurationSummary
 
 		spinner.New().
-			Title("Fetching specs...").
+			Title("Fetching projects...").
 			Action(func() {
 				configs, err = api.NewClient(token).GetConfigurations()
 			}).Run()
 
 		if err != nil {
-			failf("Failed to fetch specs: %v", err)
+			failf("Failed to fetch projects: %v", err)
 		}
 
 		if len(configs) == 0 {
-			ui.Muted("No specs found. Create one through Alethia.")
+			ui.Muted("No projects found. Create one through Alethia.")
 			return
 		}
 
@@ -87,7 +87,7 @@ var listSpecsCmd = &cobra.Command{
 			}
 		}
 
-		m := ui.NewTableModel(columns, rows, "specs", "project", 0)
+		m := ui.NewTableModel(columns, rows, "projects", "project", 0)
 		if _, err := tea.NewProgram(m).Run(); err != nil {
 			failf("Table error: %v", err)
 		}
@@ -105,5 +105,5 @@ func formatTime(t time.Time) string {
 }
 
 func init() {
-	specCmd.AddCommand(listSpecsCmd)
+	projectCmd.AddCommand(listProjectsCmd)
 }

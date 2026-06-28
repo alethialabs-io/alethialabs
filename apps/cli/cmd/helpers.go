@@ -43,14 +43,3 @@ func confirm(title, description string) bool {
 	}
 	return true
 }
-
-// selectZoneAndSpec runs the interactive zone → spec picker shared by the
-// spec plan/apply/destroy commands.
-func selectZoneAndSpec(token string) (zoneID, specID string, err error) {
-	zoneID, _, err = selectZone(token)
-	if err != nil {
-		return "", "", err
-	}
-	specID, err = selectSpec(token, zoneID)
-	return zoneID, specID, err
-}
