@@ -10,3 +10,8 @@ output "oidc_provider_arn" {
   description = "GitHub Actions OIDC provider ARN (created or adopted)."
   value       = local.oidc_provider_arn
 }
+
+output "state_bucket" {
+  description = "S3 bucket holding the SES stacks' OpenTofu state."
+  value       = aws_s3_bucket.tofu_state.bucket
+}

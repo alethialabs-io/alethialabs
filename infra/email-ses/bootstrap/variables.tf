@@ -32,6 +32,12 @@ variable "sender_user_name" {
   default     = "alethia-ses-sender"
 }
 
+variable "state_bucket_name" {
+  description = "S3 bucket holding OpenTofu state for the SES stacks (this account)."
+  type        = string
+  default     = "alethia-tofu-state-270587882865"
+}
+
 # ── GitHub OIDC ──────────────────────────────────────────────────────────────
 
 variable "create_oidc_provider" {

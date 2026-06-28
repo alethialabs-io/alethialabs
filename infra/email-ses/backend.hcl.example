@@ -1,22 +1,10 @@
-# S3-compatible backend for OpenTofu state. Copy to backend.hcl (gitignored).
+# AWS S3 state backend. Copy to backend.hcl (gitignored).
 #   tofu init -backend-config=backend.hcl
+#
+# Auth comes from the AWS credential chain — admin locally, or the assumed
+# alethia-ses-deployer OIDC role in CI. No static state keys.
 
-bucket = "terraform-state"
-key    = "ses/terraform.tfstate"
-region = "us-east-1"
-
-endpoints = {
-  s3 = "https://YOUR_S3_ENDPOINT"
-}
-
-skip_credentials_validation = true
-skip_requesting_account_id  = true
-skip_metadata_api_check     = true
-skip_region_validation      = true
-skip_s3_checksum            = true
-use_path_style              = true
-use_lockfile                = true
-
-# Credentials via env:
-#   export AWS_ACCESS_KEY_ID="..."      # the TF_STATE_S3_* keys
-#   export AWS_SECRET_ACCESS_KEY="..."
+bucket       = "alethia-tofu-state-270587882865"
+key          = "ses/terraform.tfstate"
+region       = "eu-central-1"
+use_lockfile = true

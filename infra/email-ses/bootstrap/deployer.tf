@@ -136,6 +136,22 @@ data "aws_iam_policy_document" "deployer_permissions" {
     ]
     resources = ["arn:aws:sqs:${local.region}:${local.account_id}:alethia-ses-verify-*"]
   }
+
+  # OpenTofu state — the deploy role authenticates the S3 backend itself (same
+  # account), so no static state keys are needed. ListBucket on the bucket +
+  # object RW (state object + the native .tflock lock object).
+  statement {
+    sid       = "TofuStateBucket"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket", "s3:GetBucketVersioning"]
+    resources = ["arn:aws:s3:::${var.state_bucket_name}"]
+  }
+  statement {
+    sid       = "TofuStateObjects"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = ["arn:aws:s3:::${var.state_bucket_name}/*"]
+  }
 }
 
 resource "aws_iam_role_policy" "deployer" {
