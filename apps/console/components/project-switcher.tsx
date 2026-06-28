@@ -59,77 +59,61 @@ export function ProjectSwitcher() {
 
 	const startCreate = () => {
 		setOpen(false);
-		router.push(globalHref(orgSlug, "design-project"));
+		router.push(globalHref(orgSlug, "new"));
 	};
 
 	return (
-		<>
-			<span className="text-border/70 select-none" aria-hidden>
-				/
-			</span>
-			<Popover open={open} onOpenChange={setOpen}>
-				<SwitcherTrigger
-					variant="topbar"
-					open={open}
-					leading={
-						<span className="flex h-5 w-5 shrink-0 items-center justify-center rounded border text-muted-foreground">
-							<Component className="h-3 w-3" />
-						</span>
-					}
-					caption="Project"
-					label={active?.project_name ?? "All projects"}
-				/>
-				<PopoverContent className="w-72 p-0" align="start">
-					<Command>
-						{projects.length > 0 ? (
-							<>
-								<CommandInput placeholder="Find project…" className="h-9" />
-								<CommandList>
-									{/* Only on a genuine search miss — never as the empty-org state. */}
-									<CommandEmpty>No project found.</CommandEmpty>
-									<CommandGroup heading="Projects">
-										{projects.map((p) => (
-											<CommandItem
-												key={p.id}
-												value={p.project_name}
-												onSelect={() => p.slug && handleSelect(p.slug)}
-												className="gap-2"
-											>
-												<Component className="h-4 w-4 text-muted-foreground" />
-												<span className="flex-1 truncate">{p.project_name}</span>
-												{p.id === active?.id && (
-													<Check className="h-4 w-4 shrink-0" />
-												)}
-											</CommandItem>
-										))}
-									</CommandGroup>
-								</CommandList>
-							</>
-						) : (
-							<p className="px-3 py-6 text-center text-[13px] text-muted-foreground">
-								No projects yet.
-							</p>
-						)}
-						<Separator />
-						{/* Pinned footer — outside CommandList so search never hides it. */}
-						<div className="p-1">
-							<Button
-								variant="ghost"
-								onClick={startCreate}
-								className="h-auto w-full justify-start gap-2 whitespace-normal px-2 py-2 text-left"
-							>
-								<Plus className="h-4 w-4 shrink-0 text-muted-foreground" />
-								<span className="flex min-w-0 flex-col">
-									<span className="text-sm font-medium">Create a Project</span>
-									<span className="text-xs text-muted-foreground">
-										Design infrastructure in your org
-									</span>
-								</span>
-							</Button>
-						</div>
-					</Command>
-				</PopoverContent>
-			</Popover>
-		</>
+		<Popover open={open} onOpenChange={setOpen}>
+			<SwitcherTrigger
+				variant="topbar"
+				open={open}
+				label={active?.project_name ?? "All projects"}
+			/>
+			<PopoverContent className="w-72 p-0" align="start">
+				<Command>
+					{projects.length > 0 ? (
+						<>
+							<CommandInput placeholder="Find project…" className="h-9" />
+							<CommandList>
+								{/* Only on a genuine search miss — never as the empty-org state. */}
+								<CommandEmpty>No project found.</CommandEmpty>
+								<CommandGroup heading="Projects">
+									{projects.map((p) => (
+										<CommandItem
+											key={p.id}
+											value={p.project_name}
+											onSelect={() => p.slug && handleSelect(p.slug)}
+											className="gap-2"
+										>
+											<Component className="h-4 w-4 text-muted-foreground" />
+											<span className="flex-1 truncate">{p.project_name}</span>
+											{p.id === active?.id && (
+												<Check className="h-4 w-4 shrink-0" />
+											)}
+										</CommandItem>
+									))}
+								</CommandGroup>
+							</CommandList>
+						</>
+					) : (
+						<p className="px-3 py-6 text-center text-[13px] text-muted-foreground">
+							No projects yet.
+						</p>
+					)}
+					<Separator />
+					{/* Pinned footer — outside CommandList so search never hides it. */}
+					<div className="p-1">
+						<Button
+							variant="ghost"
+							onClick={startCreate}
+							className="w-full justify-start gap-2 px-2"
+						>
+							<Plus className="h-4 w-4 shrink-0 text-muted-foreground" />
+							<span className="text-sm">Create project</span>
+						</Button>
+					</div>
+				</Command>
+			</PopoverContent>
+		</Popover>
 	);
 }
