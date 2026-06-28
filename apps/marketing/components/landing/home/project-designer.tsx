@@ -50,7 +50,7 @@ function DesignerChrome({ children }: { children: ReactNode }) {
 				</div>
 				<div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
 					<div style={{ display: "flex", alignItems: "center", gap: 7, padding: "4px 14px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--surface-sunken)", ...mono, fontSize: 11, color: "var(--text-tertiary)" }}>
-						<Icon k="lock" size={11} sw={1.7} />console.alethialabs.io/design
+						<Icon k="lock" size={11} sw={1.7} />alethialabs.io/design
 					</div>
 				</div>
 				<div style={{ display: "inline-flex", gap: 2, padding: 3, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--surface)" }}>
@@ -66,15 +66,15 @@ function DesignerChrome({ children }: { children: ReactNode }) {
 	);
 }
 
-/** 02 · Spec designer — eleven guided sections compile to OpenTofu with live cost. */
-export function SpecDesigner() {
+/** 02 · Project designer — eleven guided sections compile to OpenTofu with live cost. */
+export function ProjectDesigner() {
 	return (
 		<section style={{ padding: "84px 0", borderTop: "1px solid var(--border)", background: "var(--surface-sunken)" }}>
 			<Wrap>
-				<SecMark n="02" label="Spec designer" />
+				<SecMark n="02" label="Project designer" />
 				<div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 24, flexWrap: "wrap", marginBottom: 36 }}>
 					<h2 style={{ ...disp, fontSize: 38, fontWeight: 600, letterSpacing: "-0.035em", margin: 0, maxWidth: 560, color: "var(--text-primary)" }}>Design production infrastructure. No YAML.</h2>
-					<p style={{ fontSize: 15, color: "var(--text-tertiary)", maxWidth: 400, margin: 0, lineHeight: 1.6 }}>A Spec is one configuration across eleven guided sections. Fill a form or wire a canvas — either way it compiles to OpenTofu for AWS, GCP, or Azure, with a live cost as you go.</p>
+					<p style={{ fontSize: 15, color: "var(--text-tertiary)", maxWidth: 400, margin: 0, lineHeight: 1.6 }}>A Project is one configuration across eleven guided sections. Fill a form or wire a canvas — either way it compiles to OpenTofu for AWS, GCP, or Azure, with a live cost as you go.</p>
 				</div>
 				<DesignerChrome>
 					<div style={{ display: "grid", gridTemplateColumns: "212px 1fr 232px", minHeight: 372 }} className="ah-3col">
@@ -156,7 +156,7 @@ export function SpecDesigner() {
 								</Fragment>
 							))}
 						</div>
-						<span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-tertiary)" }} className="ah-hide-sm">Same Spec, wired as a graph.</span>
+						<span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-tertiary)" }} className="ah-hide-sm">Same Project, wired as a graph.</span>
 					</div>
 				</DesignerChrome>
 			</Wrap>

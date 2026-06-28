@@ -10,14 +10,7 @@
 
 import { unstable_cache } from "next/cache";
 import Stripe from "stripe";
-import { planMeta } from "@repo/plan-catalog";
-
-/** Minimal currency-symbol map; falls back to the uppercase ISO code. */
-const CURRENCY_SYMBOL: Record<string, string> = {
-	usd: "$",
-	eur: "€",
-	gbp: "£",
-};
+import { formatSeatPrice, planMeta } from "@repo/plan-catalog";
 
 let client: Stripe | null = null;
 
@@ -31,28 +24,6 @@ function getStripe(): Stripe | null {
 		});
 	}
 	return client;
-}
-
-/** "month" → "mo", "year" → "yr"; anything else passes through. */
-function shortInterval(interval: string | undefined): string {
-	if (interval === "month") return "mo";
-	if (interval === "year") return "yr";
-	return interval ?? "mo";
-}
-
-/**
- * Format a Stripe Price into a per-seat label like "$29 / seat / mo". Whole amounts
- * drop the cents; fractional amounts keep two decimals.
- */
-function formatSeatPrice(
-	unitAmount: number,
-	currency: string,
-	interval: string | undefined,
-): string {
-	const symbol = CURRENCY_SYMBOL[currency] ?? `${currency.toUpperCase()} `;
-	const amount = unitAmount / 100;
-	const value = Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
-	return `${symbol}${value} / seat / ${shortInterval(interval)}`;
 }
 
 /**

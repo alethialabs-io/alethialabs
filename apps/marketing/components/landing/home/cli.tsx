@@ -8,13 +8,13 @@ import { LiveTerminal } from "./live-terminal";
 
 const CMDS: [string, string][] = [
 	["login", "Device-flow auth · no stored keys"],
-	["spec plan", "Compile a Spec → OpenTofu plan"],
-	["spec apply", "Queue an apply across your cloud"],
+	["project plan", "Compile a Project → OpenTofu plan"],
+	["project apply", "Queue an apply across your cloud"],
 	["agent", "Ask or act from your shell"],
-	["scan", "Repo → proposed Spec + cost"],
+	["scan", "Repo → proposed Project + cost"],
 	["jobs logs", "Stream a running job live"],
 	["runner list", "Inspect the runner fleet"],
-	["spec destroy", "Tear a Spec down safely"],
+	["project destroy", "Tear a Project down safely"],
 ];
 
 const INSTALL = "brew install alethialabs-io/alethia";
@@ -29,7 +29,7 @@ export function Cli() {
 				<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 48, alignItems: "center", marginBottom: 48 }} className="ah-surface">
 					<div>
 						<h2 style={{ ...disp, fontSize: 34, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 14px", color: "var(--text-primary)" }}>The terminal is the deploy button.</h2>
-						<p style={{ fontSize: 15, color: "var(--text-tertiary)", lineHeight: 1.65, margin: "0 0 22px", maxWidth: 440 }}>One CLI for auth, zones, specs, jobs, runners, clusters — plus the agent and repo scanner. The CLI and the console share one state, so you can script it, pipe it, and run it in CI.</p>
+						<p style={{ fontSize: 15, color: "var(--text-tertiary)", lineHeight: 1.65, margin: "0 0 22px", maxWidth: 440 }}>One CLI for auth, projects, jobs, runners, clusters — plus the agent and repo scanner. The CLI and the console share one state, so you can script it, pipe it, and run it in CI.</p>
 						<button
 							type="button"
 							onClick={() => {

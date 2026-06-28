@@ -7,7 +7,7 @@ const TILES: [IconKey, string, string][] = [
 	["building", "Organizations & teams", "Multi-tenant orgs with teams and group-based grants. Invite members; target a grant at a whole team."],
 	["key", "SSO — OIDC & SAML", "Bring your identity provider — Okta, Entra ID, AWS IAM Identity Center. New users land least-privileged."],
 	["shield", "Custom roles & RBAC", "owner · admin · operator · viewer, plus roles you define. OpenFGA relationship checks over Postgres RBAC."],
-	["sliders", "Granular IAM", "Allow and deny grants down to a single Spec or zone. A self-serve Access portal handles requests."],
+	["sliders", "Granular IAM", "Allow and deny grants down to a single Project. A self-serve Access portal handles requests."],
 	["audit", "Audit log", "Every authorization decision recorded — who, what, allowed or denied — and exportable for compliance."],
 	["layers", "Plans & metering", "community → team → enterprise. Job concurrency, runner-minutes, and AI credits scale per plan."],
 ];

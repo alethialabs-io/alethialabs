@@ -12,7 +12,7 @@ export function CTA() {
 			<div className="ah-grid-bg ah-grid-cta" />
 			<Wrap style={{ position: "relative", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center" }}>
 				<span style={{ color: "var(--text-primary)" }}><Mark size={34} /></span>
-				<h2 style={{ ...disp, fontSize: 44, fontWeight: 600, letterSpacing: "-0.04em", margin: "22px 0 16px", maxWidth: 620, color: "var(--text-primary)", lineHeight: 1.05 }}>Ship your first Spec today.</h2>
+				<h2 style={{ ...disp, fontSize: 44, fontWeight: 600, letterSpacing: "-0.04em", margin: "22px 0 16px", maxWidth: 620, color: "var(--text-primary)", lineHeight: 1.05 }}>Ship your first Project today.</h2>
 				<p style={{ fontSize: 17, color: "var(--text-secondary)", maxWidth: 500, margin: "0 0 34px", lineHeight: 1.55 }}>Open core. Self-hostable. Configure visually, deploy with zero stored credentials, reconcile with Git.</p>
 				<div style={{ display: "flex", gap: 13, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
 					<Link href="/signup"><Button size="lg">Get started <Icon k="arrow" size={15} /></Button></Link>

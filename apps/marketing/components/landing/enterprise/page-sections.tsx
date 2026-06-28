@@ -236,25 +236,25 @@ const GRANTS: Grant[] = [
 	{
 		principal: "team:payments",
 		role: "operator",
-		scope: "zone:production",
+		scope: "project:production",
 		effect: "allow",
 	},
 	{
 		principal: "dana@acme.cloud",
 		role: "viewer",
-		scope: "spec:api-backend",
+		scope: "project:api-backend",
 		effect: "allow",
 	},
 	{
 		principal: "contractor@ext",
 		role: "operator",
-		scope: "zone:staging",
+		scope: "project:staging",
 		effect: "allow",
 	},
 	{
 		principal: "contractor@ext",
 		role: "—",
-		scope: "spec:* · destroy",
+		scope: "project:* · destroy",
 		effect: "deny",
 	},
 ];
@@ -321,8 +321,8 @@ function DecisionTrace() {
 	const steps: [IconKey, string, string][] = [
 		["check", "principal", "dana@acme.cloud"],
 		["users", "member of", "team:payments"],
-		["key", "team grants", "operator @ zone:production"],
-		["shield", "operator allows", "spec apply"],
+		["key", "team grants", "operator @ project:production"],
+		["shield", "operator allows", "project apply"],
 	];
 	return (
 		<div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -370,7 +370,7 @@ function DecisionTrace() {
 					}}
 				>
 					<span style={{ color: "var(--text-tertiary)" }}>check(</span>
-					can_apply, spec:api-backend
+					can_apply, project:api-backend
 					<span style={{ color: "var(--text-tertiary)" }}>)</span>
 				</code>
 				<div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
@@ -525,7 +525,7 @@ function Hero() {
 						</Link>
 					</div>
 				</div>
-				<Frame url="console.alethialabs.io/access" height={358}>
+				<Frame url="alethialabs.io/access" height={358}>
 					<div
 						className="en-hero-grid"
 						style={{
@@ -696,12 +696,12 @@ function Pillars() {
 function Orgs() {
 	const teams: [string, number, string, string][] = [
 		["Platform", 8, "admin", "org"],
-		["Payments", 6, "operator", "zone:production"],
-		["Data", 5, "operator", "zone:staging"],
+		["Payments", 6, "operator", "project:production"],
+		["Data", 5, "operator", "project:staging"],
 		["Security", 3, "auditor", "org · read-only"],
 	];
 	const points: [string, string][] = [
-		["Group-based grants", "Target a team, a zone, or a single spec"],
+		["Group-based grants", "Target a team or a single project"],
 		["Least-privilege defaults", "New members land with the lowest role"],
 		[
 			"Membership is the source of truth",
@@ -745,7 +745,7 @@ function Orgs() {
 								maxWidth: 440,
 							}}
 						>
-							Multi-tenant organizations hold teams, zones, and specs. Invite a
+							Multi-tenant organizations hold teams and projects. Invite a
 							member once and add them to a team; aim a grant at the whole team
 							and every member inherits it. People move between teams — the
 							access follows the structure, not a spreadsheet.
@@ -1385,7 +1385,7 @@ function Rbac() {
 							}}
 						>
 							<Icon k="sliders" size={13} sw={1.7} />
-							Grants scope a role to org, zone, or a single spec
+							Grants scope a role to org or a single project
 						</span>
 					</div>
 				</div>
@@ -1399,16 +1399,16 @@ type AuditRow = [string, string, string, EffectKey, string, string];
 const AUDIT: AuditRow[] = [
 	[
 		"dana@acme.cloud",
-		"spec apply",
-		"spec:api-backend",
+		"project apply",
+		"project:api-backend",
 		"allow",
 		"team:payments#operator",
 		"2m ago",
 	],
 	[
 		"sam@acme.cloud",
-		"spec destroy",
-		"spec:edge-cache",
+		"project destroy",
+		"project:edge-cache",
 		"deny",
 		"operator ∌ destroy",
 		"14m ago",
@@ -1424,7 +1424,7 @@ const AUDIT: AuditRow[] = [
 	[
 		"ivan@acme.cloud",
 		"access requested",
-		"zone:staging",
+		"project:staging",
 		"pending",
 		"self-serve portal",
 		"1h ago",
@@ -1667,7 +1667,7 @@ function Security() {
 		[
 			"shield",
 			"Granular IAM · Access portal",
-			"Allow and deny down to a single spec or zone. Members request access; approvals are one click and logged.",
+			"Allow and deny down to a single project. Members request access; approvals are one click and logged.",
 		],
 	];
 	return (

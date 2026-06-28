@@ -24,9 +24,9 @@ const COMPARE: [ProviderId, string, string, boolean][] = [
 ];
 
 const TOOLS: [IconKey, string, string][] = [
-	["sparkles", "19 tools", "list_specs · list_jobs · list_runners · scan_repo · propose_operation. One tool layer drives the console, the CLI, and the agent."],
+	["sparkles", "19 tools", "list_projects · list_jobs · list_runners · scan_repo · propose_operation. One tool layer drives the console, the CLI, and the agent."],
 	["plug", "MCP server", "The same tools, exposed to Claude over MCP — operate Alethia from Claude Code or claude.ai."],
-	["scan", "Repo scanner", "Point it at a repo; it infers the stack and returns a ready-to-deploy Spec with a cost estimate."],
+	["scan", "Repo scanner", "Point it at a repo; it infers the stack and returns a ready-to-deploy Project with a cost estimate."],
 ];
 
 /** 05 · AI — an agent that reads your infrastructure through the same tools. */
@@ -37,7 +37,7 @@ export function AI() {
 				<SecMark n="05" label="AI" />
 				<div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 24, flexWrap: "wrap", marginBottom: 36 }}>
 					<h2 style={{ ...disp, fontSize: 38, fontWeight: 600, letterSpacing: "-0.035em", margin: 0, maxWidth: 580, color: "var(--text-primary)" }}>An agent that understands your infrastructure.</h2>
-					<p style={{ fontSize: 15, color: "var(--text-tertiary)", maxWidth: 400, margin: 0, lineHeight: 1.6 }}>It reads your specs, jobs, clusters, and costs through the same tools the console uses. Ask in read-only mode; in act mode it proposes operations you approve — it never provisions on its own.</p>
+					<p style={{ fontSize: 15, color: "var(--text-tertiary)", maxWidth: 400, margin: 0, lineHeight: 1.6 }}>It reads your projects, jobs, clusters, and costs through the same tools the console uses. Ask in read-only mode; in act mode it proposes operations you approve — it never provisions on its own.</p>
 				</div>
 				<div style={{ display: "grid", gridTemplateColumns: "1.05fr 0.95fr", gap: 16, alignItems: "stretch" }} className="ah-2col">
 					{/* agent panel */}
@@ -51,13 +51,13 @@ export function AI() {
 					{/* right column */}
 					<div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 						<div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)", overflow: "hidden" }}>
-							<AskActRow ic="book" title="Ask — read-only" body="Query specs, jobs, clusters, connectors, and costs. The agent answers from live state, never guessing." />
+							<AskActRow ic="book" title="Ask — read-only" body="Query projects, jobs, clusters, connectors, and costs. The agent answers from live state, never guessing." />
 							<AskActRow ic="check" title="Act — you approve" body="It proposes plan and apply operations as cards. Nothing runs until you click approve." />
 						</div>
 						<div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)", overflow: "hidden", flex: 1 }}>
 							<div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", borderBottom: "1px solid var(--border)", background: "var(--surface-muted)" }}>
 								<Icon k="scan" size={15} /><span style={{ ...disp, fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>Repo scanner</span>
-								<span style={{ ...mono, fontSize: 10, color: "var(--text-tertiary)", marginLeft: "auto" }}>repo → Spec</span>
+								<span style={{ ...mono, fontSize: 10, color: "var(--text-tertiary)", marginLeft: "auto" }}>repo → Project</span>
 							</div>
 							<div style={{ padding: "14px 16px" }}>
 								<div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
@@ -69,7 +69,7 @@ export function AI() {
 										<span key={n} style={{ fontSize: 11.5, color: "var(--text-primary)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-xs)", padding: "3px 9px", background: "var(--surface-muted)" }}>{n}</span>
 									))}
 								</div>
-								<div style={{ ...eyebrow, fontSize: 8.5, marginBottom: 7 }}>Estimated · same Spec, each cloud</div>
+								<div style={{ ...eyebrow, fontSize: 8.5, marginBottom: 7 }}>Estimated · same Project, each cloud</div>
 								<div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
 									{COMPARE.map(([id, label, val, best]) => (
 										<div key={id} style={{ display: "flex", alignItems: "center", gap: 10 }}>

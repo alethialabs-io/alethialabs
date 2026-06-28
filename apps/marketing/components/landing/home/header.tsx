@@ -35,7 +35,7 @@ interface MenuGroup {
 const PRODUCT_MENU: MenuGroup[] = [
 	{ group: "Platform", items: [
 		{ ic: "grid", name: "Console", desc: "Visual control plane — configure, deploy, observe" },
-		{ ic: "node", name: "Spec designer", desc: "Design infrastructure visually — form or canvas, live cost" },
+		{ ic: "node", name: "Project designer", desc: "Design infrastructure visually — form or canvas, live cost" },
 		{ ic: "terminal", name: "alethia CLI", desc: "Plan, apply, and operate from your shell" },
 	] },
 	{ group: "Operate", items: [
@@ -45,7 +45,7 @@ const PRODUCT_MENU: MenuGroup[] = [
 	] },
 	{ group: "Intelligence", items: [
 		{ ic: "sparkles", name: "AI agent", desc: "An assistant that knows your infrastructure — ask or act" },
-		{ ic: "scan", name: "Repo scanner", desc: "Point it at a repo; get a proposed Spec and cost" },
+		{ ic: "scan", name: "Repo scanner", desc: "Point it at a repo; get a proposed Project and cost" },
 		{ ic: "plug", name: "MCP server", desc: "The same tools, exposed to Claude over MCP" },
 	] },
 	{ group: "Govern", items: [

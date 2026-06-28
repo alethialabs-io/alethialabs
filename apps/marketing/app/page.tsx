@@ -6,8 +6,8 @@ import { Header } from "@/components/landing/home/header";
 import { Hero } from "@/components/landing/home/hero";
 import { RunsOn } from "@/components/landing/home/runs-on";
 import { ZeroTrust } from "@/components/landing/home/zero-trust";
-import { SpecDesigner } from "@/components/landing/home/spec-designer";
-import { SpecsJobs } from "@/components/landing/home/specs-jobs";
+import { ProjectDesigner } from "@/components/landing/home/project-designer";
+import { ProjectsJobs } from "@/components/landing/home/projects-jobs";
 import { FleetTeaser } from "@/components/landing/home/fleet-teaser";
 import { AI } from "@/components/landing/home/ai";
 import { Alerts } from "@/components/landing/home/alerts";
@@ -32,8 +32,8 @@ export default async function HomePage() {
 				<Hero />
 				<RunsOn />
 				<ZeroTrust />
-				<SpecDesigner />
-				<SpecsJobs />
+				<ProjectDesigner />
+				<ProjectsJobs />
 				<FleetTeaser />
 				<AI />
 				<Alerts />

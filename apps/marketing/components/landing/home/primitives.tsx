@@ -221,11 +221,11 @@ export function SecMark({ n, label }: { n: string; label: string }) {
 	);
 }
 
-/* ---------- jobs table (console mock + specs→jobs) ---------- */
+/* ---------- jobs table (console mock + projects→jobs) ---------- */
 export interface JobRow {
 	type: string;
 	status: string;
-	spec: string;
+	project: string;
 	provider: ProviderId | null;
 	runner: string;
 	created: string;
@@ -233,16 +233,16 @@ export interface JobRow {
 }
 
 export const JOBS: JobRow[] = [
-	{ type: "Apply", status: "active", spec: "api-backend", provider: "aws", runner: "prod-eu-1", created: "2m ago", duration: "12m 34s" },
-	{ type: "Plan", status: "active", spec: "web-frontend", provider: "gcp", runner: "prod-eu-1", created: "18m ago", duration: "1m 12s" },
-	{ type: "Apply", status: "processing", spec: "data-pipeline", provider: "azure", runner: "eu-2", created: "24m ago", duration: "4m 02s" },
-	{ type: "Destroy", status: "failed", spec: "legacy-api", provider: "aws", runner: "prod-eu-1", created: "1h ago", duration: "3m 41s" },
-	{ type: "Fetch resources", status: "queued", spec: "—", provider: null, runner: "—", created: "1h ago", duration: "—" },
+	{ type: "Apply", status: "active", project: "api-backend", provider: "aws", runner: "prod-eu-1", created: "2m ago", duration: "12m 34s" },
+	{ type: "Plan", status: "active", project: "web-frontend", provider: "gcp", runner: "prod-eu-1", created: "18m ago", duration: "1m 12s" },
+	{ type: "Apply", status: "processing", project: "data-pipeline", provider: "azure", runner: "eu-2", created: "24m ago", duration: "4m 02s" },
+	{ type: "Destroy", status: "failed", project: "legacy-api", provider: "aws", runner: "prod-eu-1", created: "1h ago", duration: "3m 41s" },
+	{ type: "Fetch resources", status: "queued", project: "—", provider: null, runner: "—", created: "1h ago", duration: "—" },
 ];
 
-/** Provisioning-jobs table — Type / Status / Spec / Runner / Created / Duration. */
+/** Provisioning-jobs table — Type / Status / Project / Runner / Created / Duration. */
 export function JobsTable({ rows, compact }: { rows: JobRow[]; compact?: boolean }) {
-	const cols = ["Type", "Status", "Spec", "Runner", "Created", "Duration"];
+	const cols = ["Type", "Status", "Project", "Runner", "Created", "Duration"];
 	const grid = "1.3fr 1.05fr 1.25fr 1fr 0.9fr 0.85fr";
 	return (
 		<div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", background: "var(--surface)" }}>
@@ -257,7 +257,7 @@ export function JobsTable({ rows, compact }: { rows: JobRow[]; compact?: boolean
 					<span><StatusBadge status={r.status} /></span>
 					<span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "var(--text-secondary)", ...mono }}>
 						{r.provider ? <Prov id={r.provider} size={13} /> : <span style={{ width: 13 }} />}
-						{r.spec}
+						{r.project}
 					</span>
 					<span style={{ fontSize: 11.5, color: "var(--text-secondary)", ...mono }}>{r.runner}</span>
 					<span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>{r.created}</span>
@@ -336,13 +336,13 @@ export function Msg({ role, children }: { role: "you" | "agent"; children: React
 
 /** Agent "proposed operation" card requiring approval. */
 export function ProposeCard({
-	op = "plan_spec",
-	spec = "orders-api",
+	op = "plan_project",
+	project = "orders-api",
 	add = 23,
 	cost = "$312/mo",
 }: {
 	op?: string;
-	spec?: string;
+	project?: string;
 	add?: number;
 	cost?: string;
 }) {
@@ -354,7 +354,7 @@ export function ProposeCard({
 				<span style={{ ...mono, fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-tertiary)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius-xs)", padding: "2px 6px", marginLeft: "auto" }}>needs approval</span>
 			</div>
 			<div style={{ padding: "11px 12px" }}>
-				<code style={{ ...mono, fontSize: 12, color: "var(--text-primary)" }}>{op} · {spec}</code>
+				<code style={{ ...mono, fontSize: 12, color: "var(--text-primary)" }}>{op} · {project}</code>
 				<div style={{ display: "flex", gap: 13, margin: "9px 0 12px", ...mono, fontSize: 10.5, color: "var(--text-tertiary)" }}>
 					<span>{add} to add</span><span>0 change</span><span>0 destroy</span>
 					<span style={{ color: "var(--text-secondary)", marginLeft: "auto" }}>~{cost}</span>

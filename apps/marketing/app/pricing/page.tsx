@@ -11,7 +11,7 @@ import { getTeamPriceLabel } from "@/lib/billing/pricing-display";
 export const metadata: Metadata = {
 	title: "Pricing · Alethia",
 	description:
-		"Alethia pricing — start free with your own Zones & Specs, upgrade for teams, governance, and enterprise SSO. You only pay your own cloud for what you provision.",
+		"Alethia pricing — start free with your own Projects, upgrade for teams, governance, and enterprise SSO. You only pay your own cloud for what you provision.",
 };
 
 /**

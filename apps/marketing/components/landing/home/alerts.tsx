@@ -7,7 +7,7 @@ import { disp, Icon, type IconKey, mono, SecMark, Wrap } from "./primitives";
 const POLICIES: [string, string, number][] = [
 	["Job failed", "Any apply or destroy fails", 2],
 	["Runner offline", "A runner misses 3 heartbeats", 2],
-	["Cost threshold", "A Spec exceeds its monthly budget", 1],
+	["Cost threshold", "A Project exceeds its monthly budget", 1],
 ];
 
 const CHANNELS: [IconKey, string, string, string][] = [

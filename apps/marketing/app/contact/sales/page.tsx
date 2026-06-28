@@ -31,7 +31,7 @@ export default async function ContactSalesPage() {
 							[
 								"grid",
 								"A demo against your stack",
-								"We provision a real Spec and walk the console, the CLI, and the agent — on the clouds you actually run.",
+								"We provision a real Project and walk the console, the CLI, and the agent — on the clouds you actually run.",
 							],
 							[
 								"shield",

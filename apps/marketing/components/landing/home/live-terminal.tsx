@@ -12,19 +12,19 @@ interface Frame {
 
 const SESSION: Record<ProviderId, Frame[]> = {
 	aws: [
-		{ cmd: "alethia login", out: ["→ Opening browser for device authorization…", "✓ Authenticated · you@acme.cloud", "✓ Zone set to production"] },
-		{ cmd: "alethia spec plan --cloud aws", out: ["▸ Compiling 11 sections → OpenTofu", "47 to add · 0 change · 0 destroy", "Estimated  $847.23/mo"] },
-		{ cmd: "alethia spec apply", out: ["✓ queued job · runner prod-eu-1", "✓ aws_eks_cluster.main     v1.31", "✓ helm_release.argocd      v2.12", "… +44 more", "✓ Apply complete · 12m 34s"] },
+		{ cmd: "alethia login", out: ["→ Opening browser for device authorization…", "✓ Authenticated · you@acme.cloud"] },
+		{ cmd: "alethia project plan --cloud aws", out: ["▸ Compiling 11 sections → OpenTofu", "47 to add · 0 change · 0 destroy", "Estimated  $847.23/mo"] },
+		{ cmd: "alethia project apply", out: ["✓ queued job · runner prod-eu-1", "✓ aws_eks_cluster.main     v1.31", "✓ helm_release.argocd      v2.12", "… +44 more", "✓ Apply complete · 12m 34s"] },
 	],
 	gcp: [
-		{ cmd: "alethia login", out: ["→ Opening browser for device authorization…", "✓ Authenticated · you@acme.cloud", "✓ Zone set to production"] },
-		{ cmd: "alethia spec plan --cloud gcp", out: ["▸ Compiling 11 sections → OpenTofu", "39 to add · 0 change · 0 destroy", "Estimated  $612.00/mo"] },
-		{ cmd: "alethia spec apply", out: ["✓ queued job · runner prod-eu-1", "✓ google_container_cluster.main", "✓ helm_release.argocd", "… +30 more", "✓ Apply complete · 9m 51s"] },
+		{ cmd: "alethia login", out: ["→ Opening browser for device authorization…", "✓ Authenticated · you@acme.cloud"] },
+		{ cmd: "alethia project plan --cloud gcp", out: ["▸ Compiling 11 sections → OpenTofu", "39 to add · 0 change · 0 destroy", "Estimated  $612.00/mo"] },
+		{ cmd: "alethia project apply", out: ["✓ queued job · runner prod-eu-1", "✓ google_container_cluster.main", "✓ helm_release.argocd", "… +30 more", "✓ Apply complete · 9m 51s"] },
 	],
 	azure: [
-		{ cmd: "alethia login", out: ["→ Opening browser for device authorization…", "✓ Authenticated · you@acme.cloud", "✓ Zone set to production"] },
-		{ cmd: "alethia spec plan --cloud azure", out: ["▸ Compiling 11 sections → OpenTofu", "41 to add · 0 change · 0 destroy", "Estimated  $408.00/mo"] },
-		{ cmd: "alethia spec apply", out: ["✓ queued job · runner eu-2", "✓ azurerm_kubernetes_cluster", "✓ helm_release.argocd", "… +31 more", "✓ Apply complete · 11m 08s"] },
+		{ cmd: "alethia login", out: ["→ Opening browser for device authorization…", "✓ Authenticated · you@acme.cloud"] },
+		{ cmd: "alethia project plan --cloud azure", out: ["▸ Compiling 11 sections → OpenTofu", "41 to add · 0 change · 0 destroy", "Estimated  $408.00/mo"] },
+		{ cmd: "alethia project apply", out: ["✓ queued job · runner eu-2", "✓ azurerm_kubernetes_cluster", "✓ helm_release.argocd", "… +31 more", "✓ Apply complete · 11m 08s"] },
 	],
 };
 

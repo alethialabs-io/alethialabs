@@ -152,7 +152,7 @@ function PlanCards({ teamPriceLabel }: { teamPriceLabel: string }) {
 					))}
 				</div>
 				<p style={{ fontSize: 12.5, color: "var(--text-tertiary)", textAlign: "center", margin: "22px 0 0", lineHeight: 1.6 }}>
-					All plans include multi-cloud provisioning, the Spec designer, GitOps, the AI agent, and zero stored credentials. The Team price is per seat, billed monthly through Stripe.
+					All plans include multi-cloud provisioning, the Project designer, GitOps, the AI agent, and zero stored credentials. The Team price is per seat, billed monthly through Stripe.
 				</p>
 			</Wrap>
 		</section>
@@ -173,10 +173,10 @@ const MATRIX: MatrixGroup[] = [
 		label: "Platform",
 		rows: [
 			["Multi-cloud provisioning", true, true, true],
-			["Spec designer — form + canvas", true, true, true],
+			["Project designer — form + canvas", true, true, true],
 			["GitOps (ArgoCD)", true, true, true],
 			["Zero-trust cloud connections", true, true, true],
-			["Zones & Specs", "Unlimited", "Unlimited", "Unlimited"],
+			["Projects", "Unlimited", "Unlimited", "Unlimited"],
 		],
 	},
 	{
@@ -294,7 +294,7 @@ function OpenCore() {
 							Free forever. Run it in your own cloud.
 						</h2>
 						<p style={{ fontSize: 15, color: "var(--text-tertiary)", lineHeight: 1.6, margin: 0, maxWidth: 620 }}>
-							The complete single-tenant product is open source under AGPL-3.0 — full provisioning, the Spec designer, GitOps, the AI agent, and community RBAC. The paid tiers add multi-member organizations, SSO, custom roles, and audit export. No cloud credentials ever leave your control.
+							The complete single-tenant product is open source under AGPL-3.0 — full provisioning, the Project designer, GitOps, the AI agent, and community RBAC. The paid tiers add multi-member organizations, SSO, custom roles, and audit export. No cloud credentials ever leave your control.
 						</p>
 					</div>
 					<div style={{ display: "flex", flexDirection: "column", gap: 10 }} className="ah-hide-sm">

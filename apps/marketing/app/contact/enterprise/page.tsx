@@ -36,7 +36,7 @@ export default async function ContactEnterprisePage() {
 							[
 								"sliders",
 								"Custom roles & granular IAM",
-								"Compose allow and deny down to a single spec or zone, evaluated by OpenFGA over Postgres RBAC.",
+								"Compose allow and deny down to a single project, evaluated by OpenFGA over Postgres RBAC.",
 							],
 							[
 								"audit",

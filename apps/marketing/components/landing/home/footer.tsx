@@ -10,7 +10,7 @@ interface FooterCol {
 }
 
 const COLUMNS: FooterCol[] = [
-	{ title: "Product", links: ["Console", "Spec designer", "alethia CLI", "Runners", "Jobs", "Alerts"] },
+	{ title: "Product", links: ["Console", "Project designer", "alethia CLI", "Runners", "Jobs", "Alerts"] },
 	{ title: "Intelligence", links: ["AI agent", "Repo scanner", "MCP server"] },
 	{ title: "Enterprise", links: ["Organizations", "SSO — OIDC & SAML", "Roles & RBAC", "Audit log", "Pricing"] },
 	{ title: "Resources", links: ["Documentation", "Quickstart", "CLI reference", "Architecture", "GitHub", "Changelog"] },

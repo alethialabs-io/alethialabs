@@ -65,7 +65,7 @@ function BrowserFrame({ url, children, height = 396 }: { url: string; children: 
 /** Four overview metric tiles for the console mock. */
 function StatTiles() {
 	const tiles: [IconKey, string, string][] = [
-		["layers", "6", "Specs"],
+		["layers", "6", "Projects"],
 		["grid", "4", "Clusters"],
 		["server", "11/12", "Runners online"],
 		["jobs", "38", "Jobs today"],
@@ -129,9 +129,9 @@ function ProductSwitcher() {
 			{tab === "cli" ? (
 				<LiveTerminal height={440} />
 			) : (
-				<BrowserFrame url={"console.alethialabs.io/" + (tab === "console" ? "overview" : tab)}>
+				<BrowserFrame url={"alethialabs.io/" + (tab === "console" ? "overview" : tab)}>
 					{tab === "console" && (
-						<PageMini eb="Acme Cloud · production" title="Overview" action={<Button size="sm"><Icon k="layers" size={14} />Create a Spec</Button>}>
+						<PageMini eb="Acme Cloud · production" title="Overview" action={<Button size="sm"><Icon k="layers" size={14} />Create a Project</Button>}>
 							<StatTiles />
 							<div style={{ ...eyebrow, fontSize: 9, margin: "4px 0 10px" }}>Recent jobs</div>
 							<JobsTable rows={JOBS.slice(0, 3)} compact />
@@ -171,7 +171,7 @@ export function Hero() {
 					<span style={{ color: "var(--text-tertiary)" }}>multi-cloud infrastructure.</span>
 				</h1>
 				<p style={{ fontSize: 18.5, color: "var(--text-secondary)", maxWidth: 640, margin: "24px 0 32px", lineHeight: 1.55 }}>
-					Design infrastructure as a Spec, deploy it across AWS, GCP, and Azure with zero stored credentials, and operate everything — jobs, runners, alerts, and an AI agent — from the console or the <code style={{ ...mono, fontSize: 16, color: "var(--text-primary)" }}>alethia</code> CLI.
+					Design infrastructure as a Project, deploy it across AWS, GCP, and Azure with zero stored credentials, and operate everything — jobs, runners, alerts, and an AI agent — from the console or the <code style={{ ...mono, fontSize: 16, color: "var(--text-primary)" }}>alethia</code> CLI.
 				</p>
 				<div style={{ display: "flex", alignItems: "center", gap: 13, marginBottom: 50, flexWrap: "wrap", justifyContent: "center" }}>
 					<Button size="lg">Get started <Icon k="arrow" size={15} /></Button>
