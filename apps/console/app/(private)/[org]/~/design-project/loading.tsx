@@ -3,7 +3,7 @@
 
 import { Skeleton } from "@repo/ui/skeleton";
 
-export default function DesignSpecLoading() {
+export default function DesignProjectLoading() {
 	return (
 		<div className="w-full space-y-6">
 			<div className="space-y-1.5">

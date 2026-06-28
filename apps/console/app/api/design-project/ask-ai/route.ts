@@ -9,7 +9,7 @@ import { recordAiUsage } from "@/lib/billing/ai-quota";
 import { getAiModel, isAiConfigured } from "@/lib/config/ai";
 import type { CanvasContext } from "@/lib/ai/canvas-context";
 import { summarizeCanvas } from "@/lib/ai/canvas-context";
-import { buildSpecAssistantTools } from "@/lib/ai/tools";
+import { buildProjectAssistantTools } from "@/lib/ai/tools";
 
 interface AskAiBody {
 	messages: UIMessage[];
@@ -18,7 +18,7 @@ interface AskAiBody {
 
 function systemPrompt(canvas: CanvasContext | undefined): string {
 	return [
-		"You are Alethia's design-spec assistant. You compose multi-cloud infrastructure on a",
+		"You are Alethia's design-project assistant. You compose multi-cloud infrastructure on a",
 		"visual canvas by PROPOSING changes the user accepts — you never apply anything yourself.",
 		"",
 		'Workflow for a build request (e.g. "an EKS cluster + an RDS db of size X + a new VPC for',
@@ -49,13 +49,13 @@ function systemPrompt(canvas: CanvasContext | undefined): string {
 		"",
 		"You can also answer questions about the user's account using read tools (these run",
 		"immediately, no proposal needed):",
-		"- `list_specs` / `get_spec`, `list_zones` — saved specs + workspaces.",
+		"- `list_projects` / `get_project` — saved projects.",
 		"- `list_jobs` / `get_job` / `get_plan_result` — provisioning job status + errors.",
 		"- `list_clusters` — what's provisioned/live (endpoints, dbs, caches).",
 		"- `list_runners` — execution agents. `list_connectors` — connected providers.",
 		"- `get_cached_resources(cloudIdentityId)` — an account's EXISTING VPCs/subnets, to reuse a",
 		"  VPC or avoid CIDR clashes when composing a network.",
-		"Plan / deploy can't be triggered from chat yet — point the user to the Plan / Create-spec UI.",
+		"Plan / deploy can't be triggered from chat yet — point the user to the Plan / Create-project UI.",
 		"",
 		"Rules:",
 		"- CORE resources (cluster, network, database, cache, queue, topic, nosql) all run on the stack's",
@@ -107,7 +107,7 @@ export async function POST(req: Request) {
 		model: modelId,
 		system: systemPrompt(canvas),
 		messages: await convertToModelMessages(messages),
-		tools: buildSpecAssistantTools(canvas),
+		tools: buildProjectAssistantTools(canvas),
 		stopWhen: stepCountIs(8),
 		// Record once the run completes, with the real token usage for cost-of-serve.
 		onFinish: ({ usage }) => {

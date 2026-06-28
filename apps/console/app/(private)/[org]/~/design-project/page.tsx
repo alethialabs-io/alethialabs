@@ -4,35 +4,35 @@
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
 import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
 import { getScanProposal } from "@/app/server/actions/scanner";
-import { getSpecAsFormData } from "@/app/server/actions/specs";
-import { DesignSpecWorkbench } from "@/components/design-spec/design-spec-workbench";
+import { getProjectAsFormData } from "@/app/server/actions/projects";
+import { DesignProjectWorkbench } from "@/components/design-project/design-project-workbench";
 
-interface DesignSpecPageProps {
+interface DesignProjectPageProps {
 	searchParams: Promise<{ source?: string; scan?: string }>;
 }
 
-export default async function DesignSpecPage({ searchParams }: DesignSpecPageProps) {
+export default async function DesignProjectPage({ searchParams }: DesignProjectPageProps) {
 	const { source, scan } = await searchParams;
 	const [identities, connectors] = await Promise.all([
 		getVerifiedCloudIdentities(),
 		getConnectorsWithStatus(),
 	]);
 
-	let sourceSpec: Awaited<ReturnType<typeof getSpecAsFormData>> | undefined;
+	let sourceProject: Awaited<ReturnType<typeof getProjectAsFormData>> | undefined;
 	if (source) {
 		try {
-			sourceSpec = await getSpecAsFormData(source);
+			sourceProject = await getProjectAsFormData(source);
 		} catch {
-			// Source spec not found or unauthorized — proceed without pre-population
+			// Source project not found or unauthorized — proceed without pre-population
 		}
 	} else if (scan) {
-		// Repo-analyzer handoff: open the scanner's proposed spec for review.
+		// Repo-analyzer handoff: open the scanner's proposed project for review.
 		try {
 			const res = await getScanProposal(scan);
 			if (res.status === "READY") {
 				const p = res.proposal.provider;
-				sourceSpec = {
-					formData: res.proposal.proposedSpec,
+				sourceProject = {
+					formData: res.proposal.proposedProject,
 					provider: p === "gcp" || p === "azure" ? p : "aws",
 				};
 			}
@@ -48,19 +48,19 @@ export default async function DesignSpecPage({ searchParams }: DesignSpecPagePro
 		<div className="w-full space-y-6">
 			<div className="space-y-1.5">
 				<h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground">
-					{sourceSpec ? "Duplicate & Edit" : "Create a Spec"}
+					{sourceProject ? "Duplicate & Edit" : "Create a Project"}
 				</h1>
 				<p className="text-muted-foreground text-sm">
-					{sourceSpec
-						? "Review and edit the converted spec before creating."
+					{sourceProject
+						? "Review and edit the converted project before creating."
 						: "Configure your infrastructure components. Each section maps to a resource in your cloud account."}
 				</p>
 			</div>
 
-			<DesignSpecWorkbench
+			<DesignProjectWorkbench
 				cloudIdentities={identities}
 				connectors={connectors}
-				sourceSpec={sourceSpec}
+				sourceProject={sourceProject}
 				canvasEnabled={canvasEnabled}
 			/>
 		</div>

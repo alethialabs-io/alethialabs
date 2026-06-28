@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// C2 slug resolution. The `/{org}/{zone}/{spec}/{env}` route layers resolve each
+// C2 slug resolution. The `/{org}/{project}/{env}` route layers resolve each
 // slug → entity id here (tenant-scoped via withOwnerScope / membership checks),
 // then render the existing id-based views. `resolveOrgScope` also syncs the
 // session's active organization so the rest of the request is scoped to the URL org.
@@ -14,9 +14,8 @@ import { getServiceDb } from "@/lib/db";
 import {
 	member,
 	organization,
-	specEnvironments,
-	specs,
-	zones,
+	projectEnvironments,
+	projects,
 } from "@/lib/db/schema";
 import { PERSONAL_ORG_SLUG } from "@/lib/routing";
 import { setActiveOrganization } from "./workspace";
@@ -61,51 +60,35 @@ export async function resolveOrgScope(orgSlug: string): Promise<ResolvedOrg> {
 	return { orgId: org.id, isPersonal: false };
 }
 
-/** Resolves a zone slug → zone id within the active scope (404 → throws). */
-export async function resolveZoneId(zoneSlug: string): Promise<string> {
+/** Resolves a project (project) slug → project id within the active scope (404 → throws). Projects
+ * are unique per org, so the slug resolves directly (RLS scopes to the active org). */
+export async function resolveProjectId(projectSlug: string): Promise<string> {
 	const { userId } = await getOwnerScope();
 	return withOwnerScope(userId, async (tx) => {
-		const [zone] = await tx
-			.select({ id: zones.id })
-			.from(zones)
-			.where(eq(zones.slug, zoneSlug))
+		const [project] = await tx
+			.select({ id: projects.id })
+			.from(projects)
+			.where(eq(projects.slug, projectSlug))
 			.limit(1);
-		if (!zone) throw new Error("Zone not found");
-		return zone.id;
+		if (!project) throw new Error("Project not found");
+		return project.id;
 	});
 }
 
-/** Resolves a spec slug (within a zone) → spec id. */
-export async function resolveSpecId(
-	zoneId: string,
-	specSlug: string,
-): Promise<string> {
-	const { userId } = await getOwnerScope();
-	return withOwnerScope(userId, async (tx) => {
-		const [spec] = await tx
-			.select({ id: specs.id })
-			.from(specs)
-			.where(and(eq(specs.zone_id, zoneId), eq(specs.slug, specSlug)))
-			.limit(1);
-		if (!spec) throw new Error("Spec not found");
-		return spec.id;
-	});
-}
-
-/** Resolves an environment name (within a spec) → environment id. */
+/** Resolves an environment name (within a project) → environment id. */
 export async function resolveEnvironmentId(
-	specId: string,
+	projectId: string,
 	envName: string,
 ): Promise<string> {
 	const { userId } = await getOwnerScope();
 	return withOwnerScope(userId, async (tx) => {
 		const [env] = await tx
-			.select({ id: specEnvironments.id })
-			.from(specEnvironments)
+			.select({ id: projectEnvironments.id })
+			.from(projectEnvironments)
 			.where(
 				and(
-					eq(specEnvironments.spec_id, specId),
-					eq(specEnvironments.name, envName),
+					eq(projectEnvironments.project_id, projectId),
+					eq(projectEnvironments.name, envName),
 				),
 			)
 			.limit(1);
@@ -145,33 +128,16 @@ export async function getActiveOrgSlug(): Promise<string> {
 	return primary?.slug ?? PERSONAL_ORG_SLUG;
 }
 
-/** A zone's slug by id (within the active scope), or null. */
-export async function getZoneSlug(zoneId: string): Promise<string | null> {
-	const { userId } = await getOwnerScope();
-	return withOwnerScope(userId, async (tx) => {
-		const [zone] = await tx
-			.select({ slug: zones.slug })
-			.from(zones)
-			.where(eq(zones.id, zoneId))
-			.limit(1);
-		return zone?.slug ?? null;
-	});
-}
-
-/** A spec's slug path `{ zoneSlug, specSlug }` by spec id, or null if either is missing. */
-export async function getSpecSlugPath(
-	specId: string,
-): Promise<{ zoneSlug: string; specSlug: string } | null> {
+/** A project (project) slug by project id (within the active scope), or null. */
+export async function getProjectSlug(projectId: string): Promise<string | null> {
 	const { userId } = await getOwnerScope();
 	return withOwnerScope(userId, async (tx) => {
 		const [row] = await tx
-			.select({ specSlug: specs.slug, zoneSlug: zones.slug })
-			.from(specs)
-			.leftJoin(zones, eq(specs.zone_id, zones.id))
-			.where(eq(specs.id, specId))
+			.select({ projectSlug: projects.slug })
+			.from(projects)
+			.where(eq(projects.id, projectId))
 			.limit(1);
-		if (!row?.specSlug || !row.zoneSlug) return null;
-		return { zoneSlug: row.zoneSlug, specSlug: row.specSlug };
+		return row?.projectSlug ?? null;
 	});
 }
 
@@ -183,36 +149,29 @@ export interface SwitcherEnv {
 }
 
 /**
- * Lists a spec's environments resolved by zone+spec slug (for the EnvSwitcher).
+ * Lists a project's environments resolved by project slug (for the EnvSwitcher).
  * Returns [] if the slugs don't resolve in the active scope (the switcher hides).
  */
 export async function getEnvironmentsForSlug(
-	zoneSlug: string,
-	specSlug: string,
+	projectSlug: string,
 ): Promise<SwitcherEnv[]> {
 	const { userId } = await getOwnerScope();
 	return withOwnerScope(userId, async (tx) => {
-		const [zone] = await tx
-			.select({ id: zones.id })
-			.from(zones)
-			.where(eq(zones.slug, zoneSlug))
+		const [project] = await tx
+			.select({ id: projects.id })
+			.from(projects)
+			.where(eq(projects.slug, projectSlug))
 			.limit(1);
-		if (!zone) return [];
-		const [spec] = await tx
-			.select({ id: specs.id })
-			.from(specs)
-			.where(and(eq(specs.zone_id, zone.id), eq(specs.slug, specSlug)))
-			.limit(1);
-		if (!spec) return [];
+		if (!project) return [];
 		return tx
 			.select({
-				id: specEnvironments.id,
-				name: specEnvironments.name,
-				stage: specEnvironments.stage,
-				is_default: specEnvironments.is_default,
+				id: projectEnvironments.id,
+				name: projectEnvironments.name,
+				stage: projectEnvironments.stage,
+				is_default: projectEnvironments.is_default,
 			})
-			.from(specEnvironments)
-			.where(eq(specEnvironments.spec_id, spec.id))
-			.orderBy(specEnvironments.created_at);
+			.from(projectEnvironments)
+			.where(eq(projectEnvironments.project_id, project.id))
+			.orderBy(projectEnvironments.created_at);
 	});
 }

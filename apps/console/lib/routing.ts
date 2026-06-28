@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // C2 slug routing — the single source of truth for the Vercel-style drilldown URLs
-// `/{org}/{zone}/{spec}/{env}`. Every link/navigation builds its href from these so
+// `/{org}/{project}/{env}`. Every link/navigation builds its href from these so
 // the path shape changes in one place. The personal (no-org) scope uses the reserved
 // `~` segment, which the `[org]` layout maps back to the user's personal scope.
 
@@ -28,7 +28,7 @@ const STATIC_RESERVED_SLUGS = [
 	"docs",
 ];
 
-/** Org-segment values that must never be a real org/zone slug — the static console/sibling
+/** Org-segment values that must never be a real org slug — the static console/sibling
  * shadows plus the marketing zone's owned segments derived from microfrontends.json. A path
  * added to microfrontends.json is reserved automatically; scripts/check-marketing-routes.mjs
  * guards the rest of the chain (the marketing app/ routes + the Caddy mirror). */
@@ -37,39 +37,46 @@ export const RESERVED_SLUGS = new Set([
 	...MARKETING_RESERVED_SEGMENTS,
 ]);
 
-/** `/{org}` — org overview (its zones). */
+/** `/{org}` — org overview (its projects). */
 export function orgHref(orgSlug: string): string {
 	return `/${orgSlug}`;
 }
 
 /** `/{org}/~/{sub}` — an org-global page (jobs, runners, settings/…). The `~`
- * segment separates org-global routes from the `/{org}/{zone}` project drilldown. */
+ * segment separates org-global routes from the `/{org}/{project}` project drilldown. */
 export function globalHref(orgSlug: string, sub: string): string {
 	return `/${orgSlug}/~/${sub}`;
 }
 
-/** `/{org}/{zone}` — zone detail (its specs). */
-export function zoneHref(orgSlug: string, zoneSlug: string): string {
-	return `/${orgSlug}/${zoneSlug}`;
+/** `/{org}/{project}` — project (project) detail; resolves to its default environment. A
+ * project is the top-level unit under the org. */
+export function projectHref(orgSlug: string, projectSlug: string): string {
+	return `/${orgSlug}/${projectSlug}`;
 }
 
-/** `/{org}/{zone}/{spec}` — spec (app) detail; resolves to its default environment. */
-export function specHref(
+/** `/{org}/{project}/settings/{sub}` — a project-scoped settings page (context-aware mirror
+ * of the org `~/settings`). The literal `settings` segment is reserved per-project (see
+ * RESERVED_PROJECT_CHILD_SLUGS) so it never collides with an environment name. */
+export function projectSettingsHref(
 	orgSlug: string,
-	zoneSlug: string,
-	specSlug: string,
+	projectSlug: string,
+	sub: string,
 ): string {
-	return `/${orgSlug}/${zoneSlug}/${specSlug}`;
+	return `/${orgSlug}/${projectSlug}/settings/${sub}`;
 }
 
-/** `/{org}/{zone}/{spec}/{env}` — a specific environment of a spec. */
+/** Literal path segments that live directly under `/{org}/{project}` and therefore shadow an
+ * environment name — and `~` (the org-global scope), which a project slug must never be.
+ * `createProject` feeds these to `pickFreeSlug` so generated slugs skip them. */
+export const RESERVED_PROJECT_CHILD_SLUGS = ["settings"];
+
+/** `/{org}/{project}/{env}` — a specific environment of a project. */
 export function envHref(
 	orgSlug: string,
-	zoneSlug: string,
-	specSlug: string,
+	projectSlug: string,
 	envName: string,
 ): string {
-	return `/${orgSlug}/${zoneSlug}/${specSlug}/${envName}`;
+	return `/${orgSlug}/${projectSlug}/${envName}`;
 }
 
 /** Lowercases + slugifies a name (a-z0-9 and single dashes); "" → "". */
@@ -83,7 +90,7 @@ export function slugify(raw: string): string {
 
 /**
  * Picks a slug that doesn't collide with `taken` by appending `-2`, `-3`, …
- * (used by createZone / createSpec to keep the per-scope unique constraints).
+ * (used by createZone / createProject to keep the per-scope unique constraints).
  */
 export function pickFreeSlug(
 	base: string,
