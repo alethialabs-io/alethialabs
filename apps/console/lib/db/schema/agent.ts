@@ -6,7 +6,7 @@ import { index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-cor
 
 // Agent chat thread — a persisted conversation with the Alethia agent. Owner-scoped
 // (no cross-DB FK to auth.users). `messages` is the full AI SDK UIMessage[] transcript
-// stored as JSONB; `org_id` mirrors the zones/specs RLS pattern (community = user_id).
+// stored as JSONB; `org_id` mirrors the projects RLS pattern (community = user_id).
 export const agentThreads = pgTable(
 	"agent_threads",
 	{

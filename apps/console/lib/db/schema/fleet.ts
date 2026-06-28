@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Managed-fleet warm-pool specs (dataroom/spec/mvp/26-fleet-controller.md). One row = one
+// Managed-fleet warm-pool projects (dataroom/spec/mvp/26-fleet-controller.md). One row = one
 // declarative pool the Fleet Controller reconciles toward. This replaces the
 // `FLEET_POOLS` env var so pools are editable live from the console (the controller
 // re-reads enabled rows every tick). The managed fleet is platform-operator
 // infrastructure shared across all orgs, so these rows are GLOBAL (no org_id / no RLS):
 // all access goes through getServiceDb() gated by the `fleet` PDP resource (owner/admin).
-// Column shapes mirror FleetSpec (lib/fleet/types.ts) + the env zod schema
+// Column shapes mirror FleetTarget (lib/fleet/types.ts) + the env zod schema
 // (lib/fleet/config.ts) 1:1.
 
 import {

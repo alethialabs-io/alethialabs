@@ -23,14 +23,11 @@ import {
 } from "./enums";
 import { cloudIdentities } from "./identities";
 import { runners } from "./runners";
-import { specs } from "./specs";
-import { specEnvironments } from "./spec-environments";
-import { zones } from "./zones";
+import { projects } from "./projects";
+import { projectEnvironments } from "./project-environments";
 
 // Unified provisioning job queue. Claimed atomically by runners via the
-// claim_next_job RPC (FOR UPDATE SKIP LOCKED). `zone_id` is denormalized
-// (NOT NULL) so runner-lifecycle jobs — which have no spec — still carry a
-// scope; a trigger keeps it consistent with the spec's zone when spec_id is set.
+// claim_next_job RPC (FOR UPDATE SKIP LOCKED). Tenancy scope is `org_id`.
 export const jobs = pgTable(
 	"jobs",
 	{
@@ -38,24 +35,19 @@ export const jobs = pgTable(
 		user_id: uuid().notNull(),
 		// Coarse tenancy scope (RLS blast wall); community org_id = user_id via trigger.
 		org_id: uuid(),
-		// Nullable: jobs always have a runner but not necessarily a zone —
-		// cloud-hosted runners and runner-lifecycle / FETCH_RESOURCES /
-		// CONNECTION_TEST jobs have no spec → no zone. Denormalized scope for
-		// spec jobs only (kept in sync by the jobs_sync_zone trigger).
-		zone_id: uuid().references(() => zones.id, { onDelete: "set null" }),
-		spec_id: uuid().references(() => specs.id, { onDelete: "set null" }),
-		// M1: which environment of the spec this job provisions. NULL for
-		// runner-lifecycle / connection-test jobs (no spec). On delete set null so
+		project_id: uuid().references(() => projects.id, { onDelete: "set null" }),
+		// M1: which environment of the project this job provisions. NULL for
+		// runner-lifecycle / connection-test jobs (no project). On delete set null so
 		// removing an environment doesn't cascade away its job history.
-		environment_id: uuid().references(() => specEnvironments.id, {
+		environment_id: uuid().references(() => projectEnvironments.id, {
 			onDelete: "set null",
 		}),
 		cloud_identity_id: uuid().references(() => cloudIdentities.id, {
 			onDelete: "set null",
 		}),
 		job_type: provisionJobType().notNull(),
-		// Intentionally polymorphic per job_type: a frozen spec_full snapshot for
-		// spec jobs, a runner-deploy config for runner-lifecycle jobs, or {} for
+		// Intentionally polymorphic per job_type: a frozen project_full snapshot for
+		// project jobs, a runner-deploy config for runner-lifecycle jobs, or {} for
 		// connection-test/fetch jobs — so an open JSON record is the correct type.
 		config_snapshot: jsonb()
 			.$type<Record<string, unknown>>()
@@ -94,7 +86,6 @@ export const jobs = pgTable(
 	(t) => [
 		index("idx_jobs_user").on(t.user_id),
 		index("idx_jobs_org").on(t.org_id),
-		index("idx_jobs_zone").on(t.zone_id),
 		// Claim index — the hot path for claim_next_job: highest priority first, then
 		// oldest. (Cross-org fairness is layered on in the RPC.)
 		index("idx_jobs_queue")

@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Per-Spec component tables. All reference specs(spec_id) ON DELETE CASCADE;
-// singletons are UNIQUE on spec_id, multi-component tables UNIQUE on (spec_id, name)
-// — the composite/unique index also serves spec_id lookups, so no extra FK index.
+// Per-Project component tables. All reference projects(project_id) ON DELETE CASCADE;
+// singletons are UNIQUE on project_id, multi-component tables UNIQUE on (project_id, name)
+// — the composite/unique index also serves project_id lookups, so no extra FK index.
 
 import { sql } from "drizzle-orm";
 import {
@@ -45,27 +45,27 @@ import {
 	nosqlTableType,
 } from "./enums";
 import { cloudIdentities } from "./identities";
-import { specs } from "./specs";
+import { projects } from "./projects";
 
-const specRef = () =>
+const projectRef = () =>
 	uuid()
 		.notNull()
-		.references(() => specs.id, { onDelete: "cascade" });
+		.references(() => projects.id, { onDelete: "cascade" });
 // Per-resource cloud placement (the "versatile model"): each component may name
-// its own cloud identity instead of inheriting the spec's primary one. NULL means
-// "inherit specs.cloud_identity_id". on delete set null so removing an identity
+// its own cloud identity instead of inheriting the project's primary one. NULL means
+// "inherit projects.cloud_identity_id". on delete set null so removing an identity
 // just re-inherits rather than cascading the component away.
 const ownerRef = () =>
 	uuid().references(() => cloudIdentities.id, { onDelete: "set null" });
 const cost = () => numeric({ precision: 12, scale: 2, mode: "number" });
 const ts = () => timestamp({ withTimezone: true }).defaultNow().notNull();
 
-// ── Singletons (1:1 per spec) ────────────────────────────────────────────────
+// ── Singletons (1:1 per project) ────────────────────────────────────────────────
 
-export const specNetwork = pgTable("spec_network", {
+export const projectNetwork = pgTable("project_network", {
 	id: uuid().primaryKey().defaultRandom(),
-	spec_id: specRef().unique(),
-	// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+	project_id: projectRef().unique(),
+	// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 	cloud_identity_id: ownerRef(),
 	region: text(),
 	provision_network: boolean().default(true).notNull(),
@@ -80,10 +80,10 @@ export const specNetwork = pgTable("spec_network", {
 	updated_at: ts(),
 });
 
-export const specCluster = pgTable("spec_cluster", {
+export const projectCluster = pgTable("project_cluster", {
 	id: uuid().primaryKey().defaultRandom(),
-	spec_id: specRef().unique(),
-	// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+	project_id: projectRef().unique(),
+	// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 	cloud_identity_id: ownerRef(),
 	region: text(),
 	// No cloud-specific defaults: the provider mapper resolves the K8s version /
@@ -109,10 +109,10 @@ export const specCluster = pgTable("spec_cluster", {
 	updated_at: ts(),
 });
 
-export const specDns = pgTable("spec_dns", {
+export const projectDns = pgTable("project_dns", {
 	id: uuid().primaryKey().defaultRandom(),
-	spec_id: specRef().unique(),
-	// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+	project_id: projectRef().unique(),
+	// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 	cloud_identity_id: ownerRef(),
 	region: text(),
 	enabled: boolean().default(false).notNull(),
@@ -132,11 +132,11 @@ export const specDns = pgTable("spec_dns", {
 });
 
 // Observability component — no cloud-native default today; provider chooses the
-// backend (datadog / grafana / prometheus). Singleton per spec like DNS.
-export const specObservability = pgTable("spec_observability", {
+// backend (datadog / grafana / prometheus). Singleton per project like DNS.
+export const projectObservability = pgTable("project_observability", {
 	id: uuid().primaryKey().defaultRandom(),
-	spec_id: specRef().unique(),
-	// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+	project_id: projectRef().unique(),
+	// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 	cloud_identity_id: ownerRef(),
 	region: text(),
 	enabled: boolean().default(false).notNull(),
@@ -149,23 +149,23 @@ export const specObservability = pgTable("spec_observability", {
 	updated_at: ts(),
 });
 
-export const specRepositories = pgTable("spec_repositories", {
+export const projectRepositories = pgTable("project_repositories", {
 	id: uuid().primaryKey().defaultRandom(),
-	spec_id: specRef().unique(),
+	project_id: projectRef().unique(),
 	apps_destination_repo: text(),
 	created_at: ts(),
 	updated_at: ts(),
 });
 
-// ── Multi (1:N per spec, UNIQUE on (spec_id, name)) ───────────────────────────
+// ── Multi (1:N per project, UNIQUE on (project_id, name)) ───────────────────────────
 
-export const specDatabases = pgTable(
-	"spec_databases",
+export const projectDatabases = pgTable(
+	"project_databases",
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		spec_id: specRef(),
+		project_id: projectRef(),
 		name: text().notNull(),
-		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
 		region: text(),
 		// Provider-neutral: the mapper translates a generic engine family to the
@@ -188,16 +188,16 @@ export const specDatabases = pgTable(
 		created_at: ts(),
 		updated_at: ts(),
 	},
-	(t) => [unique("spec_databases_spec_id_name_key").on(t.spec_id, t.name)],
+	(t) => [unique("project_databases_project_id_name_key").on(t.project_id, t.name)],
 );
 
-export const specCaches = pgTable(
-	"spec_caches",
+export const projectCaches = pgTable(
+	"project_caches",
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		spec_id: specRef(),
+		project_id: projectRef(),
 		name: text().notNull(),
-		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
 		region: text(),
 		engine: cacheEngine().default("redis"),
@@ -217,16 +217,16 @@ export const specCaches = pgTable(
 		created_at: ts(),
 		updated_at: ts(),
 	},
-	(t) => [unique("spec_caches_spec_id_name_key").on(t.spec_id, t.name)],
+	(t) => [unique("project_caches_project_id_name_key").on(t.project_id, t.name)],
 );
 
-export const specQueues = pgTable(
-	"spec_queues",
+export const projectQueues = pgTable(
+	"project_queues",
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		spec_id: specRef(),
+		project_id: projectRef(),
 		name: text().notNull(),
-		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
 		region: text(),
 		ordered: boolean().default(false),
@@ -241,16 +241,16 @@ export const specQueues = pgTable(
 		created_at: ts(),
 		updated_at: ts(),
 	},
-	(t) => [unique("spec_queues_spec_id_name_key").on(t.spec_id, t.name)],
+	(t) => [unique("project_queues_project_id_name_key").on(t.project_id, t.name)],
 );
 
-export const specTopics = pgTable(
-	"spec_topics",
+export const projectTopics = pgTable(
+	"project_topics",
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		spec_id: specRef(),
+		project_id: projectRef(),
 		name: text().notNull(),
-		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
 		region: text(),
 		subscriptions: jsonb().$type<TopicSubscription[]>().default([]),
@@ -260,16 +260,16 @@ export const specTopics = pgTable(
 		created_at: ts(),
 		updated_at: ts(),
 	},
-	(t) => [unique("spec_topics_spec_id_name_key").on(t.spec_id, t.name)],
+	(t) => [unique("project_topics_project_id_name_key").on(t.project_id, t.name)],
 );
 
-export const specNosqlTables = pgTable(
-	"spec_nosql_tables",
+export const projectNosqlTables = pgTable(
+	"project_nosql_tables",
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		spec_id: specRef(),
+		project_id: projectRef(),
 		name: text().notNull(),
-		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
 		region: text(),
 		table_type: nosqlTableType().default("standard"),
@@ -287,16 +287,16 @@ export const specNosqlTables = pgTable(
 		created_at: ts(),
 		updated_at: ts(),
 	},
-	(t) => [unique("spec_nosql_tables_spec_id_name_key").on(t.spec_id, t.name)],
+	(t) => [unique("project_nosql_tables_project_id_name_key").on(t.project_id, t.name)],
 );
 
-export const specContainerRegistries = pgTable(
-	"spec_container_registries",
+export const projectContainerRegistries = pgTable(
+	"project_container_registries",
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		spec_id: specRef(),
+		project_id: projectRef(),
 		name: text().notNull(),
-		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
 		region: text(),
 		// Pluggable provider selector (connectors.slug). NULL / "native" = the
@@ -311,17 +311,17 @@ export const specContainerRegistries = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
-		unique("spec_container_registries_spec_id_name_key").on(t.spec_id, t.name),
+		unique("project_container_registries_project_id_name_key").on(t.project_id, t.name),
 	],
 );
 
-export const specSecrets = pgTable(
-	"spec_secrets",
+export const projectSecrets = pgTable(
+	"project_secrets",
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		spec_id: specRef(),
+		project_id: projectRef(),
 		name: text().notNull(),
-		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
 		region: text(),
 		// Pluggable provider selector (connectors.slug). NULL / "native" = the
@@ -337,16 +337,16 @@ export const specSecrets = pgTable(
 		created_at: ts(),
 		updated_at: ts(),
 	},
-	(t) => [unique("spec_secrets_spec_id_name_key").on(t.spec_id, t.name)],
+	(t) => [unique("project_secrets_project_id_name_key").on(t.project_id, t.name)],
 );
 
-export const specStorageBuckets = pgTable(
-	"spec_storage_buckets",
+export const projectStorageBuckets = pgTable(
+	"project_storage_buckets",
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		spec_id: specRef(),
+		project_id: projectRef(),
 		name: text().notNull(),
-		// Per-resource cloud placement — NULL inherits specs.cloud_identity_id / region.
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
 		region: text(),
 		versioning: boolean().default(false),
@@ -362,14 +362,14 @@ export const specStorageBuckets = pgTable(
 		created_at: ts(),
 		updated_at: ts(),
 	},
-	(t) => [unique("spec_storage_buckets_spec_id_name_key").on(t.spec_id, t.name)],
+	(t) => [unique("project_storage_buckets_project_id_name_key").on(t.project_id, t.name)],
 );
 
-export const specGitCredentials = pgTable(
-	"spec_git_credentials",
+export const projectGitCredentials = pgTable(
+	"project_git_credentials",
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		spec_id: specRef(),
+		project_id: projectRef(),
 		purpose: gitCredentialPurpose().notNull(),
 		method: gitCredentialMethod().notNull(),
 		provider_identity_id: uuid(),
@@ -378,7 +378,7 @@ export const specGitCredentials = pgTable(
 	},
 	(t) => [
 		check(
-			"spec_git_credentials_source_ck",
+			"project_git_credentials_source_ck",
 			sql`${t.provider_identity_id} IS NOT NULL OR ${t.secret_ref} IS NOT NULL`,
 		),
 	],
@@ -389,7 +389,7 @@ export const auditLog = pgTable(
 	"audit_log",
 	{
 		id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity(),
-		spec_id: specRef(),
+		project_id: projectRef(),
 		user_id: uuid().notNull(),
 		action: auditAction().notNull(),
 		component_type: text(),
@@ -397,5 +397,5 @@ export const auditLog = pgTable(
 		changes: jsonb().$type<AuditChanges>(),
 		created_at: ts(),
 	},
-	(t) => [index("idx_audit_log_spec").on(t.spec_id)],
+	(t) => [index("idx_audit_log_project").on(t.project_id)],
 );
