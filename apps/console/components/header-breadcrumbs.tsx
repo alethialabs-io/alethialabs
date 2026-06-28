@@ -12,14 +12,15 @@ import {
 	BreadcrumbSeparator,
 } from "@repo/ui/breadcrumb";
 import { JOB_TYPES } from "@/components/jobs/columns";
-import { useZonesStore } from "@/lib/stores/use-zones-store";
+import { useProjectsStore } from "@/lib/stores/use-projects-store";
 import { useJobsStore } from "@/lib/stores/use-jobs-store";
+import { projectHref } from "@/lib/routing";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Fragment, useMemo } from "react";
 
 const SEGMENT_LABELS: Record<string, string> = {
-	"design-spec": "Create a Spec",
+	"design-project": "Create a Project",
 	clusters: "Clusters",
 	jobs: "Jobs",
 	connectors: "Connectors",
@@ -32,10 +33,16 @@ const SEGMENT_LABELS: Record<string, string> = {
 	roles: "Roles",
 	access: "Access",
 	sso: "Single Sign-On",
-	audit: "Audit Log",
+	activity: "Activity",
 	billing: "Billing",
 	usage: "Usage",
+	agent: "Agent",
 };
+
+/** A nice label for a URL segment: the map first, else a capitalized fallback. */
+function segmentLabel(seg: string): string {
+	return SEGMENT_LABELS[seg] ?? seg.charAt(0).toUpperCase() + seg.slice(1);
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -47,15 +54,18 @@ interface Crumb {
 /** Branding + route-aware breadcrumb bar for the dashboard header. */
 export function HeaderBreadcrumbs() {
 	const pathname = usePathname();
-	const { zones } = useZonesStore();
+	const { projects } = useProjectsStore();
 	const { jobs } = useJobsStore();
 
 	const crumbs = useMemo(() => {
-		// C2 slug drilldown `/{org}/{zone}/{spec}/{env}` — resolve names from the store
-		// (the OrgSwitcher already shows the org, so the trail starts at the zone).
+		// C2 slug drilldown `/{org}/{project}/{env}` — resolve the project name from the
+		// store (the OrgSwitcher already shows the org, so the trail starts at the project).
 		const segs = pathname.split("/").filter(Boolean);
 		if (segs.length >= 1 && segs[0] !== "dashboard") {
 			const [orgSeg, second] = segs;
+
+			// Bare org overview `/{org}` — the trail is just the current page.
+			if (segs.length === 1) return [{ label: "Overview" }];
 
 			// `/{org}/~/{page}[/…]` — an org-global page. Label from SEGMENT_LABELS
 			// (jobs/runners/settings/general/…), resolving job UUIDs by type.
@@ -65,9 +75,9 @@ export function HeaderBreadcrumbs() {
 				for (let j = 0; j < rest.length; j++) {
 					const s = rest[j];
 					const isLast = j === rest.length - 1;
-					if (SEGMENT_LABELS[s]) {
+					if (!UUID_RE.test(s)) {
 						out.push({
-							label: SEGMENT_LABELS[s],
+							label: segmentLabel(s),
 							href: isLast
 								? undefined
 								: `/${orgSeg}/~/${rest.slice(0, j + 1).join("/")}`,
@@ -88,23 +98,17 @@ export function HeaderBreadcrumbs() {
 				return out;
 			}
 
-			const [, zoneSlug, specSlug, envSeg] = segs;
+			// `/{org}/{project}[/{env}]` — project → env.
+			const [, projectSlug, envSeg] = segs;
 			const out: Crumb[] = [];
-			const z = zones.find((v) => v.slug === zoneSlug);
-			if (zoneSlug) {
+			const project = projects.find((p) => p.slug === projectSlug);
+			if (projectSlug) {
 				out.push({
-					label: z?.name ?? zoneSlug,
-					href: specSlug ? `/${orgSeg}/${zoneSlug}` : undefined,
+					label: project?.project_name ?? projectSlug,
+					href: envSeg ? projectHref(orgSeg, projectSlug) : undefined,
 				});
 			}
-			if (specSlug) {
-				const sp = z?.specs.find((v) => v.slug === specSlug);
-				out.push({
-					label: sp?.project_name ?? specSlug,
-					href: envSeg ? `/${orgSeg}/${zoneSlug}/${specSlug}` : undefined,
-				});
-			}
-			if (envSeg) out.push({ label: envSeg });
+			if (envSeg) out.push({ label: envSeg, href: undefined });
 			return out;
 		}
 
@@ -127,30 +131,6 @@ export function HeaderBreadcrumbs() {
 				continue;
 			}
 
-			if (seg === "zones") {
-				const zoneId = raw[i + 1];
-				if (zoneId && UUID_RE.test(zoneId)) {
-					const z = zones.find((v) => v.id === zoneId);
-					const zoneName = z?.name ?? zoneId.slice(0, 8) + "…";
-					const specId = raw[i + 2] === "specs" ? raw[i + 3] : undefined;
-
-					if (specId && UUID_RE.test(specId)) {
-						const spec = z?.specs.find((v) => v.id === specId);
-						const specName = spec?.project_name ?? specId.slice(0, 8) + "…";
-						result.push({ label: zoneName, href: `/dashboard/zones/${zoneId}` });
-						result.push({ label: specName });
-						i += 4;
-					} else {
-						result.push({ label: zoneName });
-						i += 2;
-					}
-				} else {
-					result.push({ label: "Zones" });
-					i++;
-				}
-				continue;
-			}
-
 			if (UUID_RE.test(seg)) {
 				const prev = raw[i - 1];
 				if (prev === "jobs") {
@@ -170,7 +150,7 @@ export function HeaderBreadcrumbs() {
 		}
 
 		return result;
-	}, [pathname, zones, jobs]);
+	}, [pathname, projects, jobs]);
 
 	// On /dashboard there are no route crumbs — the bar is just "[·] / Org".
 	if (crumbs.length === 0) return null;
@@ -178,10 +158,10 @@ export function HeaderBreadcrumbs() {
 	return (
 		<Breadcrumb>
 			<BreadcrumbList className="flex-nowrap">
-				{/* Route segments. The leading separator divides the org switcher from the trail. */}
+				{/* Separators sit between crumbs only — no leading chevron. */}
 				{crumbs.map((crumb, i) => (
 					<Fragment key={crumb.href ?? crumb.label}>
-						<BreadcrumbSeparator />
+						{i > 0 && <BreadcrumbSeparator />}
 						<BreadcrumbItem className="min-w-0">
 							{i < crumbs.length - 1 && crumb.href ? (
 								<BreadcrumbLink asChild>
