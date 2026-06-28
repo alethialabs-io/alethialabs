@@ -3,8 +3,8 @@
 #
 # One SES domain identity per stream, with Easy DKIM (RSA-2048) and a custom
 # MAIL FROM subdomain (bounce.<subdomain>) so SPF/bounces align under our domain
-# and DMARC passes. DKIM tokens + the MAIL FROM endpoint are published to DNS in
-# dns.tf.
+# and DMARC passes. The DKIM tokens + MAIL FROM endpoint must be published as DNS
+# records (managed externally — see README; not by this stack).
 
 resource "aws_sesv2_email_identity" "stream" {
   for_each = var.streams

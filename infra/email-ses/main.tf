@@ -6,7 +6,8 @@
 # with DKIM + custom MAIL FROM, per-stream configuration sets that route
 # bounce/complaint events to SNS (→ the console /api/webhooks/ses handler →
 # suppression list), account VDM, reputation alarms, and a least-privilege send
-# policy on the existing runtime user. Cloudflare owns the DNS so it never drifts.
+# policy on the existing runtime user. DNS (DKIM/MAIL FROM/DMARC) is managed
+# externally — not by this stack — so it stays AWS-only and provider-agnostic.
 #
 # Send-only — there is no inbound (receipt rules / S3 spool) here.
 

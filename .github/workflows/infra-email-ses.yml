@@ -16,10 +16,6 @@ env:
   TF_DIR: infra/email-ses
   TOFU_VERSION: "1.10.10"
 
-  # OpenTofu variables.
-  TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-  TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
-
 jobs:
   plan:
     if: github.event_name == 'pull_request'

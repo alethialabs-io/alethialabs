@@ -7,7 +7,7 @@ output "identity_arns" {
 }
 
 output "dkim_tokens" {
-  description = "Easy-DKIM CNAME tokens per stream (already published to Cloudflare)."
+  description = "Easy-DKIM tokens per stream — publish as <token>._domainkey.<sub> CNAMEs."
   value       = { for k, id in aws_sesv2_email_identity.stream : k => id.dkim_signing_attributes[0].tokens }
 }
 

@@ -8,20 +8,9 @@ variable "aws_region" {
 }
 
 variable "domain" {
-  description = "Root domain. Sending subdomains and _dmarc hang off this."
+  description = "Root domain. Sending subdomains hang off this."
   type        = string
   default     = "alethialabs.io"
-}
-
-variable "cloudflare_api_token" {
-  description = "Cloudflare API token with DNS edit on the zone."
-  type        = string
-  sensitive   = true
-}
-
-variable "cloudflare_zone_id" {
-  description = "Cloudflare zone ID for var.domain."
-  type        = string
 }
 
 # Reputation-isolated sending streams. Each gets its own SES domain identity,
@@ -36,22 +25,6 @@ variable "streams" {
   default = {
     auth    = { subdomain = "auth" } # auth.<domain> — AUTH_EMAIL_FROM
     general = { subdomain = "mail" } # mail.<domain> — EMAIL_FROM
-  }
-}
-
-variable "dmarc_rua" {
-  description = "DMARC aggregate-report mailbox (rua=). Must be a real inbox."
-  type        = string
-  default     = "mailto:dmarc@alethialabs.io"
-}
-
-variable "dmarc_policy" {
-  description = "DMARC policy. Start at none; tighten to quarantine/reject once reports are clean."
-  type        = string
-  default     = "none"
-  validation {
-    condition     = contains(["none", "quarantine", "reject"], var.dmarc_policy)
-    error_message = "dmarc_policy must be none, quarantine, or reject."
   }
 }
 

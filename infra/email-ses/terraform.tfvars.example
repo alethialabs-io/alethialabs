@@ -3,15 +3,11 @@
 # — these must be ADMIN creds for the SES account (270587882865); the runtime
 # send-only key cannot create anything.
 
-cloudflare_api_token = "YOUR_CLOUDFLARE_API_TOKEN"
-cloudflare_zone_id   = "YOUR_CLOUDFLARE_ZONE_ID"
-
 aws_region = "eu-central-1"
 domain     = "alethialabs.io"
 
-# DMARC — start at none, tighten once aggregate reports look clean.
-dmarc_policy = "none"
-dmarc_rua    = "mailto:dmarc@alethialabs.io"
+# DNS (DKIM / MAIL FROM / DMARC) is NOT managed here — set those records once with
+# your DNS provider (see README). This stack only manages AWS-side SES resources.
 
 # Inbox for reputation alarms (leave "" to skip the email subscription).
 alarm_email = "borislav@alethialabs.io"
