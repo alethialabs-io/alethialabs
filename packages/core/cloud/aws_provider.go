@@ -23,7 +23,7 @@ func (p *awsProvider) RequiredCLIs() []string {
 	return []string{"aws-iam-authenticator", "kubectl", "helm"}
 }
 
-func (p *awsProvider) ProviderTfvars(config *types.SpecConfig) map[string]interface{} {
+func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	enableKarpenter := false
 	if v, ok := config.Cluster.ProviderConfig["enable_karpenter"]; ok {
 		if b, ok := v.(bool); ok {
@@ -208,7 +208,7 @@ func providerInt(cfg map[string]any, key string) (int, bool) {
 // s3SSEAlgorithm resolves the S3 server-side-encryption algorithm from the
 // bucket's provider_config (encryption_algorithm), defaulting to AES256 when
 // encryption is enabled.
-func s3SSEAlgorithm(b types.SpecStorageBucketConfig) string {
+func s3SSEAlgorithm(b types.ProjectStorageBucketConfig) string {
 	if b.ProviderConfig != nil {
 		if v, ok := b.ProviderConfig["encryption_algorithm"].(string); ok && v != "" {
 			return v
@@ -224,7 +224,7 @@ func derefIntOr(p *int, def int) int {
 	return def
 }
 
-func buildSQSQueues(queues []types.SpecQueueConfig, topics []types.SpecTopicConfig) map[string]interface{} {
+func buildSQSQueues(queues []types.ProjectQueueConfig, topics []types.ProjectTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, q := range queues {
 		cfg := map[string]interface{}{
@@ -248,7 +248,7 @@ func buildSQSQueues(queues []types.SpecQueueConfig, topics []types.SpecTopicConf
 	return result
 }
 
-func buildSNSTopics(topics []types.SpecTopicConfig) map[string]interface{} {
+func buildSNSTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
 		subs := []map[string]string{}
@@ -265,7 +265,7 @@ func buildSNSTopics(topics []types.SpecTopicConfig) map[string]interface{} {
 	return result
 }
 
-func (p *awsProvider) ConfigureKubeconfig(ctx context.Context, config *types.SpecConfig, outputs map[string]interface{}, stdout io.Writer) error {
+func (p *awsProvider) ConfigureKubeconfig(ctx context.Context, config *types.ProjectConfig, outputs map[string]interface{}, stdout io.Writer) error {
 	clusterName := ExtractClusterName(outputs)
 	if clusterName == "" {
 		return fmt.Errorf("no EKS cluster name in outputs")
@@ -327,7 +327,7 @@ users:
 	return nil
 }
 
-func buildSecrets(secrets []types.SpecSecretConfig) []map[string]interface{} {
+func buildSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
 		entry := map[string]interface{}{
@@ -344,7 +344,7 @@ func buildSecrets(secrets []types.SpecSecretConfig) []map[string]interface{} {
 	return result
 }
 
-func hasGlobalTables(tables []types.SpecNosqlConfig) bool {
+func hasGlobalTables(tables []types.ProjectNosqlConfig) bool {
 	for _, t := range tables {
 		if t.TableType == "global" {
 			return true
@@ -353,7 +353,7 @@ func hasGlobalTables(tables []types.SpecNosqlConfig) bool {
 	return false
 }
 
-func buildDDBTables(tables []types.SpecNosqlConfig, tableType string) []map[string]interface{} {
+func buildDDBTables(tables []types.ProjectNosqlConfig, tableType string) []map[string]interface{} {
 	result := []map[string]interface{}{}
 	for _, t := range tables {
 		if t.TableType != tableType {
@@ -373,7 +373,7 @@ func buildDDBTables(tables []types.SpecNosqlConfig, tableType string) []map[stri
 	return result
 }
 
-func buildS3Buckets(buckets []types.SpecStorageBucketConfig) []map[string]interface{} {
+func buildS3Buckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
 		blockPublic := !b.PublicAccess

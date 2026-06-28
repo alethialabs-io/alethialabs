@@ -14,8 +14,8 @@ import (
 type CloudProvider interface {
 	Name() string
 	RequiredCLIs() []string
-	ProviderTfvars(config *types.SpecConfig) map[string]interface{}
-	ConfigureKubeconfig(ctx context.Context, config *types.SpecConfig, outputs map[string]interface{}, stdout io.Writer) error
+	ProviderTfvars(config *types.ProjectConfig) map[string]interface{}
+	ConfigureKubeconfig(ctx context.Context, config *types.ProjectConfig, outputs map[string]interface{}, stdout io.Writer) error
 }
 
 func NewCloudProvider(provider string) (CloudProvider, error) {

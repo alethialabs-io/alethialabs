@@ -12,7 +12,7 @@ type RepoFile struct {
 
 // RepoDigest is the deterministic, STATIC analysis of a repository produced by an
 // ANALYZE_REPO job (clone + walk + parse — NO repo code is executed). The console
-// feeds it to the model to infer the infrastructure a Spec should provision. It is
+// feeds it to the model to infer the infrastructure a Project should provision. It is
 // stored on jobs.execution_metadata.repo_digest.
 type RepoDigest struct {
 	RepoURL      string         `json:"repo_url"`

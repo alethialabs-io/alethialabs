@@ -127,19 +127,19 @@ func TestIntegration_GetRunners(t *testing.T) {
 	}
 }
 
-func TestIntegration_GetSpecClusters(t *testing.T) {
+func TestIntegration_GetClusters(t *testing.T) {
 	token := loadTestToken(t)
 	client := NewClient(token)
 
-	clusters, err := client.GetSpecClusters()
-	skipOnAuthOrNotFound(t, err, "GetSpecClusters")
+	clusters, err := client.GetClusters()
+	skipOnAuthOrNotFound(t, err, "GetClusters")
 	if err != nil {
-		t.Fatalf("GetSpecClusters failed: %v", err)
+		t.Fatalf("GetClusters failed: %v", err)
 	}
 
 	t.Logf("Found %d clusters", len(clusters))
 	for _, c := range clusters {
-		t.Logf("  %s — %s (%s) [%s]", c.SpecProjectName, c.ClusterName, c.ClusterVersion, c.Status)
+		t.Logf("  %s — %s (%s) [%s]", c.ProjectName, c.ClusterName, c.ClusterVersion, c.Status)
 
 		validStatuses := map[string]bool{
 			"PENDING": true, "CREATING": true, "ACTIVE": true,
@@ -181,7 +181,7 @@ func TestIntegration_GetJobs(t *testing.T) {
 	token := loadTestToken(t)
 	client := NewClient(token)
 
-	page, err := client.GetJobs("", "", 20, 0)
+	page, err := client.GetJobs("", 20, 0)
 	jobs := page.Jobs
 	skipOnAuthOrNotFound(t, err, "GetJobs")
 	if err != nil {
@@ -224,7 +224,7 @@ func TestIntegration_GetJob_FirstFromList(t *testing.T) {
 	token := loadTestToken(t)
 	client := NewClient(token)
 
-	page, err := client.GetJobs("", "", 20, 0)
+	page, err := client.GetJobs("", 20, 0)
 	jobs := page.Jobs
 	skipOnAuthOrNotFound(t, err, "GetJobs")
 	if err != nil {

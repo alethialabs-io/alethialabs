@@ -13,8 +13,8 @@ func TestValidatePlacement(t *testing.T) {
 	const core = "id-core"
 	const other = "id-other"
 
-	coreDB := func(id string) types.SpecDatabaseConfig {
-		return types.SpecDatabaseConfig{
+	coreDB := func(id string) types.ProjectDatabaseConfig {
+		return types.ProjectDatabaseConfig{
 			Placement: types.Placement{CloudIdentityID: id},
 			Name:      "primary",
 		}
@@ -22,39 +22,39 @@ func TestValidatePlacement(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		vc      *types.SpecConfig
+		vc      *types.ProjectConfig
 		wantErr bool
 	}{
 		{
 			name:    "all inherit (empty placements) — ok",
-			vc:      &types.SpecConfig{CloudIdentityID: core, Databases: []types.SpecDatabaseConfig{{Name: "primary"}}},
+			vc:      &types.ProjectConfig{CloudIdentityID: core, Databases: []types.ProjectDatabaseConfig{{Name: "primary"}}},
 			wantErr: false,
 		},
 		{
 			name:    "core resource explicitly on primary — ok",
-			vc:      &types.SpecConfig{CloudIdentityID: core, Databases: []types.SpecDatabaseConfig{coreDB(core)}},
+			vc:      &types.ProjectConfig{CloudIdentityID: core, Databases: []types.ProjectDatabaseConfig{coreDB(core)}},
 			wantErr: false,
 		},
 		{
 			name:    "core database on foreign cloud — gated",
-			vc:      &types.SpecConfig{CloudIdentityID: core, Databases: []types.SpecDatabaseConfig{coreDB(other)}},
+			vc:      &types.ProjectConfig{CloudIdentityID: core, Databases: []types.ProjectDatabaseConfig{coreDB(other)}},
 			wantErr: true,
 		},
 		{
 			name: "core cluster on foreign cloud — gated",
-			vc: &types.SpecConfig{
+			vc: &types.ProjectConfig{
 				CloudIdentityID: core,
-				Cluster:         types.SpecClusterConfig{Placement: types.Placement{CloudIdentityID: other}},
+				Cluster:         types.ProjectClusterConfig{Placement: types.Placement{CloudIdentityID: other}},
 			},
 			wantErr: true,
 		},
 		{
 			name: "periphery (dns/secrets/storage) on foreign cloud — ok",
-			vc: &types.SpecConfig{
+			vc: &types.ProjectConfig{
 				CloudIdentityID: core,
-				DNS:             types.SpecDNSConfig{Placement: types.Placement{CloudIdentityID: other}},
-				Secrets:         []types.SpecSecretConfig{{Placement: types.Placement{CloudIdentityID: other}, Name: "s"}},
-				StorageBuckets:  []types.SpecStorageBucketConfig{{Placement: types.Placement{CloudIdentityID: other}, Name: "b"}},
+				DNS:             types.ProjectDNSConfig{Placement: types.Placement{CloudIdentityID: other}},
+				Secrets:         []types.ProjectSecretConfig{{Placement: types.Placement{CloudIdentityID: other}, Name: "s"}},
+				StorageBuckets:  []types.ProjectStorageBucketConfig{{Placement: types.Placement{CloudIdentityID: other}, Name: "b"}},
 			},
 			wantErr: false,
 		},

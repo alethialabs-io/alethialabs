@@ -56,15 +56,14 @@ type ConfigurationExport struct {
 // ProvisionJob mirrors the `jobs` wire contract (see
 // apps/console/lib/validations/cli-contract.ts → jobWire). Every column the
 // backend returns has a field here; the list endpoint additionally populates
-// SpecName/RunnerName. Nullable columns arrive as JSON null, which Go decodes to
+// ProjectName/RunnerName. Nullable columns arrive as JSON null, which Go decodes to
 // the zero value, so scalar nullables stay as plain strings.
 type ProvisionJob struct {
 	ID                string                  `json:"id"`
 	UserID            string                  `json:"user_id"`
 	OrgID             string                  `json:"org_id"`
 	JobType           string                  `json:"job_type"`
-	ZoneID            string                  `json:"zone_id"`
-	SpecID            string                  `json:"spec_id"`
+	ProjectID         string                  `json:"project_id"`
 	CloudIdentityID   string                  `json:"cloud_identity_id"`
 	RunnerID          string                  `json:"runner_id"`
 	AssignedRunnerID  string                  `json:"assigned_runner_id"`
@@ -82,8 +81,8 @@ type ProvisionJob struct {
 	CreatedAt         time.Time               `json:"created_at"`
 	UpdatedAt         time.Time               `json:"updated_at"`
 	// List-only display fields (GET /api/jobs); absent on the single-job GET.
-	SpecName   string `json:"spec_name,omitempty"`
-	RunnerName string `json:"runner_name,omitempty"`
+	ProjectName string `json:"project_name,omitempty"`
+	RunnerName  string `json:"runner_name,omitempty"`
 }
 
 type JobsPage struct {
@@ -114,7 +113,7 @@ type Runner struct {
 	CreatedAt          time.Time `json:"created_at"`
 }
 
-type SpecCluster struct {
+type ClusterSummary struct {
 	ID                   string   `json:"id"`
 	ClusterName          string   `json:"cluster_name"`
 	ClusterVersion       string   `json:"cluster_version"`
@@ -128,9 +127,9 @@ type SpecCluster struct {
 	EstimatedMonthlyCost *float64 `json:"estimated_monthly_cost"`
 	CreatedAt            string   `json:"created_at"`
 	UpdatedAt            string   `json:"updated_at"`
-	SpecProjectName      string   `json:"spec_project_name"`
-	SpecEnvironment      string   `json:"spec_environment"`
-	SpecRegion           string   `json:"spec_region"`
+	ProjectName          string   `json:"project_name"`
+	Environment          string   `json:"environment"`
+	Region               string   `json:"region"`
 }
 
 type CloudIdentity struct {
@@ -138,26 +137,6 @@ type CloudIdentity struct {
 	Provider  string `json:"provider"`
 	Label     string `json:"label"`
 	CreatedAt string `json:"created_at"`
-}
-
-// ZoneSpec is a spec as nested under a zone (GET /api/cli/zones).
-type ZoneSpec struct {
-	ID               string `json:"id"`
-	ProjectName      string `json:"project_name"`
-	EnvironmentStage string `json:"environment_stage"`
-	Status           string `json:"status"`
-	Region           string `json:"region"`
-}
-
-// ZoneWithSpecs mirrors the zoneWire contract — a zone plus its nested specs.
-type ZoneWithSpecs struct {
-	ID          string     `json:"id"`
-	UserID      string     `json:"user_id"`
-	Name        string     `json:"name"`
-	Description *string    `json:"description"`
-	CreatedAt   string     `json:"created_at"`
-	UpdatedAt   string     `json:"updated_at"`
-	Specs       []ZoneSpec `json:"specs"`
 }
 
 type DeployRunnerResponse struct {
@@ -174,7 +153,6 @@ type DeployRunnerResponse struct {
 
 type QueueJobParams struct {
 	JobType          string
-	ZoneID           string
 	ConfigurationID  string
 	CloudIdentityID  string
 	AssignedRunnerID string
@@ -327,7 +305,7 @@ func (c *Client) GetRepositories(provider string) ([]Repository, error) {
 	return successResp.Repositories, nil
 }
 
-// --- Configurations (Specs) ---
+// --- Configurations (Projects) ---
 
 func (c *Client) GetConfigurations() ([]types.ConfigurationSummary, error) {
 	endpoint := fmt.Sprintf("%s/cli/configurations", c.baseURL)
@@ -372,7 +350,6 @@ func (c *Client) QueueJobWithParams(params QueueJobParams) (*ProvisionJob, error
 	endpoint := fmt.Sprintf("%s/jobs", c.baseURL)
 	payload := map[string]interface{}{
 		"job_type": params.JobType,
-		"zone_id":  params.ZoneID,
 	}
 	if params.ConfigurationID != "" {
 		payload["configuration_id"] = params.ConfigurationID
@@ -399,14 +376,11 @@ func (c *Client) QueueJobWithParams(params QueueJobParams) (*ProvisionJob, error
 	return successResp.Job, nil
 }
 
-func (c *Client) GetJobs(status, zoneID string, limit, offset int) (*JobsPage, error) {
+func (c *Client) GetJobs(status string, limit, offset int) (*JobsPage, error) {
 	endpoint := fmt.Sprintf("%s/jobs", c.baseURL)
 	params := url.Values{}
 	if status != "" {
 		params.Set("status", status)
-	}
-	if zoneID != "" {
-		params.Set("zone_id", zoneID)
 	}
 	if limit > 0 {
 		params.Set("limit", fmt.Sprintf("%d", limit))
@@ -493,12 +467,12 @@ func (c *Client) DeployRunner(name, cloudIdentityID, region, assignedRunnerID st
 	return &resp, nil
 }
 
-// --- Clusters (Spec Clusters) ---
+// --- Clusters (Project Clusters) ---
 
-func (c *Client) GetSpecClusters() ([]SpecCluster, error) {
+func (c *Client) GetClusters() ([]ClusterSummary, error) {
 	endpoint := fmt.Sprintf("%s/cli/clusters", c.baseURL)
 	var successResp struct {
-		Clusters []SpecCluster `json:"clusters"`
+		Clusters []ClusterSummary `json:"clusters"`
 	}
 	if err := c.doGet(endpoint, &successResp); err != nil {
 		return nil, fmt.Errorf("failed to get clusters: %w", err)
@@ -521,15 +495,14 @@ func (c *Client) SendLog(deploymentID string, log LogEntry) error {
 
 type BootstrapJob struct {
 	ID           string    `json:"id"`
-	ZoneID       string    `json:"zone_id"`
 	Status       string    `json:"status"`
 	ErrorMessage *string   `json:"error_message,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-func (c *Client) CreateBootstrapJob(zoneID string) (*BootstrapJob, error) {
+func (c *Client) CreateBootstrapJob() (*BootstrapJob, error) {
 	endpoint := fmt.Sprintf("%s/cli/bootstrap-jobs", c.baseURL)
-	payload := map[string]string{"zone_id": zoneID}
+	payload := map[string]string{}
 	var successResp struct {
 		Job *BootstrapJob `json:"job"`
 	}
@@ -568,11 +541,11 @@ type ClusterRegistrationResponse struct {
 	AgentToken string `json:"agent_token"`
 }
 
-func (c *Client) RegisterCluster(name, vpcID, vpcCidr, region, zoneID string) (*ClusterRegistrationResponse, error) {
+func (c *Client) RegisterCluster(name, vpcID, vpcCidr, region string) (*ClusterRegistrationResponse, error) {
 	endpoint := fmt.Sprintf("%s/cli/clusters", c.baseURL)
 	payload := map[string]string{
 		"name": name, "vpc_id": vpcID, "vpc_cidr": vpcCidr,
-		"region": region, "zone_id": zoneID,
+		"region": region,
 	}
 	var resp ClusterRegistrationResponse
 	if err := c.doPost(endpoint, payload, &resp); err != nil {
@@ -614,42 +587,6 @@ func (c *Client) SendBootstrapLog(jobID string, logChunk string, streamType stri
 		"stream_type": streamType,
 	}
 	return c.doPost(endpoint, payload, nil)
-}
-
-// --- Zones ---
-
-func (c *Client) GetZones() ([]ZoneWithSpecs, error) {
-	endpoint := fmt.Sprintf("%s/cli/zones", c.baseURL)
-	var successResp struct {
-		Zones []ZoneWithSpecs `json:"zones"`
-	}
-	if err := c.doGet(endpoint, &successResp); err != nil {
-		return nil, fmt.Errorf("failed to get zones: %w", err)
-	}
-	return successResp.Zones, nil
-}
-
-func (c *Client) CreateZone(name, description string) (*types.Zone, error) {
-	endpoint := fmt.Sprintf("%s/cli/zones", c.baseURL)
-	payload := map[string]string{"name": name}
-	if description != "" {
-		payload["description"] = description
-	}
-	var successResp struct {
-		Zone *types.Zone `json:"zone"`
-	}
-	if err := c.doPost(endpoint, payload, &successResp); err != nil {
-		return nil, fmt.Errorf("failed to create zone: %w", err)
-	}
-	return successResp.Zone, nil
-}
-
-func (c *Client) DeleteZone(id string) error {
-	endpoint := fmt.Sprintf("%s/cli/zones/%s", c.baseURL, id)
-	if err := c.doDelete(endpoint); err != nil {
-		return fmt.Errorf("failed to delete zone: %w", err)
-	}
-	return nil
 }
 
 // --- Cloud Identities ---

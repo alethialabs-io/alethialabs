@@ -81,19 +81,9 @@ func TestContract_Runners(t *testing.T) {
 	}{resp.Runners})
 }
 
-func TestContract_Zones(t *testing.T) {
-	var resp struct {
-		Zones []ZoneWithSpecs `json:"zones"`
-	}
-	strictDecode(t, "zones.json", &resp)
-	if len(resp.Zones) != 1 || len(resp.Zones[0].Specs) != 1 {
-		t.Fatalf("unexpected zones shape: %+v", resp)
-	}
-}
-
 func TestContract_Clusters(t *testing.T) {
 	var resp struct {
-		Clusters []SpecCluster `json:"clusters"`
+		Clusters []ClusterSummary `json:"clusters"`
 	}
 	strictDecode(t, "clusters.json", &resp)
 }

@@ -15,8 +15,7 @@ import (
 )
 
 type DestroyParams struct {
-	ZoneID           string
-	ZoneName         string
+	ProjectName      string
 	Environment      string
 	Region           string
 	CleanupWorkspace bool
@@ -31,10 +30,7 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 		out = os.Stdout
 	}
 
-	workspaceName := fmt.Sprintf("%s-%s", params.ZoneName, params.Environment)
-	if params.ZoneName == "" {
-		workspaceName = fmt.Sprintf("%s-%s", params.ZoneID, params.Environment)
-	}
+	workspaceName := fmt.Sprintf("%s-%s", params.ProjectName, params.Environment)
 
 	home, err := os.UserHomeDir()
 	if err != nil {

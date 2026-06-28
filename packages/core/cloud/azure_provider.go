@@ -20,7 +20,7 @@ func (p *azureProvider) RequiredCLIs() []string {
 	return []string{"az", "kubectl", "helm"}
 }
 
-func (p *azureProvider) ProviderTfvars(config *types.SpecConfig) map[string]interface{} {
+func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	wafEnabled := false
 	managedCert := false
 	if v, ok := config.DNS.ProviderConfig["azure_waf"]; ok {
@@ -142,7 +142,7 @@ func (p *azureProvider) ProviderTfvars(config *types.SpecConfig) map[string]inte
 	return tfvars
 }
 
-func (p *azureProvider) ConfigureKubeconfig(ctx context.Context, config *types.SpecConfig, outputs map[string]interface{}, stdout io.Writer) error {
+func (p *azureProvider) ConfigureKubeconfig(ctx context.Context, config *types.ProjectConfig, outputs map[string]interface{}, stdout io.Writer) error {
 	clusterName := ExtractClusterName(outputs)
 	if clusterName == "" {
 		return fmt.Errorf("no AKS cluster name in outputs")
@@ -184,7 +184,7 @@ func extractOutputString(outputs map[string]interface{}, key string) string {
 	return ""
 }
 
-func buildServiceBusQueues(queues []types.SpecQueueConfig) map[string]interface{} {
+func buildServiceBusQueues(queues []types.ProjectQueueConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, q := range queues {
 		cfg := map[string]interface{}{
@@ -212,7 +212,7 @@ func buildServiceBusQueues(queues []types.SpecQueueConfig) map[string]interface{
 	return result
 }
 
-func buildServiceBusTopics(topics []types.SpecTopicConfig) map[string]interface{} {
+func buildServiceBusTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
 		subs := []map[string]interface{}{}
@@ -229,7 +229,7 @@ func buildServiceBusTopics(topics []types.SpecTopicConfig) map[string]interface{
 	return result
 }
 
-func buildCosmosDBCollections(tables []types.SpecNosqlConfig) []map[string]interface{} {
+func buildCosmosDBCollections(tables []types.ProjectNosqlConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(tables))
 	for _, t := range tables {
 		entry := map[string]interface{}{
@@ -245,7 +245,7 @@ func buildCosmosDBCollections(tables []types.SpecNosqlConfig) []map[string]inter
 	return result
 }
 
-func buildAzureContainers(buckets []types.SpecStorageBucketConfig) []map[string]interface{} {
+func buildAzureContainers(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
 		accessType := "private"

@@ -170,9 +170,9 @@ func TestDeployRunner_WithAssigned(t *testing.T) {
 	}
 }
 
-// --- GetSpecClusters ---
+// --- GetClusters ---
 
-func TestGetSpecClusters_Success(t *testing.T) {
+func TestGetClusters_Success(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertAuth(t, r)
 		if r.URL.Path != "/api/cli/clusters" {
@@ -188,15 +188,15 @@ func TestGetSpecClusters_Success(t *testing.T) {
 					"node_min_size":     2,
 					"node_max_size":     10,
 					"node_desired_size": 3,
-					"spec_project_name": "my-app",
-					"spec_environment":  "production",
-					"spec_region":       "eu-west-1",
+					"project_name": "my-app",
+					"environment":  "production",
+					"region":       "eu-west-1",
 				},
 			},
 		})
 	}))
 
-	clusters, err := client.GetSpecClusters()
+	clusters, err := client.GetClusters()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -206,8 +206,8 @@ func TestGetSpecClusters_Success(t *testing.T) {
 	if clusters[0].ClusterName != "prod-eks" {
 		t.Errorf("expected prod-eks, got %s", clusters[0].ClusterName)
 	}
-	if clusters[0].SpecProjectName != "my-app" {
-		t.Errorf("expected my-app, got %s", clusters[0].SpecProjectName)
+	if clusters[0].ProjectName != "my-app" {
+		t.Errorf("expected my-app, got %s", clusters[0].ProjectName)
 	}
 }
 
@@ -273,8 +273,8 @@ func TestQueueJob_Plan(t *testing.T) {
 		if body["job_type"] != "PLAN" {
 			t.Errorf("expected PLAN, got %v", body["job_type"])
 		}
-		if body["configuration_id"] != "spec-1" {
-			t.Errorf("expected spec-1, got %v", body["configuration_id"])
+		if body["configuration_id"] != "project-1" {
+			t.Errorf("expected project-1, got %v", body["configuration_id"])
 		}
 		if _, ok := body["plan_job_id"]; ok {
 			t.Error("plan_job_id should not be sent when empty")
@@ -288,8 +288,7 @@ func TestQueueJob_Plan(t *testing.T) {
 
 	job, err := client.QueueJobWithParams(QueueJobParams{
 		JobType:         "PLAN",
-		ZoneID:          "vy-1",
-		ConfigurationID: "spec-1",
+		ConfigurationID: "project-1",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -318,8 +317,7 @@ func TestQueueJob_DeployWithAssigned(t *testing.T) {
 
 	_, err := client.QueueJobWithParams(QueueJobParams{
 		JobType:          "DEPLOY",
-		ZoneID:           "vy-1",
-		ConfigurationID:  "spec-1",
+		ConfigurationID:  "project-1",
 		AssignedRunnerID: "w-1",
 		PlanJobID:        "plan-1",
 	})
@@ -339,21 +337,18 @@ func TestGetJobs_WithFilters(t *testing.T) {
 		if r.URL.Query().Get("status") != "SUCCESS" {
 			t.Errorf("expected status=SUCCESS, got %s", r.URL.Query().Get("status"))
 		}
-		if r.URL.Query().Get("zone_id") != "vy-1" {
-			t.Errorf("expected zone_id=vy-1, got %s", r.URL.Query().Get("zone_id"))
-		}
 		if r.URL.Query().Get("limit") != "20" {
 			t.Errorf("expected limit=20, got %s", r.URL.Query().Get("limit"))
 		}
 		json.NewEncoder(w).Encode(map[string]any{
-			"jobs":   []map[string]any{{"id": "j1", "status": "SUCCESS", "job_type": "PLAN", "spec_name": "my-app"}},
+			"jobs":   []map[string]any{{"id": "j1", "status": "SUCCESS", "job_type": "PLAN", "project_name": "my-app"}},
 			"total":  1,
 			"limit":  20,
 			"offset": 0,
 		})
 	}))
 
-	page, err := client.GetJobs("SUCCESS", "vy-1", 20, 0)
+	page, err := client.GetJobs("SUCCESS", 20, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -363,8 +358,8 @@ func TestGetJobs_WithFilters(t *testing.T) {
 	if page.Total != 1 {
 		t.Errorf("expected total 1, got %d", page.Total)
 	}
-	if page.Jobs[0].SpecName != "my-app" {
-		t.Errorf("expected spec_name my-app, got %s", page.Jobs[0].SpecName)
+	if page.Jobs[0].ProjectName != "my-app" {
+		t.Errorf("expected project_name my-app, got %s", page.Jobs[0].ProjectName)
 	}
 }
 
@@ -378,7 +373,7 @@ func TestGetJobs_Pagination(t *testing.T) {
 		})
 	}))
 
-	page, err := client.GetJobs("", "", 20, 20)
+	page, err := client.GetJobs("", 20, 20)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

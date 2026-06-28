@@ -19,8 +19,17 @@ import (
 
 const (
 	DefaultS3Region    = "us-east-1"
-	DefaultStateBucket = "spec-tofu-state"
+	DefaultStateBucket = "project-tofu-state"
 )
+
+// stateBucket returns the configured tofu state bucket name, honoring the
+// ALETHIA_STORAGE_STATE_BUCKET override and falling back to DefaultStateBucket.
+func stateBucket() string {
+	if b := strings.TrimSpace(os.Getenv("ALETHIA_STORAGE_STATE_BUCKET")); b != "" {
+		return b
+	}
+	return DefaultStateBucket
+}
 
 // S3BackendConfig describes an S3-compatible state backend (SeaweedFS / Garage /
 // MinIO / AWS S3 / R2). The endpoint is operator-supplied — there is no default
@@ -43,7 +52,7 @@ func NewS3BackendFromEnv() *S3BackendConfig {
 		Region:    region,
 		AccessKey: os.Getenv("ALETHIA_STORAGE_ACCESS_KEY_ID"),
 		SecretKey: os.Getenv("ALETHIA_STORAGE_SECRET_ACCESS_KEY"),
-		Bucket:    DefaultStateBucket,
+		Bucket:    stateBucket(),
 	}
 }
 
@@ -56,7 +65,7 @@ func S3BackendFromConfig(endpoint, region, accessKey, secretKey string) *S3Backe
 		Region:    region,
 		AccessKey: accessKey,
 		SecretKey: secretKey,
-		Bucket:    DefaultStateBucket,
+		Bucket:    stateBucket(),
 	}
 }
 
@@ -109,8 +118,8 @@ func autoCreateBuckets() bool {
 }
 
 // WriteBackendHCL writes a backend.hcl file for tofu init -backend-config=<file>.
-func (c *S3BackendConfig) WriteBackendHCL(dir, zoneID, projectName, environment, region string) (string, error) {
-	key := fmt.Sprintf("%s/%s-%s-%s/tofu.tfstate", zoneID, projectName, environment, region)
+func (c *S3BackendConfig) WriteBackendHCL(dir, projectName, environment, region string) (string, error) {
+	key := fmt.Sprintf("%s-%s-%s/tofu.tfstate", projectName, environment, region)
 	return c.writeHCL(dir, key)
 }
 

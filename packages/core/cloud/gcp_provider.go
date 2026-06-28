@@ -20,7 +20,7 @@ func (p *gcpProvider) RequiredCLIs() []string {
 	return []string{"gcloud", "kubectl", "helm"}
 }
 
-func (p *gcpProvider) ProviderTfvars(config *types.SpecConfig) map[string]interface{} {
+func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	enableAutopilot := false
 	if v, ok := config.Cluster.ProviderConfig["enable_autopilot"]; ok {
 		if b, ok := v.(bool); ok {
@@ -83,7 +83,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.SpecConfig) map[string]interf
 		"firestore_databases": buildFirestoreDatabases(config.NosqlTables),
 
 		// Artifact Registry
-		// TODO: enable when SpecConfig gains a ContainerRegistries field
+		// TODO: enable when ProjectConfig gains a ContainerRegistries field
 		// "provision_artifact_registry": len(config.ContainerRegistries) > 0,
 		"provision_artifact_registry": false,
 
@@ -96,7 +96,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.SpecConfig) map[string]interf
 
 		// Cloud SQL
 		"create_cloud_sql": len(config.Databases) > 0,
-		// TODO: wire from SpecConfig when an AuthorizedNetworks field is added
+		// TODO: wire from ProjectConfig when an AuthorizedNetworks field is added
 		"cloud_sql_authorized_networks": []map[string]interface{}{},
 	}
 
@@ -157,7 +157,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.SpecConfig) map[string]interf
 	return tfvars
 }
 
-func (p *gcpProvider) ConfigureKubeconfig(ctx context.Context, config *types.SpecConfig, outputs map[string]interface{}, stdout io.Writer) error {
+func (p *gcpProvider) ConfigureKubeconfig(ctx context.Context, config *types.ProjectConfig, outputs map[string]interface{}, stdout io.Writer) error {
 	clusterName := ExtractClusterName(outputs)
 	if clusterName == "" {
 		return fmt.Errorf("no GKE cluster name in outputs")
@@ -182,7 +182,7 @@ func (p *gcpProvider) ConfigureKubeconfig(ctx context.Context, config *types.Spe
 	return nil
 }
 
-func buildPubSubTopics(topics []types.SpecTopicConfig, queues []types.SpecQueueConfig) map[string]interface{} {
+func buildPubSubTopics(topics []types.ProjectTopicConfig, queues []types.ProjectQueueConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
 		subs := []map[string]interface{}{}
@@ -219,7 +219,7 @@ func buildPubSubTopics(topics []types.SpecTopicConfig, queues []types.SpecQueueC
 	return result
 }
 
-func buildFirestoreDatabases(tables []types.SpecNosqlConfig) []map[string]interface{} {
+func buildFirestoreDatabases(tables []types.ProjectNosqlConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(tables))
 	for _, t := range tables {
 		entry := map[string]interface{}{
@@ -234,7 +234,7 @@ func buildFirestoreDatabases(tables []types.SpecNosqlConfig) []map[string]interf
 	return result
 }
 
-func buildGCPSecrets(secrets []types.SpecSecretConfig) []map[string]interface{} {
+func buildGCPSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
 		result = append(result, map[string]interface{}{
@@ -247,7 +247,7 @@ func buildGCPSecrets(secrets []types.SpecSecretConfig) []map[string]interface{} 
 	return result
 }
 
-func buildGCSBuckets(buckets []types.SpecStorageBucketConfig) []map[string]interface{} {
+func buildGCSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
 		entry := map[string]interface{}{

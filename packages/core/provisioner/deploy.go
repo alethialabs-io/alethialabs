@@ -24,7 +24,7 @@ import (
 )
 
 type DeployParams struct {
-	SpecConfig     *types.SpecConfig
+	ProjectConfig  *types.ProjectConfig
 	Provider       string
 	PlanFile       string
 	DryRun         bool
@@ -34,7 +34,7 @@ type DeployParams struct {
 	TemplatesDir   string
 	// CategoriesDir is the root of the composable per-category modules
 	// (infra/templates/categories). When set, pluggable providers selected on the
-	// Spec are composed into the plan; native resources are guarded off via tfvars.
+	// Project resources are composed into the plan; native resources are guarded off via tfvars.
 	CategoriesDir string
 	S3Backend     *cloud.S3BackendConfig
 	Stdout        io.Writer
@@ -55,11 +55,11 @@ type PlanResult struct {
 	ArgocdAdminPassword string
 }
 
-// RunDeployV2 executes a deployment using the provider-agnostic SpecConfig and CloudProvider interface.
+// RunDeployV2 executes a deployment using the provider-agnostic ProjectConfig and CloudProvider interface.
 func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) {
-	vc := params.SpecConfig
+	vc := params.ProjectConfig
 	if vc == nil {
-		return nil, fmt.Errorf("SpecConfig is required for RunDeployV2")
+		return nil, fmt.Errorf("ProjectConfig is required for RunDeployV2")
 	}
 
 	// Enforce placement discipline before anything else: a CORE resource on a
@@ -159,7 +159,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	if err := params.S3Backend.EnsureBucket(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ensure state bucket: %w", err)
 	}
-	backendFile, err := params.S3Backend.WriteBackendHCL(tfDir, vc.ZoneID, vc.ProjectName, vc.EnvironmentStage, vc.Region)
+	backendFile, err := params.S3Backend.WriteBackendHCL(tfDir, vc.ProjectName, vc.EnvironmentStage, vc.Region)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write backend config: %w", err)
 	}
@@ -284,7 +284,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 
 		if gitopsRequested {
 			if params.GitAccessToken == "" {
-				return nil, fmt.Errorf("GitOps requested (apps repo %s) but no git access token is available — reconnect the git provider for this spec", vc.Repositories.AppsDestinationRepo)
+				return nil, fmt.Errorf("GitOps requested (apps repo %s) but no git access token is available — reconnect the git provider for this project", vc.Repositories.AppsDestinationRepo)
 			}
 			if err := argocd.ConfigureRepoCredentials(vc.Repositories.AppsDestinationRepo, params.GitAccessToken, stdout, stderr); err != nil {
 				return nil, fmt.Errorf("failed to connect ArgoCD to apps repo %s: %w", vc.Repositories.AppsDestinationRepo, err)
@@ -326,7 +326,7 @@ func resolveArgoTemplatesDir() string {
 	return ""
 }
 
-func installArgoCD(ctx context.Context, vc *types.SpecConfig, outputs map[string]interface{}, result *PlanResult, stdout, stderr io.Writer) error {
+func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[string]interface{}, result *PlanResult, stdout, stderr io.Writer) error {
 	fmt.Fprintln(stdout, "Installing ArgoCD...")
 
 	addRepoCmd := "helm repo add argo https://argoproj.github.io/argo-helm && helm repo update"

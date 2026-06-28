@@ -3,9 +3,8 @@
 
 package types
 
-type SpecConfig struct {
+type ProjectConfig struct {
 	ID               string `json:"id"`
-	ZoneID           string `json:"zone_id"`
 	UserID           string `json:"user_id"`
 	ProjectName      string `json:"project_name"`
 	EnvironmentStage string `json:"environment_stage"`
@@ -14,20 +13,20 @@ type SpecConfig struct {
 	CloudIdentityID  string `json:"cloud_identity_id"`
 	Provider         string `json:"provider"`
 
-	Network       SpecNetworkConfig       `json:"network"`
-	Cluster       SpecClusterConfig       `json:"cluster"`
-	DNS           SpecDNSConfig           `json:"dns"`
-	Observability SpecObservabilityConfig `json:"observability"`
-	Repositories  SpecRepositoriesConfig  `json:"repositories"`
+	Network       ProjectNetworkConfig       `json:"network"`
+	Cluster       ProjectClusterConfig       `json:"cluster"`
+	DNS           ProjectDNSConfig           `json:"dns"`
+	Observability ProjectObservabilityConfig `json:"observability"`
+	Repositories  ProjectRepositoriesConfig  `json:"repositories"`
 
-	Databases           []SpecDatabaseConfig          `json:"databases"`
-	Caches              []SpecCacheConfig             `json:"caches"`
-	Queues              []SpecQueueConfig             `json:"queues"`
-	Topics              []SpecTopicConfig             `json:"topics"`
-	NosqlTables         []SpecNosqlConfig             `json:"nosql_tables"`
-	Secrets             []SpecSecretConfig            `json:"secrets"`
-	ContainerRegistries []SpecContainerRegistryConfig `json:"container_registries"`
-	StorageBuckets      []SpecStorageBucketConfig     `json:"storage_buckets"`
+	Databases           []ProjectDatabaseConfig          `json:"databases"`
+	Caches              []ProjectCacheConfig             `json:"caches"`
+	Queues              []ProjectQueueConfig             `json:"queues"`
+	Topics              []ProjectTopicConfig             `json:"topics"`
+	NosqlTables         []ProjectNosqlConfig             `json:"nosql_tables"`
+	Secrets             []ProjectSecretConfig            `json:"secrets"`
+	ContainerRegistries []ProjectContainerRegistryConfig `json:"container_registries"`
+	StorageBuckets      []ProjectStorageBucketConfig     `json:"storage_buckets"`
 
 	GitAccessToken string `json:"git_access_token"`
 
@@ -49,7 +48,7 @@ type ConnectorCredential struct {
 
 // ConnectorCredentialFor returns the decrypted credential fields for a given
 // (category, slug), or nil if none was attached.
-func (c *SpecConfig) ConnectorCredentialFor(category, slug string) map[string]string {
+func (c *ProjectConfig) ConnectorCredentialFor(category, slug string) map[string]string {
 	for _, cc := range c.ConnectorCredentials {
 		if cc.Category == category && cc.Slug == slug {
 			return cc.Credentials
@@ -60,8 +59,8 @@ func (c *SpecConfig) ConnectorCredentialFor(category, slug string) map[string]st
 
 // Placement is the resolved cloud placement of a single resource ("versatile
 // model"). It is embedded in every component config so each resource can name its
-// own cloud independently of the spec's primary one. Empty fields mean "inherit the
-// spec's primary placement" — buildConfigSnapshot resolves them to concrete values
+// own cloud independently of the project's primary one. Empty fields mean "inherit the
+// project's primary placement" — buildConfigSnapshot resolves them to concrete values
 // before they reach the runner. CloudProvider is intentionally NOT named "provider":
 // several components already carry a pluggable connector slug under json:"provider"
 // (cloudflare/vault/…), which is an orthogonal concern from the cloud account.
@@ -71,7 +70,7 @@ type Placement struct {
 	Region          string `json:"region"`
 }
 
-type SpecNetworkConfig struct {
+type ProjectNetworkConfig struct {
 	Placement
 	ProvisionNetwork bool   `json:"provision_network"`
 	CIDRBlock        string `json:"cidr_block"`
@@ -79,7 +78,7 @@ type SpecNetworkConfig struct {
 	SingleNatGateway bool   `json:"single_nat_gateway"`
 }
 
-type SpecClusterConfig struct {
+type ProjectClusterConfig struct {
 	Placement
 	ClusterVersion  string         `json:"cluster_version"`
 	InstanceTypes   []string       `json:"instance_types"`
@@ -90,7 +89,7 @@ type SpecClusterConfig struct {
 	ProviderConfig  map[string]any `json:"provider_config"`
 }
 
-type SpecDNSConfig struct {
+type ProjectDNSConfig struct {
 	Placement
 	Enabled bool `json:"enabled"`
 	// Pluggable provider slug (connectors.slug); "" / "native" = cloud-native DNS.
@@ -100,19 +99,19 @@ type SpecDNSConfig struct {
 	ProviderConfig map[string]any `json:"provider_config"`
 }
 
-// SpecObservabilityConfig — pluggable-only component (no cloud-native default).
-type SpecObservabilityConfig struct {
+// ProjectObservabilityConfig — pluggable-only component (no cloud-native default).
+type ProjectObservabilityConfig struct {
 	Placement
 	Enabled        bool           `json:"enabled"`
 	Provider       string         `json:"provider"`
 	ProviderConfig map[string]any `json:"provider_config"`
 }
 
-type SpecRepositoriesConfig struct {
+type ProjectRepositoriesConfig struct {
 	AppsDestinationRepo string `json:"apps_destination_repo"`
 }
 
-type SpecDatabaseConfig struct {
+type ProjectDatabaseConfig struct {
 	Placement
 	Name                string   `json:"name"`
 	Engine              string   `json:"engine"`
@@ -124,7 +123,7 @@ type SpecDatabaseConfig struct {
 	IamAuth             *bool    `json:"iam_auth"`
 }
 
-type SpecCacheConfig struct {
+type ProjectCacheConfig struct {
 	Placement
 	Name          string `json:"name"`
 	Engine        string `json:"engine"`
@@ -133,7 +132,7 @@ type SpecCacheConfig struct {
 	MultiAz       *bool  `json:"multi_az"`
 }
 
-type SpecQueueConfig struct {
+type ProjectQueueConfig struct {
 	Placement
 	Name              string         `json:"name"`
 	Ordered           *bool          `json:"ordered"`
@@ -142,7 +141,7 @@ type SpecQueueConfig struct {
 	ProviderConfig    map[string]any `json:"provider_config"`
 }
 
-type SpecTopicConfig struct {
+type ProjectTopicConfig struct {
 	Placement
 	Name          string              `json:"name"`
 	Subscriptions []TopicSubscription `json:"subscriptions"`
@@ -153,7 +152,7 @@ type TopicSubscription struct {
 	Endpoint string `json:"endpoint"`
 }
 
-type SpecNosqlConfig struct {
+type ProjectNosqlConfig struct {
 	Placement
 	Name                string `json:"name"`
 	PartitionKey        string `json:"partition_key"`
@@ -165,7 +164,7 @@ type SpecNosqlConfig struct {
 	PointInTimeRecovery bool   `json:"point_in_time_recovery"`
 }
 
-type SpecSecretConfig struct {
+type ProjectSecretConfig struct {
 	Placement
 	Name         string `json:"name"`
 	Generate     bool   `json:"generate"`
@@ -176,7 +175,7 @@ type SpecSecretConfig struct {
 	ProviderConfig map[string]any `json:"provider_config"`
 }
 
-type SpecContainerRegistryConfig struct {
+type ProjectContainerRegistryConfig struct {
 	Placement
 	Name string `json:"name"`
 	// Pluggable provider slug (connectors.slug); "" / "native" = cloud-native registry.
@@ -184,7 +183,7 @@ type SpecContainerRegistryConfig struct {
 	ProviderConfig map[string]any `json:"provider_config"`
 }
 
-type SpecStorageBucketConfig struct {
+type ProjectStorageBucketConfig struct {
 	Placement
 	Name              string         `json:"name"`
 	Versioning        bool           `json:"versioning"`

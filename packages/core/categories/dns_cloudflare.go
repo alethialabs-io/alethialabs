@@ -10,12 +10,12 @@ func init() {
 	register("dns", "cloudflare", behavior{
 		tfvars: func(ctx ComponentContext) map[string]any {
 			zoneID := pcString(ctx.ProviderConfig, "zone_id", "")
-			if zoneID == "" && ctx.Spec != nil {
-				zoneID = ctx.Spec.DNS.ZoneID
+			if zoneID == "" && ctx.Project != nil {
+				zoneID = ctx.Project.DNS.ZoneID
 			}
 			domain := ""
-			if ctx.Spec != nil {
-				domain = ctx.Spec.DNS.DomainName
+			if ctx.Project != nil {
+				domain = ctx.Project.DNS.DomainName
 			}
 			return map[string]any{
 				"cloudflare_api_token": cred(ctx.Credentials, "api_token", ""),
@@ -29,10 +29,10 @@ func init() {
 				return fmt.Errorf("missing Cloudflare api_token (credential not connected)")
 			}
 			if pcString(ctx.ProviderConfig, "zone_id", "") == "" &&
-				(ctx.Spec == nil || ctx.Spec.DNS.ZoneID == "") {
+				(ctx.Project == nil || ctx.Project.DNS.ZoneID == "") {
 				return fmt.Errorf("zone_id required for Cloudflare DNS")
 			}
-			if ctx.Spec == nil || ctx.Spec.DNS.DomainName == "" {
+			if ctx.Project == nil || ctx.Project.DNS.DomainName == "" {
 				return fmt.Errorf("domain_name required for Cloudflare DNS")
 			}
 			return nil

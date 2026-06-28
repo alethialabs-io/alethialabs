@@ -8,7 +8,6 @@ import "time"
 type ConfigurationSummary struct {
 	ID                   string    `json:"id"`
 	ProjectName          string    `json:"project_name"`
-	ZoneID               *string   `json:"zone_id"`
 	EnvironmentStage     string    `json:"environment_stage"`
 	Status               string    `json:"status"`
 	Region               string    `json:"region"`
@@ -47,7 +46,6 @@ type Configuration struct {
 	LastDownloadedAt *string `json:"last_downloaded_at"`
 	// Name                    string    `json:"name"`
 	ProjectName            string    `json:"project_name"`
-	ZoneID                 *string   `json:"zone_id"`
 	RedisAllowedCidrBlocks *string   `json:"redis_allowed_cidr_blocks"`
 	SesQueuesTopics        *string   `json:"ses_queues_topics"`
 	Status                 *string   `json:"status"`

@@ -12,11 +12,11 @@ import (
 // Placement discipline — "versatile model, disciplined provisioning". The data
 // model lets every resource name its own cloud (types.Placement), but provisioning
 // today supports a single-cloud CORE plus freely-placed PERIPHERY. A CORE resource
-// whose effective cloud identity differs from the spec's primary identity is a hot
+// whose effective cloud identity differs from the project's primary identity is a hot
 // cross-cloud data-plane edge — gated until the cross-cloud networking substrate
 // exists.
 //
-// CORE (must colocate on the spec's primary cloud identity):
+// CORE (must colocate on the project's primary cloud identity):
 //   network, cluster, databases, caches, queues, topics, nosql_tables.
 // PERIPHERY (may diverge freely — reached over the public internet / at build time
 // or composed via the pluggable `categories` system, never over the cluster's
@@ -44,11 +44,11 @@ func effectiveIdentity(p types.Placement, core string) string {
 }
 
 // ValidatePlacement enforces the provisioning discipline: it returns a gate error
-// if any CORE resource is placed on a cloud identity other than the spec's primary
+// if any CORE resource is placed on a cloud identity other than the project's primary
 // one. PERIPHERY resources may diverge freely and are not checked here.
-func ValidatePlacement(vc *types.SpecConfig) error {
+func ValidatePlacement(vc *types.ProjectConfig) error {
 	if vc == nil {
-		return fmt.Errorf("SpecConfig is required")
+		return fmt.Errorf("ProjectConfig is required")
 	}
 	core := vc.CloudIdentityID
 

@@ -23,7 +23,7 @@ import (
 	tfjson "github.com/hashicorp/terraform-json"
 )
 
-// DefaultIaCVersion is the OpenTofu version the runner provisions with when a Spec
+// DefaultIaCVersion is the OpenTofu version the runner provisions with when a project
 // snapshot doesn't pin one. OpenTofu (MPL-2.0) replaces Terraform (BUSL); it is
 // state- and CLI-compatible with the Terraform 1.6 line, so terraform-exec drives
 // it unchanged.

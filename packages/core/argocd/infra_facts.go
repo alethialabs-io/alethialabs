@@ -31,7 +31,7 @@ type InfraFacts struct {
 	AppsDestinationRepo string
 }
 
-func BuildFromOutputs(outputs map[string]interface{}, vc *types.SpecConfig) *InfraFacts {
+func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *InfraFacts {
 	enableKarpenter := false
 	if v, ok := vc.Cluster.ProviderConfig["enable_karpenter"]; ok {
 		if b, ok := v.(bool); ok {

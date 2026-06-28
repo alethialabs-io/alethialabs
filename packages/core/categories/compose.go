@@ -22,12 +22,12 @@ import (
 // workDir/_categories.tf.json (OpenTofu reads .tf.json natively) with the module
 // blocks. Returns the number of modules composed.
 //
-// MVP note: secrets and registries are assumed homogeneous per Spec — if any item
+// MVP note: secrets and registries are assumed homogeneous per project — if any item
 // selects a pluggable provider, that provider handles the whole category and a
 // warning is logged for any mixed selection.
 func Compose(
 	workDir, categoriesSrcDir string,
-	vc *types.SpecConfig,
+	vc *types.ProjectConfig,
 	tfvars map[string]any,
 	log io.Writer,
 ) (int, error) {
@@ -67,7 +67,7 @@ func Compose(
 			return 0, err
 		}
 		ctx := ComponentContext{
-			Spec:           vc,
+			Project:        vc,
 			Credentials:    vc.ConnectorCredentialFor("dns", vc.DNS.Provider),
 			ProviderConfig: vc.DNS.ProviderConfig,
 		}
@@ -84,7 +84,7 @@ func Compose(
 			return 0, err
 		}
 		ctx := ComponentContext{
-			Spec:           vc,
+			Project:        vc,
 			Credentials:    vc.ConnectorCredentialFor("observability", vc.Observability.Provider),
 			ProviderConfig: vc.Observability.ProviderConfig,
 		}
@@ -100,7 +100,7 @@ func Compose(
 			return 0, err
 		}
 		ctx := ComponentContext{
-			Spec:        vc,
+			Project:     vc,
 			Credentials: vc.ConnectorCredentialFor("secrets", slug),
 			Items:       items,
 		}
@@ -117,7 +117,7 @@ func Compose(
 			return 0, err
 		}
 		ctx := ComponentContext{
-			Spec:        vc,
+			Project:     vc,
 			Credentials: vc.ConnectorCredentialFor("registry", slug),
 			Items:       items,
 		}
@@ -148,7 +148,7 @@ type providerItem struct {
 	item     ComponentItem
 }
 
-func secretItems(vc *types.SpecConfig) []providerItem {
+func secretItems(vc *types.ProjectConfig) []providerItem {
 	out := make([]providerItem, 0, len(vc.Secrets))
 	for _, s := range vc.Secrets {
 		out = append(out, providerItem{
@@ -159,7 +159,7 @@ func secretItems(vc *types.SpecConfig) []providerItem {
 	return out
 }
 
-func registryItems(vc *types.SpecConfig) []providerItem {
+func registryItems(vc *types.ProjectConfig) []providerItem {
 	out := make([]providerItem, 0, len(vc.ContainerRegistries))
 	for _, r := range vc.ContainerRegistries {
 		out = append(out, providerItem{

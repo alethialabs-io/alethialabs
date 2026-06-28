@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package categories implements the pluggable per-category connector providers
-// (DNS / secrets / registry / observability) that decouple WHAT a Spec needs from
+// (DNS / secrets / registry / observability) that decouple WHAT a Project needs from
 // WHO provides it. It mirrors packages/core/cloud one level down: declarative data
 // (slug, category, module path, credential shape) lives in catalog.json — the SAME
 // manifest the console codegen consumes — and behavior (Tfvars/Validate) lives in
@@ -29,9 +29,9 @@ type ComponentItem struct {
 
 // ComponentContext is everything a provider needs to emit module tfvars: the
 // decrypted credential, the component's provider_config (singleton) or items
-// (multi), and the surrounding Spec for cross-references (domain, region, …).
+// (multi), and the surrounding Project for cross-references (domain, region, …).
 type ComponentContext struct {
-	Spec           *types.SpecConfig
+	Project        *types.ProjectConfig
 	Credentials    map[string]string
 	ProviderConfig map[string]any
 	Items          []ComponentItem

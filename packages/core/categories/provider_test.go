@@ -55,17 +55,17 @@ func TestCloudflareTfvarsAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec := &types.SpecConfig{}
-	spec.DNS = types.SpecDNSConfig{Enabled: true, DomainName: "example.com"}
+	project := &types.ProjectConfig{}
+	project.DNS = types.ProjectDNSConfig{Enabled: true, DomainName: "example.com"}
 
 	// Missing credential → validation fails.
-	missing := ComponentContext{Spec: spec, ProviderConfig: map[string]any{"zone_id": "z1"}}
+	missing := ComponentContext{Project: project, ProviderConfig: map[string]any{"zone_id": "z1"}}
 	if err := p.Validate(missing); err == nil {
 		t.Fatal("expected validation error for missing api_token")
 	}
 
 	ok := ComponentContext{
-		Spec:           spec,
+		Project:        project,
 		Credentials:    map[string]string{"api_token": "tok"},
 		ProviderConfig: map[string]any{"zone_id": "z1", "proxied": true},
 	}
@@ -83,8 +83,8 @@ func TestCloudflareTfvarsAndValidate(t *testing.T) {
 
 func TestComposeWritesGuardsAndModuleFile(t *testing.T) {
 	workDir := t.TempDir()
-	vc := &types.SpecConfig{}
-	vc.DNS = types.SpecDNSConfig{
+	vc := &types.ProjectConfig{}
+	vc.DNS = types.ProjectDNSConfig{
 		Enabled:        true,
 		Provider:       "cloudflare",
 		DomainName:     "example.com",
@@ -116,8 +116,8 @@ func TestComposeWritesGuardsAndModuleFile(t *testing.T) {
 }
 
 func TestComposeMissingCredentialFails(t *testing.T) {
-	vc := &types.SpecConfig{}
-	vc.DNS = types.SpecDNSConfig{Enabled: true, Provider: "cloudflare", DomainName: "example.com"}
+	vc := &types.ProjectConfig{}
+	vc.DNS = types.ProjectDNSConfig{Enabled: true, Provider: "cloudflare", DomainName: "example.com"}
 	// No credential attached → Validate inside Compose should fail.
 	var log bytes.Buffer
 	if _, err := Compose(t.TempDir(), "", vc, map[string]any{}, &log); err == nil {
