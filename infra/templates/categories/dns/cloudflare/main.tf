@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Cloudflare DNS — pluggable alternative to the cluster cloud's native DNS.
-# Composed into the plan by the runner (categories.Compose) when a Spec selects
+# Composed into the plan by the runner (categories.Compose) when a Project selects
 # Cloudflare for its DNS provider. The cluster cloud's native DNS/cert resources
-# are guarded off via the `dns_provider` variable in the spec/<cloud> templates.
+# are guarded off via the `dns_provider` variable in the project/<cloud> templates.
 
 terraform {
   required_providers {

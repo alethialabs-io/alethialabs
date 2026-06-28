@@ -19,7 +19,7 @@ variable "dockerhub_namespace" {
 }
 
 variable "repositories" {
-  description = "Spec registry component names (for reference/labelling)."
+  description = "Project registry component names (for reference/labelling)."
   type        = list(string)
   default     = []
 }

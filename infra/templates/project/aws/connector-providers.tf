@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Pluggable-connector guard variables. Set by the runner (categories.Compose):
-# when a Spec selects a pluggable provider for a category, the matching variable
+# when a Project selects a pluggable provider for a category, the matching variable
 # holds that provider's slug and the cloud-native resource below is skipped — the
 # pluggable module (composed into _categories.tf.json) takes over. Default
 # "native" preserves the cloud-native behavior.

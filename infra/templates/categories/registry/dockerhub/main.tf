@@ -4,8 +4,8 @@
 # Docker Hub — pluggable alternative to the cloud-native container registry.
 # Rather than creating cloud registry repos, this wires a Kubernetes
 # imagePullSecret so workloads can pull from Docker Hub. Composed by the runner
-# when a Spec selects Docker Hub; the native registry (ECR/AR/ACR) is guarded off
-# via `registry_provider` in spec/<cloud>.
+# when a Project selects Docker Hub; the native registry (ECR/AR/ACR) is guarded off
+# via `registry_provider` in project/<cloud>.
 
 terraform {
   required_providers {

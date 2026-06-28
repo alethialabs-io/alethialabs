@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Grafana Cloud observability — installs a Grafana Agent (Alloy) that remote-writes
-# cluster metrics to Grafana Cloud. Composed by the runner when a Spec selects
+# cluster metrics to Grafana Cloud. Composed by the runner when a Project selects
 # Grafana for observability.
 
 terraform {

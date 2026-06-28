@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # HashiCorp Vault — pluggable alternative to the cloud-native secrets store.
-# Provisions a KV v2 entry per Spec secret so applications resolve them from Vault.
-# Composed by the runner when a Spec selects Vault for its secrets provider; the
-# native secrets resources are guarded off via `secrets_provider` in spec/<cloud>.
+# Provisions a KV v2 entry per Project secret so applications resolve them from Vault.
+# Composed by the runner when a Project selects Vault for its secrets provider; the
+# native secrets resources are guarded off via `secrets_provider` in project/<cloud>.
 
 terraform {
   required_providers {

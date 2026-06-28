@@ -3,7 +3,7 @@
 #
 # Prometheus observability — installs kube-prometheus-stack in-cluster, optionally
 # remote-writing to an external Prometheus-compatible store. Composed by the runner
-# when a Spec selects Prometheus for observability.
+# when a Project selects Prometheus for observability.
 
 terraform {
   required_providers {
@@ -17,7 +17,7 @@ terraform {
 locals {
   remote_write_values = var.prometheus_remote_write_url == "" ? "" : yamlencode({
     prometheus = {
-      prometheusSpec = {
+      prometheusProject = {
         remoteWrite = [{
           url = var.prometheus_remote_write_url
           basicAuth = var.prometheus_remote_write_username == "" ? null : {
@@ -41,7 +41,7 @@ resource "helm_release" "kube_prometheus_stack" {
   values = local.remote_write_values == "" ? [] : [local.remote_write_values]
 
   set {
-    name  = "prometheus.prometheusSpec.retention"
+    name  = "prometheus.prometheusProject.retention"
     value = "${var.prometheus_retention_days}d"
   }
 }

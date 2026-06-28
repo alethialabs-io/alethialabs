@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Datadog observability — installs the Datadog agent into the cluster. Composed by
-# the runner when a Spec selects Datadog for observability (a pluggable-only
+# the runner when a Project selects Datadog for observability (a pluggable-only
 # category with no cloud-native default).
 
 terraform {

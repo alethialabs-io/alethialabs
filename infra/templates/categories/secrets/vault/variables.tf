@@ -25,7 +25,7 @@ variable "vault_kv_version" {
 }
 
 variable "secret_names" {
-  description = "Names of the Spec secrets to manage in Vault."
+  description = "Names of the Project secrets to manage in Vault."
   type        = list(string)
   default     = []
 }
