@@ -60,14 +60,14 @@ USER runner
 WORKDIR /home/runner
 ENV TF_PLUGIN_CACHE_DIR=/home/runner/.terraform.d/plugin-cache
 
-COPY --chown=runner:runner infra/templates/spec/aws/ /home/runner/spec-templates/aws/
+COPY --chown=runner:runner infra/templates/project/aws/ /home/runner/project-templates/aws/
 COPY --chown=runner:runner infra/templates/runner/ /home/runner/runner-templates/
 COPY --chown=runner:runner infra/templates/argocd/ /home/runner/argocd-templates/
 
 # Pre-initialize only the AWS template (providers + modules) — see the full Dockerfile
 # for the rationale. Keeps the .terraform tree for the per-job copy.
 RUN mkdir -p "${TF_PLUGIN_CACHE_DIR}" && \
-    (cd /home/runner/spec-templates/aws && tofu init -backend=false -input=false -upgrade)
+    (cd /home/runner/project-templates/aws && tofu init -backend=false -input=false -upgrade)
 
 ENV ALETHIA_RUNNER_PROVIDERS=aws
 ENTRYPOINT ["runner"]

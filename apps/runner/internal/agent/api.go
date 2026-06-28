@@ -29,7 +29,6 @@ type RunnerAPIClient struct {
 type Job struct {
 	ID                string         `json:"id"`
 	UserID            string         `json:"user_id"`
-	ZoneID            string         `json:"zone_id"`
 	CloudIdentityID   *string        `json:"cloud_identity_id"`
 	JobType           string         `json:"job_type"`
 	ClusterID         *string        `json:"cluster_id"`

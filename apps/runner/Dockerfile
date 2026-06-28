@@ -82,11 +82,11 @@ RUN adduser -D -u 1000 runner
 USER runner
 WORKDIR /home/runner
 
-COPY --chown=runner:runner infra/templates/spec/ /home/runner/spec-templates/
+COPY --chown=runner:runner infra/templates/project/ /home/runner/project-templates/
 COPY --chown=runner:runner infra/templates/runner/ /home/runner/runner-templates/
 COPY --chown=runner:runner infra/templates/argocd/ /home/runner/argocd-templates/
 
-# Pre-initialize each spec template at build time so job-time `tofu init` does no
+# Pre-initialize each project template at build time so job-time `tofu init` does no
 # network work. Two costs are eliminated, both otherwise paid per job: (1) provider
 # downloads (~300–700 MB) — cached into the shared TF_PLUGIN_CACHE_DIR and symlinked
 # from each template's .terraform/providers; (2) registry MODULE downloads (~30+
@@ -100,7 +100,7 @@ ENV TF_PLUGIN_CACHE_DIR=/home/runner/.terraform.d/plugin-cache
 RUN mkdir -p "${TF_PLUGIN_CACHE_DIR}" && \
     for d in aws azure gcp; do \
       echo "Pre-initializing ${d} template (providers + modules)..." && \
-      (cd "/home/runner/spec-templates/${d}" && \
+      (cd "/home/runner/project-templates/${d}" && \
         tofu init -backend=false -input=false -upgrade) ; \
     done
 

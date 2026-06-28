@@ -558,11 +558,11 @@ func (w *Runner) fetchAzureResources(ctx context.Context, subscriptionID string,
 	}, nil
 }
 
-func resolveSpecTemplatesDir() string {
+func resolveProjectTemplatesDir() string {
 	candidates := []string{
-		"/home/runner/spec-templates",
-		"spec-templates",
-		"../../infra/templates/spec",
+		"/home/runner/project-templates",
+		"project-templates",
+		"../../infra/templates/project",
 	}
 	for _, d := range candidates {
 		if info, err := os.Stat(d); err == nil && info.IsDir() {
@@ -573,7 +573,7 @@ func resolveSpecTemplatesDir() string {
 }
 
 // resolveCategoriesTemplatesDir locates the composable per-category modules
-// (infra/templates/categories) — a sibling of the spec templates dir.
+// (infra/templates/categories) — a sibling of the project templates dir.
 func resolveCategoriesTemplatesDir() string {
 	candidates := []string{
 		"/home/runner/category-templates",
@@ -606,7 +606,7 @@ func toCoreConnectorCreds(creds []ConnectorCredential) []types.ConnectorCredenti
 }
 
 func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, identity *CloudIdentity, connectorCreds []ConnectorCredential, stdout, stderr *JobLogger) error {
-	vc, err := snapshotToSpecConfig(job.ConfigSnapshot)
+	vc, err := snapshotToProjectConfig(job.ConfigSnapshot)
 	if err != nil {
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
 	}
@@ -649,9 +649,9 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	}
 
 	params := provisioner.DeployParams{
-		SpecConfig:     vc,
+		ProjectConfig:  vc,
 		Provider:       provider,
-		TemplatesDir:   filepath.Join(resolveSpecTemplatesDir(), provider),
+		TemplatesDir:   filepath.Join(resolveProjectTemplatesDir(), provider),
 		CategoriesDir:  resolveCategoriesTemplatesDir(),
 		GitAccessToken: gitToken,
 		S3Backend:      w.s3Backend(),
@@ -701,7 +701,7 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 }
 
 func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, identity *CloudIdentity, connectorCreds []ConnectorCredential, stdout, stderr *JobLogger) error {
-	vc, err := snapshotToSpecConfig(job.ConfigSnapshot)
+	vc, err := snapshotToProjectConfig(job.ConfigSnapshot)
 	if err != nil {
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
 	}
@@ -728,10 +728,10 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 	}
 
 	params := provisioner.DeployParams{
-		SpecConfig:     vc,
+		ProjectConfig:  vc,
 		Provider:       provider,
 		DryRun:         true,
-		TemplatesDir:   filepath.Join(resolveSpecTemplatesDir(), provider),
+		TemplatesDir:   filepath.Join(resolveProjectTemplatesDir(), provider),
 		CategoriesDir:  resolveCategoriesTemplatesDir(),
 		InfracostToken: infracostKey,
 		GitAccessToken: planGitToken,
@@ -793,7 +793,7 @@ func (w *Runner) executeDestroy(ctx context.Context, job *Job, stdout, stderr *J
 	region := getSnapshotString(snapshot, "region")
 
 	params := provisioner.DestroyParams{
-		ZoneID:           job.ZoneID,
+		ProjectName:      getSnapshotString(snapshot, "project_name"),
 		Environment:      getSnapshotString(snapshot, "environment_stage"),
 		Region:           region,
 		CleanupWorkspace: true,
@@ -813,13 +813,13 @@ func getSnapshotString(snapshot map[string]any, key string) string {
 	return ""
 }
 
-func snapshotToSpecConfig(snapshot map[string]any) (*types.SpecConfig, error) {
+func snapshotToProjectConfig(snapshot map[string]any) (*types.ProjectConfig, error) {
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return nil, err
 	}
 
-	var vc types.SpecConfig
+	var vc types.ProjectConfig
 	if err := json.Unmarshal(data, &vc); err != nil {
 		return nil, err
 	}

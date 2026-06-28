@@ -59,12 +59,12 @@ USER runner
 WORKDIR /home/runner
 ENV TF_PLUGIN_CACHE_DIR=/home/runner/.terraform.d/plugin-cache
 
-COPY --chown=runner:runner infra/templates/spec/gcp/ /home/runner/spec-templates/gcp/
+COPY --chown=runner:runner infra/templates/project/gcp/ /home/runner/project-templates/gcp/
 COPY --chown=runner:runner infra/templates/runner/ /home/runner/runner-templates/
 COPY --chown=runner:runner infra/templates/argocd/ /home/runner/argocd-templates/
 
 RUN mkdir -p "${TF_PLUGIN_CACHE_DIR}" && \
-    (cd /home/runner/spec-templates/gcp && tofu init -backend=false -input=false -upgrade)
+    (cd /home/runner/project-templates/gcp && tofu init -backend=false -input=false -upgrade)
 
 ENV ALETHIA_RUNNER_PROVIDERS=gcp
 ENTRYPOINT ["runner"]

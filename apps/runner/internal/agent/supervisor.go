@@ -148,7 +148,7 @@ func (s *supervisor) forwardSignal(sig os.Signal) {
 
 // RealWorkerSpawn re-execs this binary as a worker: ALETHIA_RUNNER_WORKER=1 plus a
 // private HOME so the worker's cloud-CLI/kube config never collides with its peers.
-// TF_PLUGIN_CACHE_DIR and the baked spec-templates stay absolute (shared, read-only).
+// TF_PLUGIN_CACHE_DIR and the baked project-templates stay absolute (shared, read-only).
 func RealWorkerSpawn(ctx context.Context, index int) (WorkerProc, error) {
 	exe, err := os.Executable()
 	if err != nil {

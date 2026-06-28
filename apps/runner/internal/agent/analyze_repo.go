@@ -15,7 +15,7 @@ import (
 
 // executeAnalyzeRepo clones the target repo and produces a STATIC RepoDigest (no
 // repo code is executed — clone + walk + parse only) which the console feeds to the
-// model to infer a Spec. The digest is written to execution_metadata.repo_digest.
+// model to infer a Project. The digest is written to execution_metadata.repo_digest.
 func (w *Runner) executeAnalyzeRepo(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
 	_ = ctx
 	repoURL, _ := job.ConfigSnapshot["repo_url"].(string)
