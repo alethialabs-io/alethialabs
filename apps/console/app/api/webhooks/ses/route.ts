@@ -14,7 +14,7 @@
 import { recordSuppression } from "@/lib/email/suppression";
 import { verifySnsSignature } from "@/lib/email/sns-signature";
 import { sesEventSchema, snsMessageSchema } from "@/lib/validations/ses-event";
-import type { EmailSuppressionDetail } from "@/types/database-custom.types";
+import type { EmailSuppressionDetail } from "@/types/jsonb.types";
 
 // node:crypto signature verification needs the Node runtime, not edge.
 export const runtime = "nodejs";

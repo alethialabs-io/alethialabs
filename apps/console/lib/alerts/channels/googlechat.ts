@@ -4,7 +4,7 @@
 // Google Chat incoming webhook. POSTs a simple formatted text message to the space
 // webhook URL (stored encrypted). Google Chat supports basic *bold* markup.
 
-import type { AlertEventContext } from "@/types/database-custom.types";
+import type { AlertEventContext } from "@/types/jsonb.types";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import type { AlertChannel } from "@/lib/db/schema";
 import type { ChannelSender } from "./types";

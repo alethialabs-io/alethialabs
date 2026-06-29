@@ -13,7 +13,7 @@ import {
 	createDecipheriv,
 	randomBytes,
 } from "node:crypto";
-import type { EncryptedSecret } from "@/types/database-custom.types";
+import type { EncryptedSecret } from "@/types/jsonb.types";
 
 const ALGO = "aes-256-gcm";
 const KEY_BYTES = 32;

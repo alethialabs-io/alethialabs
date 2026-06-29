@@ -9,7 +9,7 @@ import type {
 	CachedResources,
 	GcpCachedResources,
 	AzureCachedResources,
-} from "@/types/database-custom.types";
+} from "@/types/jsonb.types";
 
 export type AnyCachedResources =
 	| CachedResources

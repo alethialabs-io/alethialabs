@@ -6,7 +6,7 @@
 // no SES configured, sendEmail() logs instead of sending so self-hosters work
 // zero-setup. Event type → human label comes from the events util.
 
-import type { AlertEventContext } from "@/types/database-custom.types";
+import type { AlertEventContext } from "@/types/jsonb.types";
 import { AlertEmail } from "@/emails/alert";
 import { getEmailConfig } from "@repo/email/config";
 import type { AlertChannel } from "@/lib/db/schema";

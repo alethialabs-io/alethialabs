@@ -40,7 +40,7 @@ import {
 	type AlertSeverity,
 	provisionJobType,
 } from "@/lib/db/schema/enums";
-import type { AlertRuleMatch } from "@/types/database-custom.types";
+import type { AlertRuleMatch } from "@/types/jsonb.types";
 import {
 	type ChannelInput,
 	channelInputSchema,

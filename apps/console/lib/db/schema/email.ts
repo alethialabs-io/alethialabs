@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { jsonb, pgEnum, pgTable, text, timestamp } from "drizzle-orm/pg-core";
-import type { EmailSuppressionDetail } from "@/types/database-custom.types";
+import type { EmailSuppressionDetail } from "@/types/jsonb.types";
 
 // Why an address must never be mailed again: a permanent (hard) bounce or a
 // complaint (marked as spam). Transient bounces are NOT suppressed.

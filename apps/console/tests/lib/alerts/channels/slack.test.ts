@@ -15,7 +15,7 @@ import { slackSender } from "@/lib/alerts/channels/slack";
 import { TEST_CONTEXT } from "@/lib/alerts/channels/types";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import type { AlertChannel } from "@/lib/db/schema";
-import type { AlertEventContext } from "@/types/database-custom.types";
+import type { AlertEventContext } from "@/types/jsonb.types";
 
 const WEBHOOK = "https://hooks.slack.com/services/T000/B000/xyz";
 

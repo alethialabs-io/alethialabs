@@ -13,7 +13,7 @@ import {
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
-import type { RunnerMetadata } from "@/types/database-custom.types";
+import type { RunnerMetadata } from "@/types/jsonb.types";
 import {
 	cloudProvider,
 	runnerMode,

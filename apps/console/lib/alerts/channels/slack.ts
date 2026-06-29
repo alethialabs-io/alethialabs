@@ -5,7 +5,7 @@
 // (stored encrypted). Severity drives the leading emoji; details render as a context
 // block so the message is scannable in a channel.
 
-import type { AlertEventContext } from "@/types/database-custom.types";
+import type { AlertEventContext } from "@/types/jsonb.types";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import type { AlertChannel } from "@/lib/db/schema";
 import type { AlertSeverity } from "@/lib/db/schema/enums";

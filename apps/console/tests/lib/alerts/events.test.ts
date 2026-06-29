@@ -6,7 +6,7 @@ import { matchesRule, meetsSeverity } from "@/lib/alerts/events";
 import type {
 	AlertEventContext,
 	AlertRuleMatch,
-} from "@/types/database-custom.types";
+} from "@/types/jsonb.types";
 
 describe("meetsSeverity", () => {
 	it("is true only when actual ≥ floor", () => {

@@ -5,7 +5,7 @@
 // (stored encrypted, no URL). verify() triggers then immediately resolves the same
 // dedup_key so a test never leaves an open incident or pages the on-call.
 
-import type { AlertEventContext } from "@/types/database-custom.types";
+import type { AlertEventContext } from "@/types/jsonb.types";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import type { AlertChannel } from "@/lib/db/schema";
 import type { AlertSeverity } from "@/lib/db/schema/enums";

@@ -22,7 +22,7 @@ import type {
 	DnsProviderConfig,
 	NosqlProviderConfig,
 	TopicSubscription,
-} from "@/types/database-custom.types";
+} from "@/types/jsonb.types";
 
 // Insert schemas derived from the Drizzle tables (drizzle-zod) — the replacement
 // for the retired supazod `public*InsertSchema` schemas. JSONB columns get their

@@ -26,7 +26,7 @@ import type {
 	AlertEventContext,
 	AlertRuleMatch,
 	EncryptedSecret,
-} from "@/types/database-custom.types";
+} from "@/types/jsonb.types";
 import { alertChannelType, alertDeliveryStatus, alertSeverity } from "./enums";
 
 // A delivery destination. The sensitive material (webhook/Slack/RocketChat URL +

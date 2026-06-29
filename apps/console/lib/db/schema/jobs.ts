@@ -14,7 +14,7 @@ import {
 	timestamp,
 	uuid,
 } from "drizzle-orm/pg-core";
-import type { ExecutionMetadata } from "@/types/database-custom.types";
+import type { ExecutionMetadata } from "@/types/jsonb.types";
 import {
 	cloudProvider,
 	logStreamType,

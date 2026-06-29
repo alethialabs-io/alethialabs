@@ -6,7 +6,7 @@
 // — the outbound mirror of the inbound Stripe verification in app/api/webhooks.
 
 import { createHmac } from "node:crypto";
-import type { AlertEventContext } from "@/types/database-custom.types";
+import type { AlertEventContext } from "@/types/jsonb.types";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import type { AlertChannel } from "@/lib/db/schema";
 import type { ChannelSender } from "./types";

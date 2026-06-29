@@ -5,7 +5,7 @@
 // (stored encrypted); severity drives the theme colour. Detail fields render as a facts
 // section so the card is scannable.
 
-import type { AlertEventContext } from "@/types/database-custom.types";
+import type { AlertEventContext } from "@/types/jsonb.types";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import type { AlertChannel } from "@/lib/db/schema";
 import type { AlertSeverity } from "@/lib/db/schema/enums";

@@ -20,7 +20,7 @@ import {
 } from "@/lib/db/schema";
 import type { Action, Resource } from "@/lib/authz/registry";
 import type { Actor } from "@/lib/authz/types";
-import type { AlertEventContext } from "@/types/database-custom.types";
+import type { AlertEventContext } from "@/types/jsonb.types";
 import { authzEventKey, eventMatches, isSecurityKey, labelForKey } from "./catalog";
 import { dispatchDeliveries } from "./dispatch";
 import { matchesRule, meetsSeverity } from "./events";

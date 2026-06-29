@@ -4,7 +4,7 @@
 import "server-only";
 import { generateObject } from "ai";
 import { getAiModel } from "@/lib/config/ai";
-import type { RepoDigest, RepoFile } from "@/types/database-custom.types";
+import type { RepoDigest, RepoFile } from "@/types/jsonb.types";
 import { type InferredStack, inferredStackSchema } from "./schema";
 
 /** Cap the digest fed to the model (the runner already truncated per-file). */

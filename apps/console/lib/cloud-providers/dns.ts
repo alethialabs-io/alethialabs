@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { DnsProviderConfig } from "@/types/database-custom.types";
+import type { DnsProviderConfig } from "@/types/jsonb.types";
 import type { CloudProviderSlug } from "./registry";
 
 interface WafOption {

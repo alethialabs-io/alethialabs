@@ -9,7 +9,7 @@
 import { eq } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { emailSuppression } from "@/lib/db/schema";
-import type { EmailSuppressionDetail } from "@/types/database-custom.types";
+import type { EmailSuppressionDetail } from "@/types/jsonb.types";
 
 /** Normalize an address for the suppression key (case-insensitive, trimmed). */
 function normalize(email: string): string {

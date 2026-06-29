@@ -5,7 +5,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
-import type { CloudCredentials } from "@/types/database-custom.types";
+import type { CloudCredentials } from "@/types/jsonb.types";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliCloudIdentitiesResponse } from "@/lib/validations/cli-contract";

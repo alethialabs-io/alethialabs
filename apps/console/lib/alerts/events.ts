@@ -8,7 +8,7 @@
 import type {
 	AlertEventContext,
 	AlertRuleMatch,
-} from "@/types/database-custom.types";
+} from "@/types/jsonb.types";
 import type { AlertSeverity } from "@/lib/db/schema/enums";
 
 const SEVERITY_RANK: Record<AlertSeverity, number> = {

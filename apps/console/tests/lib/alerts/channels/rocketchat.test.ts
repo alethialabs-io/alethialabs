@@ -14,7 +14,7 @@ vi.mock("@/lib/crypto/secrets", () => ({ decryptSecret: vi.fn() }));
 import { rocketchatSender } from "@/lib/alerts/channels/rocketchat";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import type { AlertChannel } from "@/lib/db/schema";
-import type { AlertEventContext } from "@/types/database-custom.types";
+import type { AlertEventContext } from "@/types/jsonb.types";
 
 const WEBHOOK = "https://chat.example.com/hooks/abc/xyz";
 

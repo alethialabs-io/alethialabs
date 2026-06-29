@@ -7,7 +7,7 @@ import type {
 	ClusterAdmin,
 	ClusterProviderConfig,
 	DnsProviderConfig,
-} from "@/types/database-custom.types";
+} from "@/types/jsonb.types";
 
 /**
  * Row shape of the `project_full` view (lib/db/programmables.sql). OUTPUT column names

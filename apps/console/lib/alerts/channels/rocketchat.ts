@@ -4,7 +4,7 @@
 // RocketChat incoming webhook. Same shape family as Slack — POSTs `{text, attachments}`
 // to the integration URL (stored encrypted); severity drives the attachment colour.
 
-import type { AlertEventContext } from "@/types/database-custom.types";
+import type { AlertEventContext } from "@/types/jsonb.types";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import type { AlertChannel } from "@/lib/db/schema";
 import type { AlertSeverity } from "@/lib/db/schema/enums";

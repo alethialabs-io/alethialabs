@@ -17,7 +17,7 @@ import type {
 	CachedResources,
 	GcpCachedResources,
 	AzureCachedResources,
-} from "@/types/database-custom.types";
+} from "@/types/jsonb.types";
 import { Globe, Shield } from "lucide-react";
 import { useFormContext } from "react-hook-form";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
