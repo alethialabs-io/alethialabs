@@ -3,8 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, eq, inArray, sql } from "drizzle-orm";
+import {
+	getBillingSummary,
+	getCollaborationAccess,
+} from "@/app/server/actions/billing";
 import { ensureMemberGrant, revokeMemberGrant } from "@/lib/authz/grants";
 import { authorize, currentActor } from "@/lib/authz/guard";
+import type { BillingPlan } from "@/lib/db/schema/enums";
 import { getServiceDb } from "@/lib/db";
 import {
 	invitation,
@@ -14,6 +19,7 @@ import {
 	teamMember,
 	user,
 } from "@/lib/db/schema";
+import { INVITE_ROLES, type InviteRoleOption } from "@/lib/members/roles";
 
 export interface MemberRow {
 	/** member-row id (or the user id when synthesizing the personal owner). */
@@ -204,4 +210,85 @@ export async function setMemberSuspended(
 		await ensureMemberGrant(m.orgId, m.userId, m.role);
 	}
 	return { ok: true };
+}
+
+/** Everything the invite dialog needs in one round-trip: gate, plan/seat context, the
+ * role choices, and the emails already in the org (for client-side dedupe). */
+export interface InviteContext {
+	/** The org may invite (card-backed/paid). When false the UI shows the upsell. */
+	canInvite: boolean;
+	/** Stripe is wired (hosted) — drives whether the seat-cost banner is meaningful. */
+	hosted: boolean;
+	plan: BillingPlan;
+	/** Members currently occupying a seat (the seat banner's "in use"). */
+	memberCount: number;
+	/** Per-seat (or flat) monthly USD, for the seat-cost banner. null = unknown/custom. */
+	unitAmountUsd: number | null;
+	roles: InviteRoleOption[];
+	/** Lowercased emails of existing members (already in the org). */
+	existingEmails: string[];
+	/** Lowercased emails with a pending invitation. */
+	pendingEmails: string[];
+}
+
+/** Resolves the invite dialog's context: the collaboration gate, plan/seat figures, the
+ * available roles, and the emails already taken (member or pending). Read-only; any member
+ * (the actual invite goes through Better Auth, gated by the ee `beforeCreateInvitation`
+ * hook / `canOrgInvite`). */
+export async function getInviteContext(): Promise<InviteContext> {
+	const actor = await currentActor();
+	const db = getServiceDb();
+
+	const [access, billing, rows] = await Promise.all([
+		getCollaborationAccess(),
+		getBillingSummary(),
+		actor.orgId === actor.userId
+			? Promise.resolve(
+					[] as { memberEmail: string | null; inviteEmail: string | null }[],
+				)
+			: db
+					.select({ memberEmail: user.email, inviteEmail: invitation.email })
+					.from(member)
+					.innerJoin(user, eq(member.userId, user.id))
+					.where(eq(member.organizationId, actor.orgId))
+					.then((members) =>
+						db
+							.select({ email: invitation.email })
+							.from(invitation)
+							.where(
+								and(
+									eq(invitation.organizationId, actor.orgId),
+									eq(invitation.status, "pending"),
+								),
+							)
+							.then((invites) => [
+								...members.map((m) => ({
+									memberEmail: m.memberEmail,
+									inviteEmail: null,
+								})),
+								...invites.map((i) => ({
+									memberEmail: null,
+									inviteEmail: i.email,
+								})),
+							]),
+					),
+	]);
+
+	const existingEmails: string[] = [];
+	const pendingEmails: string[] = [];
+	for (const r of rows) {
+		if (r.memberEmail) existingEmails.push(r.memberEmail.toLowerCase());
+		if (r.inviteEmail) pendingEmails.push(r.inviteEmail.toLowerCase());
+	}
+
+	return {
+		canInvite: access.canInvite,
+		hosted: billing.hosted,
+		plan: billing.plan,
+		memberCount: billing.memberCount,
+		unitAmountUsd: billing.unitAmountUsd,
+		roles: [...INVITE_ROLES],
+		existingEmails,
+		pendingEmails,
+	};
 }

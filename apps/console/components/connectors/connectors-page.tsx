@@ -2,47 +2,29 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
 import {
 	disconnectAwsIdentity,
-	saveAwsIdentity,
+	renameCloudIdentity,
+	reverifyCloudIdentity,
 } from "@/app/(private)/dashboard/providers/actions";
-import {
-	disconnectAzureIdentity,
-	saveAzureIdentity,
-} from "@/app/(private)/dashboard/providers/azure-actions";
-import {
-	disconnectGcpIdentity,
-	saveGcpIdentity,
-} from "@/app/(private)/dashboard/providers/gcp-actions";
-import {
-	disconnectExtraCloud,
-	saveAlibaba,
-	saveSelfManagedTokenCloud,
-	saveTokenCloud,
-} from "@/app/(private)/dashboard/providers/extra-cloud-actions";
+import { disconnectAzureIdentity } from "@/app/(private)/dashboard/providers/azure-actions";
+import { disconnectGcpIdentity } from "@/app/(private)/dashboard/providers/gcp-actions";
+import { disconnectExtraCloud } from "@/app/(private)/dashboard/providers/extra-cloud-actions";
 import { deleteProviderToken } from "@/app/server/actions/identities";
 import {
 	deleteConnectorCredential,
-	setCloudIdentityScope,
-	setConnectorCredentialScope,
+	type ConnectorGroup,
 	type ConnectorWithConnection,
 } from "@/app/server/actions/connectors";
-import type { CredentialScope } from "@/lib/db/schema/enums";
+import { ConnectorCard } from "@/components/connectors/connector-card";
+import { ConnectorRow } from "@/components/connectors/connector-row";
 import { ConnectorDetailSheet } from "@/components/connectors/connector-detail-sheet";
-import { ConnectorsList } from "@/components/connectors/connectors-list";
-import {
-	ConnectorsSidebar,
-	type CategoryFilter,
-} from "@/components/connectors/connectors-sidebar";
 import { ApiKeyConnection } from "@/components/connector/api-key-connection";
-import { AwsConnection } from "@/components/connector/aws-connection";
-import { AzureConnection } from "@/components/connector/azure-connection";
-import { GcpConnection } from "@/components/connector/gcp-connection";
 import {
-	AlibabaConnection,
-	TokenCloudConnection,
-} from "@/components/connector/extra-cloud-connection";
+	ConnectSheetHeader,
+	EXTRA_CLOUDS,
+	useCloudConnect,
+} from "@/components/cloud-connect/use-cloud-connect";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import {
 	AlertDialog,
@@ -54,22 +36,43 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 } from "@repo/ui/alert-dialog";
+import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import {
-	Sheet,
-	SheetContent,
-	SheetDescription,
-	SheetHeader,
-	SheetTitle,
-} from "@repo/ui/sheet";
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@repo/ui/select";
+import { Sheet, SheetContent } from "@repo/ui/sheet";
+import {
+	Table,
+	TableBody,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@repo/ui/table";
+import { ViewToggle, type ViewMode } from "@repo/ui/view-toggle";
 import { authClient } from "@/lib/auth/client";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
-import { Loader2, Search, Unplug } from "lucide-react";
-import { useRouter } from "next/navigation";
+import {
+	BookOpen,
+	Boxes,
+	Cloud,
+	Container,
+	KeyRound,
+	Loader2,
+	Search,
+	Unplug,
+} from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 interface ConnectorsPageProps {
+	orgSlug: string;
+	canManage: boolean;
 	integrations: ConnectorWithConnection[];
 	awsSetup: { externalId: string; identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
@@ -77,94 +80,126 @@ interface ConnectorsPageProps {
 	extraSetup?: Record<string, { identityId: string; externalId?: string }>;
 }
 
-/** Clouds connected by a scoped API token (no role-federation). */
-const TOKEN_CLOUDS = ["digitalocean", "hetzner", "civo"] as const;
-type TokenCloud = (typeof TOKEN_CLOUDS)[number];
-const EXTRA_CLOUDS = [...TOKEN_CLOUDS, "alibaba"] as const;
+type GroupFilter = "all" | ConnectorGroup;
 
-const TOKEN_CLOUD_META: Record<
-	TokenCloud,
-	{ name: string; docsUrl: string; tokenHelp: string; envVar: string }
-> = {
-	digitalocean: {
-		name: "DigitalOcean",
-		docsUrl: "https://cloud.digitalocean.com/account/api/tokens",
-		tokenHelp: "Create a Personal Access Token with read + write scopes.",
-		envVar: "DIGITALOCEAN_ACCESS_TOKEN",
+const GROUP_META: {
+	id: ConnectorGroup;
+	label: string;
+	description: string;
+	icon: typeof Cloud;
+	docsHref: string;
+}[] = [
+	{
+		id: "clouds",
+		label: "Clouds",
+		description:
+			"Provider accounts Alethia provisions into, via short-lived federated credentials.",
+		icon: Cloud,
+		docsHref: "/docs/console/connectors",
 	},
-	hetzner: {
-		name: "Hetzner Cloud",
-		docsUrl: "https://console.hetzner.cloud/",
-		tokenHelp: "Create a project-scoped API token (Security → API Tokens).",
-		envVar: "HCLOUD_TOKEN",
+	{
+		id: "secrets",
+		label: "Secrets",
+		description:
+			"Where Projects read secrets at deploy time — fetched just-in-time, never written to state.",
+		icon: KeyRound,
+		docsHref: "/docs/console/connectors/pluggable",
 	},
-	civo: {
-		name: "Civo",
-		docsUrl: "https://dashboard.civo.com/security",
-		tokenHelp: "Copy your API key from the Security page.",
-		envVar: "CIVO_TOKEN",
+	{
+		id: "registries",
+		label: "Registries",
+		description:
+			"Container registries clusters pull from. Pull credentials are injected & rotated automatically.",
+		icon: Container,
+		docsHref: "/docs/console/connectors/pluggable",
 	},
-};
+	{
+		id: "apps",
+		label: "Apps",
+		description:
+			"Git, observability and DNS services Alethia connects to and acts through.",
+		icon: Boxes,
+		docsHref: "/docs/console/connectors/git-providers",
+	},
+];
 
 export function ConnectorsPage({
+	orgSlug,
+	canManage,
 	integrations,
-	awsSetup,
-	gcpSetup,
-	azureSetup,
-	extraSetup,
+	awsSetup: awsSetupProp,
+	gcpSetup: gcpSetupProp,
+	azureSetup: azureSetupProp,
+	extraSetup: extraSetupProp,
 }: ConnectorsPageProps) {
 	const router = useRouter();
-	const [selectedCategory, setSelectedCategory] =
-		useState<CategoryFilter>("all");
+	// Deep-link: `?type=cloud` (from the overview "Add new → Cloud") opens filtered to Clouds.
+	const searchParams = useSearchParams();
+	const initialGroup: GroupFilter =
+		searchParams.get("type") === "cloud" ? "clouds" : "all";
+	const [activeGroup, setActiveGroup] = useState<GroupFilter>(initialGroup);
 	const [searchQuery, setSearchQuery] = useState("");
-	const [selectedIntegration, setSelectedIntegration] =
-		useState<ConnectorWithConnection | null>(null);
+	const [viewMode, setViewMode] = useState<ViewMode>("card");
+	const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
 	const [detailOpen, setDetailOpen] = useState(false);
-	const [awsSheetOpen, setAwsSheetOpen] = useState(false);
-	const [gcpSheetOpen, setGcpSheetOpen] = useState(false);
-	const [azureSheetOpen, setAzureSheetOpen] = useState(false);
-	const [extraCloudSlug, setExtraCloudSlug] = useState<string | null>(null);
+
+	// Cloud connect flow (AWS/GCP/Azure/extra) — shared with the create-project cloud picker.
+	const cloudConnect = useCloudConnect({
+		integrations,
+		awsSetup: awsSetupProp,
+		gcpSetup: gcpSetupProp,
+		azureSetup: azureSetupProp,
+		extraSetup: extraSetupProp,
+	});
+
 	const [apiKeySlug, setApiKeySlug] = useState<string | null>(null);
-	const [disconnectTarget, setDisconnectTarget] =
-		useState<ConnectorWithConnection | null>(null);
+	const [disconnectTarget, setDisconnectTarget] = useState<{
+		integration: ConnectorWithConnection;
+		identityId?: string;
+	} | null>(null);
 	const [isDisconnecting, setIsDisconnecting] = useState(false);
 	const [connectingSlug, setConnectingSlug] = useState<string | null>(null);
 
-	const counts = useMemo(() => {
-		const result: Record<string, number> = { all: integrations.length };
-		for (const i of integrations) {
-			result[i.category] = (result[i.category] ?? 0) + 1;
-		}
-		return result as Record<CategoryFilter, number>;
+	// The selected connector is derived from the live list (by slug) so the manage
+	// sheet reflects fresh data after a router.refresh() (disconnect / rename / add).
+	const selectedIntegration = useMemo(
+		() => integrations.find((i) => i.slug === selectedSlug) ?? null,
+		[integrations, selectedSlug],
+	);
+
+	/** Looks up a connector by slug — used to glyph the connect-sheet headers. */
+	const bySlug = (slug: string | null | undefined) =>
+		slug ? integrations.find((i) => i.slug === slug) : undefined;
+
+	const groupCounts = useMemo(() => {
+		const counts: Record<string, number> = { all: integrations.length };
+		for (const i of integrations) counts[i.group] = (counts[i.group] ?? 0) + 1;
+		return counts;
 	}, [integrations]);
 
 	const filtered = useMemo(() => {
-		let result = integrations;
-		if (selectedCategory !== "all") {
-			result = result.filter((i) => i.category === selectedCategory);
-		}
-		if (searchQuery.trim()) {
-			const q = searchQuery.toLowerCase();
-			result = result.filter(
-				(i) =>
-					i.name.toLowerCase().includes(q) ||
-					i.description.toLowerCase().includes(q) ||
-					i.organization.toLowerCase().includes(q),
+		const q = searchQuery.trim().toLowerCase();
+		return integrations.filter((i) => {
+			if (activeGroup !== "all" && i.group !== activeGroup) return false;
+			if (!q) return true;
+			return (
+				i.name.toLowerCase().includes(q) ||
+				i.description.toLowerCase().includes(q) ||
+				i.organization.toLowerCase().includes(q)
 			);
-		}
-		return result;
-	}, [integrations, selectedCategory, searchQuery]);
+		});
+	}, [integrations, activeGroup, searchQuery]);
 
+	/** Initiates the connect flow (or adds another cloud account). */
 	const handleConnect = async (integration: ConnectorWithConnection) => {
-		if (integration.category === "git") {
-			setConnectingSlug(integration.slug);
-			try {
-				const provider = integration.slug as PublicGitProvider;
-				const callbackURL = "/dashboard/connectors";
+		setDetailOpen(false);
+		const slug = integration.slug;
 
-				// Better Auth account linking — redirects to the provider. Native
-				// GitHub via linkSocial (repo scope); self-hosted GitLab + Bitbucket
-				// via the genericOAuth link endpoint (scopes are server-configured).
+		if (integration.category === "git") {
+			setConnectingSlug(slug);
+			try {
+				const provider = slug as PublicGitProvider;
+				const callbackURL = `/${orgSlug}/~/connectors`;
 				const { error } =
 					provider === "github"
 						? await authClient.linkSocial({
@@ -178,356 +213,277 @@ export function ConnectorsPage({
 							});
 				if (error) throw new Error(error.message);
 			} catch (err) {
-				console.error(`Error linking ${integration.slug}:`, err);
+				console.error(`Error linking ${slug}:`, err);
 				toast.error(`Failed to connect ${integration.name}`);
 			} finally {
 				setConnectingSlug(null);
 			}
-		} else if (integration.slug === "aws") {
-			setAwsSheetOpen(true);
-		} else if (integration.slug === "gcp") {
-			setGcpSheetOpen(true);
-		} else if (integration.slug === "azure") {
-			setAzureSheetOpen(true);
-		} else if ((EXTRA_CLOUDS as readonly string[]).includes(integration.slug)) {
-			setExtraCloudSlug(integration.slug);
-		} else if (integration.auth_method === "api_key") {
-			setApiKeySlug(integration.slug);
+			return;
 		}
-		setDetailOpen(false);
+
+		if (integration.auth_method === "api_key") {
+			setApiKeySlug(slug);
+			return;
+		}
+
+		// Cloud providers (aws/gcp/azure/extra) → the shared connect-sheet flow.
+		await cloudConnect.openConnect(integration);
 	};
 
-	const handleDisconnect = (integration: ConnectorWithConnection) => {
-		setDisconnectTarget(integration);
-		setDetailOpen(false);
+	const openManage = (integration: ConnectorWithConnection) => {
+		setSelectedSlug(integration.slug);
+		setDetailOpen(true);
 	};
 
-	/** Share a cloud / api_key credential with the org, or pull it back to personal. */
-	const handleShare = async (
-		integration: ConnectorWithConnection,
-		target: CredentialScope,
-	) => {
+	/** Re-runs a failed cloud verification with the stored credentials (no re-entry). */
+	const handleReverify = async (integration: ConnectorWithConnection) => {
+		if (!integration.reverify_identity_id) return;
+		setConnectingSlug(integration.slug);
 		try {
-			const result =
-				integration.category === "cloud"
-					? await setCloudIdentityScope(
-							integration.connection_details?.cloud_identity_id ?? "",
-							target,
-						)
-					: await setConnectorCredentialScope(integration.slug, target);
-			if (!result.ok) throw new Error(result.error);
-			toast.success(
-				target === "org"
-					? `Shared ${integration.name} with your org`
-					: `${integration.name} is now personal`,
-			);
+			await reverifyCloudIdentity(integration.reverify_identity_id);
+			toast.success(`Re-verifying ${integration.name}…`);
 			router.refresh();
 		} catch (err) {
 			toast.error(
-				err instanceof Error ? err.message : "Failed to change sharing",
+				err instanceof Error ? err.message : `Failed to re-verify ${integration.name}`,
 			);
+		} finally {
+			setConnectingSlug(null);
+		}
+	};
+
+	/** Renames a cloud account, then refreshes so the sheet shows the new name. */
+	const handleRename = async (identityId: string, name: string) => {
+		try {
+			await renameCloudIdentity(identityId, name);
+			toast.success("Account renamed.");
+			router.refresh();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Failed to rename");
 		}
 	};
 
 	const confirmDisconnect = async () => {
 		if (!disconnectTarget) return;
+		const { integration, identityId } = disconnectTarget;
 		setIsDisconnecting(true);
-
 		try {
-			if (disconnectTarget.category === "git") {
-				// Unlinks the Better Auth account (removes its stored tokens).
+			const cloudId =
+				identityId ?? integration.connection_details?.cloud_identity_id;
+			if (integration.category === "git") {
 				const result = await deleteProviderToken(
-					disconnectTarget.slug as PublicGitProvider,
+					integration.slug as PublicGitProvider,
 				);
 				if (result.error) throw new Error(result.error);
-
-				toast.success(
-					`Successfully disconnected ${disconnectTarget.name}`,
-				);
-			} else if (disconnectTarget.slug === "aws") {
-				const cloudIdentityId =
-					disconnectTarget.connection_details?.cloud_identity_id;
-				if (!cloudIdentityId) throw new Error("Missing identity ID");
-				await disconnectAwsIdentity(cloudIdentityId);
-				toast.success("AWS account disconnected.");
-			} else if (disconnectTarget.slug === "gcp") {
-				const cloudIdentityId =
-					disconnectTarget.connection_details?.cloud_identity_id;
-				if (!cloudIdentityId) throw new Error("Missing identity ID");
-				await disconnectGcpIdentity(cloudIdentityId);
-				toast.success("GCP project disconnected.");
-			} else if (disconnectTarget.slug === "azure") {
-				const cloudIdentityId =
-					disconnectTarget.connection_details?.cloud_identity_id;
-				if (!cloudIdentityId) throw new Error("Missing identity ID");
-				await disconnectAzureIdentity(cloudIdentityId);
-				toast.success("Azure subscription disconnected.");
-			} else if ((EXTRA_CLOUDS as readonly string[]).includes(disconnectTarget.slug)) {
-				const cloudIdentityId =
-					disconnectTarget.connection_details?.cloud_identity_id;
-				if (!cloudIdentityId) throw new Error("Missing identity ID");
+			} else if (integration.slug === "aws") {
+				if (!cloudId) throw new Error("Missing identity ID");
+				await disconnectAwsIdentity(cloudId);
+			} else if (integration.slug === "gcp") {
+				if (!cloudId) throw new Error("Missing identity ID");
+				await disconnectGcpIdentity(cloudId);
+			} else if (integration.slug === "azure") {
+				if (!cloudId) throw new Error("Missing identity ID");
+				await disconnectAzureIdentity(cloudId);
+			} else if ((EXTRA_CLOUDS as readonly string[]).includes(integration.slug)) {
+				if (!cloudId) throw new Error("Missing identity ID");
 				await disconnectExtraCloud(
-					cloudIdentityId,
-					disconnectTarget.slug as (typeof EXTRA_CLOUDS)[number],
+					cloudId,
+					integration.slug as (typeof EXTRA_CLOUDS)[number],
 				);
-				toast.success(`${disconnectTarget.name} disconnected.`);
-			} else if (disconnectTarget.auth_method === "api_key") {
-				const result = await deleteConnectorCredential(
-					disconnectTarget.slug,
-				);
+			} else if (integration.auth_method === "api_key") {
+				const result = await deleteConnectorCredential(integration.slug);
 				if (!result.ok) throw new Error(result.error);
-				toast.success(`Disconnected ${disconnectTarget.name}.`);
 			}
-
+			toast.success(`Disconnected ${integration.name}.`);
 			setDisconnectTarget(null);
 			router.refresh();
 		} catch (err) {
 			console.error("Disconnect error:", err);
-			toast.error(
-				`Failed to disconnect ${disconnectTarget?.name ?? "connector"}`,
-			);
+			toast.error(`Failed to disconnect ${integration.name}`);
 		} finally {
 			setIsDisconnecting(false);
 		}
 	};
 
-	const handleAwsConnect = async (roleArn: string) => {
-		if (!awsSetup) throw new Error("AWS setup not initialized");
-		const result = await saveAwsIdentity(awsSetup.identityId, roleArn);
-		return result;
-	};
-
-	const handleGcpConnect = async (wifConfigJson: string) => {
-		if (!gcpSetup) throw new Error("GCP setup not initialized");
-		return await saveGcpIdentity(gcpSetup.identityId, wifConfigJson);
-	};
-
-	const handleAzureConnect = async (
-		tenantId: string,
-		clientId: string,
-		subscriptionId: string,
-	) => {
-		if (!azureSetup) throw new Error("Azure setup not initialized");
-		return await saveAzureIdentity(
-			azureSetup.identityId,
-			tenantId,
-			clientId,
-			subscriptionId,
-		);
-	};
-
-	const handleTokenCloudConnect = (provider: TokenCloud) => async (token: string) => {
-		const setup = extraSetup?.[provider];
-		if (!setup) throw new Error(`${provider} setup not initialized`);
-		return await saveTokenCloud(setup.identityId, provider, token);
-	};
-
-	const handleSelfManagedConnect = (provider: TokenCloud) => async () => {
-		const setup = extraSetup?.[provider];
-		if (!setup) throw new Error(`${provider} setup not initialized`);
-		return await saveSelfManagedTokenCloud(setup.identityId, provider);
-	};
-
-	const handleAlibabaConnect = async (roleArn: string) => {
-		const setup = extraSetup?.alibaba;
-		if (!setup) throw new Error("Alibaba setup not initialized");
-		return await saveAlibaba(setup.identityId, roleArn);
-	};
-
-	const openDetail = (integration: ConnectorWithConnection) => {
-		setSelectedIntegration(integration);
-		setDetailOpen(true);
-	};
+	const visibleGroups = GROUP_META.filter(
+		(g) => activeGroup === "all" || g.id === activeGroup,
+	);
 
 	return (
 		<>
-			<div className="flex gap-8">
-				<ConnectorsSidebar
-					selected={selectedCategory}
-					onSelect={setSelectedCategory}
-					counts={counts}
-				/>
-
-				<div className="flex-1 space-y-4">
-					<div className="relative">
-						<Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+			<div className="space-y-6">
+				{/* top bar — group filter + search + view toggle + docs */}
+				<div className="flex items-center gap-3">
+					<Select
+						value={activeGroup}
+						onValueChange={(v) =>
+							setActiveGroup(
+								v === "all"
+									? "all"
+									: (GROUP_META.find((g) => g.id === v)?.id ?? "all"),
+							)
+						}
+					>
+						<SelectTrigger className="h-9 w-44 shrink-0 rounded-md border-border/60 bg-muted/20">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{[
+								{ id: "all" as GroupFilter, label: "All" },
+								...GROUP_META.map((g) => ({
+									id: g.id as GroupFilter,
+									label: g.label,
+								})),
+							].map((opt) => (
+								<SelectItem key={opt.id} value={opt.id}>
+									<span className="flex w-full items-center justify-between gap-3">
+										<span>{opt.label}</span>
+										<span className="font-mono text-[10px] text-muted-foreground">
+											{groupCounts[opt.id] ?? 0}
+										</span>
+									</span>
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+					<div className="relative flex-1">
+						<Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
 						<Input
-							placeholder="Search connectors..."
+							placeholder="Search connectors"
 							value={searchQuery}
 							onChange={(e) => setSearchQuery(e.target.value)}
-							className="pl-9 h-9 text-sm bg-muted/30 border-border/50"
+							className="h-9 border-border/60 bg-muted/20 pl-9 text-sm"
 						/>
 					</div>
-
-					<ConnectorsList
-						integrations={filtered}
-						onCardClick={openDetail}
-						onConnect={handleConnect}
-						onDisconnect={handleDisconnect}
-						onShare={handleShare}
-						connectingSlug={connectingSlug}
-					/>
+					<ViewToggle value={viewMode} onChange={setViewMode} />
+					<a
+						href="/docs/concepts/connectors"
+						target="_blank"
+						rel="noopener noreferrer"
+						title="What are connectors?"
+						className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground transition-colors hover:text-foreground"
+					>
+						<BookOpen className="size-4" />
+						<span className="sr-only">What are connectors?</span>
+					</a>
 				</div>
+
+				{visibleGroups.map((group) => {
+					const items = filtered.filter((i) => i.group === group.id);
+					if (items.length === 0) return null;
+					const connected = items.filter((i) => i.connected).length;
+					const Icon = group.icon;
+					return (
+						<section key={group.id} className="space-y-3.5">
+							<div className="flex items-center gap-3">
+								<span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground">
+									<Icon className="size-3.5" />
+								</span>
+								<h2 className="font-display text-[15px] font-semibold tracking-tight">
+									{group.label}
+								</h2>
+								<a
+									href={group.docsHref}
+									target="_blank"
+									rel="noopener noreferrer"
+									title={`Learn about ${group.label.toLowerCase()} connectors`}
+									className="text-muted-foreground/70 transition-colors hover:text-foreground"
+								>
+									<BookOpen className="size-3.5" />
+								</a>
+								<span className="hidden max-w-[52ch] text-xs text-muted-foreground md:inline">
+									{group.description}
+								</span>
+								<span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
+									{connected} / {items.length} connected
+								</span>
+							</div>
+
+							{viewMode === "card" ? (
+								<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
+									{items.map((integration) => (
+										<ConnectorCard
+											key={integration.id}
+											integration={integration}
+											canManage={canManage}
+											isConnecting={
+													connectingSlug === integration.slug ||
+													cloudConnect.connectingSlug === integration.slug
+												}
+											onConnect={() => handleConnect(integration)}
+											onManage={() => openManage(integration)}
+											onReverify={() => handleReverify(integration)}
+										/>
+									))}
+								</div>
+							) : (
+								<div className="overflow-hidden rounded-xl border border-border/60">
+									<Table>
+										<TableHeader>
+											<TableRow className="hover:bg-transparent">
+												<TableHead>Connector</TableHead>
+												<TableHead>Status</TableHead>
+												<TableHead>Details</TableHead>
+												<TableHead className="text-right">Action</TableHead>
+											</TableRow>
+										</TableHeader>
+										<TableBody>
+											{items.map((integration) => (
+												<ConnectorRow
+													key={integration.id}
+													integration={integration}
+													canManage={canManage}
+													isConnecting={
+													connectingSlug === integration.slug ||
+													cloudConnect.connectingSlug === integration.slug
+												}
+													onConnect={() => handleConnect(integration)}
+													onManage={() => openManage(integration)}
+													onReverify={() => handleReverify(integration)}
+												/>
+											))}
+										</TableBody>
+									</Table>
+								</div>
+							)}
+						</section>
+					);
+				})}
+
+				{filtered.length === 0 && (
+					<div className="py-14 text-center text-sm text-muted-foreground">
+						No connectors match your search.
+					</div>
+				)}
 			</div>
 
 			<ConnectorDetailSheet
 				integration={selectedIntegration}
 				open={detailOpen}
 				onOpenChange={setDetailOpen}
+				canManage={canManage}
+				isConnecting={
+					selectedIntegration
+						? connectingSlug === selectedIntegration.slug
+						: false
+				}
 				onConnect={() =>
 					selectedIntegration && handleConnect(selectedIntegration)
 				}
-				onDisconnect={() =>
-					selectedIntegration && handleDisconnect(selectedIntegration)
+				onDisconnectConnector={() =>
+					selectedIntegration &&
+					setDisconnectTarget({ integration: selectedIntegration })
 				}
-				isConnecting={connectingSlug === selectedIntegration?.slug}
+				onDisconnectAccount={(identityId) =>
+					selectedIntegration &&
+					setDisconnectTarget({ integration: selectedIntegration, identityId })
+				}
+				onRenameAccount={handleRename}
 			/>
 
-			{/* AWS Connection Sheet */}
-			<Sheet
-				open={awsSheetOpen}
-				onOpenChange={(open) => {
-					setAwsSheetOpen(open);
-					if (!open) router.refresh();
-				}}
-			>
-				<SheetContent
-					side="right"
-					className="w-full sm:max-w-2xl overflow-y-auto p-0"
-				>
-					<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
-						<SheetTitle>Connect AWS Account</SheetTitle>
-						<SheetDescription>
-							Set up a cross-account IAM role to allow Alethia to
-							provision infrastructure in your AWS account.
-						</SheetDescription>
-					</SheetHeader>
-					<div className="px-6 py-6">
-						{awsSetup && (
-							<AwsConnection
-								externalId={awsSetup.externalId}
-								onComplete={handleAwsConnect}
-							/>
-						)}
-					</div>
-				</SheetContent>
-			</Sheet>
+			{cloudConnect.sheets}
 
-			{/* GCP Connection Sheet */}
-			<Sheet
-				open={gcpSheetOpen}
-				onOpenChange={(open) => {
-					setGcpSheetOpen(open);
-					if (!open) router.refresh();
-				}}
-			>
-				<SheetContent
-					side="right"
-					className="w-full sm:max-w-2xl overflow-y-auto p-0"
-				>
-					<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
-						<SheetTitle>Connect GCP Project</SheetTitle>
-						<SheetDescription>
-							Set up Workload Identity Federation to allow Alethia
-							to provision infrastructure in your GCP project.
-						</SheetDescription>
-					</SheetHeader>
-					<div className="px-6 py-6">
-						{gcpSetup && (
-							<GcpConnection onComplete={handleGcpConnect} />
-						)}
-					</div>
-				</SheetContent>
-			</Sheet>
-
-			{/* Azure Connection Sheet */}
-			<Sheet
-				open={azureSheetOpen}
-				onOpenChange={(open) => {
-					setAzureSheetOpen(open);
-					if (!open) router.refresh();
-				}}
-			>
-				<SheetContent
-					side="right"
-					className="w-full sm:max-w-2xl overflow-y-auto p-0"
-				>
-					<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
-						<SheetTitle>Connect Azure Subscription</SheetTitle>
-						<SheetDescription>
-							Set up federated identity credentials to allow Alethia
-							to provision infrastructure in your Azure
-							subscription.
-						</SheetDescription>
-					</SheetHeader>
-					<div className="px-6 py-6">
-						{azureSetup && (
-							<AzureConnection onComplete={handleAzureConnect} />
-						)}
-					</div>
-				</SheetContent>
-			</Sheet>
-
-			{/* Extra-cloud Connection Sheet (DigitalOcean / Hetzner / Civo token, Alibaba RAM role) */}
-			<Sheet
-				open={!!extraCloudSlug}
-				onOpenChange={(open) => {
-					if (!open) {
-						setExtraCloudSlug(null);
-						router.refresh();
-					}
-				}}
-			>
-				<SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto p-0">
-					{extraCloudSlug === "alibaba" ? (
-						<>
-							<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
-								<SheetTitle>Connect Alibaba Cloud</SheetTitle>
-								<SheetDescription>
-									Connect via a RAM role — Alethia stores no Alibaba credentials.
-								</SheetDescription>
-							</SheetHeader>
-							<div className="px-6 py-6">
-								{extraSetup?.alibaba && (
-									<AlibabaConnection
-										externalId={extraSetup.alibaba.externalId}
-										onSave={handleAlibabaConnect}
-									/>
-								)}
-							</div>
-						</>
-					) : extraCloudSlug ? (
-						(() => {
-							const slug = extraCloudSlug as TokenCloud;
-							const m = TOKEN_CLOUD_META[slug];
-							return (
-								<>
-									<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
-										<SheetTitle>Connect {m.name}</SheetTitle>
-										<SheetDescription>
-											Connect with a scoped API token (encrypted at rest).
-										</SheetDescription>
-									</SheetHeader>
-									<div className="px-6 py-6">
-										{extraSetup?.[slug] && (
-											<TokenCloudConnection
-												providerName={m.name}
-												tokenHelp={m.tokenHelp}
-												docsUrl={m.docsUrl}
-												envVar={m.envVar}
-												onSave={handleTokenCloudConnect(slug)}
-												onSaveSelfManaged={handleSelfManagedConnect(slug)}
-											/>
-										)}
-									</div>
-								</>
-							);
-						})()
-					) : null}
-				</SheetContent>
-			</Sheet>
-
-			{/* api_key Connection Sheet (Cloudflare, Vault, Docker Hub, …) */}
+			{/* api_key Connection Sheet */}
 			<Sheet
 				open={!!apiKeySlug}
 				onOpenChange={(open) => {
@@ -539,7 +495,7 @@ export function ConnectorsPage({
 			>
 				<SheetContent
 					side="right"
-					className="w-full sm:max-w-md overflow-y-auto p-0"
+					className="w-full overflow-y-auto p-0 sm:max-w-md"
 				>
 					{apiKeySlug &&
 						(() => {
@@ -547,13 +503,11 @@ export function ConnectorsPage({
 							if (!provider) return null;
 							return (
 								<>
-									<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
-										<SheetTitle>Connect {provider.name}</SheetTitle>
-										<SheetDescription>
-											Provide an API credential. It is encrypted at rest
-											and only used by the runner at provision time.
-										</SheetDescription>
-									</SheetHeader>
+									<ConnectSheetHeader
+										integration={bySlug(apiKeySlug)}
+										title={`Connect ${provider.name}`}
+										description="Provide an API credential. It is encrypted at rest and shared with your organization."
+									/>
 									<div className="px-6 py-6">
 										<ApiKeyConnection
 											provider={provider}
@@ -566,7 +520,7 @@ export function ConnectorsPage({
 				</SheetContent>
 			</Sheet>
 
-			{/* Disconnect Confirmation */}
+			{/* Disconnect confirmation */}
 			<AlertDialog
 				open={!!disconnectTarget}
 				onOpenChange={(open) => !open && setDisconnectTarget(null)}
@@ -574,18 +528,14 @@ export function ConnectorsPage({
 				<AlertDialogContent>
 					<AlertDialogHeader>
 						<AlertDialogTitle>
-							Disconnect {disconnectTarget?.name}?
+							Disconnect {disconnectTarget?.integration.name}?
 						</AlertDialogTitle>
 						<AlertDialogDescription>
-							{disconnectTarget?.slug === "aws"
-								? "This will remove the stored IAM role ARN. You won't be able to provision new AWS infrastructure until you reconnect. Existing resources are not affected."
-								: disconnectTarget?.slug === "gcp"
-									? "This will remove the Workload Identity Federation configuration. You won't be able to provision new GCP infrastructure until you reconnect. Existing resources are not affected."
-									: disconnectTarget?.slug === "azure"
-										? "This will remove the federated identity configuration. You won't be able to provision new Azure infrastructure until you reconnect. Existing resources are not affected."
-										: disconnectTarget?.category === "cloud"
-											? "This will remove the stored credentials. You won't be able to provision new infrastructure until you reconnect. Existing resources are not affected."
-											: `This will unlink your ${disconnectTarget?.name} account. You won't be able to access repositories from this provider until you reconnect.`}
+							{disconnectTarget?.integration.category === "cloud"
+								? "This removes the stored connection. You won't be able to provision new infrastructure with this account until you reconnect. Existing resources are not affected."
+								: disconnectTarget?.integration.category === "git"
+									? `This unlinks your ${disconnectTarget?.integration.name} account. You won't be able to access its repositories until you reconnect.`
+									: "This removes the stored credential for the whole organization. You won't be able to use this connector until you reconnect."}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -597,9 +547,9 @@ export function ConnectorsPage({
 							disabled={isDisconnecting}
 						>
 							{isDisconnecting ? (
-								<Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+								<Loader2 className="mr-1.5 size-3.5 animate-spin" />
 							) : (
-								<Unplug className="w-3.5 h-3.5 mr-1.5" />
+								<Unplug className="mr-1.5 size-3.5" />
 							)}
 							Disconnect
 						</AlertDialogAction>

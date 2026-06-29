@@ -47,6 +47,10 @@ export const invitation = pgTable("invitation", {
 		.references(() => organization.id, { onDelete: "cascade" }),
 	email: text().notNull(),
 	role: text(),
+	// Better Auth's org plugin runs with teams enabled, so it maps a `teamId` on the
+	// invitation model (an optional team to join on accept). Nullable; no FK to match the
+	// plugin's loose mapping.
+	teamId: uuid(),
 	status: text().default("pending").notNull(),
 	expiresAt: timestamp({ withTimezone: true }).notNull(),
 	inviterId: uuid()

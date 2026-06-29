@@ -246,6 +246,55 @@
       "when": 1782375998502,
       "tag": "0034_email_suppression",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1782376998502,
+      "tag": "0035_cloud_identity_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1782376999502,
+      "tag": "0036_flatten_zones",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1782377999502,
+      "tag": "0037_rename_spec_to_project",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1782378000502,
+      "tag": "0038_rename_spec_status_enum",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1782378001502,
+      "tag": "0039_alert_channel_types",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1782378002502,
+      "tag": "0040_alert_rule_channel_severity",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1782378003502,
+      "tag": "0041_invitation_team_id",
+      "breakpoints": true
     }
   ]
 }
