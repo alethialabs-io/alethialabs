@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// RocketChat incoming webhook. Same shape family as Slack — POSTs `{text, attachments}`
-// to the integration URL (stored encrypted); severity drives the attachment colour.
+// Microsoft Teams incoming webhook. POSTs a MessageCard to the channel webhook URL
+// (stored encrypted); severity drives the theme colour. Detail fields render as a facts
+// section so the card is scannable.
 
 import type { AlertEventContext } from "@/types/database-custom.types";
 import { decryptSecret } from "@/lib/crypto/secrets";
@@ -13,26 +14,29 @@ import { TEST_CONTEXT } from "./types";
 
 const TIMEOUT_MS = 10_000;
 
+// MessageCard themeColor is a hex string without the leading '#'.
 const SEVERITY_COLOR: Record<AlertSeverity, string> = {
-	info: "#71717a",
-	warning: "#a16207",
-	critical: "#b91c1c",
+	info: "71717A",
+	warning: "A16207",
+	critical: "B91C1C",
 };
 
 /** Reads the incoming-webhook URL from the channel's encrypted secret. */
 function webhookUrl(channel: AlertChannel): string {
 	const secret = channel.secret ? decryptSecret(channel.secret) : {};
 	if (!secret.url) {
-		throw new Error("RocketChat channel has no webhook URL configured");
+		throw new Error("Microsoft Teams channel has no webhook URL configured");
 	}
 	return secret.url;
 }
 
-/** Builds the attachment fields from the populated event context. */
-function fields(context: AlertEventContext): { title: string; value: string; short: boolean }[] {
-	const out: { title: string; value: string; short: boolean }[] = [];
-	const add = (title: string, value?: string) => {
-		if (value) out.push({ title, value, short: true });
+/** MessageCard facts from the populated event context. */
+function facts(
+	context: AlertEventContext,
+): { name: string; value: string }[] {
+	const out: { name: string; value: string }[] = [];
+	const add = (name: string, value?: string) => {
+		if (value) out.push({ name, value });
 	};
 	add("Actor", context.actor_id);
 	add("Action", context.action);
@@ -53,31 +57,36 @@ async function post(
 	channel: AlertChannel,
 	context: AlertEventContext,
 ): Promise<void> {
-	const color = SEVERITY_COLOR[context.severity ?? "warning"] ?? "#a16207";
+	const body: Record<string, unknown> = {
+		"@type": "MessageCard",
+		"@context": "http://schema.org/extensions",
+		themeColor: SEVERITY_COLOR[context.severity ?? "warning"] ?? "A16207",
+		summary: context.title,
+		title: context.title,
+		text: context.summary ?? "",
+		sections: [{ facts: facts(context) }],
+	};
+	if (context.link) {
+		body.potentialAction = [
+			{
+				"@type": "OpenUri",
+				name: "Open in console",
+				targets: [{ os: "default", uri: context.link }],
+			},
+		];
+	}
 	const res = await fetch(webhookUrl(channel), {
 		method: "POST",
 		headers: { "content-type": "application/json" },
-		body: JSON.stringify({
-			text: `*${context.title}*`,
-			attachments: [
-				{
-					color,
-					text: context.summary ?? "",
-					fields: fields(context),
-					...(context.link
-						? { title: "Open in console", title_link: context.link }
-						: {}),
-				},
-			],
-		}),
+		body: JSON.stringify(body),
 		signal: AbortSignal.timeout(TIMEOUT_MS),
 	});
 	if (!res.ok) {
-		throw new Error(`RocketChat responded ${res.status} ${res.statusText}`);
+		throw new Error(`Microsoft Teams responded ${res.status} ${res.statusText}`);
 	}
 }
 
-export const rocketchatSender: ChannelSender = {
+export const msteamsSender: ChannelSender = {
 	send: post,
 	verify: (channel) => post(channel, TEST_CONTEXT),
 };

@@ -63,8 +63,8 @@ export const CATEGORIES: CatalogCategory[] = [
 			ev("deploy.succeeded", "system.job.succeeded", "Deploy succeeded", "info", true),
 			ev("deploy.failed", "system.job.failed", "Deploy failed", "critical", true),
 			ev("destroy.requested", "system.job.destroy_requested", "Destroy requested", "warning", true),
-			ev("destroy.completed", "system.spec.destroyed", "Destroy completed", "warning", true),
-			ev("drift.detected", "system.spec.drift", "Drift detected", "warning"),
+			ev("destroy.completed", "system.project.destroyed", "Destroy completed", "warning", true),
+			ev("drift.detected", "system.project.drift", "Drift detected", "warning"),
 		],
 	},
 	{

@@ -27,3 +27,20 @@ export async function register() {
 		.backfill()
 		.catch((err) => console.error("[authz] FGA backfill failed:", err));
 }
+
+/**
+ * Captures the FULL server stack for any uncaught request error (Server Components, Route
+ * Handlers, Server Actions). The dev overlay and terminal otherwise collapse app frames as
+ * "ignore-listed", which hides the real throw site; this logs the unredacted stack + digest
+ * so a digest seen in the browser maps to an exact `file:line` here.
+ */
+export async function onRequestError(
+	error: unknown,
+	request: { path?: string; method?: string },
+	context: { routePath?: string; routeType?: string },
+): Promise<void> {
+	const e = error as { message?: string; stack?: string; digest?: string };
+	console.error(
+		`[onRequestError] ${request.method ?? "?"} ${request.path ?? context.routePath ?? "?"} (${context.routeType ?? "?"}) digest=${e?.digest ?? "-"}\n${e?.stack ?? e?.message ?? String(error)}`,
+	);
+}

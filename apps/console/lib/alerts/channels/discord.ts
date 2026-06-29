@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// RocketChat incoming webhook. Same shape family as Slack — POSTs `{text, attachments}`
-// to the integration URL (stored encrypted); severity drives the attachment colour.
+// Discord incoming webhook. POSTs a rich embed to the channel webhook URL (stored
+// encrypted); severity drives the embed colour.
 
 import type { AlertEventContext } from "@/types/database-custom.types";
 import { decryptSecret } from "@/lib/crypto/secrets";
@@ -13,26 +13,27 @@ import { TEST_CONTEXT } from "./types";
 
 const TIMEOUT_MS = 10_000;
 
-const SEVERITY_COLOR: Record<AlertSeverity, string> = {
-	info: "#71717a",
-	warning: "#a16207",
-	critical: "#b91c1c",
+// Discord embed colours are integers.
+const SEVERITY_COLOR: Record<AlertSeverity, number> = {
+	info: 0x71717a,
+	warning: 0xa16207,
+	critical: 0xb91c1c,
 };
 
-/** Reads the incoming-webhook URL from the channel's encrypted secret. */
+/** Reads the webhook URL from the channel's encrypted secret. */
 function webhookUrl(channel: AlertChannel): string {
 	const secret = channel.secret ? decryptSecret(channel.secret) : {};
-	if (!secret.url) {
-		throw new Error("RocketChat channel has no webhook URL configured");
-	}
+	if (!secret.url) throw new Error("Discord channel has no webhook URL configured");
 	return secret.url;
 }
 
-/** Builds the attachment fields from the populated event context. */
-function fields(context: AlertEventContext): { title: string; value: string; short: boolean }[] {
-	const out: { title: string; value: string; short: boolean }[] = [];
-	const add = (title: string, value?: string) => {
-		if (value) out.push({ title, value, short: true });
+/** Embed fields from the populated event context. */
+function fields(
+	context: AlertEventContext,
+): { name: string; value: string; inline: boolean }[] {
+	const out: { name: string; value: string; inline: boolean }[] = [];
+	const add = (name: string, value?: string) => {
+		if (value) out.push({ name, value, inline: true });
 	};
 	add("Actor", context.actor_id);
 	add("Action", context.action);
@@ -53,31 +54,29 @@ async function post(
 	channel: AlertChannel,
 	context: AlertEventContext,
 ): Promise<void> {
-	const color = SEVERITY_COLOR[context.severity ?? "warning"] ?? "#a16207";
 	const res = await fetch(webhookUrl(channel), {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({
-			text: `*${context.title}*`,
-			attachments: [
+			username: "Alethia",
+			embeds: [
 				{
-					color,
-					text: context.summary ?? "",
+					title: context.title,
+					description: context.summary ?? undefined,
+					color: SEVERITY_COLOR[context.severity ?? "warning"] ?? 0xa16207,
 					fields: fields(context),
-					...(context.link
-						? { title: "Open in console", title_link: context.link }
-						: {}),
+					...(context.link ? { url: context.link } : {}),
 				},
 			],
 		}),
 		signal: AbortSignal.timeout(TIMEOUT_MS),
 	});
 	if (!res.ok) {
-		throw new Error(`RocketChat responded ${res.status} ${res.statusText}`);
+		throw new Error(`Discord responded ${res.status} ${res.statusText}`);
 	}
 }
 
-export const rocketchatSender: ChannelSender = {
+export const discordSender: ChannelSender = {
 	send: post,
 	verify: (channel) => post(channel, TEST_CONTEXT),
 };

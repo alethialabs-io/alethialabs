@@ -267,7 +267,7 @@ export interface RepoFile {
 }
 
 // Deterministic static analysis of a repository (ANALYZE_REPO job). Mirrors the Go
-// `RepoDigest` (packages/core/types/repo_digest.go); fed to the model to infer a Spec.
+// `RepoDigest` (packages/core/types/repo_digest.go); fed to the model to infer a Project.
 export interface RepoDigest {
 	repo_url: string;
 	ref?: string;
@@ -298,8 +298,7 @@ export interface AlertChannelConfig {
 // events of this type". Compound/boolean expressions are an ee/ capability.
 export interface AlertRuleMatch {
 	job_types?: string[];
-	zone_ids?: string[];
-	spec_ids?: string[];
+	project_ids?: string[];
 	resource_types?: string[];
 	actions?: string[];
 	min_severity?: AlertSeverity;
@@ -318,11 +317,10 @@ export interface AlertEventContext {
 	resource_type?: string;
 	resource_id?: string;
 	reason?: string;
-	// job / spec sources
+	// job / project sources
 	job_id?: string;
 	job_type?: string;
-	spec_id?: string;
-	zone_id?: string;
+	project_id?: string;
 	// connector source
 	connector_slug?: string;
 	// deep link into the console

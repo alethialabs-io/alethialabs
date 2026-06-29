@@ -28,7 +28,7 @@ export const environmentStage = pgEnum("environment_stage", [
 	"production",
 ]);
 
-export const specStatus = pgEnum("spec_status", [
+export const projectStatus = pgEnum("project_status", [
 	"DRAFT",
 	"QUEUED",
 	"PROVISIONING",
@@ -152,6 +152,16 @@ export const connectorStatus = pgEnum("connector_status", [
 // governed by the PDP connector/cloud_identity grants + roles. See dataroom/spec/mvp/08 + 07.
 export const credentialScope = pgEnum("credential_scope", ["personal", "org"]);
 
+// Lifecycle of a cloud_identity's connection: just created (no creds yet), a
+// CONNECTION_TEST is in flight, the test passed (connected), or it failed. Drives
+// the connectors page health treatment + the verification finalize.
+export const cloudIdentityStatus = pgEnum("cloud_identity_status", [
+	"pending",
+	"testing",
+	"connected",
+	"failed",
+]);
+
 // Alerting (dataroom/spec/mvp/25-alerting-notifications.md). Delivery channels, event
 // sources, severity, and the deliveries-ledger lifecycle.
 export const alertChannelType = pgEnum("alert_channel_type", [
@@ -159,6 +169,11 @@ export const alertChannelType = pgEnum("alert_channel_type", [
 	"email",
 	"slack",
 	"rocketchat",
+	"discord",
+	"teams",
+	"mattermost",
+	"googlechat",
+	"pagerduty",
 ]);
 // Event keys are TEXT, not a DB enum — the catalog is code-derived from the PDP
 // registry (lib/alerts/catalog.ts) so a new alertable action/event is code-only.
@@ -187,7 +202,7 @@ export const connectorHealthStatus = pgEnum("connector_health_status", [
 
 // Billing plan an organization is subscribed to. Drives entitlements via the
 // granular ladder in lib/billing/plan.ts (community → all off; team → orgs/teams;
-// enterprise → + custom roles + audit export + SSO). `community` is also the
+// enterprise → + custom roles + activity export + SSO). `community` is also the
 // implicit plan for any org with no billing row.
 export const billingPlan = pgEnum("billing_plan", [
 	"community",
@@ -215,7 +230,7 @@ export type RunnerMode = (typeof runnerMode.enumValues)[number];
 export type RunnerOperator = (typeof runnerOperator.enumValues)[number];
 export type RunnerProvisioning = (typeof runnerProvisioning.enumValues)[number];
 export type RunnerStatus = (typeof runnerStatus.enumValues)[number];
-export type SpecStatus = (typeof specStatus.enumValues)[number];
+export type ProjectStatus = (typeof projectStatus.enumValues)[number];
 export type ComponentStatus = (typeof componentStatus.enumValues)[number];
 export type EnvironmentStage = (typeof environmentStage.enumValues)[number];
 export type CacheEngine = (typeof cacheEngine.enumValues)[number];
@@ -225,6 +240,8 @@ export type BillingStatus = (typeof billingStatus.enumValues)[number];
 export type AlertChannelType = (typeof alertChannelType.enumValues)[number];
 export type AlertSeverity = (typeof alertSeverity.enumValues)[number];
 export type CredentialScope = (typeof credentialScope.enumValues)[number];
+export type CloudIdentityStatus =
+	(typeof cloudIdentityStatus.enumValues)[number];
 export type ConnectorHealthKind =
 	(typeof connectorHealthKind.enumValues)[number];
 export type ConnectorHealthStatus =

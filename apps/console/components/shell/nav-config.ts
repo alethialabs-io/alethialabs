@@ -16,12 +16,9 @@ import {
 	Eye,
 	FlaskConical,
 	Gauge,
-	GitBranch,
-	Layers,
 	LayoutDashboard,
 	LifeBuoy,
 	LineChart,
-	Puzzle,
 	ScrollText,
 	Server,
 	Settings,
@@ -34,7 +31,7 @@ import {
 import { globalHref, orgHref } from "@/lib/routing";
 
 /** A sidebar section that slides in as a nested sub-sidebar. */
-export type DrillId = "observability" | "runners" | "alerts" | "settings";
+export type DrillId = "observability" | "alerts" | "settings";
 
 /** A small uppercase tag on a nav item. */
 export interface NavBadge {
@@ -54,6 +51,8 @@ export interface NavItem {
 	drill?: DrillId;
 	/** Route-owned drills navigate here on click, so the route itself opens the drill. */
 	anchor?: string;
+	/** In-page section anchor id (e.g. "channels"): scroll to it instead of route-navigating. */
+	scrollId?: string;
 	badge?: NavBadge;
 	/** A surface that does not exist yet — rendered visible but non-interactive. */
 	disabled?: boolean;
@@ -86,17 +85,16 @@ export function buildSidebarNav(orgSlug: string): SidebarNavGroups {
 			{ label: "Clusters", icon: Server, sub: "clusters", href: globalHref(orgSlug, "clusters") },
 			{ label: "Jobs", icon: ClipboardList, sub: "jobs", href: globalHref(orgSlug, "jobs") },
 			{ label: "Observability", icon: Eye, drill: "observability" },
-			{ label: "Runners", icon: Workflow, drill: "runners", anchor: globalHref(orgSlug, "runners") },
+			{ label: "Runners", icon: Workflow, sub: "runners", href: globalHref(orgSlug, "runners") },
 		],
 		connect: [
 			{ label: "Connectors", icon: Blocks, sub: "connectors", href: globalHref(orgSlug, "connectors") },
 			{ label: "Alerts", icon: Bell, drill: "alerts", anchor: globalHref(orgSlug, "alerts") },
-			{ label: "Integrations", icon: Puzzle, disabled: true, badge: { text: "Beta", tone: "beta" } },
 			{ label: "Agent", icon: Sparkles, sub: "agent", href: globalHref(orgSlug, "agent") },
 			{ label: "Sandboxes", icon: FlaskConical, disabled: true, badge: { text: "Soon", tone: "soon" } },
 		],
 		pinned: [
-			{ label: "Usage", icon: Gauge, href: globalHref(orgSlug, "settings/usage") },
+			{ label: "Usage", icon: Gauge, sub: "usage", href: globalHref(orgSlug, "usage") },
 			{ label: "Support", icon: LifeBuoy, disabled: true, badge: { text: "Soon", tone: "soon" } },
 			{ label: "Settings", icon: Settings, drill: "settings", anchor: globalHref(orgSlug, "settings") },
 		],
@@ -119,25 +117,31 @@ export function buildDrills(orgSlug: string): Record<DrillId, DrillDef> {
 				{ label: "Activity", icon: Activity, disabled: true, badge: soon },
 			],
 		},
-		runners: {
-			id: "runners",
-			title: "Runners",
-			routeOwned: true,
-			items: [
-				{ label: "Fleet overview", icon: Workflow, sub: "runners", href: globalHref(orgSlug, "runners") },
-				{ label: "Pools", icon: Layers, disabled: true, badge: soon },
-				{ label: "Versions", icon: GitBranch, disabled: true, badge: soon },
-				{ label: "Self-hosted", icon: Server, disabled: true, badge: soon },
-			],
-		},
 		alerts: {
 			id: "alerts",
 			title: "Alerts",
 			routeOwned: true,
+			// Single-page hub: each item anchor-scrolls to its stacked section. The href
+			// carries the hash so cross-page clicks land scrolled to the right section.
 			items: [
-				{ label: "Policies", icon: ShieldAlert, sub: "alerts", href: globalHref(orgSlug, "alerts") },
-				{ label: "Channels", icon: Webhook, disabled: true, badge: soon },
-				{ label: "Activity", icon: Activity, disabled: true, badge: soon },
+				{
+					label: "Policies",
+					icon: ShieldAlert,
+					scrollId: "policies",
+					href: `${globalHref(orgSlug, "alerts")}#policies`,
+				},
+				{
+					label: "Channels",
+					icon: Webhook,
+					scrollId: "channels",
+					href: `${globalHref(orgSlug, "alerts")}#channels`,
+				},
+				{
+					label: "Activity",
+					icon: Activity,
+					scrollId: "activity",
+					href: `${globalHref(orgSlug, "alerts")}#activity`,
+				},
 			],
 		},
 		settings: {
@@ -154,7 +158,18 @@ export function globalSub(pathname: string): string | null {
 	return segs[1] === "~" ? segs[2] ?? null : null;
 }
 
-/** True when the path is the bare org overview `/{org}` (the zones grid). */
+/** The active settings scope from a pathname: org (`/{org}/~/settings/*`), a specific project
+ * (`/{org}/{project}/settings/*`), or null when the path isn't a settings page. */
+export function settingsScope(
+	pathname: string,
+): { kind: "org" } | { kind: "project"; projectSlug: string } | null {
+	const segs = pathname.split("/").filter(Boolean); // [org, ~|project, "settings", sub?]
+	if (segs[2] !== "settings") return null;
+	if (segs[1] === "~") return { kind: "org" };
+	return { kind: "project", projectSlug: segs[1] };
+}
+
+/** True when the path is the bare org overview `/{org}` (the projects grid). */
 export function isOverviewPath(pathname: string): boolean {
 	const segs = pathname.split("/").filter(Boolean);
 	return segs.length === 1 && segs[0] !== "dashboard";
@@ -167,16 +182,10 @@ export function isNavItemActive(item: NavItem, pathname: string): boolean {
 	return false;
 }
 
-/** The drill that owns the current route (so it auto-opens on deep-link/refresh), or null. */
+/** The drill that owns the current route (so it auto-opens on deep-link/refresh), or null.
+ * Settings is route-owned at BOTH scopes (org `~/settings` and project `{project}/settings`). */
 export function routeOwnedDrill(pathname: string): DrillId | null {
-	switch (globalSub(pathname)) {
-		case "settings":
-			return "settings";
-		case "runners":
-			return "runners";
-		case "alerts":
-			return "alerts";
-		default:
-			return null;
-	}
+	if (settingsScope(pathname)) return "settings";
+	if (globalSub(pathname) === "alerts") return "alerts";
+	return null;
 }

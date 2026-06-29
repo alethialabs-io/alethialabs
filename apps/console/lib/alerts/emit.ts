@@ -23,7 +23,7 @@ import type { Actor } from "@/lib/authz/types";
 import type { AlertEventContext } from "@/types/database-custom.types";
 import { authzEventKey, eventMatches, isSecurityKey, labelForKey } from "./catalog";
 import { dispatchDeliveries } from "./dispatch";
-import { matchesRule } from "./events";
+import { matchesRule, meetsSeverity } from "./events";
 import { getEnabledRules } from "./rule-cache";
 
 /** The event "subject" — distinguishes throttle buckets within one rule+channel. */
@@ -31,7 +31,7 @@ function subjectOf(context: AlertEventContext): string {
 	return (
 		context.resource_id ??
 		context.job_id ??
-		context.spec_id ??
+		context.project_id ??
 		context.connector_slug ??
 		""
 	);
@@ -69,11 +69,16 @@ export async function emitAlertEvent(
 	for (const rule of matched) {
 		const severity = context.severity ?? rule.severity;
 		const channels = await db
-			.select({ channel_id: alertRuleChannels.channel_id })
+			.select({
+				channel_id: alertRuleChannels.channel_id,
+				min_severity: alertRuleChannels.min_severity,
+			})
 			.from(alertRuleChannels)
 			.where(eq(alertRuleChannels.rule_id, rule.id));
 
-		for (const { channel_id } of channels) {
+		for (const { channel_id, min_severity } of channels) {
+			// Per-channel routing floor: skip channels that only want higher severities.
+			if (min_severity && !meetsSeverity(severity, min_severity)) continue;
 			const dedupeKey = `${rule.id}:${channel_id}:${eventKey}:${subject}`;
 			if (await isThrottled(rule, dedupeKey)) continue;
 			rows.push({

@@ -8,6 +8,12 @@ import {
 import { AlertsPage } from "@/components/alerts/alerts-page";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { ForbiddenError } from "@/lib/authz/types";
+import { pageMetadata } from "@/lib/seo/page-metadata";
+
+export const metadata = pageMetadata({
+	title: "Alerts",
+	description: "Notification channels, alert rules, and delivery activity.",
+});
 
 /** Alerts surface: notification channels, alert rules, and the delivery activity log. */
 export default async function AlertsRoute() {

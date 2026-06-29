@@ -5,7 +5,12 @@
 // channel (PagerDuty, Discord, …) is one new file + one entry here.
 
 import type { AlertChannelType } from "@/lib/db/schema/enums";
+import { discordSender } from "./discord";
 import { emailSender } from "./email";
+import { googlechatSender } from "./googlechat";
+import { mattermostSender } from "./mattermost";
+import { msteamsSender } from "./msteams";
+import { pagerdutySender } from "./pagerduty";
 import { rocketchatSender } from "./rocketchat";
 import { slackSender } from "./slack";
 import type { ChannelSender } from "./types";
@@ -16,6 +21,11 @@ const SENDERS: Record<AlertChannelType, ChannelSender> = {
 	email: emailSender,
 	slack: slackSender,
 	rocketchat: rocketchatSender,
+	discord: discordSender,
+	teams: msteamsSender,
+	mattermost: mattermostSender,
+	googlechat: googlechatSender,
+	pagerduty: pagerdutySender,
 };
 
 /** The sender for a channel type. */

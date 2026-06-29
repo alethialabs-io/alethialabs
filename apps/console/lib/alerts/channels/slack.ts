@@ -39,7 +39,7 @@ function detailLines(context: AlertEventContext): string {
 	}
 	if (context.reason) parts.push(`*reason* ${context.reason}`);
 	if (context.job_id) parts.push(`*job* ${context.job_id}`);
-	if (context.spec_id) parts.push(`*spec* ${context.spec_id}`);
+	if (context.project_id) parts.push(`*project* ${context.project_id}`);
 	if (context.connector_slug) parts.push(`*connector* ${context.connector_slug}`);
 	return parts.join("  ·  ");
 }

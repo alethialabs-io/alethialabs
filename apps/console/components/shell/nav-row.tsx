@@ -33,10 +33,13 @@ export function NavRow({
 	item,
 	active,
 	onOpenDrill,
+	onClick,
 }: {
 	item: NavItem;
 	active: boolean;
 	onOpenDrill?: (id: DrillId) => void;
+	/** Intercepts a navigable row's click (e.g. to anchor-scroll on the same page). */
+	onClick?: (e: React.MouseEvent) => void;
 }) {
 	const Icon = item.icon;
 	const className = cn(
@@ -84,7 +87,7 @@ export function NavRow({
 	}
 
 	return (
-		<Link href={item.href ?? "#"} className={className}>
+		<Link href={item.href ?? "#"} className={className} onClick={onClick}>
 			{inner}
 		</Link>
 	);

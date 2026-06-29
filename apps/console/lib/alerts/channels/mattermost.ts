@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// RocketChat incoming webhook. Same shape family as Slack — POSTs `{text, attachments}`
-// to the integration URL (stored encrypted); severity drives the attachment colour.
+// Mattermost incoming webhook. Mattermost accepts the Slack-compatible `{text,
+// attachments}` shape, so this mirrors the Rocket.Chat sender; severity drives the
+// attachment colour.
 
 import type { AlertEventContext } from "@/types/database-custom.types";
 import { decryptSecret } from "@/lib/crypto/secrets";
@@ -23,13 +24,15 @@ const SEVERITY_COLOR: Record<AlertSeverity, string> = {
 function webhookUrl(channel: AlertChannel): string {
 	const secret = channel.secret ? decryptSecret(channel.secret) : {};
 	if (!secret.url) {
-		throw new Error("RocketChat channel has no webhook URL configured");
+		throw new Error("Mattermost channel has no webhook URL configured");
 	}
 	return secret.url;
 }
 
-/** Builds the attachment fields from the populated event context. */
-function fields(context: AlertEventContext): { title: string; value: string; short: boolean }[] {
+/** Slack-style attachment fields from the populated event context. */
+function fields(
+	context: AlertEventContext,
+): { title: string; value: string; short: boolean }[] {
 	const out: { title: string; value: string; short: boolean }[] = [];
 	const add = (title: string, value?: string) => {
 		if (value) out.push({ title, value, short: true });
@@ -58,7 +61,7 @@ async function post(
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({
-			text: `*${context.title}*`,
+			text: `**${context.title}**`,
 			attachments: [
 				{
 					color,
@@ -73,11 +76,11 @@ async function post(
 		signal: AbortSignal.timeout(TIMEOUT_MS),
 	});
 	if (!res.ok) {
-		throw new Error(`RocketChat responded ${res.status} ${res.statusText}`);
+		throw new Error(`Mattermost responded ${res.status} ${res.statusText}`);
 	}
 }
 
-export const rocketchatSender: ChannelSender = {
+export const mattermostSender: ChannelSender = {
 	send: post,
 	verify: (channel) => post(channel, TEST_CONTEXT),
 };

@@ -86,7 +86,8 @@ export function NotificationsPopover() {
 								</div>
 								<div className="min-w-0 flex-1">
 									<p className="text-xs font-medium text-foreground">
-										{n.jobType.replace("_", " ")} — {n.status.toLowerCase()}
+										{(n.jobType ?? "Job").replace("_", " ")} —{" "}
+										{(n.status ?? "").toLowerCase()}
 									</p>
 									<p className="mt-0.5 text-[11px] text-muted-foreground">
 										{new Date(n.createdAt).toLocaleTimeString()}

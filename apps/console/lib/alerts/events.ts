@@ -46,8 +46,7 @@ export function matchesRule(
 	}
 	return (
 		passesSet(match.job_types, context.job_type) &&
-		passesSet(match.zone_ids, context.zone_id) &&
-		passesSet(match.spec_ids, context.spec_id) &&
+		passesSet(match.project_ids, context.project_id) &&
 		passesSet(match.resource_types, context.resource_type) &&
 		passesSet(match.actions, context.action)
 	);

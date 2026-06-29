@@ -13,7 +13,7 @@ const channelTypeEnum = z.enum(alertChannelType.enumValues);
 const severityEnum = z.enum(alertSeverity.enumValues);
 
 // An event-key pattern: dot-separated segments, lowercase, with `*` wildcards
-// (authz.spec.destroy.denied, authz.*.*.denied, system.job.*).
+// (authz.project.destroy.denied, authz.*.*.denied, system.job.*).
 const eventPatternSchema = z
 	.string()
 	.min(1)
@@ -24,6 +24,8 @@ const channelSecretSchema = z
 	.object({
 		url: z.string().url().optional(),
 		signingSecret: z.string().min(1).optional(),
+		// PagerDuty Events API v2 integration routing key (no URL).
+		routingKey: z.string().min(1).optional(),
 	})
 	.partial();
 
@@ -46,8 +48,7 @@ export type ChannelInput = z.infer<typeof channelInputSchema>;
 export const ruleMatchSchema = z
 	.object({
 		job_types: z.array(z.string()).optional(),
-		zone_ids: z.array(z.string().uuid()).optional(),
-		spec_ids: z.array(z.string().uuid()).optional(),
+		project_ids: z.array(z.string().uuid()).optional(),
 		resource_types: z.array(z.string()).optional(),
 		actions: z.array(z.string()).optional(),
 		min_severity: severityEnum.optional(),
@@ -67,7 +68,15 @@ export const policyInputSchema = z.object({
 	escalate: z.boolean().default(false),
 	recipient: z.string().max(120).optional(),
 	enabled: z.boolean().default(true),
-	channelIds: z.array(z.string().uuid()).min(1, "Bind at least one channel."),
+	// Channel bindings with an optional per-channel severity floor (null/absent = all).
+	channels: z
+		.array(
+			z.object({
+				id: z.string().uuid(),
+				min_severity: severityEnum.optional(),
+			}),
+		)
+		.min(1, "Bind at least one channel."),
 });
 
 export type PolicyInput = z.infer<typeof policyInputSchema>;

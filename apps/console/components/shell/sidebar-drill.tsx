@@ -6,8 +6,18 @@ import { ChevronLeft } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { SettingsNav } from "@/components/settings/settings-nav";
-import { orgHref } from "@/lib/routing";
-import { type DrillDef, isNavItemActive } from "./nav-config";
+import {
+	type AlertsSection,
+	useAlertsSection,
+} from "@/lib/stores/use-alerts-section";
+import { orgHref, projectHref } from "@/lib/routing";
+import {
+	type DrillDef,
+	globalSub,
+	isNavItemActive,
+	type NavItem,
+	settingsScope,
+} from "./nav-config";
 import { NavRow } from "./nav-row";
 
 /**
@@ -26,14 +36,46 @@ export function SidebarDrill({
 	onBack: () => void;
 }) {
 	const pathname = usePathname();
+	const activeSection = useAlertsSection((s) => s.active);
+	const setActiveSection = useAlertsSection((s) => s.setActive);
+	const onAlertsRoute = globalSub(pathname) === "alerts";
+
+	// Alerts items anchor-scroll within the single-page hub. On the alerts route we
+	// intercept the click and smooth-scroll; from elsewhere the <Link> navigates to
+	// `…/alerts#<id>` and the page scrolls itself on mount.
+	const alertsItemProps = (item: NavItem) => {
+		if (!item.scrollId) return {};
+		const id = item.scrollId;
+		return {
+			active: activeSection === id,
+			onClick: (e: React.MouseEvent) => {
+				if (!onAlertsRoute) return;
+				e.preventDefault();
+				document
+					.getElementById(id)
+					?.scrollIntoView({ behavior: "smooth", block: "start" });
+				setActiveSection(id as AlertsSection);
+				history.replaceState(null, "", `#${id}`);
+			},
+		};
+	};
+
 	const headClassName =
 		"flex flex-1 items-center gap-2 rounded-md px-2 py-2 text-left text-[13.5px] font-semibold text-foreground transition-colors hover:bg-muted/60";
+
+	// The Settings drill backs out to its scope's home: the project overview when inside a
+	// project's settings, otherwise the org overview. Other route-owned drills back to the org.
+	const scope = settingsScope(pathname);
+	const backHref =
+		drill.id === "settings" && scope?.kind === "project"
+			? projectHref(orgSlug, scope.projectSlug)
+			: orgHref(orgSlug);
 
 	return (
 		<div className="flex h-full flex-col">
 			<div className="flex h-[53px] shrink-0 items-center border-b px-2.5">
 				{drill.routeOwned ? (
-					<Link href={orgHref(orgSlug)} className={headClassName}>
+					<Link href={backHref} className={headClassName}>
 						<ChevronLeft className="h-4 w-4 text-muted-foreground" />
 						{drill.title}
 					</Link>
@@ -51,7 +93,12 @@ export function SidebarDrill({
 				) : (
 					<div className="space-y-0.5">
 						{drill.items?.map((item) => (
-							<NavRow key={item.label} item={item} active={isNavItemActive(item, pathname)} />
+							<NavRow
+								key={item.label}
+								item={item}
+								active={isNavItemActive(item, pathname)}
+								{...alertsItemProps(item)}
+							/>
 						))}
 					</div>
 				)}
