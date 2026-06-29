@@ -29,7 +29,7 @@ func failf(format string, args ...any) {
 // short "Cancelled." note so callers can simply `return` on false.
 func confirm(title, description string) bool {
 	var ok bool
-	err := huh.NewForm(
+	err := ui.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
 				Title(title).

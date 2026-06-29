@@ -5,11 +5,11 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/update"
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/version"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
 )
 
@@ -20,6 +20,8 @@ const (
 
 func init() {
 	rootCmd.Version = version.Version
+	rootCmd.PersistentFlags().StringP("output", "o", "table", "Output format: table, json, or csv")
+	rootCmd.PersistentFlags().Bool("no-input", false, "Disable interactive prompts (fail instead of prompting)")
 }
 
 var rootCmd = &cobra.Command{
@@ -28,6 +30,11 @@ var rootCmd = &cobra.Command{
 	Long: `alethia is the command-line interface to the Alethia control plane.
 Configure infrastructure visually, then plan, deploy, and tear it down across
 AWS, GCP, and Azure from the terminal.`,
+	// Resolves the input mode (--no-input / non-TTY stdin) before any subcommand
+	// runs, so the interactive selectors know whether prompting is allowed.
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		resolveInputMode(cmd)
+	},
 	// Runs after any subcommand that doesn't override it — surfaces the upgrade
 	// notice once per day without ever blocking the command.
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
@@ -61,15 +68,12 @@ func printBanner() {
 	row("docs", ui.LinkStyle.Render(docsURL))
 }
 
-// WebOrigin returns the Alethia control-plane URL from ALETHIA_WEB_ORIGIN. It is
-// required (no default) — the CLI exits with a clear message when it is unset.
+// WebOrigin returns the Alethia control-plane URL, resolved as
+// ALETHIA_WEB_ORIGIN env > persisted config > the hosted default. Prod needs no
+// setup; self-host/dev override it via `alethia config set web-origin` or the env.
 func WebOrigin() string {
-	v := os.Getenv("ALETHIA_WEB_ORIGIN")
-	if v == "" {
-		fmt.Fprintln(os.Stderr, "Error: ALETHIA_WEB_ORIGIN is required (set it to your Alethia control-plane URL).")
-		os.Exit(1)
-	}
-	return v
+	origin, _ := types.ResolveWebOrigin()
+	return origin
 }
 
 func Execute() {
