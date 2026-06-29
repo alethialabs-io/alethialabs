@@ -15,7 +15,11 @@ alethia uses the [Charmbracelet](https://charm.sh/) suite for rich terminal UI. 
 
 ## Interactive Selectors
 
-When `--project-id` is omitted from `plan`, `apply`, or `destroy`, alethia launches a TUI selector:
+The interactive selectors are **not a standalone command** — they appear automatically whenever a
+command needs a resource you didn't specify on the command line and prompting is allowed (a TTY with
+`--no-input` off). For example, omitting `--project-id` from `project plan`, `project apply`, or
+`project destroy` opens a Project picker; omitting `--runner-id` opens a Runner picker; and
+`org switch` / `connector remove` with no argument open their own pickers.
 
 ### Project Selector
 
@@ -28,13 +32,11 @@ When `--project-id` is omitted from `plan`, `apply`, or `destroy`, alethia launc
 
 Each Project shows its environment stage, region, and current status.
 
-### Standalone Usage
-
-```bash
-alethia selectors
-```
-
-Runs the full selection flow and prints the selected IDs.
+<Callout type="info">
+With `--no-input` (or when stdin is not a TTY — e.g. in CI or a pipe), the selectors are disabled.
+Pass the required IDs explicitly (`--project-id`, `--runner-id`, an org argument, …) or the command
+fails with a clear "interactive input required" error instead of hanging.
+</Callout>
 
 ## Progress Stepper
 

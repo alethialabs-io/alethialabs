@@ -7,6 +7,10 @@
     "plan-and-apply",
     "jobs",
     "runners",
-    "clusters"
+    "clusters",
+    "organizations",
+    "notifications",
+    "access",
+    "billing"
   ]
 }

@@ -5,15 +5,18 @@ description: CLI configuration files, environment variables, and credential stor
 
 # Configuration
 
-alethia stores configuration and credentials in the user's config directory.
+alethia stores configuration and credentials in the user's config directory (`~/.config/alethia`
+on Linux/macOS — exact location follows the OS user-config dir). Inspect the resolved values and
+on-disk paths at any time with [`alethia config`](#alethia-config).
 
 ## File Locations
 
 | File | Purpose |
 |------|---------|
-| `~/.config/alethia/auth.json` | CLI authentication tokens (access + refresh JWT) |
+| `~/.config/alethia/credentials.json` | CLI authentication tokens (access + refresh JWT) |
+| `~/.config/alethia/config.json` | Active organization context (id, name, slug) |
 
-## auth.json
+## credentials.json
 
 Created by `alethia login`. Contains JWT tokens for API authentication:
 
@@ -21,11 +24,47 @@ Created by `alethia login`. Contains JWT tokens for API authentication:
 {
   "access_token": "eyJ...",
   "refresh_token": "eyJ...",
-  "expires_at": "2026-06-02T15:30:00Z"
+  "user_email": "you@example.com"
 }
 ```
 
 The access token is refreshed automatically before each API call if expired. See [Authentication](/cli/authentication).
+
+## config.json
+
+Created/updated by `alethia org switch`. Records the active organization, which is sent as the
+`X-Alethia-Org` header on every request:
+
+```json
+{
+  "active_org_id": "org_123",
+  "active_org_name": "Acme",
+  "active_org_slug": "acme"
+}
+```
+
+Clear it with `alethia config clear-context`.
+
+## `alethia config`
+
+Show the resolved CLI configuration: the control-plane URL (`ALETHIA_WEB_ORIGIN`), the active
+organization context, and the on-disk paths of the credentials and config files.
+
+```bash
+alethia config
+```
+
+```
+Field          Value
+web origin     https://app.alethialabs.io
+active org     Acme
+active org id  org_123
+credentials    /Users/you/.config/alethia/credentials.json
+config         /Users/you/.config/alethia/config.json
+```
+
+`alethia config clear-context` clears the active organization context. `alethia config -o json`
+emits the same values as a JSON object.
 
 ## Runner Credentials
 
@@ -42,6 +81,17 @@ then set `ALETHIA_RUNNER_ID` and `ALETHIA_RUNNER_TOKEN` on the host. See
 | `ALETHIA_WEB_ORIGIN` | Production URL (baked at build time) | Override the Alethia API base URL |
 
 This is the only environment variable alethia uses. All other configuration comes from the JSON files above or command-line flags.
+
+## Global Flags
+
+Two persistent flags are available on every command:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-o, --output <table\|json\|csv>` | `table` | Output format. |
+| `--no-input` | off | Disable interactive prompts (fail instead of prompting). Auto-enabled when stdin is not a TTY. |
+
+See [Identity & Global Options](/cli/identity) for output-format examples and scripting tips.
 
 ## Build-Time Configuration
 

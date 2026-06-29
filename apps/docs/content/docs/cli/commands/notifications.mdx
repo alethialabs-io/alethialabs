@@ -1,0 +1,130 @@
+---
+title: Notifications (Alerts, Channels & Activity)
+description: Manage notification channels and alert rules, and read the delivery/activity log, from the alethia CLI.
+---
+
+# Notifications
+
+Alethia's notification system has three parts, all manageable from the CLI:
+
+- **Notification channels** are delivery destinations — webhook, email, Slack, PagerDuty, and more —
+  that alert rules fan out to.
+- **Alert rules** bind product events (event-key patterns) to one or more channels.
+- The **activity log** is a durable record of every action, denial, and alert delivery.
+
+All commands operate on the **active organization** (set via `alethia org switch`); override
+per-invocation with `--org <id>`. Every command accepts the global
+[`-o, --output <table|json|csv>`](/cli/identity#output-formats) flag.
+
+<Callout type="info">
+Alerts require a **Pro plan or higher**. Channel secrets (webhook/Slack URLs, PagerDuty routing
+keys) are encrypted at rest and never returned by the API — the CLI only shows whether a secret is
+configured.
+</Callout>
+
+## `alethia channels`
+
+Alias: `channel`.
+
+### `channels list`
+
+Lists the active organization's notification channels. On a TTY this opens the interactive table;
+with `--output json|csv` (or `--no-input`) it prints a static table.
+
+```bash
+alethia channels list
+alethia channels list -o json
+```
+
+### `channels create`
+
+Creates a channel. The destination depends on `--type`; the endpoint is **verified before the
+channel is saved** (a channel never exists unverified).
+
+| Type                         | Required destination flag(s)        |
+| ---------------------------- | ----------------------------------- |
+| `email`                      | one or more `--recipient <email>`   |
+| `slack` / `webhook` / others | `--url <url>` (+ `--signing-secret`)|
+| `pagerduty`                  | `--routing-key <key>`               |
+
+```bash
+# Slack/webhook
+alethia channels create "Ops Slack" --type slack --url https://hooks.slack.com/services/XXX
+
+# Email (repeat --recipient for multiple)
+alethia channels create "On-call" --type email --recipient sre@example.com --recipient lead@example.com
+
+# PagerDuty
+alethia channels create "PD" --type pagerduty --routing-key R0UT1NGKEY
+```
+
+### `channels verify <id>`
+
+Sends a synthetic test event through the channel and marks it verified.
+
+```bash
+alethia channels verify 3f1c…
+```
+
+### `channels delete <id>`
+
+Deletes a channel (prompts for confirmation). Alert rules bound to it lose this destination;
+delivery history is preserved.
+
+```bash
+alethia channels delete 3f1c…
+```
+
+## `alethia alerts`
+
+Alias: `alert`. An alert rule binds one or more **event-key patterns** (e.g. `system.job.failed`,
+`authz.*.denied`) to notification channels.
+
+### `alerts list`
+
+Lists the active organization's alert rules with their bound channel count.
+
+```bash
+alethia alerts list
+alethia alerts list -o json
+```
+
+### `alerts create`
+
+Creates a rule. Repeat `--event` and `--channel` for multiple values.
+
+```bash
+alethia alerts create "Job failures" \
+  --event system.job.failed \
+  --channel 3f1c… \
+  --severity critical
+```
+
+| Flag         | Description                                          |
+| ------------ | ---------------------------------------------------- |
+| `--event`    | Event-key pattern (repeatable, required)             |
+| `--channel`  | Channel id to route to (repeatable, required)        |
+| `--severity` | `info`, `warning` (default), or `critical`           |
+
+### `alerts delete <id>`
+
+Deletes an alert rule (prompts for confirmation). Matching events will no longer be routed.
+
+```bash
+alethia alerts delete a1b2…
+```
+
+## `alethia activity`
+
+Reads the active organization's delivery/activity log — every recorded action and denial, newest
+first, including alert deliveries.
+
+```bash
+alethia activity              # latest 50
+alethia activity -n 200       # latest 200
+alethia activity -o json
+```
+
+| Flag            | Description                                  |
+| --------------- | -------------------------------------------- |
+| `-n, --limit`   | Maximum number of entries to show (default 50)|

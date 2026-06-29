@@ -5,7 +5,12 @@ description: List and inspect infrastructure configurations from the CLI.
 
 # Project Commands
 
-Projects are infrastructure configurations. These commands are read-only — to create Projects, use the [Design a Project](/console/design-project) form in Alethia.
+Projects are infrastructure configurations (an *app* that owns one or more environments). The CLI
+can both **read** projects (`list`, `get`) and **author** them — create a project, manage its
+environments, and CRUD its component resources — so the whole project lifecycle is scriptable.
+
+All authoring commands operate on the **active organization** (set via `alethia org switch`, or
+`--org`). Every command accepts the global `-o, --output <table|json|csv>` flag.
 
 ## `alethia project list`
 
@@ -25,18 +30,112 @@ c3d4...       data-pipeline   gcp       us-east4    staging     DRAFT
 
 ## `alethia project get`
 
-Get detailed information about a specific Project.
+Get detailed information about a specific Project. The project is identified by a **positional
+project name** (not a flag).
 
 ```bash
-alethia project get --id <project-id>
+alethia project get api-backend
 ```
 
-| Flag | Required | Description |
+| Argument / Flag | Required | Description |
 |------|----------|-------------|
-| `--id` | Yes | Project UUID |
+| `<project_name>` | Yes | Project name (positional) |
+| `--open` | No | Open the project in the web console. (Long-only — `-o` is the global `--output` flag.) |
 
 Shows the full Project configuration including:
 - Project name, provider, region, environment
 - Status and estimated monthly cost
 - Component summary (network, cluster, databases, caches, etc.)
 - Cloud identity reference
+
+When run interactively without `--open`, the CLI offers to open the project in the browser after
+printing it.
+
+## `alethia project create`
+
+Create a new project in the active organization. A default environment is created with it; add
+component resources afterwards with `alethia project component add`.
+
+```bash
+alethia project create api-backend --region eu-west-1 --cloud-identity-id <id>
+```
+
+| Argument / Flag | Required | Description |
+|------|----------|-------------|
+| `<name>` | Yes | Project name (positional) |
+| `--region` | Yes* | Cloud region to provision into (*prompted on a TTY when omitted) |
+| `--cloud-identity-id` | No | Cloud account to link (interactive picker on a TTY when omitted) |
+| `--stage` | No | Initial environment stage: `development` (default), `staging`, `production` |
+| `--iac-version` | No | OpenTofu version to pin (defaults server-side) |
+
+The created project prints as a card (or the typed object with `--output json`).
+
+## `alethia project env`
+
+A project owns N independently-provisionable environments. The project is named with `--project`
+(its name **or** id).
+
+```bash
+# List a project's environments
+alethia project env list --project api-backend
+
+# Add an environment
+alethia project env add staging --project api-backend --stage staging --region us-east-1
+```
+
+| Command | Flags | Description |
+|------|----------|-------------|
+| `env list` | `--project <p>` | List the project's environments (default first) |
+| `env add <name>` | `--project <p>` `--stage <s>` `--region <r>` | Add an environment (name is slugified; region inherits the project's when omitted) |
+
+## `alethia project component`
+
+One uniform group authors **all** of a project's component resources. The project is named with
+`--project`.
+
+Supported **kinds** — singletons (one per project, name-less): `network`, `cluster`, `dns`,
+`observability`, `repositories`; and multi (named, many per project): `databases`, `caches`,
+`queues`, `topics`, `nosql_tables`, `container_registries`, `secrets`, `storage_buckets`.
+
+```bash
+# List the supported kinds
+alethia project component kinds
+
+# List a project's components (optionally filter by --kind)
+alethia project component list --project api-backend --kind databases
+
+# Add a database (multi kind → --name required)
+alethia project component add --project api-backend --kind databases --name main \
+  --set engine=postgres --set port=5432 --set iam_auth=true
+
+# Configure the cluster singleton (--name ignored; upserts)
+alethia project component add --project api-backend --kind cluster \
+  --set cluster_version=1.31 --set node_min_size=2 --set 'instance_types=["t3.medium"]'
+
+# Remove components (destructive → confirms)
+alethia project component remove --project api-backend --kind databases --name main
+alethia project component remove --project api-backend --kind network
+```
+
+| Command | Flags | Description |
+|------|----------|-------------|
+| `component kinds` | — | List the supported component kinds + their cardinality |
+| `component list` | `--project <p>` `--kind <k>` `--env <e>` | List components (all kinds, or one) |
+| `component add` | `--project <p>` `--kind <k>` `--name <n>` `--set key=value`… | Create a component |
+| `component remove` | `--project <p>` `--kind <k>` `--name <n>` | Delete a component (confirms) |
+
+### The `--set` field setter
+
+`--set key=value` is repeatable and generic. Each value is parsed as JSON when it can be, else taken
+literally — so numbers, booleans, and arrays are typed correctly:
+
+```bash
+--set port=5432                       # number
+--set iam_auth=true                   # boolean
+--set instance_types='["t3.medium"]'  # array
+--set engine=postgres                 # string
+```
+
+Fields are **validated server-side** against the component's schema: an unknown or mistyped field
+fails with a clear `400`, naming the offending field and the allowed set. Singleton kinds ignore
+`--name` (they upsert the project's single row); multi kinds require it.

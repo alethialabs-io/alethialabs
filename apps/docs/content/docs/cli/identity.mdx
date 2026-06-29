@@ -1,0 +1,124 @@
+---
+title: Identity & Global Options
+description: whoami, config, output formats, the --no-input flag, and utility commands (version, open, completion).
+---
+
+# Identity & Global Options
+
+This page covers the top-level commands that tell you **who you are** and **how the CLI is
+configured**, plus the global flags and utility commands available everywhere.
+
+## `alethia whoami`
+
+Show who you are signed in as: the authenticated user, the active organization, your role in it, the
+org's plan, and its default runner.
+
+```bash
+alethia whoami
+```
+
+```
+Field           Value
+User            you@example.com
+Name            Ada Lovelace
+Organization    Acme
+Slug            acme
+Role            owner
+Plan            pro
+Default runner  acme-eu-west-1
+```
+
+Use `--output json` for scripting:
+
+```bash
+alethia whoami -o json | jq '.active_org.slug'
+```
+
+If no organization is active, the `Organization` row shows a dash — set one with
+[`alethia org switch`](/cli/commands/organizations#alethia-org-switch).
+
+## `alethia config`
+
+Show the resolved CLI configuration: the control-plane URL (`ALETHIA_WEB_ORIGIN`), the active
+organization context, and the on-disk paths of the credentials and config files.
+
+```bash
+alethia config
+```
+
+`alethia config clear-context` clears the active organization. See
+[Configuration](/cli/configuration#alethia-config) for the full output and file layout.
+
+## Output Formats
+
+Every command accepts a global output flag:
+
+```
+-o, --output <table|json|csv>   (default: table)
+```
+
+| Format | Behavior |
+|--------|----------|
+| `table` | Human-readable. On a TTY, list/get commands render an **interactive** table (sort, navigate, quit). |
+| `json` | Static, machine-readable JSON — ideal for piping into `jq`. |
+| `csv` | Static comma-separated rows — ideal for spreadsheets and `cut`/`awk`. |
+
+```bash
+# Pipe JSON into jq
+alethia project list -o json | jq '.[].name'
+
+# Export a CSV of jobs
+alethia jobs list -o csv > jobs.csv
+```
+
+When output is **not** `table` (or stdout is piped / `--no-input` is set), list/get commands print
+static output instead of the interactive table — so they're safe to use in scripts and CI.
+
+## The `--no-input` Flag
+
+```
+--no-input    Disable interactive prompts (fail instead of prompting).
+```
+
+Interactive selectors and confirmation prompts are disabled with `--no-input`. It is **auto-enabled
+when stdin is not a TTY** (a pipe, CI, etc.), so the CLI never hangs waiting for input that can't
+come. With prompting disabled, supply required values explicitly (`--project-id`, `--runner-id`, an
+org argument, …) or the command fails with a clear error. See [TUI Components](/cli/tui).
+
+## Utility Commands
+
+### `alethia version`
+
+Print the CLI version. If a newer release is known (from the daily background check), it also prints
+the latest available version.
+
+```bash
+alethia version
+# alethia v1.4.0
+```
+
+### `alethia open`
+
+Open the Alethia web console (default) or the docs in your browser. Aliases: `docs`, `dashboard`.
+
+```bash
+alethia open            # opens the console
+alethia open docs       # opens the documentation
+alethia open console    # explicit
+```
+
+`alethia docs` (the alias) defaults to the docs target.
+
+### `alethia completion`
+
+Generate a shell completion script (standard Cobra completion).
+
+```bash
+alethia completion bash
+alethia completion zsh
+alethia completion fish
+alethia completion powershell
+```
+
+Follow the script's own header comments to install it for your shell — for example, source it from
+your shell profile or drop it into your completions directory.

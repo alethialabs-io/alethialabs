@@ -31,7 +31,7 @@ Type the code at the Bubble Tea TUI prompt. The CLI shows a spinner while waitin
 CLI sends the device code + verification code to Alethia. On success, receives a JWT pair (access + refresh).
 
 ### Tokens stored
-Saved to `~/.config/alethia/auth.json`.
+Saved to `~/.config/alethia/credentials.json`.
 
 </Steps>
 
@@ -49,7 +49,7 @@ Re-authenticates even if a valid token already exists. Useful when switching acc
 alethia logout
 ```
 
-Removes `~/.config/alethia/auth.json`.
+Removes `~/.config/alethia/credentials.json`.
 
 ## Token Lifecycle
 
@@ -58,7 +58,20 @@ Removes `~/.config/alethia/auth.json`.
 | Access token | 1 hour | `Authorization: Bearer` header on API calls |
 | Refresh token | 90 days | Obtain new access tokens transparently |
 
-Before each API call, alethia checks the access token's expiry. If expired, it refreshes automatically via `POST /api/auth/cli/refresh`. The user never notices.
+Before each API call, alethia decodes the access token's `exp` claim. If it has expired (or expires within a minute), the CLI refreshes automatically via `POST /api/auth/cli/refresh` and rewrites the stored access token. The user never notices.
+
+## Identity & Active Org
+
+After logging in, confirm who you are signed in as and which organization the CLI is scoped to:
+
+```bash
+alethia whoami   # user, active org, role, plan, default runner
+alethia config   # control-plane URL, active org, on-disk file paths
+```
+
+The active organization is sent as the `X-Alethia-Org` header on every request. Set or change it
+with `alethia org switch`. See [Identity & Global Options](/cli/identity) and
+[Organizations, Members & Teams](/cli/commands/organizations).
 
 ## Environment Variables
 
@@ -74,17 +87,21 @@ alethia login  # authenticates against local dev server
 ## Token Storage
 
 ```
-~/.config/alethia/auth.json
+~/.config/alethia/credentials.json
 ```
 
 ```json
 {
   "access_token": "eyJ...",
   "refresh_token": "eyJ...",
-  "expires_at": "2026-06-02T15:30:00Z"
+  "user_email": "you@example.com"
 }
 ```
 
+The access-token expiry is read from the JWT itself (the `exp` claim), so no separate timestamp is
+stored. The active-org context is kept separately in `~/.config/alethia/config.json` (see
+[Configuration](/cli/configuration)).
+
 <Callout type="warn">
-This file contains authentication tokens. It is not encrypted — protect it with filesystem permissions (created with `0600` by default).
+This file contains authentication tokens. It is not encrypted — protect it with filesystem permissions.
 </Callout>

@@ -150,7 +150,7 @@ alethia connector gcp --project my-gcp-project --manual
 1. Open [Google Cloud Shell](https://shell.cloud.google.com/cloudshell/open?shellonly=true&show=terminal).
 2. Run the printed command:
    ```bash
-   curl -sO https://alethia-onboarding-templates.s3.eu-west-1.amazonaws.com/alethia-gcp-setup.sh \
+   curl -sO https://alethia-connector-assets.s3.eu-west-1.amazonaws.com/alethia-gcp-setup.sh \
      && bash alethia-gcp-setup.sh my-gcp-project
    ```
 3. Paste everything between `--- START CONFIG ---` and `--- END CONFIG ---` at the prompt.
@@ -260,7 +260,7 @@ alethia connector azure --subscription <subscription-id> --manual
 1. Open [Azure Cloud Shell](https://shell.azure.com).
 2. Run the printed command:
    ```bash
-   curl -sO https://alethia-onboarding-templates.s3.eu-west-1.amazonaws.com/alethia-azure-setup.sh \
+   curl -sO https://alethia-connector-assets.s3.eu-west-1.amazonaws.com/alethia-azure-setup.sh \
      && bash alethia-azure-setup.sh <subscription-id>
    ```
 3. Paste the **Tenant ID**, **Client ID**, and **Subscription ID** it prints at the prompts.
@@ -304,7 +304,7 @@ If you omit the provider, the CLI shows a picker of connected accounts.
 <Callout type="warn">
 Disconnecting resets the identity to a pending state and **orphans any projects** that referenced it
 (their `cloud_identity_id` is cleared). It does not destroy already-provisioned cloud resources —
-run [`alethia destroy project`](/cli/commands/plan-and-apply) first to tear those down. You can
+run [`alethia project destroy`](/cli/commands/plan-and-apply) first to tear those down. You can
 reconnect the same provider later.
 </Callout>
 
@@ -317,5 +317,5 @@ reconnect the same provider later.
 | `aws CLI not found on PATH` / `az CLI not found on PATH` | Install the provider CLI, or use `--manual` to set the connection up from the browser. |
 | `could not find WIF config in installer output` | The Cloud Shell installer did not finish. Re-run, or use `--manual` and paste the config yourself. |
 | `Captured WIF config is not valid JSON` | The pasted block was truncated. Copy everything between `--- START CONFIG ---` and `--- END CONFIG ---`. |
-| Connection test reaches `FAILED` | Alethia could not assume the credentials. Confirm the role trust policy / External ID (AWS), the workload identity binding (GCP), or the federated credential + Contributor role (Azure). Inspect with `alethia jobs logs --id <job-id>`. |
+| Connection test reaches `FAILED` | Alethia could not assume the credentials. Confirm the role trust policy / External ID (AWS), the workload identity binding (GCP), or the federated credential + Contributor role (Azure). Inspect with `alethia jobs logs <job-id>`. |
 | `Invalid format. Expected: arn:aws:iam::…` | The pasted role ARN is malformed — copy the exact `RoleArn` from the stack Outputs. |
