@@ -10,7 +10,6 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/huh/spinner"
 )
 
 // runnerOperatorLabel renders a runner's operator/provisioning as a short label:
@@ -28,13 +27,14 @@ func runnerOperatorLabel(w api.Runner) string {
 // selectProject runs the interactive project picker shared by the project
 // plan/apply/destroy commands. Projects are listed flat (top-level projects).
 func selectProject(token string) (projectID string, err error) {
+	if err := requireInteractive(); err != nil {
+		return "", err
+	}
 	var configs []types.ConfigurationSummary
 
-	spinner.New().
-		Title("Fetching projects...").
-		Action(func() {
-			configs, err = api.NewClient(token).GetConfigurations()
-		}).Run()
+	ui.RunSpinner("Fetching projects...", func() {
+		configs, err = api.NewClient(token).GetConfigurations()
+	})
 
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch projects: %w", err)
@@ -52,7 +52,7 @@ func selectProject(token string) (projectID string, err error) {
 		return "", fmt.Errorf("no projects found — create one through Alethia")
 	}
 
-	err = huh.NewForm(
+	err = ui.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Select Project").
@@ -72,15 +72,16 @@ var (
 )
 
 func selectRunner(token string, excludeID string) (runnerID string, err error) {
+	if err := requireInteractive(); err != nil {
+		return "", err
+	}
 	apiClient := api.NewClient(token)
 
 	var runners []api.Runner
 
-	spinner.New().
-		Title("Fetching runners...").
-		Action(func() {
-			runners, err = apiClient.GetRunners()
-		}).Run()
+	ui.RunSpinner("Fetching runners...", func() {
+		runners, err = apiClient.GetRunners()
+	})
 
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch runners: %w", err)
@@ -125,7 +126,7 @@ func selectRunner(token string, excludeID string) (runnerID string, err error) {
 
 	runnerID = defaultValue
 
-	err = huh.NewForm(
+	err = ui.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Select Runner").
@@ -138,16 +139,43 @@ func selectRunner(token string, excludeID string) (runnerID string, err error) {
 	return runnerID, err
 }
 
+// selectOrgInteractive shows a picker for the active organization.
+func selectOrgInteractive(orgs []api.OrgSummary) (*api.OrgSummary, error) {
+	options := make([]huh.Option[string], len(orgs))
+	for i, o := range orgs {
+		label := fmt.Sprintf("%s (%s)", o.Name, o.Role)
+		if o.IsActive {
+			label += ui.DefaultBadge()
+		}
+		options[i] = huh.NewOption(label, o.ID)
+	}
+	var id string
+	err := ui.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Select Organization").
+				Description("Set the active organization context").
+				Options(options...).
+				Value(&id),
+		),
+	).Run()
+	if err != nil {
+		return nil, err
+	}
+	return matchOrg(orgs, id), nil
+}
+
 func selectCloudIdentity(token string) (identityID string, err error) {
+	if err := requireInteractive(); err != nil {
+		return "", err
+	}
 	apiClient := api.NewClient(token)
 
 	var identities []api.CloudIdentity
 
-	spinner.New().
-		Title("Fetching cloud accounts...").
-		Action(func() {
-			identities, err = apiClient.GetCloudIdentities()
-		}).Run()
+	ui.RunSpinner("Fetching cloud accounts...", func() {
+		identities, err = apiClient.GetCloudIdentities()
+	})
 
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch cloud identities: %w", err)
@@ -162,7 +190,7 @@ func selectCloudIdentity(token string) (identityID string, err error) {
 		options[i] = huh.NewOption(id.Label, id.ID)
 	}
 
-	err = huh.NewForm(
+	err = ui.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Select Cloud Account").

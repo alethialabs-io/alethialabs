@@ -28,6 +28,38 @@ type cliPreferences struct {
 	HideLoginWarning bool `json:"hide_login_warning"`
 }
 
+// resolveLogin handles the "not authenticated" branch of getAuthTokenInternal:
+// it errors fast when prompting is disabled, otherwise offers an interactive
+// "log in now?" prompt, runs the device flow, and returns the fresh token. This
+// is irreducible interactive glue, kept out of the unit-tested token-state logic.
+func resolveLogin(credsPath string, promptLogin bool) (string, error) {
+	if !promptLogin {
+		return "", fmt.Errorf("authentication required. Please run `alethia login`")
+	}
+
+	confirmLogin, err := ui.AuthRequiredPrompt()
+	if err != nil || !confirmLogin {
+		return "", fmt.Errorf("authentication required. Please run `alethia login`")
+	}
+
+	if err := performLoginFlow(); err != nil {
+		return "", err
+	}
+
+	// Read credentials again after successful login.
+	file, err := os.ReadFile(credsPath)
+	if err != nil {
+		return "", fmt.Errorf("error reading credentials file after login: %w", err)
+	}
+
+	var creds types.ExchangeResponse
+	if err := json.Unmarshal(file, &creds); err != nil {
+		return "", fmt.Errorf("error parsing credentials file after login: %w", err)
+	}
+
+	return creds.AccessToken, nil
+}
+
 func getPreferencesPath() (string, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
@@ -70,6 +102,7 @@ type model struct {
 func initialModel() model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
+	s.Style = ui.SpinnerStyle
 	return model{
 		spinner: s,
 		loading: true,
@@ -190,7 +223,7 @@ func performLoginFlow() error {
 		fmt.Println()
 
 		var hideWarning bool
-		err := huh.NewForm(
+		err := ui.NewForm(
 			huh.NewGroup(
 				huh.NewConfirm().
 					Title("Hide this message in the future?").
@@ -232,12 +265,22 @@ func performLoginFlow() error {
 
 // --- Cobra Command ---
 
-var forceLogin bool
+var (
+	forceLogin     bool
+	loginWebOrigin string
+)
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate with the platform",
 	Run: func(cmd *cobra.Command, args []string) {
+		// 0. Persist a control-plane URL passed for this login (self-host/dev).
+		if loginWebOrigin != "" {
+			if err := runConfigSet(os.Stdout, "web-origin", loginWebOrigin); err != nil {
+				fail(err)
+			}
+		}
+
 		// 1. Check if already authenticated (unless forced)
 		if !forceLogin {
 			if _, err := getAuthTokenInternal(false); err == nil {
@@ -263,4 +306,5 @@ var loginCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(loginCmd)
 	loginCmd.Flags().BoolVarP(&forceLogin, "force", "f", false, "Force re-authentication")
+	loginCmd.Flags().StringVar(&loginWebOrigin, "web-origin", "", "Control-plane URL to use & persist (self-host/dev)")
 }

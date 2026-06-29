@@ -8,7 +8,6 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -26,11 +25,9 @@ var jobsCancelCmd = &cobra.Command{
 
 		apiClient := api.NewClient(token)
 
-		spinner.New().
-			Title("Cancelling job...").
-			Action(func() {
-				err = apiClient.CancelJob(jobID)
-			}).Run()
+		ui.RunSpinner("Cancelling job...", func() {
+			err = apiClient.CancelJob(jobID)
+		})
 
 		if err != nil {
 			failf("Failed to cancel job: %v", err)

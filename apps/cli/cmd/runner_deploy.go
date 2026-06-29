@@ -42,7 +42,7 @@ var runnerDeployCmd = &cobra.Command{
 			hostname, _ := os.Hostname()
 			defaultName := fmt.Sprintf("runner-%s", hostname)
 
-			err = huh.NewForm(
+			err = ui.NewForm(
 				huh.NewGroup(
 					huh.NewInput().
 						Title("Runner name").
@@ -60,7 +60,7 @@ var runnerDeployCmd = &cobra.Command{
 		}
 
 		if deployRegion == "" {
-			err = huh.NewForm(
+			err = ui.NewForm(
 				huh.NewGroup(
 					huh.NewInput().
 						Title("Region").

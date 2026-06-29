@@ -77,6 +77,6 @@ var projectDestroyCmd = &cobra.Command{
 func init() {
 	projectCmd.AddCommand(projectDestroyCmd)
 	projectDestroyCmd.Flags().StringVar(&projectDestroyProjectID, "project-id", "", "ID of the project to destroy")
-	projectDestroyCmd.Flags().StringVar(&projectDestroyRunnerID, "runner-id", "", "Assign to a projectific runner")
+	projectDestroyCmd.Flags().StringVar(&projectDestroyRunnerID, "runner-id", "", "Assign to a specific runner")
 	projectDestroyCmd.Flags().BoolVarP(&projectDestroyWait, "wait", "w", false, "Wait for job completion")
 }

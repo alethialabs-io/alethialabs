@@ -10,7 +10,6 @@ import (
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -31,11 +30,9 @@ picker.`,
 		apiClient := api.NewClient(token)
 
 		var identities []api.CloudIdentity
-		spinner.New().
-			Title("Fetching cloud connections...").
-			Action(func() {
-				identities, err = apiClient.GetCloudIdentities()
-			}).Run()
+		ui.RunSpinner("Fetching cloud connections...", func() {
+			identities, err = apiClient.GetCloudIdentities()
+		})
 		if err != nil {
 			fail(err)
 		}
@@ -85,7 +82,7 @@ func pickIdentity(identities []api.CloudIdentity, args []string) (*api.CloudIden
 	}
 
 	var chosenID string
-	if err := huh.NewForm(huh.NewGroup(
+	if err := ui.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().
 			Title("Select a connection to remove").
 			Options(options...).

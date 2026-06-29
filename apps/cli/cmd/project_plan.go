@@ -70,6 +70,6 @@ var projectPlanCmd = &cobra.Command{
 func init() {
 	projectCmd.AddCommand(projectPlanCmd)
 	projectPlanCmd.Flags().StringVar(&projectPlanProjectID, "project-id", "", "ID of the project to plan")
-	projectPlanCmd.Flags().StringVar(&projectPlanRunnerID, "runner-id", "", "Assign to a projectific runner")
+	projectPlanCmd.Flags().StringVar(&projectPlanRunnerID, "runner-id", "", "Assign to a specific runner")
 	projectPlanCmd.Flags().BoolVarP(&projectPlanWait, "wait", "w", false, "Wait for job completion")
 }

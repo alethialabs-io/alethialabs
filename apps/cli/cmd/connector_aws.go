@@ -112,7 +112,7 @@ func awsManualFlow(externalID string) (string, error) {
 	fmt.Println("  2. Create the stack, then copy its RoleArn output below.")
 
 	var roleArn string
-	if err := huh.NewForm(huh.NewGroup(
+	if err := ui.NewForm(huh.NewGroup(
 		huh.NewInput().
 			Title("Role ARN").
 			Placeholder("arn:aws:iam::123456789012:role/AlethiaProvisionerRole-...").

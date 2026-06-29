@@ -15,7 +15,7 @@ import (
 
 var projectGetCmd = &cobra.Command{
 	Use:   "get [project_name]",
-	Short: "Get a projectific project by project name",
+	Short: "Get a specific project by project name",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		projectName := args[0]
@@ -41,7 +41,7 @@ var projectGetCmd = &cobra.Command{
 
 		if !openInBrowser {
 			var confirm bool
-			err := huh.NewForm(
+			err := ui.NewForm(
 				huh.NewGroup(
 					huh.NewConfirm().
 						Title("Open in Browser").
@@ -68,5 +68,6 @@ var projectGetCmd = &cobra.Command{
 
 func init() {
 	projectCmd.AddCommand(projectGetCmd)
-	projectGetCmd.Flags().BoolP("open", "o", false, "Open the project in the web browser")
+	// Note: -o is reserved for the global --output flag, so --open is long-only.
+	projectGetCmd.Flags().Bool("open", false, "Open the project in the web browser")
 }

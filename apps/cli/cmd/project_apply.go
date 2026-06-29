@@ -74,7 +74,7 @@ var projectApplyCmd = &cobra.Command{
 func init() {
 	projectCmd.AddCommand(projectApplyCmd)
 	projectApplyCmd.Flags().StringVar(&projectApplyProjectID, "project-id", "", "ID of the project to deploy")
-	projectApplyCmd.Flags().StringVar(&projectApplyRunnerID, "runner-id", "", "Assign to a projectific runner")
+	projectApplyCmd.Flags().StringVar(&projectApplyRunnerID, "runner-id", "", "Assign to a specific runner")
 	projectApplyCmd.Flags().StringVar(&projectApplyPlanJobID, "plan-job-id", "", "Reference a prior PLAN job")
 	projectApplyCmd.Flags().BoolVarP(&projectApplyWait, "wait", "w", false, "Wait for job completion")
 }

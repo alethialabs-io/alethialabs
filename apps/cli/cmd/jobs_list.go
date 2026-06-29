@@ -5,17 +5,18 @@ package cmd
 
 import (
 	"fmt"
-	"math"
+	"io"
+	"os"
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 )
+
+var jobListColumns = []string{"Type", "Status", "Project", "Runner", "Created", "Duration"}
 
 var (
 	jobsListStatus string
@@ -50,14 +51,19 @@ var jobsListCmd = &cobra.Command{
 
 		var page *api.JobsPage
 
-		spinner.New().
-			Title("Fetching jobs...").
-			Action(func() {
-				page, err = apiClient.GetJobs(jobsListStatus, pageSize, 0)
-			}).Run()
+		ui.RunSpinner("Fetching jobs...", func() {
+			page, err = apiClient.GetJobs(jobsListStatus, pageSize, 0)
+		})
 
 		if err != nil {
 			failf("Failed to fetch jobs: %v", err)
+		}
+
+		if !interactiveTable(cmd) {
+			if err := renderJobs(os.Stdout, outputFormat(cmd), page.Jobs); err != nil {
+				fail(err)
+			}
+			return
 		}
 
 		if page.Total == 0 {
@@ -82,56 +88,22 @@ var jobsListCmd = &cobra.Command{
 	},
 }
 
-type jobsPaginatedModel struct {
-	ui.PaginatedTableModel
-	apiClient *api.Client
-	pageSize  int
-	status    string
-}
-
-func (m jobsPaginatedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case ui.PageChangedMsg:
-		return m, m.fetchPage(msg.Page)
+// renderJobs writes a page of jobs to out in the requested format. Pagination is
+// interactive-only; non-interactive output returns up to --limit jobs.
+func renderJobs(out io.Writer, format string, jobs []api.ProvisionJob) error {
+	if len(jobs) == 0 && format == ui.FormatTable {
+		fmt.Fprintln(out, ui.MutedStyle.Render("No jobs found."))
+		return nil
 	}
-	updated, cmd := m.PaginatedTableModel.Update(msg)
-	m.PaginatedTableModel = updated.(ui.PaginatedTableModel)
-	return m, cmd
+	return ui.Render(out, format, ui.TableSpec{
+		Columns: jobListColumns,
+		Rows:    jobRowsPlain(jobs),
+	}, jobs)
 }
 
-func (m jobsPaginatedModel) fetchPage(page int) tea.Cmd {
-	return func() tea.Msg {
-		offset := (page - 1) * m.pageSize
-		result, err := m.apiClient.GetJobs(m.status, m.pageSize, offset)
-		if err != nil {
-			return nil
-		}
-		totalPages := int(math.Ceil(float64(result.Total) / float64(m.pageSize)))
-		if totalPages < 1 {
-			totalPages = 1
-		}
-		return ui.PageDataMsg{
-			Rows:       jobRows(result.Jobs),
-			Total:      result.Total,
-			Page:       page,
-			TotalPages: totalPages,
-		}
-	}
-}
-
-func jobColumns() []table.Column {
-	return []table.Column{
-		{Title: "Type", Width: 16},
-		{Title: "Status", Width: 12},
-		{Title: "Project", Width: 18},
-		{Title: "Runner", Width: 16},
-		{Title: "Created", Width: 16},
-		{Title: "Duration", Width: 10},
-	}
-}
-
-func jobRows(jobs []api.ProvisionJob) []table.Row {
-	rows := make([]table.Row, len(jobs))
+// jobRowsPlain projects each job into a plain table row.
+func jobRowsPlain(jobs []api.ProvisionJob) [][]string {
+	rows := make([][]string, len(jobs))
 	for i, j := range jobs {
 		typeLabel := jobTypeLabels[j.JobType]
 		if typeLabel == "" {
@@ -154,7 +126,7 @@ func jobRows(jobs []api.ProvisionJob) []table.Row {
 			runner = ui.SymbolDash
 		}
 
-		rows[i] = table.Row{
+		rows[i] = []string{
 			typeLabel,
 			j.Status,
 			project,

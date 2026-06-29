@@ -8,14 +8,13 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
 const (
 	// connectorBaseURL hosts the public copies of the setup artifacts used by
-	// the guided-manual fallbacks.
-	connectorBaseURL   = "https://alethia-onboarding-templates.s3.eu-west-1.amazonaws.com"
+	// the guided-manual fallbacks (provisioned by infra/connector-assets).
+	connectorBaseURL   = "https://alethia-connector-assets.s3.eu-west-1.amazonaws.com"
 	gcpCloudShellURL   = "https://shell.cloud.google.com/cloudshell/open?shellonly=true&show=terminal"
 	azureCloudShellURL = "https://shell.azure.com"
 	alethiaAwsAccount  = "787587782604"
@@ -40,11 +39,9 @@ func init() {
 func initProviderIdentity(apiClient *api.Client, provider string) (*api.InitIdentityResponse, error) {
 	var resp *api.InitIdentityResponse
 	var err error
-	spinner.New().
-		Title("Initializing connection...").
-		Action(func() {
-			resp, err = apiClient.InitProviderIdentity(provider)
-		}).Run()
+	ui.RunSpinner("Initializing connection...", func() {
+		resp, err = apiClient.InitProviderIdentity(provider)
+	})
 	return resp, err
 }
 
@@ -57,11 +54,9 @@ func finalizeConnection(
 ) error {
 	var resp *api.ConnectIdentityResponse
 	var err error
-	spinner.New().
-		Title("Submitting credentials & queuing connection test...").
-		Action(func() {
-			resp, err = apiClient.ConnectProviderIdentity(provider, identityID, creds)
-		}).Run()
+	ui.RunSpinner("Submitting credentials & queuing connection test...", func() {
+		resp, err = apiClient.ConnectProviderIdentity(provider, identityID, creds)
+	})
 	if err != nil {
 		return err
 	}

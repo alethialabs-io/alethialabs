@@ -9,7 +9,6 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -46,11 +45,9 @@ var runnerRemoveCmd = &cobra.Command{
 
 		apiClient := api.NewClient(token)
 
-		spinner.New().
-			Title("Removing runner...").
-			Action(func() {
-				err = apiClient.RemoveRunner(runnerID)
-			}).Run()
+		ui.RunSpinner("Removing runner...", func() {
+			err = apiClient.RemoveRunner(runnerID)
+		})
 
 		if err != nil {
 			failf("Error: %v", err)
