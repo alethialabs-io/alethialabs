@@ -1,0 +1,10 @@
+{
+	"usage": {
+		"seats_used": 0,
+		"seats_cap": 0,
+		"runner_minutes": 0,
+		"projects": 0,
+		"ai_credits_used": 0,
+		"ai_credits_granted": 0
+	}
+}

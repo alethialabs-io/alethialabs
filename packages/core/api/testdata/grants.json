@@ -1,0 +1,14 @@
+{
+	"grants": [
+		{
+			"id": "00000000-0000-4000-8000-000000000000",
+			"principal_type": "string",
+			"principal_id": "00000000-0000-4000-8000-000000000000",
+			"effect": "string",
+			"role": "string",
+			"permission_key": "string",
+			"resource_type": "string",
+			"resource_id": "00000000-0000-4000-8000-000000000000"
+		}
+	]
+}

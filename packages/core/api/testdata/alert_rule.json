@@ -1,0 +1,17 @@
+{
+	"alert_rule": {
+		"id": "00000000-0000-4000-8000-000000000000",
+		"name": "string",
+		"description": "string",
+		"event_patterns": [
+			"string"
+		],
+		"severity": "string",
+		"throttle_seconds": 0,
+		"enabled": false,
+		"channel_ids": [
+			"00000000-0000-4000-8000-000000000000"
+		],
+		"created_at": "2026-01-01T00:00:00.000Z"
+	}
+}

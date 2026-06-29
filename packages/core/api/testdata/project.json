@@ -1,0 +1,16 @@
+{
+	"project": {
+		"id": "00000000-0000-4000-8000-000000000000",
+		"project_name": "string",
+		"slug": "string",
+		"region": "string",
+		"iac_version": "string",
+		"cloud_identity_id": "string",
+		"cloud_provider": "string",
+		"environment_stage": "string",
+		"status": "string",
+		"estimated_monthly_cost": 0,
+		"created_at": "2026-01-01T00:00:00.000Z",
+		"updated_at": "2026-01-01T00:00:00.000Z"
+	}
+}

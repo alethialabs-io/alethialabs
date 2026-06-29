@@ -1,0 +1,10 @@
+{
+	"component": {
+		"id": "string",
+		"kind": "string",
+		"name": "string",
+		"status": "string",
+		"cloud_identity_id": "string",
+		"config": {}
+	}
+}

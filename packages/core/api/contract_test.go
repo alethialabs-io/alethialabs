@@ -154,3 +154,229 @@ func TestContract_DeployRunner(t *testing.T) {
 	strictDecode(t, "deploy_runner.json", &resp)
 	assertNoExtraStructKeys(t, "deploy_runner.json", resp)
 }
+
+func TestContract_WhoAmI(t *testing.T) {
+	var me WhoAmI
+	strictDecode(t, "whoami.json", &me)
+	assertNoExtraStructKeys(t, "whoami.json", me)
+}
+
+func TestContract_Orgs(t *testing.T) {
+	var resp struct {
+		Orgs []OrgSummary `json:"orgs"`
+	}
+	strictDecode(t, "orgs.json", &resp)
+	if len(resp.Orgs) != 1 {
+		t.Fatalf("expected 1 org, got %d", len(resp.Orgs))
+	}
+	assertNoExtraStructKeys(t, "orgs.json", resp)
+}
+
+func TestContract_Members(t *testing.T) {
+	var resp struct {
+		Members []Member `json:"members"`
+	}
+	strictDecode(t, "members.json", &resp)
+	if len(resp.Members) != 1 {
+		t.Fatalf("expected 1 member, got %d", len(resp.Members))
+	}
+	assertNoExtraStructKeys(t, "members.json", resp)
+}
+
+func TestContract_Teams(t *testing.T) {
+	var resp struct {
+		Teams []Team `json:"teams"`
+	}
+	strictDecode(t, "teams.json", &resp)
+	if len(resp.Teams) != 1 {
+		t.Fatalf("expected 1 team, got %d", len(resp.Teams))
+	}
+	assertNoExtraStructKeys(t, "teams.json", resp)
+}
+
+func TestContract_Channels(t *testing.T) {
+	var resp struct {
+		Channels []Channel `json:"channels"`
+	}
+	strictDecode(t, "channels.json", &resp)
+	if len(resp.Channels) != 1 {
+		t.Fatalf("expected 1 channel, got %d", len(resp.Channels))
+	}
+	assertNoExtraStructKeys(t, "channels.json", resp)
+}
+
+func TestContract_Channel(t *testing.T) {
+	var resp struct {
+		Channel Channel `json:"channel"`
+	}
+	strictDecode(t, "channel.json", &resp)
+	assertNoExtraStructKeys(t, "channel.json", resp)
+}
+
+func TestContract_AlertRules(t *testing.T) {
+	var resp struct {
+		AlertRules []AlertRule `json:"alert_rules"`
+	}
+	strictDecode(t, "alert_rules.json", &resp)
+	if len(resp.AlertRules) != 1 {
+		t.Fatalf("expected 1 alert rule, got %d", len(resp.AlertRules))
+	}
+	assertNoExtraStructKeys(t, "alert_rules.json", resp)
+}
+
+func TestContract_AlertRule(t *testing.T) {
+	var resp struct {
+		AlertRule AlertRule `json:"alert_rule"`
+	}
+	strictDecode(t, "alert_rule.json", &resp)
+	assertNoExtraStructKeys(t, "alert_rule.json", resp)
+}
+
+func TestContract_Activity(t *testing.T) {
+	var resp struct {
+		Activity []ActivityEntry `json:"activity"`
+	}
+	strictDecode(t, "activity.json", &resp)
+	if len(resp.Activity) != 1 {
+		t.Fatalf("expected 1 activity entry, got %d", len(resp.Activity))
+	}
+	assertNoExtraStructKeys(t, "activity.json", resp)
+}
+
+func TestContract_Roles(t *testing.T) {
+	var resp struct {
+		Roles []Role `json:"roles"`
+	}
+	strictDecode(t, "roles.json", &resp)
+	if len(resp.Roles) != 1 {
+		t.Fatalf("expected 1 role, got %d", len(resp.Roles))
+	}
+	assertNoExtraStructKeys(t, "roles.json", resp)
+}
+
+func TestContract_Role(t *testing.T) {
+	var resp struct {
+		Role Role `json:"role"`
+	}
+	strictDecode(t, "role.json", &resp)
+	assertNoExtraStructKeys(t, "role.json", resp)
+}
+
+func TestContract_Grants(t *testing.T) {
+	var resp struct {
+		Grants []Grant `json:"grants"`
+	}
+	strictDecode(t, "grants.json", &resp)
+	if len(resp.Grants) != 1 {
+		t.Fatalf("expected 1 grant, got %d", len(resp.Grants))
+	}
+	assertNoExtraStructKeys(t, "grants.json", resp)
+}
+
+func TestContract_Grant(t *testing.T) {
+	var resp struct {
+		Grant Grant `json:"grant"`
+	}
+	strictDecode(t, "grant.json", &resp)
+	assertNoExtraStructKeys(t, "grant.json", resp)
+}
+
+func TestContract_SsoProviders(t *testing.T) {
+	var resp struct {
+		SsoProviders []SsoProvider `json:"sso_providers"`
+	}
+	strictDecode(t, "sso_providers.json", &resp)
+	if len(resp.SsoProviders) != 1 {
+		t.Fatalf("expected 1 sso provider, got %d", len(resp.SsoProviders))
+	}
+	assertNoExtraStructKeys(t, "sso_providers.json", resp)
+}
+
+func TestContract_SsoProvider(t *testing.T) {
+	var resp struct {
+		SsoProvider SsoProvider `json:"sso_provider"`
+	}
+	strictDecode(t, "sso_provider.json", &resp)
+	assertNoExtraStructKeys(t, "sso_provider.json", resp)
+}
+
+func TestContract_Billing(t *testing.T) {
+	var resp struct {
+		Billing Billing `json:"billing"`
+	}
+	strictDecode(t, "billing.json", &resp)
+	assertNoExtraStructKeys(t, "billing.json", resp)
+}
+
+func TestContract_Usage(t *testing.T) {
+	var resp struct {
+		Usage Usage `json:"usage"`
+	}
+	strictDecode(t, "usage.json", &resp)
+	assertNoExtraStructKeys(t, "usage.json", resp)
+}
+
+func TestContract_FleetPools(t *testing.T) {
+	var resp struct {
+		Pools []FleetPool `json:"pools"`
+	}
+	strictDecode(t, "fleet_pools.json", &resp)
+	if len(resp.Pools) != 1 {
+		t.Fatalf("expected 1 fleet pool, got %d", len(resp.Pools))
+	}
+	assertNoExtraStructKeys(t, "fleet_pools.json", resp)
+}
+
+func TestContract_FleetPool(t *testing.T) {
+	var resp struct {
+		Pool FleetPool `json:"pool"`
+	}
+	strictDecode(t, "fleet_pool.json", &resp)
+	assertNoExtraStructKeys(t, "fleet_pool.json", resp)
+}
+
+func TestContract_Project(t *testing.T) {
+	var resp struct {
+		Project Project `json:"project"`
+	}
+	strictDecode(t, "project.json", &resp)
+	assertNoExtraStructKeys(t, "project.json", resp)
+}
+
+func TestContract_Environments(t *testing.T) {
+	var resp struct {
+		Environments []Environment `json:"environments"`
+	}
+	strictDecode(t, "environments.json", &resp)
+	if len(resp.Environments) != 1 {
+		t.Fatalf("expected 1 environment, got %d", len(resp.Environments))
+	}
+	assertNoExtraStructKeys(t, "environments.json", resp)
+}
+
+func TestContract_Environment(t *testing.T) {
+	var resp struct {
+		Environment Environment `json:"environment"`
+	}
+	strictDecode(t, "environment.json", &resp)
+	assertNoExtraStructKeys(t, "environment.json", resp)
+}
+
+func TestContract_Components(t *testing.T) {
+	var resp struct {
+		Components []Component `json:"components"`
+	}
+	strictDecode(t, "components.json", &resp)
+	if len(resp.Components) != 1 {
+		t.Fatalf("expected 1 component, got %d", len(resp.Components))
+	}
+	assertNoExtraStructKeys(t, "components.json", resp)
+}
+
+func TestContract_Component(t *testing.T) {
+	var resp struct {
+		Component Component `json:"component"`
+	}
+	strictDecode(t, "component.json", &resp)
+	assertNoExtraStructKeys(t, "component.json", resp)
+}

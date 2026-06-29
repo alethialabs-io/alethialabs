@@ -1,0 +1,10 @@
+{
+	"billing": {
+		"plan": "string",
+		"status": "string",
+		"seats": 0,
+		"stripe_subscription_id": "string",
+		"trial_ends_at": "2026-01-01T00:00:00.000Z",
+		"current_period_end": "2026-01-01T00:00:00.000Z"
+	}
+}
