@@ -44,6 +44,7 @@ import {
 import { Button } from "@repo/ui/button";
 import { Skeleton } from "@repo/ui/skeleton";
 import { authClient } from "@/lib/auth/client";
+import { slugify } from "@/lib/slug";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { cn } from "@repo/ui/utils";
 
@@ -54,13 +55,6 @@ const REGIONS = [
 	"ap-southeast-1 · Singapore",
 ];
 const ENVS = ["staging", "development", "production"];
-
-function slugify(s: string): string {
-	return s
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "");
-}
 
 /** A compact, human-readable rendering of the org's primary (billing) address. */
 function formatPrimaryAddress(a: OrgPrimaryAddress): string {
