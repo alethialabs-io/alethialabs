@@ -222,12 +222,10 @@ function Fields({
 				<Field label="Project name">
 					<Input
 						value={(c.project_name as string) ?? ""}
-						maxLength={25}
-						placeholder="my-project"
-						className="h-9 font-mono text-sm"
-						onChange={(e) =>
-							onChange({ project_name: e.target.value.toLowerCase() })
-						}
+						maxLength={50}
+						placeholder="My Project"
+						className="h-9 text-sm"
+						onChange={(e) => onChange({ project_name: e.target.value })}
 					/>
 				</Field>
 				<Field label="Environment">
