@@ -4,6 +4,7 @@
 import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-registry";
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import { DB_ENGINES, DEFAULT_REGION, type CloudProviderSlug } from "@/lib/cloud-providers";
+import { slugify } from "@/lib/slug";
 import { type ProjectFormData, projectFormSchema } from "@/lib/validations/project-form.schema";
 import type { InferredNeed, InferredStack } from "./schema";
 
@@ -16,15 +17,10 @@ const SERVICE_KINDS: InferredNeed["kind"][] = [
 	"secret",
 ];
 
-/** Slug → `[a-z0-9-]`, start alnum, ≤25 (the project project_name regex). */
-function slugify(name: string, fallback = "app"): string {
-	const s = name
-		.toLowerCase()
-		.replace(/[^a-z0-9-]+/g, "-")
-		.replace(/-+/g, "-")
-		.replace(/^[^a-z0-9]+/, "")
-		.replace(/-+$/, "");
-	return s.slice(0, 25) || fallback;
+/** Canonical slug capped at 25 chars (component/project names stay short), with a
+ *  non-empty fallback when the name slugifies away entirely. */
+function shortSlug(name: string, fallback = "app"): string {
+	return slugify(name, 25) || fallback;
 }
 
 function repoName(url: string): string {
@@ -77,7 +73,7 @@ export function inferredStackToFormData(
 		counts[need.kind] = (counts[need.kind] ?? 0) + 1;
 		const baseName = typeof cfg.name === "string" ? cfg.name : need.kind;
 		cfg.name = need.name
-			? slugify(need.name, baseName)
+			? shortSlug(need.name, baseName)
 			: counts[need.kind] > 1
 				? `${baseName}-${counts[need.kind]}`
 				: baseName;
@@ -91,7 +87,7 @@ export function inferredStackToFormData(
 
 	const candidate = {
 		project: {
-			project_name: slugify(repoName(opts.repoUrl)),
+			project_name: shortSlug(repoName(opts.repoUrl)),
 			environment_stage: "development",
 			region: opts.region || DEFAULT_REGION[provider],
 			cloud_identity_id: opts.identityId,
