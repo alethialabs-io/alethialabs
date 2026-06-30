@@ -28,12 +28,6 @@ export function orgUrl(slug: string): string {
 	return `${orgHost()}/${slug}`;
 }
 
-/** Normalizes a free-text org name into a URL slug (lowercase, hyphenated). The single
- *  source for the auto-slug used by /onboarding + the create-org sheet. */
-export function slugify(s: string): string {
-	return s
-		.toLowerCase()
-		.trim()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "");
-}
+/** Vercel-style org name → URL slug (the auto-slug used by /onboarding + the create-org
+ *  sheet). Canonical implementation lives in `./slug`; re-exported here for the org callers. */
+export { slugify } from "./slug";

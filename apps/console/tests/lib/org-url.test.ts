@@ -38,4 +38,9 @@ describe("slugify", () => {
 	it("normalizes a free-text name to a slug", () => {
 		expect(slugify("  My Cool Team! ")).toBe("my-cool-team");
 	});
+
+	it("drops apostrophes and folds accents (Vercel-style)", () => {
+		expect(slugify("bobikenobi12's Org")).toBe("bobikenobi12s-org");
+		expect(slugify("José's Café")).toBe("joses-cafe");
+	});
 });
