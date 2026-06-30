@@ -58,11 +58,12 @@ const EXAMPLE_PROMPTS = [
 
 const formSchema = z.object({
 	prompt: z.string().optional(),
+	// Free-text name; the URL slug is derived from it (slugPreview / createProject).
 	project_name: z
 		.string()
 		.min(1, "Project name is required")
-		.max(25)
-		.regex(/^[a-z0-9][a-z0-9-]*$/, "Lowercase, numbers, hyphens only"),
+		.max(50)
+		.refine((v) => slugify(v).length > 0, "Enter at least one letter or number"),
 	template: z.string().min(1),
 	// The selected cloud provider slug; connectedness/provisionability enforced at submit.
 	cloud: z.string().min(1, "Select a connected cloud"),
@@ -311,7 +312,7 @@ export function CreateProjectForm({
 					<Input
 						id="project_name"
 						autoComplete="off"
-						placeholder="my-project"
+						placeholder="My Project"
 						{...form.register("project_name")}
 					/>
 					{form.formState.errors.project_name ? (
