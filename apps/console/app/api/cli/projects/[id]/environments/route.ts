@@ -8,6 +8,7 @@ import { resolveCliProject } from "@/lib/cli/resolve-project";
 import { getServiceDb } from "@/lib/db";
 import { projectEnvironments } from "@/lib/db/schema";
 import { environmentStage } from "@/lib/db/schema/enums";
+import { slugify } from "@/lib/slug";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import {
@@ -21,15 +22,6 @@ const addEnvironmentBody = z.object({
 	stage: z.enum(environmentStage.enumValues).default("development"),
 	region: z.string().min(1).optional(),
 });
-
-/** Lowercases + slugifies an environment name (feeds the tofu state path + URL). */
-function slugifyEnvName(raw: string): string {
-	return raw
-		.toLowerCase()
-		.trim()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "");
-}
 
 /** Maps an environment row to its CLI wire shape. */
 function toEnvironmentWire(row: typeof projectEnvironments.$inferSelect) {
@@ -88,7 +80,7 @@ export async function POST(
 	if (!parsed.success) {
 		return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
 	}
-	const name = slugifyEnvName(parsed.data.name);
+	const name = slugify(parsed.data.name);
 	if (!name) {
 		return NextResponse.json(
 			{ error: "Environment name is required" },
