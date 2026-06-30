@@ -28,6 +28,11 @@ describe("slugify", () => {
 	it("returns empty string for input with no alphanumerics", () => {
 		expect(slugify("@#$%")).toBe("");
 	});
+
+	it("drops apostrophes and folds accents (Vercel-style)", () => {
+		expect(slugify("bobikenobi12's Org")).toBe("bobikenobi12s-org");
+		expect(slugify("José's Café")).toBe("joses-cafe");
+	});
 });
 
 describe("pickFreeSlug", () => {

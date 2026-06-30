@@ -79,14 +79,9 @@ export function envHref(
 	return `/${orgSlug}/${projectSlug}/${envName}`;
 }
 
-/** Lowercases + slugifies a name (a-z0-9 and single dashes); "" → "". */
-export function slugify(raw: string): string {
-	return raw
-		.toLowerCase()
-		.trim()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "");
-}
+/** Vercel-style name → URL slug. Canonical implementation lives in `./slug`; re-exported
+ *  here so the many `@/lib/routing` callers keep a single import site. */
+export { slugify } from "./slug";
 
 /**
  * Picks a slug that doesn't collide with `taken` by appending `-2`, `-3`, …
