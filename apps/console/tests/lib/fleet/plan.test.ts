@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { plan, targetCount } from "@/lib/fleet/plan";
-import type { FleetAction, FleetSpec, Observed, ObservedInstance } from "@/lib/fleet/types";
+import type { FleetAction, FleetTarget, Observed, ObservedInstance } from "@/lib/fleet/types";
 import { describe, expect, it } from "vitest";
 
-function spec(over: Partial<FleetSpec> = {}): FleetSpec {
+function project(over: Partial<FleetTarget> = {}): FleetTarget {
 	return {
 		provider: "aws",
 		warmMin: 2,
@@ -47,16 +47,40 @@ const destroys = (a: FleetAction[]) => a.filter((x) => x.type === "destroy");
 
 describe("targetCount", () => {
 	it("floors at warmMin, lifts by demand + buffer, clamps to max", () => {
-		expect(targetCount(spec(), 0, 0)).toBe(2); // warmMin
-		expect(targetCount(spec(), 5, 0)).toBe(6); // ceil(5/1)+buffer
-		expect(targetCount(spec(), 0, 4)).toBe(5); // peak+buffer
-		expect(targetCount(spec(), 1000, 0)).toBe(10); // max clamp
+		expect(targetCount(project(), 0, 0)).toBe(2); // warmMin
+		expect(targetCount(project(), 5, 0)).toBe(6); // ceil(5/1)+buffer
+		expect(targetCount(project(), 0, 4)).toBe(5); // peak+buffer
+		expect(targetCount(project(), 1000, 0)).toBe(10); // max clamp
+	});
+
+	it("divides backlog by slotsPerRunner and rounds UP (ceil)", () => {
+		// 5 jobs / 2 slots = 2.5 → ceil 3 demand; +buffer 1 = 4 (floor would give 3).
+		expect(targetCount(project({ slotsPerRunner: 2, warmMin: 0, buffer: 1 }), 5, 0)).toBe(4);
+		// 4 jobs / 2 slots = exactly 2; +buffer 1 = 3.
+		expect(targetCount(project({ slotsPerRunner: 2, warmMin: 0, buffer: 1 }), 4, 0)).toBe(3);
+	});
+
+	it("treats slotsPerRunner < 1 as 1 (no divide-by-zero blow-up)", () => {
+		// slots 0 → max(1,0)=1 → 3 jobs / 1 = 3 demand; +buffer 1 = 4.
+		expect(targetCount(project({ slotsPerRunner: 0, warmMin: 0, buffer: 1 }), 3, 0)).toBe(4);
+	});
+
+	it("takes the MAX of recent peak and backlog-derived demand", () => {
+		// peak 4 dominates backlog-demand 3 (3 jobs/1 slot); +buffer 1 = 5.
+		expect(targetCount(project({ warmMin: 0, buffer: 1 }), 3, 4)).toBe(5);
+		// backlog-demand 8 dominates peak 2; +buffer 1 = 9.
+		expect(targetCount(project({ warmMin: 0, buffer: 1 }), 8, 2)).toBe(9);
+	});
+
+	it("clamps negative backlog to zero demand", () => {
+		// max(0, -5) → 0 demand, so warmMin 2 floors it (not a negative result).
+		expect(targetCount(project({ buffer: 0 }), -5, 0)).toBe(2);
 	});
 });
 
 describe("plan — count + placement", () => {
 	it("cold start creates to target, one per location (minPerLocation)", () => {
-		const a = plan(spec(), obs([]));
+		const a = plan(project(), obs([]));
 		expect(creates(a)).toHaveLength(2);
 		expect(new Set(creates(a).map((c) => c.type === "create" && c.location))).toEqual(
 			new Set(["fsn1", "nbg1"]),
@@ -64,13 +88,13 @@ describe("plan — count + placement", () => {
 	});
 
 	it("scales up on backlog", () => {
-		const a = plan(spec(), obs([], { backlog: 5 })); // target 6
+		const a = plan(project(), obs([], { backlog: 5 })); // target 6
 		expect(creates(a)).toHaveLength(6);
 	});
 
 	it("enforces minPerLocation even when the count target is met", () => {
 		// 2 online both in fsn1 → count met (target 2) but nbg1 below min → 1 create in nbg1
-		const a = plan(spec(), obs([inst({ location: "fsn1" }), inst({ location: "fsn1" })]));
+		const a = plan(project(), obs([inst({ location: "fsn1" }), inst({ location: "fsn1" })]));
 		const c = creates(a);
 		expect(c).toHaveLength(1);
 		expect(c[0].type === "create" && c[0].location).toBe("nbg1");
@@ -80,7 +104,7 @@ describe("plan — count + placement", () => {
 describe("plan — health", () => {
 	it("reaps a dead (offline) instance and replaces it", () => {
 		const a = plan(
-			spec(),
+			project(),
 			obs([
 				inst({ location: "fsn1" }),
 				inst({ location: "nbg1", status: "offline", runnerId: "r" }),
@@ -92,7 +116,7 @@ describe("plan — health", () => {
 
 	it("treats an unregistered young instance as booting (not dead)", () => {
 		const a = plan(
-			spec({ warmMin: 1, minPerLocation: 0, locations: ["fsn1"] }),
+			project({ warmMin: 1, minPerLocation: 0, locations: ["fsn1"] }),
 			obs([inst({ status: "none", runnerId: null, ageSeconds: 10 })], { bootGraceSeconds: 120 }),
 		);
 		expect(destroys(a)).toHaveLength(0); // still booting → leave it
@@ -100,7 +124,7 @@ describe("plan — health", () => {
 
 	it("reaps an unregistered instance past the boot grace", () => {
 		const a = plan(
-			spec({ warmMin: 0, minPerLocation: 0, locations: ["fsn1"], buffer: 0 }),
+			project({ warmMin: 0, minPerLocation: 0, locations: ["fsn1"], buffer: 0 }),
 			obs([inst({ status: "none", runnerId: null, ageSeconds: 600 })], { bootGraceSeconds: 120 }),
 		);
 		expect(destroys(a)).toHaveLength(1);
@@ -110,7 +134,7 @@ describe("plan — health", () => {
 describe("plan — version rollout", () => {
 	it("surges a replacement before draining when at target", () => {
 		// 2 outdated online at target 2 → can't drain yet (online not > target) → surge 1 new
-		const a = plan(spec(), obs([inst({ version: "v1" }), inst({ version: "v1", location: "nbg1" })]));
+		const a = plan(project(), obs([inst({ version: "v1" }), inst({ version: "v1", location: "nbg1" })]));
 		expect(drains(a)).toHaveLength(0);
 		const c = creates(a);
 		expect(c).toHaveLength(1);
@@ -120,7 +144,7 @@ describe("plan — version rollout", () => {
 	it("drains one outdated once online exceeds target", () => {
 		// 2 v1 + 1 v2 online (3 > target 2) → drain one v1, no new create
 		const a = plan(
-			spec(),
+			project(),
 			obs([
 				inst({ version: "v1", instanceId: "old1", runnerId: "old1" }),
 				inst({ version: "v1", location: "nbg1", instanceId: "old2", runnerId: "old2" }),
@@ -135,7 +159,7 @@ describe("plan — version rollout", () => {
 
 	it("reaps a drained instance once idle", () => {
 		const a = plan(
-			spec(),
+			project(),
 			obs([inst(), inst({ location: "nbg1" }), inst({ status: "draining", busy: false })]),
 		);
 		expect(destroys(a)).toHaveLength(1);
@@ -144,7 +168,7 @@ describe("plan — version rollout", () => {
 	it("never drains a busy outdated runner's slot out from under it", () => {
 		// prefers the idle outdated when online > target
 		const a = plan(
-			spec(),
+			project(),
 			obs([
 				inst({ version: "v1", busy: true, instanceId: "busy", runnerId: "busy" }),
 				inst({ version: "v1", busy: false, location: "nbg1", instanceId: "idle", runnerId: "idle" }),
@@ -160,22 +184,64 @@ describe("plan — version rollout", () => {
 describe("plan — idle surplus scale-down", () => {
 	it("holds surplus until the grace window elapses", () => {
 		const instances = [inst(), inst({ location: "nbg1" }), inst({ location: "nbg1" })]; // 3 > target 2
-		expect(destroys(plan(spec(), obs(instances, { surplusTicks: 1 })))).toHaveLength(0);
+		expect(destroys(plan(project(), obs(instances, { surplusTicks: 1 })))).toHaveLength(0);
 		// grace elapsed → drop the surplus idle one (nbg1 has 2 > min 1)
-		const a = plan(spec(), obs(instances, { surplusTicks: 3 }));
+		const a = plan(project(), obs(instances, { surplusTicks: 3 }));
 		expect(destroys(a)).toHaveLength(1);
 	});
 
 	it("never scales a location below its minimum", () => {
 		// target 2, 2 online (1 per loc) but surplusTicks high → nothing to drop (each at min)
-		const a = plan(spec(), obs([inst({ location: "fsn1" }), inst({ location: "nbg1" })], { surplusTicks: 9 }));
+		const a = plan(project(), obs([inst({ location: "fsn1" }), inst({ location: "nbg1" })], { surplusTicks: 9 }));
 		expect(destroys(a)).toHaveLength(0);
+	});
+});
+
+describe("plan — placement + capacity-cap edges (mutation hardening)", () => {
+	it("distributes creates round-robin to the least-loaded location", () => {
+		// 3 creates over 2 locations, min 0 (skips the below-min path) → a, b, a (least-loaded each time).
+		const a = plan(
+			project({ minPerLocation: 0, locations: ["a", "b"], warmMin: 3, buffer: 0, max: 10 }),
+			obs([]),
+		);
+		const locs = creates(a).map((c) => c.type === "create" && c.location);
+		expect(locs).toHaveLength(3);
+		expect(locs.filter((l) => l === "a")).toHaveLength(2);
+		expect(locs.filter((l) => l === "b")).toHaveLength(1);
+	});
+
+	it("never creates beyond max + surge, even to satisfy per-location minimums", () => {
+		// target 0, but minPerLocation 2 × 2 locations = 4 wanted; max 2 + surge 1 = 3 hard cap.
+		const a = plan(
+			project({ max: 2, surge: 1, warmMin: 0, buffer: 0, minPerLocation: 2, locations: ["a", "b"] }),
+			obs([]),
+		);
+		expect(creates(a)).toHaveLength(3);
+	});
+
+	it("scales surplus down from the most-loaded location, never below a location minimum", () => {
+		// 3 online: 2 in fsn1, 1 in nbg1; target 2; min 1; grace elapsed → drop 1 from fsn1 (over min),
+		// and crucially NOT from nbg1 (which sits exactly at the minimum).
+		const a = plan(
+			project({ warmMin: 2, buffer: 0, minPerLocation: 1, locations: ["fsn1", "nbg1"] }),
+			obs(
+				[
+					inst({ location: "fsn1", instanceId: "f1", runnerId: "f1" }),
+					inst({ location: "fsn1", instanceId: "f2", runnerId: "f2" }),
+					inst({ location: "nbg1", instanceId: "n1", runnerId: "n1" }),
+				],
+				{ surplusTicks: 5 },
+			),
+		);
+		const d = destroys(a);
+		expect(d).toHaveLength(1);
+		expect(d[0].type === "destroy" && d[0].instanceId).toMatch(/^f/); // fsn1, not the at-min nbg1
 	});
 });
 
 describe("plan — rollout converges with the warmMin invariant intact", () => {
 	it("rolls v1→v2 across ticks, never dropping online below warmMin", () => {
-		const s = spec({ warmMin: 2, minPerLocation: 1, locations: ["fsn1", "nbg1"], surge: 1, buffer: 0 });
+		const s = project({ warmMin: 2, minPerLocation: 1, locations: ["fsn1", "nbg1"], surge: 1, buffer: 0 });
 		// start: 2 online v1 (one per location)
 		let instances: ObservedInstance[] = [
 			inst({ instanceId: "a", runnerId: "a", version: "v1", location: "fsn1" }),

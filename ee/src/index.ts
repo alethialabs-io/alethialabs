@@ -9,6 +9,7 @@
 
 import { sso } from "@better-auth/sso";
 import { OpenFgaClient } from "@openfga/sdk";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { organization } from "better-auth/plugins/organization";
 import { sql } from "drizzle-orm";
 import type { Actor, Entitlements } from "@/lib/authz/types";
@@ -30,13 +31,22 @@ function buildFgaClient(core: CoreContext): OpenFgaClient | null {
 /** Every enterprise feature on — the grant for a licensed instance / a paid org. */
 const ALL_ENTITLEMENTS: Entitlements = {
 	organizations: true,
+	teams: true,
 	sso: true, // OIDC + SAML via @better-auth/sso
 	customRoles: true,
-	auditExport: true,
+	activityExport: true,
+	alerting: true,
 	advancedAlerting: true,
+	byoRunners: true,
+	managedPools: true,
 	// A licensed instance gets the enterprise tier's quotas (mirrors the ladder in
 	// core's planEntitlements("enterprise"); inlined to keep this package type-only on core).
-	quotas: { maxConcurrentJobs: null, priorityLevel: 30, includedRunnerMinutes: 20_000 },
+	quotas: {
+		maxConcurrentJobs: null,
+		priorityLevel: 30,
+		includedRunnerMinutes: 20_000,
+		activityRetentionDays: 365,
+	},
 	// Enterprise "20×" AI tier (mirrors core's planEntitlements("enterprise").ai).
 	ai: {
 		enabled: true,
@@ -58,6 +68,15 @@ function licensedInstanceWide(): boolean {
 	return process.env.ALETHIA_LICENSE_ACTIVE === "true";
 }
 
+/** Reads a string `organizationId` off an unknown request body, else null. */
+function bodyOrgId(body: unknown): string | null {
+	if (typeof body === "object" && body !== null && "organizationId" in body) {
+		const value = body.organizationId;
+		return typeof value === "string" ? value : null;
+	}
+	return null;
+}
+
 export function register(core: CoreContext): EnterpriseModule {
 	const fgaClient = buildFgaClient(core);
 	const tupleSync = fgaClient ? new FgaTupleSync(core, fgaClient) : undefined;
@@ -68,7 +87,12 @@ export function register(core: CoreContext): EnterpriseModule {
 			organization({
 				creatorRole: "owner",
 				// Group-based grants: a grant can target a team (grants.principal_type='team').
-				teams: { enabled: true },
+				// `defaultTeam.enabled: false` — DON'T let better-auth auto-create a per-org
+				// default team on org create: that implicit team trips the Enterprise
+				// `beforeCreateTeam` gate below (a new org has no `teams` entitlement), which
+				// would 403 the whole `/organization/create`. Teams are created explicitly
+				// (and stay Enterprise-gated); orgs don't need a default one.
+				teams: { enabled: true, defaultTeam: { enabled: false } },
 				// Membership roles = the PDP roles (owner/admin/operator/viewer), injected
 				// from core so the org-plugin role vocabulary matches end-to-end.
 				ac: core.orgAc,
@@ -93,11 +117,37 @@ export function register(core: CoreContext): EnterpriseModule {
 				// Sync org membership → PDP grants on every lifecycle event, so the PDP
 				// (which authorizes from grants, not member.role) actually grants access.
 				organizationHooks: {
+					// Pay-to-collaborate: a card-less Pro trial is solo. Block invites until
+					// the org is on a paid (or card-backed) subscription — enforced here so
+					// it holds regardless of the client (the UI shows the upsell separately).
+					beforeCreateInvitation: async ({ invitation }) => {
+						if (!(await core.canOrgInvite(invitation.organizationId))) {
+							throw new APIError("FORBIDDEN", {
+								message:
+									"Add a payment method to invite teammates — trials are single-member.",
+							});
+						}
+					},
+					// Teams are an Enterprise capability. Block creation server-side so the
+					// gate holds regardless of the client (the UI shows the upsell separately).
+					beforeCreateTeam: async ({ team }) => {
+						if (!(await core.canOrgCreateTeams(team.organizationId))) {
+							throw new APIError("FORBIDDEN", {
+								message: "Teams require an Enterprise plan.",
+							});
+						}
+					},
 					afterCreateOrganization: async ({ organization: org, user }) => {
 						await core.ensureMemberGrant(org.id, user.id, "owner");
 					},
 					afterAddMember: async ({ organization: org, user, member }) => {
 						await core.ensureMemberGrant(org.id, user.id, member.role);
+						// Per-seat billing: a new billable member bumps the subscription quantity.
+						await core.syncOrgSeats(org.id);
+						core.recordActivity({ userId: user.id, orgId: org.id }, "join", {
+							type: "member",
+							id: user.id,
+						});
 						core.emitAlertEvent(org.id, "system.member.joined", {
 							title: `Member joined: ${user.email ?? user.id}`,
 							severity: "info",
@@ -108,9 +158,21 @@ export function register(core: CoreContext): EnterpriseModule {
 					},
 					afterUpdateMemberRole: async ({ organization: org, user, member }) => {
 						await core.ensureMemberGrant(org.id, user.id, member.role);
+						// A role change can flip billable status (e.g. viewer ⇄ operator).
+						await core.syncOrgSeats(org.id);
+						core.recordActivity({ userId: user.id, orgId: org.id }, "role_change", {
+							type: "member",
+							id: user.id,
+						});
 					},
 					afterRemoveMember: async ({ organization: org, user }) => {
 						await core.revokeMemberGrant(org.id, user.id);
+						// Per-seat billing: removing a billable member frees a seat (prorated).
+						await core.syncOrgSeats(org.id);
+						core.recordActivity({ userId: user.id, orgId: org.id }, "remove", {
+							type: "member",
+							id: user.id,
+						});
 						core.emitAlertEvent(org.id, "system.member.removed", {
 							title: `Member removed: ${user.email ?? user.id}`,
 							severity: "warning",
@@ -145,6 +207,30 @@ export function register(core: CoreContext): EnterpriseModule {
 					defaultRole: "member",
 				},
 			}),
+
+			// Entitlement gate for SSO registration. The @better-auth/sso plugin enforces
+			// org membership/admin but NOT the plan — so without this a non-Enterprise org
+			// admin could register a provider via direct POST. Block /sso/register unless
+			// the target org holds the `sso` entitlement (the UI shows the upsell instead).
+			{
+				id: "alethia-sso-entitlement-guard",
+				hooks: {
+					before: [
+						{
+							matcher: (context: { path?: string }) =>
+								context.path === "/sso/register",
+							handler: createAuthMiddleware(async (ctx) => {
+								const orgId = bodyOrgId(ctx.body);
+								if (!orgId || !(await core.resolveOrgEntitlements(orgId)).sso) {
+									throw new APIError("FORBIDDEN", {
+										message: "Single Sign-On requires an Enterprise plan.",
+									});
+								}
+							}),
+						},
+					],
+				},
+			},
 		],
 
 		// Map a verified user to their active org. Primary org = earliest membership;

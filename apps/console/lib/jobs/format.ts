@@ -69,6 +69,11 @@ export const JOB_TYPES: Record<
 		icon: GitBranch,
 		description: "Scan a repository for infrastructure config",
 	},
+	DETECT_DRIFT: {
+		label: "Detect Drift",
+		icon: RefreshCw,
+		description: "Refresh-only check for drift between state and live cloud",
+	},
 };
 
 /** Formats an elapsed millisecond span as `42s` or `1m 12s`. */

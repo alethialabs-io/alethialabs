@@ -7,12 +7,12 @@ import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
 import {
 	jobs,
-	specCaches,
-	specCluster,
-	specDatabases,
-	specEnvironments,
+	projectCaches,
+	projectCluster,
+	projectDatabases,
+	projectEnvironments,
 } from "@/lib/db/schema";
-import type { ProviderOutputs } from "@/types/database-custom.types";
+import type { ProviderOutputs } from "@/types/jsonb.types";
 
 // execution_metadata is JSONB written by the runner. Parse the fields we read
 // (lenient: .catch(undefined) mirrors the old optional-read behavior without casts).
@@ -25,7 +25,7 @@ const deployMetaSchema = z.object({
 });
 
 /**
- * After a DEPLOY job succeeds, persist terraform outputs to the spec component
+ * After a DEPLOY job succeeds, persist terraform outputs to the project component
  * tables. Service path — runs on the BYPASSRLS connection (runner-triggered).
  */
 export async function finalizeDeployment(jobId: string) {
@@ -34,7 +34,7 @@ export async function finalizeDeployment(jobId: string) {
 	const [job] = await db
 		.select({
 			status: jobs.status,
-			spec_id: jobs.spec_id,
+			project_id: jobs.project_id,
 			environment_id: jobs.environment_id,
 			job_type: jobs.job_type,
 			execution_metadata: jobs.execution_metadata,
@@ -46,14 +46,14 @@ export async function finalizeDeployment(jobId: string) {
 	if (!job) return;
 	if (job.status !== "SUCCESS") return;
 	if (job.job_type !== "DEPLOY") return;
-	if (!job.spec_id) return;
+	if (!job.project_id) return;
 	if (!job.execution_metadata) return;
 
-	const specId = job.spec_id;
+	const projectId = job.project_id;
 	const meta = deployMetaSchema.parse(job.execution_metadata);
 	const outputs = meta.outputs;
 
-	const clusterUpdate: Partial<typeof specCluster.$inferInsert> = {
+	const clusterUpdate: Partial<typeof projectCluster.$inferInsert> = {
 		status: "ACTIVE",
 	};
 	if (meta.cluster_name) clusterUpdate.cluster_name = meta.cluster_name;
@@ -67,7 +67,7 @@ export async function finalizeDeployment(jobId: string) {
 		if (clusterArn) clusterUpdate.provider_outputs = { arn: clusterArn };
 	}
 
-	await db.update(specCluster).set(clusterUpdate).where(eq(specCluster.spec_id, specId));
+	await db.update(projectCluster).set(clusterUpdate).where(eq(projectCluster.project_id, projectId));
 
 	if (outputs) {
 		const rdsEndpoint = extractOutputValue(outputs, "rds_cluster_endpoint");
@@ -93,16 +93,16 @@ export async function finalizeDeployment(jobId: string) {
 			);
 			if (kmsKey) dbOutputs.kms_key = kmsKey;
 
-			const dbUpdate: Partial<typeof specDatabases.$inferInsert> = {
+			const dbUpdate: Partial<typeof projectDatabases.$inferInsert> = {
 				endpoint: rdsEndpoint,
 				status: "ACTIVE",
 				provider_outputs: dbOutputs,
 			};
 
 			await db
-				.update(specDatabases)
+				.update(projectDatabases)
 				.set(dbUpdate)
-				.where(eq(specDatabases.spec_id, specId));
+				.where(eq(projectDatabases.project_id, projectId));
 		}
 
 		const redisEndpoint = extractOutputValue(
@@ -110,7 +110,7 @@ export async function finalizeDeployment(jobId: string) {
 			"redis_primary_endpoint_address",
 		);
 		if (redisEndpoint) {
-			const cacheUpdate: Partial<typeof specCaches.$inferInsert> = {
+			const cacheUpdate: Partial<typeof projectCaches.$inferInsert> = {
 				endpoint: redisEndpoint,
 				status: "ACTIVE",
 			};
@@ -121,18 +121,18 @@ export async function finalizeDeployment(jobId: string) {
 			if (readerEndpoint) cacheUpdate.reader_endpoint = readerEndpoint;
 
 			await db
-				.update(specCaches)
+				.update(projectCaches)
 				.set(cacheUpdate)
-				.where(eq(specCaches.spec_id, specId));
+				.where(eq(projectCaches.project_id, projectId));
 		}
 	}
 
-	// M1: mark the targeted environment ACTIVE (status moved off specs).
+	// M1: mark the targeted environment ACTIVE (status moved off projects).
 	if (job.environment_id) {
 		await db
-			.update(specEnvironments)
+			.update(projectEnvironments)
 			.set({ status: "ACTIVE" })
-			.where(eq(specEnvironments.id, job.environment_id));
+			.where(eq(projectEnvironments.id, job.environment_id));
 	}
 }
 

@@ -6,7 +6,7 @@ import {
 	cloudIdentities,
 	connectorCredentials,
 	connectors,
-	type Job,
+	jobs,
 	runners,
 } from "@/lib/db/schema";
 import { markFailed } from "@/lib/connectors/health";
@@ -59,12 +59,24 @@ export async function POST(req: Request) {
 			.where(eq(runners.id, runnerId))
 			.limit(1);
 
-		// claim_next_job returns SETOF jobs — typed via the execute generic.
-		const claimed = await db.execute<Job>(
-			sql`select * from claim_next_job(${runnerId}::uuid, ${tokenHash}, ${runner?.cloud_identity_id ?? null}::uuid)`,
+		// claim_next_job atomically claims + returns the row, but raw execute over the
+		// prepare:false client yields Postgres-format timestamp strings the runner can't
+		// decode (it wants RFC3339). Use it only for the id, then re-read via a typed
+		// select so Drizzle maps timestamptz → Date → ISO in the JSON response.
+		const claimed = await db.execute<{ id: string }>(
+			sql`select id from claim_next_job(${runnerId}::uuid, ${tokenHash}, ${runner?.cloud_identity_id ?? null}::uuid)`,
 		);
 
-		const job = claimed[0];
+		const claimedId = claimed[0]?.id;
+		if (!claimedId) {
+			return NextResponse.json({ job: null });
+		}
+
+		const [job] = await db
+			.select()
+			.from(jobs)
+			.where(eq(jobs.id, claimedId))
+			.limit(1);
 		if (!job) {
 			return NextResponse.json({ job: null });
 		}

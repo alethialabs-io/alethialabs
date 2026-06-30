@@ -62,16 +62,37 @@ export interface Pdp {
 /** Feature entitlements for a scope. Community = all false; ee/ flips per license. */
 export interface Entitlements {
 	organizations: boolean;
+	/** Team (access-group) management — create teams and scope grants to them. Enterprise. */
+	teams: boolean;
 	sso: boolean;
 	customRoles: boolean;
-	auditExport: boolean;
+	/** CSV export of the Activity log. Viewing is free; export is Enterprise. */
+	activityExport: boolean;
 	/**
-	 * Security/governance alerting (dataroom/spec/mvp/25-alerting-notifications.md): alert rules
-	 * sourced from PDP audit events (denials, sensitive allows, grant/role changes) plus
-	 * advanced match/escalation. Basic infra/ops alerting is free in core and ungated;
-	 * this flag only gates the PDP-sourced half. Granted on enterprise.
+	 * The alerting surface as a whole (dataroom/spec/mvp/25-alerting-notifications.md): policies,
+	 * channels and the delivery activity log. Granular notification routing is a paid feature —
+	 * granted on team (Pro) and up. Community sees the upsell instead of the surface.
+	 */
+	alerting: boolean;
+	/**
+	 * Security/governance alerting: alert rules sourced from PDP Activity events (denials,
+	 * recorded actions, grant/role changes). Sits ON TOP of `alerting` — the operational
+	 * (system.*) half is unlocked at Pro; this flag only gates the PDP-sourced (authz.*) half,
+	 * which stays Enterprise.
 	 */
 	advancedAlerting: boolean;
+	/**
+	 * Bring-your-own runners — the runner list + Add Runner (deploy into your cloud / register your
+	 * own). Granted on team (Pro) and up; community sees the upsell. Self-managed operators always
+	 * have it (gated by deployment mode, not this flag).
+	 */
+	byoRunners: boolean;
+	/**
+	 * Managed warm-pool fleet operations (pools / versions / economics). Reserved for Enterprise;
+	 * not yet surfaced on hosted (the managed fleet is a global platform table — per-org hosted
+	 * pools are a future project). Self-managed operators manage pools regardless of this flag.
+	 */
+	managedPools: boolean;
 	/**
 	 * Runner-scheduling quotas (ADR 20). Mirrors the authoritative SQL mapping in
 	 * programmables.sql (plan_max_concurrency / plan_priority) for UI + insert-time
@@ -88,6 +109,12 @@ export interface Entitlements {
 		 * Self-hosted runners are never metered.
 		 */
 		includedRunnerMinutes: number;
+		/**
+		 * How far back the Activity (authz-decision) feed is queryable, in days. Gates the
+		 * time-range presets in the UI (a window older than this prompts an upgrade);
+		 * community 7 · team 30 · enterprise 365.
+		 */
+		activityRetentionDays: number;
 	};
 	/**
 	 * AI entitlements (repo-scanner + agent + Ask AI). All AI spends **AI credits** from

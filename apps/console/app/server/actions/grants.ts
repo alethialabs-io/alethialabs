@@ -5,6 +5,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { getMembers } from "@/app/server/actions/members";
 import { listCustomRoles } from "@/app/server/actions/roles";
+import { recordActivity } from "@/lib/authz/activity";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { currentActor } from "@/lib/authz/guard";
@@ -20,10 +21,9 @@ import {
 	grants,
 	role,
 	runners,
-	specs,
+	projects,
 	team,
 	user,
-	zones,
 } from "@/lib/db/schema";
 
 const VALID_KEYS: ReadonlySet<string> = new Set(PERMISSIONS.map((p) => p.key));
@@ -45,19 +45,18 @@ export interface GrantOptions {
 	principals: { id: string; label: string; type: "user" | "team" }[];
 	roles: { id: string; name: string; builtin: boolean }[];
 	permissions: { key: string; resource: string; action: string }[];
-	resources: Record<"zone" | "spec" | "runner" | "cloud_identity", GrantOption[]>;
+	resources: Record<"project" | "runner" | "cloud_identity", GrantOption[]>;
 }
 
 /** Everything the "Grant access" builder needs, in one round-trip. */
 export async function getGrantOptions(): Promise<GrantOptions> {
 	const actor = await currentActor();
 	const db = getServiceDb();
-	const [members, teamRows, zoneRows, specRows, runnerRows, idRows, custom] =
+	const [members, teamRows, projectRows, runnerRows, idRows, custom] =
 		await Promise.all([
 			getMembers(),
 			db.select({ id: team.id, label: team.name }).from(team).where(eq(team.organizationId, actor.orgId)),
-			db.select({ id: zones.id, label: zones.name }).from(zones).where(eq(zones.org_id, actor.orgId)),
-			db.select({ id: specs.id, label: specs.project_name }).from(specs).where(eq(specs.org_id, actor.orgId)),
+			db.select({ id: projects.id, label: projects.project_name }).from(projects).where(eq(projects.org_id, actor.orgId)),
 			db.select({ id: runners.id, label: runners.name }).from(runners).where(eq(runners.org_id, actor.orgId)),
 			db.select({ id: cloudIdentities.id, label: cloudIdentities.name }).from(cloudIdentities).where(eq(cloudIdentities.org_id, actor.orgId)),
 			listCustomRoles(),
@@ -80,7 +79,7 @@ export async function getGrantOptions(): Promise<GrantOptions> {
 		],
 		roles: [...builtin, ...custom.map((r) => ({ id: r.id, name: r.name, builtin: false }))],
 		permissions: PERMISSIONS.map((p) => ({ key: p.key, resource: p.resource, action: p.action })),
-		resources: { zone: zoneRows, spec: specRows, runner: runnerRows, cloud_identity: idRows },
+		resources: { project: projectRows, runner: runnerRows, cloud_identity: idRows },
 	};
 }
 
@@ -143,6 +142,7 @@ export async function assignGrant(input: AssignGrantInput): Promise<void> {
 		resource_type: resourceType,
 		resource_id: resourceId ?? undefined,
 	});
+	recordActivity(actor, "assign", { type: "grant" });
 }
 
 export async function revokeGrant(id: string): Promise<void> {
@@ -178,6 +178,7 @@ export async function revokeGrant(id: string): Promise<void> {
 		resource_type: g.resource_type,
 		resource_id: g.resource_id ?? undefined,
 	});
+	recordActivity(actor, "revoke", { type: "grant" });
 }
 
 export interface AccessGrantRow {

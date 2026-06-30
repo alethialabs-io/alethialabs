@@ -17,7 +17,7 @@ license. Notable bundled or vendored components include:
   * HashiCorp Terraform, providers, and modules — licensed by HashiCorp under the
     Business Source License / Mozilla Public License 2.0, as applicable.
   * Vendored Terraform "valkey" module
-    (infra/templates/spec/aws/modules/valkey/) — Apache License 2.0.
+    (infra/templates/project/aws/modules/valkey/) — Apache License 2.0.
   * Node.js, Go, and JavaScript/TypeScript dependencies — each under the license
     declared in its own package metadata (package.json / go.mod / *.dist-info).
 

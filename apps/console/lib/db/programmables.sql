@@ -1,4 +1,4 @@
--- Programmables: least-privilege app role + grants, updated_at + zone-consistency
+-- Programmables: least-privilege app role + grants, updated_at
 -- triggers, the SECURITY DEFINER queue RPCs (token-hash authed; on the renamed
 -- jobs/runners tables), and the per-owner RLS backstop. Idempotent — applied via
 -- the migrate runner's .unsafe() after the schema migration. Runs as superuser.
@@ -31,10 +31,10 @@ DO $$
 DECLARE tbl TEXT;
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
-    'specs', 'spec_environments', 'spec_network', 'spec_cluster', 'spec_dns',
-    'spec_repositories', 'spec_databases', 'spec_caches', 'spec_queues', 'spec_topics',
-    'spec_nosql_tables', 'spec_container_registries', 'spec_secrets',
-    'spec_storage_buckets', 'jobs'
+    'projects', 'project_environments', 'project_network', 'project_cluster', 'project_dns',
+    'project_repositories', 'project_databases', 'project_caches', 'project_queues', 'project_topics',
+    'project_nosql_tables', 'project_container_registries', 'project_secrets',
+    'project_storage_buckets', 'jobs'
   ]) LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS %1$s_updated_at ON public.%1$I', tbl);
     EXECUTE format(
@@ -43,22 +43,10 @@ BEGIN
   END LOOP;
 END $$;
 
--- ── jobs.zone_id consistency: derive from the spec when a job references one
--- (keeps the denormalized zone_id in sync without a subquery CHECK). ──
-CREATE OR REPLACE FUNCTION public.jobs_sync_zone()
-RETURNS TRIGGER AS $$
-BEGIN
-  IF NEW.spec_id IS NOT NULL THEN
-    SELECT COALESCE(s.zone_id, NEW.zone_id) INTO NEW.zone_id
-    FROM public.specs s WHERE s.id = NEW.spec_id;
-  END IF;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
+-- Projects are top-level; an earlier per-job consistency trigger + its function are
+-- dropped by migration. Jobs scope by org_id.
 DROP TRIGGER IF EXISTS jobs_sync_zone ON public.jobs;
-CREATE TRIGGER jobs_sync_zone BEFORE INSERT OR UPDATE OF spec_id ON public.jobs
-  FOR EACH ROW EXECUTE FUNCTION public.jobs_sync_zone();
+DROP FUNCTION IF EXISTS public.jobs_sync_zone();
 
 -- ── Push dispatch: wake runners the instant a job becomes claimable, instead of
 -- waiting on their poll. Fires on insert and on requeue (status→QUEUED, e.g.
@@ -245,6 +233,87 @@ BEGIN
         SELECT 1 FROM public.runners r
         WHERE r.id = jobs.runner_id AND r.last_heartbeat > now() - INTERVAL '5 minutes'
       ));
+    GET DIAGNOSTICS v_count = ROW_COUNT;
+    RETURN v_count;
+END;
+$$;
+
+-- Fast-fail stuck CONNECTION_TEST jobs so the connect sheet / identity can never spin
+-- forever. Two cases, both scoped to CONNECTION_TEST (PLAN/DEPLOY cold-starts legitimately
+-- wait for a runner, so they're untouched), both flipping the linked unverified identity to
+-- 'failed' so the page reflects it:
+--   (a) QUEUED   — never picked up (managed fleet at 0, OSS self-host, or local dev with no
+--                  runner), older than p_ttl.
+--   (b) CLAIMED/PROCESSING — a runner claimed it but never finished (wedged on a hanging
+--       verify, e.g. an Azure SDK/IMDS probe). Connection tests are quick, so one claimed
+--       beyond p_claimed_ttl is hung; fail it regardless of runner heartbeat (the runner may
+--       be alive but stuck — recover_stale_jobs only handles dead runners).
+CREATE OR REPLACE FUNCTION public.fail_unclaimed_connection_tests(
+    p_ttl INTERVAL DEFAULT INTERVAL '5 minutes',
+    p_claimed_ttl INTERVAL DEFAULT INTERVAL '10 minutes'
+)
+RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_unclaimed INTEGER; v_wedged INTEGER;
+BEGIN
+    -- (a) QUEUED tests no runner ever claimed.
+    WITH stuck AS (
+        UPDATE public.jobs
+        SET status = 'FAILED',
+            error_message = 'No runner available — start a runner and retry.',
+            completed_at = now(), updated_at = now()
+        WHERE job_type = 'CONNECTION_TEST'
+          AND status = 'QUEUED'
+          AND created_at < now() - p_ttl
+        RETURNING cloud_identity_id
+    )
+    UPDATE public.cloud_identities ci
+    SET status = 'failed',
+        last_error = 'No runner available — start a runner and retry.',
+        last_tested_at = now(), updated_at = now()
+    FROM stuck
+    WHERE ci.id = stuck.cloud_identity_id
+      AND ci.is_verified = false;
+    GET DIAGNOSTICS v_unclaimed = ROW_COUNT;
+
+    -- (b) CLAIMED/PROCESSING tests a runner picked up but never finished (wedged).
+    WITH wedged AS (
+        UPDATE public.jobs
+        SET status = 'FAILED',
+            error_message = 'Connection test timed out — the runner did not finish. Retry.',
+            completed_at = now(), updated_at = now()
+        WHERE job_type = 'CONNECTION_TEST'
+          AND status IN ('CLAIMED', 'PROCESSING')
+          AND claimed_at < now() - p_claimed_ttl
+        RETURNING cloud_identity_id
+    )
+    UPDATE public.cloud_identities ci
+    SET status = 'failed',
+        last_error = 'Connection test timed out — the runner did not finish. Retry.',
+        last_tested_at = now(), updated_at = now()
+    FROM wedged
+    WHERE ci.id = wedged.cloud_identity_id
+      AND ci.is_verified = false;
+    GET DIAGNOSTICS v_wedged = ROW_COUNT;
+
+    RETURN v_unclaimed + v_wedged;
+END;
+$$;
+
+-- Garbage-collect never-saved pending identities. initIdentity() seeds one row per
+-- connect-sheet open; abandoned flows leave 'pending' rows forever. Deletes only
+-- pending rows that aged out and have NO job at all (a never-saved identity has none);
+-- never touches testing/failed/connected. jobs.cloud_identity_id is ON DELETE SET NULL.
+CREATE OR REPLACE FUNCTION public.gc_pending_identities(p_age INTERVAL DEFAULT INTERVAL '24 hours')
+RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_count INTEGER;
+BEGIN
+    DELETE FROM public.cloud_identities ci
+    WHERE ci.status = 'pending'
+      AND ci.is_verified = false
+      AND ci.updated_at < now() - p_age
+      AND NOT EXISTS (
+        SELECT 1 FROM public.jobs j WHERE j.cloud_identity_id = ci.id
+      );
     GET DIAGNOSTICS v_count = ROW_COUNT;
     RETURN v_count;
 END;
@@ -467,21 +536,21 @@ BEGIN
 END;
 $$;
 
--- ── spec_full: denormalized read model for the CLI config + job-create endpoints.
--- OUTPUT column names match the SpecConfig wire contract (zone_id, create_vpc, …);
--- sources the renamed spec_* tables. Numerics are cast to float8 so the JSON carries
+-- ── project_full: denormalized read model for the CLI config + job-create endpoints.
+-- OUTPUT column names match the ProjectConfig wire contract (create_vpc, …);
+-- sources the renamed project_* tables. Numerics are cast to float8 so the JSON carries
 -- numbers (postgres-js otherwise returns numeric as a string). ──
 -- DROP first: CREATE OR REPLACE VIEW cannot rename/reorder existing columns
 -- (Postgres 42P16), and this view's output columns change as the schema evolves.
-DROP VIEW IF EXISTS public.spec_full;
-CREATE VIEW public.spec_full AS
+DROP VIEW IF EXISTS public.project_full;
+CREATE VIEW public.project_full AS
 SELECT
-  s.id, s.user_id, s.zone_id AS zone_id, s.cloud_identity_id,
+  s.id, s.user_id, s.cloud_identity_id,
   s.project_name,
-  -- M1: environment identity + provisioning status now live on the spec's default
-  -- environment (was specs.environment_stage / specs.status). The wire keeps the
+  -- M1: environment identity + provisioning status now live on the project's default
+  -- environment (was projects.environment_stage / projects.status). The wire keeps the
   -- `environment_stage` name + emits the env's name (= the old stage for backfilled
-  -- specs, so the SpecConfig.EnvironmentStage → tofu state path is unchanged).
+  -- projects, so the ProjectConfig.EnvironmentStage → tofu state path is unchanged).
   env.name AS environment_stage,
   s.region,
   ci.provider AS cloud_provider,
@@ -520,20 +589,20 @@ SELECT
   repos.apps_destination_repo,
 
   -- Aggregated
-  EXISTS(SELECT 1 FROM public.spec_databases d WHERE d.spec_id = s.id AND d.status != 'DESTROYED') AS has_database,
-  (SELECT MIN(d.min_capacity)::float8 FROM public.spec_databases d WHERE d.spec_id = s.id AND d.status != 'DESTROYED') AS db_min_capacity,
-  (SELECT MAX(d.max_capacity)::float8 FROM public.spec_databases d WHERE d.spec_id = s.id AND d.status != 'DESTROYED') AS db_max_capacity,
-  EXISTS(SELECT 1 FROM public.spec_caches c WHERE c.spec_id = s.id AND c.status != 'DESTROYED') AS has_cache
+  EXISTS(SELECT 1 FROM public.project_databases d WHERE d.project_id = s.id AND d.status != 'DESTROYED') AS has_database,
+  (SELECT MIN(d.min_capacity)::float8 FROM public.project_databases d WHERE d.project_id = s.id AND d.status != 'DESTROYED') AS db_min_capacity,
+  (SELECT MAX(d.max_capacity)::float8 FROM public.project_databases d WHERE d.project_id = s.id AND d.status != 'DESTROYED') AS db_max_capacity,
+  EXISTS(SELECT 1 FROM public.project_caches c WHERE c.project_id = s.id AND c.status != 'DESTROYED') AS has_cache
 
-FROM public.specs s
-LEFT JOIN public.spec_environments env ON env.spec_id = s.id AND env.is_default = true
+FROM public.projects s
+LEFT JOIN public.project_environments env ON env.project_id = s.id AND env.is_default = true
 LEFT JOIN public.cloud_identities ci ON ci.id = s.cloud_identity_id
-LEFT JOIN public.spec_network net ON net.spec_id = s.id
-LEFT JOIN public.spec_cluster cl ON cl.spec_id = s.id
-LEFT JOIN public.spec_dns dns ON dns.spec_id = s.id
-LEFT JOIN public.spec_repositories repos ON repos.spec_id = s.id;
+LEFT JOIN public.project_network net ON net.project_id = s.id
+LEFT JOIN public.project_cluster cl ON cl.project_id = s.id
+LEFT JOIN public.project_dns dns ON dns.project_id = s.id
+LEFT JOIN public.project_repositories repos ON repos.project_id = s.id;
 
-GRANT SELECT ON public.spec_full TO alethia_app;
+GRANT SELECT ON public.project_full TO alethia_app;
 
 -- ── org_id coarse-tenancy backfill + trigger. Community: org_id = user_id (the
 -- user's personal org); the ee/ Teams build assigns real organization ids. The
@@ -549,7 +618,7 @@ $$ LANGUAGE plpgsql;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['zones', 'specs', 'cloud_identities', 'connector_credentials', 'jobs', 'runners']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['projects','cloud_identities', 'connector_credentials', 'jobs', 'runners']) LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS %1$s_set_org_id ON public.%1$I', tbl);
     EXECUTE format(
       'CREATE TRIGGER %1$s_set_org_id BEFORE INSERT ON public.%1$I
@@ -569,7 +638,7 @@ END $$;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['zones', 'specs', 'jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['projects','jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant']) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(
@@ -601,12 +670,15 @@ BEGIN
   END LOOP;
 END $$;
 
--- runners: managed rows are public-read; writes are owner/org-scoped self runners.
+-- runners: reads are owner/org-scoped. Managed (platform-fleet) rows have no owner/org, so they
+-- are NOT visible through the tenant RLS path — they leak fleet topology/COGS to every tenant
+-- otherwise. The fleet controller, scaler, runner claim/heartbeat/wake, and the self-managed
+-- operator's fleet view all read managed rows via the service role (getServiceDb), which bypasses
+-- RLS. Writes remain owner/org-scoped self runners.
 ALTER TABLE public.runners ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS runners_select ON public.runners;
 CREATE POLICY runners_select ON public.runners FOR SELECT
-  USING (operator = 'managed'::public.runner_operator
-         OR user_id = current_setting('app.current_owner', true)::uuid
+  USING (user_id = current_setting('app.current_owner', true)::uuid
          OR org_id = current_setting('app.current_org', true)::uuid);
 DROP POLICY IF EXISTS runners_insert ON public.runners;
 CREATE POLICY runners_insert ON public.runners FOR INSERT
@@ -622,23 +694,23 @@ CREATE POLICY runners_delete ON public.runners FOR DELETE
   USING (user_id = current_setting('app.current_owner', true)::uuid
          OR org_id = current_setting('app.current_org', true)::uuid);
 
--- Spec child tables (ownership via the parent spec)
+-- Project child tables (ownership via the parent project)
 DO $$
 DECLARE tbl TEXT;
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
-    'spec_environments', 'spec_network', 'spec_cluster', 'spec_dns', 'spec_observability', 'spec_repositories', 'spec_databases',
-    'spec_caches', 'spec_queues', 'spec_topics', 'spec_nosql_tables',
-    'spec_container_registries', 'spec_secrets', 'spec_git_credentials', 'spec_storage_buckets'
+    'project_environments', 'project_network', 'project_cluster', 'project_dns', 'project_observability', 'project_repositories', 'project_databases',
+    'project_caches', 'project_queues', 'project_topics', 'project_nosql_tables',
+    'project_container_registries', 'project_secrets', 'project_git_credentials', 'project_storage_buckets'
   ]) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(
       'CREATE POLICY owner_all ON public.%I FOR ALL
-         USING (spec_id IN (SELECT id FROM public.specs
+         USING (project_id IN (SELECT id FROM public.projects
                 WHERE user_id = current_setting(''app.current_owner'', true)::uuid
                    OR org_id = current_setting(''app.current_org'', true)::uuid))
-         WITH CHECK (spec_id IN (SELECT id FROM public.specs
+         WITH CHECK (project_id IN (SELECT id FROM public.projects
                 WHERE user_id = current_setting(''app.current_owner'', true)::uuid
                    OR org_id = current_setting(''app.current_org'', true)::uuid))', tbl);
   END LOOP;
@@ -656,7 +728,7 @@ CREATE POLICY logs_select ON public.job_logs FOR SELECT
 ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS audit_select ON public.audit_log;
 CREATE POLICY audit_select ON public.audit_log FOR SELECT
-  USING (spec_id IN (SELECT id FROM public.specs
+  USING (project_id IN (SELECT id FROM public.projects
     WHERE user_id = current_setting('app.current_owner', true)::uuid
        OR org_id = current_setting('app.current_org', true)::uuid));
 
@@ -692,3 +764,9 @@ UPDATE public."user"
    SET onboarding_completed_at = created_at
  WHERE onboarding_completed_at IS NULL
    AND created_at < TIMESTAMPTZ '2026-06-25 00:00:00+00';
+
+-- Self-heal cloud_identities.status from the legacy is_verified flag (status shipped
+-- in 0035). Idempotent: only verified rows still marked anything other than connected.
+UPDATE public.cloud_identities
+   SET status = 'connected'
+ WHERE is_verified = true AND status <> 'connected';

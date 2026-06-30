@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "@testing-library/jest-dom/vitest";
-import { vi } from "vitest";
+import { cleanup } from "@testing-library/react";
+import { afterEach, vi } from "vitest";
+
+// Unmount + reset the DOM between tests (Vitest globals are off, so RTL's automatic
+// afterEach cleanup isn't registered for us).
+afterEach(() => cleanup());
 
 // Better Auth (lib/config/auth.ts) and the DB client (lib/config/database.ts)
 // validate env at import. Provide test-safe values; no real connection is made

@@ -7,10 +7,28 @@
 // next-themes. Wrap a <PaymentForm> in this with the intent's clientSecret.
 
 import { Elements } from "@stripe/react-stripe-js";
-import type { StripeElementsOptions } from "@stripe/stripe-js";
+import type { StripeElementStyle, StripeElementsOptions } from "@stripe/stripe-js";
 import { useTheme } from "next-themes";
 import type { ReactNode } from "react";
 import { getStripePromise } from "@/lib/billing/stripe-client";
+
+/**
+ * Per-element `style` for the split card elements (CardNumber/Expiry/Cvc) — the same
+ * grayscale/Geist tokens as the Payment Element appearance, but in the individual-element
+ * style shape (the split elements ignore the Elements-level `appearance`).
+ */
+export function cardElementStyle(dark: boolean): StripeElementStyle {
+	return {
+		base: {
+			color: dark ? "#fafafa" : "#171717",
+			fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif",
+			fontSize: "14px",
+			iconColor: dark ? "#a3a3a3" : "#737373",
+			"::placeholder": { color: dark ? "#737373" : "#a3a3a3" },
+		},
+		invalid: { color: dark ? "#fafafa" : "#171717", iconColor: dark ? "#fafafa" : "#171717" },
+	};
+}
 
 /** Grayscale + squared + Geist appearance for the Payment Element. */
 function appearanceFor(dark: boolean): StripeElementsOptions["appearance"] {

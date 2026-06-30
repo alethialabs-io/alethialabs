@@ -55,5 +55,5 @@ output "redis_policy_documents_for_tenants" {
 
 output "redis_secret_kms_key_arn" {
   description = "Arn of KMS key used to encrypt the secret with password"
-  value       =  aws_kms_key.redis_secrets_kms_key.arn
+  value       = aws_kms_key.redis_secrets_kms_key.arn
 }

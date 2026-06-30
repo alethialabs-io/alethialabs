@@ -63,6 +63,32 @@ export async function seedAuthz(): Promise<void> {
 
 	await db.insert(rolePermission).values(rolePerms).onConflictDoNothing();
 
+	// One-time rename of registry permission keys (audit:* → activity:*): move existing
+	// custom grants + role-permissions onto the new keys BEFORE the prune below
+	// cascade-deletes the renamed (now-absent) keys, so no access is lost. Idempotent —
+	// no rows match once migrated.
+	const KEY_RENAMES: [string, string][] = [
+		["audit:view_audit", "activity:view_activity"],
+		["audit:export_audit", "activity:export_activity"],
+	];
+	for (const [oldKey, newKey] of KEY_RENAMES) {
+		// grants.id is the PK, so permission_key isn't unique — a plain UPDATE is safe.
+		await db.execute(
+			sql`update grants set permission_key = ${newKey} where permission_key = ${oldKey}`,
+		);
+		// role_permission PK is (role_id, permission_key): only move rows whose role
+		// doesn't already hold the new key (built-in roles were re-seeded above with the
+		// new key; their old-key rows fall to the prune's cascade).
+		await db.execute(sql`
+			update role_permission rp set permission_key = ${newKey}
+			where rp.permission_key = ${oldKey}
+			  and not exists (
+				select 1 from role_permission x
+				where x.role_id = rp.role_id and x.permission_key = ${newKey}
+			  )
+		`);
+	}
+
 	// Prune permissions no longer in the registry (e.g. renamed actions) so the DB
 	// never drifts from registry.ts. ON DELETE CASCADE on role_permission.permission_key
 	// and grants.permission_key removes any rows referencing the dropped key.

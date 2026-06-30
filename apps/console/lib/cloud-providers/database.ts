@@ -41,7 +41,7 @@ export const DB_CAPACITY: Record<CloudProviderSlug, CapacityModel> = {
 	azure: { unit: "vCores", min: 1, max: 64, step: 1, defaultMin: 2, defaultMax: 4 },
 };
 
-/** Cross-provider database engine mapping for spec conversion. */
+/** Cross-provider database engine mapping for project conversion. */
 export const ENGINE_MAP: Record<
 	CloudProviderSlug,
 	Record<CloudProviderSlug, Record<string, string>>

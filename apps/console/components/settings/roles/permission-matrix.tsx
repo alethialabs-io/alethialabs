@@ -6,17 +6,16 @@ import { Switch } from "@repo/ui/switch";
 import { PERMISSIONS, RESOURCES, type Resource } from "@/lib/authz/registry";
 
 // "Per service" grouping — each resource type is its own section, so granting is
-// granular (e.g. specs' plan/deploy/destroy independently of zones or runners).
+// granular (e.g. projects' plan/deploy/destroy independently of runners).
 const RESOURCE_LABEL: Record<Resource, string> = {
 	org: "Organization",
-	zone: "Zones",
-	spec: "Specs",
+	project: "Projects",
 	runner: "Runners",
 	cloud_identity: "Cloud identities",
 	job: "Jobs",
 	connector: "Connectors",
 	member: "Members",
-	audit: "Audit",
+	activity: "Activity",
 	billing: "Billing",
 	alert: "Alerts",
 	fleet: "Fleet",

@@ -14,7 +14,7 @@ import { FormControl, FormField, FormItem } from "@repo/ui/form";
 import { HelpTooltip } from "./help-tooltip";
 import { useProviderSlug, useProviderMeta, INSTANCE_TYPES, K8S_VERSIONS, AUTOSCALER } from "@/lib/cloud-providers";
 import { useCloudProviderStore } from "@/lib/stores/use-cloud-provider-store";
-import type { CachedResources } from "@/types/database-custom.types";
+import type { CachedResources } from "@/types/jsonb.types";
 import { Server, ShieldCheck, X } from "lucide-react";
 import { useFormContext } from "react-hook-form";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
@@ -111,6 +111,27 @@ export function SectionCluster() {
 						))}
 						{nodeSizeError && <p className="text-[11px] text-destructive col-span-3">{nodeSizeError}</p>}
 					</div>
+				</div>
+
+				{/* Node Disk */}
+				<div className="space-y-2">
+					<div className="flex items-center gap-1.5">
+						<Label className="text-xs font-medium">Node Disk (GB)</Label>
+						<HelpTooltip topic="node-disk-size" />
+					</div>
+					<FormField control={control} name="cluster.node_disk_size_gb" render={({ field }) => (
+						<FormItem className="space-y-1">
+							<FormControl>
+								<Input type="number" min={20} max={16384}
+									name={field.name}
+									onBlur={field.onBlur}
+									value={field.value ?? ""}
+									placeholder="Default for cloud (EKS 50 / GKE 50 / AKS 100)"
+									onChange={(e) => field.onChange(e.target.value === "" ? null : parseInt(e.target.value) || null)}
+									className="h-8 text-xs" />
+							</FormControl>
+						</FormItem>
+					)} />
 				</div>
 
 				{/* Instance Types */}

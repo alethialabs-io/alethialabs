@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { useRunnersStore } from "@/lib/stores/use-runners-store";
+import { useRunnersQuery } from "@/lib/query/use-runners-query";
 import { Button } from "@repo/ui/button";
 import { StatusBadge } from "@repo/ui/status-badge";
 import {
@@ -43,7 +43,8 @@ export function RunnerSelectPopover({
 	description,
 	excludeId,
 }: RunnerSelectPopoverProps) {
-	const { runners: allRunners, isLoading, fetchRunners } = useRunnersStore();
+	const { data: runnersData, isPending: isLoading, refetch } = useRunnersQuery();
+	const allRunners = runnersData?.runners ?? [];
 	const runners = useMemo(
 		() => excludeId ? allRunners.filter((t) => t.id !== excludeId) : allRunners,
 		[allRunners, excludeId],
@@ -54,13 +55,13 @@ export function RunnerSelectPopover({
 
 	useEffect(() => {
 		if (open) {
-			fetchRunners();
+			void refetch();
 			const defaultRunner = runners.find(
 				(w) => w.is_default && w.status === "ONLINE",
 			);
 			setSelected(defaultRunner?.id ?? null);
 		}
-	}, [open, fetchRunners, runners]);
+	}, [open, refetch, runners]);
 
 	const handleConfirm = () => {
 		setOpen(false);

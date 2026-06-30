@@ -155,7 +155,16 @@ func (w *Runner) claimLoop(ctx context.Context, draining *atomic.Bool) error {
 			}
 
 			fmt.Printf("Claimed job %s (type=%s)\n", claim.Job.ID, claim.Job.JobType)
-			jobCtx, jobCancel := context.WithTimeout(ctx, 2*time.Hour)
+			// Connection tests / resource fetches are quick auth+list calls — bound them
+			// tightly so a hanging cloud SDK call (e.g. an Azure credential/IMDS probe in a
+			// non-federated env) can't wedge the runner and hold the claim for the full job
+			// timeout. PLAN/DEPLOY keep the long timeout (they provision real infra).
+			jobTimeout := 2 * time.Hour
+			switch claim.Job.JobType {
+			case "CONNECTION_TEST", "FETCH_RESOURCES":
+				jobTimeout = 3 * time.Minute
+			}
+			jobCtx, jobCancel := context.WithTimeout(ctx, jobTimeout)
 			if err := w.executeJob(jobCtx, claim); err != nil {
 				fmt.Fprintf(os.Stderr, "Job %s failed: %v\n", claim.Job.ID, err)
 			}
@@ -369,6 +378,8 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 		execErr = w.executeDestroyRunner(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	case "ANALYZE_REPO":
 		execErr = w.executeAnalyzeRepo(ctx, job, stdoutLogger, stderrLogger)
+	case "DETECT_DRIFT":
+		execErr = w.executeDriftDetection(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}
@@ -657,6 +668,8 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		S3Backend:      w.s3Backend(),
 		Stdout:         stdout,
 		Stderr:         stderr,
+		// Honour an authorized verification waiver recorded on the job (if any).
+		VerifyOverride: buildVerifyOverride(job.VerifyOverride),
 	}
 
 	if job.PlanJobID != nil && *job.PlanJobID != "" {
@@ -691,6 +704,12 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		}
 		if len(result.Outputs) > 0 {
 			metadata["outputs"] = result.Outputs
+		}
+		if result.VerifyReport != nil {
+			metadata["verify_result"] = result.VerifyReport
+		}
+		if result.VerifyReceipt != nil {
+			metadata["verify_receipt"] = result.VerifyReceipt
 		}
 		if len(metadata) > 0 {
 			_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
@@ -766,6 +785,12 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 			if result.CostBreakdown.Summary != nil {
 				metadata["cost_summary"] = result.CostBreakdown.Summary
 			}
+		}
+		if result.VerifyReport != nil {
+			metadata["verify_result"] = result.VerifyReport
+		}
+		if result.VerifyReceipt != nil {
+			metadata["verify_receipt"] = result.VerifyReceipt
 		}
 	}
 

@@ -2,12 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
+import { useState } from "react";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
+import { Input } from "@repo/ui/input";
 import { Separator } from "@repo/ui/separator";
 import { StatusBadge } from "@repo/ui/status-badge";
 import {
@@ -19,67 +20,98 @@ import {
 } from "@repo/ui/sheet";
 import {
 	BookOpen,
+	Check,
 	ExternalLink,
-	HelpCircle,
 	Loader2,
-	RefreshCw,
-	Shield,
+	Pencil,
+	Plus,
 	Unlink,
+	X,
 } from "lucide-react";
-
-const AUTH_METHOD_LABELS: Record<string, string> = {
-	oauth: "OAuth",
-	iam_role: "IAM Role",
-	service_account: "Service Account",
-	service_principal: "Service Principal",
-	ram_role: "RAM Role",
-};
 
 interface ConnectorDetailSheetProps {
 	integration: ConnectorWithConnection | null;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	onConnect: () => void;
-	onDisconnect: () => void;
+	canManage: boolean;
 	isConnecting?: boolean;
+	/** Connect, or (for a connected cloud) add another account. */
+	onConnect: () => void;
+	/** Disconnect a non-cloud connector (git token / api_key credential). */
+	onDisconnectConnector: () => void;
+	/** Disconnect a specific cloud account by identity id. */
+	onDisconnectAccount: (identityId: string) => void;
+	/** Rename a cloud account. */
+	onRenameAccount: (identityId: string, name: string) => Promise<void>;
 }
 
+/**
+ * The manage sheet for one connector. For clouds it lists every connected account
+ * (each renamable / disconnectable) and offers "Add another account"; for git /
+ * api_key connectors it offers connect or disconnect. Mutating affordances are
+ * hidden unless `canManage`.
+ */
 export function ConnectorDetailSheet({
 	integration,
 	open,
 	onOpenChange,
-	onConnect,
-	onDisconnect,
+	canManage,
 	isConnecting,
+	onConnect,
+	onDisconnectConnector,
+	onDisconnectAccount,
+	onRenameAccount,
 }: ConnectorDetailSheetProps) {
+	const [editingId, setEditingId] = useState<string | null>(null);
+	const [draft, setDraft] = useState("");
+	const [savingId, setSavingId] = useState<string | null>(null);
+
 	if (!integration) return null;
 
 	const isComingSoon = integration.status === "coming_soon";
 	const isConnected = integration.connected;
 	const isGit = integration.category === "git";
-	const needsReconnection =
-		integration.token_health === "expired" ||
-		integration.token_health === "refresh_failed";
+	const isCloud = integration.category === "cloud";
+	const accounts = integration.accounts ?? [];
+
+	const startRename = (id: string, current: string) => {
+		setEditingId(id);
+		setDraft(current);
+	};
+
+	const commitRename = async (id: string) => {
+		const name = draft.trim();
+		if (!name) return;
+		setSavingId(id);
+		try {
+			await onRenameAccount(id, name);
+			setEditingId(null);
+		} finally {
+			setSavingId(null);
+		}
+	};
 
 	return (
 		<Sheet open={open} onOpenChange={onOpenChange}>
 			<SheetContent
 				side="right"
-				className="w-full sm:max-w-md overflow-y-auto p-0"
+				className="w-full overflow-y-auto p-0 sm:max-w-md"
 			>
-				<SheetHeader className="px-6 pt-6 pb-4 border-b border-border/40">
+				<SheetHeader className="border-b border-border/40 px-6 pb-4 pt-6">
 					<div className="flex items-center gap-4">
-						<div className="shrink-0 w-12 h-12 rounded-lg border border-border/50 bg-background flex items-center justify-center overflow-hidden p-2">
+						<div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/50 bg-background p-2">
 							{isGit ? (
 								<GitProviderIcon
 									provider={integration.slug}
 									size={28}
+									mono={!isConnected}
 								/>
 							) : (
 								<ConnectorIcon
 									src={integration.icon_url}
 									name={integration.name}
 									size={32}
+									mono={!isConnected}
 								/>
 							)}
 						</div>
@@ -94,12 +126,9 @@ export function ConnectorDetailSheet({
 					</div>
 				</SheetHeader>
 
-				<div className="px-6 py-5 space-y-6">
-					{/* Status */}
+				<div className="space-y-6 px-6 py-5">
 					<div className="flex items-center gap-2">
-						{isConnected && needsReconnection ? (
-							<StatusBadge status="pending" label="Needs Reconnection" />
-						) : isConnected ? (
+						{isConnected ? (
 							<StatusBadge status="connected" label="Connected" />
 						) : isComingSoon ? (
 							<Badge variant="secondary" className="text-xs">
@@ -108,245 +137,166 @@ export function ConnectorDetailSheet({
 						) : (
 							<Badge
 								variant="outline"
-								className="text-muted-foreground border-border/50 text-xs"
+								className="border-border/50 text-xs text-muted-foreground"
 							>
 								Not connected
 							</Badge>
 						)}
+						{isConnected && integration.scope === "org" && (
+							<Badge
+								variant="outline"
+								className="border-border/50 text-[10px] text-muted-foreground"
+							>
+								Org-wide
+							</Badge>
+						)}
 					</div>
 
-					{/* Details */}
-					<div className="space-y-4">
-						<h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-							Details
-						</h3>
+					<p className="text-sm leading-relaxed text-foreground/80">
+						{integration.description}
+					</p>
 
-						<div className="space-y-3">
-							<div className="flex justify-between items-start">
-								<span className="text-xs text-muted-foreground">
-									Author
-								</span>
-								<span className="text-xs font-medium text-foreground">
-									{integration.organization}
-								</span>
-							</div>
-							<div className="flex justify-between items-start">
-								<span className="text-xs text-muted-foreground">
-									Category
-								</span>
-								<span className="text-xs font-medium text-foreground capitalize">
-									{integration.category}
-								</span>
-							</div>
-							<div className="flex justify-between items-start">
-								<span className="text-xs text-muted-foreground">
-									Auth Method
-								</span>
-								<Badge
-									variant="outline"
-									className="text-[10px] py-0 text-muted-foreground border-border/50"
-								>
-									{AUTH_METHOD_LABELS[
-										integration.auth_method
-									] ?? integration.auth_method}
-								</Badge>
-							</div>
-							{isConnected &&
-								integration.connection_details?.username && (
-									<div className="flex justify-between items-start">
-										<span className="text-xs text-muted-foreground">
-											Account
-										</span>
-										<span className="text-xs font-mono text-foreground">
-											@
-											{
-												integration.connection_details
-													.username
-											}
-										</span>
-									</div>
-								)}
-							{isConnected &&
-								integration.connection_details?.account_id && (
-									<div className="flex justify-between items-start">
-										<span className="text-xs text-muted-foreground">
-											AWS Account
-										</span>
-										<span className="text-xs font-mono text-foreground">
-											{
-												integration.connection_details
-													.account_id
-											}
-										</span>
-									</div>
-								)}
-							{isConnected &&
-								integration.connection_details?.project_id && (
-									<div className="flex justify-between items-start">
-										<span className="text-xs text-muted-foreground">
-											GCP Project
-										</span>
-										<span className="text-xs font-mono text-foreground">
-											{
-												integration.connection_details
-													.project_id
-											}
-										</span>
-									</div>
-								)}
-							{isConnected &&
-								integration.connection_details
-									?.service_account_email && (
-									<div className="flex justify-between items-start">
-										<span className="text-xs text-muted-foreground">
-											Service Account
-										</span>
-										<span className="text-xs font-mono text-foreground text-right max-w-[200px] truncate">
-											{
-												integration.connection_details
-													.service_account_email
-											}
-										</span>
-									</div>
-								)}
-							{isConnected &&
-								integration.connection_details
-									?.tenant_id && (
-									<div className="flex justify-between items-start">
-										<span className="text-xs text-muted-foreground">
-											Tenant
-										</span>
-										<span className="text-xs font-mono text-foreground">
-											{integration.connection_details.tenant_id.slice(0, 8)}...
-										</span>
-									</div>
-								)}
-							{isConnected &&
-								integration.connection_details
-									?.subscription_id && (
-									<div className="flex justify-between items-start">
-										<span className="text-xs text-muted-foreground">
-											Subscription
-										</span>
-										<span className="text-xs font-mono text-foreground">
-											{integration.connection_details.subscription_id.slice(0, 8)}...
-										</span>
-									</div>
-								)}
-						</div>
-					</div>
-
-					{/* Description */}
-					<div className="space-y-2">
-						<h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-							Description
-						</h3>
-						<p className="text-sm text-foreground/80 leading-relaxed">
-							{integration.description}
-						</p>
-					</div>
-
-					<Separator />
-
-					{/* Links */}
-					{(integration.docs_url ||
-						integration.support_url ||
-						integration.privacy_url) && (
+					{/* Cloud accounts (multi-account) */}
+					{isCloud && isConnected && (
 						<div className="space-y-3">
 							<h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-								More Info
+								Accounts
 							</h3>
-							<div className="space-y-1">
-								{integration.docs_url && (
-									<a
-										href={integration.docs_url}
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+							<div className="space-y-2">
+								{accounts.map((acc) => (
+									<div
+										key={acc.identityId}
+										className="flex items-center gap-2 rounded-lg border border-border/50 px-3 py-2"
 									>
-										<BookOpen className="h-4 w-4" />
-										Documentation
-										<ExternalLink className="h-3 w-3 ml-auto" />
-									</a>
-								)}
-								{integration.support_url && (
-									<a
-										href={integration.support_url}
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
-									>
-										<HelpCircle className="h-4 w-4" />
-										Support
-										<ExternalLink className="h-3 w-3 ml-auto" />
-									</a>
-								)}
-								{integration.privacy_url && (
-									<a
-										href={integration.privacy_url}
-										target="_blank"
-										rel="noopener noreferrer"
-										className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
-									>
-										<Shield className="h-4 w-4" />
-										Privacy Policy
-										<ExternalLink className="h-3 w-3 ml-auto" />
-									</a>
-								)}
+										{editingId === acc.identityId ? (
+											<>
+												<Input
+													value={draft}
+													onChange={(e) => setDraft(e.target.value)}
+													className="h-7 text-xs"
+													autoFocus
+													onKeyDown={(e) => {
+														if (e.key === "Enter") commitRename(acc.identityId);
+														if (e.key === "Escape") setEditingId(null);
+													}}
+												/>
+												<Button
+													size="sm"
+													variant="ghost"
+													className="size-7 p-0"
+													disabled={savingId === acc.identityId}
+													onClick={() => commitRename(acc.identityId)}
+												>
+													{savingId === acc.identityId ? (
+														<Loader2 className="size-3.5 animate-spin" />
+													) : (
+														<Check className="size-3.5" />
+													)}
+												</Button>
+												<Button
+													size="sm"
+													variant="ghost"
+													className="size-7 p-0"
+													onClick={() => setEditingId(null)}
+												>
+													<X className="size-3.5" />
+												</Button>
+											</>
+										) : (
+											<>
+												<div className="min-w-0 flex-1">
+													<div className="truncate text-xs font-medium text-foreground">
+														{acc.name}
+													</div>
+													{acc.label && (
+														<div className="truncate font-mono text-[10px] text-muted-foreground">
+															{acc.label}
+														</div>
+													)}
+												</div>
+												{canManage && (
+													<>
+														<Button
+															size="sm"
+															variant="ghost"
+															className="size-7 p-0 text-muted-foreground"
+															onClick={() => startRename(acc.identityId, acc.name)}
+														>
+															<Pencil className="size-3.5" />
+														</Button>
+														<Button
+															size="sm"
+															variant="ghost"
+															className="size-7 p-0 text-destructive hover:text-destructive"
+															onClick={() => onDisconnectAccount(acc.identityId)}
+														>
+															<Unlink className="size-3.5" />
+														</Button>
+													</>
+												)}
+											</>
+										)}
+									</div>
+								))}
 							</div>
+							{canManage && (
+								<Button
+									variant="outline"
+									size="sm"
+									className="w-full border-border/50 text-xs"
+									disabled={isConnecting}
+									onClick={onConnect}
+								>
+									{isConnecting ? (
+										<Loader2 className="mr-1.5 size-3.5 animate-spin" />
+									) : (
+										<Plus className="mr-1.5 size-3.5" />
+									)}
+									Add another account
+								</Button>
+							)}
 						</div>
 					)}
 
 					<Separator />
 
-					{/* Action */}
-					{!isComingSoon && (
-						<div className="space-y-2">
-							{isConnected && needsReconnection ? (
-								<>
-									<Button
-										className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-										disabled={isConnecting}
-										onClick={onConnect}
-									>
-										{isConnecting ? (
-											<Loader2 className="w-4 h-4 mr-2 animate-spin" />
-										) : (
-											<RefreshCw className="w-4 h-4 mr-2" />
-										)}
-										Reconnect {integration.name}
-									</Button>
-									<Button
-										variant="outline"
-										className="w-full text-destructive hover:text-destructive hover:bg-destructive/10 border-border/50"
-										onClick={onDisconnect}
-									>
-										<Unlink className="w-4 h-4 mr-2" />
-										Disconnect
-									</Button>
-								</>
-							) : isConnected ? (
-								<Button
-									variant="outline"
-									className="w-full text-destructive hover:text-destructive hover:bg-destructive/10 border-border/50"
-									onClick={onDisconnect}
+					{(integration.docs_url || integration.support_url) && (
+						<div className="space-y-1">
+							{integration.docs_url && (
+								<a
+									href={integration.docs_url}
+									target="_blank"
+									rel="noopener noreferrer"
+									className="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
 								>
-									<Unlink className="w-4 h-4 mr-2" />
-									Disconnect {integration.name}
-								</Button>
-							) : (
-								<Button
-									className="w-full"
-									disabled={isConnecting}
-									onClick={onConnect}
-								>
-									{isConnecting && (
-										<Loader2 className="w-4 h-4 mr-2 animate-spin" />
-									)}
-									Connect {integration.name}
-								</Button>
+									<BookOpen className="size-4" />
+									Documentation
+									<ExternalLink className="ml-auto size-3" />
+								</a>
 							)}
 						</div>
+					)}
+
+					{/* Connect (any not-connected connector) / disconnect (non-cloud) */}
+					{!isComingSoon && canManage && !isConnected && (
+						<Button
+							className="w-full"
+							disabled={isConnecting}
+							onClick={onConnect}
+						>
+							{isConnecting && <Loader2 className="mr-2 size-4 animate-spin" />}
+							Connect {integration.name}
+						</Button>
+					)}
+					{!isComingSoon && canManage && isConnected && !isCloud && (
+						<Button
+							variant="outline"
+							className="w-full border-border/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
+							onClick={onDisconnectConnector}
+						>
+							<Unlink className="mr-2 size-4" />
+							Disconnect {integration.name}
+						</Button>
 					)}
 				</div>
 			</SheetContent>

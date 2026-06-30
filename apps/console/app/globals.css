@@ -60,3 +60,22 @@
     animation: none;
   }
 }
+
+/* Shining-border CTA (create-project primary button). */
+@keyframes cta-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px var(--border), 0 0 12px -4px var(--ring);
+  }
+  50% {
+    box-shadow: 0 0 0 1px var(--ring), 0 0 22px -2px var(--ring);
+  }
+}
+.cta-shine {
+  animation: cta-glow 2.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cta-shine {
+    animation: none;
+  }
+}

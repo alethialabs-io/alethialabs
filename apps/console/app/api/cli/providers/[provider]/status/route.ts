@@ -13,7 +13,7 @@ export async function GET(
 	req: Request,
 	{ params }: { params: Promise<{ provider: string }> },
 ) {
-	const { userId, provider, errorResponse: authError } =
+	const { userId, scope, provider, errorResponse: authError } =
 		await resolveCliProvider(req, params);
 	if (authError) return authError;
 
@@ -23,7 +23,7 @@ export async function GET(
 	if (forbid) return forbid;
 
 	try {
-		const status = await conn.getStatus(userId, provider);
+		const status = await conn.getStatus(scope, provider);
 		return cliJson(providerStatusWire, status);
 	} catch (err) {
 		return errorResponse(err, 500);

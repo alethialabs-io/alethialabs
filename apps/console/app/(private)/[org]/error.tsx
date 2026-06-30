@@ -24,7 +24,7 @@ export default function OrgError({
 	return (
 		<ErrorState
 			title="Couldn't load this page"
-			description="Something went wrong while loading your workspace. Try again."
+			description="Something went wrong while loading your organization. Try again."
 			actions={
 				<Button size="sm" onClick={reset}>
 					Try again

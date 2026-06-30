@@ -100,7 +100,7 @@ export const DEFAULT_REGION: Record<CloudProviderSlug, string> = {
 	azure: "westeurope",
 };
 
-/** Cross-provider region mapping for spec conversion. */
+/** Cross-provider region mapping for project conversion. */
 export const REGION_MAP: Record<
 	CloudProviderSlug,
 	Record<CloudProviderSlug, Record<string, string>>

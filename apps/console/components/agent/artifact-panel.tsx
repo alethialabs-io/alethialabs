@@ -6,7 +6,7 @@ import { X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { getRegionPrices } from "@/app/server/actions/pricing";
 import { getPlanResult } from "@/app/server/actions/jobs";
-import { getSpec } from "@/app/server/actions/specs";
+import { getProject } from "@/app/server/actions/projects";
 import { Badge } from "@repo/ui/badge";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
@@ -19,15 +19,22 @@ import {
 	useArtifactStore,
 } from "@/lib/stores/use-artifact-store";
 import { useJobLogStream } from "@/hooks/use-job-log-stream";
+import type {
+	SignedReceipt,
+	VerifyReport,
+	VerifyStatus,
+} from "@/types/jsonb.types";
 import { cn } from "@repo/ui/utils";
 
-type SpecDetail = Awaited<ReturnType<typeof getSpec>>;
+type ProjectDetail = Awaited<ReturnType<typeof getProject>>;
 
 interface PlanState {
 	status: string;
 	error: string | null;
 	planSummary: PlanSummary | null;
 	costSummary: CostSummary | null;
+	verifyReport: VerifyReport | null;
+	receipt: SignedReceipt | null;
 }
 
 /** Narrow a free-form provider string to a known slug (no casts). */
@@ -37,7 +44,7 @@ function toSlug(p: string): CloudProviderSlug {
 
 /**
  * The agent's right-hand artifact panel — Config / Plan / Cost / Logs for the
- * active spec/job (from `useArtifactStore`). All four tabs read existing server
+ * active project/job (from `useArtifactStore`). All four tabs read existing server
  * actions + pure parsers; Logs streams over the shared `useJobLogStream` SSE.
  * Grayscale/squared; sheds below `xl` (matches the design).
  */
@@ -47,31 +54,31 @@ export function ArtifactPanel() {
 	const setTab = useArtifactStore((s) => s.setTab);
 	const close = useArtifactStore((s) => s.close);
 
-	const specId = artifact?.specId;
+	const projectId = artifact?.projectId;
 	const jobId = artifact?.jobId;
 
-	const [spec, setSpec] = useState<SpecDetail | null>(null);
+	const [project, setProject] = useState<ProjectDetail | null>(null);
 	const [cost, setCost] = useState<{ items: CostItem[]; total: number } | null>(
 		null,
 	);
 	const [plan, setPlan] = useState<PlanState | null>(null);
 	const { logs } = useJobLogStream(jobId ?? null);
 
-	// Load the spec + compute its cost.
+	// Load the project + compute its cost.
 	useEffect(() => {
 		let cancelled = false;
 		(async () => {
-			if (!specId) {
+			if (!projectId) {
 				if (!cancelled) {
-					setSpec(null);
+					setProject(null);
 					setCost(null);
 				}
 				return;
 			}
-			const detail = await getSpec(specId);
+			const detail = await getProject(projectId);
 			if (cancelled) return;
-			setSpec(detail);
-			const region = detail.spec.region;
+			setProject(detail);
+			const region = detail.project.region;
 			const prices = region ? await getRegionPrices(region) : null;
 			if (cancelled) return;
 			const c = detail.components.cluster;
@@ -109,7 +116,7 @@ export function ArtifactPanel() {
 		return () => {
 			cancelled = true;
 		};
-	}, [specId]);
+	}, [projectId]);
 
 	// Load the job's plan result.
 	useEffect(() => {
@@ -129,6 +136,8 @@ export function ArtifactPanel() {
 				costSummary: meta?.cost_breakdown
 					? parseCostBreakdown(meta.cost_breakdown)
 					: null,
+				verifyReport: meta?.verify_result ?? null,
+				receipt: meta?.verify_receipt ?? null,
 			});
 		})();
 		return () => {
@@ -138,7 +147,7 @@ export function ArtifactPanel() {
 
 	if (!artifact) return null;
 
-	const title = spec?.spec.project_name ?? (jobId ? `Job ${jobId.slice(0, 8)}` : "Artifact");
+	const title = project?.project.project_name ?? (jobId ? `Job ${jobId.slice(0, 8)}` : "Artifact");
 
 	return (
 		<aside className="hidden w-[420px] flex-none flex-col border-l border-border bg-card xl:flex">
@@ -181,7 +190,7 @@ export function ArtifactPanel() {
 					<TabsContent value="config" className="m-0 h-full">
 						<ScrollArea className="h-full">
 							<div className="p-4">
-								<ConfigPane spec={spec} />
+								<ConfigPane project={project} />
 							</div>
 						</ScrollArea>
 					</TabsContent>
@@ -271,19 +280,19 @@ function ListSection({
 	);
 }
 
-function ConfigPane({ spec }: { spec: SpecDetail | null }) {
-	if (!spec) return <Empty text="Loading…" />;
-	const { components, cloudProvider } = spec;
+function ConfigPane({ project }: { project: ProjectDetail | null }) {
+	if (!project) return <Empty text="Loading…" />;
+	const { components, cloudProvider } = project;
 	const c = components.cluster;
 	const n = components.network;
 	const dns = components.dns;
 	return (
 		<div className="space-y-4">
 			<div className="border border-border bg-muted/40 p-3">
-				<div className="text-sm font-medium">{spec.spec.project_name}</div>
+				<div className="text-sm font-medium">{project.project.project_name}</div>
 				<div className="vx-eyebrow mt-1 text-[9px]">
-					{cloudProvider} · {spec.spec.region ?? "—"} ·{" "}
-					{spec.spec.environment_stage}
+					{cloudProvider} · {project.project.region ?? "—"} ·{" "}
+					{project.project.environment_stage}
 				</div>
 			</div>
 
@@ -346,7 +355,7 @@ function ConfigPane({ spec }: { spec: SpecDetail | null }) {
 }
 
 function CostPane({ cost }: { cost: { items: CostItem[]; total: number } | null }) {
-	if (!cost) return <Empty text="Open a spec to estimate its cost." />;
+	if (!cost) return <Empty text="Open a project to estimate its cost." />;
 	return (
 		<div>
 			<div className="space-y-1.5">
@@ -391,6 +400,118 @@ function CountPill({ n, label }: { n: number; label: string }) {
 	);
 }
 
+/** Verdict/status → grayscale Badge variant (no color; fail is solid, pass is outline). */
+function statusBadgeVariant(s: VerifyStatus): "default" | "outline" | "secondary" {
+	if (s === "fail") return "default";
+	if (s === "pass") return "outline";
+	return "secondary";
+}
+
+const VERDICT_LABEL: Record<VerifyStatus, string> = {
+	pass: "passed",
+	fail: "blocked",
+	warn: "warnings",
+	not_evaluable: "not evaluable",
+};
+
+/**
+ * The verification gate's per-control result (elench). Renders the overall verdict,
+ * each control's status + findings, and — importantly — the coverage notes that say
+ * what the gate could NOT inspect, so a `not_evaluable` is never mistaken for a pass.
+ */
+function VerifyBlock({ report }: { report: VerifyReport }) {
+	return (
+		<Section title="Verification">
+			<div className="flex items-center justify-between border-b border-border py-2">
+				<span className="font-mono text-[10px] text-muted-foreground">
+					{report.provider} · {report.catalog_version}
+				</span>
+				<Badge
+					variant={statusBadgeVariant(report.verdict)}
+					className="rounded-none text-[9px] uppercase"
+				>
+					{VERDICT_LABEL[report.verdict]}
+				</Badge>
+			</div>
+			{report.controls.map((c) => (
+				<div key={c.id} className="border-b border-border py-2 last:border-0">
+					<div className="flex items-center justify-between gap-2">
+						<span className="font-mono text-[11px] text-foreground">{c.id}</span>
+						<Badge
+							variant={statusBadgeVariant(c.status)}
+							className="rounded-none text-[9px] uppercase"
+						>
+							{c.status.replace("_", " ")}
+						</Badge>
+					</div>
+					<div className="text-[10px] text-muted-foreground">
+						{c.title}
+						{c.frameworks?.length ? ` · ${c.frameworks.join(", ")}` : ""}
+					</div>
+					{(c.findings ?? []).map((f, i) => (
+						<div
+							key={`${f.address}-${i}`}
+							className="mt-1 font-mono text-[10px] text-foreground"
+						>
+							<span className="text-muted-foreground">{f.address}</span> — {f.message}
+						</div>
+					))}
+					{c.coverage && (
+						<div className="mt-1 text-[10px] italic text-muted-foreground">
+							coverage: {c.coverage}
+						</div>
+					)}
+				</div>
+			))}
+		</Section>
+	);
+}
+
+/**
+ * The signed evidence receipt (elench): shows whether the receipt is signed, the
+ * plan hash it is bound to, any recorded exception, and a download of the raw
+ * receipt JSON (which can be verified offline against the signing public key).
+ */
+function ReceiptBlock({ receipt, jobId }: { receipt: SignedReceipt; jobId: string }) {
+	const signed = receipt.algorithm === "ed25519";
+	const body = receipt.receipt;
+	const download = () => {
+		const blob = new Blob([JSON.stringify(receipt, null, 2)], {
+			type: "application/json",
+		});
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = `elench-receipt-${jobId.slice(0, 8)}.json`;
+		a.click();
+		URL.revokeObjectURL(url);
+	};
+	return (
+		<Section title="Evidence receipt">
+			<Row k="status" v={signed ? `signed · ${receipt.key_id ?? ""}` : "unsigned"} />
+			<Row k="plan sha256" v={body.plan_sha256 ? `${body.plan_sha256.slice(0, 16)}…` : "—"} />
+			<Row k="catalog" v={body.catalog_version} />
+			{body.tofu_version && <Row k="opentofu" v={body.tofu_version} />}
+			{body.evaluated_at && <Row k="evaluated" v={body.evaluated_at} />}
+			{body.exception && (
+				<Row
+					k="exception"
+					v={`${body.exception.controls.join(", ")} by ${body.exception.by}`}
+				/>
+			)}
+			<div className="py-2">
+				<button
+					type="button"
+					onClick={download}
+					className="w-full border border-border px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
+				>
+					Download receipt
+				</button>
+			</div>
+		</Section>
+	);
+}
+
 function PlanPane({
 	plan,
 	jobId,
@@ -400,43 +521,48 @@ function PlanPane({
 }) {
 	if (!jobId) return <Empty text="Open a job to see its plan." />;
 	if (!plan) return <Empty text="Loading…" />;
-	if (!plan.planSummary)
-		return (
-			<Empty
-				text={
-					plan.error
-						? `Plan failed: ${plan.error}`
-						: "No plan output yet — run a plan (deploy flow coming soon)."
-				}
-			/>
-		);
-	const { counts, resources } = plan.planSummary;
 	return (
 		<div className="space-y-3">
-			<div className="flex gap-2">
-				<CountPill n={counts.create} label="add" />
-				<CountPill n={counts.update} label="change" />
-				<CountPill n={counts.delete} label="destroy" />
-				{counts.replace > 0 && <CountPill n={counts.replace} label="replace" />}
-			</div>
-			{plan.costSummary?.totalMonthlyCost != null && (
-				<div className="font-mono text-xs text-muted-foreground">
-					~${plan.costSummary.totalMonthlyCost.toFixed(0)}/mo
-				</div>
-			)}
-			<div className="divide-y divide-border border border-border">
-				{resources.map((r) => (
-					<div
-						key={r.address}
-						className="flex items-center justify-between gap-2 px-3 py-1.5 font-mono text-[11px]"
-					>
-						<span className="truncate text-foreground">
-							{r.displayName} · {r.name}
-						</span>
-						<span className="flex-none text-muted-foreground">{r.action}</span>
+			{plan.verifyReport && <VerifyBlock report={plan.verifyReport} />}
+			{plan.receipt && <ReceiptBlock receipt={plan.receipt} jobId={jobId} />}
+			{plan.planSummary ? (
+				<>
+					<div className="flex gap-2">
+						<CountPill n={plan.planSummary.counts.create} label="add" />
+						<CountPill n={plan.planSummary.counts.update} label="change" />
+						<CountPill n={plan.planSummary.counts.delete} label="destroy" />
+						{plan.planSummary.counts.replace > 0 && (
+							<CountPill n={plan.planSummary.counts.replace} label="replace" />
+						)}
 					</div>
-				))}
-			</div>
+					{plan.costSummary?.totalMonthlyCost != null && (
+						<div className="font-mono text-xs text-muted-foreground">
+							~${plan.costSummary.totalMonthlyCost.toFixed(0)}/mo
+						</div>
+					)}
+					<div className="divide-y divide-border border border-border">
+						{plan.planSummary.resources.map((r) => (
+							<div
+								key={r.address}
+								className="flex items-center justify-between gap-2 px-3 py-1.5 font-mono text-[11px]"
+							>
+								<span className="truncate text-foreground">
+									{r.displayName} · {r.name}
+								</span>
+								<span className="flex-none text-muted-foreground">{r.action}</span>
+							</div>
+						))}
+					</div>
+				</>
+			) : (
+				<Empty
+					text={
+						plan.error
+							? `Plan failed: ${plan.error}`
+							: "No plan output yet — run a plan (deploy flow coming soon)."
+					}
+				/>
+			)}
 		</div>
 	);
 }

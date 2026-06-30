@@ -19,91 +19,24 @@ import {
 	FormMessage,
 } from "@repo/ui/form";
 import { Input } from "@repo/ui/input";
+import { CopyButton } from "@repo/ui/copy-button";
+import { FieldHelp } from "@repo/ui/field-help";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { getJobStatus } from "@/app/server/actions/jobs";
-import { verifyExtraCloudIdentity } from "@/app/(private)/dashboard/providers/extra-cloud-actions";
 import {
-	AlertCircle,
-	CheckCircle2,
-	Copy,
-	ExternalLink,
-	KeyRound,
-	Loader2,
-	Server,
-	ShieldCheck,
-	XCircle,
-} from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+	ConnectionTestStatus,
+	InfoNote,
+	StatusCallout,
+} from "@/components/connector/connection-ui";
+import {
+	type ConnTestState,
+	useConnectionTest,
+} from "@/components/connector/use-connection-test";
+import { ExternalLink, KeyRound, Server, ShieldCheck } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
-import { toast } from "sonner";
 import * as z from "zod";
 
-type VerifyState =
-	| { phase: "idle" }
-	| { phase: "verifying" }
-	| { phase: "success" }
-	| { phase: "failed"; error: string };
-
 type SaveResult = { jobId: string; identityId: string };
-
-/** Save → poll the CONNECTION_TEST job → verify. Shared by both forms. */
-function useVerifyPoll() {
-	const router = useRouter();
-	const [state, setState] = useState<VerifyState>({ phase: "idle" });
-	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-	const stop = useCallback(() => {
-		if (pollRef.current) {
-			clearInterval(pollRef.current);
-			pollRef.current = null;
-		}
-	}, []);
-	useEffect(() => () => stop(), [stop]);
-
-	const run = useCallback(
-		async (save: () => Promise<SaveResult>) => {
-			setState({ phase: "verifying" });
-			let jobId = "";
-			let identityId = "";
-			try {
-				({ jobId, identityId } = await save());
-			} catch (e) {
-				setState({
-					phase: "failed",
-					error: e instanceof Error ? e.message : "Failed to save connection.",
-				});
-				return;
-			}
-			stop();
-			pollRef.current = setInterval(async () => {
-				try {
-					const r = await getJobStatus(jobId);
-					if (!r) return;
-					if (r.status === "SUCCESS") {
-						stop();
-						await verifyExtraCloudIdentity(identityId, jobId);
-						setState({ phase: "success" });
-						toast.success("Connection verified!");
-						router.refresh();
-					} else if (r.status === "FAILED") {
-						stop();
-						setState({
-							phase: "failed",
-							error: r.error_message || "Connection test failed.",
-						});
-					}
-				} catch {
-					stop();
-					setState({ phase: "failed", error: "Failed to check verification status." });
-				}
-			}, 2000);
-		},
-		[stop, router],
-	);
-
-	return { state, run };
-}
 
 /** Numbered step, identical to the aws/gcp/azure sheets. */
 function Step({ n, title, children }: { n: number; title: string; children?: ReactNode }) {
@@ -160,47 +93,45 @@ function MethodTab({
 }
 
 /**
- * Verify section + form, styled exactly like the success/verifying/failed blocks
- * in aws/gcp/azure-connection. `children` is the provider-specific form.
+ * Verify section + form. While a CONNECTION_TEST is in flight it shows the shared
+ * queued/testing/success status (with Cancel); on idle/failure it shows the
+ * provider-specific form (`children`). Mirrors the aws/gcp/azure sheets.
  */
 function VerifySection({
 	state,
 	successText,
 	verifyingText,
+	onCancel,
 	children,
 }: {
-	state: VerifyState;
+	state: ConnTestState;
 	successText: string;
 	verifyingText: string;
+	onCancel: () => void;
 	children: ReactNode;
 }) {
+	const inFlight =
+		state.phase === "success" ||
+		state.phase === "saving" ||
+		state.phase === "queued" ||
+		state.phase === "testing";
 	return (
 		<div className="pt-6 border-t border-border/40">
-			{state.phase === "success" ? (
-				<div className="flex items-center gap-3 p-4 bg-muted/50 border border-border rounded-md">
-					<CheckCircle2 className="w-5 h-5 text-foreground shrink-0" />
-					<div>
-						<p className="text-sm font-medium text-foreground">Connection verified</p>
-						<p className="text-xs text-muted-foreground mt-0.5">{successText}</p>
-					</div>
-				</div>
-			) : state.phase === "verifying" ? (
-				<div className="flex items-center gap-3 p-4 bg-muted/30 border border-border/40 rounded-md">
-					<Loader2 className="w-5 h-5 animate-spin text-muted-foreground shrink-0" />
-					<div>
-						<p className="text-sm font-medium text-foreground">Verifying connection…</p>
-						<p className="text-xs text-muted-foreground mt-0.5">{verifyingText}</p>
-					</div>
-				</div>
+			{inFlight ? (
+				<ConnectionTestStatus
+					phase={state.phase}
+					startedAt={state.startedAt}
+					successText={successText}
+					verifyingText={verifyingText}
+					onCancel={onCancel}
+				/>
 			) : (
 				<>
 					{state.phase === "failed" && (
-						<div className="flex items-start gap-3 p-4 mb-4 bg-destructive/5 border border-destructive/20 rounded-md">
-							<XCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
-							<div>
-								<p className="text-sm font-medium text-destructive">Verification failed</p>
-								<p className="text-xs text-muted-foreground mt-0.5">{state.error}</p>
-							</div>
+						<div className="mb-4">
+							<StatusCallout variant="error" title="Verification failed">
+								{state.error}
+							</StatusCallout>
 						</div>
 					)}
 					{children}
@@ -229,7 +160,7 @@ export function TokenCloudConnection({
 	onSave: (token: string) => Promise<SaveResult>;
 	onSaveSelfManaged: () => Promise<SaveResult>;
 }) {
-	const { state, run } = useVerifyPoll();
+	const { state, run, cancel } = useConnectionTest();
 	const [method, setMethod] = useState<"token" | "self">("token");
 	const form = useForm<{ token: string }>({
 		resolver: zodResolver(tokenSchema),
@@ -292,15 +223,16 @@ export function TokenCloudConnection({
 								<Step n={2} title="Paste the token below">
 									<p className="text-xs text-muted-foreground max-w-sm">
 										Alethia verifies it immediately and stores it encrypted (AES-GCM) — it is
-										only decrypted on the runner at provision time, never in a spec snapshot.
+										only decrypted on the runner at provision time, never in a project snapshot.
 									</p>
 								</Step>
 							</div>
 
 							<VerifySection
 								state={state}
+								onCancel={cancel}
 								successText={`Alethia can authenticate into ${providerName} with your token. You're ready to provision infrastructure.`}
-								verifyingText={`Testing your ${providerName} token against the ${providerName} API. This takes a few seconds.`}
+								verifyingText={`Testing your ${providerName} token against the ${providerName} API.`}
 							>
 								<Form {...form}>
 									<form
@@ -312,7 +244,15 @@ export function TokenCloudConnection({
 											name="token"
 											render={({ field }) => (
 												<FormItem>
-													<FormLabel className="text-xs font-medium">API Token</FormLabel>
+													<div className="flex items-center gap-1.5">
+														<FormLabel className="text-xs font-medium">
+															API Token
+														</FormLabel>
+														<FieldHelp title={`${providerName} API token`}>
+															{tokenHelp} Alethia encrypts it at rest and only
+															decrypts it on the runner at provision time.
+														</FieldHelp>
+													</div>
 													<FormControl>
 														<Input
 															type="password"
@@ -334,11 +274,11 @@ export function TokenCloudConnection({
 										</Button>
 									</form>
 								</Form>
-								<div className="mt-5 flex items-start gap-2.5 p-3 bg-muted/20 rounded-md border border-border/40 text-[11px] text-muted-foreground">
-									<AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-									<p className="leading-relaxed">
-										Revoke the token in {providerName} at any time to cut Alethia&apos;s access.
-									</p>
+								<div className="mt-5">
+									<InfoNote>
+										Revoke the token in {providerName} at any time to cut
+										Alethia&apos;s access.
+									</InfoNote>
 								</div>
 							</VerifySection>
 						</>
@@ -352,16 +292,10 @@ export function TokenCloudConnection({
 									</p>
 									<div className="flex items-center gap-2 p-2.5 bg-muted/30 border border-border/40 rounded-md font-mono text-[11px]">
 										<span className="break-all min-w-0">{envVar}=&lt;your-token&gt;</span>
-										<button
-											type="button"
-											onClick={() => {
-												navigator.clipboard.writeText(`${envVar}=`);
-												toast.success("Copied");
-											}}
-											className="ml-auto p-1 shrink-0 text-muted-foreground hover:text-foreground rounded"
-										>
-											<Copy className="w-3.5 h-3.5" />
-										</button>
+										<CopyButton
+											text={`${envVar}=`}
+											className="ml-auto shrink-0 rounded p-1"
+										/>
 									</div>
 								</Step>
 								<Step n={2} title="Connect">
@@ -374,6 +308,7 @@ export function TokenCloudConnection({
 
 							<VerifySection
 								state={state}
+								onCancel={cancel}
 								successText={`${providerName} connected — your self-hosted runner authenticated with its own token. Alethia stored nothing.`}
 								verifyingText={`Waiting for a self-hosted runner with ${envVar} set to claim the connection test.`}
 							>
@@ -384,12 +319,12 @@ export function TokenCloudConnection({
 								>
 									{retry ? "Retry" : "Connect (no token stored)"}
 								</Button>
-								<div className="mt-5 flex items-start gap-2.5 p-3 bg-muted/20 rounded-md border border-border/40 text-[11px] text-muted-foreground">
-									<AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-									<p className="leading-relaxed">
-										True zero-trust for clouds without federation: the secret never enters
-										Alethia&apos;s database — it stays in your own infrastructure.
-									</p>
+								<div className="mt-5">
+									<InfoNote>
+										True zero-trust for clouds without federation: the secret
+										never enters Alethia&apos;s database — it stays in your own
+										infrastructure.
+									</InfoNote>
 								</div>
 							</VerifySection>
 						</>
@@ -415,7 +350,7 @@ export function AlibabaConnection({
 	externalId?: string;
 	onSave: (roleArn: string) => Promise<SaveResult>;
 }) {
-	const { state, run } = useVerifyPoll();
+	const { state, run, cancel } = useConnectionTest();
 	const form = useForm<{ roleArn: string }>({
 		resolver: zodResolver(alibabaSchema),
 		defaultValues: { roleArn: "" },
@@ -449,16 +384,10 @@ export function AlibabaConnection({
 								<div className="flex items-center gap-2 p-2.5 bg-muted/30 border border-border/40 rounded-md font-mono text-[11px]">
 									<span className="text-muted-foreground shrink-0">External ID:</span>
 									<span className="break-all min-w-0">{externalId}</span>
-									<button
-										type="button"
-										onClick={() => {
-											navigator.clipboard.writeText(externalId);
-											toast.success("External ID copied");
-										}}
-										className="ml-auto p-1 shrink-0 text-muted-foreground hover:text-foreground rounded"
-									>
-										<Copy className="w-3.5 h-3.5" />
-									</button>
+									<CopyButton
+										text={externalId}
+										className="ml-auto shrink-0 rounded p-1"
+									/>
 								</div>
 							)}
 						</Step>
@@ -466,7 +395,7 @@ export function AlibabaConnection({
 						<Step n={2} title="Attach provisioning permissions">
 							<p className="text-xs text-muted-foreground max-w-sm">
 								Grant the role the permissions Alethia needs (ACK, VPC, and the managed
-								services your Specs use).
+								services your Projects use).
 							</p>
 						</Step>
 
@@ -480,6 +409,7 @@ export function AlibabaConnection({
 
 					<VerifySection
 						state={state}
+						onCancel={cancel}
 						successText="Alethia recorded your RAM role and verified it with a real STS AssumeRole — zero stored credentials."
 						verifyingText="Assuming the RAM role via Alibaba STS."
 					>
@@ -493,7 +423,20 @@ export function AlibabaConnection({
 									name="roleArn"
 									render={({ field }) => (
 										<FormItem>
-											<FormLabel className="text-xs font-medium">RAM Role ARN</FormLabel>
+											<div className="flex items-center gap-1.5">
+												<FormLabel className="text-xs font-medium">
+													RAM Role ARN
+												</FormLabel>
+												<FieldHelp title="RAM Role ARN">
+													The ARN of the RAM role you created that trusts
+													Alethia — looks like{" "}
+													<code className="text-foreground">
+														acs:ram::&lt;account&gt;:role/&lt;name&gt;
+													</code>
+													. Alethia assumes it via STS; no Alibaba
+													credentials are stored.
+												</FieldHelp>
+											</div>
 											<FormControl>
 												<Input
 													placeholder="acs:ram::5123456789012345:role/AlethiaProvisioner"

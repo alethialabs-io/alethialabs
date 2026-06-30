@@ -12,15 +12,15 @@ import {
 	BreadcrumbSeparator,
 } from "@repo/ui/breadcrumb";
 import { JOB_TYPES } from "@/components/jobs/columns";
-import { useProjectsStore } from "@/lib/stores/use-projects-store";
-import { useJobsStore } from "@/lib/stores/use-jobs-store";
+import { useProjectsQuery } from "@/lib/query/use-projects-query";
+import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import { projectHref } from "@/lib/routing";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Fragment, useMemo } from "react";
 
 const SEGMENT_LABELS: Record<string, string> = {
-	"design-project": "Create a Project",
+	new: "New project",
 	clusters: "Clusters",
 	jobs: "Jobs",
 	connectors: "Connectors",
@@ -54,8 +54,8 @@ interface Crumb {
 /** Branding + route-aware breadcrumb bar for the dashboard header. */
 export function HeaderBreadcrumbs() {
 	const pathname = usePathname();
-	const { projects } = useProjectsStore();
-	const { jobs } = useJobsStore();
+	const { data: projects = [] } = useProjectsQuery();
+	const { data: jobs = [] } = useJobsQuery();
 
 	const crumbs = useMemo(() => {
 		// C2 slug drilldown `/{org}/{project}/{env}` — resolve the project name from the

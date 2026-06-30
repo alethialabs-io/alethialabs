@@ -6,11 +6,11 @@ projects:
       name: infra-platform
 
     # Spec templates (cost visibility only — applied by nodes into user accounts)
-    - path: infra/templates/spec/aws
+    - path: infra/templates/project/aws
       name: spec-template-aws
-    - path: infra/templates/spec/gcp
+    - path: infra/templates/project/gcp
       name: spec-template-gcp
-    - path: infra/templates/spec/azure
+    - path: infra/templates/project/azure
       name: spec-template-azure
 
     # Runner self-hosted template

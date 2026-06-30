@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "server-only";
-import { and, eq, gte, sum } from "drizzle-orm";
+import { and, eq, gte, sql, sum } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { aiCreditGrant, aiUsageLedger } from "@/lib/db/schema";
 import { aiCostMicros } from "@/lib/billing/model-costs";
@@ -27,6 +27,34 @@ export async function sumCredits(
 			),
 		);
 	return Number(row?.s ?? 0);
+}
+
+/** A day's AI-credit consumption for an org (both budget sources combined). */
+export type AiCreditsDayRow = { day: string; credits: number };
+
+/**
+ * Day-bucketed AI credits an org consumed over [from, to) — the AI line of the Usage
+ * page's "over time" chart. Both `included` and `purchased` sources, grouped by
+ * `created_at`'s day. Only active days are returned; the caller fills the axis.
+ */
+export async function aiCreditsSeries(
+	orgId: string,
+	from: Date,
+	to: Date,
+): Promise<AiCreditsDayRow[]> {
+	// Bind the window as timestamptz casts — drizzle's raw `sql` template doesn't serialize a
+	// JS Date through postgres-js (it throws), so pass the ISO string with an explicit cast.
+	return getServiceDb().execute<AiCreditsDayRow>(sql`
+		select
+			to_char(date_trunc('day', created_at), 'YYYY-MM-DD') as day,
+			coalesce(sum(credits), 0)::int as credits
+		from public.ai_usage_ledger
+		where org_id = ${orgId}
+		  and created_at >= ${from.toISOString()}::timestamptz
+		  and created_at < ${to.toISOString()}::timestamptz
+		group by 1
+		order by 1
+	`);
 }
 
 /** Remaining purchased top-up credits: Σ grants − Σ purchased usage (all time). */

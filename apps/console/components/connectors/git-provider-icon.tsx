@@ -9,8 +9,17 @@ interface GitProviderIconProps {
 	provider: GitProvider | string;
 	className?: string;
 	size?: number;
+	/** Desaturate the mark (default). Pass `false` to show real colors. */
+	mono?: boolean;
 }
 
-export function GitProviderIcon({ provider, className, size = 16 }: GitProviderIconProps) {
-	return <ProviderIcon provider={provider} size={size} className={className} />;
+export function GitProviderIcon({
+	provider,
+	className,
+	size = 16,
+	mono = true,
+}: GitProviderIconProps) {
+	return (
+		<ProviderIcon provider={provider} size={size} className={className} mono={mono} />
+	);
 }

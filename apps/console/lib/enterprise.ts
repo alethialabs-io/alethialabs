@@ -6,12 +6,12 @@
 // enterprise package and registers its implementations; the seams (getPdp /
 // getActiveScope / getAuthPlugins / getEntitlements) read them, falling back to
 // community defaults when nothing is registered. The boundary-guard lint
-// (scripts/check-ee-boundary.mjs) allowlists ONLY this file. See spec 12.
+// (scripts/check-ee-boundary.mjs) allowlists ONLY this file. See project 12.
 
 import { createRequire } from "node:module";
 import type { BetterAuthOptions } from "better-auth";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
-import { enforceDecision } from "@/lib/authz/audit";
+import { enforceDecision, recordActivity } from "@/lib/authz/activity";
 import { checksFor } from "@/lib/authz/fga-mapping";
 import { buildAuthorizationModel } from "@/lib/authz/fga-model";
 import {
@@ -21,6 +21,8 @@ import {
 } from "@/lib/authz/fga-tuples";
 import { listOrgResourceIds } from "@/lib/authz/resource-tables";
 import { orgAc, orgRoles } from "@/lib/authz/org-access-control";
+import { canOrgCreateTeams, canOrgInvite } from "@/lib/billing/collaboration";
+import { syncOrgSeats } from "@/lib/billing/seats";
 import { ensureMemberGrant, revokeMemberGrant } from "@/lib/authz/grants";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import type { TupleSync } from "@/lib/authz/tuple-sync";
@@ -47,11 +49,35 @@ export interface CoreContext {
 	revokeMemberGrant: typeof revokeMemberGrant;
 	sendInviteEmail: typeof sendInviteEmail;
 	/**
+	 * The pay-to-collaborate gate: whether an org may invite members (paid or
+	 * card-backed trial). Injected so the organization plugin's beforeCreateInvitation
+	 * hook can block invites on a card-less trial without ee/ importing core billing.
+	 */
+	canOrgInvite: typeof canOrgInvite;
+	/**
+	 * The Enterprise gate for team creation: whether an org may create teams. Injected so
+	 * the organization plugin's beforeCreateTeam hook can block team creation on a
+	 * non-Enterprise org without ee/ importing core billing.
+	 */
+	canOrgCreateTeams: typeof canOrgCreateTeams;
+	/**
+	 * Reconciles an org's per-seat subscription quantity with its billable membership
+	 * (prorated). Injected so the organization plugin's member lifecycle hooks keep
+	 * Stripe seats in step without ee/ importing core billing.
+	 */
+	syncOrgSeats: typeof syncOrgSeats;
+	/**
 	 * Emits an alert event (best-effort, fire-and-forget) so ee/ membership hooks can
 	 * raise `system.member.*` alerts without importing core's alerting runtime — only
 	 * this core-provided method. Keeps the ee→core boundary clean.
 	 */
 	emitAlertEvent: typeof emitAlertEventSafe;
+	/**
+	 * Records an Activity-log entry (best-effort) so ee/ membership hooks can log
+	 * invites/removals/role-changes into the org Activity feed without importing core's
+	 * authz runtime — only this core-provided method.
+	 */
+	recordActivity: typeof recordActivity;
 	/**
 	 * Resolves an org's entitlements from its billing record (plan + subscription
 	 * status). Injected so the ee/ entitlement resolver decides per-org from billing
@@ -123,7 +149,11 @@ function loadEnterprise(): void {
 			ensureMemberGrant,
 			revokeMemberGrant,
 			sendInviteEmail,
+			canOrgInvite,
+			canOrgCreateTeams,
+			syncOrgSeats,
 			emitAlertEvent: emitAlertEventSafe,
+			recordActivity,
 			resolveOrgEntitlements,
 			fga: {
 				buildModel: buildAuthorizationModel,

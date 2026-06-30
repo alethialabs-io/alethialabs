@@ -5,7 +5,7 @@
 // Settings · Teams — the authored claude.ai/design card grid, composed from the shared
 // settings primitives. Wired to the real backend: getTeams (name + members) + better-auth
 // createTeam/removeTeam + ManageTeamDialog (add/remove members). The design's per-team
-// description, stored slug, zone-access chips and role-tag have no backend yet — omitted
+// description, stored slug and role-tag have no backend yet — omitted
 // and tracked in dataroom/spec/features/settings-design-port.md.
 
 import { MoreHorizontal, Plus, Users } from "lucide-react";
@@ -37,6 +37,9 @@ import {
 	DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
 import { Skeleton } from "@repo/ui/skeleton";
+import { useEntitlement } from "@/components/settings/enterprise-gate";
+import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
+import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
 import { authClient } from "@/lib/auth/client";
 import { cn } from "@repo/ui/utils";
 import { ManageTeamDialog } from "./manage-team-dialog";
@@ -54,6 +57,10 @@ function slugify(s: string): string {
 }
 
 export function TeamsList() {
+	// Teams are an Enterprise capability. Without it the page stays fully visible —
+	// existing teams render read-only and creation is replaced by an upsell — matching
+	// the server-side `beforeCreateTeam` gate (no hard wall).
+	const entitled = useEntitlement("teams");
 	const [teams, setTeams] = useState<TeamRow[] | null>(null);
 	const [creating, setCreating] = useState(false);
 	const [name, setName] = useState("");
@@ -71,7 +78,7 @@ export function TeamsList() {
 	}, [load]);
 
 	const create = async () => {
-		if (!name.trim()) return;
+		if (!entitled || !name.trim()) return;
 		const { error } = await authClient.organization.createTeam({ name: name.trim() });
 		if (error) {
 			toast.error(error.message ?? "Couldn't create team");
@@ -140,14 +147,26 @@ export function TeamsList() {
 					placeholder="Search teams"
 					className="w-[240px]"
 				/>
-				<Button size="sm" onClick={() => setCreating((v) => !v)}>
-					<Plus size={13} />
-					Create team
-				</Button>
+				{entitled ? (
+					<Button size="sm" onClick={() => setCreating((v) => !v)}>
+						<Plus size={13} />
+						Create team
+					</Button>
+				) : (
+					<UpgradeDialog
+						feature="teams"
+						trigger={
+							<Button size="sm">
+								<Plus size={13} />
+								Create team
+							</Button>
+						}
+					/>
+				)}
 			</div>
 
 			{/* inline create panel */}
-			{creating && (
+			{entitled && creating && (
 				<div className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-sm">
 					<p className="mb-3 text-[13px] font-medium text-text-primary">New team</p>
 					<div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -189,14 +208,18 @@ export function TeamsList() {
 
 			{/* grid */}
 			{filtered.length === 0 ? (
-				<div className="rounded-lg border border-dashed border-border bg-surface-sunken px-6 py-12 text-center">
-					<Users className="mx-auto mb-3 size-5 text-text-tertiary" />
-					<p className="text-[13px] text-text-tertiary">
-						{teams.length === 0
-							? "No teams yet. Create one to grant access to a group of members at once."
-							: "No teams match your search."}
-					</p>
-				</div>
+				!entitled && teams.length === 0 ? (
+					<FeatureUpsell feature="teams" />
+				) : (
+					<div className="rounded-lg border border-dashed border-border bg-surface-sunken px-6 py-12 text-center">
+						<Users className="mx-auto mb-3 size-5 text-text-tertiary" />
+						<p className="text-[13px] text-text-tertiary">
+							{teams.length === 0
+								? "No teams yet. Create one to grant access to a group of members at once."
+								: "No teams match your search."}
+						</p>
+					</div>
+				)
 			) : (
 				<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
 					{filtered.map((t) => (
@@ -219,11 +242,12 @@ export function TeamsList() {
 									</div>
 								</div>
 								<DropdownMenu>
-									<DropdownMenuTrigger asChild>
+									<DropdownMenuTrigger asChild disabled={!entitled}>
 										<button
 											type="button"
 											aria-label="Manage team"
-											className="inline-flex size-7 shrink-0 items-center justify-center rounded-sm text-text-disabled transition-colors hover:bg-surface-muted hover:text-text-primary"
+											disabled={!entitled}
+											className="inline-flex size-7 shrink-0 items-center justify-center rounded-sm text-text-disabled transition-colors hover:bg-surface-muted hover:text-text-primary disabled:pointer-events-none disabled:opacity-40"
 										>
 											<MoreHorizontal size={16} />
 										</button>
@@ -270,7 +294,12 @@ export function TeamsList() {
 								<span className="font-mono text-[11px] text-text-tertiary">
 									{t.memberCount} member{t.memberCount === 1 ? "" : "s"}
 								</span>
-								<Button variant="outline" size="sm" onClick={() => setManage(t)}>
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={!entitled}
+									onClick={() => setManage(t)}
+								>
 									Manage
 								</Button>
 							</div>

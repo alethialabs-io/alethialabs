@@ -13,14 +13,13 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { getOrgSettings } from "@/app/server/actions/org-settings";
 import { getSsoProviders, type SsoProviderRow } from "@/app/server/actions/sso";
+import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { RegisterProviderDialog } from "@/components/settings/sso/register-provider-dialog";
+import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
+import { userInitials } from "@/lib/user-display";
 import { Button } from "@repo/ui/button";
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
-
-function initials(s: string): string {
-	return s.slice(0, 2).toUpperCase();
-}
 
 /** Copy-to-clipboard button with a brief confirmation. */
 function CopyButton({ value }: { value: string }) {
@@ -108,11 +107,14 @@ function StatusPill({ ok, label }: { ok: boolean; label: string }) {
 }
 
 export function SsoManager() {
+	// SSO is Enterprise. Without it the surface stays visible and shows the upsell instead
+	// of registering a provider; the register endpoint is enforced server-side regardless.
+	const entitled = useEntitlement("sso");
 	const [providers, setProviders] = useState<SsoProviderRow[] | null>(null);
 	const [slug, setSlug] = useState("");
 	// SSR-consistent origin (no window → no hydration mismatch); falls back to the prod host.
 	const origin =
-		process.env.NEXT_PUBLIC_APP_URL ?? "https://console.alethialabs.io";
+		process.env.NEXT_PUBLIC_APP_URL ?? "https://alethialabs.io";
 
 	const load = useCallback(() => {
 		getSsoProviders()
@@ -123,14 +125,16 @@ export function SsoManager() {
 			.catch(() => {});
 	}, []);
 	useEffect(() => {
-		load();
-	}, [load]);
+		if (entitled) load();
+	}, [entitled, load]);
 
 	const tenant = slug || "org";
 
 	return (
 		<div>
-			{providers === null ? (
+			{!entitled ? (
+				<FeatureUpsell feature="sso" />
+			) : providers === null ? (
 				<div className="space-y-4">
 					<Skeleton className="h-20 w-full" />
 					<Skeleton className="h-48 w-full" />
@@ -185,7 +189,7 @@ function SsoDetail({
 			<div className="mb-4 flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-surface p-4 shadow-sm">
 				<div className="flex items-center gap-3">
 					<span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-ink font-display text-[14px] font-semibold uppercase text-ink-foreground">
-						{initials(p.providerId)}
+						{userInitials({ name: p.providerId })}
 					</span>
 					<div className="flex flex-col gap-1">
 						<span className="flex items-center gap-2 text-[14px] font-medium capitalize text-text-primary">

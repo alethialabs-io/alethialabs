@@ -3,11 +3,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { authorize } from "@/lib/authz/guard";
+import { deploymentMode } from "@/lib/billing/config";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
 import { queryProvisionedHours } from "@/lib/queries/runner-usage";
+import { generateRunnerToken } from "@/lib/runners/auth";
 import { notifyScaler } from "@/lib/scaler";
-import { createHash, randomBytes } from "crypto";
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 
 const RELEASE_FIELDS = {
@@ -40,7 +41,9 @@ function toReleaseInfo(r: {
 	return { ...r, released_at: r.released_at.toISOString() };
 }
 
-/** All runners visible to the user, joined with their pinned release, default first. */
+/** The user's own runners (self/BYO), joined with their pinned release, default first. Managed
+ *  (platform-fleet) runners are excluded by RLS — they are read separately via
+ *  {@link getManagedRunnersWithReleases} on self-managed deployments. */
 export async function getRunnersWithReleases() {
 	const actor = await authorize("view", { type: "runner" });
 	const owner = actor.userId;
@@ -62,12 +65,36 @@ export async function getRunnersWithReleases() {
 }
 
 /**
+ * The managed warm-fleet runners (operator='managed'), joined with their release. These have no
+ * owner/org so RLS hides them from the tenant path; they are platform infrastructure. Returns
+ * `[]` on the hosted SaaS (tenants must never see our fleet); on a self-managed deployment the
+ * operator IS the customer, so we read them via the service path (RLS-bypassing) for the fleet
+ * view. Shaped identically to {@link getRunnersWithReleases} so the store can merge them.
+ */
+export async function getManagedRunnersWithReleases() {
+	await authorize("view", { type: "runner" });
+	if (deploymentMode() === "hosted") return [];
+	const rows = await getServiceDb()
+		.select({ runner: runners, release: RELEASE_FIELDS })
+		.from(runners)
+		.leftJoin(runnerReleases, eq(runners.release_id, runnerReleases.id))
+		.where(eq(runners.operator, "managed"))
+		.orderBy(asc(runners.created_at));
+	return rows.map((r) => ({
+		...r.runner,
+		runner_releases: r.release ? toReleaseInfo(r.release) : null,
+	}));
+}
+
+/**
  * Provisioned hours per managed runner for the current calendar month (UTC),
  * keyed by runner id. Reads the platform billing ledger via the service path
  * (RLS-denied to the app role); still-open sessions are billed up to now.
  */
 export async function getManagedRunnerUsage(): Promise<Record<string, number>> {
 	await authorize("view", { type: "runner" });
+	// Managed-runner billing is platform data — never surfaced to hosted tenants.
+	if (deploymentMode() === "hosted") return {};
 	const now = new Date();
 	const from = new Date(
 		Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
@@ -89,6 +116,22 @@ export async function getLatestRunnerRelease(): Promise<ReleaseInfo | null> {
 			.orderBy(desc(runnerReleases.released_at))
 			.limit(1);
 		return r ? toReleaseInfo(r) : null;
+	});
+}
+
+/** The most recent runner releases (newest first) for the Versions changelog. */
+export async function getRecentRunnerReleases(
+	limit = 10,
+): Promise<ReleaseInfo[]> {
+	const actor = await authorize("view", { type: "runner" });
+	const owner = actor.userId;
+	return withOwnerScope(owner, async (tx) => {
+		const rows = await tx
+			.select(RELEASE_FIELDS)
+			.from(runnerReleases)
+			.orderBy(desc(runnerReleases.released_at))
+			.limit(limit);
+		return rows.map(toReleaseInfo);
 	});
 }
 
@@ -129,8 +172,7 @@ export async function getOnlineRunnerCount(): Promise<number> {
 export async function registerRunner(name: string) {
 	const actor = await authorize("create", { type: "runner" });
 	const owner = actor.userId;
-	const runnerToken = randomBytes(32).toString("hex");
-	const tokenHash = createHash("sha256").update(runnerToken).digest("hex");
+	const { token: runnerToken, hash: tokenHash } = generateRunnerToken();
 
 	const runner = await withOwnerScope(owner, async (tx) => {
 		const [r] = await tx
@@ -200,8 +242,7 @@ export async function deployRunner(params: {
 }) {
 	const actor = await authorize("deploy", { type: "runner" });
 	const owner = actor.userId;
-	const runnerToken = randomBytes(32).toString("hex");
-	const tokenHash = createHash("sha256").update(runnerToken).digest("hex");
+	const { token: runnerToken, hash: tokenHash } = generateRunnerToken();
 
 	const result = await withOwnerScope(owner, async (tx) => {
 		const [runner] = await tx

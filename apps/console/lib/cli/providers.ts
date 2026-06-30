@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { verifyCliToken } from "@/lib/cli/auth";
-import type { CloudProvider } from "@/lib/cloud-providers/connections";
+import { getActiveScope } from "@/lib/auth/scope";
+import type { CloudProvider, ConnScope } from "@/lib/cloud-providers/connections";
 import { NextResponse } from "next/server";
 
 const PROVIDERS: readonly CloudProvider[] = ["aws", "gcp", "azure"];
@@ -12,12 +13,18 @@ export function isCloudProvider(value: string): value is CloudProvider {
 }
 
 type Resolved =
-	| { userId: string; provider: CloudProvider; errorResponse: null }
-	| { userId: null; provider: null; errorResponse: Response };
+	| {
+			userId: string;
+			scope: ConnScope;
+			provider: CloudProvider;
+			errorResponse: null;
+	  }
+	| { userId: null; scope: null; provider: null; errorResponse: Response };
 
 /**
  * Verifies the CLI bearer token and validates the `[provider]` route segment.
- * Returns the user id + typed provider, or a ready-to-return error response.
+ * Returns the user id, the actor's org-scope (cloud connections are org-scoped),
+ * and the typed provider, or a ready-to-return error response.
  */
 export async function resolveCliProvider(
 	req: Request,
@@ -25,13 +32,14 @@ export async function resolveCliProvider(
 ): Promise<Resolved> {
 	const { payload, error } = await verifyCliToken(req);
 	if (error) {
-		return { userId: null, provider: null, errorResponse: error };
+		return { userId: null, scope: null, provider: null, errorResponse: error };
 	}
 
 	const userId = payload?.sub;
 	if (!userId) {
 		return {
 			userId: null,
+			scope: null,
 			provider: null,
 			errorResponse: NextResponse.json(
 				{ error: "Invalid token payload" },
@@ -44,6 +52,7 @@ export async function resolveCliProvider(
 	if (!isCloudProvider(provider)) {
 		return {
 			userId: null,
+			scope: null,
 			provider: null,
 			errorResponse: NextResponse.json(
 				{ error: `Unsupported provider: ${provider}` },
@@ -52,7 +61,8 @@ export async function resolveCliProvider(
 		};
 	}
 
-	return { userId, provider, errorResponse: null };
+	const scope = await getActiveScope(userId);
+	return { userId, scope, provider, errorResponse: null };
 }
 
 /** Maps a thrown error to a JSON error response with the given status. */

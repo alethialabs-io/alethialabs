@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { z } from "zod";
-import type { SpecFormData } from "@/lib/validations/spec-form.schema";
+import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 
 /** One inferred backing-service need, each justified by evidence in the repo. */
 export const inferredNeedSchema = z.object({
@@ -33,10 +33,10 @@ export const inferredStackSchema = z.object({
 export type InferredNeed = z.infer<typeof inferredNeedSchema>;
 export type InferredStack = z.infer<typeof inferredStackSchema>;
 
-/** A scan's review-ready proposal: the inferred stack + a guaranteed-valid spec. */
+/** A scan's review-ready proposal: the inferred stack + a guaranteed-valid project. */
 export interface ScanProposal {
 	stack: InferredStack;
-	proposedSpec: SpecFormData;
+	proposedProject: ProjectFormData;
 	provider: string;
 	identityId: string;
 }

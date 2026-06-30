@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { verifyAwsIdentity } from "@/app/(private)/dashboard/providers/actions";
-import { getJobStatus } from "@/app/server/actions/jobs";
 import { Button } from "@repo/ui/button";
 import {
 	Card,
@@ -22,22 +20,29 @@ import {
 	FormMessage,
 } from "@repo/ui/form";
 import { Input } from "@repo/ui/input";
+import {
+	ConnectionTestStatus,
+	InfoNote,
+	StatusCallout,
+} from "@/components/connector/connection-ui";
+import { useConnectionTest } from "@/components/connector/use-connection-test";
+import { CopyButton } from "@repo/ui/copy-button";
+import { FieldHelp } from "@repo/ui/field-help";
+import {
+	ALETHIA_AWS_ACCOUNT_ID,
+	connectorAssetUrl,
+} from "@/components/connector/connector-assets";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-	AlertCircle,
 	CheckCircle2,
 	CloudIcon,
-	Copy,
+	Download,
 	ExternalLink,
-	Loader2,
 	ShieldCheck,
 	Terminal,
-	XCircle,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { toast } from "sonner";
 import * as z from "zod";
 // Zod schema for Role ARN validation
 const awsRoleSchema = z.object({
@@ -71,71 +76,14 @@ interface AwsConnectionProps {
 	externalId: string;
 }
 
-type VerifyState =
-	| { phase: "idle" }
-	| { phase: "verifying"; jobId: string; identityId: string }
-	| { phase: "success" }
-	| { phase: "failed"; error: string };
-
 export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
-	const router = useRouter();
 	const [method, setMethod] = useState<"cloudformation" | "terraform">(
 		"cloudformation",
 	);
-	const [verifyState, setVerifyState] = useState<VerifyState>({
-		phase: "idle",
-	});
-	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const { state: verifyState, run, cancel } = useConnectionTest();
 
-	const stopPolling = useCallback(() => {
-		if (pollRef.current) {
-			clearInterval(pollRef.current);
-			pollRef.current = null;
-		}
-	}, []);
-
-	useEffect(() => {
-		return () => stopPolling();
-	}, [stopPolling]);
-
-	const startPolling = useCallback(
-		(jobId: string, identityId: string) => {
-			stopPolling();
-			pollRef.current = setInterval(async () => {
-				try {
-					const result = await getJobStatus(jobId);
-					if (!result) return;
-
-					if (result.status === "SUCCESS") {
-						stopPolling();
-						await verifyAwsIdentity(identityId, jobId);
-						setVerifyState({ phase: "success" });
-						toast.success("AWS connection verified!");
-						router.refresh();
-					} else if (result.status === "FAILED") {
-						stopPolling();
-						setVerifyState({
-							phase: "failed",
-							error:
-								result.error_message ||
-								"Connection test failed. Check the Role ARN and External ID.",
-						});
-					}
-				} catch {
-					stopPolling();
-					setVerifyState({
-						phase: "failed",
-						error: "Failed to check verification status.",
-					});
-				}
-			}, 2000);
-		},
-		[stopPolling],
-	);
-
-	const templateUrl =
-		"https://alethia-onboarding-templates.s3.eu-west-1.amazonaws.com/alethia-bootstrap.yaml";
-	const launchStackUrl = `https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateURL=${encodeURIComponent(templateUrl)}&stackName=AlethiaConnect&param_ExternalId=${encodeURIComponent(externalId)}&param_AlethiaAwsAccountId=787587782604`;
+	const templateUrl = connectorAssetUrl("alethia-bootstrap.yaml");
+	const launchStackUrl = `https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateURL=${encodeURIComponent(templateUrl)}&stackName=AlethiaConnect&param_ExternalId=${encodeURIComponent(externalId)}&param_AlethiaAwsAccountId=${ALETHIA_AWS_ACCOUNT_ID}`;
 
 	const form = useForm<AwsRoleFormValues>({
 		resolver: zodResolver(awsRoleSchema),
@@ -154,26 +102,8 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 		document.body.removeChild(link);
 	};
 
-	const copyToClipboard = (text: string, label: string) => {
-		navigator.clipboard.writeText(text);
-		toast.success(`${label} copied to clipboard`);
-	};
-
 	const onSubmit = async (data: AwsRoleFormValues) => {
-		setVerifyState({ phase: "verifying", jobId: "", identityId: "" });
-		try {
-			const { jobId, identityId } = await onComplete(data.roleArn);
-			setVerifyState({ phase: "verifying", jobId, identityId });
-			startPolling(jobId, identityId);
-		} catch (error) {
-			setVerifyState({
-				phase: "failed",
-				error:
-					error instanceof Error
-						? error.message
-						: "Failed to save connection.",
-			});
-		}
+		await run(() => onComplete(data.roleArn));
 	};
 
 	return (
@@ -299,18 +229,7 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 											<code className="bg-background px-1.5 py-0.5 border border-border/50 rounded text-foreground">
 												{externalId}
 											</code>
-											<button
-												onClick={() =>
-													copyToClipboard(
-														externalId,
-														"External ID",
-													)
-												}
-												className="ml-1 text-muted-foreground hover:text-foreground transition-colors"
-												type="button"
-											>
-												<Copy className="w-3 h-3" />
-											</button>
+											<CopyButton text={externalId} className="ml-1" />
 										</div>
 									</div>
 								</div>
@@ -355,18 +274,37 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 											<span className="truncate">
 												{externalId}
 											</span>
-											<button
-												onClick={() =>
-													copyToClipboard(
-														externalId,
-														"External ID",
-													)
-												}
-												className="ml-auto p-1 text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
+											<CopyButton
+												text={externalId}
+												className="ml-auto rounded p-1 hover:bg-muted"
+											/>
+										</div>
+										<div className="mt-3 flex flex-wrap items-center gap-3">
+											<Button
 												type="button"
+												size="sm"
+												className="h-8 text-xs font-medium"
+												onClick={() => {
+													const a = document.createElement("a");
+													a.href = "/connector-terraform/aws.tf";
+													a.download = "alethia-aws.tf";
+													document.body.appendChild(a);
+													a.click();
+													document.body.removeChild(a);
+												}}
 											>
-												<Copy className="w-3.5 h-3.5" />
-											</button>
+												<Download className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+												Download module
+											</Button>
+											<a
+												href="/docs/console/connectors/aws"
+												target="_blank"
+												rel="noopener noreferrer"
+												className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+											>
+												Full guide
+												<ExternalLink className="w-3 h-3" />
+											</a>
 										</div>
 									</div>
 								</div>
@@ -396,49 +334,19 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 						)}
 
 						<div className="pt-6 border-t border-border/40">
-							{verifyState.phase === "success" ? (
-								<div className="flex items-center gap-3 p-4 bg-muted/50 border border-border rounded-md">
-									<CheckCircle2 className="w-5 h-5 text-foreground shrink-0" />
-									<div>
-										<p className="text-sm font-medium text-foreground">
-											Connection verified
-										</p>
-										<p className="text-xs text-muted-foreground mt-0.5">
-											Alethia can assume the IAM role in
-											your account. You&apos;re ready to
-											provision infrastructure.
-										</p>
-									</div>
-								</div>
-							) : verifyState.phase === "verifying" ? (
-								<div className="flex items-center gap-3 p-4 bg-muted/30 border border-border/40 rounded-md">
-									<Loader2 className="w-5 h-5 animate-spin text-muted-foreground shrink-0" />
-									<div>
-										<p className="text-sm font-medium text-foreground">
-											Verifying connection...
-										</p>
-										<p className="text-xs text-muted-foreground mt-0.5">
-											Testing role assumption into your
-											AWS account. This takes a few
-											seconds.
-										</p>
-									</div>
-								</div>
+							{verifyState.phase === "success" ||
+							verifyState.phase === "saving" ||
+							verifyState.phase === "queued" ||
+							verifyState.phase === "testing" ? (
+								<ConnectionTestStatus
+									phase={verifyState.phase}
+									startedAt={verifyState.startedAt}
+									successText="Alethia can assume the IAM role in your account. You're ready to provision infrastructure."
+									verifyingText="Testing role assumption into your AWS account."
+									onCancel={cancel}
+								/>
 							) : (
 								<>
-									{verifyState.phase === "failed" && (
-										<div className="flex items-start gap-3 p-4 mb-4 bg-destructive/5 border border-destructive/20 rounded-md">
-											<XCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
-											<div>
-												<p className="text-sm font-medium text-destructive">
-													Verification failed
-												</p>
-												<p className="text-xs text-muted-foreground mt-0.5">
-													{verifyState.error}
-												</p>
-											</div>
-										</div>
-									)}
 									<Form {...form}>
 										<form
 											onSubmit={form.handleSubmit(
@@ -451,9 +359,26 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 												name="roleArn"
 												render={({ field }) => (
 													<FormItem>
-														<FormLabel className="text-xs font-medium text-foreground mb-2 block">
-															IAM Role ARN
-														</FormLabel>
+														<div className="mb-2 flex items-center gap-1.5">
+															<FormLabel className="text-xs font-medium text-foreground">
+																IAM Role ARN
+															</FormLabel>
+															<FieldHelp title="IAM Role ARN">
+																The ARN of the role the setup created. Copy it
+																from the CloudFormation{" "}
+																<b className="text-foreground">Outputs</b> tab
+																(<code className="text-foreground">RoleArn</code>),
+																or from{" "}
+																<code className="text-foreground">
+																	terraform output role_arn
+																</code>
+																. Looks like{" "}
+																<code className="text-foreground">
+																	arn:aws:iam::123456789012:role/AlethiaProvisionerRole
+																</code>
+																.
+															</FieldHelp>
+														</div>
 														<div className="flex gap-2 items-start">
 															<div className="relative flex-1">
 																<FormControl>
@@ -489,20 +414,28 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 															</Button>
 														</div>
 														<FormMessage className="text-xs" />
+														{verifyState.phase === "failed" && (
+															<div className="mt-3">
+																<StatusCallout
+																	variant="error"
+																	title="Verification failed"
+																>
+																	{verifyState.error}
+																</StatusCallout>
+															</div>
+														)}
 													</FormItem>
 												)}
 											/>
 										</form>
 									</Form>
 
-									<div className="mt-5 flex items-start gap-2.5 p-3 bg-muted/20 rounded-md border border-border/40 text-[11px] text-muted-foreground">
-										<AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-										<p className="leading-relaxed">
-											Alethia will verify it can assume this
-											role using the unique External ID.
-											This prevents unauthorized
+									<div className="mt-5">
+										<InfoNote>
+											Alethia will verify it can assume this role using the
+											unique External ID. This prevents unauthorized
 											cross-account access.
-										</p>
+										</InfoNote>
 									</div>
 								</>
 							)}

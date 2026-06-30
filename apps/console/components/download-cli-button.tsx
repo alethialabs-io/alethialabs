@@ -10,7 +10,7 @@ import {
 	PopoverTrigger,
 } from "@repo/ui/popover";
 import { cn } from "@repo/ui/utils";
-import { ArrowUpRight, SquareTerminal } from "lucide-react";
+import { ArrowUpRight, Terminal } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -49,20 +49,21 @@ export function DownloadCliButton() {
 		<Popover>
 			<PopoverTrigger asChild>
 				<Button
-					variant="outline"
+					variant="ghost"
 					size="sm"
 					className="h-9 gap-2 text-muted-foreground hover:text-foreground"
 				>
-					<SquareTerminal className="h-4 w-4" />
+					{/* `>_` prompt glyph (borderless) — mirrors the CLI itself. */}
+					<Terminal className="h-4 w-4" />
 					<span className="hidden sm:inline-flex items-center">
-						Download
+						Download alethia
 						{/* Blinking terminal caret (reuses the alethia-blink keyframe). */}
 						<span
 							aria-hidden
 							className="ml-0.5 inline-block h-4 w-[0.5ch] bg-current animate-[alethia-blink_1.1s_steps(1,end)_infinite] motion-reduce:animate-none"
 						/>
 					</span>
-					<span className="sr-only sm:hidden">Download Alethia CLI</span>
+					<span className="sr-only sm:hidden">Download alethia CLI</span>
 				</Button>
 			</PopoverTrigger>
 			<PopoverContent className="w-96 p-0" align="end">

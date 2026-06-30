@@ -27,7 +27,7 @@ resource "aws_security_group" "redis_cluster_sg" {
   name        = local.redis_security_group_name
   description = "Rules for Elasticache Redis cluster"
   vpc_id      = var.vpc_id
-  tags                                 = var.redis_tags
+  tags        = var.redis_tags
   dynamic "ingress" {
     for_each = [
       for rules in local.redis_security_group_ingress_rules : rules

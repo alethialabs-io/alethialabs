@@ -23,6 +23,6 @@ variable "sns_topics" {
 }
 
 variable "environment" {
-  type = string
+  type        = string
   description = "Environment"
 }

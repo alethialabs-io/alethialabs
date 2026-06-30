@@ -85,7 +85,8 @@ type ProjectClusterConfig struct {
 	NodeMinSize     int            `json:"node_min_size"`
 	NodeMaxSize     int            `json:"node_max_size"`
 	NodeDesiredSize int            `json:"node_desired_size"`
-	ClusterAdmins   []interface{}  `json:"cluster_admins"`
+	NodeDiskSizeGB  *int           `json:"node_disk_size_gb"`
+	ClusterAdmins   []any          `json:"cluster_admins"`
 	ProviderConfig  map[string]any `json:"provider_config"`
 }
 
@@ -116,6 +117,7 @@ type ProjectDatabaseConfig struct {
 	Name                string   `json:"name"`
 	Engine              string   `json:"engine"`
 	EngineVersion       string   `json:"engine_version"`
+	InstanceClass       string   `json:"instance_class"`
 	MinCapacity         *float64 `json:"min_capacity"`
 	MaxCapacity         *float64 `json:"max_capacity"`
 	Port                *int     `json:"port"`
@@ -127,6 +129,7 @@ type ProjectCacheConfig struct {
 	Placement
 	Name          string `json:"name"`
 	Engine        string `json:"engine"`
+	EngineVersion string `json:"engine_version"`
 	NodeType      string `json:"node_type"`
 	NumCacheNodes *int   `json:"num_cache_nodes"`
 	MultiAz       *bool  `json:"multi_az"`

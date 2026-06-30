@@ -1,92 +1,29 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
-import { getValidProviderToken } from "@/app/server/actions/identities";
-import {
-	getAwsConnectionStatus,
-	getAwsExternalId,
-} from "@/app/(private)/dashboard/providers/actions";
-import {
-	getGcpConnectionStatus,
-	initGcpIdentity,
-} from "@/app/(private)/dashboard/providers/gcp-actions";
-import {
-	getAzureConnectionStatus,
-	initAzureIdentity,
-} from "@/app/(private)/dashboard/providers/azure-actions";
-import {
-	getExtraCloudStatus,
-	initExtraCloudIdentity,
-} from "@/app/(private)/dashboard/providers/extra-cloud-actions";
+import { getCloudConnectSetup } from "@/lib/connectors/cloud-connect-setup";
 import { ConnectorsPage } from "@/components/connectors/connectors-page";
-import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
+import { pageMetadata } from "@/lib/seo/page-metadata";
 
-export default async function ConnectorsRoute() {
-	const [initialIntegrations, awsStatus, gcpStatus, azureStatus] =
-		await Promise.all([
-			getConnectorsWithStatus(),
-			getAwsConnectionStatus(),
-			getGcpConnectionStatus(),
-			getAzureConnectionStatus(),
-		]);
-	let integrations = initialIntegrations;
+export const metadata = pageMetadata({
+	title: "Connectors",
+	description: "Connect AWS, GCP, and Azure cloud accounts to Alethia.",
+});
 
-	// Attempt auto-refresh for expired git tokens
-	const expiredGitIntegrations = integrations.filter(
-		(i) => i.category === "git" && i.token_health === "expired",
-	);
-	if (expiredGitIntegrations.length > 0) {
-		await Promise.all(
-			expiredGitIntegrations.map((i) =>
-				getValidProviderToken(i.slug as PublicGitProvider).catch(() => null),
-			),
-		);
-		// Re-fetch to reflect updated health
-		integrations = await getConnectorsWithStatus();
-	}
+export default async function ConnectorsRoute({
+	params,
+}: {
+	params: Promise<{ org: string }>;
+}) {
+	const { org: orgSlug } = await params;
 
-	let awsSetup: { externalId: string; identityId: string } | null = null;
-	if (!awsStatus.connected) {
-		try {
-			awsSetup = await getAwsExternalId();
-		} catch {}
-	}
-
-	let gcpSetup: { identityId: string } | null = null;
-	if (!gcpStatus.connected) {
-		try {
-			gcpSetup = await initGcpIdentity();
-		} catch {}
-	}
-
-	let azureSetup: { identityId: string } | null = null;
-	if (!azureStatus.connected) {
-		try {
-			azureSetup = await initAzureIdentity();
-		} catch {}
-	}
-
-	// Initialise pending identities for the extra clouds (so the connect sheet has an
-	// identityId / Alibaba external_id to bind to). Only for clouds not yet connected.
-	const EXTRA = ["alibaba", "digitalocean", "hetzner", "civo"] as const;
-	const extraSetup: Record<string, { identityId: string; externalId?: string }> = {};
-	await Promise.all(
-		EXTRA.map(async (slug) => {
-			try {
-				const status = await getExtraCloudStatus(slug);
-				if (status.connected) return;
-				const init = await initExtraCloudIdentity(slug);
-				extraSetup[slug] = {
-					identityId: init.identityId,
-					externalId: init.externalId,
-				};
-			} catch {}
-		}),
-	);
+	const { canManage, integrations, awsSetup, gcpSetup, azureSetup, extraSetup } =
+		await getCloudConnectSetup();
 
 	return (
 		<ConnectorsPage
+			orgSlug={orgSlug}
+			canManage={canManage}
 			integrations={integrations}
 			awsSetup={awsSetup}
 			gcpSetup={gcpSetup}

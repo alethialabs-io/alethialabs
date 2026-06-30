@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, eq, inArray } from "drizzle-orm";
+import { recordActivity } from "@/lib/authz/activity";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { currentActor } from "@/lib/authz/guard";
@@ -80,6 +81,7 @@ export async function createRole(
 		resource_type: "role",
 		resource_id: created.id,
 	});
+	recordActivity(actor, "create", { type: "role", id: created.id });
 	return { id: created.id, name: created.name, permissionKeys: keys };
 }
 
@@ -125,6 +127,7 @@ export async function updateRole(
 		resource_type: "role",
 		resource_id: id,
 	});
+	recordActivity(actor, "edit", { type: "role", id });
 }
 
 export async function deleteRole(id: string): Promise<void> {
@@ -148,4 +151,5 @@ export async function deleteRole(id: string): Promise<void> {
 		resource_type: "role",
 		resource_id: id,
 	});
+	recordActivity(actor, "destroy", { type: "role", id });
 }

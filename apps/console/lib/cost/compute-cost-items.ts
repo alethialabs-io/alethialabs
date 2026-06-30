@@ -22,7 +22,7 @@ export interface CostItem {
 	detail?: string;
 }
 
-/** The slice of spec config the estimate needs. */
+/** The slice of project config the estimate needs. */
 export interface CostInput {
 	instanceTypes: string[];
 	nodeDesiredSize: number;

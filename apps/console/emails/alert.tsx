@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Button, Heading, Section, Text } from "@react-email/components";
-import type { AlertEventContext } from "@/types/database-custom.types";
+import type { AlertEventContext } from "@/types/jsonb.types";
 import { EmailLayout } from "@repo/email/components/layout";
 import { colors, fonts, primaryButton, radii, text } from "@repo/email/components/theme";
 
@@ -72,8 +72,7 @@ export function AlertEmail({ context, eventLabel }: AlertEmailProps) {
 				<Detail label="reason" value={context.reason} />
 				<Detail label="job" value={context.job_id} />
 				<Detail label="job_type" value={context.job_type} />
-				<Detail label="spec" value={context.spec_id} />
-				<Detail label="zone" value={context.zone_id} />
+				<Detail label="project" value={context.project_id} />
 				<Detail label="connector" value={context.connector_slug} />
 			</Section>
 

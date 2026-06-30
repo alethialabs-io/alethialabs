@@ -4,32 +4,32 @@
 import { describe, expect, it } from "vitest";
 import { decide } from "@/lib/authz/evaluate";
 
-// S is a spec under zone Z (ancestors of S = [Z, org]).
+// S is a project under org O (ancestors of S = [O]).
 describe("decide (allow ∧ ¬deny — explicit deny overrides)", () => {
 	it("allows when an allow covers and no deny", () => {
-		expect(decide([null], [], "S", ["Z"])).toBe(true); // org-wide allow
-		expect(decide(["Z"], [], "S", ["Z"])).toBe(true); // zone allow inherits to spec
-		expect(decide(["S"], [], "S", ["Z"])).toBe(true); // direct allow on the spec
+		expect(decide([null], [], "S", ["O"])).toBe(true); // org-wide allow
+		expect(decide(["O"], [], "S", ["O"])).toBe(true); // org allow inherits to project
+		expect(decide(["S"], [], "S", ["O"])).toBe(true); // direct allow on the project
 	});
 
 	it("explicit deny on the resource overrides an inherited allow (the headline case)", () => {
-		// "view this zone's specs, EXCEPT spec S": allow at Z, deny at S.
-		expect(decide(["Z"], ["S"], "S", ["Z"])).toBe(false);
-		// a sibling spec S2 (also under Z) is unaffected.
-		expect(decide(["Z"], ["S"], "S2", ["Z"])).toBe(true);
+		// "view the org's projects, EXCEPT project S": allow at O, deny at S.
+		expect(decide(["O"], ["S"], "S", ["O"])).toBe(false);
+		// a sibling project S2 (also under O) is unaffected.
+		expect(decide(["O"], ["S"], "S2", ["O"])).toBe(true);
 	});
 
 	it("container deny excludes all descendants", () => {
-		// allow org-wide, deny across zone Z ⇒ spec S (under Z) denied.
-		expect(decide([null], ["Z"], "S", ["Z"])).toBe(false);
+		// allow org-wide, deny across org O ⇒ project S (under O) denied.
+		expect(decide([null], ["O"], "S", ["O"])).toBe(false);
 	});
 
 	it("a deny elsewhere does not affect this resource", () => {
-		expect(decide([null], ["OTHER"], "S", ["Z"])).toBe(true);
+		expect(decide([null], ["OTHER"], "S", ["O"])).toBe(true);
 	});
 
 	it("no allow ⇒ denied (default-deny)", () => {
-		expect(decide([], ["S"], "S", ["Z"])).toBe(false);
-		expect(decide([], [], "S", ["Z"])).toBe(false);
+		expect(decide([], ["S"], "S", ["O"])).toBe(false);
+		expect(decide([], [], "S", ["O"])).toBe(false);
 	});
 });

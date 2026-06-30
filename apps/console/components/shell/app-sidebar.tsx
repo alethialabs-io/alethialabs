@@ -37,7 +37,7 @@ export function AppSidebar({ isHosted = false }: { isHosted?: boolean }) {
 	return (
 		<div className="flex h-full w-full flex-col bg-background">
 			<div className="flex h-[53px] shrink-0 items-center border-b px-2.5">
-				<OrgSwitcher variant="sidebar" />
+				<OrgSwitcher />
 			</div>
 
 			<div className="relative min-h-0 flex-1 overflow-hidden">

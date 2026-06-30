@@ -30,7 +30,7 @@ export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ provider: string }> },
 ) {
-	const { userId, provider, errorResponse: authError } =
+	const { userId, scope, provider, errorResponse: authError } =
 		await resolveCliProvider(req, params);
 	if (authError) return authError;
 
@@ -67,7 +67,7 @@ export async function POST(
 					);
 				}
 				result = await conn.saveAwsIdentity(
-					userId,
+					scope,
 					identityId,
 					creds.role_arn,
 				);
@@ -83,7 +83,7 @@ export async function POST(
 					typeof creds.wif_config === "string"
 						? creds.wif_config
 						: JSON.stringify(creds.wif_config);
-				result = await conn.saveGcpIdentity(userId, identityId, wifJson);
+				result = await conn.saveGcpIdentity(scope, identityId, wifJson);
 				break;
 			}
 			case "azure":
@@ -100,7 +100,7 @@ export async function POST(
 					);
 				}
 				result = await conn.saveAzureIdentity(
-					userId,
+					scope,
 					identityId,
 					creds.tenant_id,
 					creds.client_id,
@@ -115,7 +115,7 @@ export async function POST(
 					);
 				}
 				result = await conn.saveAlibabaIdentity(
-					userId,
+					scope,
 					identityId,
 					creds.role_arn,
 				);
@@ -126,7 +126,7 @@ export async function POST(
 				if (creds.self_managed) {
 					// Self-hosted runner supplies the token from its env — store nothing.
 					result = await conn.saveSelfManagedTokenIdentity(
-						userId,
+						scope,
 						identityId,
 						provider,
 					);
@@ -139,7 +139,7 @@ export async function POST(
 					);
 				}
 				result = await conn.saveTokenCloudIdentity(
-					userId,
+					scope,
 					identityId,
 					provider,
 					creds.api_token,

@@ -34,7 +34,7 @@ jobs:
 
       - name: Stage templates for Docker build
         run: |
-          cp -r infra/templates/spec apps/runner/spec-templates
+          cp -r infra/templates/project apps/runner/project-templates
           cp -r infra/templates/runner apps/runner/runner-templates
           cp -r infra/templates/argocd apps/runner/argocd-templates
 

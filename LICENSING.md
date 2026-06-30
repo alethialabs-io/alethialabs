@@ -41,7 +41,7 @@ Trivial shared tooling kept permissive on purpose:
 
 Vendored third-party code keeps its original license, for example:
 
-    infra/templates/spec/aws/modules/valkey/   ->  Apache-2.0
+    infra/templates/project/aws/modules/valkey/   ->  Apache-2.0
 
 Full texts of referenced licenses live under [`LICENSES/`](LICENSES/), and
 third-party attributions are in [`NOTICE`](NOTICE).

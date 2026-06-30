@@ -39,7 +39,7 @@ import {
 } from "@/lib/cloud-providers/registry";
 import { REGION_LABELS, groupRegions } from "@/lib/cloud-providers";
 import { getProjectSlug } from "@/app/server/actions/resolve";
-import { useProjectsStore } from "@/lib/stores/use-projects-store";
+import { useRefreshProjects } from "@/lib/query/use-projects-query";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { orgHref, projectHref } from "@/lib/routing";
 
@@ -64,6 +64,7 @@ export function DuplicateModal({
 }: DuplicateModalProps) {
 	const router = useRouter();
 	const orgSlug = useActiveOrgSlug();
+	const refreshProjects = useRefreshProjects();
 
 	const [identities, setIdentities] = useState<CloudIdentityOption[]>([]);
 	const [selectedIdentityId, setSelectedIdentityId] = useState<string>("");
@@ -110,7 +111,7 @@ export function DuplicateModal({
 				targetRegion,
 			);
 			setResult(res);
-			useProjectsStore.getState().fetchProjects(true);
+			refreshProjects();
 			toast.success("Project duplicated");
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : "Failed to duplicate project");

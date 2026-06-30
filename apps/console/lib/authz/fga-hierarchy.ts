@@ -3,15 +3,14 @@
 
 // The resource hierarchy DAG (parent types per instance resource). Single source of
 // truth shared by the FGA model generator and the tuple expander, so they agree by
-// construction. Org-level resources (org/member/audit/billing) and `job` are NOT
+// construction. Org-level resources (org/member/activity/billing) and `job` are NOT
 // instance types: job is ephemeral + high-volume and never individually shared, so
 // its permissions resolve at the org (org-wide grants only).
 
 import type { Resource } from "@/lib/authz/registry";
 
 export const PARENTS: Partial<Record<Resource, Resource[]>> = {
-	zone: ["org"],
-	spec: ["zone", "org"],
+	project: ["org"],
 	runner: ["org"],
 	cloud_identity: ["org"],
 	connector: ["org"],

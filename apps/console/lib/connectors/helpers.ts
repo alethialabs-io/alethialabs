@@ -15,7 +15,7 @@ export function connectedSlugs(connectors: ConnectorWithConnection[]): Set<strin
 
 /**
  * Pluggable providers in a category that the user has connected — the source of
- * truth for the design-spec's per-component option lists. A provider the user
+ * truth for the design-project's per-component option lists. A provider the user
  * hasn't connected is dropped, so they can't select something that would fail at
  * provision time.
  */

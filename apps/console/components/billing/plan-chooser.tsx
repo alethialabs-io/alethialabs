@@ -22,9 +22,11 @@ import {
 import { Badge } from "@repo/ui/badge";
 import {
 	type PlanCatalogEntry,
+	type PlanId,
 	planMeta,
 } from "@repo/plan-catalog";
 import type { BillingPlan } from "@/lib/db/schema/enums";
+import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { cn } from "@repo/ui/utils";
 
 const GROUP_ICON: Record<string, LucideIcon> = {
@@ -92,9 +94,7 @@ export function PlanChooser({ plans, value, onChange }: PlanChooserProps) {
 									{p.tagline}
 								</p>
 							</div>
-							<span className="shrink-0 text-sm font-medium text-foreground">
-								{p.priceLabel}
-							</span>
+							<PlanPriceLabel plan={p.id} />
 						</button>
 					);
 				})}
@@ -137,5 +137,13 @@ export function PlanChooser({ plans, value, onChange }: PlanChooserProps) {
 				</div>
 			</div>
 		</div>
+	);
+}
+
+/** The plan's price label, read live from Stripe (catalog fallback while loading). */
+function PlanPriceLabel({ plan }: { plan: PlanId }) {
+	const { label } = useLivePlanPrice(plan);
+	return (
+		<span className="shrink-0 text-sm font-medium text-foreground">{label}</span>
 	);
 }

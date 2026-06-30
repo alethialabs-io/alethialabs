@@ -7,15 +7,16 @@ import { Button } from "@repo/ui/button";
 import {
 	Form,
 	FormControl,
-	FormDescription,
 	FormField,
 	FormItem,
 	FormLabel,
 	FormMessage,
 } from "@repo/ui/form";
 import { Input } from "@repo/ui/input";
+import { FieldHelp } from "@repo/ui/field-help";
+import { InfoNote, StatusCallout } from "@/components/connector/connection-ui";
 import type { ConnectorProviderMeta } from "@/lib/connectors/registry.generated";
-import { AlertCircle, CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -34,7 +35,7 @@ type SubmitState =
 
 /**
  * Generic credential form for any api_key connector provider — fields are
- * rendered from the provider's registry credential spec, so adding a new provider
+ * rendered from the provider's registry credential project, so adding a new provider
  * needs no new component. Submits to saveConnectorCredential (which encrypts the
  * secret fields and pings the provider to verify).
  */
@@ -45,7 +46,7 @@ export function ApiKeyConnection({
 	const router = useRouter();
 	const [state, setState] = useState<SubmitState>({ phase: "idle" });
 
-	// Defaults from the declarative field spec. Validation is per-field below —
+	// Defaults from the declarative field project. Validation is per-field below —
 	// the dynamic field set has no static shape, so we validate on submit rather
 	// than via a schema resolver, and the server action re-validates + verifies.
 	const defaults: Record<string, string> = {};
@@ -106,34 +107,21 @@ export function ApiKeyConnection({
 			<p className="text-sm text-muted-foreground">{provider.description}</p>
 
 			{state.phase === "success" && (
-				<div className="flex items-start gap-3 p-4 bg-muted/40 border border-border rounded-md">
-					<CheckCircle2 className="w-5 h-5 text-foreground shrink-0" />
-					<div>
-						<p className="text-sm font-medium text-foreground">
-							{state.verified ? "Connected and verified" : "Saved"}
-						</p>
-						<p className="text-xs text-muted-foreground mt-0.5">
-							{state.verified
-								? `${provider.name} is ready to use in a Spec.`
-								: state.message ??
-									"The credential was stored but could not be verified."}
-						</p>
-					</div>
-				</div>
+				<StatusCallout
+					variant="success"
+					title={state.verified ? "Connected and verified" : "Saved"}
+				>
+					{state.verified
+						? `${provider.name} is ready to use in a Project.`
+						: (state.message ??
+							"The credential was stored but could not be verified.")}
+				</StatusCallout>
 			)}
 
 			{state.phase === "failed" && (
-				<div className="flex items-start gap-3 p-4 bg-destructive/5 border border-destructive/20 rounded-md">
-					<XCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
-					<div>
-						<p className="text-sm font-medium text-destructive">
-							Could not connect
-						</p>
-						<p className="text-xs text-muted-foreground mt-0.5">
-							{state.error}
-						</p>
-					</div>
-				</div>
+				<StatusCallout variant="error" title="Could not connect">
+					{state.error}
+				</StatusCallout>
 			)}
 
 			<Form {...form}>
@@ -148,12 +136,17 @@ export function ApiKeyConnection({
 							name={f.key}
 							render={({ field }) => (
 								<FormItem>
-									<FormLabel className="text-xs font-medium text-foreground">
-										{f.label}
-										{f.required && (
-											<span className="text-destructive"> *</span>
+									<div className="flex items-center gap-1.5">
+										<FormLabel className="text-xs font-medium text-foreground">
+											{f.label}
+											{f.required && (
+												<span className="text-destructive"> *</span>
+											)}
+										</FormLabel>
+										{f.help && (
+											<FieldHelp title={f.label}>{f.help}</FieldHelp>
 										)}
-									</FormLabel>
+									</div>
 									<FormControl>
 										<Input
 											type={f.secret ? "password" : "text"}
@@ -163,11 +156,6 @@ export function ApiKeyConnection({
 											{...field}
 										/>
 									</FormControl>
-									{f.help && (
-										<FormDescription className="text-[11px]">
-											{f.help}
-										</FormDescription>
-									)}
 									<FormMessage className="text-xs" />
 								</FormItem>
 							)}
@@ -187,13 +175,10 @@ export function ApiKeyConnection({
 				</form>
 			</Form>
 
-			<div className="flex items-start gap-2.5 p-3 bg-muted/20 rounded-md border border-border/40 text-[11px] text-muted-foreground">
-				<AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-				<p className="leading-relaxed">
-					Secrets are encrypted at rest and only decrypted on the runner at
-					provision time — never stored in a Spec snapshot.
-				</p>
-			</div>
+			<InfoNote>
+				Secrets are encrypted at rest and only decrypted on the runner at
+				provision time — never stored in a Project snapshot.
+			</InfoNote>
 		</div>
 	);
 }

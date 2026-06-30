@@ -4,7 +4,7 @@
 // Codegen for the pluggable-connectors SSOT. Reads the single manifest
 // (packages/core/categories/catalog.json) and emits:
 //   1. lib/connectors/registry.generated.ts — typed provider/credential/form
-//      metadata that drives the connector credential form + the Spec provider
+//      metadata that drives the connector credential form + the Project provider
 //      selectors (no per-provider hand-coded components).
 //   2. lib/db/seed/connectors.generated.sql — idempotent catalog rows applied by
 //      the migrate one-shot (scripts/migrate.mjs).

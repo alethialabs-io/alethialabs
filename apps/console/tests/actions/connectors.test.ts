@@ -1,128 +1,448 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { describe, expect, it } from "vitest";
+// Mocked-boundary tests for the connectors actions: stub the authz guard, a thenable drizzle chain
+// (getServiceDb + withScope), the secret-crypto + provider-ping boundaries, and keep the REAL
+// generated connector registry. We exercise the real exported actions and assert their guard
+// branches, the plain/secret field partition, what gets written, and the returned shapes.
 
-function mergeConnectorsWithConnections(
-	connectors: Array<{
-		slug: string;
-		category: string;
-		name: string;
-	}>,
-	gitTokens: Set<string>,
-	cloudIdentities: Array<{
-		provider: string;
-		credentials: { account_id?: string; role_arn?: string };
-	}>,
-	identityMap: Map<
-		string,
-		{ username?: string; avatar_url?: string; id?: string }
-	>,
-) {
-	return connectors.map((connector) => {
-		let connected = false;
-		let connection_details: Record<string, unknown> | null = null;
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-		if (connector.category === "git") {
-			connected = gitTokens.has(connector.slug);
-			const identity = identityMap.get(connector.slug);
-			if (connected && identity) {
-				connection_details = {
-					username: identity.username,
-					avatar_url: identity.avatar_url,
-					identity_id: identity.id,
-				};
-			}
-		} else if (connector.category === "cloud") {
-			const cloudIdentity = cloudIdentities.find(
-				(ci) => ci.provider === connector.slug,
-			);
-			if (cloudIdentity) {
-				connected = true;
-				connection_details = {
-					account_id: cloudIdentity.credentials?.account_id,
-					role_arn: cloudIdentity.credentials?.role_arn,
-				};
-			}
-		}
+vi.mock("@/lib/authz/guard", () => ({
+	authorize: vi.fn(),
+	currentActor: vi.fn(),
+}));
+vi.mock("@/lib/db", () => ({
+	getServiceDb: vi.fn(),
+	withScope: vi.fn(),
+}));
+vi.mock("@/lib/crypto/secrets", () => ({ encryptSecret: vi.fn() }));
+vi.mock("@/lib/connectors/verify", () => ({
+	verifyConnectorCredential: vi.fn(),
+}));
 
-		return { ...connector, connected, connection_details };
+import {
+	deleteConnectorCredential,
+	getConnectorsWithStatus,
+	saveConnectorCredential,
+	setCloudIdentityScope,
+	setConnectorCredentialScope,
+} from "@/app/server/actions/connectors";
+import { authorize, currentActor } from "@/lib/authz/guard";
+import { verifyConnectorCredential as pingConnector } from "@/lib/connectors/verify";
+import { encryptSecret } from "@/lib/crypto/secrets";
+import { getServiceDb, withScope } from "@/lib/db";
+
+/**
+ * A drizzle-ish chain: every builder method returns the chain, and each terminal
+ * await (`then`) shifts the next seeded result off `queue` (FIFO, matching the
+ * action's deterministic query order). An Error in the queue is thrown on await.
+ */
+function makeDb() {
+	const spies = {
+		where: vi.fn(),
+		update: vi.fn(),
+		insert: vi.fn(),
+		delete: vi.fn(),
+		values: vi.fn(),
+		onConflictDoUpdate: vi.fn(),
+		set: vi.fn(),
+	};
+	let queue: unknown[] = [];
+	const db: Record<string, unknown> = {};
+	Object.assign(db, {
+		select: () => db,
+		from: () => db,
+		innerJoin: () => db,
+		leftJoin: () => db,
+		orderBy: () => db,
+		limit: () => db,
+		returning: () => db,
+		where: (...a: unknown[]) => {
+			spies.where(...a);
+			return db;
+		},
+		update: (...a: unknown[]) => {
+			spies.update(...a);
+			return db;
+		},
+		insert: (...a: unknown[]) => {
+			spies.insert(...a);
+			return db;
+		},
+		delete: (...a: unknown[]) => {
+			spies.delete(...a);
+			return db;
+		},
+		values: (...a: unknown[]) => {
+			spies.values(...a);
+			return db;
+		},
+		onConflictDoUpdate: (...a: unknown[]) => {
+			spies.onConflictDoUpdate(...a);
+			return db;
+		},
+		set: (...a: unknown[]) => {
+			spies.set(...a);
+			return db;
+		},
+		then: (resolve: (v: unknown) => void) => {
+			const next = queue.length ? queue.shift() : [];
+			if (next instanceof Error) throw next;
+			return resolve(next);
+		},
 	});
+	return {
+		db,
+		spies,
+		setQueue: (q: unknown[]) => {
+			queue = q;
+		},
+	};
 }
 
-describe("Connector status merging", () => {
-	const connectors = [
-		{ slug: "github", category: "git", name: "GitHub" },
-		{ slug: "gitlab", category: "git", name: "GitLab" },
-		{ slug: "aws", category: "cloud", name: "AWS" },
-		{ slug: "gcp", category: "cloud", name: "GCP" },
-	];
+let dbh: ReturnType<typeof makeDb>;
 
-	it("marks git providers as connected when token exists", () => {
-		const result = mergeConnectorsWithConnections(
-			connectors,
-			new Set(["github"]),
-			[],
-			new Map([
-				[
-					"github",
-					{ username: "user1", avatar_url: "https://example.com/avatar", id: "id1" },
-				],
-			]),
-		);
+beforeEach(() => {
+	vi.clearAllMocks();
+	dbh = makeDb();
+	vi.mocked(getServiceDb).mockReturnValue(dbh.db as never);
+	// withScope just runs the callback against our chain and returns its (thenable) result.
+	vi.mocked(withScope).mockImplementation(((_s: unknown, fn: (tx: unknown) => unknown) =>
+		fn(dbh.db)) as never);
+	vi.mocked(authorize).mockResolvedValue({
+		userId: "user-1",
+		orgId: "org-1",
+	} as never);
+	vi.mocked(currentActor).mockResolvedValue({
+		userId: "user-1",
+		orgId: "org-1",
+	} as never);
+});
 
-		expect(result[0].connected).toBe(true);
-		expect(result[0].connection_details?.username).toBe("user1");
-		expect(result[1].connected).toBe(false);
+describe("saveConnectorCredential", () => {
+	it("rejects when the caller lacks manage_connectors", async () => {
+		vi.mocked(authorize).mockRejectedValue(new Error("Forbidden"));
+		await expect(
+			saveConnectorCredential("vault", { address: "a", token: "t" }),
+		).rejects.toThrow(/Forbidden/);
 	});
 
-	it("marks cloud providers as connected when identity exists", () => {
-		const result = mergeConnectorsWithConnections(
-			connectors,
-			new Set(),
+	it("returns an error for an unknown connector slug", async () => {
+		const r = await saveConnectorCredential("does-not-exist", {});
+		expect(r).toEqual({ ok: false, error: "Unknown connector: does-not-exist" });
+	});
+
+	it("validates required fields before touching the DB", async () => {
+		// vault requires `address` (plain) + `token` (secret); omit the token.
+		const r = await saveConnectorCredential("vault", { address: "https://v" });
+		expect(r).toEqual({ ok: false, error: "Vault Token is required." });
+		expect(pingConnector).not.toHaveBeenCalled();
+	});
+
+	it("returns an error when the connector is missing from the catalog", async () => {
+		dbh.setQueue([[]]); // catalog lookup → no row
+		const r = await saveConnectorCredential("vault", {
+			address: "https://v",
+			token: "s3cret",
+		});
+		expect(r).toEqual({ ok: false, error: "Connector not in catalog: vault" });
+	});
+
+	it("partitions plain/secret fields, encrypts secrets, pings, and upserts a verified org credential", async () => {
+		vi.mocked(pingConnector).mockResolvedValue({ ok: true, message: "pong" } as never);
+		vi.mocked(encryptSecret).mockReturnValue("ENC" as never);
+		dbh.setQueue([[{ id: "conn-1" }], []]); // catalog row, then insert result
+
+		const fields = { address: "https://v", token: "s3cret" };
+		const r = await saveConnectorCredential("vault", fields);
+
+		expect(r).toEqual({ ok: true, verified: true, message: "pong" });
+		// Ping receives the FULL (unencrypted) field set.
+		expect(pingConnector).toHaveBeenCalledWith("vault", fields);
+		// Only the secret field is encrypted; the plain field is not.
+		expect(encryptSecret).toHaveBeenCalledWith({ token: "s3cret" });
+		// The written row stores plain fields in clear, the encrypted blob, scope=org, verified.
+		const values = dbh.spies.values.mock.calls[0][0] as {
+			scope: string;
+			is_verified: boolean;
+			org_id: string;
+			credentials: { fields: Record<string, string>; secret: unknown };
+		};
+		expect(values.scope).toBe("org");
+		expect(values.org_id).toBe("org-1");
+		expect(values.is_verified).toBe(true);
+		expect(values.credentials.fields).toEqual({ address: "https://v" });
+		expect(values.credentials.secret).toBe("ENC");
+		expect(dbh.spies.onConflictDoUpdate).toHaveBeenCalled();
+	});
+
+	it("still saves (verified=false) when the provider ping fails", async () => {
+		vi.mocked(pingConnector).mockResolvedValue({ ok: false } as never);
+		vi.mocked(encryptSecret).mockReturnValue("ENC" as never);
+		dbh.setQueue([[{ id: "conn-1" }], []]);
+
+		const r = await saveConnectorCredential("vault", {
+			address: "https://v",
+			token: "s3cret",
+		});
+		expect(r).toEqual({ ok: true, verified: false, message: undefined });
+		const values = dbh.spies.values.mock.calls[0][0] as { is_verified: boolean };
+		expect(values.is_verified).toBe(false);
+	});
+
+	it("returns an error when encryption throws", async () => {
+		vi.mocked(pingConnector).mockResolvedValue({ ok: true } as never);
+		vi.mocked(encryptSecret).mockImplementation(() => {
+			throw new Error("no key configured");
+		});
+		dbh.setQueue([[{ id: "conn-1" }]]);
+		const r = await saveConnectorCredential("vault", {
+			address: "https://v",
+			token: "s3cret",
+		});
+		expect(r).toEqual({ ok: false, error: "no key configured" });
+		expect(dbh.spies.values).not.toHaveBeenCalled();
+	});
+});
+
+describe("deleteConnectorCredential", () => {
+	it("rejects when unauthorized", async () => {
+		vi.mocked(authorize).mockRejectedValue(new Error("Forbidden"));
+		await expect(deleteConnectorCredential("vault")).rejects.toThrow(/Forbidden/);
+	});
+
+	it("returns an error when the connector is not in the catalog", async () => {
+		dbh.setQueue([[]]);
+		const r = await deleteConnectorCredential("vault");
+		expect(r).toEqual({ ok: false, error: "Connector not in catalog: vault" });
+		expect(dbh.spies.delete).not.toHaveBeenCalled();
+	});
+
+	it("deletes the credential within an org scope", async () => {
+		dbh.setQueue([[{ id: "conn-1" }], []]);
+		const r = await deleteConnectorCredential("vault");
+		expect(r).toEqual({ ok: true });
+		expect(dbh.spies.delete).toHaveBeenCalledTimes(1);
+		expect(withScope).toHaveBeenCalledWith(
+			{ ownerId: "user-1", orgId: "org-1" },
+			expect.any(Function),
+		);
+	});
+});
+
+describe("setConnectorCredentialScope", () => {
+	it("returns an error when the connector is not in the catalog", async () => {
+		dbh.setQueue([[]]);
+		const r = await setConnectorCredentialScope("vault", "org");
+		expect(r).toEqual({ ok: false, error: "Connector not in catalog: vault" });
+	});
+
+	it("promotes the caller's personal credential to org scope", async () => {
+		dbh.setQueue([[{ id: "conn-1" }], [{ id: "cred-1" }]]);
+		const r = await setConnectorCredentialScope("vault", "org");
+		expect(r).toEqual({ ok: true });
+		const setArg = dbh.spies.set.mock.calls[0][0] as {
+			scope: string;
+			org_id: string;
+		};
+		expect(setArg.scope).toBe("org");
+		expect(setArg.org_id).toBe("org-1");
+	});
+
+	it("reports when there is no personal credential to share", async () => {
+		dbh.setQueue([[{ id: "conn-1" }], []]); // update returns no rows
+		const r = await setConnectorCredentialScope("vault", "org");
+		expect(r).toEqual({ ok: false, error: "No personal credential to share." });
+	});
+
+	it("demotes an org credential back to personal", async () => {
+		dbh.setQueue([[{ id: "conn-1" }], [{ id: "cred-1" }]]);
+		const r = await setConnectorCredentialScope("vault", "personal");
+		expect(r).toEqual({ ok: true });
+		const setArg = dbh.spies.set.mock.calls[0][0] as { scope: string };
+		expect(setArg.scope).toBe("personal");
+	});
+
+	it("reports when there is no shared credential to make personal", async () => {
+		dbh.setQueue([[{ id: "conn-1" }], []]);
+		const r = await setConnectorCredentialScope("vault", "personal");
+		expect(r).toEqual({
+			ok: false,
+			error: "No shared credential to make personal.",
+		});
+	});
+
+	it("maps a unique-violation into a friendly conflict error", async () => {
+		dbh.setQueue([[{ id: "conn-1" }], new Error("duplicate key")]);
+		const r = await setConnectorCredentialScope("vault", "org");
+		expect(r).toEqual({
+			ok: false,
+			error: "An org credential already exists for this connector.",
+		});
+	});
+});
+
+describe("setCloudIdentityScope", () => {
+	it("rejects when manage_identities is denied", async () => {
+		vi.mocked(authorize).mockRejectedValue(new Error("Forbidden"));
+		await expect(setCloudIdentityScope("ci-1", "org")).rejects.toThrow(
+			/Forbidden/,
+		);
+	});
+
+	it("promotes a personal cloud identity to org scope", async () => {
+		dbh.setQueue([[{ id: "ci-1" }]]); // update returning
+		const r = await setCloudIdentityScope("ci-1", "org");
+		expect(r).toEqual({ ok: true });
+		const setArg = dbh.spies.set.mock.calls[0][0] as {
+			scope: string;
+			org_id: string;
+		};
+		expect(setArg.scope).toBe("org");
+		expect(setArg.org_id).toBe("org-1");
+	});
+
+	it("returns not-found when no row matched", async () => {
+		dbh.setQueue([[]]);
+		const r = await setCloudIdentityScope("ci-1", "personal");
+		expect(r).toEqual({
+			ok: false,
+			error: "Cloud identity not found for this action.",
+		});
+	});
+
+	it("maps a DB error to a generic scope-change failure", async () => {
+		dbh.setQueue([new Error("constraint")]);
+		const r = await setCloudIdentityScope("ci-1", "org");
+		expect(r).toEqual({
+			ok: false,
+			error: "Could not change the credential's scope.",
+		});
+	});
+});
+
+describe("getConnectorsWithStatus", () => {
+	/** Minimal catalog connector row; spread verbatim into the result. */
+	function connector(over: Record<string, unknown>) {
+		return {
+			id: "x",
+			slug: "x",
+			name: "X",
+			category: "git",
+			auth_method: "oauth2",
+			status: "active",
+			sort_order: 0,
+			...over,
+		};
+	}
+
+	it("marks a git connector connected with a healthy token", async () => {
+		// queue order: catalog, account tokens, verified cloud, cloud health, api_key creds
+		dbh.setQueue([
+			[connector({ slug: "github", category: "git" })],
+			[{ provider: "github", expires_at: null, refresh_token: null }],
+			[],
+			[],
+			[],
+		]);
+		const [row] = await getConnectorsWithStatus();
+		expect(row.connected).toBe(true);
+		expect(row.token_health).toBe("healthy");
+		expect(row.group).toBe("apps");
+		expect(row.connection_details).toBeNull();
+	});
+
+	it("flags an expired git token (refresh available) as expired", async () => {
+		dbh.setQueue([
+			[connector({ slug: "github", category: "git" })],
 			[
 				{
-					provider: "aws",
-					credentials: {
-						account_id: "123456789012",
-						role_arn: "arn:aws:iam::123456789012:role/Test",
-					},
+					provider: "github",
+					expires_at: new Date(Date.now() - 1000).toISOString(),
+					refresh_token: "r",
 				},
 			],
-			new Map(),
-		);
-
-		expect(result[2].connected).toBe(true);
-		expect(result[2].connection_details?.account_id).toBe("123456789012");
-		expect(result[3].connected).toBe(false);
-	});
-
-	it("handles no connections", () => {
-		const result = mergeConnectorsWithConnections(
-			connectors,
-			new Set(),
 			[],
-			new Map(),
-		);
-
-		expect(result.every((i) => !i.connected)).toBe(true);
-		expect(result.every((i) => i.connection_details === null)).toBe(true);
+			[],
+			[],
+		]);
+		const [row] = await getConnectorsWithStatus();
+		expect(row.token_health).toBe("expired");
 	});
 
-	it("handles all connected", () => {
-		const result = mergeConnectorsWithConnections(
-			connectors,
-			new Set(["github", "gitlab"]),
+	it("surfaces a connected cloud account with its details and scope", async () => {
+		dbh.setQueue([
+			[connector({ slug: "aws", category: "cloud", auth_method: "role" })],
+			[],
 			[
-				{ provider: "aws", credentials: { account_id: "123" } },
-				{ provider: "gcp", credentials: {} },
+				{
+					id: "ci-1",
+					name: "prod",
+					provider: "aws",
+					credentials: { account_id: "123456789012", role_arn: "arn:x" },
+					scope: "org",
+				},
 			],
-			new Map([
-				["github", { username: "u1" }],
-				["gitlab", { username: "u2" }],
-			]),
-		);
+			[],
+			[],
+		]);
+		const [row] = await getConnectorsWithStatus();
+		expect(row.connected).toBe(true);
+		expect(row.group).toBe("clouds");
+		expect(row.scope).toBe("org");
+		expect(row.accounts).toHaveLength(1);
+		expect(row.accounts?.[0]).toMatchObject({
+			identityId: "ci-1",
+			name: "prod",
+			label: "123456789012",
+		});
+		expect(row.connection_details).toMatchObject({
+			account_id: "123456789012",
+			role_arn: "arn:x",
+			cloud_identity_id: "ci-1",
+		});
+	});
 
-		expect(result.every((i) => i.connected)).toBe(true);
+	it("drives the re-verify treatment for a failed cloud verification", async () => {
+		dbh.setQueue([
+			[connector({ slug: "gcp", category: "cloud", auth_method: "wif" })],
+			[],
+			[], // no verified identities
+			[{ id: "h-1", provider: "gcp", status: "failed", last_error: "boom" }],
+			[],
+		]);
+		const [row] = await getConnectorsWithStatus();
+		expect(row.connected).toBe(false);
+		expect(row.cloud_health).toBe("failed");
+		expect(row.last_error).toBe("boom");
+		expect(row.reverify_identity_id).toBe("h-1");
+		expect(row.accounts).toEqual([]);
+	});
+
+	it("marks an api_key connector connected from a verified stored credential", async () => {
+		dbh.setQueue([
+			[connector({ slug: "vault", category: "secrets", auth_method: "api_key" })],
+			[],
+			[],
+			[],
+			[{ slug: "vault", is_verified: true, scope: "org" }],
+		]);
+		const [row] = await getConnectorsWithStatus();
+		expect(row.connected).toBe(true);
+		expect(row.group).toBe("secrets");
+		expect(row.scope).toBe("org");
+		expect(row.token_health).toBe("healthy");
+	});
+
+	it("falls back to a logged-out catalog (everything disconnected) when no actor", async () => {
+		vi.mocked(currentActor).mockRejectedValue(new Error("no session"));
+		// Only the public catalog query runs when scope is null.
+		dbh.setQueue([
+			[connector({ slug: "github", category: "git" })],
+		]);
+		const [row] = await getConnectorsWithStatus();
+		expect(row.connected).toBe(false);
+		expect(row.connection_details).toBeNull();
 	});
 });

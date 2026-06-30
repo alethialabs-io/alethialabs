@@ -12,8 +12,9 @@ import { Check } from "lucide-react";
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
-import { PAID_PLANS, PLAN_CATALOG } from "@repo/plan-catalog";
+import { PAID_PLANS, type PlanId, PLAN_CATALOG } from "@repo/plan-catalog";
 import type { BillingPlan } from "@/lib/db/schema/enums";
+import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { cn } from "@repo/ui/utils";
 
 interface PlanPickerProps {
@@ -63,9 +64,7 @@ export function PlanPicker({
 									</Badge>
 								)}
 							</div>
-							<p className="text-sm font-medium text-foreground">
-								{plan.priceLabel}
-							</p>
+							<PlanPriceLabel plan={plan.id} />
 							<p className="text-xs text-muted-foreground">{plan.tagline}</p>
 						</div>
 
@@ -90,4 +89,10 @@ export function PlanPicker({
 			})}
 		</div>
 	);
+}
+
+/** The plan's price label, read live from Stripe (catalog fallback while loading). */
+function PlanPriceLabel({ plan }: { plan: PlanId }) {
+	const { label } = useLivePlanPrice(plan);
+	return <p className="text-sm font-medium text-foreground">{label}</p>;
 }

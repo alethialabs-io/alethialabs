@@ -1,0 +1,9 @@
+# AWS S3 state backend for the bootstrap stack. Copy to backend.hcl (gitignored).
+#   tofu init -backend-config=backend.hcl
+#
+# Auth comes from the AWS credential chain (admin). No static state keys.
+
+bucket       = "alethia-tofu-state-270587882865"
+key          = "connector-assets-bootstrap/terraform.tfstate"
+region       = "eu-central-1"
+use_lockfile = true

@@ -100,6 +100,12 @@ export function SectionCaches() {
 									<FormControl><Input type="number" min={1} max={6} name={f.name} onBlur={f.onBlur} value={f.value ?? 1} onChange={(e) => f.onChange(parseInt(e.target.value) || 1)} className="h-8 text-xs" /></FormControl>
 								</FormItem>
 							)} />
+							<FormField control={control} name={`caches.${i}.engine_version`} render={({ field: f }) => (
+								<FormItem className="space-y-1">
+									<div className="flex items-center gap-1"><Label className="text-[11px]">Engine Version</Label><HelpTooltip topic="cache-engine-version" /></div>
+									<FormControl><Input name={f.name} onBlur={f.onBlur} value={f.value ?? ""} placeholder="Template default" onChange={(e) => f.onChange(e.target.value || null)} className="h-8 text-xs font-mono" /></FormControl>
+								</FormItem>
+							)} />
 						</div>
 						<FormField control={control} name={`caches.${i}.multi_az`} render={({ field: f }) => (
 							<div className="flex items-center justify-between p-2 bg-muted/20 rounded">

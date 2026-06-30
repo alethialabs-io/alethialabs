@@ -12,6 +12,11 @@ import { z } from "zod";
  * claude.ai connectors drive the identical PDP-gated surface over the wire. No new
  * authority — each tool's execute() still resolves currentActor() and enforces its
  * verb; the MCP route binds the token-derived actor via runWithActor() first.
+ *
+ * This function is a generic bridge over whatever tool set it is given. The MCP
+ * route MUST pass the READ-ONLY external projection — `buildExternalAgentTools()`
+ * (lib/ai/tools), which filters by audience (registry.ts) — so HITL/canvas/
+ * job-queuing tools are never exposed to a customer's agent at launch.
  */
 
 /** The runtime slice of an AI-SDK tool the bridge needs. Tool's published type erases

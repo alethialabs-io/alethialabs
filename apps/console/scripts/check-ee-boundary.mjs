@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Open-core boundary guard (spec 12): the AGPL core must NEVER import the
+// Open-core boundary guard (project 12): the AGPL core must NEVER import the
 // commercial `@alethia/ee` package. The community build must be complete and
 // buildable with `ee/` absent. The ONLY permitted touchpoint is the allowlisted
 // loader (lib/enterprise.ts), which does a single tolerant dynamic load and routes

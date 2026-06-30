@@ -61,7 +61,7 @@ resource "aws_secretsmanager_secret" "dbsecret_extra" {
   name        = "rds-${local.name_string}-extra"
   kms_key_id  = aws_kms_key.rds_secret_kms_key.arn
   tags        = var.rds_tags
-  
+
   recovery_window_in_days = 0
 }
 

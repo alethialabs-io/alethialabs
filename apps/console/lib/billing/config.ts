@@ -16,10 +16,13 @@ export type PaidPlan = Exclude<BillingPlan, "community">;
 const schema = z.object({
 	secretKey: z.string().min(1),
 	webhookSecret: z.string().min(1),
-	/** Stripe Price IDs per paid plan (test or live, matching the secret key). */
+	/** Stripe Price IDs per paid plan (test or live, matching the secret key).
+	 * `team` (Pro) is the only self-serve Stripe price. `enterprise` is OPTIONAL —
+	 * Enterprise is invoiced off-Stripe (sales-assisted) and granted via
+	 * scripts/set-org-plan.mjs, so a Stripe price for it need not exist. */
 	prices: z.object({
 		team: z.string().min(1),
-		enterprise: z.string().min(1),
+		enterprise: z.string().min(1).optional(),
 	}),
 	/**
 	 * Optional GRADUATED metered Price IDs for runner job-minutes per plan — the
@@ -96,9 +99,19 @@ export function getStripeConfig(): StripeConfig {
 	return cached;
 }
 
-/** The Stripe Price ID for a paid plan. */
+/** The Stripe Price ID for a paid plan. Throws if that plan has no configured price
+ *  (Enterprise is invoiced off-Stripe — grant it via scripts/set-org-plan.mjs). */
 export function priceIdForPlan(plan: PaidPlan): string {
-	return getStripeConfig().prices[plan];
+	const id = getStripeConfig().prices[plan];
+	if (!id) {
+		throw new Error(
+			`No Stripe price configured for the ${plan} plan (set STRIPE_PRICE_${plan.toUpperCase()}).` +
+				(plan === "enterprise"
+					? " Enterprise is invoiced off-Stripe — use scripts/set-org-plan.mjs."
+					: ""),
+		);
+	}
+	return id;
 }
 
 /** The graduated metered Price ID for a plan's runner-minutes, if configured. */
@@ -109,7 +122,7 @@ export function meterPriceIdForPlan(plan: PaidPlan): string | undefined {
 /** The paid plan a Stripe Price ID maps to, or null if it isn't one of ours. */
 export function planForPriceId(priceId: string): PaidPlan | null {
 	const { prices } = getStripeConfig();
-	const entry = (Object.entries(prices) as [PaidPlan, string][]).find(
+	const entry = (Object.entries(prices) as [PaidPlan, string | undefined][]).find(
 		([, id]) => id === priceId,
 	);
 	return entry ? entry[0] : null;

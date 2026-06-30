@@ -8,12 +8,12 @@ import { NextResponse } from "next/server";
 
 type DisconnectBody = { identity_id?: string };
 
-/** Resets a provider identity to its pending state and orphans its specs. */
+/** Resets a provider identity to its pending state and orphans its projects. */
 export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ provider: string }> },
 ) {
-	const { userId, provider, errorResponse: authError } =
+	const { userId, scope, provider, errorResponse: authError } =
 		await resolveCliProvider(req, params);
 	if (authError) return authError;
 
@@ -38,7 +38,7 @@ export async function POST(
 
 	try {
 		const result = await conn.disconnectIdentity(
-			userId,
+			scope,
 			body.identity_id,
 			provider,
 		);

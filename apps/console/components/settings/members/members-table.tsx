@@ -20,9 +20,11 @@ import {
 	type MemberRow,
 	setMemberSuspended,
 } from "@/app/server/actions/members";
+import { getCollaborationAccess } from "@/app/server/actions/billing";
 import { DataTable } from "@/components/data-table";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
+import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
 import {
 	SettingsSearch,
 	SettingsSelect,
@@ -47,6 +49,7 @@ import {
 import { Skeleton } from "@repo/ui/skeleton";
 import { authClient } from "@/lib/auth/client";
 import { toOrgRole } from "@/lib/authz/org-access-control";
+import { userInitials } from "@/lib/user-display";
 import { cn } from "@repo/ui/utils";
 
 const ROLE_OPTIONS = ["admin", "operator", "viewer"] as const;
@@ -66,10 +69,6 @@ interface RowView {
 	status: "active" | "pending" | "suspended";
 	activity: string;
 	isYou: boolean;
-}
-
-function initials(s: string): string {
-	return s.slice(0, 2).toUpperCase();
 }
 
 /** The status dot+label, mapped onto the global `.vx-status` device. */
@@ -129,6 +128,10 @@ export function MembersTable() {
 	const [search, setSearch] = useState("");
 	const [roleFilter, setRoleFilter] = useState("all");
 	const [selected, setSelected] = useState<Set<string>>(new Set());
+	// Inviting is the paid (Pro) value — viewing members is always open. The billing-backed
+	// `canInvite` gate (card-backed/paid) decides whether the Invite button opens the form
+	// or the Pro upsell; the server enforces it again in `beforeCreateInvitation`.
+	const [canInvite, setCanInvite] = useState(false);
 
 	const load = useCallback(() => {
 		getMembers()
@@ -141,6 +144,11 @@ export function MembersTable() {
 	useEffect(() => {
 		load();
 	}, [load]);
+	useEffect(() => {
+		getCollaborationAccess()
+			.then((a) => setCanInvite(a.canInvite))
+			.catch(() => setCanInvite(false));
+	}, []);
 
 	const changeRole = useCallback(
 		async (memberId: string, value: string) => {
@@ -186,7 +194,7 @@ export function MembersTable() {
 			refId: m.id,
 			name: m.name?.trim() || m.email,
 			meta: m.email,
-			avatar: initials(m.name?.trim() || m.email),
+			avatar: userInitials({ name: m.name, email: m.email }),
 			role: m.role,
 			teams: m.teams,
 			status: m.status === "suspended" ? "suspended" : "active",
@@ -202,7 +210,7 @@ export function MembersTable() {
 			refId: i.id,
 			name: i.email,
 			meta: `invited by ${i.inviterName}`,
-			avatar: initials(i.email),
+			avatar: userInitials({ email: i.email }),
 			role: i.role,
 			teams: [],
 			status: "pending",
@@ -496,9 +504,19 @@ export function MembersTable() {
 							{ value: "viewer", label: "Viewer" },
 						]}
 					/>
-					{canManage && (
+					{canInvite ? (
 						<InviteMemberDialog
 							onInvited={load}
+							trigger={
+								<Button size="sm">
+									<Plus size={13} />
+									Invite member
+								</Button>
+							}
+						/>
+					) : (
+						<UpgradeDialog
+							feature="invite"
 							trigger={
 								<Button size="sm">
 									<Plus size={13} />

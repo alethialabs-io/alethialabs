@@ -177,6 +177,9 @@ export const auth = betterAuth({
 			username: { type: "string", required: false, input: false },
 			// Server-managed (input:false) — set when the user finishes /onboarding.
 			onboardingCompletedAt: { type: "date", required: false, input: false },
+			// Server-managed (input:false) — set the first time the account starts its
+			// single Pro trial (one-per-account, see startProTrial / getProOffer).
+			proTrialConsumedAt: { type: "date", required: false, input: false },
 		},
 	},
 	account: {

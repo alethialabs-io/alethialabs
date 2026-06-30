@@ -24,7 +24,7 @@ import { getMembers, type MemberRow } from "@/app/server/actions/members";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { SettingsSearch } from "@/components/settings/settings-ui";
 import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
-import { useProjectsStore } from "@/lib/stores/use-projects-store";
+import { useProjectsQuery } from "@/lib/query/use-projects-query";
 import {
 	useActiveOrgSlug,
 	useWorkspaceStore,
@@ -76,8 +76,7 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 	const retentionDays = useWorkspaceStore(
 		(s) => s.entitlements?.quotas.activityRetentionDays ?? 7,
 	);
-	const projects = useProjectsStore((s) => s.projects);
-	const fetchProjects = useProjectsStore((s) => s.fetchProjects);
+	const { data: projects = [] } = useProjectsQuery();
 
 	const [members, setMembers] = useState<MemberRow[]>([]);
 
@@ -101,13 +100,13 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 	const [exporting, setExporting] = useState(false);
 	const [upgradeOpen, setUpgradeOpen] = useState(false);
 
-	// Members + projects drive the filter options + the humanizer's name resolution.
+	// Members drive the filter options + the humanizer's name resolution (projects come
+	// from the shared query cache).
 	useEffect(() => {
 		getMembers()
 			.then(setMembers)
 			.catch(() => setMembers([]));
-		void fetchProjects();
-	}, [fetchProjects]);
+	}, []);
 
 	// Debounce the free-text search so it doesn't refetch on every keystroke.
 	useEffect(() => {

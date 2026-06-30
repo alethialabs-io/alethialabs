@@ -24,7 +24,7 @@ locals {
     "us-west-2"      = "uw2"
   }
 
-  bucket_name_prefix  = "${var.project_name}-s3-${local.aws_regions_short[var.region]}-${var.environment}"
- 
+  bucket_name_prefix = "${var.project_name}-s3-${local.aws_regions_short[var.region]}-${var.environment}"
+
 }
 

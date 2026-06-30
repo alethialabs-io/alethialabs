@@ -7,6 +7,7 @@ import { PublicEnvScript } from "next-runtime-env";
 import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@repo/ui/sonner";
+import { Providers } from "./providers";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -68,8 +69,9 @@ export default function RootLayout({
 					defaultTheme="light"
 					enableSystem={false}
 				>
-					{children}
-					<Toaster />
+					<Providers>{children}</Providers>
+					{/* Nudged up so toasts clear the bottom-right "Get started" pill. */}
+					<Toaster offset={{ bottom: "76px" }} mobileOffset={{ bottom: "76px" }} />
 				</ThemeProvider>
 			</body>
 		</html>

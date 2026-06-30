@@ -109,9 +109,9 @@ output "credential_config" {
     token_url                         = "https://sts.googleapis.com/v1/token"
     service_account_impersonation_url = "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${google_service_account.alethia.email}:generateAccessToken"
     credential_source = {
-      environment_id                = "aws1"
-      region_url                    = "http://169.254.169.254/latest/meta-data/placement/availability-zone"
-      url                           = "http://169.254.169.254/latest/meta-data/iam/security-credentials"
+      environment_id                 = "aws1"
+      region_url                     = "http://169.254.169.254/latest/meta-data/placement/availability-zone"
+      url                            = "http://169.254.169.254/latest/meta-data/iam/security-credentials"
       regional_cred_verification_url = "https://sts.{region}.amazonaws.com?Action=GetCallerIdentity&Version=2011-06-15"
     }
   })

@@ -41,6 +41,11 @@ jobs:
           tofu init -backend=false
           tofu validate
 
+      - name: IaC checks (fmt + tflint + Trivy)
+        uses: ./.github/actions/iac-checks
+        with:
+          working-directory: ${{ env.TF_DIR }}
+
   apply:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest

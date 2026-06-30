@@ -56,9 +56,20 @@ interface ProviderIconProps {
 	provider: Provider | string;
 	size?: number;
 	className?: string;
+	/**
+	 * Render the brand mark desaturated (the grayscale design-system default). Set
+	 * `false` to show the logo in its real colors — e.g. to signal a *connected*
+	 * provider. GitHub/Google are inline `currentColor` marks and are unaffected.
+	 */
+	mono?: boolean;
 }
 
-export function ProviderIcon({ provider, size = 16, className }: ProviderIconProps) {
+export function ProviderIcon({
+	provider,
+	size = 16,
+	className,
+	mono = true,
+}: ProviderIconProps) {
 	const slug = provider?.toLowerCase();
 
 	if (slug === "google") {
@@ -71,7 +82,8 @@ export function ProviderIcon({ provider, size = 16, className }: ProviderIconPro
 
 	// Plain <img> (not next/image) so this stays framework-agnostic in the shared
 	// UI package; the icons are tiny static PNGs served from /public. The design
-	// system is grayscale, so brand-colored logos are desaturated via CSS.
+	// system is grayscale, so brand-colored logos are desaturated via CSS unless
+	// `mono` is false (e.g. a connected provider shown in full color).
 	if (CLOUD_PROVIDERS.has(slug)) {
 		// Detailed multi-tone marks (AWS/GCP/Azure/…): desaturate but keep the shape.
 		return (
@@ -80,7 +92,11 @@ export function ProviderIcon({ provider, size = 16, className }: ProviderIconPro
 				alt={PROVIDER_LABELS[slug as Provider] ?? slug}
 				width={size}
 				height={size}
-				className={cn("object-contain grayscale opacity-90", className)}
+				className={cn(
+					"object-contain",
+					mono && "grayscale opacity-90",
+					className,
+				)}
 			/>
 		);
 	}
@@ -96,7 +112,8 @@ export function ProviderIcon({ provider, size = 16, className }: ProviderIconPro
 				width={size}
 				height={size}
 				className={cn(
-					"object-contain brightness-0 opacity-90 dark:invert",
+					"object-contain",
+					mono && "brightness-0 opacity-90 dark:invert",
 					className,
 				)}
 			/>

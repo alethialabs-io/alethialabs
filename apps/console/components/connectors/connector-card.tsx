@@ -2,231 +2,175 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
-import type { CredentialScope } from "@/lib/db/schema/enums";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
-import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "@repo/ui/dropdown-menu";
-import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
-import { Loader2, Lock, MoreVertical, RefreshCw, Unlink, Users } from "lucide-react";
-
-const AUTH_METHOD_LABELS: Record<string, string> = {
-	oauth: "OAuth",
-	iam_role: "IAM Role",
-	service_account: "Service Account",
-	service_principal: "Service Principal",
-	ram_role: "RAM Role",
-};
+import { Loader2, RefreshCw } from "lucide-react";
 
 interface ConnectorCardProps {
 	integration: ConnectorWithConnection;
-	onClick: () => void;
+	/** Whether the current member may add/edit connections. */
+	canManage: boolean;
+	/** Connect (or, for a connected cloud, "add another account"). */
 	onConnect: () => void;
-	onDisconnect: () => void;
-	/** Share with the org / pull back to personal (cloud + api_key only). */
-	onShare?: (target: CredentialScope) => void;
+	/** Open the manage sheet (connected connectors). */
+	onManage: () => void;
+	/** Re-run the verification for a failed cloud connector (no credential re-entry). */
+	onReverify?: () => void;
 	isConnecting?: boolean;
 }
 
+/**
+ * One connector tile — matches the grayscale `.conn` card in the connectors design:
+ * a logo, name + description, a fill/outline status dot, a mono meta row (account
+ * count · auth method), and a Manage/Connect action gated by `canManage`.
+ */
 export function ConnectorCard({
 	integration,
-	onClick,
+	canManage,
 	onConnect,
-	onDisconnect,
-	onShare,
+	onManage,
+	onReverify,
 	isConnecting,
 }: ConnectorCardProps) {
 	const isComingSoon = integration.status === "coming_soon";
 	const isConnected = integration.connected;
 	const isGit = integration.category === "git";
+	const isCloud = integration.category === "cloud";
 	const needsReconnection =
 		integration.token_health === "expired" ||
 		integration.token_health === "refresh_failed";
-	// Git OAuth tokens are personal; cloud + api_key credentials can be org-shared.
-	const canShare = isConnected && !isGit && !isComingSoon && Boolean(onShare);
-	const isShared = integration.scope === "org";
+	const cloudFailed = integration.cloud_health === "failed";
+	const cloudTesting = integration.cloud_health === "testing";
+	const accountCount = integration.accounts?.length ?? 0;
 
 	return (
 		<div
 			className={cn(
-				"flex items-center gap-4 px-5 py-4 transition-colors rounded-lg border border-border/50",
+				"flex flex-col gap-3 rounded-xl border bg-background p-4 shadow-sm transition-colors",
 				isComingSoon
-					? "opacity-50"
-					: "hover:bg-muted/30 cursor-pointer",
+					? "opacity-50 border-border/50"
+					: "border-border/60 hover:border-border",
 			)}
-			onClick={isComingSoon ? undefined : onClick}
 		>
-			<div className="shrink-0 w-10 h-10 rounded-lg border border-border/50 bg-background flex items-center justify-center overflow-hidden p-1.5">
-				{isGit ? (
-					<GitProviderIcon provider={integration.slug} size={24} />
-				) : (
-					<ConnectorIcon
-						src={integration.icon_url}
-						name={integration.name}
-						size={28}
-					/>
-				)}
-			</div>
-
-			<div className="flex-1 min-w-0">
-				<div className="flex items-center gap-2.5">
-					<span className="text-sm font-medium text-foreground">
-						{integration.name}
-					</span>
-					{isConnected && needsReconnection && (
-						<StatusBadge status="pending" label="Needs Reconnection" />
+			<div className="flex items-start gap-3">
+				<div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-muted/40 p-1.5">
+					{isGit ? (
+						<GitProviderIcon
+							provider={integration.slug}
+							size={22}
+							mono={!isConnected}
+						/>
+					) : (
+						<ConnectorIcon
+							src={integration.icon_url}
+							name={integration.name}
+							size={24}
+							mono={!isConnected}
+						/>
 					)}
-					{isConnected && !needsReconnection && (
-						<StatusBadge status="connected" label="Connected" />
-					)}
-					{isConnected && isShared && (
-						<Badge
-							variant="outline"
-							className="text-[10px] py-0 text-muted-foreground border-border/50"
-						>
-							<Users className="w-2.5 h-2.5 mr-1" />
-							Shared
-						</Badge>
-					)}
-					{isComingSoon && (
-						<Badge
-							variant="secondary"
-							className="text-[10px] py-0"
-						>
-							Coming Soon
-						</Badge>
-					)}
-					<Badge
-						variant="outline"
-						className="text-[10px] py-0 text-muted-foreground border-border/50"
-					>
-						{AUTH_METHOD_LABELS[integration.auth_method] ??
-							integration.auth_method}
-					</Badge>
 				</div>
-				<p className="text-xs text-muted-foreground mt-0.5 truncate pr-4">
-					{integration.description}
-				</p>
-				{isConnected && integration.connection_details?.username && (
-					<p className="text-[11px] text-muted-foreground font-mono mt-1">
-						@{integration.connection_details.username}
+				<div className="min-w-0 flex-1">
+					<div className="truncate text-sm font-medium text-foreground">
+						{integration.name}
+					</div>
+					<p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground">
+						{integration.description}
 					</p>
-				)}
-				{isConnected && integration.connection_details?.account_id && (
-					<p className="text-[11px] text-muted-foreground font-mono mt-1">
-						Account{" "}
-						{integration.connection_details.account_id}
-					</p>
-				)}
-				{isConnected && integration.connection_details?.project_id && (
-					<p className="text-[11px] text-muted-foreground font-mono mt-1">
-						Project{" "}
-						{integration.connection_details.project_id}
-					</p>
-				)}
-				{isConnected && integration.connection_details?.subscription_id && (
-					<p className="text-[11px] text-muted-foreground font-mono mt-1">
-						Subscription{" "}
-						{integration.connection_details.subscription_id.slice(0, 8)}...
-					</p>
-				)}
+				</div>
+				{/* status dot — filled when connected, outline otherwise */}
+				<span
+					className={cn(
+						"mt-1 size-2.5 shrink-0 rounded-full",
+						isConnected
+							? "bg-foreground ring-4 ring-muted/60"
+							: "border-[1.5px] border-border",
+					)}
+					aria-hidden
+				/>
 			</div>
 
-			<div className="shrink-0 flex items-center gap-2">
-				{!isComingSoon && isConnected && needsReconnection && (
+			<div className="mt-auto flex items-center justify-between gap-2 border-t border-border/40 pt-3">
+				<div className="flex min-w-0 items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
+					{isCloud && isConnected && (
+						<span className="rounded-full border border-border/60 px-1.5 py-0.5">
+							{accountCount} {accountCount === 1 ? "account" : "accounts"}
+						</span>
+					)}
+					{integration.scope === "org" && !isCloud && isConnected && (
+						<span className="rounded-full border border-border/60 px-1.5 py-0.5">
+							Org
+						</span>
+					)}
+					<span
+						className={cn("truncate", cloudFailed && "text-destructive")}
+					>
+						{isComingSoon
+							? "Coming soon"
+							: needsReconnection
+								? "Needs reconnection"
+								: isConnected
+									? "Connected"
+									: cloudFailed
+										? "Verification failed"
+										: cloudTesting
+											? "Verifying…"
+											: "Not connected"}
+					</span>
+				</div>
+
+				{isComingSoon ? null : isConnected && needsReconnection && canManage ? (
 					<Button
 						size="sm"
-						className="text-xs h-8 bg-primary hover:bg-primary/90 text-primary-foreground"
+						className="h-7 px-2.5 text-xs"
 						disabled={isConnecting}
-						onClick={(e) => {
-							e.stopPropagation();
-							onConnect();
-						}}
+						onClick={onConnect}
 					>
 						{isConnecting ? (
-							<Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+							<Loader2 className="mr-1 size-3.5 animate-spin" />
 						) : (
-							<RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+							<RefreshCw className="mr-1 size-3.5" />
 						)}
 						Reconnect
 					</Button>
-				)}
-				{!isComingSoon && isConnected && !needsReconnection && (
+				) : isConnected ? (
 					<Button
-						variant="outline"
+						variant="ghost"
 						size="sm"
-						className="text-xs h-8 text-destructive hover:text-destructive hover:bg-destructive/10 border-border/50"
-						onClick={(e) => {
-							e.stopPropagation();
-							onDisconnect();
-						}}
+						className="h-7 px-2.5 text-xs"
+						onClick={onManage}
 					>
-						<Unlink className="w-3.5 h-3.5 mr-1.5" />
-						Disconnect
+						Manage
 					</Button>
-				)}
-				{!isComingSoon && !isConnected && (
+				) : cloudTesting ? (
+					<Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+				) : cloudFailed && canManage ? (
 					<Button
 						size="sm"
-						className="text-xs h-8"
+						className="h-7 px-2.5 text-xs"
 						disabled={isConnecting}
-						onClick={(e) => {
-							e.stopPropagation();
-							onConnect();
-						}}
+						onClick={onReverify}
 					>
-						{isConnecting && (
-							<Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+						{isConnecting ? (
+							<Loader2 className="mr-1 size-3.5 animate-spin" />
+						) : (
+							<RefreshCw className="mr-1 size-3.5" />
 						)}
+						Re-verify
+					</Button>
+				) : canManage ? (
+					<Button
+						size="sm"
+						className="h-7 px-2.5 text-xs"
+						disabled={isConnecting}
+						onClick={onConnect}
+					>
+						{isConnecting && <Loader2 className="mr-1 size-3.5 animate-spin" />}
 						Connect
 					</Button>
-				)}
-				{canShare && (
-					<DropdownMenu>
-						<DropdownMenuTrigger asChild>
-							<Button
-								variant="ghost"
-								size="sm"
-								className="h-8 w-8 p-0 text-muted-foreground"
-								onClick={(e) => e.stopPropagation()}
-							>
-								<MoreVertical className="h-4 w-4" />
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end">
-							{isShared ? (
-								<DropdownMenuItem
-									onClick={(e) => {
-										e.stopPropagation();
-										onShare?.("personal");
-									}}
-								>
-									<Lock className="h-3.5 w-3.5 mr-2" />
-									Make personal
-								</DropdownMenuItem>
-							) : (
-								<DropdownMenuItem
-									onClick={(e) => {
-										e.stopPropagation();
-										onShare?.("org");
-									}}
-								>
-									<Users className="h-3.5 w-3.5 mr-2" />
-									Share with org
-								</DropdownMenuItem>
-							)}
-						</DropdownMenuContent>
-					</DropdownMenu>
-				)}
+				) : null}
 			</div>
 		</div>
 	);

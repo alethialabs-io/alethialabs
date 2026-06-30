@@ -36,6 +36,11 @@ variable "network_cidr" {
   type        = string
   default     = "10.0.0.0/16"
   description = "Primary CIDR range for the VPC subnet"
+
+  validation {
+    condition     = can(cidrhost(var.network_cidr, 0))
+    error_message = "network_cidr must be a valid IPv4 CIDR, e.g. 10.0.0.0/16."
+  }
 }
 
 variable "network_id" {
@@ -60,12 +65,22 @@ variable "pods_cidr_range" {
   type        = string
   default     = "10.1.0.0/16"
   description = "Secondary CIDR range for GKE pods"
+
+  validation {
+    condition     = can(cidrhost(var.pods_cidr_range, 0))
+    error_message = "pods_cidr_range must be a valid IPv4 CIDR."
+  }
 }
 
 variable "services_cidr_range" {
   type        = string
   default     = "10.2.0.0/20"
   description = "Secondary CIDR range for GKE services"
+
+  validation {
+    condition     = can(cidrhost(var.services_cidr_range, 0))
+    error_message = "services_cidr_range must be a valid IPv4 CIDR."
+  }
 }
 
 #########################################################################
@@ -88,6 +103,11 @@ variable "gke_instance_types" {
   type        = list(string)
   default     = ["e2-standard-4"]
   description = "Machine types for the GKE node pool"
+
+  validation {
+    condition     = length(var.gke_instance_types) > 0
+    error_message = "gke_instance_types must list at least one machine type."
+  }
 }
 
 variable "gke_node_min_size" {
@@ -100,6 +120,11 @@ variable "gke_node_max_size" {
   type        = number
   default     = 5
   description = "Maximum number of nodes in the node pool"
+
+  validation {
+    condition     = var.gke_node_max_size >= var.gke_node_min_size
+    error_message = "gke_node_max_size must be >= gke_node_min_size."
+  }
 }
 
 variable "gke_node_desired_size" {
@@ -118,12 +143,22 @@ variable "gke_disk_size_gb" {
   type        = number
   default     = 50
   description = "Size of the disk attached to each node (GB)"
+
+  validation {
+    condition     = var.gke_disk_size_gb >= 20
+    error_message = "gke_disk_size_gb must be at least 20 GB."
+  }
 }
 
 variable "gke_disk_type" {
   type        = string
   default     = "pd-standard"
   description = "Type of the disk attached to each node (pd-standard, pd-ssd, pd-balanced)"
+
+  validation {
+    condition     = contains(["pd-standard", "pd-ssd", "pd-balanced"], var.gke_disk_type)
+    error_message = "gke_disk_type must be one of pd-standard, pd-ssd, pd-balanced."
+  }
 }
 
 variable "gke_preemptible" {
@@ -413,12 +448,12 @@ variable "create_cloud_storage" {
 
 variable "cloud_storage_buckets" {
   type = list(object({
-    name_suffix       = string
-    location          = optional(string)
-    storage_class     = optional(string, "STANDARD")
-    versioning        = optional(bool, false)
-    force_destroy     = optional(bool, false)
-    uniform_access    = optional(bool, true)
+    name_suffix    = string
+    location       = optional(string)
+    storage_class  = optional(string, "STANDARD")
+    versioning     = optional(bool, false)
+    force_destroy  = optional(bool, false)
+    uniform_access = optional(bool, true)
     lifecycle_rules = optional(list(object({
       action_type          = string
       action_storage_class = optional(string)
@@ -443,8 +478,8 @@ variable "provision_artifact_registry" {
 
 variable "artifact_registry_repos" {
   type = map(object({
-    format        = optional(string, "DOCKER")
-    description   = optional(string, "")
+    format         = optional(string, "DOCKER")
+    description    = optional(string, "")
     immutable_tags = optional(bool, false)
   }))
   default     = {}

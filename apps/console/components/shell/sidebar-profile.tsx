@@ -23,6 +23,7 @@ import { authClient } from "@/lib/auth/client";
 import { legalUrl } from "@/lib/legal";
 import { globalHref } from "@/lib/routing";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+import { displayName, userInitials } from "@/lib/user-display";
 import { Avatar, AvatarFallback } from "@repo/ui/avatar";
 import { Button } from "@repo/ui/button";
 import {
@@ -39,12 +40,6 @@ import { NotificationsPopover } from "./notifications-popover";
 
 /** Default issue tracker for self-hosted "Report an issue"; override per deployment. */
 const DEFAULT_ISSUES_URL = "https://github.com/alethialabs-io/alethia/issues/new";
-
-/** Two-letter initials for the avatar fallback, from the user's email. */
-function userInitials(email?: string | null): string {
-	if (!email) return "U";
-	return email.slice(0, 2).toUpperCase();
-}
 
 /**
  * The pinned bottom bar of the sidebar: avatar + username, a three-dot button that opens
@@ -81,11 +76,11 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
 			<div className="flex min-w-0 flex-1 items-center gap-2.5 px-1.5 py-1.5">
 				<Avatar className="h-7 w-7">
 					<AvatarFallback className="bg-muted text-[10px] font-medium text-muted-foreground">
-						{userInitials(user?.email)}
+						{userInitials(user)}
 					</AvatarFallback>
 				</Avatar>
 				<span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
-					{user?.name ?? "User"}
+					{displayName(user)}
 				</span>
 			</div>
 
@@ -104,7 +99,7 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
 						<div className="flex items-center gap-2">
 							<div className="flex min-w-0 flex-1 flex-col space-y-1">
 								<p className="truncate text-sm font-medium leading-none">
-									{user?.name ?? "User"}
+									{displayName(user)}
 								</p>
 								<p className="truncate text-xs leading-none text-muted-foreground">
 									{user?.email ?? "Loading…"}

@@ -5,8 +5,15 @@
 
 import { Check, Copy } from "lucide-react";
 import { useCallback, useState } from "react";
+import { cn } from "./utils";
 
-export function CopyButton({ text }: { text: string }) {
+export function CopyButton({
+	text,
+	className,
+}: {
+	text: string;
+	className?: string;
+}) {
 	const [copied, setCopied] = useState(false);
 
 	const handleCopy = useCallback(() => {
@@ -17,8 +24,12 @@ export function CopyButton({ text }: { text: string }) {
 
 	return (
 		<button
+			type="button"
 			onClick={handleCopy}
-			className="text-muted-foreground hover:text-foreground transition-colors"
+			className={cn(
+				"text-muted-foreground transition-colors hover:text-foreground",
+				className,
+			)}
 			aria-label="Copy to clipboard"
 		>
 			{copied ? (

@@ -2,10 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { authorize, currentActor } from "@/lib/authz/guard";
-import { getOwner } from "@/lib/auth/owner";
-import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
+import { getServiceDb, withScope } from "@/lib/db";
 import {
 	account,
 	cloudIdentities,
@@ -17,7 +16,7 @@ import type { CredentialScope } from "@/lib/db/schema/enums";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import { verifyConnectorCredential as pingConnector } from "@/lib/connectors/verify";
-import type { ConnectorCredentials } from "@/types/database-custom.types";
+import type { ConnectorCredentials } from "@/types/jsonb.types";
 
 export type ConnectorCategory = Connector["category"];
 export type ConnectorAuthMethod = Connector["auth_method"];
@@ -38,12 +37,51 @@ export type ConnectorConnectionDetails = {
 
 export type GitTokenHealth = "healthy" | "expired" | "refresh_failed";
 
+/** The four presentation groups the connectors page renders (from the design). */
+export type ConnectorGroup = "clouds" | "secrets" | "registries" | "apps";
+
+/** One connected cloud account (a verified cloud_identity row). */
+export type CloudAccount = {
+	identityId: string;
+	name: string;
+	/** Short descriptor — account id / project / subscription. */
+	label?: string;
+};
+
+/** Maps a catalog category to its presentation group on the connectors page. */
+function groupForCategory(category: ConnectorCategory): ConnectorGroup {
+	switch (category) {
+		case "cloud":
+			return "clouds";
+		case "secrets":
+			return "secrets";
+		case "registry":
+			return "registries";
+		default:
+			// git, observability, dns → external app/service connections
+			return "apps";
+	}
+}
+
 export type ConnectorWithConnection = Connector & {
 	connected: boolean;
 	connection_details: ConnectorConnectionDetails | null;
 	token_health?: GitTokenHealth;
 	/** Visibility of the backing credential (cloud / api_key). Undefined for git. */
 	scope?: CredentialScope;
+	/** The presentation group (clouds / secrets / registries / apps). */
+	group: ConnectorGroup;
+	/** Connected accounts for cloud connectors (a provider can hold several). */
+	accounts?: CloudAccount[];
+	/**
+	 * For a not-yet-connected cloud connector whose latest verification is in flight
+	 * or failed — drives the "Verifying…" / "Verification failed → Re-verify" states.
+	 */
+	cloud_health?: "testing" | "failed";
+	/** The last verification error (set when `cloud_health === "failed"`). */
+	last_error?: string;
+	/** The cloud identity to re-verify (for a failed/testing cloud connector). */
+	reverify_identity_id?: string;
 };
 
 /** Connectors catalog + the current user's connection status per connector. */
@@ -84,6 +122,7 @@ export async function getConnectorsWithStatus(): Promise<
 				tx
 					.select({
 						id: cloudIdentities.id,
+						name: cloudIdentities.name,
 						provider: cloudIdentities.provider,
 						credentials: cloudIdentities.credentials,
 						scope: cloudIdentities.scope,
@@ -92,6 +131,37 @@ export async function getConnectorsWithStatus(): Promise<
 					.where(eq(cloudIdentities.is_verified, true)),
 			)
 		: [];
+
+	// Latest non-verified cloud identity per provider — drives the "Verifying…" /
+	// "Verification failed → Re-verify" treatment for connectors with no connected
+	// account yet. Newest first so the first seen per provider is the latest attempt.
+	const cloudHealthRows = scope
+		? await withScope({ ownerId: scope.userId, orgId: scope.orgId }, (tx) =>
+				tx
+					.select({
+						id: cloudIdentities.id,
+						provider: cloudIdentities.provider,
+						status: cloudIdentities.status,
+						last_error: cloudIdentities.last_error,
+					})
+					.from(cloudIdentities)
+					.where(eq(cloudIdentities.is_verified, false))
+					.orderBy(desc(cloudIdentities.updated_at)),
+			)
+		: [];
+	const cloudHealthByProvider = new Map<
+		string,
+		{ status: string; last_error: string | null; identityId: string }
+	>();
+	for (const r of cloudHealthRows) {
+		if (!cloudHealthByProvider.has(r.provider)) {
+			cloudHealthByProvider.set(r.provider, {
+				status: r.status,
+				last_error: r.last_error,
+				identityId: r.id,
+			});
+		}
+	}
 
 	// api_key connector credentials (dns/secrets/registry/observability), keyed by
 	// connector slug. Secrets stay encrypted here — only `is_verified` is needed.
@@ -130,8 +200,16 @@ export async function getConnectorsWithStatus(): Promise<
 		}
 	}
 
+	/** Builds the short account descriptor shown on a cloud account row. */
+	const accountLabel = (creds: typeof cloudIdentityRows[number]["credentials"]) =>
+		creds?.account_id ??
+		creds?.project_id ??
+		creds?.subscription_id ??
+		undefined;
+
 	return catalog.map((connector): ConnectorWithConnection => {
 		const slug = connector.slug;
+		const group = groupForCategory(connector.category);
 
 		if (connector.category === "git") {
 			const connected = tokens.has(slug);
@@ -139,6 +217,7 @@ export async function getConnectorsWithStatus(): Promise<
 			// table in D6; connected + token_health drive the UI meanwhile.
 			return {
 				...connector,
+				group,
 				connected,
 				connection_details: null,
 				token_health: connected ? tokenHealth.get(slug) : undefined,
@@ -146,13 +225,22 @@ export async function getConnectorsWithStatus(): Promise<
 		}
 
 		if (connector.category === "cloud") {
-			const cloud = cloudIdentityRows.find((ci) => ci.provider === slug);
-			if (cloud) {
-				const creds = cloud.credentials;
+			// A provider can hold several accounts — collect them all (org-scoped).
+			const rows = cloudIdentityRows.filter((ci) => ci.provider === slug);
+			if (rows.length > 0) {
+				const accounts: CloudAccount[] = rows.map((ci) => ({
+					identityId: ci.id,
+					name: ci.name,
+					label: accountLabel(ci.credentials),
+				}));
+				const primary = rows[0];
+				const creds = primary.credentials;
 				return {
 					...connector,
+					group,
 					connected: true,
-					scope: cloud.scope,
+					scope: primary.scope,
+					accounts,
 					connection_details: {
 						account_id: creds?.account_id ?? undefined,
 						role_arn: creds?.role_arn ?? undefined,
@@ -160,10 +248,30 @@ export async function getConnectorsWithStatus(): Promise<
 						service_account_email: creds?.service_account_email ?? undefined,
 						tenant_id: creds?.tenant_id ?? undefined,
 						subscription_id: creds?.subscription_id ?? undefined,
-						cloud_identity_id: cloud.id,
+						cloud_identity_id: primary.id,
 					},
 				};
 			}
+			const health = cloudHealthByProvider.get(slug);
+			const cloud_health =
+				health?.status === "failed"
+					? "failed"
+					: health?.status === "testing"
+						? "testing"
+						: undefined;
+			return {
+				...connector,
+				group,
+				connected: false,
+				accounts: [],
+				connection_details: null,
+				cloud_health,
+				last_error:
+					cloud_health === "failed"
+						? (health?.last_error ?? undefined)
+						: undefined,
+				reverify_identity_id: cloud_health ? health?.identityId : undefined,
+			};
 		}
 
 		// api_key pluggable providers (dns/secrets/registry/observability).
@@ -171,6 +279,7 @@ export async function getConnectorsWithStatus(): Promise<
 			const cred = credentialBySlug.get(slug);
 			return {
 				...connector,
+				group,
 				connected: true,
 				scope: cred?.scope,
 				connection_details: null,
@@ -178,7 +287,7 @@ export async function getConnectorsWithStatus(): Promise<
 			};
 		}
 
-		return { ...connector, connected: false, connection_details: null };
+		return { ...connector, group, connected: false, connection_details: null };
 	});
 }
 
@@ -188,7 +297,7 @@ export type ConnectorCredentialResult =
 
 /**
  * Splits submitted fields into non-secret (plaintext) + secret (encrypted)
- * groups per the provider's registry credential spec, builds the stored envelope,
+ * groups per the provider's registry credential project, builds the stored envelope,
  * pings the provider to verify, and upserts the connector_credentials row. Returns
  * whether the credential verified; an unverified credential is still saved.
  */
@@ -196,8 +305,7 @@ export async function saveConnectorCredential(
 	slug: string,
 	fields: Record<string, string>,
 ): Promise<ConnectorCredentialResult> {
-	const userId = await getOwner();
-	if (!userId) return { ok: false, error: "Not authenticated." };
+	const actor = await authorize("manage_connectors", { type: "connector" });
 
 	const provider = getConnectorProviderBySlug(slug);
 	if (!provider) return { ok: false, error: `Unknown connector: ${slug}` };
@@ -245,25 +353,26 @@ export async function saveConnectorCredential(
 		};
 	}
 
-	// New credentials are created `personal` (author-only). Sharing with the org is an
-	// explicit, PDP-guarded action (setConnectorCredentialScope). The conflict target is
-	// the personal partial-unique index, so the targetWhere mirrors its predicate.
-	await withOwnerScope(userId, (tx) =>
+	// Connectors are org-scoped: a saved credential is shared with the whole org (subject
+	// to the manage_connectors permission, enforced above). The conflict target is the
+	// org partial-unique index, so the targetWhere mirrors its predicate.
+	await withScope({ ownerId: actor.userId, orgId: actor.orgId }, (tx) =>
 		tx
 			.insert(connectorCredentials)
 			.values({
-				user_id: userId,
+				user_id: actor.userId,
+				org_id: actor.orgId,
 				connector_id: connector.id,
-				scope: "personal",
+				scope: "org",
 				credentials,
 				is_verified: verdict.ok,
 			})
 			.onConflictDoUpdate({
 				target: [
-					connectorCredentials.user_id,
+					connectorCredentials.org_id,
 					connectorCredentials.connector_id,
 				],
-				targetWhere: sql`scope = 'personal'`,
+				targetWhere: sql`scope = 'org'`,
 				set: {
 					credentials,
 					is_verified: verdict.ok,
@@ -279,8 +388,7 @@ export async function saveConnectorCredential(
 export async function deleteConnectorCredential(
 	slug: string,
 ): Promise<{ ok: boolean; error?: string }> {
-	const userId = await getOwner();
-	if (!userId) return { ok: false, error: "Not authenticated." };
+	const actor = await authorize("manage_connectors", { type: "connector" });
 
 	const [connector] = await getServiceDb()
 		.select({ id: connectorsTable.id })
@@ -289,10 +397,9 @@ export async function deleteConnectorCredential(
 		.limit(1);
 	if (!connector) return { ok: false, error: `Connector not in catalog: ${slug}` };
 
-	// Ownership is enforced by withOwnerScope + RLS (scoped_all); filter by the
-	// resource key only — an explicit user_id predicate is redundant and trips
-	// check:authz-scope.
-	await withOwnerScope(userId, (tx) =>
+	// Tenancy is enforced by withScope + RLS (scoped_all); filter by the resource key
+	// only — an explicit org_id predicate is redundant and trips check:authz-scope.
+	await withScope({ ownerId: actor.userId, orgId: actor.orgId }, (tx) =>
 		tx
 			.delete(connectorCredentials)
 			.where(eq(connectorCredentials.connector_id, connector.id)),
@@ -303,7 +410,7 @@ export async function deleteConnectorCredential(
 /**
  * Shares an api_key connector credential with the whole org (scope='org') or pulls it
  * back to personal. Managing org credentials is a PDP `manage_connectors` action — so
- * it also flows through the audit/alert chokepoint. Promotes the caller's personal row;
+ * it also flows through the activity/alert chokepoint. Promotes the caller's personal row;
  * demotes the org row back to its author.
  */
 export async function setConnectorCredentialScope(

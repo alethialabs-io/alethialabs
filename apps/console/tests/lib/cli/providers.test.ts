@@ -7,6 +7,16 @@ vi.mock("@/lib/cli/auth", () => ({
 	verifyCliToken: vi.fn(),
 }));
 
+// Cloud connections are org-scoped: resolveCliProvider resolves the actor's scope.
+// Stub it so the pure provider-resolution logic stays DB-free in this unit test.
+vi.mock("@/lib/auth/scope", () => ({
+	getActiveScope: vi.fn(async (userId: string) => ({
+		userId,
+		orgId: userId,
+		entitlements: {},
+	})),
+}));
+
 import { verifyCliToken } from "@/lib/cli/auth";
 import {
 	errorResponse,
@@ -96,6 +106,11 @@ describe("resolveCliProvider", () => {
 		expect(result.errorResponse).toBeNull();
 		expect(result.userId).toBe("user-123");
 		expect(result.provider).toBe("gcp");
+		expect(result.scope).toEqual({
+			userId: "user-123",
+			orgId: "user-123",
+			entitlements: {},
+		});
 	});
 
 	it("returns 401 when the payload has no subject", async () => {

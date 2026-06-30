@@ -5,7 +5,7 @@
 import type { ToolUIPart, UIMessage } from "ai";
 import { PanelRight, Telescope } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import {
 	createThread,
@@ -38,7 +38,7 @@ const SUGGESTIONS = [
 	"Show my recent provisioning jobs",
 ];
 
-const specIdSchema = z.object({ specId: z.string() });
+const projectIdSchema = z.object({ projectId: z.string() });
 const jobIdSchema = z.object({ jobId: z.string() });
 const scanResultSchema = z.object({ openInCanvasUrl: z.string().optional() });
 
@@ -57,6 +57,17 @@ export default function AgentPage() {
 	const [active, setActive] = useState<ActiveThread | null>(null);
 	const [mode, setMode] = useState<AgentMode>("ask");
 	const [model, setModel] = useState(AI_MODELS[0].id);
+	// A prompt handed off from the create-project hero (`?prompt=`) — auto-sent into the
+	// freshest thread once, then stripped from the URL so a refresh doesn't resend it.
+	const [seedPrompt, setSeedPrompt] = useState<string | null>(null);
+
+	useEffect(() => {
+		const p = new URLSearchParams(window.location.search).get("prompt");
+		if (p) {
+			setSeedPrompt(p);
+			window.history.replaceState(null, "", window.location.pathname);
+		}
+	}, []);
 
 	const selectThread = useCallback(async (id: string) => {
 		const full = await getThread(id);
@@ -137,6 +148,7 @@ export default function AgentPage() {
 						threadId={active.id}
 						initialMessages={active.messages}
 						onFirstMessage={handleFirstMessage}
+						initialPrompt={seedPrompt}
 						mode={mode}
 						model={model}
 					/>
@@ -160,12 +172,15 @@ function AgentChatPane({
 	threadId,
 	initialMessages,
 	onFirstMessage,
+	initialPrompt,
 	mode,
 	model,
 }: {
 	threadId: string;
 	initialMessages: UIMessage[];
 	onFirstMessage: (id: string, text: string) => void;
+	/** Prompt handed off from the create-project hero; auto-sent once into an empty thread. */
+	initialPrompt?: string | null;
 	mode: AgentMode;
 	model: string;
 }) {
@@ -181,7 +196,16 @@ function AgentChatPane({
 		prepareBody,
 	});
 
-	// propose_operation → approval card; spec/job results → Open-in-panel; else default.
+	// Auto-send the create-project hero prompt once, into an otherwise-empty thread.
+	const seededRef = useRef(false);
+	useEffect(() => {
+		if (seededRef.current || !initialPrompt || messages.length > 0) return;
+		seededRef.current = true;
+		onFirstMessage(threadId, initialPrompt);
+		sendMessage({ text: initialPrompt });
+	}, [initialPrompt, messages.length, threadId, onFirstMessage, sendMessage]);
+
+	// propose_operation → approval card; project/job results → Open-in-panel; else default.
 	const renderToolPart = useCallback(
 		(part: ToolUIPart) => {
 			if (part.type === "tool-propose_operation") {
@@ -191,7 +215,7 @@ function AgentChatPane({
 				return <ApprovalCard proposal={parsed.data} />;
 			}
 
-			// Repo scan ready → an "Open in canvas" link to review the proposed spec.
+			// Repo scan ready → an "Open in canvas" link to review the proposed project.
 			if (part.type === "tool-get_scan_result" && part.state === "output-available") {
 				const parsed = scanResultSchema.safeParse(part.output);
 				if (parsed.success && parsed.data.openInCanvasUrl) {
@@ -216,11 +240,11 @@ function AgentChatPane({
 			}
 
 			let onOpen: (() => void) | undefined;
-			if (part.type === "tool-get_spec") {
-				const p = specIdSchema.safeParse(part.input);
+			if (part.type === "tool-get_project") {
+				const p = projectIdSchema.safeParse(part.input);
 				if (p.success) {
-					const id = p.data.specId;
-					onOpen = () => openArtifact({ specId: id }, "config");
+					const id = p.data.projectId;
+					onOpen = () => openArtifact({ projectId: id }, "config");
 				}
 			} else if (
 				part.type === "tool-get_job" ||

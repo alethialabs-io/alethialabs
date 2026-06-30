@@ -4,7 +4,7 @@
 
 
 import { Button } from "@repo/ui/button";
-import { AddRunnerSheet } from "@/components/runners/add-runner-sheet";
+import { AddRunnerDialog } from "@/components/runners/add-runner-dialog";
 import { Plus } from "lucide-react";
 import { useState } from "react";
 
@@ -14,15 +14,14 @@ export function AddRunnerButton() {
 	return (
 		<>
 			<Button
-				variant="outline"
 				size="sm"
-				className="h-9 text-xs font-medium"
+				className="h-9 gap-1.5 text-xs font-medium"
 				onClick={() => setOpen(true)}
 			>
-				<Plus className="mr-2 h-3.5 w-3.5" />
-				Add Runner
+				<Plus className="h-3.5 w-3.5" />
+				Add runner
 			</Button>
-			<AddRunnerSheet open={open} onOpenChange={setOpen} />
+			<AddRunnerDialog open={open} onOpenChange={setOpen} />
 		</>
 	);
 }

@@ -5,7 +5,7 @@ import type { BetterAuthOptions } from "better-auth";
 import { getEnterprise } from "@/lib/enterprise";
 
 /**
- * Extra Better Auth plugins contributed by the enterprise build (spec 07 Part F,
+ * Extra Better Auth plugins contributed by the enterprise build (project 07 Part F,
  * seam 3) — `organization()` + SSO. Community returns `[]`. The core community
  * plugins (emailOTP, genericOAuth, nextCookies) stay in lib/auth/index.ts; this
  * only appends the enterprise ones.

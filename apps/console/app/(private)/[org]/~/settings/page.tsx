@@ -3,12 +3,12 @@
 
 import { redirect } from "next/navigation";
 
-/** /{org}/~/settings → the first section (Roles is available in every edition). */
+/** /{org}/~/settings → General, the first section (always available on every plan). */
 export default async function SettingsIndex({
 	params,
 }: {
 	params: Promise<{ org: string }>;
 }) {
 	const { org } = await params;
-	redirect(`/${org}/~/settings/roles`);
+	redirect(`/${org}/~/settings/general`);
 }

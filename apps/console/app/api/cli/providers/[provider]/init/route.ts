@@ -11,7 +11,7 @@ export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ provider: string }> },
 ) {
-	const { userId, provider, errorResponse: authError } =
+	const { userId, scope, provider, errorResponse: authError } =
 		await resolveCliProvider(req, params);
 	if (authError) return authError;
 
@@ -21,7 +21,7 @@ export async function POST(
 	if (forbid) return forbid;
 
 	try {
-		const result = await conn.initIdentity(userId, provider);
+		const result = await conn.initIdentity(scope, provider);
 		return NextResponse.json({
 			identity_id: result.identityId,
 			external_id: result.externalId ?? null,

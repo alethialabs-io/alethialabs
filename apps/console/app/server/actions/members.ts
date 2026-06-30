@@ -26,6 +26,7 @@ export interface MemberRow {
 	id: string;
 	userId: string;
 	name: string | null;
+	username: string | null;
 	email: string;
 	image: string | null;
 	role: string;
@@ -52,6 +53,7 @@ export async function getMembers(): Promise<MemberRow[]> {
 			id: member.id,
 			userId: user.id,
 			name: user.name,
+			username: user.username,
 			email: user.email,
 			image: user.image,
 			role: member.role,
@@ -68,6 +70,7 @@ export async function getMembers(): Promise<MemberRow[]> {
 			.select({
 				id: user.id,
 				name: user.name,
+				username: user.username,
 				email: user.email,
 				image: user.image,
 				createdAt: user.createdAt,
@@ -81,6 +84,7 @@ export async function getMembers(): Promise<MemberRow[]> {
 				id: u.id,
 				userId: u.id,
 				name: u.name,
+				username: u.username,
 				email: u.email,
 				image: u.image,
 				role: "owner",

@@ -11,7 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getProject, deleteProject } from "@/app/server/actions/projects";
 import { DuplicateModal } from "@/components/project-detail/duplicate-modal";
-import { useProjectsStore } from "@/lib/stores/use-projects-store";
+import { useRefreshProjects } from "@/lib/query/use-projects-query";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { orgHref } from "@/lib/routing";
 import { usePlan } from "@/components/plan/use-plan";
@@ -52,7 +52,7 @@ interface ProjectDetailViewProps {
 export function ProjectDetailView({ projectId, envName }: ProjectDetailViewProps) {
 	const router = useRouter();
 	const orgSlug = useActiveOrgSlug();
-	const { removeProject } = useProjectsStore();
+	const refreshProjects = useRefreshProjects();
 	const [detail, setDetail] = useState<ProjectData | null>(null);
 
 	const refreshDetail = useCallback(() => {
@@ -126,7 +126,7 @@ export function ProjectDetailView({ projectId, envName }: ProjectDetailViewProps
 		if (!confirm("Delete this project and all its components?")) return;
 		try {
 			await deleteProject(projectId);
-			removeProject(projectId);
+			refreshProjects();
 			toast.success("Project deleted");
 			router.push(orgHref(orgSlug));
 		} catch (err) {
@@ -185,7 +185,7 @@ export function ProjectDetailView({ projectId, envName }: ProjectDetailViewProps
 								<ArrowRightLeft className="h-3.5 w-3.5 mr-2" />
 								Quick Duplicate
 							</DropdownMenuItem>
-							<DropdownMenuItem onClick={() => router.push(`/dashboard/design-project?source=${projectId}`)}>
+							<DropdownMenuItem onClick={() => router.push("/dashboard/new")}>
 								<Copy className="h-3.5 w-3.5 mr-2" />
 								Duplicate &amp; Edit
 							</DropdownMenuItem>

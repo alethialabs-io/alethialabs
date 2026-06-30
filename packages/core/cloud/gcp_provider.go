@@ -110,6 +110,9 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		if db.EngineVersion != "" {
 			tfvars["cloud_sql_engine_version"] = db.EngineVersion
 		}
+		if db.InstanceClass != "" {
+			tfvars["cloud_sql_tier"] = db.InstanceClass
+		}
 		if db.Port != nil {
 			tfvars["cloud_sql_port"] = *db.Port
 		}
@@ -128,6 +131,9 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		}
 		if cache.Engine != "" {
 			tfvars["memorystore_engine"] = cache.Engine
+		}
+		if cache.EngineVersion != "" {
+			tfvars["memorystore_redis_version"] = cache.EngineVersion
 		}
 		if cache.NodeType != "" {
 			tfvars["memorystore_instance_type"] = cache.NodeType
@@ -149,10 +155,18 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	if config.Cluster.NodeDesiredSize > 0 {
 		tfvars["gke_node_desired_size"] = config.Cluster.NodeDesiredSize
 	}
+	if config.Cluster.NodeDiskSizeGB != nil {
+		tfvars["gke_disk_size_gb"] = *config.Cluster.NodeDiskSizeGB
+	}
 
 	if !provisionNetwork && config.Network.NetworkID != "" {
 		tfvars["network_id"] = config.Network.NetworkID
 	}
+
+	// Generic passthrough — see mergeProviderConfig (aws_provider.go). Reserved keys
+	// are consumed above under a different tfvar name.
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, "enable_autopilot")
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "cloud_armor", "managed_certificate")
 
 	return tfvars
 }

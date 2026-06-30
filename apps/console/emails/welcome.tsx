@@ -15,7 +15,7 @@ interface WelcomeEmailProps {
 const STEPS = [
 	{
 		n: "01",
-		title: "Create a Spec.",
+		title: "Create a Project.",
 		body: "Open the console and walk the guided sections into your first cluster.",
 	},
 	{
@@ -26,7 +26,7 @@ const STEPS = [
 	{
 		n: "03",
 		title: "Read the docs.",
-		body: "Architecture, the Zones & Specs model, and provider setup for AWS, GCP, and Azure.",
+		body: "Architecture, the Projects model, and provider setup for AWS, GCP, and Azure.",
 	},
 ] as const;
 
@@ -36,7 +36,7 @@ export function WelcomeEmail({
 }: WelcomeEmailProps) {
 	return (
 		<EmailLayout
-			preview="Your Alethia control plane is ready — design your first spec."
+			preview="Your Alethia control plane is ready — design your first project."
 			legal={
 				<>
 					You&apos;re receiving this because you created an Alethia
@@ -80,7 +80,7 @@ export function WelcomeEmail({
 				runs.
 			</Text>
 			<Text className="a-text-2" style={{ ...text.body, marginBottom: "22px" }}>
-				Sign in to the console to design your first spec, or pick up the
+				Sign in to the console to design your first project, or pick up the
 				CLI:
 			</Text>
 

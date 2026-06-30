@@ -36,6 +36,11 @@ variable "vnet_cidr" {
   type        = string
   default     = "10.0.0.0/16"
   description = "Primary CIDR range for the Virtual Network"
+
+  validation {
+    condition     = can(cidrhost(var.vnet_cidr, 0))
+    error_message = "vnet_cidr must be a valid IPv4 CIDR, e.g. 10.0.0.0/16."
+  }
 }
 
 variable "vnet_id" {
@@ -70,6 +75,11 @@ variable "aks_instance_types" {
   type        = list(string)
   default     = ["Standard_D4s_v5"]
   description = "VM sizes for the AKS default node pool"
+
+  validation {
+    condition     = length(var.aks_instance_types) > 0
+    error_message = "aks_instance_types must list at least one VM size."
+  }
 }
 
 variable "aks_node_min_size" {
@@ -82,6 +92,11 @@ variable "aks_node_max_size" {
   type        = number
   default     = 5
   description = "Maximum number of nodes in the AKS node pool"
+
+  validation {
+    condition     = var.aks_node_max_size >= var.aks_node_min_size
+    error_message = "aks_node_max_size must be >= aks_node_min_size."
+  }
 }
 
 variable "aks_node_desired_size" {
@@ -94,6 +109,11 @@ variable "aks_disk_size_gb" {
   type        = number
   default     = 100
   description = "Size of the OS disk attached to each AKS node (GB)"
+
+  validation {
+    condition     = var.aks_disk_size_gb >= 30
+    error_message = "aks_disk_size_gb must be at least 30 GB (Azure OS-disk minimum)."
+  }
 }
 
 #########################################################################
@@ -246,9 +266,9 @@ variable "cosmos_db_consistency_level" {
 
 variable "cosmos_db_collections" {
   type = list(object({
-    name          = string
-    partition_key = optional(string, "/id")
-    billing_mode  = optional(string, "PAY_PER_REQUEST")
+    name                       = string
+    partition_key              = optional(string, "/id")
+    billing_mode               = optional(string, "PAY_PER_REQUEST")
     analytical_storage_enabled = optional(bool, false)
   }))
   default     = []

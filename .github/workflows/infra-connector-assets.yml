@@ -1,0 +1,79 @@
+name: Infra - Connector Assets
+
+on:
+  pull_request:
+    paths:
+      - 'infra/connector-assets/**'
+      - 'infra/connector/**'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/connector-assets/**'
+      - 'infra/connector/**'
+
+permissions:
+  contents: read
+
+env:
+  TF_DIR: infra/connector-assets
+  TOFU_VERSION: "1.10.10"
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: OpenTofu Validate (no backend, no creds)
+        working-directory: ${{ env.TF_DIR }}
+        # PR plans are validate-only: no backend, no cloud/state creds reach a PR
+        # job (the repo is contributor-facing). Real plan+apply run on main.
+        run: |
+          tofu init -backend=false
+          tofu validate
+
+      - name: IaC checks (fmt + tflint + Trivy)
+        uses: ./.github/actions/iac-checks
+        with:
+          working-directory: ${{ env.TF_DIR }}
+
+  apply:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # assume the deploy role via GitHub OIDC — no stored AWS keys
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      # Least-privilege deploy role from infra/connector-assets/bootstrap (its ARN is
+      # a non-secret Actions variable). Sets AWS_* env for the OpenTofu provider. The
+      # bucket lives in eu-west-1; state lives in eu-central-1 (configured below).
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.CONNECTOR_ASSETS_DEPLOYER_ROLE_ARN }}
+          aws-region: eu-west-1
+
+      - name: OpenTofu Init
+        working-directory: ${{ env.TF_DIR }}
+        # AWS S3 backend in the same account — the assumed OIDC deploy role
+        # authenticates the backend too, so there are no static state keys.
+        run: |
+          tofu init -upgrade \
+            -backend-config="bucket=alethia-tofu-state-270587882865" \
+            -backend-config="key=connector-assets/terraform.tfstate" \
+            -backend-config="region=eu-central-1" \
+            -backend-config="use_lockfile=true"
+
+      - name: OpenTofu Apply
+        working-directory: ${{ env.TF_DIR }}
+        run: tofu apply -auto-approve

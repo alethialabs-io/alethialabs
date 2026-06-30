@@ -14,7 +14,10 @@ import {
 	timestamp,
 	uuid,
 } from "drizzle-orm/pg-core";
-import type { ExecutionMetadata } from "@/types/jsonb.types";
+import type {
+	ExecutionMetadata,
+	VerifyOverrideInput,
+} from "@/types/jsonb.types";
 import {
 	cloudProvider,
 	logStreamType,
@@ -80,6 +83,9 @@ export const jobs = pgTable(
 		usage_reported_at: timestamp({ withTimezone: true }),
 		error_message: text(),
 		execution_metadata: jsonb().$type<ExecutionMetadata>(),
+		// Authorized, time-boxed waiver of failing verification controls for this
+		// DEPLOY job (elench). NULL = no waiver (any hard control failure blocks apply).
+		verify_override: jsonb().$type<VerifyOverrideInput>(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},

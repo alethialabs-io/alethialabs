@@ -5,7 +5,7 @@ import type { Actor, Entitlements } from "@/lib/authz/types";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 
 /**
- * Feature entitlements for a scope (spec 07 Part F, seam 5). Entitlements are
+ * Feature entitlements for a scope (project 07 Part F, seam 5). Entitlements are
  * resolved once — asynchronously — when the actor's scope is built (getActiveScope →
  * the ee/ per-org resolver, which reads the org's billing record / signed license),
  * and attached to the actor. This accessor just reads them synchronously, so call

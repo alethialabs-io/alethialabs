@@ -2,57 +2,66 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// "Create organization" slide-over — a 2-column form (details / plan / team) + a live
-// order-summary rail, then an embedded payment step. Composed from shadcn/ui + Tailwind
-// tokens (no CSS module). react-hook-form + zod validation. Community = a free org; paid
-// = the in-app Payment + Address Element (Stripe Tax computes VAT from the address).
-// Address/VAT/cards are managed later in the Stripe Customer Portal.
+// Create a paid Pro organization — a two-column purchase modal:
+//   • LEFT (persistent): the "What's included" checklist (PlanChecklist).
+//   • RIGHT (progressive): State 1 = team name → State 2 = the shared BillingCheckoutForm
+//     (split-card payment). Then a third "invite" view after the org exists.
+// The org is created ONLY after the card is confirmed (deferred create:
+// createNewOrgSubscriptionIntent → confirmCardPayment → linkSubscriptionToNewOrg), so a
+// Stripe failure can never orphan an org. If the account still holds its one trial, a
+// card-less "Start trial" path creates a solo trial org instead (trials can't invite).
+// The two-column shell, invite view, and small form primitives are shared with the
+// upgrade-org sheet via ./org-purchase-ui.
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowRight, Check, Info, Plus, Users, X } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useEffect, useState } from "react";
+import { type UseFormReturn, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import {
+	attachTaxIdToCustomer,
 	createNewOrgSubscriptionIntent,
+	getProOffer,
 	isOrgSlugAvailable,
 	linkSubscriptionToNewOrg,
+	type ProOffer,
+	setCustomerBillingAddress,
+	startProTrial,
 } from "@/app/server/actions/billing";
+import { updateOrgPrimaryAddress } from "@/app/server/actions/org-settings";
 import { setActiveOrganization } from "@/app/server/actions/workspace";
-import { PaymentForm } from "@/components/billing/payment-form";
+import {
+	billingAddressFrom,
+	BillingCheckoutForm,
+	type CollectedBilling,
+} from "@/components/billing/billing-checkout-form";
+import {
+	Field,
+	InviteView,
+	isValidInviteEmail,
+	PurchaseLayout,
+	type Role,
+	type SentInvite,
+} from "@/components/org/org-purchase-ui";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
+import { authClient } from "@/lib/auth/client";
+import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
+import { orgHost, slugify } from "@/lib/org-url";
+import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
+import { planMeta } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@repo/ui/select";
 import {
 	Sheet,
 	SheetContent,
 	SheetDescription,
 	SheetTitle,
 } from "@repo/ui/sheet";
-import { authClient } from "@/lib/auth/client";
-import { planMeta } from "@repo/plan-catalog";
-import type { BillingPlan } from "@/lib/db/schema/enums";
-import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
-import { cn } from "@repo/ui/utils";
-
-const ROLES = ["admin", "operator", "viewer"] as const;
-type Role = (typeof ROLES)[number];
-interface Invite {
-	email: string;
-	role: Role;
-}
 
 const schema = z.object({
-	name: z.string().trim().min(2, "Give your organization a name."),
+	name: z.string().trim().min(2, "Give your team a name."),
 	slug: z
 		.string()
 		.trim()
@@ -61,83 +70,7 @@ const schema = z.object({
 });
 type FormData = z.infer<typeof schema>;
 
-const CARDS: {
-	id: BillingPlan;
-	who: string;
-	price: string;
-	per: string | null;
-	custom?: boolean;
-	billed: string;
-	recommended?: boolean;
-}[] = [
-	{
-		id: "community",
-		who: "Solo, homelab & self-hosters who own their stack",
-		price: "Free",
-		per: null,
-		billed: "AGPL · self-hosted",
-	},
-	{
-		id: "team",
-		who: "Small teams that want a shared, hosted control plane",
-		price: "$29",
-		per: "/seat·mo",
-		billed: "Hosted · billed per seat",
-		recommended: true,
-	},
-	{
-		id: "enterprise",
-		who: "Regulated & large teams needing SSO, audit & SLA",
-		price: "Let's talk",
-		per: null,
-		custom: true,
-		billed: "Annual contract · self-managed option",
-	},
-];
-
-function initials(name: string): string {
-	const parts = name.trim().split(/\s+/).filter(Boolean);
-	if (!parts.length) return "OR";
-	return ((parts[0][0] ?? "") + (parts[1] ? parts[1][0] : (parts[0][1] ?? "")))
-		.toUpperCase()
-		.padEnd(2, parts[0][0]?.toUpperCase() ?? "R");
-}
-function slugify(s: string): string {
-	return s
-		.toLowerCase()
-		.trim()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "");
-}
-function money(n: number): string {
-	return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-/** A compact role <select> on the shadcn Select primitive. */
-function RoleField({
-	value,
-	onChange,
-	className,
-}: {
-	value: Role;
-	onChange: (role: Role) => void;
-	className?: string;
-}) {
-	return (
-		<Select value={value} onValueChange={(v) => onChange(v as Role)}>
-			<SelectTrigger size="sm" aria-label="Role" className={cn("capitalize", className)}>
-				<SelectValue />
-			</SelectTrigger>
-			<SelectContent>
-				{ROLES.map((r) => (
-					<SelectItem key={r} value={r} className="capitalize">
-						{r}
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
-	);
-}
+type View = "name" | "pay" | "invite";
 
 interface CreateOrgSheetProps {
 	open: boolean;
@@ -147,6 +80,8 @@ interface CreateOrgSheetProps {
 export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const router = useRouter();
 	const fetchWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
+	const { data: session } = authClient.useSession();
+	const ownerEmail = session?.user?.email ?? "";
 
 	const form = useForm<FormData>({
 		resolver: zodResolver(schema),
@@ -157,110 +92,130 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const slug = form.watch("slug");
 
 	const [slugTouched, setSlugTouched] = useState(false);
-	const [step, setStep] = useState<"details" | "payment">("details");
-	const [plan, setPlan] = useState<BillingPlan>("team");
-	const [invites, setInvites] = useState<Invite[]>([]);
+	const [showUrl, setShowUrl] = useState(false);
+	const [view, setView] = useState<View>("name");
+	const [offer, setOffer] = useState<ProOffer | null>(null);
+	const [busy, setBusy] = useState(false);
+
+	// Deferred-create payment refs (carried across a Back→retry so neither the customer
+	// nor the incomplete subscription duplicates in Stripe).
+	const [clientSecret, setClientSecret] = useState<string | null>(null);
+	const [customerId, setCustomerId] = useState<string | null>(null);
+	const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
+	const [createdOrgId, setCreatedOrgId] = useState<string | null>(null);
+	const [createdSlug, setCreatedSlug] = useState("");
+	// Payment succeeded but the org create / link then failed — offer a retry (no second
+	// charge) rather than the payment form. `lastBilling` lets the retry re-run setup.
+	const [needsSetupRetry, setNeedsSetupRetry] = useState(false);
+	const [lastBilling, setLastBilling] = useState<CollectedBilling | null>(null);
+
+	// Invite step.
+	const [isTrialOrg, setIsTrialOrg] = useState(false);
 	const [inviteEmail, setInviteEmail] = useState("");
 	const [inviteRole, setInviteRole] = useState<Role>("operator");
-	const [busy, setBusy] = useState(false);
-	const [clientSecret, setClientSecret] = useState<string | null>(null);
-	const [createdOrgId, setCreatedOrgId] = useState<string | null>(null);
-	const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
-	const [customerId, setCustomerId] = useState<string | null>(null);
-	// Set when payment succeeded but org create / link / invites then failed — the org
-	// isn't set up yet but the customer HAS paid, so we offer a retry (no second charge)
-	// instead of the payment form.
-	const [needsSetupRetry, setNeedsSetupRetry] = useState(false);
+	const [sent, setSent] = useState<SentInvite[]>([]);
 
-	const effSlug = slug || "org";
-	const seats = 1 + invites.length;
-	const meta = planMeta(plan);
+	const meta = planMeta("team");
+	const teamPrice = useLivePlanPrice("team");
+	const trialAvailable = offer?.kind === "trial";
 
-	const monthly =
-		plan === "community" ? 0 : plan === "team" ? seats * 29 : -1;
-	const totalLabel =
-		plan === "community" ? "Free" : monthly < 0 ? "Custom" : `$${monthly}`;
-	const totalSub =
-		plan === "community"
-			? "self-hosted · AGPL"
-			: monthly < 0
-				? "annual contract · contact sales"
-				: "per month · excl. tax";
-	const ctaLabel = plan === "enterprise" ? "Contact sales" : "Create organization";
+	// Resolve the account's Pro offer (trial vs pay) when the sheet opens.
+	useEffect(() => {
+		if (!open) return;
+		let active = true;
+		getProOffer()
+			.then((o) => active && setOffer(o))
+			.catch(() => active && setOffer({ kind: "none" }));
+		return () => {
+			active = false;
+		};
+	}, [open]);
 
 	function reset() {
 		form.reset({ name: "", slug: "" });
 		setSlugTouched(false);
-		setStep("details");
-		setPlan("team");
-		setInvites([]);
-		setInviteEmail("");
-		setInviteRole("operator");
+		setShowUrl(false);
+		setView("name");
 		setBusy(false);
 		setClientSecret(null);
-		setCreatedOrgId(null);
-		setSubscriptionId(null);
 		setCustomerId(null);
+		setSubscriptionId(null);
+		setCreatedOrgId(null);
+		setCreatedSlug("");
 		setNeedsSetupRetry(false);
+		setLastBilling(null);
+		setIsTrialOrg(false);
+		setInviteEmail("");
+		setInviteRole("operator");
+		setSent([]);
 	}
+
 	function handleOpenChange(next: boolean) {
 		if (!next) reset();
 		onOpenChange(next);
 	}
 
-	function addInvite() {
-		const email = inviteEmail.trim();
-		if (!z.string().email().safeParse(email).success) {
-			toast.error("Enter a valid email to invite.");
-			return;
+	/** Close the sheet and drop the user into their new organization. */
+	function goToOrg() {
+		fetchWorkspace();
+		handleOpenChange(false);
+		if (createdSlug) router.push(`/${createdSlug}`);
+		else router.refresh();
+	}
+
+	/** Validate the form + slug availability before any Stripe / org work. */
+	async function validate(): Promise<FormData | null> {
+		if (!(await form.trigger())) return null;
+		const data = form.getValues();
+		if (!(await isOrgSlugAvailable(data.slug))) {
+			form.setError("slug", { message: "That slug is taken — try another." });
+			return null;
 		}
-		setInvites((prev) => [...prev, { email, role: inviteRole }]);
-		setInviteEmail("");
+		return data;
 	}
 
 	/**
-	 * Community: create the org now (it's free). Paid: nothing is persisted yet — we
-	 * validate the slug, open a subscription intent for an org that doesn't exist, and
-	 * move to payment. The org is only created once the charge succeeds (handlePaid), so
-	 * a Stripe failure here can never leave an orphan org behind.
+	 * Creates the org (with the chosen slug) and scopes the session to it. Returns the
+	 * id + persisted slug, or null when the slug collided (error surfaced inline).
 	 */
-	async function onCreate(data: FormData) {
+	async function createOrg(
+		data: FormData,
+	): Promise<{ id: string; slug: string } | null> {
+		const { data: org, error } = await authClient.organization.create({
+			name: data.name,
+			slug: data.slug,
+		});
+		if (error || !org) {
+			if (/slug|unique|exist|taken/i.test(error?.message ?? "")) {
+				form.setError("slug", { message: "That slug is taken — try another." });
+				return null;
+			}
+			throw new Error(error?.message ?? "Couldn't create the organization");
+		}
+		setCreatedOrgId(org.id);
+		const persisted = org.slug ?? data.slug;
+		setCreatedSlug(persisted);
+		await setActiveOrganization(org.id);
+		return { id: org.id, slug: persisted };
+	}
+
+	/**
+	 * Step 1 → step 2. Trial-eligible accounts go straight to the card-less trial panel
+	 * (no Stripe intent); everyone else opens a subscription intent and gets the payment
+	 * form. Validation (name + slug availability) runs before either branch.
+	 */
+	async function continueToCheckout() {
+		if (busy) return;
 		setBusy(true);
 		try {
-			if (plan === "community") {
-				const { data: org, error } = await authClient.organization.create({
-					name: data.name,
-					slug: data.slug,
-				});
-				if (error || !org) {
-					if (/slug|unique|exist|taken/i.test(error?.message ?? "")) {
-						form.setError("slug", { message: "That slug is taken — try another." });
-						return;
-					}
-					throw new Error(error?.message ?? "Couldn't create the organization");
-				}
-				await setActiveOrganization(org.id);
-				await fetchWorkspace();
-				toast.success("Organization created.");
-				finishAndClose();
+			const data = await validate();
+			if (!data) return;
+			if (trialAvailable) {
+				// Card-less trial — the trial panel confirms; no payment intent needed.
+				setView("pay");
 				return;
 			}
-			if (plan === "enterprise") {
-				contactSales();
-				return;
-			}
-
-			// Paid (team): make sure the slug is free BEFORE charging, so a collision
-			// surfaces inline rather than after the customer has paid.
-			if (!(await isOrgSlugAvailable(data.slug))) {
-				form.setError("slug", { message: "That slug is taken — try another." });
-				return;
-			}
-
-			// Reuse the customer / replace the prior incomplete sub on a Back→retry or a
-			// seat change, so neither piles up in Stripe.
-			const intent = await createNewOrgSubscriptionIntent(plan, {
-				seats,
+			const intent = await createNewOrgSubscriptionIntent("team", {
 				orgName: data.name,
 				priorSubscriptionId: subscriptionId ?? undefined,
 				customerId: customerId ?? undefined,
@@ -268,7 +223,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			setSubscriptionId(intent.subscriptionId);
 			setCustomerId(intent.customerId);
 			setClientSecret(intent.clientSecret);
-			setStep("payment");
+			setView("pay");
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Something went wrong");
 		} finally {
@@ -276,70 +231,92 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		}
 	}
 
-	function contactSales() {
-		window.location.href = "mailto:sales@alethialabs.io?subject=Alethia%20Enterprise";
-	}
-
-	function finishAndClose() {
-		fetchWorkspace();
-		handleOpenChange(false);
-		router.refresh();
+	/** Trial path: create the org now (card-less) and burn the account's one trial. If the
+	 *  trial fails AFTER the org was created, roll the org back so we never leave an orphan
+	 *  (no billing) behind. */
+	async function startTrial() {
+		if (busy) return;
+		setBusy(true);
+		try {
+			const data = await validate();
+			if (!data) return;
+			const org = await createOrg(data);
+			if (!org) return;
+			try {
+				await startProTrial();
+			} catch (trialErr) {
+				// Roll back the just-created org — a failed trial must not orphan it.
+				await authClient.organization
+					.delete({ organizationId: org.id })
+					.catch(() => {});
+				setCreatedOrgId(null);
+				setCreatedSlug("");
+				throw trialErr;
+			}
+			await fetchWorkspace();
+			setIsTrialOrg(true);
+			toast.success("Trial started — your organization is ready.");
+			setView("invite");
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Couldn't start the trial");
+		} finally {
+			setBusy(false);
+		}
 	}
 
 	/**
-	 * Payment has succeeded — now do the deferred setup: create the org, link the paid
-	 * subscription to it (which writes the billing record synchronously, so the
-	 * `organizations` entitlement is live immediately — no webhook race), then send the
-	 * queued invites. Idempotent on retry via `createdOrgId`: if any step fails after the
-	 * charge, we keep the payment refs and offer a retry rather than re-charging.
+	 * Card confirmed — persist billing details on the standalone customer, create + link
+	 * the org so its entitlement is live immediately, then move to invite. Idempotent on
+	 * retry via createdOrgId: if a step fails after the charge we keep the refs + offer a
+	 * retry instead of re-charging. Address / tax / primary-address saves are best-effort.
 	 */
-	async function handlePaid() {
+	async function handlePaid(billing: CollectedBilling) {
 		setBusy(true);
 		setNeedsSetupRetry(false);
+		setLastBilling(billing);
 		try {
 			if (!subscriptionId || !customerId) {
 				throw new Error("Missing payment reference — please retry.");
 			}
+			try {
+				await setCustomerBillingAddress({
+					customerId,
+					address: billingAddressFrom(billing),
+				});
+			} catch {
+				// Non-fatal — Stripe still has the address from the payment method.
+			}
+			if (billing.taxValue.trim()) {
+				try {
+					await attachTaxIdToCustomer({
+						customerId,
+						type: billing.taxType,
+						value: billing.taxValue,
+					});
+				} catch {
+					toast.warning("Couldn't save the tax id — add it later in billing.");
+				}
+			}
 
 			let orgId = createdOrgId;
 			if (!orgId) {
-				const values = form.getValues();
-				const { data: org, error } = await authClient.organization.create({
-					name: values.name,
-					slug: values.slug,
-				});
-				if (error || !org) {
-					throw new Error(error?.message ?? "Couldn't create the organization");
-				}
+				const org = await createOrg(form.getValues());
+				if (!org) return;
 				orgId = org.id;
-				setCreatedOrgId(orgId);
-				await setActiveOrganization(orgId);
 			}
-
 			await linkSubscriptionToNewOrg({ orgId, subscriptionId, customerId });
 			await fetchWorkspace();
-			toast.success("Subscription active — your organization is ready.");
-
-			// Entitlement is already active — send queued invites and report any misses once.
-			const failed: string[] = [];
-			for (const inv of invites) {
+			if (billing.useAsPrimary) {
 				try {
-					await authClient.organization.inviteMember({
-						email: inv.email,
-						role: inv.role,
-					});
+					await updateOrgPrimaryAddress(billingAddressFrom(billing));
 				} catch {
-					failed.push(inv.email);
+					// Non-fatal — billing address is still set on the customer.
 				}
 			}
-			if (failed.length > 0) {
-				toast.error(
-					`Couldn't invite ${failed.join(", ")} — finish from the Members page.`,
-				);
-			}
-			finishAndClose();
+			setIsTrialOrg(false);
+			toast.success("Subscription active — your organization is ready.");
+			setView("invite");
 		} catch (e) {
-			// Payment went through but setup didn't — let the user retry without re-paying.
 			setNeedsSetupRetry(true);
 			toast.error(
 				e instanceof Error
@@ -351,525 +328,279 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		}
 	}
 
-	const submit = form.handleSubmit(onCreate);
+	/** Send one invite into the created (paid) org. Trials are solo (see beforeCreate). */
+	async function addInvite() {
+		const email = inviteEmail.trim();
+		if (!isValidInviteEmail(email)) {
+			toast.error("Enter a valid email to invite.");
+			return;
+		}
+		try {
+			await authClient.organization.inviteMember({ email, role: inviteRole });
+			setSent((p) => [...p, { email, role: inviteRole }]);
+			setInviteEmail("");
+			toast.success(`Invitation sent to ${email}`);
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Couldn't send the invite");
+		}
+	}
+
+	const heading = view === "pay" ? `Create ${name || "team"}` : "Create a team";
 
 	return (
 		<Sheet open={open} onOpenChange={handleOpenChange}>
 			<SheetContent
 				side="right"
 				showCloseButton={false}
-				className="w-[92vw] gap-0 p-0 sm:max-w-[1112px]"
+				className="w-[92vw] gap-0 overflow-y-auto p-0 sm:max-w-3xl"
 			>
-				<SheetTitle className="sr-only">Create organization</SheetTitle>
+				<SheetTitle className="sr-only">Create a team</SheetTitle>
 				<SheetDescription className="sr-only">
-					Set up a new organization, choose a plan, and invite your team.
+					Create a Pro team, pay, and invite your teammates.
 				</SheetDescription>
 
-				{step === "details" ? (
-					<div className="flex h-full flex-col">
-						{/* header + stepper */}
-						<div className="flex items-start justify-between gap-4 border-b border-border px-7 py-5">
-							<div>
-								<span className="vx-eyebrow">New organization</span>
-								<h1 className="mt-1.5 font-display text-[22px] font-semibold tracking-[-0.02em] text-text-primary">
-									Create organization
-								</h1>
-								<p className="mt-1 max-w-prose text-[12.5px] text-text-tertiary">
-									An organization groups your Zones, Specs, and team under shared billing,
-									roles, and audit. You can change your plan anytime.
-								</p>
-								<Stepper />
-							</div>
-							<button
-								type="button"
-								aria-label="Close"
-								onClick={() => handleOpenChange(false)}
-								className="rounded-sm p-1.5 text-text-tertiary transition-colors hover:bg-surface-muted hover:text-text-primary"
-							>
-								<X size={15} />
-							</button>
-						</div>
-
-						{/* body + rail */}
-						<div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[1fr_344px]">
-							{/* main column */}
-							<form
-								onSubmit={submit}
-								className="space-y-7 overflow-y-auto px-7 py-6"
-							>
-								{/* 01 Details */}
-								<Block num="01" title="Organization details">
-									<div className="flex items-center gap-4">
-										<div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-ink font-display text-[18px] font-semibold text-ink-foreground">
-											{initials(name)}
-										</div>
-										<div className="text-[11.5px] text-text-tertiary">
-											<div className="text-text-secondary">
-												Avatar generated from the organization name.
-											</div>
-											<div>Square · replaceable after setup</div>
-										</div>
-									</div>
-
-									<Field
-										label="Organization name"
-										required
-										error={form.formState.errors.name?.message}
-									>
-										<Input
-											placeholder="Acme Cloud"
-											autoComplete="off"
-											{...form.register("name")}
-											onChange={(e) => {
-												const v = e.target.value;
-												form.setValue("name", v, { shouldValidate: true });
-												if (!slugTouched)
-													form.setValue("slug", slugify(v), { shouldValidate: true });
-											}}
-										/>
-									</Field>
-
-									<Field label="Slug" error={form.formState.errors.slug?.message}>
-										<div className="flex h-9 items-center overflow-hidden rounded-sm border border-input bg-transparent focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
-											<span className="whitespace-nowrap pl-3 pr-0.5 font-mono text-[12px] text-text-tertiary">
-												alethialabs.io/
-											</span>
-											<input
-												className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-[12px] text-text-primary outline-none"
-												placeholder="acme-cloud"
-												autoComplete="off"
-												value={slug}
-												onChange={(e) => {
-													setSlugTouched(true);
-													form.setValue("slug", slugify(e.target.value), {
-														shouldValidate: true,
-													});
-												}}
-											/>
-										</div>
-									</Field>
-								</Block>
-
-								{/* 02 Plan */}
-								<Block num="02" title="Choose a plan">
-									<div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-										{CARDS.map((card) => {
-											const sel = card.id === plan;
-											return (
-												<button
-													type="button"
-													key={card.id}
-													onClick={() => setPlan(card.id)}
-													className={cn(
-														"relative flex flex-col rounded-lg border p-4 text-left transition-colors",
-														sel
-															? "border-ink ring-1 ring-ink"
-															: "border-border hover:border-border-strong",
-													)}
-												>
-													{card.recommended && (
-														<span className="absolute right-3 top-3 rounded-full bg-ink px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide text-ink-foreground">
-															Recommended
-														</span>
-													)}
-													<div className="flex items-center gap-2">
-														<span className="text-[15px] font-semibold text-text-primary">
-															{planMeta(card.id).name}
-														</span>
-														{sel && (
-															<span className="flex size-4 items-center justify-center rounded-full bg-ink text-ink-foreground">
-																<Check size={11} strokeWidth={3} />
-															</span>
-														)}
-													</div>
-													<p className="mt-1 text-[11.5px] text-text-tertiary">{card.who}</p>
-													<div className="mt-3 flex items-baseline gap-1">
-														<span className="font-display text-[20px] font-semibold tracking-[-0.02em] text-text-primary">
-															{card.price}
-														</span>
-														{card.per && (
-															<span className="font-mono text-[11px] text-text-tertiary">
-																{card.per}
-															</span>
-														)}
-													</div>
-													<div className="mt-0.5 font-mono text-[10px] text-text-tertiary">
-														{card.billed}
-													</div>
-													<div className="my-3 h-px bg-border" />
-													<ul className="space-y-1.5">
-														{planMeta(card.id).highlights.map((f) => (
-															<li
-																key={f}
-																className="flex items-center gap-2 text-[12px] text-text-secondary"
-															>
-																<Check
-																	size={12}
-																	strokeWidth={2.4}
-																	className="shrink-0 text-text-tertiary"
-																/>
-																<span>{f}</span>
-															</li>
-														))}
-													</ul>
-												</button>
-											);
-										})}
-									</div>
-									<p className="mt-3 flex items-start gap-2 text-[11.5px] text-text-tertiary">
-										<Info size={13} className="mt-0.5 shrink-0" />
-										Add-ons billed as used — runner-minutes beyond plan and AI repo-scans
-										are metered. Cloud spend is always billed by your own provider.
-									</p>
-								</Block>
-
-								{/* 03 Team */}
-								<Block num="03" title="Invite your team" optional>
-									{plan === "community" ? (
-										<p className="rounded-lg border border-dashed border-border bg-surface-sunken px-4 py-3 text-[12px] text-text-tertiary">
-											Inviting teammates is available on a paid plan — your personal
-											workspace is just you.
-										</p>
-									) : (
-										<>
-											<div className="flex gap-2">
-												<Input
-													placeholder="name@company.com"
-													autoComplete="off"
-													value={inviteEmail}
-													onChange={(e) => setInviteEmail(e.target.value)}
-													onKeyDown={(e) => {
-														if (e.key === "Enter") {
-															e.preventDefault();
-															addInvite();
-														}
-													}}
-												/>
-												<RoleField
-													value={inviteRole}
-													onChange={setInviteRole}
-													className="w-[120px] shrink-0"
-												/>
-												<Button
-													type="button"
-													variant="outline"
-													size="sm"
-													className="shrink-0"
-													onClick={addInvite}
-												>
-													<Plus size={14} />
-													Invite
-												</Button>
-											</div>
-
-											<div className="mt-3 space-y-1.5">
-												<Seat avatar="YO" name="You" meta="Organization creator">
-													<span className="rounded-full border border-border-strong px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-text-secondary">
-														Owner
-													</span>
-												</Seat>
-												{invites.map((inv, i) => (
-													<Seat
-														key={`${inv.email}-${i}`}
-														avatar={inv.email.slice(0, 2).toUpperCase()}
-														name={inv.email}
-														meta="Invited · pending"
-													>
-														<RoleField
-															value={inv.role}
-															onChange={(role) =>
-																setInvites((prev) =>
-																	prev.map((p, j) => (j === i ? { ...p, role } : p)),
-																)
-															}
-															className="w-[110px]"
-														/>
-														<button
-															type="button"
-															aria-label="Remove"
-															onClick={() =>
-																setInvites((prev) => prev.filter((_, j) => j !== i))
-															}
-															className="rounded-sm p-1 text-text-tertiary hover:bg-surface-muted hover:text-text-primary"
-														>
-															<X size={15} />
-														</button>
-													</Seat>
-												))}
-											</div>
-											<p className="mt-2 flex items-center gap-2 text-[11.5px] text-text-tertiary">
-												<Users size={13} />
-												<span>
-													<b className="font-medium text-text-secondary">{seats}</b> seat
-													{seats === 1 ? "" : "s"}
-													{plan === "team" ? " · billed per seat" : ""}.
-												</span>
-											</p>
-										</>
-									)}
-								</Block>
-							</form>
-
-							{/* order-summary rail */}
-							<aside className="flex flex-col border-t border-border lg:border-l lg:border-t-0">
-								<div className="flex-1 space-y-4 overflow-y-auto p-6">
-									<span className="vx-eyebrow">Order summary</span>
-									<div className="flex items-center gap-3">
-										<div className="flex size-9 items-center justify-center rounded-lg bg-ink font-display text-[13px] font-semibold text-ink-foreground">
-											{initials(name)}
-										</div>
-										<div className="flex min-w-0 flex-col">
-											<span className="truncate text-[13px] font-medium text-text-primary">
-												{name || "Untitled"}
-											</span>
-											<span className="truncate font-mono text-[11px] text-text-tertiary">
-												alethialabs.io/{effSlug}
-											</span>
-										</div>
-									</div>
-
-									<div className="space-y-2 text-[12.5px]">
-										<RailLine k="Plan" v={meta.name} strong />
-										<RailLine k="Seats" v={String(seats)} />
-									</div>
-
-									<div className="h-px bg-border" />
-
-									<div className="space-y-2 text-[12.5px]">
-										<RailLine
-											k={plan === "team" ? `Team · $29 × ${seats}` : `${meta.name} plan`}
-											v={monthly < 0 ? "custom" : money(Math.max(0, monthly))}
-										/>
-										<RailLine k="Runner-minutes" v="metered" />
-										<div className="flex items-start justify-between pt-2">
-											<span className="text-[13px] font-medium text-text-primary">
-												Due today
-											</span>
-											<span className="text-right">
-												<span className="font-display text-[16px] font-semibold text-text-primary">
-													{totalLabel}
-												</span>
-												<div className="font-mono text-[10px] text-text-tertiary">
-													{totalSub}
-												</div>
-											</span>
-										</div>
-									</div>
-								</div>
-
-								<div className="space-y-2 border-t border-border p-6">
-									<Button
-										className="w-full"
-										disabled={busy}
-										onClick={plan === "enterprise" ? contactSales : () => void submit()}
-									>
-										{busy ? "Setting up…" : ctaLabel}
-										<ArrowRight size={15} />
-									</Button>
-									<Button
-										variant="ghost"
-										className="w-full"
-										onClick={() => handleOpenChange(false)}
-									>
-										Cancel
-									</Button>
-									<p className="text-center font-mono text-[10px] text-text-tertiary">
-										No charge until you confirm payment.
-									</p>
-								</div>
-							</aside>
-						</div>
-					</div>
-				) : (
-					/* payment step */
-					<div className="mx-auto flex h-full w-full max-w-md flex-col justify-center gap-5 p-7">
-						{!needsSetupRetry && (
-							<button
-								type="button"
-								onClick={() => {
-									// Keep the sub/customer refs so the next attempt reuses the
-									// customer and cancels this incomplete sub instead of leaking it.
-									setStep("details");
-									setClientSecret(null);
-								}}
-								className="self-start text-[12.5px] text-text-tertiary hover:text-text-primary"
-							>
-								← Back
-							</button>
-						)}
-						<div className="flex items-center justify-between rounded-lg border border-border bg-surface-sunken px-4 py-3">
-							<span className="text-[13px] font-medium text-text-primary">
-								{meta.name} plan
-							</span>
-							<span className="font-mono text-[13px] text-text-primary">{totalLabel}</span>
-						</div>
-						{needsSetupRetry ? (
-							/* Paid, but org create / link failed — finish setup without re-charging. */
-							<div className="space-y-3">
-								<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-[12.5px] text-text-secondary">
-									Your payment went through, but we couldn&apos;t finish setting up the
-									organization. You won&apos;t be charged again — retry to complete
-									setup.
-								</p>
-								<Button
-									className="w-full"
-									disabled={busy}
-									onClick={() => void handlePaid()}
-								>
-									{busy ? "Finishing…" : "Complete setup"}
-									<ArrowRight size={15} />
-								</Button>
-							</div>
+				{(view === "name" || view === "pay") && (
+					<PurchaseLayout
+						meta={meta}
+						heading={heading}
+						onClose={() => handleOpenChange(false)}
+					>
+						{view === "name" ? (
+							<NamePanel
+								form={form}
+								slug={slug}
+								showUrl={showUrl}
+								setShowUrl={setShowUrl}
+								slugTouched={slugTouched}
+								setSlugTouched={setSlugTouched}
+								busy={busy}
+								ready={offer !== null}
+								onContinue={() => void continueToCheckout()}
+							/>
+						) : needsSetupRetry ? (
+							<RetrySetup
+								busy={busy}
+								onRetry={() => lastBilling && void handlePaid(lastBilling)}
+							/>
+						) : trialAvailable ? (
+							<TrialPanel
+								busy={busy}
+								priceLabel={teamPrice.label}
+								trialDays={offer?.trialDays ?? 30}
+								onBack={() => setView("name")}
+								onStart={() => void startTrial()}
+							/>
 						) : (
 							clientSecret && (
-								<StripeElementsProvider clientSecret={clientSecret}>
-									<PaymentForm
-										mode="payment"
-										submitLabel={`Subscribe — ${totalLabel}`}
-										onSuccess={handlePaid}
-									/>
-								</StripeElementsProvider>
+								<div className="space-y-4">
+									<button
+										type="button"
+										onClick={() => {
+											setView("name");
+											setClientSecret(null);
+										}}
+										className="text-[12.5px] text-text-tertiary transition-colors hover:text-text-primary"
+									>
+										← Back
+									</button>
+									<StripeElementsProvider clientSecret={clientSecret}>
+										<BillingCheckoutForm
+											clientSecret={clientSecret}
+											meta={meta}
+											unitAmountUsd={teamPrice.unitAmountUsd}
+											ownerEmail={ownerEmail}
+											submitLabel="Create"
+											onPaid={(b) => handlePaid(b)}
+										/>
+									</StripeElementsProvider>
+								</div>
 							)
 						)}
-					</div>
+					</PurchaseLayout>
+				)}
+
+				{view === "invite" && (
+					<InviteView
+						isTrialOrg={isTrialOrg}
+						ownerEmail={ownerEmail}
+						inviteEmail={inviteEmail}
+						setInviteEmail={setInviteEmail}
+						inviteRole={inviteRole}
+						setInviteRole={setInviteRole}
+						sent={sent}
+						onAdd={() => void addInvite()}
+						onFinish={goToOrg}
+						onAddPayment={() => {
+							handleOpenChange(false);
+							router.push(
+								createdSlug ? `/${createdSlug}/settings/billing` : "/dashboard",
+							);
+						}}
+					/>
 				)}
 			</SheetContent>
 		</Sheet>
 	);
 }
 
-/** The 01 → 02 → 03 stepper (details is the only interactive step). */
-function Stepper() {
-	const steps = [
-		{ n: "01", label: "Details" },
-		{ n: "02", label: "Plan" },
-		{ n: "03", label: "Team" },
-	];
+// ── Create-specific views ──────────────────────────────────────────────────────
+
+/** State 1 — team name (auto-slug) + a single Continue. Trial-vs-pay is decided in step 2. */
+function NamePanel({
+	form,
+	slug,
+	showUrl,
+	setShowUrl,
+	slugTouched,
+	setSlugTouched,
+	busy,
+	ready,
+	onContinue,
+}: {
+	form: UseFormReturn<FormData>;
+	slug: string;
+	showUrl: boolean;
+	setShowUrl: (v: boolean) => void;
+	slugTouched: boolean;
+	setSlugTouched: (v: boolean) => void;
+	busy: boolean;
+	/** False until the Pro offer (trial vs pay) has resolved, so step 2 routes correctly. */
+	ready: boolean;
+	onContinue: () => void;
+}) {
 	return (
-		<div className="mt-4 flex items-center gap-2">
-			{steps.map((s, i) => (
-				<div key={s.n} className="flex items-center gap-2">
-					<div
-						className={cn(
-							"flex items-center gap-2 rounded-full border px-2.5 py-1",
-							i === 0 ? "border-ink bg-ink text-ink-foreground" : "border-border",
-						)}
+		<form
+			onSubmit={(e) => {
+				e.preventDefault();
+				onContinue();
+			}}
+			className="flex flex-col gap-4"
+		>
+			<Field label="Team name" required error={form.formState.errors.name?.message}>
+				<Input
+					placeholder="Acme Cloud"
+					autoComplete="off"
+					autoFocus
+					{...form.register("name")}
+					onChange={(e) => {
+						const v = e.target.value;
+						form.setValue("name", v, { shouldValidate: true });
+						if (!slugTouched)
+							form.setValue("slug", slugify(v), { shouldValidate: true });
+					}}
+				/>
+				<div className="flex items-center justify-between pt-1">
+					<span className="font-mono text-[11.5px] text-text-tertiary">
+						{orgHost()}/<span className="text-text-secondary">{slug || "org"}</span>
+					</span>
+					<button
+						type="button"
+						onClick={() => setShowUrl(!showUrl)}
+						className="font-mono text-[11px] text-text-tertiary transition-colors hover:text-text-primary"
 					>
-						<span className="font-mono text-[10px]">{s.n}</span>
-						<span
-							className={cn(
-								"text-[11.5px] font-medium",
-								i === 0 ? "text-ink-foreground" : "text-text-tertiary",
-							)}
-						>
-							{s.label}
-						</span>
-					</div>
-					{i < steps.length - 1 && <span className="h-px w-5 bg-border" />}
+						{showUrl ? "Done" : "Customize URL"}
+					</button>
 				</div>
-			))}
-		</div>
+				{showUrl && (
+					<div className="flex h-9 items-center overflow-hidden rounded-sm border border-input bg-transparent focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
+						<span className="whitespace-nowrap pl-3 pr-0.5 font-mono text-[12px] text-text-tertiary">
+							{orgHost()}/
+						</span>
+						<input
+							className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-[12px] text-text-primary outline-none"
+							placeholder="acme-cloud"
+							autoComplete="off"
+							value={slug}
+							onChange={(e) => {
+								setSlugTouched(true);
+								form.setValue("slug", slugify(e.target.value), {
+									shouldValidate: true,
+								});
+							}}
+						/>
+					</div>
+				)}
+				{form.formState.errors.slug?.message && (
+					<p className="text-[11px] text-destructive">
+						{form.formState.errors.slug.message}
+					</p>
+				)}
+			</Field>
+
+			<Button type="submit" disabled={busy || !ready} className="w-full">
+				{busy ? "Setting up…" : "Continue"}
+				<ArrowRight size={15} />
+			</Button>
+		</form>
 	);
 }
 
-/** A numbered section block (01/02/03 + title + rule). */
-function Block({
-	num,
-	title,
-	optional,
-	children,
+/**
+ * Step 2 (trial-eligible) — a card-less 30-day trial. Shows $0 due now / price after, and
+ * a single "Start free trial" CTA. No payment form: a free trial has no reason to decline.
+ */
+function TrialPanel({
+	busy,
+	priceLabel,
+	trialDays,
+	onBack,
+	onStart,
 }: {
-	num: string;
-	title: string;
-	optional?: boolean;
-	children: React.ReactNode;
+	busy: boolean;
+	/** Live Stripe price label shown for "after the trial". */
+	priceLabel: string;
+	trialDays: number;
+	onBack: () => void;
+	onStart: () => void;
 }) {
 	return (
-		<section className="space-y-3">
-			<div className="flex items-center gap-3">
-				<span className="font-mono text-[10px] text-text-tertiary">{num}</span>
-				<h2 className="font-display text-[14.5px] font-semibold tracking-[-0.01em] text-text-primary">
-					{title}
-				</h2>
-				<span className="h-px flex-1 bg-border" />
-				{optional && (
-					<span className="font-mono text-[10px] uppercase tracking-wide text-text-tertiary">
-						optional
-					</span>
-				)}
-			</div>
-			{children}
-		</section>
-	);
-}
-
-/** A labeled form field with an optional error. */
-function Field({
-	label,
-	required,
-	error,
-	children,
-}: {
-	label: string;
-	required?: boolean;
-	error?: string;
-	children: React.ReactNode;
-}) {
-	return (
-		<div className="space-y-1.5">
-			<div className="flex items-center gap-1.5 text-[13px] font-medium text-text-primary">
-				{label}
-				{required && (
-					<span className="font-mono text-[10px] uppercase tracking-wide text-text-tertiary">
-						required
-					</span>
-				)}
-			</div>
-			{children}
-			{error && <p className="text-[11px] text-destructive">{error}</p>}
-		</div>
-	);
-}
-
-/** A seat row in the invite list. */
-function Seat({
-	avatar,
-	name,
-	meta,
-	children,
-}: {
-	avatar: string;
-	name: string;
-	meta: string;
-	children: React.ReactNode;
-}) {
-	return (
-		<div className="flex items-center gap-3 rounded-lg border border-border px-3 py-2">
-			<span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border-strong bg-surface-muted font-mono text-[10px] text-text-secondary">
-				{avatar}
-			</span>
-			<div className="flex min-w-0 flex-1 flex-col">
-				<span className="truncate text-[12.5px] text-text-primary">{name}</span>
-				<span className="font-mono text-[10px] text-text-tertiary">{meta}</span>
-			</div>
-			{children}
-		</div>
-	);
-}
-
-/** A key/value line in the order-summary rail. */
-function RailLine({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
-	return (
-		<div className="flex items-center justify-between gap-2">
-			<span className="text-text-tertiary">{k}</span>
-			<span
-				className={cn(
-					"text-right",
-					strong ? "font-medium text-text-primary" : "text-text-secondary",
-				)}
+		<div className="space-y-4">
+			<button
+				type="button"
+				onClick={onBack}
+				className="text-[12.5px] text-text-tertiary transition-colors hover:text-text-primary"
 			>
-				{v}
-			</span>
+				← Back
+			</button>
+
+			<div className="rounded-lg border border-border">
+				<div className="flex items-center justify-between border-b border-border px-4 py-3">
+					<span className="text-[13px] font-medium text-text-primary">Due today</span>
+					<span className="font-display text-[18px] font-semibold text-text-primary">
+						$0
+					</span>
+				</div>
+				<div className="flex items-center justify-between px-4 py-3 text-[12.5px] text-text-secondary">
+					<span>After your {trialDays}-day free trial</span>
+					<span className="font-mono text-[12px] text-text-primary">
+						{priceLabel}
+					</span>
+				</div>
+			</div>
+
+			<Button type="button" className="w-full" disabled={busy} onClick={onStart}>
+				{busy ? "Setting up…" : `Start ${trialDays}-day free trial`}
+				<ArrowRight size={15} />
+			</Button>
+			<p className="text-center font-mono text-[10px] text-text-tertiary">
+				No charge during the trial · cancel anytime
+			</p>
+		</div>
+	);
+}
+
+/** Paid, but org create/link failed after the charge — finish setup, no re-charge. */
+function RetrySetup({ busy, onRetry }: { busy: boolean; onRetry: () => void }) {
+	return (
+		<div className="space-y-3">
+			<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-[12.5px] text-text-secondary">
+				Your payment went through, but we couldn&apos;t finish setting up the team. You
+				won&apos;t be charged again — retry to complete setup.
+			</p>
+			<Button className="w-full" disabled={busy} onClick={onRetry}>
+				{busy ? "Finishing…" : "Complete setup"}
+				<ArrowRight size={15} />
+			</Button>
 		</div>
 	);
 }

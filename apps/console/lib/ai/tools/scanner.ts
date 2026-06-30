@@ -64,7 +64,7 @@ export function scannerTools() {
 						nosql: proposedProject.nosql_tables.length,
 						secrets: proposedProject.secrets.length,
 					},
-					openInCanvasUrl: `/dashboard/design-project?scan=${jobId}`,
+					openInCanvasUrl: `/dashboard/new?scan=${jobId}`,
 				};
 			},
 		}),

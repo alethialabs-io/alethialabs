@@ -13,7 +13,11 @@ import { Button } from "@repo/ui/button";
 import { Badge } from "@repo/ui/badge";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { Skeleton } from "@repo/ui/skeleton";
-import { useRunnersStore, type RunnerReleaseInfo } from "@/lib/stores/use-runners-store";
+import { getReleaseNotes } from "@/app/server/actions/runners";
+import {
+	useUpdateRunner,
+	type RunnerReleaseInfo,
+} from "@/lib/query/use-runners-query";
 import { formatDistanceToNow } from "date-fns";
 import { ArrowUpCircle, ExternalLink, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -40,7 +44,7 @@ export function ReleaseNotesPopover({
 	children,
 }: ReleaseNotesPopoverProps) {
 	const router = useRouter();
-	const { fetchReleaseNotes, updateRunner } = useRunnersStore();
+	const { mutateAsync: updateRunner } = useUpdateRunner();
 	const [open, setOpen] = useState(false);
 	const [release, setRelease] = useState<RunnerReleaseInfo | null>(null);
 	const [loading, setLoading] = useState(false);
@@ -52,10 +56,11 @@ export function ReleaseNotesPopover({
 			return;
 		}
 		setLoading(true);
-		fetchReleaseNotes(version)
+		getReleaseNotes(version)
 			.then(setRelease)
+			.catch(() => setRelease(null))
 			.finally(() => setLoading(false));
-	}, [open, version, fetchReleaseNotes]);
+	}, [open, version]);
 
 	const handleUpdate = async () => {
 		if (!runnerId) return;

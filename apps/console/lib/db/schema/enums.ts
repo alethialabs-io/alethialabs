@@ -105,6 +105,7 @@ export const provisionJobType = pgEnum("provision_job_type", [
 	"DEPLOY_RUNNER",
 	"UPDATE_RUNNER",
 	"ANALYZE_REPO",
+	"DETECT_DRIFT",
 ]);
 
 export const runnerMode = pgEnum("runner_mode", ["self-hosted", "cloud-hosted"]);

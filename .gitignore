@@ -16,6 +16,11 @@ alethia.env
 
 # Testing
 coverage
+cover.out
+
+# Mutation testing (Stryker)
+.stryker-tmp/
+reports/mutation/
 
 # Python bytecode caches (Lambda scaler, etc.)
 __pycache__/
@@ -69,7 +74,7 @@ infra/**/tfplan
 infra/platform/scaler/lambda.zip
 
 # Node runtime template copies (source: packages/core/assets/)
-apps/runner/spec-templates/
+apps/runner/project-templates/
 apps/runner/runner-templates/
 apps/runner/argocd-templates/
 

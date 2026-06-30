@@ -170,7 +170,7 @@ async function main() {
 		.insert(alertRuleChannels)
 		.values({ rule_id: secPolicy.id, channel_id: channel.id });
 	invalidateOrgRules(ORG);
-	const n3 = await emitAlertEvent(ORG, "authz.spec.destroy.denied", {
+	const n3 = await emitAlertEvent(ORG, "authz.project.destroy.denied", {
 		title: "Denied",
 		severity: "warning",
 		actor_id: USER1,

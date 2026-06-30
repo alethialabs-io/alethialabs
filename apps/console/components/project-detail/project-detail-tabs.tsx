@@ -11,7 +11,7 @@ import { Card, CardContent } from "@repo/ui/card";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
 import { getProvider, DB_CAPACITY, type CloudProviderSlug } from "@/lib/cloud-providers";
-import { useJobsStore } from "@/lib/stores/use-jobs-store";
+import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import type { JobWithMeta } from "@/app/server/actions/jobs";
 import type { ProvisionJobType } from "@/lib/db/schema";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -172,7 +172,7 @@ export function ProjectDetailTabs({ detail, projectId, plan, onApplied }: Projec
 		components.nosql_tables.length +
 		components.secrets.length;
 
-	const allJobs = useJobsStore((s) => s.jobs);
+	const { data: allJobs = [] } = useJobsQuery();
 	const jobs = useMemo(
 		() => allJobs.filter((j) => j.project_id === projectId).slice(0, 5),
 		[allJobs, projectId],

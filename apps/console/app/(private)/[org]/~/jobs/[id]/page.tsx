@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { getJob, getJobStatus, rerunJob, cancelJob } from "@/app/server/actions/jobs";
-import { provisionSpec } from "@/app/server/actions/specs";
+import { rerunJob, cancelJob } from "@/app/server/actions/jobs";
+import { provisionProject } from "@/app/server/actions/projects";
 import { useJobLogStream } from "@/hooks/use-job-log-stream";
-import type { Job } from "@/lib/db/schema";
+import { useJobQuery } from "@/lib/query/use-jobs-query";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
 import { StatusBadge } from "@repo/ui/status-badge";
@@ -33,71 +33,29 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 
-type JobState = "QUEUED" | "CLAIMED" | "PROCESSING" | "SUCCESS" | "FAILED" | "CANCELLED" | null;
-
 /** Full-page job detail view with realtime log streaming (SSE). */
 export default function JobDetailPage() {
-	const { id: jobId } = useParams<{ id: string }>();
+	const { org, id: jobId } = useParams<{ org: string; id: string }>();
 	const router = useRouter();
 
-	const [job, setJob] = useState<Job | null>(null);
+	// The job row (status + error_message included) comes from the shared query, which
+	// polls every 3s while in-flight and idles on terminal status.
+	const { data: job, isPending: isLoading, refetch } = useJobQuery(jobId);
+	const jobState = job?.status ?? null;
+	const jobError = job?.error_message ?? null;
 	const { logs } = useJobLogStream(jobId);
-	const [jobState, setJobState] = useState<JobState>(null);
-	const [jobError, setJobError] = useState<string | null>(null);
-	const [isLoading, setIsLoading] = useState(true);
 	const [actionLoading, setActionLoading] = useState(false);
 
 	const bottomRef = useRef<HTMLDivElement>(null);
-	const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
 	const scrollToBottom = useCallback(() => {
 		setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
 	}, []);
 
-	const stopStatusPoll = useCallback(() => {
-		if (statusPollRef.current) {
-			clearInterval(statusPollRef.current);
-			statusPollRef.current = null;
-		}
-	}, []);
-
-	useEffect(() => {
-		if (!jobId) return;
-
-		getJob(jobId)
-			.then((data) => {
-				if (data) {
-					setJob(data);
-					setJobState(data.status);
-					setJobError(data.error_message);
-				}
-				setIsLoading(false);
-			})
-			.catch(() => setIsLoading(false));
-	}, [jobId]);
-
 	// Auto-scroll as streamed logs (from useJobLogStream) arrive.
 	useEffect(() => {
 		if (logs.length > 0) scrollToBottom();
 	}, [logs.length, scrollToBottom]);
-
-	useEffect(() => {
-		if (!jobId) return;
-
-		statusPollRef.current = setInterval(async () => {
-			const result = await getJobStatus(jobId);
-			if (!result) return;
-			setJobState(result.status);
-			if (result.status === "FAILED" || result.status === "CANCELLED") {
-				setJobError(result.error_message);
-				stopStatusPoll();
-			} else if (result.status === "SUCCESS") {
-				stopStatusPoll();
-			}
-		}, 3000);
-
-		return () => stopStatusPoll();
-	}, [jobId, stopStatusPoll]);
 
 	const handleRerun = async () => {
 		if (!jobId) return;
@@ -105,7 +63,7 @@ export default function JobDetailPage() {
 		try {
 			const newJob = await rerunJob(jobId);
 			toast.success("Job re-queued");
-			router.push(`/dashboard/jobs/${newJob.id}`);
+			router.push(`/${org}/~/jobs/${newJob.id}`);
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : "Failed to re-run");
 			setActionLoading(false);
@@ -117,9 +75,7 @@ export default function JobDetailPage() {
 		setActionLoading(true);
 		try {
 			await cancelJob(jobId);
-			setJobState("CANCELLED");
-			setJobError("Cancelled by user");
-			stopStatusPoll();
+			await refetch();
 			toast.success("Job cancelled");
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : "Failed to cancel");
@@ -129,12 +85,12 @@ export default function JobDetailPage() {
 	};
 
 	const handleApply = async (runnerId: string | null) => {
-		if (!job?.spec_id || !jobId) return;
+		if (!job?.project_id || !jobId) return;
 		setActionLoading(true);
 		try {
-			const { jobId: deployJobId } = await provisionSpec(job.spec_id, jobId, runnerId);
+			const { jobId: deployJobId } = await provisionProject(job.project_id, jobId, runnerId);
 			toast.success("Deploy job created");
-			router.push(`/dashboard/jobs/${deployJobId}`);
+			router.push(`/${org}/~/jobs/${deployJobId}`);
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : "Failed to apply");
 			setActionLoading(false);
@@ -200,7 +156,7 @@ export default function JobDetailPage() {
 								Cancel
 							</Button>
 						)}
-						{isPlanSuccess && job.spec_id && (
+						{isPlanSuccess && job.project_id && (
 							<RunnerSelectPopover
 								trigger={
 									<Button size="sm" className="h-8 text-xs" disabled={actionLoading}>
@@ -325,10 +281,10 @@ export default function JobDetailPage() {
 								<p className="text-[11px] text-muted-foreground">Completed</p>
 								<p>{job.completed_at ? new Date(job.completed_at).toLocaleString() : "—"}</p>
 							</div>
-							{job.spec_id && (
+							{job.project_id && (
 								<div>
-									<p className="text-[11px] text-muted-foreground">Spec</p>
-									<p className="font-mono truncate">{job.spec_id}</p>
+									<p className="text-[11px] text-muted-foreground">Project</p>
+									<p className="font-mono truncate">{job.project_id}</p>
 								</div>
 							)}
 						</div>

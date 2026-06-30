@@ -17,6 +17,8 @@ interface WorkspaceStore {
 	organizations: WorkspaceOrg[];
 	/** Feature entitlements — gate the switcher's "create org" + the admin surfaces. */
 	entitlements: Entitlements | null;
+	/** Hosted SaaS vs self-managed deployment — gates platform-fleet surfaces. */
+	isHosted: boolean;
 	isLoading: boolean;
 	fetchWorkspace: () => Promise<void>;
 	/** Persist the active org server-side, then update local state. */
@@ -27,6 +29,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
 	activeOrgId: null,
 	organizations: [],
 	entitlements: null,
+	isHosted: false,
 	isLoading: false,
 	fetchWorkspace: async () => {
 		set({ isLoading: true });
@@ -36,6 +39,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
 				activeOrgId: ctx.activeOrgId,
 				organizations: ctx.organizations,
 				entitlements: ctx.entitlements,
+				isHosted: ctx.isHosted,
 			});
 		} catch {
 			// Unauthenticated / transient — keep defaults; the layout still renders.
@@ -48,6 +52,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
 		set({ activeOrgId: orgId });
 	},
 }));
+
+/** Whether the console is the hosted SaaS (vs a self-managed/community deployment). */
+export function useIsHosted(): boolean {
+	return useWorkspaceStore((s) => s.isHosted);
+}
 
 /**
  * The active organization's URL slug (for building `/{org}/…` drilldown hrefs).

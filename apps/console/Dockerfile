@@ -35,7 +35,7 @@ ENV BETTER_AUTH_SECRET=build-time-placeholder \
     ALETHIA_STORAGE_SECRET_ACCESS_KEY=build
 # Canvas is gated by a NEXT_PUBLIC_ flag that Next inlines at build time. Default
 # off; pass --build-arg NEXT_PUBLIC_CANVAS_ENABLED=true (or via compose build.args)
-# to bake the design-spec canvas into the image.
+# to bake the design-project canvas into the image.
 ARG NEXT_PUBLIC_CANVAS_ENABLED=false
 ENV NEXT_PUBLIC_CANVAS_ENABLED=$NEXT_PUBLIC_CANVAS_ENABLED
 # Build the enterprise package (esbuild → ee/dist/index.js) BEFORE next build, so

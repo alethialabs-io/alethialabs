@@ -23,27 +23,29 @@ describe("expandGrant (role → permission tuples)", () => {
 			expect(t.user).toBe("user:U");
 			expect(t.object).toBe("org:O");
 		}
-		expect(tuples).toContainEqual({ user: "user:U", relation: "spec_deploy", object: "org:O" });
+		expect(tuples).toContainEqual({ user: "user:U", relation: "project_deploy", object: "org:O" });
 		expect(tuples).toContainEqual({ user: "user:U", relation: "member_manage_members", object: "org:O" });
 	});
 
 	it("team principal uses the team#member userset", () => {
 		const [t] = expandGrant(
 			{ orgId: "O", principalType: "team", principalId: "T", effect: "allow", resourceType: "org", resourceId: null },
-			["zone:view"],
+			["project:view"],
 		);
-		expect(t).toEqual({ user: "team:T#member", relation: "zone_view", object: "org:O" });
+		expect(t).toEqual({ user: "team:T#member", relation: "project_view", object: "org:O" });
 	});
 
-	it("zone-scoped allow: zone actions → perm_ on zone, spec actions → spec_ capability, no org-level", () => {
+	it("project-scoped allow: project actions → perm_ on the project, no org-level, no create", () => {
 		const tuples = expandGrant(
-			{ ...base, effect: "allow", resourceType: "zone", resourceId: "Z" },
+			{ ...base, effect: "allow", resourceType: "project", resourceId: "S" },
 			ownerKeys,
 		);
-		expect(tuples).toContainEqual({ user: "user:U", relation: "perm_view", object: "zone:Z" });
-		expect(tuples).toContainEqual({ user: "user:U", relation: "spec_deploy", object: "zone:Z" });
-		expect(tuples.every((t) => t.object === "zone:Z")).toBe(true);
+		expect(tuples).toContainEqual({ user: "user:U", relation: "perm_view", object: "project:S" });
+		expect(tuples).toContainEqual({ user: "user:U", relation: "perm_deploy", object: "project:S" });
+		// Projects are top-level (no descendants), so a scoped grant only writes perm_ on the project.
+		expect(tuples.every((t) => t.object === "project:S")).toBe(true);
 		expect(tuples.some((t) => t.relation === "member_manage_members")).toBe(false);
+		// `create` is org-level and never conferred by a scoped grant.
 		expect(tuples.some((t) => t.relation === "perm_create")).toBe(false);
 	});
 
@@ -68,42 +70,35 @@ describe("expandGrant (role → permission tuples)", () => {
 			tuples.every(
 				(t) =>
 					t.relation.endsWith("_view") ||
-					t.relation.endsWith("_view_audit") ||
+					t.relation.endsWith("_view_activity") ||
 					t.relation.endsWith("_view_alerts"),
 			),
 		).toBe(true);
 	});
 
 	it("a DENY grant writes deny_ relations (the exclusion)", () => {
-		// deny a single permission on a specific spec → perm_deny_ on that spec
-		const specDeny = expandGrant(
-			{ ...base, effect: "deny", resourceType: "spec", resourceId: "S" },
-			["spec:view"],
+		// deny a single permission on a specific project → perm_deny_ on that project
+		const projectDeny = expandGrant(
+			{ ...base, effect: "deny", resourceType: "project", resourceId: "S" },
+			["project:view"],
 		);
-		expect(specDeny).toContainEqual({ user: "user:U", relation: "perm_deny_view", object: "spec:S" });
-
-		// deny spec:view across a whole zone → the zone's spec_deny_ capability
-		const zoneDeny = expandGrant(
-			{ ...base, effect: "deny", resourceType: "zone", resourceId: "Z" },
-			["spec:view"],
-		);
-		expect(zoneDeny).toContainEqual({ user: "user:U", relation: "spec_deny_view", object: "zone:Z" });
+		expect(projectDeny).toContainEqual({ user: "user:U", relation: "perm_deny_view", object: "project:S" });
 
 		// org-wide deny → the org deny capability
 		const orgDeny = expandGrant(
 			{ ...base, effect: "deny", resourceType: "org", resourceId: null },
-			["zone:view"],
+			["project:view"],
 		);
-		expect(orgDeny).toContainEqual({ user: "user:U", relation: "zone_deny_view", object: "org:O" });
+		expect(orgDeny).toContainEqual({ user: "user:U", relation: "project_deny_view", object: "org:O" });
 	});
 });
 
 describe("hierarchy + team tuples", () => {
 	it("hierarchyTuple makes the child point at its parent", () => {
-		expect(hierarchyTuple({ childType: "spec", childId: "S", parentType: "zone", parentId: "Z" })).toEqual({
-			user: "zone:Z",
+		expect(hierarchyTuple({ childType: "project", childId: "S", parentType: "org", parentId: "O" })).toEqual({
+			user: "org:O",
 			relation: "parent",
-			object: "spec:S",
+			object: "project:S",
 		});
 	});
 	it("teamMemberTuple links a user into a team", () => {

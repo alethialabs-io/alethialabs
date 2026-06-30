@@ -15,7 +15,7 @@ resource "aws_secretsmanager_secret" "secret" {
 resource "aws_secretsmanager_secret_version" "version" {
   for_each = { for secret in var.custom_secrets : secret.secret_name => secret }
 
-  secret_id     = aws_secretsmanager_secret.secret[each.key].id
+  secret_id = aws_secretsmanager_secret.secret[each.key].id
   secret_string = coalesce(
     lookup(each.value, "value", null),
     lookup(each.value, "manual", false) ? "editme" : null,

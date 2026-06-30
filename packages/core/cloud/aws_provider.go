@@ -131,6 +131,9 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 			"db_port":        derefIntOr(db.Port, 5432),
 			"db_name":        db.Name,
 		}
+		if db.InstanceClass != "" {
+			tfvars["rds_instance_type"] = db.InstanceClass
+		}
 		if db.BackupRetentionDays != nil {
 			tfvars["rds_backup_retention_period"] = *db.BackupRetentionDays
 		}
@@ -142,6 +145,9 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	if len(config.Caches) > 0 {
 		cache := config.Caches[0]
 		tfvars["redis_instance_type"] = orDefault(cache.NodeType, "cache.t3.medium")
+		if cache.EngineVersion != "" {
+			tfvars["redis_engine_version"] = cache.EngineVersion
+		}
 		if cache.NumCacheNodes != nil {
 			tfvars["redis_cluster_size"] = *cache.NumCacheNodes
 		}
@@ -162,8 +168,42 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	if config.Cluster.NodeDesiredSize > 0 {
 		tfvars["eks_ng_desired_size"] = config.Cluster.NodeDesiredSize
 	}
+	if config.Cluster.NodeDiskSizeGB != nil {
+		tfvars["eks_disk_size"] = *config.Cluster.NodeDiskSizeGB
+	}
+
+	// Generic passthrough: any provider_config key that names a template variable
+	// flows through verbatim (e.g. eks_volume_iops, a CMEK key id, WAF rule list)
+	// without a dedicated Go field. Reserved keys are consumed above under a
+	// different tfvar name, so they aren't injected as undeclared duplicates.
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, "enable_karpenter")
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "cloudfront_waf", "acm_certificate", "application_waf")
 
 	return tfvars
+}
+
+// mergeProviderConfig copies template-variable overrides from a component's
+// provider_config JSONB into the flat tfvars map, WITHOUT clobbering keys already
+// set by the typed mappings (merge-if-absent). This is the generic "passthrough"
+// that lets the UI drive any template variable by name without a dedicated Go field
+// per knob. `reserved` lists provider_config keys the typed code already consumed
+// under a different tfvar name, so they are skipped (no undeclared-var duplicates).
+func mergeProviderConfig(tfvars map[string]interface{}, pc map[string]any, reserved ...string) {
+	if len(pc) == 0 {
+		return
+	}
+	skip := make(map[string]bool, len(reserved))
+	for _, r := range reserved {
+		skip[r] = true
+	}
+	for k, v := range pc {
+		if skip[k] {
+			continue
+		}
+		if _, exists := tfvars[k]; !exists {
+			tfvars[k] = v
+		}
+	}
 }
 
 func ensureSlice(s []interface{}) []interface{} {

@@ -19,8 +19,8 @@ import {
 	updateRole,
 } from "@/app/server/actions/roles";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
+import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
 import {
-	SettingsPageHead,
 	SettingsSearch,
 	settingsControl,
 	settingsControlSize,
@@ -119,6 +119,7 @@ export function RolesManager() {
 	const [editPerms, setEditPerms] = useState<string[]>([]);
 	const [saving, setSaving] = useState(false);
 	const [deleting, setDeleting] = useState<CustomRole | null>(null);
+	const [upsellOpen, setUpsellOpen] = useState(false);
 
 	const load = useCallback(() => {
 		listCustomRoles()
@@ -201,7 +202,7 @@ export function RolesManager() {
 
 	function onCreateClick() {
 		if (!entitled) {
-			toast.info("Custom roles require an Enterprise plan.");
+			setUpsellOpen(true);
 			return;
 		}
 		setGallery((v) => !v);
@@ -222,12 +223,6 @@ export function RolesManager() {
 
 	return (
 		<div>
-			<SettingsPageHead
-				eyebrow="Roles"
-				title="Roles"
-				description="A role is a named set of permissions. Assign it at the highest scope and let Org → Zone → Spec inheritance flow it down — sensitive scopes are never implied by a broad role."
-			/>
-
 			{/* toolbar */}
 			<div className="mb-[14px] flex flex-wrap items-center justify-between gap-4">
 				<div className="flex items-center gap-3">
@@ -246,6 +241,12 @@ export function RolesManager() {
 					Create role
 				</Button>
 			</div>
+
+			<UpgradeDialog
+				feature="roles"
+				open={upsellOpen}
+				onOpenChange={setUpsellOpen}
+			/>
 
 			{/* template gallery */}
 			{gallery && entitled && (
@@ -360,7 +361,7 @@ export function RolesManager() {
 									className={cn(settingsControl, settingsControlSize, "max-w-sm")}
 									value={editName}
 									onChange={(e) => setEditName(e.target.value)}
-									placeholder="spec-deployer"
+									placeholder="project-deployer"
 									disabled={!entitled}
 									autoComplete="off"
 								/>

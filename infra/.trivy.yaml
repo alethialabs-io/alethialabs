@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Shared Trivy config for infra/ misconfiguration scanning (referenced by
+# .github/actions/iac-checks). Trivy absorbed tfsec; `scan-type: config` runs its
+# Terraform misconfiguration checks. Intentional design choices are excluded below.
+
+misconfiguration:
+  # IDs of checks that flag deliberate, reviewed design decisions.
+  exclude:
+    # The connector-assets bucket is intentionally public-read (serves the CloudFormation
+    # template + Cloud Shell setup scripts; AWS CFN quick-create requires an S3-hosted URL).
+    - AVD-AWS-0086 # No public access block so not blocking public policies
+    - AVD-AWS-0087 # S3 bucket does not block public ACLs
+    - AVD-AWS-0091 # S3 access block should block public policy
+    - AVD-AWS-0093 # S3 access block should restrict public bucket
+    - AVD-AWS-0094 # S3 bucket should have block public policy
+    - AVD-AWS-0132 # S3 bucket encryption (connector-assets serves public, non-secret files)

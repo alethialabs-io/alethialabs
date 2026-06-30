@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Static IaC checks for a single OpenTofu stack/template dir — fmt + lint + security.
+# Credential-free by design, so it is safe on contributor PRs (the repo never puts cloud/state
+# secrets on PR jobs). The caller must have already run setup-opentofu (so `tofu` is on PATH).
+
+name: IaC checks
+description: tofu fmt-check + tflint + Trivy config scan over a Terraform/OpenTofu directory.
+
+inputs:
+  working-directory:
+    description: Directory to check (an OpenTofu stack or template root).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: tofu fmt (check)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: tofu fmt -check -recursive
+
+    - name: Setup tflint
+      uses: terraform-linters/setup-tflint@v4
+      with:
+        tflint_version: v0.54.0
+
+    - name: tflint
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TFLINT_CONFIG_FILE: ${{ github.workspace }}/infra/.tflint.hcl
+      run: |
+        tflint --init
+        tflint --recursive --format compact
+
+    - name: Trivy config scan (Terraform misconfig)
+      uses: aquasecurity/trivy-action@0.28.0
+      with:
+        scan-type: config
+        scan-ref: ${{ inputs.working-directory }}
+        trivy-config: ${{ github.workspace }}/infra/.trivy.yaml
+        exit-code: "1"
+        severity: HIGH,CRITICAL

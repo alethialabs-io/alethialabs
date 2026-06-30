@@ -7,7 +7,8 @@ import { getOwner } from "@/lib/auth/owner";
 import { withOwnerScope } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
 import type { AnyCachedResources } from "@/lib/cloud-providers";
-import type { CachedResources } from "@/types/database-custom.types";
+import { normalizeCachedResources } from "@/lib/cloud-providers/cached-resources";
+import type { CachedResources } from "@/types/jsonb.types";
 
 export type CachedAwsResources = CachedResources & {
 	cached_at: string | null;
@@ -37,12 +38,9 @@ export async function getCachedAwsResources(
 	);
 
 	if (!row?.cached_resources) return null;
-	const res = row.cached_resources as CachedResources;
+	// This reader is AWS-scoped (provider = 'aws'), so the union column is AWS-shaped here.
 	return {
-		regions: res.regions ?? [],
-		vpcs: res.vpcs ?? {},
-		subnets: res.subnets ?? {},
-		hosted_zones: res.hosted_zones ?? [],
+		...normalizeCachedResources(row.cached_resources as CachedResources),
 		cached_at: row.cached_at?.toISOString() ?? null,
 	};
 }

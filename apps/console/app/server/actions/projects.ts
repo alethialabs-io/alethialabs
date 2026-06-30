@@ -570,6 +570,7 @@ async function buildConfigSnapshot(
 				node_min_size: cluster?.node_min_size ?? 2,
 				node_max_size: cluster?.node_max_size ?? 5,
 				node_desired_size: cluster?.node_desired_size ?? 2,
+				node_disk_size_gb: cluster?.node_disk_size_gb ?? null,
 				cluster_admins: cluster?.cluster_admins ?? [],
 				provider_config: cluster?.provider_config ?? {},
 			},
@@ -730,6 +731,48 @@ export async function provisionProject(
 	return result;
 }
 
+/**
+ * Queue a DETECT_DRIFT job (elench): a refresh-only plan that reports drift between
+ * recorded state and the live cloud for an environment, storing a drift posture on
+ * the job's execution_metadata. Read-only against the cloud — it never applies.
+ * A scheduler can call this per environment on a tiered cadence; it's also
+ * invocable on demand.
+ */
+export async function detectDrift(
+	projectId: string,
+	environmentId?: string | null,
+	runnerId?: string | null,
+) {
+	const actor = await authorize("plan", { type: "project", id: projectId });
+	await assertUsageAllowed(actor.orgId);
+	const owner = actor.userId;
+	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
+		owner,
+		projectId,
+		environmentId,
+	);
+
+	const result = await withOwnerScope(owner, async (tx) => {
+		const [job] = await tx
+			.insert(jobs)
+			.values({
+				user_id: owner,
+				project_id: projectId,
+				environment_id: environment.id,
+				cloud_identity_id: identity.id,
+				job_type: "DETECT_DRIFT",
+				config_snapshot: configSnapshot,
+				status: "QUEUED",
+				...(runnerId ? { assigned_runner_id: runnerId } : {}),
+			})
+			.returning({ id: jobs.id });
+		return { jobId: job.id };
+	});
+
+	notifyScaler();
+	return result;
+}
+
 // ============================================================
 // Delete
 // ============================================================
@@ -797,6 +840,8 @@ export async function getProjectAsFormData(
 					node_min_size: source.components.cluster.node_min_size ?? 2,
 					node_max_size: source.components.cluster.node_max_size ?? 5,
 					node_desired_size: source.components.cluster.node_desired_size ?? 2,
+					node_disk_size_gb:
+						source.components.cluster.node_disk_size_gb ?? undefined,
 					cluster_admins: source.components.cluster.cluster_admins ?? [],
 					provider_config: source.components.cluster.provider_config ?? {},
 				}
@@ -830,6 +875,7 @@ export async function getProjectAsFormData(
 			name: db.name,
 			engine: db.engine ?? undefined,
 			engine_version: db.engine_version ?? undefined,
+			instance_class: db.instance_class ?? undefined,
 			min_capacity: db.min_capacity ?? undefined,
 			max_capacity: db.max_capacity ?? undefined,
 			port: db.port ?? undefined,
@@ -839,6 +885,7 @@ export async function getProjectAsFormData(
 		caches: source.components.caches.map((c) => ({
 			name: c.name,
 			engine: c.engine ?? undefined,
+			engine_version: c.engine_version ?? undefined,
 			node_type: c.node_type ?? undefined,
 			num_cache_nodes: c.num_cache_nodes ?? undefined,
 			multi_az: c.multi_az ?? undefined,

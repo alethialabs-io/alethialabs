@@ -3,30 +3,43 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { revalidatePath } from "next/cache";
-import { getOwner, requireOwner } from "@/lib/auth/owner";
+import { authorize, authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import * as conn from "@/lib/cloud-providers/connections";
 
 /**
  * Server actions for the clouds added after AWS/GCP/Azure: Alibaba (RAM role) and
  * the token clouds DigitalOcean / Hetzner / Civo. Thin wrappers over connections.ts,
- * mirroring the per-cloud action files.
+ * mirroring the per-cloud action files. Connections are org-scoped and gated by the
+ * `manage_identities` permission.
  */
 
 type ExtraCloud = "alibaba" | "digitalocean" | "hetzner" | "civo";
 
-/** Verified connection status for one of the extra clouds. */
+/** Verified connection status for one of the extra clouds (first connected account). */
 export async function getExtraCloudStatus(
 	provider: ExtraCloud,
 ): Promise<conn.ConnectionStatus> {
-	const userId = await getOwner();
-	if (!userId) return { connected: false };
-	return conn.getStatus(userId, provider);
+	const actor = await currentActor();
+	return conn.getStatus(actor, provider);
 }
 
-/** Gets or creates the user's pending identity (Alibaba also gets a stable external_id). */
+/** Lists every connected account for one of the extra clouds (multi-account). */
+export async function listExtraCloudIdentities(
+	provider: ExtraCloud,
+): Promise<conn.ConnectionStatus[]> {
+	const actor = await currentActor();
+	return conn.listIdentities(actor, provider);
+}
+
+/**
+ * Gets or creates a pending identity (Alibaba also gets a stable external_id).
+ * Manage-gated but not activity-logged — this only seeds the connect sheet.
+ */
 export async function initExtraCloudIdentity(provider: ExtraCloud) {
-	const userId = await requireOwner();
-	return conn.initIdentity(userId, provider);
+	const actor = await authorizeQuiet("manage_identities", {
+		type: "cloud_identity",
+	});
+	return conn.initIdentity(actor, provider);
 }
 
 /** Persists a DigitalOcean/Hetzner/Civo scoped API token and queues a connection test. */
@@ -35,8 +48,11 @@ export async function saveTokenCloud(
 	provider: "digitalocean" | "hetzner" | "civo",
 	apiToken: string,
 ) {
-	const userId = await requireOwner();
-	return conn.saveTokenCloudIdentity(userId, identityId, provider, apiToken);
+	const actor = await authorize("manage_identities", {
+		type: "cloud_identity",
+		id: identityId,
+	});
+	return conn.saveTokenCloudIdentity(actor, identityId, provider, apiToken);
 }
 
 /**
@@ -48,14 +64,20 @@ export async function saveSelfManagedTokenCloud(
 	identityId: string,
 	provider: "digitalocean" | "hetzner" | "civo",
 ) {
-	const userId = await requireOwner();
-	return conn.saveSelfManagedTokenIdentity(userId, identityId, provider);
+	const actor = await authorize("manage_identities", {
+		type: "cloud_identity",
+		id: identityId,
+	});
+	return conn.saveSelfManagedTokenIdentity(actor, identityId, provider);
 }
 
 /** Persists an Alibaba RAM-role ARN and queues a connection test. */
 export async function saveAlibaba(identityId: string, roleArn: string) {
-	const userId = await requireOwner();
-	return conn.saveAlibabaIdentity(userId, identityId, roleArn);
+	const actor = await authorize("manage_identities", {
+		type: "cloud_identity",
+		id: identityId,
+	});
+	return conn.saveAlibabaIdentity(actor, identityId, roleArn);
 }
 
 /** Marks an extra-cloud identity verified using the connection-test result. */
@@ -63,8 +85,11 @@ export async function verifyExtraCloudIdentity(
 	identityId: string,
 	jobId?: string,
 ) {
-	const userId = await requireOwner();
-	const result = await conn.verifyIdentity(userId, identityId, jobId);
+	const actor = await authorize("manage_identities", {
+		type: "cloud_identity",
+		id: identityId,
+	});
+	const result = await conn.verifyIdentity(actor, identityId, jobId);
 	revalidatePath("/dashboard/connectors");
 	return result;
 }
@@ -74,6 +99,9 @@ export async function disconnectExtraCloud(
 	identityId: string,
 	provider: ExtraCloud,
 ) {
-	const userId = await requireOwner();
-	return conn.disconnectIdentity(userId, identityId, provider);
+	const actor = await authorize("manage_identities", {
+		type: "cloud_identity",
+		id: identityId,
+	});
+	return conn.disconnectIdentity(actor, identityId, provider);
 }

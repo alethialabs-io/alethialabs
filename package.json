@@ -29,7 +29,9 @@
 		"compose:up:site": "COMPOSE_PROFILES=marketing bash scripts/compose-up.sh caddy app docs blog marketing",
 		"compose:ps": "docker compose ps",
 		"compose:logs": "docker compose logs -f --tail=100",
-		"compose:down": "docker compose down"
+		"compose:down": "docker compose down",
+		"check:connector-assets": "node scripts/check-connector-assets.mjs",
+		"sync:connector-assets": "node scripts/sync-connector-assets.mjs"
 	},
 	"devDependencies": {
 		"prettier": "^3.6.2",

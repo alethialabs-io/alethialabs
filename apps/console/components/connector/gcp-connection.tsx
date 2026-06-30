@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { verifyGcpIdentity } from "@/app/(private)/dashboard/providers/gcp-actions";
-import { getJobStatus } from "@/app/server/actions/jobs";
 import { Button } from "@repo/ui/button";
 import {
 	Card,
@@ -22,22 +20,25 @@ import {
 	FormMessage,
 } from "@repo/ui/form";
 import { Textarea } from "@repo/ui/textarea";
+import {
+	ConnectionTestStatus,
+	InfoNote,
+	StatusCallout,
+} from "@/components/connector/connection-ui";
+import { useConnectionTest } from "@/components/connector/use-connection-test";
+import { CopyButton } from "@repo/ui/copy-button";
+import { FieldHelp } from "@repo/ui/field-help";
+import { connectorAssetUrl } from "@/components/connector/connector-assets";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-	AlertCircle,
 	CheckCircle2,
-	Copy,
 	Download,
 	ExternalLink,
-	Loader2,
 	ShieldCheck,
 	Terminal,
-	XCircle,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { toast } from "sonner";
 import * as z from "zod";
 
 const wifConfigSchema = z.object({
@@ -99,65 +100,9 @@ interface GcpConnectionProps {
 	) => Promise<{ jobId: string; identityId: string }>;
 }
 
-type VerifyState =
-	| { phase: "idle" }
-	| { phase: "verifying"; jobId: string; identityId: string }
-	| { phase: "success" }
-	| { phase: "failed"; error: string };
-
 export function GcpConnection({ onComplete }: GcpConnectionProps) {
-	const router = useRouter();
 	const [method, setMethod] = useState<"gcloud" | "terraform">("gcloud");
-	const [verifyState, setVerifyState] = useState<VerifyState>({
-		phase: "idle",
-	});
-	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-	const stopPolling = useCallback(() => {
-		if (pollRef.current) {
-			clearInterval(pollRef.current);
-			pollRef.current = null;
-		}
-	}, []);
-
-	useEffect(() => {
-		return () => stopPolling();
-	}, [stopPolling]);
-
-	const startPolling = useCallback(
-		(jobId: string, identityId: string) => {
-			stopPolling();
-			pollRef.current = setInterval(async () => {
-				try {
-					const result = await getJobStatus(jobId);
-					if (!result) return;
-
-					if (result.status === "SUCCESS") {
-						stopPolling();
-						await verifyGcpIdentity(identityId, jobId);
-						setVerifyState({ phase: "success" });
-						toast.success("GCP connection verified!");
-						router.refresh();
-					} else if (result.status === "FAILED") {
-						stopPolling();
-						setVerifyState({
-							phase: "failed",
-							error:
-								result.error_message ||
-								"Connection test failed. Check the Workload Identity Federation setup.",
-						});
-					}
-				} catch {
-					stopPolling();
-					setVerifyState({
-						phase: "failed",
-						error: "Failed to check verification status.",
-					});
-				}
-			}, 2000);
-		},
-		[stopPolling],
-	);
+	const { state: verifyState, run, cancel } = useConnectionTest();
 
 	const form = useForm<WifConfigFormValues>({
 		resolver: zodResolver(wifConfigSchema),
@@ -167,8 +112,7 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 		mode: "onChange",
 	});
 
-	const scriptUrl =
-		"https://alethia-onboarding-templates.s3.eu-west-1.amazonaws.com/alethia-gcp-setup.sh";
+	const scriptUrl = connectorAssetUrl("alethia-gcp-setup.sh");
 	const cloudShellCmd = `curl -sO ${scriptUrl} && bash alethia-gcp-setup.sh YOUR_PROJECT_ID`;
 	const cloudShellUrl =
 		"https://shell.cloud.google.com/cloudshell/open?shellonly=true&show=terminal";
@@ -182,24 +126,8 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 		document.body.removeChild(link);
 	};
 
-	const copyToClipboard = (text: string, label: string) => {
-		navigator.clipboard.writeText(text);
-		toast.success(`${label} copied to clipboard`);
-	};
-
 	const onSubmit = async (data: WifConfigFormValues) => {
-		setVerifyState({ phase: "verifying", jobId: "", identityId: "" });
-		try {
-			const { jobId, identityId } = await onComplete(data.wifConfig);
-			setVerifyState({ phase: "verifying", jobId, identityId });
-			startPolling(jobId, identityId);
-		} catch (error: unknown) {
-			const message =
-				error instanceof Error
-					? error.message
-					: "Failed to save connection.";
-			setVerifyState({ phase: "failed", error: message });
-		}
+		await run(() => onComplete(data.wifConfig));
 	};
 
 	const isValidJson = (() => {
@@ -350,18 +278,10 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 											<span className="break-all min-w-0">
 												{cloudShellCmd}
 											</span>
-											<button
-												onClick={() =>
-													copyToClipboard(
-														cloudShellCmd,
-														"Command",
-													)
-												}
-												className="mt-0.5 p-1 shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
-												type="button"
-											>
-												<Copy className="w-3.5 h-3.5" />
-											</button>
+											<CopyButton
+												text={cloudShellCmd}
+												className="mt-0.5 shrink-0 rounded p-1 hover:bg-muted"
+											/>
 										</div>
 									</div>
 								</div>
@@ -414,6 +334,33 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 												&quot;project_id=YOUR_PROJECT_ID&quot;
 											</div>
 										</div>
+										<div className="mt-3 flex flex-wrap items-center gap-3">
+											<Button
+												type="button"
+												size="sm"
+												className="h-8 text-xs font-medium"
+												onClick={() => {
+													const a = document.createElement("a");
+													a.href = "/connector-terraform/gcp.tf";
+													a.download = "alethia-gcp.tf";
+													document.body.appendChild(a);
+													a.click();
+													document.body.removeChild(a);
+												}}
+											>
+												<Download className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+												Download module
+											</Button>
+											<a
+												href="/docs/console/connectors/gcp"
+												target="_blank"
+												rel="noopener noreferrer"
+												className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+											>
+												Full guide
+												<ExternalLink className="w-3 h-3" />
+											</a>
+										</div>
 									</div>
 								</div>
 
@@ -439,50 +386,19 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 						)}
 
 						<div className="pt-6 border-t border-border/40">
-							{verifyState.phase === "success" ? (
-								<div className="flex items-center gap-3 p-4 bg-muted/50 border border-border rounded-md">
-									<CheckCircle2 className="w-5 h-5 text-foreground shrink-0" />
-									<div>
-										<p className="text-sm font-medium text-foreground">
-											Connection verified
-										</p>
-										<p className="text-xs text-muted-foreground mt-0.5">
-											Alethia can authenticate into your GCP
-											project via Workload Identity
-											Federation. You&apos;re ready to
-											provision infrastructure.
-										</p>
-									</div>
-								</div>
-							) : verifyState.phase === "verifying" ? (
-								<div className="flex items-center gap-3 p-4 bg-muted/30 border border-border/40 rounded-md">
-									<Loader2 className="w-5 h-5 animate-spin text-muted-foreground shrink-0" />
-									<div>
-										<p className="text-sm font-medium text-foreground">
-											Verifying connection...
-										</p>
-										<p className="text-xs text-muted-foreground mt-0.5">
-											Testing Workload Identity Federation
-											authentication into your GCP
-											project. This takes a few seconds.
-										</p>
-									</div>
-								</div>
+							{verifyState.phase === "success" ||
+							verifyState.phase === "saving" ||
+							verifyState.phase === "queued" ||
+							verifyState.phase === "testing" ? (
+								<ConnectionTestStatus
+									phase={verifyState.phase}
+									startedAt={verifyState.startedAt}
+									successText="Alethia can authenticate into your GCP project via Workload Identity Federation. You're ready to provision infrastructure."
+									verifyingText="Testing Workload Identity Federation authentication into your GCP project."
+									onCancel={cancel}
+								/>
 							) : (
 								<>
-									{verifyState.phase === "failed" && (
-										<div className="flex items-start gap-3 p-4 mb-4 bg-destructive/5 border border-destructive/20 rounded-md">
-											<XCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
-											<div>
-												<p className="text-sm font-medium text-destructive">
-													Verification failed
-												</p>
-												<p className="text-xs text-muted-foreground mt-0.5">
-													{verifyState.error}
-												</p>
-											</div>
-										</div>
-									)}
 									<Form {...form}>
 										<form
 											onSubmit={form.handleSubmit(
@@ -495,10 +411,27 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 												name="wifConfig"
 												render={({ field }) => (
 													<FormItem>
-														<FormLabel className="text-xs font-medium text-foreground mb-2 block">
-															WIF Credential
-															Config JSON
-														</FormLabel>
+														<div className="mb-2 flex items-center gap-1.5">
+															<FormLabel className="text-xs font-medium text-foreground">
+																WIF Credential Config JSON
+															</FormLabel>
+															<FieldHelp title="WIF Credential Config JSON">
+																The full Workload Identity Federation
+																credential JSON the setup prints — copy
+																everything between{" "}
+																<b className="text-foreground">START CONFIG</b>{" "}
+																and <b className="text-foreground">END CONFIG</b>{" "}
+																(or{" "}
+																<code className="text-foreground">
+																	terraform output credential_config
+																</code>
+																). It starts with{" "}
+																<code className="text-foreground">
+																	&quot;type&quot;: &quot;external_account&quot;
+																</code>
+																.
+															</FieldHelp>
+														</div>
 														<div className="space-y-2">
 															<FormControl>
 																<Textarea
@@ -523,6 +456,14 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 													</FormItem>
 												)}
 											/>
+											{verifyState.phase === "failed" && (
+												<StatusCallout
+													variant="error"
+													title="Verification failed"
+												>
+													{verifyState.error}
+												</StatusCallout>
+											)}
 											<Button
 												disabled={
 													!form.formState.isValid
@@ -537,17 +478,13 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 										</form>
 									</Form>
 
-									<div className="mt-5 flex items-start gap-2.5 p-3 bg-muted/20 rounded-md border border-border/40 text-[11px] text-muted-foreground">
-										<AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-										<p className="leading-relaxed">
-											Alethia uses Workload Identity
-											Federation for keyless
-											authentication. No service account
-											keys are stored — only the trust
-											configuration between Alethia&apos;s
-											AWS infrastructure and your GCP
-											project.
-										</p>
+									<div className="mt-5">
+										<InfoNote>
+											Alethia uses Workload Identity Federation for keyless
+											authentication. No service account keys are stored —
+											only the trust configuration between Alethia&apos;s
+											infrastructure and your GCP project.
+										</InfoNote>
 									</div>
 								</>
 							)}

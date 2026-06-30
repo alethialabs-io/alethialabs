@@ -2,10 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Building2, Check, ChevronsUpDown, Plus } from "lucide-react";
+import { Check, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
+import { OrgAvatar } from "@/components/org/org-avatar";
+import { SwitcherTrigger } from "@/components/shell/switcher-trigger";
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
 import {
@@ -16,37 +18,27 @@ import {
 	CommandItem,
 	CommandList,
 } from "@repo/ui/command";
-import {
-	Popover,
-	PopoverContent,
-	PopoverTrigger,
-} from "@repo/ui/popover";
+import { Popover, PopoverContent } from "@repo/ui/popover";
 import { Separator } from "@repo/ui/separator";
 import { planMeta } from "@repo/plan-catalog";
-import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
+import {
+	useActiveOrgSlug,
+	useWorkspaceStore,
+} from "@/lib/stores/use-workspace-store";
+import { orgHref } from "@/lib/routing";
 
 /**
  * Header organization switcher (Vercel-style). Lists the organizations the user
  * belongs to with their plan, marks the active one (which re-scopes the PDP + RLS on
  * switch), and offers a pinned "Create organization" action — always available, since
  * creating an org is the pay-to-collaborate path. The personal scope shows as
- * "Personal" (Free). Active org → "Create" opens the create sheet (name + plan → checkout).
+ * "Personal" (Free). "Create" opens the create sheet (name → pay → invite). The trigger is a
+ * split button: clicking the org name/avatar navigates to the org home, only the chevron opens
+ * the switcher.
  */
-/** Compact initials for an org avatar — first letters of up to two words. */
-function orgInitials(name: string): string {
-	const parts = name.trim().split(/\s+/).filter(Boolean);
-	if (parts.length === 0) return "?";
-	if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-	return (parts[0][0] + parts[1][0]).toUpperCase();
-}
-
-/** Where the switcher renders — `header` (compact inline) or `sidebar` (full-width row). */
-type OrgSwitcherVariant = "header" | "sidebar";
-
-export function OrgSwitcher({
-	variant = "header",
-}: { variant?: OrgSwitcherVariant } = {}) {
+export function OrgSwitcher() {
 	const router = useRouter();
+	const orgSlug = useActiveOrgSlug();
 	const [open, setOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
 	const { activeOrgId, organizations, fetchWorkspace, switchOrg } =
@@ -75,41 +67,26 @@ export function OrgSwitcher({
 	return (
 		<>
 			<Popover open={open} onOpenChange={setOpen}>
-				<PopoverTrigger asChild>
-					{variant === "sidebar" ? (
-						<Button
-							variant="ghost"
-							role="combobox"
-							aria-expanded={open}
-							className="h-auto w-full justify-start gap-2.5 px-2.5 py-2"
-						>
-							<span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-foreground/20 to-foreground/5 text-[10px] font-semibold text-foreground">
-								{orgInitials(active?.name ?? "Personal")}
-							</span>
-							<span className="min-w-0 flex-1 truncate text-left text-[13.5px] font-medium">
-								{active?.name ?? "Personal"}
-							</span>
-							<span className="shrink-0 rounded-full border px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-muted-foreground">
-								{meta.name}
-							</span>
-							<ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-						</Button>
-					) : (
-						<Button
-							variant="ghost"
-							size="sm"
-							role="combobox"
-							aria-expanded={open}
-							className="gap-2 px-2 text-sm font-medium"
-						>
-							<Building2 className="h-4 w-4 text-muted-foreground" />
-							<span className="max-w-[12rem] truncate">
-								{active?.name ?? "Personal"}
-							</span>
-							<ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-						</Button>
-					)}
-				</PopoverTrigger>
+				<SwitcherTrigger
+					variant="sidebar"
+					open={open}
+					href={orgHref(orgSlug)}
+					ariaLabel="Switch organization"
+					leading={
+						<OrgAvatar
+							name={active?.name ?? "Personal"}
+							logo={active?.logo}
+							size={24}
+							className="rounded-full"
+						/>
+					}
+					label={active?.name ?? "Personal"}
+					badge={
+						<span className="shrink-0 rounded-full border px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-muted-foreground">
+							{meta.name}
+						</span>
+					}
+				/>
 				<PopoverContent className="w-72 p-0" align="start">
 					<Command>
 						<CommandInput placeholder="Find organization…" className="h-9" />
@@ -125,8 +102,18 @@ export function OrgSwitcher({
 											onSelect={() => handleSelect(o.id)}
 											className="gap-2"
 										>
-											<Building2 className="h-4 w-4 text-muted-foreground" />
+											<OrgAvatar
+												name={o.name}
+												logo={o.logo}
+												size={20}
+												className="rounded-full"
+											/>
 											<span className="flex-1 truncate">{o.name}</span>
+											{o.status === "trialing" && (
+												<Badge className="bg-ink px-1.5 text-[9.5px] font-medium uppercase tracking-wide text-ink-foreground">
+													Trial
+												</Badge>
+											)}
 											<Badge
 												variant="outline"
 												className="text-[10px] font-normal text-muted-foreground"
@@ -153,7 +140,7 @@ export function OrgSwitcher({
 								<span className="flex min-w-0 flex-col">
 									<span className="text-sm font-medium">Create organization</span>
 									<span className="text-xs text-muted-foreground">
-										Collaborate with others in a shared workspace
+										Collaborate with others in a shared organization
 									</span>
 								</span>
 							</Button>

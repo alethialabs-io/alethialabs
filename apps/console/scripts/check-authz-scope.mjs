@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Authz-scope guard (spec 07): user-facing entry points must authorize through the
+// Authz-scope guard (project 07): user-facing entry points must authorize through the
 // PDP (getPdp().enforce / authorize / authorizeCli), never ad-hoc `.eq(user_id)`
 // ownership. Tenancy is the org RLS (server actions) or explicit `org_id` scoping
 // (no-RLS CLI/stream paths). This lint fails on `eq(<x>.user_id, …)` or

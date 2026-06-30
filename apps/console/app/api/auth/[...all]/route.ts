@@ -6,7 +6,7 @@
 // plugin's HTTP surface (/api/auth/organization/*). Provider tokens persist to the
 // `account` table.
 //
-// Server-side entitlement gate (spec 14 / billing foundation F1). Pricing model:
+// Server-side entitlement gate (project 14 / billing foundation F1). Pricing model:
 // creating a workspace (org) is FREE — a single-member community org — but TEAMS and
 // MEMBERS are the paid feature ("free org, pay to unlock teams"). The org plugin's UI
 // hides team/member actions for unentitled users, but the HTTP endpoints underneath

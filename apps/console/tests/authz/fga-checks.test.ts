@@ -6,22 +6,22 @@ import { checksFor } from "@/lib/authz/fga-mapping";
 
 describe("checksFor (the OR-check)", () => {
 	it("per-instance action with id ⇒ instance can_ OR org capability", () => {
-		const checks = checksFor("zone", "view", { id: "Z", orgId: "O" });
+		const checks = checksFor("project", "view", { id: "S", orgId: "O" });
 		expect(checks).toEqual([
-			{ object: "zone:Z", relation: "can_view" },
-			{ object: "org:O", relation: "zone_view" },
+			{ object: "project:S", relation: "can_view" },
+			{ object: "org:O", relation: "project_view" },
 		]);
 	});
 
 	it("per-instance action WITHOUT id ⇒ just the org capability", () => {
-		expect(checksFor("zone", "view", { orgId: "O" })).toEqual([
-			{ object: "org:O", relation: "zone_view" },
+		expect(checksFor("project", "view", { orgId: "O" })).toEqual([
+			{ object: "org:O", relation: "project_view" },
 		]);
 	});
 
 	it("create ⇒ org capability only (create is org-level)", () => {
-		expect(checksFor("zone", "create", { id: "Z", orgId: "O" })).toEqual([
-			{ object: "org:O", relation: "zone_create" },
+		expect(checksFor("project", "create", { id: "S", orgId: "O" })).toEqual([
+			{ object: "org:O", relation: "project_create" },
 		]);
 	});
 

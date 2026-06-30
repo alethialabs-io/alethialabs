@@ -4,7 +4,7 @@
 
 import { Check, Component, Plus } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { SwitcherTrigger } from "@/components/shell/switcher-trigger";
 import { Button } from "@repo/ui/button";
 import {
@@ -17,7 +17,7 @@ import {
 } from "@repo/ui/command";
 import { Popover, PopoverContent } from "@repo/ui/popover";
 import { Separator } from "@repo/ui/separator";
-import { useProjectsStore } from "@/lib/stores/use-projects-store";
+import { useProjectsQuery } from "@/lib/query/use-projects-query";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref, projectHref } from "@/lib/routing";
 
@@ -33,11 +33,7 @@ export function ProjectSwitcher() {
 	const pathname = usePathname();
 	const orgSlug = useActiveOrgSlug();
 	const [open, setOpen] = useState(false);
-	const { projects, fetchProjects } = useProjectsStore();
-
-	useEffect(() => {
-		fetchProjects();
-	}, [fetchProjects]);
+	const { data: projects = [] } = useProjectsQuery();
 
 	// Render across the whole org (overview, `~` global pages, project drilldowns) — never the
 	// legacy `/dashboard/*` tree. The active project is only the one in a `/{org}/{project}/…`

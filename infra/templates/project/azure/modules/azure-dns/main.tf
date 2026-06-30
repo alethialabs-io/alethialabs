@@ -11,7 +11,7 @@ resource "azurerm_app_service_certificate_order" "this" {
   resource_group_name = var.resource_group_name
   location            = "global"
   distinguished_name  = "CN=*.${var.domain}"
-  product_type        = "WildcardSsl"
+  product_type        = "WildCard"
 
   tags = var.tags
 }

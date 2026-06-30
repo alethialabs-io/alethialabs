@@ -4,6 +4,7 @@
 
 import { getPdp } from "@/lib/authz";
 import { authorize } from "@/lib/authz/guard";
+import { deploymentMode } from "@/lib/billing/config";
 import { getServiceDb } from "@/lib/db";
 import { fleetPools, type CloudProvider, type FleetPool } from "@/lib/db/schema";
 import {
@@ -30,6 +31,23 @@ import {
 } from "@/lib/validations/fleet";
 import { asc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+
+/**
+ * The managed warm-pool fleet is platform-operator infrastructure (the `fleet_pools` rows are
+ * global, with no org_id). On the hosted SaaS no tenant operates it — exposing it would leak our
+ * fleet topology and COGS — so fleet reads/writes are only available on self-managed deployments,
+ * where the operator IS the customer. (Enterprise / internal-admin access is a later addition.)
+ */
+function isFleetOperatorDeployment(): boolean {
+	return deploymentMode() === "self-managed";
+}
+
+/** Throws on deployments where the managed fleet must not be reachable by the actor (hosted). */
+function assertFleetOperable(): void {
+	if (!isFleetOperatorDeployment()) {
+		throw new Error("The managed fleet is not available on this deployment.");
+	}
+}
 
 /** A version (or location) and how many live runners carry it, for a pool's distribution row. */
 export interface PoolTally {
@@ -183,8 +201,12 @@ function targetVersionFor(pool: FleetPool, latest: string | null): string | null
  * who can view runners; the cards are read-only (mutations gate on the `fleet` resource).
  */
 export async function getFleetPoolViews(): Promise<FleetOverview> {
+	// Hosted tenants don't operate the managed fleet — show nothing rather than our topology.
+	if (!isFleetOperatorDeployment()) {
+		return { pools: [], fleetProviderActive: false, canManageFleet: false };
+	}
 	const actor = await authorize("view", { type: "runner" });
-	// Non-throwing capability probe (no audit write) — gates the create/edit/delete UI.
+	// Non-throwing capability probe (no activity write) — gates the create/edit/delete UI.
 	const canManageFleet = (await getPdp().can(actor, "create", { type: "fleet" })).allowed;
 
 	const pools = await getServiceDb()
@@ -207,11 +229,12 @@ export async function getFleetPoolViews(): Promise<FleetOverview> {
 /** The raw stored pool rows for the editor form. Visible config (warmMin/locations) is not
  *  sensitive; mutations remain owner/admin-gated. */
 export async function listFleetPoolConfigs(): Promise<FleetPool[]> {
+	assertFleetOperable();
 	await authorize("view", { type: "fleet" });
 	return getServiceDb().select().from(fleetPools).orderBy(asc(fleetPools.provider));
 }
 
-/** Map a validated create input to the insert row (camelCase spec → snake_case columns). */
+/** Map a validated create input to the insert row (camelCase project → snake_case columns). */
 function toInsertRow(input: FleetPoolCreateInput) {
 	return {
 		provider: input.provider,
@@ -253,6 +276,7 @@ function toUpdatePatch(input: FleetPoolUpdateInput): Partial<typeof fleetPools.$
 /** Create a warm pool. Provisions real VMs once a cloud provider is wired, so it's gated to
  *  owner/admin (the `fleet` resource). Wakes the controller to converge immediately. */
 export async function createFleetPool(input: FleetPoolCreateInput): Promise<FleetPool> {
+	assertFleetOperable();
 	await authorize("create", { type: "fleet" });
 	const data = fleetPoolCreateSchema.parse(input);
 	const [row] = await getServiceDb()
@@ -264,11 +288,12 @@ export async function createFleetPool(input: FleetPoolCreateInput): Promise<Flee
 	return row;
 }
 
-/** Edit a warm pool's spec (resize, pin a version, change locations). Converges live. */
+/** Edit a warm pool's project (resize, pin a version, change locations). Converges live. */
 export async function updateFleetPool(
 	id: string,
 	input: FleetPoolUpdateInput,
 ): Promise<FleetPool> {
+	assertFleetOperable();
 	await authorize("edit", { type: "fleet", id });
 	const data = fleetPoolUpdateSchema.parse(input);
 	const [row] = await getServiceDb()
@@ -283,6 +308,7 @@ export async function updateFleetPool(
 
 /** Pause/resume a pool. Paused pools are skipped by the controller (its runners drain). */
 export async function setFleetPoolEnabled(id: string, enabled: boolean): Promise<FleetPool> {
+	assertFleetOperable();
 	await authorize("edit", { type: "fleet", id });
 	const [row] = await getServiceDb()
 		.update(fleetPools)
@@ -296,6 +322,7 @@ export async function setFleetPoolEnabled(id: string, enabled: boolean): Promise
 
 /** Delete a pool. The controller then drains + reaps its runners on the next tick. */
 export async function deleteFleetPool(id: string): Promise<{ success: true }> {
+	assertFleetOperable();
 	await authorize("destroy", { type: "fleet", id });
 	await getServiceDb().delete(fleetPools).where(eq(fleetPools.id, id));
 	wakeFleetScaler();
@@ -329,6 +356,7 @@ export interface FleetEconomics {
  * reach viewers/operators (it's the manager gate, not a literal "create").
  */
 export async function getFleetEconomics(): Promise<FleetEconomics> {
+	assertFleetOperable();
 	await authorize("create", { type: "fleet" });
 
 	const now = new Date();

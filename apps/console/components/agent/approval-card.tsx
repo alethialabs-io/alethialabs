@@ -4,7 +4,7 @@
 
 import { Check, ShieldCheck, X } from "lucide-react";
 import { useState } from "react";
-import { planSpec, provisionSpec } from "@/app/server/actions/specs";
+import { planProject, provisionProject } from "@/app/server/actions/projects";
 import { Button } from "@repo/ui/button";
 import type { OperationProposal } from "@/lib/ai/operation";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
@@ -14,7 +14,7 @@ type Phase = "idle" | "running" | "done" | "rejected" | "denied";
 
 /**
  * HITL approval for an agent-proposed plan/deploy. Approve calls the PDP-gated
- * planSpec/provisionSpec (the M1 placement + usage gates run inside them) and opens
+ * planProject/provisionProject (the M1 placement + usage gates run inside them) and opens
  * the artifact Logs tab on the returned job; a denial (Forbidden / usage cap) shows
  * the "held back" note from the action's error message.
  */
@@ -23,7 +23,7 @@ export function ApprovalCard({ proposal }: { proposal: OperationProposal }) {
 	const [phase, setPhase] = useState<Phase>("idle");
 	const [reason, setReason] = useState<string | null>(null);
 
-	const isDeploy = proposal.operation.operation === "provision_spec";
+	const isDeploy = proposal.operation.operation === "provision_project";
 
 	const approve = async () => {
 		setPhase("running");
@@ -31,10 +31,10 @@ export function ApprovalCard({ proposal }: { proposal: OperationProposal }) {
 		try {
 			const op = proposal.operation;
 			const { jobId } =
-				op.operation === "plan_spec"
-					? await planSpec(op.specId)
-					: await provisionSpec(op.specId, op.planJobId);
-			open({ specId: op.specId, jobId }, "logs");
+				op.operation === "plan_project"
+					? await planProject(op.projectId)
+					: await provisionProject(op.projectId, op.planJobId);
+			open({ projectId: op.projectId, jobId }, "logs");
 			setPhase("done");
 		} catch (err) {
 			setPhase("denied");

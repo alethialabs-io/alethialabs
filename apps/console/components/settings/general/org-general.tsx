@@ -13,10 +13,12 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
 	getOrgSettings,
+	type OrgPrimaryAddress,
 	type OrgSettings,
 } from "@/app/server/actions/org-settings";
 import {
 	SettingsCardFoot,
+	SettingsColumns,
 	SettingsDangerRow,
 	SettingsField,
 	SettingsPanel,
@@ -25,6 +27,8 @@ import {
 	settingsControl,
 	settingsControlSize,
 } from "@/components/settings/settings-ui";
+import { orgHost } from "@/lib/org-url";
+import { OrgLogoUpload } from "@/components/org/org-logo-upload";
 // NB: the page header lives in general/page.tsx (outside the gate) so it stays visible.
 import {
 	AlertDialog,
@@ -51,16 +55,19 @@ const REGIONS = [
 ];
 const ENVS = ["staging", "development", "production"];
 
-function initials(name: string): string {
-	const parts = name.trim().split(/\s+/).filter(Boolean);
-	if (!parts.length) return "OR";
-	return ((parts[0][0] ?? "") + (parts[1]?.[0] ?? parts[0][1] ?? "")).toUpperCase();
-}
 function slugify(s: string): string {
 	return s
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "");
+}
+
+/** A compact, human-readable rendering of the org's primary (billing) address. */
+function formatPrimaryAddress(a: OrgPrimaryAddress): string {
+	const cityLine = [a.city, a.state, a.postalCode].filter(Boolean).join(" ");
+	return [a.name, a.line1, a.line2, cityLine, a.country]
+		.filter((part) => part && part.trim())
+		.join(", ");
 }
 
 export function OrgGeneral() {
@@ -94,6 +101,9 @@ export function OrgGeneral() {
 						region: s.region,
 						defaultEnv: s.defaultEnv,
 						terraformVersion: s.terraformVersion,
+						// Preserve the billing-set primary address — it's not edited here, but the
+						// metadata write would otherwise drop it.
+						...(s.primaryAddress ? { primaryAddress: s.primaryAddress } : {}),
 					},
 				},
 			});
@@ -137,118 +147,124 @@ export function OrgGeneral() {
 
 	return (
 		<div>
-			<SettingsSection title="Organization profile">
-				<SettingsPanel>
-					<div className="py-1">
-						<SettingsField
-							label="Logo"
-							hint="A square avatar, generated from the name until you upload one."
-						>
-							<div className="flex items-center gap-4">
-								<div className="flex size-14 items-center justify-center rounded-lg bg-ink font-display text-[22px] font-semibold tracking-[-0.02em] text-ink-foreground">
-									{initials(s.name)}
-								</div>
-								<Button
-									variant="outline"
-									size="sm"
-									onClick={() => toast.info("Logo upload is coming soon.")}
-								>
-									Upload image
-								</Button>
-								<Button variant="ghost" size="sm" disabled>
-									Remove
-								</Button>
-							</div>
-						</SettingsField>
-						<SettingsField
-							label="Organization name"
-							hint="Shown across the console and in invitations."
-						>
-							<input
-								className={cn(settingsControl, settingsControlSize)}
-								value={s.name}
-								onChange={(e) => set("name", e.target.value)}
-								autoComplete="off"
-							/>
-						</SettingsField>
-						<SettingsField
-							label="Organization URL"
-							hint="The slug for your org's console workspace."
-						>
-							<div className="flex h-[38px] items-center overflow-hidden rounded-sm border border-border-strong bg-surface-sunken">
-								<span className="whitespace-nowrap pl-3 pr-0.5 font-mono text-[12px] text-text-tertiary">
-									console.alethialabs.io/
-								</span>
+			<SettingsColumns>
+				<SettingsSection title="Organization profile">
+					<SettingsPanel>
+						<div className="py-1">
+							<SettingsField
+								label="Logo"
+								hint="A square avatar, generated from the name until you upload one."
+							>
+								<OrgLogoUpload
+									name={s.name}
+									logo={s.logo}
+									onChange={(url) => set("logo", url)}
+								/>
+							</SettingsField>
+							<SettingsField
+								label="Organization name"
+								hint="Shown across the console and in invitations."
+							>
 								<input
-									className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-[12px] text-text-primary outline-none"
-									value={s.slug}
-									onChange={(e) => set("slug", slugify(e.target.value))}
+									className={cn(settingsControl, settingsControlSize)}
+									value={s.name}
+									onChange={(e) => set("name", e.target.value)}
 									autoComplete="off"
 								/>
-							</div>
-							<span className="font-mono text-[10.5px] text-text-tertiary">
-								Lowercase, numbers and hyphens.
-							</span>
-						</SettingsField>
-						<SettingsField
-							label="Description"
-							hint="Optional. A short line for teammates and audit context."
-						>
-							<textarea
-								className={cn(
-									settingsControl,
-									"min-h-16 resize-y py-2.5 leading-normal",
+							</SettingsField>
+							<SettingsField
+								label="Organization URL"
+								hint="The slug for your organization's URL."
+							>
+								<div className="flex h-[38px] items-center overflow-hidden rounded-sm border border-border-strong bg-surface-sunken">
+									<span className="whitespace-nowrap pl-3 pr-0.5 font-mono text-[12px] text-text-tertiary">
+										{orgHost()}/
+									</span>
+									<input
+										className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-[12px] text-text-primary outline-none"
+										value={s.slug}
+										onChange={(e) => set("slug", slugify(e.target.value))}
+										autoComplete="off"
+									/>
+								</div>
+								<span className="font-mono text-[10.5px] text-text-tertiary">
+									Lowercase, numbers and hyphens.
+								</span>
+							</SettingsField>
+							<SettingsField
+								label="Description"
+								hint="Optional. A short line for teammates and audit context."
+							>
+								<textarea
+									className={cn(
+										settingsControl,
+										"min-h-16 resize-y py-2.5 leading-normal",
+									)}
+									placeholder="What does this organization manage?"
+									value={s.description}
+									onChange={(e) => set("description", e.target.value)}
+								/>
+							</SettingsField>
+							<SettingsField
+								label="Primary address"
+								hint="Set from billing checkout when you opt to reuse the billing address."
+							>
+								{s.primaryAddress ? (
+									<address className="rounded-sm border border-border-strong bg-surface-sunken px-3 py-2.5 text-[12.5px] not-italic leading-relaxed text-text-secondary">
+										{formatPrimaryAddress(s.primaryAddress)}
+									</address>
+								) : (
+									<span className="font-mono text-[11px] text-text-tertiary">
+										Not set — check &ldquo;use as primary address&rdquo; during checkout.
+									</span>
 								)}
-								placeholder="What does this organization manage?"
-								value={s.description}
-								onChange={(e) => set("description", e.target.value)}
-							/>
-						</SettingsField>
-					</div>
-					<SettingsCardFoot note="Applies across the console">{saveBtn}</SettingsCardFoot>
-				</SettingsPanel>
-			</SettingsSection>
+							</SettingsField>
+						</div>
+						<SettingsCardFoot note="Applies across the console">{saveBtn}</SettingsCardFoot>
+					</SettingsPanel>
+				</SettingsSection>
 
-			<SettingsSection title="Defaults">
-				<SettingsPanel>
-					<div className="py-1">
-						<SettingsField
-							label="Data region"
-							hint="Residency for the control plane and Spec state."
-						>
-							<SettingsSelect
-								value={s.region}
-								onChange={(v) => set("region", v)}
-								options={REGIONS.map((r) => ({ value: r.split(" ")[0], label: r }))}
-							/>
-							<span className="font-mono text-[10.5px] text-text-tertiary">
-								Region migration requires a support request.
-							</span>
-						</SettingsField>
-						<SettingsField
-							label="Default Spec environment"
-							hint="Pre-selected stage for newly planted Specs."
-						>
-							<SettingsSelect
-								value={s.defaultEnv}
-								onChange={(v) => set("defaultEnv", v)}
-								options={ENVS.map((en) => ({ value: en, label: en }))}
-							/>
-						</SettingsField>
-						<SettingsField
-							label="Terraform version"
-							hint="Pinned across runners unless a Spec overrides it."
-						>
-							<input
-								className={cn(settingsControl, settingsControlSize, "font-mono text-[12.5px]")}
-								value={s.terraformVersion}
-								onChange={(e) => set("terraformVersion", e.target.value)}
-							/>
-						</SettingsField>
-					</div>
-					<SettingsCardFoot note="Applies to new resources only">{saveBtn}</SettingsCardFoot>
-				</SettingsPanel>
-			</SettingsSection>
+				<SettingsSection title="Defaults">
+					<SettingsPanel>
+						<div className="py-1">
+							<SettingsField
+								label="Data region"
+								hint="Residency for the control plane and Project state."
+							>
+								<SettingsSelect
+									value={s.region}
+									onChange={(v) => set("region", v)}
+									options={REGIONS.map((r) => ({ value: r.split(" ")[0], label: r }))}
+								/>
+								<span className="font-mono text-[10.5px] text-text-tertiary">
+									Region migration requires a support request.
+								</span>
+							</SettingsField>
+							<SettingsField
+								label="Default Project environment"
+								hint="Pre-selected stage for newly planted Projects."
+							>
+								<SettingsSelect
+									value={s.defaultEnv}
+									onChange={(v) => set("defaultEnv", v)}
+									options={ENVS.map((en) => ({ value: en, label: en }))}
+								/>
+							</SettingsField>
+							<SettingsField
+								label="Terraform version"
+								hint="Pinned across runners unless a Project overrides it."
+							>
+								<input
+									className={cn(settingsControl, settingsControlSize, "font-mono text-[12.5px]")}
+									value={s.terraformVersion}
+									onChange={(e) => set("terraformVersion", e.target.value)}
+								/>
+							</SettingsField>
+						</div>
+						<SettingsCardFoot note="Applies to new resources only">{saveBtn}</SettingsCardFoot>
+					</SettingsPanel>
+				</SettingsSection>
+			</SettingsColumns>
 
 			<SettingsSection title="Danger zone" className="mb-0">
 				<SettingsPanel danger>
@@ -266,7 +282,7 @@ export function OrgGeneral() {
 					</SettingsDangerRow>
 					<SettingsDangerRow
 						title="Delete organization"
-						description={`Permanently delete ${s.name} and all its Specs. This destroys no cloud resources — run destroy first. Cannot be undone.`}
+						description={`Permanently delete ${s.name} and all its Projects. This destroys no cloud resources — run destroy first. Cannot be undone.`}
 					>
 						<AlertDialog>
 							<AlertDialogTrigger asChild>

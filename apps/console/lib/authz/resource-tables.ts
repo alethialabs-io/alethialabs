@@ -8,11 +8,10 @@
 import { eq } from "drizzle-orm";
 import type { Resource } from "@/lib/authz/registry";
 import { getServiceDb } from "@/lib/db";
-import { cloudIdentities, jobs, runners, specs, zones } from "@/lib/db/schema";
+import { cloudIdentities, jobs, runners, projects } from "@/lib/db/schema";
 
 const RESOURCE_TABLE = {
-	zone: zones,
-	spec: specs,
+	project: projects,
 	job: jobs,
 	runner: runners,
 	cloud_identity: cloudIdentities,

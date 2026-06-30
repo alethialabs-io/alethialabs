@@ -14,7 +14,7 @@
 //     down to its descendants.
 //   • the instance type R carries `perm_A` (a grant scoped to one instance) and
 //     `can_A = perm_A OR R_A from parent` (the effective check).
-// `create` and org/member/audit/billing keys live only as org capabilities.
+// `create` and org/member/activity/billing keys live only as org capabilities.
 //
 // Output is plain JSON typed locally (no @openfga/sdk import — this stays in core);
 // the ee/ client passes it to writeAuthorizationModel(), which validates it.

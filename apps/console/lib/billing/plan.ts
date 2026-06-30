@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The plan → entitlements ladder: the single source of truth for "what paying
-// unlocks" (spec 14-gtm-pricing). It is a PURE function with no I/O and no ee/
+// unlocks" (project 14-gtm-pricing). It is a PURE function with no I/O and no ee/
 // import, so it is safe to live in core and be called from both the community
 // fallback and the ee/ per-org resolution. The COMMERCIAL decision — which plan an
 // org is actually on, and whether its subscription is active — lives in ee/
@@ -14,20 +14,29 @@ import type { Entitlements } from "@/lib/authz/types";
 /** Community baseline — every enterprise feature off. The implicit plan. */
 export const COMMUNITY_ENTITLEMENTS: Entitlements = {
 	organizations: false,
+	teams: false,
 	sso: false,
 	customRoles: false,
-	auditExport: false,
+	activityExport: false,
+	alerting: false,
 	advancedAlerting: false,
-	quotas: { maxConcurrentJobs: 2, priorityLevel: 0, includedRunnerMinutes: 200 },
+	byoRunners: false,
+	managedPools: false,
+	quotas: {
+		maxConcurrentJobs: 2,
+		priorityLevel: 0,
+		includedRunnerMinutes: 200,
+		activityRetentionDays: 7,
+	},
 	// Free trial: a taste of AI (illustrative credits; scan ~20, message ~1 — tune later).
 	ai: { enabled: true, tier: "trial", windowCredits: 30, windowHours: 5, weeklyCredits: 100 },
 };
 
 /**
  * The granular ladder (each tier is additive over the one below it):
- *  - community  → all off (single-tenant: own zones/specs only, no teams)
- *  - team       → organizations/teams
- *  - enterprise → + custom roles + audit export + SSO/SAML
+ *  - community  → all off (single-tenant: own projects only)
+ *  - team       → organizations (invite + collaborate) + alerting (policies/channels)
+ *  - enterprise → + teams + custom roles + activity export + advanced (PDP) alerting + SSO/SAML
  *
  * Adjusting what a tier grants is a one-line edit here.
  */
@@ -37,10 +46,13 @@ export function planEntitlements(plan: BillingPlan): Entitlements {
 			return {
 				...COMMUNITY_ENTITLEMENTS,
 				organizations: true,
+				alerting: true,
+				byoRunners: true,
 				quotas: {
 					maxConcurrentJobs: 8,
 					priorityLevel: 10,
 					includedRunnerMinutes: 500,
+					activityRetentionDays: 30,
 				},
 				// AI "Standard" (×1).
 				ai: { enabled: true, tier: "standard", windowCredits: 300, windowHours: 5, weeklyCredits: 3_000 },
@@ -48,14 +60,19 @@ export function planEntitlements(plan: BillingPlan): Entitlements {
 		case "enterprise":
 			return {
 				organizations: true,
+				teams: true,
 				customRoles: true,
-				auditExport: true,
+				activityExport: true,
+				alerting: true,
 				advancedAlerting: true,
 				sso: true,
+				byoRunners: true,
+				managedPools: true,
 				quotas: {
 					maxConcurrentJobs: null,
 					priorityLevel: 30,
 					includedRunnerMinutes: 20_000,
+					activityRetentionDays: 365,
 				},
 				// AI "20×".
 				ai: {

@@ -7,7 +7,7 @@
 import { poolSchema } from "@/lib/fleet/config";
 import { z } from "zod";
 
-/** Create a pool: the full spec, plus an optional display name. `provider` is required. */
+/** Create a pool: the full project, plus an optional display name. `provider` is required. */
 export const fleetPoolCreateSchema = poolSchema.extend({
 	name: z.string().trim().min(1).max(60).optional(),
 });

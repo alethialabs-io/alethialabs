@@ -127,7 +127,7 @@ Note: `pnpm dev` (unfiltered) runs *every* app and is heavy — use `pnpm dev:up
 The DB tier is **Drizzle ORM + postgres-js** on self-hosted Postgres. Schema changes
 follow a strict pipeline. **Never edit generated migration files manually.**
 
-1. Edit the schema in `lib/db/schema/*.ts` (one file per domain: jobs, runners, specs, zones, …).
+1. Edit the schema in `lib/db/schema/*.ts` (one file per domain: jobs, runners, projects, …).
 2. Run `pnpm -F console db:generate` — drizzle-kit diffs the schema and writes a new SQL migration to
    `lib/db/migrations/` (+ updates the `meta/` journal).
 3. Migrations apply via `scripts/migrate.mjs` (the `migrate` Docker target / compose one-shot): it runs
@@ -154,10 +154,10 @@ snapshots end up with the same `prevId` → a permanent "collision" that jams `d
 - Column types are inferred straight from the Drizzle schema (`typeof table.$inferSelect` /
   `$inferInsert`) — there is **no** generated `database.types.ts`.
 - For JSONB columns with a known shape, type them on the column with
-  `jsonb().$type<SomeInterface>()`; the interface lives in `types/database-custom.types.ts`
+  `jsonb().$type<SomeInterface>()`; the interface lives in `types/jsonb.types.ts`
   (CloudCredentials, CachedResources, ClusterAdmin, TopicSubscription, etc.).
 - **Never** use `Record<string, unknown>` for a JSONB field that has a known shape — define the
-  interface in `database-custom.types.ts`.
+  interface in `jsonb.types.ts`.
 
 ### Zod schemas (drizzle-zod)
 
@@ -165,9 +165,9 @@ Derive validators from the schema with `drizzle-zod` rather than hand-writing th
 
 ```typescript
 import { createInsertSchema } from "drizzle-zod";
-import { specCluster } from "@/lib/db/schema";
+import { projectCluster } from "@/lib/db/schema";
 
-const clusterInsert = createInsertSchema(specCluster, {
+const clusterInsert = createInsertSchema(projectCluster, {
   // refine JSONB columns with their interface types
   cluster_admins: z.custom<ClusterAdmin[]>().optional(),
   provider_config: z.custom<ClusterProviderConfig>().optional(),
@@ -179,9 +179,9 @@ Form/input schemas live in `lib/validations/`. Reusable typed query builders bel
 ### Alethia Code Style
 
 - All functions must have a brief JSDoc comment explaining what they do.
-- Group components by feature/domain, not by type. Example: `components/integrations/`, `components/design-spec/`, not `components/buttons/`, `components/modals/`.
+- Group components by feature/domain, not by type. Example: `components/integrations/`, `components/design-project/`, not `components/buttons/`, `components/modals/`.
 - Component files that are renamed should be deleted, not left behind with re-exports.
-- Never use `Record<string, unknown>` for JSONB fields that have a known shape. Define a proper interface in `database-custom.types.ts`.
+- Never use `Record<string, unknown>` for JSONB fields that have a known shape. Define a proper interface in `jsonb.types.ts`.
 - Prefer `useFormContext` + `useFieldArray` over prop drilling for form sections.
 
 ### Alethia Project Structure
@@ -203,7 +203,7 @@ apps/console/
     cloud-providers/      # AWS, GCP, Azure integration helpers
     stores/               # Zustand state stores
   types/
-    database-custom.types.ts  # JSONB field interfaces ($type<>() on the schema)
+    jsonb.types.ts  # JSONB field interfaces ($type<>() on the schema)
 ```
 
 ### Alethia Key Patterns
@@ -221,10 +221,9 @@ apps/console/
 - **Entry point**: `apps/cli/main.go` → `cmd.Execute()`
 - **Commands** (`apps/cli/cmd/`): Cobra-based CLI with 27+ commands organized into groups:
   - **Auth**: `login`, `logout` — device code flow with browser automation, JWT tokens
-  - **Zones**: `zone list|create|delete` — workspace management
-  - **Specs**: `spec list|get` — infrastructure configuration browsing
+  - **Projects**: `project list|get` — infrastructure configuration browsing
   - **Jobs**: `jobs list|get|logs|cancel|wait` — provisioning job management
-  - **Provisioning**: `spec plan`, `spec apply`, `spec destroy` — queue IaC operations
+  - **Provisioning**: `project plan`, `project apply`, `project destroy` — queue IaC operations
   - **Runners**: `runner deploy|list|destroy|remove` — runner lifecycle
   - **Clusters**: `clusters list` — Kubernetes cluster management
 
@@ -256,6 +255,7 @@ apps/console/
 - **Purpose**: Long-running daemon that polls Alethia for queued provisioning jobs, claims them, executes OpenTofu operations, and streams logs back.
 - **Deployment**: Docker image on ECS Fargate, auto-registered with Alethia via HTTP on startup.
 - **Runner operator/provisioning**: `operator=managed` (Alethia runs it in the platform account, assumes role into customer accounts, billed by provisioned hours via the `runner_usage_sessions` ledger) or `operator=self` (runs in the customer's cloud with native permissions). Self runners are further split by `provisioning`: `deployed` (provisioned into the customer's cloud by an existing runner running Terraform) or `registered` (customer brought their own — own Terraform or `alethia runner start`).
+- **Verification gate (elench)**: between `tofu plan` and `tofu apply`, `provisioner.RunDeployV2` runs `packages/core/verify` over the plan JSON and attaches a `verify.Report` to the result. A real apply is **fail-closed** — a hard control failure blocks before `tofu apply` unless an authorized `verify.Override` waives it. The runner forwards the report on `execution_metadata["verify_result"]` (PLAN + DEPLOY); the console renders it in the agent artifact panel's Plan tab. See `packages/core/verify/README.md`.
 
 ---
 
@@ -263,8 +263,8 @@ apps/console/
 
 - **Location**: `packages/core/`
 - **Purpose**: Shared types, cloud provider interfaces, and embedded OpenTofu templates used by both alethia and Node.
-- **OpenTofu templates**: Embedded in `assets/terraform/seed/` — spec provisioning templates for AWS, GCP, Azure.
-- **Key packages**: Config types (SpecConfig), cloud provider abstraction (CloudProvider interface), template rendering (pongo2).
+- **OpenTofu templates**: the seed bootstrap lives in `assets/tofu/seed/`; the full per-cloud project templates are in `infra/templates/project/{aws,gcp,azure}` (applied at provision time). Templates are parameterised by tofu variables, not rendered — `provisioner/deploy.go` copies them verbatim and writes a tfvars map (`tofu.OverrideTfvarsFromMap`) from `ProviderTfvars`.
+- **Key packages**: Config types (`ProjectConfig`), cloud provider abstraction (`CloudProvider` interface → `ProviderTfvars`), ArgoCD application rendering via Go `text/template` (`argocd/render.go`), and the **`verify`** package — the deterministic, fail-closed policy gate over the OpenTofu plan JSON (keyless / least-privilege / OIDC-sub controls; honest `not_evaluable` for what the plan can't show; ed25519-signed evidence receipt). Engine-agnostic `Evaluate` seam; pure-Go in Phase 0, OPA/Rego swap-in later. The **`drift`** package turns a `plan -refresh-only -json` into a per-env drift `Posture` (the "keep proving it" half).
 
 ---
 
@@ -366,9 +366,9 @@ legacy AWS ECS fleet + Lambda scaler (`infra/fleet-aws`) was retired.
 
 ### Templates (`infra/templates/`)
 
-- `spec/aws/` — AWS EKS + VPC + RDS + security groups
-- `spec/gcp/` — GCP GKE + Cloud SQL + networking
-- `spec/azure/` — Azure AKS + managed resources
+- `project/aws/` — AWS EKS + VPC + RDS + security groups
+- `project/gcp/` — GCP GKE + Cloud SQL + networking
+- `project/azure/` — Azure AKS + managed resources
 - `runner/aws/` — Self-hosted runner deployment template
 - `argocd/` — ArgoCD configuration templates
 

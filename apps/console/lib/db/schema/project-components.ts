@@ -33,7 +33,7 @@ import type {
 	SecretsProviderConfig,
 	StorageProviderConfig,
 	TopicSubscription,
-} from "@/types/database-custom.types";
+} from "@/types/jsonb.types";
 import {
 	auditAction,
 	cacheEngine,
@@ -95,6 +95,9 @@ export const projectCluster = pgTable("project_cluster", {
 	node_min_size: integer().default(2),
 	node_max_size: integer().default(5),
 	node_desired_size: integer().default(2),
+	// Worker-node root disk size (GB). NULL → the per-cloud template default applies
+	// (EKS 50 / GKE 50 / AKS 100). Maps to eks_disk_size / gke_disk_size_gb / aks_disk_size_gb.
+	node_disk_size_gb: integer(),
 	provider_config: jsonb().$type<ClusterProviderConfig>().default({}),
 	cluster_name: text(),
 	cluster_endpoint: text(),
@@ -172,6 +175,9 @@ export const projectDatabases = pgTable(
 		// cloud's managed DB (Aurora / Cloud SQL / Azure DB) at provision time.
 		engine: text(),
 		engine_version: text(),
+		// Provider-neutral instance sizing. NULL → template default. Maps to
+		// rds_instance_type (AWS) / cloud_sql_tier (GCP) / azure_db_sku_name (Azure).
+		instance_class: text(),
 		min_capacity: numeric({ precision: 6, scale: 2, mode: "number" }).default(0.5),
 		max_capacity: numeric({ precision: 6, scale: 2, mode: "number" }).default(4),
 		port: integer().default(5432),
@@ -201,6 +207,9 @@ export const projectCaches = pgTable(
 		cloud_identity_id: ownerRef(),
 		region: text(),
 		engine: cacheEngine().default("redis"),
+		// Engine version. NULL → template default (Redis 7.1 / Memorystore REDIS_7_0 /
+		// Azure 6). Maps to redis_engine_version / memorystore_redis_version / azure_cache_redis_version.
+		engine_version: text(),
 		// Provider-neutral: the mapper picks the cloud's cache node type/SKU.
 		node_type: text(),
 		num_cache_nodes: integer().default(1),

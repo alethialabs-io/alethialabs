@@ -4,8 +4,8 @@
 
 
 import { useCallback, useEffect, useState } from "react";
-import { planSpec, provisionSpec } from "@/app/server/actions/specs";
-import { getPlanResult, getSpecJobs } from "@/app/server/actions/jobs";
+import { planProject, provisionProject } from "@/app/server/actions/projects";
+import { getPlanResult, getProjectJobs } from "@/app/server/actions/jobs";
 import {
 	parsePlanJSON,
 	type PlanSummary,
@@ -14,7 +14,7 @@ import {
 	parseCostBreakdown,
 	type CostSummary,
 } from "@/lib/plan/parse-cost";
-import { useJobsStore } from "@/lib/stores/use-jobs-store";
+import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import {
 	type JobLogEntry,
 	useJobLogStream,
@@ -40,7 +40,7 @@ export interface UsePlanReturn {
 	applyPlan: (runnerId?: string | null) => Promise<void>;
 }
 
-export function usePlan(specId: string | null, onRefresh?: () => void): UsePlanReturn {
+export function usePlan(projectId: string | null, onRefresh?: () => void): UsePlanReturn {
 	const [phase, setPhase] = useState<PlanPhase>("idle");
 	const [planJobId, setPlanJobId] = useState<string | null>(null);
 	const [deployJobId, setDeployJobId] = useState<string | null>(null);
@@ -49,16 +49,16 @@ export function usePlan(specId: string | null, onRefresh?: () => void): UsePlanR
 	const [error, setError] = useState<string | null>(null);
 	const { logs } = useJobLogStream(planJobId);
 
-	const jobs = useJobsStore((state) => state.jobs);
+	const { data: jobs = [] } = useJobsQuery();
 
 	useEffect(() => {
-		if (!specId) return;
+		if (!projectId) return;
 		let cancelled = false;
 
 		async function loadExistingPlan() {
 			try {
-				const specJobs = await getSpecJobs(specId!);
-				const latestPlan = specJobs
+				const projectJobs = await getProjectJobs(projectId!);
+				const latestPlan = projectJobs
 					.filter(
 						(j) =>
 							j.job_type === "PLAN" && j.status === "SUCCESS",
@@ -107,7 +107,7 @@ export function usePlan(specId: string | null, onRefresh?: () => void): UsePlanR
 		return () => {
 			cancelled = true;
 		};
-	}, [specId]);
+	}, [projectId]);
 
 	useEffect(() => {
 		if (!planJobId || phase !== "generating") return;
@@ -162,14 +162,14 @@ export function usePlan(specId: string | null, onRefresh?: () => void): UsePlanR
 	}, [jobs, deployJobId, phase, onRefresh]);
 
 	const generatePlan = useCallback(async (runnerId?: string | null) => {
-		if (!specId) return;
+		if (!projectId) return;
 		setPhase("generating");
 		setError(null);
 		setPlanResult(null);
 		setCostResult(null);
 
 		try {
-			const { jobId } = await planSpec(specId, runnerId);
+			const { jobId } = await planProject(projectId, runnerId);
 			// Logs stream via useJobLogStream(planJobId) once this is set.
 			setPlanJobId(jobId);
 		} catch (err) {
@@ -180,15 +180,15 @@ export function usePlan(specId: string | null, onRefresh?: () => void): UsePlanR
 					: "Failed to start plan",
 			);
 		}
-	}, [specId]);
+	}, [projectId]);
 
 	const applyPlan = useCallback(async (runnerId?: string | null) => {
-		if (!specId || !planJobId) return;
+		if (!projectId || !planJobId) return;
 		setPhase("applying");
 		setError(null);
 
 		try {
-			const { jobId } = await provisionSpec(specId, planJobId, runnerId);
+			const { jobId } = await provisionProject(projectId, planJobId, runnerId);
 			setDeployJobId(jobId);
 		} catch (err) {
 			setPhase("failed");
@@ -198,7 +198,7 @@ export function usePlan(specId: string | null, onRefresh?: () => void): UsePlanR
 					: "Failed to start provisioning",
 			);
 		}
-	}, [specId, planJobId]);
+	}, [projectId, planJobId]);
 
 	return {
 		phase,

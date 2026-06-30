@@ -77,6 +77,7 @@ export interface PrimaryOrg {
 	id: string;
 	name: string;
 	slug: string;
+	logo: string | null;
 	role: string;
 }
 
@@ -87,6 +88,7 @@ export async function getPrimaryOrg(userId: string): Promise<PrimaryOrg | null> 
 			id: organization.id,
 			name: organization.name,
 			slug: organization.slug,
+			logo: organization.logo,
 			role: member.role,
 		})
 		.from(organization)

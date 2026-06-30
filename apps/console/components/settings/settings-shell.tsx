@@ -9,5 +9,5 @@ import type { ReactNode } from "react";
  * `/{org}/~/settings` — Vercel-style — so this shell is just the content column.
  */
 export function SettingsShell({ children }: { children: ReactNode }) {
-	return <div className="min-w-0 flex-1">{children}</div>;
+	return <div className="mx-auto w-full min-w-0 max-w-[1200px]">{children}</div>;
 }

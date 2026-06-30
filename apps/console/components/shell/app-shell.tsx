@@ -9,10 +9,11 @@
 import type React from "react";
 import { Suspense, useEffect, useState } from "react";
 import { Sheet, SheetContent, SheetTitle } from "@repo/ui/sheet";
-import { authClient } from "@/lib/auth/client";
-import { useJobsStore } from "@/lib/stores/use-jobs-store";
+import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
+import { SetupGuideCard } from "@/components/onboarding/setup-guide";
 import { AppSidebar } from "./app-sidebar";
+import { CommandPalette } from "./command-palette";
 import { Topbar } from "./topbar";
 
 /** The authenticated dashboard chrome: sidebar + topbar + scrolling content canvas. */
@@ -25,8 +26,6 @@ export function AppShell({
 	isHosted?: boolean;
 }) {
 	const [mobileOpen, setMobileOpen] = useState(false);
-	const { data: session } = authClient.useSession();
-	const user = session?.user ?? null;
 
 	// Load the workspace once here so every nav href resolves to the active org even
 	// before the org switcher mounts (the switcher used to be the only loader).
@@ -34,10 +33,9 @@ export function AppShell({
 		useWorkspaceStore.getState().fetchWorkspace();
 	}, []);
 
-	// Initial jobs load once a session is present (live updates come from the store poll).
-	useEffect(() => {
-		if (user) useJobsStore.getState().fetchJobs(true);
-	}, [user]);
+	// Warm the shared jobs cache session-wide so the command palette, breadcrumbs, and
+	// overview resolve job names everywhere; TanStack Query dedupes and polls it.
+	useJobsQuery();
 
 	return (
 		<div className="flex h-dvh w-full overflow-hidden bg-background">
@@ -78,6 +76,12 @@ export function AppShell({
 					</Suspense>
 				</main>
 			</div>
+
+			{/* Global command palette (the sidebar "Find…" box + ⌘K / F). */}
+			<CommandPalette />
+
+			{/* First-run "Setup guide" — toggled from the topbar button, floats bottom-right. */}
+			<SetupGuideCard />
 		</div>
 	);
 }

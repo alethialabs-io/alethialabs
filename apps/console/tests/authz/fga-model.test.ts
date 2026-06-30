@@ -57,7 +57,7 @@ describe("OpenFGA model generation", () => {
 	});
 
 	it("gives instance types a parent relation for inheritance", () => {
-		for (const r of ["zone", "spec", "runner", "cloud_identity", "connector"]) {
+		for (const r of ["project", "runner", "cloud_identity", "connector"]) {
 			expect(byType.get(r)?.relations.parent, `${r} missing parent`).toBeDefined();
 		}
 	});

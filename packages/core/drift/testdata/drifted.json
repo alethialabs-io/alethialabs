@@ -1,0 +1,29 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_drift": [
+    {
+      "address": "aws_security_group.web",
+      "mode": "managed",
+      "type": "aws_security_group",
+      "name": "web",
+      "change": {
+        "actions": ["update"],
+        "before": { "ingress": [] },
+        "after": { "ingress": [{ "from_port": 22 }] }
+      }
+    },
+    {
+      "address": "aws_instance.bastion",
+      "mode": "managed",
+      "type": "aws_instance",
+      "name": "bastion",
+      "change": {
+        "actions": ["delete"],
+        "before": { "id": "i-123" },
+        "after": null
+      }
+    }
+  ],
+  "resource_changes": []
+}

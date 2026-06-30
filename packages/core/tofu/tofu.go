@@ -100,6 +100,21 @@ func (t *TofuCLI) Plan(ctx context.Context, varFile, planOutFile string) (bool, 
 	return t.tf.Plan(ctx, opts...)
 }
 
+// PlanRefreshOnly runs `tofu plan -refresh-only` — it reconciles state with the
+// live cloud and reports drift WITHOUT proposing config changes, isolating true
+// drift from pending changes. Used by DETECT_DRIFT jobs to compute drift posture.
+func (t *TofuCLI) PlanRefreshOnly(ctx context.Context, varFile, planOutFile string) (bool, error) {
+	fmt.Println("Running OpenTofu plan (refresh-only)...")
+	opts := []tfexec.PlanOption{
+		tfexec.Out(planOutFile),
+		tfexec.RefreshOnly(true),
+	}
+	if varFile != "" {
+		opts = append(opts, tfexec.VarFile(varFile))
+	}
+	return t.tf.Plan(ctx, opts...)
+}
+
 func (t *TofuCLI) Apply(ctx context.Context, planFile string) error {
 	fmt.Println("Applying OpenTofu plan...")
 	return t.tf.Apply(ctx, tfexec.DirOrPlan(planFile))

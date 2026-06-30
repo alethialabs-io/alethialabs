@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Settings · Access — an inheritance info-note, a stat strip (Grants / Org-wide /
-// Zone-scoped / Spec-scoped), a toolbar (search · scope filter · Add grant), an inline
+// Project-scoped), a toolbar (search · scope filter · Add grant), an inline
 // grant builder with a live preview, and the grants table on the shared DataTable
 // (sortable + paginated). Wired to grants.ts (listAccessGrants / getGrantOptions /
-// assignGrant / revokeGrant). The page header + Enterprise gate live in access/page.tsx.
+// assignGrant / revokeGrant). The page header lives in the settings shell; without the
+// Enterprise `customRoles` entitlement the surface stays visible and shows the upsell.
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { formatDistanceToNow } from "date-fns";
@@ -23,6 +24,7 @@ import {
 } from "@/app/server/actions/grants";
 import { DataTable } from "@/components/data-table";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
+import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
 import {
 	SettingsSearch,
 	SettingsSelect,
@@ -48,19 +50,18 @@ import {
 } from "@repo/ui/dropdown-menu";
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
+import { userInitials } from "@/lib/user-display";
 import { Combobox } from "./combobox";
 
 const SCOPE_LEVEL: Record<string, string> = {
 	org: "Org-wide",
-	zone: "Zone",
-	spec: "Spec",
+	project: "Project",
 	runner: "Runner",
 	cloud_identity: "Cloud identity",
 };
 const SCOPE_OPTIONS = [
 	{ value: "org", label: "Entire organization" },
-	{ value: "zone", label: "A Zone" },
-	{ value: "spec", label: "A Spec" },
+	{ value: "project", label: "A Project" },
 	{ value: "runner", label: "A runner" },
 	{ value: "cloud_identity", label: "A cloud identity" },
 ];
@@ -69,11 +70,9 @@ const SCOPE_OPTIONS = [
 function reachLabel(resourceType: string): string {
 	switch (resourceType) {
 		case "org":
-			return "All Zones & Specs";
-		case "zone":
-			return "This Zone & its Specs";
-		case "spec":
-			return "This Spec";
+			return "All Projects";
+		case "project":
+			return "This Project";
 		case "runner":
 			return "This runner";
 		case "cloud_identity":
@@ -81,9 +80,6 @@ function reachLabel(resourceType: string): string {
 		default:
 			return "—";
 	}
-}
-function initials(s: string): string {
-	return s.slice(0, 2).toUpperCase();
 }
 
 export function AccessManager() {
@@ -104,6 +100,8 @@ export function AccessManager() {
 			.catch(() => setOptions(null));
 	}, []);
 	useEffect(() => {
+		// Custom-scoped grants are Enterprise. Without the entitlement the server would
+		// reject the queries (requireAccessAdmin), so skip the load and show the upsell.
 		if (entitled) load();
 	}, [entitled, load]);
 
@@ -134,8 +132,7 @@ export function AccessManager() {
 	const stats = {
 		total: all.length,
 		org: all.filter((g) => g.resourceType === "org").length,
-		zone: all.filter((g) => g.resourceType === "zone").length,
-		spec: all.filter((g) => g.resourceType === "spec").length,
+		project: all.filter((g) => g.resourceType === "project").length,
 	};
 
 	const filtered = useMemo(() => {
@@ -164,7 +161,7 @@ export function AccessManager() {
 					return (
 						<div className="flex items-center gap-2.5">
 							<span className="flex size-8 shrink-0 items-center justify-center rounded-full border bg-muted font-mono text-[11px] text-muted-foreground">
-								{initials(g.principalLabel)}
+								{userInitials({ name: g.principalLabel })}
 							</span>
 							<div className="flex min-w-0 flex-col">
 								<span className="truncate text-foreground">{g.principalLabel}</span>
@@ -283,14 +280,15 @@ export function AccessManager() {
 			<div className="mb-[18px] flex gap-3 rounded-lg border border-border bg-surface-sunken p-4">
 				<Info size={16} className="mt-0.5 shrink-0 text-text-tertiary" />
 				<p className="text-[12.5px] leading-relaxed text-text-secondary">
-					<b className="font-medium text-text-primary">Org → Zone → Spec inheritance.</b>{" "}
-					A grant on the org applies everywhere; a grant on a Zone applies to it and every
-					Spec it contains; a grant on a single Spec is exact. Lower scopes can add access,
-					never remove it.
+					<b className="font-medium text-text-primary">Org → Project inheritance.</b>{" "}
+					A grant on the org applies everywhere; a grant on a single Project is exact.
+					Lower scopes can add access, never remove it.
 				</p>
 			</div>
 
-			{grants === null ? (
+			{!entitled ? (
+				<FeatureUpsell feature="access" />
+			) : grants === null ? (
 				<div className="space-y-3">
 					<Skeleton className="h-20 w-full" />
 					<Skeleton className="h-64 w-full" />
@@ -300,8 +298,7 @@ export function AccessManager() {
 					<StatStrip>
 						<StatCell label="Grants" value={stats.total} sub="active" />
 						<StatCell label="Org-wide" value={stats.org} sub="grants" />
-						<StatCell label="Zone-scoped" value={stats.zone} sub="grants" />
-						<StatCell label="Spec-scoped" value={stats.spec} sub="grants" />
+						<StatCell label="Project-scoped" value={stats.project} sub="grants" />
 					</StatStrip>
 
 					{/* toolbar */}
@@ -321,8 +318,7 @@ export function AccessManager() {
 								options={[
 									{ value: "all", label: "All scopes" },
 									{ value: "org", label: "Org-wide" },
-									{ value: "zone", label: "Zone" },
-									{ value: "spec", label: "Spec" },
+									{ value: "project", label: "Project" },
 								]}
 							/>
 						</div>

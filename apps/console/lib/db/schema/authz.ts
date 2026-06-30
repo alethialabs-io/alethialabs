@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Authorization tables (spec 07 Part D). The PDP (lib/authz) owns these via the
+// Authorization tables (project 07 Part D). The PDP (lib/authz) owns these via the
 // service connection; they are authz METADATA, not tenant data, so they are not
 // under the per-tenant RLS. `resource_type`/`action` are text storing the registry
 // keys — lib/authz/registry.ts (registry-as-code) is the single source of truth.
@@ -50,8 +50,8 @@ export const rolePermission = pgTable(
  * A grant: a principal gets a role OR a single permission at a scope, as an ALLOW or
  * an explicit DENY. resource_id NULL = org-wide (wildcard). A grant references EXACTLY
  * one of role_id / permission_key. Explicit deny overrides allow (IAM semantics) and
- * inherits down the hierarchy, so "view this zone's specs EXCEPT spec S" = an allow on
- * the zone + a deny scoped to S.
+ * inherits down the hierarchy, so "view the org's projects EXCEPT project S" = an allow on
+ * the org + a deny scoped to S.
  */
 export const grants = pgTable(
 	"grants",
@@ -79,7 +79,7 @@ export const grants = pgTable(
 	],
 );
 
-/** Org→Zone→Spec edges the PDP walks (recursive CTE) so a higher grant flows down. */
+/** Org→Project edges the PDP walks (recursive CTE) so a higher grant flows down. */
 export const resourceHierarchy = pgTable(
 	"resource_hierarchy",
 	{
@@ -96,9 +96,10 @@ export const resourceHierarchy = pgTable(
 	],
 );
 
-/** Append-only decision log; written by the PDP on every enforce() so audit can't be skipped. */
-export const authzAuditLog = pgTable(
-	"authz_audit_log",
+/** Append-only Activity log; written by the PDP on every enforce() (and by the explicit
+ *  recordActivity seam for non-PDP governance events) so activity can't be skipped. */
+export const authzActivityLog = pgTable(
+	"authz_activity_log",
 	{
 		id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity(),
 		org_id: uuid().notNull(),
@@ -110,7 +111,7 @@ export const authzAuditLog = pgTable(
 		reason: text(),
 		ts: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
-	(t) => [index("idx_authz_audit_org").on(t.org_id)],
+	(t) => [index("idx_authz_activity_org").on(t.org_id)],
 );
 
 export type Permission = typeof permission.$inferSelect;

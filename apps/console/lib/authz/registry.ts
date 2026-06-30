@@ -10,14 +10,13 @@
 /** Resource types the PDP reasons about. */
 export const RESOURCES = [
 	"org",
-	"zone",
-	"spec",
+	"project",
 	"runner",
 	"cloud_identity",
 	"job",
 	"connector",
 	"member",
-	"audit",
+	"activity",
 	"billing",
 	"alert",
 	// Managed warm-pool config (dataroom/spec/mvp/26-fleet-controller.md). Provisions real cloud
@@ -37,8 +36,8 @@ export const ACTIONS = [
 	"manage_identities",
 	"manage_members",
 	"manage_connectors",
-	"view_audit",
-	"export_audit",
+	"view_activity",
+	"export_activity",
 	"manage_billing",
 	// Alerting config (dataroom/spec/mvp/25-alerting-notifications.md): read the alert
 	// channels/rules/deliveries vs mutate them.
@@ -65,14 +64,13 @@ export interface PermissionDef {
  *  not listed here is not a permission and can never be granted. */
 const MATRIX: Partial<Record<Resource, readonly Action[]>> = {
 	org: ["view", "edit", "manage_billing"],
-	zone: ["view", "create", "edit", "destroy"],
-	spec: ["view", "create", "edit", "plan", "deploy", "destroy"],
+	project: ["view", "create", "edit", "plan", "deploy", "destroy"],
 	runner: ["view", "create", "edit", "destroy", "deploy"],
 	cloud_identity: ["view", "manage_identities", "test", "fetch_resources"],
 	job: ["view", "create", "edit"],
 	connector: ["view", "manage_connectors"],
 	member: ["view", "manage_members"],
-	audit: ["view_audit", "export_audit"],
+	activity: ["view_activity", "export_activity"],
 	billing: ["manage_billing"],
 	alert: ["view_alerts", "manage_alerts"],
 	fleet: ["view", "create", "edit", "destroy"],
@@ -116,7 +114,7 @@ export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 			((["view", "create", "edit", "plan", "deploy", "destroy"] as Action[]).includes(
 				p.action,
 			) &&
-				!["cloud_identity", "member", "billing", "audit", "fleet"].includes(p.resource)) ||
+				!["cloud_identity", "member", "billing", "activity", "fleet"].includes(p.resource)) ||
 			p.action === "view_alerts",
 	).map((p) => p.key),
 	// Read-only (including alert config).

@@ -101,6 +101,9 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		if db.EngineVersion != "" {
 			tfvars["azure_db_engine_version"] = db.EngineVersion
 		}
+		if db.InstanceClass != "" {
+			tfvars["azure_db_sku_name"] = db.InstanceClass
+		}
 		if db.Port != nil {
 			tfvars["azure_db_port"] = *db.Port
 		}
@@ -116,6 +119,9 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		cache := config.Caches[0]
 		if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1 {
 			tfvars["azure_cache_sku"] = "Standard"
+		}
+		if cache.EngineVersion != "" {
+			tfvars["azure_cache_redis_version"] = cache.EngineVersion
 		}
 		if cache.MultiAz != nil {
 			tfvars["azure_cache_multi_az"] = *cache.MultiAz
@@ -134,10 +140,18 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 	if config.Cluster.NodeDesiredSize > 0 {
 		tfvars["aks_node_desired_size"] = config.Cluster.NodeDesiredSize
 	}
+	if config.Cluster.NodeDiskSizeGB != nil {
+		tfvars["aks_disk_size_gb"] = *config.Cluster.NodeDiskSizeGB
+	}
 
 	if !provisionVnet && config.Network.NetworkID != "" {
 		tfvars["vnet_id"] = config.Network.NetworkID
 	}
+
+	// Generic passthrough — see mergeProviderConfig (aws_provider.go). Reserved keys
+	// are consumed above under a different tfvar name.
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig)
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "azure_waf", "managed_certificate")
 
 	return tfvars
 }

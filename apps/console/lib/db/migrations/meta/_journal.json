@@ -302,6 +302,27 @@
       "when": 1782378004502,
       "tag": "0042_project_max_config_knobs",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1782378005502,
+      "tag": "0043_jobs_verify_override",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1782378006502,
+      "tag": "0044_detect_drift_job_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1782378007502,
+      "tag": "0045_agent_identity_memory",
+      "breakpoints": true
     }
   ]
 }

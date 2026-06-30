@@ -21,27 +21,49 @@ import {
 } from "@repo/ui/form";
 import { Input } from "@repo/ui/input";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { getJobStatus } from "@/app/server/actions/jobs";
-import { verifyAzureIdentity } from "@/app/(private)/dashboard/providers/azure-actions";
 import {
-	AlertCircle,
-	CheckCircle2,
-	Copy,
+	ConnectionTestStatus,
+	InfoNote,
+	StatusCallout,
+} from "@/components/connector/connection-ui";
+import { useConnectionTest } from "@/components/connector/use-connection-test";
+import { connectorAssetUrl } from "@/components/connector/connector-assets";
+import { CopyButton } from "@repo/ui/copy-button";
+import { FieldHelp } from "@repo/ui/field-help";
+import {
+	ClipboardPaste,
 	Download,
 	ExternalLink,
-	Loader2,
 	ShieldCheck,
 	Terminal,
-	XCircle,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ClipboardEvent, useState } from "react";
 import { useForm } from "react-hook-form";
-import { toast } from "sonner";
 import * as z from "zod";
 
 const GUID_REGEX =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Bare GUID (no anchors) — for scraping the setup-script output. */
+const GUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+
+/**
+ * Extracts the tenant/client/subscription GUIDs from a pasted setup-script output
+ * block (`Tenant ID: … / Client ID: … / Subscription ID: …`). Falls back to "three
+ * bare GUIDs in order" when the labels aren't present.
+ */
+function parseAzureIds(text: string): Partial<AzureFormValues> {
+	const grab = (label: string) =>
+		text.match(new RegExp(`${label}[^0-9a-fA-F]*(${GUID})`, "i"))?.[1];
+	let tenantId = grab("tenant");
+	let clientId = grab("client");
+	let subscriptionId = grab("subscription");
+	if (!tenantId && !clientId && !subscriptionId) {
+		const all = text.match(new RegExp(GUID, "g")) ?? [];
+		if (all.length >= 3) [tenantId, clientId, subscriptionId] = all;
+	}
+	return { tenantId, clientId, subscriptionId };
+}
 
 const azureSchema = z.object({
 	tenantId: z.string().regex(GUID_REGEX, "Invalid Tenant ID. Expected a UUID."),
@@ -59,68 +81,11 @@ interface AzureConnectionProps {
 	) => Promise<{ jobId: string; identityId: string }>;
 }
 
-type VerifyState =
-	| { phase: "idle" }
-	| { phase: "verifying"; jobId: string; identityId: string }
-	| { phase: "success" }
-	| { phase: "failed"; error: string };
-
 export function AzureConnection({ onComplete }: AzureConnectionProps) {
-	const router = useRouter();
 	const [method, setMethod] = useState<"cli" | "terraform">("cli");
-	const [verifyState, setVerifyState] = useState<VerifyState>({
-		phase: "idle",
-	});
-	const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const { state: verifyState, run, cancel } = useConnectionTest();
 
-	const stopPolling = useCallback(() => {
-		if (pollRef.current) {
-			clearInterval(pollRef.current);
-			pollRef.current = null;
-		}
-	}, []);
-
-	useEffect(() => {
-		return () => stopPolling();
-	}, [stopPolling]);
-
-	const startPolling = useCallback(
-		(jobId: string, identityId: string) => {
-			stopPolling();
-			pollRef.current = setInterval(async () => {
-				try {
-					const result = await getJobStatus(jobId);
-					if (!result) return;
-
-					if (result.status === "SUCCESS") {
-						stopPolling();
-						await verifyAzureIdentity(identityId, jobId);
-						setVerifyState({ phase: "success" });
-						toast.success("Azure connection verified!");
-						router.refresh();
-					} else if (result.status === "FAILED") {
-						stopPolling();
-						setVerifyState({
-							phase: "failed",
-							error:
-								result.error_message ||
-								"Connection test failed. Check the federated identity credential setup.",
-						});
-					}
-				} catch {
-					stopPolling();
-					setVerifyState({
-						phase: "failed",
-						error: "Failed to check verification status.",
-					});
-				}
-			}, 2000);
-		},
-		[stopPolling],
-	);
-
-	const scriptUrl =
-		"https://alethia-onboarding-templates.s3.eu-west-1.amazonaws.com/alethia-azure-setup.sh";
+	const scriptUrl = connectorAssetUrl("alethia-azure-setup.sh");
 	const cloudShellCmd = `curl -sO ${scriptUrl} && bash alethia-azure-setup.sh YOUR_SUBSCRIPTION_ID`;
 	const cloudShellUrl =
 		"https://shell.azure.com";
@@ -144,27 +109,49 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 		document.body.removeChild(link);
 	};
 
-	const copyToClipboard = (text: string, label: string) => {
-		navigator.clipboard.writeText(text);
-		toast.success(`${label} copied to clipboard`);
+	const onSubmit = async (data: AzureFormValues) => {
+		await run(() =>
+			onComplete(data.tenantId, data.clientId, data.subscriptionId),
+		);
 	};
 
-	const onSubmit = async (data: AzureFormValues) => {
-		setVerifyState({ phase: "verifying", jobId: "", identityId: "" });
+	// True when "Paste all" found nothing on the clipboard — a quiet inline hint (no toast).
+	const [pasteMissed, setPasteMissed] = useState(false);
+
+	/** Fills the GUID fields from a pasted block; returns how many were set. */
+	const fillFromText = (text: string): number => {
+		const ids = parseAzureIds(text);
+		let n = 0;
+		for (const key of ["tenantId", "clientId", "subscriptionId"] as const) {
+			const value = ids[key];
+			if (value) {
+				form.setValue(key, value, { shouldValidate: true, shouldDirty: true });
+				n++;
+			}
+		}
+		return n;
+	};
+
+	/** "Paste all" — read the clipboard and fill every field at once (best-effort). */
+	const handlePasteAll = async () => {
 		try {
-			const { jobId, identityId } = await onComplete(
-				data.tenantId,
-				data.clientId,
-				data.subscriptionId,
-			);
-			setVerifyState({ phase: "verifying", jobId, identityId });
-			startPolling(jobId, identityId);
-		} catch (error: unknown) {
-			const message =
-				error instanceof Error
-					? error.message
-					: "Failed to save connection.";
-			setVerifyState({ phase: "failed", error: message });
+			setPasteMissed(fillFromText(await navigator.clipboard.readText()) < 1);
+		} catch {
+			setPasteMissed(true);
+		}
+	};
+
+	/** Paste into any field: if it's the whole block, split it across all three. */
+	const handleFieldPaste = (e: ClipboardEvent<HTMLInputElement>) => {
+		const text = e.clipboardData.getData("text");
+		const ids = parseAzureIds(text);
+		const found = [ids.tenantId, ids.clientId, ids.subscriptionId].filter(
+			Boolean,
+		).length;
+		if (found >= 2) {
+			e.preventDefault();
+			fillFromText(text);
+			setPasteMissed(false);
 		}
 	};
 
@@ -305,18 +292,10 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 											<span className="break-all min-w-0">
 												{cloudShellCmd}
 											</span>
-											<button
-												onClick={() =>
-													copyToClipboard(
-														cloudShellCmd,
-														"Command",
-													)
-												}
-												className="mt-0.5 p-1 shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
-												type="button"
-											>
-												<Copy className="w-3.5 h-3.5" />
-											</button>
+											<CopyButton
+												text={cloudShellCmd}
+												className="mt-0.5 shrink-0 rounded p-1 hover:bg-muted"
+											/>
 										</div>
 									</div>
 								</div>
@@ -372,6 +351,33 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 												&quot;subscription_id=YOUR_SUBSCRIPTION_ID&quot;
 											</div>
 										</div>
+										<div className="mt-3 flex flex-wrap items-center gap-3">
+											<Button
+												type="button"
+												size="sm"
+												className="h-8 text-xs font-medium"
+												onClick={() => {
+													const a = document.createElement("a");
+													a.href = "/connector-terraform/azure.tf";
+													a.download = "alethia-azure.tf";
+													document.body.appendChild(a);
+													a.click();
+													document.body.removeChild(a);
+												}}
+											>
+												<Download className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+												Download module
+											</Button>
+											<a
+												href="/docs/console/connectors/azure"
+												target="_blank"
+												rel="noopener noreferrer"
+												className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+											>
+												Full guide
+												<ExternalLink className="w-3 h-3" />
+											</a>
+										</div>
 									</div>
 								</div>
 
@@ -397,51 +403,19 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 						)}
 
 						<div className="pt-6 border-t border-border/40">
-							{verifyState.phase === "success" ? (
-								<div className="flex items-center gap-3 p-4 bg-muted/50 border border-border rounded-md">
-									<CheckCircle2 className="w-5 h-5 text-foreground shrink-0" />
-									<div>
-										<p className="text-sm font-medium text-foreground">
-											Connection verified
-										</p>
-										<p className="text-xs text-muted-foreground mt-0.5">
-											Alethia can authenticate into your
-											Azure subscription via federated
-											identity. You&apos;re ready to
-											provision infrastructure.
-										</p>
-									</div>
-								</div>
-							) : verifyState.phase === "verifying" ? (
-								<div className="flex items-center gap-3 p-4 bg-muted/30 border border-border/40 rounded-md">
-									<Loader2 className="w-5 h-5 animate-spin text-muted-foreground shrink-0" />
-									<div>
-										<p className="text-sm font-medium text-foreground">
-											Verifying connection...
-										</p>
-										<p className="text-xs text-muted-foreground mt-0.5">
-											Testing federated identity
-											authentication into your Azure
-											subscription. This takes a few
-											seconds.
-										</p>
-									</div>
-								</div>
+							{verifyState.phase === "success" ||
+							verifyState.phase === "saving" ||
+							verifyState.phase === "queued" ||
+							verifyState.phase === "testing" ? (
+								<ConnectionTestStatus
+									phase={verifyState.phase}
+									startedAt={verifyState.startedAt}
+									successText="Alethia can authenticate into your Azure subscription via federated identity. You're ready to provision infrastructure."
+									verifyingText="Testing federated identity authentication into your Azure subscription."
+									onCancel={cancel}
+								/>
 							) : (
 								<>
-									{verifyState.phase === "failed" && (
-										<div className="flex items-start gap-3 p-4 mb-4 bg-destructive/5 border border-destructive/20 rounded-md">
-											<XCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
-											<div>
-												<p className="text-sm font-medium text-destructive">
-													Verification failed
-												</p>
-												<p className="text-xs text-muted-foreground mt-0.5">
-													{verifyState.error}
-												</p>
-											</div>
-										</div>
-									)}
 									<Form {...form}>
 										<form
 											onSubmit={form.handleSubmit(
@@ -449,19 +423,47 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 											)}
 											className="space-y-4"
 										>
+											<div className="flex items-center justify-between gap-2">
+												<p className="text-[11px] text-muted-foreground">
+													{pasteMissed
+														? "No IDs found on the clipboard — paste the script output, or fill the fields manually."
+														: "Paste all three at once — we'll split them across the fields."}
+												</p>
+												<Button
+													type="button"
+													variant="outline"
+													size="sm"
+													className="h-7 text-xs"
+													onClick={handlePasteAll}
+												>
+													<ClipboardPaste className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+													Paste all
+												</Button>
+											</div>
 											<FormField
 												control={form.control}
 												name="tenantId"
 												render={({ field }) => (
 													<FormItem>
-														<FormLabel className="text-xs font-medium">
-															Tenant ID
-														</FormLabel>
+														<div className="flex items-center gap-1.5">
+															<FormLabel className="text-xs font-medium">
+																Tenant ID
+															</FormLabel>
+															<FieldHelp title="Tenant ID">
+																Your Microsoft Entra ID{" "}
+																<b className="text-foreground">
+																	directory (tenant) ID
+																</b>{" "}
+																— the first value the setup script prints
+																(Azure Portal → Microsoft Entra ID → Overview).
+															</FieldHelp>
+														</div>
 														<FormControl>
 															<Input
 																placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 																className="h-9 text-sm font-mono border-border/50"
 																{...field}
+																onPaste={handleFieldPaste}
 															/>
 														</FormControl>
 														<FormMessage className="text-xs" />
@@ -473,15 +475,29 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 												name="clientId"
 												render={({ field }) => (
 													<FormItem>
-														<FormLabel className="text-xs font-medium">
-															Client ID
-															(Application ID)
-														</FormLabel>
+														<div className="flex items-center gap-1.5">
+															<FormLabel className="text-xs font-medium">
+																Client ID (Application ID)
+															</FormLabel>
+															<FieldHelp title="Client ID (Application ID)">
+																The{" "}
+																<b className="text-foreground">
+																	Application (client) ID
+																</b>{" "}
+																of the{" "}
+																<code className="text-foreground">
+																	alethia-provisioner
+																</code>{" "}
+																app registration — the second value the script
+																prints.
+															</FieldHelp>
+														</div>
 														<FormControl>
 															<Input
 																placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 																className="h-9 text-sm font-mono border-border/50"
 																{...field}
+																onPaste={handleFieldPaste}
 															/>
 														</FormControl>
 														<FormMessage className="text-xs" />
@@ -493,20 +509,37 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 												name="subscriptionId"
 												render={({ field }) => (
 													<FormItem>
-														<FormLabel className="text-xs font-medium">
-															Subscription ID
-														</FormLabel>
+														<div className="flex items-center gap-1.5">
+															<FormLabel className="text-xs font-medium">
+																Subscription ID
+															</FormLabel>
+															<FieldHelp title="Subscription ID">
+																The Azure{" "}
+																<b className="text-foreground">subscription</b>{" "}
+																Alethia provisions into — the third value the
+																script prints (the ID you passed to it).
+															</FieldHelp>
+														</div>
 														<FormControl>
 															<Input
 																placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 																className="h-9 text-sm font-mono border-border/50"
 																{...field}
+																onPaste={handleFieldPaste}
 															/>
 														</FormControl>
 														<FormMessage className="text-xs" />
 													</FormItem>
 												)}
 											/>
+											{verifyState.phase === "failed" && (
+												<StatusCallout
+													variant="error"
+													title="Verification failed"
+												>
+													{verifyState.error}
+												</StatusCallout>
+											)}
 											<Button
 												disabled={
 													!form.formState.isValid
@@ -522,17 +555,13 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 										</form>
 									</Form>
 
-									<div className="mt-5 flex items-start gap-2.5 p-3 bg-muted/20 rounded-md border border-border/40 text-[11px] text-muted-foreground">
-										<AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-										<p className="leading-relaxed">
-											Alethia uses Azure federated identity
-											credentials for keyless
-											authentication. No client secrets
-											are stored — only the trust
-											configuration between Alethia&apos;s
-											AWS infrastructure and your Azure
-											tenant.
-										</p>
+									<div className="mt-5">
+										<InfoNote>
+											Alethia uses Azure federated identity credentials for
+											keyless authentication. No client secrets are stored —
+											only the trust configuration between Alethia&apos;s
+											infrastructure and your Azure tenant.
+										</InfoNote>
 									</div>
 								</>
 							)}

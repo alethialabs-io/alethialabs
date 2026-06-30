@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { SpecFormData } from "@/lib/validations/spec-form.schema";
+import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 import type { CloudProviderSlug } from "./registry";
 import { PROVIDERS } from "./registry";
 import { REGION_MAP, DEFAULT_REGION } from "./regions";
@@ -23,12 +23,12 @@ export interface ConversionWarning {
 	message: string;
 }
 
-/** Converts a spec form config from one cloud provider to another, mapping all provider-specific values. */
-export function convertSpecConfig(
-	source: SpecFormData,
+/** Converts a project form config from one cloud provider to another, mapping all provider-specific values. */
+export function convertProjectConfig(
+	source: ProjectFormData,
 	sourceProvider: CloudProviderSlug,
 	targetProvider: CloudProviderSlug,
-): { data: SpecFormData; warnings: ConversionWarning[] } {
+): { data: ProjectFormData; warnings: ConversionWarning[] } {
 	if (sourceProvider === targetProvider) {
 		return { data: structuredClone(source), warnings: [] };
 	}
@@ -39,16 +39,16 @@ export function convertSpecConfig(
 
 	// --- Region ---
 	const regionMap = REGION_MAP[sourceProvider]?.[targetProvider] ?? {};
-	const mappedRegion = regionMap[data.spec.region];
+	const mappedRegion = regionMap[data.project.region];
 	if (mappedRegion) {
-		data.spec.region = mappedRegion;
-	} else if (data.spec.region) {
+		data.project.region = mappedRegion;
+	} else if (data.project.region) {
 		warnings.push({
 			severity: "error",
 			component: "Region",
-			message: `Region "${data.spec.region}" has no equivalent on ${target.shortName}. Defaulting to ${DEFAULT_REGION[targetProvider]}.`,
+			message: `Region "${data.project.region}" has no equivalent on ${target.shortName}. Defaulting to ${DEFAULT_REGION[targetProvider]}.`,
 		});
-		data.spec.region = DEFAULT_REGION[targetProvider];
+		data.project.region = DEFAULT_REGION[targetProvider];
 	}
 
 	// --- Cluster ---

@@ -10,7 +10,7 @@ import { useMemo } from "react";
 export type PrepareBody = (messages: UIMessage[]) => Record<string, unknown>;
 
 export interface UseAgentChatOptions {
-	/** Streaming route this surface talks to (e.g. /api/agent, /api/design-spec/ask-ai). */
+	/** Streaming route this surface talks to (e.g. /api/agent, /api/design-project/ask-ai). */
 	api: string;
 	/**
 	 * Extra body fields merged into every request. Read FRESH at send time, so it

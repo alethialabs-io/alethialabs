@@ -11,7 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/alethialabs-io/alethialabs/packages/core/accessanalyzer"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/categories"
@@ -21,6 +24,8 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
+	"github.com/alethialabs-io/alethialabs/packages/core/verify"
+	tfjson "github.com/hashicorp/terraform-json"
 )
 
 type DeployParams struct {
@@ -41,6 +46,10 @@ type DeployParams struct {
 	Stderr        io.Writer
 	ApiClient     *api.Client
 	DeploymentID  string
+	// VerifyOverride, when set, waives specific failing verification controls so
+	// a fail-closed apply can proceed deliberately. Nil means no waiver (the
+	// default — any hard control failure blocks apply).
+	VerifyOverride *verify.Override
 }
 
 // PlanResult holds structured output from a deployment (dry-run or full apply).
@@ -53,6 +62,14 @@ type PlanResult struct {
 	ClusterEndpoint     string
 	ArgocdURL           string
 	ArgocdAdminPassword string
+	// VerifyReport is the deterministic verification gate's result for this plan
+	// (nil if the plan JSON could not be produced). On a real apply a blocking
+	// verdict stops the apply before any infrastructure changes.
+	VerifyReport *verify.Report
+	// VerifyReceipt is the per-apply evidence receipt sealing the report to the
+	// plan hash + tool versions. Signed when a signing key is configured
+	// (Algorithm "ed25519"); otherwise attached unsigned (Algorithm "none").
+	VerifyReceipt *verify.SignedReceipt
 }
 
 // RunDeployV2 executes a deployment using the provider-agnostic ProjectConfig and CloudProvider interface.
@@ -224,6 +241,46 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		}
 	}
 
+	// Verification gate (elench Phase 0). Evaluate the plan against the authored
+	// security controls. The report is always attached to the result so the
+	// console can surface it on both plan and apply jobs; the fail-closed
+	// ENFORCEMENT happens just before apply, below. If the plan JSON could not be
+	// produced we log a coverage gap rather than block (the experiment is about
+	// control correctness, not tooling failures).
+	if planJSON != nil {
+		// Opt-in AWS IAM Access Analyzer corroboration: provable, automated-reasoning
+		// checks that the planned policies don't grant a sensitive-action denylist.
+		// Off by default (no AWS calls) so existing behaviour is unchanged.
+		vopts := verify.Options{}
+		if provider.Name() == "aws" && os.Getenv("ALETHIA_VERIFY_ACCESS_ANALYZER") == "1" {
+			if cfg, cfgErr := config.LoadDefaultConfig(ctx); cfgErr == nil {
+				vopts.PolicyChecker = accessanalyzer.NewFromConfig(cfg)
+				fmt.Fprintln(stdout, "Verification: IAM Access Analyzer corroboration enabled")
+			} else {
+				fmt.Fprintf(stderr, "Warning: Access Analyzer disabled (AWS config load failed: %v)\n", cfgErr)
+			}
+		}
+		if vrep, vErr := verify.EvaluateWithOptions(ctx, planJSON, vopts); vErr != nil {
+			fmt.Fprintf(stderr, "Warning: verification gate failed to run: %v\n", vErr)
+		} else {
+			result.VerifyReport = vrep
+			fmt.Fprintf(stdout, "Verification gate: verdict=%s (pass=%d fail=%d warn=%d not_evaluable=%d, catalog %s)\n",
+				vrep.Verdict, vrep.Summary.Pass, vrep.Summary.Fail, vrep.Summary.Warn, vrep.Summary.NotEvaluable, vrep.CatalogVersion)
+			for _, c := range vrep.Controls {
+				if c.Status == verify.StatusFail || c.Status == verify.StatusWarn {
+					for _, f := range c.Findings {
+						fmt.Fprintf(stdout, "  [%s/%s] %s: %s\n", c.ID, c.Status, f.Address, f.Message)
+					}
+				}
+				if c.Coverage != "" {
+					fmt.Fprintf(stdout, "  [%s] coverage: %s\n", c.ID, c.Coverage)
+				}
+			}
+		}
+	} else {
+		fmt.Fprintln(stdout, "Verification gate: SKIPPED (no plan JSON) — coverage gap, not a pass")
+	}
+
 	if params.InfracostToken != "" {
 		infracostEnv := []string{"INFRACOST_API_KEY=" + params.InfracostToken}
 		infracostCLI := infracost.NewInfracostCLI("v0.10.39", params.InfracostToken)
@@ -243,9 +300,31 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		if planBytes, readErr := os.ReadFile(planFile); readErr == nil {
 			result.PlanFileBytes = planBytes
 		}
+		// Plan jobs get an (advisory) evidence receipt too, so the console can show
+		// the verdict + signed receipt before any apply is approved.
+		attachReceipt(&result, planFile, planJSON, nil, stdout)
 		fmt.Fprintln(stdout, "Dry-run complete. Plan and cost analysis finished.")
 		return &result, nil
 	}
+
+	// Fail-closed enforcement: a real apply must not proceed while any hard
+	// verification control is failing and unwaived. An authorized override may
+	// waive specific controls (recorded for the evidence receipt in Phase 1);
+	// disabling the gate wholesale is deliberately not an option here.
+	if result.VerifyReport != nil {
+		if unresolved := result.VerifyReport.Unwaived(params.VerifyOverride); len(unresolved) > 0 {
+			return nil, fmt.Errorf("verification gate BLOCKED apply: failing controls %v (catalog %s) — fix the plan or supply an authorized override to proceed",
+				unresolved, result.VerifyReport.CatalogVersion)
+		}
+		if params.VerifyOverride != nil && len(params.VerifyOverride.Controls) > 0 {
+			fmt.Fprintf(stdout, "Verification override applied by %q for controls %v (reason: %s)\n",
+				params.VerifyOverride.By, params.VerifyOverride.Controls, params.VerifyOverride.Reason)
+		}
+	}
+
+	// Seal the evidence receipt for this apply (records any applied override as an
+	// exception) before mutating any infrastructure.
+	attachReceipt(&result, planFile, planJSON, params.VerifyOverride, stdout)
 
 	fmt.Fprintln(stdout, "Applying OpenTofu changes...")
 	if err := tf.Apply(ctx, planFile); err != nil {
@@ -310,6 +389,66 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 
 	fmt.Fprintln(stdout, "Deployment completed successfully.")
 	return &result, nil
+}
+
+// runnerIdentity is a best-effort identifier for the executor, recorded in the
+// evidence receipt.
+func runnerIdentity() string {
+	if id := os.Getenv("ALETHIA_RUNNER_INSTANCE_ID"); id != "" {
+		return id
+	}
+	if h, err := os.Hostname(); err == nil {
+		return h
+	}
+	return "unknown-runner"
+}
+
+// attachReceipt builds, signs (if a key is configured), and attaches the per-apply
+// evidence receipt to the result. It is a no-op when there is no verification
+// report (e.g. the plan JSON could not be produced). `override` is the waiver that
+// was applied on the apply path (nil on dry-run / plan jobs), recorded in the
+// receipt as an exception.
+func attachReceipt(result *PlanResult, planFile string, planJSON *tfjson.Plan, override *verify.Override, stdout io.Writer) {
+	if result.VerifyReport == nil {
+		return
+	}
+	planBytes, _ := os.ReadFile(planFile)
+	tofuVer := ""
+	if planJSON != nil {
+		tofuVer = planJSON.TerraformVersion
+	}
+	receipt := verify.BuildReceipt(verify.BuildReceiptParams{
+		Report:      result.VerifyReport,
+		PlanBytes:   planBytes,
+		TofuVersion: tofuVer,
+		Override:    override,
+		Runner:      runnerIdentity(),
+		EvaluatedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+
+	priv, keyID, ok, err := verify.SigningKeyFromEnv()
+	if err != nil {
+		fmt.Fprintf(stdout, "Warning: receipt signing key invalid: %v — attaching unsigned receipt\n", err)
+	}
+	if ok {
+		if signed, sErr := verify.Sign(receipt, priv, keyID); sErr != nil {
+			fmt.Fprintf(stdout, "Warning: receipt signing failed: %v — attaching unsigned receipt\n", sErr)
+			result.VerifyReceipt = &verify.SignedReceipt{Receipt: receipt, Algorithm: "none"}
+		} else {
+			result.VerifyReceipt = signed
+			fmt.Fprintf(stdout, "Evidence receipt signed (key %s, plan sha256 %s)\n", keyID, shortHash(receipt.PlanSHA256))
+		}
+		return
+	}
+	result.VerifyReceipt = &verify.SignedReceipt{Receipt: receipt, Algorithm: "none"}
+	fmt.Fprintf(stdout, "Evidence receipt built (unsigned — set %s to sign)\n", verify.SigningKeyEnv)
+}
+
+func shortHash(h string) string {
+	if len(h) <= 12 {
+		return h
+	}
+	return h[:12] + "…"
 }
 
 func resolveArgoTemplatesDir() string {

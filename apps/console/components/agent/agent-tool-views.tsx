@@ -18,7 +18,7 @@ import { AgentToolCard } from "./agent-chat";
 
 /** Tool result types this module renders specially (tables / chips). */
 export const TOOL_VIEW_TYPES = new Set<string>([
-	"tool-list_specs",
+	"tool-list_projects",
 	"tool-list_jobs",
 	"tool-list_clusters",
 	"tool-list_connectors",
@@ -28,14 +28,14 @@ export const TOOL_VIEW_TYPES = new Set<string>([
 ]);
 
 const str = z.string().nullish();
-const specsOut = z.object({
-	specs: z.array(
+const projectsOut = z.object({
+	projects: z.array(
 		z.object({ id: z.string(), name: str, environment: str, region: str, status: str }),
 	),
 });
 const jobsOut = z.object({
 	jobs: z.array(
-		z.object({ id: z.string(), type: str, spec: str, provider: str, status: str }),
+		z.object({ id: z.string(), type: str, project: str, provider: str, status: str }),
 	),
 });
 const clustersOut = z.object({
@@ -80,7 +80,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 /**
  * Polished tool-result renderings for the agent transcript — inline tables for the
- * list_* reads (specs/jobs clickable → artifact panel) and compact chips for the
+ * list_* reads (projects/jobs clickable → artifact panel) and compact chips for the
  * catalog/CIDR tools. Falls back to the default tool card for anything else.
  */
 export function ToolView({ part }: { part: ToolUIPart }) {
@@ -104,25 +104,25 @@ export function ToolView({ part }: { part: ToolUIPart }) {
 		case "tool-list_service_options":
 			return <ToolChip label="list_service_options" value="options loaded" />;
 
-		case "tool-list_specs": {
-			const p = specsOut.safeParse(part.output);
+		case "tool-list_projects": {
+			const p = projectsOut.safeParse(part.output);
 			if (!p.success) return <AgentToolCard part={part} />;
 			return (
 				<Shell>
 					<Table>
 						<TableHeader>
 							<TableRow>
-								<TableHead className={TH}>Spec</TableHead>
+								<TableHead className={TH}>Project</TableHead>
 								<TableHead className={TH}>Env</TableHead>
 								<TableHead className={TH}>Region</TableHead>
 								<TableHead className={TH}>Status</TableHead>
 							</TableRow>
 						</TableHeader>
 						<TableBody>
-							{p.data.specs.map((s) => (
+							{p.data.projects.map((s) => (
 								<TableRow
 									key={s.id}
-									onClick={() => open({ specId: s.id }, "config")}
+									onClick={() => open({ projectId: s.id }, "config")}
 									className="cursor-pointer"
 								>
 									<TableCell className={cn(TD, "font-medium")}>{s.name ?? "—"}</TableCell>
@@ -148,7 +148,7 @@ export function ToolView({ part }: { part: ToolUIPart }) {
 						<TableHeader>
 							<TableRow>
 								<TableHead className={TH}>Type</TableHead>
-								<TableHead className={TH}>Spec</TableHead>
+								<TableHead className={TH}>Project</TableHead>
 								<TableHead className={TH}>Status</TableHead>
 							</TableRow>
 						</TableHeader>
@@ -160,7 +160,7 @@ export function ToolView({ part }: { part: ToolUIPart }) {
 									className="cursor-pointer"
 								>
 									<TableCell className={cn(TD, "font-mono")}>{j.type ?? "—"}</TableCell>
-									<TableCell className={TD}>{j.spec ?? "—"}</TableCell>
+									<TableCell className={TD}>{j.project ?? "—"}</TableCell>
 									<TableCell className={TD}>
 										<Status v={j.status} />
 									</TableCell>

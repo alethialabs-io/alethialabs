@@ -1,0 +1,18 @@
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env.
+# Apply this stack ONCE with an admin/root identity for the account (270587882865) —
+# it creates the least-priv deploy role and adopts the existing GitHub OIDC provider.
+
+aws_region  = "eu-west-1"
+bucket_name = "alethia-connector-assets"
+
+# GitHub repo + branch whose Actions runs may assume the deploy role.
+github_repo   = "bobikenobi12/bb-thesis-2026"
+github_branch = "main"
+
+# The account already has the GitHub Actions OIDC provider (created by the SES
+# bootstrap), so adopt it. Flip to true only in an account that doesn't have one.
+create_oidc_provider = false
+oidc_provider_arn    = "arn:aws:iam::270587882865:oidc-provider/token.actions.githubusercontent.com"
+
+# Optional: let your admin user/role assume the deploy role for local import/apply.
+# admin_principal_arns = ["arn:aws:iam::270587882865:user/you"]

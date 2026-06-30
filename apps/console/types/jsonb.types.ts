@@ -257,6 +257,114 @@ export interface ExecutionMetadata {
 	cost_breakdown?: Record<string, unknown>;
 	// ANALYZE_REPO jobs: the runner's static repo analysis (packages/core/scanner).
 	repo_digest?: RepoDigest;
+	// PLAN/DEPLOY jobs: the elench verification gate's result for the plan
+	// (packages/core/verify). On DEPLOY a blocking verdict stops apply.
+	verify_result?: VerifyReport;
+	// PLAN/DEPLOY jobs: the signed evidence receipt sealing the report to the plan
+	// hash + tool versions (packages/core/verify Receipt/SignedReceipt).
+	verify_receipt?: SignedReceipt;
+	// DETECT_DRIFT jobs: the per-environment drift posture (packages/core/drift).
+	drift_posture?: DriftPosture;
+}
+
+// Mirrors the Go `drift.Posture` (packages/core/drift). `unmanaged_known` is false
+// for a refresh-only plan — it cannot see resources that exist in the cloud but
+// not in state.
+export interface DriftResource {
+	address: string;
+	type: string;
+	kind: "modified" | "deleted" | "other";
+}
+
+export interface DriftPosture {
+	in_sync: boolean;
+	drifted: number;
+	details?: DriftResource[];
+	unmanaged: number;
+	unmanaged_known: boolean;
+	scanned_at?: string;
+}
+
+// ── Verification gate (elench) ───────────────────────────────────────────────
+// Mirrors the Go `verify.Report` (packages/core/verify/types.go). The deterministic
+// policy gate runs between `tofu plan` and `tofu apply`; `not_evaluable` means the
+// plan JSON lacked the information to judge a control — NEVER a silent pass.
+
+export type VerifyStatus = "pass" | "fail" | "warn" | "not_evaluable";
+
+export interface VerifyFinding {
+	address: string;
+	message: string;
+}
+
+export interface VerifyControlResult {
+	id: string;
+	title: string;
+	severity: "high" | "medium" | "low";
+	status: VerifyStatus;
+	frameworks?: string[];
+	provider: string;
+	findings?: VerifyFinding[];
+	/** Plain-language note on what this control could NOT inspect on this plan. */
+	coverage?: string;
+}
+
+export interface VerifySummary {
+	pass: number;
+	fail: number;
+	warn: number;
+	not_evaluable: number;
+}
+
+export interface VerifyReport {
+	verdict: VerifyStatus;
+	catalog_version: string;
+	provider: string;
+	controls: VerifyControlResult[];
+	summary: VerifySummary;
+}
+
+// A waiver recorded in the receipt when an apply proceeded despite a failing
+// control (the verdict itself is NOT rewritten — the exception explains why).
+export interface RecordedException {
+	controls: string[];
+	reason: string;
+	by: string;
+	expiry?: string;
+}
+
+// jobs.verify_override — an authorized, time-boxed waiver attached to a DEPLOY job.
+// The runner passes it to the fail-closed gate (packages/core/verify Override). `by`
+// is set server-side to the authorizing actor; `expiry` is RFC3339.
+export interface VerifyOverrideInput {
+	controls: string[];
+	reason: string;
+	by: string;
+	expiry?: string;
+}
+
+// Mirrors the Go `verify.Receipt` — the per-apply evidence record.
+export interface VerifyReceiptBody {
+	version: string;
+	plan_sha256: string;
+	tofu_version?: string;
+	provider_versions?: Record<string, string>;
+	catalog_version: string;
+	provider: string;
+	verdict: VerifyStatus;
+	report: VerifyReport;
+	exception?: RecordedException;
+	runner?: string;
+	evaluated_at?: string;
+}
+
+// Mirrors the Go `verify.SignedReceipt`. `algorithm` is "ed25519" when signed or
+// "none" when a signing key was not configured.
+export interface SignedReceipt {
+	receipt: VerifyReceiptBody;
+	algorithm: string;
+	key_id?: string;
+	signature?: string;
 }
 
 // One captured (truncated) file from a scanned repo. Mirrors packages/core/types RepoFile.

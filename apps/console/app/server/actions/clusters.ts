@@ -7,12 +7,12 @@ import { getOwner } from "@/lib/auth/owner";
 import { withOwnerScope } from "@/lib/db";
 import {
 	cloudIdentities,
-	specCaches,
-	specCluster,
-	specDatabases,
-	specDns,
-	specEnvironments,
-	specs,
+	projectCaches,
+	projectCluster,
+	projectDatabases,
+	projectDns,
+	projectEnvironments,
+	projects,
 } from "@/lib/db/schema";
 
 export interface ClusterData {
@@ -22,7 +22,7 @@ export interface ClusterData {
 	environment_stage: string;
 	status: string;
 	cloud_identities: { provider: string } | null;
-	spec_cluster: {
+	project_cluster: {
 		cluster_name: string | null;
 		cluster_endpoint: string | null;
 		cluster_arn: string | null;
@@ -31,7 +31,7 @@ export interface ClusterData {
 		argocd_admin_password: string | null;
 		status: string;
 	} | null;
-	spec_databases: {
+	project_databases: {
 		name: string;
 		engine: string | null;
 		endpoint: string | null;
@@ -39,83 +39,83 @@ export interface ClusterData {
 		master_credentials_secret_arn: string | null;
 		status: string;
 	}[];
-	spec_caches: {
+	project_caches: {
 		name: string;
 		engine: string | null;
 		endpoint: string | null;
 		status: string;
 	}[];
-	spec_dns: { domain_name: string | null; enabled: boolean } | null;
+	project_dns: { domain_name: string | null; enabled: boolean } | null;
 }
 
-/** Fetches all active specs with their cluster, database, cache, and DNS data. */
+/** Fetches all active projects with their cluster, database, cache, and DNS data. */
 export async function getClusters(): Promise<ClusterData[]> {
 	const owner = await getOwner();
 	if (!owner) return [];
 
 	return withOwnerScope(owner, async (tx) => {
-		// Spec + to-one relations (cloud identity, cluster, dns) in one pass.
+		// Project + to-one relations (cloud identity, cluster, dns) in one pass.
 		const baseRows = await tx
 			.select({
-				id: specs.id,
-				project_name: specs.project_name,
-				region: specs.region,
-				// M1: environment + status from the spec's default environment.
-				environment_stage: specEnvironments.name,
-				status: specEnvironments.status,
+				id: projects.id,
+				project_name: projects.project_name,
+				region: projects.region,
+				// M1: environment + status from the project's default environment.
+				environment_stage: projectEnvironments.name,
+				status: projectEnvironments.status,
 				provider: cloudIdentities.provider,
-				cluster_name: specCluster.cluster_name,
-				cluster_endpoint: specCluster.cluster_endpoint,
-				cluster_outputs: specCluster.provider_outputs,
-				cluster_version: specCluster.cluster_version,
-				argocd_url: specCluster.argocd_url,
-				argocd_admin_password: specCluster.argocd_admin_password,
-				cluster_status: specCluster.status,
-				dns_domain_name: specDns.domain_name,
-				dns_enabled: specDns.enabled,
+				cluster_name: projectCluster.cluster_name,
+				cluster_endpoint: projectCluster.cluster_endpoint,
+				cluster_outputs: projectCluster.provider_outputs,
+				cluster_version: projectCluster.cluster_version,
+				argocd_url: projectCluster.argocd_url,
+				argocd_admin_password: projectCluster.argocd_admin_password,
+				cluster_status: projectCluster.status,
+				dns_domain_name: projectDns.domain_name,
+				dns_enabled: projectDns.enabled,
 			})
-			.from(specs)
-			.leftJoin(cloudIdentities, eq(specs.cloud_identity_id, cloudIdentities.id))
+			.from(projects)
+			.leftJoin(cloudIdentities, eq(projects.cloud_identity_id, cloudIdentities.id))
 			.leftJoin(
-				specEnvironments,
+				projectEnvironments,
 				and(
-					eq(specEnvironments.spec_id, specs.id),
-					eq(specEnvironments.is_default, true),
+					eq(projectEnvironments.project_id, projects.id),
+					eq(projectEnvironments.is_default, true),
 				),
 			)
-			.leftJoin(specCluster, eq(specCluster.spec_id, specs.id))
-			.leftJoin(specDns, eq(specDns.spec_id, specs.id))
-			.where(eq(specEnvironments.status, "ACTIVE"))
-			.orderBy(desc(specs.created_at));
+			.leftJoin(projectCluster, eq(projectCluster.project_id, projects.id))
+			.leftJoin(projectDns, eq(projectDns.project_id, projects.id))
+			.where(eq(projectEnvironments.status, "ACTIVE"))
+			.orderBy(desc(projects.created_at));
 
 		if (baseRows.length === 0) return [];
 
-		const specIds = baseRows.map((r) => r.id);
+		const projectIds = baseRows.map((r) => r.id);
 
-		// To-many relations fetched in bulk, then grouped by spec.
+		// To-many relations fetched in bulk, then grouped by project.
 		const [dbRows, cacheRows] = await Promise.all([
 			tx
 				.select({
-					spec_id: specDatabases.spec_id,
-					name: specDatabases.name,
-					engine: specDatabases.engine,
-					endpoint: specDatabases.endpoint,
-					reader_endpoint: specDatabases.reader_endpoint,
-					provider_outputs: specDatabases.provider_outputs,
-					status: specDatabases.status,
+					project_id: projectDatabases.project_id,
+					name: projectDatabases.name,
+					engine: projectDatabases.engine,
+					endpoint: projectDatabases.endpoint,
+					reader_endpoint: projectDatabases.reader_endpoint,
+					provider_outputs: projectDatabases.provider_outputs,
+					status: projectDatabases.status,
 				})
-				.from(specDatabases)
-				.where(inArray(specDatabases.spec_id, specIds)),
+				.from(projectDatabases)
+				.where(inArray(projectDatabases.project_id, projectIds)),
 			tx
 				.select({
-					spec_id: specCaches.spec_id,
-					name: specCaches.name,
-					engine: specCaches.engine,
-					endpoint: specCaches.endpoint,
-					status: specCaches.status,
+					project_id: projectCaches.project_id,
+					name: projectCaches.name,
+					engine: projectCaches.engine,
+					endpoint: projectCaches.endpoint,
+					status: projectCaches.status,
 				})
-				.from(specCaches)
-				.where(inArray(specCaches.spec_id, specIds)),
+				.from(projectCaches)
+				.where(inArray(projectCaches.project_id, projectIds)),
 		]);
 
 		return baseRows.map((r) => ({
@@ -125,7 +125,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 			environment_stage: r.environment_stage ?? "development",
 			status: r.status ?? "ACTIVE",
 			cloud_identities: r.provider ? { provider: r.provider } : null,
-			spec_cluster: r.cluster_status
+			project_cluster: r.cluster_status
 				? {
 						cluster_name: r.cluster_name,
 						cluster_endpoint: r.cluster_endpoint,
@@ -136,16 +136,16 @@ export async function getClusters(): Promise<ClusterData[]> {
 						status: r.cluster_status,
 					}
 				: null,
-			spec_databases: dbRows
-				.filter((d) => d.spec_id === r.id)
-				.map(({ spec_id: _s, provider_outputs, ...db }) => ({
+			project_databases: dbRows
+				.filter((d) => d.project_id === r.id)
+				.map(({ project_id: _s, provider_outputs, ...db }) => ({
 					...db,
 					master_credentials_secret_arn: provider_outputs?.secret_ref ?? null,
 				})),
-			spec_caches: cacheRows
-				.filter((c) => c.spec_id === r.id)
-				.map(({ spec_id: _s, ...c }) => c),
-			spec_dns:
+			project_caches: cacheRows
+				.filter((c) => c.project_id === r.id)
+				.map(({ project_id: _s, ...c }) => c),
+			project_dns:
 				r.dns_enabled !== null
 					? { domain_name: r.dns_domain_name, enabled: r.dns_enabled }
 					: null,

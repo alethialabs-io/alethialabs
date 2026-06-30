@@ -4,7 +4,13 @@
 
 import { authorize } from "@/lib/authz/guard";
 import { withOwnerScope } from "@/lib/db";
-import { cloudIdentities, jobs, runners, specs } from "@/lib/db/schema";
+import {
+	cloudIdentities,
+	jobs,
+	projectEnvironments,
+	projects,
+	runners,
+} from "@/lib/db/schema";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { notifyScaler } from "@/lib/scaler";
 import { desc, eq } from "drizzle-orm";
@@ -37,7 +43,7 @@ export async function getJob(jobId: string) {
 	});
 }
 
-/** Fetches all jobs with spec project_name and runner name joined. */
+/** Fetches all jobs with project project_name and runner name joined. */
 export async function getJobs() {
 	const actor = await authorize("view", { type: "job" });
 	const owner = actor.userId;
@@ -45,28 +51,36 @@ export async function getJobs() {
 		const rows = await tx
 			.select({
 				job: jobs,
-				spec_name: specs.project_name,
-				spec_zone_id: specs.zone_id,
+				project_name: projects.project_name,
+				project_slug: projects.slug,
 				runner_name: runners.name,
 				cloud_provider: cloudIdentities.provider,
+				environment_name: projectEnvironments.name,
+				environment_stage: projectEnvironments.stage,
 			})
 			.from(jobs)
-			.leftJoin(specs, eq(jobs.spec_id, specs.id))
+			.leftJoin(projects, eq(jobs.project_id, projects.id))
 			.leftJoin(runners, eq(jobs.runner_id, runners.id))
 			.leftJoin(cloudIdentities, eq(jobs.cloud_identity_id, cloudIdentities.id))
+			.leftJoin(
+				projectEnvironments,
+				eq(jobs.environment_id, projectEnvironments.id),
+			)
 			.orderBy(desc(jobs.created_at));
 
 		return rows.map((r) => ({
 			...r.job,
-			spec_name: r.spec_name ?? null,
-			spec_zone_id: r.spec_zone_id ?? null,
+			project_name: r.project_name ?? null,
+			project_slug: r.project_slug ?? null,
 			runner_name: r.runner_name ?? null,
 			cloud_provider: r.cloud_provider ?? null,
+			environment_name: r.environment_name ?? null,
+			environment_stage: r.environment_stage ?? null,
 		}));
 	});
 }
 
-/** A job row enriched with joined spec/runner/provider display fields (from getJobs). */
+/** A job row enriched with joined project/runner/provider display fields (from getJobs). */
 export type JobWithMeta = Awaited<ReturnType<typeof getJobs>>[number];
 
 export async function getPlanResult(jobId: string) {
@@ -87,14 +101,14 @@ export async function getPlanResult(jobId: string) {
 	});
 }
 
-export async function getSpecJobs(specId: string) {
-	const actor = await authorize("view", { type: "spec", id: specId });
+export async function getProjectJobs(projectId: string) {
+	const actor = await authorize("view", { type: "project", id: projectId });
 	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
 		return tx
 			.select()
 			.from(jobs)
-			.where(eq(jobs.spec_id, specId))
+			.where(eq(jobs.project_id, projectId))
 			.orderBy(desc(jobs.created_at));
 	});
 }
@@ -109,8 +123,7 @@ export async function rerunJob(jobId: string) {
 				job_type: jobs.job_type,
 				config_snapshot: jobs.config_snapshot,
 				cloud_identity_id: jobs.cloud_identity_id,
-				zone_id: jobs.zone_id,
-				spec_id: jobs.spec_id,
+				project_id: jobs.project_id,
 			})
 			.from(jobs)
 			.where(eq(jobs.id, jobId))
@@ -125,8 +138,7 @@ export async function rerunJob(jobId: string) {
 				job_type: original.job_type,
 				config_snapshot: original.config_snapshot,
 				cloud_identity_id: original.cloud_identity_id,
-				zone_id: original.zone_id,
-				spec_id: original.spec_id,
+				project_id: original.project_id,
 				status: "QUEUED",
 			})
 			.returning({ id: jobs.id });
@@ -160,6 +172,55 @@ export async function cancelJob(jobId: string) {
 				status: "CANCELLED",
 				error_message: "Cancelled by user",
 				completed_at: new Date(),
+			})
+			.where(eq(jobs.id, jobId));
+	});
+}
+
+/**
+ * Record an authorized, time-boxed verification override on a QUEUED deploy job
+ * (elench). The runner reads `jobs.verify_override` and passes it to the
+ * fail-closed gate so a deliberate, accountable waiver can let an apply proceed
+ * despite a failing control — disabling the gate wholesale is never an option.
+ * `by` is stamped server-side to the authorizing actor; the waiver expires after
+ * `ttlHours` (default 24). Requires edit authority on the job.
+ */
+export async function recordVerifyOverride(
+	jobId: string,
+	controls: string[],
+	reason: string,
+	ttlHours = 24,
+) {
+	if (controls.length === 0) {
+		throw new Error("At least one control id is required to record an override");
+	}
+	if (!reason.trim()) {
+		throw new Error("A reason is required for a verification override");
+	}
+	const actor = await authorize("edit", { type: "job", id: jobId });
+	const owner = actor.userId;
+	const expiry = new Date(Date.now() + ttlHours * 3_600_000).toISOString();
+	return withOwnerScope(owner, async (tx) => {
+		const [job] = await tx
+			.select({ status: jobs.status })
+			.from(jobs)
+			.where(eq(jobs.id, jobId))
+			.limit(1);
+		if (!job) throw new Error("Job not found");
+		if (job.status !== "QUEUED") {
+			throw new Error(
+				`A verification override can only be set on a QUEUED job (status ${job.status})`,
+			);
+		}
+		await tx
+			.update(jobs)
+			.set({
+				verify_override: {
+					controls,
+					reason: reason.trim(),
+					by: actor.userId,
+					expiry,
+				},
 			})
 			.where(eq(jobs.id, jobId));
 	});

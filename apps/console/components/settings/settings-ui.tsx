@@ -17,34 +17,9 @@ import {
 } from "@repo/ui/select";
 import { cn } from "@repo/ui/utils";
 
-/** Page header — mono eyebrow + Geist title + description, with an optional action. */
-export function SettingsPageHead({
-	eyebrow,
-	title,
-	description,
-	action,
-}: {
-	eyebrow?: string;
-	title: string;
-	description?: ReactNode;
-	action?: ReactNode;
-}) {
-	return (
-		<div className="mb-7 flex items-end justify-between gap-6">
-			<div className="flex flex-col gap-2">
-				{eyebrow && <span className="vx-eyebrow">{eyebrow}</span>}
-				<h1 className="font-display text-[25px] font-semibold tracking-[-0.02em] text-text-primary">
-					{title}
-				</h1>
-				{description && (
-					<p className="max-w-[60ch] text-[13.5px] leading-[1.55] text-text-secondary">
-						{description}
-					</p>
-				)}
-			</div>
-			{action && <div className="shrink-0">{action}</div>}
-		</div>
-	);
+/** Two-up responsive grid for pairing short sections; stacks on narrow screens. */
+export function SettingsColumns({ children }: { children: ReactNode }) {
+	return <div className="grid grid-cols-1 gap-x-6 lg:grid-cols-2">{children}</div>;
 }
 
 /** A titled block: Geist h2 + a hairline rule (+ optional trailing action), then content. */
@@ -60,7 +35,7 @@ export function SettingsSection({
 	className?: string;
 }) {
 	return (
-		<section className={cn("mb-[22px]", className)}>
+		<section className={cn("mb-[18px]", className)}>
 			<div className="mb-3 flex items-baseline gap-3">
 				<h2 className="font-display text-[14.5px] font-semibold tracking-[-0.01em] text-text-primary">
 					{title}
@@ -108,7 +83,7 @@ export function SettingsField({
 	children: ReactNode;
 }) {
 	return (
-		<div className="grid grid-cols-[200px_1fr] items-start gap-6 border-b border-border px-[22px] py-[18px] last:border-b-0">
+		<div className="grid grid-cols-[200px_1fr] items-start gap-6 border-b border-border px-[22px] py-[15px] last:border-b-0">
 			<div className="flex flex-col gap-1">
 				<span className="text-[13px] font-medium text-text-primary">{label}</span>
 				{hint && (

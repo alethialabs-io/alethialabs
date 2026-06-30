@@ -9,6 +9,7 @@
 
 import type Stripe from "stripe";
 import { planForPriceId } from "@/lib/billing/config";
+import { ensureIncludedCredit } from "@/lib/billing/credit-grants";
 import { upsertOrgBilling } from "@/lib/billing/queries";
 import type { BillingStatus } from "@/lib/db/schema/enums";
 
@@ -62,4 +63,8 @@ export async function syncSubscriptionToBilling(
 			? new Date(item.current_period_end * 1000)
 			: null,
 	});
+
+	// Grant the plan's monthly included usage credit for this period (idempotent,
+	// best-effort). Runs on activation + each renewal sync.
+	await ensureIncludedCredit(sub);
 }

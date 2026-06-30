@@ -7,11 +7,19 @@
 // auto-provisioned primary org by writing the `organization` table directly
 // (mirroring provisionPrimaryOrg) rather than via authClient.organization.*.
 
-import { and, eq, ne } from "drizzle-orm";
+import { and, count, eq, ne } from "drizzle-orm";
 import { completeOnboarding, getPrimaryOrg } from "@/lib/auth/onboarding";
 import { getOwner } from "@/lib/auth/owner";
+import { currentActor } from "@/lib/authz/guard";
+import { getEntitlements } from "@/lib/authz/entitlements";
 import { getServiceDb } from "@/lib/db";
-import { organization } from "@/lib/db/schema";
+import {
+	cloudIdentities,
+	jobs,
+	member,
+	organization,
+	projects,
+} from "@/lib/db/schema";
 import { RESERVED_SLUGS } from "@/lib/routing";
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -70,4 +78,57 @@ export async function markOnboardingComplete(): Promise<void> {
 	const userId = await getOwner();
 	if (!userId) throw new Error("Not authenticated");
 	await completeOnboarding(userId);
+}
+
+/** Real-data progress for the in-product "Get started" first-run checklist. */
+export interface GettingStartedState {
+	hasCloud: boolean;
+	hasProject: boolean;
+	/** A project has been provisioned at least once (a DEPLOY job succeeded). */
+	hasProvisioned: boolean;
+	/** Inviting teammates is a paid (Pro+) entitlement. */
+	canInvite: boolean;
+	/** Active members in the org (>1 means a teammate has joined). */
+	memberCount: number;
+}
+
+/**
+ * Derives the "Get started" checklist completion from the active org's real state —
+ * connected clouds, projects, members — so steps tick off as the user actually
+ * does them (Stripe-style), rather than tracking a wizard.
+ */
+export async function getGettingStartedState(): Promise<GettingStartedState> {
+	const actor = await currentActor();
+	const orgId = actor.orgId;
+	const db = getServiceDb();
+	const [ci, sp, dep, mc] = await Promise.all([
+		db
+			.select({ n: count() })
+			.from(cloudIdentities)
+			.where(eq(cloudIdentities.org_id, orgId)),
+		db.select({ n: count() }).from(projects).where(eq(projects.org_id, orgId)),
+		// Ever provisioned: a deploy job that reached SUCCESS (permanent record —
+		// still counts even if the environment was later destroyed).
+		db
+			.select({ n: count() })
+			.from(jobs)
+			.where(
+				and(
+					eq(jobs.org_id, orgId),
+					eq(jobs.status, "SUCCESS"),
+					eq(jobs.job_type, "DEPLOY"),
+				),
+			),
+		db
+			.select({ n: count() })
+			.from(member)
+			.where(eq(member.organizationId, orgId)),
+	]);
+	return {
+		hasCloud: (ci[0]?.n ?? 0) > 0,
+		hasProject: (sp[0]?.n ?? 0) > 0,
+		hasProvisioned: (dep[0]?.n ?? 0) > 0,
+		canInvite: getEntitlements(actor).organizations,
+		memberCount: mc[0]?.n ?? 0,
+	};
 }

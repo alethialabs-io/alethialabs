@@ -63,6 +63,12 @@ Only the providers you configure appear on the sign-in screen.
 
 Set each provider's callback to `https://<your-domain>/api/auth/callback/<provider>`.
 
+## Cloud connectors (optional)
+
+| Key | Default | Notes |
+|---|---|---|
+| `NEXT_PUBLIC_CONNECTOR_ASSETS_ORIGIN` | hosted bucket | Origin serving the connector setup artifacts the AWS/GCP/Azure connect flows hand out (`alethia-bootstrap.yaml`, `alethia-{gcp,azure}-setup.sh`). Point it at your own console origin — the files ship in `apps/console/public/`, e.g. `https://alethia.example.com`. The AWS CloudFormation quick-create flow needs an S3-hosted template, so AWS uses the bucket default or the Terraform method. |
+
 ## Managed runner fleet (optional)
 
 By default, runners are static — you register them yourself (see [Runners](/console/runners)).

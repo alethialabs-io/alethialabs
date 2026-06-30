@@ -10,7 +10,7 @@ import { isOnboardingComplete } from "@/lib/auth/onboarding";
  * Legacy `/dashboard/*` catch-all → canonicalizes to the org-scoped tree. After C2c
  * the global pages live at `/{org}/~/…`, so any old `/dashboard/X` link, the
  * post-login redirect, and bookmarks 307 here to `/{org}/~/X` (root → `/{org}`).
- * The specific `dashboard/zones/[id]` UUID redirectors win over this catch-all.
+ * The specific `dashboard/...` UUID redirectors win over this catch-all.
  */
 export default async function DashboardLegacyRedirect({
 	params,

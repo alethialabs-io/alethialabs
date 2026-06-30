@@ -7,7 +7,7 @@ import type { Actor } from "@/lib/authz/types";
 
 /**
  * Resolves a verified user's active tenancy scope — the seam between identity and
- * authorization (spec 07 Part F, seam 2). Community is single-tenant: the user's
+ * authorization (project 07 Part F, seam 2). Community is single-tenant: the user's
  * personal org is their own id, so `orgId === userId` (the optional `activeOrgId` is
  * ignored — there is only the personal org). The `ee/` Teams build registers a
  * resolver that maps the user to their selected organization (validating membership)

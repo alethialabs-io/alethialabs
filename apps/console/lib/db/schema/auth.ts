@@ -24,6 +24,11 @@ export const user = pgTable("user", {
 	// onboarded (brand-new signups), which gates the post-login landing into /onboarding.
 	// Pre-existing users are backfilled to created_at in programmables.sql.
 	onboardingCompletedAt: timestamp({ withTimezone: true }),
+	// When the account consumed its single, account-wide Pro trial. NULL = the trial is
+	// still available (the getProOffer hook offers it on /onboarding + the create-org
+	// sheet); set the first time startProTrial succeeds so it can never be farmed. Bound
+	// to the user (not the org) so spinning up extra orgs grants no extra trials.
+	proTrialConsumedAt: timestamp({ withTimezone: true }),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });

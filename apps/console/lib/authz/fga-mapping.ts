@@ -15,7 +15,7 @@ import type { Action, Resource } from "@/lib/authz/registry";
 const ORG_LEVEL: ReadonlySet<Resource> = new Set<Resource>([
 	"org",
 	"member",
-	"audit",
+	"activity",
 	"billing",
 	"job",
 	// Alert policies are org-scoped config — no per-instance object, resolved org-wide.
@@ -25,15 +25,15 @@ const ORG_LEVEL: ReadonlySet<Resource> = new Set<Resource>([
 ]);
 
 export interface FgaCheck {
-	/** OpenFGA object, e.g. "org:<uuid>" or "zone:<uuid>". */
+	/** OpenFGA object, e.g. "org:<uuid>" or "project:<uuid>". */
 	object: string;
-	/** OpenFGA relation, e.g. "zone_view" (org capability) or "can_view" (instance). */
+	/** OpenFGA relation, e.g. "project_create" (org capability) or "can_view" (instance). */
 	relation: string;
 }
 
 /**
  * True when the (resource, action) is an ORG-level capability rather than a
- * per-instance permission: org/member/audit/billing actions, and every `create`
+ * per-instance permission: org/member/activity/billing actions, and every `create`
  * (you create a resource of a type within the org, not on a specific instance).
  */
 export function isOrgLevel(resourceType: Resource, action: Action): boolean {

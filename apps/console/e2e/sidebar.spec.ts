@@ -6,7 +6,7 @@ import { test, expect } from "./fixtures/auth";
 test.describe("Sidebar navigation", () => {
 	test("renders all nav items", async ({ authedPage: page }) => {
 		await expect(page.getByRole("link", { name: "Overview" })).toBeVisible();
-		await expect(page.getByRole("link", { name: /create a spec/i })).toBeVisible();
+		await expect(page.getByRole("link", { name: /create a project/i })).toBeVisible();
 		await expect(page.getByRole("link", { name: "Clusters" })).toBeVisible();
 		await expect(page.getByRole("link", { name: "Jobs" })).toBeVisible();
 		await expect(page.getByRole("link", { name: "Connectors" })).toBeVisible();

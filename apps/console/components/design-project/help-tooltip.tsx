@@ -51,6 +51,21 @@ const HELP_CONTENT: Record<string, { title: string; description: string }> = {
 		description:
 			"IAM users with full administrative access to the EKS cluster (system:masters group). Add your team members' email addresses.",
 	},
+	"node-disk-size": {
+		title: "Node Disk Size",
+		description:
+			"Root volume size (GB) for each worker node. Leave blank to use the per-cloud default (EKS 50 / GKE 50 / AKS 100). Increase for image-heavy or data-local workloads.",
+	},
+	"db-instance-class": {
+		title: "Instance Class / Tier",
+		description:
+			"The compute size for the managed database — AWS instance type (e.g. db.r6g.large), GCP tier (e.g. db-custom-2-7680), or Azure SKU (e.g. GP_Standard_D2s_v3). Leave blank for the template default.",
+	},
+	"cache-engine-version": {
+		title: "Cache Engine Version",
+		description:
+			"The Redis/Valkey engine version. Leave blank to use the per-cloud default (ElastiCache 7.1 / Memorystore REDIS_7_0 / Azure 6). Pin a version for compatibility.",
+	},
 	acu: {
 		title: "Aurora Capacity Units",
 		description:

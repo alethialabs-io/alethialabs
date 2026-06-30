@@ -243,7 +243,7 @@ for i in $(seq 1 "$RUNNERS"); do
                   ALETHIA_RUNNER_TOKEN="${SELF_TOKENS[$((i-1))]}" )
     fi
     # Run from apps/runner so resolveSpecTemplatesDir()'s native fallback
-    # (../../infra/templates/spec) resolves; per-job workdirs use os.MkdirTemp("")
+    # (../../infra/templates/project) resolves; per-job workdirs use os.MkdirTemp("")
     # (temp dir, not CWD), so this doesn't litter the source tree.
     nohup env "${env_args[@]}" sh -c "cd '$ROOT/apps/runner' && exec '$BIN'" \
       >> "$LOG" 2>&1 < /dev/null &

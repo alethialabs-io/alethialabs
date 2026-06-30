@@ -46,6 +46,11 @@ variable "vpc_cidr" {
   type        = string
   description = "CIDR of VPC to be used by Resale common resources"
   default     = ""
+
+  validation {
+    condition     = var.vpc_cidr == "" || can(cidrhost(var.vpc_cidr, 0))
+    error_message = "vpc_cidr must be empty (use an external VPC) or a valid IPv4 CIDR, e.g. 10.0.0.0/16."
+  }
 }
 
 variable "vpc_id" {
@@ -98,6 +103,11 @@ variable "cluster_endpoint_public_access_cidrs" {
   description = "CIDRs with access to the EKS cluster. Restricted to customer and Alethia"
   type        = list(string)
   default     = ["0.0.0.0/0"]
+
+  validation {
+    condition     = length(var.cluster_endpoint_public_access_cidrs) > 0 && alltrue([for c in var.cluster_endpoint_public_access_cidrs : can(cidrhost(c, 0))])
+    error_message = "cluster_endpoint_public_access_cidrs must be a non-empty list of valid IPv4 CIDRs."
+  }
 }
 
 variable "cluster_log_retention_in_days" {
@@ -142,12 +152,22 @@ variable "eks_disk_size" {
   description = "Disk size of the root volume attached to the EKS worker nodes"
   type        = number
   default     = 50
+
+  validation {
+    condition     = var.eks_disk_size >= 20
+    error_message = "eks_disk_size must be at least 20 GB."
+  }
 }
 
 variable "eks_instance_types" {
   description = "EC2 instance types for the EKS worker nodes"
   type        = list(string)
   default     = ["m5a.4xlarge"]
+
+  validation {
+    condition     = length(var.eks_instance_types) > 0
+    error_message = "eks_instance_types must list at least one instance type."
+  }
 }
 
 variable "eks_volume_type" {
@@ -172,6 +192,11 @@ variable "eks_ng_max_size" {
   description = "Maximum number of the worker nodes in the node group"
   type        = number
   default     = 5
+
+  validation {
+    condition     = var.eks_ng_max_size >= var.eks_ng_min_size
+    error_message = "eks_ng_max_size must be >= eks_ng_min_size."
+  }
 }
 
 variable "eks_ng_desired_size" {
@@ -184,6 +209,11 @@ variable "eks_ng_capacity_type" {
   description = "capacity type for node group nodes"
   type        = string
   default     = "SPOT"
+
+  validation {
+    condition     = contains(["SPOT", "ON_DEMAND"], var.eks_ng_capacity_type)
+    error_message = "eks_ng_capacity_type must be SPOT or ON_DEMAND."
+  }
 }
 
 #########################################################################

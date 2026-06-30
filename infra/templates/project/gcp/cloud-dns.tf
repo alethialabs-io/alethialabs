@@ -6,8 +6,8 @@ module "cloud_dns" {
   environment  = var.environment
   project_name = var.project_name
 
-  zone_name   = var.cloud_dns_zone_name != "" ? var.cloud_dns_zone_name : local.cloud_dns_name
-  domain      = var.cloud_dns_domain
+  zone_name = var.cloud_dns_zone_name != "" ? var.cloud_dns_zone_name : local.cloud_dns_name
+  domain    = var.cloud_dns_domain
 
   managed_certificate = var.cloud_dns_managed_certificate
 

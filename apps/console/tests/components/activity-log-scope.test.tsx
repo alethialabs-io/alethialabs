@@ -8,7 +8,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// A flat list of projects (projects) under the org, as the projects store holds them.
+// A flat list of projects under the org, as the projects query returns them.
 const PROJECTS = [
 	{ id: "s1", project_name: "api", slug: "api" },
 	{ id: "s2", project_name: "web", slug: "web" },
@@ -19,9 +19,8 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 	useWorkspaceStore: (sel: (s: unknown) => unknown) =>
 		sel({ entitlements: { quotas: { activityRetentionDays: 7 } } }),
 }));
-vi.mock("@/lib/stores/use-projects-store", () => ({
-	useProjectsStore: (sel: (s: unknown) => unknown) =>
-		sel({ projects: PROJECTS, fetchProjects: vi.fn() }),
+vi.mock("@/lib/query/use-projects-query", () => ({
+	useProjectsQuery: () => ({ data: PROJECTS }),
 }));
 vi.mock("@/components/settings/enterprise-gate", () => ({
 	useEntitlement: () => false,

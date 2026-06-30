@@ -7,10 +7,11 @@ import { getOwnerScope } from "@/lib/auth/owner";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import type { Entitlements } from "@/lib/authz/types";
+import { deploymentMode } from "@/lib/billing/config";
 import { isBillingActive } from "@/lib/billing/plan";
 import { PERSONAL_ORG_SLUG } from "@/lib/routing";
 import { getServiceDb } from "@/lib/db";
-import type { BillingPlan } from "@/lib/db/schema/enums";
+import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
 import {
 	member,
 	organization,
@@ -23,10 +24,14 @@ export interface WorkspaceOrg {
 	name: string;
 	/** URL slug for C2 routing (`/{slug}/…`). Personal scope uses the reserved `~`. */
 	slug: string;
+	/** Served logo URL, or null → monogram. */
+	logo: string | null;
 	role: string;
 	/** Effective billing plan — the org's plan while its subscription is live, else
 	 * `community`. Drives the plan badge in the switcher. */
 	plan: BillingPlan;
+	/** Subscription status — drives the "Trial" highlight in the switcher. */
+	status: BillingStatus;
 }
 
 export interface WorkspaceContext {
@@ -35,6 +40,8 @@ export interface WorkspaceContext {
 	/** Orgs the user belongs to; community = a single synthetic "Personal" workspace. */
 	organizations: WorkspaceOrg[];
 	entitlements: Entitlements;
+	/** Hosted SaaS vs self-managed/community deployment — gates platform-fleet surfaces client-side. */
+	isHosted: boolean;
 }
 
 /**
@@ -53,6 +60,7 @@ export async function getWorkspaceContext(): Promise<WorkspaceContext> {
 			id: organization.id,
 			name: organization.name,
 			slug: organization.slug,
+			logo: organization.logo,
 			role: member.role,
 			plan: organizationBilling.plan,
 			status: organizationBilling.status,
@@ -72,22 +80,31 @@ export async function getWorkspaceContext(): Promise<WorkspaceContext> {
 					name: r.name,
 					// Fall back to the reserved personal slug if an org somehow has none.
 					slug: r.slug ?? PERSONAL_ORG_SLUG,
+					logo: r.logo,
 					role: r.role,
 					// Effective plan: the paid plan only while the subscription is live.
 					plan:
 						r.plan && r.status && isBillingActive(r.status) ? r.plan : "community",
+					status: r.status ?? "none",
 				}))
 			: [
 					{
 						id: userId,
 						name: "Personal",
 						slug: PERSONAL_ORG_SLUG,
+						logo: null,
 						role: "owner",
 						plan: "community",
+						status: "none",
 					},
 				];
 
-	return { activeOrgId: actor.orgId, organizations, entitlements };
+	return {
+		activeOrgId: actor.orgId,
+		organizations,
+		entitlements,
+		isHosted: deploymentMode() === "hosted",
+	};
 }
 
 /**

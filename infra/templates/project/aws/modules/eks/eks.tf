@@ -27,8 +27,8 @@ module "eks" {
       most_recent = true
     }
     vpc-cni = {
-      most_recent               = true
-      service_account_role_arn  = module.vpc_cni_irsa.iam_role_arn
+      most_recent              = true
+      service_account_role_arn = module.vpc_cni_irsa.iam_role_arn
     }
   }
 

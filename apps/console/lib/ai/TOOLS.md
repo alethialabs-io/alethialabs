@@ -16,6 +16,12 @@ sparingly). Status: ✅ wired · ▢ candidate · ⛔ do-not-expose.
 
 Tools live in `lib/ai/tools/` — `compose.ts` (canvas-building) + `read.ts` (read surface) + `index.ts`.
 
+**Exposure SSOT (`registry.ts`):** every tool is classified by **audience** (`in-app` | `external` |
+`both`). The MCP server consumes `buildExternalAgentTools()` — the read-only projection
+(`externalToolsOnly`, audience `external|both`) — so HITL/canvas/job-queuing tools never reach an
+external agent (read-only at launch). `assertAudienceCoverage` (tested in
+`tests/lib/ai/tools/registry.test.ts`) fails CI if a new tool ships without an explicit audience.
+
 ## READ — backing action · PDP verb (all ✅ wired, trimmed + secret-free)
 - ✅ `list_services` — registry/`PROVIDERS` (pure) — addable node kinds + per-cloud service names.
 - ✅ `list_service_options(provider)` — `lib/cloud-providers` tables — instance types / k8s / db / cache / regions.

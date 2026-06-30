@@ -4,6 +4,7 @@
 
 import { Search } from "lucide-react";
 import { usePathname } from "next/navigation";
+import { useCommandPalette } from "@/lib/stores/use-command-palette";
 import { buildSidebarNav, type DrillId, isNavItemActive } from "./nav-config";
 import { NavRow } from "./nav-row";
 
@@ -24,12 +25,12 @@ export function SidebarNav({
 
 	return (
 		<div className="flex h-full flex-col">
-			{/* Find box — visual stub (a global command palette will back this later). */}
+			{/* Find box — opens the global command palette (also ⌘K / F). */}
 			<div className="px-3 pb-2 pt-3">
 				<button
 					type="button"
-					disabled
-					className="flex h-9 w-full cursor-not-allowed items-center gap-2.5 rounded-md border bg-muted/30 px-2.5 text-muted-foreground"
+					onClick={() => useCommandPalette.getState().setOpen(true)}
+					className="flex h-9 w-full items-center gap-2.5 rounded-md border bg-muted/30 px-2.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
 				>
 					<Search className="h-[15px] w-[15px] shrink-0" />
 					<span className="flex-1 text-left text-[13px]">Find…</span>

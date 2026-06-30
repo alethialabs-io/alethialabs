@@ -25,16 +25,19 @@ import {
 	createSubscriptionIntent,
 	getBillingSummary,
 	resumeSubscription,
+	saveTaxId,
+	updateBillingAddress,
 } from "@/app/server/actions/billing";
-import { getOrgSettings, type OrgSettings } from "@/app/server/actions/org-settings";
-import { PaymentForm } from "@/components/billing/payment-form";
+import { updateOrgPrimaryAddress } from "@/app/server/actions/org-settings";
+import {
+	billingAddressFrom,
+	BillingCheckoutForm,
+	type CollectedBilling,
+} from "@/components/billing/billing-checkout-form";
 import { PlanPicker } from "@/components/billing/plan-picker";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
-import {
-	SettingsPageHead,
-	SettingsSection,
-} from "@/components/settings/settings-ui";
+import { SettingsSection } from "@/components/settings/settings-ui";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
 import {
@@ -60,14 +63,6 @@ const STATUS_LABEL: Record<BillingSummary["status"], string> = {
 	canceled: "Canceled",
 };
 
-// Display-only monthly amounts (the authoritative prices live in Stripe). Team is
-// per-seat; the others are flat. Mirrors plan-catalog's display-label convention.
-const MONTHLY: Record<BillingPlan, number> = {
-	community: 0,
-	team: 29,
-	enterprise: 2500,
-};
-
 /** "1 Jul 2026" */
 function formatDate(iso: string): string {
 	return new Date(iso).toLocaleDateString(undefined, {
@@ -78,12 +73,9 @@ function formatDate(iso: string): string {
 }
 
 export function BillingPanel() {
-	const activeOrgId = useWorkspaceStore((s) => s.activeOrgId);
-	const organizations = useWorkspaceStore((s) => s.organizations);
 	const fetchWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
 
 	const [summary, setSummary] = useState<BillingSummary | null>(null);
-	const [org, setOrg] = useState<OrgSettings | null>(null);
 	const [pending, startTransition] = useTransition();
 	const [pendingPlan, setPendingPlan] = useState<BillingPlan | null>(null);
 	const [createOpen, setCreateOpen] = useState(false);
@@ -98,11 +90,6 @@ export function BillingPanel() {
 		getBillingSummary()
 			.then(setSummary)
 			.catch(() => toast.error("Couldn't load billing details."));
-		getOrgSettings()
-			.then(setOrg)
-			.catch(() => {
-				/* personal scope or no org — header meta just omits slug/region */
-			});
 		fetchWorkspace();
 	}, [fetchWorkspace]);
 	useEffect(() => {
@@ -142,6 +129,21 @@ export function BillingPanel() {
 		setPaySecret(null);
 		toast.success("Subscription active.");
 		refresh();
+	}
+
+	/** Persist the checkout's billing details on the active org's customer, then close. */
+	async function onCheckoutPaid(billing: CollectedBilling) {
+		try {
+			await updateBillingAddress(billingAddressFrom(billing)).catch(() => {});
+			if (billing.taxValue.trim()) {
+				await saveTaxId(billing.taxType, billing.taxValue).catch(() => {});
+			}
+			if (billing.useAsPrimary) {
+				await updateOrgPrimaryAddress(billingAddressFrom(billing)).catch(() => {});
+			}
+		} finally {
+			onSubscribed();
+		}
 	}
 
 	function toggleCancel() {
@@ -194,7 +196,7 @@ export function BillingPanel() {
 						Create an organization
 					</h2>
 					<p className="mt-1 max-w-prose text-sm text-muted-foreground">
-						Your account is a personal workspace — your Zones and Specs are all yours.
+						Your account is a personal scope — your Projects are all yours.
 						Create an organization to collaborate with teammates on a paid plan.
 					</p>
 					<Button className="mt-4" onClick={() => setCreateOpen(true)}>
@@ -207,39 +209,18 @@ export function BillingPanel() {
 	}
 
 	const meta = planMeta(summary.plan);
-	const orgName =
-		organizations.find((o) => o.id === activeOrgId)?.name ?? org?.name ?? "—";
+	// The unit price is Stripe-authoritative (summary.unitAmountUsd = the subscription's
+	// actual price), never the catalog. Per-seat plans bill unit × seats; a null unit
+	// (Enterprise/custom, or community) → `monthly` is null and we show meta.priceLabel.
 	const seatCount = summary.seats ?? Math.max(1, summary.memberCount);
-	const monthly =
-		summary.plan === "team" ? MONTHLY.team * seatCount : MONTHLY[summary.plan];
+	const unit = summary.unitAmountUsd;
+	const monthly = unit === null ? null : meta.perSeat ? unit * seatCount : unit;
 	const periodLabel = summary.currentPeriodEnd
 		? `${summary.cancelAtPeriodEnd ? "Cancels" : "Renews"} ${formatDate(summary.currentPeriodEnd)}`
 		: null;
 
 	return (
 		<div>
-			<SettingsPageHead
-				title="Billing"
-				description={`Manage your plan, payment methods, and invoices for ${orgName}.`}
-				action={
-					<div className="flex items-center gap-2.5 font-mono text-[11px] text-text-tertiary">
-						<span>Org</span>
-						{org?.slug && (
-							<>
-								<span className="size-1 rounded-full bg-text-disabled" />
-								<span>{org.slug}</span>
-							</>
-						)}
-						{org?.region && (
-							<>
-								<span className="size-1 rounded-full bg-text-disabled" />
-								<span>{org.region}</span>
-							</>
-						)}
-					</div>
-				}
-			/>
-
 			{/* current plan */}
 			<SettingsSection title="Current plan">
 				<div className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
@@ -276,7 +257,9 @@ export function BillingPanel() {
 						</div>
 						<div className="flex flex-col items-end gap-[3px] text-right">
 							<div className="font-display text-[26px] font-semibold tracking-[-0.03em] text-text-primary">
-								{monthly === 0 ? (
+								{monthly === null ? (
+									meta.priceLabel
+								) : monthly === 0 ? (
 									"Free"
 								) : (
 									<>
@@ -287,7 +270,13 @@ export function BillingPanel() {
 									</>
 								)}
 							</div>
-							{monthly > 0 && summary.currentPeriodEnd && (
+							{meta.perSeat && unit !== null && monthly !== null && monthly > 0 && (
+								<div className="font-mono text-[10.5px] text-text-tertiary">
+									${unit.toLocaleString()}/seat · {seatCount} seat
+									{seatCount === 1 ? "" : "s"}
+								</div>
+							)}
+							{monthly !== null && monthly > 0 && summary.currentPeriodEnd && (
 								<div className="font-mono text-[10.5px] text-text-tertiary">
 									next charge ${monthly.toLocaleString()} ·{" "}
 									{formatDate(summary.currentPeriodEnd)}
@@ -357,18 +346,19 @@ export function BillingPanel() {
 
 			{/* embedded subscribe dialog */}
 			<Dialog open={payOpen} onOpenChange={setPayOpen}>
-				<DialogContent className="sm:max-w-md">
+				<DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-lg">
 					<DialogHeader>
 						<DialogTitle>
 							Subscribe to {payPlan ? planMeta(payPlan).name : ""}
 						</DialogTitle>
 					</DialogHeader>
-					{paySecret && (
+					{paySecret && payPlan && (
 						<StripeElementsProvider clientSecret={paySecret}>
-							<PaymentForm
-								mode="payment"
+							<BillingCheckoutForm
+								clientSecret={paySecret}
+								meta={planMeta(payPlan)}
 								submitLabel="Subscribe"
-								onSuccess={onSubscribed}
+								onPaid={onCheckoutPaid}
 							/>
 						</StripeElementsProvider>
 					)}

@@ -17,7 +17,7 @@ export function permissionKey(resource: Resource, action: Action): PermissionKey
  * principal, and required permission, decide whether they cover the target
  * resource. A `null` grant resource_id is org-wide (covers everything); otherwise
  * the grant must name the resource itself or one of its ancestors (a higher-scope
- * grant flows down the Org→Zone→Spec hierarchy). Empty ⇒ default-deny.
+ * grant flows down the Org→Project hierarchy). Empty ⇒ default-deny.
  */
 export function coversResource(
 	grantResourceIds: ReadonlyArray<string | null>,
@@ -34,7 +34,7 @@ export function coversResource(
 /**
  * The final allow/deny decision for a permission on a resource. Allow grants and
  * explicit-deny grants are evaluated with the SAME coverage rule (a grant covers the
- * resource itself or any ancestor — so a deny scoped to a zone OR to one spec both
+ * resource itself or any ancestor — so a deny scoped to the org OR to one project both
  * exclude correctly). Explicit deny ALWAYS wins (no specificity ranking, IAM-style):
  * allowed ⇔ an allow covers AND no deny covers.
  */

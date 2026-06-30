@@ -4,7 +4,7 @@
 import { withMcpAuth } from "better-auth/plugins";
 import { createMcpHandler } from "mcp-handler";
 import { registerAiToolsOnMcp } from "@/lib/ai/mcp/adapter";
-import { buildAgentTools } from "@/lib/ai/tools";
+import { buildExternalAgentTools } from "@/lib/ai/tools";
 import { auth } from "@/lib/auth";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
@@ -23,8 +23,10 @@ export const maxDuration = 300;
  * Actor every other caller uses (getActiveScope) and bind it for the request via
  * runWithActor, so the tools enforce the user's grants with no new authority.
  *
- * Read-only by design: mutations (plan/deploy) stay in the app behind HITL approval,
- * so we expose the "ask" tool set. scan_repo only queues a static analysis job.
+ * Read-only by design: we expose the audience-filtered EXTERNAL projection
+ * (buildExternalAgentTools → registry.ts), i.e. only read/both tools. HITL
+ * proposals, canvas tools, AND job-queuing writes (scan_repo) are excluded — the
+ * external surface stays strictly read-only at launch (see the elench plan A5).
  */
 // lib/auth annotates `plugins` as BetterAuthOptions["plugins"] (widened, to allow the
 // conditional enterprise pushes), which erases per-plugin type inference — so the mcp()
@@ -47,12 +49,12 @@ const handler = withMcpAuth(auth as unknown as McpAuthInstance, async (_req, ses
 
 	const mcp = createMcpHandler(
 		(server) => {
-			registerAiToolsOnMcp(server, buildAgentTools({ mode: "ask" }));
+			registerAiToolsOnMcp(server, buildExternalAgentTools());
 		},
 		{
 			serverInfo: { name: "alethia", version: "1.0.0" },
 			instructions:
-				"Alethia control-plane tools: read the user's projects/clusters/jobs/runners, browse the service catalog, and scan a git repo to infer the infrastructure it needs. Provisioning is done in the Alethia dashboard with human approval.",
+				"Alethia control-plane tools (read-only): read the user's projects/clusters/jobs/runners, browse the service catalog, and review repo-scan results. Provisioning and repo scans are initiated in the Alethia dashboard with human approval.",
 		},
 		{ basePath: "/api" },
 	);

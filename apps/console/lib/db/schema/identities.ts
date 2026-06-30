@@ -18,9 +18,9 @@ import type {
 	CloudCredentials,
 	ConnectorCredentials,
 	GcpCachedResources,
-} from "@/types/database-custom.types";
+} from "@/types/jsonb.types";
 import { connectors } from "./connectors";
-import { cloudProvider, credentialScope } from "./enums";
+import { cloudIdentityStatus, cloudProvider, credentialScope } from "./enums";
 
 // Cloud credential anchors. `credentials`/`cached_resources` are typed JSONB.
 export const cloudIdentities = pgTable(
@@ -41,6 +41,13 @@ export const cloudIdentities = pgTable(
 		>(),
 		cached_at: timestamp({ withTimezone: true }),
 		is_verified: boolean().default(false),
+		// Richer connection lifecycle (the verification finalize / page health drive
+		// off this). `connected` ⇔ `is_verified=true`; both are set together.
+		status: cloudIdentityStatus().default("pending").notNull(),
+		// Last CONNECTION_TEST failure reason (cleared on a successful verify).
+		last_error: text(),
+		// When the most recent CONNECTION_TEST resolved (success or failure).
+		last_tested_at: timestamp({ withTimezone: true }),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},

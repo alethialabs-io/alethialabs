@@ -3,7 +3,7 @@
 
 import { getServiceDb } from "@/lib/db";
 import { runners } from "@/lib/db/schema";
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
@@ -12,6 +12,17 @@ export type RunnerAuthResult = {
 	tokenHash: string;
 	error: NextResponse | null;
 };
+
+/** SHA-256 hex digest of a runner token — what we store + compare (never the plaintext). */
+export function hashRunnerToken(token: string): string {
+	return createHash("sha256").update(token).digest("hex");
+}
+
+/** Mints a fresh runner bearer token + its stored hash. */
+export function generateRunnerToken(): { token: string; hash: string } {
+	const token = randomBytes(32).toString("hex");
+	return { token, hash: hashRunnerToken(token) };
+}
 
 export async function verifyRunnerToken(
 	req: Request,
@@ -30,7 +41,7 @@ export async function verifyRunnerToken(
 		};
 	}
 
-	const tokenHash = createHash("sha256").update(runnerToken).digest("hex");
+	const tokenHash = hashRunnerToken(runnerToken);
 
 	const db = getServiceDb();
 	const [runner] = await db

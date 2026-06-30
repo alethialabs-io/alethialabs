@@ -86,6 +86,12 @@ export function SectionDatabases() {
 									</Select>
 								</FormItem>
 							)} />
+							<FormField control={control} name={`databases.${i}.instance_class`} render={({ field: f }) => (
+								<FormItem className="space-y-1">
+									<div className="flex items-center gap-1"><Label className="text-[11px]">Instance Class</Label><HelpTooltip topic="db-instance-class" /></div>
+									<FormControl><Input name={f.name} onBlur={f.onBlur} value={f.value ?? ""} placeholder="Template default" onChange={(e) => f.onChange(e.target.value || null)} className="h-8 text-xs font-mono" /></FormControl>
+								</FormItem>
+							)} />
 							<FormField control={control} name={`databases.${i}.min_capacity`} render={({ field: f }) => (
 								<FormItem className="space-y-1">
 									<div className="flex items-center gap-1"><Label className="text-[11px]">Min {capacity.unit}</Label><HelpTooltip topic="acu" /></div>

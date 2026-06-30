@@ -13,7 +13,7 @@ export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ provider: string }> },
 ) {
-	const { userId, errorResponse: authError } = await resolveCliProvider(
+	const { userId, scope, errorResponse: authError } = await resolveCliProvider(
 		req,
 		params,
 	);
@@ -40,7 +40,7 @@ export async function POST(
 
 	try {
 		const result = await conn.verifyIdentity(
-			userId,
+			scope,
 			body.identity_id,
 			body.job_id,
 		);

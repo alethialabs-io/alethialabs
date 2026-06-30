@@ -5,6 +5,7 @@ import type { CanvasContext } from "../canvas-context";
 import { catalogTools, composeTools } from "./compose";
 import { operationTools } from "./operations";
 import { readTools } from "./read";
+import { externalToolsOnly } from "./registry";
 import { scannerTools } from "./scanner";
 
 /** Agent chat mode: Ask = read-only; Act = may propose plan/deploy operations. */
@@ -36,4 +37,16 @@ export function buildAgentTools(opts?: { mode?: AgentMode }) {
 		...scannerTools(),
 		...(opts?.mode === "act" ? operationTools() : {}),
 	};
+}
+
+/**
+ * The **external** tool projection for the MCP server: the same defs as the in-app
+ * agent, filtered to the read-only / PDP-gated subset (audience external|both —
+ * see `registry.ts`). HITL proposals, canvas tools, and job-queuing writes are
+ * excluded — the MCP surface is read-only at launch. This is the single seam the
+ * remote MCP route should call so the external surface can never drift from the
+ * in-app tool definitions.
+ */
+export function buildExternalAgentTools() {
+	return externalToolsOnly(buildAgentTools({ mode: "act" }));
 }

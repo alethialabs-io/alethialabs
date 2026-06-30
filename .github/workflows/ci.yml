@@ -11,6 +11,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC — mutation testing (slow, non-blocking)
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -40,6 +43,8 @@ jobs:
         run: pnpm exec turbo run check-types lint
       - name: Unit tests
         run: pnpm exec turbo run test
+      # Coverage is merged into the self-hosted README badge by the `coverage-badge` job
+      # (push-to-main); no third-party service. See scripts/coverage-badge.mjs + TESTING.md.
       # Build smoke for the split-affected apps — catches transpilePackages /
       # standalone breakage on PRs. Build-only placeholder env so the console's
       # strict zod config modules pass validation (mirrors apps/console/Dockerfile;
@@ -54,6 +59,81 @@ jobs:
           ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
           ALETHIA_STORAGE_ACCESS_KEY_ID: build
           ALETHIA_STORAGE_SECRET_ACCESS_KEY: build
+
+  integration:
+    name: Integration (real Postgres + RLS)
+    runs-on: ubuntu-latest
+    # A throwaway Postgres mirroring the dev stack (compose uses postgres:17-alpine with the
+    # same superuser/db). db:migrate then creates the least-priv `alethia_app` role + RLS, so
+    # the suite exercises the real SQL query builders and the multi-tenant isolation boundary.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: alethia
+          POSTGRES_PASSWORD: alethia-dev-secret
+          POSTGRES_DB: alethia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alethia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Point at the CI service (the suite's setup.ts defaults to :5433 — these win).
+      ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
+      # A DISTINCT app-role URL so the RLS isolation assertion actually runs (not skipped).
+      ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate the test database (schema + programmables/RLS + app role)
+        run: pnpm -F console db:migrate
+      - name: Integration tests (real SQL query builders + RLS isolation)
+        run: pnpm -F console test:integration
+
+  coverage-badge:
+    name: Coverage badge (self-hosted)
+    runs-on: ubuntu-latest
+    # Only on push to main: regenerate coverage and commit the shields.io badge JSON the README
+    # renders. No third-party service. `[skip ci]` on the commit avoids a run loop.
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run unit suites (produces per-project coverage summaries)
+        run: pnpm exec turbo run test
+      - name: Compute merged coverage → badge JSON
+        run: node scripts/coverage-badge.mjs
+      - name: Commit the badge if it changed
+        run: |
+          if git diff --quiet -- .github/badges/coverage.json; then
+            echo "Coverage badge unchanged."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/badges/coverage.json
+            git commit -m "chore(ci): update coverage badge [skip ci]"
+            git push || echo "::warning::badge push skipped (branch protection?)"
+          fi
 
   guards:
     name: Authz / open-core guards
@@ -83,6 +163,10 @@ jobs:
           pnpm -F console gen:cli-fixtures
           git diff --exit-code -- packages/core/api/testdata \
             || { echo "::error::CLI fixtures are stale — run 'pnpm -F console gen:cli-fixtures' and commit (the Go contract test will then name any struct field to update)."; exit 1; }
+      - name: Tests exercise real source (anti-vacuous-test tripwire)
+        run: node scripts/check-test-imports.mjs
+      - name: Connector setup artifacts in sync (infra/connector ⇄ console public)
+        run: node scripts/check-connector-assets.mjs
 
   go:
     name: Go (build · vet · test · lint)
@@ -97,17 +181,82 @@ jobs:
         with:
           go-version: "1.25"
           cache-dependency-path: ${{ matrix.module }}/go.sum
-      - name: Build · vet · test
+      - name: Build · vet · test (with coverage)
         working-directory: ${{ matrix.module }}
         run: |
           go build ./...
           go vet ./...
-          go test ./...
+          go test -coverprofile=cover.out ./...
+      - name: CLI logic-scope coverage gate (≥90%)
+        if: matrix.module == 'apps/cli'
+        working-directory: ${{ matrix.module }}
+        run: ./scripts/coverage.sh 90
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
           working-directory: ${{ matrix.module }}
+
+  go-coverage-badge:
+    name: Go coverage badge (self-hosted)
+    runs-on: ubuntu-latest
+    # Push-to-main only: aggregate the three Go modules' coverage into one badge JSON the README
+    # renders, and commit it. `[skip ci]` avoids a run loop.
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Cover each Go module
+        run: |
+          for m in apps/cli apps/runner packages/core; do
+            (cd "$m" && go test -coverprofile=cover.out ./...)
+          done
+      - name: Compute aggregate Go coverage → badge JSON
+        run: node scripts/go-coverage-badge.mjs
+      - name: Commit the badge if it changed
+        run: |
+          if git diff --quiet -- .github/badges/go-coverage.json; then
+            echo "Go coverage badge unchanged."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/badges/go-coverage.json
+            git commit -m "chore(ci): update go coverage badge [skip ci]"
+            git push || echo "::warning::badge push skipped (branch protection?)"
+          fi
+
+  mutation:
+    name: Mutation testing (Stryker + Gremlins)
+    # The objective "are the tests real" check. Slow — runs WEEKLY + on manual dispatch only,
+    # never on PRs. Report-only for now (|| true); ratchet to a hard threshold as scores climb.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - run: pnpm install --frozen-lockfile
+      - name: TS mutation (Stryker — lib + actions)
+        run: pnpm -F console mutate || true
+      - name: Go mutation (Gremlins — all modules)
+        run: |
+          go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
+          scripts/go-mutation.sh || true
 
   secrets:
     name: Secret scan (gitleaks)

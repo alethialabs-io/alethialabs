@@ -9,13 +9,13 @@ import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import {
 	NODE_REGISTRY,
 	SINGLETON_KINDS,
-} from "@/components/design-spec/canvas/graph/node-registry";
+} from "@/components/design-project/canvas/graph/node-registry";
 import type {
 	CanvasEdge,
 	CanvasNode,
 	CanvasNodeData,
 	NodeKind,
-} from "@/components/design-spec/canvas/graph/types";
+} from "@/components/design-project/canvas/graph/types";
 
 const PROJECT_NODE_ID = "project-root";
 const HISTORY_CAP = 50;
@@ -214,7 +214,7 @@ export const useCanvasStore = create<CanvasStore>()(
 				const provider = get().getEffectiveProvider(PROJECT_NODE_ID) ?? "aws";
 				const count = nodes.length;
 				const config = NODE_REGISTRY[kind].defaultData(provider);
-				// Array kinds are UNIQUE on (spec, name) — suffix to avoid clashes.
+				// Array kinds are UNIQUE on (project, name) — suffix to avoid clashes.
 				if (typeof config.name === "string") {
 					const taken = new Set(
 						nodes
@@ -420,7 +420,7 @@ export const useCanvasStore = create<CanvasStore>()(
 			},
 		}),
 		{
-			name: "design-spec-canvas-draft",
+			name: "design-project-canvas-draft",
 			storage: createJSONStorage(() => sessionStorage),
 			version: 1,
 			// Persist only the graph; identities are server data, history is ephemeral.

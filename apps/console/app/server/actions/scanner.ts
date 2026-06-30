@@ -4,7 +4,6 @@
 
 import { eq } from "drizzle-orm";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
-import { getZones } from "@/app/server/actions/zones";
 import { requireOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { assertAiAllowed } from "@/lib/billing/ai-guard";
@@ -15,8 +14,8 @@ import { jobs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import { inferStack } from "@/lib/scanner/infer";
 import type { ScanProposal } from "@/lib/scanner/schema";
-import { inferredStackToFormData } from "@/lib/scanner/to-spec";
-import type { RepoDigest } from "@/types/database-custom.types";
+import { inferredStackToFormData } from "@/lib/scanner/to-project";
+import type { RepoDigest } from "@/types/jsonb.types";
 
 /** Narrow a free-form provider string to a known slug (no casts). */
 function toSlug(p: string): CloudProviderSlug {
@@ -27,7 +26,7 @@ function toSlug(p: string): CloudProviderSlug {
  * Queue an ANALYZE_REPO job: a runner clones the repo and statically parses it into
  * a RepoDigest (no repo code executed). Returns the job id to poll/stream. The repo
  * URL lives in config_snapshot; the runner resolves a git token via /git-token (which
- * falls back to config_snapshot.repo_url for spec-less scan jobs).
+ * falls back to config_snapshot.repo_url for project-less scan jobs).
  *
  * B6 will front this with `assertScanAllowed` (entitlement + per-scan meter).
  */
@@ -90,14 +89,15 @@ export async function getScanDigest(jobId: string): Promise<{
 
 /**
  * Build a review-ready proposal from a completed scan: model infers an InferredStack
- * from the digest, then a deterministic mapper turns it into a guaranteed-valid Spec
- * (placed on the user's default cloud account + zone). Recomputes on demand (caching
- * is a later optimization). The result opens in the canvas via `?scan=<jobId>`.
+ * from the digest, then a deterministic mapper turns it into a guaranteed-valid Project
+ * (placed on the user's default cloud account). Recomputes on demand (caching is a later
+ * optimization). The result opens in the canvas via `?scan=<jobId>`. A project is a
+ * top-level project now, so no grouping layer is required.
  */
 export async function getScanProposal(jobId: string): Promise<
 	| { status: "NOT_FOUND" }
 	| { status: "PENDING"; jobStatus: string }
-	| { status: "NEEDS_SETUP"; needsIdentity: boolean; needsZone: boolean }
+	| { status: "NEEDS_SETUP"; needsIdentity: boolean }
 	| { status: "READY"; proposal: ScanProposal }
 > {
 	const owner = await requireOwner();
@@ -142,26 +142,20 @@ export async function getScanProposal(jobId: string): Promise<
 	});
 
 	const identities = await getVerifiedCloudIdentities();
-	const { zones } = await getZones();
-	if (identities.length === 0 || zones.length === 0) {
-		return {
-			status: "NEEDS_SETUP",
-			needsIdentity: identities.length === 0,
-			needsZone: zones.length === 0,
-		};
+	if (identities.length === 0) {
+		return { status: "NEEDS_SETUP", needsIdentity: true };
 	}
 
 	const identity = identities[0];
 	const provider = toSlug(identity.provider);
-	const proposedSpec = inferredStackToFormData(stack, {
+	const proposedProject = inferredStackToFormData(stack, {
 		identityId: identity.id,
 		provider,
-		zoneId: zones[0].id,
 		repoUrl,
 	});
 
 	return {
 		status: "READY",
-		proposal: { stack, proposedSpec, provider, identityId: identity.id },
+		proposal: { stack, proposedProject, provider, identityId: identity.id },
 	};
 }
