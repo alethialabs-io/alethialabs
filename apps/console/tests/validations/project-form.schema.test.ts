@@ -25,6 +25,8 @@ const validProject = {
 };
 
 describe("projectFormSchema", () => {
+	// project_name is now a free-text display name (Vercel-style); the URL slug is derived
+	// from it via slugify in createProject. Only empty / all-symbol / over-length are rejected.
 	describe("project.project_name", () => {
 		it("rejects empty project_name", () => {
 			const data = { ...validProject, project: { ...validProject.project, project_name: "" } };
@@ -32,32 +34,27 @@ describe("projectFormSchema", () => {
 			expect(result.success).toBe(false);
 		});
 
-		it("rejects project_name with uppercase", () => {
-			const data = { ...validProject, project: { ...validProject.project, project_name: "MyProject" } };
-			const result = projectFormSchema.safeParse(data);
-			expect(result.success).toBe(false);
+		it("accepts free-text names (uppercase, spaces, apostrophes)", () => {
+			for (const project_name of ["My Project", "Acme Cloud", "Bob's API"]) {
+				const data = { ...validProject, project: { ...validProject.project, project_name } };
+				expect(projectFormSchema.safeParse(data).success).toBe(true);
+			}
 		});
 
-		it("rejects project_name with spaces", () => {
-			const data = { ...validProject, project: { ...validProject.project, project_name: "my project" } };
-			const result = projectFormSchema.safeParse(data);
-			expect(result.success).toBe(false);
-		});
-
-		it("rejects project_name starting with hyphen", () => {
-			const data = { ...validProject, project: { ...validProject.project, project_name: "-my-project" } };
-			const result = projectFormSchema.safeParse(data);
-			expect(result.success).toBe(false);
-		});
-
-		it("accepts valid project_name", () => {
+		it("accepts a slug-shaped name", () => {
 			const data = { ...validProject, project: { ...validProject.project, project_name: "my-project-123" } };
 			const result = projectFormSchema.safeParse(data);
 			expect(result.success).toBe(true);
 		});
 
-		it("rejects project_name > 25 chars", () => {
-			const data = { ...validProject, project: { ...validProject.project, project_name: "a".repeat(26) } };
+		it("rejects a name that slugifies to nothing", () => {
+			const data = { ...validProject, project: { ...validProject.project, project_name: "@#$%" } };
+			const result = projectFormSchema.safeParse(data);
+			expect(result.success).toBe(false);
+		});
+
+		it("rejects project_name > 50 chars", () => {
+			const data = { ...validProject, project: { ...validProject.project, project_name: "a".repeat(51) } };
 			const result = projectFormSchema.safeParse(data);
 			expect(result.success).toBe(false);
 		});

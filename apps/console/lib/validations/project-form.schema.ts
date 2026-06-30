@@ -3,6 +3,7 @@
 
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { slugify } from "@/lib/slug";
 import {
 	projectCaches,
 	projectCluster,
@@ -65,7 +66,13 @@ const projectSchema = projectsInsert
 		estimated_monthly_cost: true,
 	})
 	.extend({
-		project_name: z.string().min(1, "Project name is required").max(25).regex(/^[a-z0-9][a-z0-9-]*$/, "Lowercase, numbers, hyphens only"),
+		// Free-text display name (Vercel-style): the URL slug is derived from it via
+		// `slugify` in createProject. We only require it slugifies to something non-empty.
+		project_name: z
+			.string()
+			.min(1, "Project name is required")
+			.max(50)
+			.refine((v) => slugify(v).length > 0, "Enter at least one letter or number"),
 		region: z.string().min(1, "Region is required"),
 		cloud_identity_id: z.string().min(1, "Cloud account is required"),
 		container_platform: z.string().optional(),
