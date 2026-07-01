@@ -4,6 +4,7 @@
 import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { finalizeDeployment } from "@/app/server/actions/deployments";
+import { recordDriftPosture } from "@/app/server/actions/drift";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { finalizeConnectionTest } from "@/lib/cloud-providers/connections";
 import { reportJobUsageOnce } from "@/lib/billing/meter";
@@ -53,6 +54,7 @@ export async function PUT(
 					environment_id: jobs.environment_id,
 					org_id: jobs.org_id,
 					cloud_identity_id: jobs.cloud_identity_id,
+					execution_metadata: jobs.execution_metadata,
 				})
 				.from(jobs)
 				.where(eq(jobs.id, jobId))
@@ -127,6 +129,34 @@ export async function PUT(
 					}
 				}
 			}
+
+				// DETECT_DRIFT: persist the runner's drift posture (posted in execution_metadata
+				// by the refresh-only plan → drift.Analyze) into the per-environment day-2 record.
+				if (
+					job?.job_type === "DETECT_DRIFT" &&
+					status === "SUCCESS" &&
+					job.project_id
+				) {
+					const posture = job.execution_metadata?.drift_posture;
+					if (posture) {
+						try {
+							await recordDriftPosture({
+								projectId: job.project_id,
+								environmentId: job.environment_id ?? null,
+								inSync: posture.in_sync,
+								drifted: posture.drifted,
+								details: (posture.details ?? []).map((d) => ({
+									address: d.address,
+									type: d.type,
+									kind: String(d.kind),
+								})),
+								scannedAt: posture.scanned_at ?? new Date().toISOString(),
+							});
+						} catch (err) {
+							console.error("Persist drift posture error:", err);
+						}
+					}
+				}
 
 			// CONNECTION_TEST: authoritatively finalize the cloud identity from the
 			// terminal job result, server-side — so a connect sheet closed between

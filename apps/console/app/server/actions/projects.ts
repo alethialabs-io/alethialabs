@@ -866,6 +866,46 @@ export async function provisionProject(
 }
 
 /**
+ * Queue a DETECT_DRIFT job — the runner runs `tofu plan -refresh-only -json` and
+ * `drift.Analyze` on the environment's provisioned state, and posts the posture back
+ * (persisted to `environment_drift` by the job-status route). The day-2 "keep proving
+ * it" trigger; called manually from the UI/assistant or by a scheduler.
+ */
+export async function queueDriftDetection(
+	projectId: string,
+	environmentId?: string | null,
+	runnerId?: string | null,
+) {
+	const actor = await authorize("deploy", { type: "project", id: projectId });
+	const owner = actor.userId;
+	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
+		owner,
+		projectId,
+		environmentId,
+	);
+
+	const result = await withOwnerScope(owner, async (tx) => {
+		const [job] = await tx
+			.insert(jobs)
+			.values({
+				user_id: owner,
+				project_id: projectId,
+				environment_id: environment.id,
+				cloud_identity_id: identity.id,
+				job_type: "DETECT_DRIFT",
+				config_snapshot: configSnapshot,
+				status: "QUEUED",
+				...(runnerId ? { assigned_runner_id: runnerId } : {}),
+			})
+			.returning({ id: jobs.id });
+		return { jobId: job.id };
+	});
+
+	notifyScaler();
+	return result;
+}
+
+/**
  * Queue a DESTROY job to tear down a project's environment in the cloud — mirrors
  * provisionProject but with job_type DESTROY: the env moves to QUEUED and a runner
  * destroys the provisioned resources. Distinct from deleteProject, which only drops the
