@@ -3,13 +3,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { FileText, LayoutGrid } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
-import { cn } from "@repo/ui/utils";
 import {
 	projectFormSchema,
 	type ProjectFormData,
@@ -17,47 +15,45 @@ import {
 } from "@/lib/validations/project-form.schema";
 import { DesignProjectCanvas } from "./canvas/design-project-canvas";
 import { formToGraph } from "./canvas/graph/form-to-graph";
-import { graphToForm } from "./canvas/graph/graph-to-form";
 import { ConnectorsProvider } from "./connectors-context";
+import { RepositoryProvider } from "./repository-context";
 import {
 	buildDefaultFormValues,
-	DesignProjectFormBody,
 	type SourceProjectData,
-} from "./design-project-form";
-import { RepositoryProvider } from "./repository-context";
+} from "./source-project";
 
 interface DesignProjectWorkbenchProps {
 	cloudIdentities: CloudIdentityOption[];
 	connectors?: ConnectorWithConnection[];
 	sourceProject?: SourceProjectData;
-	/** Gates the canvas view; when false only the form renders (zero behavior change). */
-	canvasEnabled: boolean;
+	/** Edit mode: the live project + active environment the canvas deploys/destroys.
+	 * Omitted in the create flow (`~/new`), where Deploy creates a new project. */
+	projectId?: string;
+	envName?: string;
 }
 
-type View = "form" | "canvas";
-
 /**
- * Hosts both the form and the canvas over ONE shared RHF form instance. The
- * Canvas⇄Form toggle bridges the two representations on switch (form→canvas seeds
- * the canvas store; canvas→form resets the form from the graph).
+ * Hosts the project canvas. The canvas is the sole design surface (the legacy form was
+ * removed); a shared RHF FormProvider is still mounted because some inspector fields
+ * (repository / cloud-identity selectors) read form context, and the abstract zod schema
+ * + graph⇄form round-trip remain the persistence contract.
  */
 export function DesignProjectWorkbench({
 	cloudIdentities,
 	connectors = [],
 	sourceProject,
-	canvasEnabled,
+	projectId,
+	envName,
 }: DesignProjectWorkbenchProps) {
-	const [view, setView] = useState<View>("form");
-
 	const form = useForm<ProjectFormInput, unknown, ProjectFormData>({
 		resolver: zodResolver(projectFormSchema),
 		defaultValues: buildDefaultFormValues(sourceProject),
 		mode: "onChange",
 	});
 
-	// Seed the canvas store. Identities are always refreshed; the graph is seeded
-	// only when duplicating (sourceProject) or when the store is pristine — otherwise a
-	// persisted sessionStorage draft is preserved across reloads/navigation.
+	// Seed the canvas store. Identities are always refreshed; the graph is seeded only
+	// when loading a source project or when the store is pristine — otherwise a persisted
+	// sessionStorage draft is preserved across reloads/navigation.
 	useEffect(() => {
 		const store = useCanvasStore.getState();
 		store.setIdentities(cloudIdentities);
@@ -71,68 +67,15 @@ export function DesignProjectWorkbench({
 		}
 	}, [cloudIdentities, sourceProject]);
 
-	const toCanvas = () => {
-		useCanvasStore
-			.getState()
-			.setGraph(formToGraph(form.getValues() as ProjectFormData, cloudIdentities));
-		setView("canvas");
-	};
-
-	const toForm = () => {
-		form.reset(
-			graphToForm(useCanvasStore.getState().nodes) as unknown as ProjectFormInput,
-		);
-		setView("form");
-	};
-
-	const showCanvas = canvasEnabled && view === "canvas";
-
 	return (
 		<ConnectorsProvider connectors={connectors}>
 			<RepositoryProvider>
 				<FormProvider {...form}>
-					{canvasEnabled && (
-						<div className="mb-4 inline-flex border border-border">
-							<button
-								type="button"
-								onClick={toForm}
-								className={cn(
-									"flex items-center gap-1.5 px-3 py-1.5 text-xs",
-									view === "form"
-										? "bg-foreground text-background"
-										: "bg-background",
-								)}
-							>
-								<FileText className="h-3.5 w-3.5" />
-								Form
-							</button>
-							<button
-								type="button"
-								onClick={toCanvas}
-								className={cn(
-									"flex items-center gap-1.5 border-l border-border px-3 py-1.5 text-xs",
-									view === "canvas"
-										? "bg-foreground text-background"
-										: "bg-background",
-								)}
-							>
-								<LayoutGrid className="h-3.5 w-3.5" />
-								Canvas
-							</button>
-						</div>
-					)}
-
-					{showCanvas ? (
-						<DesignProjectCanvas
-							cloudIdentities={cloudIdentities}
-							onToggleForm={toForm}
-						/>
-					) : (
-						<DesignProjectFormBody
-							cloudIdentities={cloudIdentities}
-							sourceProject={sourceProject}
-						/>
-					)}
+					<DesignProjectCanvas
+						cloudIdentities={cloudIdentities}
+						projectId={projectId}
+						envName={envName}
+					/>
 				</FormProvider>
 			</RepositoryProvider>
 		</ConnectorsProvider>

@@ -7,6 +7,8 @@ import { generateText } from "ai";
 import { eq } from "drizzle-orm";
 import { explainFindings } from "@/lib/ai/explain-findings";
 import { authorize } from "@/lib/authz/guard";
+import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
+import { recordAiUsage } from "@/lib/billing/ai-quota";
 import { getAiModel, isAiConfigured } from "@/lib/config/ai";
 import { withOwnerScope } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
@@ -33,8 +35,38 @@ export async function explainJobFindings(jobId: string) {
 	});
 	if (!report) return [];
 
-	return explainFindings(report, async (prompt) => {
-		const { text } = await generateText({ model: getAiModel(), prompt });
+	// Budget-gate + meter the model call. This is an advisory feature, so an
+	// over-budget org degrades to no explanation rather than an error.
+	const charge = await assertAiAllowed(actor.orgId, "agent").catch((e: unknown) => {
+		if (e instanceof AiBudgetError) return null;
+		throw e;
+	});
+	if (!charge) return [];
+
+	const modelId = getAiModel();
+	let inputTokens = 0;
+	let outputTokens = 0;
+	let cachedInputTokens = 0;
+	const explanations = await explainFindings(report, async (prompt) => {
+		const { text, usage } = await generateText({ model: modelId, prompt });
+		inputTokens += usage.inputTokens ?? 0;
+		outputTokens += usage.outputTokens ?? 0;
+		cachedInputTokens += usage.cachedInputTokens ?? 0;
 		return text;
 	});
+
+	void recordAiUsage({
+		orgId: actor.orgId,
+		userId: actor.userId,
+		kind: "agent",
+		credits: charge.credits,
+		source: charge.source,
+		refId: jobId,
+		model: modelId,
+		inputTokens,
+		outputTokens,
+		cachedInputTokens,
+	});
+
+	return explanations;
 }

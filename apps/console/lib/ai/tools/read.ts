@@ -4,7 +4,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
-import { getCloudIdentityResources } from "@/app/server/actions/cloud-resources";
+import { getCloudIdentityInventory } from "@/app/server/actions/cloud-resources";
 import { getClusters } from "@/app/server/actions/clusters";
 import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
 import { getJob, getJobs, getPlanResult } from "@/app/server/actions/jobs";
@@ -137,10 +137,16 @@ export function readTools() {
 			inputSchema: z.object({ jobId: z.string() }),
 			execute: async ({ jobId }) => {
 				const r = await getPlanResult(jobId);
+				const meta = r.execution_metadata;
 				return {
 					status: r.status,
 					error: r.error_message,
-					output_keys: Object.keys(r.execution_metadata ?? {}),
+					output_keys: Object.keys(meta ?? {}),
+					// The elench verification gate verdict + per-control report for this plan
+					// (null until a PLAN job with the verify stage completes). Surfaced so the
+					// assistant can present the proof before a deploy is approved.
+					verify_verdict: meta?.verify_result?.verdict ?? null,
+					verify_result: meta?.verify_result ?? null,
 				};
 			},
 		}),
@@ -232,10 +238,10 @@ export function readTools() {
 
 		get_cached_resources: tool({
 			description:
-				"Get a cloud account's last-discovered EXISTING resources (VPCs/subnets/regions) so you can suggest reusing a VPC or avoid CIDR clashes. PDP-gated read; never returns credentials.",
+				"Get a cloud account's LIVE existing resources (VPCs/subnets/regions) from the asset inventory so you can suggest reusing a VPC or avoid CIDR clashes. PDP-gated read; never returns credentials.",
 			inputSchema: z.object({ cloudIdentityId: z.string() }),
 			execute: async ({ cloudIdentityId }) =>
-				getCloudIdentityResources(cloudIdentityId),
+				getCloudIdentityInventory(cloudIdentityId),
 		}),
 	};
 }

@@ -5,8 +5,9 @@ import { notFound } from "next/navigation";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
 import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
 import { getProjectAsFormData } from "@/app/server/actions/projects";
-import { resolveProjectId } from "@/app/server/actions/resolve";
+import { resolveEnvironmentId, resolveProjectId } from "@/app/server/actions/resolve";
 import { DesignProjectWorkbench } from "@/components/design-project/design-project-workbench";
+import { ProjectAssistant } from "@/components/project-assistant/project-assistant";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
 /** Per-project tab title from the URL slug (kept cheap — no extra project fetch). */
@@ -29,10 +30,14 @@ export async function generateMetadata({
  */
 export default async function ProjectDesignPage({
 	params,
+	searchParams,
 }: {
 	params: Promise<{ org: string; project: string }>;
+	searchParams: Promise<{ env?: string | string[] }>;
 }) {
 	const { project } = await params;
+	const sp = await searchParams;
+	const envName = typeof sp.env === "string" ? sp.env : undefined;
 	let projectId: string;
 	try {
 		projectId = await resolveProjectId(project);
@@ -40,33 +45,33 @@ export default async function ProjectDesignPage({
 		notFound();
 	}
 
+	// The active environment (`?env=`) scopes which env's design loads; absent → the default env.
+	const environmentId = envName
+		? await resolveEnvironmentId(projectId, envName).catch(() => null)
+		: null;
+
 	const [identities, connectors, sourceProject] = await Promise.all([
 		getVerifiedCloudIdentities(),
 		getConnectorsWithStatus(),
-		getProjectAsFormData(projectId).catch(() => undefined),
+		getProjectAsFormData(projectId, environmentId).catch(() => undefined),
 	]);
 
-	// Canvas is gated during rollout; when off the workbench renders only the form.
-	const canvasEnabled = process.env.NEXT_PUBLIC_CANVAS_ENABLED === "true";
-
 	return (
-		<div className="w-full space-y-6">
-			<div className="space-y-1.5">
-				<h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-					{sourceProject?.formData.project.project_name ?? "Design"}
-				</h1>
-				<p className="text-sm text-muted-foreground">
-					Design this project&apos;s infrastructure. Each section maps to a resource in your
-					cloud account.
-				</p>
+		<>
+			{/* Full-bleed canvas: cancel the AppShell padding and fill topbar→sidebar, no scroll. */}
+			<div className="-m-4 h-[calc(100dvh-3.5rem)] overflow-hidden sm:-m-6 lg:-m-8 xl:-m-10">
+				<DesignProjectWorkbench
+					cloudIdentities={identities}
+					connectors={connectors}
+					sourceProject={sourceProject}
+					projectId={projectId}
+					envName={envName}
+				/>
 			</div>
 
-			<DesignProjectWorkbench
-				cloudIdentities={identities}
-				connectors={connectors}
-				sourceProject={sourceProject}
-				canvasEnabled={canvasEnabled}
-			/>
-		</div>
+			{/* Project-scoped assistant: scan→propose→design→plan/deploy with verification.
+			    A Sheet (portal) driven by the shared store — opened from the canvas "AI" button. */}
+			<ProjectAssistant projectId={projectId} />
+		</>
 	);
 }

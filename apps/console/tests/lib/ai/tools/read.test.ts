@@ -13,7 +13,7 @@ vi.mock("@/app/server/actions/aws/identities", () => ({
 	getVerifiedCloudIdentities: vi.fn(),
 }));
 vi.mock("@/app/server/actions/cloud-resources", () => ({
-	getCloudIdentityResources: vi.fn(),
+	getCloudIdentityInventory: vi.fn(),
 }));
 vi.mock("@/app/server/actions/clusters", () => ({ getClusters: vi.fn() }));
 vi.mock("@/app/server/actions/connectors", () => ({
@@ -34,7 +34,7 @@ vi.mock("@/app/server/actions/projects", () => ({
 
 import { readTools } from "@/lib/ai/tools/read";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
-import { getCloudIdentityResources } from "@/app/server/actions/cloud-resources";
+import { getCloudIdentityInventory } from "@/app/server/actions/cloud-resources";
 import { getClusters } from "@/app/server/actions/clusters";
 import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
 import { getJob, getJobs, getPlanResult } from "@/app/server/actions/jobs";
@@ -259,7 +259,24 @@ describe("get_plan_result", () => {
 			status: "completed",
 			error: null,
 			output_keys: ["kubeconfig", "endpoint"],
+			verify_verdict: null,
+			verify_result: null,
 		});
+	});
+
+	it("surfaces the elench verify verdict + report when present", async () => {
+		const report = { verdict: "fail", catalog_version: "v", provider: "aws", controls: [], summary: { pass: 0, fail: 1, warn: 0, not_evaluable: 0 } };
+		vi.mocked(getPlanResult).mockResolvedValue({
+			status: "completed",
+			error_message: null,
+			execution_metadata: { verify_result: report },
+		} as never);
+		const out = (await run(readTools().get_plan_result, { jobId: "j3" })) as {
+			verify_verdict: string | null;
+			verify_result: unknown;
+		};
+		expect(out.verify_verdict).toBe("fail");
+		expect(out.verify_result).toEqual(report);
 	});
 
 	it("yields empty output_keys when execution_metadata is null", async () => {
@@ -398,13 +415,17 @@ describe("list_cloud_identities", () => {
 });
 
 describe("get_cached_resources", () => {
-	it("passes the id through and returns the action result verbatim", async () => {
-		const resources = { vpcs: [{ id: "vpc-1" }], regions: ["eu-west-1"] };
-		vi.mocked(getCloudIdentityResources).mockResolvedValue(resources as never);
+	it("passes the id through and returns the live inventory verbatim", async () => {
+		const inventory = {
+			networks: [{ native_id: "vpc-1" }],
+			subnets: [],
+			regions: ["eu-west-1"],
+		};
+		vi.mocked(getCloudIdentityInventory).mockResolvedValue(inventory as never);
 		const out = await run(readTools().get_cached_resources, {
 			cloudIdentityId: "ci1",
 		});
-		expect(getCloudIdentityResources).toHaveBeenCalledWith("ci1");
-		expect(out).toBe(resources);
+		expect(getCloudIdentityInventory).toHaveBeenCalledWith("ci1");
+		expect(out).toBe(inventory);
 	});
 });

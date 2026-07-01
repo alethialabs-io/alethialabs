@@ -10,7 +10,7 @@ import { useMemo } from "react";
 export type PrepareBody = (messages: UIMessage[]) => Record<string, unknown>;
 
 export interface UseAgentChatOptions {
-	/** Streaming route this surface talks to (e.g. /api/agent, /api/design-project/ask-ai). */
+	/** Streaming route this surface talks to (e.g. /api/agent, /api/projects/[id]/assistant). */
 	api: string;
 	/**
 	 * Extra body fields merged into every request. Read FRESH at send time, so it
@@ -26,8 +26,8 @@ export interface UseAgentChatOptions {
 
 /**
  * Surface-agnostic chat hook: wraps AI SDK `useChat` + `DefaultChatTransport`,
- * parameterized by the route + a body builder. Generalizes the canvas `useAskAi`
- * so the Agent page and the canvas Ask AI sheet share one transport wiring.
+ * parameterized by the route + a body builder. One transport wiring shared by the
+ * project assistant and any other chat surface.
  * Pass `id`/`initialMessages` to resume a persisted thread (key the consumer by
  * `id` so it remounts cleanly per thread).
  */

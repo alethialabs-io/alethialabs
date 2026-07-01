@@ -14,13 +14,16 @@ import {
 	projectQueues,
 	projectRepositories,
 	projectSecrets,
+	projectSourceRepos,
 	projectTopics,
 	projects,
 } from "@/lib/db/schema";
 import type {
 	ClusterAdmin,
 	ClusterProviderConfig,
+	DetectedService,
 	DnsProviderConfig,
+	NodeSize,
 	NosqlProviderConfig,
 	TopicSubscription,
 } from "@/types/jsonb.types";
@@ -34,11 +37,15 @@ const networkInsert = createInsertSchema(projectNetwork);
 const clusterInsert = createInsertSchema(projectCluster, {
 	cluster_admins: z.custom<ClusterAdmin[]>().optional(),
 	provider_config: z.custom<ClusterProviderConfig>().optional(),
+	node_size: z.custom<NodeSize>().optional(),
 });
 const dnsInsert = createInsertSchema(projectDns, {
 	provider_config: z.custom<DnsProviderConfig>().optional(),
 });
 const repositoriesInsert = createInsertSchema(projectRepositories);
+const sourceReposInsert = createInsertSchema(projectSourceRepos, {
+	services: z.custom<DetectedService[]>().optional(),
+});
 const databasesInsert = createInsertSchema(projectDatabases);
 const cachesInsert = createInsertSchema(projectCaches);
 const queuesInsert = createInsertSchema(projectQueues);
@@ -106,6 +113,13 @@ const repositoriesSchema = repositoriesInsert.omit({
 	project_id: true,
 });
 
+// One scanned source repo (or monorepo subtree) attached to the project. Multiple
+// allowed (1:N) — the inference merge collects them; ArgoCD's destination stays the
+// single `repositories.apps_destination_repo`.
+const sourceRepoItemSchema = sourceReposInsert
+	.omit({ ...autoFields, project_id: true })
+	.extend({ repo_url: z.string().min(1, "Repo URL is required") });
+
 const databaseItemSchema = databasesInsert.omit({
 	...componentAutoFields,
 	endpoint: true,
@@ -146,6 +160,7 @@ export const projectFormSchema = z.object({
 	cluster: clusterSchema,
 	dns: dnsSchema,
 	repositories: repositoriesSchema,
+	source_repos: z.array(sourceRepoItemSchema).default([]),
 	databases: z.array(databaseItemSchema).default([]),
 	caches: z.array(cacheItemSchema).default([]),
 	queues: z.array(queueItemSchema).default([]),
@@ -164,6 +179,7 @@ export {
 	topicItemSchema,
 	nosqlItemSchema,
 	secretItemSchema,
+	sourceRepoItemSchema,
 	// Singleton sub-schemas — consumed by the canvas for per-node validation.
 	projectSchema,
 	networkSchema,

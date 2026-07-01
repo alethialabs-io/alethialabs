@@ -14,10 +14,13 @@ import { isOnboardingComplete } from "@/lib/auth/onboarding";
  */
 export default async function DashboardLegacyRedirect({
 	params,
+	searchParams,
 }: {
 	params: Promise<{ rest?: string[] }>;
+	searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
 	const { rest } = await params;
+	const sp = await searchParams;
 	// The middleware guard is optimistic (cookie presence only), so a stale/expired
 	// cookie can reach here without a valid session — getActiveOrgSlug() would then throw
 	// Unauthorized and 500. Send those to sign-in instead.
@@ -28,8 +31,16 @@ export default async function DashboardLegacyRedirect({
 	if (!(await isOnboardingComplete(userId))) redirect("/onboarding");
 	const org = await getActiveOrgSlug();
 	const sub = (rest ?? []).join("/");
+	// Preserve any query string (e.g. `?scan=<jobId>` for the scan→design bridge) so
+	// legacy `/dashboard/X?q=…` links don't lose their params on canonicalization.
+	const qs = new URLSearchParams(
+		Object.entries(sp).flatMap(([k, v]) =>
+			v == null ? [] : Array.isArray(v) ? v.map((x) => [k, x] as [string, string]) : [[k, v]],
+		),
+	).toString();
+	const suffix = qs ? `?${qs}` : "";
 	// Account settings is now a dialog (no page); send the old `/dashboard/profile`
 	// bookmark to the org root rather than a dead `/{org}/~/profile`.
 	if (sub === "profile") redirect(`/${org}`);
-	redirect(sub ? `/${org}/~/${sub}` : `/${org}`);
+	redirect(sub ? `/${org}/~/${sub}${suffix}` : `/${org}${suffix}`);
 }

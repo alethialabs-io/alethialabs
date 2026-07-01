@@ -419,7 +419,7 @@ const VERDICT_LABEL: Record<VerifyStatus, string> = {
  * each control's status + findings, and — importantly — the coverage notes that say
  * what the gate could NOT inspect, so a `not_evaluable` is never mistaken for a pass.
  */
-function VerifyBlock({ report }: { report: VerifyReport }) {
+export function VerifyBlock({ report }: { report: VerifyReport }) {
 	return (
 		<Section title="Verification">
 			<div className="flex items-center justify-between border-b border-border py-2">

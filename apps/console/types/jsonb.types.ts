@@ -39,6 +39,24 @@ export interface VpcInfo {
 	IsDefault: boolean;
 }
 
+/**
+ * A service detected inside a source repo by the scanner (monorepo-aware). One repo
+ * may yield several — e.g. `apps/api` + `apps/web` in a workspace. Stored on
+ * `project_source_repos.services` and consumed by per-service inference.
+ */
+export interface DetectedService {
+	/** Path within the repo, relative; "" = repo root. */
+	path: string;
+	/** Service name, derived from the directory or manifest. */
+	name: string;
+	/** Whether a Dockerfile exists at this service's path. */
+	hasDockerfile: boolean;
+	/** Inferred runtime (node/python/go/…), when detected. */
+	runtime?: string;
+	/** Container port, when detected from the Dockerfile/manifest. */
+	port?: number;
+}
+
 export interface SubnetInfo {
 	ID: string;
 	CIDR: string;
@@ -390,6 +408,8 @@ export interface RepoDigest {
 	ci_configs?: RepoFile[];
 	env_examples?: RepoFile[];
 	signals?: string[];
+	/** Monorepo-aware deployable services detected in the repo (path + runtime/port). */
+	services?: DetectedService[];
 }
 
 // ── Alerting (dataroom/spec/mvp/25-alerting-notifications.md) ────────────────────────────
@@ -450,3 +470,31 @@ export interface EmailSuppressionDetail {
 	// Remote MTA diagnostic text, if any.
 	diagnostic?: string;
 }
+
+/**
+ * Payload of a staged project change (project_changes.payload). It's a cloud-indifferent
+ * component-config delta whose shape depends on component_type (database, cache, …), so it
+ * is intentionally an open record rather than one fixed interface — the canvas diff and
+ * applyStagedChanges validate it against the matching drizzle-zod schema before it lands.
+ */
+export type StagedChangePayload = Record<string, unknown>;
+
+/**
+ * Cloud-indifferent cluster node capability (project_cluster.node_size). The Go catalog
+ * resolver maps it to the nearest per-provider instance type at provision time.
+ */
+export interface NodeSize {
+	vcpu: number;
+	memory_gb: number;
+}
+
+/**
+ * Provider-nuance bag on a cloud inventory row (cloud_* tables' `attributes`). The typed columns
+ * carry the cross-cloud common shape; this holds the genuinely provider-specific extras
+ * (e.g. AWS `arn`, Azure `resource_group`, GCP `self_link`, tags) — heterogeneous by design, so a
+ * constrained primitive map rather than one fixed interface.
+ */
+export type CloudInventoryAttributes = Record<
+	string,
+	string | number | boolean | null | string[]
+>;

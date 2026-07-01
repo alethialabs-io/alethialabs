@@ -14,7 +14,11 @@ import { jobs } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import { inferStack } from "@/lib/scanner/infer";
 import type { ScanProposal } from "@/lib/scanner/schema";
-import { inferredStackToFormData } from "@/lib/scanner/to-project";
+import {
+	inferredStackToFormData,
+	mergeScansToFormData,
+	type ScanInput,
+} from "@/lib/scanner/to-project";
 import type { RepoDigest } from "@/types/jsonb.types";
 
 /** Narrow a free-form provider string to a known slug (no casts). */
@@ -122,6 +126,8 @@ export async function getScanProposal(jobId: string): Promise<
 		typeof job.config_snapshot?.repo_url === "string"
 			? job.config_snapshot.repo_url
 			: "";
+	const ref =
+		typeof job.config_snapshot?.ref === "string" ? job.config_snapshot.ref : undefined;
 
 	const inferred = await inferStack(digest);
 	const stack = inferred.stack;
@@ -152,10 +158,82 @@ export async function getScanProposal(jobId: string): Promise<
 		identityId: identity.id,
 		provider,
 		repoUrl,
+		ref,
+		services: digest.services,
 	});
 
 	return {
 		status: "READY",
 		proposal: { stack, proposedProject, provider, identityId: identity.id },
+	};
+}
+
+/**
+ * Multi-repo proposal: infer each finished scan job and MERGE them into one project
+ * (union backing needs, one source_repos row per repo — see mergeScansToFormData). Any
+ * job still without a digest short-circuits to PENDING; the caller polls until all are
+ * ready. Mirrors getScanProposal's states + per-job cost-of-serve metering.
+ */
+export async function getMergedScanProposal(jobIds: string[]): Promise<
+	| { status: "NOT_FOUND" }
+	| { status: "PENDING"; jobStatus: string }
+	| { status: "NEEDS_SETUP"; needsIdentity: boolean }
+	| { status: "READY"; proposal: ScanProposal }
+> {
+	const owner = await requireOwner();
+	if (jobIds.length === 0) return { status: "NOT_FOUND" };
+	const scanActor = await currentActor();
+
+	const inputs: ScanInput[] = [];
+	for (const jobId of jobIds) {
+		const job = await withOwnerScope(owner, async (tx) => {
+			const [j] = await tx
+				.select({
+					status: jobs.status,
+					execution_metadata: jobs.execution_metadata,
+					config_snapshot: jobs.config_snapshot,
+				})
+				.from(jobs)
+				.where(eq(jobs.id, jobId))
+				.limit(1);
+			return j ?? null;
+		});
+		if (!job) return { status: "NOT_FOUND" };
+		const digest = job.execution_metadata?.repo_digest ?? null;
+		if (!digest) return { status: "PENDING", jobStatus: job.status };
+
+		const repoUrl =
+			typeof job.config_snapshot?.repo_url === "string" ? job.config_snapshot.repo_url : "";
+		const ref =
+			typeof job.config_snapshot?.ref === "string" ? job.config_snapshot.ref : undefined;
+		const inferred = await inferStack(digest);
+		void recordAiUsage({
+			orgId: scanActor.orgId,
+			userId: scanActor.userId,
+			kind: "scan",
+			credits: 0,
+			source: "included",
+			refId: jobId,
+			model: inferred.model,
+			inputTokens: inferred.inputTokens,
+			outputTokens: inferred.outputTokens,
+			cachedInputTokens: inferred.cachedInputTokens,
+		});
+		inputs.push({ stack: inferred.stack, repoUrl, ref, services: digest.services });
+	}
+
+	const identities = await getVerifiedCloudIdentities();
+	if (identities.length === 0) return { status: "NEEDS_SETUP", needsIdentity: true };
+	const identity = identities[0];
+	const provider = toSlug(identity.provider);
+	const proposedProject = mergeScansToFormData(inputs, {
+		identityId: identity.id,
+		provider,
+	});
+
+	return {
+		status: "READY",
+		// The first repo's stack heads the display; the merged project carries them all.
+		proposal: { stack: inputs[0].stack, proposedProject, provider, identityId: identity.id },
 	};
 }

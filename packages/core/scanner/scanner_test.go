@@ -60,6 +60,50 @@ func TestScan_ClassifiesFilesAndSignals(t *testing.T) {
 	}
 }
 
+func TestScan_DetectsMonorepoServices(t *testing.T) {
+	root := t.TempDir()
+	// A monorepo: a Go API service + a Node web service under apps/, each with its own
+	// Dockerfile + manifest, and a root manifest (the workspace root).
+	write(t, root, "package.json", `{"name":"mono","workspaces":["apps/*"]}`)
+	write(t, root, "apps/api/go.mod", "module api\n")
+	write(t, root, "apps/api/Dockerfile", "FROM golang:1.25\nEXPOSE 8080\n")
+	write(t, root, "apps/web/package.json", `{"name":"web"}`)
+	write(t, root, "apps/web/Dockerfile", "FROM node:20\nEXPOSE 3000/tcp\n")
+
+	d, err := Scan(root, "https://github.com/acme/mono.git", "main", nil)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	byPath := map[string]struct {
+		runtime string
+		port    int
+		docker  bool
+		name    string
+	}{}
+	for _, s := range d.Services {
+		byPath[s.Path] = struct {
+			runtime string
+			port    int
+			docker  bool
+			name    string
+		}{s.Runtime, s.Port, s.HasDockerfile, s.Name}
+	}
+
+	api, ok := byPath["apps/api"]
+	if !ok || api.runtime != "go" || api.port != 8080 || !api.docker || api.name != "api" {
+		t.Errorf("apps/api service wrong: %+v", byPath["apps/api"])
+	}
+	web, ok := byPath["apps/web"]
+	if !ok || web.runtime != "node" || web.port != 3000 || !web.docker || web.name != "web" {
+		t.Errorf("apps/web service wrong: %+v (port should strip /tcp)", byPath["apps/web"])
+	}
+	// The workspace root manifest yields a root service named from the repo.
+	if root, ok := byPath[""]; !ok || root.name != "mono" {
+		t.Errorf("root service should be named from the repo (.git stripped): %+v", byPath[""])
+	}
+}
+
 func TestScan_EmptyRepo(t *testing.T) {
 	d, err := Scan(t.TempDir(), "u", "", nil)
 	if err != nil {

@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { isToolUIPart, type ToolUIPart, type UIMessage } from "ai";
-import { Loader2 } from "lucide-react";
-import { Fragment, type ReactNode } from "react";
+import { Check, CopyIcon, Loader2, RefreshCcwIcon } from "lucide-react";
+import { Fragment, type ReactNode, useState } from "react";
+import { Action, Actions } from "@/components/ai-elements/actions";
 import {
 	Conversation,
 	ConversationContent,
@@ -14,6 +15,11 @@ import {
 	MessageContent,
 	MessageResponse,
 } from "@/components/ai-elements/message";
+import {
+	Reasoning,
+	ReasoningContent,
+	ReasoningTrigger,
+} from "@/components/ai-elements/reasoning";
 import {
 	PromptInput,
 	PromptInputBody,
@@ -74,14 +80,26 @@ export interface AgentChatProps {
 	renderToolPart?: RenderToolPart;
 	/** Shown when `error` is set (defaults to a generic unavailable message). */
 	errorMessage?: ReactNode;
+	/** When provided, the last assistant message gets a Retry action that re-runs it. */
+	onRetry?: () => void;
 	className?: string;
+}
+
+/** Concatenate a message's text parts (for the Copy action). */
+function messageText(message: UIMessage): string {
+	return message.parts
+		.filter((p): p is { type: "text"; text: string } => p.type === "text")
+		.map((p) => p.text)
+		.join("\n\n");
 }
 
 /**
  * Surface-agnostic chat transcript + composer, built on the AI Elements
- * primitives (grayscale/squared). Consumed by the Agent page and the canvas
- * Ask AI sheet — each passes its own transport (via `useAgentChat`) and an
- * optional `renderToolPart` for proposal/approval lanes.
+ * primitives (grayscale/squared): streamed markdown responses, a `Reasoning`
+ * panel for model thinking, `Tool` cards, and per-message `Actions`
+ * (copy/regenerate). Consumed by the project assistant and the agent surfaces —
+ * each passes its own transport (via `useAgentChat`) + an optional
+ * `renderToolPart` for proposal/approval lanes.
  */
 export function AgentChat({
 	messages,
@@ -93,10 +111,19 @@ export function AgentChat({
 	emptyState,
 	renderToolPart,
 	errorMessage,
+	onRetry,
 	className,
 }: AgentChatProps) {
 	const pending = status === "submitted" || status === "streaming";
 	const lastMessageId = messages.at(-1)?.id;
+	const [copiedId, setCopiedId] = useState<string | null>(null);
+
+	const copyMessage = (message: UIMessage) => {
+		void navigator.clipboard.writeText(messageText(message)).then(() => {
+			setCopiedId(message.id);
+			setTimeout(() => setCopiedId((id) => (id === message.id ? null : id)), 1500);
+		});
+	};
 
 	const submit = (text: string) => {
 		const t = text.trim();
@@ -128,6 +155,21 @@ export function AgentChat({
 							<MessageContent>
 								{m.parts.map((part, i) => {
 									const key = `${m.id}-${i}`;
+
+									if (part.type === "reasoning" && part.text) {
+										return (
+											<Reasoning
+												key={key}
+												className="w-full"
+												isStreaming={
+													status === "streaming" && m.id === lastMessageId
+												}
+											>
+												<ReasoningTrigger />
+												<ReasoningContent>{part.text}</ReasoningContent>
+											</Reasoning>
+										);
+									}
 
 									if (part.type === "text" && part.text) {
 										return m.role === "assistant" ? (
@@ -161,6 +203,34 @@ export function AgentChat({
 										/>
 									)}
 							</MessageContent>
+
+							{/* Copy / regenerate on completed assistant turns. */}
+							{m.role === "assistant" &&
+								!(m.id === lastMessageId && pending) &&
+								messageText(m) && (
+									<Actions className="mt-1 px-1">
+										<Action
+											tooltip={copiedId === m.id ? "Copied" : "Copy"}
+											label="Copy message"
+											onClick={() => copyMessage(m)}
+										>
+											{copiedId === m.id ? (
+												<Check className="size-3.5" />
+											) : (
+												<CopyIcon className="size-3.5" />
+											)}
+										</Action>
+										{onRetry && m.id === lastMessageId && (
+											<Action
+												tooltip="Retry"
+												label="Regenerate response"
+												onClick={onRetry}
+											>
+												<RefreshCcwIcon className="size-3.5" />
+											</Action>
+										)}
+									</Actions>
+								)}
 						</Message>
 					))}
 

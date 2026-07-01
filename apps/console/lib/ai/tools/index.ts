@@ -12,15 +12,20 @@ import { scannerTools } from "./scanner";
 export type AgentMode = "ask" | "act";
 
 /**
- * The design-project (canvas) assistant's tool SSOT — canvas-building tools
- * (compose.ts) + the read surface (read.ts). Every tool wraps a PDP-gated
- * capability; mutations are proposals only. Mutate-via-job tools
- * (plan/deploy/job-control) are deferred — see lib/ai/TOOLS.md.
+ * The PROJECT-PAGE assistant's tool SSOT — the full surface for driving the MVP "A"
+ * loop on a single project: catalog lookups + the read surface + repo scanning +
+ * canvas-bound design proposals (compose) + HITL plan/deploy proposals (operations).
+ * Every tool is PDP-gated; all mutations are proposals (apply on the canvas / approve
+ * to run). `ctx` is the live canvas snapshot when the canvas is active, else undefined
+ * (compose tools degrade gracefully).
  */
-export function buildProjectAssistantTools(ctx: CanvasContext | undefined) {
+export function buildProjectAgentTools(ctx: CanvasContext | undefined) {
 	return {
-		...composeTools(ctx),
+		...catalogTools(),
 		...readTools(),
+		...scannerTools(),
+		...composeTools(ctx),
+		...operationTools(),
 	};
 }
 

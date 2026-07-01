@@ -26,7 +26,7 @@ import { registerAiToolsOnMcp } from "@/lib/ai/mcp/adapter";
 import {
 	buildAgentTools,
 	buildExternalAgentTools,
-	buildProjectAssistantTools,
+	buildProjectAgentTools,
 } from "@/lib/ai/tools";
 import {
 	assertAudienceCoverage,
@@ -67,7 +67,7 @@ describe("tool audience registry", () => {
 	it("classifies every buildable tool (anti-drift)", () => {
 		const names = new Set<string>([
 			...Object.keys(buildAgentTools({ mode: "act" })),
-			...Object.keys(buildProjectAssistantTools(undefined)),
+			...Object.keys(buildProjectAgentTools(undefined)),
 		]);
 		expect(() => assertAudienceCoverage([...names])).not.toThrow();
 	});

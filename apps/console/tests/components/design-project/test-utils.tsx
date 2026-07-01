@@ -28,6 +28,7 @@ const DEFAULT_VALUES: ProjectFormData = {
 	},
 	dns: { enabled: false },
 	repositories: {},
+	source_repos: [],
 	databases: [],
 	caches: [],
 	queues: [],

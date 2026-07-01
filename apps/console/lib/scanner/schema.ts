@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { z } from "zod";
+import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 
 /** One inferred backing-service need, each justified by evidence in the repo. */
@@ -37,6 +38,6 @@ export type InferredStack = z.infer<typeof inferredStackSchema>;
 export interface ScanProposal {
 	stack: InferredStack;
 	proposedProject: ProjectFormData;
-	provider: string;
+	provider: CloudProviderSlug;
 	identityId: string;
 }

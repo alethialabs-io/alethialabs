@@ -32,9 +32,17 @@ export function graphToForm(nodes: CanvasNode[]): Record<string, unknown> {
 	const dns = first("dns");
 	const repositories = first("repositories");
 
+	// Source repos ride on the project-root config; lift them back to the top level so
+	// they don't leak into the `project` sub-schema (which would strip them).
+	const projectConfig: Record<string, unknown> = { ...(project?.data.config ?? {}) };
+	const source_repos = Array.isArray(projectConfig.source_repos)
+		? projectConfig.source_repos
+		: [];
+	delete projectConfig.source_repos;
+
 	return {
 		project: {
-			...(project?.data.config ?? {}),
+			...projectConfig,
 			cloud_identity_id: project?.data.cloud_identity_id ?? "",
 		},
 		network: network
@@ -45,6 +53,7 @@ export function graphToForm(nodes: CanvasNode[]): Record<string, unknown> {
 			: undefined,
 		dns: dns ? { ...dns.data.config, ...placement(dns) } : { enabled: false },
 		repositories: repositories?.data.config ?? {},
+		source_repos,
 		databases: ofKind("database"),
 		caches: ofKind("cache"),
 		queues: ofKind("queue"),

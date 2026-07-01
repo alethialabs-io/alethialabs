@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -147,12 +149,115 @@ func Scan(root, repoURL, ref string, log func(string)) (*types.RepoDigest, error
 	}
 	sort.Strings(d.Signals)
 
+	d.Services = detectServices(d, repoURL)
+
 	if log != nil {
-		log(fmt.Sprintf("Scanned %d files — %d manifests, %d Dockerfiles, %d compose, %d k8s, %d CI, %d signals",
+		log(fmt.Sprintf("Scanned %d files — %d manifests, %d Dockerfiles, %d compose, %d k8s, %d CI, %d signals, %d services",
 			d.FileCount, len(d.Manifests), len(d.Dockerfiles), len(d.Compose),
-			len(d.K8sManifests), len(d.CIConfigs), len(d.Signals)))
+			len(d.K8sManifests), len(d.CIConfigs), len(d.Signals), len(d.Services)))
 	}
 	return d, nil
+}
+
+// detectServices groups the captured Dockerfiles + language manifests by directory
+// into deployable services (monorepo-aware): each distinct directory carrying a
+// Dockerfile or a manifest is one service (path "" = repo root). Derived from the
+// already-captured files, so it adds no extra filesystem walk.
+func detectServices(d *types.RepoDigest, repoURL string) []types.DetectedService {
+	byPath := map[string]*types.DetectedService{}
+	get := func(p string) *types.DetectedService {
+		s, ok := byPath[p]
+		if !ok {
+			name := path.Base(p)
+			if p == "" {
+				name = repoName(repoURL)
+			}
+			s = &types.DetectedService{Path: p, Name: name}
+			byPath[p] = s
+		}
+		return s
+	}
+	for _, f := range d.Dockerfiles {
+		s := get(dirKey(f.Path))
+		s.HasDockerfile = true
+		if s.Port == 0 {
+			s.Port = parseExpose(f.Content)
+		}
+	}
+	for _, f := range d.Manifests {
+		s := get(dirKey(f.Path))
+		if s.Runtime == "" {
+			s.Runtime = runtimeForManifest(filepath.Base(f.Path))
+		}
+	}
+	out := make([]types.DetectedService, 0, len(byPath))
+	for _, s := range byPath {
+		out = append(out, *s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
+}
+
+// dirKey normalizes a captured file's directory to a service path ("" = repo root).
+func dirKey(filePath string) string {
+	dir := filepath.ToSlash(filepath.Dir(filePath))
+	if dir == "." {
+		return ""
+	}
+	return dir
+}
+
+// runtimeForManifest maps a manifest filename to a coarse runtime label.
+func runtimeForManifest(name string) string {
+	switch name {
+	case "package.json":
+		return "node"
+	case "go.mod":
+		return "go"
+	case "requirements.txt", "pyproject.toml", "Pipfile":
+		return "python"
+	case "Gemfile":
+		return "ruby"
+	case "pom.xml", "build.gradle", "build.gradle.kts":
+		return "java"
+	case "Cargo.toml":
+		return "rust"
+	case "composer.json":
+		return "php"
+	case "mix.exs":
+		return "elixir"
+	}
+	return ""
+}
+
+// parseExpose returns the first EXPOSE port declared in a Dockerfile, or 0.
+func parseExpose(content string) int {
+	for line := range strings.SplitSeq(content, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) >= 2 && strings.EqualFold(fields[0], "EXPOSE") {
+			p := fields[1]
+			if i := strings.IndexByte(p, '/'); i >= 0 {
+				p = p[:i] // strip "/tcp"
+			}
+			if n, err := strconv.Atoi(p); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// repoName derives a fallback service name from a repo URL (last path segment,
+// ".git" stripped).
+func repoName(repoURL string) string {
+	s := strings.TrimSuffix(strings.TrimRight(repoURL, "/"), ".git")
+	if i := strings.LastIndexAny(s, "/:"); i >= 0 {
+		s = s[i+1:]
+	}
+	if s == "" {
+		return "app"
+	}
+	return s
 }
 
 // readCapped reads up to maxFileBytes of a file (never loads more), returning the

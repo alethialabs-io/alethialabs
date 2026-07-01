@@ -3,11 +3,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
-import { Keyboard, Loader2, Plus, Rocket, Sparkles } from "lucide-react";
+import { Plus, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { createProject, type CreateProjectInput } from "@/app/server/actions/projects";
+import {
+	createProject,
+	destroyProject,
+	provisionProject,
+	type CreateProjectInput,
+} from "@/app/server/actions/projects";
+import {
+	applyStagedChanges,
+	discardStagedChanges,
+} from "@/app/server/actions/staged-changes";
+import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { Button } from "@repo/ui/button";
 import {
@@ -16,21 +26,29 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@repo/ui/dialog";
+import { useAssistantStore } from "@/lib/stores/use-assistant-store";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { orgHref, projectHref } from "@/lib/routing";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
-import { AskAiSheet } from "./ai/ask-ai-sheet";
+import { SourceReposCard } from "../source-repos-card";
 import { CanvasCommandPalette } from "./canvas-command-palette";
+import { CanvasControls } from "./canvas-controls";
 import { CanvasFlow } from "./canvas-flow";
 import { CostPanel } from "./cost-panel";
+import { PendingChangesBar } from "./pending-changes-bar";
 import { graphToForm } from "./graph/graph-to-form";
 import { NodeInspector } from "./node-inspector";
 import { NodePalette } from "./node-palette";
 
 interface DesignProjectCanvasProps {
 	cloudIdentities: CloudIdentityOption[];
-	onToggleForm: () => void;
+	/** Optional — only present while the legacy form view still exists. */
+	onToggleForm?: () => void;
+	/** Edit mode: persist + provision/destroy this live project's active environment.
+	 * Absent in the create flow (Deploy creates a new project instead). */
+	projectId?: string;
+	envName?: string;
 }
 
 /** The canvas editor surface (inside its own ReactFlowProvider). */
@@ -42,15 +60,20 @@ export function DesignProjectCanvas(props: DesignProjectCanvasProps) {
 	);
 }
 
-function CanvasInner({ cloudIdentities, onToggleForm }: DesignProjectCanvasProps) {
+function CanvasInner({
+	cloudIdentities,
+	onToggleForm,
+	projectId,
+	envName,
+}: DesignProjectCanvasProps) {
 	const router = useRouter();
 	const orgSlug = useActiveOrgSlug();
 	const { fitView } = useReactFlow();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [cmdOpen, setCmdOpen] = useState(false);
-	const [askAiOpen, setAskAiOpen] = useState(false);
+	const openAssistant = useAssistantStore((s) => s.setOpen);
 	const [shortcutsOpen, setShortcutsOpen] = useState(false);
-	const [saving, setSaving] = useState(false);
+	const [deploying, setDeploying] = useState(false);
 	const selectedIds = useCanvasStore((s) => s.selectedIds);
 	const openInspector = useCanvasStore((s) => s.openInspector);
 	const undo = useCanvasStore((s) => s.undo);
@@ -67,7 +90,6 @@ function CanvasInner({ cloudIdentities, onToggleForm }: DesignProjectCanvasProps
 			);
 			return;
 		}
-		setSaving(true);
 		try {
 			const { project } = await createProject(
 				parsed.data as unknown as CreateProjectInput,
@@ -79,10 +101,63 @@ function CanvasInner({ cloudIdentities, onToggleForm }: DesignProjectCanvasProps
 			);
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Failed to create project");
-		} finally {
-			setSaving(false);
 		}
 	}, [router, orgSlug]);
+
+	/** Edit mode: persist the desired config to the live project, then provision the
+	 * active environment. Falls back to create when there's no projectId. */
+	const handleDeploy = useCallback(async () => {
+		if (!projectId) return handleSave();
+		const nodes = useCanvasStore.getState().nodes;
+		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
+		if (!parsed.success) {
+			const first = parsed.error.issues[0];
+			toast.error(
+				`Can't deploy: ${first?.path.join(".") || "project"} — ${first?.message}`,
+			);
+			return;
+		}
+		setDeploying(true);
+		try {
+			// Persist + provision the ACTIVE environment (config is environment-scoped).
+			const environmentId = await resolveActiveEnvironmentId(projectId, envName);
+			await applyStagedChanges(
+				projectId,
+				environmentId,
+				parsed.data as unknown as CreateProjectInput,
+			);
+			await provisionProject(projectId, undefined, undefined, environmentId);
+			useCanvasStore.getState().commitBaseline();
+			toast.success("Deploy queued");
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Failed to deploy");
+		} finally {
+			setDeploying(false);
+		}
+	}, [projectId, envName, handleSave]);
+
+	/** Edit mode: queue a DESTROY job for the active environment. */
+	const handleDestroy = useCallback(async () => {
+		if (!projectId) return;
+		try {
+			const environmentId = await resolveActiveEnvironmentId(projectId, envName);
+			await destroyProject(projectId, environmentId);
+			toast.success("Destroy queued");
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Failed to destroy");
+		}
+	}, [projectId, envName]);
+
+	/** Edit mode: clear the active environment's staged changes (the Discard action). */
+	const handleDiscardStaged = useCallback(async () => {
+		if (!projectId) return;
+		try {
+			const environmentId = await resolveActiveEnvironmentId(projectId, envName);
+			await discardStagedChanges(projectId, environmentId);
+		} catch {
+			// non-fatal — the canvas store already reverted; the durable rows just persist.
+		}
+	}, [projectId, envName]);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -130,67 +205,47 @@ function CanvasInner({ cloudIdentities, onToggleForm }: DesignProjectCanvasProps
 	}, [handleSave, selectedIds, openInspector, undo, redo, duplicateNodes]);
 
 	return (
-		<div className="relative h-[calc(100vh-13rem)] min-h-[520px] w-full border border-border">
-			<div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between border-b border-border bg-background/80 px-3 py-2 backdrop-blur">
-				<div className="flex items-center gap-2">
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						className="h-8 text-xs"
-						onClick={() => setPaletteOpen(true)}
-					>
-						<Plus className="mr-1 h-3.5 w-3.5" />
-						Add component
-					</Button>
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						className="h-8 text-xs"
-						onClick={() => setAskAiOpen(true)}
-					>
-						<Sparkles className="mr-1 h-3.5 w-3.5" />
-						Ask AI
-					</Button>
-					<span className="font-mono text-[11px] text-muted-foreground">
-						⌘K
-					</span>
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						className="h-8 px-2 text-xs"
-						onClick={() => setShortcutsOpen(true)}
-						aria-label="Keyboard shortcuts"
-					>
-						<Keyboard className="h-3.5 w-3.5" />
-					</Button>
-				</div>
+		<div className="relative h-full min-h-[480px] w-full">
+			<div className="h-full">
+				<CanvasFlow />
+			</div>
+
+			{/* Bottom-left: scanned source repos + monorepo services (hidden when none). */}
+			<SourceReposCard />
+
+			{/* Top-right: add a service + ask AI */}
+			<div className="absolute right-3 top-3 z-10 flex items-center gap-2">
 				<Button
 					type="button"
 					size="sm"
 					className="h-8 text-xs"
-					onClick={handleSave}
-					disabled={saving}
+					onClick={() => setPaletteOpen(true)}
 				>
-					{saving ? (
-						<>
-							<Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-							Creating…
-						</>
-					) : (
-						<>
-							<Rocket className="mr-1 h-3.5 w-3.5" />
-							Create project
-						</>
-					)}
+					<Plus className="mr-1 h-3.5 w-3.5" />
+					Add
+				</Button>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					className="h-8 text-xs"
+					onClick={() => openAssistant(true)}
+				>
+					<Sparkles className="mr-1 h-3.5 w-3.5" />
+					AI
 				</Button>
 			</div>
 
-			<div className="h-full pt-[44px]">
-				<CanvasFlow />
-			</div>
+			{/* Bottom-left: settings / zoom / fit / undo-redo / layers */}
+			<CanvasControls />
+
+			{/* Bottom-center: staged changes → Deploy / Discard / Destroy */}
+			<PendingChangesBar
+				onDeploy={projectId ? handleDeploy : handleSave}
+				deploying={deploying}
+				onDestroy={projectId ? handleDestroy : undefined}
+				onDiscard={projectId ? () => void handleDiscardStaged() : undefined}
+			/>
 
 			<div className="absolute bottom-3 right-3 z-10">
 				<CostPanel />
@@ -208,10 +263,9 @@ function CanvasInner({ cloudIdentities, onToggleForm }: DesignProjectCanvasProps
 				onSave={handleSave}
 				onToggleView={onToggleForm}
 				onFitView={() => fitView({ padding: 0.3 })}
-				onAskAi={() => setAskAiOpen(true)}
+				onAskAi={() => openAssistant(true)}
 			/>
 
-			<AskAiSheet open={askAiOpen} onOpenChange={setAskAiOpen} />
 
 			<Dialog open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
 				<DialogContent className="sm:max-w-sm">

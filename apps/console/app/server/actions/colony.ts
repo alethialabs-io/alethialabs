@@ -9,7 +9,9 @@ import {
 	type Task,
 	runSupervisor,
 } from "@/lib/agent/supervisor";
-import { requireOwner } from "@/lib/auth/owner";
+import { currentActor } from "@/lib/authz/guard";
+import { assertAiAllowed } from "@/lib/billing/ai-guard";
+import { recordAiUsage } from "@/lib/billing/ai-quota";
 import { getAiModel, isAiConfigured } from "@/lib/config/ai";
 
 /**
@@ -26,7 +28,7 @@ import { getAiModel, isAiConfigured } from "@/lib/config/ai";
 export async function runColonyTasks(
 	objectives: string[],
 ): Promise<SupervisorResult> {
-	await requireOwner();
+	const actor = await currentActor();
 	if (!isAiConfigured()) {
 		throw new Error("AI is not configured (set AI_GATEWAY_API_KEY)");
 	}
@@ -34,9 +36,18 @@ export async function runColonyTasks(
 		throw new Error("at least one objective is required");
 	}
 
+	// Budget-gate the run (throws AiBudgetError when over the window/weekly limit).
+	const charge = await assertAiAllowed(actor.orgId, "agent");
+
 	const modelId = getAiModel();
+	let inputTokens = 0;
+	let outputTokens = 0;
+	let cachedInputTokens = 0;
 	const runner = createLlmSubAgentRunner(async (prompt) => {
-		const { text } = await generateText({ model: modelId, prompt });
+		const { text, usage } = await generateText({ model: modelId, prompt });
+		inputTokens += usage.inputTokens ?? 0;
+		outputTokens += usage.outputTokens ?? 0;
+		cachedInputTokens += usage.cachedInputTokens ?? 0;
 		return text;
 	});
 
@@ -46,5 +57,20 @@ export async function runColonyTasks(
 		status: "pending",
 	}));
 
-	return runSupervisor(tasks, runner);
+	const result = await runSupervisor(tasks, runner);
+
+	// Record the colony's accumulated token cost across all sub-agent calls.
+	void recordAiUsage({
+		orgId: actor.orgId,
+		userId: actor.userId,
+		kind: "agent",
+		credits: charge.credits,
+		source: charge.source,
+		model: modelId,
+		inputTokens,
+		outputTokens,
+		cachedInputTokens,
+	});
+
+	return result;
 }

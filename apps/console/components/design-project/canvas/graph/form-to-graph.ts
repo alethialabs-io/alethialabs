@@ -54,6 +54,9 @@ export function formToGraph(
 				environment_stage: form.project.environment_stage,
 				region: form.project.region,
 				iac_version: form.project.iac_version,
+				// Scanned source repos (1:N) ride on the project root — not their own nodes —
+				// so they survive the canvas round-trip and reach createProject.
+				source_repos: form.source_repos ?? [],
 			},
 			{ x: 260, y: 0 },
 			coreId,

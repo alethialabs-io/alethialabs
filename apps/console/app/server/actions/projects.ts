@@ -25,6 +25,7 @@ import {
 	projectObservability,
 	projectQueues,
 	projectRepositories,
+	projectSourceRepos,
 	projectSecrets,
 	projectTopics,
 	projects,
@@ -38,7 +39,7 @@ import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { notifyScaler } from "@/lib/scaler";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 import { pickFreeSlug, RESERVED_PROJECT_CHILD_SLUGS, slugify } from "@/lib/routing";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { type AnyColumn, and, desc, eq, inArray } from "drizzle-orm";
 
 /**
  * Mirrors the Go provisioner gate (packages/core/provisioner/placement.go):
@@ -90,6 +91,10 @@ export interface CreateProjectInput {
 		typeof projectRepositories.$inferInsert,
 		"id" | "project_id" | "created_at" | "updated_at"
 	>;
+	source_repos?: Omit<
+		typeof projectSourceRepos.$inferInsert,
+		"id" | "project_id" | "created_at" | "updated_at"
+	>[];
 	databases?: Omit<
 		ComponentInsert<typeof projectDatabases.$inferInsert>,
 		"endpoint" | "reader_endpoint"
@@ -107,6 +112,94 @@ export interface CreateProjectInput {
 // ============================================================
 // Create
 // ============================================================
+
+/** A withOwnerScope transaction handle (the arg drizzle passes the callback). */
+type ComponentTx = Parameters<Parameters<typeof withOwnerScope>[1]>[0];
+
+/** `project_id = … AND environment_id = …` — component rows are scoped to one environment, so
+ * every component read/delete filters on both. */
+function envScope(
+	table: { project_id: AnyColumn; environment_id: AnyColumn },
+	projectId: string,
+	environmentId: string,
+) {
+	return and(
+		eq(table.project_id, projectId),
+		eq(table.environment_id, environmentId),
+	);
+}
+
+/** Inserts a form's component rows for one (project, environment). The single source of the
+ * per-table form→column mapping, shared by createProject / updateProjectDesign /
+ * duplicateEnvironment so environment scoping stays consistent across all three. */
+async function writeComponents(
+	tx: ComponentTx,
+	projectId: string,
+	environmentId: string,
+	data: CreateProjectInput,
+) {
+	const base = { project_id: projectId, environment_id: environmentId };
+	await tx.insert(projectNetwork).values({ ...base, ...data.network });
+	await tx.insert(projectCluster).values({ ...base, ...data.cluster });
+	await tx.insert(projectDns).values({ ...base, ...data.dns });
+	await tx.insert(projectRepositories).values({ ...base, ...data.repositories });
+	if (data.source_repos?.length)
+		await tx
+			.insert(projectSourceRepos)
+			.values(data.source_repos.map((r) => ({ ...base, ...r })));
+	if (data.databases?.length)
+		await tx
+			.insert(projectDatabases)
+			.values(data.databases.map((db) => ({ ...base, ...db })));
+	if (data.caches?.length)
+		await tx
+			.insert(projectCaches)
+			.values(data.caches.map((c) => ({ ...base, ...c })));
+	if (data.queues?.length)
+		await tx
+			.insert(projectQueues)
+			.values(data.queues.map((q) => ({ ...base, ...q })));
+	if (data.topics?.length)
+		await tx
+			.insert(projectTopics)
+			.values(data.topics.map((t) => ({ ...base, ...t })));
+	if (data.nosql_tables?.length)
+		await tx
+			.insert(projectNosqlTables)
+			.values(data.nosql_tables.map((n) => ({ ...base, ...n })));
+	if (data.secrets?.length)
+		await tx
+			.insert(projectSecrets)
+			.values(data.secrets.map((s) => ({ ...base, ...s })));
+}
+
+/** Deletes every component row for one (project, environment) — the delete half of the canvas
+ * delete-then-insert reconcile, scoped so other environments are untouched. */
+async function clearComponents(
+	tx: ComponentTx,
+	projectId: string,
+	environmentId: string,
+) {
+	await tx.delete(projectNetwork).where(envScope(projectNetwork, projectId, environmentId));
+	await tx.delete(projectCluster).where(envScope(projectCluster, projectId, environmentId));
+	await tx.delete(projectDns).where(envScope(projectDns, projectId, environmentId));
+	await tx
+		.delete(projectRepositories)
+		.where(envScope(projectRepositories, projectId, environmentId));
+	await tx
+		.delete(projectSourceRepos)
+		.where(envScope(projectSourceRepos, projectId, environmentId));
+	await tx
+		.delete(projectDatabases)
+		.where(envScope(projectDatabases, projectId, environmentId));
+	await tx.delete(projectCaches).where(envScope(projectCaches, projectId, environmentId));
+	await tx.delete(projectQueues).where(envScope(projectQueues, projectId, environmentId));
+	await tx.delete(projectTopics).where(envScope(projectTopics, projectId, environmentId));
+	await tx
+		.delete(projectNosqlTables)
+		.where(envScope(projectNosqlTables, projectId, environmentId));
+	await tx.delete(projectSecrets).where(envScope(projectSecrets, projectId, environmentId));
+}
 
 export async function createProject(data: CreateProjectInput) {
 	const actor = await authorize("create", { type: "project" });
@@ -134,17 +227,22 @@ export async function createProject(data: CreateProjectInput) {
 		if (!project) throw new Error("Failed to create project");
 
 		// The project's default (and, for now, only) environment. `name` = the chosen
-		// stage value so the tofu/S3 state path matches the legacy single-env path.
-		await tx.insert(projectEnvironments).values({
-			project_id: project.id,
-			user_id: owner,
-			org_id: project.org_id,
-			name: environment_stage,
-			stage: environment_stage,
-			status: "DRAFT",
-			is_default: true,
-			region: projectFields.region,
-		});
+		// stage value so the tofu/S3 state path matches the legacy single-env path. Its id
+		// scopes the component rows below (config is environment-scoped).
+		const [defaultEnv] = await tx
+			.insert(projectEnvironments)
+			.values({
+				project_id: project.id,
+				user_id: owner,
+				org_id: project.org_id,
+				name: environment_stage,
+				stage: environment_stage,
+				status: "DRAFT",
+				is_default: true,
+				region: projectFields.region,
+			})
+			.returning({ id: projectEnvironments.id });
+		if (!defaultEnv) throw new Error("Failed to create default environment");
 
 		// Authz hierarchy edge: project → org, so an org-wide grant flows down to this project.
 		await tx
@@ -158,44 +256,8 @@ export async function createProject(data: CreateProjectInput) {
 			.onConflictDoNothing();
 		mirrorHierarchyEdge("project", project.id, "org", owner);
 
-		// Singleton components (tx rolls back automatically on any failure).
-		await tx.insert(projectNetwork).values({ project_id: project.id, ...data.network });
-		await tx.insert(projectCluster).values({ project_id: project.id, ...data.cluster });
-		await tx.insert(projectDns).values({ project_id: project.id, ...data.dns });
-		await tx
-			.insert(projectRepositories)
-			.values({ project_id: project.id, ...data.repositories });
-
-		if (data.databases?.length) {
-			await tx
-				.insert(projectDatabases)
-				.values(data.databases.map((db) => ({ project_id: project.id, ...db })));
-		}
-		if (data.caches?.length) {
-			await tx
-				.insert(projectCaches)
-				.values(data.caches.map((c) => ({ project_id: project.id, ...c })));
-		}
-		if (data.queues?.length) {
-			await tx
-				.insert(projectQueues)
-				.values(data.queues.map((q) => ({ project_id: project.id, ...q })));
-		}
-		if (data.topics?.length) {
-			await tx
-				.insert(projectTopics)
-				.values(data.topics.map((t) => ({ project_id: project.id, ...t })));
-		}
-		if (data.nosql_tables?.length) {
-			await tx
-				.insert(projectNosqlTables)
-				.values(data.nosql_tables.map((n) => ({ project_id: project.id, ...n })));
-		}
-		if (data.secrets?.length) {
-			await tx
-				.insert(projectSecrets)
-				.values(data.secrets.map((s) => ({ project_id: project.id, ...s })));
-		}
+		// Components belong to the default environment (tx rolls back on any failure).
+		await writeComponents(tx, project.id, defaultEnv.id, data);
 
 		await tx.insert(auditLog).values({
 			project_id: project.id,
@@ -208,6 +270,43 @@ export async function createProject(data: CreateProjectInput) {
 		});
 
 		return { project };
+	});
+}
+
+/**
+ * Reconcile an existing project's components to the desired canvas config (the
+ * `graphToForm` output). Config is treated as desired-state: each singleton is rewritten
+ * and array components (databases/caches/queues/topics/nosql/secrets) are replaced to
+ * match `data`, all in one tx. Provisioned outputs/status repopulate on the next deploy
+ * via finalizeDeployment. The canvas persists through this (via applyStagedChanges) so an
+ * existing project is *edited* rather than re-created.
+ */
+export async function updateProjectDesign(
+	projectId: string,
+	environmentId: string,
+	data: CreateProjectInput,
+) {
+	const actor = await authorize("edit", { type: "project", id: projectId });
+	const owner = actor.userId;
+	return withOwnerScope(owner, async (tx) => {
+		// environment_stage seeds the default env at create time; not a project column.
+		const { environment_stage, ...projectFields } = data.project;
+		void environment_stage;
+		await tx.update(projects).set(projectFields).where(eq(projects.id, projectId));
+
+		// Reconcile THIS environment's components only (delete-then-insert within the tx);
+		// other environments of the project keep their own config.
+		await clearComponents(tx, projectId, environmentId);
+		await writeComponents(tx, projectId, environmentId, data);
+
+		await tx.insert(auditLog).values({
+			project_id: projectId,
+			user_id: owner,
+			action: "UPDATED",
+			changes: { project_name: data.project.project_name },
+		});
+
+		return { success: true };
 	});
 }
 
@@ -245,7 +344,10 @@ export async function getProjectsList() {
 	});
 }
 
-export async function getProject(projectId: string) {
+export async function getProject(
+	projectId: string,
+	environmentId?: string | null,
+) {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
@@ -256,54 +358,9 @@ export async function getProject(projectId: string) {
 			.limit(1);
 		if (!project) throw new Error("Project not found");
 
-		const [network] = await tx
-			.select()
-			.from(projectNetwork)
-			.where(eq(projectNetwork.project_id, projectId))
-			.limit(1);
-		const [cluster] = await tx
-			.select()
-			.from(projectCluster)
-			.where(eq(projectCluster.project_id, projectId))
-			.limit(1);
-		const [dns] = await tx
-			.select()
-			.from(projectDns)
-			.where(eq(projectDns.project_id, projectId))
-			.limit(1);
-		const [repos] = await tx
-			.select()
-			.from(projectRepositories)
-			.where(eq(projectRepositories.project_id, projectId))
-			.limit(1);
-		const databases = await tx
-			.select()
-			.from(projectDatabases)
-			.where(eq(projectDatabases.project_id, projectId));
-		const caches = await tx
-			.select()
-			.from(projectCaches)
-			.where(eq(projectCaches.project_id, projectId));
-		const queues = await tx
-			.select()
-			.from(projectQueues)
-			.where(eq(projectQueues.project_id, projectId));
-		const topics = await tx
-			.select()
-			.from(projectTopics)
-			.where(eq(projectTopics.project_id, projectId));
-		const nosqlTables = await tx
-			.select()
-			.from(projectNosqlTables)
-			.where(eq(projectNosqlTables.project_id, projectId));
-		const secrets = await tx
-			.select()
-			.from(projectSecrets)
-			.where(eq(projectSecrets.project_id, projectId));
-
-		// M1: the project's environments (default first). The default env's name + status
-		// surface as `project.environment_stage` / `project.status` so existing single-value
-		// reads keep working; the full list drives the Environments management UI.
+		// M1: the project's environments (default first). The active env (the given one, else the
+		// default) surfaces as `project.environment_stage` / `project.status` and scopes the
+		// component reads — config is environment-scoped, so each env loads its own services.
 		const environments = await tx
 			.select()
 			.from(projectEnvironments)
@@ -311,6 +368,91 @@ export async function getProject(projectId: string) {
 			.orderBy(desc(projectEnvironments.is_default), projectEnvironments.created_at);
 		const defaultEnv =
 			environments.find((e) => e.is_default) ?? environments[0] ?? null;
+		const activeEnv =
+			(environmentId
+				? environments.find((e) => e.id === environmentId)
+				: undefined) ?? defaultEnv;
+
+		/** Reads one environment's component rows (env-scoped). */
+		async function readComponents(envId: string) {
+			const [network] = await tx
+				.select()
+				.from(projectNetwork)
+				.where(envScope(projectNetwork, projectId, envId))
+				.limit(1);
+			const [cluster] = await tx
+				.select()
+				.from(projectCluster)
+				.where(envScope(projectCluster, projectId, envId))
+				.limit(1);
+			const [dns] = await tx
+				.select()
+				.from(projectDns)
+				.where(envScope(projectDns, projectId, envId))
+				.limit(1);
+			const [repos] = await tx
+				.select()
+				.from(projectRepositories)
+				.where(envScope(projectRepositories, projectId, envId))
+				.limit(1);
+			const sourceRepos = await tx
+				.select()
+				.from(projectSourceRepos)
+				.where(envScope(projectSourceRepos, projectId, envId));
+			const databases = await tx
+				.select()
+				.from(projectDatabases)
+				.where(envScope(projectDatabases, projectId, envId));
+			const caches = await tx
+				.select()
+				.from(projectCaches)
+				.where(envScope(projectCaches, projectId, envId));
+			const queues = await tx
+				.select()
+				.from(projectQueues)
+				.where(envScope(projectQueues, projectId, envId));
+			const topics = await tx
+				.select()
+				.from(projectTopics)
+				.where(envScope(projectTopics, projectId, envId));
+			const nosqlTables = await tx
+				.select()
+				.from(projectNosqlTables)
+				.where(envScope(projectNosqlTables, projectId, envId));
+			const secrets = await tx
+				.select()
+				.from(projectSecrets)
+				.where(envScope(projectSecrets, projectId, envId));
+			return {
+				network: network ?? null,
+				cluster: cluster ?? null,
+				dns: dns ?? null,
+				repositories: repos ?? null,
+				source_repos: sourceRepos,
+				databases,
+				caches,
+				queues,
+				topics,
+				nosql_tables: nosqlTables,
+				secrets,
+			};
+		}
+
+		const components = activeEnv
+			? await readComponents(activeEnv.id)
+			: {
+					network: null,
+					cluster: null,
+					dns: null,
+					repositories: null,
+					source_repos: [],
+					databases: [],
+					caches: [],
+					queues: [],
+					topics: [],
+					nosql_tables: [],
+					secrets: [],
+				};
 
 		let cloudProvider = "aws";
 		if (project.cloud_identity_id) {
@@ -325,24 +467,14 @@ export async function getProject(projectId: string) {
 		return {
 			project: {
 				...project,
-				environment_stage: defaultEnv?.name ?? "development",
-				status: defaultEnv?.status ?? "DRAFT",
+				// The env being viewed (active), so the canvas/form reflect that environment.
+				environment_stage: activeEnv?.name ?? "development",
+				status: activeEnv?.status ?? "DRAFT",
 				default_environment_id: defaultEnv?.id ?? null,
 			},
 			environments,
 			cloudProvider,
-			components: {
-				network: network ?? null,
-				cluster: cluster ?? null,
-				dns: dns ?? null,
-				repositories: repos ?? null,
-				databases,
-				caches,
-				queues,
-				topics,
-				nosql_tables: nosqlTables,
-				secrets,
-			},
+			components,
 		};
 	});
 }
@@ -387,58 +519,60 @@ async function buildConfigSnapshot(
 			);
 		}
 
+		// Snapshot the TARGET environment's components (config is environment-scoped).
+		const envId = environment.id;
 		const [network] = await tx
 			.select()
 			.from(projectNetwork)
-			.where(eq(projectNetwork.project_id, projectId))
+			.where(envScope(projectNetwork, projectId, envId))
 			.limit(1);
 		const [cluster] = await tx
 			.select()
 			.from(projectCluster)
-			.where(eq(projectCluster.project_id, projectId))
+			.where(envScope(projectCluster, projectId, envId))
 			.limit(1);
 		const [dns] = await tx
 			.select()
 			.from(projectDns)
-			.where(eq(projectDns.project_id, projectId))
+			.where(envScope(projectDns, projectId, envId))
 			.limit(1);
 		const [repos] = await tx
 			.select()
 			.from(projectRepositories)
-			.where(eq(projectRepositories.project_id, projectId))
+			.where(envScope(projectRepositories, projectId, envId))
 			.limit(1);
 		const databases = await tx
 			.select()
 			.from(projectDatabases)
-			.where(eq(projectDatabases.project_id, projectId));
+			.where(envScope(projectDatabases, projectId, envId));
 		const caches = await tx
 			.select()
 			.from(projectCaches)
-			.where(eq(projectCaches.project_id, projectId));
+			.where(envScope(projectCaches, projectId, envId));
 		const queues = await tx
 			.select()
 			.from(projectQueues)
-			.where(eq(projectQueues.project_id, projectId));
+			.where(envScope(projectQueues, projectId, envId));
 		const topics = await tx
 			.select()
 			.from(projectTopics)
-			.where(eq(projectTopics.project_id, projectId));
+			.where(envScope(projectTopics, projectId, envId));
 		const nosqlTables = await tx
 			.select()
 			.from(projectNosqlTables)
-			.where(eq(projectNosqlTables.project_id, projectId));
+			.where(envScope(projectNosqlTables, projectId, envId));
 		const secrets = await tx
 			.select()
 			.from(projectSecrets)
-			.where(eq(projectSecrets.project_id, projectId));
+			.where(envScope(projectSecrets, projectId, envId));
 		const containerRegistries = await tx
 			.select()
 			.from(projectContainerRegistries)
-			.where(eq(projectContainerRegistries.project_id, projectId));
+			.where(envScope(projectContainerRegistries, projectId, envId));
 		const [observability] = await tx
 			.select()
 			.from(projectObservability)
-			.where(eq(projectObservability.project_id, projectId))
+			.where(envScope(projectObservability, projectId, envId))
 			.limit(1);
 
 		// ── Resolve per-resource placement ("versatile model") ───────────────
@@ -732,6 +866,60 @@ export async function provisionProject(
 }
 
 /**
+ * Queue a DESTROY job to tear down a project's environment in the cloud — mirrors
+ * provisionProject but with job_type DESTROY: the env moves to QUEUED and a runner
+ * destroys the provisioned resources. Distinct from deleteProject, which only drops the
+ * DB rows. Used by the canvas Pending Changes bar's Destroy action.
+ */
+export async function destroyProject(
+	projectId: string,
+	environmentId?: string | null,
+	runnerId?: string | null,
+) {
+	const actor = await authorize("destroy", { type: "project", id: projectId });
+	await assertUsageAllowed(actor.orgId);
+	const owner = actor.userId;
+	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
+		owner,
+		projectId,
+		environmentId,
+	);
+
+	const result = await withOwnerScope(owner, async (tx) => {
+		const [job] = await tx
+			.insert(jobs)
+			.values({
+				user_id: owner,
+				project_id: projectId,
+				environment_id: environment.id,
+				cloud_identity_id: identity.id,
+				job_type: "DESTROY",
+				config_snapshot: configSnapshot,
+				status: "QUEUED",
+				...(runnerId ? { assigned_runner_id: runnerId } : {}),
+			})
+			.returning({ id: jobs.id });
+
+		await tx
+			.update(projectEnvironments)
+			.set({ status: "QUEUED" })
+			.where(eq(projectEnvironments.id, environment.id));
+
+		await tx.insert(auditLog).values({
+			project_id: projectId,
+			user_id: owner,
+			action: "DESTROYED",
+			changes: { job_id: job.id, environment_id: environment.id },
+		});
+
+		return { jobId: job.id };
+	});
+
+	notifyScaler();
+	return result;
+}
+
+/**
  * Queue a DETECT_DRIFT job (elench): a refresh-only plan that reports drift between
  * recorded state and the live cloud for an environment, storing a drift posture on
  * the job's execution_metadata. Read-only against the cloud — it never applies.
@@ -794,8 +982,9 @@ export async function deleteProject(projectId: string) {
 /** Converts a project's DB representation to ProjectFormData for duplication / pre-populating forms. */
 export async function getProjectAsFormData(
 	projectId: string,
+	environmentId?: string | null,
 ): Promise<{ formData: ProjectFormData; provider: CloudProviderSlug }> {
-	const source = await getProject(projectId);
+	const source = await getProject(projectId, environmentId);
 
 	let provider: CloudProviderSlug = "aws";
 	if (source.project.cloud_identity_id) {
@@ -871,6 +1060,12 @@ export async function getProjectAsFormData(
 						source.components.repositories.apps_destination_repo ?? undefined,
 				}
 			: {},
+		source_repos: source.components.source_repos.map((r) => ({
+			repo_url: r.repo_url,
+			ref: r.ref ?? undefined,
+			scan_path: r.scan_path,
+			services: r.services ?? [],
+		})),
 		databases: source.components.databases.map((db) => ({
 			name: db.name,
 			engine: db.engine ?? undefined,
@@ -995,8 +1190,10 @@ export async function addEnvironment(
 ) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
-	const name = slugifyEnvName(input.name);
+	const name = slugify(input.name);
 	if (!name) throw new Error("Environment name is required");
+	if (RESERVED_PROJECT_CHILD_SLUGS.includes(name))
+		throw new Error(`"${name}" is reserved and can't be used as an environment name`);
 	return withOwnerScope(owner, async (tx) => {
 		const [project] = await tx
 			.select({ org_id: projects.org_id })
@@ -1017,6 +1214,70 @@ export async function addEnvironment(
 				region: input.region ?? null,
 			})
 			.returning();
+		return { environment: env };
+	});
+}
+
+/**
+ * Creates a new environment by duplicating an existing one: it inherits the base environment's
+ * stage + region AND a fresh copy of all the base env's components (services/variables/config).
+ * The copy is config-only — `getProjectAsFormData` strips provisioned outputs, and the new rows
+ * start `status:"PENDING"` — so the duplicate is undeployed until its own Deploy.
+ */
+export async function duplicateEnvironment(
+	projectId: string,
+	baseEnvironmentId: string,
+	name: string,
+) {
+	const actor = await authorize("edit", { type: "project", id: projectId });
+	const owner = actor.userId;
+	const slug = slugify(name);
+	if (!slug) throw new Error("Environment name is required");
+	if (RESERVED_PROJECT_CHILD_SLUGS.includes(slug))
+		throw new Error(`"${slug}" is reserved and can't be used as an environment name`);
+	// The base env's design (form shape = config only; provisioned outputs already stripped). Null
+	// when the base env has no design yet (an empty env) → the duplicate is created empty too.
+	const baseConfig = await getProjectAsFormData(projectId, baseEnvironmentId)
+		.then((r) => r.formData)
+		.catch(() => null);
+	return withOwnerScope(owner, async (tx) => {
+		const [base] = await tx
+			.select({
+				org_id: projectEnvironments.org_id,
+				stage: projectEnvironments.stage,
+				region: projectEnvironments.region,
+			})
+			.from(projectEnvironments)
+			.where(
+				and(
+					eq(projectEnvironments.id, baseEnvironmentId),
+					eq(projectEnvironments.project_id, projectId),
+				),
+			)
+			.limit(1);
+		if (!base) throw new Error("Base environment not found for this project");
+		const [env] = await tx
+			.insert(projectEnvironments)
+			.values({
+				project_id: projectId,
+				user_id: owner,
+				org_id: base.org_id,
+				name: slug,
+				stage: base.stage,
+				status: "DRAFT",
+				is_default: false,
+				region: base.region,
+			})
+			.returning();
+		if (!env) throw new Error("Failed to create environment");
+		// Copy the base env's components into the new env (fresh rows, status defaults to PENDING).
+		if (baseConfig)
+			await writeComponents(
+				tx,
+				projectId,
+				env.id,
+				baseConfig as unknown as CreateProjectInput,
+			);
 		return { environment: env };
 	});
 }
@@ -1042,15 +1303,6 @@ export async function deleteEnvironment(projectId: string, environmentId: string
 		await tx.delete(projectEnvironments).where(eq(projectEnvironments.id, environmentId));
 		return { success: true };
 	});
-}
-
-/** Lowercases + slugifies an environment name (a-z0-9 and single dashes). */
-function slugifyEnvName(raw: string): string {
-	return raw
-		.toLowerCase()
-		.trim()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "");
 }
 
 // ============================================================
