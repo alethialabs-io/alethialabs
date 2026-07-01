@@ -23,7 +23,6 @@ import (
 	"os"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/verify"
-	tfjson "github.com/hashicorp/terraform-json"
 )
 
 func main() {
@@ -37,6 +36,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("elench-verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	jsonOut := fs.Bool("json", false, "emit the full report as JSON")
+	manifests := fs.Bool("manifests", false, "audit Kubernetes manifests (YAML) instead of a tofu plan")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -49,20 +49,29 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		data, err = io.ReadAll(stdin)
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "elench-verify: read plan: %v\n", err)
+		fmt.Fprintf(stderr, "elench-verify: read input: %v\n", err)
 		return 1
 	}
 
-	var plan tfjson.Plan
-	if err := json.Unmarshal(data, &plan); err != nil {
-		fmt.Fprintf(stderr, "elench-verify: parse plan JSON: %v\n", err)
-		return 1
-	}
-
-	rep, err := verify.Evaluate(context.Background(), &plan)
-	if err != nil {
-		fmt.Fprintf(stderr, "elench-verify: evaluate: %v\n", err)
-		return 1
+	var rep *verify.Report
+	if *manifests {
+		rep, err = verify.EvaluateManifests(data)
+		if err != nil {
+			fmt.Fprintf(stderr, "elench-verify: audit manifests: %v\n", err)
+			return 1
+		}
+	} else {
+		// Accepts an Alethia-generated OR a bring-your-own plan (same controls).
+		plan, perr := verify.ParseCustomerPlan(data)
+		if perr != nil {
+			fmt.Fprintf(stderr, "elench-verify: parse plan JSON: %v\n", perr)
+			return 1
+		}
+		rep, err = verify.Evaluate(context.Background(), plan)
+		if err != nil {
+			fmt.Fprintf(stderr, "elench-verify: evaluate: %v\n", err)
+			return 1
+		}
 	}
 
 	if *jsonOut {
