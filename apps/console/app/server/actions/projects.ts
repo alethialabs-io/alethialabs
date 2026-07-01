@@ -541,6 +541,10 @@ async function buildConfigSnapshot(
 			.from(projectRepositories)
 			.where(envScope(projectRepositories, projectId, envId))
 			.limit(1);
+		const sourceRepos = await tx
+			.select()
+			.from(projectSourceRepos)
+			.where(envScope(projectSourceRepos, projectId, envId));
 		const databases = await tx
 			.select()
 			.from(projectDatabases)
@@ -726,6 +730,14 @@ async function buildConfigSnapshot(
 			repositories: {
 				apps_destination_repo: repos?.apps_destination_repo,
 			},
+			// Scanned source repos + detected services — the runner generates app
+			// manifests from these into an empty GitOps repo at deploy time.
+			source_repos: sourceRepos.map((r) => ({
+				repo_url: r.repo_url,
+				ref: r.ref ?? undefined,
+				scan_path: r.scan_path,
+				services: r.services ?? [],
+			})),
 			databases: databases.map((d) => ({ ...d, ...resolvePlacement(d) })),
 			caches: caches.map((c) => ({ ...c, ...resolvePlacement(c) })),
 			queues: queues.map((q) => ({ ...q, ...resolvePlacement(q) })),

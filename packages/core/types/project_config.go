@@ -18,6 +18,7 @@ type ProjectConfig struct {
 	DNS           ProjectDNSConfig           `json:"dns"`
 	Observability ProjectObservabilityConfig `json:"observability"`
 	Repositories  ProjectRepositoriesConfig  `json:"repositories"`
+	SourceRepos   []ProjectSourceRepoConfig  `json:"source_repos,omitempty"`
 
 	Databases           []ProjectDatabaseConfig          `json:"databases"`
 	Caches              []ProjectCacheConfig             `json:"caches"`
@@ -78,10 +79,20 @@ type ProjectNetworkConfig struct {
 	SingleNatGateway bool   `json:"single_nat_gateway"`
 }
 
+// NodeSize is a cloud-indifferent node capability; the catalog resolver maps it to the
+// nearest concrete per-provider instance type at provision time.
+type NodeSize struct {
+	VCPU     float64 `json:"vcpu"`
+	MemoryGB float64 `json:"memory_gb"`
+}
+
 type ProjectClusterConfig struct {
 	Placement
-	ClusterVersion  string         `json:"cluster_version"`
-	InstanceTypes   []string       `json:"instance_types"`
+	ClusterVersion string `json:"cluster_version"`
+	// Concrete provider SKUs (legacy / explicit override). When empty, NodeSize resolves.
+	InstanceTypes []string `json:"instance_types"`
+	// Cloud-indifferent node capability (preferred); resolved to InstanceTypes per provider.
+	NodeSize        *NodeSize      `json:"node_size"`
 	NodeMinSize     int            `json:"node_min_size"`
 	NodeMaxSize     int            `json:"node_max_size"`
 	NodeDesiredSize int            `json:"node_desired_size"`
@@ -112,10 +123,23 @@ type ProjectRepositoriesConfig struct {
 	AppsDestinationRepo string `json:"apps_destination_repo"`
 }
 
+// ProjectSourceRepoConfig is a scanned source repo (1:N) + its detected services,
+// carried in the config snapshot so the runner can generate app manifests at deploy
+// time (the "generate" apps path).
+type ProjectSourceRepoConfig struct {
+	RepoURL  string            `json:"repo_url"`
+	Ref      string            `json:"ref,omitempty"`
+	ScanPath string            `json:"scan_path,omitempty"`
+	Services []DetectedService `json:"services,omitempty"`
+}
+
 type ProjectDatabaseConfig struct {
 	Placement
-	Name                string   `json:"name"`
-	Engine              string   `json:"engine"`
+	Name string `json:"name"`
+	// Concrete provider engine (legacy / explicit). When empty, EngineFamily resolves it.
+	Engine string `json:"engine"`
+	// Cloud-indifferent engine family ("postgres" | "mysql"); resolved per provider.
+	EngineFamily        string   `json:"engine_family"`
 	EngineVersion       string   `json:"engine_version"`
 	InstanceClass       string   `json:"instance_class"`
 	MinCapacity         *float64 `json:"min_capacity"`
@@ -130,9 +154,12 @@ type ProjectCacheConfig struct {
 	Name          string `json:"name"`
 	Engine        string `json:"engine"`
 	EngineVersion string `json:"engine_version"`
-	NodeType      string `json:"node_type"`
-	NumCacheNodes *int   `json:"num_cache_nodes"`
-	MultiAz       *bool  `json:"multi_az"`
+	// Concrete provider SKU (legacy / explicit). When empty, MemoryGB resolves it.
+	NodeType string `json:"node_type"`
+	// Cloud-indifferent size (preferred); resolved to the nearest provider SKU.
+	MemoryGB      float64 `json:"memory_gb"`
+	NumCacheNodes *int    `json:"num_cache_nodes"`
+	MultiAz       *bool   `json:"multi_az"`
 }
 
 type ProjectQueueConfig struct {
