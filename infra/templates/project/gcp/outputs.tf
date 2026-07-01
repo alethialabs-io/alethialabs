@@ -117,3 +117,17 @@ output "project_id" {
   description = "GCP project ID"
   value       = var.project_id
 }
+
+#########################################################################
+##            Workload Identity Outputs (cluster add-ons)             ##
+#########################################################################
+
+output "gcp_project_id" {
+  description = "GCP project id (for Workload Identity annotations)"
+  value       = var.project_id
+}
+
+output "external_dns_service_account" {
+  description = "external-dns Google service account email (Workload Identity)"
+  value       = var.provision_gke ? google_service_account.external_dns[0].email : null
+}

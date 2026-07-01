@@ -1,3 +1,4 @@
+{{- if eq .Provider "aws" }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -33,3 +34,4 @@ spec:
     syncOptions:
       - CreateNamespace=true
   revisionHistoryLimit: 3
+{{- end }}

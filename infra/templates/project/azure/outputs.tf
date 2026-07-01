@@ -74,3 +74,17 @@ output "location_short" {
   description = "Short form of the deployment location"
   value       = local.azure_locations_short[var.location]
 }
+
+#########################################################################
+##            Workload Identity Outputs (cluster add-ons)             ##
+#########################################################################
+
+output "azure_tenant_id" {
+  description = "Azure AD tenant id (for workload-identity annotations)"
+  value       = data.azurerm_client_config.current.tenant_id
+}
+
+output "external_dns_client_id" {
+  description = "external-dns managed identity client id (Workload Identity)"
+  value       = var.provision_aks ? azurerm_user_assigned_identity.external_dns[0].client_id : null
+}

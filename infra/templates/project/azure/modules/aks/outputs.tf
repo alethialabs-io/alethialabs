@@ -36,3 +36,8 @@ output "node_resource_group" {
   description = "Auto-generated resource group containing AKS agent pool nodes"
   value       = azurerm_kubernetes_cluster.this.node_resource_group
 }
+
+output "oidc_issuer_url" {
+  description = "The OIDC issuer URL of the AKS cluster (for federated workload identity)"
+  value       = azurerm_kubernetes_cluster.this.oidc_issuer_url
+}
