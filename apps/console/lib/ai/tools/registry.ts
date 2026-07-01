@@ -38,6 +38,7 @@ export const TOOL_AUDIENCE: Record<string, ToolAudience> = {
 	list_jobs: "both",
 	get_job: "both",
 	get_plan_result: "both",
+	get_drift_posture: "both",
 	list_runners: "both",
 	list_clusters: "both",
 	list_connectors: "both",

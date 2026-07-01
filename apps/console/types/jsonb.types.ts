@@ -57,6 +57,20 @@ export interface DetectedService {
 	port?: number;
 }
 
+/**
+ * One resource that has drifted from its provisioned state — mirrors the Go
+ * `drift.ResourceDrift` (packages/core/drift). Stored on `environment_drift.details`;
+ * produced by a DETECT_DRIFT job's `tofu plan -refresh-only` → `drift.Analyze`.
+ */
+export interface DriftDetail {
+	/** Terraform address of the drifted resource. */
+	address: string;
+	/** Resource type (e.g. aws_db_instance). */
+	type: string;
+	/** "modified" | "deleted" | "other" — how it diverged. */
+	kind: string;
+}
+
 export interface SubnetInfo {
 	ID: string;
 	CIDR: string;

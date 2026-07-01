@@ -7,6 +7,7 @@ import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities"
 import { getCloudIdentityInventory } from "@/app/server/actions/cloud-resources";
 import { getClusters } from "@/app/server/actions/clusters";
 import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
+import { getLatestDriftPosture } from "@/app/server/actions/drift";
 import { getJob, getJobs, getPlanResult } from "@/app/server/actions/jobs";
 import { getRunnersWithReleases } from "@/app/server/actions/runners";
 import { getProject, getProjects } from "@/app/server/actions/projects";
@@ -147,6 +148,31 @@ export function readTools() {
 					// assistant can present the proof before a deploy is approved.
 					verify_verdict: meta?.verify_result?.verdict ?? null,
 					verify_result: meta?.verify_result ?? null,
+				};
+			},
+		}),
+
+		get_drift_posture: tool({
+			description:
+				"Get a project's latest day-2 drift posture: whether the live infrastructure is in sync with what was provisioned, and which resources drifted. PDP-gated read.",
+			inputSchema: z.object({
+				projectId: z.string(),
+				environmentId: z.string().optional(),
+			}),
+			execute: async ({ projectId, environmentId }) => {
+				const p = await getLatestDriftPosture(projectId, environmentId);
+				if (!p) {
+					return {
+						status: "no_data",
+						message: "No drift detection has run for this project yet.",
+					};
+				}
+				return {
+					status: "ok",
+					in_sync: p.inSync,
+					drifted: p.drifted,
+					details: p.details,
+					scanned_at: p.scannedAt,
 				};
 			},
 		}),
