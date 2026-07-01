@@ -51,6 +51,7 @@ export const TOOL_AUDIENCE: Record<string, ToolAudience> = {
 	// Scanner — scan_repo QUEUES a runner job (a write) so it stays in-app for the
 	// read-only launch; its results are reads and are externally safe.
 	scan_repo: "in-app",
+	audit_infrastructure: "in-app",
 	get_scan_result: "both",
 	compare_providers: "both",
 };

@@ -3,6 +3,7 @@
 
 import { tool } from "ai";
 import { z } from "zod";
+import { queueAudit } from "@/app/server/actions/audit";
 import { getScanProposal, scanRepo } from "@/app/server/actions/scanner";
 import { compareProviders } from "@/lib/scanner/compare";
 
@@ -14,6 +15,30 @@ import { compareProviders } from "@/lib/scanner/compare";
  */
 export function scannerTools() {
 	return {
+		audit_infrastructure: tool({
+			description:
+				"Audit a customer's EXISTING infrastructure with elench (the 'bring your own IaC' flow): paste an OpenTofu/Terraform `show -json` plan or Kubernetes manifests. Queues an AUDIT job (provisions nothing) and returns a jobId — then poll get_plan_result(jobId), whose verify_result carries the signed report + per-control findings.",
+			inputSchema: z.object({
+				input: z
+					.string()
+					.describe("The OpenTofu/Terraform plan JSON, or Kubernetes manifests (YAML)."),
+				kind: z
+					.enum(["plan", "manifests"])
+					.describe("Whether the input is a terraform 'plan' JSON or k8s 'manifests'."),
+				projectId: z
+					.string()
+					.optional()
+					.describe("Optional project to attach the audit to."),
+			}),
+			execute: async ({ input, kind, projectId }) => {
+				const { jobId } = await queueAudit(input, kind, projectId);
+				return {
+					jobId,
+					status: "queued",
+					note: "Auditing — call get_plan_result(jobId); its verify_result holds the verdict + findings.",
+				};
+			},
+		}),
 		scan_repo: tool({
 			description:
 				"Analyze a git repository to infer the infrastructure it needs. Queues a scan (the runner clones + statically parses it — no code is executed) and returns a jobId. Then poll get_scan_result. Accepts a public URL or a connected private repo.",

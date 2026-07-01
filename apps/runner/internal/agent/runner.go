@@ -16,9 +16,6 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
-	alethiaAws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
-	alethiaAzure "github.com/alethialabs-io/alethialabs/packages/core/cloud/azure"
-	alethiaGcp "github.com/alethialabs-io/alethialabs/packages/core/cloud/gcp"
 	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -277,94 +274,20 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	var execErr error
 	switch job.JobType {
 	case "CONNECTION_TEST":
+		// Credential activation above already performed the real auth (STS AssumeRole / WIF /
+		// federated identity), which IS the proof of access. Resource caching now happens
+		// server-side in the console (the asset inventory), so the runner no longer lists resources;
+		// it just reports the activation result. Self-managed token clouds (no federation) verify the
+		// stored token over HTTP here.
 		switch provider {
-		case "gcp":
-			fmt.Fprintln(stdoutLogger, "Connection test passed — WIF authentication succeeded.")
-			resources, fetchErr := w.fetchGcpResources(ctx, claim.CloudIdentity.ProjectID, stdoutLogger)
-			if fetchErr != nil {
-				fmt.Fprintf(stderrLogger, "Warning: failed to cache GCP resources: %v\n", fetchErr)
-			} else {
-				_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
-					"cached_resources": resources,
-				})
-				fmt.Fprintln(stdoutLogger, "GCP resources cached successfully.")
-			}
-		case "azure":
-			fmt.Fprintln(stdoutLogger, "Connection test passed — Azure federated identity authenticated.")
-			resources, fetchErr := w.fetchAzureResources(ctx, claim.CloudIdentity.SubscriptionID, stdoutLogger)
-			if fetchErr != nil {
-				fmt.Fprintf(stderrLogger, "Warning: failed to cache Azure resources: %v\n", fetchErr)
-			} else {
-				_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
-					"cached_resources": resources,
-				})
-				fmt.Fprintln(stdoutLogger, "Azure resources cached successfully.")
-			}
 		case "digitalocean", "hetzner", "civo":
 			if err := VerifyTokenCloud(ctx, provider, claim.CloudIdentity.APIToken, claim.CloudIdentity.SelfManaged); err != nil {
 				execErr = fmt.Errorf("connection test failed: %w", err)
 			} else {
 				fmt.Fprintf(stdoutLogger, "Connection test passed — %s token authenticated.\n", provider)
 			}
-		case "alibaba":
-			// Activation above already performed a real STS AssumeRole; reaching here
-			// means the customer's RAM role is assumable with zero stored credentials.
-			fmt.Fprintln(stdoutLogger, "Connection test passed — Alibaba RAM role assumption succeeded.")
 		default:
-			fmt.Fprintln(stdoutLogger, "Connection test passed — role assumption succeeded.")
-			resources, fetchErr := w.fetchAwsResources(ctx, stdoutLogger)
-			if fetchErr != nil {
-				fmt.Fprintf(stderrLogger, "Warning: failed to cache AWS resources: %v\n", fetchErr)
-			} else {
-				_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
-					"cached_resources": resources,
-				})
-				fmt.Fprintln(stdoutLogger, "AWS resources cached successfully.")
-			}
-		}
-	case "FETCH_RESOURCES":
-		switch provider {
-		case "gcp":
-			fmt.Fprintln(stdoutLogger, "Fetching GCP resources...")
-			projectID := ""
-			if claim.CloudIdentity != nil {
-				projectID = claim.CloudIdentity.ProjectID
-			}
-			resources, fetchErr := w.fetchGcpResources(ctx, projectID, stdoutLogger)
-			if fetchErr != nil {
-				execErr = fmt.Errorf("failed to fetch GCP resources: %w", fetchErr)
-			} else {
-				_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
-					"cached_resources": resources,
-				})
-				fmt.Fprintln(stdoutLogger, "GCP resources fetched successfully.")
-			}
-		case "azure":
-			fmt.Fprintln(stdoutLogger, "Fetching Azure resources...")
-			subscriptionID := ""
-			if claim.CloudIdentity != nil {
-				subscriptionID = claim.CloudIdentity.SubscriptionID
-			}
-			resources, fetchErr := w.fetchAzureResources(ctx, subscriptionID, stdoutLogger)
-			if fetchErr != nil {
-				execErr = fmt.Errorf("failed to fetch Azure resources: %w", fetchErr)
-			} else {
-				_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
-					"cached_resources": resources,
-				})
-				fmt.Fprintln(stdoutLogger, "Azure resources fetched successfully.")
-			}
-		default:
-			fmt.Fprintln(stdoutLogger, "Fetching AWS resources...")
-			resources, fetchErr := w.fetchAwsResources(ctx, stdoutLogger)
-			if fetchErr != nil {
-				execErr = fmt.Errorf("failed to fetch AWS resources: %w", fetchErr)
-			} else {
-				_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
-					"cached_resources": resources,
-				})
-				fmt.Fprintln(stdoutLogger, "AWS resources fetched successfully.")
-			}
+			fmt.Fprintln(stdoutLogger, "Connection test passed — credential activation succeeded.")
 		}
 	case "PLAN":
 		execErr = w.executePlan(ctx, job, provider, claim.CloudIdentity, claim.ConnectorCredentials, stdoutLogger, stderrLogger)
@@ -380,6 +303,8 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 		execErr = w.executeAnalyzeRepo(ctx, job, stdoutLogger, stderrLogger)
 	case "DETECT_DRIFT":
 		execErr = w.executeDriftDetection(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
+	case "AUDIT":
+		execErr = w.executeAudit(ctx, job, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}
@@ -394,179 +319,6 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	_ = w.api.UpdateJobStatus(job.ID, "SUCCESS", "", nil)
 	fmt.Printf("Job %s completed successfully\n", job.ID)
 	return nil
-}
-
-func (w *Runner) fetchAwsResources(ctx context.Context, logger *JobLogger) (map[string]any, error) {
-	fmt.Fprintln(logger, "Fetching enabled regions...")
-	ec2Client, err := alethiaAws.NewEC2Client(ctx, alethiaAws.AWSOptions{Region: "us-east-1"})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create EC2 client: %w", err)
-	}
-
-	regions, err := ec2Client.ListRegions(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list regions: %w", err)
-	}
-	fmt.Fprintf(logger, "Found %d enabled regions\n", len(regions))
-
-	vpcs := make(map[string]any)
-	subnets := make(map[string]any)
-
-	for _, region := range regions {
-		regionalClient, err := alethiaAws.NewEC2Client(ctx, alethiaAws.AWSOptions{Region: region})
-		if err != nil {
-			continue
-		}
-
-		regionVPCs, err := regionalClient.ListVPCs(ctx)
-		if err != nil {
-			continue
-		}
-
-		if len(regionVPCs) > 0 {
-			vpcs[region] = regionVPCs
-			regionSubnets := make(map[string]any)
-			for _, vpc := range regionVPCs {
-				vpcSubnets, err := regionalClient.ListSubnets(ctx, vpc.ID)
-				if err != nil {
-					continue
-				}
-				if len(vpcSubnets) > 0 {
-					regionSubnets[vpc.ID] = vpcSubnets
-				}
-			}
-			if len(regionSubnets) > 0 {
-				subnets[region] = regionSubnets
-			}
-		}
-	}
-
-	fmt.Fprintln(logger, "Fetching Route53 hosted zones...")
-	r53Client, err := alethiaAws.NewRoute53Client(ctx, alethiaAws.AWSOptions{Region: "us-east-1"})
-	var hostedZones []alethiaAws.HostedZoneInfo
-	if err == nil {
-		hostedZones, _ = r53Client.ListHostedZones(ctx)
-	}
-	fmt.Fprintf(logger, "Found %d hosted zones\n", len(hostedZones))
-
-	fmt.Fprintln(logger, "Fetching IAM users...")
-	iamClient, err := alethiaAws.NewIAMClient(ctx, alethiaAws.AWSOptions{Region: "us-east-1"})
-	var iamUsers []alethiaAws.IAMUserInfo
-	if err == nil {
-		iamUsers, _ = iamClient.ListUsers(ctx)
-	}
-	fmt.Fprintf(logger, "Found %d IAM users\n", len(iamUsers))
-
-	return map[string]any{
-		"regions":      regions,
-		"vpcs":         vpcs,
-		"subnets":      subnets,
-		"hosted_zones": hostedZones,
-		"iam_users":    iamUsers,
-	}, nil
-}
-
-func (w *Runner) fetchGcpResources(ctx context.Context, projectID string, logger *JobLogger) (map[string]any, error) {
-	fmt.Fprintln(logger, "Fetching GCP compute regions...")
-	computeClient, err := alethiaGcp.NewComputeClient(ctx, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create compute client: %w", err)
-	}
-
-	regions, err := computeClient.ListRegions(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list regions: %w", err)
-	}
-	fmt.Fprintf(logger, "Found %d active regions\n", len(regions))
-
-	fmt.Fprintln(logger, "Fetching VPC networks...")
-	networks, err := computeClient.ListNetworks(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list networks: %w", err)
-	}
-	fmt.Fprintf(logger, "Found %d networks\n", len(networks))
-
-	subnets := make(map[string]any)
-	for _, region := range regions {
-		regionSubnets, err := computeClient.ListSubnetworks(ctx, region)
-		if err != nil {
-			continue
-		}
-		if len(regionSubnets) > 0 {
-			subnets[region] = regionSubnets
-		}
-	}
-
-	fmt.Fprintln(logger, "Fetching Cloud DNS managed zones...")
-	dnsClient, err := alethiaGcp.NewDNSClient(ctx, projectID)
-	var managedZones []alethiaGcp.ManagedZoneInfo
-	if err == nil {
-		managedZones, _ = dnsClient.ListManagedZones(ctx)
-	}
-	fmt.Fprintf(logger, "Found %d managed zones\n", len(managedZones))
-
-	return map[string]any{
-		"regions":       regions,
-		"networks":      networks,
-		"subnets":       subnets,
-		"managed_zones": managedZones,
-	}, nil
-}
-
-func (w *Runner) fetchAzureResources(ctx context.Context, subscriptionID string, logger *JobLogger) (map[string]any, error) {
-	fmt.Fprintln(logger, "Fetching Azure locations...")
-	computeClient, err := alethiaAzure.NewComputeClient(ctx, subscriptionID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Azure compute client: %w", err)
-	}
-
-	locations, err := computeClient.ListLocations(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list locations: %w", err)
-	}
-	fmt.Fprintf(logger, "Found %d locations\n", len(locations))
-
-	fmt.Fprintln(logger, "Fetching VNets...")
-	vnets, err := computeClient.ListVnets(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list vnets: %w", err)
-	}
-	fmt.Fprintf(logger, "Found %d VNets\n", len(vnets))
-
-	fmt.Fprintln(logger, "Fetching subnets for each VNet...")
-	subnets := make(map[string]any)
-	for _, vnet := range vnets {
-		if vnet.ID == "" {
-			continue
-		}
-		parsed, parseErr := alethiaAzure.ParseResourceID(vnet.ID)
-		if parseErr != nil {
-			fmt.Fprintf(logger, "Warning: could not parse VNet ID %s: %v\n", vnet.ID, parseErr)
-			continue
-		}
-		vnetSubnets, subErr := computeClient.ListSubnets(ctx, parsed.ResourceGroup, parsed.ResourceName)
-		if subErr != nil {
-			fmt.Fprintf(logger, "Warning: failed to list subnets for VNet %s: %v\n", vnet.Name, subErr)
-			continue
-		}
-		subnets[vnet.Name] = vnetSubnets
-		fmt.Fprintf(logger, "Found %d subnets in VNet %s\n", len(vnetSubnets), vnet.Name)
-	}
-
-	fmt.Fprintln(logger, "Fetching Azure DNS zones...")
-	dnsClient, err := alethiaAzure.NewDNSClient(ctx, subscriptionID)
-	var dnsZones []alethiaAzure.DnsZoneInfo
-	if err == nil {
-		dnsZones, _ = dnsClient.ListDnsZones(ctx)
-	}
-	fmt.Fprintf(logger, "Found %d DNS zones\n", len(dnsZones))
-
-	return map[string]any{
-		"locations": locations,
-		"vnets":     vnets,
-		"subnets":   subnets,
-		"dns_zones": dnsZones,
-	}, nil
 }
 
 func resolveProjectTemplatesDir() string {

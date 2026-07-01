@@ -87,6 +87,9 @@ export const auditAction = pgEnum("audit_action", [
 	"STATUS_CHANGED",
 ]);
 
+/** Op of a staged project change (project_changes), diffed against the live config. */
+export const changeOp = pgEnum("change_op", ["CREATE", "UPDATE", "DELETE"]);
+
 export const provisionJobStatus = pgEnum("provision_job_status", [
 	"QUEUED",
 	"CLAIMED",
@@ -106,6 +109,7 @@ export const provisionJobType = pgEnum("provision_job_type", [
 	"UPDATE_RUNNER",
 	"ANALYZE_REPO",
 	"DETECT_DRIFT",
+	"AUDIT",
 ]);
 
 export const runnerMode = pgEnum("runner_mode", ["self-hosted", "cloud-hosted"]);
@@ -160,6 +164,10 @@ export const cloudIdentityStatus = pgEnum("cloud_identity_status", [
 	"pending",
 	"testing",
 	"connected",
+	// Authenticated but missing some provisioning permissions (server-side health probe).
+	"degraded",
+	// Was connected, but access has since been lost (revoked role / broken trust).
+	"disconnected",
 	"failed",
 ]);
 
