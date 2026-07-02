@@ -17,6 +17,13 @@ linters:
     - ineffassign
     - staticcheck
     - unused
+    # Enforces that every switch over a generated enum type (types.JobType /
+    # JobStatus / CloudProvider — packages/core/types/enums_gen.go) handles every
+    # value. A default clause does NOT satisfy it (default-signifies-exhaustive
+    # stays false), so adding an enum value forces a case in the runner dispatch,
+    # the CloudProvider factory, and the credential switch. Intentionally-partial
+    # switches keep a plain `string` tag so they're not checked.
+    - exhaustive
   settings:
     staticcheck:
       # golangci-lint's default check set, plus -ST1005 (capitalized error strings):
@@ -61,6 +68,13 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
+      # Tests deliberately build nil-check-then-deref cases to exercise guards.
+      # golangci's built-in default exclusions cover SA5011 in tests, but enabling
+      # an extra linter (exhaustive) turns those defaults off — restore it explicitly.
+      - path: _test\.go
+        text: SA5011
+        linters:
+          - staticcheck
 
 formatters:
   enable:
