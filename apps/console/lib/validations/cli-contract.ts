@@ -100,6 +100,8 @@ export const jobWire = createSelectSchema(jobs, {
 	usage_reported_at: true,
 	// M1: per-environment provisioning target — internal, not on the frozen CLI wire.
 	environment_id: true,
+	// Internal elench waiver input (set by console authz) — never on the CLI wire.
+	verify_override: true,
 });
 
 /** A job as returned in the list (GET /api/jobs) — adds joined display names. */
@@ -151,10 +153,15 @@ export const initIdentityWire = z.object({
 	external_id: z.string().nullable().optional(),
 });
 
-/** Credential submission (POST /api/cli/providers/:provider/connect). */
+/** Credential submission (POST /api/cli/providers/:provider/connect). The server
+ * verifies the identity INLINE (synchronous health probe) and returns the verdict
+ * directly — there is no CONNECTION_TEST job to poll anymore. */
 export const connectIdentityWire = z.object({
-	job_id: z.string(),
 	identity_id: z.string(),
+	verified: z.boolean(),
+	status: z.enum(["connected", "degraded", "disconnected"]),
+	error: z.string().nullable(),
+	missing_permissions: z.array(z.string()),
 });
 
 /** Deploy-runner result (POST /api/cli/runners/deploy). */

@@ -386,6 +386,13 @@
       "when": 1782892166438,
       "tag": "0054_inventory_encrypt",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1782892166439,
+      "tag": "0055_environment_promotions",
+      "breakpoints": true
     }
   ]
 }
