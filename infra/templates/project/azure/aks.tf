@@ -10,7 +10,7 @@ module "aks" {
   cluster_name        = local.aks_name
   cluster_version     = var.aks_cluster_version
   resource_group_name = azurerm_resource_group.main.name
-  vnet_subnet_id      = var.provision_vnet ? module.vnet[0].subnet_id : var.vnet_id
+  vnet_subnet_id      = var.provision_vnet ? module.vnet[0].subnet_id : data.azurerm_subnet.existing[0].id
 
   machine_types     = var.aks_instance_types
   node_min_size     = var.aks_node_min_size
