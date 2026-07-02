@@ -2,98 +2,70 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { withOwnerScope } from "@/lib/db";
-import { cloudIdentities, jobs } from "@/lib/db/schema";
-import { notifyScaler } from "@/lib/scaler";
+import { openSensitive } from "@/lib/cloud-providers/inventory/upsert";
+import {
+	cloudNetworks,
+	cloudRegions,
+	cloudSubnets,
+} from "@/lib/db/schema";
 
 /**
- * Returns a cloud identity's last-cached discovered resources (VPCs/subnets/zones)
- * for read consumers like the AI assistant — so it can suggest an existing VPC or
- * avoid CIDR clashes. PDP-gated on the identity. Never returns credentials.
+ * A cloud identity's LIVE asset inventory (networks + subnets + regions) from the normalized cloud_*
+ * tables — the canvas's "use an existing VPC instead of creating one" source and the elench agent's
+ * real-state read. Replaces the retired `cached_resources` JSONB reader + the runner FETCH_RESOURCES
+ * job (inventory is now kept fresh server-side by the reconciliation sweep + event ingester).
+ * PDP-gated; soft-removed rows excluded; never returns credentials.
  */
-export async function getCloudIdentityResources(cloudIdentityId: string) {
+export async function getCloudIdentityInventory(cloudIdentityId: string) {
 	const actor = await authorize("view", {
 		type: "cloud_identity",
 		id: cloudIdentityId,
 	});
 	return withOwnerScope(actor.userId, async (tx) => {
-		const [row] = await tx
-			.select({
-				provider: cloudIdentities.provider,
-				cached_resources: cloudIdentities.cached_resources,
-				cached_at: cloudIdentities.cached_at,
-			})
-			.from(cloudIdentities)
-			.where(eq(cloudIdentities.id, cloudIdentityId))
-			.limit(1);
-		if (!row) return { provider: null, resources: null, cachedAt: null };
+		const networks = await tx
+			.select()
+			.from(cloudNetworks)
+			.where(
+				and(
+					eq(cloudNetworks.cloud_identity_id, cloudIdentityId),
+					isNull(cloudNetworks.removed_at),
+				),
+			)
+			.orderBy(cloudNetworks.region);
+		const subnets = await tx
+			.select()
+			.from(cloudSubnets)
+			.where(
+				and(
+					eq(cloudSubnets.cloud_identity_id, cloudIdentityId),
+					isNull(cloudSubnets.removed_at),
+				),
+			);
+		const regions = await tx
+			.select({ name: cloudRegions.native_id })
+			.from(cloudRegions)
+			.where(
+				and(
+					eq(cloudRegions.cloud_identity_id, cloudIdentityId),
+					isNull(cloudRegions.removed_at),
+				),
+			)
+			.orderBy(cloudRegions.native_id);
+		// Decrypt the sealed sensitive attrs (CIDRs) back onto each row and strip the ciphertext — the
+		// consumer sees `cidr_block`, never the `sensitive` blob.
 		return {
-			provider: row.provider,
-			resources: row.cached_resources ?? null,
-			cachedAt: row.cached_at,
+			networks: networks.map(({ sensitive, ...n }) => ({
+				...n,
+				cidr_block: openSensitive(sensitive).cidr_block ?? null,
+			})),
+			subnets: subnets.map(({ sensitive, ...s }) => ({
+				...s,
+				cidr_block: openSensitive(sensitive).cidr_block ?? null,
+			})),
+			regions: regions.map((r) => r.name),
 		};
-	});
-}
-
-/** Queues a FETCH_RESOURCES job for any cloud identity, regardless of provider. */
-export async function refreshCloudResources(cloudIdentityId: string) {
-	const actor = await authorize("view", {
-		type: "cloud_identity",
-		id: cloudIdentityId,
-	});
-	const userId = actor.userId;
-
-	const jobId = await withOwnerScope(userId, async (tx) => {
-		const [job] = await tx
-			.insert(jobs)
-			.values({
-				user_id: userId,
-				job_type: "FETCH_RESOURCES",
-				cloud_identity_id: cloudIdentityId,
-				config_snapshot: {},
-				status: "QUEUED",
-			})
-			.returning({ id: jobs.id });
-		return job.id;
-	});
-
-	notifyScaler();
-	return { jobId };
-}
-
-/** Persists cached resources from a completed job to the cloud identity, then returns them. */
-export async function completeResourceRefresh(
-	cloudIdentityId: string,
-	jobId: string,
-) {
-	const actor = await authorize("view", {
-		type: "cloud_identity",
-		id: cloudIdentityId,
-	});
-	const userId = actor.userId;
-
-	return withOwnerScope(userId, async (tx) => {
-		const [job] = await tx
-			.select({ execution_metadata: jobs.execution_metadata })
-			.from(jobs)
-			.where(eq(jobs.id, jobId))
-			.limit(1);
-
-		const cached = job?.execution_metadata?.cached_resources;
-		if (cached === undefined || cached === null) {
-			return { success: false, resources: null, cachedAt: null };
-		}
-
-		const cachedAt = new Date().toISOString();
-		// Opaque runner-produced payload → raw jsonb assignment (RLS-scoped by tx).
-		await tx.execute(
-			sql`update cloud_identities
-			    set cached_resources = ${JSON.stringify(cached)}::jsonb, cached_at = ${cachedAt}::timestamptz
-			    where id = ${cloudIdentityId}`,
-		);
-
-		return { success: true, resources: cached, cachedAt };
 	});
 }

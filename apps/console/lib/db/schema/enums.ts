@@ -102,8 +102,6 @@ export const provisionJobType = pgEnum("provision_job_type", [
 	"DESTROY_RUNNER",
 	"DEPLOY",
 	"DESTROY",
-	"CONNECTION_TEST",
-	"FETCH_RESOURCES",
 	"PLAN",
 	"DEPLOY_RUNNER",
 	"UPDATE_RUNNER",
@@ -228,6 +226,26 @@ export const billingStatus = pgEnum("billing_status", [
 	"canceled",
 ]);
 
+// Environment promotion (Phase 2). A promotion writes a source env's structural changes onto a
+// target env, runs a PLAN to produce verify + cost, evaluates the target's protection gates, then
+// DEPLOYs (or waits for approval). No new provision_job_type — a promotion reuses PLAN then DEPLOY.
+export const promotionStatus = pgEnum("promotion_status", [
+	"PENDING_PLAN", // candidate written; PLAN job queued to produce verify + cost
+	"PENDING_APPROVAL", // gates need a human (manual approval or cost over threshold)
+	"APPROVED", // approvals satisfied; deploy about to enqueue
+	"DEPLOYING", // deploy job queued/running
+	"SUCCEEDED",
+	"FAILED", // plan or deploy failed
+	"BLOCKED", // a hard gate failed (predecessor unhealthy / verify hard-fail)
+	"CANCELLED",
+]);
+// A single required-approval decision on a promotion.
+export const approvalStatus = pgEnum("approval_status", [
+	"pending",
+	"approved",
+	"rejected",
+]);
+
 // TS unions derived from the pg enums — the Drizzle-native replacement for the
 // supazod-generated `Public*` enum types. Use these everywhere app code needs the
 // string-literal union of an enum's values.
@@ -242,6 +260,8 @@ export type RunnerStatus = (typeof runnerStatus.enumValues)[number];
 export type ProjectStatus = (typeof projectStatus.enumValues)[number];
 export type ComponentStatus = (typeof componentStatus.enumValues)[number];
 export type EnvironmentStage = (typeof environmentStage.enumValues)[number];
+export type PromotionStatus = (typeof promotionStatus.enumValues)[number];
+export type ApprovalStatus = (typeof approvalStatus.enumValues)[number];
 export type CacheEngine = (typeof cacheEngine.enumValues)[number];
 export type LogStreamType = (typeof logStreamType.enumValues)[number];
 export type BillingPlan = (typeof billingPlan.enumValues)[number];

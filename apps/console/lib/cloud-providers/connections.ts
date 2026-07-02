@@ -2,12 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { randomUUID } from "crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getServiceDb } from "@/lib/db";
-import { cloudIdentities, jobs, projects } from "@/lib/db/schema";
-import { notifyScaler } from "@/lib/scaler";
+import { cloudIdentities, projects } from "@/lib/db/schema";
 import { encryptSecret } from "@/lib/crypto/secrets";
+import { probeHealth, type HealthStatus } from "@/lib/cloud-providers/health";
+import {
+	purgeCloudInventory,
+	syncCloudInventory,
+} from "@/lib/cloud-providers/inventory";
 import type { CloudCredentials } from "@/types/jsonb.types";
 
 /**
@@ -249,29 +253,72 @@ export async function renameIdentity(
 	return { success: true };
 }
 
-/** Inserts a QUEUED CONNECTION_TEST job and wakes the scaler. */
-async function queueConnectionTest(
+/** Outcome of an instant server-side connection verify — surfaced straight to the connect UI. */
+export interface ConnectionResult {
+	identityId: string;
+	/** True when the connection authenticated (connected or degraded); false when disconnected. */
+	verified: boolean;
+	status: HealthStatus;
+	error: string | null;
+	/** Provisioning permissions found missing (drives the DEGRADED hint), empty when connected. */
+	missingPermissions: string[];
+}
+
+/**
+ * Server-side connection verify (no runner, no job): probe the provider's health, persist the result to
+ * the identity, and return the outcome for the connect UI to show instantly. Kicks off the initial asset
+ * inventory in the background on success. Throws if the provider has no server-side probe (unknown
+ * provider) — every managed provider is server-side, so callers can rely on a result.
+ */
+async function verifyConnectionInline(
 	scope: ConnScope,
 	identityId: string,
-	configSnapshot: Record<string, unknown>,
-	opts?: { requiresSelfRunner?: boolean },
-): Promise<string> {
+): Promise<ConnectionResult> {
 	const db = getServiceDb();
-	const [job] = await db
-		.insert(jobs)
-		.values({
-			user_id: scope.userId,
-			org_id: scope.orgId,
-			job_type: "CONNECTION_TEST",
-			cloud_identity_id: identityId,
-			config_snapshot: configSnapshot,
-			status: "QUEUED",
-			requires_self_runner: opts?.requiresSelfRunner ?? false,
-		})
-		.returning({ id: jobs.id });
+	const identity = await loadIdentity(scope, identityId);
+	const result = await probeHealth(identity);
+	if (!result) {
+		throw new Error(`No server-side health probe for provider "${identity.provider}".`);
+	}
 
-	notifyScaler();
-	return job.id;
+	const ok = result.status !== "disconnected";
+	await db
+		.update(cloudIdentities)
+		.set({
+			is_verified: ok,
+			status: result.status, // connected | degraded | disconnected
+			last_error: result.error,
+			last_tested_at: new Date(),
+			verified_account_id: result.accountId,
+			missing_permissions: result.missingPermissions,
+			updated_at: new Date(),
+		})
+		.where(eq(cloudIdentities.id, identityId));
+
+	// Ops alert on the transition into a healthy (connected/degraded) state.
+	if (ok && identity.status !== "connected" && scope.orgId) {
+		emitAlertEventSafe(scope.orgId, "system.identity.connected", {
+			title: `Cloud identity connected: ${identity.provider}`,
+			severity: "info",
+			resource_type: "cloud_identity",
+			resource_id: identityId,
+		});
+	}
+
+	// Kick off the initial asset inventory in the background (best-effort; the periodic
+	// reconciliation sweep is the reliable backstop). Reload creds so the probe's updates are seen.
+	if (ok) {
+		const fresh = await loadIdentity(scope, identityId).catch(() => null);
+		if (fresh) void syncCloudInventory(fresh);
+	}
+
+	return {
+		identityId,
+		verified: ok,
+		status: result.status,
+		error: result.error,
+		missingPermissions: result.missingPermissions,
+	};
 }
 
 /** Loads an identity row scoped to the org, throwing if it is missing. */
@@ -311,12 +358,12 @@ export function parseAwsRoleArn(roleArn: string): { accountId: string } {
 	return { accountId: match[1] };
 }
 
-/** Validates a Role ARN, persists it, and queues a connection test. */
+/** Validates a Role ARN, persists it, and verifies the connection server-side (no runner). */
 export async function saveAwsIdentity(
 	scope: ConnScope,
 	identityId: string,
 	roleArn: string,
-): Promise<{ jobId: string; identityId: string }> {
+): Promise<ConnectionResult> {
 	const { accountId } = parseAwsRoleArn(roleArn);
 
 	const identity = await loadIdentity(scope, identityId);
@@ -342,11 +389,8 @@ export async function saveAwsIdentity(
 			),
 		);
 
-	const jobId = await queueConnectionTest(scope, identityId, {
-		role_arn: roleArn,
-		account_id: accountId,
-	});
-	return { jobId, identityId };
+	// AWS verifies server-side (no runner) — assume the role + capability probe, inline.
+	return verifyConnectionInline(scope, identityId);
 }
 
 // --- GCP ---
@@ -423,12 +467,12 @@ export function parseWifConfig(wifConfigJson: string) {
 	return { parsed, projectNumber, serviceAccountEmail, projectId };
 }
 
-/** Validates a WIF config JSON, persists it, and queues a connection test. */
+/** Validates a WIF config JSON, persists it, and verifies the connection server-side (no runner). */
 export async function saveGcpIdentity(
 	scope: ConnScope,
 	identityId: string,
 	wifConfigJson: string,
-): Promise<{ jobId: string; identityId: string }> {
+): Promise<ConnectionResult> {
 	const { parsed, projectNumber, serviceAccountEmail, projectId } =
 		parseWifConfig(wifConfigJson);
 
@@ -456,12 +500,8 @@ export async function saveGcpIdentity(
 			),
 		);
 
-	const jobId = await queueConnectionTest(scope, identityId, {
-		project_id: projectId,
-		project_number: projectNumber,
-		service_account_email: serviceAccountEmail,
-	});
-	return { jobId, identityId };
+	// GCP verifies server-side (WIF token + a Compute read) — no runner.
+	return verifyConnectionInline(scope, identityId);
 }
 
 // --- Azure ---
@@ -469,14 +509,14 @@ export async function saveGcpIdentity(
 const GUID_REGEX =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Validates the three Azure GUIDs, persists them, and queues a connection test. */
+/** Validates the three Azure GUIDs, persists them, and verifies the connection server-side (no runner). */
 export async function saveAzureIdentity(
 	scope: ConnScope,
 	identityId: string,
 	tenantId: string,
 	clientId: string,
 	subscriptionId: string,
-): Promise<{ jobId: string; identityId: string }> {
+): Promise<ConnectionResult> {
 	if (!GUID_REGEX.test(tenantId)) {
 		throw new Error("Invalid Tenant ID format. Expected a UUID.");
 	}
@@ -512,24 +552,20 @@ export async function saveAzureIdentity(
 			),
 		);
 
-	const jobId = await queueConnectionTest(scope, identityId, {
-		tenant_id: tenantId,
-		client_id: clientId,
-		subscription_id: subscriptionId,
-	});
-	return { jobId, identityId };
+	// Azure verifies server-side (platform app token + an ARM read) — no runner.
+	return verifyConnectionInline(scope, identityId);
 }
 
 // --- Alibaba (RAM role — zero stored credentials, like AWS) ---
 
 const ALIBABA_ARN_REGEX = /^acs:ram::(\d+):role\/[\w+=,.@-]+$/;
 
-/** Validates an Alibaba RAM role ARN, persists it, and queues a connection test. */
+/** Validates an Alibaba RAM role ARN, persists it, and verifies the connection server-side (no runner). */
 export async function saveAlibabaIdentity(
 	scope: ConnScope,
 	identityId: string,
 	roleArn: string,
-): Promise<{ jobId: string; identityId: string }> {
+): Promise<ConnectionResult> {
 	const match = roleArn.match(ALIBABA_ARN_REGEX);
 	if (!match) {
 		throw new Error("Invalid format. Expected: acs:ram::5123456789012345:role/RoleName");
@@ -551,11 +587,8 @@ export async function saveAlibabaIdentity(
 			and(eq(cloudIdentities.id, identityId), eq(cloudIdentities.org_id, scope.orgId)),
 		);
 
-	const jobId = await queueConnectionTest(scope, identityId, {
-		role_arn: roleArn,
-		account_id: accountId,
-	});
-	return { jobId, identityId };
+	// Alibaba verifies server-side (RAM-role AssumeRole via platform STS) — no runner.
+	return verifyConnectionInline(scope, identityId);
 }
 
 // --- Token clouds (DigitalOcean / Hetzner / Civo) — scoped API token, encrypted at rest ---
@@ -571,7 +604,7 @@ export async function saveTokenCloudIdentity(
 	identityId: string,
 	provider: CloudProvider,
 	apiToken: string,
-): Promise<{ jobId: string; identityId: string }> {
+): Promise<ConnectionResult> {
 	if (!TOKEN_CLOUDS.has(provider)) {
 		throw new Error(`${provider} is not a token-authenticated cloud`);
 	}
@@ -595,189 +628,22 @@ export async function saveTokenCloudIdentity(
 			and(eq(cloudIdentities.id, identityId), eq(cloudIdentities.org_id, scope.orgId)),
 		);
 
-	// No secret in the snapshot — only a marker that a token connection test is requested.
-	const jobId = await queueConnectionTest(scope, identityId, { token_connection_test: true });
-	return { jobId, identityId };
+	// Token clouds verify server-side (HTTP probe with the stored token) — no runner.
+	return verifyConnectionInline(scope, identityId);
 }
 
+// --- Shared re-verify / disconnect ---
+
 /**
- * Connects a token cloud in SELF-MANAGED mode: Alethia stores NO token. The
- * customer's self-hosted runner supplies it from its own environment (HCLOUD_TOKEN,
- * CIVO_TOKEN, DIGITALOCEAN_ACCESS_TOKEN). The connection test is pinned to a
- * self-hosted runner (requires_self_runner) so a managed runner — which lacks the
- * token — never claims it. The honest zero-trust path for clouds with no federation.
+ * Re-verifies an already-saved identity server-side without re-entering credentials
+ * (e.g. the "Re-verify" affordance on a degraded/disconnected connector, or a periodic
+ * refresh). Flips the identity to 'testing', re-probes health, and persists the result —
+ * returning it for the caller to surface. No runner, no job.
  */
-export async function saveSelfManagedTokenIdentity(
+export async function reverifyConnection(
 	scope: ConnScope,
 	identityId: string,
-	provider: CloudProvider,
-): Promise<{ jobId: string; identityId: string }> {
-	if (!TOKEN_CLOUDS.has(provider)) {
-		throw new Error(`${provider} is not a token-authenticated cloud`);
-	}
-	const identity = await loadIdentity(scope, identityId);
-
-	await getServiceDb()
-		.update(cloudIdentities)
-		.set({
-			name: `${PENDING_NAME[provider].replace(" (Pending)", "")}`,
-			// No token — drop any previously stored one and mark self-managed.
-			credentials: { ...identity.credentials, token: null, self_managed: true },
-			is_verified: false,
-			status: "testing",
-			last_error: null,
-			updated_at: new Date(),
-		})
-		.where(
-			and(eq(cloudIdentities.id, identityId), eq(cloudIdentities.org_id, scope.orgId)),
-		);
-
-	const jobId = await queueConnectionTest(
-		scope,
-		identityId,
-		{ token_connection_test: true, self_managed: true },
-		{ requiresSelfRunner: true },
-	);
-	return { jobId, identityId };
-}
-
-// --- Shared verify / disconnect ---
-
-/**
- * Authoritatively records the outcome of a CONNECTION_TEST on the identity. Called
- * server-side from the job-status route the moment the runner reports SUCCESS/FAILED
- * (so a closed connect sheet can't strand a passed test as "not connected"), and
- * re-used by the client `verifyIdentity` refresh. Idempotent: the connected alert
- * fires only on the transition into connected; the opaque, runner-produced
- * `cached_resources` payload is written via raw jsonb assignment.
- */
-export async function finalizeConnectionTest(
-	identityId: string,
-	ok: boolean,
-	opts?: { errorMessage?: string | null; cached?: unknown },
-): Promise<void> {
-	const db = getServiceDb();
-	const [before] = await db
-		.select({
-			status: cloudIdentities.status,
-			org_id: cloudIdentities.org_id,
-			provider: cloudIdentities.provider,
-		})
-		.from(cloudIdentities)
-		.where(eq(cloudIdentities.id, identityId))
-		.limit(1);
-	if (!before) return;
-
-	if (!ok) {
-		await db
-			.update(cloudIdentities)
-			.set({
-				status: "failed",
-				last_error: opts?.errorMessage ?? "Verification failed.",
-				last_tested_at: new Date(),
-				updated_at: new Date(),
-			})
-			.where(eq(cloudIdentities.id, identityId));
-		return;
-	}
-
-	const cached = opts?.cached;
-	if (cached !== undefined && cached !== null) {
-		await db.execute(
-			sql`update cloud_identities
-			    set is_verified = true, status = 'connected', last_error = null,
-			        last_tested_at = now(), updated_at = now(),
-			        cached_resources = ${JSON.stringify(cached)}::jsonb, cached_at = now()
-			    where id = ${identityId}`,
-		);
-	} else {
-		await db
-			.update(cloudIdentities)
-			.set({
-				is_verified: true,
-				status: "connected",
-				last_error: null,
-				last_tested_at: new Date(),
-				updated_at: new Date(),
-			})
-			.where(eq(cloudIdentities.id, identityId));
-	}
-
-	// Ops alert (free) — only on the transition into connected (idempotent).
-	if (before.status !== "connected" && before.org_id) {
-		emitAlertEventSafe(before.org_id, "system.identity.connected", {
-			title: `Cloud identity connected: ${before.provider}`,
-			severity: "info",
-			resource_type: "cloud_identity",
-			resource_id: identityId,
-		});
-	}
-}
-
-/**
- * Client-invoked refresh after the connect sheet observes a SUCCESS job. The server
- * already finalizes via the job-status route, so this is best-effort/idempotent —
- * it just pulls the job's cached_resources and re-applies the connected state.
- */
-export async function verifyIdentity(
-	scope: ConnScope,
-	identityId: string,
-	jobId?: string,
-): Promise<{ success: true }> {
-	let cached: unknown;
-	if (jobId) {
-		const [job] = await getServiceDb()
-			.select({ execution_metadata: jobs.execution_metadata })
-			.from(jobs)
-			.where(and(eq(jobs.id, jobId), eq(jobs.org_id, scope.orgId)))
-			.limit(1);
-		cached = job?.execution_metadata?.cached_resources;
-	}
-	await finalizeConnectionTest(identityId, true, { cached });
-	return { success: true };
-}
-
-/**
- * Re-runs the CONNECTION_TEST for an already-saved identity without re-entering
- * credentials (e.g. after a failed verification). Rebuilds the job config_snapshot
- * from the stored credentials, flips the identity back to 'testing', and re-queues.
- */
-export async function requeueConnectionTest(
-	scope: ConnScope,
-	identityId: string,
-): Promise<{ jobId: string; identityId: string }> {
-	const identity = await loadIdentity(scope, identityId);
-	const c = identity.credentials;
-
-	let snapshot: Record<string, unknown>;
-	let requiresSelfRunner = false;
-	switch (identity.provider) {
-		case "aws":
-		case "alibaba":
-			snapshot = { role_arn: c.role_arn, account_id: c.account_id };
-			break;
-		case "gcp":
-			snapshot = {
-				project_id: c.project_id,
-				project_number: c.project_number,
-				service_account_email: c.service_account_email,
-			};
-			break;
-		case "azure":
-			snapshot = {
-				tenant_id: c.tenant_id,
-				client_id: c.client_id,
-				subscription_id: c.subscription_id,
-			};
-			break;
-		default:
-			// Token clouds: self-managed (no stored token) vs encrypted stored token.
-			requiresSelfRunner = !!c.self_managed;
-			snapshot = c.self_managed
-				? { token_connection_test: true, self_managed: true }
-				: { token_connection_test: true };
-	}
-
+): Promise<ConnectionResult> {
 	await getServiceDb()
 		.update(cloudIdentities)
 		.set({ status: "testing", last_error: null, updated_at: new Date() })
@@ -788,10 +654,7 @@ export async function requeueConnectionTest(
 			),
 		);
 
-	const jobId = await queueConnectionTest(scope, identityId, snapshot, {
-		requiresSelfRunner,
-	});
-	return { jobId, identityId };
+	return verifyConnectionInline(scope, identityId);
 }
 
 /**
@@ -845,6 +708,9 @@ export async function disconnectIdentity(
 		.update(projects)
 		.set({ cloud_identity_id: null })
 		.where(eq(projects.cloud_identity_id, identityId));
+
+	// Purge the stored asset inventory — we keep no projection of a cloud we no longer access.
+	await purgeCloudInventory(identityId);
 
 	// Ops alert (free): a cloud identity was revoked/disconnected.
 	if (disconnected?.org_id) {

@@ -512,3 +512,77 @@ export type CloudInventoryAttributes = Record<
 	string,
 	string | number | boolean | null | string[]
 >;
+
+/**
+ * The reconnaissance-sensitive attributes of an inventory row (CIDRs, IPs, endpoints, DNS domains).
+ * Sealed with AES-GCM into the `sensitive` text column (via inventory/upsert `sealSensitive`) and
+ * decrypted only on read (`openSensitive`). All values are strings (the AES envelope stores a
+ * `Record<string,string>`). We never store raw resource tags.
+ */
+export interface CloudSensitiveAttrs {
+	cidr_block?: string;
+	private_ip?: string;
+	public_ip?: string;
+	endpoint?: string;
+	domain?: string;
+	repository_url?: string;
+}
+
+// ============================================================
+// Environment promotion (Phase 2). Stored on environment_promotions / _protection_rules.
+// ============================================================
+
+/** Who may approve a promotion into a protected environment. Stored on `environment_protection_rules.approvers`. */
+export interface ApproverSpec {
+	/** Explicit user ids allowed to approve. */
+	user_ids: string[];
+	/** A built-in role (owner/admin/operator/…) whose members may approve; null = only listed users. */
+	role: string | null;
+	/** How many distinct approvals are required. */
+	min_count: number;
+}
+
+/** A single field's before/after in a promotion UPDATE. */
+export interface ComponentFieldChange {
+	from: unknown;
+	to: unknown;
+}
+
+/** One component's change in a promotion changeset. `key` is the component_type for singletons,
+ * else the resource `name` (source_repos: `repo_url|scan_path`). */
+export interface ComponentChange {
+	component_type: string;
+	key: string;
+	op: "CREATE" | "UPDATE" | "DELETE";
+	/** Structural field diffs (UPDATE only). */
+	fields?: Record<string, ComponentFieldChange>;
+}
+
+/** The promotable delta from a source env's design to a target env's, plus a human summary.
+ * Stored on `environment_promotions.diff_summary`. */
+export interface PromotionDiff {
+	changes: ComponentChange[];
+	summary: string[];
+	/** Whether the actor opted into applying DELETEs (target-only components). */
+	include_removals: boolean;
+}
+
+/** Per-rule outcome of a protection-gate evaluation. */
+export interface GateResult {
+	type:
+		| "predecessor_healthy"
+		| "manual_approval"
+		| "verify_pass"
+		| "soak_timer"
+		| "cost_delta";
+	status: "pass" | "fail" | "pending" | "skipped";
+	detail: string;
+}
+
+/** The overall gate evaluation for a promotion. Stored on `environment_promotions.gate_evaluations`. */
+export interface GateEvaluation {
+	overall: "pass" | "blocked" | "pending_approval";
+	results: GateResult[];
+	/** RFC3339 timestamp of the evaluation. */
+	evaluated_at: string;
+}
