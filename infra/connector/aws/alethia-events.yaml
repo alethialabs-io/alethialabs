@@ -1,0 +1,122 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Alethia Platform: near-real-time asset-inventory event forwarder. Watches EC2 network changes
+  (CloudTrail via EventBridge) and POSTs NORMALIZED change events to Alethia's ingestion endpoint
+  (/api/cloud-events/aws), keeping the connection's asset inventory fresh between reconciliation sweeps.
+  Opt-in companion to alethia-bootstrap.yaml (the cross-account role). Stays entirely in the customer
+  account; only normalized {kind, native_id, region, deleted} events leave it — never credentials.
+
+# NOTE: deploy/verify in a real AWS account (CloudTrail must be enabled in the region for the management
+# events below to reach EventBridge). The console side (the ingester + the normalized contract) is live;
+# this is the in-account forwarder half.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: "Alethia ingestion" }
+        Parameters: [IngestionUrl, IngestionSecret]
+    ParameterLabels:
+      IngestionUrl: { default: "Alethia ingestion base URL" }
+      IngestionSecret: { default: "Ingestion bearer secret (ALETHIA_CRON_SECRET)" }
+
+Parameters:
+  IngestionUrl:
+    Type: String
+    Description: "Base URL of the Alethia console, e.g. https://app.alethialabs.io"
+  IngestionSecret:
+    Type: String
+    NoEcho: true
+    Description: "Shared bearer secret the forwarder presents (matches the console's ALETHIA_CRON_SECRET)."
+
+Resources:
+  ForwarderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  # Normalizes one EC2 management event → the Alethia NormalizedCloudEvent contract and POSTs it.
+  ForwarderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Timeout: 15
+      Role: !GetAtt ForwarderRole.Arn
+      Environment:
+        Variables:
+          INGESTION_URL: !Ref IngestionUrl
+          INGESTION_SECRET: !Ref IngestionSecret
+      Code:
+        ZipFile: |
+          // Maps an EC2 CloudTrail event (via EventBridge) → Alethia's normalized change event and
+          // POSTs { account_id, events: [...] } to /api/cloud-events/aws. The console resolves the
+          // account → connection and upserts/soft-removes the matching inventory row.
+          const KIND = {
+            CreateVpc: ["network", false], DeleteVpc: ["network", true],
+            CreateSubnet: ["subnet", false], DeleteSubnet: ["subnet", true],
+          };
+          exports.handler = async (event) => {
+            const name = event?.detail?.eventName;
+            const map = KIND[name];
+            if (!map) return { skipped: name };
+            const [kind, deleted] = map;
+            const region = event.region || event?.detail?.awsRegion || null;
+            const accountId = event.account || event?.detail?.recipientAccountId;
+            const d = event.detail || {};
+            // Native id: from the response (create) or the request params (delete).
+            const nativeId =
+              d.responseElements?.vpc?.vpcId ||
+              d.responseElements?.subnet?.subnetId ||
+              d.requestParameters?.vpcId ||
+              d.requestParameters?.subnetId;
+            if (!accountId || !nativeId) return { skipped: "no id" };
+            const body = JSON.stringify({
+              account_id: accountId,
+              events: [{ kind, native_id: nativeId, region, deleted }],
+            });
+            const res = await fetch(`${process.env.INGESTION_URL}/api/cloud-events/aws`, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                authorization: `Bearer ${process.env.INGESTION_SECRET}`,
+              },
+              body,
+            });
+            return { status: res.status };
+          };
+
+  # EC2 network management events (CloudTrail → EventBridge default bus).
+  NetworkChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Alethia: EC2 VPC/subnet create+delete → inventory forwarder"
+      EventPattern:
+        source: ["aws.ec2"]
+        detail-type: ["AWS API Call via CloudTrail"]
+        detail:
+          eventSource: ["ec2.amazonaws.com"]
+          eventName: [CreateVpc, DeleteVpc, CreateSubnet, DeleteSubnet]
+      State: ENABLED
+      Targets:
+        - Id: AlethiaForwarder
+          Arn: !GetAtt ForwarderFunction.Arn
+
+  ForwarderInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ForwarderFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt NetworkChangeRule.Arn
+
+Outputs:
+  ForwarderFunctionArn:
+    Description: "The inventory event-forwarder Lambda ARN."
+    Value: !GetAtt ForwarderFunction.Arn
