@@ -1,0 +1,96 @@
+---
+title: Agent harness
+description: One tool registry exposed read-only to external agents, per-agent identities with isolated memory, a stateless executor, and a supervisor that delegates to a colony.
+---
+
+# Agent harness
+
+<Enterprise />
+
+The harness exposes the platform's tools **once** and reuses them everywhere — the in-app agent, and the
+customer's own agents (Claude Code, Codex, Gemini) — without ever forking the tool definitions. It then
+layers scoped agent identities, isolated memory, and a supervisor on top.
+
+## Tool registry — the single source of truth
+
+Every agent tool is an AI-SDK `tool()` definition in `apps/console/lib/ai/tools/`, classified by
+**audience** in `registry.ts`:
+
+| Audience | Who sees it |
+|---|---|
+| `in-app` | Dashboard agent only — HITL proposals, canvas-context tools, and job-queuing writes. |
+| `external` / `both` | Read-only, PDP-gated, stateless — safe to expose to a customer's agent. |
+
+`buildExternalAgentTools()` is the **read-only projection** (`externalToolsOnly`, audience
+`external|both`). An anti-drift test (`assertAudienceCoverage`) fails CI if a new tool ships without an
+explicit audience, so the external surface can never silently widen.
+
+<Callout type="info">
+  Authorization is **not** re-implemented in the registry. Each tool's `execute` still resolves the
+  actor and enforces its PDP verb at call time; the audience map only decides *visibility*.
+</Callout>
+
+## The MCP surface — read-only at launch
+
+The remote MCP server (`app/api/mcp/route.ts`, OAuth 2.1 via Better Auth + actor binding) consumes
+`buildExternalAgentTools()` — so HITL proposals, canvas tools, and job-queuing writes (`scan_repo`) never
+reach an external agent. A single endpoint serves Claude Code, ChatGPT, Codex, and Gemini/Zed-via-ACP.
+
+<Callout type="warn">
+  Writes stay **out** of the external surface until an approval-over-MCP design exists: a multi-turn
+  HITL approval (propose → human click → resume) does not project onto a single stateless MCP
+  `tools/call`. The endpoint is a connector, not the moat — the moat is the governed, provable execution
+  behind it.
+</Callout>
+
+### The proof surface over MCP
+
+The evidence half of elench is readable by an external agent, not just the dashboard:
+
+| Tool | Audience | Returns |
+|---|---|---|
+| `get_plan_result` | `both` | A job's status + the elench `verify_verdict` / `verify_result` (the signed gate report). |
+| `get_drift_posture` | `both` | The latest day-2 [drift `Posture`](/elench/engine-internals) for a project environment. |
+| `audit_infrastructure` | `in-app` | Queues an `AUDIT` job over a bring-your-own plan / manifests (a job-queuing write → stays in-app). |
+
+So a customer's own agent can ask "is this cluster still in sync, and did the last deploy pass the gate?"
+over the read-only MCP surface — the "keep proving it" evidence, not just the build.
+
+## Agents are DATA, not processes
+
+A "colony of per-project agents" is realized as **durable per-tenant data on stateless compute**, not
+standing daemons (a long-lived in-context process accrues context rot). An agent is a row
+(`agent_identities`, migration `0045`): persona, mission, tool-scope, and a memory namespace. A stateless
+executor reconstructs context per turn.
+
+Memory lives in `agent_memory`, keyed by `(namespace, path)`. The namespace is the per-tenant prefix
+(`org/{orgId}/project/{projectId}`); the path is validated by the tenant-isolation guard
+`lib/agent/memory-path.ts`, which **rejects every traversal escape** (`..`, absolute paths outside the
+`/memories` mount, backslashes, null bytes) so one tenant can never read another's memory.
+
+## The stateless executor
+
+`lib/agent/executor.ts` is the deterministic core of running a turn *as* an agent:
+
+- `buildAgentSystemPrompt(identity, memorySummary?)` composes the persona + mission (+ just-in-time
+  memory) into a system prompt.
+- `scopeToolsToAgent(tools, tool_scope)` narrows the tool set to the agent's allowlist (least privilege
+  per agent — deployer / auditor / cost-optimizer roles).
+
+The agent-scoped chat route (`/api/agent/[agentId]`) loads the identity, applies these, and runs the turn
+via the AI SDK — mirroring the main agent route, tools still PDP-gated at execute time.
+
+## The supervisor / colony
+
+`lib/agent/supervisor.ts` is a deterministic, replayable orchestrator. It delegates tasks to sub-agents
+and drives them via a **Magentic-style Task / Progress ledger** (facts + plan + per-task status) with a
+**stall counter that triggers a bounded re-plan** (`stall > 2 → re-plan`). The actual sub-agent execution
+is **injected** (`SubAgentRunner`) — exactly the "AI executes, deterministic code decides" pattern, so the
+control flow is testable without a model and always terminates.
+
+<Callout type="warn">
+  **Use it where it pays.** A standing colony costs roughly 15× the tokens of a single agent and loses on
+  work over one convergent state (e.g. IaC plan/apply). The supervisor is for breadth-first **read**
+  fan-out (drift / cost / security surveys across accounts) and tenant-isolated tasks; write/converge
+  work stays on a single-threaded path.
+</Callout>

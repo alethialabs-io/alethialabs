@@ -1,0 +1,85 @@
+---
+title: Control catalog
+description: The authored controls per cloud, what each detects, the engine's blind spots, framework mapping, and catalog versioning.
+---
+
+# Control catalog
+
+<Enterprise />
+
+The current catalog is **`elench-controls-0.1.0`**. `Evaluate` detects the plan's cloud and runs that
+provider's control set (a mixed or unknown plan runs all of them, so nothing is silently skipped). Every
+control records its `provider`, so a uniform posture UI can never imply coverage a control does not have.
+
+## AWS
+
+| ID | Title | Hard-fail on |
+|----|-------|--------------|
+| `KEYLESS-001` | No static IAM access keys | creating an `aws_iam_access_key` (use OIDC federation instead) |
+| `OIDC-001` | Federated trust bound to a specific subject | a federated (`sts:AssumeRoleWithWebIdentity`) role whose trust **lacks a `:sub` condition**, or binds `sub` only with a **`StringLike` wildcard** (the "any repo can assume" footgun) |
+| `LEASTPRIV-001` | No over-broad IAM grants (named patterns) | `Action:"*"` + `Resource:"*"`; `Allow` + `NotAction`; attaching `AdministratorAccess` / `PowerUserAccess` / `IAMFullAccess`. **Warns** on sensitive service wildcards (`iam:*`, `kms:*`, …) with `Resource:"*"`. **Not-evaluable** when the policy body is computed or referenced only by ARN. |
+| `ACCESS-ANALYZER-001` | No sensitive actions grantable | (opt-in) a policy AWS IAM Access Analyzer proves *could* grant any action in a sensitive denylist. |
+
+## GCP
+
+| ID | Title | Hard-fail on |
+|----|-------|--------------|
+| `GCP-KEYLESS-001` | No static service-account keys | creating a `google_service_account_key` (use Workload Identity) |
+| `GCP-WIF-001` | WIF providers are attribute-conditioned | a `google_iam_workload_identity_pool_provider` with an empty `attribute_condition` |
+| `GCP-LEASTPRIV-001` | No project-wide primitive roles | binding `roles/owner` (fail) — **warns** on `roles/editor` — via `google_project_iam_member`/`_binding` |
+
+## Azure
+
+| ID | Title | Hard-fail on |
+|----|-------|--------------|
+| `AZURE-KEYLESS-001` | No static app/SP secrets | creating an `azuread_application_password` / `azuread_service_principal_password` (use a federated identity credential) |
+| `AZURE-FED-001` | Federated credentials bind a subject | an `azuread_application_federated_identity_credential` with an empty or wildcard `subject` |
+| `AZURE-LEASTPRIV-001` | No Owner/Contributor assignments | an `azurerm_role_assignment` of `Owner` (fail) — **warns** on `Contributor` — scope annotated |
+
+## Kubernetes
+
+A separate input path — `EvaluateManifests(yaml)` — decodes (multi-doc) manifests and runs the k8s set
+(`provider` = `k8s`). It backs the [bring-your-own audit](/elench/engine-internals) and grades the
+manifests Alethia *generates* (which pass by construction).
+
+| ID | Title | Hard-fail on |
+|----|-------|--------------|
+| `CONTAINERSECURITY-001` | Containers run non-root, unprivileged, on pinned images | a `privileged` container, `runAsUser: 0`, or a mutable `:latest` / untagged image. **Warns** when `runAsNonRoot` is unset (may run as root). |
+| `RBAC-001` | No wildcard RBAC or anonymous bindings | a `ClusterRole`/`Role` rule granting `"*"` verbs on `"*"` resources in `"*"` apiGroups; a binding to `system:anonymous` / `system:unauthenticated` |
+| `HOSTACCESS-001` | Pods don't reach the host namespace or filesystem | `hostNetwork` / `hostPID` / `hostIPC: true`, or a `hostPath` volume |
+| `RESOURCES-001` | Containers declare CPU + memory limits | a container missing CPU and/or memory `limits` (**warn** — reliability, not a breach) |
+
+Coverage is honest the same way the cloud controls are: a control with no in-scope resources is a vacuous
+pass, and workload kinds without a decodable pod spec are simply not counted.
+
+## Blind spots
+
+<Callout type="warn">
+  The gate inspects what the plan JSON can actually show. It is honest about the rest rather than
+  guessing:
+
+  - **Computed bodies** (`after_unknown`) — interpolated IAM/trust/bucket policies → `not_evaluable`.
+  - **Managed-policy-by-ARN** — AWS-managed (non-admin) policies attached by ARN have no body in the
+    plan → coverage gap, not a pass.
+  - **Cross-state / cross-module** — resources created in another state or module, permission
+    boundaries, and SCPs are out of view.
+  - **AWS is deepest.** GCP/Azure cover the static-credential, federation-binding, and primitive-role
+    cases; the per-cloud `provider` on each control + the report makes coverage explicit.
+</Callout>
+
+## Framework mapping
+
+Each control carries a small, conservative set of framework references (CIS / SOC 2 criteria), surfaced
+in the posture and the receipt.
+
+<Callout type="info">
+  A wrong control-to-framework mapping (e.g. claiming a control satisfies "SOC 2 CC6.1" when it does
+  not) is **worse than no mapping** — it manufactures false assurance. Mappings are kept deliberately
+  small, owned, and reviewed, never auto-generated.
+</Callout>
+
+## Catalog versioning
+
+`CatalogVersion` is part of the evidence. **Bump it whenever a control's logic changes in a way that
+could alter a verdict** — an old receipt is only meaningful against the catalog (and provider schema)
+that produced it. The version is recorded on every report and sealed into the receipt.

@@ -5,6 +5,7 @@
     "aws",
     "gcp",
     "azure",
+    "health-and-inventory",
     "git-providers",
     "pluggable"
   ]

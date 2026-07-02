@@ -43,7 +43,9 @@ PostgreSQL `claim_next_job()` with `FOR UPDATE SKIP LOCKED` prevents double-exec
 STS AssumeRole (AWS), RAM AssumeRole (Alibaba), WIF token exchange (GCP), or OIDC federated identity (Azure) — all zero stored credentials. Token clouds (DigitalOcean / Hetzner / Civo) use an API token, either stored encrypted or kept entirely in your own self-hosted runner. See [Cloud Credentials](/runner/cloud-credentials).
 
 ### Executes Terraform
-`init` → `plan` → `apply` or `destroy`. See [Job Execution](/runner/job-execution).
+`init` → `plan` → `apply` or `destroy`. Provisions **greenfield** infrastructure, or **attaches to
+existing** resources when the config marks a component "existing" (brownfield — e.g. deploy into an
+existing VPC/VNet). See [Job Execution](/runner/job-execution).
 
 ### Installs ArgoCD
 Helm chart deployment with App of Apps pattern. See [GitOps & ArgoCD](/concepts/gitops-argocd).

@@ -40,14 +40,11 @@ The CLI drives the provider's own tooling to create the resources Alethia needs 
 role, a workload identity pool, or an app registration) and captures the resulting credential
 material.
 
-### Submit & test
-The captured credentials are sent to Alethia, which queues a `CONNECTION_TEST` job. A
-[Runner](/runner) assumes the credentials and confirms it can reach your account, caching a
-snapshot of available regions, networks, and DNS zones.
-
-### Verify
-Once the test passes, the identity is marked **verified** and is ready to provision into. The CLI
-polls the job and reports progress live.
+### Submit & verify
+The captured credentials are sent to Alethia, which verifies them **instantly, server-side** — an
+auth + provisioning-permission probe (no runner). The identity is marked `Connected`, `Degraded`, or
+`Disconnected` and is ready to provision into. Existing resources are discovered separately by the
+server-side [asset inventory](/console/connectors/health-and-inventory).
 
 </Steps>
 
@@ -101,7 +98,7 @@ The CLI invokes `gcloud cloud-shell ssh`, pushes the installer, and runs it. The
 a minute while Cloud Shell provisions.
 
 ### Connection test
-The captured WIF config is submitted, a `CONNECTION_TEST` job runs, and the identity is verified.
+The captured WIF config is submitted, verified instantly server-side, and the identity is marked Connected (or Degraded/Disconnected).
 
 </Steps>
 
@@ -118,10 +115,8 @@ Running installer via gcloud Cloud Shell (the first run can take a minute)...
 { ...WIF credential config... }
 --- END CONFIG ---
 
-✓ Queued CONNECTION_TEST job (ID: 9f3a...)
-⏳ Waiting for job 9f3a...
-  Status: SUCCESS
-✓ Job completed successfully
+✓ Verifying connection (server-side)...
+✓ Connected
 
 ✓ GCP project "my-gcp-project" connected
 ```
@@ -185,7 +180,7 @@ The CLI runs `aws cloudformation deploy` (stack `AlethiaConnect`), creating a ro
 Alethia platform account, scoped by the External ID.
 
 ### Connection test
-The role ARN is submitted, the `CONNECTION_TEST` job runs, and the identity is verified.
+The role ARN is submitted, the connection is verified instantly server-side, and the identity is marked Connected (or Degraded/Disconnected).
 
 </Steps>
 
@@ -243,7 +238,7 @@ The CLI runs the setup script via `az`, creating the app registration, federated
 role assignment.
 
 ### Connection test
-The captured IDs are submitted, the `CONNECTION_TEST` job runs, and the identity is verified.
+The captured IDs are submitted, the connection is verified instantly server-side, and the identity is marked Connected (or Degraded/Disconnected).
 
 </Steps>
 

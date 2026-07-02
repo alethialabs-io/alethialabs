@@ -9,6 +9,13 @@ When a user clicks "Plan" or "Apply", the platform transforms the Project's form
 
 <img src="/docs/diagrams/concepts/provisioning-pipeline.svg" alt="Provisioning Pipeline" />
 
+<Callout type="info">
+  The Project config can be authored by hand **or inferred from repos** — the "A" flow scans one or more
+  repos (monorepo-aware), infers the stack, and produces the same `ProjectFormData` this pipeline
+  consumes. See the [elench Architecture](/elench/architecture) page for the full repos → verified cluster
+  loop.
+</Callout>
+
 ## Stage 1: Form → Database
 
 The Project form in Console (or `alethia plan` in the CLI) calls `createProject()`, which inserts the configuration into normalized component tables:
@@ -19,7 +26,8 @@ The Project form in Console (or `alethia plan` in the CLI) calls `createProject(
 | `project_network` | CIDR block, provision_network flag, existing network_id |
 | `project_cluster` | K8s version, instance types, node min/max/desired, cluster_admins, provider_config |
 | `project_dns` | Enabled flag, zone_id, domain_name, WAF settings (in provider_config) |
-| `project_repositories` | Apps destination repo URL |
+| `project_repositories` | Apps destination (GitOps) repo URL |
+| `project_source_repos` | Scanned source repos (1:N) + detected services — used to generate app manifests |
 | `project_databases` | Engine, instance class, scaling config (per database) |
 | `project_caches` | Node type, cluster size (per cache) |
 | `project_queues` | Queue name, config (per queue) |
@@ -111,7 +119,9 @@ Terraform state is stored in S3-compatible storage. The backend key follows the 
 For DEPLOY jobs, `terraform apply` runs the plan. If a `plan_job_id` is linked, the cached plan artifact is downloaded and applied directly.
 
 ### Post-Apply
-After apply, the Runner extracts Terraform outputs (cluster endpoint, database endpoints, ARNs), configures kubeconfig via the provider, installs ArgoCD, and renders application templates. See [GitOps & ArgoCD](/concepts/gitops-argocd).
+After apply, the Runner extracts Terraform outputs (cluster endpoint, database endpoints, ARNs), configures kubeconfig via the provider, installs ArgoCD, and renders application templates (per cloud — see [Multi-cloud](/elench/multi-cloud)). It then **generates app manifests** for the detected services and scaffolds them into the GitOps repo — only when that repo has no manifests yet, so a bring-your-own repo is never overwritten. See [GitOps & ArgoCD](/concepts/gitops-argocd).
+
+Between `plan` and `apply` the [elench verification gate](/elench/engine-internals) runs (fail-closed) and seals a signed receipt.
 
 </Steps>
 

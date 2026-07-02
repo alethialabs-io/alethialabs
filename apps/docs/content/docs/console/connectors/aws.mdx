@@ -54,14 +54,16 @@ AWS integration uses a **Cross-Account IAM Role** with an External ID. The Runne
 
 ## Verification
 
-After submitting, Alethia queues a `CONNECTION_TEST` job:
+After submitting, Alethia verifies the connection **instantly, server-side** (no runner):
 
-1. A Runner assumes the role via `STS AssumeRole` with the External ID
-2. Calls `sts:GetCallerIdentity` to verify the assumed identity
-3. Discovers existing resources: VPCs, subnets, hosted zones, IAM users, security groups
-4. Caches discovered resources in `cloud_identities.credentials`
+1. The console assumes the role via `STS AssumeRole` with the External ID (using Alethia's platform creds)
+2. Calls `sts:GetCallerIdentity` to confirm the assumed identity (proof of access)
+3. Runs a small capability probe (representative reads) → the connection is `Connected`, or `Degraded`
+   when provisioning permissions are missing, or `Disconnected` when auth fails
 
-If verification fails, the error message explains what went wrong (e.g., trust policy misconfiguration, missing permissions).
+If verification fails, the error message explains what went wrong (e.g., trust policy misconfiguration,
+missing permissions). Existing resources (VPCs, subnets, …) are discovered separately by the
+server-side [asset inventory](/console/connectors/health-and-inventory), not during this probe.
 
 ## IAM Role Permissions
 

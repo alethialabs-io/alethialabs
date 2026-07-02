@@ -35,12 +35,14 @@ Provide:
 
 ## Verification
 
-Same as other providers — a `CONNECTION_TEST` job verifies the federated identity by:
+Same as other providers — Alethia verifies the federated identity **instantly, server-side** (no runner):
 
-1. Presenting an OIDC token to Azure
-2. Azure validates against the registered issuer/subject
-3. Returns an access token for Azure Resource Manager
-4. Runner discovers existing VNets, subnets, DNS zones
+1. The console presents an OIDC token to Azure
+2. Azure validates against the registered issuer/subject and returns an ARM access token
+3. A small ARM read confirms provisioning access → `Connected` / `Degraded` / `Disconnected`
+
+Existing VNets, subnets, and DNS zones are discovered separately by the server-side
+[asset inventory](/console/connectors/health-and-inventory).
 
 ## What's Stored
 

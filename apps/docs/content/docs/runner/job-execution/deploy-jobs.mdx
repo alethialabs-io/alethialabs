@@ -7,6 +7,16 @@ description: How Runner executes DEPLOY jobs — terraform apply, kubeconfig, an
 
 DEPLOY jobs apply the Terraform plan and install ArgoCD on the provisioned cluster.
 
+<Callout type="info">
+  **Brownfield attach.** A DEPLOY doesn't only create new infrastructure — it can attach to what you
+  **already have**. When the project config marks a component as "existing" (e.g. an existing VPC/VNet —
+  see [Reuse existing resources](/console/design-project/network#reuse-existing-resources)), the runner
+  passes the resource's id into the tofu template instead of creating it, and the template `data`-sources
+  the existing resource (and, for networks, resolves its subnets) so the rest of the graph wires into it.
+  The provision-vs-existing seam is a `count = var.provision_X ? 1 : 0` guard on the create path plus a
+  data source on the existing path. Today this covers networks on AWS/GCP/Azure.
+</Callout>
+
 ## Execution Flow
 
 <Steps>

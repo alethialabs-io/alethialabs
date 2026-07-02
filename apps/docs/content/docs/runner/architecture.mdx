@@ -25,6 +25,18 @@ runner start
 
 The poll loop runs on the main goroutine. The heartbeat runs as a background goroutine. Both share the Runner configuration.
 
+### Job types
+
+The dispatch switch (`internal/agent/runner.go`) routes each claimed job to its handler:
+
+| Job type | Handler | Does |
+|---|---|---|
+| `PLAN` / `DEPLOY` / `DESTROY` | `executePlan` / `executeDeploy` / … | OpenTofu plan/apply/destroy (+ the verify gate, ArgoCD, and manifest scaffold on deploy). |
+| `ANALYZE_REPO` | `executeAnalyzeRepo` | Clone + statically scan a repo into a `RepoDigest`. |
+| `DETECT_DRIFT` | `executeDriftDetection` | `tofu plan -refresh-only` → `drift.Analyze` → post a `Posture`. |
+| `AUDIT` | `executeAudit` | Run the elench verify engine over a **bring-your-own** plan or k8s manifests → post `verify_result`. Provisions nothing. |
+| `DEPLOY_RUNNER` / `UPDATE_RUNNER` / `DESTROY_RUNNER` | `executeDeployRunner` / … | Provision, update, or tear down a self-operated runner. |
+
 ## Configuration
 
 Runner receives its configuration via environment variables:
@@ -95,9 +107,9 @@ Runner and Alethia CLI both import from `packages/core/`:
 |---------|---------|
 | `provisioner/` | Bootstrap, deploy, destroy orchestration |
 | `terraform/` | Terraform CLI wrapper (init, plan, apply, destroy) |
-| `cloud/aws/` | AWS SDK operations (STS, resource discovery) |
-| `cloud/gcp/` | GCP SDK operations (WIF, resource discovery) |
-| `cloud/azure/` | Azure SDK operations (federated auth, resource discovery) |
+| `cloud/aws/` | AWS SDK for provisioning (STS AssumeRole, EKS kubeconfig, S3 state) |
+| `cloud/gcp/` | GCP Workload Identity Federation + kubeconfig |
+| `cloud/azure/` | Azure federated auth + kubeconfig |
 | `argocd/` | ArgoCD installation and configuration |
 | `helm/` | Helm chart operations |
 | `git/` | Git clone, branch, commit, push |

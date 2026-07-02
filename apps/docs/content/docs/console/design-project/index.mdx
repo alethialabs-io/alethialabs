@@ -19,7 +19,9 @@ The Provider Ribbon sits at the top of the form and controls three things:
 
 2. **Region Selector** — populated with the selected provider's available regions, grouped by geography (US, Europe, Asia Pacific, etc.).
 
-3. **Resource Refresh** — a button to trigger a `FETCH_RESOURCES` job that discovers existing cloud resources (VPCs, subnets, hosted zones, IAM users). Results are cached in the `cloud_identities.credentials` JSONB field.
+3. **Existing resources** — VPCs, subnets, and other resources you can reuse come from Alethia's
+   server-side [asset inventory](/console/connectors/health-and-inventory), which stays current
+   automatically (event-driven + a reconciliation sweep). There's no manual refresh.
 
 When the Cloud Identity changes (e.g., switching from an AWS account to a GCP project), the entire form adapts. See [Cloud Provider Abstraction](/concepts/cloud-abstraction) for how this works.
 

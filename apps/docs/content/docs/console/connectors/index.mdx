@@ -45,7 +45,7 @@ Cloud connections use the platform's [zero-credential model](/concepts/security)
   <Card title="Azure" href="/console/connectors/azure">Federated Identity via Entra ID</Card>
 </Cards>
 
-After connecting, Alethia queues a `CONNECTION_TEST` job to verify the credentials and discover existing resources (VPCs, subnets, DNS zones). See [Job Queue Pattern](/concepts/job-queue).
+After connecting, Alethia verifies the credentials **instantly, server-side** (an auth + provisioning-permission probe — no runner, no job) and marks the connection `Connected`, `Degraded`, or `Disconnected`. Existing resources (VPCs, subnets, DNS zones) are discovered + kept fresh by the server-side, event-driven asset inventory. See [Connection health & inventory](/console/connectors/health-and-inventory).
 
 ## Git Provider Connections
 
