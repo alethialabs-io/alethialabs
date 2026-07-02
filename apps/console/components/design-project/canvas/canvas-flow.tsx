@@ -5,7 +5,6 @@
 import {
 	Background,
 	BackgroundVariant,
-	Controls,
 	ReactFlow,
 	type EdgeTypes,
 	type NodeTypes,
@@ -53,11 +52,25 @@ export function CanvasFlow() {
 	const edges = useCanvasStore((s) => s.edges);
 	const onNodesChange = useCanvasStore((s) => s.onNodesChange);
 	const openInspector = useCanvasStore((s) => s.openInspector);
+	const showConnections = useCanvasStore((s) => s.showConnections);
+	const hiddenKinds = useCanvasStore((s) => s.hiddenKinds);
+
+	// Visibility layers hide whole node groups; connections toggle hides all edges.
+	// Edges to/from a hidden node are dropped so none dangle. The project root is the graph's
+	// data anchor (name/region/core identity) but is never drawn — it's edited via the toolbar's
+	// Project settings button instead.
+	const visibleNodes = nodes.filter(
+		(n) => n.data.kind !== "project" && !hiddenKinds.includes(n.data.kind),
+	);
+	const visibleIds = new Set(visibleNodes.map((n) => n.id));
+	const visibleEdges = showConnections
+		? edges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
+		: [];
 
 	return (
 		<ReactFlow<CanvasNode>
-			nodes={nodes}
-			edges={edges}
+			nodes={visibleNodes}
+			edges={visibleEdges}
 			onNodesChange={onNodesChange}
 			nodeTypes={nodeTypes}
 			edgeTypes={edgeTypes}
@@ -77,7 +90,6 @@ export function CanvasFlow() {
 				size={1}
 				color="var(--border, #e5e5e5)"
 			/>
-			<Controls showInteractive={false} className="!rounded-none" />
 		</ReactFlow>
 	);
 }

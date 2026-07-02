@@ -3,13 +3,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
-import { Plus, Sparkles } from "lucide-react";
+import { motion } from "motion/react";
+import { Plus, Settings, Sparkles } from "lucide-react";
+import { cn } from "@repo/ui/utils";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
 	createProject,
-	destroyProject,
 	provisionProject,
 	type CreateProjectInput,
 } from "@/app/server/actions/projects";
@@ -27,18 +28,18 @@ import {
 	DialogTitle,
 } from "@repo/ui/dialog";
 import { useAssistantStore } from "@/lib/stores/use-assistant-store";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { orgHref, projectHref } from "@/lib/routing";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
 import { SourceReposCard } from "../source-repos-card";
 import { CanvasCommandPalette } from "./canvas-command-palette";
 import { CanvasControls } from "./canvas-controls";
+import { CanvasDock, useDockState } from "./canvas-dock";
 import { CanvasFlow } from "./canvas-flow";
 import { CostPanel } from "./cost-panel";
 import { PendingChangesBar } from "./pending-changes-bar";
 import { graphToForm } from "./graph/graph-to-form";
-import { NodeInspector } from "./node-inspector";
 import { NodePalette } from "./node-palette";
 
 interface DesignProjectCanvasProps {
@@ -48,7 +49,10 @@ interface DesignProjectCanvasProps {
 	/** Edit mode: persist + provision/destroy this live project's active environment.
 	 * Absent in the create flow (Deploy creates a new project instead). */
 	projectId?: string;
-	envName?: string;
+	environmentId?: string;
+	/** When true the docked panel (inspector + assistant) is owned by the project shell, so the
+	 * board renders alone. When false (the standalone create flow) the board renders its own dock. */
+	dockInShell?: boolean;
 }
 
 /** The canvas editor surface (inside its own ReactFlowProvider). */
@@ -64,7 +68,8 @@ function CanvasInner({
 	cloudIdentities,
 	onToggleForm,
 	projectId,
-	envName,
+	environmentId,
+	dockInShell,
 }: DesignProjectCanvasProps) {
 	const router = useRouter();
 	const orgSlug = useActiveOrgSlug();
@@ -79,6 +84,33 @@ function CanvasInner({
 	const undo = useCanvasStore((s) => s.undo);
 	const redo = useCanvasStore((s) => s.redo);
 	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
+
+	// The standalone (create-flow) dock — the project shell owns it otherwise (`dockInShell`).
+	const dock = useDockState(true, !!projectId);
+
+	/** Open the assistant, closing the inspector — they share the single docked region. */
+	const openAssistantExclusive = useCallback(() => {
+		openInspector(null);
+		openAssistant(true);
+	}, [openInspector, openAssistant]);
+
+	/** Open a node's inspector, closing the assistant. */
+	const openInspectorExclusive = useCallback(
+		(id: string) => {
+			openAssistant(false);
+			openInspector(id);
+		},
+		[openAssistant, openInspector],
+	);
+
+	// Shortcut hints render with OS-correct modifiers (⌘ on macOS, Ctrl elsewhere). The key
+	// handlers themselves stay OS-agnostic (`metaKey || ctrlKey`) — only the labels differ.
+	const shortcuts = useMemo(() => {
+		const isMac =
+			typeof navigator !== "undefined" &&
+			/Mac|iP(hone|ad|od)/.test(navigator.platform);
+		return buildShortcuts(isMac);
+	}, []);
 
 	const handleSave = useCallback(async () => {
 		const nodes = useCanvasStore.getState().nodes;
@@ -119,14 +151,18 @@ function CanvasInner({
 		}
 		setDeploying(true);
 		try {
-			// Persist + provision the ACTIVE environment (config is environment-scoped).
-			const environmentId = await resolveActiveEnvironmentId(projectId, envName);
-			await applyStagedChanges(
+			// Persist + provision the ACTIVE environment (config is environment-scoped). Re-resolve
+			// through the server so a stale/absent id still lands on the project's default env.
+			const activeEnvId = await resolveActiveEnvironmentId(
 				projectId,
 				environmentId,
+			);
+			await applyStagedChanges(
+				projectId,
+				activeEnvId,
 				parsed.data as unknown as CreateProjectInput,
 			);
-			await provisionProject(projectId, undefined, undefined, environmentId);
+			await provisionProject(projectId, undefined, undefined, activeEnvId);
 			useCanvasStore.getState().commitBaseline();
 			toast.success("Deploy queued");
 		} catch (e) {
@@ -134,30 +170,21 @@ function CanvasInner({
 		} finally {
 			setDeploying(false);
 		}
-	}, [projectId, envName, handleSave]);
-
-	/** Edit mode: queue a DESTROY job for the active environment. */
-	const handleDestroy = useCallback(async () => {
-		if (!projectId) return;
-		try {
-			const environmentId = await resolveActiveEnvironmentId(projectId, envName);
-			await destroyProject(projectId, environmentId);
-			toast.success("Destroy queued");
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Failed to destroy");
-		}
-	}, [projectId, envName]);
+	}, [projectId, environmentId, handleSave]);
 
 	/** Edit mode: clear the active environment's staged changes (the Discard action). */
 	const handleDiscardStaged = useCallback(async () => {
 		if (!projectId) return;
 		try {
-			const environmentId = await resolveActiveEnvironmentId(projectId, envName);
-			await discardStagedChanges(projectId, environmentId);
+			const activeEnvId = await resolveActiveEnvironmentId(
+				projectId,
+				environmentId,
+			);
+			await discardStagedChanges(projectId, activeEnvId);
 		} catch {
 			// non-fatal — the canvas store already reverted; the durable rows just persist.
 		}
-	}, [projectId, envName]);
+	}, [projectId, environmentId]);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -183,6 +210,11 @@ function CanvasInner({
 				if (selectedIds.length) duplicateNodes(selectedIds);
 				return;
 			}
+			if (mod && e.key.toLowerCase() === "i") {
+				e.preventDefault();
+				if (projectId) openAssistantExclusive();
+				return;
+			}
 			const t = e.target as HTMLElement | null;
 			const typing =
 				!!t &&
@@ -198,23 +230,52 @@ function CanvasInner({
 				setShortcutsOpen((o) => !o);
 				return;
 			}
-			if (e.key === "Enter" && selectedIds[0]) openInspector(selectedIds[0]);
+			if (e.key === "Enter" && selectedIds[0])
+				openInspectorExclusive(selectedIds[0]);
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [handleSave, selectedIds, openInspector, undo, redo, duplicateNodes]);
+	}, [
+		handleSave,
+		selectedIds,
+		openInspectorExclusive,
+		openAssistantExclusive,
+		projectId,
+		undo,
+		redo,
+		duplicateNodes,
+	]);
 
-	return (
-		<div className="relative h-full min-h-[480px] w-full">
-			<div className="h-full">
+	const boardContent = (
+		<>
+			{/* Keyed by the active environment so switching envs (picker / Shift+Tab) crossfades
+			    the canvas instead of snapping to the new env's design. */}
+			<motion.div
+				key={environmentId ?? "default"}
+				initial={{ opacity: 0 }}
+				animate={{ opacity: 1 }}
+				transition={{ duration: 0.15 }}
+				className="h-full"
+			>
 				<CanvasFlow />
-			</div>
+			</motion.div>
 
 			{/* Bottom-left: scanned source repos + monorepo services (hidden when none). */}
 			<SourceReposCard />
 
-			{/* Top-right: add a service + ask AI */}
+			{/* Top-right: project settings + add a service + ask AI */}
 			<div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					className="h-8 w-8"
+					onClick={() => openInspectorExclusive(PROJECT_NODE_ID)}
+					aria-label="Project settings"
+					title="Project settings"
+				>
+					<Settings className="h-4 w-4" />
+				</Button>
 				<Button
 					type="button"
 					size="sm"
@@ -224,26 +285,27 @@ function CanvasInner({
 					<Plus className="mr-1 h-3.5 w-3.5" />
 					Add
 				</Button>
-				<Button
-					type="button"
-					variant="outline"
-					size="sm"
-					className="h-8 text-xs"
-					onClick={() => openAssistant(true)}
-				>
-					<Sparkles className="mr-1 h-3.5 w-3.5" />
-					AI
-				</Button>
+				{projectId && (
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						className="h-8 text-xs"
+						onClick={openAssistantExclusive}
+					>
+						<Sparkles className="mr-1 h-3.5 w-3.5" />
+						AI
+					</Button>
+				)}
 			</div>
 
 			{/* Bottom-left: settings / zoom / fit / undo-redo / layers */}
 			<CanvasControls />
 
-			{/* Bottom-center: staged changes → Deploy / Discard / Destroy */}
+			{/* Bottom-center: staged changes → Deploy / Discard (Destroy now lives in Project settings) */}
 			<PendingChangesBar
 				onDeploy={projectId ? handleDeploy : handleSave}
 				deploying={deploying}
-				onDestroy={projectId ? handleDestroy : undefined}
 				onDiscard={projectId ? () => void handleDiscardStaged() : undefined}
 			/>
 
@@ -256,16 +318,14 @@ function CanvasInner({
 				onOpenChange={setPaletteOpen}
 				identities={cloudIdentities}
 			/>
-			<NodeInspector identities={cloudIdentities} />
 			<CanvasCommandPalette
 				open={cmdOpen}
 				onOpenChange={setCmdOpen}
 				onSave={handleSave}
 				onToggleView={onToggleForm}
 				onFitView={() => fitView({ padding: 0.3 })}
-				onAskAi={() => openAssistant(true)}
+				onAskAi={openAssistantExclusive}
 			/>
-
 
 			<Dialog open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
 				<DialogContent className="sm:max-w-sm">
@@ -273,7 +333,7 @@ function CanvasInner({
 						<DialogTitle className="text-base">Keyboard shortcuts</DialogTitle>
 					</DialogHeader>
 					<div className="space-y-1.5">
-						{SHORTCUTS.map((s) => (
+						{shortcuts.map((s) => (
 							<div
 								key={s.label}
 								className="flex items-center justify-between text-sm"
@@ -287,17 +347,52 @@ function CanvasInner({
 					</div>
 				</DialogContent>
 			</Dialog>
+		</>
+	);
+
+	// In the project shell the dock (inspector + persistent assistant) is rendered one level up, so
+	// the board renders alone. The standalone create flow renders its own dock beside the board.
+	if (dockInShell)
+		return (
+			<div className="relative h-full min-h-[480px] w-full">{boardContent}</div>
+		);
+
+	return (
+		<div className="flex h-full min-h-[480px] w-full">
+			<div
+				className={cn(
+					"relative min-h-[480px] min-w-0 flex-1",
+					dock && "border-r border-border",
+				)}
+			>
+				{boardContent}
+			</div>
+			<CanvasDock
+				dock={dock}
+				projectId={projectId}
+				identities={cloudIdentities}
+			/>
 		</div>
 	);
 }
 
-const SHORTCUTS: { label: string; keys: string }[] = [
-	{ label: "Command palette", keys: "⌘K" },
-	{ label: "Add component", keys: "A" },
-	{ label: "Open inspector", keys: "Enter" },
-	{ label: "Duplicate selection", keys: "⌘D" },
-	{ label: "Delete selection", keys: "Del" },
-	{ label: "Undo / Redo", keys: "⌘Z / ⇧⌘Z" },
-	{ label: "Save project", keys: "⌘S" },
-	{ label: "Shortcuts", keys: "?" },
-];
+/** The shortcut hint rows, with OS-correct modifier glyphs (⌘ on macOS, `Ctrl` elsewhere). */
+function buildShortcuts(isMac: boolean): { label: string; keys: string }[] {
+	const mod = isMac ? "⌘" : "Ctrl";
+	const j = isMac ? "" : "+"; // "⌘K" on macOS vs "Ctrl+K" elsewhere
+	return [
+		{ label: "Command palette", keys: `${mod}${j}K` },
+		{ label: "Add component", keys: "A" },
+		{ label: "Ask AI", keys: `${mod}${j}I` },
+		{ label: "Open inspector", keys: "Enter" },
+		{ label: "Duplicate selection", keys: `${mod}${j}D` },
+		{ label: "Delete selection", keys: "Del" },
+		{
+			label: "Undo / Redo",
+			keys: isMac ? "⌘Z / ⇧⌘Z" : "Ctrl+Z / Ctrl+Shift+Z",
+		},
+		{ label: "Switch environment", keys: isMac ? "⇧⇥" : "Shift+Tab" },
+		{ label: "Save project", keys: `${mod}${j}S` },
+		{ label: "Shortcuts", keys: "?" },
+	];
+}

@@ -81,6 +81,105 @@ function deriveEdges(nodes: CanvasNode[]): CanvasEdge[] {
 	return edges;
 }
 
+/** Approximate node footprint used by overlap repair + relayout (px). */
+const NODE_W = 240;
+const NODE_H = 130;
+
+/**
+ * Deterministic tidy layout by kind — mirrors formToGraph's grid so "Reset canvas"
+ * returns a readable arrangement without destroying any nodes/config. Project sits up
+ * top; singletons in an infrastructure row; array kinds stack in rows below.
+ */
+function layoutByKind(nodes: CanvasNode[]): CanvasNode[] {
+	const singletonRow: NodeKind[] = ["network", "cluster", "dns", "repositories"];
+	const arrayRows: NodeKind[] = ["database", "cache", "queue", "topic", "nosql", "secret"];
+	const counts = new Map<NodeKind, number>();
+	return nodes.map((n) => {
+		const kind = n.data.kind;
+		if (kind === "project") return { ...n, position: { x: 260, y: 0 } };
+		const si = singletonRow.indexOf(kind);
+		if (si !== -1) return { ...n, position: { x: 60 + si * 220, y: 180 } };
+		const ri = arrayRows.indexOf(kind);
+		if (ri !== -1) {
+			const i = counts.get(kind) ?? 0;
+			counts.set(kind, i + 1);
+			return { ...n, position: { x: 120 + i * 220, y: 340 + ri * 130 } };
+		}
+		// Unknown kinds (e.g. future storage) flow into a trailing grid.
+		const i = counts.get(kind) ?? 0;
+		counts.set(kind, i + 1);
+		return { ...n, position: { x: 120 + i * 220, y: 340 + arrayRows.length * 130 } };
+	});
+}
+
+/** Push apart any nodes whose footprints overlap (keeps the project root anchored). */
+function spreadOverlaps(nodes: CanvasNode[]): CanvasNode[] {
+	const placed: CanvasNode[] = [];
+	const overlaps = (a: CanvasNode, b: CanvasNode) =>
+		Math.abs(a.position.x - b.position.x) < NODE_W &&
+		Math.abs(a.position.y - b.position.y) < NODE_H;
+	for (const node of nodes) {
+		if (node.id === PROJECT_NODE_ID) {
+			placed.push(node);
+			continue;
+		}
+		let pos = { ...node.position };
+		let guard = 0;
+		while (placed.some((p) => overlaps({ ...node, position: pos }, p)) && guard < 200) {
+			pos = { x: pos.x, y: pos.y + NODE_H + 20 };
+			guard++;
+		}
+		placed.push({ ...node, position: pos });
+	}
+	return placed;
+}
+
+/** A staged difference between the canvas (desired) and the saved baseline. */
+export interface PendingChange {
+	id: string;
+	op: "new" | "modified" | "removed";
+	kind: NodeKind;
+	name: string;
+}
+
+/** Human label for a node from its config (resource name, else project name, else kind). */
+function nodeName(n: CanvasNode): string {
+	return (
+		(n.data.config.name as string) ||
+		(n.data.config.project_name as string) ||
+		n.data.kind
+	);
+}
+
+/**
+ * Diff the desired canvas against the saved baseline → the staged-change list shown in
+ * the Pending Changes bar. The project root is excluded (it isn't a provisionable add).
+ */
+export function diffNodes(baseline: CanvasNode[], nodes: CanvasNode[]): PendingChange[] {
+	const base = new Map(baseline.map((n) => [n.id, n]));
+	const cur = new Map(nodes.map((n) => [n.id, n]));
+	const changes: PendingChange[] = [];
+	for (const n of nodes) {
+		if (n.id === PROJECT_NODE_ID) continue;
+		const prev = base.get(n.id);
+		if (!prev) {
+			changes.push({ id: n.id, op: "new", kind: n.data.kind, name: nodeName(n) });
+		} else if (
+			JSON.stringify(prev.data.config) !== JSON.stringify(n.data.config) ||
+			prev.data.cloud_identity_id !== n.data.cloud_identity_id
+		) {
+			changes.push({ id: n.id, op: "modified", kind: n.data.kind, name: nodeName(n) });
+		}
+	}
+	for (const n of baseline) {
+		if (n.id === PROJECT_NODE_ID) continue;
+		if (!cur.has(n.id)) {
+			changes.push({ id: n.id, op: "removed", kind: n.data.kind, name: nodeName(n) });
+		}
+	}
+	return changes;
+}
+
 /** A name unique among existing names of the same kind. */
 function uniqueName(base: string, taken: Set<string>): string {
 	if (!taken.has(base)) return base;
@@ -98,6 +197,12 @@ interface CanvasStore {
 	/** Undo/redo snapshot stacks (node sets; edges re-derived on restore). */
 	past: CanvasNode[][];
 	future: CanvasNode[][];
+	/** Last-saved/loaded snapshot the Pending Changes bar diffs against. */
+	baseline: CanvasNode[];
+	/** Revert the canvas to the baseline (discard all staged changes). */
+	discardChanges: () => void;
+	/** Mark the current canvas as the new saved baseline (after a successful deploy). */
+	commitBaseline: () => void;
 	/** Verified cloud identities (server data) — seeded for label/provider lookup. */
 	identities: CloudIdentityOption[];
 	setIdentities: (identities: CloudIdentityOption[]) => void;
@@ -125,6 +230,15 @@ interface CanvasStore {
 	undo: () => void;
 	redo: () => void;
 	reset: () => void;
+
+	/** Canvas view prefs (ephemeral UI state, not persisted). */
+	showConnections: boolean;
+	toggleConnections: () => void;
+	hiddenKinds: NodeKind[];
+	toggleKindVisibility: (kind: NodeKind) => void;
+	/** Non-destructive tidy actions for the canvas-settings popover. */
+	repairOverlaps: () => void;
+	relayout: () => void;
 
 	getNode: (id: string) => CanvasNode | undefined;
 	getCoreIdentity: () => string | null;
@@ -156,7 +270,10 @@ export const useCanvasStore = create<CanvasStore>()(
 			dirty: false,
 			past: [],
 			future: [],
+			baseline: [makeProjectNode()],
 			identities: [],
+			showConnections: true,
+			hiddenKinds: [],
 
 			setIdentities: (identities) => set({ identities }),
 
@@ -192,6 +309,8 @@ export const useCanvasStore = create<CanvasStore>()(
 					dirty: false,
 					past: [],
 					future: [],
+					// The loaded graph is the saved state → it becomes the diff baseline.
+					baseline: structuredClone(withRoot),
 				});
 			},
 
@@ -400,7 +519,44 @@ export const useCanvasStore = create<CanvasStore>()(
 					dirty: false,
 					past: [],
 					future: [],
+					baseline: [makeProjectNode()],
 				}),
+
+			discardChanges: () => {
+				const baseline = structuredClone(get().baseline);
+				set({
+					nodes: baseline,
+					edges: deriveEdges(baseline),
+					selectedIds: [],
+					inspectorNodeId: null,
+					dirty: false,
+					past: [],
+					future: [],
+				});
+			},
+
+			commitBaseline: () => set((s) => ({ baseline: structuredClone(s.nodes), dirty: false })),
+
+			toggleConnections: () => set((s) => ({ showConnections: !s.showConnections })),
+
+			toggleKindVisibility: (kind) =>
+				set((s) => ({
+					hiddenKinds: s.hiddenKinds.includes(kind)
+						? s.hiddenKinds.filter((k) => k !== kind)
+						: [...s.hiddenKinds, kind],
+				})),
+
+			repairOverlaps: () => {
+				get().commit();
+				const next = spreadOverlaps(get().nodes);
+				set({ nodes: next, dirty: true });
+			},
+
+			relayout: () => {
+				get().commit();
+				const next = layoutByKind(get().nodes);
+				set({ nodes: next, dirty: true });
+			},
 
 			getNode: (id) => get().nodes.find((n) => n.id === id),
 			getCoreIdentity: () => coreIdentity(get().nodes),
@@ -423,8 +579,13 @@ export const useCanvasStore = create<CanvasStore>()(
 			name: "design-project-canvas-draft",
 			storage: createJSONStorage(() => sessionStorage),
 			version: 1,
-			// Persist only the graph; identities are server data, history is ephemeral.
-			partialize: (state) => ({ nodes: state.nodes, edges: state.edges }),
+			// Persist the graph + baseline (so the pending-changes diff survives reload);
+			// identities are server data and history is ephemeral.
+			partialize: (state) => ({
+				nodes: state.nodes,
+				edges: state.edges,
+				baseline: state.baseline,
+			}),
 		},
 	),
 );
