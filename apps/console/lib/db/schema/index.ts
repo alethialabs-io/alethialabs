@@ -14,6 +14,7 @@ export * from "./cloud-inventory";
 export * from "./projects";
 export * from "./project-components";
 export * from "./project-environments";
+export * from "./promotions";
 export * from "./drift";
 export * from "./runners";
 export * from "./fleet";

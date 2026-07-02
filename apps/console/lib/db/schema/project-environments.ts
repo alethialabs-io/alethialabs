@@ -13,6 +13,7 @@ import { sql } from "drizzle-orm";
 import {
 	boolean,
 	index,
+	integer,
 	pgTable,
 	text,
 	timestamp,
@@ -43,6 +44,17 @@ export const projectEnvironments = pgTable(
 		is_default: boolean().default(false).notNull(),
 		// NULL inherits projects.region.
 		region: text(),
+		// --- Day-2 governance (Phase 2) ---------------------------------------------------------
+		// Opt-in: on detected cloud drift, auto-queue a DEPLOY of the last-deployed design to restore
+		// state. Production is always approval-gated regardless of this flag (see maybeAutoHeal).
+		auto_heal: boolean().default(false).notNull(),
+		last_auto_heal_at: timestamp({ withTimezone: true }),
+		// Consecutive auto-heal deploy failures; drives backoff + the circuit breaker.
+		auto_heal_failures: integer().default(0).notNull(),
+		// Fingerprint of the config_snapshot last SUCCESSFULLY deployed (set by finalizeDeployment).
+		// Powers the predecessor-healthy gate, the soak timer, and config-vs-desired divergence.
+		deployed_config_hash: text(),
+		last_deployed_at: timestamp({ withTimezone: true }),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
