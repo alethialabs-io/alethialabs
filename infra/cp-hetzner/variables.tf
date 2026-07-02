@@ -29,6 +29,27 @@ variable "domain" {
   default     = "alethialabs.io"
 }
 
+variable "email_forward_to" {
+  # Destination inbox for Cloudflare Email Routing (infra/cp-hetzner/email-routing.tf) — only
+  # used when manage_email_routing = true. The live routing was bootstrapped out-of-band (the
+  # cp-hetzner state is empty), so it stays "" and the routing resources are gated off until
+  # the existing routing is `tofu import`-ed post-launch (see README). Set the real inbox in
+  # the gitignored terraform.tfvars / CI when flipping manage_email_routing on.
+  description = "Inbox that inbound alethialabs.io mail is forwarded to (when manage_email_routing)."
+  type        = string
+  default     = ""
+}
+
+variable "manage_email_routing" {
+  # false (default): Terraform does NOT manage the Cloudflare Email Routing resources. They were
+  # bootstrapped out-of-band and are live; the cp-hetzner state is empty, so a fresh apply would
+  # collide ("already exists") and fail the box provision. Flip true only AFTER `tofu import`-ing
+  # the existing settings/address/rules/catch-all into state (see README).
+  description = "Whether Terraform manages the Cloudflare Email Routing resources in email-routing.tf."
+  type        = bool
+  default     = false
+}
+
 variable "ssh_public_key" {
   description = "SSH public key authorized on the server (CI deploy key)."
   type        = string

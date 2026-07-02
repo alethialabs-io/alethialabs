@@ -1,0 +1,14 @@
+{
+  "name": "alethia-gmail-inbox-setup",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "One-off Gmail API setup for the alethialabs.io shared inbox (labels, filters, SES send-as). Isolated from the pnpm workspace on purpose.",
+  "scripts": {
+    "setup": "node setup.mjs"
+  },
+  "dependencies": {
+    "@google-cloud/local-auth": "^3.0.1",
+    "googleapis": "^144.0.0"
+  }
+}

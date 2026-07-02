@@ -28,6 +28,10 @@ locals {
     "arn:aws:ses:${local.region}:${local.account_id}:configuration-set/alethia-${k}"
   ]
 
+  # Apex send-as identity (created by the main stack) — target of the SMTP user's
+  # scoped SendRawEmail policy (Gmail "Send mail as" for support@/sales@/…).
+  apex_identity_arn = "arn:aws:ses:${local.region}:${local.account_id}:identity/${var.domain}"
+
   oidc_provider_arn = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : var.oidc_provider_arn
 }
 
