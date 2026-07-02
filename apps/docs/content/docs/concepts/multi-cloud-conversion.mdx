@@ -9,6 +9,12 @@ Users can duplicate an existing Project and target a different cloud provider. T
 
 <img src="/docs/diagrams/concepts/multi-cloud-conversion.svg" alt="Multi-Cloud Conversion" />
 
+<Callout type="info">
+  A converted project doesn't just *provision* on the new cloud — it **deploys apps** there too. The
+  ArgoCD/GitOps layer is cloud-agnostic (per-cloud workload identity), so GCP and Azure get a working
+  external-dns + app-sync just like AWS. See [Multi-cloud GitOps seam](/elench/multi-cloud).
+</Callout>
+
 ## When Conversion Happens
 
 1. User clicks **"Duplicate & Edit"** on an existing Project

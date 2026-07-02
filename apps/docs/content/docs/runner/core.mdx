@@ -36,6 +36,9 @@ RunDeployV2(projectConfig, provider, planFile, installerConfig, apiClient, dryRu
   → Validate dependencies (terraform, kubectl, helm, cloud CLIs)
   → Download templates from embedded assets
   → Generate terraform.tfvars from ProjectConfig
+      · brownfield: for a component marked "existing" (e.g. !ProvisionNetwork + NetworkID), inject the
+        existing resource id as a tfvar (vpc_id / network_id / vnet_id) so the template attaches to it
+        instead of creating one; AWS additionally resolves the VPC's subnets here (EC2 API)
   → terraform init (with S3 backend)
   → terraform plan (if no planFile) or terraform apply (if planFile)
   → Infracost analysis (optional)
@@ -71,10 +74,12 @@ type CloudProvider interface {
 }
 ```
 
-Three implementations:
-- `aws_provider.go` — AWS SDK (STS, EC2, IAM, Route53, S3)
-- `gcp_provider.go` — GCP SDK (Compute, DNS)
-- `azure_provider.go` — Azure SDK (Compute, DNS)
+Three implementations (provisioning-only — the runner no longer lists cloud resources; the console
+maintains the [asset inventory](/console/connectors/health-and-inventory) server-side):
+- `aws_provider.go` — AWS SDK: STS (AssumeRole), EKS (post-provision kubeconfig), S3 (state), Access
+  Analyzer (verify gate), plus an EC2 subnet lookup for reusing an existing VPC.
+- `gcp_provider.go` — GCP Workload Identity Federation + kubeconfig.
+- `azure_provider.go` — Azure federated identity + kubeconfig (`azidentity`).
 
 Plus `s3_backend.go` — S3-compatible storage client for Terraform state and plan artifacts.
 

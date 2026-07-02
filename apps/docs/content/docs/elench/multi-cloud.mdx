@@ -1,0 +1,88 @@
+---
+title: Multi-cloud
+description: How AWS, GCP and Azure all deploy apps — the cloud-agnostic GitOps seam, per-cloud workload identity, manifest generation, and the checklist for adding a cloud.
+---
+
+# Multi-cloud GitOps seam
+
+<Community />
+
+The provisioner was already ~95% cloud-agnostic — the `CloudProvider` interface, `ProviderTfvars`, and
+`ConfigureKubeconfig` all work for AWS, GCP and Azure. The **one** thing keeping GCP/Azure from actually
+*deploying apps* was the GitOps seam: `argocd.BuildFromOutputs` + the ArgoCD templates were
+AWS/IRSA/EKS-hardcoded. That seam is now `Provider`-discriminated, so all three clouds render a working
+ArgoCD layer.
+
+## Cloud-agnostic InfraFacts
+
+`packages/core/argocd/infra_facts.go` carries **common facts** (cluster name/endpoint, region, DNS) plus a
+**per-cloud workload-identity block**, and `BuildFromOutputs` extracts the right outputs per provider:
+
+| Provider | Cluster output | Workload identity | external-dns SA annotation |
+|---|---|---|---|
+| AWS | `eks_cluster_name` | IRSA role ARN | `eks.amazonaws.com/role-arn` |
+| GCP | `gke_cluster_name` | Workload Identity SA email (`external_dns_service_account`) | `iam.gke.io/gcp-service-account` |
+| Azure | `aks_cluster_name` | Federated Identity client id (`external_dns_client_id`) | `azure.workload.identity/client-id` |
+
+`InfraFacts.DNSProvider()` maps the cloud to the external-dns `provider` value (`aws` / `google` /
+`azure`). The ArgoCD templates (`infra/templates/argocd/*.yaml`) switch on `.Provider`; AWS-only apps
+(`aws-load-balancer-controller`, `karpenter`, `storage-class-gp3`) are guarded so they **render empty →
+are skipped** on other clouds. `render_test.go` pins AWS-unchanged and asserts the GCP/Azure output.
+
+## Per-cloud workload identity, keyless
+
+Each cloud binds the in-cluster `external-dns` service account to a cloud identity with **no static key**:
+
+- **GCP** — `infra/templates/project/gcp/workload-identity.tf`: a Google service account with `roles/dns.admin`,
+  bound to `external-dns/external-dns-sa` via GKE Workload Identity; exported as `external_dns_service_account`.
+- **Azure** — `azure/workload-identity.tf`: a user-assigned managed identity + a **federated credential** on
+  the AKS OIDC issuer (`oidc_issuer_url` output added to the AKS module), `DNS Zone Contributor`; exported as
+  `external_dns_client_id`.
+
+Both templates are `tofu validate`-clean.
+
+## Manifest generation (the "generate" apps path)
+
+`packages/core/manifests` renders a hardened Deployment/Service/Ingress per detected service
+(`FromServices` → `WriteManifests`): non-root, `drop: [ALL]`, read-only rootfs, resource limits, no
+privilege escalation — so the generated manifests **pass the k8s [audit](/elench/control-catalog) by
+construction**. At deploy, `RunDeployV2` commits them to the GitOps repo **only when the repo has no
+manifests yet** (`hasManifests` guard):
+
+<Callout type="warn">
+  **Never clobbers bring-your-own.** Generation is safe-by-construction: it writes to an *empty* apps repo
+  or does nothing, and is **non-fatal** — a git edge case warns, it never fails an otherwise-healthy
+  cluster. "Bring your own manifests" simply means ArgoCD points at a repo that already has them.
+</Callout>
+
+## Adding a cloud
+
+The deploy flow itself never changes — a new cloud is five edits (mirrors
+`packages/core/cloud/README.md`):
+
+<Steps>
+<Step>
+### CloudProvider impl + factory case
+Add `<cloud>_provider.go` implementing the four-method interface and a `case` in `NewCloudProvider`.
+</Step>
+<Step>
+### Terraform template + outputs
+Provision a cluster + backing services + a **keyless** workload-identity binding for the external-dns KSA,
+exporting the identity. Validate with `tofu validate`.
+</Step>
+<Step>
+### Runner credential activation
+Teach the runner how to activate the cloud's credentials before `tofu` runs (AssumeRole / WIF / federated).
+</Step>
+<Step>
+### ArgoCD facts + templates
+Add a `BuildFromOutputs` case + the per-cloud block, and the branch in `external-dns.yaml` (provider value
++ SA annotation). Empty render = "not applicable".
+</Step>
+</Steps>
+
+<Callout type="info">
+  **Honest status.** The seam is green — `BuildFromOutputs` per-cloud unit tests, template render tests,
+  and `tofu validate` for the GCP/Azure workload-identity Terraform. The remaining proof is a real
+  GKE/AKS end-to-end run + a live apps-repo git push; only a live cluster/repo can validate those.
+</Callout>

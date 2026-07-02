@@ -22,8 +22,6 @@ Infrastructure provisioning is slow (minutes to hours) and must be reliable. A j
 
 | Type | Purpose | Triggered By |
 |------|---------|-------------|
-| `CONNECTION_TEST` | Verify cloud credentials, cache discovered resources | Connecting a cloud provider |
-| `FETCH_RESOURCES` | Refresh cached VPCs, subnets, hosted zones | Manual refresh in UI |
 | `PLAN` | Run `terraform plan` + optional Infracost analysis | Clicking "Plan" on a Project |
 | `DEPLOY` | Run `terraform apply` + install ArgoCD | Clicking "Apply" on a Project |
 | `DESTROY` | Run `terraform destroy` | Clicking "Destroy" on a Project |

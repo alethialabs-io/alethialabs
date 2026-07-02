@@ -1,0 +1,96 @@
+---
+title: Architecture
+description: The full system — repos to a verified GitOps Kubernetes cluster on your cloud. The "A" (infer-and-generate) and "B" (bring-your-own + audit) flows, stage by stage, and where the elench proof layer sits.
+---
+
+# Architecture
+
+<Community />
+
+Alethia is **one product**: connect your repos and get a **verified GitOps Kubernetes cluster on your own
+cloud**. Two operator modes — **managed** (Alethia's runner fleet assumes a role into your account) and
+**self** (a runner you run) — and two entry flows that share the same design surface, provisioner, and
+proof layer:
+
+- **"A" — infer & generate.** Scan repos → infer the stack → propose a project → provision the cluster +
+  backing services + ArgoCD → generate app manifests → GitOps deploy → **verify**.
+- **"B" — bring your own + audit.** Point at existing OpenTofu/Terraform or Kubernetes manifests →
+  **audit** them with the same engine → get a signed report.
+
+<Callout type="info">
+  **Core vs Enterprise.** The generate/provision **"A" flow is core** (open-source, self-hostable). The
+  **elench proof layer — verify · audit · drift · agent · MCP — is Enterprise.** This page is the map;
+  the proof-layer pages carry the <Enterprise /> badge.
+</Callout>
+
+## The "A" pipeline
+
+Each stage names its source-of-truth code so the docs stay honest to the implementation.
+
+```
+ repos ─▶ scan ─▶ infer + merge ─▶ propose ─▶ provision ─▶ generate ─▶ GitOps ─▶ VERIFY ─▶ day-2 drift
+   │       │           │             │           │            │          │          │           │
+ connect  Go       lib/scanner    canvas    RunDeployV2   manifests   ArgoCD    elench      DETECT_DRIFT
+ (1:N)   scanner   infer/          design    (tofu)       .FromServices Apps     gate +      → Posture
+         per-svc   to-project                                          (path .)  receipt     (loop)
+```
+
+1. **Connect repos (1:N, monorepo-aware).** `project_source_repos` (migration `0050`) holds every scanned
+   repo + its detected services.
+2. **Scan.** `packages/core/scanner` clones + statically reads a repo (never executes it) into a
+   `RepoDigest`, and detects per-directory **services** (Dockerfile / workspace manifests) — so a monorepo
+   yields several deployable services, not one blob.
+3. **Infer + merge.** `apps/console/lib/scanner/infer.ts` turns the digest into an `InferredStack` (LLM,
+   structured output); `to-project.ts` `mergeScansToFormData` folds **N repos / services** into one
+   guaranteed-valid `ProjectFormData` (union backing needs, de-duped names, one `source_repos` row/repo).
+4. **Propose / design.** The proposal seeds the canvas; the user reviews and edits before anything is
+   persisted.
+5. **Provision.** `packages/core/provisioner.RunDeployV2` runs OpenTofu, installs ArgoCD, and wires the
+   GitOps repo credentials.
+6. **Generate manifests.** `packages/core/manifests` renders hardened Deployment/Service/Ingress for each
+   detected service and scaffolds them into the GitOps repo — **only when that repo has no manifests
+   yet** (never clobbers a bring-your-own repo). See [Multi-cloud](/elench/multi-cloud).
+7. **GitOps.** ArgoCD's `apps` Application syncs the manifests repo (`path: .`, auto-sync).
+8. **Verify.** Between `tofu plan` and `tofu apply`, the [verification engine](/elench/engine-internals)
+   runs keyless / least-privilege / OIDC controls and seals a signed receipt — **fail-closed**.
+9. **Day-2 drift.** After apply, a scheduled `DETECT_DRIFT` job keeps re-checking (below).
+
+## The "B" pipeline — bring your own + audit
+
+The verification engine is **plan-agnostic**, so auditing infrastructure Alethia *didn't* generate needs
+no new controls:
+
+```
+ existing plan / manifests ─▶ AUDIT job ─▶ verify (same controls) ─▶ signed report ─▶ VerifyBlock
+```
+
+- **Terraform:** `verify.ParseCustomerPlan(planJSON)` → `Evaluate` — the same AWS/GCP/Azure controls.
+- **Kubernetes:** `verify.EvaluateManifests(yaml)` → the k8s [control set](/elench/control-catalog).
+- The `AUDIT` job (migration `0052`) runs on the runner (`executeAudit`) and posts the report to
+  `jobs.execution_metadata.verify_result`, surfaced by the existing `get_plan_result` tool + the
+  `VerifyBlock`. Queue it from the assistant (`audit_infrastructure` tool) or `queueAudit`.
+
+## The data model
+
+| Table / field | What it holds |
+|---|---|
+| `project_source_repos` (0050) | Scanned source repos (1:N) + detected services (JSONB). |
+| `environment_drift` (0051) | Latest day-2 `Posture` per environment. |
+| `jobs.job_type` | `ANALYZE_REPO` · `PLAN` · `DEPLOY` · `DESTROY` · `DETECT_DRIFT` · `AUDIT` · `*_RUNNER`. |
+| `jobs.execution_metadata` | `repo_digest` · `verify_result` (the signed report) · `drift_posture`. |
+
+## Where to go next
+
+<Cards>
+  <Card title="Multi-cloud GitOps seam" href="/elench/multi-cloud">
+    How AWS / GCP / Azure all deploy apps: cloud-agnostic InfraFacts, per-cloud workload identity, and
+    manifest generation.
+  </Card>
+  <Card title="Verification engine" href="/elench/engine-internals">
+    The Evaluate seam, the bring-your-own + manifest audit entry points, signed receipts, and the drift
+    loop.
+  </Card>
+  <Card title="Provisioning pipeline" href="/concepts/provisioning-pipeline">
+    The core form → snapshot → ProjectConfig → OpenTofu stages the "A" flow rides on.
+  </Card>
+</Cards>

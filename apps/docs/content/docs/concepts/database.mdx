@@ -276,7 +276,7 @@ Git credentials for the GitOps / app-deployment repos.
 | `user_id` | uuid (FK) | Owner |
 | `project_id` | uuid (FK) | Target Project |
 | `cloud_identity_id` | uuid (FK) | Cloud account for execution |
-| `job_type` | provision_job_type enum | CONNECTION_TEST, PLAN, DEPLOY, DEPLOY_RUNNER, etc. |
+| `job_type` | provision_job_type enum | PLAN, DEPLOY, DESTROY, DEPLOY_RUNNER, DETECT_DRIFT, etc. |
 | `status` | provision_job_status enum | QUEUED → SUCCESS/FAILED |
 | `runner_id` | uuid (FK → runners) | Assigned Runner |
 | `config_snapshot` | jsonb | Frozen Project config for the job |

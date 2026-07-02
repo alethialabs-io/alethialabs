@@ -36,12 +36,14 @@ Paste the WIF configuration JSON and click "Complete."
 
 ## Verification
 
-Alethia queues a `CONNECTION_TEST` job. The Runner:
+Alethia verifies the connection **instantly, server-side** (no runner):
 
-1. Presents an OIDC token to GCP's Security Token Service
-2. GCP validates the token against the registered issuer/subject
-3. Returns a short-lived GCP access token
-4. The Runner uses the access token to discover existing resources (VPC networks, subnets, DNS zones)
+1. The console presents an OIDC token to GCP's Security Token Service (Workload Identity Federation)
+2. GCP validates the token against the registered issuer/subject and returns a short-lived access token
+3. A small Compute read confirms provisioning access → `Connected` / `Degraded` / `Disconnected`
+
+Existing resources (VPC networks, subnets, DNS zones) are discovered separately by the server-side
+[asset inventory](/console/connectors/health-and-inventory).
 
 ## What's Stored
 

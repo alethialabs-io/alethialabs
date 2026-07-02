@@ -45,13 +45,48 @@ Provisions a new network from scratch. Fields:
 
 ### Use Existing Network
 
-Select from existing networks discovered by the resource refresh job. The dropdown shows:
-- Network ID and name
-- CIDR range
-- Region
+Instead of creating a network, attach the project to one that **already exists** in the account — its id
+comes from Alethia's server-side [asset inventory](/console/connectors/health-and-inventory) (network id,
+name, CIDR, region).
+
+**How it works — brownfield attach (AWS · GCP · Azure).** When you pick "existing", Alethia records the
+network id and, at deploy time, the [Runner](/runner) does **not** create a network. Instead the OpenTofu
+template *reads* your existing network and wires the cluster into it:
+
+- **AWS** — the runner looks up the VPC's subnets and passes them in (public/private split).
+- **GCP** — the template `data`-sources the VPC network and resolves its subnetwork in the project's
+  region (including that subnet's pod/service secondary ranges) for GKE.
+- **Azure** — the template `data`-sources the VNet and uses one of its subnets for AKS.
 
 <Callout type="info">
-Existing networks must be in the same region as the project. The resource refresh job (`FETCH_RESOURCES`) populates the list by querying your cloud account. If you don't see a network, click the refresh button in the Provider Ribbon.
+Existing networks must be in the same region as the project. The list comes from Alethia's server-side
+[asset inventory](/console/connectors/health-and-inventory), which stays fresh automatically (a
+reconciliation sweep, plus optional event forwarders) — there's no manual refresh.
+</Callout>
+
+## Reuse existing resources
+
+"Use existing network" is one case of a deliberately **narrow** idea: reuse the **shared substrate you
+deploy _into_**, instead of creating a duplicate. The test for whether reuse is a provisioning concern is
+simple — **does the rest of the infrastructure graph attach to it?**
+
+- ✅ **Network (VPC/VNet + subnets)** — the cluster and nodes attach into its subnets. Available today on
+  AWS, GCP, and Azure (a provision-new vs use-existing toggle; at deploy time the template `data`-sources
+  the existing network rather than creating one). The list comes from the server-side
+  [asset inventory](/console/connectors/health-and-inventory).
+- 🚧 **Kubernetes cluster** — your workloads deploy _onto_ it (nobody wants a fresh cluster per app). Same
+  toggle, on the roadmap.
+
+That's the whole scope. **Databases, caches, queues, storage, etc. are _not_ "reuse" targets** — nothing
+downstream attaches to them in the graph. If a database already exists, there's nothing to provision:
+the app simply needs its **connection endpoint + secret**, which is a *connection/config* concern (a value
+you supply), not a provisioned component. Trying to model that as "provision vs existing" just reintroduces
+a credential-handling problem the keyless model otherwise avoids.
+
+<Callout type="info">
+The inventory still tracks every resource kind (databases, caches, …) — but for **drift/day-2 awareness,
+collision-avoidance, and agent context**, not for reuse. Storing what exists is not the same as attaching
+your project to it.
 </Callout>
 
 ## CIDR Block Validation

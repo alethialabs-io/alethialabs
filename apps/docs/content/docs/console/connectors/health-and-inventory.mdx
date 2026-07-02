@@ -1,0 +1,85 @@
+---
+title: Connection Health & Inventory
+description: How Alethia verifies cloud connections and keeps their asset inventory fresh — server-side, no runner.
+---
+
+# Connection Health & Inventory
+
+Once a cloud account is connected, Alethia does two things **entirely server-side in the console** — no
+[Runner](/runner) is involved. The runner is provisioning-only; it never tests connections or lists
+resources.
+
+<Callout type="info">
+  Every connection is **platform-managed**: on the hosted service, the Alethia platform account holds
+  the short-lived credentials; on a self-hosted (OSS) console, your own console does. There is no
+  "bring the token to a self-hosted runner" path.
+</Callout>
+
+## Connection health
+
+The moment you connect (and continuously afterward), Alethia runs an **instant health probe**:
+
+1. **Auth** — assume the customer role / exchange the federated token / present the API token, using the
+   platform credentials. Success proves access.
+2. **Provisioning-capability probe** — a small set of representative reads to confirm the connection can
+   actually see what Alethia provisions into.
+
+The result is one of three statuses, surfaced on the connector card:
+
+| Status | Meaning |
+|--------|---------|
+| **Connected** | Authenticated and the capability probe passed. Ready to provision. |
+| **Degraded** | Authenticated, but some provisioning permissions look missing — provisioning may fail until the role/policy is widened. The missing permissions are listed. |
+| **Disconnected** | Authentication failed (revoked trust, wrong external id, expired/invalid token). |
+
+Health is re-checked on a schedule and can be re-run on demand with **Re-verify**. Because it's a direct
+API call, it resolves in well under a second — there is no queue and no job to wait on.
+
+## Asset inventory
+
+Alethia keeps a normalized inventory of the resources you provision alongside (VPCs/networks, subnets,
+NICs, Kubernetes clusters, databases, caches, queues, topics, NoSQL tables, container registries,
+secrets, storage buckets, DNS zones, and regions). It powers the **"use existing VPC"** picker on the
+canvas and gives the verification agent real-world context.
+
+The inventory is maintained server-side:
+
+- **On connect** — a first sync populates the baseline.
+- **Reconciliation sweep** — an in-process scheduler (no external cron) re-lists per connection via the
+  cloud SDKs on a TTL cadence (health ~10 min, inventory ~1 h), upserts the typed `cloud_*` tables,
+  soft-removes anything no longer present, and **backfills** connections that were never synced. This is
+  the reliable backstop and is **on by default**.
+- **Event-driven updates (opt-in, near-real-time)** — a per-cloud forwarder can stream change events so
+  the inventory reflects a new/deleted resource within seconds (**AWS** EventBridge → Lambda; **GCP**
+  Cloud Asset Inventory → Pub/Sub → Cloud Function; **Azure** Event Grid → Function App). Each normalizes
+  the change and `POST`s `{ kind, native_id, region, deleted }` to `/api/cloud-events/{provider}` — never
+  credentials. The forwarders are **deployed separately** into your cloud; until then, the sweep provides
+  minutes-level freshness.
+
+### Data custody — how the inventory is stored
+
+The inventory is a **minimized, encrypted, expiring projection** — the cloud stays the source of truth:
+
+- **Minimized** — only the identifiers features need (resource id, name, region, kind + low-sensitivity
+  typed fields). We do **not** store resource tags (they routinely carry owner emails / cost centers /
+  secrets); only the `Name` tag becomes the row name.
+- **Encrypted at rest** — reconnaissance-sensitive attributes (CIDRs, IPs, endpoints, DNS domains) are
+  sealed in a single AES-GCM `sensitive` blob per row, decrypted only in-app when a feature needs them.
+- **Expiring + purged** — soft-removed rows are garbage-collected after a retention window
+  (`ALETHIA_INVENTORY_RETENTION_DAYS`, default 7); **disconnecting a connection purges its inventory
+  entirely**.
+
+Storing this metadata doesn't weaken the keyless connection model — a resource id or CIDR is not a
+credential, and a breach grants no cloud access (that still requires the role trust, which Alethia holds
+no key for).
+
+## What the Runner does NOT do
+
+For clarity, the [Runner](/runner) is **provisioning-only**. It does **not**:
+
+- test cloud connections (server-side, above),
+- discover or list cloud resources (server-side asset inventory, above),
+- cache resource lists.
+
+It claims `PLAN` / `DEPLOY` / `DESTROY` (and the runner-lifecycle + drift) jobs, runs OpenTofu, streams
+logs, and runs the [verify gate](/runner). See [Runner Jobs](/runner/job-execution).

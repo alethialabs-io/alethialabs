@@ -1,0 +1,153 @@
+---
+title: Verification engine
+description: How the deterministic policy gate works — the Evaluate seam, statuses, fail-closed gating, overrides, Access Analyzer corroboration, signed receipts, and drift.
+---
+
+# Verification engine
+
+<Enterprise />
+
+The engine (`packages/core/verify`) is a deterministic policy gate over the OpenTofu **plan JSON**. It
+runs **between `tofu plan` and `tofu apply`** inside `provisioner.RunDeployV2`, and it is **fail-closed**:
+a hard control failure blocks the apply before any infrastructure changes.
+
+## The Evaluate seam
+
+The whole engine sits behind one entrypoint:
+
+```go
+func Evaluate(ctx context.Context, plan *tfjson.Plan) (*Report, error)
+```
+
+It is deterministic and side-effect free — the same plan always yields the same verdict, which is what
+the evidence receipt relies on. The seam is **engine-agnostic**: Phase 0 ships a pure-Go evaluator
+(builds and tests offline, no external policy runtime); an OPA/Rego backend for customer-authorable
+control bundles can be swapped in behind the identical `Report` contract without touching any caller.
+
+`EvaluateWithOptions(ctx, plan, opts)` is the same path with optional AWS Access Analyzer corroboration
+(below).
+
+## Three ways in — same Report
+
+The engine is plan-agnostic, so the same `Report` (and receipt) shape serves three inputs:
+
+| Entrypoint | Input | Use |
+|---|---|---|
+| `Evaluate(plan)` | An Alethia-generated OpenTofu plan | The apply-time gate. |
+| `ParseCustomerPlan(json)` → `Evaluate` | A **bring-your-own** `tofu show -json` plan | Audit infrastructure Alethia didn't generate — **zero control changes**. |
+| `EvaluateManifests(yaml)` | Kubernetes manifests (multi-doc) | The k8s [control set](/elench/control-catalog); `Provider` = `k8s`. |
+
+The **"B" flow** (bring-your-own + audit) rides the latter two: an `AUDIT` job (migration `0052`) runs on
+the runner (`executeAudit`) — parsing the customer's plan or manifests, evaluating them, and posting the
+report to `jobs.execution_metadata.verify_result`. It provisions nothing; the console surfaces it through
+the same `get_plan_result` tool + `VerifyBlock` a PLAN job's gate uses. Queue it with the
+`audit_infrastructure` agent tool or the `queueAudit` action, or run it locally with
+[`elench-verify -manifests`](/elench/extending).
+
+## Statuses and the verdict
+
+Every control reports one of four statuses, and the report's overall verdict follows a strict
+precedence:
+
+| Status | Meaning |
+|---|---|
+| `pass` | The control was evaluated and the plan satisfies it. |
+| `fail` | Evaluated and violated. On a real apply this **blocks** (unless overridden). |
+| `warn` | A recorded concern that does not block. |
+| `not_evaluable` | The plan JSON lacked the information to judge it. **Never** treated as a pass. |
+
+> **Verdict precedence:** `fail` › `warn` › `not_evaluable` › `pass`.
+
+The `not_evaluable` rung is the heart of the engine's honesty.
+
+<Callout type="warn">
+  **Never a silent pass.** A policy body that is computed until apply (`after_unknown`), or an
+  AWS-managed policy referenced only by ARN (whose body is not in the plan), is reported `not_evaluable`
+  with a plain-language coverage note — never a quiet `pass`. A silent pass on an un-inspectable
+  resource is exactly the false result the verification claim must never make.
+</Callout>
+
+## Fail-closed, with a real exception path
+
+A fail-closed gate with no escape hatch gets disabled within a week. Elench ships the exception path
+**with** the gate:
+
+- A `verify.Override` is an **authorized, time-boxed** waiver of *specific* control ids — never a way to
+  disable the gate wholesale.
+- It is persisted on the deploy job (`jobs.verify_override`, migration `0043`), stamped server-side with
+  the authorizing actor and an expiry by the `recordVerifyOverride` action.
+- The runner reconstructs it (`buildVerifyOverride`) and passes it to the gate; `Report.Unwaived(ov)`
+  returns any failing control the override does **not** cover. A non-empty result keeps the apply blocked.
+- The waiver is recorded in the evidence receipt as an exception (who, why, expiry) — the verdict itself
+  is **not** rewritten to pass.
+
+## AWS IAM Access Analyzer corroboration
+
+Beyond the pattern checks, the gate can corroborate IAM policies with **AWS IAM Access Analyzer's
+automated reasoning** — a *provable* statement about what a policy could grant, run pre-apply without
+deploying anything.
+
+- `verify.PolicyChecker` is the seam (the pure `verify` package carries no cloud SDK); the AWS-backed
+  implementation lives in `packages/core/accessanalyzer` and calls `CheckAccessNotGranted` per action.
+- Control `ACCESS-ANALYZER-001` fails when a planned policy could grant any action in a sensitive-action
+  denylist; a checker error is `not_evaluable`, never a pass.
+- It is **off by default** (no AWS calls). The runner enables it for AWS jobs when
+  `ALETHIA_VERIFY_ACCESS_ANALYZER=1`, building the checker from the assumed-role config.
+
+## Signed evidence receipt
+
+After the gate decides (and any override is applied), the runner seals a **`Receipt`** for the apply and
+signs it (ed25519 detached signature → tamper-evident; offline `Verify`).
+
+<Tabs items={["What it contains", "Honest framing"]}>
+<Tab value="What it contains">
+
+| Field | Why |
+|---|---|
+| `plan_sha256` | Binds the receipt to the exact plan evaluated. |
+| `tofu_version`, `catalog_version` | A verdict is only meaningful against the schema + controls that produced it. |
+| `report` | The full per-control result, including `not_evaluable` and coverage. |
+| `exception` | Any recorded override (controls, reason, by, expiry). |
+| `runner`, `evaluated_at` | Provenance. |
+
+</Tab>
+<Tab value="Honest framing">
+
+A receipt signed by Alethia's own runner is **tamper-evidence on self-attestation** — it proves "Alethia's
+runner asserted these controls passed on plan `sha256` and the file wasn't edited since", not independent
+compliance proof. To make it meaningful to a customer's auditor, anchor the root of trust outside Alethia:
+sign with a **customer-controlled key** and/or log the signature to a **transparency log (Rekor)**. The
+key is loaded from `ALETHIA_RECEIPT_SIGNING_KEY`; with none configured the receipt is attached
+**unsigned** rather than blocking the apply — signing is additive evidence, not a precondition.
+
+</Tab>
+</Tabs>
+
+## Continuous drift — "keep proving it"
+
+`packages/core/drift` turns a `tofu plan -refresh-only -json` into a per-environment **`Posture`**
+(`in_sync`, `drifted` count, per-resource `kind` ∈ modified/deleted/other) via `Analyze(plan)`. The full
+loop is closed end-to-end:
+
+```
+ sweep cron ─▶ DETECT_DRIFT job ─▶ runner ─▶ persist ─▶ environment_drift ─▶ read
+ (schedule)    (0044)              refresh-  (job-status  (0051, latest       get_drift_posture
+                                   only →     route)       per env)           + MCP
+                                   Analyze)
+```
+
+1. A tiered scheduler (`lib/drift/schedule` + `dispatch`) enqueues checks per environment on a cadence
+   (production most often) through the cron route `/api/internal/drift/sweep` (`sweepDriftSchedule`).
+2. `DETECT_DRIFT` (migration `0044`) runs on the runner (`executeDriftDetection`) and posts the `Posture`.
+3. The job-status route persists it to **`environment_drift`** (migration `0051`, latest per environment)
+   via `recordDriftPosture`.
+4. `getLatestDriftPosture` reads it back for the UI, the assistant, and — via the
+   [`get_drift_posture`](/elench/agent-runtime) tool (audience `both`) — external agents over MCP.
+
+<Callout type="warn">
+  **Coverage is stated, not hidden.** A refresh-only plan only sees resources in state, so it detects
+  *modified* and *deleted-out-of-band* managed resources. It **cannot** see **unmanaged** resources (in
+  the cloud, not in state) — that needs a cloud inventory source (AWS Config / Cloud Asset Inventory).
+  `Posture.unmanaged_known` is `false` so a consumer never implies we checked for unmanaged resources
+  when we did not.
+</Callout>
