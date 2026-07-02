@@ -18,7 +18,6 @@ import type { LucideIcon } from "lucide-react";
 import {
 	AUTOSCALER,
 	DB_CAPACITY,
-	DB_ENGINES,
 	DEFAULT_CACHE_NODE,
 	DEFAULT_INSTANCE_TYPE,
 	DEFAULT_K8S_VERSION,
@@ -53,6 +52,12 @@ export interface NodeKindDef {
 	icon: LucideIcon;
 	/** Default config for a freshly-added node, given the effective provider. */
 	defaultData: (provider: CloudProviderSlug) => Record<string, unknown>;
+	/** Optional pre-add step: pick a value for `key` (e.g. the DB engine) before the node is
+	 * created + configured. Kinds without variants are added straight to the canvas. */
+	variants?: {
+		key: string;
+		options: { value: string; label: string; description: string }[];
+	};
 }
 
 /**
@@ -119,17 +124,31 @@ export const NODE_REGISTRY: Record<NodeKind, NodeKindDef> = {
 		label: "Database",
 		icon: Database,
 		defaultData: (provider) => {
-			const engine = DB_ENGINES[provider][0];
 			const capacity = DB_CAPACITY[provider];
 			return {
 				name: "primary",
-				engine: engine.value,
-				engine_version: engine.defaultVersion,
+				// Cloud-indifferent: the Go resolver maps the family to the cloud's managed DB.
+				engine_family: "postgres",
 				min_capacity: capacity.defaultMin,
 				max_capacity: capacity.defaultMax,
 				port: 5432,
 				iam_auth: false,
 			};
+		},
+		variants: {
+			key: "engine_family",
+			options: [
+				{
+					value: "postgres",
+					label: "PostgreSQL",
+					description: "Broad extension support — the default relational choice.",
+				},
+				{
+					value: "mysql",
+					label: "MySQL",
+					description: "Familiar, with wide tooling and driver compatibility.",
+				},
+			],
 		},
 	},
 	cache: {
@@ -148,6 +167,21 @@ export const NODE_REGISTRY: Record<NodeKind, NodeKindDef> = {
 			num_cache_nodes: 1,
 			multi_az: false,
 		}),
+		variants: {
+			key: "engine",
+			options: [
+				{
+					value: "redis",
+					label: "Redis",
+					description: "In-memory data store for caching, sessions, and queues.",
+				},
+				{
+					value: "valkey",
+					label: "Valkey",
+					description: "Open-source Redis fork, drop-in compatible.",
+				},
+			],
+		},
 	},
 	queue: {
 		kind: "queue",

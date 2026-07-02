@@ -2,48 +2,33 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { TriangleAlert, X } from "lucide-react";
+import { useState } from "react";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
-import {
-	Select,
-	SelectContent,
-	SelectGroup,
-	SelectItem,
-	SelectLabel,
-	SelectTrigger,
-	SelectValue,
-} from "@repo/ui/select";
-import {
-	Sheet,
-	SheetContent,
-	SheetDescription,
-	SheetHeader,
-	SheetTitle,
-} from "@repo/ui/sheet";
-import { Switch } from "@repo/ui/switch";
-import { RepositorySelector } from "@/components/repository-selector";
-import {
-	CACHE_NODE_TYPES,
-	DB_CAPACITY,
-	DB_ENGINES,
-	INSTANCE_TYPES,
-	K8S_VERSIONS,
-	MESSAGING,
-	NOSQL,
-	REGION_LABELS,
-	groupRegions,
-	type CloudProviderSlug,
-} from "@/lib/cloud-providers";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
+import { cn } from "@repo/ui/utils";
+import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { CloudIdentitySelector } from "../cloud-identity-selector";
 import { NODE_REGISTRY } from "./graph/node-registry";
 import type { CanvasNode } from "./graph/types";
+import { CONFIG_SCHEMA } from "./inspector/config-schema";
+import { ConfigFields } from "./inspector/config-fields";
+import { DangerZone } from "./inspector/danger-zone";
 
-/** A labelled field row. */
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+/** A labelled field row (used by the cloud-account selector). */
+function Field({
+	label,
+	children,
+}: {
+	label: string;
+	children: React.ReactNode;
+}) {
 	return (
 		<div className="space-y-1.5">
 			<Label className="text-xs">{label}</Label>
@@ -52,44 +37,24 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 	);
 }
 
-/** Region dropdown keyed by the node's effective provider. */
-function RegionSelect({
-	provider,
-	value,
-	onChange,
-}: {
-	provider: CloudProviderSlug;
-	value: string;
-	onChange: (v: string) => void;
-}) {
-	const groups = groupRegions(Object.keys(REGION_LABELS[provider] ?? {}), provider);
-	return (
-		<Select value={value || ""} onValueChange={onChange}>
-			<SelectTrigger className="h-9 text-sm">
-				<SelectValue placeholder="Region" />
-			</SelectTrigger>
-			<SelectContent>
-				{groups.map((g) => (
-					<SelectGroup key={g.group}>
-						<SelectLabel>{g.group}</SelectLabel>
-						{g.regions.map((r) => (
-							<SelectItem key={r.value} value={r.value}>
-								{r.label} ({r.value})
-							</SelectItem>
-						))}
-					</SelectGroup>
-				))}
-			</SelectContent>
-		</Select>
-	);
-}
-
-interface NodeInspectorProps {
+interface InspectorPanelProps {
 	identities: CloudIdentityOption[];
+	/** Edit mode only: tear down the active environment (queues a DESTROY job). Surfaced as a
+	 * danger action on the project settings panel. */
+	onDestroyEnvironment?: () => void;
 }
 
-/** Right-side Sheet that configures the selected node. */
-export function NodeInspector({ identities }: NodeInspectorProps) {
+/**
+ * The service-config body of the canvas's inline docked side panel. Configures the selected node:
+ * a header (resource icon, editable name, type badge, live one-line summary, close) over
+ * Overview + Settings tabs, where Settings is built data-drivenly from the node's config schema
+ * (collapsible sections, radio-cards, typed fields) plus a Danger zone. Rendered only when a node
+ * is selected (`inspectorNodeId`).
+ */
+export function InspectorPanel({
+	identities,
+	onDestroyEnvironment,
+}: InspectorPanelProps) {
 	const inspectorNodeId = useCanvasStore((s) => s.inspectorNodeId);
 	const node = useCanvasStore((s) =>
 		inspectorNodeId ? s.nodes.find((n) => n.id === inspectorNodeId) : undefined,
@@ -102,71 +67,176 @@ export function NodeInspector({ identities }: NodeInspectorProps) {
 	const core = useCanvasStore((s) => s.getCoreIdentity());
 	const provider = node ? getEffectiveProvider(node.id) : null;
 	const def = node ? NODE_REGISTRY[node.data.kind] : null;
+	const schema = node ? CONFIG_SCHEMA[node.data.kind] : undefined;
+	if (!node || !def) return null;
+
 	const gated =
-		!!node &&
-		def?.classification === "core" &&
+		def.classification === "core" &&
 		!!core &&
 		(node.data.cloud_identity_id ?? core) !== core;
 
+	// Which config key (if any) holds this node's editable display name.
+	const nameKey =
+		node.data.kind === "project"
+			? "project_name"
+			: typeof node.data.config.name === "string"
+				? "name"
+				: null;
+
+	const Icon = def.icon;
+	const summary = schema
+		? schema.summary(node.data.config, provider)
+		: undefined;
+
 	return (
-		<Sheet
-			open={!!node}
-			onOpenChange={(o) => {
-				if (!o) openInspector(null);
-			}}
-		>
-			<SheetContent
-				side="right"
-				className="w-[380px] gap-0 overflow-y-auto sm:max-w-[380px]"
-			>
-				{node && def && (
-					<>
-						<SheetHeader>
-							<span className="vx-eyebrow">{def.eyebrow}</span>
-							<SheetTitle className="text-base">
-								{(node.data.config.name as string) ||
-									(node.data.config.project_name as string) ||
-									def.label}
-							</SheetTitle>
-							<SheetDescription className="text-xs">
-								{def.classification === "root"
-									? "Project basics and the stack's core cloud account."
-									: def.classification === "core"
-										? "Core resource — must run on the stack's cloud."
-										: "Periphery — may run on any connected cloud."}
-							</SheetDescription>
-						</SheetHeader>
-
-						<div className="space-y-5 px-4 pb-10">
-							{gated && (
-								<Alert variant="default" className="border-border bg-muted">
-									<AlertDescription className="text-xs">
-										This core resource sits on a different cloud than the stack.
-										Hot cross-cloud data-plane edges are on the roadmap — it can be
-										drawn, but the project will not provision until colocated.
-									</AlertDescription>
-								</Alert>
-							)}
-
-							{def.cloudScoped && (
-								<IdentityField
-									node={node}
-									identities={identities}
-									onPick={(id, prov) => setNodeIdentity(node.id, id, prov)}
-									onInherit={() => setNodeIdentity(node.id, null, null)}
-								/>
-							)}
-
-							<Fields
-								node={node}
-								provider={provider}
-								onChange={(patch) => updateNodeConfig(node.id, patch)}
-							/>
-						</div>
-					</>
+		<div className="flex h-full flex-col">
+			<div className="flex items-start gap-3 border-b border-border p-4">
+				{Icon && (
+					<span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-muted-foreground">
+						<Icon className="h-4 w-4" />
+					</span>
 				)}
-			</SheetContent>
-		</Sheet>
+				<div className="min-w-0 flex-1 space-y-1">
+					<div className="flex flex-wrap items-center gap-2">
+						{nameKey ? (
+							<Input
+								value={(node.data.config[nameKey] as string) ?? ""}
+								maxLength={nameKey === "project_name" ? 50 : undefined}
+								placeholder={nameKey === "project_name" ? "My Project" : "name"}
+								onChange={(e) =>
+									updateNodeConfig(node.id, {
+										[nameKey]:
+											nameKey === "project_name"
+												? e.target.value
+												: e.target.value.toLowerCase(),
+									})
+								}
+								className={cn(
+									"h-8 max-w-[16rem] border-0 bg-transparent px-0 text-base font-semibold shadow-none focus-visible:ring-0",
+									nameKey === "name" && "font-mono",
+								)}
+							/>
+						) : (
+							<span className="text-base font-semibold">{def.label}</span>
+						)}
+						<span className="vx-eyebrow rounded border border-border px-1.5 py-0.5">
+							{def.eyebrow}
+						</span>
+					</div>
+					<p className="truncate text-xs text-muted-foreground">
+						{summary ||
+							(def.classification === "root"
+								? "Project basics and the stack's core cloud account."
+								: def.classification === "core"
+									? "Core resource — must run on the stack's cloud."
+									: "Periphery — may run on any connected cloud.")}
+					</p>
+				</div>
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					className="h-7 w-7 shrink-0"
+					onClick={() => openInspector(null)}
+					aria-label="Close"
+				>
+					<X className="h-4 w-4" />
+				</Button>
+			</div>
+
+			<Tabs
+				defaultValue="settings"
+				className="flex min-h-0 flex-1 flex-col gap-0"
+			>
+				<TabsList className="mx-4 mt-3 shrink-0">
+					<TabsTrigger value="overview">Overview</TabsTrigger>
+					<TabsTrigger value="settings">Settings</TabsTrigger>
+				</TabsList>
+
+				<TabsContent
+					value="overview"
+					className="min-h-0 flex-1 overflow-y-auto px-4 pb-10 pt-4"
+				>
+					<Overview node={node} provider={provider} />
+				</TabsContent>
+
+				<TabsContent
+					value="settings"
+					className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pb-10 pt-4"
+				>
+					{gated && (
+						<Alert variant="default" className="border-border bg-muted">
+							<AlertDescription className="text-xs">
+								This core resource sits on a different cloud than the stack. Hot
+								cross-cloud data-plane edges are on the roadmap — it can be
+								drawn, but the project will not provision until colocated.
+							</AlertDescription>
+						</Alert>
+					)}
+
+					{def.cloudScoped && (
+						<IdentityField
+							node={node}
+							identities={identities}
+							onPick={(id, prov) => setNodeIdentity(node.id, id, prov)}
+							onInherit={() => setNodeIdentity(node.id, null, null)}
+						/>
+					)}
+
+					{schema && (
+						<ConfigFields
+							schema={schema}
+							config={node.data.config}
+							provider={provider}
+							onChange={(patch) => updateNodeConfig(node.id, patch)}
+						/>
+					)}
+
+					{node.data.kind === "project" && onDestroyEnvironment && (
+						<DestroyEnvironmentZone onDestroy={onDestroyEnvironment} />
+					)}
+
+					<DangerZone node={node} />
+				</TabsContent>
+			</Tabs>
+		</div>
+	);
+}
+
+/** Project-panel danger action: tear down the active environment's provisioned infra. */
+function DestroyEnvironmentZone({ onDestroy }: { onDestroy: () => void }) {
+	const [confirm, setConfirm] = useState(false);
+	return (
+		<div className="rounded-lg border border-destructive/30">
+			<div className="flex items-center gap-2 border-b border-destructive/20 px-4 py-3">
+				<TriangleAlert className="h-4 w-4 text-destructive" />
+				<p className="text-sm font-medium text-destructive">Danger zone</p>
+			</div>
+			<div className="flex items-center justify-between gap-4 px-4 py-4">
+				<div className="min-w-0">
+					<p className="text-sm font-medium">Destroy environment</p>
+					<p className="text-xs text-muted-foreground">
+						Queue a teardown of the provisioned infrastructure for this environment.
+					</p>
+				</div>
+				<Button
+					type="button"
+					variant="destructive"
+					size="sm"
+					onClick={() => setConfirm(true)}
+				>
+					Destroy
+				</Button>
+			</div>
+			<ConfirmDialog
+				open={confirm}
+				onOpenChange={setConfirm}
+				title="Destroy this environment?"
+				description="This queues a DESTROY job that tears down the environment's provisioned cloud infrastructure. This cannot be undone."
+				confirmLabel="Destroy environment"
+				onConfirm={onDestroy}
+			/>
+		</div>
 	);
 }
 
@@ -204,509 +274,45 @@ function IdentityField({
 	);
 }
 
-/** Renders the type-specific configuration fields for a node. */
-function Fields({
+/** Read-only summary of a node: placement + its primitive config values. Provisioned
+ * outputs (endpoints/ARNs) will surface here once the node carries live status. */
+function Overview({
 	node,
 	provider,
-	onChange,
 }: {
 	node: CanvasNode;
 	provider: CloudProviderSlug | null;
-	onChange: (patch: Record<string, unknown>) => void;
 }) {
-	const c = node.data.config;
-
-	if (node.data.kind === "project") {
-		return (
-			<>
-				<Field label="Project name">
-					<Input
-						value={(c.project_name as string) ?? ""}
-						maxLength={50}
-						placeholder="My Project"
-						className="h-9 text-sm"
-						onChange={(e) => onChange({ project_name: e.target.value })}
-					/>
-				</Field>
-				<Field label="Environment">
-					<Select
-						value={(c.environment_stage as string) ?? "development"}
-						onValueChange={(v) => onChange({ environment_stage: v })}
-					>
-						<SelectTrigger className="h-9 text-sm">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="development">Development</SelectItem>
-							<SelectItem value="staging">Staging</SelectItem>
-							<SelectItem value="production">Production</SelectItem>
-						</SelectContent>
-					</Select>
-				</Field>
-				<Field label="Region">
-					{provider ? (
-						<RegionSelect
-							provider={provider}
-							value={(c.region as string) ?? ""}
-							onChange={(v) => onChange({ region: v })}
-						/>
-					) : (
-						<p className="text-xs text-muted-foreground">
-							Select a cloud account first.
-						</p>
-					)}
-				</Field>
-			</>
-		);
-	}
-
-	if (node.data.kind === "network") {
-		const provision = c.provision_network !== false;
-		return (
-			<>
-				<div className="flex items-center justify-between">
-					<Label className="text-xs">Provision new network</Label>
-					<Switch
-						checked={provision}
-						onCheckedChange={(v) => onChange({ provision_network: v })}
-					/>
-				</div>
-				{provision ? (
-					<Field label="CIDR block">
-						<Input
-							value={(c.cidr_block as string) ?? ""}
-							placeholder="10.0.0.0/16"
-							className="h-9 font-mono text-sm"
-							onChange={(e) => onChange({ cidr_block: e.target.value })}
-						/>
-					</Field>
-				) : (
-					<Field label="Existing network ID">
-						<Input
-							value={(c.network_id as string) ?? ""}
-							placeholder="vpc-…"
-							className="h-9 font-mono text-sm"
-							onChange={(e) => onChange({ network_id: e.target.value })}
-						/>
-					</Field>
-				)}
-			</>
-		);
-	}
-
-	if (node.data.kind === "cluster") {
-		if (!provider)
-			return <ProviderNotice />;
-		const instances = (c.instance_types as string[] | undefined) ?? [];
-		return (
-			<>
-				<Field label="Kubernetes version">
-					<Select
-						value={(c.cluster_version as string) ?? K8S_VERSIONS[provider][0]}
-						onValueChange={(v) => onChange({ cluster_version: v })}
-					>
-						<SelectTrigger className="h-9 text-sm">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{K8S_VERSIONS[provider].map((v) => (
-								<SelectItem key={v} value={v}>
-									{v}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				</Field>
-				<Field label="Instance type">
-					<Select
-						value={instances[0] ?? INSTANCE_TYPES[provider][0].value}
-						onValueChange={(v) => onChange({ instance_types: [v] })}
-					>
-						<SelectTrigger className="h-9 text-sm">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{INSTANCE_TYPES[provider].map((it) => (
-								<SelectItem key={it.value} value={it.value}>
-									{it.label} · {it.vcpu}vCPU/{it.memoryGb}GB
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				</Field>
-				<div className="grid grid-cols-3 gap-2">
-					{(["node_min_size", "node_desired_size", "node_max_size"] as const).map(
-						(key, i) => (
-							<Field key={key} label={["Min", "Desired", "Max"][i]}>
-								<Input
-									type="number"
-									min={1}
-									max={100}
-									value={(c[key] as number) ?? 2}
-									className="h-9 text-sm"
-									onChange={(e) =>
-										onChange({ [key]: Number.parseInt(e.target.value, 10) || 0 })
-									}
-								/>
-							</Field>
-						),
-					)}
-				</div>
-			</>
-		);
-	}
-
-	if (node.data.kind === "database") {
-		if (!provider) return <ProviderNotice />;
-		const capacity = DB_CAPACITY[provider];
-		return (
-			<>
-				<Field label="Name">
-					<Input
-						value={(c.name as string) ?? ""}
-						className="h-9 font-mono text-sm"
-						onChange={(e) => onChange({ name: e.target.value.toLowerCase() })}
-					/>
-				</Field>
-				<Field label="Engine">
-					<Select
-						value={(c.engine as string) ?? DB_ENGINES[provider][0].value}
-						onValueChange={(v) => {
-							const eng = DB_ENGINES[provider].find((e) => e.value === v);
-							onChange({ engine: v, engine_version: eng?.defaultVersion });
-						}}
-					>
-						<SelectTrigger className="h-9 text-sm">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{DB_ENGINES[provider].map((e) => (
-								<SelectItem key={e.value} value={e.value}>
-									{e.label}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				</Field>
-				<div className="grid grid-cols-2 gap-2">
-					<Field label={`Min ${capacity.unit}`}>
-						<Input
-							type="number"
-							step={capacity.step}
-							min={capacity.min}
-							max={capacity.max}
-							value={(c.min_capacity as number) ?? capacity.defaultMin}
-							className="h-9 text-sm"
-							onChange={(e) =>
-								onChange({ min_capacity: Number.parseFloat(e.target.value) || 0 })
-							}
-						/>
-					</Field>
-					<Field label={`Max ${capacity.unit}`}>
-						<Input
-							type="number"
-							step={capacity.step}
-							min={capacity.min}
-							max={capacity.max}
-							value={(c.max_capacity as number) ?? capacity.defaultMax}
-							className="h-9 text-sm"
-							onChange={(e) =>
-								onChange({ max_capacity: Number.parseFloat(e.target.value) || 0 })
-							}
-						/>
-					</Field>
-				</div>
-				<div className="flex items-center justify-between">
-					<Label className="text-xs">IAM authentication</Label>
-					<Switch
-						checked={!!c.iam_auth}
-						onCheckedChange={(v) => onChange({ iam_auth: v })}
-					/>
-				</div>
-			</>
-		);
-	}
-
-	if (node.data.kind === "cache") {
-		if (!provider) return <ProviderNotice />;
-		return (
-			<>
-				<Field label="Name">
-					<Input
-						value={(c.name as string) ?? ""}
-						className="h-9 font-mono text-sm"
-						onChange={(e) => onChange({ name: e.target.value.toLowerCase() })}
-					/>
-				</Field>
-				<Field label="Engine">
-					<Select
-						value={(c.engine as string) ?? "redis"}
-						onValueChange={(v) => onChange({ engine: v })}
-					>
-						<SelectTrigger className="h-9 text-sm">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="redis">Redis</SelectItem>
-							<SelectItem value="valkey">Valkey</SelectItem>
-						</SelectContent>
-					</Select>
-				</Field>
-				<Field label="Node type">
-					<Select
-						value={(c.node_type as string) ?? CACHE_NODE_TYPES[provider][0].value}
-						onValueChange={(v) => onChange({ node_type: v })}
-					>
-						<SelectTrigger className="h-9 text-sm">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{CACHE_NODE_TYPES[provider].map((n) => (
-								<SelectItem key={n.value} value={n.value}>
-									{n.label} · {n.memoryGb}GB ({n.cost})
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				</Field>
-				<div className="grid grid-cols-2 gap-2">
-					<Field label="Nodes">
-						<Input
-							type="number"
-							min={1}
-							max={6}
-							value={(c.num_cache_nodes as number) ?? 1}
-							className="h-9 text-sm"
-							onChange={(e) =>
-								onChange({ num_cache_nodes: Number.parseInt(e.target.value, 10) || 1 })
-							}
-						/>
-					</Field>
-					<div className="flex items-end justify-between pb-1.5">
-						<Label className="text-xs">Multi-AZ</Label>
-						<Switch
-							checked={!!c.multi_az}
-							onCheckedChange={(v) => onChange({ multi_az: v })}
-						/>
-					</div>
-				</div>
-			</>
-		);
-	}
-
-	if (node.data.kind === "queue") {
-		const messaging = provider ? MESSAGING[provider] : null;
-		return (
-			<>
-				<Field label="Name">
-					<Input
-						value={(c.name as string) ?? ""}
-						className="h-9 font-mono text-sm"
-						onChange={(e) => onChange({ name: e.target.value.toLowerCase() })}
-					/>
-				</Field>
-				<Field label={messaging?.visibilityTimeoutLabel ?? "Visibility timeout (s)"}>
-					<Input
-						type="number"
-						min={0}
-						max={43200}
-						value={(c.visibility_timeout as number) ?? 30}
-						className="h-9 text-sm"
-						onChange={(e) =>
-							onChange({ visibility_timeout: Number.parseInt(e.target.value, 10) || 0 })
-						}
-					/>
-				</Field>
-				<div className="flex items-center justify-between">
-					<Label className="text-xs">{messaging?.fifoLabel ?? "Ordered delivery"}</Label>
-					<Switch
-						checked={!!c.ordered}
-						onCheckedChange={(v) => onChange({ ordered: v })}
-					/>
-				</div>
-			</>
-		);
-	}
-
-	if (node.data.kind === "topic") {
-		return (
-			<Field label="Name">
-				<Input
-					value={(c.name as string) ?? ""}
-					className="h-9 font-mono text-sm"
-					onChange={(e) => onChange({ name: e.target.value.toLowerCase() })}
-				/>
-			</Field>
-		);
-	}
-
-	if (node.data.kind === "nosql") {
-		const nosql = provider ? NOSQL[provider] : null;
-		return (
-			<>
-				<Field label="Name">
-					<Input
-						value={(c.name as string) ?? ""}
-						className="h-9 font-mono text-sm"
-						onChange={(e) => onChange({ name: e.target.value.toLowerCase() })}
-					/>
-				</Field>
-				<div className="grid grid-cols-2 gap-2">
-					<Field label="Partition key">
-						<Input
-							value={(c.partition_key as string) ?? ""}
-							placeholder="id"
-							className="h-9 font-mono text-sm"
-							onChange={(e) => onChange({ partition_key: e.target.value })}
-						/>
-					</Field>
-					<Field label="Type">
-						<Select
-							value={(c.partition_key_type as string) ?? "S"}
-							onValueChange={(v) => onChange({ partition_key_type: v })}
-						>
-							<SelectTrigger className="h-9 text-sm">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								{(nosql?.keyTypes ?? [{ value: "S", label: "String" }]).map((k) => (
-									<SelectItem key={k.value} value={k.value}>
-										{k.label}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-					</Field>
-				</div>
-				<Field label="Capacity mode">
-					<Select
-						value={(c.capacity_mode as string) ?? "on_demand"}
-						onValueChange={(v) => onChange({ capacity_mode: v })}
-					>
-						<SelectTrigger className="h-9 text-sm">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{(nosql?.billingModes ?? [{ value: "on_demand", label: "On-demand" }]).map(
-								(m) => (
-									<SelectItem key={m.value} value={m.value}>
-										{m.label}
-									</SelectItem>
-								),
-							)}
-						</SelectContent>
-					</Select>
-				</Field>
-				<div className="flex items-center justify-between">
-					<Label className="text-xs">Point-in-time recovery</Label>
-					<Switch
-						checked={c.point_in_time_recovery !== false}
-						onCheckedChange={(v) => onChange({ point_in_time_recovery: v })}
-					/>
-				</div>
-			</>
-		);
-	}
-
-	if (node.data.kind === "secret") {
-		return (
-			<>
-				<Field label="Name">
-					<Input
-						value={(c.name as string) ?? ""}
-						className="h-9 font-mono text-sm"
-						onChange={(e) =>
-							onChange({ name: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "") })
-						}
-					/>
-				</Field>
-				<div className="flex items-center justify-between">
-					<Label className="text-xs">Auto-generate</Label>
-					<Switch
-						checked={c.generate !== false}
-						onCheckedChange={(v) => onChange({ generate: v })}
-					/>
-				</div>
-				{c.generate !== false && (
-					<>
-						<Field label="Length">
-							<Input
-								type="number"
-								min={8}
-								max={128}
-								value={(c.length as number) ?? 32}
-								className="h-9 text-sm"
-								onChange={(e) =>
-									onChange({ length: Number.parseInt(e.target.value, 10) || 32 })
-								}
-							/>
-						</Field>
-						<div className="flex items-center justify-between">
-							<Label className="text-xs">Special characters</Label>
-							<Switch
-								checked={!!c.special_chars}
-								onCheckedChange={(v) => onChange({ special_chars: v })}
-							/>
-						</div>
-					</>
-				)}
-			</>
-		);
-	}
-
-	if (node.data.kind === "repositories") {
-		return (
-			<Field label="ArgoCD apps repository">
-				<RepositorySelector
-					label=""
-					placeholder="Select repository"
-					value={(c.apps_destination_repo as string) || undefined}
-					onChange={(v) => onChange({ apps_destination_repo: v || "" })}
-				/>
-			</Field>
-		);
-	}
-
-	// dns
-	return (
-		<>
-			<div className="flex items-center justify-between">
-				<Label className="text-xs">Enabled</Label>
-				<Switch
-					checked={c.enabled !== false}
-					onCheckedChange={(v) => onChange({ enabled: v })}
-				/>
-			</div>
-			<Field label="Domain name">
-				<Input
-					value={(c.domain_name as string) ?? ""}
-					placeholder="example.com"
-					className="h-9 font-mono text-sm"
-					onChange={(e) => onChange({ domain_name: e.target.value })}
-				/>
-			</Field>
-			<div className="flex items-center justify-between">
-				<Label className="text-xs">Managed certificate</Label>
-				<Switch
-					checked={!!c.managed_certificate}
-					onCheckedChange={(v) => onChange({ managed_certificate: v })}
-				/>
-			</div>
-			<div className="flex items-center justify-between">
-				<Label className="text-xs">WAF</Label>
-				<Switch
-					checked={!!c.waf_enabled}
-					onCheckedChange={(v) => onChange({ waf_enabled: v })}
-				/>
-			</div>
-		</>
+	const def = NODE_REGISTRY[node.data.kind];
+	// Only show scalar config (skip nested objects/arrays — those have their own UIs).
+	const rows = Object.entries(node.data.config).filter(
+		([, v]) => v != null && typeof v !== "object" && String(v) !== "",
 	);
-}
-
-function ProviderNotice() {
 	return (
-		<p className="text-xs text-muted-foreground">
-			Select a cloud account on the project node first.
-		</p>
+		<div className="space-y-4 text-sm">
+			<dl className="grid grid-cols-[8rem_1fr] gap-y-2">
+				<dt className="text-muted-foreground">Type</dt>
+				<dd>{def.label}</dd>
+				<dt className="text-muted-foreground">Cloud</dt>
+				<dd>{provider ? provider.toUpperCase() : "Inherits project"}</dd>
+				<dt className="text-muted-foreground">Status</dt>
+				<dd className="text-muted-foreground">Draft — not provisioned</dd>
+			</dl>
+			{rows.length > 0 && (
+				<div className="space-y-2 border-t border-border/60 pt-3">
+					<span className="vx-eyebrow">Configuration</span>
+					<dl className="grid grid-cols-[8rem_1fr] gap-y-1.5 text-xs">
+						{rows.map(([k, v]) => (
+							<div key={k} className="contents">
+								<dt className="text-muted-foreground">
+									{k.replace(/_/g, " ")}
+								</dt>
+								<dd className="truncate font-mono">{String(v)}</dd>
+							</div>
+						))}
+					</dl>
+				</div>
+			)}
+		</div>
 	);
 }

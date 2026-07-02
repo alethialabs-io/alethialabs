@@ -70,7 +70,8 @@ interface CanvasCommandPaletteProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	onSave: () => void;
-	onToggleView: () => void;
+	/** Optional — only present while the legacy form view still exists. */
+	onToggleView?: () => void;
 	onFitView: () => void;
 	onAskAi: () => void;
 }
@@ -189,9 +190,11 @@ export function CanvasCommandPalette({
 					<CommandItem value="redo" onSelect={() => run(redo)}>
 						Redo
 					</CommandItem>
-					<CommandItem value="toggle-form" onSelect={() => run(onToggleView)}>
-						Switch to form
-					</CommandItem>
+					{onToggleView && (
+						<CommandItem value="toggle-form" onSelect={() => run(onToggleView)}>
+							Switch to form
+						</CommandItem>
+					)}
 				</CommandGroup>
 			</CommandList>
 		</CommandDialog>
