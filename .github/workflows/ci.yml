@@ -163,6 +163,11 @@ jobs:
           pnpm -F console gen:cli-fixtures
           git diff --exit-code -- packages/core/api/testdata \
             || { echo "::error::CLI fixtures are stale — run 'pnpm -F console gen:cli-fixtures' and commit (the Go contract test will then name any struct field to update)."; exit 1; }
+      - name: Go enum constants are in sync with the drizzle enums
+        run: |
+          pnpm -F console gen:go-enums
+          git diff --exit-code -- packages/core/types/enums_gen.go \
+            || { echo "::error::Go enum constants are stale — run 'pnpm -F console gen:go-enums' and commit. The Go build + exhaustive lint then flag any switch/map to update."; exit 1; }
       - name: Tests exercise real source (anti-vacuous-test tripwire)
         run: node scripts/check-test-imports.mjs
       - name: Connector setup artifacts in sync (infra/connector ⇄ console public)
