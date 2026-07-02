@@ -25,7 +25,7 @@ Two surfaces, both recreated here as UI kits:
 ### Sources (for the reader)
 Reverse-engineered from a real codebase. If you have access, explore it for higher-fidelity work:
 
-- **GitHub — `bobikenobi12/bb-thesis-2026`** → https://github.com/bobikenobi12/bb-thesis-2026
+- **GitHub — `alethialabs-io/alethialabs`** → https://github.com/alethialabs-io/alethialabs
   - Control plane: `apps/trellis` (Next.js, React 19, Tailwind v4, shadcn/ui "new-york", Lucide, default-dark, Geist + Geist Mono).
   - CLI: `apps/grape` (Go, Cobra, Charmbracelet). Worker: `apps/tendril`. Docs: `apps/vintner`.
   - Marketing landing: `apps/trellis/components/landing/*`. Primitives: `apps/trellis/components/ui/*`.

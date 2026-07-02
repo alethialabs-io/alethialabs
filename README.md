@@ -1,9 +1,9 @@
 # Alethia Labs
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![CI](https://github.com/bobikenobi12/bb-thesis-2026/actions/workflows/ci.yml/badge.svg)](https://github.com/bobikenobi12/bb-thesis-2026/actions/workflows/ci.yml)
-[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/bobikenobi12/bb-thesis-2026/main/.github/badges/coverage.json)](./TESTING.md)
-[![go coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/bobikenobi12/bb-thesis-2026/main/.github/badges/go-coverage.json)](./TESTING.md)
+[![CI](https://github.com/alethialabs-io/alethialabs/actions/workflows/ci.yml/badge.svg)](https://github.com/alethialabs-io/alethialabs/actions/workflows/ci.yml)
+[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/.github/badges/coverage.json)](./TESTING.md)
+[![go coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/.github/badges/go-coverage.json)](./TESTING.md)
 
 An open-source, multi-cloud internal developer platform for provisioning and managing infrastructure through a web control plane and CLI, backed by GitOps reconciliation.
 

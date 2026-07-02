@@ -6,7 +6,7 @@ aws_region = "eu-central-1"
 domain     = "alethialabs.io"
 
 # GitHub repo + branch whose Actions runs may assume the deploy role.
-github_repo   = "bobikenobi12/bb-thesis-2026"
+github_repo   = "alethialabs-io/alethialabs"
 github_branch = "main"
 
 # Set false (and fill oidc_provider_arn) if the account already has the GitHub

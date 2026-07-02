@@ -46,7 +46,7 @@ If `queued > 0` and the service's `desiredCount` is 0, the Lambda calls `ecs:Upd
 
 ### Container Starts
 
-ECS Fargate pulls the Runner Docker image from GHCR (`ghcr.io/bobikenobi12/runner:latest`), injects secrets from AWS Secrets Manager, and starts the container. This takes roughly 30–60 seconds depending on image cache state.
+ECS Fargate pulls the Runner Docker image from GHCR (`ghcr.io/alethialabs-io/runner:latest`), injects secrets from AWS Secrets Manager, and starts the container. This takes roughly 30–60 seconds depending on image cache state.
 
 ### Runner Claims Job
 

@@ -117,5 +117,5 @@ perms verify needs); admin creds work too.
 `.github/workflows/infra-email-ses.yml`: PRs run `tofu validate` (no creds); pushes to `main` assume
 the deploy role via **GitHub OIDC** (`id-token: write`) and apply — **no stored AWS keys, no state
 keys** (S3 backend in-account). Config: just the Actions **variable** `SES_DEPLOYER_ROLE_ARN`
-(= the bootstrap `deployer_role_arn`). The deploy role trusts `bobikenobi12/bb-thesis-2026@main` —
+(= the bootstrap `deployer_role_arn`). The deploy role trusts `alethialabs-io/alethialabs@main` —
 change `github_repo` / `github_branch` in the bootstrap stack if that moves.
