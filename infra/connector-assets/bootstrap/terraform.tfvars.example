@@ -6,7 +6,7 @@ aws_region  = "eu-west-1"
 bucket_name = "alethia-connector-assets"
 
 # GitHub repo + branch whose Actions runs may assume the deploy role.
-github_repo   = "bobikenobi12/bb-thesis-2026"
+github_repo   = "alethialabs-io/alethialabs"
 github_branch = "main"
 
 # The account already has the GitHub Actions OIDC provider (created by the SES

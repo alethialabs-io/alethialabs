@@ -55,7 +55,7 @@ variable "oidc_provider_arn" {
 variable "github_repo" {
   description = "owner/repo allowed to assume the deploy role via OIDC."
   type        = string
-  default     = "bobikenobi12/bb-thesis-2026"
+  default     = "alethialabs-io/alethialabs"
 }
 
 variable "github_branch" {
