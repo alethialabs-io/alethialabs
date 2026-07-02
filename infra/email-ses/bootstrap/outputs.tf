@@ -15,3 +15,8 @@ output "state_bucket" {
   description = "S3 bucket holding the SES stacks' OpenTofu state."
   value       = aws_s3_bucket.tofu_state.bucket
 }
+
+output "smtp_gmail_user" {
+  description = "IAM user to mint SES SMTP credentials for Gmail 'Send mail as' (README §6)."
+  value       = aws_iam_user.smtp_gmail.name
+}

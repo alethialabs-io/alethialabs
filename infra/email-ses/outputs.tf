@@ -11,6 +11,11 @@ output "dkim_tokens" {
   value       = { for k, id in aws_sesv2_email_identity.stream : k => id.dkim_signing_attributes[0].tokens }
 }
 
+output "dkim_tokens_apex" {
+  description = "Easy-DKIM tokens for the apex send-as identity — publish as <token>._domainkey CNAMEs on alethialabs.io."
+  value       = aws_sesv2_email_identity.apex.dkim_signing_attributes[0].tokens
+}
+
 output "configuration_set_names" {
   description = "Per-stream config-set names → ALETHIA_SES_AUTH_CONFIG_SET / ALETHIA_SES_GENERAL_CONFIG_SET."
   value       = { for k, cs in aws_sesv2_configuration_set.stream : k => cs.configuration_set_name }

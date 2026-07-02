@@ -59,6 +59,11 @@ Once for the root domain: `_dmarc` TXT `v=DMARC1; p=none; rua=mailto:dmarc@aleth
 (For alethialabs.io these are already live in Cloudflare; this stack intentionally does not
 manage them so it stays AWS-only and OSS-friendly.)
 
+**Apex send-as identity:** the `alethialabs.io` apex identity (for Gmail "Send mail as",
+§6) also needs its **3 DKIM CNAMEs** — `<token>._domainkey` on the apex, value
+`<token>.dkim.amazonses.com`, from `tofu output -json dkim_tokens_apex`. This gives
+`d=alethialabs.io` DKIM so replies from `support@`/`sales@`/… pass DMARC.
+
 ## 2. Apply the main stack
 
 The SES identities / config sets are already applied for alethialabs.io. For a fresh
@@ -111,6 +116,34 @@ sends a real message (asserts a MessageId), then sends a simulator bounce + comp
 both land on the events topic — captured via a throwaway SQS queue, so it does not need the console
 webhook deployed. Run it as the **deploy role** (its policy grants the send + SNS-subscribe + SQS
 perms verify needs); admin creds work too.
+
+## 6. SMTP credentials for Gmail "Send mail as" (reply *as* the addresses)
+
+Inbound to `support@`/`sales@`/… is handled by Cloudflare Email Routing
+(`infra/cp-hetzner/email-routing.tf`). To *reply as* them, add them in Gmail as
+"Send mail as" aliases that relay through **SES SMTP** — automated by
+[`scripts/gmail-inbox/`](../../scripts/gmail-inbox/README.md). SMTP needs a username +
+password minted from the least-priv `alethia-ses-smtp-gmail` IAM user (created by
+`bootstrap/`, scoped to `ses:SendRawEmail` on the apex identity):
+
+```bash
+# SMTP username = the access key id; keep the secret to derive the password.
+aws iam create-access-key --user-name alethia-ses-smtp-gmail
+
+# SES SMTP password = HMAC of the secret key (region-specific). Node one-liner:
+SECRET='<SecretAccessKey>' node -e '
+  const {createHmac}=require("crypto");
+  const sign=(k,m)=>createHmac("sha256",k).update(m,"utf8").digest();
+  let s=sign("AWS4"+process.env.SECRET,"11111111");
+  for (const p of ["eu-central-1","ses","aws4_request","SendRawEmail"]) s=sign(s,p);
+  console.log(Buffer.concat([Buffer.from([0x04]),s]).toString("base64"));'
+```
+
+Then set `SES_SMTP_USER` (the `AccessKeyId`) + `SES_SMTP_PASSWORD` (the printed value) for
+the Gmail script. Host/port are `email-smtp.eu-central-1.amazonaws.com:587` (STARTTLS).
+Requires production access (§4) to email arbitrary recipients. (Console shortcut: SES →
+*SMTP settings* → *Create SMTP credentials* also works, but mints its own broadly-scoped
+IAM user rather than reusing the least-priv one above.)
 
 ## CI
 

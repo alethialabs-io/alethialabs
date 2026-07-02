@@ -1,0 +1,5 @@
+# OAuth client secret + minted token — never commit these.
+credentials.json
+token.json
+node_modules/
+package-lock.json
