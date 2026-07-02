@@ -38,8 +38,8 @@ type Job struct {
 	ConfigurationHash *string        `json:"configuration_hash"`
 	// VerifyOverride, when present, is an authorized waiver of failing verification
 	// controls (elench): { controls, reason, by, expiry }. nil = no waiver.
-	VerifyOverride map[string]any `json:"verify_override"`
-	Status         string         `json:"status"`
+	VerifyOverride    map[string]any `json:"verify_override"`
+	Status            string         `json:"status"`
 	RunnerID          *string        `json:"runner_id"`
 	ClaimedAt         *time.Time     `json:"claimed_at"`
 	StartedAt         *time.Time     `json:"started_at"`

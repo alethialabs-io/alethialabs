@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/alethialabs-io/alethialabs/packages/core/accessanalyzer"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
@@ -25,6 +24,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 	"github.com/alethialabs-io/alethialabs/packages/core/verify"
+	"github.com/aws/aws-sdk-go-v2/config"
 	tfjson "github.com/hashicorp/terraform-json"
 )
 

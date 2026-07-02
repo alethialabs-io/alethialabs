@@ -13,10 +13,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/verify"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/accessanalyzer"
 	"github.com/aws/aws-sdk-go-v2/service/accessanalyzer/types"
-	"github.com/alethialabs-io/alethialabs/packages/core/verify"
 )
 
 // Checker implements verify.PolicyChecker over the Access Analyzer API.

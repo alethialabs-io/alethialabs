@@ -50,6 +50,7 @@ linters:
         # Interactive TUI / help output — the error is irrelevant to the CLI.
         - (*github.com/charmbracelet/huh/spinner.Spinner).Run
         - (*github.com/spf13/cobra.Command).Help
+        - github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui.RunSpinner
         # Process env mutation — a failure means downstream config fails anyway.
         - os.Setenv
         - os.Unsetenv
