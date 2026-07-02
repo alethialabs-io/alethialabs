@@ -23,7 +23,7 @@ services:
   runner:
     image: "ghcr.io/alethialabs-io/runner:${ALETHIA_IMAGE_TAG:-latest}"
     pull_policy: always
-  # Marketing public site — opt-in self-host (hosted alethialabs.io uses Vercel).
+  # Marketing public site — self-hosted (the tunnel overlay turns the zone on).
   # Inactive unless the operator runs with COMPOSE_PROFILES=marketing AND enables
   # the `import marketing*.caddy` line in deploy/prod/Caddyfile.
   marketing:

@@ -18,6 +18,11 @@ variable "cloudflare_zone_id" {
   type        = string
 }
 
+variable "cloudflare_account_id" {
+  description = "Cloudflare account ID that owns the Zero Trust tunnel."
+  type        = string
+}
+
 variable "domain" {
   description = "Apex domain served by the control plane."
   type        = string

@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in the bootstrap
+# workflow. Defaults already target the current repo + account.
+
+github_repo   = "alethialabs-io/alethialabs" # after the org transfer
+github_branch = "main"
+
+# Runner ECR/ECS scoping (eu-west-1 dev fleet). Adjust when the fleet moves.
+runner_aws_region     = "eu-west-1"
+runner_ecr_repository = "alethia-runner-dev-runner"
+runner_ecs_cluster    = "alethia-runner-dev-eu-west-1-cluster"
+runner_ecs_service    = "alethia-runner-dev-eu-west-1-service"
+
+# Optional: allow an admin principal to assume the roles for local apply.
+# admin_principal_arns = ["arn:aws:iam::270587882865:role/YourAdminRole"]

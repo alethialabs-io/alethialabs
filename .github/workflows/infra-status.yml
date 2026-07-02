@@ -13,15 +13,10 @@ permissions:
 env:
   TF_DIR: infra/status
   TOFU_VERSION: "1.10.10"
-
-  # S3-compatible state backend credentials (read by the s3 backend).
-  AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_S3_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_S3_SECRET_ACCESS_KEY }}
-
-  # OpenTofu variables. DNS for status.* is added by hand (TF doesn't touch Cloudflare).
-  TF_VAR_hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
-  TF_VAR_ssh_public_key: ${{ secrets.DEPLOY_SSH_PUBLIC_KEY }}
-  TF_VAR_acme_email: ${{ secrets.ACME_EMAIL }}
+  ASM_SECRET_ID: alethia/prod/env
+  ASM_REGION: eu-central-1
+  # TF-vars are loaded from Secrets Manager at apply time (see the load step).
+  # DNS for status.* is added by hand (TF doesn't touch Cloudflare).
 
 jobs:
   plan:
@@ -50,26 +45,46 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      id-token: write # assume the deploy role via GitHub OIDC — no stored AWS keys
     steps:
       - uses: actions/checkout@v4
       - uses: opentofu/setup-opentofu@v1
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
 
+      # Same least-priv OIDC role as cp-hetzner (infra/aws-oidc → alethia-cp-deployer);
+      # it grants S3 state on status/* too.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.CP_HETZNER_DEPLOYER_ROLE_ARN }}
+          aws-region: ${{ env.ASM_REGION }}
+
+      - name: Load TF-vars from Secrets Manager
+        run: |
+          set -euo pipefail
+          json="$(aws secretsmanager get-secret-value --secret-id "$ASM_SECRET_ID" --region "$ASM_REGION" --query SecretString --output text)"
+          load() {
+            local var="$1" key="$2" val
+            val="$(printf '%s' "$json" | jq -r --arg k "$key" '.[$k] // ""')"
+            echo "::add-mask::$val"
+            echo "$var=$val" >> "$GITHUB_ENV"
+          }
+          load TF_VAR_hcloud_token   HCLOUD_TOKEN
+          load TF_VAR_ssh_public_key DEPLOY_SSH_PUBLIC_KEY
+          load TF_VAR_acme_email     ACME_EMAIL
+
       - name: OpenTofu Init
         working-directory: ${{ env.TF_DIR }}
+        # AWS-native S3 backend — the OIDC role authenticates it; no static keys.
         run: |
           tofu init -upgrade \
-            -backend-config="bucket=terraform-state" \
+            -backend-config="bucket=alethia-tofu-state-270587882865" \
             -backend-config="key=status/terraform.tfstate" \
-            -backend-config="endpoint=${{ secrets.TF_STATE_S3_ENDPOINT }}" \
-            -backend-config="region=${{ secrets.TF_STATE_S3_REGION }}" \
-            -backend-config="skip_credentials_validation=true" \
-            -backend-config="skip_metadata_api_check=true" \
-            -backend-config="skip_region_validation=true" \
-            -backend-config="skip_requesting_account_id=true" \
-            -backend-config="skip_s3_checksum=true" \
-            -backend-config="force_path_style=true"
+            -backend-config="region=eu-central-1" \
+            -backend-config="use_lockfile=true"
 
       - name: OpenTofu Apply
         working-directory: ${{ env.TF_DIR }}

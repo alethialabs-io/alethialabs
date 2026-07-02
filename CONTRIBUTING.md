@@ -28,7 +28,8 @@ AGPL-only contribution would block us from shipping the commercial edition.
 
 ## How to contribute
 
-1. Fork the repo and create a branch from `main`.
+1. Fork the repo and create a branch from `dev` (the integration branch — see
+   *Branching & release flow* below). PRs target `dev`, not `main`.
 2. Make your change. Add an SPDX header to every new source file:
    - Core code: `SPDX-License-Identifier: AGPL-3.0-only`
    - Code under `ee/`: `SPDX-License-Identifier: LicenseRef-Alethia-Commercial`
@@ -38,6 +39,31 @@ AGPL-only contribution would block us from shipping the commercial edition.
 4. Use [Conventional Commits](https://www.conventionalcommits.org/) — releases are
    automated with release-please.
 5. Open a pull request and sign the CLA when prompted.
+
+## Branching & release flow
+
+Three long-lived branches promote right-to-left; `main` is protected and only ever
+receives merges from `staging`.
+
+| Branch | Role | Merges from | Deploy |
+|---|---|---|---|
+| `dev` | integration — all feature/fix PRs land here | feature branches (PR + green CI) | — (CI only) |
+| `staging` | release candidate | `dev` (PR + green CI) | — (built/tested; no deploy yet) |
+| `main` | production | `staging` **only** (PR + green CI, linear history) | auto → alethialabs.io (`deploy-console.yml`) |
+
+- **`main` is protected:** requires a PR, all CI status checks green, up-to-date branch,
+  linear history; force-push/deletion blocked; admins included. No direct pushes — ever.
+  **0 required approvals** (solo repo — you can't approve your own PR); bump
+  `required_approving_review_count` in `infra/github` when a second reviewer exists.
+- **`staging` is protected too** (PR + green CI), lighter than `main`.
+- **release-please** runs on `main` and opens the release PRs (CLI + runner version
+  bumps); this flow is unchanged by the branch model.
+- A production release is a `staging → main` PR. Hotfixes still go through
+  `dev → staging → main` unless it's a true emergency (cherry-pick to `staging`).
+
+> The protections are **codified** in [`infra/github/`](infra/github/) (Terraform `github`
+> provider), applied once locally during bootstrap; a manual `gh api` fallback lives in
+> [`deploy/prod/README.md`](deploy/prod/README.md#branch-protection--repo-governance).
 
 ## Reporting security issues
 

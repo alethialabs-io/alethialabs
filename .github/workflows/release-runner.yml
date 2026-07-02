@@ -16,6 +16,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write # assume the runner-release deploy role via GitHub OIDC — no stored AWS keys
 
 env:
   AWS_REGION: eu-west-1
@@ -46,11 +47,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Configure AWS credentials
+      # Least-privilege OIDC role (infra/aws-oidc → alethia-runner-release-deployer):
+      # ECR push to the runner repo + ecs:UpdateService on the one service. No keys.
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.RUNNER_RELEASE_DEPLOYER_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -82,10 +84,13 @@ jobs:
 
       - name: Publish release metadata to Alethia
         env:
-          ALETHIA_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
-          RELEASE_API_SECRET: ${{ secrets.RELEASE_API_SECRET }}
+          # URL is a non-secret repo variable; the bearer comes from the vault (the same
+          # OIDC role assumed above for ECR/ECS also has GetSecretValue).
+          ALETHIA_URL: ${{ vars.PUBLIC_APP_URL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          RELEASE_API_SECRET="$(aws secretsmanager get-secret-value --secret-id alethia/prod/env --region eu-central-1 --query SecretString --output text | jq -r '.RELEASE_API_SECRET // ""')"
+          echo "::add-mask::$RELEASE_API_SECRET"
           NOTES=$(gh release view "runner-v${{ steps.meta.outputs.VERSION }}" --json body -q .body 2>/dev/null || echo "")
           curl -sf -X POST "${ALETHIA_URL}/api/releases/runner" \
             -H "Authorization: Bearer ${RELEASE_API_SECRET}" \

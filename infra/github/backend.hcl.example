@@ -1,0 +1,8 @@
+# AWS-native S3 backend for OpenTofu state. Copy to backend.hcl (gitignored).
+#
+#   tofu init -backend-config=backend.hcl
+
+bucket       = "alethia-tofu-state-270587882865"
+key          = "github/terraform.tfstate"
+region       = "eu-central-1"
+use_lockfile = true

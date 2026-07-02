@@ -17,6 +17,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write # assume the runner-release deploy role via GitHub OIDC — no stored AWS keys
 
 env:
   AWS_REGION: eu-west-1
@@ -41,11 +42,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Configure AWS credentials
+      # Least-privilege OIDC role (infra/aws-oidc → alethia-runner-release-deployer). No keys.
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.RUNNER_RELEASE_DEPLOYER_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
