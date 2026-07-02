@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { revalidatePath } from "next/cache";
 import { authorize, authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import * as conn from "@/lib/cloud-providers/connections";
 
@@ -42,7 +41,7 @@ export async function initExtraCloudIdentity(provider: ExtraCloud) {
 	return conn.initIdentity(actor, provider);
 }
 
-/** Persists a DigitalOcean/Hetzner/Civo scoped API token and queues a connection test. */
+/** Persists a DigitalOcean/Hetzner/Civo scoped API token and verifies it server-side. */
 export async function saveTokenCloud(
 	identityId: string,
 	provider: "digitalocean" | "hetzner" | "civo",
@@ -55,43 +54,13 @@ export async function saveTokenCloud(
 	return conn.saveTokenCloudIdentity(actor, identityId, provider, apiToken);
 }
 
-/**
- * Connects a token cloud in self-managed mode — Alethia stores NO token; the
- * customer's self-hosted runner supplies it from its own env. The connection test is
- * pinned to a self-hosted runner.
- */
-export async function saveSelfManagedTokenCloud(
-	identityId: string,
-	provider: "digitalocean" | "hetzner" | "civo",
-) {
-	const actor = await authorize("manage_identities", {
-		type: "cloud_identity",
-		id: identityId,
-	});
-	return conn.saveSelfManagedTokenIdentity(actor, identityId, provider);
-}
-
-/** Persists an Alibaba RAM-role ARN and queues a connection test. */
+/** Persists an Alibaba RAM-role ARN and verifies it server-side (STS AssumeRole). */
 export async function saveAlibaba(identityId: string, roleArn: string) {
 	const actor = await authorize("manage_identities", {
 		type: "cloud_identity",
 		id: identityId,
 	});
 	return conn.saveAlibabaIdentity(actor, identityId, roleArn);
-}
-
-/** Marks an extra-cloud identity verified using the connection-test result. */
-export async function verifyExtraCloudIdentity(
-	identityId: string,
-	jobId?: string,
-) {
-	const actor = await authorize("manage_identities", {
-		type: "cloud_identity",
-		id: identityId,
-	});
-	const result = await conn.verifyIdentity(actor, identityId, jobId);
-	revalidatePath("/dashboard/connectors");
-	return result;
 }
 
 /** Resets an extra-cloud identity to its pending state. */

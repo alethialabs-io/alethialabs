@@ -4,11 +4,8 @@
 package agent
 
 import (
-	"context"
 	"fmt"
-	"net/http"
 	"os"
-	"time"
 )
 
 // Token clouds (DigitalOcean, Hetzner, Civo) have no role-federation, so they
@@ -64,51 +61,4 @@ func ActivateTokenCloud(provider, token string, selfManaged bool) (func(), error
 			_ = os.Unsetenv(e)
 		}
 	}, nil
-}
-
-// tokenCloudVerifyURL is a cheap authenticated GET that confirms the token works.
-var tokenCloudVerifyURL = map[string]string{
-	"digitalocean": "https://api.digitalocean.com/v2/account",
-	"hetzner":      "https://api.hetzner.cloud/v1/datacenters",
-	"civo":         "https://api.civo.com/v2/regions",
-}
-
-// VerifyTokenCloud confirms the scoped token authenticates, without provisioning
-// anything. Used by the CONNECTION_TEST job for DigitalOcean/Hetzner/Civo.
-func VerifyTokenCloud(ctx context.Context, provider, token string, selfManaged bool) error {
-	url, ok := tokenCloudVerifyURL[provider]
-	if !ok {
-		return fmt.Errorf("unsupported token cloud: %s", provider)
-	}
-	// Self-managed: Alethia holds no token — verify with the one in the runner's env.
-	if selfManaged {
-		token = tokenFromEnv(provider)
-		if token == "" {
-			return fmt.Errorf(
-				"self-managed %s: expected %s in this runner's environment",
-				provider, tokenCloudEnvVars[provider][0],
-			)
-		}
-	}
-	if token == "" {
-		return fmt.Errorf("empty API token for %s", provider)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("%s API call failed: %w", provider, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("invalid or unauthorized %s token (HTTP %d)", provider, resp.StatusCode)
-	}
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("%s API returned HTTP %d", provider, resp.StatusCode)
-	}
-	return nil
 }

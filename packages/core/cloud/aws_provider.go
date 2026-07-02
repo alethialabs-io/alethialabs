@@ -57,7 +57,7 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 	tfvars := map[string]interface{}{
 		"project_name":   config.ProjectName,
-		"region":         config.Region,
+		"region":         resolveRegion("aws", config.Region),
 		"environment":    config.EnvironmentStage,
 		"aws_account_id": config.CloudAccountID,
 
@@ -125,9 +125,10 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 			scalingConfig["max_capacity"] = *db.MaxCapacity
 		}
 		tfvars["rds_scaling_config"] = scalingConfig
+		engine, version := resolveDBEngine("aws", db)
 		tfvars["rds_config"] = map[string]interface{}{
-			"engine":         orDefault(db.Engine, "aurora-postgresql"),
-			"engine_version": orDefault(db.EngineVersion, "16.6"),
+			"engine":         orDefault(engine, "aurora-postgresql"),
+			"engine_version": orDefault(version, "16.6"),
 			"db_port":        derefIntOr(db.Port, 5432),
 			"db_name":        db.Name,
 		}
@@ -144,7 +145,10 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 	if len(config.Caches) > 0 {
 		cache := config.Caches[0]
-		tfvars["redis_instance_type"] = orDefault(cache.NodeType, "cache.t3.medium")
+		tfvars["redis_instance_type"] = orDefault(
+			resolveCacheNodeType("aws", cache),
+			"cache.t3.medium",
+		)
 		if cache.EngineVersion != "" {
 			tfvars["redis_engine_version"] = cache.EngineVersion
 		}
@@ -156,8 +160,8 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		}
 	}
 
-	if len(config.Cluster.InstanceTypes) > 0 {
-		tfvars["eks_instance_types"] = config.Cluster.InstanceTypes
+	if inst := resolveInstanceTypes("aws", config.Cluster); len(inst) > 0 {
+		tfvars["eks_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {
 		tfvars["eks_ng_min_size"] = config.Cluster.NodeMinSize

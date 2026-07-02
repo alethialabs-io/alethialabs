@@ -137,36 +137,51 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 
 	tfvars := provider.ProviderTfvars(vc)
 
-	if !vc.Network.ProvisionNetwork && vc.Network.NetworkID != "" && provider.Name() == "aws" {
-		tfvars["vpc_id"] = vc.Network.NetworkID
-		fmt.Fprintf(stdout, "Using existing VPC %s — looking up subnets...\n", vc.Network.NetworkID)
-		ec2Client, ec2Err := alethiaAws.NewEC2Client(ctx, alethiaAws.AWSOptions{Region: vc.Region})
-		if ec2Err != nil {
-			fmt.Fprintf(stderr, "Warning: failed to create EC2 client for subnet lookup: %v\n", ec2Err)
-		} else {
-			subnets, subErr := ec2Client.ListSubnets(ctx, vc.Network.NetworkID)
-			if subErr != nil {
-				fmt.Fprintf(stderr, "Warning: failed to list subnets: %v\n", subErr)
+	// Brownfield: attach to an EXISTING network instead of creating one. AWS resolves the VPC's subnets
+	// here (EC2 API); GCP/Azure pass the network id and the tofu template data-sources the network + a
+	// subnet in-region (keeps the per-cloud subnet nuance in HCL). See infra/templates/project/*.
+	if !vc.Network.ProvisionNetwork && vc.Network.NetworkID != "" {
+		switch provider.Name() {
+		case "aws":
+			tfvars["vpc_id"] = vc.Network.NetworkID
+			fmt.Fprintf(stdout, "Using existing VPC %s — looking up subnets...\n", vc.Network.NetworkID)
+			ec2Client, ec2Err := alethiaAws.NewEC2Client(ctx, alethiaAws.AWSOptions{Region: vc.Region})
+			if ec2Err != nil {
+				fmt.Fprintf(stderr, "Warning: failed to create EC2 client for subnet lookup: %v\n", ec2Err)
 			} else {
-				privateIDs := make([]string, 0)
-				publicIDs := make([]string, 0)
-				for _, s := range subnets {
-					if s.MapPublicIpOnLaunch {
-						publicIDs = append(publicIDs, s.ID)
-					} else {
-						privateIDs = append(privateIDs, s.ID)
+				subnets, subErr := ec2Client.ListSubnets(ctx, vc.Network.NetworkID)
+				if subErr != nil {
+					fmt.Fprintf(stderr, "Warning: failed to list subnets: %v\n", subErr)
+				} else {
+					privateIDs := make([]string, 0)
+					publicIDs := make([]string, 0)
+					for _, s := range subnets {
+						if s.MapPublicIpOnLaunch {
+							publicIDs = append(publicIDs, s.ID)
+						} else {
+							privateIDs = append(privateIDs, s.ID)
+						}
 					}
+					if len(publicIDs) == 0 {
+						publicIDs = privateIDs
+					}
+					if len(privateIDs) == 0 {
+						privateIDs = publicIDs
+					}
+					tfvars["vpc_private_subnet_ids"] = privateIDs
+					tfvars["vpc_public_subnet_ids"] = publicIDs
+					fmt.Fprintf(stdout, "Found %d private and %d public subnets\n", len(privateIDs), len(publicIDs))
 				}
-				if len(publicIDs) == 0 {
-					publicIDs = privateIDs
-				}
-				if len(privateIDs) == 0 {
-					privateIDs = publicIDs
-				}
-				tfvars["vpc_private_subnet_ids"] = privateIDs
-				tfvars["vpc_public_subnet_ids"] = publicIDs
-				fmt.Fprintf(stdout, "Found %d private and %d public subnets\n", len(privateIDs), len(publicIDs))
 			}
+		case "gcp":
+			// Self-link (projects/…/global/networks/…). The template data-sources the network + a
+			// subnetwork in var.region (with its pod/service secondary ranges).
+			tfvars["network_id"] = vc.Network.NetworkID
+			fmt.Fprintf(stdout, "Using existing VPC network %s — the template resolves a subnet in %s.\n", vc.Network.NetworkID, vc.Region)
+		case "azure":
+			// VNet resource id. The template data-sources the VNet + a subnet for AKS.
+			tfvars["vnet_id"] = vc.Network.NetworkID
+			fmt.Fprintf(stdout, "Using existing VNet %s — the template resolves an AKS subnet.\n", vc.Network.NetworkID)
 		}
 	}
 

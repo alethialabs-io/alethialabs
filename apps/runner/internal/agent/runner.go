@@ -152,15 +152,8 @@ func (w *Runner) claimLoop(ctx context.Context, draining *atomic.Bool) error {
 			}
 
 			fmt.Printf("Claimed job %s (type=%s)\n", claim.Job.ID, claim.Job.JobType)
-			// Connection tests / resource fetches are quick auth+list calls — bound them
-			// tightly so a hanging cloud SDK call (e.g. an Azure credential/IMDS probe in a
-			// non-federated env) can't wedge the runner and hold the claim for the full job
-			// timeout. PLAN/DEPLOY keep the long timeout (they provision real infra).
+			// PLAN/DEPLOY/DESTROY provision real infra, so they keep a long timeout.
 			jobTimeout := 2 * time.Hour
-			switch claim.Job.JobType {
-			case "CONNECTION_TEST", "FETCH_RESOURCES":
-				jobTimeout = 3 * time.Minute
-			}
 			jobCtx, jobCancel := context.WithTimeout(ctx, jobTimeout)
 			if err := w.executeJob(jobCtx, claim); err != nil {
 				fmt.Fprintf(os.Stderr, "Job %s failed: %v\n", claim.Job.ID, err)
@@ -211,8 +204,8 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	}
 
 	if claim.CloudIdentity != nil {
-		switch claim.CloudIdentity.Provider {
-		case "aws":
+		switch types.CloudProvider(claim.CloudIdentity.Provider) {
+		case types.CloudProviderAws:
 			fmt.Fprintf(stdoutLogger, "Assuming role %s into account %s...\n", claim.CloudIdentity.RoleArn, claim.CloudIdentity.AccountID)
 			sessionName := fmt.Sprintf("runner-%s", job.ID[:8])
 			if err := AssumeRole(ctx, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID, sessionName); err != nil {
@@ -222,7 +215,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 				return err
 			}
 			defer ClearAssumedCredentials()
-		case "gcp":
+		case types.CloudProviderGcp:
 			fmt.Fprintf(stdoutLogger, "Activating WIF for project %s (SA: %s)...\n", claim.CloudIdentity.ProjectID, claim.CloudIdentity.ServiceAccountEmail)
 			cleanup, err := ActivateGcpWIF(claim.CloudIdentity.WifConfig, claim.CloudIdentity.ProjectID)
 			if err != nil {
@@ -232,7 +225,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 				return err
 			}
 			defer cleanup()
-		case "azure":
+		case types.CloudProviderAzure:
 			fmt.Fprintf(stdoutLogger, "Activating Azure federated identity for tenant %s (subscription: %s)...\n", claim.CloudIdentity.TenantID, claim.CloudIdentity.SubscriptionID)
 			cleanup, err := ActivateAzureFederated(claim.CloudIdentity.TenantID, claim.CloudIdentity.ClientID, claim.CloudIdentity.SubscriptionID)
 			if err != nil {
@@ -242,7 +235,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 				return err
 			}
 			defer cleanup()
-		case "digitalocean", "hetzner", "civo":
+		case types.CloudProviderDigitalocean, types.CloudProviderHetzner, types.CloudProviderCivo:
 			fmt.Fprintf(stdoutLogger, "Activating %s API token...\n", claim.CloudIdentity.Provider)
 			cleanup, err := ActivateTokenCloud(claim.CloudIdentity.Provider, claim.CloudIdentity.APIToken, claim.CloudIdentity.SelfManaged)
 			if err != nil {
@@ -252,7 +245,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 				return err
 			}
 			defer cleanup()
-		case "alibaba":
+		case types.CloudProviderAlibaba:
 			fmt.Fprintf(stdoutLogger, "Assuming Alibaba RAM role %s...\n", claim.CloudIdentity.RoleArn)
 			sessionName := fmt.Sprintf("runner-%s", job.ID[:8])
 			cleanup, err := ActivateAlibabaRole(ctx, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID, sessionName)
@@ -272,38 +265,25 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	}
 
 	var execErr error
-	switch job.JobType {
-	case "CONNECTION_TEST":
-		// Credential activation above already performed the real auth (STS AssumeRole / WIF /
-		// federated identity), which IS the proof of access. Resource caching now happens
-		// server-side in the console (the asset inventory), so the runner no longer lists resources;
-		// it just reports the activation result. Self-managed token clouds (no federation) verify the
-		// stored token over HTTP here.
-		switch provider {
-		case "digitalocean", "hetzner", "civo":
-			if err := VerifyTokenCloud(ctx, provider, claim.CloudIdentity.APIToken, claim.CloudIdentity.SelfManaged); err != nil {
-				execErr = fmt.Errorf("connection test failed: %w", err)
-			} else {
-				fmt.Fprintf(stdoutLogger, "Connection test passed — %s token authenticated.\n", provider)
-			}
-		default:
-			fmt.Fprintln(stdoutLogger, "Connection test passed — credential activation succeeded.")
-		}
-	case "PLAN":
+	// Switch on the generated types.JobType so `exhaustive` (golangci-lint) forces a
+	// case for every provision_job_type value — adding a job type here is mandatory,
+	// and removing one from the enum SSOT makes the missing constant a compile error.
+	switch types.JobType(job.JobType) {
+	case types.JobTypePlan:
 		execErr = w.executePlan(ctx, job, provider, claim.CloudIdentity, claim.ConnectorCredentials, stdoutLogger, stderrLogger)
-	case "DEPLOY":
+	case types.JobTypeDeploy:
 		execErr = w.executeDeploy(ctx, job, provider, claim.CloudIdentity, claim.ConnectorCredentials, stdoutLogger, stderrLogger)
-	case "DESTROY":
+	case types.JobTypeDestroy:
 		execErr = w.executeDestroy(ctx, job, stdoutLogger, stderrLogger)
-	case "DEPLOY_RUNNER", "UPDATE_RUNNER":
+	case types.JobTypeDeployRunner, types.JobTypeUpdateRunner:
 		execErr = w.executeDeployRunner(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
-	case "DESTROY_RUNNER":
+	case types.JobTypeDestroyRunner:
 		execErr = w.executeDestroyRunner(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
-	case "ANALYZE_REPO":
+	case types.JobTypeAnalyzeRepo:
 		execErr = w.executeAnalyzeRepo(ctx, job, stdoutLogger, stderrLogger)
-	case "DETECT_DRIFT":
+	case types.JobTypeDetectDrift:
 		execErr = w.executeDriftDetection(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
-	case "AUDIT":
+	case types.JobTypeAudit:
 		execErr = w.executeAudit(ctx, job, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)

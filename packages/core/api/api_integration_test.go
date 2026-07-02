@@ -191,14 +191,15 @@ func TestIntegration_GetJobs(t *testing.T) {
 
 	t.Logf("Found %d jobs", len(jobs))
 
-	validStatuses := map[string]bool{
-		"QUEUED": true, "CLAIMED": true, "PROCESSING": true,
-		"SUCCESS": true, "FAILED": true, "CANCELLED": true,
+	// Derived from the generated enum SSOT so these sets can never drift from the
+	// backend's provision_job_status / provision_job_type values.
+	validStatuses := map[string]bool{}
+	for _, s := range types.AllJobStatuses {
+		validStatuses[string(s)] = true
 	}
-	validTypes := map[string]bool{
-		"DEPLOY": true, "DESTROY": true, "PLAN": true,
-		"DEPLOY_RUNNER": true, "UPDATE_RUNNER": true, "DESTROY_RUNNER": true,
-		"CONNECTION_TEST": true, "FETCH_RESOURCES": true,
+	validTypes := map[string]bool{}
+	for _, jt := range types.AllJobTypes {
+		validTypes[string(jt)] = true
 	}
 
 	for i, j := range jobs {

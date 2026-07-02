@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { ToolUIPart } from "ai";
-import { Check, Sparkles, Telescope } from "lucide-react";
+import { Check, Sparkles, Telescope, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { z } from "zod";
@@ -16,13 +16,6 @@ import { aiProposalSchema } from "@/lib/ai/proposal";
 import { operationProposalSchema } from "@/lib/ai/operation";
 import { useAssistantStore } from "@/lib/stores/use-assistant-store";
 import { Button } from "@repo/ui/button";
-import {
-	Sheet,
-	SheetContent,
-	SheetDescription,
-	SheetHeader,
-	SheetTitle,
-} from "@repo/ui/sheet";
 import { useProjectAssistant } from "./use-project-assistant";
 
 const scanResultSchema = z.object({ openInCanvasUrl: z.string().optional() });
@@ -54,7 +47,9 @@ const verifyReportSchema = z.object({
 		not_evaluable: z.number(),
 	}),
 });
-const planResultSchema = z.object({ verify_result: verifyReportSchema.nullish() });
+const planResultSchema = z.object({
+	verify_result: verifyReportSchema.nullish(),
+});
 
 const SUGGESTIONS = [
 	"Scan my repo: https://github.com/…",
@@ -64,13 +59,13 @@ const SUGGESTIONS = [
 ];
 
 /**
- * The project-page assistant — a docked drawer that drives the MVP loop for THIS
- * project: scan repos → propose infra, edit the design (propose_changes → canvas),
- * and propose plan/deploy (ApprovalCard) with the elench verdict. Reuses the shared
- * `<AgentChat>` + the canvas/agent proposal renderers.
+ * The project-page assistant — the agent body of the canvas's inline docked side panel. Drives
+ * the MVP loop for THIS project: scan repos → propose infra, edit the design (propose_changes →
+ * canvas), and propose plan/deploy (ApprovalCard) with the elench verdict. Reuses the shared
+ * `<AgentChat>` + the canvas/agent proposal renderers. Stays mounted so chat state survives the
+ * panel closing/switching to the inspector.
  */
-export function ProjectAssistant({ projectId }: { projectId: string }) {
-	const open = useAssistantStore((s) => s.open);
+export function AssistantPanel({ projectId }: { projectId: string }) {
 	const setOpen = useAssistantStore((s) => s.setOpen);
 	const { messages, sendMessage, status, error, regenerate } =
 		useProjectAssistant(projectId);
@@ -120,7 +115,10 @@ export function ProjectAssistant({ projectId }: { projectId: string }) {
 
 		// Plan result → render the elench verification verdict inline (the proof beat),
 		// so the user sees pass/fail per control before approving a deploy.
-		if (part.type === "tool-get_plan_result" && part.state === "output-available") {
+		if (
+			part.type === "tool-get_plan_result" &&
+			part.state === "output-available"
+		) {
 			const parsed = planResultSchema.safeParse(part.output);
 			if (parsed.success && parsed.data.verify_result) {
 				return (
@@ -133,7 +131,10 @@ export function ProjectAssistant({ projectId }: { projectId: string }) {
 		}
 
 		// Repo scan ready → a link to review the proposed project in the design surface.
-		if (part.type === "tool-get_scan_result" && part.state === "output-available") {
+		if (
+			part.type === "tool-get_scan_result" &&
+			part.state === "output-available"
+		) {
 			const parsed = scanResultSchema.safeParse(part.output);
 			if (parsed.success && parsed.data.openInCanvasUrl) {
 				return (
@@ -161,23 +162,34 @@ export function ProjectAssistant({ projectId }: { projectId: string }) {
 	};
 
 	return (
-		<Sheet open={open} onOpenChange={setOpen}>
-			<SheetContent
-				side="right"
-				className="flex w-[440px] flex-col gap-0 p-0 sm:max-w-[440px]"
-			>
-				<SheetHeader className="border-b border-border">
+		<div className="flex h-full flex-col">
+			<div className="flex items-start justify-between gap-2 border-b border-border p-4">
+				<div className="min-w-0">
 					<span className="vx-eyebrow flex items-center gap-1.5">
 						<Sparkles className="h-3 w-3" />
 						Project assistant
 					</span>
-					<SheetTitle className="text-base">Build & operate this project</SheetTitle>
-					<SheetDescription className="text-xs">
-						Scan a repo to infer infrastructure, edit the design, and plan/deploy with
-						verification — you approve every change.
-					</SheetDescription>
-				</SheetHeader>
+					<h2 className="mt-1 text-base font-semibold">
+						Build & operate this project
+					</h2>
+					<p className="mt-0.5 text-xs text-muted-foreground">
+						Scan a repo to infer infrastructure, edit the design, and
+						plan/deploy with verification — you approve every change.
+					</p>
+				</div>
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					className="h-7 w-7 shrink-0"
+					onClick={() => setOpen(false)}
+					aria-label="Close assistant"
+				>
+					<X className="h-4 w-4" />
+				</Button>
+			</div>
 
+			<div className="flex min-h-0 flex-1 flex-col">
 				<AgentChat
 					messages={messages}
 					status={status}
@@ -188,7 +200,7 @@ export function ProjectAssistant({ projectId }: { projectId: string }) {
 					placeholder="Scan a repo, edit the design, or ask about this project…"
 					renderToolPart={renderToolPart}
 				/>
-			</SheetContent>
-		</Sheet>
+			</div>
+		</div>
 	);
 }

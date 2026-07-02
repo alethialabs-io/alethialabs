@@ -7,7 +7,15 @@ import { useMemo, useState } from "react";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { cn } from "@repo/ui/utils";
-import { buildDrills, type DrillId, routeOwnedDrill } from "./nav-config";
+import {
+	buildDrills,
+	buildProjectDrills,
+	buildProjectSidebarNav,
+	buildSidebarNav,
+	type DrillId,
+	projectScope,
+	routeOwnedDrill,
+} from "./nav-config";
 import { SidebarDrill } from "./sidebar-drill";
 import { SidebarNav } from "./sidebar-nav";
 import { SidebarProfile } from "./sidebar-profile";
@@ -22,7 +30,24 @@ import { SidebarProfile } from "./sidebar-profile";
 export function AppSidebar({ isHosted = false }: { isHosted?: boolean }) {
 	const pathname = usePathname();
 	const orgSlug = useActiveOrgSlug();
-	const drills = useMemo(() => buildDrills(orgSlug), [orgSlug]);
+
+	// Inside a project drilldown the whole sidebar scopes to that project; at the org overview
+	// and org-global (`~`) scope it stays org-wide. Mirrors the scope-aware Settings drill.
+	const projectSlug = projectScope(pathname)?.projectSlug ?? null;
+	const groups = useMemo(
+		() =>
+			projectSlug
+				? buildProjectSidebarNav(orgSlug, projectSlug)
+				: buildSidebarNav(orgSlug),
+		[orgSlug, projectSlug],
+	);
+	const drills = useMemo(
+		() =>
+			projectSlug
+				? buildProjectDrills(orgSlug, projectSlug)
+				: buildDrills(orgSlug),
+		[orgSlug, projectSlug],
+	);
 
 	const routeDrill = routeOwnedDrill(pathname);
 	// A click-opened drill (Observability) is scoped to the path it was opened on, so any
@@ -52,7 +77,7 @@ export function AppSidebar({ isHosted = false }: { isHosted?: boolean }) {
 					)}
 				>
 					<SidebarNav
-						orgSlug={orgSlug}
+						groups={groups}
 						onOpenDrill={(id) => setManual({ drill: id, path: pathname })}
 					/>
 				</div>

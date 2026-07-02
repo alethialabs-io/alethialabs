@@ -11,7 +11,6 @@ import {
 	Container,
 	FileSearch,
 	GitBranch,
-	Plug,
 	RefreshCw,
 	Rocket,
 	Trash2,
@@ -38,16 +37,6 @@ export const JOB_TYPES: Record<
 		label: "Destroy",
 		icon: Trash2,
 		description: "Tear down infrastructure",
-	},
-	CONNECTION_TEST: {
-		label: "Connection Test",
-		icon: Plug,
-		description: "Verify cloud account access",
-	},
-	FETCH_RESOURCES: {
-		label: "Fetch Resources",
-		icon: RefreshCw,
-		description: "Cache cloud regions, networks, zones",
 	},
 	DEPLOY_RUNNER: {
 		label: "Deploy Runner",

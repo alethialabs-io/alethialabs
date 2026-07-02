@@ -34,7 +34,8 @@ BEGIN
     'projects', 'project_environments', 'project_network', 'project_cluster', 'project_dns',
     'project_repositories', 'project_databases', 'project_caches', 'project_queues', 'project_topics',
     'project_nosql_tables', 'project_container_registries', 'project_secrets',
-    'project_storage_buckets', 'jobs'
+    'project_storage_buckets', 'jobs',
+    'environment_protection_rules', 'environment_promotions'
   ]) LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS %1$s_updated_at ON public.%1$I', tbl);
     EXECUTE format(
@@ -103,8 +104,6 @@ $$;
 CREATE OR REPLACE FUNCTION public.jobtype_priority_bump(jt public.provision_job_type)
 RETURNS smallint LANGUAGE sql IMMUTABLE AS $$
   SELECT (CASE jt
-    WHEN 'CONNECTION_TEST' THEN 5
-    WHEN 'FETCH_RESOURCES' THEN 5
     WHEN 'PLAN' THEN 3
     WHEN 'DEPLOY_RUNNER' THEN 2
     WHEN 'UPDATE_RUNNER' THEN 2
@@ -238,66 +237,9 @@ BEGIN
 END;
 $$;
 
--- Fast-fail stuck CONNECTION_TEST jobs so the connect sheet / identity can never spin
--- forever. Two cases, both scoped to CONNECTION_TEST (PLAN/DEPLOY cold-starts legitimately
--- wait for a runner, so they're untouched), both flipping the linked unverified identity to
--- 'failed' so the page reflects it:
---   (a) QUEUED   — never picked up (managed fleet at 0, OSS self-host, or local dev with no
---                  runner), older than p_ttl.
---   (b) CLAIMED/PROCESSING — a runner claimed it but never finished (wedged on a hanging
---       verify, e.g. an Azure SDK/IMDS probe). Connection tests are quick, so one claimed
---       beyond p_claimed_ttl is hung; fail it regardless of runner heartbeat (the runner may
---       be alive but stuck — recover_stale_jobs only handles dead runners).
-CREATE OR REPLACE FUNCTION public.fail_unclaimed_connection_tests(
-    p_ttl INTERVAL DEFAULT INTERVAL '5 minutes',
-    p_claimed_ttl INTERVAL DEFAULT INTERVAL '10 minutes'
-)
-RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_unclaimed INTEGER; v_wedged INTEGER;
-BEGIN
-    -- (a) QUEUED tests no runner ever claimed.
-    WITH stuck AS (
-        UPDATE public.jobs
-        SET status = 'FAILED',
-            error_message = 'No runner available — start a runner and retry.',
-            completed_at = now(), updated_at = now()
-        WHERE job_type = 'CONNECTION_TEST'
-          AND status = 'QUEUED'
-          AND created_at < now() - p_ttl
-        RETURNING cloud_identity_id
-    )
-    UPDATE public.cloud_identities ci
-    SET status = 'failed',
-        last_error = 'No runner available — start a runner and retry.',
-        last_tested_at = now(), updated_at = now()
-    FROM stuck
-    WHERE ci.id = stuck.cloud_identity_id
-      AND ci.is_verified = false;
-    GET DIAGNOSTICS v_unclaimed = ROW_COUNT;
-
-    -- (b) CLAIMED/PROCESSING tests a runner picked up but never finished (wedged).
-    WITH wedged AS (
-        UPDATE public.jobs
-        SET status = 'FAILED',
-            error_message = 'Connection test timed out — the runner did not finish. Retry.',
-            completed_at = now(), updated_at = now()
-        WHERE job_type = 'CONNECTION_TEST'
-          AND status IN ('CLAIMED', 'PROCESSING')
-          AND claimed_at < now() - p_claimed_ttl
-        RETURNING cloud_identity_id
-    )
-    UPDATE public.cloud_identities ci
-    SET status = 'failed',
-        last_error = 'Connection test timed out — the runner did not finish. Retry.',
-        last_tested_at = now(), updated_at = now()
-    FROM wedged
-    WHERE ci.id = wedged.cloud_identity_id
-      AND ci.is_verified = false;
-    GET DIAGNOSTICS v_wedged = ROW_COUNT;
-
-    RETURN v_unclaimed + v_wedged;
-END;
-$$;
+-- Connection verification is server-side + instant now (no CONNECTION_TEST job), so the old
+-- stuck-connection-test sweeper is retired. Drop it from any DB that still has it.
+DROP FUNCTION IF EXISTS public.fail_unclaimed_connection_tests(INTERVAL, INTERVAL);
 
 -- Garbage-collect never-saved pending identities. initIdentity() seeds one row per
 -- connect-sheet open; abandoned flows leave 'pending' rows forever. Deletes only
@@ -536,6 +478,28 @@ BEGIN
 END;
 $$;
 
+-- ── Environment-scoping backfill ───────────────────────────────────────────────────
+-- Component config became environment-scoped (environment_id added to every project_* table).
+-- Attach any pre-existing rows (created when config was project-level) to their project's
+-- DEFAULT environment. Idempotent: only rows whose environment_id is still NULL are touched, so
+-- this is safe to re-run on every migrate.
+DO $$
+DECLARE tbl TEXT;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY[
+    'project_network', 'project_cluster', 'project_dns', 'project_observability',
+    'project_repositories', 'project_databases', 'project_caches', 'project_queues',
+    'project_topics', 'project_nosql_tables', 'project_container_registries',
+    'project_secrets', 'project_storage_buckets', 'project_git_credentials'
+  ]) LOOP
+    EXECUTE format(
+      'UPDATE public.%I c SET environment_id = e.id
+         FROM public.project_environments e
+        WHERE e.project_id = c.project_id AND e.is_default
+          AND c.environment_id IS NULL', tbl);
+  END LOOP;
+END $$;
+
 -- ── project_full: denormalized read model for the CLI config + job-create endpoints.
 -- OUTPUT column names match the ProjectConfig wire contract (create_vpc, …);
 -- sources the renamed project_* tables. Numerics are cast to float8 so the JSON carries
@@ -588,19 +552,21 @@ SELECT
   -- Repositories
   repos.apps_destination_repo,
 
-  -- Aggregated
-  EXISTS(SELECT 1 FROM public.project_databases d WHERE d.project_id = s.id AND d.status != 'DESTROYED') AS has_database,
-  (SELECT MIN(d.min_capacity)::float8 FROM public.project_databases d WHERE d.project_id = s.id AND d.status != 'DESTROYED') AS db_min_capacity,
-  (SELECT MAX(d.max_capacity)::float8 FROM public.project_databases d WHERE d.project_id = s.id AND d.status != 'DESTROYED') AS db_max_capacity,
-  EXISTS(SELECT 1 FROM public.project_caches c WHERE c.project_id = s.id AND c.status != 'DESTROYED') AS has_cache
+  -- Aggregated (scoped to the default environment's components)
+  EXISTS(SELECT 1 FROM public.project_databases d WHERE d.project_id = s.id AND d.environment_id = env.id AND d.status != 'DESTROYED') AS has_database,
+  (SELECT MIN(d.min_capacity)::float8 FROM public.project_databases d WHERE d.project_id = s.id AND d.environment_id = env.id AND d.status != 'DESTROYED') AS db_min_capacity,
+  (SELECT MAX(d.max_capacity)::float8 FROM public.project_databases d WHERE d.project_id = s.id AND d.environment_id = env.id AND d.status != 'DESTROYED') AS db_max_capacity,
+  EXISTS(SELECT 1 FROM public.project_caches c WHERE c.project_id = s.id AND c.environment_id = env.id AND c.status != 'DESTROYED') AS has_cache
 
+-- The view summarises a project via its DEFAULT environment: `env` is the default env and every
+-- component join/aggregate is scoped to it (components are environment-scoped).
 FROM public.projects s
 LEFT JOIN public.project_environments env ON env.project_id = s.id AND env.is_default = true
 LEFT JOIN public.cloud_identities ci ON ci.id = s.cloud_identity_id
-LEFT JOIN public.project_network net ON net.project_id = s.id
-LEFT JOIN public.project_cluster cl ON cl.project_id = s.id
-LEFT JOIN public.project_dns dns ON dns.project_id = s.id
-LEFT JOIN public.project_repositories repos ON repos.project_id = s.id;
+LEFT JOIN public.project_network net ON net.project_id = s.id AND net.environment_id = env.id
+LEFT JOIN public.project_cluster cl ON cl.project_id = s.id AND cl.environment_id = env.id
+LEFT JOIN public.project_dns dns ON dns.project_id = s.id AND dns.environment_id = env.id
+LEFT JOIN public.project_repositories repos ON repos.project_id = s.id AND repos.environment_id = env.id;
 
 GRANT SELECT ON public.project_full TO alethia_app;
 
@@ -670,6 +636,33 @@ BEGIN
   END LOOP;
 END $$;
 
+-- Cloud inventory tables: ownership flows through the parent cloud_identity's scope. Writes come from
+-- the console's server-side sync/event-ingester via the service role (RLS-bypassing); this gates tenant
+-- reads to identities they own/share.
+DO $$
+DECLARE tbl TEXT;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY[
+    'cloud_regions', 'cloud_networks', 'cloud_subnets', 'cloud_nics', 'cloud_dns_zones',
+    'cloud_kubernetes_clusters', 'cloud_databases', 'cloud_caches', 'cloud_queues', 'cloud_topics',
+    'cloud_nosql_tables', 'cloud_container_registries', 'cloud_secrets', 'cloud_storage_buckets',
+    'cloud_resources'
+  ]) LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
+    EXECUTE format(
+      'CREATE POLICY owner_all ON public.%I FOR ALL
+         USING (cloud_identity_id IN (
+           SELECT id FROM public.cloud_identities ci
+            WHERE (ci.scope = ''personal'' AND ci.user_id = current_setting(''app.current_owner'', true)::uuid)
+               OR (ci.scope = ''org'' AND ci.org_id = current_setting(''app.current_org'', true)::uuid)))
+         WITH CHECK (cloud_identity_id IN (
+           SELECT id FROM public.cloud_identities ci
+            WHERE (ci.scope = ''personal'' AND ci.user_id = current_setting(''app.current_owner'', true)::uuid)
+               OR (ci.scope = ''org'' AND ci.org_id = current_setting(''app.current_org'', true)::uuid)))', tbl);
+  END LOOP;
+END $$;
+
 -- runners: reads are owner/org-scoped. Managed (platform-fleet) rows have no owner/org, so they
 -- are NOT visible through the tenant RLS path — they leak fleet topology/COGS to every tenant
 -- otherwise. The fleet controller, scaler, runner claim/heartbeat/wake, and the self-managed
@@ -701,7 +694,9 @@ BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
     'project_environments', 'project_network', 'project_cluster', 'project_dns', 'project_observability', 'project_repositories', 'project_databases',
     'project_caches', 'project_queues', 'project_topics', 'project_nosql_tables',
-    'project_container_registries', 'project_secrets', 'project_git_credentials', 'project_storage_buckets'
+    'project_container_registries', 'project_secrets', 'project_git_credentials', 'project_storage_buckets',
+    'project_changes',
+    'environment_protection_rules', 'environment_promotions', 'promotion_approvals'
   ]) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
@@ -716,7 +711,8 @@ BEGIN
   END LOOP;
 END $$;
 
--- job_logs + audit_log: user reads own (via parent), runners write via service role.
+-- job_logs: user reads own (via parent). audit_log: user reads + inserts own (append-only);
+-- runners also write via the RLS-bypassing service role.
 ALTER TABLE public.job_logs ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS logs_select ON public.job_logs;
 CREATE POLICY logs_select ON public.job_logs FOR SELECT
@@ -729,6 +725,14 @@ ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS audit_select ON public.audit_log;
 CREATE POLICY audit_select ON public.audit_log FOR SELECT
   USING (project_id IN (SELECT id FROM public.projects
+    WHERE user_id = current_setting('app.current_owner', true)::uuid
+       OR org_id = current_setting('app.current_org', true)::uuid));
+-- Append-only INSERT for the app role (e.g. createProject's CREATED entry), scoped to owned
+-- projects so the write stays inside the same withOwnerScope transaction. No UPDATE/DELETE policy
+-- → audit rows are immutable from the app role.
+DROP POLICY IF EXISTS audit_insert ON public.audit_log;
+CREATE POLICY audit_insert ON public.audit_log FOR INSERT
+  WITH CHECK (project_id IN (SELECT id FROM public.projects
     WHERE user_id = current_setting('app.current_owner', true)::uuid
        OR org_id = current_setting('app.current_org', true)::uuid));
 

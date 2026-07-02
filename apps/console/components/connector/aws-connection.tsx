@@ -25,7 +25,10 @@ import {
 	InfoNote,
 	StatusCallout,
 } from "@/components/connector/connection-ui";
-import { useConnectionTest } from "@/components/connector/use-connection-test";
+import {
+	type VerifyOutcome,
+	useConnectionTest,
+} from "@/components/connector/use-connection-test";
 import { CopyButton } from "@repo/ui/copy-button";
 import { FieldHelp } from "@repo/ui/field-help";
 import {
@@ -72,7 +75,7 @@ type AwsRoleFormValues = z.infer<typeof awsRoleSchema>;
 interface AwsConnectionProps {
 	onComplete: (
 		roleArn: string,
-	) => Promise<{ jobId: string; identityId: string }>;
+	) => Promise<VerifyOutcome>;
 	externalId: string;
 }
 
@@ -335,12 +338,11 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 
 						<div className="pt-6 border-t border-border/40">
 							{verifyState.phase === "success" ||
-							verifyState.phase === "saving" ||
-							verifyState.phase === "queued" ||
-							verifyState.phase === "testing" ? (
+							verifyState.phase === "saving" ? (
 								<ConnectionTestStatus
 									phase={verifyState.phase}
-									startedAt={verifyState.startedAt}
+									status={verifyState.status}
+									missingPermissions={verifyState.missingPermissions}
 									successText="Alethia can assume the IAM role in your account. You're ready to provision infrastructure."
 									verifyingText="Testing role assumption into your AWS account."
 									onCancel={cancel}

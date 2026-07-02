@@ -7,13 +7,18 @@
 // tree. Replaces the legacy header-centric `DashboardChrome`.
 
 import type React from "react";
+import { usePathname } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { Sheet, SheetContent, SheetTitle } from "@repo/ui/sheet";
+import { cn } from "@repo/ui/utils";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { SetupGuideCard } from "@/components/onboarding/setup-guide";
 import { AppSidebar } from "./app-sidebar";
 import { CommandPalette } from "./command-palette";
+import { JobToaster } from "./job-toaster";
+import { projectScope } from "./nav-config";
+import { SidebarRail } from "./sidebar-rail";
 import { Topbar } from "./topbar";
 
 /** The authenticated dashboard chrome: sidebar + topbar + scrolling content canvas. */
@@ -27,6 +32,12 @@ export function AppShell({
 }) {
 	const [mobileOpen, setMobileOpen] = useState(false);
 
+	// Inside a project (`/{org}/{project}/…`) the sidebar collapses to an icon rail — the project
+	// workspace navigates via that rail while its views render in the content area. Org routes keep
+	// the full sidebar.
+	const pathname = usePathname();
+	const collapsed = projectScope(pathname) != null;
+
 	// Load the workspace once here so every nav href resolves to the active org even
 	// before the org switcher mounts (the switcher used to be the only loader).
 	useEffect(() => {
@@ -39,9 +50,14 @@ export function AppShell({
 
 	return (
 		<div className="flex h-dvh w-full overflow-hidden bg-background">
-			{/* Desktop sidebar */}
-			<aside className="hidden w-[252px] shrink-0 border-r lg:block">
-				<AppSidebar isHosted={isHosted} />
+			{/* Desktop sidebar — collapses to a 56px icon rail on the project canvas. */}
+			<aside
+				className={cn(
+					"hidden shrink-0 border-r lg:block",
+					collapsed ? "w-[56px]" : "w-[252px]",
+				)}
+			>
+				{collapsed ? <SidebarRail /> : <AppSidebar isHosted={isHosted} />}
 			</aside>
 
 			{/* Mobile sidebar */}
@@ -79,6 +95,9 @@ export function AppShell({
 
 			{/* Global command palette (the sidebar "Find…" box + ⌘K / F). */}
 			<CommandPalette />
+
+			{/* Single job-lifecycle toast driver (loading → success/failed in place). */}
+			<JobToaster />
 
 			{/* First-run "Setup guide" — toggled from the topbar button, floats bottom-right. */}
 			<SetupGuideCard />

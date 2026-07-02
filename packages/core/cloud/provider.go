@@ -19,14 +19,17 @@ type CloudProvider interface {
 }
 
 func NewCloudProvider(provider string) (CloudProvider, error) {
-	switch provider {
-	case "aws":
+	// Switch on types.CloudProvider so `exhaustive` forces a case for every cloud_provider
+	// value — adding a cloud to the enum SSOT makes wiring it here (or explicitly marking it
+	// "coming soon") mandatory, and removing one is a compile error.
+	switch types.CloudProvider(provider) {
+	case types.CloudProviderAws:
 		return &awsProvider{}, nil
-	case "gcp":
+	case types.CloudProviderGcp:
 		return &gcpProvider{}, nil
-	case "azure":
+	case types.CloudProviderAzure:
 		return &azureProvider{}, nil
-	case "alibaba", "digitalocean", "hetzner", "civo":
+	case types.CloudProviderAlibaba, types.CloudProviderDigitalocean, types.CloudProviderHetzner, types.CloudProviderCivo:
 		// Connectable today (identity + connection test); OpenTofu provisioning
 		// templates land in a later pass.
 		return nil, fmt.Errorf("provisioning for %s is coming soon (the account can be connected, but clusters can't be provisioned on it yet)", provider)

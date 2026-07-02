@@ -55,7 +55,9 @@ describe("href builders", () => {
 		expect(orgHref("acme")).toBe("/acme");
 		expect(globalHref("acme", "settings/billing")).toBe("/acme/~/settings/billing");
 		expect(projectHref("acme", "api")).toBe("/acme/api");
-		expect(envHref("acme", "api", "staging")).toBe("/acme/api/staging");
+		expect(envHref("acme", "api", "env-123")).toBe(
+			"/acme/api/architecture?environment_id=env-123",
+		);
 		expect(projectSettingsHref("acme", "api", "activity")).toBe(
 			"/acme/api/settings/activity",
 		);

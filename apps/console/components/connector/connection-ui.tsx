@@ -5,27 +5,8 @@
 import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
 import { AlertCircle, CheckCircle2, Loader2, XCircle } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
-import type { ConnTestPhase } from "./use-connection-test";
-
-/** Live seconds since `startedAt`, ticking once a second (0 when not started). */
-function useElapsedSeconds(startedAt?: number): number {
-	const [now, setNow] = useState(() => Date.now());
-	useEffect(() => {
-		if (!startedAt) return;
-		setNow(Date.now());
-		const id = setInterval(() => setNow(Date.now()), 1000);
-		return () => clearInterval(id);
-	}, [startedAt]);
-	return startedAt ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
-}
-
-/** Formats seconds as `m:ss`. */
-function mmss(total: number): string {
-	const m = Math.floor(total / 60);
-	const s = total % 60;
-	return `${m}:${s.toString().padStart(2, "0")}`;
-}
+import type { ReactNode } from "react";
+import type { ConnTestPhase, VerifyStatus } from "./use-connection-test";
 
 type CalloutVariant = "success" | "pending" | "error";
 
@@ -85,60 +66,51 @@ export function StatusCallout({
 }
 
 /**
- * Renders the in-progress / done states of a CONNECTION_TEST (driven by
- * `useConnectionTest`): a `queued` "waiting for a runner" hint (with the
- * always-present Cancel so the flow can never get stuck), `testing`, `saving`, and
- * `success`. The caller handles `idle`/`failed` by showing its credential form.
+ * Renders the in-progress / done states of an instant server-side connection verify (driven by
+ * `useConnectionTest`): `saving` (the single save+verify round trip, with a Cancel so the flow can
+ * never get stuck) and `success` — which distinguishes a fully CONNECTED account from a DEGRADED one
+ * (authenticated, but missing some provisioning permissions). The caller handles `idle`/`failed` by
+ * showing its credential form.
  */
 export function ConnectionTestStatus({
 	phase,
 	successText,
 	verifyingText,
 	onCancel,
-	startedAt,
+	status,
+	missingPermissions,
 }: {
 	phase: ConnTestPhase;
 	successText: string;
 	verifyingText: string;
 	onCancel: () => void;
-	startedAt?: number;
+	status?: VerifyStatus;
+	missingPermissions?: string[];
 }) {
-	const elapsed = useElapsedSeconds(phase === "success" ? undefined : startedAt);
-
 	if (phase === "success") {
+		if (status === "degraded") {
+			const missing = missingPermissions?.length
+				? ` (${missingPermissions.join(", ")})`
+				: "";
+			return (
+				<StatusCallout variant="pending" title="Connected — limited permissions">
+					{successText} Some provisioning permissions look missing{missing} — provisioning may
+					fail until the role is widened.
+				</StatusCallout>
+			);
+		}
 		return (
 			<StatusCallout variant="success" title="Connection verified">
 				{successText}
 			</StatusCallout>
 		);
 	}
-	if (phase === "saving") {
-		return (
-			<StatusCallout variant="pending" title="Saving…">
-				Storing your credentials.
-			</StatusCallout>
-		);
-	}
 
-	const isQueued = phase === "queued";
-	const base = isQueued ? "Waiting for a runner" : "Verifying connection";
-	const title = startedAt ? `${base} · ${mmss(elapsed)}` : base;
-	const escalation =
-		isQueued && elapsed > 15
-			? "A managed runner is starting up — this can take a minute."
-			: !isQueued && elapsed > 45
-				? "First-time verification can take a couple of minutes while the cloud propagates the trust."
-				: null;
-
+	// `saving` — the save + server-side verify happen in one round trip; it resolves near-instantly.
 	return (
 		<div className="space-y-3">
-			<StatusCallout variant="pending" title={title}>
-				{isQueued
-					? "No runner has picked this up yet — make sure a runner is connected (managed fleet, or your self-hosted runner). It verifies automatically once one claims it."
-					: verifyingText}
-				{escalation && (
-					<span className="mt-1 block text-muted-foreground/80">{escalation}</span>
-				)}
+			<StatusCallout variant="pending" title="Verifying connection…">
+				{verifyingText}
 			</StatusCallout>
 			<div className="flex justify-end">
 				<Button

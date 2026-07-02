@@ -37,6 +37,7 @@ import {
 } from "@/lib/cloud-providers";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { notifyScaler } from "@/lib/scaler";
+import { designInventory } from "@/lib/promotions/diff";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 import { pickFreeSlug, RESERVED_PROJECT_CHILD_SLUGS, slugify } from "@/lib/routing";
 import { type AnyColumn, and, desc, eq, inArray } from "drizzle-orm";
@@ -476,6 +477,26 @@ export async function getProject(
 			cloudProvider,
 			components,
 		};
+	});
+}
+
+/**
+ * Reconciles a SINGLE environment's components to `data` (delete-then-insert), leaving the projects
+ * row and every other environment untouched. Used by environment promotion to write the merged
+ * candidate design into the target env before planning it. Unlike `updateProjectDesign`, it never
+ * writes project-level fields (a promotion must not rename/re-region/re-cloud the project).
+ */
+export async function reconcileEnvironmentComponents(
+	projectId: string,
+	environmentId: string,
+	data: CreateProjectInput,
+) {
+	const actor = await authorize("edit", { type: "project", id: projectId });
+	const owner = actor.userId;
+	return withOwnerScope(owner, async (tx) => {
+		await clearComponents(tx, projectId, environmentId);
+		await writeComponents(tx, projectId, environmentId, data);
+		return { success: true };
 	});
 }
 
@@ -1175,6 +1196,8 @@ export async function duplicateProjectForProvider(
 	targetRegion: string,
 ): Promise<{
 	newProjectId: string;
+	/** Slug of the new project, for navigating into its canvas (`/{org}/{slug}`). */
+	newProjectSlug: string;
 	warnings: ConversionWarning[];
 }> {
 	const actor = await authorize("create", { type: "project" });
@@ -1207,11 +1230,48 @@ export async function duplicateProjectForProvider(
 
 	const input = converted as unknown as CreateProjectInput;
 	const { project } = await createProject(input);
+	if (!project.slug) throw new Error("Duplicated project is missing a slug");
 
 	return {
 		newProjectId: project.id,
+		newProjectSlug: project.slug,
 		warnings,
 	};
+}
+
+/**
+ * The infrastructure categories a project's default environment currently provisions — used by the
+ * cross-cloud duplicate dialog to preview which managed services will be translated (cluster → GKE,
+ * Aurora → Cloud SQL, …). `network` + `cluster` are always present; the rest are listed only when
+ * the design actually has one. Purely a read of the design (no provisioned state).
+ */
+export type DuplicateCategory =
+	| "network"
+	| "cluster"
+	| "dns"
+	| "databases"
+	| "caches"
+	| "nosql"
+	| "queues"
+	| "topics"
+	| "secrets";
+
+/** Source provider + the service categories present, for the cross-cloud duplicate preview. */
+export async function getProjectDuplicateSummary(projectId: string): Promise<{
+	provider: CloudProviderSlug;
+	projectName: string;
+	categories: DuplicateCategory[];
+}> {
+	const { formData, provider } = await getProjectAsFormData(projectId);
+	const categories: DuplicateCategory[] = ["network", "cluster"];
+	if (formData.dns?.enabled) categories.push("dns");
+	if (formData.databases?.length) categories.push("databases");
+	if (formData.caches?.length) categories.push("caches");
+	if (formData.nosql_tables?.length) categories.push("nosql");
+	if (formData.queues?.length) categories.push("queues");
+	if (formData.topics?.length) categories.push("topics");
+	if (formData.secrets?.length) categories.push("secrets");
+	return { provider, projectName: formData.project.project_name, categories };
 }
 
 // ============================================================
@@ -1332,6 +1392,90 @@ export async function duplicateEnvironment(
 			);
 		return { environment: env };
 	});
+}
+
+/** Toggles opt-in auto-heal for an environment (reconcile re-applies the deployed design on drift). */
+export async function setAutoHeal(
+	projectId: string,
+	environmentId: string,
+	enabled: boolean,
+) {
+	const actor = await authorize("edit", { type: "project", id: projectId });
+	return withOwnerScope(actor.userId, (tx) =>
+		tx
+			.update(projectEnvironments)
+			.set({ auto_heal: enabled, updated_at: new Date() })
+			.where(
+				and(
+					eq(projectEnvironments.id, environmentId),
+					eq(projectEnvironments.project_id, projectId),
+				),
+			),
+	);
+}
+
+/** Per-component presence across a project's environments (the "where do my envs diverge" matrix). */
+export interface EnvConsistency {
+	envs: { id: string; name: string; stage: string }[];
+	rows: {
+		component_type: string;
+		key: string;
+		/** Per env id: `present` (aligned), `differs` (structural mismatch vs peers), or `absent`. */
+		perEnv: Record<string, "present" | "differs" | "absent">;
+	}[];
+}
+
+/**
+ * Builds the cross-environment consistency matrix: each promotable component (keyed by type + name)
+ * marked per environment as present / differs / absent. `differs` = the component exists in more than
+ * one env with a diverging *structural* signature (from `designInventory`).
+ */
+export async function getEnvConsistency(projectId: string): Promise<EnvConsistency> {
+	await authorize("view", { type: "project", id: projectId });
+	const { environments } = await getProjectEnvironments(projectId);
+	const designs = await Promise.all(
+		environments.map(async (e) => ({
+			env: e,
+			inventory: designInventory((await getProjectAsFormData(projectId, e.id)).formData),
+		})),
+	);
+
+	// composite key ("type name") → { present sigs per env }
+	const keys = new Map<string, { component_type: string; key: string }>();
+	const sigByEnv = new Map<string, Map<string, string>>(); // envId → (compositeKey → sig)
+	for (const { env, inventory } of designs) {
+		const m = new Map<string, string>();
+		for (const entry of inventory) {
+			const composite = `${entry.component_type} ${entry.key}`;
+			keys.set(composite, { component_type: entry.component_type, key: entry.key });
+			m.set(composite, entry.sig);
+		}
+		sigByEnv.set(env.id, m);
+	}
+
+	const rows = Array.from(keys.entries())
+		.map(([composite, meta]) => {
+			const presentSigs = new Set<string>();
+			for (const m of sigByEnv.values()) {
+				const s = m.get(composite);
+				if (s !== undefined) presentSigs.add(s);
+			}
+			const diverges = presentSigs.size > 1;
+			const perEnv: Record<string, "present" | "differs" | "absent"> = {};
+			for (const env of environments) {
+				const has = sigByEnv.get(env.id)?.has(composite);
+				perEnv[env.id] = has ? (diverges ? "differs" : "present") : "absent";
+			}
+			return { component_type: meta.component_type, key: meta.key, perEnv };
+		})
+		.sort((a, b) =>
+			`${a.component_type}${a.key}`.localeCompare(`${b.component_type}${b.key}`),
+		);
+
+	return {
+		envs: environments.map((e) => ({ id: e.id, name: e.name, stage: e.stage })),
+		rows,
+	};
 }
 
 /** Deletes a non-default environment (the default is the project's anchor). */

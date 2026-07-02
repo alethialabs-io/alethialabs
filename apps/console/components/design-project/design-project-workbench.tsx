@@ -29,7 +29,10 @@ interface DesignProjectWorkbenchProps {
 	/** Edit mode: the live project + active environment the canvas deploys/destroys.
 	 * Omitted in the create flow (`~/new`), where Deploy creates a new project. */
 	projectId?: string;
-	envName?: string;
+	environmentId?: string;
+	/** True on the project Architecture route — the docked panel is owned by the project shell, so
+	 * the canvas renders the board alone. Omitted in the standalone create flow. */
+	dockInShell?: boolean;
 }
 
 /**
@@ -43,7 +46,8 @@ export function DesignProjectWorkbench({
 	connectors = [],
 	sourceProject,
 	projectId,
-	envName,
+	environmentId,
+	dockInShell,
 }: DesignProjectWorkbenchProps) {
 	const form = useForm<ProjectFormInput, unknown, ProjectFormData>({
 		resolver: zodResolver(projectFormSchema),
@@ -74,7 +78,8 @@ export function DesignProjectWorkbench({
 					<DesignProjectCanvas
 						cloudIdentities={cloudIdentities}
 						projectId={projectId}
-						envName={envName}
+						environmentId={environmentId}
+						dockInShell={dockInShell}
 					/>
 				</FormProvider>
 			</RepositoryProvider>

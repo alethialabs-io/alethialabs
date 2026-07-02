@@ -78,7 +78,7 @@ describe("ConnectorCard", () => {
 					name: "AWS",
 					connected: false,
 					cloud_health: "failed",
-					last_error: "No runner available — start a runner and retry.",
+					last_error: "AssumeRole denied — check the role trust policy.",
 					reverify_identity_id: "id-1",
 				})}
 				canManage

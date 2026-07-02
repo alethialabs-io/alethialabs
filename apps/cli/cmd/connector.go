@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -45,8 +46,9 @@ func initProviderIdentity(apiClient *api.Client, provider string) (*api.InitIden
 	return resp, err
 }
 
-// finalizeConnection submits the captured credentials, waits for the
-// CONNECTION_TEST job, and marks the identity verified once it passes.
+// finalizeConnection submits the captured credentials and reports the verdict. The
+// server verifies the identity INLINE (a synchronous health probe) and returns the
+// result directly — there is no CONNECTION_TEST job to wait for.
 func finalizeConnection(
 	apiClient *api.Client,
 	provider, identityID string,
@@ -54,20 +56,27 @@ func finalizeConnection(
 ) error {
 	var resp *api.ConnectIdentityResponse
 	var err error
-	ui.RunSpinner("Submitting credentials & queuing connection test...", func() {
+	ui.RunSpinner("Submitting credentials & running connection test...", func() {
 		resp, err = apiClient.ConnectProviderIdentity(provider, identityID, creds)
 	})
 	if err != nil {
 		return err
 	}
 
-	ui.JobQueued("CONNECTION_TEST", resp.JobID)
-	if err := waitForJob(apiClient, resp.JobID); err != nil {
-		return err
+	if !resp.Verified {
+		if resp.Error != "" {
+			return fmt.Errorf("connection test failed (%s): %s", resp.Status, resp.Error)
+		}
+		return fmt.Errorf("connection test failed (%s)", resp.Status)
 	}
 
-	if err := apiClient.VerifyProviderIdentity(provider, identityID, resp.JobID); err != nil {
-		return fmt.Errorf("connection test passed but verification failed: %w", err)
+	if resp.Status == "degraded" && len(resp.MissingPermissions) > 0 {
+		ui.Warning(fmt.Sprintf(
+			"Connected, but missing some provisioning permissions: %s",
+			strings.Join(resp.MissingPermissions, ", "),
+		))
+		return nil
 	}
+	ui.Success("Connection verified")
 	return nil
 }

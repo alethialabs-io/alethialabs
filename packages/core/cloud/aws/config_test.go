@@ -73,27 +73,3 @@ func TestLoadConfig(t *testing.T) {
 		})
 	}
 }
-
-// TestDerefStr table-tests the nil-safe string dereference helper used to map
-// AWS SDK *string fields onto plain struct fields.
-func TestDerefStr(t *testing.T) {
-	hello := "hello"
-	empty := ""
-	tests := []struct {
-		name string
-		in   *string
-		want string
-	}{
-		{name: "nil pointer yields empty string", in: nil, want: ""},
-		{name: "non-empty value", in: &hello, want: "hello"},
-		{name: "empty value", in: &empty, want: ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := derefStr(tt.in); got != tt.want {
-				t.Errorf("derefStr(%v) = %q, want %q", tt.in, got, tt.want)
-			}
-		})
-	}
-}

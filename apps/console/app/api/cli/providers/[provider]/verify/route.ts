@@ -6,9 +6,9 @@ import * as conn from "@/lib/cloud-providers/connections";
 import { errorResponse, resolveCliProvider } from "@/lib/cli/providers";
 import { NextResponse } from "next/server";
 
-type VerifyBody = { identity_id?: string; job_id?: string };
+type VerifyBody = { identity_id?: string };
 
-/** Marks an identity verified after its CONNECTION_TEST job has succeeded. */
+/** Re-verifies a saved cloud identity server-side (auth + provisioning-capability probe). */
 export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ provider: string }> },
@@ -39,11 +39,7 @@ export async function POST(
 	}
 
 	try {
-		const result = await conn.verifyIdentity(
-			scope,
-			body.identity_id,
-			body.job_id,
-		);
+		const result = await conn.reverifyConnection(scope, body.identity_id);
 		return NextResponse.json(result);
 	} catch (err) {
 		return errorResponse(err, 400);

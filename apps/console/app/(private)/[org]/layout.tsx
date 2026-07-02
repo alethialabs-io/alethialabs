@@ -22,12 +22,13 @@ export default async function OrgLayout({
 }) {
 	const { org } = await params;
 	// No valid session (e.g. a stale/expired cookie the optimistic middleware let
-	// through) → sign-in, not a dead-end 404.
+	// through, or a failed session lookup) → sign-in, not a dead-end 404.
 	if (!(await getOwner())) redirect("/login");
 	try {
 		await resolveOrgScope(org);
-	} catch {
-		// Authenticated but the org is unknown / not a member → genuine 404.
+	} catch (e) {
+		// A lost session mid-request → sign-in; an authenticated-but-unknown/forbidden org → 404.
+		if (e instanceof Error && e.message === "Unauthorized") redirect("/login");
 		notFound();
 	}
 	// Feedback is a hosted-only feature (it emails Alethia Labs); the shell hides it

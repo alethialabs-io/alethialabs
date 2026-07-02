@@ -26,7 +26,10 @@ import {
 	InfoNote,
 	StatusCallout,
 } from "@/components/connector/connection-ui";
-import { useConnectionTest } from "@/components/connector/use-connection-test";
+import {
+	type VerifyOutcome,
+	useConnectionTest,
+} from "@/components/connector/use-connection-test";
 import { connectorAssetUrl } from "@/components/connector/connector-assets";
 import { CopyButton } from "@repo/ui/copy-button";
 import { FieldHelp } from "@repo/ui/field-help";
@@ -78,7 +81,7 @@ interface AzureConnectionProps {
 		tenantId: string,
 		clientId: string,
 		subscriptionId: string,
-	) => Promise<{ jobId: string; identityId: string }>;
+	) => Promise<VerifyOutcome>;
 }
 
 export function AzureConnection({ onComplete }: AzureConnectionProps) {
@@ -404,12 +407,11 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 
 						<div className="pt-6 border-t border-border/40">
 							{verifyState.phase === "success" ||
-							verifyState.phase === "saving" ||
-							verifyState.phase === "queued" ||
-							verifyState.phase === "testing" ? (
+							verifyState.phase === "saving" ? (
 								<ConnectionTestStatus
 									phase={verifyState.phase}
-									startedAt={verifyState.startedAt}
+									status={verifyState.status}
+									missingPermissions={verifyState.missingPermissions}
 									successText="Alethia can authenticate into your Azure subscription via federated identity. You're ready to provision infrastructure."
 									verifyingText="Testing federated identity authentication into your Azure subscription."
 									onCancel={cancel}

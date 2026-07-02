@@ -17,7 +17,6 @@ import {
 import {
 	initExtraCloudIdentity,
 	saveAlibaba,
-	saveSelfManagedTokenCloud,
 	saveTokenCloud,
 } from "@/app/(private)/dashboard/providers/extra-cloud-actions";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
@@ -254,11 +253,6 @@ export function useCloudConnect({
 		if (!setup) throw new Error(`${provider} setup not initialized`);
 		return saveTokenCloud(setup.identityId, provider, token);
 	};
-	const handleSelfManagedConnect = (provider: TokenCloud) => async () => {
-		const setup = extraSetup?.[provider];
-		if (!setup) throw new Error(`${provider} setup not initialized`);
-		return saveSelfManagedTokenCloud(setup.identityId, provider);
-	};
 	const handleAlibabaConnect = async (roleArn: string) => {
 		const setup = extraSetup?.alibaba;
 		if (!setup) throw new Error("Alibaba setup not initialized");
@@ -376,9 +370,7 @@ export function useCloudConnect({
 												providerName={m.name}
 												tokenHelp={m.tokenHelp}
 												docsUrl={m.docsUrl}
-												envVar={m.envVar}
 												onSave={handleTokenCloudConnect(slug)}
-												onSaveSelfManaged={handleSelfManagedConnect(slug)}
 											/>
 										)}
 									</div>

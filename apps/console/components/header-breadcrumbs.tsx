@@ -98,17 +98,29 @@ export function HeaderBreadcrumbs() {
 				return out;
 			}
 
-			// `/{org}/{project}[/{env}]` — project → env.
-			const [, projectSlug, envSeg] = segs;
-			const out: Crumb[] = [];
+			// `/{org}/{project}` — the canvas IS the project's Overview (the project name is
+			// already shown in the Project switcher). Deeper `/{org}/{project}/{sub}...` pages
+			// show project name → sub-page labels. (Env now lives in `?environment_id=`, not a
+			// path segment, so there's no env crumb.)
+			const [, projectSlug, ...rest] = segs;
+			if (rest.length === 0) return [{ label: "Overview" }];
 			const project = projects.find((p) => p.slug === projectSlug);
-			if (projectSlug) {
-				out.push({
+			const out: Crumb[] = [
+				{
 					label: project?.project_name ?? projectSlug,
-					href: envSeg ? projectHref(orgSeg, projectSlug) : undefined,
+					href: projectHref(orgSeg, projectSlug),
+				},
+			];
+			for (let j = 0; j < rest.length; j++) {
+				const s = rest[j];
+				const isLast = j === rest.length - 1;
+				out.push({
+					label: segmentLabel(s),
+					href: isLast
+						? undefined
+						: `/${orgSeg}/${projectSlug}/${rest.slice(0, j + 1).join("/")}`,
 				});
 			}
-			if (envSeg) out.push({ label: envSeg, href: undefined });
 			return out;
 		}
 

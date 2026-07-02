@@ -86,8 +86,6 @@ function deniedTarget(row: ActivityRow, ctx: ActivityContext): string {
 			return "alert management";
 		case "test":
 			return `testing ${resourcePhrase(row, ctx)}`;
-		case "fetch_resources":
-			return `fetching resources for ${resourcePhrase(row, ctx)}`;
 		default:
 			return `${row.action.replace(/_/g, " ")} ${resourcePhrase(row, ctx)}`;
 	}
@@ -133,8 +131,6 @@ function pastPredicate(row: ActivityRow, ctx: ActivityContext): Predicate {
 			return { lead: "updated", target: "alert settings" };
 		case "test":
 			return { lead: "tested", target: resourcePhrase(row, ctx) };
-		case "fetch_resources":
-			return { lead: "fetched resources for", target: resourcePhrase(row, ctx) };
 		default:
 			return { lead: row.action.replace(/_/g, " "), target: resourcePhrase(row, ctx) };
 	}
