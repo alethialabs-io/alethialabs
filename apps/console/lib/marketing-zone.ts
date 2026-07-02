@@ -8,7 +8,7 @@
 // the routing. The Caddy mirror (deploy/caddy/marketing.caddy.example) and the
 // filesystem (apps/marketing/app/) are kept honest by scripts/check-marketing-routes.mjs.
 
-import microfrontends from "@/microfrontends.json";
+import microfrontends from "@/marketing-zones.json";
 
 /** A slug-shaped path segment (lowercase a-z/0-9 + single hyphens) — the only thing an
  * org slug can be, and therefore the only thing that can collide with a marketing path.

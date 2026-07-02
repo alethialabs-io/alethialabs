@@ -12,6 +12,7 @@ import { eq, inArray } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { PostgresRbacPDP } from "@/lib/authz/postgres-rbac-pdp";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
+import { seedAuthz } from "@/lib/authz/seed";
 import type { Actor } from "@/lib/authz/types";
 import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
@@ -61,6 +62,12 @@ async function seedGrant(values: {
 describeIfDb("PostgresRbacPDP (community RBAC over Postgres)", () => {
 	beforeAll(async () => {
 		const db = getServiceDb();
+		// Seed the GLOBAL authz catalog (permission/role/role_permission) from the registry so the
+		// grants below satisfy their permission_key/role_id foreign keys. This test seeds its own
+		// catalog rather than relying on authz-seed.test.ts running first — vitest's file order is
+		// not alphabetical, so depending on cross-file ordering makes this suite flaky. seedAuthz()
+		// is idempotent (onConflictDoNothing) and its module-level run-once guard is per test file.
+		await seedAuthz();
 		// Actor + outsider users, the org, a team the actor belongs to (for team grants).
 		await db.insert(user).values([
 			{ id: USER, email: `it-pdp-actor-${USER}@example.test` },
