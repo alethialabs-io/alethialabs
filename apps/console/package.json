@@ -52,7 +52,6 @@
 		"@stripe/stripe-js": "^9.8.0",
 		"@tanstack/react-query": "^5.95.0",
 		"@tanstack/react-table": "^8.21.3",
-		"@vercel/microfrontends": "^2.3.6",
 		"@xyflow/react": "^12.10.2",
 		"ai": "^6.0.208",
 		"better-auth": "^1.6.19",

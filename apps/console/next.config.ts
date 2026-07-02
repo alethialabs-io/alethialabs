@@ -3,7 +3,6 @@
 
 import path from "node:path";
 import type { NextConfig } from "next";
-import { withMicrofrontends } from "@vercel/microfrontends/next/config";
 
 // Cross-origin dev/proxy origins to allow (the public tunnel — Cloudflare quick tunnel /
 // ngrok — that `dev:stack`/`dev:tunnel` front the app with). Without this, Next blocks
@@ -67,8 +66,8 @@ const nextConfig: NextConfig = {
 	},
 };
 
-// Console is the microfrontends default zone: it owns the residual (incl. the `/{org}`
-// wildcard) and proxies the marketing-owned root paths to the marketing app per
-// microfrontends.json. The existing get.alethialabs.io / DOCS_URL rewrites are preserved
-// above (withMicrofrontends composes with them).
-export default withMicrofrontends(nextConfig);
+// Console is the default zone: it owns the residual (incl. the `/{org}` wildcard). The
+// marketing-owned root paths are stitched to the marketing app by Caddy at the edge
+// (deploy/prod/Caddyfile.tunnel + deploy/caddy/marketing.caddy), NOT by Next — the path
+// map still lives in microfrontends.json (source for RESERVED_SLUGS + the Caddy mirror).
+export default nextConfig;

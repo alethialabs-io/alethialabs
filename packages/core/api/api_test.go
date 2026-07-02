@@ -188,9 +188,9 @@ func TestGetClusters_Success(t *testing.T) {
 					"node_min_size":     2,
 					"node_max_size":     10,
 					"node_desired_size": 3,
-					"project_name": "my-app",
-					"environment":  "production",
-					"region":       "eu-west-1",
+					"project_name":      "my-app",
+					"environment":       "production",
+					"region":            "eu-west-1",
 				},
 			},
 		})

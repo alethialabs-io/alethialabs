@@ -3,7 +3,6 @@
 
 import path from "node:path";
 import type { NextConfig } from "next";
-import { withMicrofrontends } from "@vercel/microfrontends/next/config";
 
 const nextConfig: NextConfig = {
 	output: "standalone",
@@ -19,4 +18,4 @@ const nextConfig: NextConfig = {
 	assetPrefix: "/mkt-assets",
 };
 
-export default withMicrofrontends(nextConfig);
+export default nextConfig;
