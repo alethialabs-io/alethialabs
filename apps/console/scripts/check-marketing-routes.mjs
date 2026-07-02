@@ -14,7 +14,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const MF_PATH = "microfrontends.json";
+const MF_PATH = "marketing-zones.json";
 const MARKETING_APP = "../marketing/app";
 const CADDY = "../../deploy/caddy/marketing.caddy.example";
 const MARKETING_NEXT_CONFIG = "../marketing/next.config.ts";
