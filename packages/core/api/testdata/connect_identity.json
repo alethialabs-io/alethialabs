@@ -1,4 +1,9 @@
 {
-	"job_id": "string",
-	"identity_id": "string"
+	"identity_id": "string",
+	"verified": false,
+	"status": "connected",
+	"error": "string",
+	"missing_permissions": [
+		"string"
+	]
 }

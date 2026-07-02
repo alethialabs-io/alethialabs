@@ -1,77 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { notFound } from "next/navigation";
-import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
-import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
-import { getProjectAsFormData } from "@/app/server/actions/projects";
-import { resolveEnvironmentId, resolveProjectId } from "@/app/server/actions/resolve";
-import { DesignProjectWorkbench } from "@/components/design-project/design-project-workbench";
-import { ProjectAssistant } from "@/components/project-assistant/project-assistant";
-import { pageMetadata } from "@/lib/seo/page-metadata";
-
-/** Per-project tab title from the URL slug (kept cheap — no extra project fetch). */
-export async function generateMetadata({
-	params,
-}: {
-	params: Promise<{ org: string; project: string }>;
-}) {
-	const { project } = await params;
-	return pageMetadata({
-		title: project,
-		description: "Design this project's multi-cloud infrastructure.",
-	});
-}
+import { redirect } from "next/navigation";
 
 /**
- * `/{org}/{project}` — the project's design page. Loads the project as the workbench source so
- * its infrastructure can be (re)designed on the canvas/form. (Ported from the retired
- * `~/design-project` route; the project IS the design surface.)
+ * `/{org}/{project}` — the project has no plain landing surface; it redirects to its default view,
+ * **Architecture** (the design canvas). The environment (`?environment_id=`) is carried through so a
+ * deep link keeps its selected env; Architecture resolves the default env when it's absent.
  */
-export default async function ProjectDesignPage({
+export default async function ProjectIndexPage({
 	params,
 	searchParams,
 }: {
 	params: Promise<{ org: string; project: string }>;
-	searchParams: Promise<{ env?: string | string[] }>;
+	searchParams: Promise<{ environment_id?: string | string[] }>;
 }) {
-	const { project } = await params;
+	const { org, project } = await params;
 	const sp = await searchParams;
-	const envName = typeof sp.env === "string" ? sp.env : undefined;
-	let projectId: string;
-	try {
-		projectId = await resolveProjectId(project);
-	} catch {
-		notFound();
-	}
-
-	// The active environment (`?env=`) scopes which env's design loads; absent → the default env.
-	const environmentId = envName
-		? await resolveEnvironmentId(projectId, envName).catch(() => null)
-		: null;
-
-	const [identities, connectors, sourceProject] = await Promise.all([
-		getVerifiedCloudIdentities(),
-		getConnectorsWithStatus(),
-		getProjectAsFormData(projectId, environmentId).catch(() => undefined),
-	]);
-
-	return (
-		<>
-			{/* Full-bleed canvas: cancel the AppShell padding and fill topbar→sidebar, no scroll. */}
-			<div className="-m-4 h-[calc(100dvh-3.5rem)] overflow-hidden sm:-m-6 lg:-m-8 xl:-m-10">
-				<DesignProjectWorkbench
-					cloudIdentities={identities}
-					connectors={connectors}
-					sourceProject={sourceProject}
-					projectId={projectId}
-					envName={envName}
-				/>
-			</div>
-
-			{/* Project-scoped assistant: scan→propose→design→plan/deploy with verification.
-			    A Sheet (portal) driven by the shared store — opened from the canvas "AI" button. */}
-			<ProjectAssistant projectId={projectId} />
-		</>
-	);
+	const envId =
+		typeof sp.environment_id === "string" ? sp.environment_id : undefined;
+	const query = envId ? `?environment_id=${encodeURIComponent(envId)}` : "";
+	redirect(`/${org}/${project}/architecture${query}`);
 }

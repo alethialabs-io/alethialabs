@@ -16,6 +16,7 @@ import {
 	Eye,
 	FlaskConical,
 	Gauge,
+	Layers,
 	LayoutDashboard,
 	LifeBuoy,
 	LineChart,
@@ -28,7 +29,7 @@ import {
 	Webhook,
 	Workflow,
 } from "lucide-react";
-import { globalHref, orgHref } from "@/lib/routing";
+import { globalHref, orgHref, projectGlobalHref } from "@/lib/routing";
 
 /** A sidebar section that slides in as a nested sub-sidebar. */
 export type DrillId = "observability" | "alerts" | "settings";
@@ -58,6 +59,8 @@ export interface NavItem {
 	disabled?: boolean;
 	/** Active only on the exact org overview (`/{org}`). */
 	exact?: boolean;
+	/** Active only on the exact project overview (`/{org}/{project}`). */
+	exactProject?: boolean;
 }
 
 /** The three groups of the main sidebar view. */
@@ -98,6 +101,31 @@ export function buildSidebarNav(orgSlug: string): SidebarNavGroups {
 			{ label: "Support", icon: LifeBuoy, disabled: true, badge: { text: "Soon", tone: "soon" } },
 			{ label: "Settings", icon: Settings, drill: "settings", anchor: globalHref(orgSlug, "settings") },
 		],
+	};
+}
+
+/** Builds the main-view nav groups scoped to a single project. Mirrors `buildSidebarNav` but
+ * every link targets `/{org}/{project}/…` so the sidebar follows the project drilldown. Only the
+ * project-relevant surfaces appear; inherently org-level concerns (Runners, Connectors, Agent,
+ * Alerts, Billing/Members/…) live at the org `~` scope, reached via the org switcher. */
+export function buildProjectSidebarNav(
+	orgSlug: string,
+	projectSlug: string,
+): SidebarNavGroups {
+	const sub = (s: string) => projectGlobalHref(orgSlug, projectSlug, s);
+	// A project is a workspace with exactly these six views — all top-aligned, each rendered in
+	// place of the canvas. Architecture is the design surface (the bare project redirects to it).
+	return {
+		top: [
+			{ label: "Architecture", icon: Waypoints, sub: "architecture", href: sub("architecture") },
+			{ label: "Environments", icon: Layers, sub: "environments", href: sub("environments") },
+			{ label: "Jobs", icon: ClipboardList, sub: "jobs", href: sub("jobs") },
+			{ label: "Clusters", icon: Server, sub: "clusters", href: sub("clusters") },
+			{ label: "Usage", icon: Gauge, sub: "usage", href: sub("usage") },
+			{ label: "Settings", icon: Settings, sub: "settings", href: sub("settings") },
+		],
+		connect: [],
+		pinned: [],
 	};
 }
 
@@ -152,6 +180,38 @@ export function buildDrills(orgSlug: string): Record<DrillId, DrillDef> {
 	};
 }
 
+/** Builds the drill-in sub-views scoped to a single project. Observability points its Jobs item
+ * at the project jobs page (the rest stay "Soon" stubs); Settings reuses the scope-aware
+ * `<SettingsNav/>`. Alerts is org-only, so it has no project variant. */
+export function buildProjectDrills(
+	orgSlug: string,
+	projectSlug: string,
+): Record<DrillId, DrillDef> {
+	const soon: NavBadge = { text: "Soon", tone: "soon" };
+	return {
+		observability: {
+			id: "observability",
+			title: "Observability",
+			routeOwned: false,
+			items: [
+				{
+					label: "Jobs",
+					icon: ClipboardList,
+					sub: "jobs",
+					href: projectGlobalHref(orgSlug, projectSlug, "jobs"),
+				},
+				{ label: "Logs", icon: ScrollText, disabled: true, badge: soon },
+				{ label: "Metrics", icon: LineChart, disabled: true, badge: soon },
+				{ label: "Traces", icon: Waypoints, disabled: true, badge: soon },
+				{ label: "Activity", icon: Activity, disabled: true, badge: soon },
+			],
+		},
+		// Org-only — never rendered in project scope, but the map shape requires an entry.
+		alerts: { id: "alerts", title: "Alerts", routeOwned: true, items: [] },
+		settings: { id: "settings", title: "Settings", routeOwned: true },
+	};
+}
+
 /** The org-global sub-page under `/{org}/~/{sub}` (e.g. "settings"), or null. */
 export function globalSub(pathname: string): string | null {
 	const segs = pathname.split("/").filter(Boolean);
@@ -169,16 +229,42 @@ export function settingsScope(
 	return { kind: "project", projectSlug: segs[1] };
 }
 
+/** The project drilldown scope from a pathname: a specific project when the second segment is a
+ * real project slug (`/{org}/{project}[/…]`), or null at the org overview (`/{org}`) and the
+ * org-global scope (`/{org}/~/…`). Drives which sidebar (org vs project) the shell renders. */
+export function projectScope(
+	pathname: string,
+): { projectSlug: string } | null {
+	const segs = pathname.split("/").filter(Boolean); // [org, ~|project, sub?]
+	if (segs.length < 2 || segs[1] === "~") return null;
+	return { projectSlug: segs[1] };
+}
+
+/** The project sub-page under `/{org}/{project}/{sub}` (e.g. "jobs"), or null when not in a
+ * project scope. The project analogue of `globalSub`. */
+export function projectSub(pathname: string): string | null {
+	return projectScope(pathname) ? pathname.split("/").filter(Boolean)[2] ?? null : null;
+}
+
 /** True when the path is the bare org overview `/{org}` (the projects grid). */
 export function isOverviewPath(pathname: string): boolean {
 	const segs = pathname.split("/").filter(Boolean);
 	return segs.length === 1 && segs[0] !== "dashboard";
 }
 
-/** Whether a nav item is the active route — structural, independent of the resolved org slug. */
+/** True when the path is the bare project overview `/{org}/{project}` (no sub-page). */
+export function isProjectOverviewPath(pathname: string): boolean {
+	const segs = pathname.split("/").filter(Boolean);
+	return segs.length === 2 && segs[1] !== "~";
+}
+
+/** Whether a nav item is the active route — structural, independent of the resolved org slug.
+ * Matches in both scopes: `sub` against the org-global sub (`/{org}/~/{sub}`) or the project sub
+ * (`/{org}/{project}/{sub}`), whichever the pathname is in. */
 export function isNavItemActive(item: NavItem, pathname: string): boolean {
 	if (item.exact) return isOverviewPath(pathname);
-	if (item.sub) return globalSub(pathname) === item.sub;
+	if (item.exactProject) return isProjectOverviewPath(pathname);
+	if (item.sub) return (globalSub(pathname) ?? projectSub(pathname)) === item.sub;
 	return false;
 }
 

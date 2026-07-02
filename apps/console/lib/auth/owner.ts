@@ -6,6 +6,20 @@ import { auth } from "@/lib/auth";
 import { getInjectedActor } from "@/lib/authz/actor-context";
 
 /**
+ * Reads the current Better Auth session, tolerating a failed lookup. A stale/expired token that the
+ * optimistic middleware let through (or a transient DB hiccup) makes the session-table query throw;
+ * we treat that as "no session" so callers can redirect to sign-in instead of 500-ing the page.
+ */
+async function safeGetSession() {
+	try {
+		return await auth.api.getSession({ headers: await headers() });
+	} catch (error) {
+		console.error("[auth] session lookup failed:", error);
+		return null;
+	}
+}
+
+/**
  * Returns the authenticated user's id — the owner scope passed to
  * withOwnerScope() for the per-owner RLS backstop. Identity comes from Better
  * Auth (Phase D); the contract (a uuid string or throw) is stable so every caller stays the same. Throws on no session.
@@ -16,14 +30,14 @@ import { getInjectedActor } from "@/lib/authz/actor-context";
 export async function requireOwner(): Promise<string> {
 	const injected = getInjectedActor();
 	if (injected) return injected.userId;
-	const session = await auth.api.getSession({ headers: await headers() });
+	const session = await safeGetSession();
 	if (!session?.user) throw new Error("Unauthorized");
 	return session.user.id;
 }
 
-/** Like requireOwner() but returns null instead of throwing. */
+/** Like requireOwner() but returns null instead of throwing (also on a failed session lookup). */
 export async function getOwner(): Promise<string | null> {
-	const session = await auth.api.getSession({ headers: await headers() });
+	const session = await safeGetSession();
 	return session?.user?.id ?? null;
 }
 
@@ -48,10 +62,11 @@ export async function getOwnerScope(): Promise<OwnerScope> {
 		return {
 			userId: injected.userId,
 			sessionId: "",
-			activeOrgId: injected.orgId === injected.userId ? undefined : injected.orgId,
+			activeOrgId:
+				injected.orgId === injected.userId ? undefined : injected.orgId,
 		};
 	}
-	const session = await auth.api.getSession({ headers: await headers() });
+	const session = await safeGetSession();
 	if (!session?.user) throw new Error("Unauthorized");
 	return {
 		userId: session.user.id,
@@ -62,7 +77,10 @@ export async function getOwnerScope(): Promise<OwnerScope> {
 
 /** Reads session.activeOrganizationId without assuming the org-plugin types are present. */
 function readActiveOrgId(s: object): string | undefined {
-	if ("activeOrganizationId" in s && typeof s.activeOrganizationId === "string") {
+	if (
+		"activeOrganizationId" in s &&
+		typeof s.activeOrganizationId === "string"
+	) {
 		return s.activeOrganizationId;
 	}
 	return undefined;

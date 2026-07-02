@@ -9,10 +9,15 @@ import Link from "next/link";
 
 /**
  * Clusters grid. Data comes from the server-prefetched `useClustersQuery` cache, which
- * then polls on the reconciliation cadence; `loading.tsx` covers the prefetch window.
+ * then polls on the reconciliation cadence; `loading.tsx` covers the prefetch window. Pass
+ * `projectId` to scope the grid to a single project (each row's `id` is its project id) — the
+ * project drilldown's Clusters page reuses this with the shared org cache.
  */
-export function ClustersClient() {
-	const { data: clusters = [] } = useClustersQuery();
+export function ClustersClient({ projectId }: { projectId?: string }) {
+	const { data: allClusters = [] } = useClustersQuery();
+	const clusters = projectId
+		? allClusters.filter((c) => c.id === projectId)
+		: allClusters;
 
 	return (
 		<div className="space-y-6">

@@ -67,7 +67,7 @@ import {
 	Unplug,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 interface ConnectorsPageProps {
@@ -133,6 +133,14 @@ export function ConnectorsPage({
 	extraSetup: extraSetupProp,
 }: ConnectorsPageProps) {
 	const router = useRouter();
+	// Passive refresh: pick up sweep-driven connection-status changes (connected → degraded/disconnected,
+	// or backfilled inventory) without a manual reload. Soft-refresh only while the tab is visible.
+	useEffect(() => {
+		const id = setInterval(() => {
+			if (document.visibilityState === "visible") router.refresh();
+		}, 30_000);
+		return () => clearInterval(id);
+	}, [router]);
 	// Deep-link: `?type=cloud` (from the overview "Add new → Cloud") opens filtered to Clouds.
 	const searchParams = useSearchParams();
 	const initialGroup: GroupFilter =

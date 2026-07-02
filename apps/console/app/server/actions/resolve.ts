@@ -75,25 +75,43 @@ export async function resolveProjectId(projectSlug: string): Promise<string> {
 	});
 }
 
-/** Resolves an environment name (within a project) → environment id. */
-export async function resolveEnvironmentId(
+/**
+ * The canvas's active environment id: the env identified by `envId` (validated to belong to the
+ * project), or — when `envId` is absent (the bare `/{org}/{project}` canvas) or doesn't resolve —
+ * the project's DEFAULT environment. Config is environment-scoped, so every load/stage/apply needs
+ * a concrete environment id.
+ */
+export async function resolveActiveEnvironmentId(
 	projectId: string,
-	envName: string,
+	envId?: string | null,
 ): Promise<string> {
 	const { userId } = await getOwnerScope();
 	return withOwnerScope(userId, async (tx) => {
-		const [env] = await tx
+		if (envId) {
+			const [named] = await tx
+				.select({ id: projectEnvironments.id })
+				.from(projectEnvironments)
+				.where(
+					and(
+						eq(projectEnvironments.project_id, projectId),
+						eq(projectEnvironments.id, envId),
+					),
+				)
+				.limit(1);
+			if (named) return named.id;
+		}
+		const [def] = await tx
 			.select({ id: projectEnvironments.id })
 			.from(projectEnvironments)
 			.where(
 				and(
 					eq(projectEnvironments.project_id, projectId),
-					eq(projectEnvironments.name, envName),
+					eq(projectEnvironments.is_default, true),
 				),
 			)
 			.limit(1);
-		if (!env) throw new Error("Environment not found");
-		return env.id;
+		if (!def) throw new Error("Project has no default environment");
+		return def.id;
 	});
 }
 
@@ -143,6 +161,7 @@ export async function getProjectSlug(projectId: string): Promise<string | null> 
 
 export interface SwitcherEnv {
 	id: string;
+	project_id: string;
 	name: string;
 	stage: string;
 	is_default: boolean;
@@ -166,6 +185,7 @@ export async function getEnvironmentsForSlug(
 		return tx
 			.select({
 				id: projectEnvironments.id,
+				project_id: projectEnvironments.project_id,
 				name: projectEnvironments.name,
 				stage: projectEnvironments.stage,
 				is_default: projectEnvironments.is_default,

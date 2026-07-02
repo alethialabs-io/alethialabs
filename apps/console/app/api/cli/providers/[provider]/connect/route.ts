@@ -56,7 +56,7 @@ export async function POST(
 	}
 
 	try {
-		let result: { jobId: string; identityId: string };
+		let result: conn.ConnectionResult;
 
 		switch (provider) {
 			case "aws":
@@ -123,18 +123,9 @@ export async function POST(
 			case "digitalocean":
 			case "hetzner":
 			case "civo":
-				if (creds.self_managed) {
-					// Self-hosted runner supplies the token from its env — store nothing.
-					result = await conn.saveSelfManagedTokenIdentity(
-						scope,
-						identityId,
-						provider,
-					);
-					break;
-				}
 				if (!creds.api_token) {
 					return NextResponse.json(
-						{ error: "Missing credentials.api_token (or set self_managed: true)" },
+						{ error: "Missing credentials.api_token" },
 						{ status: 400 },
 					);
 				}
@@ -153,8 +144,11 @@ export async function POST(
 		}
 
 		return NextResponse.json({
-			job_id: result.jobId,
 			identity_id: result.identityId,
+			verified: result.verified,
+			status: result.status,
+			error: result.error,
+			missing_permissions: result.missingPermissions,
 		});
 	} catch (err) {
 		return errorResponse(err, 400);

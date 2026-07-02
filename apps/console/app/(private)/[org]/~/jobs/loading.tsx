@@ -3,39 +3,64 @@
 
 import { Skeleton } from "@repo/ui/skeleton";
 
-/** Instant skeleton shown while the jobs route prefetches on the server. */
+/** Width of each faux filter control, mirroring the real range picker + combobox chips. */
+const FILTER_WIDTHS = ["w-32", "w-28", "w-40", "w-40", "w-40", "w-40"];
+
+/**
+ * Instant skeleton shown while the jobs route prefetches on the server. Mirrors the loaded
+ * layout — the filter chip row and the `DataTable` (header + rows) — so the swap to real data
+ * doesn't shift the page.
+ */
 export default function JobsLoading() {
 	return (
 		<div className="space-y-6">
-			<div>
-				<h1 className="text-2xl font-semibold tracking-tight text-foreground">Jobs</h1>
-				<p className="text-sm text-muted-foreground mt-1">Provision job history and execution logs.</p>
+			{/* Filter row — h-8 controls matching QuickRange/DateRange/MultiCombobox. */}
+			<div className="flex flex-wrap items-center gap-2.5">
+				{FILTER_WIDTHS.map((w, i) => (
+					<Skeleton key={i} className={`h-8 ${w} rounded-md`} />
+				))}
 			</div>
-			<div className="space-y-4">
-				<div className="flex flex-col sm:flex-row gap-3">
-					<div className="flex gap-1">
-						{[1, 2, 3, 4, 5].map((i) => (
-							<Skeleton key={i} className="h-7 w-16 rounded-md" />
-						))}
-					</div>
-					<Skeleton className="h-7 w-48 rounded-md" />
-				</div>
-				<div className="rounded-lg border border-border/40">
-					<div className="flex gap-4 border-b border-border/40 p-3">
-						{[1, 2, 3, 4, 5].map((i) => (
-							<Skeleton key={i} className="h-3 w-20" />
-						))}
-					</div>
-					{[1, 2, 3, 4, 5].map((i) => (
-						<div key={i} className="flex gap-4 border-b border-border/20 p-3">
-							<Skeleton className="h-3 w-16" />
-							<Skeleton className="h-3 w-20" />
-							<Skeleton className="h-3 w-14 rounded-full" />
-							<Skeleton className="h-3 w-24" />
-							<Skeleton className="h-3 w-28" />
-						</div>
+
+			{/* Table — mirrors DataTable's bordered, scroll-height container. */}
+			<div className="h-[70vh] overflow-hidden rounded-md border">
+				{/* Header row */}
+				<div className="flex items-center gap-4 border-b bg-background p-3">
+					{["w-12", "w-14", "w-16", "w-14", "w-20", "w-16"].map((w, i) => (
+						<Skeleton
+							key={i}
+							className={`h-3 ${w} ${i === 5 ? "ml-auto" : ""}`}
+						/>
 					))}
 				</div>
+				{/* Body rows */}
+				{Array.from({ length: 11 }).map((_, i) => (
+					<div
+						key={i}
+						className="flex items-center gap-4 border-b border-border/40 p-3"
+					>
+						{/* Type: icon + label */}
+						<div className="flex items-center gap-2">
+							<Skeleton className="size-3.5 rounded-sm" />
+							<Skeleton className="h-3 w-20" />
+						</div>
+						{/* Status: pill + duration */}
+						<div className="flex items-center gap-2">
+							<Skeleton className="h-4 w-16 rounded-full" />
+							<Skeleton className="h-3 w-10" />
+						</div>
+						{/* Project */}
+						<Skeleton className="h-3 w-24" />
+						{/* Runner */}
+						<Skeleton className="h-3 w-16" />
+						{/* Environment */}
+						<Skeleton className="h-3 w-20" />
+						{/* Initiated: timestamp + avatar, right-aligned */}
+						<div className="ml-auto flex items-center gap-2">
+							<Skeleton className="h-3 w-20" />
+							<Skeleton className="size-6 rounded-full" />
+						</div>
+					</div>
+				))}
 			</div>
 		</div>
 	);

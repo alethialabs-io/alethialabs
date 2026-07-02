@@ -60,8 +60,10 @@ export async function getClusters(): Promise<ClusterData[]> {
 				id: projects.id,
 				project_name: projects.project_name,
 				region: projects.region,
-				// M1: environment + status from the project's default environment.
+				// M1: environment + status from the project's default environment. Its id scopes the
+				// component joins below (components are environment-scoped).
 				environment_stage: projectEnvironments.name,
+				environment_id: projectEnvironments.id,
 				status: projectEnvironments.status,
 				provider: cloudIdentities.provider,
 				cluster_name: projectCluster.cluster_name,
@@ -83,14 +85,29 @@ export async function getClusters(): Promise<ClusterData[]> {
 					eq(projectEnvironments.is_default, true),
 				),
 			)
-			.leftJoin(projectCluster, eq(projectCluster.project_id, projects.id))
-			.leftJoin(projectDns, eq(projectDns.project_id, projects.id))
+			.leftJoin(
+				projectCluster,
+				and(
+					eq(projectCluster.project_id, projects.id),
+					eq(projectCluster.environment_id, projectEnvironments.id),
+				),
+			)
+			.leftJoin(
+				projectDns,
+				and(
+					eq(projectDns.project_id, projects.id),
+					eq(projectDns.environment_id, projectEnvironments.id),
+				),
+			)
 			.where(eq(projectEnvironments.status, "ACTIVE"))
 			.orderBy(desc(projects.created_at));
 
 		if (baseRows.length === 0) return [];
 
-		const projectIds = baseRows.map((r) => r.id);
+		// The default-env ids scope the to-many component fetches below.
+		const envIds = baseRows
+			.map((r) => r.environment_id)
+			.filter((x): x is string => Boolean(x));
 
 		// To-many relations fetched in bulk, then grouped by project.
 		const [dbRows, cacheRows] = await Promise.all([
@@ -105,7 +122,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 					status: projectDatabases.status,
 				})
 				.from(projectDatabases)
-				.where(inArray(projectDatabases.project_id, projectIds)),
+				.where(inArray(projectDatabases.environment_id, envIds)),
 			tx
 				.select({
 					project_id: projectCaches.project_id,
@@ -115,7 +132,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 					status: projectCaches.status,
 				})
 				.from(projectCaches)
-				.where(inArray(projectCaches.project_id, projectIds)),
+				.where(inArray(projectCaches.environment_id, envIds)),
 		]);
 
 		return baseRows.map((r) => ({

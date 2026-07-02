@@ -57,8 +57,7 @@ describe("startStaleJobRecovery — tick body", () => {
 	it("runs the recovery SQL and emits an alert per swept runner (skipping org-less rows)", async () => {
 		const execute = vi
 			.fn()
-			// recover / fail-unclaimed / gc-pending resolve to nothing; sweep resolves rows.
-			.mockResolvedValueOnce([])
+			// recover / gc-pending resolve to nothing; sweep resolves rows.
 			.mockResolvedValueOnce([])
 			.mockResolvedValueOnce([])
 			.mockResolvedValueOnce([
@@ -72,7 +71,7 @@ describe("startStaleJobRecovery — tick body", () => {
 		tick!();
 		await new Promise((r) => setTimeout(r, 0)); // flush the void promises
 
-		expect(execute).toHaveBeenCalledTimes(4); // recover + fail-unclaimed + gc + sweep
+		expect(execute).toHaveBeenCalledTimes(3); // recover + gc + sweep (connection tests are server-side now)
 		expect(emitAlertEventSafe).toHaveBeenCalledTimes(1); // only the org-bearing runner
 		expect(emitAlertEventSafe).toHaveBeenCalledWith(
 			"o1",

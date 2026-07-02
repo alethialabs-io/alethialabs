@@ -75,6 +75,9 @@ func TestCorpus(t *testing.T) {
 		if want, ok := labels[name]; ok {
 			labeled++
 			blocked := rep.Blocking()
+			// The corpus golden labels are only pass/fail (a plan is expected to block or
+			// not); warn / not_evaluable are never expected labels here.
+			//exhaustive:ignore
 			switch want {
 			case StatusFail:
 				if !blocked {

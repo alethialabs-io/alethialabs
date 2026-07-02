@@ -12,7 +12,16 @@ import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import { useProjectsQuery } from "@/lib/query/use-projects-query";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import type { JobWithMeta } from "@/app/server/actions/jobs";
+import { Button } from "@repo/ui/button";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
+import {
+	Empty,
+	EmptyContent,
+	EmptyDescription,
+	EmptyHeader,
+	EmptyMedia,
+	EmptyTitle,
+} from "@repo/ui/empty";
 import { MultiCombobox } from "@repo/ui/multi-combobox";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import {
@@ -23,6 +32,7 @@ import {
 } from "@repo/ui/range";
 import { TooltipProvider } from "@repo/ui/tooltip";
 import { Activity, Boxes, ClipboardList, Layers, Users, Wrench } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
@@ -169,25 +179,24 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 
 	return (
 		<div className="space-y-6">
-			<div>
-				<h1 className="text-2xl font-semibold tracking-tight text-foreground">
-					Jobs
-				</h1>
-				<p className="mt-1 text-sm text-muted-foreground">
-					Provision job history and execution logs.
-				</p>
-			</div>
-
 			{jobs.length === 0 ? (
-				<div className="flex flex-col items-center justify-center py-16 text-center">
-					<div className="mb-4 rounded-full bg-muted/50 p-3">
-						<ClipboardList className="h-8 w-8 text-muted-foreground" />
-					</div>
-					<h3 className="mb-1 text-sm font-medium text-foreground">No jobs yet</h3>
-					<p className="max-w-sm text-xs text-muted-foreground">
-						Jobs are created when you provision a project or connect a cloud account.
-					</p>
-				</div>
+				<Empty className="min-h-[60vh] border border-dashed">
+					<EmptyHeader>
+						<EmptyMedia variant="icon">
+							<ClipboardList />
+						</EmptyMedia>
+						<EmptyTitle>No jobs yet</EmptyTitle>
+						<EmptyDescription>
+							Jobs are created when you provision a project or connect a cloud
+							account.
+						</EmptyDescription>
+					</EmptyHeader>
+					<EmptyContent>
+						<Button asChild variant="outline" size="sm">
+							<Link href={`/${orgSlug}/~/new`}>Create a project</Link>
+						</Button>
+					</EmptyContent>
+				</Empty>
 			) : (
 				<>
 					<div className="flex flex-wrap items-center gap-2.5">

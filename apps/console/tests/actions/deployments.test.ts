@@ -157,7 +157,12 @@ describe("finalizeDeployment — success path", () => {
 			reader_endpoint: "redis-ro.example:6379",
 		});
 
-		expect(writeFor(projectEnvironments)?.set).toEqual({ status: "ACTIVE" });
+		expect(writeFor(projectEnvironments)?.set).toMatchObject({
+			status: "ACTIVE",
+			auto_heal_failures: 0,
+			deployed_config_hash: expect.any(String),
+			last_deployed_at: expect.any(Date),
+		});
 	});
 
 	it("marks the cluster ACTIVE but skips db/cache when outputs are empty", async () => {
@@ -173,17 +178,22 @@ describe("finalizeDeployment — success path", () => {
 		expect(cluster).not.toHaveProperty("provider_outputs");
 		expect(writeFor(projectDatabases)).toBeUndefined();
 		expect(writeFor(projectCaches)).toBeUndefined();
-		expect(writeFor(projectEnvironments)?.set).toEqual({ status: "ACTIVE" });
+		expect(writeFor(projectEnvironments)?.set).toMatchObject({
+			status: "ACTIVE",
+			auto_heal_failures: 0,
+			deployed_config_hash: expect.any(String),
+			last_deployed_at: expect.any(Date),
+		});
 	});
 
-	it("skips the environment write when the job has no environment_id", async () => {
+	it("does nothing when the job has no environment_id", async () => {
+		// Components are environment-scoped, so a job without a target environment has no
+		// rows to write — finalizeDeployment early-returns (deployments.ts) and writes nothing.
 		const job = fullJob();
 		job.environment_id = null as never;
-		job.execution_metadata.outputs = {} as never;
-		const { writeFor } = mockDb([job]);
+		const { updates } = mockDb([job]);
 		await finalizeDeployment("job-1");
-		expect(writeFor(projectEnvironments)).toBeUndefined();
-		expect(writeFor(projectCluster)?.set).toMatchObject({ status: "ACTIVE" });
+		expect(updates).toHaveLength(0);
 	});
 
 	it("ignores non-string metadata fields via the lenient zod parser", async () => {

@@ -652,9 +652,15 @@ type InitIdentityResponse struct {
 	ExternalID string `json:"external_id"`
 }
 
+// ConnectIdentityResponse is the SYNCHRONOUS result of submitting credentials — the
+// server runs the health probe inline and returns the verdict directly (there is no
+// CONNECTION_TEST job anymore). Mirrors connectIdentityWire in cli-contract.ts.
 type ConnectIdentityResponse struct {
-	JobID      string `json:"job_id"`
-	IdentityID string `json:"identity_id"`
+	IdentityID         string   `json:"identity_id"`
+	Verified           bool     `json:"verified"`
+	Status             string   `json:"status"` // connected | degraded | disconnected
+	Error              string   `json:"error"`
+	MissingPermissions []string `json:"missing_permissions"`
 }
 
 type ProviderStatus struct {
@@ -684,8 +690,9 @@ func (c *Client) InitProviderIdentity(provider string) (*InitIdentityResponse, e
 	return &resp, nil
 }
 
-// ConnectProviderIdentity submits the captured credentials and queues a
-// CONNECTION_TEST job. The credentials map shape is provider-specific:
+// ConnectProviderIdentity submits the captured credentials; the server verifies the
+// identity INLINE (a synchronous health probe) and returns the verdict directly — no
+// job to poll. The credentials map shape is provider-specific:
 //   - aws:   {"role_arn": "..."}
 //   - gcp:   {"wif_config": {...}}
 //   - azure: {"tenant_id": "...", "client_id": "...", "subscription_id": "..."}
@@ -700,20 +707,6 @@ func (c *Client) ConnectProviderIdentity(provider, identityID string, credential
 		return nil, fmt.Errorf("failed to submit %s credentials: %w", provider, err)
 	}
 	return &resp, nil
-}
-
-// VerifyProviderIdentity marks an identity verified after its connection test
-// job has succeeded.
-func (c *Client) VerifyProviderIdentity(provider, identityID, jobID string) error {
-	endpoint := fmt.Sprintf("%s/cli/providers/%s/verify", c.baseURL, provider)
-	payload := map[string]interface{}{
-		"identity_id": identityID,
-		"job_id":      jobID,
-	}
-	if err := c.doPost(endpoint, payload, nil); err != nil {
-		return fmt.Errorf("failed to verify %s identity: %w", provider, err)
-	}
-	return nil
 }
 
 // DisconnectProviderIdentity resets a provider identity to its pending state.

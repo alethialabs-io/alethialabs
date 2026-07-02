@@ -5,23 +5,27 @@
 import { Search } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useCommandPalette } from "@/lib/stores/use-command-palette";
-import { buildSidebarNav, type DrillId, isNavItemActive } from "./nav-config";
+import {
+	type DrillId,
+	isNavItemActive,
+	type SidebarNavGroups,
+} from "./nav-config";
 import { NavRow } from "./nav-row";
 
 /**
- * The main sidebar view: a stubbed "Find…" box plus the three nav groups (top, connect,
- * and a pinned-bottom group). Drill triggers either navigate (route-owned) or call
- * `onOpenDrill` to slide a sub-view in.
+ * The main sidebar view: a stubbed "Find…" box plus the nav groups (top, connect, and a
+ * pinned-bottom group). The groups are built by the shell — org-wide or project-scoped — and
+ * passed in. Drill triggers either navigate (route-owned) or call `onOpenDrill` to slide a
+ * sub-view in.
  */
 export function SidebarNav({
-	orgSlug,
+	groups,
 	onOpenDrill,
 }: {
-	orgSlug: string;
+	groups: SidebarNavGroups;
 	onOpenDrill: (id: DrillId) => void;
 }) {
 	const pathname = usePathname();
-	const groups = buildSidebarNav(orgSlug);
 
 	return (
 		<div className="flex h-full flex-col">
@@ -50,18 +54,23 @@ export function SidebarNav({
 					))}
 				</div>
 
-				<div className="my-2 h-px bg-border" />
-
-				<div className="space-y-0.5">
-					{groups.connect.map((item) => (
-						<NavRow
-							key={item.label}
-							item={item}
-							active={isNavItemActive(item, pathname)}
-							onOpenDrill={onOpenDrill}
-						/>
-					))}
-				</div>
+				{/* The "connect" group is org-only (empty in project scope) — skip it + its
+				    divider so the project sidebar doesn't show a dangling rule. */}
+				{groups.connect.length > 0 && (
+					<>
+						<div className="my-2 h-px bg-border" />
+						<div className="space-y-0.5">
+							{groups.connect.map((item) => (
+								<NavRow
+									key={item.label}
+									item={item}
+									active={isNavItemActive(item, pathname)}
+									onOpenDrill={onOpenDrill}
+								/>
+							))}
+						</div>
+					</>
+				)}
 
 				<div className="mt-auto space-y-0.5 pt-3">
 					{groups.pinned.map((item) => (

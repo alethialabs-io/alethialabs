@@ -43,10 +43,8 @@ export const ACTIONS = [
 	// channels/rules/deliveries vs mutate them.
 	"view_alerts",
 	"manage_alerts",
-	// Granular cloud-identity operations (distinct per provision_job_type, so each
-	// job type is independently grantable/deniable): CONNECTION_TEST, FETCH_RESOURCES.
+	// Cloud-identity connection verify (server-side; re-run via the "Re-verify" affordance).
 	"test",
-	"fetch_resources",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -66,7 +64,7 @@ const MATRIX: Partial<Record<Resource, readonly Action[]>> = {
 	org: ["view", "edit", "manage_billing"],
 	project: ["view", "create", "edit", "plan", "deploy", "destroy"],
 	runner: ["view", "create", "edit", "destroy", "deploy"],
-	cloud_identity: ["view", "manage_identities", "test", "fetch_resources"],
+	cloud_identity: ["view", "manage_identities", "test"],
 	job: ["view", "create", "edit"],
 	connector: ["view", "manage_connectors"],
 	member: ["view", "manage_members"],

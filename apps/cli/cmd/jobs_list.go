@@ -11,6 +11,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
@@ -23,15 +24,20 @@ var (
 	jobsListLimit  int
 )
 
+// jobTypeLabels maps every provision_job_type to a friendly table label. Keyed by the
+// generated types.JobType constants so a removed enum value is a compile error here; a
+// test (TestJobTypeLabels_CoverAllJobTypes) asserts every job type has a label, so an
+// added one fails the build.
 var jobTypeLabels = map[string]string{
-	"PLAN":            "Plan",
-	"DEPLOY":          "Deploy",
-	"DESTROY":         "Destroy",
-	"CONNECTION_TEST": "Test Conn.",
-	"FETCH_RESOURCES": "Fetch Res.",
-	"DEPLOY_RUNNER":   "Deploy Runner",
-	"UPDATE_RUNNER":   "Update Runner",
-	"DESTROY_RUNNER":  "Destroy Runner",
+	string(types.JobTypePlan):          "Plan",
+	string(types.JobTypeDeploy):        "Deploy",
+	string(types.JobTypeDestroy):       "Destroy",
+	string(types.JobTypeAnalyzeRepo):   "Analyze Repo",
+	string(types.JobTypeDetectDrift):   "Detect Drift",
+	string(types.JobTypeAudit):         "Audit",
+	string(types.JobTypeDeployRunner):  "Deploy Runner",
+	string(types.JobTypeUpdateRunner):  "Update Runner",
+	string(types.JobTypeDestroyRunner): "Destroy Runner",
 }
 
 var jobsListCmd = &cobra.Command{

@@ -49,7 +49,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	tfvars := map[string]interface{}{
 		"project_name": config.ProjectName,
 		"project_id":   config.CloudAccountID,
-		"region":       config.Region,
+		"region":       resolveRegion("gcp", config.Region),
 		"environment":  config.EnvironmentStage,
 
 		// Network
@@ -102,13 +102,20 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 	if len(config.Databases) > 0 {
 		db := config.Databases[0]
+		fam := db.EngineFamily
+		if fam == "" {
+			fam = "postgres"
+			if db.Engine == "mysql" || db.Engine == "aurora-mysql" {
+				fam = "mysql"
+			}
+		}
 		engine := "POSTGRES"
-		if db.Engine == "mysql" || db.Engine == "aurora-mysql" {
+		if fam == "mysql" {
 			engine = "MYSQL"
 		}
 		tfvars["cloud_sql_engine"] = engine
-		if db.EngineVersion != "" {
-			tfvars["cloud_sql_engine_version"] = db.EngineVersion
+		if _, version := resolveDBEngine("gcp", db); version != "" {
+			tfvars["cloud_sql_engine_version"] = version
 		}
 		if db.InstanceClass != "" {
 			tfvars["cloud_sql_tier"] = db.InstanceClass
@@ -135,16 +142,16 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		if cache.EngineVersion != "" {
 			tfvars["memorystore_redis_version"] = cache.EngineVersion
 		}
-		if cache.NodeType != "" {
-			tfvars["memorystore_instance_type"] = cache.NodeType
+		if nt := resolveCacheNodeType("gcp", cache); nt != "" {
+			tfvars["memorystore_instance_type"] = nt
 		}
 		if cache.MultiAz != nil {
 			tfvars["memorystore_multi_az"] = *cache.MultiAz
 		}
 	}
 
-	if len(config.Cluster.InstanceTypes) > 0 {
-		tfvars["gke_instance_types"] = config.Cluster.InstanceTypes
+	if inst := resolveInstanceTypes("gcp", config.Cluster); len(inst) > 0 {
+		tfvars["gke_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {
 		tfvars["gke_node_min_size"] = config.Cluster.NodeMinSize

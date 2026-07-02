@@ -397,7 +397,7 @@ describe("createPolicy", () => {
 		throttle_seconds: 0,
 		escalate: false,
 		enabled: true,
-		channelIds: [UUID],
+		channels: [{ id: UUID }],
 	};
 
 	it("inserts the rule, binds channels, invalidates the cache and revalidates", async () => {
@@ -405,7 +405,7 @@ describe("createPolicy", () => {
 		await createPolicy(base as never);
 		// First insert = rule values; second = channel bindings.
 		expect(valuesSpy.mock.calls[0][0]).toMatchObject({ org_id: "org-1", name: "P", created_by: "user-1" });
-		expect(valuesSpy.mock.calls[1][0]).toEqual([{ rule_id: "rule-1", channel_id: UUID }]);
+		expect(valuesSpy.mock.calls[1][0]).toEqual([{ rule_id: "rule-1", channel_id: UUID, min_severity: null }]);
 		expect(invalidateOrgRules).toHaveBeenCalledWith("org-1");
 		expect(revalidatePath).toHaveBeenCalledWith("/dashboard/alerts");
 	});
@@ -442,14 +442,14 @@ describe("updatePolicy / togglePolicy / deletePolicy", () => {
 		throttle_seconds: 0,
 		escalate: false,
 		enabled: true,
-		channelIds: [UUID],
+		channels: [{ id: UUID }],
 	};
 
 	it("updatePolicy rewrites the rule and replaces its bindings", async () => {
 		const { setSpy, valuesSpy } = mockDb({ selectRows: [{ id: UUID }] });
 		await updatePolicy("rule-1", base as never);
 		expect(setSpy.mock.calls[0][0]).toMatchObject({ name: "P", event_patterns: ["system.job.failed"] });
-		expect(valuesSpy.mock.calls[0][0]).toEqual([{ rule_id: "rule-1", channel_id: UUID }]);
+		expect(valuesSpy.mock.calls[0][0]).toEqual([{ rule_id: "rule-1", channel_id: UUID, min_severity: null }]);
 		expect(invalidateOrgRules).toHaveBeenCalledWith("org-1");
 	});
 

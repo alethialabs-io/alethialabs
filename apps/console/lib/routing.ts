@@ -54,6 +54,17 @@ export function projectHref(orgSlug: string, projectSlug: string): string {
 	return `/${orgSlug}/${projectSlug}`;
 }
 
+/** `/{org}/{project}/{sub}` — a project-scoped global page (jobs, clusters, usage,
+ * environments), the project analogue of `globalHref`. `sub` is reserved
+ * (RESERVED_PROJECT_CHILD_SLUGS) so it never collides with an environment name. */
+export function projectGlobalHref(
+	orgSlug: string,
+	projectSlug: string,
+	sub: string,
+): string {
+	return `/${orgSlug}/${projectSlug}/${sub}`;
+}
+
 /** `/{org}/{project}/settings/{sub}` — a project-scoped settings page (context-aware mirror
  * of the org `~/settings`). The literal `settings` segment is reserved per-project (see
  * RESERVED_PROJECT_CHILD_SLUGS) so it never collides with an environment name. */
@@ -66,17 +77,28 @@ export function projectSettingsHref(
 }
 
 /** Literal path segments that live directly under `/{org}/{project}` and therefore shadow an
- * environment name — and `~` (the org-global scope), which a project slug must never be.
- * `createProject` feeds these to `pickFreeSlug` so generated slugs skip them. */
-export const RESERVED_PROJECT_CHILD_SLUGS = ["settings"];
+ * environment name — the project-scoped pages (settings + the project nav subs). A project slug
+ * must also never be `~` (the org-global scope). `createProject` / `addEnvironment` feed these to
+ * `pickFreeSlug` / name validation so generated slugs and env names skip them. */
+export const RESERVED_PROJECT_CHILD_SLUGS = [
+	"architecture",
+	"settings",
+	"jobs",
+	"clusters",
+	"usage",
+	"environments",
+];
 
-/** `/{org}/{project}/{env}` — a specific environment of a project. */
+/** `/{org}/{project}/architecture?environment_id={id}` — the project's Architecture (design canvas)
+ * view focused on a specific environment. The environment lives in a query param (not a path
+ * segment) so switching envs updates the active view in place; it carries the env id (stable across
+ * renames). Architecture is the project's default view — the bare `/{org}/{project}` redirects here. */
 export function envHref(
 	orgSlug: string,
 	projectSlug: string,
-	envName: string,
+	environmentId: string,
 ): string {
-	return `/${orgSlug}/${projectSlug}/${envName}`;
+	return `/${orgSlug}/${projectSlug}/architecture?environment_id=${encodeURIComponent(environmentId)}`;
 }
 
 /** Vercel-style name → URL slug. Canonical implementation lives in `./slug`; re-exported

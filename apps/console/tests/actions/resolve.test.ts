@@ -18,7 +18,6 @@ import {
 	getActiveOrgSlug,
 	getEnvironmentsForSlug,
 	getProjectSlug,
-	resolveEnvironmentId,
 	resolveOrgScope,
 	resolveProjectId,
 } from "@/app/server/actions/resolve";
@@ -123,20 +122,6 @@ describe("resolveProjectId", () => {
 	it("throws when the project slug doesn't resolve", async () => {
 		mockOwnerScope([]);
 		await expect(resolveProjectId("nope")).rejects.toThrow(/Project not found/);
-	});
-});
-
-describe("resolveEnvironmentId", () => {
-	it("returns the environment id for a resolvable name", async () => {
-		mockOwnerScope([{ id: "env-1" }]);
-		await expect(resolveEnvironmentId("proj-1", "staging")).resolves.toBe("env-1");
-	});
-
-	it("throws when the environment doesn't resolve", async () => {
-		mockOwnerScope([]);
-		await expect(resolveEnvironmentId("proj-1", "ghost")).rejects.toThrow(
-			/Environment not found/,
-		);
 	});
 });
 

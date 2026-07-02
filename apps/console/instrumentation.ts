@@ -17,6 +17,10 @@ export async function register() {
 	// In-app alert-delivery retry sweep (self-hostable; no external cron).
 	const { startAlertScheduler } = await import("@/lib/alerts/scheduler");
 	startAlertScheduler();
+	// In-app connection sweep: keeps cloud health + the asset-inventory baseline fresh and backfills
+	// never-synced connections (self-hostable; no external cron — the /api route stays for hosted).
+	const { startConnectionSweeper } = await import("@/lib/cloud-providers/sweep");
+	startConnectionSweeper();
 	// Sync the static authz registry (permissions + built-in roles) — idempotent.
 	const { seedAuthz } = await import("@/lib/authz/seed");
 	await seedAuthz().catch((err) => console.error("[authz] seed failed:", err));

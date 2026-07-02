@@ -590,9 +590,13 @@ func TestConnectProviderIdentity_Success(t *testing.T) {
 			t.Errorf("unexpected credentials: %v", body.Credentials)
 		}
 
+		// Synchronous verdict — no job_id.
 		json.NewEncoder(w).Encode(map[string]any{
-			"job_id":      "job-9",
-			"identity_id": "id-123",
+			"identity_id":         "id-123",
+			"verified":            true,
+			"status":              "connected",
+			"error":               nil,
+			"missing_permissions": []string{},
 		})
 	}))
 
@@ -602,39 +606,11 @@ func TestConnectProviderIdentity_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.JobID != "job-9" {
-		t.Errorf("expected job-9, got %s", resp.JobID)
+	if !resp.Verified || resp.Status != "connected" {
+		t.Errorf("expected verified connected, got verified=%v status=%s", resp.Verified, resp.Status)
 	}
 	if resp.IdentityID != "id-123" {
 		t.Errorf("expected id-123, got %s", resp.IdentityID)
-	}
-}
-
-func TestVerifyProviderIdentity_Success(t *testing.T) {
-	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assertAuth(t, r)
-		if r.URL.Path != "/api/cli/providers/azure/verify" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		if r.Method != "POST" {
-			t.Errorf("expected POST, got %s", r.Method)
-		}
-
-		var body struct {
-			IdentityID string `json:"identity_id"`
-			JobID      string `json:"job_id"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("failed to decode body: %v", err)
-		}
-		if body.IdentityID != "id-7" || body.JobID != "job-7" {
-			t.Errorf("unexpected body: %+v", body)
-		}
-		json.NewEncoder(w).Encode(map[string]any{"success": true})
-	}))
-
-	if err := client.VerifyProviderIdentity("azure", "id-7", "job-7"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

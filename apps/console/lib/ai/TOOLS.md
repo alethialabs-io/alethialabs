@@ -46,7 +46,8 @@ external agent (read-only at launch). `assertAudienceCoverage` (tested in
 - ▢ `provision_project` — `provisionProject(id, planJobId?)` · `deploy project` (usage) — DEPLOY job; suggest
   plan→deploy chaining via `plan_job_id`.
 - ▢ `rerun_job` — `rerunJob(id)` · `create job` (usage). `cancel_job` — `cancelJob(id)` · `edit job`.
-- ▢ `refresh_cloud_resources` — `refreshCloudResources(id)` · `view cloud_identity` — FETCH_RESOURCES job.
+- ~~`refresh_cloud_resources` — FETCH_RESOURCES job~~ (RETIRED — the `FETCH_RESOURCES` job type was removed;
+  cloud resources are now kept current by the `cloud_*` inventory sync, migration `0049`, not a runner job).
 
 ## DIRECT-WRITE — expose sparingly (prefer PROPOSE→accept)
 - ▢ `create_project` — `createProject()` · `create project` — the agent should normally PROPOSE the canvas graph

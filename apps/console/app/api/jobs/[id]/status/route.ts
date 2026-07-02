@@ -5,8 +5,13 @@ import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { finalizeDeployment } from "@/app/server/actions/deployments";
 import { recordDriftPosture } from "@/app/server/actions/drift";
+import {
+	advancePromotionOnPlan,
+	failPromotionForJob,
+	finalizePromotionOnDeploy,
+} from "@/app/server/actions/promotions";
+import { maybeAutoHeal } from "@/app/server/actions/reconcile";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
-import { finalizeConnectionTest } from "@/lib/cloud-providers/connections";
 import { reportJobUsageOnce } from "@/lib/billing/meter";
 import { getServiceDb } from "@/lib/db";
 import { jobs, projectEnvironments } from "@/lib/db/schema";
@@ -113,6 +118,10 @@ export async function PUT(
 						await setEnvStatus("PROVISIONING");
 					} else if (status === "FAILED") {
 						await setEnvStatus("FAILED");
+						// A promotion's deploy failed → mark the promotion FAILED (no-op otherwise).
+						await failPromotionForJob(jobId).catch((err) =>
+							console.error("Fail promotion (deploy) error:", err),
+						);
 					} else if (status === "SUCCESS") {
 						try {
 							await finalizeDeployment(jobId);
@@ -120,12 +129,23 @@ export async function PUT(
 							console.error("Finalize deployment error:", err);
 							await setEnvStatus("FAILED");
 						}
+						// Mark a promotion SUCCEEDED if this deploy was one (no-op otherwise).
+						await finalizePromotionOnDeploy(jobId).catch((err) =>
+							console.error("Finalize promotion error:", err),
+						);
 					}
 				} else if (job.job_type === "PLAN") {
 					if (status === "FAILED") {
 						await setEnvStatus("FAILED");
+						await failPromotionForJob(jobId).catch((err) =>
+							console.error("Fail promotion (plan) error:", err),
+						);
 					} else if (status === "SUCCESS") {
 						await setEnvStatus("DRAFT");
+						// If this PLAN backs a promotion, evaluate its gates now (deploy / await / block).
+						await advancePromotionOnPlan(jobId).catch((err) =>
+							console.error("Advance promotion error:", err),
+						);
 					}
 				}
 			}
@@ -155,30 +175,16 @@ export async function PUT(
 						} catch (err) {
 							console.error("Persist drift posture error:", err);
 						}
+						// Day-2 reconcile: if the env drifted, consider auto-healing it (opt-in;
+						// prod stays approval-gated; guarded by backoff + circuit breaker).
+						if (!posture.in_sync && job.environment_id) {
+							await maybeAutoHeal(job.project_id, job.environment_id).catch(
+								(err) => console.error("Auto-heal error:", err),
+							);
+						}
 					}
 				}
 
-			// CONNECTION_TEST: authoritatively finalize the cloud identity from the
-			// terminal job result, server-side — so a connect sheet closed between
-			// SUCCESS and the client refresh can't strand a passed test as unverified.
-			if (
-				job?.job_type === "CONNECTION_TEST" &&
-				job.cloud_identity_id &&
-				(status === "SUCCESS" || status === "FAILED")
-			) {
-				try {
-					await finalizeConnectionTest(
-						job.cloud_identity_id,
-						status === "SUCCESS",
-						{
-							errorMessage: error_message ?? null,
-							cached: execution_metadata?.cached_resources ?? undefined,
-						},
-					);
-				} catch (err) {
-					console.error("Finalize connection test error:", err);
-				}
-			}
 		}
 
 		// Bill managed-runner job-minutes once the job is terminal (best-effort; a

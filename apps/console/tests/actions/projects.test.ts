@@ -185,8 +185,9 @@ describe("createProject", () => {
 	it("derives a collision-free slug, seeds the default env + hierarchy edge, persists components, and audits", async () => {
 		const { valuesSpy, insertSpy } = setupDb({
 			select: new Map([[projects, [{ slug: "my-app" }]]]), // an existing project already owns "my-app"
-			insert: new Map([
+			insert: new Map<unknown, RowsResolver>([
 				[projects, [{ id: "p1", org_id: "org-1", slug: "my-app-2", user_id: "user-1" }]],
+				[projectEnvironments, [{ id: "env-1" }]],
 			]),
 		});
 
@@ -233,9 +234,11 @@ describe("createProject", () => {
 			provision_network: true,
 		});
 		expect(valuesFor(valuesSpy, projectDatabases)).toEqual([
-			{ project_id: "p1", name: "db1", engine: "postgres" },
+			{ project_id: "p1", environment_id: "env-1", name: "db1", engine: "postgres" },
 		]);
-		expect(valuesFor(valuesSpy, projectSecrets)).toEqual([{ project_id: "p1", name: "s1" }]);
+		expect(valuesFor(valuesSpy, projectSecrets)).toEqual([
+			{ project_id: "p1", environment_id: "env-1", name: "s1" },
+		]);
 
 		expect(valuesFor(valuesSpy, auditLog)).toMatchObject({
 			project_id: "p1",
@@ -253,7 +256,10 @@ describe("createProject", () => {
 	it("skips reserved project-child slugs (settings → settings-2)", async () => {
 		const { valuesSpy } = setupDb({
 			select: new Map([[projects, []]]), // no existing projects, the reservation alone collides
-			insert: new Map([[projects, [{ id: "p2", org_id: "org-1" }]]]),
+			insert: new Map<unknown, RowsResolver>([
+				[projects, [{ id: "p2", org_id: "org-1" }]],
+				[projectEnvironments, [{ id: "env-1" }]],
+			]),
 		});
 
 		await createProject({
@@ -651,13 +657,17 @@ describe("duplicateProjectForProvider", () => {
 					[{ id: "env-1", name: "production", status: "DRAFT", is_default: true }],
 				],
 			]),
-			insert: new Map([[projects, [{ id: "new-proj", org_id: "org-1" }]]]),
+			insert: new Map<unknown, RowsResolver>([
+				[projects, [{ id: "new-proj", slug: "new-proj", org_id: "org-1" }]],
+				[projectEnvironments, [{ id: "env-1" }]],
+			]),
 		});
 
 		const r = await duplicateProjectForProvider("p1", "ci-target", "europe-west1");
 
 		expect(authorize).toHaveBeenCalledWith("create", { type: "project" });
 		expect(r.newProjectId).toBe("new-proj");
+		expect(r.newProjectSlug).toBe("new-proj");
 		// the real converter always emits at least the cluster k8s-version info note cross-provider
 		expect(r.warnings.length).toBeGreaterThan(0);
 		expect(r.warnings.some((w) => w.component === "Cluster")).toBe(true);

@@ -44,10 +44,17 @@ export const cloudIdentities = pgTable(
 		// Richer connection lifecycle (the verification finalize / page health drive
 		// off this). `connected` ⇔ `is_verified=true`; both are set together.
 		status: cloudIdentityStatus().default("pending").notNull(),
-		// Last CONNECTION_TEST failure reason (cleared on a successful verify).
+		// Last health-probe failure reason (cleared on a successful verify).
 		last_error: text(),
-		// When the most recent CONNECTION_TEST resolved (success or failure).
+		// When the most recent health probe resolved (success or failure).
 		last_tested_at: timestamp({ withTimezone: true }),
+		// The cloud account / principal the server-side probe authenticated as (proof of access).
+		verified_account_id: text(),
+		// Provisioning permissions the probe found MISSING (drives the `degraded` status). Empty when
+		// fully capable; the connectors UI lists these so the user can widen the role.
+		missing_permissions: text().array().default([]),
+		// When the server-side asset inventory for this connection last completed a full sweep.
+		inventory_synced_at: timestamp({ withTimezone: true }),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},

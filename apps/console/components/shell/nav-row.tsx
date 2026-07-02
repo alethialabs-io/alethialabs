@@ -53,7 +53,7 @@ export function NavRow({
 
 	const inner = (
 		<>
-			<Icon className="h-[17px] w-[17px] shrink-0 opacity-90" />
+			<Icon className="h-4 w-4 shrink-0 opacity-90" />
 			<span className="flex-1 truncate text-left">{item.label}</span>
 			{item.badge && <NavItemBadge badge={item.badge} />}
 			{item.drill && (

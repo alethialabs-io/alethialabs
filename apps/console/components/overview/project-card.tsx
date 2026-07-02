@@ -6,11 +6,19 @@
 // provider icon, region, status, an estimated monthly cost, and a favorite star. Projects
 // are the top-level unit under the org.
 
-import { Box, Star } from "lucide-react";
+import { Box, Copy, MoreVertical, Star } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 import { ProviderIcon } from "@repo/ui/provider-icon";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "@repo/ui/dropdown-menu";
 import { StatusBadge } from "@repo/ui/status-badge";
 import type { ProjectWithProvider } from "@/app/server/actions/projects";
+import { DuplicateProjectDialog } from "@/components/projects/duplicate-project-dialog";
 import { orgHref, projectHref } from "@/lib/routing";
 
 /** A single project (project) tile. */
@@ -29,6 +37,7 @@ export function ProjectCard({
 		? projectHref(orgSlug, project.slug)
 		: orgHref(orgSlug);
 	const provider = project.cloud_provider;
+	const [duplicateOpen, setDuplicateOpen] = useState(false);
 
 	return (
 		<div className="group/project relative rounded-lg border bg-card p-3.5 shadow-sm transition-all hover:-translate-y-px hover:border-foreground/20 hover:shadow-md">
@@ -82,11 +91,38 @@ export function ProjectCard({
 				type="button"
 				onClick={onToggleFavorite}
 				aria-label={isFavorite ? "Unstar project" : "Star project"}
-				className="pointer-events-auto absolute right-2.5 top-2.5 z-20 grid size-6 place-items-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/project:opacity-100 data-[on=true]:opacity-100"
+				className="pointer-events-auto absolute right-9 top-2.5 z-20 grid size-6 place-items-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/project:opacity-100 data-[on=true]:opacity-100"
 				data-on={isFavorite}
 			>
 				<Star className={`h-3.5 w-3.5 ${isFavorite ? "fill-current" : ""}`} />
 			</button>
+
+			{/* Project actions — above the link so it stays clickable. */}
+			<DropdownMenu>
+				<DropdownMenuTrigger
+					aria-label={`${project.project_name} actions`}
+					className="pointer-events-auto absolute right-2.5 top-2.5 z-20 grid size-6 place-items-center rounded-sm text-muted-foreground opacity-0 outline-none transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 data-[state=open]:opacity-100 group-hover/project:opacity-100"
+				>
+					<MoreVertical className="h-3.5 w-3.5" />
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="end" className="w-52">
+					<DropdownMenuItem
+						disabled={!project.slug}
+						onSelect={() => setDuplicateOpen(true)}
+					>
+						<Copy className="mr-2 h-3.5 w-3.5" />
+						Duplicate to another cloud…
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+
+			<DuplicateProjectDialog
+				open={duplicateOpen}
+				onOpenChange={setDuplicateOpen}
+				sourceProjectId={project.id}
+				sourceProjectName={project.project_name}
+				orgSlug={orgSlug}
+			/>
 		</div>
 	);
 }

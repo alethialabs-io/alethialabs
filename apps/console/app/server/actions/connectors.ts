@@ -253,8 +253,9 @@ export async function getConnectorsWithStatus(): Promise<
 				};
 			}
 			const health = cloudHealthByProvider.get(slug);
+			// A disconnected identity (auth lost) surfaces like a failed verification — Re-verify.
 			const cloud_health =
-				health?.status === "failed"
+				health?.status === "failed" || health?.status === "disconnected"
 					? "failed"
 					: health?.status === "testing"
 						? "testing"

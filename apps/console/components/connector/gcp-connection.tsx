@@ -25,7 +25,10 @@ import {
 	InfoNote,
 	StatusCallout,
 } from "@/components/connector/connection-ui";
-import { useConnectionTest } from "@/components/connector/use-connection-test";
+import {
+	type VerifyOutcome,
+	useConnectionTest,
+} from "@/components/connector/use-connection-test";
 import { CopyButton } from "@repo/ui/copy-button";
 import { FieldHelp } from "@repo/ui/field-help";
 import { connectorAssetUrl } from "@/components/connector/connector-assets";
@@ -97,7 +100,7 @@ type WifConfigFormValues = z.infer<typeof wifConfigSchema>;
 interface GcpConnectionProps {
 	onComplete: (
 		wifConfigJson: string,
-	) => Promise<{ jobId: string; identityId: string }>;
+	) => Promise<VerifyOutcome>;
 }
 
 export function GcpConnection({ onComplete }: GcpConnectionProps) {
@@ -387,12 +390,11 @@ export function GcpConnection({ onComplete }: GcpConnectionProps) {
 
 						<div className="pt-6 border-t border-border/40">
 							{verifyState.phase === "success" ||
-							verifyState.phase === "saving" ||
-							verifyState.phase === "queued" ||
-							verifyState.phase === "testing" ? (
+							verifyState.phase === "saving" ? (
 								<ConnectionTestStatus
 									phase={verifyState.phase}
-									startedAt={verifyState.startedAt}
+									status={verifyState.status}
+									missingPermissions={verifyState.missingPermissions}
 									successText="Alethia can authenticate into your GCP project via Workload Identity Federation. You're ready to provision infrastructure."
 									verifyingText="Testing Workload Identity Federation authentication into your GCP project."
 									onCancel={cancel}

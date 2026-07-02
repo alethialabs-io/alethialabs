@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { SwitcherTrigger } from "@/components/shell/switcher-trigger";
 import { Button } from "@repo/ui/button";
+import { ProviderIcon } from "@repo/ui/provider-icon";
 import {
 	Command,
 	CommandEmpty,
@@ -63,6 +64,13 @@ export function ProjectSwitcher() {
 			<SwitcherTrigger
 				variant="topbar"
 				open={open}
+				leading={
+					active?.cloud_provider ? (
+						<span className="flex h-5 w-5 shrink-0 items-center justify-center rounded border text-muted-foreground">
+							<ProviderIcon provider={active.cloud_provider} size={12} />
+						</span>
+					) : undefined
+				}
 				label={active?.project_name ?? "All projects"}
 			/>
 			<PopoverContent className="w-72 p-0" align="start">
@@ -81,7 +89,15 @@ export function ProjectSwitcher() {
 											onSelect={() => p.slug && handleSelect(p.slug)}
 											className="gap-2"
 										>
-											<Component className="h-4 w-4 text-muted-foreground" />
+											{p.cloud_provider ? (
+												<ProviderIcon
+													provider={p.cloud_provider}
+													size={16}
+													className="shrink-0"
+												/>
+											) : (
+												<Component className="h-4 w-4 text-muted-foreground" />
+											)}
 											<span className="flex-1 truncate">{p.project_name}</span>
 											{p.id === active?.id && (
 												<Check className="h-4 w-4 shrink-0" />

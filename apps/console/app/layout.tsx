@@ -70,8 +70,10 @@ export default function RootLayout({
 					enableSystem={false}
 				>
 					<Providers>{children}</Providers>
-					{/* Nudged up so toasts clear the bottom-right "Get started" pill. */}
-					<Toaster offset={{ bottom: "76px" }} mobileOffset={{ bottom: "76px" }} />
+					{/* Bottom-center keeps toasts clear of the bottom-right floating chrome (setup
+					    guide card + assistant button) without a brittle fixed offset. Sonner already
+					    sits above everything (z-index ~1e9), so this is purely positional. */}
+					<Toaster position="bottom-center" closeButton />
 				</ThemeProvider>
 			</body>
 		</html>

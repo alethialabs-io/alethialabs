@@ -19,14 +19,6 @@ type SweptRunner = {
 
 const RECOVERY_INTERVAL_MS = 60_000;
 
-/** Minutes a CONNECTION_TEST may sit QUEUED (unclaimed) before it's failed. */
-const CONNECTION_TEST_TTL_MIN = Number(
-	process.env.ALETHIA_CONNECTION_TEST_TTL_MIN ?? "5",
-);
-/** Minutes a CONNECTION_TEST may stay CLAIMED/PROCESSING (a wedged runner) before it's failed. */
-const CONNECTION_TEST_CLAIMED_TTL_MIN = Number(
-	process.env.ALETHIA_CONNECTION_TEST_CLAIMED_TTL_MIN ?? "10",
-);
 /** Hours a never-saved pending identity lingers before it's garbage-collected. */
 const PENDING_IDENTITY_TTL_H = Number(
 	process.env.ALETHIA_PENDING_IDENTITY_TTL_H ?? "24",
@@ -52,18 +44,7 @@ export function startStaleJobRecovery(): void {
 			.catch((err) => {
 				console.error("[job-recovery] recover_stale_jobs failed:", err);
 			});
-		// Fail CONNECTION_TEST jobs no runner ever claimed (so the connect sheet stops
-		// spinning) and GC never-saved pending identities. Best-effort.
-		void db
-			.execute(
-				sql`select fail_unclaimed_connection_tests(make_interval(mins => ${CONNECTION_TEST_TTL_MIN}), make_interval(mins => ${CONNECTION_TEST_CLAIMED_TTL_MIN}))`,
-			)
-			.catch((err) => {
-				console.error(
-					"[job-recovery] fail_unclaimed_connection_tests failed:",
-					err,
-				);
-			});
+		// GC never-saved pending identities. Best-effort.
 		void db
 			.execute(
 				sql`select gc_pending_identities(make_interval(hours => ${PENDING_IDENTITY_TTL_H}))`,

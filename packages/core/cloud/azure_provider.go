@@ -42,7 +42,7 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 	tfvars := map[string]interface{}{
 		"project_name":    config.ProjectName,
 		"subscription_id": config.CloudAccountID,
-		"location":        config.Region,
+		"location":        resolveRegion("azure", config.Region),
 		"environment":     config.EnvironmentStage,
 
 		// Network
@@ -93,13 +93,16 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 
 	if len(config.Databases) > 0 {
 		db := config.Databases[0]
-		engine := "postgres"
-		if db.Engine == "mysql" || db.Engine == "aurora-mysql" {
-			engine = "mysql"
+		fam := db.EngineFamily
+		if fam == "" {
+			fam = "postgres"
+			if db.Engine == "mysql" || db.Engine == "aurora-mysql" {
+				fam = "mysql"
+			}
 		}
-		tfvars["azure_db_engine"] = engine
-		if db.EngineVersion != "" {
-			tfvars["azure_db_engine_version"] = db.EngineVersion
+		tfvars["azure_db_engine"] = fam
+		if _, version := resolveDBEngine("azure", db); version != "" {
+			tfvars["azure_db_engine_version"] = version
 		}
 		if db.InstanceClass != "" {
 			tfvars["azure_db_sku_name"] = db.InstanceClass
@@ -128,8 +131,8 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		}
 	}
 
-	if len(config.Cluster.InstanceTypes) > 0 {
-		tfvars["aks_instance_types"] = config.Cluster.InstanceTypes
+	if inst := resolveInstanceTypes("azure", config.Cluster); len(inst) > 0 {
+		tfvars["aks_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {
 		tfvars["aks_node_min_size"] = config.Cluster.NodeMinSize
