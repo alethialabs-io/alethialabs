@@ -12,35 +12,46 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
-vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/crypto/secrets", () => ({
 	encryptSecret: vi.fn((v: unknown) => `ENC::${JSON.stringify(v)}`),
+}));
+// Verification is server-side now: the save fns probe health inline (no runner, no job) and kick off
+// the inventory sync in the background. Both boundaries are stubbed; `probeHealth` defaults to CONNECTED.
+vi.mock("@/lib/cloud-providers/health", () => ({ probeHealth: vi.fn() }));
+vi.mock("@/lib/cloud-providers/inventory", () => ({
+	syncCloudInventory: vi.fn(),
+	purgeCloudInventory: vi.fn(),
 }));
 
 import {
 	disconnectIdentity,
-	finalizeConnectionTest,
 	getStatus,
 	initIdentity,
 	listIdentities,
 	parseAwsRoleArn,
 	parseWifConfig,
 	renameIdentity,
-	requeueConnectionTest,
+	reverifyConnection,
 	saveAlibabaIdentity,
 	saveAwsIdentity,
 	saveAzureIdentity,
 	saveGcpIdentity,
-	saveSelfManagedTokenIdentity,
 	saveTokenCloudIdentity,
-	verifyIdentity,
 } from "@/lib/cloud-providers/connections";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getServiceDb } from "@/lib/db";
-import { notifyScaler } from "@/lib/scaler";
+import { probeHealth } from "@/lib/cloud-providers/health";
 import { encryptSecret } from "@/lib/crypto/secrets";
 
 const SCOPE = { userId: "user-1", orgId: "org-1" };
+
+/** A CONNECTED health probe result (auth ok, no missing permissions). */
+const CONNECTED = {
+	status: "connected" as const,
+	accountId: "acc-123",
+	error: null,
+	missingPermissions: [] as string[],
+};
 
 /**
  * Builds a thenable drizzle-ish db. Every terminal await (a chain `.then`, or `.execute`)
@@ -99,7 +110,21 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	db = makeDb();
 	vi.mocked(getServiceDb).mockReturnValue(db as never);
+	vi.mocked(probeHealth).mockResolvedValue(CONNECTED);
 });
+
+/**
+ * Queues the DB results a successful server-side verify awaits AFTER the save fn's own
+ * load+credential-update: verifyConnectionInline re-loads the identity, updates its status, then
+ * re-loads it once more to seed the background inventory sync. `provider`/`status` shape the alert branch.
+ */
+function queueVerify(provider: string) {
+	queue(
+		[{ id: "ci", provider, status: "testing", credentials: {} }], // verify loadIdentity
+		[], // status update
+		[{ id: "ci", provider, status: "connected", credentials: {} }], // reload for inventory
+	);
+}
 
 // --- pure parsers ---
 
@@ -307,19 +332,26 @@ describe("renameIdentity", () => {
 // --- saveAwsIdentity ---
 
 describe("saveAwsIdentity", () => {
-	it("persists the role/account, queues a CONNECTION_TEST, and notifies the scaler", async () => {
+	it("persists the role/account, verifies server-side (no job), and returns the status", async () => {
 		queue(
-			[{ id: "ci-1", credentials: { external_id: "ext-1" } }], // loadIdentity
-			[], // update
-			[{ id: "job-1" }], // queueConnectionTest insert
+			[{ id: "ci-1", provider: "aws", status: "testing", credentials: { external_id: "ext-1" } }], // loadIdentity (save)
+			[], // credential update
 		);
+		queueVerify("aws");
 		const r = await saveAwsIdentity(
 			SCOPE,
 			"ci-1",
 			"arn:aws:iam::123456789012:role/AlethiaRole",
 		);
-		expect(r).toEqual({ jobId: "job-1", identityId: "ci-1" });
+		expect(r).toEqual({
+			identityId: "ci-1",
+			verified: true,
+			status: "connected",
+			error: null,
+			missingPermissions: [],
+		});
 
+		// credential update (sets[0]) then the health-result status update (sets[1])
 		expect(db._sets[0]).toMatchObject({
 			name: "AWS Account (123456789012)",
 			is_verified: false,
@@ -330,25 +362,39 @@ describe("saveAwsIdentity", () => {
 				account_id: "123456789012",
 			},
 		});
-		expect(db._values[0]).toMatchObject({
-			user_id: "user-1",
-			org_id: "org-1",
-			job_type: "CONNECTION_TEST",
-			cloud_identity_id: "ci-1",
-			status: "QUEUED",
-			requires_self_runner: false,
-			config_snapshot: {
-				role_arn: "arn:aws:iam::123456789012:role/AlethiaRole",
-				account_id: "123456789012",
-			},
+		expect(db._sets[1]).toMatchObject({
+			is_verified: true,
+			status: "connected",
+			verified_account_id: "acc-123",
+			missing_permissions: [],
 		});
-		expect(notifyScaler).toHaveBeenCalledTimes(1);
+		// No job is created — verification is server-side.
+		expect(db._values).toHaveLength(0);
+		expect(probeHealth).toHaveBeenCalledTimes(1);
+	});
+
+	it("returns disconnected (unverified) when the probe fails to authenticate", async () => {
+		vi.mocked(probeHealth).mockResolvedValue({
+			status: "disconnected",
+			accountId: null,
+			error: "AssumeRole denied",
+			missingPermissions: [],
+		});
+		queue(
+			[{ id: "ci-1", provider: "aws", status: "testing", credentials: {} }], // loadIdentity (save)
+			[], // credential update
+			[{ id: "ci-1", provider: "aws", status: "testing", credentials: {} }], // verify loadIdentity
+			[], // status update
+		);
+		const r = await saveAwsIdentity(SCOPE, "ci-1", "arn:aws:iam::123456789012:role/R");
+		expect(r).toMatchObject({ verified: false, status: "disconnected", error: "AssumeRole denied" });
+		expect(db._values).toHaveLength(0);
 	});
 
 	it("throws on a malformed ARN before any db write", async () => {
 		await expect(saveAwsIdentity(SCOPE, "ci-1", "bad")).rejects.toThrow(/Invalid format/);
 		expect(db._sets).toHaveLength(0);
-		expect(notifyScaler).not.toHaveBeenCalled();
+		expect(probeHealth).not.toHaveBeenCalled();
 	});
 
 	it("throws when the identity session is missing", async () => {
@@ -371,10 +417,11 @@ describe("saveGcpIdentity", () => {
 		credential_source: { url: "u" },
 	});
 
-	it("derives the name/credentials from the WIF config and queues a test", async () => {
-		queue([{ id: "ci-g", credentials: {} }], [], [{ id: "job-g" }]);
+	it("derives the name/credentials from the WIF config and verifies server-side", async () => {
+		queue([{ id: "ci-g", provider: "gcp", status: "testing", credentials: {} }], []);
+		queueVerify("gcp");
 		const r = await saveGcpIdentity(SCOPE, "ci-g", validWif);
-		expect(r).toEqual({ jobId: "job-g", identityId: "ci-g" });
+		expect(r).toMatchObject({ identityId: "ci-g", verified: true, status: "connected" });
 		expect(db._sets[0]).toMatchObject({
 			name: "GCP Project (proj)",
 			credentials: {
@@ -383,11 +430,7 @@ describe("saveGcpIdentity", () => {
 				service_account_email: "sa@proj.iam.gserviceaccount.com",
 			},
 		});
-		expect(db._values[0].config_snapshot).toEqual({
-			project_id: "proj",
-			project_number: "777",
-			service_account_email: "sa@proj.iam.gserviceaccount.com",
-		});
+		expect(db._values).toHaveLength(0);
 	});
 });
 
@@ -396,19 +439,16 @@ describe("saveGcpIdentity", () => {
 describe("saveAzureIdentity", () => {
 	const G = "12345678-1234-1234-1234-123456789abc";
 
-	it("validates the three GUIDs, names from the subscription prefix, and queues a test", async () => {
-		queue([{ id: "ci-az", credentials: {} }], [], [{ id: "job-az" }]);
+	it("validates the three GUIDs, names from the subscription prefix, and verifies server-side", async () => {
+		queue([{ id: "ci-az", provider: "azure", status: "testing", credentials: {} }], []);
+		queueVerify("azure");
 		const r = await saveAzureIdentity(SCOPE, "ci-az", G, G, G);
-		expect(r).toEqual({ jobId: "job-az", identityId: "ci-az" });
+		expect(r).toMatchObject({ identityId: "ci-az", verified: true, status: "connected" });
 		expect(db._sets[0]).toMatchObject({
 			name: "Azure Subscription (12345678...)",
 			credentials: { tenant_id: G, client_id: G, subscription_id: G },
 		});
-		expect(db._values[0].config_snapshot).toEqual({
-			tenant_id: G,
-			client_id: G,
-			subscription_id: G,
-		});
+		expect(db._values).toHaveLength(0);
 	});
 
 	it("rejects a bad tenant GUID before any db write", async () => {
@@ -428,14 +468,15 @@ describe("saveAzureIdentity", () => {
 // --- saveAlibabaIdentity ---
 
 describe("saveAlibabaIdentity", () => {
-	it("parses the RAM role ARN and persists account id", async () => {
-		queue([{ id: "ci-al", credentials: {} }], [], [{ id: "job-al" }]);
+	it("parses the RAM role ARN, persists account id, and verifies server-side (STS)", async () => {
+		queue([{ id: "ci-al", provider: "alibaba", status: "testing", credentials: {} }], []);
+		queueVerify("alibaba");
 		const r = await saveAlibabaIdentity(
 			SCOPE,
 			"ci-al",
 			"acs:ram::5123456789012345:role/MyRole",
 		);
-		expect(r).toEqual({ jobId: "job-al", identityId: "ci-al" });
+		expect(r).toMatchObject({ identityId: "ci-al", verified: true, status: "connected" });
 		expect(db._sets[0]).toMatchObject({
 			name: "Alibaba Cloud (5123456789012345)",
 			credentials: {
@@ -443,6 +484,7 @@ describe("saveAlibabaIdentity", () => {
 				account_id: "5123456789012345",
 			},
 		});
+		expect(db._values).toHaveLength(0);
 	});
 
 	it("throws on a malformed RAM ARN", async () => {
@@ -455,23 +497,23 @@ describe("saveAlibabaIdentity", () => {
 // --- token clouds ---
 
 describe("saveTokenCloudIdentity", () => {
-	it("encrypts the token, stores it under credentials.token, and keeps it out of the snapshot", async () => {
-		queue([{ id: "ci-do", credentials: {} }], [], [{ id: "job-do" }]);
+	it("encrypts the token, stores it under credentials.token, and verifies server-side", async () => {
+		queue([{ id: "ci-do", provider: "digitalocean", status: "testing", credentials: {} }], []);
+		queueVerify("digitalocean");
 		const r = await saveTokenCloudIdentity(
 			SCOPE,
 			"ci-do",
 			"digitalocean",
 			"  dop_v1_supersecrettoken  ",
 		);
-		expect(r).toEqual({ jobId: "job-do", identityId: "ci-do" });
+		expect(r).toMatchObject({ identityId: "ci-do", verified: true, status: "connected" });
 		expect(encryptSecret).toHaveBeenCalledWith({ api_token: "dop_v1_supersecrettoken" });
 		expect(db._sets[0]).toMatchObject({
 			name: "DigitalOcean Connection",
 			credentials: { token: 'ENC::{"api_token":"dop_v1_supersecrettoken"}' },
 		});
-		// snapshot carries only a marker, never the secret
-		expect(db._values[0].config_snapshot).toEqual({ token_connection_test: true });
-		expect(JSON.stringify(db._values[0].config_snapshot)).not.toContain("supersecret");
+		// No job is created — the token never leaves the console for a runner.
+		expect(db._values).toHaveLength(0);
 	});
 
 	it("rejects a non token-authenticated cloud", async () => {
@@ -488,123 +530,17 @@ describe("saveTokenCloudIdentity", () => {
 	});
 });
 
-describe("saveSelfManagedTokenIdentity", () => {
-	it("stores no token, marks self_managed, and pins the test to a self runner", async () => {
-		queue([{ id: "ci-hz", credentials: { token: "ENC::old" } }], [], [{ id: "job-hz" }]);
-		const r = await saveSelfManagedTokenIdentity(SCOPE, "ci-hz", "hetzner");
-		expect(r).toEqual({ jobId: "job-hz", identityId: "ci-hz" });
-		expect(db._sets[0].credentials).toEqual({ token: null, self_managed: true });
-		expect(db._values[0]).toMatchObject({
-			requires_self_runner: true,
-			config_snapshot: { token_connection_test: true, self_managed: true },
-		});
-		expect(encryptSecret).not.toHaveBeenCalled();
-	});
+// --- reverifyConnection ---
 
-	it("rejects a non token cloud", async () => {
-		await expect(saveSelfManagedTokenIdentity(SCOPE, "ci", "gcp")).rejects.toThrow(
-			/not a token-authenticated cloud/,
-		);
-	});
-});
-
-// --- requeueConnectionTest ---
-
-describe("requeueConnectionTest", () => {
-	it("rebuilds the AWS snapshot from stored credentials (managed runner)", async () => {
-		queue(
-			[{ id: "ci-1", provider: "aws", credentials: { role_arn: "arn:x", account_id: "1" } }],
-			[],
-			[{ id: "job-r" }],
-		);
-		const r = await requeueConnectionTest(SCOPE, "ci-1");
-		expect(r).toEqual({ jobId: "job-r", identityId: "ci-1" });
+describe("reverifyConnection", () => {
+	it("flips to testing, re-probes health, and returns the fresh status (no job)", async () => {
+		queue([]); // status→testing update
+		queueVerify("aws");
+		const r = await reverifyConnection(SCOPE, "ci-1");
+		expect(r).toMatchObject({ identityId: "ci-1", verified: true, status: "connected" });
 		expect(db._sets[0]).toMatchObject({ status: "testing", last_error: null });
-		expect(db._values[0]).toMatchObject({
-			requires_self_runner: false,
-			config_snapshot: { role_arn: "arn:x", account_id: "1" },
-		});
-	});
-
-	it("rebuilds a self-managed token snapshot and re-pins to a self runner", async () => {
-		queue(
-			[{ id: "ci-2", provider: "hetzner", credentials: { self_managed: true } }],
-			[],
-			[{ id: "job-r2" }],
-		);
-		await requeueConnectionTest(SCOPE, "ci-2");
-		expect(db._values[0]).toMatchObject({
-			requires_self_runner: true,
-			config_snapshot: { token_connection_test: true, self_managed: true },
-		});
-	});
-});
-
-// --- finalizeConnectionTest ---
-
-describe("finalizeConnectionTest", () => {
-	it("no-ops when the identity row is missing", async () => {
-		queue([]);
-		await finalizeConnectionTest("ci-missing", true);
-		expect(db._sets).toHaveLength(0);
-		expect(db._executes).toHaveLength(0);
-		expect(emitAlertEventSafe).not.toHaveBeenCalled();
-	});
-
-	it("records a failure with the error message and emits no alert", async () => {
-		queue([{ status: "testing", org_id: "org-1", provider: "aws" }], []);
-		await finalizeConnectionTest("ci-1", false, { errorMessage: "boom" });
-		expect(db._sets[0]).toMatchObject({ status: "failed", last_error: "boom" });
-		expect(emitAlertEventSafe).not.toHaveBeenCalled();
-	});
-
-	it("marks connected and emits the connected alert on the transition", async () => {
-		queue([{ status: "testing", org_id: "org-1", provider: "gcp" }], []);
-		await finalizeConnectionTest("ci-1", true);
-		expect(db._sets[0]).toMatchObject({ is_verified: true, status: "connected" });
-		expect(emitAlertEventSafe).toHaveBeenCalledWith(
-			"org-1",
-			"system.identity.connected",
-			expect.objectContaining({ resource_id: "ci-1", resource_type: "cloud_identity" }),
-		);
-	});
-
-	it("does not re-emit when the identity was already connected", async () => {
-		queue([{ status: "connected", org_id: "org-1", provider: "gcp" }], []);
-		await finalizeConnectionTest("ci-1", true);
-		expect(emitAlertEventSafe).not.toHaveBeenCalled();
-	});
-
-	it("writes cached_resources via raw jsonb sql when a cached payload is provided", async () => {
-		queue([{ status: "testing", org_id: "org-1", provider: "aws" }], []);
-		await finalizeConnectionTest("ci-1", true, { cached: { vpcs: ["v1"] } });
-		expect(db._executes).toHaveLength(1); // raw sql path, not the .set() path
-		expect(db._sets).toHaveLength(0);
-		expect(emitAlertEventSafe).toHaveBeenCalledTimes(1);
-	});
-});
-
-// --- verifyIdentity ---
-
-describe("verifyIdentity", () => {
-	it("pulls the job's cached_resources and finalizes connected via the raw sql path", async () => {
-		queue(
-			[{ execution_metadata: { cached_resources: { zones: ["a"] } } }], // job lookup
-			[{ status: "testing", org_id: "org-1", provider: "aws" }], // finalize select
-			[], // execute
-		);
-		const r = await verifyIdentity(SCOPE, "ci-1", "job-1");
-		expect(r).toEqual({ success: true });
-		expect(db._executes).toHaveLength(1);
-		expect(emitAlertEventSafe).toHaveBeenCalledTimes(1);
-	});
-
-	it("finalizes without a job lookup when no jobId is given", async () => {
-		queue([{ status: "testing", org_id: "org-1", provider: "aws" }], []);
-		const r = await verifyIdentity(SCOPE, "ci-1");
-		expect(r).toEqual({ success: true });
-		expect(db._executes).toHaveLength(0); // no cached → plain update path
-		expect(db._sets[0]).toMatchObject({ is_verified: true, status: "connected" });
+		expect(db._values).toHaveLength(0);
+		expect(probeHealth).toHaveBeenCalledTimes(1);
 	});
 });
 

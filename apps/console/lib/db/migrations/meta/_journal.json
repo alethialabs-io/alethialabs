@@ -372,6 +372,20 @@
       "when": 1782842170000,
       "tag": "0052_audit_job_type",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1782892166437,
+      "tag": "0053_striped_forgotten_one",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1782892166438,
+      "tag": "0054_inventory_encrypt",
+      "breakpoints": true
     }
   ]
 }
