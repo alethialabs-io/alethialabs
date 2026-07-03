@@ -16,6 +16,9 @@ locals {
 # AKS Cluster
 ################################################################################
 
+# API-server IP allow-list (AVD-AZU-0041) is suppressed in infra/.trivyignore: it's
+# customer-specific (the external runner + operator kubectl need access), so default-locking
+# would break provisioning. Left customer-configurable per environment. (RBAC is enabled above.)
 resource "azurerm_kubernetes_cluster" "this" {
   name                = var.cluster_name
   location            = var.location
@@ -30,6 +33,9 @@ resource "azurerm_kubernetes_cluster" "this" {
 
   workload_identity_enabled = true
   oidc_issuer_enabled       = true
+
+  # Kubernetes RBAC (AVD-AZU-0042) — safe to enable unconditionally.
+  role_based_access_control_enabled = true
 
   # --- Default node pool --------------------------------------------------
   default_node_pool {
