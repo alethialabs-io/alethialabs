@@ -40,7 +40,7 @@ resource "github_repository_ruleset" "main" {
     }
 
     required_status_checks {
-      strict_required_status_checks_policy = true
+      strict_required_status_checks_policy = false
       dynamic "required_check" {
         for_each = var.required_status_checks
         content {
@@ -77,7 +77,7 @@ resource "github_repository_ruleset" "staging" {
     }
 
     required_status_checks {
-      strict_required_status_checks_policy = true
+      strict_required_status_checks_policy = false
       dynamic "required_check" {
         for_each = var.required_status_checks
         content {
