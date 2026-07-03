@@ -7,7 +7,7 @@
 # state prefixes — nothing else.
 resource "aws_iam_role" "cp_deployer" {
   name               = "alethia-cp-deployer"
-  description        = "Least-priv OIDC role for infra/cp-hetzner + infra/status — S3 state only."
+  description        = "Least-priv OIDC role for infra/cp-hetzner + infra/status - S3 state only."
   assume_role_policy = data.aws_iam_policy_document.deployer_trust.json
   tags               = local.tags
 }
@@ -63,7 +63,7 @@ resource "aws_iam_role_policy" "cp_deployer" {
 # one ECS service. Scoped to exactly that repo + service.
 resource "aws_iam_role" "runner_release_deployer" {
   name               = "alethia-runner-release-deployer"
-  description        = "Least-priv OIDC role for release-runner + deploy-fleet-aws — ECR push + ECS roll."
+  description        = "Least-priv OIDC role for release-runner + deploy-fleet-aws - ECR push + ECS roll."
   assume_role_policy = data.aws_iam_policy_document.deployer_trust.json
   tags               = local.tags
 }
@@ -121,7 +121,7 @@ resource "aws_iam_role_policy" "runner_release_deployer" {
 # the one secret — nothing else (no state, no ECR/ECS).
 resource "aws_iam_role" "deploy_reader" {
   name               = "alethia-deploy-reader"
-  description        = "Least-priv OIDC role for deploy-console — read the prod secret only."
+  description        = "Least-priv OIDC role for deploy-console - read the prod secret only."
   assume_role_policy = data.aws_iam_policy_document.deployer_trust.json
   tags               = local.tags
 }
