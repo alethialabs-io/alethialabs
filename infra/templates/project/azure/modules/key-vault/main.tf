@@ -1,5 +1,8 @@
 data "azurerm_client_config" "current" {}
 
+# trivy:ignore:AVD-AZU-0013 Network-ACL default-deny would block the external (Hetzner)
+# runner's data-plane writes during provisioning; access restriction is left customer-
+# configurable per environment.
 resource "azurerm_key_vault" "this" {
   name                       = "${var.project_name}-${var.environment}-kv"
   location                   = var.location
