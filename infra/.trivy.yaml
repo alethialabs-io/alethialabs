@@ -21,3 +21,10 @@ misconfiguration:
     - AVD-AWS-0093 # S3 access block should restrict public bucket
     - AVD-AWS-0094 # S3 bucket should have block public policy
     - AVD-AWS-0132 # S3 bucket encryption (connector-assets serves public, non-secret files)
+    # Azure project template (customer-provisioned; applied by the external Hetzner runner).
+    # These two are network-restriction checks that CANNOT be default-on without breaking
+    # provisioning: the runner is outside Azure, so a default-Deny key-vault ACL / IP-locked
+    # AKS API server would block the runner's own data-plane + control-plane access. They are
+    # left customer-configurable per environment (RBAC — AZU-0042 — IS fixed in the module).
+    - AVD-AZU-0013 # Key Vault network ACL default-deny (runner needs data-plane write access)
+    - AVD-AZU-0041 # AKS API server authorized IP ranges (customer-specific; default-open for kubectl)

@@ -31,6 +31,9 @@ resource "azurerm_kubernetes_cluster" "this" {
   workload_identity_enabled = true
   oidc_issuer_enabled       = true
 
+  # Kubernetes RBAC (AVD-AZU-0042) — safe to enable unconditionally.
+  role_based_access_control_enabled = true
+
   # --- Default node pool --------------------------------------------------
   default_node_pool {
     name                 = "default"
