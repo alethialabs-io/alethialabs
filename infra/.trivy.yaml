@@ -6,6 +6,11 @@
 # Terraform misconfiguration checks. Intentional design choices are excluded below.
 
 misconfiguration:
+  # Scan OUR template code only, not the internals of downloaded third-party modules
+  # (e.g. terraform-aws-modules/eks's egress-all security-group rule) — we can't fix
+  # upstream, and `tofu init` (run for `tofu validate`) pulls them into .terraform/.
+  terraform:
+    exclude-downloaded-modules: true
   # IDs of checks that flag deliberate, reviewed design decisions.
   exclude:
     # The connector-assets bucket is intentionally public-read (serves the CloudFormation
