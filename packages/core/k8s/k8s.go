@@ -10,16 +10,16 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/service/eks"
 	alethiaaws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"gopkg.in/yaml.v3"
 )
 
 type K8sCLI struct {
-	Profile string
-	Region  string
-	DryRun  bool
+	Profile   string
+	Region    string
+	DryRun    bool
 	eksClient *eks.Client
 }
 
@@ -39,7 +39,7 @@ func NewK8sCLI(opts alethiaaws.AWSOptions, dryRun bool) (*K8sCLI, error) {
 
 func (k *K8sCLI) GetContext(clusterName string, logger *utils.Logger) error {
 	logger.Info(fmt.Sprintf("Getting context for cluster: %s", clusterName), "k8s")
-	
+
 	resp, err := k.eksClient.DescribeCluster(context.Background(), &eks.DescribeClusterInput{
 		Name: &clusterName,
 	})

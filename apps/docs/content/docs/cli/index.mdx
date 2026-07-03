@@ -5,7 +5,7 @@ description: Go command-line tool for managing multi-cloud infrastructure via th
 
 # alethia CLI
 
-alethia is the command-line interface for the platform. It provides terminal-based access to all infrastructure operations — creating zones, planning and deploying Specs, monitoring jobs, and managing Runners.
+alethia is the command-line interface for the platform. It provides terminal-based access to all infrastructure operations — planning and deploying Projects, monitoring jobs, and managing Runners.
 
 ## Overview
 
@@ -21,7 +21,7 @@ alethia is the command-line interface for the platform. It provides terminal-bas
 alethia is a **thin client** that communicates with the Alethia API over HTTPS. It does not run Terraform directly — instead, it queues jobs that [Runners](/runner) execute. The CLI handles:
 
 1. **Authentication** — [Device code flow](/concepts/authentication) with tokens stored locally
-2. **Configuration** — Creating and inspecting zones and Specs
+2. **Configuration** — Creating and inspecting Projects
 3. **Job submission** — Queuing Plan / Deploy / Destroy jobs
 4. **Monitoring** — Streaming logs, checking job status, waiting for completion
 5. **Management** — Listing clusters, managing Runners
@@ -29,44 +29,76 @@ alethia is a **thin client** that communicates with the Alethia API over HTTPS. 
 ## Command Groups
 
 <Cards>
-  <Card title="Zone Commands" href="/cli/commands/zone">
-    Create, list, and delete workspaces.
+  <Card title="Connector Commands" href="/cli/commands/connector">
+    Connect AWS, GCP, and Azure cloud accounts.
   </Card>
-  <Card title="Spec Commands" href="/cli/commands/spec">
+  <Card title="Project Commands" href="/cli/commands/project">
     List and inspect infrastructure configurations.
   </Card>
   <Card title="Plan & Apply" href="/cli/commands/plan-and-apply">
     Queue plan, deploy, and destroy jobs.
   </Card>
   <Card title="Job Commands" href="/cli/commands/jobs">
-    List, stream logs, cancel, and wait for jobs.
+    List, stream logs, and cancel jobs.
   </Card>
-  <Card title="Worker Commands" href="/cli/commands/workers">
+  <Card title="Runner Commands" href="/cli/commands/runners">
     Register, list, and remove Runners.
   </Card>
   <Card title="Cluster Commands" href="/cli/commands/clusters">
     List provisioned Kubernetes clusters.
   </Card>
+  <Card title="Organizations, Members & Teams" href="/cli/commands/organizations">
+    Switch the active org and manage members and teams.
+  </Card>
+  <Card title="Notifications" href="/cli/commands/notifications">
+    Alerts and channels (console-managed today).
+  </Card>
+  <Card title="Identity & Global Options" href="/cli/identity">
+    `whoami`, `config`, output formats, and utility commands.
+  </Card>
 </Cards>
+
+## Global Flags
+
+Every command accepts two persistent flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-o, --output <table\|json\|csv>` | `table` | Output format. `json`/`csv` print static, machine-readable output. |
+| `--no-input` | off | Disable interactive prompts; fail instead of prompting. Auto-enabled when stdin is not a TTY. |
+
+List/get commands render an **interactive table** only on a TTY with the default `table` format.
+With `json`, `csv`, a pipe, or `--no-input`, they print static output instead — ideal for scripting:
+
+```bash
+alethia project list -o json | jq '.[].name'
+```
+
+See [Identity & Global Options](/cli/identity) for details.
 
 ## Quick Start
 
 ```bash
 # Install
-brew install bobikenobi12/bb-thesis-2026/alethia
+brew install alethialabs-io/tap/alethia
 
-# Authenticate
+# Point at your control plane and authenticate
+export ALETHIA_WEB_ORIGIN=https://app.alethialabs.io
 alethia login
 
-# List zones
-alethia zone list
+# Confirm who you are and pick an active org
+alethia whoami
+alethia org switch
 
-# Plan infrastructure
-alethia plan --spec-id <id>
+# Connect a cloud account (AWS, GCP, or Azure)
+alethia connector gcp --project my-gcp-project
+
+# Plan infrastructure (Projects are created in the console)
+alethia project plan --project-id <id>
 
 # Stream logs
-alethia jobs logs --id <job-id> --follow
+alethia jobs logs <job-id> --follow
 
 # Deploy
-alethia apply --spec-id <id> --plan-job-id <plan-job-id>
+alethia project apply --project-id <id> --plan-job-id <plan-job-id>
 ```

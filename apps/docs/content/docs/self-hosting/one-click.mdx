@@ -1,0 +1,64 @@
+---
+title: One-click deploy
+description: Launch the Alethia bundle on AWS or Azure with a single button — no Terraform, no shell.
+---
+
+# One-click deploy
+
+The fastest way to stand up a control plane on a public cloud: a button that opens the cloud's own
+console with a prefilled template. Each template provisions **one ARM VM**, opens 22/80/443, and runs
+the [installer](./index) via cloud-init — the same bundle as everywhere else.
+
+> **ARM only.** The published images are `linux/arm64`, so both templates default to ARM instances
+> (AWS Graviton `t4g`, Azure Ampere `Dpsv5`).
+
+> **Domain afterwards.** Leave the domain blank to come up on HTTP at the public IP first, then point
+> DNS at it and redeploy with the domain set for automatic HTTPS. Or pre-create the DNS record so the
+> first boot can obtain TLS.
+
+## AWS — Launch Stack (CloudFormation)
+
+[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/oneclick/aws-cloudformation.yaml&stackName=alethia)
+
+Template: [`deploy/oneclick/aws-cloudformation.yaml`](https://github.com/alethialabs-io/alethialabs/blob/main/deploy/oneclick/aws-cloudformation.yaml)
+
+Creates an EC2 `t4g.medium` (Ubuntu 24.04 arm64, gp3 root), a security group (22/80/443), and an
+Elastic IP. Parameters: `Domain`, `AcmeEmail`, `InstanceType`, `KeyName` (an existing key pair),
+`AllowedSshCidr`, `VolumeSize`. The AMI resolves from Canonical's public SSM parameter, so it's
+current in every region. Read `PublicIp` from the stack **Outputs**.
+
+You can also launch it from the CLI:
+```bash
+aws cloudformation deploy --stack-name alethia \
+  --template-file deploy/oneclick/aws-cloudformation.yaml \
+  --parameter-overrides Domain=alethia.example.com AcmeEmail=you@example.com KeyName=my-key \
+  --capabilities CAPABILITY_IAM
+```
+
+## Azure — Deploy to Azure (ARM template)
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Falethialabs-io%2Falethialabs%2Fmain%2Fdeploy%2Foneclick%2Fazure-arm.json)
+
+Template: [`deploy/oneclick/azure-arm.json`](https://github.com/alethialabs-io/alethialabs/blob/main/deploy/oneclick/azure-arm.json)
+
+Creates a `Standard_D2ps_v5` (Ampere ARM, Ubuntu 24.04 arm64) VM with a static public IP, VNet,
+and an NSG (22/80/443). Parameters: `domain`, `acmeEmail`, `adminUsername`, `sshPublicKey`,
+`vmSize`, `location`. Read `publicIp` from the deployment **Outputs**.
+
+From the CLI:
+```bash
+az deployment group create --resource-group alethia-cp \
+  --template-file deploy/oneclick/azure-arm.json \
+  --parameters domain=alethia.example.com acmeEmail=you@example.com \
+               sshPublicKey="$(cat ~/.ssh/id_ed25519.pub)"
+```
+
+## When to use what
+
+| | One-click | [Terraform](./terraform) | [Helm](./helm) |
+|---|---|---|---|
+| Best for | a quick managed VM, no tooling | repeatable IaC + CI (plan/apply) | existing Kubernetes |
+| State | the cloud's stack/deployment | your S3 state bucket | the cluster |
+| DNS | manual / pre-created | Cloudflare, automated | your ingress + DNS |
+
+All three land on the same bundle — switch later without reinstalling.

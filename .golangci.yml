@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# golangci-lint v2 config for the Go workspace (apps/cli, apps/runner, packages/core).
+# A strong default set; errcheck ignores the idiomatic best-effort cleanups
+# (deferred Close/Remove, fmt.Fprint* to stdout) so it flags only real dropped errors.
+
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    # Enforces that every switch over a generated enum type (types.JobType /
+    # JobStatus / CloudProvider — packages/core/types/enums_gen.go) handles every
+    # value. A default clause does NOT satisfy it (default-signifies-exhaustive
+    # stays false), so adding an enum value forces a case in the runner dispatch,
+    # the CloudProvider factory, and the credential switch. Intentionally-partial
+    # switches keep a plain `string` tag so they're not checked.
+    - exhaustive
+  settings:
+    staticcheck:
+      # golangci-lint's default check set, plus -ST1005 (capitalized error strings):
+      # many validator errors lead with a product name (Cloudflare/Datadog/…), which
+      # reads better than a forced lowercase. The default already drops the pervasive
+      # ST1000/ST1003 style nits (package comments / initialisms).
+      checks:
+        - all
+        - -ST1000
+        - -ST1003
+        - -ST1005
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+    errcheck:
+      exclude-functions:
+        # Best-effort cleanup in defers — not worth handling the error.
+        - (*os.File).Close
+        - (io.Closer).Close
+        - (io.ReadCloser).Close
+        - os.Remove
+        - os.RemoveAll
+        - (*os.File).Sync
+        # Writes to stdout/stderr / string builders never meaningfully fail.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*strings.Builder).WriteString
+        - (*bytes.Buffer).WriteString
+        # Interactive TUI / help output — the error is irrelevant to the CLI.
+        - (*github.com/charmbracelet/huh/spinner.Spinner).Run
+        - (*github.com/spf13/cobra.Command).Help
+        - github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui.RunSpinner
+        # Process env mutation — a failure means downstream config fails anyway.
+        - os.Setenv
+        - os.Unsetenv
+        - (*compress/gzip.Reader).Close
+  exclusions:
+    rules:
+      # Tests routinely ignore writer/setup errors; don't gate on errcheck there.
+      - path: _test\.go
+        linters:
+          - errcheck
+      # Tests deliberately build nil-check-then-deref cases to exercise guards.
+      # golangci's built-in default exclusions cover SA5011 in tests, but enabling
+      # an extra linter (exhaustive) turns those defaults off — restore it explicitly.
+      - path: _test\.go
+        text: SA5011
+        linters:
+          - staticcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

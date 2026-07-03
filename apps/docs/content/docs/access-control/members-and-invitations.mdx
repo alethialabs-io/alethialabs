@@ -1,0 +1,59 @@
+---
+title: Members & invitations
+description: How people join an organization — the invitation lifecycle from email to membership, and how membership becomes authorization.
+---
+
+# Members & invitations
+
+<Enterprise />
+
+In the open-source <Community>Community</Community> edition your organization has exactly one member: you, the
+owner. The <Enterprise>Enterprise</Enterprise> edition adds **multiple members** and the flow to bring them in.
+
+## The invitation lifecycle
+
+<Steps>
+<Step>
+### Invite
+In **Settings → Members → Invite member**, enter an email and pick a role. An invitation is created and an
+email is sent with an accept link.
+</Step>
+<Step>
+### Accept
+The invitee clicks the link and lands on the accept page. If they're not signed in, they're sent to sign-in
+first and returned afterward — and because email sign-in doubles as sign-up, this works even if they don't have
+an account yet.
+</Step>
+<Step>
+### Join
+Accepting creates their **membership** in the organization with the chosen role.
+</Step>
+<Step>
+### Authorize
+Membership is turned into real authorization: the member's role is synced into a **grant**, so the
+[Policy Decision Point](/access-control/architecture) starts authorizing them immediately.
+</Step>
+</Steps>
+
+<Callout type="info">
+  The last step matters. An organization's membership role and the authorization **grant** are kept in step
+  automatically — adding a member, changing their role, or removing them updates their access without any
+  manual grant management.
+</Callout>
+
+## Roles for members
+
+When you invite or edit a member you pick one of the [roles](/access-control/roles-and-permissions) — the four
+built-ins or a [custom role](/access-control/custom-roles). For finer control (scoped or deny grants), use the
+[Access portal](/access-portal) after they've joined.
+
+## Switching organizations
+
+A member can belong to more than one organization and switch between them with the **organization switcher** in
+the dashboard header. The active organization scopes everything — what you see, and what the PDP and Row-Level
+Security enforce.
+
+## Next
+
+- Group members for bulk grants with [**teams**](/access-control/teams).
+- Manage the org itself in [**organizations**](/access-control/organizations).

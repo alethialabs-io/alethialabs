@@ -9,14 +9,14 @@ test.describe("Dashboard overview", () => {
 	});
 
 	test("shows stat cards", async ({ authedPage: page }) => {
-		await expect(page.getByText("Total Vines")).toBeVisible();
+		await expect(page.getByText("Projects")).toBeVisible();
 		await expect(page.getByText("Active")).toBeVisible();
-		await expect(page.getByText("Vineyards")).toBeVisible();
+		await expect(page.getByText(/Runners? Online/)).toBeVisible();
 	});
 
-	test("has Plant a Vine button", async ({ authedPage: page }) => {
+	test("has Create a Project button", async ({ authedPage: page }) => {
 		await expect(
-			page.getByRole("link", { name: /plant/i }),
+			page.getByRole("link", { name: /create a project/i }),
 		).toBeVisible();
 	});
 });

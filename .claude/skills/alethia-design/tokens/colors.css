@@ -1,5 +1,5 @@
 /* ============================================================
-   COLORS — Alethia
+   COLORS — Alethia Labs
    Pure grayscale. Zero chroma. No hue, ever.
    A 16-step neutral ink ramp drives two themes (dark is the
    signature surface; light is for docs & dense data views).
@@ -74,11 +74,11 @@
   --accent-foreground:    var(--text-primary);
   --destructive:          var(--signal-critical);
   --input:                var(--border);
-  --radius: 0.625rem;
+  --radius: 0.25rem;
 }
 
 /* ============================================================
-   DARK theme — the signature Alethia surface.
+   DARK theme — the signature Vertex surface.
    Add class="dark" (or data-theme="dark") to <html>.
    ============================================================ */
 .dark,

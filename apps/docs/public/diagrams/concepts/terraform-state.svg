@@ -5,21 +5,18 @@
   </defs>
   <rect width="820" height="400" rx="12" fill="#18181B"/>
   <rect x="0.5" y="0.5" width="819" height="399" rx="12" fill="none" stroke="#3F3F46"/>
-  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Terraform State Management — Supabase S3 Backend</text>
+  <text x="410" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Terraform State Management — S3 Backend</text>
 
   <!-- S3 Bucket -->
   <rect x="260" y="60" width="300" height="200" rx="8" fill="#27272A" stroke="#8B5CF6" stroke-width="1.5"/>
-  <text x="410" y="84" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#8B5CF6">vine-terraform-state (S3)</text>
-  <text x="410" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">Supabase S3-compatible storage</text>
+  <text x="410" y="84" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#8B5CF6">project-tofu-state (S3)</text>
+  <text x="410" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">S3-compatible storage</text>
 
   <!-- Path tree -->
-  <text x="290" y="128" font-family="Inter, monospace, sans-serif" font-size="11" fill="#FAFAFA">my-vineyard/</text>
-  <text x="310" y="148" font-family="Inter, monospace, sans-serif" font-size="11" fill="#FAFAFA">└── api-backend/</text>
-  <text x="338" y="168" font-family="Inter, monospace, sans-serif" font-size="11" fill="#FAFAFA">├── production/</text>
-  <text x="362" y="188" font-family="Inter, monospace, sans-serif" font-size="11" fill="#A1A1AA">│   └── eu-west-1/</text>
-  <text x="390" y="208" font-family="Inter, monospace, sans-serif" font-size="10" fill="#22C55E">│       terraform.tfstate</text>
-  <text x="338" y="228" font-family="Inter, monospace, sans-serif" font-size="11" fill="#FAFAFA">└── staging/</text>
-  <text x="362" y="248" font-family="Inter, monospace, sans-serif" font-size="11" fill="#A1A1AA">    └── us-east-1/</text>
+  <text x="290" y="128" font-family="Inter, monospace, sans-serif" font-size="11" fill="#FAFAFA">api-backend-production-eu-west-1/</text>
+  <text x="310" y="148" font-family="Inter, monospace, sans-serif" font-size="10" fill="#22C55E">└── tofu.tfstate</text>
+  <text x="290" y="188" font-family="Inter, monospace, sans-serif" font-size="11" fill="#FAFAFA">api-backend-staging-us-east-1/</text>
+  <text x="310" y="208" font-family="Inter, monospace, sans-serif" font-size="10" fill="#22C55E">└── tofu.tfstate</text>
 
   <!-- Plan artifacts bucket -->
   <rect x="600" y="60" width="190" height="80" rx="8" fill="#27272A" stroke="#3F3F46"/>
@@ -61,5 +58,5 @@
   <rect x="30" y="60" width="210" height="52" rx="6" fill="#22C55E10" stroke="#22C55E40"/>
   <text x="135" y="80" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="500" fill="#22C55E">Cross-provider state</text>
   <text x="135" y="96" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">Same S3 backend regardless</text>
-  <text x="135" y="108" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">of AWS, GCP, or Azure vine</text>
+  <text x="135" y="108" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">of AWS, GCP, or Azure project</text>
 </svg>

@@ -1,0 +1,59 @@
+---
+title: Engineering Quality & Testing
+description: How Alethia is tested — the Testing Trophy, automated coverage, and the CI gates that protect every release.
+---
+
+# Engineering Quality & Testing
+
+Alethia provisions and manages production cloud infrastructure, so correctness is a feature.
+This page describes how the platform is tested, how we measure it, and the gates that every
+change passes before it ships — the same practices used by mature engineering organizations.
+
+## The Testing Trophy
+
+We test along four layers, weighted toward the ones that give the most confidence per test —
+the **Testing Trophy** model (the modern successor to the test pyramid for full-stack apps
+whose logic lives in server actions over a database):
+
+| Layer | What it protects | Tooling |
+| --- | --- | --- |
+| **Static analysis** | Type safety, lint rules, dead-code & boundary checks | TypeScript (`tsc`), Biome / ESLint |
+| **Unit** | Pure business logic — billing math, entitlements, plan resolution, routing/slug rules, input validation | Vitest |
+| **Integration** (the bulk) | Server actions and **real-database** queries, aggregations, and **row-level-security isolation** | Vitest + Postgres |
+| **End-to-end** | Critical user journeys — sign-in, workspace, usage, upgrade | Playwright |
+
+Integration is intentionally the widest band: a test that runs a real SQL aggregation or a
+whole server action against a live database catches far more than a mocked unit test. The Go
+components (CLI, Runner, shared `core` library) are covered by their own `go test` suites,
+including HTTP-contract tests.
+
+## Coverage, measured in the open
+
+Every push runs the test suite with code-coverage instrumentation. CI merges the per-project
+coverage and surfaces the number as a **badge on the repository** — coverage is a public signal,
+not a private claim. The number is ratcheted upward over time as test suites land.
+
+## What CI enforces on every change
+
+Each pull request must pass, before it can merge:
+
+- **Type-check + lint** across every app and package (fanned out automatically).
+- **The unit, component, and mocked-action test suite**, with a coverage badge generated in CI.
+- **Build smoke** of the console, marketing, and docs apps.
+- **The Go build · vet · test · lint matrix** for the CLI, Runner, and `core`.
+- **Guard checks** — open-core boundary, authorization-scope, database-migration linearity,
+  and a **secret scan** (gitleaks).
+
+A separate, database-backed **integration suite** verifies the SQL and row-level-security
+isolation against a real Postgres instance.
+
+## Why it matters for you
+
+- **Multi-tenant isolation is tested, not assumed** — row-level-security tests assert that one
+  organization can never read another's data.
+- **Billing and usage math is unit-tested** — runner-minutes, overage, AI credits, and plan
+  entitlements are covered by deterministic tests.
+- **Releases are gated** — nothing reaches `main` without passing the full suite above.
+
+> Want the engineering detail? The contributor-facing `TESTING.md` in the repository documents
+> the layers, how to run each suite, and how to write tests for each layer.

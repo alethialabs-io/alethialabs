@@ -1,0 +1,20 @@
+{
+  "title": "Access Control",
+  "icon": "ShieldCheck",
+  "root": true,
+  "pages": [
+    "index",
+    "roles-and-permissions",
+    "grants-and-scopes",
+    "custom-roles",
+    "access-portal",
+    "organizations",
+    "members-and-invitations",
+    "teams",
+    "sso",
+    "activity-log",
+    "architecture",
+    "openfga",
+    "open-core"
+  ]
+}

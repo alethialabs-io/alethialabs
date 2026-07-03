@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { planVine, provisionVine } from "@/app/server/actions/vines";
-import { getPlanResult, getVineJobs } from "@/app/server/actions/jobs";
+import { useCallback, useEffect, useState } from "react";
+import { planProject, provisionProject } from "@/app/server/actions/projects";
+import { getPlanResult, getProjectJobs } from "@/app/server/actions/jobs";
 import {
 	parsePlanJSON,
 	type PlanSummary,
@@ -14,8 +14,11 @@ import {
 	parseCostBreakdown,
 	type CostSummary,
 } from "@/lib/plan/parse-cost";
-import { useJobsStore } from "@/lib/stores/use-jobs-store";
-import { createClient } from "@/lib/supabase/client";
+import { useJobsQuery } from "@/lib/query/use-jobs-query";
+import {
+	type JobLogEntry,
+	useJobLogStream,
+} from "@/hooks/use-job-log-stream";
 
 export type PlanPhase =
 	| "idle"
@@ -25,57 +28,37 @@ export type PlanPhase =
 	| "applied"
 	| "failed";
 
-interface LogEntry {
-	id: number;
-	log_chunk: string;
-	stream_type: string;
-	created_at: string;
-}
-
 export interface UsePlanReturn {
 	phase: PlanPhase;
 	planJobId: string | null;
 	deployJobId: string | null;
 	planResult: PlanSummary | null;
 	costResult: CostSummary | null;
-	logs: LogEntry[];
+	logs: JobLogEntry[];
 	error: string | null;
-	generatePlan: (workerId?: string | null) => Promise<void>;
-	applyPlan: (workerId?: string | null) => Promise<void>;
+	generatePlan: (runnerId?: string | null) => Promise<void>;
+	applyPlan: (runnerId?: string | null) => Promise<void>;
 }
 
-export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanReturn {
+export function usePlan(projectId: string | null, onRefresh?: () => void): UsePlanReturn {
 	const [phase, setPhase] = useState<PlanPhase>("idle");
 	const [planJobId, setPlanJobId] = useState<string | null>(null);
 	const [deployJobId, setDeployJobId] = useState<string | null>(null);
 	const [planResult, setPlanResult] = useState<PlanSummary | null>(null);
 	const [costResult, setCostResult] = useState<CostSummary | null>(null);
-	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [error, setError] = useState<string | null>(null);
-	const channelRef = useRef<ReturnType<
-		ReturnType<typeof createClient>["channel"]
-	> | null>(null);
+	const { logs } = useJobLogStream(planJobId);
 
-	const jobs = useJobsStore((state) => state.jobs);
-
-	const cleanupChannel = useCallback(() => {
-		if (channelRef.current) {
-			const supabase = createClient();
-			supabase.removeChannel(channelRef.current);
-			channelRef.current = null;
-		}
-	}, []);
-
-	useEffect(() => cleanupChannel, [cleanupChannel]);
+	const { data: jobs = [] } = useJobsQuery();
 
 	useEffect(() => {
-		if (!vineId) return;
+		if (!projectId) return;
 		let cancelled = false;
 
 		async function loadExistingPlan() {
 			try {
-				const vineJobs = await getVineJobs(vineId!);
-				const latestPlan = vineJobs
+				const projectJobs = await getProjectJobs(projectId!);
+				const latestPlan = projectJobs
 					.filter(
 						(j) =>
 							j.job_type === "PLAN" && j.status === "SUCCESS",
@@ -124,7 +107,7 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 		return () => {
 			cancelled = true;
 		};
-	}, [vineId]);
+	}, [projectId]);
 
 	useEffect(() => {
 		if (!planJobId || phase !== "generating") return;
@@ -132,7 +115,6 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 		if (!job) return;
 
 		if (job.status === "FAILED") {
-			cleanupChannel();
 			setPhase("failed");
 			setError(job.error_message || "Plan generation failed");
 			onRefresh?.();
@@ -140,7 +122,6 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 		}
 
 		if (job.status === "SUCCESS") {
-			cleanupChannel();
 			getPlanResult(planJobId).then((result) => {
 				const meta = result.execution_metadata as Record<string, unknown>;
 				if (meta?.plan_result) {
@@ -160,7 +141,7 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 				setError("Failed to load plan results");
 			});
 		}
-	}, [jobs, planJobId, phase, cleanupChannel, onRefresh]);
+	}, [jobs, planJobId, phase, onRefresh]);
 
 	useEffect(() => {
 		if (!deployJobId || phase !== "applying") return;
@@ -180,35 +161,17 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 		}
 	}, [jobs, deployJobId, phase, onRefresh]);
 
-	const generatePlan = useCallback(async (workerId?: string | null) => {
-		if (!vineId) return;
+	const generatePlan = useCallback(async (runnerId?: string | null) => {
+		if (!projectId) return;
 		setPhase("generating");
 		setError(null);
-		setLogs([]);
 		setPlanResult(null);
 		setCostResult(null);
 
 		try {
-			const { jobId } = await planVine(vineId, workerId);
+			const { jobId } = await planProject(projectId, runnerId);
+			// Logs stream via useJobLogStream(planJobId) once this is set.
 			setPlanJobId(jobId);
-
-			const supabase = createClient();
-			const channel = supabase
-				.channel(`plan_logs:${jobId}`)
-				.on(
-					"postgres_changes",
-					{
-						event: "INSERT",
-						schema: "public",
-						table: "job_logs",
-						filter: `job_id=eq.${jobId}`,
-					},
-					(payload) => {
-						setLogs((prev) => [...prev, payload.new as LogEntry]);
-					},
-				)
-				.subscribe();
-			channelRef.current = channel;
 		} catch (err) {
 			setPhase("failed");
 			setError(
@@ -217,15 +180,15 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 					: "Failed to start plan",
 			);
 		}
-	}, [vineId]);
+	}, [projectId]);
 
-	const applyPlan = useCallback(async (workerId?: string | null) => {
-		if (!vineId || !planJobId) return;
+	const applyPlan = useCallback(async (runnerId?: string | null) => {
+		if (!projectId || !planJobId) return;
 		setPhase("applying");
 		setError(null);
 
 		try {
-			const { jobId } = await provisionVine(vineId, planJobId, workerId);
+			const { jobId } = await provisionProject(projectId, planJobId, runnerId);
 			setDeployJobId(jobId);
 		} catch (err) {
 			setPhase("failed");
@@ -235,7 +198,7 @@ export function usePlan(vineId: string | null, onRefresh?: () => void): UsePlanR
 					: "Failed to start provisioning",
 			);
 		}
-	}, [vineId, planJobId]);
+	}, [projectId, planJobId]);
 
 	return {
 		phase,

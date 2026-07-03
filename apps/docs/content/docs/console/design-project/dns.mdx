@@ -1,0 +1,85 @@
+---
+title: DNS & WAF
+description: Domain configuration, managed certificates, and Web Application Firewall options.
+---
+
+# DNS & WAF
+
+The DNS section is optional (controlled by a master toggle). When enabled, it configures domain management, SSL/TLS certificates, and web application firewall protection.
+
+## Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **Enabled** | Toggle | Master switch for DNS configuration |
+| **DNS Provider** | Select | Cloud-native (Route 53 / Cloud DNS / Azure DNS) or a [pluggable connector](/console/connectors/pluggable) |
+| **Zone ID** | Select or text | Existing DNS hosted zone |
+| **Domain Name** | Text input | Auto-filled from zone, or manually entered |
+| **Managed Certificate** | Toggle | Auto-provision SSL/TLS certificate (cloud-native only) |
+| **WAF Options** | Toggles | Provider-specific WAF configuration (cloud-native only) |
+
+## DNS Provider
+
+The **DNS Provider** selector decouples *what* the Project needs (a managed zone) from *who* provides it:
+
+- **Cloud-native** (default) — uses the cluster cloud's DNS service; the managed-certificate and WAF toggles apply.
+- **Cloudflare** — manages records on Cloudflare instead. Requires a connected [Cloudflare connector](/console/connectors/pluggable); set the **Zone ID** and the **Proxied** option (orange-cloud). The cloud-native DNS/cert resources are skipped at provision time.
+
+When a pluggable provider is selected, its credential is pulled from `connector_credentials` on the runner at provision time — never stored in the Project.
+
+## DNS Zones
+
+The zone selector shows existing DNS zones from Alethia's server-side [asset inventory](/console/connectors/health-and-inventory):
+
+<Tabs items={["AWS", "GCP", "Azure"]}>
+  <Tab value="AWS">
+    **Route 53** hosted zones (public only). Zone ID format: `Z1234567890ABC`.
+  </Tab>
+  <Tab value="GCP">
+    **Cloud DNS** managed zones. Zone name format: `my-zone`.
+  </Tab>
+  <Tab value="Azure">
+    **Azure DNS** zones. Zone name format: `example.com`.
+  </Tab>
+</Tabs>
+
+<Callout type="info">
+DNS zones are provider-specific. When duplicating a project across providers, the zone ID and domain are cleared and must be re-configured. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion).
+</Callout>
+
+## Managed Certificates
+
+When enabled, the platform provisions a TLS certificate automatically:
+
+| Provider | Service | Validation |
+|----------|---------|------------|
+| AWS | ACM (AWS Certificate Manager) | DNS validation via Route 53 |
+| GCP | Google-managed certificate | DNS validation via Cloud DNS |
+| Azure | App Service Certificate | DNS validation via Azure DNS |
+
+Certificates are renewed automatically before expiration.
+
+## Web Application Firewall
+
+WAF protects web applications from common attacks (SQL injection, XSS, bot traffic).
+
+<Tabs items={["AWS", "GCP", "Azure"]}>
+  <Tab value="AWS">
+    Two WAF options (can enable both):
+
+    | Option | Protects | Cost |
+    |--------|----------|------|
+    | **CloudFront WAF** | CDN-level protection | ~$5/mo base |
+    | **Application WAF (ALB)** | Load balancer level | ~$5/mo base |
+
+    AWS WAFv2 with managed rule groups (AWS Managed Rules, Bot Control).
+  </Tab>
+  <Tab value="GCP">
+    **Cloud Armor** — DDoS and application-layer protection at the load balancer.
+  </Tab>
+  <Tab value="Azure">
+    **Azure WAF** — protection via Application Gateway or Front Door.
+  </Tab>
+</Tabs>
+
+WAF costs are reflected in the [cost sidebar](/console/design-project/cost-sidebar) immediately when toggled.

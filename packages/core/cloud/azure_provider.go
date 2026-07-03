@@ -20,7 +20,7 @@ func (p *azureProvider) RequiredCLIs() []string {
 	return []string{"az", "kubectl", "helm"}
 }
 
-func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]interface{} {
+func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	wafEnabled := false
 	managedCert := false
 	if v, ok := config.DNS.ProviderConfig["azure_waf"]; ok {
@@ -42,12 +42,12 @@ func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]inte
 	tfvars := map[string]interface{}{
 		"project_name":    config.ProjectName,
 		"subscription_id": config.CloudAccountID,
-		"location":        config.Region,
+		"location":        resolveRegion("azure", config.Region),
 		"environment":     config.EnvironmentStage,
 
 		// Network
-		"provision_vnet":    provisionVnet,
-		"vnet_cidr":         orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
+		"provision_vnet":     provisionVnet,
+		"vnet_cidr":          orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
 		"single_nat_gateway": config.Network.SingleNatGateway,
 
 		// AKS
@@ -55,8 +55,8 @@ func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]inte
 		"aks_cluster_version": orDefault(config.Cluster.ClusterVersion, "1.31"),
 
 		// DNS
-		"azure_dns_enabled": config.DNS.Enabled,
-		"azure_dns_domain":  config.DNS.DomainName,
+		"azure_dns_enabled":   config.DNS.Enabled,
+		"azure_dns_domain":    config.DNS.DomainName,
 		"azure_dns_zone_name": config.DNS.ZoneID,
 
 		// WAF
@@ -93,13 +93,19 @@ func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]inte
 
 	if len(config.Databases) > 0 {
 		db := config.Databases[0]
-		engine := "postgres"
-		if db.Engine == "mysql" || db.Engine == "aurora-mysql" {
-			engine = "mysql"
+		fam := db.EngineFamily
+		if fam == "" {
+			fam = "postgres"
+			if db.Engine == "mysql" || db.Engine == "aurora-mysql" {
+				fam = "mysql"
+			}
 		}
-		tfvars["azure_db_engine"] = engine
-		if db.EngineVersion != "" {
-			tfvars["azure_db_engine_version"] = db.EngineVersion
+		tfvars["azure_db_engine"] = fam
+		if _, version := resolveDBEngine("azure", db); version != "" {
+			tfvars["azure_db_engine_version"] = version
+		}
+		if db.InstanceClass != "" {
+			tfvars["azure_db_sku_name"] = db.InstanceClass
 		}
 		if db.Port != nil {
 			tfvars["azure_db_port"] = *db.Port
@@ -117,13 +123,16 @@ func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]inte
 		if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1 {
 			tfvars["azure_cache_sku"] = "Standard"
 		}
+		if cache.EngineVersion != "" {
+			tfvars["azure_cache_redis_version"] = cache.EngineVersion
+		}
 		if cache.MultiAz != nil {
 			tfvars["azure_cache_multi_az"] = *cache.MultiAz
 		}
 	}
 
-	if len(config.Cluster.InstanceTypes) > 0 {
-		tfvars["aks_instance_types"] = config.Cluster.InstanceTypes
+	if inst := resolveInstanceTypes("azure", config.Cluster); len(inst) > 0 {
+		tfvars["aks_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {
 		tfvars["aks_node_min_size"] = config.Cluster.NodeMinSize
@@ -134,15 +143,23 @@ func (p *azureProvider) ProviderTfvars(config *types.VineConfig) map[string]inte
 	if config.Cluster.NodeDesiredSize > 0 {
 		tfvars["aks_node_desired_size"] = config.Cluster.NodeDesiredSize
 	}
+	if config.Cluster.NodeDiskSizeGB != nil {
+		tfvars["aks_disk_size_gb"] = *config.Cluster.NodeDiskSizeGB
+	}
 
 	if !provisionVnet && config.Network.NetworkID != "" {
 		tfvars["vnet_id"] = config.Network.NetworkID
 	}
 
+	// Generic passthrough — see mergeProviderConfig (aws_provider.go). Reserved keys
+	// are consumed above under a different tfvar name.
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig)
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "azure_waf", "managed_certificate")
+
 	return tfvars
 }
 
-func (p *azureProvider) ConfigureKubeconfig(ctx context.Context, config *types.VineConfig, outputs map[string]interface{}, stdout io.Writer) error {
+func (p *azureProvider) ConfigureKubeconfig(ctx context.Context, config *types.ProjectConfig, outputs map[string]interface{}, stdout io.Writer) error {
 	clusterName := ExtractClusterName(outputs)
 	if clusterName == "" {
 		return fmt.Errorf("no AKS cluster name in outputs")
@@ -184,15 +201,15 @@ func extractOutputString(outputs map[string]interface{}, key string) string {
 	return ""
 }
 
-func buildServiceBusQueues(queues []types.VineQueueConfig) map[string]interface{} {
+func buildServiceBusQueues(queues []types.ProjectQueueConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, q := range queues {
 		cfg := map[string]interface{}{
 			"max_delivery_count": 10,
 			"lock_duration":      "PT1M",
 		}
-		if q.Fifo != nil {
-			cfg["requires_session"] = *q.Fifo
+		if q.Ordered != nil {
+			cfg["requires_session"] = *q.Ordered
 		}
 		if q.VisibilityTimeout != nil {
 			cfg["lock_duration"] = fmt.Sprintf("PT%dS", *q.VisibilityTimeout)
@@ -200,19 +217,19 @@ func buildServiceBusQueues(queues []types.VineQueueConfig) map[string]interface{
 		if q.MessageRetention != nil {
 			cfg["default_message_ttl"] = fmt.Sprintf("PT%dS", *q.MessageRetention)
 		}
-		if q.DelaySeconds != nil {
+		if d, ok := providerInt(q.ProviderConfig, "delay_seconds"); ok {
 			cfg["forward_dead_lettered_messages_to"] = ""
 			cfg["max_delivery_count"] = 10
 			// Azure Service Bus doesn't have a direct delay_seconds equivalent,
 			// but we can pass it for scheduled enqueue support
-			cfg["delay_seconds"] = *q.DelaySeconds
+			cfg["delay_seconds"] = d
 		}
 		result[q.Name] = cfg
 	}
 	return result
 }
 
-func buildServiceBusTopics(topics []types.VineTopicConfig) map[string]interface{} {
+func buildServiceBusTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
 		subs := []map[string]interface{}{}
@@ -229,13 +246,13 @@ func buildServiceBusTopics(topics []types.VineTopicConfig) map[string]interface{
 	return result
 }
 
-func buildCosmosDBCollections(tables []types.VineNosqlConfig) []map[string]interface{} {
+func buildCosmosDBCollections(tables []types.ProjectNosqlConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(tables))
 	for _, t := range tables {
 		entry := map[string]interface{}{
 			"name":          t.Name,
-			"partition_key": orDefault(t.HashKey, "/id"),
-			"billing_mode":  orDefault(t.BillingMode, "PAY_PER_REQUEST"),
+			"partition_key": orDefault(t.PartitionKey, "/id"),
+			"billing_mode":  ddbCapacityMode(t.CapacityMode),
 		}
 		if t.PointInTimeRecovery {
 			entry["analytical_storage_enabled"] = true
@@ -245,7 +262,7 @@ func buildCosmosDBCollections(tables []types.VineNosqlConfig) []map[string]inter
 	return result
 }
 
-func buildAzureContainers(buckets []types.VineStorageBucketConfig) []map[string]interface{} {
+func buildAzureContainers(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
 		accessType := "private"
@@ -253,7 +270,7 @@ func buildAzureContainers(buckets []types.VineStorageBucketConfig) []map[string]
 			accessType = "blob"
 		}
 		result = append(result, map[string]interface{}{
-			"name":                 b.Name,
+			"name":                  b.Name,
 			"container_access_type": accessType,
 		})
 	}

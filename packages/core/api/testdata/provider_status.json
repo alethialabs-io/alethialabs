@@ -1,0 +1,12 @@
+{
+	"connected": false,
+	"identityId": "string",
+	"accountId": "string",
+	"roleArn": "string",
+	"externalId": "string",
+	"projectId": "string",
+	"serviceAccountEmail": "string",
+	"tenantId": "string",
+	"clientId": "string",
+	"subscriptionId": "string"
+}

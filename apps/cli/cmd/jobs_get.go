@@ -4,13 +4,11 @@
 package cmd
 
 import (
-	"fmt"
+	"io"
 	"os"
-	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -23,69 +21,59 @@ var jobsGetCmd = &cobra.Command{
 
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
 		apiClient := api.NewClient(token)
 		var job *api.ProvisionJob
 
-		spinner.New().
-			Title("Fetching job details...").
-			Action(func() {
-				job, err = apiClient.GetJob(jobID)
-			}).Run()
+		ui.RunSpinner("Fetching job details...", func() {
+			job, err = apiClient.GetJob(jobID)
+		})
 
 		if err != nil {
-			ui.Error(fmt.Sprintf("Failed to fetch job: %v", err))
-			os.Exit(1)
+			failf("Failed to fetch job: %v", err)
 		}
 
-		printJob(job)
+		if err := renderJob(os.Stdout, outputFormat(cmd), job); err != nil {
+			fail(err)
+		}
 	},
 }
 
-func printJob(job *api.ProvisionJob) {
-	doc := strings.Builder{}
+// renderJob writes a single job to out: a bordered KV card for the table format,
+// the typed object for json, Field/Value rows for csv.
+func renderJob(out io.Writer, format string, job *api.ProvisionJob) error {
+	return ui.RenderCard(out, format, "Job "+job.ID, jobFieldRows(job), job)
+}
 
-	kv := func(key, value string) {
-		doc.WriteString(ui.KeyStyle.Render(key))
-		doc.WriteString(ui.ValueStyle.Render(value))
-		doc.WriteString("\n")
+// jobFieldRows returns the present-only key/value fields of a job.
+func jobFieldRows(job *api.ProvisionJob) [][]string {
+	rows := [][]string{
+		{"ID", job.ID},
+		{"Type", job.JobType},
+		{"Status", job.Status},
+		{"Created", job.CreatedAt.Format("2006-01-02 15:04:05")},
 	}
-
-	doc.WriteString(ui.AccentStyle.Render("  Job Details"))
-	doc.WriteString("\n\n")
-	kv("ID:", job.ID)
-	kv("Type:", job.JobType)
-	kv("Status:", job.Status)
-	kv("Created:", job.CreatedAt.Format("2006-01-02 15:04:05"))
-
 	if job.StartedAt != nil {
-		kv("Started:", job.StartedAt.Format("2006-01-02 15:04:05"))
+		rows = append(rows, []string{"Started", job.StartedAt.Format("2006-01-02 15:04:05")})
 	}
 	if job.CompletedAt != nil {
-		kv("Completed:", job.CompletedAt.Format("2006-01-02 15:04:05"))
+		rows = append(rows, []string{"Completed", job.CompletedAt.Format("2006-01-02 15:04:05")})
 	}
-	if job.VineyardID != "" {
-		kv("Vineyard ID:", job.VineyardID)
+	if job.ProjectID != "" {
+		rows = append(rows, []string{"Project ID", job.ProjectID})
 	}
-	if job.ConfigurationID != "" {
-		kv("Vine ID:", job.ConfigurationID)
-	}
-	if job.WorkerID != "" {
-		kv("Tendril ID:", job.WorkerID)
+	if job.RunnerID != "" {
+		rows = append(rows, []string{"Runner ID", job.RunnerID})
 	}
 	if job.PlanJobID != "" {
-		kv("Plan Job ID:", job.PlanJobID)
+		rows = append(rows, []string{"Plan Job ID", job.PlanJobID})
 	}
 	if job.ErrorMessage != nil && *job.ErrorMessage != "" {
-		doc.WriteString(ui.KeyStyle.Render("Error:"))
-		doc.WriteString(ui.ErrorStyle.Render(*job.ErrorMessage))
-		doc.WriteString("\n")
+		rows = append(rows, []string{"Error", *job.ErrorMessage})
 	}
-
-	fmt.Println(doc.String())
+	return rows
 }
 
 func init() {

@@ -22,7 +22,7 @@ Four components work together:
 | Component | Role |
 |-----------|------|
 | **Console** | Invokes the Lambda scaler instantly via Function URL when a job is queued |
-| **Lambda scaler** | Queries Supabase for queued jobs, adjusts ECS service desired count |
+| **Lambda scaler** | POSTs to each console's `/api/platform/queue` to get queued-job counts, adjusts ECS service desired count |
 | **EventBridge rule** | Triggers the Lambda every 1 minute as a fallback (also drives scale-down) |
 | **ECS Fargate** | Runs Runner containers, pulls image from GHCR on scale-up |
 
@@ -34,23 +34,23 @@ The Lambda function runs in `eu-west-1` but manages ECS services across multiple
 
 ### Job Created
 
-A user clicks "Plan," "Apply," or "Destroy" in Console (or runs `alethia plan` / `alethia apply` / `alethia destroy`). A `provision_jobs` row is inserted with status `QUEUED`.
+A user clicks "Plan," "Apply," or "Destroy" in Console (or runs `alethia plan` / `alethia apply` / `alethia destroy`). A `jobs` row is inserted with status `QUEUED`.
 
 ### Console Notifies the Scaler
 
-Immediately after inserting the job, Console sends a fire-and-forget POST to the Lambda scaler's Function URL. The Lambda queries Supabase's REST API for the count of `QUEUED` jobs using the `content-range` header. If the direct call fails, EventBridge retries within 60 seconds.
+Immediately after inserting the job, Console sends a fire-and-forget POST to the Lambda scaler's Function URL. For each runner in its `RUNNERS` config (region/cluster/service/`alethia_url`), the Lambda POSTs to `{alethia_url}/api/platform/queue` with header `Authorization: Bearer ${ALETHIA_API_SECRET}`. That console endpoint runs `recover_stale_jobs()` and returns `{ recovered, queued }`. If the direct call fails, EventBridge retries within 60 seconds.
 
 ### ECS Scales Up
 
-If queued jobs exist and the service's `desiredCount` is 0, the Lambda calls `ecs:UpdateService` to set `desiredCount` to 1.
+If `queued > 0` and the service's `desiredCount` is 0, the Lambda calls `ecs:UpdateService` to set `desiredCount` to 1.
 
 ### Container Starts
 
-ECS Fargate pulls the Runner Docker image from GHCR (`ghcr.io/bobikenobi12/runner:latest`), injects secrets from AWS Secrets Manager, and starts the container. This takes roughly 30–60 seconds depending on image cache state.
+ECS Fargate pulls the Runner Docker image from GHCR (`ghcr.io/alethialabs-io/runner:latest`), injects secrets from AWS Secrets Manager, and starts the container. This takes roughly 30–60 seconds depending on image cache state.
 
 ### Runner Claims Job
 
-The Runner authenticates with Console using its worker token, enters its poll loop, and claims the queued job atomically via `FOR UPDATE SKIP LOCKED`. See [Job Queue Pattern](/concepts/job-queue) for claiming details.
+The Runner authenticates with Console using its runner token, enters its poll loop, and claims the queued job atomically via `FOR UPDATE SKIP LOCKED`. See [Job Queue Pattern](/concepts/job-queue) for claiming details.
 
 </Steps>
 
@@ -76,6 +76,6 @@ If a new job arrives during the idle countdown, the counter resets to zero immed
 
 ## Heartbeat Monitoring
 
-While running, a Runner sends a heartbeat to Console every 30 seconds via `POST /api/workers/heartbeat`. Each heartbeat includes the Runner's binary version and resets its status to `ONLINE`.
+While running, a Runner sends a heartbeat to Console every 30 seconds via `POST /api/runners/heartbeat`. Each heartbeat includes the Runner's binary version and resets its status to `ONLINE`.
 
 If heartbeats stop for 60 seconds, Console marks the Runner as `OFFLINE`. Jobs stuck in `PROCESSING` with no log activity for 5 minutes are marked `FAILED` — see [Failure Recovery](/concepts/job-queue#failure-recovery) for details.

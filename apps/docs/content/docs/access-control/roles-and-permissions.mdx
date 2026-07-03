@@ -1,0 +1,119 @@
+---
+title: Roles & Permissions
+description: The four built-in roles, the complete resource × action permission matrix, how grants assign roles at a scope, and how the Org → Project hierarchy makes a single grant flow downward.
+---
+
+# Roles & Permissions
+
+This is the reference for *what each role can do* and *how access is assigned*. The model is **registry-as-code**: the resources, actions, and role templates below are defined in one place in the source and seeded into the database, so the docs, the UI, and the enforcement never drift.
+
+## Permissions
+
+A **permission** is a single `resource:action` pair, e.g. `project:deploy`. Permissions are not freeform — only the pairs in the matrix below exist. Anything not listed is not a permission and can never be granted (default-deny by construction).
+
+### Resources
+
+| Resource | What it is |
+|---|---|
+| `org` | An organization (the tenancy boundary). |
+| `project` | An infrastructure definition (cluster + databases + networking + …). |
+| `runner` | An execution agent that runs provisioning jobs. |
+| `cloud_identity` | A connected cloud account (AWS / GCP / Azure). |
+| `job` | A provisioning job (plan / deploy / destroy / …). |
+| `connector` | A git / integration connection. |
+| `member` | A member of an organization. |
+| `activity` | The Activity log. |
+| `billing` | Subscription & billing. |
+
+### The matrix
+
+A ✓ means the `resource:action` permission exists and can be granted.
+
+| Resource | view | create | edit | plan | deploy | destroy | manage_* | activity |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| `org` | ✓ | | ✓ | | | | `manage_billing` | |
+| `project` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | | |
+| `runner` | ✓ | ✓ | ✓ | | ✓ | ✓ | | |
+| `cloud_identity` | ✓ | | | | | | `manage_identities` | |
+| `job` | ✓ | ✓ | ✓ | | | | | |
+| `connector` | ✓ | | | | | | `manage_connectors` | |
+| `member` | ✓ | | | | | | `manage_members` | |
+| `activity` | | | | | | | | `view_activity`, `export_activity` |
+| `billing` | | | | | | | `manage_billing` | |
+
+<Callout type="info">
+Adding a capability is a **one-line change** to the registry in the source. Because the resource and action sets are exhaustive string unions, a new action that isn't handled becomes a compile error until it's wired through — the matrix can't silently fall out of sync.
+</Callout>
+
+## The four built-in roles
+
+Roles are bundles of permissions. There are four built-in templates:
+
+<Cards>
+  <Card title="owner">
+    Everything. Full control of the organization including members and billing. The creator of an organization (and every Community user, in their personal org) is an owner.
+  </Card>
+  <Card title="admin">
+    Everything **except billing**. Can manage members, identities, integrations, and all infrastructure — but not the subscription.
+  </Card>
+  <Card title="operator">
+    Operate infrastructure: `view` / `create` / `edit` / `plan` / `deploy` / `destroy` on projects, runners, and jobs. **Cannot** manage cloud identities, members, billing, or the Activity log.
+  </Card>
+  <Card title="viewer">
+    Read-only. Can `view` everything but change nothing.
+  </Card>
+</Cards>
+
+| Role | Infra (projects/runners/jobs) | Cloud identities | Members | Integrations | Activity | Billing |
+|---|---|---|---|---|---|---|
+| **owner** | full | manage | manage | manage | view + export | manage |
+| **admin** | full | manage | manage | manage | view + export | — |
+| **operator** | full | — | — | — | — | — |
+| **viewer** | view only | view | view | view | — | — |
+
+<Callout type="warn">
+Custom roles (org-specific copies of these templates with tweaks) are an **Enterprise** feature. Community uses the four built-ins.
+</Callout>
+
+## Grants — assigning a role
+
+You never attach a permission to a user directly. Instead you create a **grant**:
+
+> *principal* gets *role* at *scope*.
+
+- **principal** — a user (or, in Enterprise, a team).
+- **role** — one of the roles above.
+- **scope** — what the grant applies to: the whole **organization**, or a single **project**.
+
+A grant scoped to the whole organization is a **wildcard** grant — it applies to every resource in the org. (This is exactly how the single grant each Community user receives works: *owner, org-wide*.)
+
+```text
+grant: alice → operator → project "production"   # operator on that project
+grant: bob   → viewer   → org                    # read-only across the whole org
+grant: you   → owner    → org                    # the Community default — full control of your personal org
+```
+
+## Inheritance: the Org → Project hierarchy
+
+Resources form a tree:
+
+```
+organization
+└── project
+```
+
+A grant **flows downward**. If you grant someone `operator` on the **organization**, they automatically have those permissions on **every project inside it** — you don't grant each project separately. A project-scoped grant covers just that project.
+
+```text
+grant: dana → operator → project "staging-api"
+  ⇒ dana can plan/deploy/destroy project "staging-api"
+  ⇒ dana CANNOT touch project "production-api"   (no grant)
+```
+
+This is why a handful of grants covers an entire estate: assign at the highest scope that makes sense and let inheritance do the rest. The decision engine resolves this by walking up from the target resource to see whether any of your grants cover it or an ancestor — see [Architecture](/access-control/architecture).
+
+## How this shows up
+
+- **List views** only show resources you can `view` — the list itself is filtered by your grants, not just hidden in the UI.
+- **Actions** (deploy, destroy, invite, …) are checked the instant you trigger them; if you lack the permission you get a clear *Forbidden*, and the attempt is recorded in the Activity log.
+- **Community**: with a single org-wide `owner` grant, you can do everything in your own workspace — the role machinery is invisible until you add teammates under [Enterprise organizations](/access-control/organizations).

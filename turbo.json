@@ -1,6 +1,7 @@
 {
 	"$schema": "https://turborepo.com/schema.json",
 	"ui": "tui",
+	"globalEnv": ["NODE_ENV"],
 	"tasks": {
 		"build": {
 			"dependsOn": ["^build"],
@@ -8,20 +9,22 @@
 			"outputs": [".next/**", "!.next/cache/**"],
 			"env": [
 				"DOCS_URL",
-				"SERVICE_ROLE_SECRET",
-				"SUPABASE_S3_ENDPOINT",
-				"SUPABASE_S3_REGION",
-				"SUPABASE_STORAGE_KEY_ID",
-				"SUPABASE_STORAGE_SECRET_KEY",
-				"RESEND_API_KEY",
+				"ALETHIA_DATABASE_URL",
+				"ALETHIA_APP_DATABASE_URL",
+				"BETTER_AUTH_SECRET",
+				"BETTER_AUTH_URL",
+				"NEXT_PUBLIC_APP_URL",
+				"ALETHIA_STORAGE_ENDPOINT",
+				"ALETHIA_STORAGE_REGION",
+				"ALETHIA_STORAGE_ACCESS_KEY_ID",
+				"ALETHIA_STORAGE_SECRET_ACCESS_KEY",
 				"CLI_JWT_SECRET",
 				"INFRACOST_API_KEY",
 				"GITLAB_APPLICATION_ID",
 				"GITLAB_SECRET",
 				"BITBUCKET_KEY",
 				"BITBUCKET_SECRET",
-				"RELEASE_API_SECRET",
-				"SCALER_FUNCTION_URL"
+				"RELEASE_API_SECRET"
 			]
 		},
 		"lint": {
@@ -29,6 +32,10 @@
 		},
 		"check-types": {
 			"dependsOn": ["^check-types"]
+		},
+		"test": {
+			"dependsOn": ["^build"],
+			"outputs": ["coverage/**"]
 		},
 		"dev": {
 			"cache": false,

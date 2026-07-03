@@ -1,0 +1,101 @@
+---
+title: Organizations, Members & Teams
+description: Switch the active organization and manage its members and teams from the CLI.
+---
+
+# Organizations, Members & Teams
+
+alethia scopes everything you do — projects, runners, jobs, connectors — to an **active
+organization**. The active org is persisted locally (in `~/.config/alethia/config.json`) and sent as
+the `X-Alethia-Org` header on every request.
+
+The `members` and `teams` commands operate on the active org by default; pass `--org <id>` to target
+a different one for a single invocation.
+
+## `alethia org`
+
+Manage the organizations you belong to. Aliases: `orgs`, `organization`, `organizations`.
+
+### `alethia org list`
+
+List the organizations you belong to. The active org is marked in the `Active` column.
+
+```bash
+alethia org list
+```
+
+Output:
+
+```
+NAME      SLUG     ROLE    PLAN  ACTIVE
+Acme      acme     owner   pro   ◆
+Personal  you      owner   free
+```
+
+### `alethia org switch`
+
+Set the active organization. Pass an org **id, slug, or name**; with no argument, pick one
+interactively.
+
+```bash
+# Explicit
+alethia org switch acme
+
+# Interactive picker (TTY only)
+alethia org switch
+```
+
+The selection is persisted locally and sent as `X-Alethia-Org` on subsequent commands. Clear it with
+[`alethia config clear-context`](/cli/configuration#alethia-config).
+
+## `alethia members`
+
+Manage members of the active organization. Alias: `member`.
+
+| Command | Description |
+|---------|-------------|
+| `alethia members list` | List members of the active org. |
+| `alethia members add <email> [--role member]` | Invite a member by email. `--role` defaults to `member`. |
+| `alethia members remove <member_id>` | Remove a member by id. |
+
+```bash
+alethia members list
+alethia members add teammate@example.com --role member
+alethia members remove mbr_123
+
+# Target a specific org instead of the active one
+alethia members list --org org_456
+```
+
+| Flag | Description |
+|------|-------------|
+| `--org <id>` | Operate on this org instead of the active one. |
+| `--role <role>` | (`members add` only) Role for the invited member. Default `member`. |
+
+## `alethia teams`
+
+Manage teams within the active organization. Alias: `team`.
+
+| Command | Description |
+|---------|-------------|
+| `alethia teams list` | List teams (name + member count). |
+| `alethia teams create <name>` | Create a team. |
+| `alethia teams delete <team_id>` | Delete a team by id. |
+
+```bash
+alethia teams list
+alethia teams create platform
+alethia teams delete team_123
+
+# Target a specific org
+alethia teams list --org org_456
+```
+
+| Flag | Description |
+|------|-------------|
+| `--org <id>` | Operate on this org instead of the active one. |
+
+<Callout type="info">
+All of these commands honor the global `-o, --output <table\|json\|csv>` flag — e.g.
+`alethia members list -o json | jq`. See [Identity & Global Options](/cli/identity).
+</Callout>

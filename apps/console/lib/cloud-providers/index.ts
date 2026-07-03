@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-export { type CloudProviderSlug, type CloudProviderMeta, PROVIDERS, getProvider, CACHE_TTL_HOURS } from "./registry";
+export { type CloudProviderSlug, type ConnectableCloudSlug, type CloudProviderMeta, PROVIDERS, getProvider, CACHE_TTL_HOURS } from "./registry";
 export { REGION_LABELS, DEFAULT_REGION, REGION_MAP, groupRegions } from "./regions";
 export {
 	INSTANCE_TYPES,
@@ -17,7 +17,7 @@ export { WAF_OPTIONS, CERT_OPTIONS } from "./dns";
 export { MESSAGING } from "./messaging";
 export { NOSQL } from "./nosql";
 export { NETWORK } from "./network";
-export { convertVineConfig, type ConversionWarning, type ConversionSeverity } from "./convert";
+export { convertProjectConfig, type ConversionWarning, type ConversionSeverity } from "./convert";
 export {
 	useCloudProviderStore,
 	useCloudProviderStore as useCloudProvider,

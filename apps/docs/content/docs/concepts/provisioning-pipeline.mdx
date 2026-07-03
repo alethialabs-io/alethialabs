@@ -1,43 +1,51 @@
 ---
 title: Provisioning Pipeline
-description: How Spec form values flow through config snapshots and provider-specific mappings into Terraform variables.
+description: How Project form values flow through config snapshots and provider-specific mappings into Terraform variables.
 ---
 
 # Provisioning Pipeline
 
-When a user clicks "Plan" or "Apply", the platform transforms the Spec's form configuration into Terraform variables through a five-stage pipeline. Each stage has a single responsibility: serialize, freeze, deserialize, map, execute.
+When a user clicks "Plan" or "Apply", the platform transforms the Project's form configuration into Terraform variables through a five-stage pipeline. Each stage has a single responsibility: serialize, freeze, deserialize, map, execute.
 
 <img src="/docs/diagrams/concepts/provisioning-pipeline.svg" alt="Provisioning Pipeline" />
 
+<Callout type="info">
+  The Project config can be authored by hand **or inferred from repos** — the "A" flow scans one or more
+  repos (monorepo-aware), infers the stack, and produces the same `ProjectFormData` this pipeline
+  consumes. See the [elench Architecture](/elench/architecture) page for the full repos → verified cluster
+  loop.
+</Callout>
+
 ## Stage 1: Form → Database
 
-The Spec form in Console (or `alethia plan` in the CLI) calls `createSpec()`, which inserts the configuration into normalized component tables:
+The Project form in Console (or `alethia plan` in the CLI) calls `createProject()`, which inserts the configuration into normalized component tables:
 
 | Table | Data |
 |-------|------|
-| `specs` | Project name, region, environment, cloud_identity_id, terraform_version |
-| `spec_network` | CIDR block, provision_network flag, existing network_id |
-| `spec_cluster` | K8s version, instance types, node min/max/desired, cluster_admins, provider_config |
-| `spec_dns` | Enabled flag, zone_id, domain_name, WAF settings (in provider_config) |
-| `spec_repositories` | Apps destination repo URL |
-| `spec_databases` | Engine, instance class, scaling config (per database) |
-| `spec_caches` | Node type, cluster size (per cache) |
-| `spec_queues` | Queue name, config (per queue) |
-| `spec_topics` | Topic name, subscriptions (per topic) |
-| `spec_nosql_tables` | Table/collection config with provider_config |
-| `spec_secrets` | Secret name and metadata |
+| `projects` | Project name, region, environment, cloud_identity_id, iac_version |
+| `project_network` | CIDR block, provision_network flag, existing network_id |
+| `project_cluster` | K8s version, instance types, node min/max/desired, cluster_admins, provider_config |
+| `project_dns` | Enabled flag, zone_id, domain_name, WAF settings (in provider_config) |
+| `project_repositories` | Apps destination (GitOps) repo URL |
+| `project_source_repos` | Scanned source repos (1:N) + detected services — used to generate app manifests |
+| `project_databases` | Engine, instance class, scaling config (per database) |
+| `project_caches` | Node type, cluster size (per cache) |
+| `project_queues` | Queue name, config (per queue) |
+| `project_topics` | Topic name, subscriptions (per topic) |
+| `project_nosql_tables` | Table/collection config with provider_config |
+| `project_secrets` | Secret name and metadata |
 
 Each table stores the shared schema. Provider-specific options live in `provider_config` JSONB columns — see [Cloud Provider Abstraction](/concepts/cloud-abstraction).
 
 ## Stage 2: Database → Config Snapshot
 
-When a job is queued, `buildConfigSnapshot()` in `app/server/actions/specs.ts` queries all component tables in parallel and assembles a single JSON object. This object is stored in `provision_jobs.config_snapshot`.
+When a job is queued, `buildConfigSnapshot()` in `app/server/actions/projects.ts` queries all component tables in parallel and assembles a single JSON object. This object is stored in `jobs.config_snapshot`.
 
-The snapshot is a **point-in-time freeze**. Even if the user edits the Spec after queuing, the job executes the exact configuration that was planned.
+The snapshot is a **point-in-time freeze**. Even if the user edits the Project after queuing, the job executes the exact configuration that was planned.
 
 ```
 config_snapshot = {
-  ...spec fields,
+  ...project fields,
   provider: "aws" | "gcp" | "azure",
   network: { provision_network, cidr_block, network_id, ... },
   cluster: { cluster_version, instance_types, node_min_size, ... },
@@ -56,26 +64,26 @@ config_snapshot = {
 The git access token is intentionally left empty in the snapshot. The Runner fetches it at runtime via `POST /api/jobs/{id}/git-token` to avoid storing secrets in the job record.
 </Callout>
 
-## Stage 3: Config Snapshot → SpecConfig
+## Stage 3: Config Snapshot → ProjectConfig
 
-The Runner worker claims the job and deserializes the JSON snapshot into a strongly-typed Go struct:
+The Runner claims the job and deserializes the JSON snapshot into a strongly-typed Go struct:
 
 ```go
-func snapshotToSpecConfig(snapshot map[string]any) (*types.SpecConfig, error) {
+func snapshotToProjectConfig(snapshot map[string]any) (*types.ProjectConfig, error) {
     data, _ := json.Marshal(snapshot)
-    var sc types.SpecConfig
+    var sc types.ProjectConfig
     json.Unmarshal(data, &sc)
     return &sc, nil
 }
 ```
 
-The `SpecConfig` struct in `packages/core/types/spec_config.go` mirrors the snapshot shape with typed fields: `Network`, `Cluster`, `DNS`, `Databases[]`, `Caches[]`, and so on.
+The `ProjectConfig` struct in `packages/core/types/project_config.go` mirrors the snapshot shape with typed fields: `Network`, `Cluster`, `DNS`, `Databases[]`, `Caches[]`, and so on.
 
-## Stage 4: SpecConfig → terraform.tfvars.json
+## Stage 4: ProjectConfig → terraform.tfvars.json
 
-Each cloud provider implements a `ProviderTfvars()` method that maps `SpecConfig` fields to provider-specific Terraform variable names:
+Each cloud provider implements a `ProviderTfvars()` method that maps `ProjectConfig` fields to provider-specific Terraform variable names:
 
-| SpecConfig Field | AWS | GCP | Azure |
+| ProjectConfig Field | AWS | GCP | Azure |
 |-----------------|-----|-----|-------|
 | `ProjectName` | `project_name` | `project_name` | `project_name` |
 | `Region` | `region` | `region` | `location` |
@@ -92,42 +100,44 @@ Each cloud provider implements a `ProviderTfvars()` method that maps `SpecConfig
 
 The result is a `map[string]interface{}` written to `terraform.tfvars.json` via `OverrideTfvarsFromMap()`.
 
-**No templating engine touches the `.tf` files.** The Terraform templates at `infra/templates/spec/{aws,gcp,azure}/` are plain HCL with `variable` declarations. Values are injected entirely through Terraform's native tfvars mechanism.
+**No templating engine touches the `.tf` files.** The Terraform templates at `infra/templates/project/{aws,gcp,azure}/` are plain HCL with `variable` declarations. Values are injected entirely through Terraform's native tfvars mechanism.
 
 ## Stage 5: Terraform Execution
 
 <Steps>
 
 ### Template Selection
-The Runner resolves the template directory based on `SpecConfig.Provider` — one of `aws/`, `gcp/`, or `azure/` under the templates path.
+The Runner resolves the template directory based on `ProjectConfig.Provider` — one of `aws/`, `gcp/`, or `azure/` under the templates path.
 
 ### Backend Configuration
-Terraform state is stored in Supabase S3. The backend key follows the pattern `{zone_id}/{project}-{env}-{region}/terraform.tfstate`. See [Terraform State](/concepts/terraform-state).
+Terraform state is stored in S3-compatible storage. The backend key follows the pattern `{project}-{env}-{region}/tofu.tfstate`. See [Terraform State](/concepts/terraform-state).
 
 ### Plan
-`terraform plan` runs with the generated tfvars. For PLAN jobs, an Infracost analysis is also generated. The plan artifact is uploaded to Supabase Storage.
+`terraform plan` runs with the generated tfvars. For PLAN jobs, an Infracost analysis is also generated. The plan artifact is uploaded to S3-compatible storage.
 
 ### Apply
 For DEPLOY jobs, `terraform apply` runs the plan. If a `plan_job_id` is linked, the cached plan artifact is downloaded and applied directly.
 
 ### Post-Apply
-After apply, the Runner extracts Terraform outputs (cluster endpoint, database endpoints, ARNs), configures kubeconfig via the provider, installs ArgoCD, and renders application templates. See [GitOps & ArgoCD](/concepts/gitops-argocd).
+After apply, the Runner extracts Terraform outputs (cluster endpoint, database endpoints, ARNs), configures kubeconfig via the provider, installs ArgoCD, and renders application templates (per cloud — see [Multi-cloud](/elench/multi-cloud)). It then **generates app manifests** for the detected services and scaffolds them into the GitOps repo — only when that repo has no manifests yet, so a bring-your-own repo is never overwritten. See [GitOps & ArgoCD](/concepts/gitops-argocd).
+
+Between `plan` and `apply` the [elench verification gate](/elench/engine-internals) runs (fail-closed) and seals a signed receipt.
 
 </Steps>
 
 ## Plan Hash Validation
 
-When a DEPLOY job references a prior PLAN job, the platform validates that the configuration hasn't changed between plan and apply. If the `config_snapshot` hash differs, the deploy fails with a hash mismatch error and the user must re-plan. This prevents applying a stale plan against a modified Spec.
+When a DEPLOY job references a prior PLAN job, the platform validates that the configuration hasn't changed between plan and apply. If the `config_snapshot` hash differs, the deploy fails with a hash mismatch error and the user must re-plan. This prevents applying a stale plan against a modified Project.
 
 ## Key Implementation Files
 
 | Component | Location |
 |-----------|----------|
-| Config snapshot builder | `apps/console/app/server/actions/specs.ts` — `buildConfigSnapshot()` |
-| SpecConfig struct | `packages/core/types/spec_config.go` |
+| Config snapshot builder | `apps/console/app/server/actions/projects.ts` — `buildConfigSnapshot()` |
+| ProjectConfig struct | `packages/core/types/project_config.go` |
 | AWS tfvars mapping | `packages/core/cloud/aws_provider.go` — `ProviderTfvars()` |
 | GCP tfvars mapping | `packages/core/cloud/gcp_provider.go` — `ProviderTfvars()` |
 | Azure tfvars mapping | `packages/core/cloud/azure_provider.go` — `ProviderTfvars()` |
 | Deploy orchestration | `packages/core/provisioner/deploy.go` — `RunDeployV2()` |
-| Snapshot deserialization | `apps/runner/worker/runner.go` — `snapshotToSpecConfig()` |
-| Terraform CLI wrapper | `packages/core/terraform/terraform.go` |
+| Snapshot deserialization | `apps/runner/internal/agent/runner.go` — `snapshotToProjectConfig()` |
+| OpenTofu CLI wrapper | `packages/core/tofu/tofu.go` |

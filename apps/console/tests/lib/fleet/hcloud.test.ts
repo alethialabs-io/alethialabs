@@ -1,0 +1,302 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Hetzner FleetProvider (lib/fleet/hcloud.ts). Mocked boundary: global fetch (the Hetzner REST API).
+// Pure helpers (config-from-env, cloud-init, create payload) are exercised real; the provider's
+// list/create/destroy are driven through getHcloudFleetProvider against canned responses — asserting
+// request shape (method/url/headers/body) + response mapping + the !ok error path and 204→null.
+
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+	getHcloudFleetProvider,
+	hcloudConfigFromEnv,
+	renderCloudInit,
+	serverCreatePayload,
+	type HcloudConfig,
+} from "@/lib/fleet/hcloud";
+import type { FleetTarget } from "@/lib/fleet/types";
+
+// ── env helpers ────────────────────────────────────────────────────────────
+const HCLOUD_ENV_KEYS = [
+	"HCLOUD_TOKEN",
+	"ALETHIA_WEB_ORIGIN",
+	"NEXT_PUBLIC_APP_URL",
+	"ALETHIA_RUNNER_BOOTSTRAP_TOKEN",
+	"HCLOUD_SERVER_TYPE",
+	"HCLOUD_IMAGE",
+	"HCLOUD_SSH_KEYS",
+	"FLEET_RUNNER_IMAGE_TAG",
+	"FLEET_RUNNER_SLOTS",
+	"ALETHIA_STORAGE_ENDPOINT",
+	"ALETHIA_STORAGE_REGION",
+	"ALETHIA_STORAGE_ACCESS_KEY_ID",
+	"ALETHIA_STORAGE_SECRET_ACCESS_KEY",
+] as const;
+
+const savedEnv: Record<string, string | undefined> = {};
+function snapshotEnv() {
+	for (const k of HCLOUD_ENV_KEYS) savedEnv[k] = process.env[k];
+}
+function restoreEnv() {
+	for (const k of HCLOUD_ENV_KEYS) {
+		if (savedEnv[k] === undefined) delete process.env[k];
+		else process.env[k] = savedEnv[k];
+	}
+}
+
+// A complete config literal so the pure helpers need no env wiring.
+function baseCfg(over: Partial<HcloudConfig> = {}): HcloudConfig {
+	return {
+		token: "test-token",
+		serverType: "cax21",
+		image: "ubuntu-24.04",
+		sshKeys: ["key-a"],
+		defaultImageTag: "latest",
+		webOrigin: "https://app.test",
+		bootstrapToken: "boot-xyz",
+		slots: 2,
+		storage: { endpoint: "https://s3.test", region: "eu", accessKey: "AK", secretKey: "SK" },
+		...over,
+	};
+}
+
+const target = (provider = "aws"): FleetTarget => ({ provider } as never);
+
+// ── fetch (Hetzner API) boundary ─────────────────────────────────────────────
+const fetchMock = vi.fn();
+function jsonRes(body: unknown, status = 200) {
+	return { ok: true, status, json: async () => body, text: async () => JSON.stringify(body) };
+}
+function noContentRes() {
+	return {
+		ok: true,
+		status: 204,
+		json: async () => {
+			throw new Error("204 has no body");
+		},
+		text: async () => "",
+	};
+}
+function errRes(status: number, text: string) {
+	return { ok: false, status, json: async () => ({}), text: async () => text };
+}
+
+beforeAll(() => {
+	snapshotEnv();
+	// Lock the cached singleton's config with known values (constructed on first use).
+	process.env.HCLOUD_TOKEN = "test-token";
+	process.env.ALETHIA_WEB_ORIGIN = "https://app.test";
+	process.env.ALETHIA_RUNNER_BOOTSTRAP_TOKEN = "boot-xyz";
+	vi.stubGlobal("fetch", fetchMock);
+	getHcloudFleetProvider(); // force construction now → cfg.token === "test-token"
+});
+
+beforeEach(() => {
+	fetchMock.mockReset();
+});
+
+afterEach(() => {
+	restoreEnv();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe("hcloudConfigFromEnv", () => {
+	it("throws when an essential var is missing", () => {
+		delete process.env.HCLOUD_TOKEN;
+		process.env.ALETHIA_WEB_ORIGIN = "https://app.test";
+		process.env.ALETHIA_RUNNER_BOOTSTRAP_TOKEN = "boot-xyz";
+		expect(() => hcloudConfigFromEnv()).toThrow(/HCLOUD_TOKEN/);
+	});
+
+	it("falls back to NEXT_PUBLIC_APP_URL for the web origin and applies defaults", () => {
+		process.env.HCLOUD_TOKEN = "tok";
+		delete process.env.ALETHIA_WEB_ORIGIN;
+		process.env.NEXT_PUBLIC_APP_URL = "https://fallback.test";
+		process.env.ALETHIA_RUNNER_BOOTSTRAP_TOKEN = "boot";
+		delete process.env.HCLOUD_SERVER_TYPE;
+		delete process.env.HCLOUD_IMAGE;
+		delete process.env.FLEET_RUNNER_IMAGE_TAG;
+		delete process.env.HCLOUD_SSH_KEYS;
+		delete process.env.FLEET_RUNNER_SLOTS;
+
+		const cfg = hcloudConfigFromEnv();
+		expect(cfg.webOrigin).toBe("https://fallback.test");
+		expect(cfg.serverType).toBe("cax21");
+		expect(cfg.image).toBe("ubuntu-24.04");
+		expect(cfg.defaultImageTag).toBe("latest");
+		expect(cfg.sshKeys).toEqual([]);
+		expect(cfg.slots).toBe(1);
+	});
+
+	it("parses HCLOUD_SSH_KEYS (trim + drop empties) and a numeric slots", () => {
+		process.env.HCLOUD_TOKEN = "tok";
+		process.env.ALETHIA_WEB_ORIGIN = "https://app.test";
+		process.env.ALETHIA_RUNNER_BOOTSTRAP_TOKEN = "boot";
+		process.env.HCLOUD_SSH_KEYS = " a , , b ,";
+		process.env.FLEET_RUNNER_SLOTS = "4";
+
+		const cfg = hcloudConfigFromEnv();
+		expect(cfg.sshKeys).toEqual(["a", "b"]);
+		expect(cfg.slots).toBe(4);
+	});
+
+	it("defaults slots to 1 when the env value is non-numeric", () => {
+		process.env.HCLOUD_TOKEN = "tok";
+		process.env.ALETHIA_WEB_ORIGIN = "https://app.test";
+		process.env.ALETHIA_RUNNER_BOOTSTRAP_TOKEN = "boot";
+		process.env.FLEET_RUNNER_SLOTS = "not-a-number";
+		expect(hcloudConfigFromEnv().slots).toBe(1);
+	});
+});
+
+describe("renderCloudInit", () => {
+	it("pins the runner image to the explicit version and injects managed env", () => {
+		const out = renderCloudInit(baseCfg(), "gcp", "v1.2.3");
+		expect(out).toContain("ghcr.io/alethialabs-io/runner-gcp:v1.2.3");
+		expect(out).toContain('-e ALETHIA_RUNNER_OPERATOR="managed"');
+		expect(out).toContain('-e ALETHIA_WEB_ORIGIN="https://app.test"');
+		expect(out).toContain('-e ALETHIA_RUNNER_BOOTSTRAP_TOKEN="boot-xyz"');
+		expect(out).toContain('-e ALETHIA_RUNNER_SLOTS="2"');
+		expect(out).toContain('-e ALETHIA_STORAGE_ENDPOINT="https://s3.test"');
+		expect(out).toContain("#cloud-config");
+	});
+
+	it("uses the default image tag when no version is pinned", () => {
+		const out = renderCloudInit(baseCfg({ defaultImageTag: "stable" }), "aws", null);
+		expect(out).toContain("ghcr.io/alethialabs-io/runner-aws:stable");
+	});
+
+	it("omits storage env flags that are empty", () => {
+		const out = renderCloudInit(
+			baseCfg({ storage: { endpoint: "", region: "", accessKey: "", secretKey: "" } }),
+			"azure",
+			null,
+		);
+		expect(out).not.toContain("ALETHIA_STORAGE_ENDPOINT");
+		expect(out).not.toContain("ALETHIA_STORAGE_REGION");
+		// Non-storage flags are still present.
+		expect(out).toContain('-e ALETHIA_WEB_ORIGIN="https://app.test"');
+	});
+});
+
+describe("serverCreatePayload", () => {
+	it("carries the pool label and version label when versioned", () => {
+		const payload = serverCreatePayload(baseCfg(), target("aws"), {
+			name: "fleet-aws-abc12345",
+			location: "fsn1",
+			version: "v9",
+		});
+		expect(payload.name).toBe("fleet-aws-abc12345");
+		expect(payload.server_type).toBe("cax21");
+		expect(payload.location).toBe("fsn1");
+		expect(payload.image).toBe("ubuntu-24.04");
+		expect(payload.ssh_keys).toEqual(["key-a"]);
+		expect(payload.start_after_create).toBe(true);
+		expect(payload.labels).toEqual({
+			"alethia-managed": "true",
+			"alethia-pool": "aws",
+			"alethia-version": "v9",
+		});
+		expect(String(payload.user_data)).toContain("ghcr.io/alethialabs-io/runner-aws:v9");
+	});
+
+	it("omits the version label when version is null", () => {
+		const payload = serverCreatePayload(baseCfg(), target("gcp"), {
+			name: "n",
+			location: "nbg1",
+			version: null,
+		});
+		expect(payload.labels).toEqual({ "alethia-managed": "true", "alethia-pool": "gcp" });
+	});
+});
+
+describe("HcloudFleetProvider.list", () => {
+	it("requests the pool label selector and maps servers to ProviderInstances", async () => {
+		const created = new Date(Date.now() - 120_000).toISOString();
+		fetchMock.mockResolvedValue(
+			jsonRes({
+				servers: [
+					{
+						id: 42,
+						created,
+						labels: { "alethia-version": "v5" },
+						datacenter: { location: { name: "fsn1" } },
+					},
+				],
+			}),
+		);
+
+		const out = await getHcloudFleetProvider().list(target("aws"));
+
+		const [url, init] = fetchMock.mock.calls[0];
+		expect(url).toBe(
+			"https://api.hetzner.cloud/v1/servers?label_selector=" +
+				encodeURIComponent("alethia-pool=aws"),
+		);
+		expect(init.method).toBe("GET");
+		expect(init.headers.Authorization).toBe("Bearer test-token");
+
+		expect(out).toHaveLength(1);
+		expect(out[0].instanceId).toBe("42");
+		expect(out[0].location).toBe("fsn1");
+		expect(out[0].version).toBe("v5");
+		expect(out[0].ageSeconds).toBeGreaterThanOrEqual(119);
+		expect(out[0].ageSeconds).toBeLessThanOrEqual(125);
+	});
+
+	it("defaults version/location and clamps a future-created age to 0", async () => {
+		fetchMock.mockResolvedValue(
+			jsonRes({ servers: [{ id: 7, created: new Date(Date.now() + 60_000).toISOString() }] }),
+		);
+		const out = await getHcloudFleetProvider().list(target("gcp"));
+		expect(out[0]).toEqual({ instanceId: "7", location: "", version: null, ageSeconds: 0 });
+	});
+
+	it("returns [] when the API body has no servers", async () => {
+		fetchMock.mockResolvedValue(jsonRes({}));
+		expect(await getHcloudFleetProvider().list(target("azure"))).toEqual([]);
+	});
+});
+
+describe("HcloudFleetProvider.create", () => {
+	it("POSTs a generated server payload built from serverCreatePayload", async () => {
+		fetchMock.mockResolvedValue(jsonRes({ server: { id: 1 } }, 201));
+
+		await getHcloudFleetProvider().create(target("aws"), { location: "fsn1", version: "v3" });
+
+		const [url, init] = fetchMock.mock.calls[0];
+		expect(url).toBe("https://api.hetzner.cloud/v1/servers");
+		expect(init.method).toBe("POST");
+		expect(init.headers["Content-Type"]).toBe("application/json");
+
+		const body = JSON.parse(init.body);
+		expect(body.name).toMatch(/^fleet-aws-[0-9a-f]{8}$/);
+		expect(body.location).toBe("fsn1");
+		expect(body.labels["alethia-version"]).toBe("v3");
+		expect(body.labels["alethia-pool"]).toBe("aws");
+		expect(String(body.user_data)).toContain("runner-aws:v3");
+	});
+});
+
+describe("HcloudFleetProvider.destroy", () => {
+	it("DELETEs the server by id and tolerates a 204 (no body)", async () => {
+		fetchMock.mockResolvedValue(noContentRes());
+
+		await expect(getHcloudFleetProvider().destroy("99")).resolves.toBeUndefined();
+
+		const [url, init] = fetchMock.mock.calls[0];
+		expect(url).toBe("https://api.hetzner.cloud/v1/servers/99");
+		expect(init.method).toBe("DELETE");
+		expect(init.body).toBeUndefined();
+	});
+});
+
+describe("api error handling", () => {
+	it("throws with method, path, status, and body text on a non-ok response", async () => {
+		fetchMock.mockResolvedValue(errRes(403, "forbidden"));
+		await expect(getHcloudFleetProvider().destroy("5")).rejects.toThrow(
+			"hcloud DELETE /servers/5 → 403: forbidden",
+		);
+	});
+});

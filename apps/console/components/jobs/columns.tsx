@@ -2,255 +2,223 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
-import { StatusBadge } from "@/components/ui/status-badge";
-import {
-	Tooltip,
-	TooltipContent,
-	TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { ProviderIcon } from "@/components/provider-icon";
-import { getProvider } from "@/lib/cloud-providers/registry";
-import {
-	PublicProvisionJobsRow,
-	PublicProvisionJobType,
-} from "@/lib/validations/db.schemas";
+import { StatusBadge } from "@repo/ui/status-badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
+import { ProviderIcon } from "@repo/ui/provider-icon";
+import { cn } from "@repo/ui/utils";
+import type { JobWithMeta } from "@/app/server/actions/jobs";
+import type { ProvisionJobType } from "@/lib/db/schema";
+import { JOB_TYPES, formatDuration } from "@/lib/jobs/format";
+import { JobAuthor, type JobAuthorInfo } from "@/components/jobs/job-author";
 import type { ColumnDef } from "@tanstack/react-table";
-import { format, formatDistanceToNow } from "date-fns";
-import { ArrowUpCircle, Container, FileSearch, Plug, RefreshCw, Rocket, Trash2, Upload } from "lucide-react";
-import Link from "next/link";
-
-/** Extended job row with joined vine/worker/provider data from getJobs(). */
-type JobRow = PublicProvisionJobsRow & {
-	vine_name?: string | null;
-	vine_vineyard_id?: string | null;
-	worker_name?: string | null;
-	cloud_provider?: string | null;
-};
-
-const JOB_TYPES: Record<
-	PublicProvisionJobType,
-	{ label: string; icon: typeof Rocket; description: string }
-> = {
-	PLAN: {
-		label: "Plan",
-		icon: FileSearch,
-		description: "Dry-run infrastructure plan",
-	},
-	DEPLOY: {
-		label: "Deploy",
-		icon: Upload,
-		description: "Provision infrastructure from config",
-	},
-	DESTROY: {
-		label: "Destroy",
-		icon: Trash2,
-		description: "Tear down infrastructure",
-	},
-	CONNECTION_TEST: {
-		label: "Connection Test",
-		icon: Plug,
-		description: "Verify cloud account access",
-	},
-	FETCH_RESOURCES: {
-		label: "Fetch Resources",
-		icon: RefreshCw,
-		description: "Cache cloud regions, networks, zones",
-	},
-	DEPLOY_WORKER: {
-		label: "Deploy Runner",
-		icon: Container,
-		description: "Deploy a self-hosted runner container",
-	},
-	UPDATE_WORKER: {
-		label: "Update Runner",
-		icon: ArrowUpCircle,
-		description: "Update a runner to a newer version",
-	},
-	DESTROY_WORKER: {
-		label: "Destroy Runner",
-		icon: Trash2,
-		description: "Tear down a self-hosted runner",
-	},
-} as Record<string, { label: string; icon: typeof Rocket; description: string }>;
+import { formatDistanceToNow } from "date-fns";
+import { Layers, Server } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export { JOB_TYPES };
 
-function formatDuration(ms: number) {
-	const seconds = Math.floor(ms / 1000);
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-	return `${minutes}m ${remainingSeconds}s`;
+/** A job row enriched with joined project/runner/provider/environment data from getJobs(). */
+type JobRow = JobWithMeta;
+
+const STAGE_LABEL: Record<string, string> = {
+	development: "dev",
+	staging: "staging",
+	production: "prod",
+};
+
+const RUNNING = new Set(["QUEUED", "CLAIMED", "PROCESSING"]);
+
+/** Ticks once a second so an in-flight job's elapsed time stays live. */
+function LiveDuration({ createdAt }: { createdAt: Date | string }) {
+	const [, setTick] = useState(0);
+	useEffect(() => {
+		const id = setInterval(() => setTick((t) => t + 1), 1000);
+		return () => clearInterval(id);
+	}, []);
+	return (
+		<span className="text-xs tabular-nums text-muted-foreground">
+			{formatDuration(Date.now() - new Date(createdAt).getTime())}
+		</span>
+	);
 }
 
 /** Renders a grayscale job status, with a tooltip surfacing the error on FAILED. */
-function JobStatus({ status, errorMessage }: { status: string; errorMessage?: string | null }) {
+function JobStatus({
+	status,
+	errorMessage,
+}: {
+	status: string;
+	errorMessage?: string | null;
+}) {
 	const badge = <StatusBadge status={status} />;
-
 	if (status === "FAILED" && errorMessage) {
-		const truncated = errorMessage.length > 120
-			? errorMessage.slice(0, 120) + "..."
-			: errorMessage;
+		const truncated =
+			errorMessage.length > 120 ? `${errorMessage.slice(0, 120)}...` : errorMessage;
 		return (
 			<Tooltip>
-				<TooltipTrigger asChild>
-					{badge}
-				</TooltipTrigger>
-				<TooltipContent side="top" className="text-xs max-w-xs">
+				<TooltipTrigger asChild>{badge}</TooltipTrigger>
+				<TooltipContent side="top" className="max-w-xs text-xs">
 					{truncated}
 				</TooltipContent>
 			</Tooltip>
 		);
 	}
-
 	return badge;
 }
 
-export const jobColumns: ColumnDef<JobRow>[] = [
-	{
-		accessorKey: "job_type",
-		header: "Type",
-		enableSorting: true,
-		cell: ({ row }) => {
-			const type = row.getValue<PublicProvisionJobType>("job_type");
-			const info = JOB_TYPES[type];
-			if (!info) return <span className="text-xs">{type}</span>;
-			const Icon = info.icon;
-			return (
-				<div className="flex items-center gap-2">
-					<Icon className="h-3.5 w-3.5 text-muted-foreground" />
-					<div>
-						<span className="text-xs font-medium">
-							{info.label}
-						</span>
-						<p className="text-[10px] text-muted-foreground hidden sm:block">
-							{info.description}
-						</p>
+/**
+ * The jobs table columns. `showProject` is false in a project-scoped context (the project is
+ * implied). `authorById` resolves each job's initiator to the org-member identity for the avatar.
+ */
+export function buildJobColumns({
+	showProject = true,
+	authorById,
+}: {
+	showProject?: boolean;
+	authorById: Map<string, JobAuthorInfo>;
+}): ColumnDef<JobRow>[] {
+	const columns: ColumnDef<JobRow>[] = [
+		{
+			accessorKey: "job_type",
+			header: "Type",
+			enableSorting: true,
+			cell: ({ row }) => {
+				const type = row.getValue<ProvisionJobType>("job_type");
+				const info = JOB_TYPES[type];
+				if (!info) return <span className="text-xs">{type}</span>;
+				const Icon = info.icon;
+				return (
+					<div className="flex items-center gap-2">
+						<Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+						<div className="min-w-0">
+							<span className="text-xs font-medium">{info.label}</span>
+							<p className="hidden text-[10px] text-muted-foreground sm:block">
+								{info.description}
+							</p>
+						</div>
 					</div>
-				</div>
-			);
+				);
+			},
 		},
-	},
-	{
-		accessorKey: "status",
-		header: "Status",
-		enableSorting: true,
-		cell: ({ row }) => {
-			const status = row.getValue("status") as string;
-			const errorMessage = row.original.error_message;
-			return <JobStatus status={status} errorMessage={errorMessage} />;
+		{
+			accessorKey: "status",
+			header: "Status",
+			enableSorting: true,
+			cell: ({ row }) => {
+				const { status, created_at, completed_at, error_message } = row.original;
+				const running = !completed_at && RUNNING.has(status);
+				return (
+					<div className="flex items-center gap-2">
+						<JobStatus status={status} errorMessage={error_message} />
+						{created_at && running ? (
+							<LiveDuration createdAt={created_at} />
+						) : created_at && completed_at ? (
+							<span className="text-xs tabular-nums text-muted-foreground">
+								{formatDuration(
+									new Date(completed_at).getTime() -
+										new Date(created_at).getTime(),
+								)}
+							</span>
+						) : null}
+					</div>
+				);
+			},
 		},
-	},
-	{
-		accessorKey: "vine_id",
-		header: "Spec",
-		enableSorting: false,
-		cell: ({ row }) => {
-			const vineId = row.getValue("vine_id") as string | null;
-			const vineName = row.original.vine_name;
-			const vineyardId = row.original.vine_vineyard_id;
-			const provider = row.original.cloud_provider;
+	];
 
-			const providerIcon = provider ? (
-				<ProviderIcon provider={provider} size={14} className="shrink-0" />
-			) : null;
-
-			if (!vineId) {
+	if (showProject) {
+		columns.push({
+			accessorKey: "project_id",
+			header: "Project",
+			enableSorting: false,
+			cell: ({ row }) => {
+				const { project_name, cloud_provider } = row.original;
 				return (
 					<div className="flex items-center gap-1.5">
-						{providerIcon}
-						<span className="text-xs text-muted-foreground">—</span>
+						{cloud_provider && (
+							<ProviderIcon
+								provider={cloud_provider}
+								size={14}
+								className="shrink-0"
+							/>
+						)}
+						<span
+							className={cn(
+								"text-xs",
+								project_name
+									? "font-medium text-foreground"
+									: "text-muted-foreground",
+							)}
+						>
+							{project_name ?? "—"}
+						</span>
 					</div>
 				);
-			}
+			},
+		});
+	}
 
-			const href = vineyardId ? `/dashboard/vineyards/${vineyardId}/vines/${vineId}` : "#";
-			return (
-				<div className="flex items-center gap-1.5">
-					{providerIcon}
-					<Link href={href} onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-foreground hover:underline">
-						{vineName ?? vineId.slice(0, 8)}
-					</Link>
-				</div>
-			);
-		},
-	},
-	{
-		accessorKey: "worker_id",
-		header: "Runner",
-		enableSorting: false,
-		cell: ({ row }) => {
-			const workerId = row.getValue("worker_id") as string | null;
-			const workerName = row.original.worker_name;
-			if (!workerId) return <span className="text-xs text-muted-foreground">—</span>;
-			return (
-				<Link href="/dashboard/tendrils" onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-foreground hover:underline">
-					{workerName ?? workerId.slice(0, 8)}
-				</Link>
-			);
-		},
-	},
-	{
-		accessorKey: "created_at",
-		header: "Created",
-		enableSorting: true,
-		cell: ({ row }) => {
-			const date = row.getValue("created_at") as string | null;
-			if (!date)
-				return <span className="text-xs text-muted-foreground">—</span>;
-			const parsed = new Date(date);
-			return (
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<span className="text-xs text-muted-foreground cursor-default">
-							{formatDistanceToNow(parsed, { addSuffix: true })}
-						</span>
-					</TooltipTrigger>
-					<TooltipContent side="top" className="text-xs">
-						{format(parsed, "MMM d, yyyy HH:mm:ss")}
-					</TooltipContent>
-				</Tooltip>
-			);
-		},
-	},
-	{
-		id: "duration",
-		header: "Duration",
-		enableSorting: true,
-		accessorFn: (row) => {
-			if (!row.created_at) return null;
-			const end = row.completed_at
-				? new Date(row.completed_at)
-				: new Date();
-			return end.getTime() - new Date(row.created_at).getTime();
-		},
-		cell: ({ row }) => {
-			const created = row.original.created_at;
-			const completed = row.original.completed_at;
-			const status = row.original.status;
-
-			if (!created)
-				return <span className="text-xs text-muted-foreground">—</span>;
-
-			if (
-				!completed &&
-				(status === "PROCESSING" || status === "CLAIMED")
-			) {
-				const ms = Date.now() - new Date(created).getTime();
+	columns.push(
+		{
+			accessorKey: "runner_id",
+			header: "Runner",
+			enableSorting: false,
+			cell: ({ row }) => {
+				const { runner_id, runner_name } = row.original;
+				if (!runner_id && !runner_name)
+					return <span className="text-xs text-muted-foreground">—</span>;
 				return (
-					<span className="text-xs text-muted-foreground animate-pulse">
-						{formatDuration(ms)}
-					</span>
+					<div className="flex items-center gap-1.5">
+						<Server className="size-3.5 shrink-0 text-muted-foreground" />
+						<span className="text-xs text-foreground">
+							{runner_name ?? runner_id?.slice(0, 8)}
+						</span>
+					</div>
 				);
-			}
-
-			if (!completed)
-				return <span className="text-xs text-muted-foreground">—</span>;
-
-			const ms =
-				new Date(completed).getTime() - new Date(created).getTime();
-			return <span className="text-xs">{formatDuration(ms)}</span>;
+			},
 		},
-	},
-];
+		{
+			id: "environment",
+			header: "Environment",
+			enableSorting: false,
+			cell: ({ row }) => {
+				const { environment_name, environment_stage } = row.original;
+				if (!environment_name)
+					return <span className="text-xs text-muted-foreground">—</span>;
+				return (
+					<div className="flex items-center gap-1.5">
+						<Layers className="size-3.5 shrink-0 text-muted-foreground" />
+						<span className="text-xs text-foreground">{environment_name}</span>
+						{environment_stage && (
+							<span className="text-[10px] text-muted-foreground">
+								{STAGE_LABEL[environment_stage] ?? environment_stage}
+							</span>
+						)}
+					</div>
+				);
+			},
+		},
+		{
+			id: "when",
+			header: "Initiated",
+			enableSorting: true,
+			accessorFn: (row) => row.created_at,
+			cell: ({ row }) => {
+				const { created_at, user_id } = row.original;
+				const author = user_id ? (authorById.get(user_id) ?? null) : null;
+				return (
+					<div className="flex items-center justify-end gap-2">
+						{created_at && (
+							<span className="whitespace-nowrap text-xs text-muted-foreground">
+								{formatDistanceToNow(new Date(created_at), { addSuffix: true })}
+							</span>
+						)}
+						<JobAuthor author={author} />
+					</div>
+				);
+			},
+		},
+	);
+
+	return columns;
+}

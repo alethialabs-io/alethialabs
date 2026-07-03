@@ -1,0 +1,25 @@
+# Local self-host ingress (plain HTTP). One front door for the bundle:
+#   /docs*  → docs service   (Next.js serves at basePath /docs, prefix kept)
+#   else    → console (app)
+# The production TLS variant (real domain + automatic HTTPS) lives in
+# deploy/hetzner/Caddyfile.
+{
+	auto_https off
+}
+
+:80 {
+	handle /docs* {
+		reverse_proxy docs:3000
+	}
+	handle /blog* {
+		reverse_proxy blog:3000
+	}
+	# Marketing zone (hosted-only — OSS ships none). To serve the marketing app behind
+	# Caddy, run a `marketing` service and drop a `marketing.caddy` beside this file
+	# (copy marketing.caddy.example), then uncomment the import below. It mirrors
+	# apps/console/microfrontends.json and must stay before the catch-all.
+	# import marketing*.caddy
+	handle {
+		reverse_proxy app:3000
+	}
+}

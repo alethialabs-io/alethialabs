@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Copy to backend.hcl (gitignored) and `tofu init -backend-config=backend.hcl`.
+# State lives in the existing account state bucket (created by infra/email-ses/bootstrap);
+# the OIDC deploy role authenticates the backend natively — no static state keys.
+bucket       = "alethia-tofu-state-270587882865"
+key          = "connector-assets/terraform.tfstate"
+region       = "eu-central-1"
+use_lockfile = true

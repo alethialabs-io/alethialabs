@@ -1,0 +1,307 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package cmd
+
+import (
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
+)
+
+// fakeClient is an in-memory apiClient for unit tests: each field is the value a
+// method returns, and the *Err fields force the error path. Mutating calls record
+// their arguments so tests can assert what was sent.
+type fakeClient struct {
+	whoami       *api.WhoAmI
+	orgs         []api.OrgSummary
+	members      []api.Member
+	teams        []api.Team
+	runners      []api.Runner
+	clusters     []api.ClusterSummary
+	configs      []types.ConfigurationSummary
+	jobsPage     *api.JobsPage
+	job          *api.ProvisionJob
+	invite       *api.Invitation
+	createdTeam  *api.Team
+	channels     []api.Channel
+	createdChan  *api.Channel
+	verifiedCh   *api.Channel
+	alertRules   []api.AlertRule
+	createdRule  *api.AlertRule
+	activity     []api.ActivityEntry
+	roles        []api.Role
+	createdRole  *api.Role
+	grants       []api.Grant
+	createdGr    *api.Grant
+	ssoProvs     []api.SsoProvider
+	ssoProv      *api.SsoProvider
+	billing      *api.Billing
+	usage        *api.Usage
+	fleetPools   []api.FleetPool
+	updatedPool  *api.FleetPool
+	createdProj  *api.Project
+	environments []api.Environment
+	createdEnv   *api.Environment
+	components   []api.Component
+	createdComp  *api.Component
+
+	err error // returned by every method when non-nil
+
+	// recorded calls
+	invitedEmail   string
+	invitedRole    string
+	removedMember  string
+	createdName    string
+	deletedTeam    string
+	createdChType  string
+	createdChCfg   map[string]interface{}
+	deletedChannel string
+	verifiedChID   string
+	createdRuleN   string
+	createdRulePat []string
+	createdRuleCh  []string
+	createdRuleSev string
+	deletedRule    string
+	activityLimit  int
+	createdRoleN   string
+	createdRoleKey []string
+	deletedRole    string
+	addedGrant     api.AddGrantParams
+	removedGrant   string
+	ssoGetID       string
+	setPoolProv    string
+	setPoolUpdate  api.FleetPoolUpdate
+	createdProjP   api.CreateProjectParams
+	envProject     string
+	addedEnvName   string
+	addedEnvStage  string
+	addedEnvRegion string
+	listCompProj   string
+	listCompKind   string
+	listCompEnv    string
+	addCompProj    string
+	addCompKind    string
+	addCompName    string
+	addCompFields  map[string]interface{}
+	rmCompProj     string
+	rmCompKind     string
+	rmCompName     string
+}
+
+func (f *fakeClient) Whoami() (*api.WhoAmI, error)                   { return f.whoami, f.err }
+func (f *fakeClient) ListOrgs() ([]api.OrgSummary, error)            { return f.orgs, f.err }
+func (f *fakeClient) ListMembers(orgID string) ([]api.Member, error) { return f.members, f.err }
+
+func (f *fakeClient) InviteMember(orgID, email, role string) (*api.Invitation, error) {
+	f.invitedEmail, f.invitedRole = email, role
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.invite != nil {
+		return f.invite, nil
+	}
+	return &api.Invitation{ID: "inv1", Email: email, Role: role, Status: "pending"}, nil
+}
+
+func (f *fakeClient) RemoveMember(orgID, memberID string) error {
+	f.removedMember = memberID
+	return f.err
+}
+
+func (f *fakeClient) ListTeams(orgID string) ([]api.Team, error) { return f.teams, f.err }
+
+func (f *fakeClient) CreateTeam(orgID, name string) (*api.Team, error) {
+	f.createdName = name
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.createdTeam != nil {
+		return f.createdTeam, nil
+	}
+	return &api.Team{ID: "team1", Name: name}, nil
+}
+
+func (f *fakeClient) DeleteTeam(orgID, teamID string) error {
+	f.deletedTeam = teamID
+	return f.err
+}
+
+func (f *fakeClient) GetRunners() ([]api.Runner, error)          { return f.runners, f.err }
+func (f *fakeClient) GetClusters() ([]api.ClusterSummary, error) { return f.clusters, f.err }
+func (f *fakeClient) GetConfigurations() ([]types.ConfigurationSummary, error) {
+	return f.configs, f.err
+}
+func (f *fakeClient) GetJobs(status string, limit, offset int) (*api.JobsPage, error) {
+	return f.jobsPage, f.err
+}
+func (f *fakeClient) GetJob(jobID string) (*api.ProvisionJob, error) { return f.job, f.err }
+
+func (f *fakeClient) ListChannels() ([]api.Channel, error) { return f.channels, f.err }
+
+func (f *fakeClient) CreateChannel(name, channelType string, config map[string]interface{}) (*api.Channel, error) {
+	f.createdName, f.createdChType, f.createdChCfg = name, channelType, config
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.createdChan != nil {
+		return f.createdChan, nil
+	}
+	return &api.Channel{ID: "ch1", Name: name, Type: channelType, IsVerified: true}, nil
+}
+
+func (f *fakeClient) DeleteChannel(channelID string) error {
+	f.deletedChannel = channelID
+	return f.err
+}
+
+func (f *fakeClient) VerifyChannel(channelID string) (*api.Channel, error) {
+	f.verifiedChID = channelID
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.verifiedCh != nil {
+		return f.verifiedCh, nil
+	}
+	return &api.Channel{ID: channelID, Name: "ops", IsVerified: true}, nil
+}
+
+func (f *fakeClient) ListAlertRules() ([]api.AlertRule, error) { return f.alertRules, f.err }
+
+func (f *fakeClient) CreateAlertRule(name string, eventPatterns, channelIDs []string, severity string) (*api.AlertRule, error) {
+	f.createdRuleN, f.createdRulePat, f.createdRuleCh, f.createdRuleSev = name, eventPatterns, channelIDs, severity
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.createdRule != nil {
+		return f.createdRule, nil
+	}
+	return &api.AlertRule{ID: "rule1", Name: name, Severity: severity, EventPatterns: eventPatterns, ChannelIDs: channelIDs}, nil
+}
+
+func (f *fakeClient) DeleteAlertRule(ruleID string) error {
+	f.deletedRule = ruleID
+	return f.err
+}
+
+func (f *fakeClient) ListActivity(limit int) ([]api.ActivityEntry, error) {
+	f.activityLimit = limit
+	return f.activity, f.err
+}
+
+func (f *fakeClient) ListRoles() ([]api.Role, error) { return f.roles, f.err }
+
+func (f *fakeClient) CreateRole(name string, permissionKeys []string) (*api.Role, error) {
+	f.createdRoleN, f.createdRoleKey = name, permissionKeys
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.createdRole != nil {
+		return f.createdRole, nil
+	}
+	return &api.Role{ID: "role1", Name: name, PermissionKeys: permissionKeys}, nil
+}
+
+func (f *fakeClient) DeleteRole(roleID string) error {
+	f.deletedRole = roleID
+	return f.err
+}
+
+func (f *fakeClient) ListGrants() ([]api.Grant, error) { return f.grants, f.err }
+
+func (f *fakeClient) AddGrant(params api.AddGrantParams) (*api.Grant, error) {
+	f.addedGrant = params
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.createdGr != nil {
+		return f.createdGr, nil
+	}
+	return &api.Grant{
+		ID: "grant1", PrincipalType: params.PrincipalType, PrincipalID: params.PrincipalID,
+		Effect: params.Effect, PermissionKey: params.PermissionKey, ResourceType: params.ResourceType,
+	}, nil
+}
+
+func (f *fakeClient) RemoveGrant(grantID string) error {
+	f.removedGrant = grantID
+	return f.err
+}
+
+func (f *fakeClient) ListSsoProviders() ([]api.SsoProvider, error) { return f.ssoProvs, f.err }
+
+func (f *fakeClient) GetSsoProvider(id string) (*api.SsoProvider, error) {
+	f.ssoGetID = id
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.ssoProv != nil {
+		return f.ssoProv, nil
+	}
+	return &api.SsoProvider{ID: id, ProviderType: "oidc", Domain: "acme.com"}, nil
+}
+
+func (f *fakeClient) GetBilling() (*api.Billing, error) { return f.billing, f.err }
+func (f *fakeClient) GetUsage() (*api.Usage, error)     { return f.usage, f.err }
+
+func (f *fakeClient) ListFleetPools() ([]api.FleetPool, error) { return f.fleetPools, f.err }
+
+func (f *fakeClient) SetFleetPool(provider string, update api.FleetPoolUpdate) (*api.FleetPool, error) {
+	f.setPoolProv, f.setPoolUpdate = provider, update
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.updatedPool != nil {
+		return f.updatedPool, nil
+	}
+	return &api.FleetPool{Provider: provider, Enabled: true}, nil
+}
+
+func (f *fakeClient) CreateProject(params api.CreateProjectParams) (*api.Project, error) {
+	f.createdProjP = params
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.createdProj != nil {
+		return f.createdProj, nil
+	}
+	return &api.Project{ID: "proj1", ProjectName: params.ProjectName, Region: params.Region, Status: "DRAFT"}, nil
+}
+
+func (f *fakeClient) ListEnvironments(project string) ([]api.Environment, error) {
+	f.envProject = project
+	return f.environments, f.err
+}
+
+func (f *fakeClient) AddEnvironment(project, name, stage, region string) (*api.Environment, error) {
+	f.envProject, f.addedEnvName, f.addedEnvStage, f.addedEnvRegion = project, name, stage, region
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.createdEnv != nil {
+		return f.createdEnv, nil
+	}
+	return &api.Environment{ID: "env1", Name: name, Stage: stage, Status: "DRAFT"}, nil
+}
+
+func (f *fakeClient) ListComponents(project, kind, env string) ([]api.Component, error) {
+	f.listCompProj, f.listCompKind, f.listCompEnv = project, kind, env
+	return f.components, f.err
+}
+
+func (f *fakeClient) AddComponent(project, kind, name string, fields map[string]interface{}) (*api.Component, error) {
+	f.addCompProj, f.addCompKind, f.addCompName, f.addCompFields = project, kind, name, fields
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.createdComp != nil {
+		return f.createdComp, nil
+	}
+	return &api.Component{ID: "comp1", Kind: kind, Name: name, Status: "PENDING"}, nil
+}
+
+func (f *fakeClient) RemoveComponent(project, kind, name string) error {
+	f.rmCompProj, f.rmCompKind, f.rmCompName = project, kind, name
+	return f.err
+}
+
+var _ apiClient = (*fakeClient)(nil)

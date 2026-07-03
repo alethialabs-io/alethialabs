@@ -1,0 +1,91 @@
+---
+title: Helm chart
+description: Run the Alethia bundle on any managed Kubernetes cluster with the Helm chart.
+---
+
+# Helm chart (`deploy/helm/alethia`)
+
+For teams already on Kubernetes, the chart deploys the same bundle as the
+[compose stack](./index) — console, docs, runner, and (optionally) bundled Postgres + object
+store — wired behind a single Ingress (console at `/`, docs at `/docs`).
+
+> **ARM only.** The published images are built `linux/arm64`, so every pod carries a
+> `nodeSelector` of `kubernetes.io/arch=arm64`. Use an ARM node pool (Graviton, Tau T2A, Ampere,
+> Axion …), or clear it with `--set nodeSelector=null` once you publish multi-arch images.
+
+## What it deploys
+- **console** Deployment + Service. Two init containers run first: `wait-for-postgres`, then
+  `migrate` (idempotent — applies schema/programmables and sets the app-role password).
+- **docs** Deployment + Service.
+- **runner** Deployment (self-registers with the console over the in-cluster Service URL).
+- **postgres** StatefulSet + headless Service + PVC — *optional* (`postgres.enabled`).
+- **seaweedfs** StatefulSet + headless Service + PVC + ConfigMap (S3 identity) — *optional*
+  (`objectStore.enabled`).
+- **Ingress** (`/docs*` → docs, `/` → console) with optional cert-manager TLS.
+- **Secret** holding the connection strings + app secrets (or bring your own via
+  `secrets.existingSecret`).
+
+## Prerequisites
+- A Kubernetes cluster with an **ARM node pool**, an **Ingress controller** (e.g. ingress-nginx),
+  and a **default StorageClass** (for the bundled Postgres/object-store PVCs).
+- **cert-manager** with a `ClusterIssuer` if you want automatic TLS.
+
+## Install
+```bash
+helm install alethia deploy/helm/alethia \
+  --namespace alethia --create-namespace \
+  --set domain=alethialabs.io \
+  --set secrets.cliJwtSecret="$(openssl rand -hex 32)" \
+  --set secrets.betterAuthSecret="$(openssl rand -hex 32)" \
+  --set postgres.password="$(openssl rand -hex 16)" \
+  --set postgres.appPassword="$(openssl rand -hex 16)" \
+  --set objectStore.secretKey="$(openssl rand -hex 16)" \
+  --set ingress.tls.clusterIssuer=letsencrypt-prod
+```
+
+Then point DNS for your domain at the ingress controller's external IP.
+
+## Bring your own Postgres / object store
+Disable the bundled ones and point at managed services:
+```bash
+helm install alethia deploy/helm/alethia \
+  --set postgres.enabled=false \
+  --set postgres.host=db.internal --set postgres.port=5432 \
+  --set postgres.user=alethia --set postgres.password=... \
+  --set postgres.database=alethia --set postgres.appPassword=... \
+  --set objectStore.enabled=false \
+  --set objectStore.endpoint=https://s3.amazonaws.com \
+  ...
+```
+
+## App secrets (OAuth, email, …)
+Provider client IDs/secrets, `ALETHIA_SES_*` (email), and other app env go under `secrets.extraEnv` as a
+map — they're merged into the chart-managed Secret and exposed to the console/runner via `envFrom`:
+```yaml
+secrets:
+  extraEnv:
+    ALETHIA_SES_REGION: eu-central-1
+    AUTH_EMAIL_FROM: Alethia <no-reply@auth.yourdomain>
+    GITHUB_CLIENT_ID: ...
+    GITHUB_CLIENT_SECRET: ...
+```
+Or manage everything yourself in one Secret and set `secrets.existingSecret=my-secret` (it must hold
+`ALETHIA_DATABASE_URL`, `ALETHIA_APP_DATABASE_URL`, `ALETHIA_APP_DB_PASSWORD`,
+`ALETHIA_STORAGE_ENDPOINT`, `CLI_JWT_SECRET`, `BETTER_AUTH_SECRET`).
+
+## Upgrade
+```bash
+helm upgrade alethia deploy/helm/alethia --reuse-values --set image.tag=v1.2.3
+```
+The migrate init container re-runs on each rollout, so schema changes apply automatically.
+
+## Key values
+| Value | Default | Notes |
+|---|---|---|
+| `image.registry` / `image.tag` | `ghcr.io/alethialabs-io` / `latest` | Pinned across components |
+| `nodeSelector` | `kubernetes.io/arch=arm64` | `null` to disable |
+| `domain` | `alethialabs.io` | Ingress host |
+| `postgres.enabled` | `true` | `false` → set `postgres.host` |
+| `objectStore.enabled` | `true` | `false` → set `objectStore.endpoint` |
+| `ingress.className` | `nginx` | Ingress controller class |
+| `ingress.tls.clusterIssuer` | `letsencrypt-prod` | cert-manager issuer |

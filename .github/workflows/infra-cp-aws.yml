@@ -1,0 +1,81 @@
+name: Infra - CP AWS
+
+on:
+  pull_request:
+    paths:
+      - 'infra/cp-aws/**'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/cp-aws/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  TF_DIR: infra/cp-aws
+  TOFU_VERSION: "1.10.10"
+
+  # AWS provider creds (the lab account that hosts the EC2 box).
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  # OpenTofu variables.
+  TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+  TF_VAR_ssh_public_key: ${{ secrets.DEPLOY_SSH_PUBLIC_KEY }}
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: OpenTofu Validate (no backend, no secrets)
+        working-directory: ${{ env.TF_DIR }}
+        # PR plans are validate-only: no backend, no cloud/state secrets reach a
+        # PR job (the repo is contributor-facing). Real plan+apply run on main.
+        run: |
+          tofu init -backend=false
+          tofu validate
+
+      - name: IaC checks (fmt + tflint + Trivy)
+        uses: ./.github/actions/iac-checks
+        with:
+          working-directory: ${{ env.TF_DIR }}
+
+  apply:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: OpenTofu Init
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          tofu init -upgrade \
+            -backend-config="bucket=terraform-state" \
+            -backend-config="key=aws-cp/terraform.tfstate" \
+            -backend-config="endpoint=${{ secrets.TF_STATE_S3_ENDPOINT }}" \
+            -backend-config="region=${{ secrets.TF_STATE_S3_REGION }}" \
+            -backend-config="access_key=${{ secrets.TF_STATE_S3_ACCESS_KEY_ID }}" \
+            -backend-config="secret_key=${{ secrets.TF_STATE_S3_SECRET_ACCESS_KEY }}" \
+            -backend-config="skip_credentials_validation=true" \
+            -backend-config="skip_metadata_api_check=true" \
+            -backend-config="skip_region_validation=true" \
+            -backend-config="skip_requesting_account_id=true" \
+            -backend-config="skip_s3_checksum=true" \
+            -backend-config="force_path_style=true"
+
+      - name: OpenTofu Apply
+        working-directory: ${{ env.TF_DIR }}
+        run: tofu apply -auto-approve

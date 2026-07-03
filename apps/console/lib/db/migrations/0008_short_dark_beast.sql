@@ -1,0 +1,1 @@
+ALTER TABLE "jobs" ADD COLUMN "requires_self_runner" boolean DEFAULT false NOT NULL;

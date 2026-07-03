@@ -117,35 +117,36 @@ The user never types a password in the terminal. The refresh token is stored loc
 
 ## Web Authentication
 
-The web application uses **Supabase GoTrue** with OAuth providers:
+The web application uses **Better Auth** with OAuth providers (GitHub and Google native; GitLab and Bitbucket via genericOAuth) plus email sign-in via 6-digit OTP:
 
 - GitHub
 - GitLab
 - Bitbucket
 - Google
 
-The user clicks a provider button, is redirected to the OAuth flow, and returns with a session JWT. Sessions are managed entirely by Supabase.
+The user clicks a provider button, is redirected to the OAuth flow, and returns with a session JWT stored in an HTTP-only cookie. Sessions are managed entirely by Better Auth.
 
 ## Row Level Security (RLS)
 
-Every user-scoped table in the database has a Row Level Security policy:
+Every org-scoped table in the database has a coarse Row Level Security policy keyed on `org_id`. The current org is set per request via `set_config('app.current_org', …)`, driven by a Policy Decision Point (PDP) in the app:
 
 ```sql
-CREATE POLICY "Users can only access own data"
-  ON specs FOR ALL
-  USING (auth.uid() = user_id);
+CREATE POLICY "Org members can only access own org data"
+  ON projects FOR ALL
+  USING (org_id = current_setting('app.current_org')::uuid);
 ```
 
-This means even if there is a bug in application code that constructs a query without a `WHERE user_id = ?` clause, PostgreSQL will filter the results to only the authenticated user's data. A raw `SELECT * FROM specs` returns only the current user's Specs.
+This means even if there is a bug in application code that constructs a query without a `WHERE org_id = ?` clause, PostgreSQL will filter the results to only the current org's data. A raw `SELECT * FROM projects` returns only the current org's Projects.
+
+RLS is the coarse, unbypassable backstop; fine-grained role/permission decisions are made by the PDP. See [Access Control](/access-control) for the full authorization model (roles, permissions, grants, and the org/tenancy model).
 
 Cloud identities are additionally filtered by provider — an AWS identity will not appear in a GCP context.
 
 ## Git Token Management
 
-OAuth tokens for Git providers (GitHub, GitLab, Bitbucket) are stored in the `provider_tokens` table:
+OAuth tokens for Git providers (GitHub, GitLab, Bitbucket) are stored on the Better Auth `account` table:
 
-- Tokens are encrypted at rest by Supabase
-- A database trigger copies tokens from `auth.identities` to `provider_tokens` on login
+- Better Auth persists each linked provider's `accessToken` / `refreshToken` / expiry on `account` at login
 - The `getValidProviderToken()` server action checks token expiry before use
 - Expired tokens are automatically refreshed via the provider's refresh flow
-- RLS ensures tokens are only accessible to their owner
+- Access is scoped to the owning user (the `org_id` RLS backstop + the PDP)

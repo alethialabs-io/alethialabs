@@ -1,0 +1,22 @@
+#cloud-config
+# Prepares the box; it does NOT bring the stack up. The deploy-hetzner workflow
+# logs into GHCR, writes /opt/alethia/.env from CI secrets, and runs compose.
+package_update: true
+package_upgrade: true
+
+runcmd:
+  # Docker + compose plugin
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable --now docker
+  # Move Docker's data-root onto the attached volume (auto-mounted at
+  # /mnt/HC_Volume_*) so Postgres + object storage persist across rebuilds.
+  - |
+    vol=$(ls -d /mnt/HC_Volume_* 2>/dev/null | head -1)
+    if [ -n "$vol" ]; then
+      mkdir -p "$vol/docker" /etc/docker
+      printf '{ "data-root": "%s/docker" }\n' "$vol" > /etc/docker/daemon.json
+      systemctl restart docker
+    fi
+  # Repo for the compose files (public OSS). The CD workflow git-pulls + deploys.
+  - git clone ${repo_url} /opt/alethia || true
+  - test -f /opt/alethia/.env || cp /opt/alethia/.env.example /opt/alethia/.env

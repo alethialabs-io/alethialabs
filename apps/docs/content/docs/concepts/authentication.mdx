@@ -11,16 +11,17 @@ The platform has three distinct authentication mechanisms — one for each compo
 
 ## Web Authentication (Console)
 
-Console uses **Supabase GoTrue** with OAuth providers:
+Console uses **Better Auth** (in-process, with the Drizzle adapter) for web sessions. Two sign-in paths are supported — social OAuth and email OTP:
 
 | Provider | Method |
 |----------|--------|
-| GitHub | OAuth 2.0 |
-| GitLab | OAuth 2.0 |
-| Bitbucket | OAuth 2.0 |
-| Google | OAuth 2.0 |
+| GitHub | OAuth 2.0 (native) |
+| Google | OAuth 2.0 (native) |
+| GitLab | OAuth 2.0 (genericOAuth) |
+| Bitbucket | OAuth 2.0 (genericOAuth) |
+| Email | 6-digit OTP (email OTP plugin) |
 
-### Flow
+### OAuth Flow
 
 <Steps>
 
@@ -28,25 +29,33 @@ Console uses **Supabase GoTrue** with OAuth providers:
 The sign-in page shows buttons for each OAuth provider.
 
 ### Redirect to provider
-Supabase redirects to the provider's authorization endpoint (e.g., `github.com/login/oauth/authorize`).
+Better Auth redirects to the provider's authorization endpoint (e.g., `github.com/login/oauth/authorize`).
 
 ### User authorizes
 The user grants the application access to their account.
 
 ### Callback with code
-The provider redirects back with an authorization code. Supabase exchanges it for access and refresh tokens.
+The provider redirects back to `/api/auth/[...all]` with an authorization code. Better Auth exchanges it for access and refresh tokens.
 
 ### Session created
-Supabase creates a session with a JWT. The JWT is stored in an HTTP-only cookie and sent with every request.
+Better Auth creates a session with a JWT. The JWT is stored in an HTTP-only cookie and sent with every request.
 
 </Steps>
 
+### Email OTP Flow
+
+For password-less email sign-in, the user enters their email, receives a **6-digit one-time code**, and submits it back. Better Auth verifies the code and issues the same cookie-backed session as the OAuth path.
+
 ### Session Management
 
-- Sessions are managed by Supabase (creation, refresh, revocation)
-- The Next.js middleware refreshes the session on every request
-- All database queries use the authenticated Supabase client, inheriting RLS context
-- `auth.uid()` in RLS policies ensures per-user data isolation
+- Sessions are managed by Better Auth (creation, refresh, revocation)
+- The session JWT lives in an HTTP-only cookie; the Next.js middleware validates it on every request
+- Data access runs through the app's Policy Decision Point (PDP), which sets the active org via `set_config('app.current_org', …)` before queries
+- Coarse Postgres RLS keyed on `org_id` enforces per-organization data isolation (not `auth.uid()`)
+
+Authentication is *who you are*; **authorization** is *what you can do*. Once you're signed in, the PDP decides
+every action — see [**Access Control**](/access-control) for roles, permissions, grants (allow/deny), and the
+org/team model.
 
 ## CLI Authentication (alethia)
 
@@ -107,7 +116,7 @@ When a Runner is registered (via UI or CLI), the server:
 
 1. Generates a random token
 2. Hashes it with SHA-256
-3. Stores the **hash** in `workers.token_hash`
+3. Stores the **hash** in `runners.token_hash`
 4. Returns the **plaintext** token to the user (shown once, never stored)
 
 ### Request Authentication
@@ -115,14 +124,14 @@ When a Runner is registered (via UI or CLI), the server:
 Every Runner API call includes two headers:
 
 ```
-X-Worker-ID: {worker-uuid}
-X-Worker-Token: {plaintext-token}
+X-Runner-ID: {runner-uuid}
+X-Runner-Token: {plaintext-token}
 ```
 
 The server:
-1. Looks up the worker by `X-Worker-ID`
-2. Hashes the provided `X-Worker-Token` with SHA-256
-3. Compares against `workers.token_hash`
+1. Looks up the runner by `X-Runner-ID`
+2. Hashes the provided `X-Runner-Token` with SHA-256
+3. Compares against `runners.token_hash`
 4. Rejects if mismatch (401)
 
 <Callout type="warn">
@@ -133,6 +142,6 @@ The plaintext token is shown only once at registration. If lost, the Runner must
 
 | Component | Method | Token Lifetime | Storage |
 |-----------|--------|---------------|---------|
-| **Console** (web) | Supabase OAuth | Session-based (auto-refresh) | HTTP-only cookie |
+| **Console** (web) | Better Auth (OAuth + email OTP) | Session-based (auto-refresh) | HTTP-only cookie |
 | **alethia** (CLI) | Device Code Grant | Access: 1h, Refresh: 90d | `~/.config/alethia/auth.json` |
 | **Runner** (agent) | SHA-256 token hash | Permanent (until re-registration) | Environment variable |

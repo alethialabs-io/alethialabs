@@ -1,0 +1,5 @@
+{
+  "title": "Compare",
+  "icon": "GitCompare",
+  "pages": ["index", "vs-porter", "vs-qovery", "vs-spacelift"]
+}

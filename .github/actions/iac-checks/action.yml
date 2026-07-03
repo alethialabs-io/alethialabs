@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Static IaC checks for a single OpenTofu stack/template dir — fmt + lint + security.
+# Credential-free by design, so it is safe on contributor PRs (the repo never puts cloud/state
+# secrets on PR jobs). The caller must have already run setup-opentofu (so `tofu` is on PATH).
+
+name: IaC checks
+description: tofu fmt-check + tflint + Trivy config scan over a Terraform/OpenTofu directory.
+
+inputs:
+  working-directory:
+    description: Directory to check (an OpenTofu stack or template root).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: tofu fmt (check)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: tofu fmt -check -recursive
+
+    - name: Setup tflint
+      uses: terraform-linters/setup-tflint@v4
+      with:
+        tflint_version: v0.54.0
+
+    - name: tflint
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TFLINT_CONFIG_FILE: ${{ github.workspace }}/infra/.tflint.hcl
+      # Gate on ERRORS only — the templates carry many style warnings (unused
+      # declarations, missing version constraints in sub-modules) that shouldn't
+      # fail CI. tflint exits 2 on any finding by default; --minimum-failure-severity
+      # limits the non-zero exit to real errors.
+      run: |
+        tflint --init
+        tflint --recursive --format compact --minimum-failure-severity=error
+
+    # Install trivy explicitly + run it directly, instead of aquasecurity/trivy-action:
+    # that action nests aquasecurity/setup-trivy@<sub-version>, and upstream deleted the
+    # sub-versions its releases pin (v0.2.1/v0.2.2), so the whole job fails to RESOLVE
+    # before any step runs. setup-trivy@v0.3.1 is a tag that still exists; trivy reads the
+    # same params from TRIVY_* env vars (exactly what trivy-action set internally).
+    - name: Setup Trivy
+      uses: aquasecurity/setup-trivy@v0.3.1
+
+    - name: Trivy config scan (Terraform misconfig)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TRIVY_CONFIG: ${{ github.workspace }}/infra/.trivy.yaml
+        TRIVY_EXIT_CODE: "1"
+        TRIVY_SEVERITY: HIGH,CRITICAL
+        # Skip the whole .terraform/ tree — `tofu init` pulls third-party modules
+        # (and their bundled k8s/example manifests) there; we scan OUR templates only.
+        TRIVY_SKIP_DIRS: "**/.terraform"
+        # Shared ignore file for reviewed, deliberately-accepted findings (IDs only match
+        # the resources they apply to, so it's safe to share across all template dirs).
+        TRIVY_IGNOREFILE: ${{ github.workspace }}/infra/.trivyignore
+      run: trivy config .

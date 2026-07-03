@@ -11,7 +11,7 @@ Alethia exposes three categories of API routes, each with its own authentication
 
 | Category | Auth Header | Token Type | Used By |
 |----------|-----------|------------|---------|
-| **Worker APIs** | `X-Worker-ID` + `X-Worker-Token` | SHA-256 hashed token | Runner agents |
+| **Runner APIs** | `X-Runner-ID` + `X-Runner-Token` | SHA-256 hashed token | Runner agents |
 | **CLI APIs** | `Authorization: Bearer {jwt}` | HS256 JWT (1h access, 90d refresh) | alethia CLI |
 | **Release APIs** | `Authorization: Bearer {secret}` | Static secret (`RELEASE_API_SECRET`) | CI/CD pipeline |
 
@@ -20,11 +20,11 @@ See [Authentication Flows](/concepts/authentication) for details on each mechani
 ## API Categories
 
 <Cards>
-  <Card title="Worker APIs" href="/console/api-reference/worker-apis">
+  <Card title="Runner APIs" href="/console/api-reference/runner-apis">
     Job claiming, heartbeat, status updates, log streaming, plan artifacts.
   </Card>
   <Card title="CLI APIs" href="/console/api-reference/cli-apis">
-    Zones, configurations, jobs, workers, repositories.
+    Configurations, jobs, runners, repositories.
   </Card>
   <Card title="Auth APIs" href="/console/api-reference/auth-apis">
     Device code flow: generate, exchange, refresh.

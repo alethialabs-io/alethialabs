@@ -1,15 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { createClient } from "@/lib/supabase/server";
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
+import { getServiceDb } from "@/lib/db";
+import { cliLogins } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 
+const GIT_PROVIDERS = ["github", "gitlab", "bitbucket"];
+
 export async function POST(req: Request) {
-	const supabase = await createClient();
-	const {
-		data: { session },
-	} = await supabase.auth.getSession();
+	const hdrs = await headers();
+	const session = await auth.api.getSession({ headers: hdrs });
 
 	if (!session) {
 		return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -26,22 +28,45 @@ export async function POST(req: Request) {
 		});
 	}
 
-	const supabaseServiceRole = await createServiceRoleClient();
+	// Best-effort: stash the user's first linked git provider token for the CLI
+	// (temporarily held in verification_code, during the device-code flow).
+	let providerToken: string | null = null;
+	try {
+		const accounts = await auth.api.listUserAccounts({ headers: hdrs });
+		const git = accounts.find((a) => GIT_PROVIDERS.includes(a.providerId));
+		if (git) {
+			const at = await auth.api.getAccessToken({
+				body: { providerId: git.providerId, userId: session.user.id },
+				headers: hdrs,
+			});
+			providerToken = at.accessToken ?? null;
+		}
+	} catch {
+		// No linked git provider / token unavailable — proceed without one.
+	}
 
-	const { error } = await supabaseServiceRole.from("cli_logins").upsert({
+	const values = {
 		device_code,
 		profile_id: session.user.id,
-		verification_code: session.provider_token, // Temporarily store provider token here
-	});
+		verification_code: providerToken,
+	};
 
-	if (error) {
-		console.error("Error saving CLI login attempt:", error);
+	try {
+		await getServiceDb()
+			.insert(cliLogins)
+			.values(values)
+			.onConflictDoUpdate({
+				target: cliLogins.device_code,
+				set: {
+					profile_id: values.profile_id,
+					verification_code: values.verification_code,
+				},
+			});
+	} catch (err) {
+		console.error("Error saving CLI login attempt:", err);
 		return new Response(
 			JSON.stringify({ error: "Failed to save login attempt" }),
-			{
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			}
+			{ status: 500, headers: { "Content-Type": "application/json" } },
 		);
 	}
 

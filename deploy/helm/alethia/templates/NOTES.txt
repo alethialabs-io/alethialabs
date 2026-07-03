@@ -1,0 +1,24 @@
+Alethia is installed.
+
+Release:   {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+Domain:    https://{{ .Values.domain }}  (console at /, docs at /docs)
+
+1. Point DNS for {{ .Values.domain }} at your ingress controller's external IP:
+     kubectl get svc -n {{ .Values.ingress.className }} -o wide   # or your ingress namespace
+
+2. Watch the rollout:
+     kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }} -w
+
+{{- if not .Values.secrets.existingSecret }}
+
+3. Secrets were created from values. For production, set strong values:
+     --set secrets.cliJwtSecret=$(openssl rand -hex 32) \
+     --set secrets.betterAuthSecret=$(openssl rand -hex 32) \
+     --set postgres.password=... --set postgres.appPassword=... \
+     --set objectStore.secretKey=...
+{{- end }}
+
+Images are built linux/arm64 only — pods carry a nodeSelector of
+kubernetes.io/arch=arm64. Use an ARM node pool, or clear it with
+`--set nodeSelector=null` if you publish multi-arch images.

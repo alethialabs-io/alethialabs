@@ -1,0 +1,114 @@
+---
+title: Billing, Usage & Fleet
+description: Inspect the active organization's billing and usage, and configure managed-fleet warm pools, from the alethia CLI.
+---
+
+# Billing, Usage & Fleet
+
+Three related views into an organization's plan and the platform's provisioning capacity:
+
+- **`billing`** — the active organization's plan, subscription status, seats, and period boundaries.
+- **`usage`** — current consumption: seats, runner-minutes, projects, and AI credits.
+- **`fleet`** — the managed pool of warm provisioning runners (platform-operator config).
+
+`billing` and `usage` operate on the **active organization** (set via `alethia org switch`); override
+per-invocation with `--org <id>`. Every command accepts the global
+[`-o, --output <table|json|csv>`](/cli/identity#output-formats) flag.
+
+<Callout type="info">
+`billing` and `usage` are **read-only** — manage the subscription, cards, and invoices in the
+console. No Stripe customer ids or charge amounts are ever returned by the CLI.
+</Callout>
+
+## `alethia billing`
+
+Shows the active organization's billing state as a detail card: its plan, subscription status, the
+purchased seat count, the Stripe subscription id, and the trial / current-period boundaries. An
+organization with no subscription reads as the free `community` plan.
+
+```bash
+alethia billing
+alethia billing -o json
+```
+
+| Field          | Meaning                                                            |
+| -------------- | ----------------------------------------------------------------- |
+| `Plan`         | `community`, `team`, or `enterprise`                              |
+| `Status`       | Subscription status (`active`, `trialing`, `none`, …)            |
+| `Seats`        | Purchased seats (per-seat plans); a dash on flat/no subscription |
+| `Subscription` | Stripe subscription id, if any                                   |
+| `Trial ends`   | When a `trialing` subscription's trial ends                      |
+| `Period ends`  | End of the current paid period                                   |
+
+## `alethia usage`
+
+Shows the active organization's current usage as a detail card: billable seats used vs the purchased
+cap, managed-runner minutes consumed this period, the project count, and AI credits used in the
+trailing week vs the plan's weekly grant.
+
+```bash
+alethia usage
+alethia usage -o json
+```
+
+| Field            | Meaning                                                       |
+| ---------------- | ------------------------------------------------------------- |
+| `Seats`          | Billable seats used **/** purchased cap                       |
+| `Runner minutes` | Managed-runner minutes consumed this billing period           |
+| `Projects`       | Projects in the organization                                  |
+| `AI credits`     | Included AI credits used this week **/** the weekly grant     |
+
+## `alethia fleet`
+
+The **managed fleet** is the platform's pool of warm provisioning runners — one pool per cloud — that
+the Fleet Controller reconciles toward a declarative target (warm floor, ceiling, locations, version).
+
+<Callout type="warn">
+Fleet configuration is **platform-operator infrastructure** (the pools are global, not per-org). It
+is only available on **self-managed deployments**, to organization **owners/admins**. On the hosted
+service `fleet list` returns an empty list, and `fleet set` is refused.
+</Callout>
+
+### `fleet list`
+
+Lists the configured warm pools. On a TTY this opens the interactive table; with `--output json|csv`
+(or `--no-input`) it prints a static table.
+
+```bash
+alethia fleet list
+alethia fleet list -o json
+```
+
+Columns: `Provider`, `Enabled`, `Warm` (floor), `Max` (ceiling), `Slots` (concurrent jobs per
+runner), `Locations`, and `Version` (a pinned version, or the tracked channel).
+
+### `fleet set <provider>`
+
+Updates the warm pool for a provider (`aws`, `gcp`, `azure`). Only the flags you pass are changed; the
+rest keep their stored value. A pinned `--version` and a release `--channel` are **mutually exclusive**
+— a version pin clears the channel.
+
+| Flag         | Updates                                              |
+| ------------ | --------------------------------------------------- |
+| `--warm-min` | Always-warm floor of runners                        |
+| `--max`      | Hard ceiling on instances                           |
+| `--slots`    | Concurrent jobs per runner                          |
+| `--enabled`  | Enable (`true`) or pause (`false`) the pool         |
+| `--channel`  | Release channel to track (e.g. `stable`)            |
+| `--version`  | Pin an exact runner version (clears the channel)    |
+
+```bash
+# Raise the AWS pool's warm floor and ceiling
+alethia fleet set aws --warm-min 2 --max 20
+
+# Pin a runner version (clears any tracked channel)
+alethia fleet set gcp --version v1.4.0
+
+# Pause a pool (drains its runners — prompts for confirmation)
+alethia fleet set azure --enabled=false
+```
+
+<Callout type="info">
+Disabling a pool drains its runners (a capacity reduction), so `fleet set --enabled=false` prompts
+for confirmation on a TTY. Pass `--no-input` in scripts.
+</Callout>

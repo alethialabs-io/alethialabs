@@ -1,0 +1,39 @@
+---
+title: Project Basics
+description: Project name, environment stage, and Terraform version.
+---
+
+# Project Basics
+
+The first section of the Design a Project form establishes the project identity and target environment.
+
+## Fields
+
+| Field | Type | Validation | Description |
+|-------|------|-----------|-------------|
+| **Project Name** | Text input | Required, lowercase, a-z0-9 + hyphens, max 25 chars | Used in resource naming and Terraform state paths |
+| **Environment Stage** | Select | Required | `development`, `staging`, or `production` |
+| **Terraform Version** | Select | Required | Default: 1.11.4. Also available: 1.10.5, 1.9.8 |
+
+## Project Name
+
+The project name is used extensively:
+- Resource naming in Terraform (e.g., `{project}-{env}-eks-cluster`)
+- State file path (see [Terraform State](/concepts/terraform-state))
+- Display in the UI (project cards, job listings)
+
+<Callout type="info">
+Names are enforced lowercase with only letters, numbers, and hyphens. This ensures compatibility with cloud resource naming constraints across all three providers.
+</Callout>
+
+## Environment Stage
+
+Three options with distinct implications:
+
+| Stage | Purpose | Naming Convention |
+|-------|---------|------------------|
+| `development` | Dev/testing | `{project}-dev-*` |
+| `staging` | Pre-production | `{project}-staging-*` |
+| `production` | Production workloads | `{project}-prod-*` |
+
+The environment stage affects Terraform state isolation — each stage gets its own state file, even within the same project and region.

@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# gitleaks config. Extends the default rules; allowlists the repo's known
+# non-secrets (the self-host dev defaults, build placeholders, and fixtures).
+# CI scans only the PR/push diff, so historical findings don't block new PRs.
+
+title = "Alethia gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known non-secrets — dev defaults, placeholders, test fixtures."
+regexTarget = "match"
+regexes = [
+  # docker-compose / .env.example self-host dev defaults (never used in prod).
+  '''alethia-dev-secret''',
+  '''alethia-app-dev-secret''',
+  '''openfga-dev-secret''',
+  '''-dev-secret''',
+  '''-dev-password''',
+  # ASM_SECRET_ID is the AWS Secrets Manager secret PATH (alethia/prod/env), not a
+  # secret value — it's public config in the deploy/infra workflows. generic-api-key
+  # flags the `ASM_SECRET_ID: alethia/prod/env` assignment; allowlist the marker.
+  '''ASM_SECRET_ID''',
+]
+paths = [
+  '''(^|/).*_test\.go$''',
+  '''(^|/)testdata/''',
+  '''\.example$''',
+  '''(^|/)\.env\.example$''',
+]

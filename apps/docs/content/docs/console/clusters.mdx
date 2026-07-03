@@ -5,7 +5,7 @@ description: Viewing provisioned Kubernetes clusters with ArgoCD access and kube
 
 # Clusters
 
-The Clusters page (`/dashboard/clusters`) shows all provisioned Kubernetes clusters from active specs.
+The Clusters page (`/dashboard/clusters`) shows all provisioned Kubernetes clusters from active projects.
 
 ## Cluster Cards
 
@@ -13,7 +13,7 @@ Each cluster displays:
 
 | Field | Description |
 |-------|-------------|
-| **Project Name** | Spec's project name + "Active" badge |
+| **Project Name** | The project's name + "Active" badge |
 | **Provider** | AWS/GCP/Azure icon with region and environment |
 | **K8s Version** | Kubernetes version (e.g., 1.32) |
 | **Cluster Endpoint** | API server URL (copy button) |
@@ -57,8 +57,8 @@ Every cluster comes with these components installed via ArgoCD (see [GitOps & Ar
 
 ## Real-time Updates
 
-The Clusters page subscribes to `specs` table UPDATE events. When a spec's status changes to ACTIVE (deploy completes), the clusters list refreshes automatically to show the new cluster.
+The Clusters page subscribes to `projects` table UPDATE events. When a project's status changes to ACTIVE (deploy completes), the clusters list refreshes automatically to show the new cluster.
 
 ## Data Source
 
-Cluster information comes from the DEPLOY job's `finalizeDeployment()` server action, which extracts Terraform outputs (cluster name, endpoint, ARN, ArgoCD URL, database/cache endpoints) and writes them to the spec's component tables.
+Cluster information comes from the DEPLOY job's `finalizeDeployment()` server action, which extracts Terraform outputs (cluster name, endpoint, ARN, ArgoCD URL, database/cache endpoints) and writes them to the project's component tables.

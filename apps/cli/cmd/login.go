@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -28,6 +28,38 @@ type cliPreferences struct {
 	HideLoginWarning bool `json:"hide_login_warning"`
 }
 
+// resolveLogin handles the "not authenticated" branch of getAuthTokenInternal:
+// it errors fast when prompting is disabled, otherwise offers an interactive
+// "log in now?" prompt, runs the device flow, and returns the fresh token. This
+// is irreducible interactive glue, kept out of the unit-tested token-state logic.
+func resolveLogin(credsPath string, promptLogin bool) (string, error) {
+	if !promptLogin {
+		return "", fmt.Errorf("authentication required. Please run `alethia login`")
+	}
+
+	confirmLogin, err := ui.AuthRequiredPrompt()
+	if err != nil || !confirmLogin {
+		return "", fmt.Errorf("authentication required. Please run `alethia login`")
+	}
+
+	if err := performLoginFlow(); err != nil {
+		return "", err
+	}
+
+	// Read credentials again after successful login.
+	file, err := os.ReadFile(credsPath)
+	if err != nil {
+		return "", fmt.Errorf("error reading credentials file after login: %w", err)
+	}
+
+	var creds types.ExchangeResponse
+	if err := json.Unmarshal(file, &creds); err != nil {
+		return "", fmt.Errorf("error parsing credentials file after login: %w", err)
+	}
+
+	return creds.AccessToken, nil
+}
+
 func getPreferencesPath() (string, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
@@ -42,7 +74,7 @@ func loadPreferences() cliPreferences {
 	if err == nil {
 		data, err := os.ReadFile(path)
 		if err == nil {
-			json.Unmarshal(data, &prefs)
+			_ = json.Unmarshal(data, &prefs)
 		}
 	}
 	return prefs
@@ -51,9 +83,9 @@ func loadPreferences() cliPreferences {
 func savePreferences(prefs cliPreferences) {
 	path, err := getPreferencesPath()
 	if err == nil {
-		os.MkdirAll(filepath.Dir(path), 0755)
+		_ = os.MkdirAll(filepath.Dir(path), 0755)
 		data, _ := json.MarshalIndent(prefs, "", "  ")
-		os.WriteFile(path, data, 0644)
+		_ = os.WriteFile(path, data, 0644)
 	}
 }
 
@@ -70,6 +102,7 @@ type model struct {
 func initialModel() model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
+	s.Style = ui.SpinnerStyle
 	return model{
 		spinner: s,
 		loading: true,
@@ -154,32 +187,26 @@ func pollForToken(deviceCode, exchangeURL string) tea.Cmd {
 	}
 }
 
-
-
 func saveTokens(tokens *types.ExchangeResponse) {
 	credsPath, err := getCredentialsPath()
 	if err != nil {
-		fmt.Printf("Error getting credentials path: %v\n", err)
-		os.Exit(1)
+		failf("Error getting credentials path: %v", err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(credsPath), 0755); err != nil {
-		fmt.Printf("Error creating config directory: %v\n", err)
-		os.Exit(1)
+		failf("Error creating config directory: %v", err)
 	}
 
 	file, err := os.Create(credsPath)
 	if err != nil {
-		fmt.Printf("Error creating credentials file: %v\n", err)
-		os.Exit(1)
+		failf("Error creating credentials file: %v", err)
 	}
 	defer file.Close()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(tokens); err != nil {
-		fmt.Printf("Error writing tokens to file: %v\n", err)
-		os.Exit(1)
+		failf("Error writing tokens to file: %v", err)
 	}
 }
 
@@ -189,14 +216,14 @@ func performLoginFlow() error {
 	prefs := loadPreferences()
 
 	if !prefs.HideLoginWarning {
-		infoBox := lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorText)).Border(lipgloss.RoundedBorder()).Padding(1, 2).BorderForeground(lipgloss.Color(ui.ColorAccent))
+		infoBox := lipgloss.NewStyle().Foreground(ui.InkPrimary).Border(lipgloss.RoundedBorder()).Padding(1, 2).BorderForeground(ui.InkMuted)
 
 		msg := fmt.Sprintf("To use the Alethia CLI, you must have an account on the Alethia.\nIf you don't have one, register at:\n%s", ui.LinkStyle.Render(WebOrigin()+"/auth/signin"))
 		fmt.Println(infoBox.Render(msg))
 		fmt.Println()
 
 		var hideWarning bool
-		err := huh.NewForm(
+		err := ui.NewForm(
 			huh.NewGroup(
 				huh.NewConfirm().
 					Title("Hide this message in the future?").
@@ -238,12 +265,22 @@ func performLoginFlow() error {
 
 // --- Cobra Command ---
 
-var forceLogin bool
+var (
+	forceLogin     bool
+	loginWebOrigin string
+)
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate with the platform",
 	Run: func(cmd *cobra.Command, args []string) {
+		// 0. Persist a control-plane URL passed for this login (self-host/dev).
+		if loginWebOrigin != "" {
+			if err := runConfigSet(os.Stdout, "web-origin", loginWebOrigin); err != nil {
+				fail(err)
+			}
+		}
+
 		// 1. Check if already authenticated (unless forced)
 		if !forceLogin {
 			if _, err := getAuthTokenInternal(false); err == nil {
@@ -251,9 +288,9 @@ var loginCmd = &cobra.Command{
 				credsPath, _ := getCredentialsPath()
 				file, _ := os.ReadFile(credsPath)
 				var creds types.ExchangeResponse
-				json.Unmarshal(file, &creds)
-				
-					fmt.Println(ui.TextStyle.Render(fmt.Sprintf("You are already logged in as: %s", ui.CyanStyle.Render(creds.UserEmail))))
+				_ = json.Unmarshal(file, &creds)
+
+				fmt.Println(ui.TextStyle.Render(fmt.Sprintf("You are already logged in as: %s", ui.CyanStyle.Render(creds.UserEmail))))
 				fmt.Println(ui.TextStyle.Render("Use --force to log in again."))
 				return
 			}
@@ -261,8 +298,7 @@ var loginCmd = &cobra.Command{
 
 		// 2. Proceed with login flow
 		if err := performLoginFlow(); err != nil {
-			ui.Error(err.Error())
-			os.Exit(1)
+			fail(err)
 		}
 	},
 }
@@ -270,4 +306,5 @@ var loginCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(loginCmd)
 	loginCmd.Flags().BoolVarP(&forceLogin, "force", "f", false, "Force re-authentication")
+	loginCmd.Flags().StringVar(&loginWebOrigin, "web-origin", "", "Control-plane URL to use & persist (self-host/dev)")
 }

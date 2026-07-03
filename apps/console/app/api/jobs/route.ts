@@ -1,34 +1,53 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { verifyCliToken } from "@/lib/cli/auth";
-import { notifyScaler } from "@/lib/scaler";
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
 import { createHash } from "crypto";
+import { type SQL, and, count, desc, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { verifyCliToken } from "@/lib/cli/auth";
+import { cliJson } from "@/lib/cli/respond";
+import { getServiceDb } from "@/lib/db";
+import { jobs, runners, projectEnvironments, projects } from "@/lib/db/schema";
+import { queryProjectFull } from "@/lib/queries/project-full";
+import { notifyScaler } from "@/lib/scaler";
+import { cliJobResponse, cliJobsPageResponse } from "@/lib/validations/cli-contract";
 
+// Job types the CLI is allowed to queue through this endpoint (a subset of the
+// full provision_job_type enum — runner-lifecycle types are created elsewhere).
+type CreatableJobType = "DEPLOY" | "DESTROY" | "PLAN" | "DESTROY_RUNNER";
+
+/** Narrows an untrusted body value to a CreatableJobType (no cast). */
+function parseJobType(v: unknown): CreatableJobType | null {
+	switch (v) {
+		case "DEPLOY":
+		case "DESTROY":
+		case "PLAN":
+		case "DESTROY_RUNNER":
+			return v;
+		default:
+			return null;
+	}
+}
+
+/** Queues a provisioning job for the CLI user, snapshotting the project config. */
 export async function POST(req: Request) {
 	const { payload, error: authError } = await verifyCliToken(req);
 	if (authError) return authError;
 
 	const userId = payload?.sub;
 	if (!userId) {
-		return NextResponse.json(
-			{ error: "Invalid token payload" },
-			{ status: 401 },
-		);
+		return NextResponse.json({ error: "Invalid token payload" }, { status: 401 });
 	}
 
 	try {
 		const body = await req.json();
 		const {
 			job_type,
-			vineyard_id,
 			configuration_id,
-			cluster_id,
 			cloud_identity_id,
 			config_snapshot,
-			assigned_worker_id,
+			assigned_runner_id,
 			plan_job_id,
 		} = body;
 
@@ -39,54 +58,48 @@ export async function POST(req: Request) {
 			);
 		}
 
-		const validJobTypes = [
-			"DEPLOY",
-			"DESTROY",
-			"PLAN",
-			"DESTROY_WORKER",
-		];
-		if (!validJobTypes.includes(job_type)) {
+		const jobType = parseJobType(job_type);
+		if (!jobType) {
 			return NextResponse.json(
 				{
-					error: `job_type must be one of: ${validJobTypes.join(", ")}`,
+					error: "job_type must be one of: DEPLOY, DESTROY, PLAN, DESTROY_RUNNER",
 				},
 				{ status: 400 },
 			);
 		}
 
-		if ((job_type === "DEPLOY" || job_type === "PLAN") && !configuration_id) {
+		if ((jobType === "DEPLOY" || jobType === "PLAN") && !configuration_id) {
 			return NextResponse.json(
 				{ error: "configuration_id is required for DEPLOY and PLAN jobs" },
 				{ status: 400 },
 			);
 		}
 
-		if (job_type === "DESTROY" && !configuration_id) {
+		if (jobType === "DESTROY" && !configuration_id) {
 			return NextResponse.json(
 				{ error: "configuration_id is required for DESTROY jobs" },
 				{ status: 400 },
 			);
 		}
 
-		const supabase = await createServiceRoleClient();
+		const db = getServiceDb();
 
-		let snapshot = config_snapshot || {};
+		let snapshot: Record<string, unknown> = config_snapshot || {};
 		let configHash: string | null = null;
-		let resolvedCloudIdentityId = cloud_identity_id || null;
-		let resolvedVineyardId = vineyard_id || null;
+		let resolvedCloudIdentityId: string | null = cloud_identity_id || null;
+		// M1: the CLI job targets the project's default environment (status + identity).
+		let resolvedEnvironmentId: string | null = null;
 
 		if (
-			(job_type === "DEPLOY" || job_type === "PLAN" || job_type === "DESTROY") &&
+			(jobType === "DEPLOY" || jobType === "PLAN" || jobType === "DESTROY") &&
 			configuration_id
 		) {
-			const { data: config, error: configError } = await supabase
-				.from("vine_full")
-				.select("*")
-				.eq("id", configuration_id)
-				.eq("user_id", userId)
-				.single();
+			const [config] = await queryProjectFull(db, {
+				id: configuration_id,
+				user_id: userId,
+			});
 
-			if (configError || !config) {
+			if (!config) {
 				return NextResponse.json(
 					{ error: "Configuration not found or unauthorized" },
 					{ status: 404 },
@@ -101,55 +114,67 @@ export async function POST(req: Request) {
 			if (!resolvedCloudIdentityId && config.cloud_identity_id) {
 				resolvedCloudIdentityId = config.cloud_identity_id;
 			}
-			if (!resolvedVineyardId && config.vineyard_id) {
-				resolvedVineyardId = config.vineyard_id;
-			}
+
+			const [defEnv] = await db
+				.select({ id: projectEnvironments.id })
+				.from(projectEnvironments)
+				.where(
+					and(
+						eq(projectEnvironments.project_id, configuration_id),
+						eq(projectEnvironments.is_default, true),
+					),
+				)
+				.limit(1);
+			resolvedEnvironmentId = defEnv?.id ?? null;
 		}
 
-		const { data: job, error: insertError } = await supabase
-			.from("provision_jobs")
-			.insert({
+		const [job] = await db
+			.insert(jobs)
+			.values({
 				user_id: userId,
-				vineyard_id: resolvedVineyardId,
+				environment_id: resolvedEnvironmentId,
 				cloud_identity_id: resolvedCloudIdentityId,
-				job_type: job_type as "DEPLOY" | "DESTROY" | "PLAN" | "DESTROY_WORKER",
-				vine_id: configuration_id || null,
+				job_type: jobType,
+				project_id: configuration_id || null,
 				config_snapshot: snapshot,
 				configuration_hash: configHash,
 				status: "QUEUED",
-				assigned_worker_id: assigned_worker_id || null,
+				assigned_runner_id: assigned_runner_id || null,
 				plan_job_id: plan_job_id || null,
 			})
-			.select()
-			.single();
+			.returning();
 
-		if (insertError) {
-			console.error("Failed to create job:", insertError);
-			return NextResponse.json(
-				{ error: "Failed to queue job: " + insertError.message },
-				{ status: 500 },
-			);
-		}
-
+		// M1: provisioning status lives on the targeted environment.
 		if (
-			(job_type === "DEPLOY" || job_type === "PLAN") &&
-			configuration_id
+			(jobType === "DEPLOY" || jobType === "PLAN") &&
+			resolvedEnvironmentId
 		) {
-			await supabase
-				.from("vines")
-				.update({ status: "QUEUED" })
-				.eq("id", configuration_id);
+			await db
+				.update(projectEnvironments)
+				.set({ status: "QUEUED" })
+				.where(eq(projectEnvironments.id, resolvedEnvironmentId));
 		}
 
-		if (job_type === "DESTROY" && configuration_id) {
-			await supabase
-				.from("vines")
-				.update({ status: "DESTROYING" })
-				.eq("id", configuration_id);
+		if (jobType === "DESTROY" && resolvedEnvironmentId) {
+			await db
+				.update(projectEnvironments)
+				.set({ status: "DESTROYING" })
+				.where(eq(projectEnvironments.id, resolvedEnvironmentId));
+		}
+
+		// Ops alert (free): a teardown was requested. org_id is trigger-populated on insert.
+		if (jobType === "DESTROY" && job.org_id) {
+			emitAlertEventSafe(job.org_id, "system.job.destroy_requested", {
+				title: "Destroy requested",
+				severity: "warning",
+				job_id: job.id,
+				job_type: "DESTROY",
+				project_id: configuration_id,
+			});
 		}
 
 		notifyScaler();
-		return NextResponse.json({ job }, { status: 201 });
+		return cliJson(cliJobResponse, { job }, { status: 201 });
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";
@@ -157,57 +182,51 @@ export async function POST(req: Request) {
 	}
 }
 
+/** Lists the CLI user's jobs with the project project name + runner name attached. */
 export async function GET(req: Request) {
 	const { payload, error: authError } = await verifyCliToken(req);
 	if (authError) return authError;
 
 	const userId = payload?.sub;
 	if (!userId) {
-		return NextResponse.json(
-			{ error: "Invalid token payload" },
-			{ status: 401 },
-		);
+		return NextResponse.json({ error: "Invalid token payload" }, { status: 401 });
 	}
 
 	const { searchParams } = new URL(req.url);
 	const status = searchParams.get("status");
-	const vineyardId = searchParams.get("vineyard_id");
 	const limit = Math.min(parseInt(searchParams.get("limit") || "20", 10), 100);
 	const offset = parseInt(searchParams.get("offset") || "0", 10);
 
-	const supabase = await createServiceRoleClient();
+	const db = getServiceDb();
 
-	let query = supabase
-		.from("provision_jobs")
-		.select(
-			"*, vines(project_name), workers!provision_jobs_worker_id_fkey(name)",
-			{ count: "exact" },
-		)
-		.eq("user_id", userId)
-		.order("created_at", { ascending: false })
-		.range(offset, offset + limit - 1);
+	const conds: SQL[] = [eq(jobs.user_id, userId)];
+	if (status) conds.push(sql`${jobs.status}::text = ${status}`);
+	const whereExpr = and(...conds);
 
-	if (status) {
-		query = query.eq("status", status as any);
-	}
+	const rows = await db
+		.select({
+			job: jobs,
+			project_name: projects.project_name,
+			runner_name: runners.name,
+		})
+		.from(jobs)
+		.leftJoin(projects, eq(jobs.project_id, projects.id))
+		.leftJoin(runners, eq(jobs.runner_id, runners.id))
+		.where(whereExpr)
+		.orderBy(desc(jobs.created_at))
+		.limit(limit)
+		.offset(offset);
 
-	if (vineyardId) {
-		query = query.eq("vineyard_id", vineyardId);
-	}
+	const [{ value: total }] = await db
+		.select({ value: count() })
+		.from(jobs)
+		.where(whereExpr);
 
-	const { data, error, count } = await query;
-
-	if (error) {
-		return NextResponse.json({ error: error.message }, { status: 500 });
-	}
-
-	const jobs = (data ?? []).map((job: any) => ({
-		...job,
-		vine_name: job.vines?.project_name ?? null,
-		worker_name: job.workers?.name ?? null,
-		vines: undefined,
-		workers: undefined,
+	const result = rows.map((r) => ({
+		...r.job,
+		project_name: r.project_name ?? null,
+		runner_name: r.runner_name ?? null,
 	}));
 
-	return NextResponse.json({ jobs, total: count ?? 0, limit, offset });
+	return cliJson(cliJobsPageResponse, { jobs: result, total, limit, offset });
 }

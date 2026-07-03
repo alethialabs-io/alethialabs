@@ -11,31 +11,45 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/accessanalyzer"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
+	"github.com/alethialabs-io/alethialabs/packages/core/categories"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	alethiaAws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
 	"github.com/alethialabs-io/alethialabs/packages/core/infracost"
-	"github.com/alethialabs-io/alethialabs/packages/core/terraform"
+	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
+	"github.com/alethialabs-io/alethialabs/packages/core/verify"
+	"github.com/aws/aws-sdk-go-v2/config"
+	tfjson "github.com/hashicorp/terraform-json"
 )
 
 type DeployParams struct {
-	VineConfig      *types.VineConfig
-	Provider        string
-	PlanFile        string
-	DryRun          bool
-	UpdateInfra     bool
-	InfracostToken  string
-	GitAccessToken  string
-	TemplatesDir    string
-	SupabaseBackend *cloud.SupabaseBackendConfig
-	Stdout          io.Writer
-	Stderr          io.Writer
-	ApiClient       *api.Client
-	DeploymentID    string
+	ProjectConfig  *types.ProjectConfig
+	Provider       string
+	PlanFile       string
+	DryRun         bool
+	UpdateInfra    bool
+	InfracostToken string
+	GitAccessToken string
+	TemplatesDir   string
+	// CategoriesDir is the root of the composable per-category modules
+	// (infra/templates/categories). When set, pluggable providers selected on the
+	// Project resources are composed into the plan; native resources are guarded off via tfvars.
+	CategoriesDir string
+	S3Backend     *cloud.S3BackendConfig
+	Stdout        io.Writer
+	Stderr        io.Writer
+	ApiClient     *api.Client
+	DeploymentID  string
+	// VerifyOverride, when set, waives specific failing verification controls so
+	// a fail-closed apply can proceed deliberately. Nil means no waiver (the
+	// default — any hard control failure blocks apply).
+	VerifyOverride *verify.Override
 }
 
 // PlanResult holds structured output from a deployment (dry-run or full apply).
@@ -48,13 +62,28 @@ type PlanResult struct {
 	ClusterEndpoint     string
 	ArgocdURL           string
 	ArgocdAdminPassword string
+	// VerifyReport is the deterministic verification gate's result for this plan
+	// (nil if the plan JSON could not be produced). On a real apply a blocking
+	// verdict stops the apply before any infrastructure changes.
+	VerifyReport *verify.Report
+	// VerifyReceipt is the per-apply evidence receipt sealing the report to the
+	// plan hash + tool versions. Signed when a signing key is configured
+	// (Algorithm "ed25519"); otherwise attached unsigned (Algorithm "none").
+	VerifyReceipt *verify.SignedReceipt
 }
 
-// RunDeployV2 executes a deployment using the provider-agnostic VineConfig and CloudProvider interface.
+// RunDeployV2 executes a deployment using the provider-agnostic ProjectConfig and CloudProvider interface.
 func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) {
-	vc := params.VineConfig
+	vc := params.ProjectConfig
 	if vc == nil {
-		return nil, fmt.Errorf("VineConfig is required for RunDeployV2")
+		return nil, fmt.Errorf("ProjectConfig is required for RunDeployV2")
+	}
+
+	// Enforce placement discipline before anything else: a CORE resource on a
+	// foreign cloud is a hot cross-cloud edge we can't provision yet. Fires on
+	// dry-run (plan) too, so the user never reaches apply.
+	if err := ValidatePlacement(vc); err != nil {
+		return nil, err
 	}
 
 	provider, err := cloud.NewCloudProvider(params.Provider)
@@ -101,74 +130,102 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		return nil, fmt.Errorf("git-based deployment not yet supported in V2; use TemplatesDir")
 	}
 
-	tf, err := terraform.NewTerraformCLI(ctx, vc.TerraformVersion, tfDir, stdout, stderr)
+	tf, err := tofu.NewTofuCLI(ctx, vc.IacVersion, tfDir, stdout, stderr)
 	if err != nil {
-		return nil, fmt.Errorf("terraform init failed: %w", err)
+		return nil, fmt.Errorf("tofu init failed: %w", err)
 	}
 
 	tfvars := provider.ProviderTfvars(vc)
 
-	if !vc.Network.ProvisionNetwork && vc.Network.NetworkID != "" && provider.Name() == "aws" {
-		tfvars["vpc_id"] = vc.Network.NetworkID
-		fmt.Fprintf(stdout, "Using existing VPC %s — looking up subnets...\n", vc.Network.NetworkID)
-		ec2Client, ec2Err := alethiaAws.NewEC2Client(ctx, alethiaAws.AWSOptions{Region: vc.Region})
-		if ec2Err != nil {
-			fmt.Fprintf(stderr, "Warning: failed to create EC2 client for subnet lookup: %v\n", ec2Err)
-		} else {
-			subnets, subErr := ec2Client.ListSubnets(ctx, vc.Network.NetworkID)
-			if subErr != nil {
-				fmt.Fprintf(stderr, "Warning: failed to list subnets: %v\n", subErr)
+	// Brownfield: attach to an EXISTING network instead of creating one. AWS resolves the VPC's subnets
+	// here (EC2 API); GCP/Azure pass the network id and the tofu template data-sources the network + a
+	// subnet in-region (keeps the per-cloud subnet nuance in HCL). See infra/templates/project/*.
+	if !vc.Network.ProvisionNetwork && vc.Network.NetworkID != "" {
+		switch provider.Name() {
+		case "aws":
+			tfvars["vpc_id"] = vc.Network.NetworkID
+			fmt.Fprintf(stdout, "Using existing VPC %s — looking up subnets...\n", vc.Network.NetworkID)
+			ec2Client, ec2Err := alethiaAws.NewEC2Client(ctx, alethiaAws.AWSOptions{Region: vc.Region})
+			if ec2Err != nil {
+				fmt.Fprintf(stderr, "Warning: failed to create EC2 client for subnet lookup: %v\n", ec2Err)
 			} else {
-				privateIDs := make([]string, 0)
-				publicIDs := make([]string, 0)
-				for _, s := range subnets {
-					if s.MapPublicIpOnLaunch {
-						publicIDs = append(publicIDs, s.ID)
-					} else {
-						privateIDs = append(privateIDs, s.ID)
+				subnets, subErr := ec2Client.ListSubnets(ctx, vc.Network.NetworkID)
+				if subErr != nil {
+					fmt.Fprintf(stderr, "Warning: failed to list subnets: %v\n", subErr)
+				} else {
+					privateIDs := make([]string, 0)
+					publicIDs := make([]string, 0)
+					for _, s := range subnets {
+						if s.MapPublicIpOnLaunch {
+							publicIDs = append(publicIDs, s.ID)
+						} else {
+							privateIDs = append(privateIDs, s.ID)
+						}
 					}
+					if len(publicIDs) == 0 {
+						publicIDs = privateIDs
+					}
+					if len(privateIDs) == 0 {
+						privateIDs = publicIDs
+					}
+					tfvars["vpc_private_subnet_ids"] = privateIDs
+					tfvars["vpc_public_subnet_ids"] = publicIDs
+					fmt.Fprintf(stdout, "Found %d private and %d public subnets\n", len(privateIDs), len(publicIDs))
 				}
-				if len(publicIDs) == 0 {
-					publicIDs = privateIDs
-				}
-				if len(privateIDs) == 0 {
-					privateIDs = publicIDs
-				}
-				tfvars["vpc_private_subnet_ids"] = privateIDs
-				tfvars["vpc_public_subnet_ids"] = publicIDs
-				fmt.Fprintf(stdout, "Found %d private and %d public subnets\n", len(privateIDs), len(publicIDs))
 			}
+		case "gcp":
+			// Self-link (projects/…/global/networks/…). The template data-sources the network + a
+			// subnetwork in var.region (with its pod/service secondary ranges).
+			tfvars["network_id"] = vc.Network.NetworkID
+			fmt.Fprintf(stdout, "Using existing VPC network %s — the template resolves a subnet in %s.\n", vc.Network.NetworkID, vc.Region)
+		case "azure":
+			// VNet resource id. The template data-sources the VNet + a subnet for AKS.
+			tfvars["vnet_id"] = vc.Network.NetworkID
+			fmt.Fprintf(stdout, "Using existing VNet %s — the template resolves an AKS subnet.\n", vc.Network.NetworkID)
 		}
 	}
 
-	if params.SupabaseBackend == nil {
-		return nil, fmt.Errorf("SupabaseBackend config is required for state storage")
+	if params.S3Backend == nil {
+		return nil, fmt.Errorf("S3Backend config is required for state storage")
 	}
-	backendFile, err := params.SupabaseBackend.WriteBackendHCL(tfDir, vc.VineyardID, vc.ProjectName, vc.EnvironmentStage, vc.Region)
+	if err := params.S3Backend.EnsureBucket(ctx); err != nil {
+		return nil, fmt.Errorf("failed to ensure state bucket: %w", err)
+	}
+	backendFile, err := params.S3Backend.WriteBackendHCL(tfDir, vc.ProjectName, vc.EnvironmentStage, vc.Region)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write backend config: %w", err)
 	}
-	fmt.Fprintf(stdout, "State backend: Supabase S3 (bucket=%s)\n", params.SupabaseBackend.Bucket)
+	fmt.Fprintf(stdout, "State backend: S3 (bucket=%s)\n", params.S3Backend.Bucket)
 
 	fmt.Fprintf(stdout, "DEBUG provider=%s, project=%v, region=%v, provision_network=%v, network_id=%q, cidr=%q\n",
 		provider.Name(), tfvars["project_name"], vc.Region, vc.Network.ProvisionNetwork, vc.Network.NetworkID, vc.Network.CIDRBlock)
 
-	varFile, err := terraform.OverrideTfvarsFromMap(tfDir, tfvars)
+	// Compose pluggable per-category connector modules (Cloudflare DNS, Vault,
+	// Docker Hub, observability). This merges their tfvars (including decrypted
+	// secrets resolved at claim time), copies the modules into the work dir, and
+	// sets the native-guard vars so the cluster cloud skips its native resource.
+	if composed, composeErr := categories.Compose(tfDir, params.CategoriesDir, vc, tfvars, stdout); composeErr != nil {
+		return nil, fmt.Errorf("connector composition failed: %w", composeErr)
+	} else if composed > 0 {
+		fmt.Fprintf(stdout, "Composed %d pluggable connector module(s).\n", composed)
+	}
+
+	varFile, err := tofu.OverrideTfvarsFromMap(tfDir, tfvars)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write tfvars: %w", err)
 	}
 
-	planFile, err := filepath.Abs(filepath.Join(tfDir, "terraform.plan.out"))
+	planFile, err := filepath.Abs(filepath.Join(tfDir, "tofu.plan.out"))
 	if err != nil {
 		return nil, err
 	}
 
-	// Suspend AWS env creds during init so the S3 backend uses inline Supabase creds from backend.hcl
-	// (ECS task role always sets AWS env vars, which would override the Supabase S3 endpoint)
+	// Suspend AWS env creds during init so the S3 backend uses inline creds from backend.hcl
+	// (ECS task role always sets AWS env vars, which would override the S3 endpoint)
 	savedCreds := suspendAWSEnvCreds()
 	if err := tf.InitWithBackendFile(ctx, backendFile, false); err != nil {
 		restoreAWSEnvCreds(savedCreds)
-		return nil, fmt.Errorf("terraform init failed: %w", err)
+		return nil, fmt.Errorf("tofu init failed: %w", err)
 	}
 	restoreAWSEnvCreds(savedCreds)
 
@@ -177,7 +234,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		planFile = params.PlanFile
 	} else {
 		if _, err := tf.Plan(ctx, varFile, planFile); err != nil {
-			return nil, fmt.Errorf("terraform plan failed: %w", err)
+			return nil, fmt.Errorf("tofu plan failed: %w", err)
 		}
 	}
 
@@ -186,17 +243,57 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	planJSON, showErr := tf.ShowPlanJSON(ctx, planFile)
 	planJSONFile := ""
 	if showErr != nil {
-		fmt.Fprintf(stdout, "Warning: terraform show -json failed: %v\n", showErr)
+		fmt.Fprintf(stdout, "Warning: tofu show -json failed: %v\n", showErr)
 	}
 	if planJSON != nil {
-		planJSONFile = filepath.Join(tmpRoot, "terraform.plan.json")
+		planJSONFile = filepath.Join(tmpRoot, "tofu.plan.json")
 		if jsonBytes, marshalErr := json.Marshal(planJSON); marshalErr == nil {
-			os.WriteFile(planJSONFile, jsonBytes, 0644)
+			_ = os.WriteFile(planJSONFile, jsonBytes, 0644)
 			var parsed map[string]interface{}
 			if json.Unmarshal(jsonBytes, &parsed) == nil {
 				result.PlanJSON = parsed
 			}
 		}
+	}
+
+	// Verification gate (elench Phase 0). Evaluate the plan against the authored
+	// security controls. The report is always attached to the result so the
+	// console can surface it on both plan and apply jobs; the fail-closed
+	// ENFORCEMENT happens just before apply, below. If the plan JSON could not be
+	// produced we log a coverage gap rather than block (the experiment is about
+	// control correctness, not tooling failures).
+	if planJSON != nil {
+		// Opt-in AWS IAM Access Analyzer corroboration: provable, automated-reasoning
+		// checks that the planned policies don't grant a sensitive-action denylist.
+		// Off by default (no AWS calls) so existing behaviour is unchanged.
+		vopts := verify.Options{}
+		if provider.Name() == "aws" && os.Getenv("ALETHIA_VERIFY_ACCESS_ANALYZER") == "1" {
+			if cfg, cfgErr := config.LoadDefaultConfig(ctx); cfgErr == nil {
+				vopts.PolicyChecker = accessanalyzer.NewFromConfig(cfg)
+				fmt.Fprintln(stdout, "Verification: IAM Access Analyzer corroboration enabled")
+			} else {
+				fmt.Fprintf(stderr, "Warning: Access Analyzer disabled (AWS config load failed: %v)\n", cfgErr)
+			}
+		}
+		if vrep, vErr := verify.EvaluateWithOptions(ctx, planJSON, vopts); vErr != nil {
+			fmt.Fprintf(stderr, "Warning: verification gate failed to run: %v\n", vErr)
+		} else {
+			result.VerifyReport = vrep
+			fmt.Fprintf(stdout, "Verification gate: verdict=%s (pass=%d fail=%d warn=%d not_evaluable=%d, catalog %s)\n",
+				vrep.Verdict, vrep.Summary.Pass, vrep.Summary.Fail, vrep.Summary.Warn, vrep.Summary.NotEvaluable, vrep.CatalogVersion)
+			for _, c := range vrep.Controls {
+				if c.Status == verify.StatusFail || c.Status == verify.StatusWarn {
+					for _, f := range c.Findings {
+						fmt.Fprintf(stdout, "  [%s/%s] %s: %s\n", c.ID, c.Status, f.Address, f.Message)
+					}
+				}
+				if c.Coverage != "" {
+					fmt.Fprintf(stdout, "  [%s] coverage: %s\n", c.ID, c.Coverage)
+				}
+			}
+		}
+	} else {
+		fmt.Fprintln(stdout, "Verification gate: SKIPPED (no plan JSON) — coverage gap, not a pass")
 	}
 
 	if params.InfracostToken != "" {
@@ -218,18 +315,40 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		if planBytes, readErr := os.ReadFile(planFile); readErr == nil {
 			result.PlanFileBytes = planBytes
 		}
+		// Plan jobs get an (advisory) evidence receipt too, so the console can show
+		// the verdict + signed receipt before any apply is approved.
+		attachReceipt(&result, planFile, planJSON, nil, stdout)
 		fmt.Fprintln(stdout, "Dry-run complete. Plan and cost analysis finished.")
 		return &result, nil
 	}
 
-	fmt.Fprintln(stdout, "Applying Terraform changes...")
+	// Fail-closed enforcement: a real apply must not proceed while any hard
+	// verification control is failing and unwaived. An authorized override may
+	// waive specific controls (recorded for the evidence receipt in Phase 1);
+	// disabling the gate wholesale is deliberately not an option here.
+	if result.VerifyReport != nil {
+		if unresolved := result.VerifyReport.Unwaived(params.VerifyOverride); len(unresolved) > 0 {
+			return nil, fmt.Errorf("verification gate BLOCKED apply: failing controls %v (catalog %s) — fix the plan or supply an authorized override to proceed",
+				unresolved, result.VerifyReport.CatalogVersion)
+		}
+		if params.VerifyOverride != nil && len(params.VerifyOverride.Controls) > 0 {
+			fmt.Fprintf(stdout, "Verification override applied by %q for controls %v (reason: %s)\n",
+				params.VerifyOverride.By, params.VerifyOverride.Controls, params.VerifyOverride.Reason)
+		}
+	}
+
+	// Seal the evidence receipt for this apply (records any applied override as an
+	// exception) before mutating any infrastructure.
+	attachReceipt(&result, planFile, planJSON, params.VerifyOverride, stdout)
+
+	fmt.Fprintln(stdout, "Applying OpenTofu changes...")
 	if err := tf.Apply(ctx, planFile); err != nil {
-		return nil, fmt.Errorf("terraform apply failed: %w", err)
+		return nil, fmt.Errorf("tofu apply failed: %w", err)
 	}
 
 	outputs, err := tf.Output(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get terraform outputs: %w", err)
+		return nil, fmt.Errorf("failed to get tofu outputs: %w", err)
 	}
 
 	result.Outputs = outputs
@@ -243,35 +362,115 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	}
 
 	if !params.DryRun && result.ClusterName != "" {
+		// GitOps bootstrap. The cluster is provisioned; ArgoCD + the infra-services
+		// (external-dns, karpenter, ALB controller, …) and the user's apps-repo
+		// connection are the "GitOps, wired — not just installed" promise. These steps
+		// FAIL the job rather than logging a buried warning: a half-wired cluster that
+		// reports success is worse than an honest failure the operator can act on.
+		gitopsRequested := vc.Repositories.AppsDestinationRepo != ""
+
 		if err := installArgoCD(ctx, vc, result.Outputs, &result, stdout, stderr); err != nil {
+			if gitopsRequested {
+				return nil, fmt.Errorf("ArgoCD install failed (GitOps requested for repo %s): %w", vc.Repositories.AppsDestinationRepo, err)
+			}
 			fmt.Fprintf(stderr, "Warning: ArgoCD installation failed: %v\n", err)
 		}
 
-		if vc.Repositories.AppsDestinationRepo != "" && params.GitAccessToken != "" {
+		if gitopsRequested {
+			if params.GitAccessToken == "" {
+				return nil, fmt.Errorf("GitOps requested (apps repo %s) but no git access token is available — reconnect the git provider for this project", vc.Repositories.AppsDestinationRepo)
+			}
 			if err := argocd.ConfigureRepoCredentials(vc.Repositories.AppsDestinationRepo, params.GitAccessToken, stdout, stderr); err != nil {
-				fmt.Fprintf(stderr, "Warning: failed to configure ArgoCD repo credentials: %v\n", err)
+				return nil, fmt.Errorf("failed to connect ArgoCD to apps repo %s: %w", vc.Repositories.AppsDestinationRepo, err)
 			}
 		}
 
 		argoTemplatesDir := resolveArgoTemplatesDir()
-		if argoTemplatesDir != "" {
-			facts := argocd.BuildFromOutputs(result.Outputs, vc)
-			renderedDir, renderErr := argocd.RenderApplications(argoTemplatesDir, facts)
-			if renderErr != nil {
-				fmt.Fprintf(stderr, "Warning: failed to render ArgoCD applications: %v\n", renderErr)
-			} else {
-				defer os.RemoveAll(renderedDir)
-				if applyErr := argocd.ApplyApplications(renderedDir, stdout, stderr); applyErr != nil {
-					fmt.Fprintf(stderr, "Warning: failed to apply ArgoCD applications: %v\n", applyErr)
-				}
-			}
-		} else {
-			fmt.Fprintln(stdout, "No ArgoCD application templates found, skipping infra-services.")
+		if argoTemplatesDir == "" {
+			// Templates are baked into the runner image; their absence is a build defect,
+			// not a user error. Silently skipping infra-services left clusters half-wired.
+			return nil, fmt.Errorf("ArgoCD application templates not found (looked in /home/runner/argocd-templates, argocd-templates, ../../infra/templates/argocd) — the runner image is missing its baked templates")
+		}
+		facts := argocd.BuildFromOutputs(result.Outputs, vc)
+		renderedDir, renderErr := argocd.RenderApplications(argoTemplatesDir, facts)
+		if renderErr != nil {
+			return nil, fmt.Errorf("failed to render ArgoCD applications: %w", renderErr)
+		}
+		defer os.RemoveAll(renderedDir)
+		if applyErr := argocd.ApplyApplications(renderedDir, stdout, stderr); applyErr != nil {
+			return nil, fmt.Errorf("failed to apply ArgoCD infrastructure applications: %w", applyErr)
+		}
+
+		// Generate app manifests for detected services into an EMPTY apps repo (never
+		// clobbers a bring-your-own repo). Non-fatal: a git edge case must not fail an
+		// otherwise-healthy cluster — the operator can add manifests later.
+		if genErr := generateAppManifests(vc, params.GitAccessToken, stdout, stderr); genErr != nil {
+			fmt.Fprintf(stderr, "Warning: app manifest generation skipped: %v\n", genErr)
 		}
 	}
 
 	fmt.Fprintln(stdout, "Deployment completed successfully.")
 	return &result, nil
+}
+
+// runnerIdentity is a best-effort identifier for the executor, recorded in the
+// evidence receipt.
+func runnerIdentity() string {
+	if id := os.Getenv("ALETHIA_RUNNER_INSTANCE_ID"); id != "" {
+		return id
+	}
+	if h, err := os.Hostname(); err == nil {
+		return h
+	}
+	return "unknown-runner"
+}
+
+// attachReceipt builds, signs (if a key is configured), and attaches the per-apply
+// evidence receipt to the result. It is a no-op when there is no verification
+// report (e.g. the plan JSON could not be produced). `override` is the waiver that
+// was applied on the apply path (nil on dry-run / plan jobs), recorded in the
+// receipt as an exception.
+func attachReceipt(result *PlanResult, planFile string, planJSON *tfjson.Plan, override *verify.Override, stdout io.Writer) {
+	if result.VerifyReport == nil {
+		return
+	}
+	planBytes, _ := os.ReadFile(planFile)
+	tofuVer := ""
+	if planJSON != nil {
+		tofuVer = planJSON.TerraformVersion
+	}
+	receipt := verify.BuildReceipt(verify.BuildReceiptParams{
+		Report:      result.VerifyReport,
+		PlanBytes:   planBytes,
+		TofuVersion: tofuVer,
+		Override:    override,
+		Runner:      runnerIdentity(),
+		EvaluatedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+
+	priv, keyID, ok, err := verify.SigningKeyFromEnv()
+	if err != nil {
+		fmt.Fprintf(stdout, "Warning: receipt signing key invalid: %v — attaching unsigned receipt\n", err)
+	}
+	if ok {
+		if signed, sErr := verify.Sign(receipt, priv, keyID); sErr != nil {
+			fmt.Fprintf(stdout, "Warning: receipt signing failed: %v — attaching unsigned receipt\n", sErr)
+			result.VerifyReceipt = &verify.SignedReceipt{Receipt: receipt, Algorithm: "none"}
+		} else {
+			result.VerifyReceipt = signed
+			fmt.Fprintf(stdout, "Evidence receipt signed (key %s, plan sha256 %s)\n", keyID, shortHash(receipt.PlanSHA256))
+		}
+		return
+	}
+	result.VerifyReceipt = &verify.SignedReceipt{Receipt: receipt, Algorithm: "none"}
+	fmt.Fprintf(stdout, "Evidence receipt built (unsigned — set %s to sign)\n", verify.SigningKeyEnv)
+}
+
+func shortHash(h string) string {
+	if len(h) <= 12 {
+		return h
+	}
+	return h[:12] + "…"
 }
 
 func resolveArgoTemplatesDir() string {
@@ -288,7 +487,7 @@ func resolveArgoTemplatesDir() string {
 	return ""
 }
 
-func installArgoCD(ctx context.Context, vc *types.VineConfig, outputs map[string]interface{}, result *PlanResult, stdout, stderr io.Writer) error {
+func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[string]interface{}, result *PlanResult, stdout, stderr io.Writer) error {
 	fmt.Fprintln(stdout, "Installing ArgoCD...")
 
 	addRepoCmd := "helm repo add argo https://argoproj.github.io/argo-helm && helm repo update"
@@ -348,6 +547,21 @@ func copyDir(src, dst string) error {
 			return err
 		}
 		target := filepath.Join(dst, rel)
+		// Preserve symlinks rather than dereferencing them. The baked, pre-initialized
+		// `.terraform/providers` tree holds symlinks into the shared plugin cache;
+		// reading through them would copy hundreds of MB per job (and fail outright on
+		// links that point at directories). filepath.Walk uses Lstat, so symlinks
+		// arrive here with ModeSymlink set and are not descended into.
+		if info.Mode()&os.ModeSymlink != 0 {
+			linkDest, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			return os.Symlink(linkDest, target)
+		}
 		if info.IsDir() {
 			return os.MkdirAll(target, 0755)
 		}

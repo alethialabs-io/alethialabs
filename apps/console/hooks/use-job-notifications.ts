@@ -2,113 +2,81 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { useCallback, useMemo } from "react";
+import { useJobsQuery } from "@/lib/query/use-jobs-query";
+import { useNotificationsStore } from "@/lib/stores/use-notifications-store";
+import { NOTIFY_JOB_TYPES } from "@/lib/jobs/toast-copy";
+import type {
+	ProvisionJobStatus as PublicProvisionJobStatus,
+	ProvisionJobType as PublicProvisionJobType,
+} from "@/lib/db/schema";
 
-import { useJobsStore } from "@/lib/stores/use-jobs-store";
-import type { PublicProvisionJobStatus, PublicProvisionJobType } from "@/lib/validations/db.schemas";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
-
+/** A bell entry derived from a recent notifiable job. */
 export interface JobNotification {
-	id: string;
 	jobId: string;
 	jobType: PublicProvisionJobType;
 	status: PublicProvisionJobStatus;
-	vineId: string | null;
+	projectName: string | null;
+	environmentName: string | null;
+	/** ISO timestamp of completion (terminal) or creation (in-flight). */
 	createdAt: string;
 	read: boolean;
 }
 
 const MAX_NOTIFICATIONS = 20;
+const TERMINAL: ReadonlySet<PublicProvisionJobStatus> = new Set([
+	"SUCCESS",
+	"FAILED",
+	"CANCELLED",
+]);
 
-/** Derives notifications from the jobs store and fires toasts on terminal status changes. */
+/**
+ * Derives the notifications-bell feed live from the shared jobs query plus the persisted
+ * read-state store. Pure (no toasts — those live in `use-job-toasts.ts`) and stateless, so
+ * the feed is always correct and survives navigation/reloads (the old hook kept an ephemeral
+ * list that emptied on every remount). Unread = terminal jobs the user hasn't acknowledged.
+ */
 export function useJobNotifications() {
-	const [notifications, setNotifications] = useState<JobNotification[]>([]);
-	const prevStatusRef = useRef<Map<string, PublicProvisionJobStatus>>(new Map());
-	const mountedAtRef = useRef<number>(Date.now());
-	const seededRef = useRef(false);
+	const { data: jobs } = useJobsQuery();
+	const readJobIds = useNotificationsStore((s) => s.readJobIds);
+	const markRead = useNotificationsStore((s) => s.markRead);
+	const markAllReadStore = useNotificationsStore((s) => s.markAllRead);
 
-	useEffect(() => {
-		const unsub = useJobsStore.subscribe((state) => {
-			if (!seededRef.current) {
-				for (const job of state.jobs) {
-					prevStatusRef.current.set(job.id, job.status);
-				}
-				if (state.jobs.length > 0) {
-					seededRef.current = true;
-				}
-				return;
-			}
+	const readSet = useMemo(() => new Set(readJobIds), [readJobIds]);
 
-			for (const job of state.jobs) {
-				const prevStatus = prevStatusRef.current.get(job.id);
+	const notifications = useMemo<JobNotification[]>(() => {
+		// getJobs() already returns newest-first; take the most recent notifiable ones.
+		return (jobs ?? [])
+			.filter((j) => NOTIFY_JOB_TYPES.has(j.job_type))
+			.slice(0, MAX_NOTIFICATIONS)
+			.map((j) => {
+				const ts = j.completed_at ?? j.created_at;
+				return {
+					jobId: j.id,
+					jobType: j.job_type,
+					status: j.status,
+					projectName: j.project_name,
+					environmentName: j.environment_name,
+					createdAt: new Date(ts).toISOString(),
+					read: readSet.has(j.id),
+				};
+			});
+	}, [jobs, readSet]);
 
-				if (prevStatus === job.status) continue;
+	const unreadCount = useMemo(
+		() => notifications.filter((n) => TERMINAL.has(n.status) && !n.read).length,
+		[notifications],
+	);
 
-				prevStatusRef.current.set(job.id, job.status);
+	const markAsRead = useCallback(
+		(jobId: string) => markRead(jobId),
+		[markRead],
+	);
 
-				const isNew = prevStatus === undefined;
-				const isTerminal = job.status === "SUCCESS" || job.status === "FAILED";
-
-				if (isNew && !isTerminal) continue;
-
-				if (isNew && isTerminal) {
-					const jobCreatedAt = job.created_at ? new Date(job.created_at).getTime() : 0;
-					if (jobCreatedAt < mountedAtRef.current) continue;
-				}
-
-				const jobTypeLabel = job.job_type.replace(/_/g, " ");
-
-				setNotifications((prev) => {
-					const notification: JobNotification = {
-						id: `${job.id}-${job.status}`,
-						jobId: job.id,
-						jobType: job.job_type,
-						status: job.status,
-						vineId: job.vine_id,
-						createdAt: new Date().toISOString(),
-						read: false,
-					};
-					const withoutOld = prev.filter((n) => n.jobId !== job.id);
-					return [notification, ...withoutOld].slice(0, MAX_NOTIFICATIONS);
-				});
-
-				if (isTerminal) {
-					const toastFn = job.status === "SUCCESS" ? toast.success : toast.error;
-					toastFn(
-						`${jobTypeLabel} — ${job.status === "SUCCESS" ? "Completed" : "Failed"}`,
-						{
-							description: job.status === "FAILED"
-								? "Job failed. Click to see details."
-								: "Job completed successfully.",
-							duration: 5000,
-							action: {
-								label: "View Job",
-								onClick: () => { window.location.href = `/dashboard/jobs/${job.id}`; },
-							},
-							cancel: {
-								label: "Dismiss",
-								onClick: () => {},
-							},
-						},
-					);
-				}
-			}
-		});
-
-		return unsub;
-	}, []);
-
-	const unreadCount = notifications.filter((n) => !n.read).length;
-
-	const markAsRead = useCallback((notificationId: string) => {
-		setNotifications((prev) =>
-			prev.map((n) => (n.id === notificationId ? { ...n, read: true } : n)),
-		);
-	}, []);
-
-	const markAllRead = useCallback(() => {
-		setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-	}, []);
+	const markAllRead = useCallback(
+		() => markAllReadStore(notifications.map((n) => n.jobId)),
+		[markAllReadStore, notifications],
+	);
 
 	return { notifications, unreadCount, markAsRead, markAllRead };
 }

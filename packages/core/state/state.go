@@ -39,15 +39,15 @@ func (s *State) SaveInfraFacts(rawConfig map[string]interface{}, outputs map[str
 	}
 
 	if len(outputs) > 0 {
-		logger.Info("Including terraform outputs.", "state")
+		logger.Info("Including OpenTofu outputs.", "state")
 		for key, output := range outputs {
 			toYAML[key] = output
 		}
 	} else {
 		if dryRun {
-			logger.Warn("No Terraform outputs found. This is expected in dry-run mode.", "state")
+			logger.Warn("No OpenTofu outputs found. This is expected in dry-run mode.", "state")
 		} else {
-			return fmt.Errorf("no Terraform outputs found in non-dry-run mode")
+			return fmt.Errorf("no OpenTofu outputs found in non-dry-run mode")
 		}
 	}
 

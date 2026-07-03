@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1
+# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Shared DEV image for the fully-dockerized hot-reload stack (scripts/dev-stack.sh).
+# Installs the WHOLE workspace (all deps incl. dev) so any zone can run `next dev`.
+# At runtime the repo source is bind-mounted at /app and each workspace `node_modules`
+# is masked by a named volume (see docker-compose.dev.yml) so THIS image's linux deps
+# win over the host's darwin ones. No build step — each service sets its own
+# `pnpm --filter <app> dev` command.
+
+FROM node:22-alpine
+RUN corepack enable && apk add --no-cache git libc6-compat
+WORKDIR /app
+
+# Install from the lockfile. .dockerignore excludes node_modules/.next/.env, so this
+# is a clean linux install of the whole workspace. (Source is bind-mounted at runtime;
+# only the resulting node_modules — surfaced via volumes — is used.)
+COPY . .
+RUN pnpm install --frozen-lockfile
+
+ENV NODE_ENV=development
+# Overridden per service (pnpm --filter console|marketing|docs|blog dev). Idle by default.
+CMD ["sh", "-c", "echo 'dev image — set a service command'; sleep infinity"]

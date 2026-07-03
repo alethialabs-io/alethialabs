@@ -1,0 +1,80 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Shared presentation helpers for provisioning jobs — the job-type catalog (label +
+// lucide icon + description) and a human duration formatter. Lives outside any component
+// so both the jobs data table (components/jobs/columns.tsx) and the overview's recent-jobs
+// card read one source of truth (promote, don't duplicate).
+
+import {
+	ArrowUpCircle,
+	Container,
+	FileSearch,
+	GitBranch,
+	RefreshCw,
+	Rocket,
+	Trash2,
+	Upload,
+} from "lucide-react";
+import type { ProvisionJobType } from "@/lib/db/schema";
+
+/** Display metadata for each provisioning job type. */
+export const JOB_TYPES: Record<
+	ProvisionJobType,
+	{ label: string; icon: typeof Rocket; description: string }
+> = {
+	PLAN: {
+		label: "Plan",
+		icon: FileSearch,
+		description: "Dry-run infrastructure plan",
+	},
+	DEPLOY: {
+		label: "Deploy",
+		icon: Upload,
+		description: "Provision infrastructure from config",
+	},
+	DESTROY: {
+		label: "Destroy",
+		icon: Trash2,
+		description: "Tear down infrastructure",
+	},
+	DEPLOY_RUNNER: {
+		label: "Deploy Runner",
+		icon: Container,
+		description: "Provision a runner into your cloud account",
+	},
+	UPDATE_RUNNER: {
+		label: "Update Runner",
+		icon: ArrowUpCircle,
+		description: "Update a runner to a newer version",
+	},
+	DESTROY_RUNNER: {
+		label: "Destroy Runner",
+		icon: Trash2,
+		description: "Tear down a provisioned runner",
+	},
+	ANALYZE_REPO: {
+		label: "Analyze Repo",
+		icon: GitBranch,
+		description: "Scan a repository for infrastructure config",
+	},
+	DETECT_DRIFT: {
+		label: "Detect Drift",
+		icon: RefreshCw,
+		description: "Refresh-only check for drift between state and live cloud",
+	},
+	AUDIT: {
+		label: "Audit",
+		icon: FileSearch,
+		description: "Audit bring-your-own IaC (terraform plan or k8s manifests) with elench",
+	},
+};
+
+/** Formats an elapsed millisecond span as `42s` or `1m 12s`. */
+export function formatDuration(ms: number): string {
+	const seconds = Math.floor(ms / 1000);
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	const remainingSeconds = seconds % 60;
+	return `${minutes}m ${remainingSeconds}s`;
+}

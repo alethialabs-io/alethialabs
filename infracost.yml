@@ -5,13 +5,13 @@ projects:
     - path: infra/platform
       name: infra-platform
 
-    # Vine templates (cost visibility only — applied by nodes into user accounts)
-    - path: infra/templates/vine/aws
-      name: vine-template-aws
-    - path: infra/templates/vine/gcp
-      name: vine-template-gcp
-    - path: infra/templates/vine/azure
-      name: vine-template-azure
+    # Spec templates (cost visibility only — applied by nodes into user accounts)
+    - path: infra/templates/project/aws
+      name: spec-template-aws
+    - path: infra/templates/project/gcp
+      name: spec-template-gcp
+    - path: infra/templates/project/azure
+      name: spec-template-azure
 
     # Runner self-hosted template
     - path: infra/templates/runner/aws

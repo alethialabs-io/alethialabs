@@ -1,0 +1,133 @@
+---
+title: Access (Roles, Grants & SSO)
+description: Manage RBAC roles and access grants, and inspect SSO providers, from the alethia CLI.
+---
+
+# Access Control
+
+Alethia's authorization model has three CLI-manageable parts:
+
+- **Roles** are permission bundles. Four **built-in** templates ship with every org
+  (`owner`, `admin`, `operator`, `viewer`) and are read-only; **custom** roles are org-scoped
+  and editable.
+- **Grants** bind a **principal** (a user or a team) to a role **or** a single permission, at a
+  resource scope, as an **allow** or an explicit **deny** (deny wins).
+- **SSO providers** are the configured OIDC/SAML identity providers (read-only from the CLI).
+
+All commands operate on the **active organization** (set via `alethia org switch`); override
+per-invocation with `--org <id>`. Every command accepts the global
+[`-o, --output <table|json|csv>`](/cli/identity#output-formats) flag.
+
+<Callout type="info">
+Authoring **custom roles** and **access grants** requires an **Enterprise** license. Listing roles
+(the built-in templates) and reading SSO providers work on any plan. SSO provider secrets and
+config JSON are never returned by the API.
+</Callout>
+
+## `alethia roles`
+
+Alias: `role`.
+
+### `roles list`
+
+Lists the active organization's roles — the four built-in templates (flagged) followed by any
+custom roles, with a permission count.
+
+```bash
+alethia roles list
+alethia roles list -o json
+```
+
+### `roles create`
+
+Creates a custom role. Repeat `--permission` for each `resource:action` key the role should carry.
+
+```bash
+alethia roles create deployers \
+  --permission project:plan \
+  --permission project:deploy \
+  --permission job:view
+```
+
+| Flag           | Description                                          |
+| -------------- | ---------------------------------------------------- |
+| `--permission` | Permission key to grant (repeatable, e.g. `project:deploy`) |
+
+### `roles delete <id>`
+
+Deletes a custom role (prompts for confirmation). Built-in roles cannot be deleted; grants
+referencing the role are removed too.
+
+```bash
+alethia roles delete 3f1c…
+```
+
+## `alethia grants`
+
+Aliases: `grant`, `access`. A grant binds a principal to **exactly one** of a role (`--role`) or a
+single permission (`--permission`), at a resource scope. Omit `--resource` for an **org-wide** grant.
+
+### `grants list`
+
+Lists the active organization's access grants.
+
+```bash
+alethia grants list
+alethia grants list -o json
+```
+
+### `grants add`
+
+Assigns a grant.
+
+```bash
+# Bind a user to a custom role, org-wide
+alethia grants add --principal-type user --principal <user-id> --role <role-id>
+
+# Allow a team a single permission on one project
+alethia grants add --principal-type team --principal <team-id> \
+  --permission project:deploy --resource-type project --resource <project-id>
+
+# Explicitly deny destroy on a project (deny wins over any allow)
+alethia grants add --principal <user-id> --effect deny \
+  --permission project:destroy --resource-type project --resource <project-id>
+```
+
+| Flag               | Description                                                    |
+| ------------------ | ------------------------------------------------------------- |
+| `--principal-type` | `user` (default) or `team`                                    |
+| `--principal`      | Principal id (required)                                       |
+| `--effect`         | `allow` (default) or `deny`                                   |
+| `--role`           | Role id to bind (XOR `--permission`)                          |
+| `--permission`     | Single permission key to bind (XOR `--role`)                  |
+| `--resource-type`  | Resource type to scope to (`project`, `runner`, `cloud_identity`, `org`; default `org`) |
+| `--resource`       | Resource id to scope to (omit for org-wide)                   |
+
+### `grants remove <id>`
+
+Revokes a grant (prompts for confirmation). The principal loses this access.
+
+```bash
+alethia grants remove a1b2…
+```
+
+## `alethia sso`
+
+Inspect the active organization's configured SSO identity providers (OIDC and SAML). Read-only —
+registering a provider is done in the console. Secrets and config JSON are never shown; `Enabled`
+reflects whether the provider's domain is verified.
+
+### `sso list`
+
+```bash
+alethia sso list
+alethia sso list -o json
+```
+
+### `sso get <id>`
+
+Shows a single provider as a detail card.
+
+```bash
+alethia sso get 3f1c…
+```

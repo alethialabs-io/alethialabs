@@ -15,13 +15,13 @@ PLAN jobs run `terraform plan` to preview infrastructure changes without applyin
 Provider-specific: STS AssumeRole (AWS), WIF exchange (GCP), or federated identity (Azure). See [Cloud Credentials](/runner/cloud-credentials).
 
 ### Generate Terraform variables
-The spec's config snapshot is transformed into `terraform.tfvars` by the provisioner. Each spec component maps to specific Terraform variables.
+The project's config snapshot is transformed into `terraform.tfvars` by the provisioner. Each project component maps to specific Terraform variables.
 
 ### terraform init
-Initializes with the [Supabase S3 backend](/concepts/terraform-state):
+Initializes with the [S3-compatible state backend](/concepts/terraform-state):
 ```
-bucket = "spec-terraform-state"
-key    = "{zone}/{project}/{stage}/{region}/terraform.tfstate"
+bucket = "project-terraform-state"
+key    = "{project}/{stage}/{region}/terraform.tfstate"
 ```
 
 ### terraform plan
@@ -44,7 +44,7 @@ infracost breakdown --path plan.json --format json
 Parses per-resource cost estimates. See [Cost Estimation](/concepts/cost-estimation).
 
 ### Upload plan artifact
-The binary `plan.tfplan` file is uploaded to Supabase Storage (`plan-artifacts` bucket) for later use by DEPLOY jobs.
+The binary `plan.tfplan` file is uploaded to S3-compatible storage (`plan-artifacts` bucket) for later use by DEPLOY jobs.
 
 ### Report results
 Job status → SUCCESS with execution metadata:
@@ -56,7 +56,7 @@ Job status → SUCCESS with execution metadata:
 
 ## What the User Sees
 
-After the plan completes, the [Plan tab](/console/jobs/plan-and-apply) in the spec detail page shows:
+After the plan completes, the [Plan tab](/console/jobs/plan-and-apply) in the project detail page shows:
 - Resource groups with create/update/delete actions
 - Per-resource costs
 - Total estimated monthly cost

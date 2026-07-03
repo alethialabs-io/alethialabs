@@ -1,0 +1,42 @@
+---
+title: Connectors Architecture
+description: How pluggable per-category connectors are declared, stored, and composed into a provision.
+---
+
+# Connectors Architecture
+
+Connectors decouple **what** a Project needs (a DNS zone, secrets, a registry, observability) from **who** provides it. Cloud (AWS/GCP/Azure) and Git (GitHub/GitLab/Bitbucket) connectors are first-class; the **pluggable per-category** connectors — Cloudflare, Vault, Docker Hub, Datadog, Grafana Cloud, Prometheus — are added by registration, not by editing call sites.
+
+## Single source of truth
+
+Every pluggable provider is declared once in a manifest, `packages/core/categories/catalog.json` (slug, category, `auth_method`, icon, credential fields, provider-config fields, module path). That manifest is consumed three ways so the provider set never drifts:
+
+- **Go** loads it with `go:embed` (`packages/core/categories`) to resolve which module to compose and what credential a provider needs.
+- **Codegen** (`pnpm -F console gen:connectors`) emits the typed TS registry (`lib/connectors/registry.generated.ts`) that drives the credential form and the Project provider selectors, plus the SQL seed of `connectors` catalog rows.
+- **Behavior** that can't be data — `Tfvars()` and `Validate()` — lives in small per-slug Go impls.
+
+This mirrors the [cloud-provider registry](/concepts/cloud-abstraction) one level down, per category.
+
+## The `CategoryProvider` contract
+
+Each provider impl exposes a small interface: `Category()`, `Slug()`, `ModulePath()`, `Tfvars(ctx)` (maps the component's config + decrypted credential into module variables), and `Validate(ctx)` (rejects nonsensical combinations before a plan is produced). A registry resolves a provider by `(category, slug)`.
+
+## Credential storage
+
+API-key credentials live in the `connector_credentials` table, owner/org-scoped under the same RLS as everything else. Secret fields are encrypted at rest with AES-256-GCM (`ALETHIA_CRED_ENCRYPTION_KEY`); non-secret fields (a Vault address, a Docker Hub username) are stored in clear. A lightweight verification ping marks a credential verified.
+
+## Runtime credential flow
+
+The zero-credential model is preserved end to end:
+
+1. A Project's `config_snapshot` carries only **identifiers** — including each component's chosen provider slug — never secrets.
+2. When a runner **claims** a job, the claim endpoint resolves the connectors the Project references, decrypts their credentials, and attaches them to the claim response (alongside the cloud identity).
+3. The runner injects them into OpenTofu variables **in memory** at provision time.
+
+## Module composition
+
+For each component with a pluggable provider, the runner copies the provider's module from `infra/templates/categories/<category>/<slug>/` into the working directory, writes a generated `_categories.tf.json` wiring the module with its variables, and sets a `<category>_provider` guard variable. The cluster-cloud templates gate their native resources on that variable (`count = var.dns_provider == "native" ? 1 : 0`), so the native resource is **skipped** when a pluggable provider is chosen. Observability is purely additive (no native default).
+
+## Open-core
+
+Connectors are core value and stay AGPL/community — the registry-of-record (`connectors` table) and the category contract are community. Only premium connectors or org-scoped connector governance would live in `ee/` (see [Open Core](/access-control/open-core)).

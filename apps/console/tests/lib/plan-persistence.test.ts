@@ -116,11 +116,11 @@ describe("Plan persistence — loadExistingPlan", () => {
 			const meta = {
 				plan_completed: true,
 				plan_result: { resource_changes: [] },
-				plan_file_key: "job-123/terraform.plan.out",
+				plan_file_key: "job-123/tofu.plan.out",
 			};
 
 			expect(meta.plan_file_key).toBeTruthy();
-			expect(meta.plan_file_key).toContain("terraform.plan.out");
+			expect(meta.plan_file_key).toContain("tofu.plan.out");
 		});
 
 		it("absent key means no artifact (old plan or upload failed)", () => {

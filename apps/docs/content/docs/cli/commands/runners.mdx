@@ -1,0 +1,57 @@
+---
+title: Runner Commands
+description: Deploy, list, and tear down runner agents from the CLI.
+---
+
+# Runner Commands
+
+Runners execute infrastructure jobs. Manage them with `alethia runner`.
+
+## `alethia runner deploy`
+
+Deploy a new runner to a cloud account. Creates a runner record and queues a
+`DEPLOY_RUNNER` job using the latest stable release.
+
+```bash
+alethia runner deploy --cloud-identity-id <id> --name <name> --region <region>
+```
+
+| Flag | Description |
+|------|-------------|
+| `--cloud-identity-id` | Cloud identity to deploy into |
+| `--name` | Runner name |
+| `--region` | Cloud region |
+| `--assigned-runner-id` | Which runner executes the deployment |
+| `--wait`, `-w` | Wait for job completion |
+
+## `alethia runner list`
+
+List all runners (status, operator, version, last heartbeat). The **Operator** column shows `managed` or, for self runners, `self · deployed` / `self · registered`.
+
+```bash
+alethia runner list
+```
+
+## `alethia runner destroy`
+
+Tear down a runner's cloud infrastructure. Queues a `DESTROY_RUNNER` job; another
+runner executes the teardown.
+
+```bash
+alethia runner destroy --runner-id <id>
+```
+
+| Flag | Description |
+|------|-------------|
+| `--runner-id` | ID of the runner to destroy |
+| `--assigned-runner-id` | Which runner executes the teardown |
+| `--wait`, `-w` | Wait for job completion |
+
+## `alethia runner remove`
+
+Remove a runner's database record only (no cloud teardown). Run
+`alethia runner destroy` first to tear down cloud resources.
+
+```bash
+alethia runner remove <runner_id>
+```

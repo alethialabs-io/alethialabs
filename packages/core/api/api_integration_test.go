@@ -47,7 +47,7 @@ func loadTestToken(t *testing.T) string {
 func refreshIfNeeded(creds types.ExchangeResponse, credsPath string) (string, error) {
 	webOrigin := os.Getenv("ALETHIA_WEB_ORIGIN")
 	if webOrigin == "" {
-		webOrigin = "https://adp.prod.itgix.eu"
+		webOrigin = "http://localhost"
 	}
 
 	payload, _ := json.Marshal(map[string]string{"refresh_token": creds.RefreshToken})
@@ -90,30 +90,34 @@ func skipOnAuthOrNotFound(t *testing.T, err error, endpoint string) {
 	}
 }
 
-func TestIntegration_GetWorkers(t *testing.T) {
+func TestIntegration_GetRunners(t *testing.T) {
 	token := loadTestToken(t)
 	client := NewClient(token)
 
-	workers, err := client.GetWorkers()
-	skipOnAuthOrNotFound(t, err, "GetWorkers")
+	runners, err := client.GetRunners()
+	skipOnAuthOrNotFound(t, err, "GetRunners")
 	if err != nil {
-		t.Fatalf("GetWorkers failed: %v", err)
+		t.Fatalf("GetRunners failed: %v", err)
 	}
 
-	t.Logf("Found %d tendrils", len(workers))
-	for _, w := range workers {
-		t.Logf("  %s (mode=%s, status=%s, default=%v)", w.Name, w.Mode, w.Status, w.IsDefault)
+	t.Logf("Found %d runners", len(runners))
+	for _, w := range runners {
+		t.Logf("  %s (operator=%s, provisioning=%s, status=%s, default=%v)", w.Name, w.Operator, w.Provisioning, w.Status, w.IsDefault)
 
 		if w.ID == "" {
-			t.Error("worker ID is empty")
+			t.Error("runner ID is empty")
 		}
 		if w.Name == "" {
-			t.Error("worker name is empty")
+			t.Error("runner name is empty")
 		}
 
-		validModes := map[string]bool{"self-hosted": true, "cloud-hosted": true}
-		if !validModes[w.Mode] {
-			t.Errorf("unexpected mode: %s", w.Mode)
+		validOperators := map[string]bool{"managed": true, "self": true}
+		if !validOperators[w.Operator] {
+			t.Errorf("unexpected operator: %s", w.Operator)
+		}
+		validProvisioning := map[string]bool{"deployed": true, "registered": true, "": true}
+		if !validProvisioning[w.Provisioning] {
+			t.Errorf("unexpected provisioning: %s", w.Provisioning)
 		}
 
 		validStatuses := map[string]bool{"ONLINE": true, "OFFLINE": true, "DRAINING": true, "": true}
@@ -123,19 +127,19 @@ func TestIntegration_GetWorkers(t *testing.T) {
 	}
 }
 
-func TestIntegration_GetVineClusters(t *testing.T) {
+func TestIntegration_GetClusters(t *testing.T) {
 	token := loadTestToken(t)
 	client := NewClient(token)
 
-	clusters, err := client.GetVineClusters()
-	skipOnAuthOrNotFound(t, err, "GetVineClusters")
+	clusters, err := client.GetClusters()
+	skipOnAuthOrNotFound(t, err, "GetClusters")
 	if err != nil {
-		t.Fatalf("GetVineClusters failed: %v", err)
+		t.Fatalf("GetClusters failed: %v", err)
 	}
 
 	t.Logf("Found %d clusters", len(clusters))
 	for _, c := range clusters {
-		t.Logf("  %s — %s (%s) [%s]", c.VineProjectName, c.ClusterName, c.ClusterVersion, c.Status)
+		t.Logf("  %s — %s (%s) [%s]", c.ProjectName, c.ClusterName, c.ClusterVersion, c.Status)
 
 		validStatuses := map[string]bool{
 			"PENDING": true, "CREATING": true, "ACTIVE": true,
@@ -177,7 +181,7 @@ func TestIntegration_GetJobs(t *testing.T) {
 	token := loadTestToken(t)
 	client := NewClient(token)
 
-	page, err := client.GetJobs("", "", 20, 0)
+	page, err := client.GetJobs("", 20, 0)
 	jobs := page.Jobs
 	skipOnAuthOrNotFound(t, err, "GetJobs")
 	if err != nil {
@@ -187,14 +191,15 @@ func TestIntegration_GetJobs(t *testing.T) {
 
 	t.Logf("Found %d jobs", len(jobs))
 
-	validStatuses := map[string]bool{
-		"QUEUED": true, "CLAIMED": true, "PROCESSING": true,
-		"SUCCESS": true, "FAILED": true, "CANCELLED": true,
+	// Derived from the generated enum SSOT so these sets can never drift from the
+	// backend's provision_job_status / provision_job_type values.
+	validStatuses := map[string]bool{}
+	for _, s := range types.AllJobStatuses {
+		validStatuses[string(s)] = true
 	}
-	validTypes := map[string]bool{
-		"DEPLOY": true, "DESTROY": true, "PLAN": true,
-		"DEPLOY_WORKER": true, "UPDATE_WORKER": true, "DESTROY_WORKER": true,
-		"CONNECTION_TEST": true, "FETCH_RESOURCES": true,
+	validTypes := map[string]bool{}
+	for _, jt := range types.AllJobTypes {
+		validTypes[string(jt)] = true
 	}
 
 	for i, j := range jobs {
@@ -220,7 +225,7 @@ func TestIntegration_GetJob_FirstFromList(t *testing.T) {
 	token := loadTestToken(t)
 	client := NewClient(token)
 
-	page, err := client.GetJobs("", "", 20, 0)
+	page, err := client.GetJobs("", 20, 0)
 	jobs := page.Jobs
 	skipOnAuthOrNotFound(t, err, "GetJobs")
 	if err != nil {

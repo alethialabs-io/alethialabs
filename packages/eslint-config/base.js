@@ -30,6 +30,7 @@ export const config = [
     },
   },
   {
-    ignores: ["dist/**"],
+    // Generated dirs that must never be linted in any project that extends this config.
+    ignores: ["dist/**", "coverage/**", ".stryker-tmp/**", "reports/mutation/**"],
   },
 ];

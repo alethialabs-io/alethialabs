@@ -16,7 +16,7 @@ This includes, among others:
 
     apps/console/        apps/cli/        apps/runner/        apps/docs/
     packages/core/   packages/ui/   packages/charts/   packages/eslint-config/
-    infra/   supabase/   scripts/   spec/
+    infra/   deploy/   scripts/   spec/
 
 ## `LicenseRef-Alethia-Commercial`
 
@@ -41,7 +41,7 @@ Trivial shared tooling kept permissive on purpose:
 
 Vendored third-party code keeps its original license, for example:
 
-    infra/templates/vine/aws/modules/valkey/   ->  Apache-2.0
+    infra/templates/project/aws/modules/valkey/   ->  Apache-2.0
 
 Full texts of referenced licenses live under [`LICENSES/`](LICENSES/), and
 third-party attributions are in [`NOTICE`](NOTICE).

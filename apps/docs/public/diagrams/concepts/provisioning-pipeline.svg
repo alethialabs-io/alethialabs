@@ -6,11 +6,11 @@
   <rect x="0.5" y="0.5" width="859" height="479" rx="12" fill="none" stroke="#3F3F46"/>
   <text x="430" y="36" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="600" fill="#FAFAFA">Provisioning Pipeline — Form to Infrastructure</text>
 
-  <!-- Stage 1: Vine Form -->
+  <!-- Stage 1: Project Form -->
   <rect x="30" y="58" width="150" height="70" rx="8" fill="#8B5CF610" stroke="#8B5CF6"/>
-  <text x="105" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#8B5CF6">Vine Form</text>
+  <text x="105" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#8B5CF6">Project Form</text>
   <text x="105" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">Console UI / Alethia CLI</text>
-  <text x="105" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">createVine()</text>
+  <text x="105" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">createProject()</text>
 
   <!-- Arrow 1→2 -->
   <line x1="180" y1="93" x2="210" y2="93" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
@@ -18,8 +18,8 @@
   <!-- Stage 2: Database -->
   <rect x="218" y="58" width="150" height="70" rx="8" fill="#27272A" stroke="#3F3F46"/>
   <text x="293" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">Database</text>
-  <text x="293" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">vines + component tables</text>
-  <text x="293" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">PostgreSQL (Supabase)</text>
+  <text x="293" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">projects + component tables</text>
+  <text x="293" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">PostgreSQL</text>
 
   <!-- Arrow 2→3 -->
   <line x1="368" y1="93" x2="398" y2="93" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
@@ -33,9 +33,9 @@
   <!-- Arrow 3→4 -->
   <line x1="556" y1="93" x2="586" y2="93" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
 
-  <!-- Stage 4: VineConfig -->
+  <!-- Stage 4: ProjectConfig -->
   <rect x="594" y="58" width="120" height="70" rx="8" fill="#27272A" stroke="#3F3F46"/>
-  <text x="654" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">VineConfig</text>
+  <text x="654" y="82" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">ProjectConfig</text>
   <text x="654" y="100" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">Go struct</text>
   <text x="654" y="116" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#71717A">JSON unmarshal</text>
 
@@ -53,25 +53,25 @@
   <text x="199" y="178" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">Component Tables (Stage 1 → 2)</text>
 
   <rect x="44" y="190" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="89" y="207" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">vines</text>
+  <text x="89" y="207" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">projects</text>
   <rect x="142" y="190" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="187" y="207" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">vine_network</text>
+  <text x="187" y="207" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_network</text>
   <rect x="240" y="190" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="285" y="207" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">vine_cluster</text>
+  <text x="285" y="207" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_cluster</text>
 
   <rect x="44" y="224" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="89" y="241" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">vine_dns</text>
+  <text x="89" y="241" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_dns</text>
   <rect x="142" y="224" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="187" y="241" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">vine_databases</text>
+  <text x="187" y="241" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_databases</text>
   <rect x="240" y="224" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="285" y="241" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">vine_caches</text>
+  <text x="285" y="241" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_caches</text>
 
   <rect x="44" y="258" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="89" y="275" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">vine_queues</text>
+  <text x="89" y="275" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_queues</text>
   <rect x="142" y="258" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="187" y="275" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">vine_topics</text>
+  <text x="187" y="275" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_topics</text>
   <rect x="240" y="258" width="90" height="26" rx="4" fill="#18181B" stroke="#3F3F46"/>
-  <text x="285" y="275" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">vine_secrets</text>
+  <text x="285" y="275" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="9" fill="#A1A1AA">project_secrets</text>
 
   <!-- Provider tfvars detail -->
   <rect x="406" y="156" width="424" height="140" rx="8" fill="#27272A" stroke="#3F3F46"/>
@@ -106,13 +106,13 @@
   <text x="430" y="344" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#FAFAFA">Terraform Execution (Runner)</text>
 
   <rect x="50" y="356" width="160" height="32" rx="6" fill="#27272A" stroke="#FF9900"/>
-  <text x="130" y="376" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FF9900">templates/vine/aws/</text>
+  <text x="130" y="376" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#FF9900">templates/project/aws/</text>
 
   <rect x="230" y="356" width="160" height="32" rx="6" fill="#27272A" stroke="#4285F4"/>
-  <text x="310" y="376" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#4285F4">templates/vine/gcp/</text>
+  <text x="310" y="376" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#4285F4">templates/project/gcp/</text>
 
   <rect x="410" y="356" width="160" height="32" rx="6" fill="#27272A" stroke="#0078D4"/>
-  <text x="490" y="376" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#0078D4">templates/vine/azure/</text>
+  <text x="490" y="376" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#0078D4">templates/project/azure/</text>
 
   <rect x="596" y="356" width="100" height="32" rx="6" fill="#18181B" stroke="#3F3F46"/>
   <text x="646" y="376" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#A1A1AA">plan / apply</text>
@@ -127,7 +127,7 @@
   <line x1="646" y1="296" x2="646" y2="318" stroke="#52525B" stroke-width="1.5" marker-end="url(#arrow)"/>
 
   <!-- Bottom summary -->
-  <text x="430" y="432" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#71717A">Config snapshot is immutable — a point-in-time freeze of the vine configuration.</text>
+  <text x="430" y="432" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#71717A">Config snapshot is immutable — a point-in-time freeze of the project configuration.</text>
   <text x="430" y="450" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#71717A">No templating engine touches .tf files. Values flow through native terraform.tfvars.json.</text>
   <text x="430" y="468" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="10" fill="#52525B">Plan hash validation ensures apply matches the exact configuration that was planned.</text>
 </svg>

@@ -1,0 +1,44 @@
+---
+title: Activity
+description: A record of everything that happens in your organization — every action and every denied attempt — browsable in Community, exportable in Enterprise.
+---
+
+# Activity
+
+Every Alethia deployment keeps a full **Activity log**, browsable in **Settings → Activity**. This is
+<Community>open-source</Community> — it works in the free edition.
+
+## What it records
+
+The Activity log is a **complete record of what happens in the org**. The Policy Decision Point writes a row for:
+
+- **Every action** — create, edit, deploy, destroy, the `manage_*` operations (identities, members, integrations,
+  billing), exports, and more.
+- **Every denied authorization** — someone tried something they weren't allowed to do.
+- **Governance changes** — custom roles created/edited/deleted, access grants assigned/revoked, and member
+  lifecycle (joins, removals, role changes).
+
+Successful **reads** (viewing a page or listing resources) are not recorded — they fire constantly and would
+drown out the signal; their *denials* still are.
+
+Each entry reads as a natural-language line: the **actor**, what they did, the **resource**, and **when**. Denied
+attempts are flagged. Filter by time range, user, project, and event type.
+
+<Callout type="info">
+  The log is engine-agnostic: whether the deployment uses the Postgres engine or the
+  [OpenFGA engine](/access-control/openfga), decisions are recorded the same way, so Activity looks
+  identical.
+</Callout>
+
+## Export
+
+<Enterprise />
+
+Exporting the log to **CSV** (for a SIEM, a spreadsheet, or a compliance archive) is an Enterprise feature,
+gated by the `activityExport` entitlement. The **Export CSV** button appears in the header when the entitlement is
+held; the export is also enforced server-side.
+
+## Next
+
+- How decisions are made (and recorded): [**architecture**](/access-control/architecture).
+- The edition split: [**feature matrix**](/editions/feature-matrix).

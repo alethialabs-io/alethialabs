@@ -10,23 +10,39 @@ import {
 	BreadcrumbList,
 	BreadcrumbPage,
 	BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
-import { AlethiaLogo } from "@/components/alethia-logo";
+} from "@repo/ui/breadcrumb";
 import { JOB_TYPES } from "@/components/jobs/columns";
-import { useVineyardsStore } from "@/lib/stores/use-vineyards-store";
-import { useJobsStore } from "@/lib/stores/use-jobs-store";
+import { useProjectsQuery } from "@/lib/query/use-projects-query";
+import { useJobsQuery } from "@/lib/query/use-jobs-query";
+import { projectHref } from "@/lib/routing";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Fragment, useMemo } from "react";
 
 const SEGMENT_LABELS: Record<string, string> = {
-	plant: "Create a Spec",
+	new: "New project",
 	clusters: "Clusters",
 	jobs: "Jobs",
-	integrations: "Integrations",
-	tendrils: "Runners",
-	profile: "Profile",
+	connectors: "Connectors",
+	alerts: "Alerts",
+	runners: "Runners",
+	settings: "Settings",
+	general: "General",
+	members: "Members",
+	teams: "Teams",
+	roles: "Roles",
+	access: "Access",
+	sso: "Single Sign-On",
+	activity: "Activity",
+	billing: "Billing",
+	usage: "Usage",
+	agent: "Agent",
 };
+
+/** A nice label for a URL segment: the map first, else a capitalized fallback. */
+function segmentLabel(seg: string): string {
+	return SEGMENT_LABELS[seg] ?? seg.charAt(0).toUpperCase() + seg.slice(1);
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -38,10 +54,76 @@ interface Crumb {
 /** Branding + route-aware breadcrumb bar for the dashboard header. */
 export function HeaderBreadcrumbs() {
 	const pathname = usePathname();
-	const { vineyards } = useVineyardsStore();
-	const { jobs } = useJobsStore();
+	const { data: projects = [] } = useProjectsQuery();
+	const { data: jobs = [] } = useJobsQuery();
 
 	const crumbs = useMemo(() => {
+		// C2 slug drilldown `/{org}/{project}/{env}` — resolve the project name from the
+		// store (the OrgSwitcher already shows the org, so the trail starts at the project).
+		const segs = pathname.split("/").filter(Boolean);
+		if (segs.length >= 1 && segs[0] !== "dashboard") {
+			const [orgSeg, second] = segs;
+
+			// Bare org overview `/{org}` — the trail is just the current page.
+			if (segs.length === 1) return [{ label: "Overview" }];
+
+			// `/{org}/~/{page}[/…]` — an org-global page. Label from SEGMENT_LABELS
+			// (jobs/runners/settings/general/…), resolving job UUIDs by type.
+			if (second === "~") {
+				const rest = segs.slice(2);
+				const out: Crumb[] = [];
+				for (let j = 0; j < rest.length; j++) {
+					const s = rest[j];
+					const isLast = j === rest.length - 1;
+					if (!UUID_RE.test(s)) {
+						out.push({
+							label: segmentLabel(s),
+							href: isLast
+								? undefined
+								: `/${orgSeg}/~/${rest.slice(0, j + 1).join("/")}`,
+						});
+					} else if (UUID_RE.test(s) && rest[j - 1] === "jobs") {
+						const job = jobs.find((v) => v.id === s);
+						const jt = job?.job_type as string | undefined;
+						out.push({
+							label:
+								jt && JOB_TYPES[jt as keyof typeof JOB_TYPES]
+									? JOB_TYPES[jt as keyof typeof JOB_TYPES].label
+									: `${s.slice(0, 8)}…`,
+						});
+					} else {
+						out.push({ label: s });
+					}
+				}
+				return out;
+			}
+
+			// `/{org}/{project}` — the canvas IS the project's Overview (the project name is
+			// already shown in the Project switcher). Deeper `/{org}/{project}/{sub}...` pages
+			// show project name → sub-page labels. (Env now lives in `?environment_id=`, not a
+			// path segment, so there's no env crumb.)
+			const [, projectSlug, ...rest] = segs;
+			if (rest.length === 0) return [{ label: "Overview" }];
+			const project = projects.find((p) => p.slug === projectSlug);
+			const out: Crumb[] = [
+				{
+					label: project?.project_name ?? projectSlug,
+					href: projectHref(orgSeg, projectSlug),
+				},
+			];
+			for (let j = 0; j < rest.length; j++) {
+				const s = rest[j];
+				const isLast = j === rest.length - 1;
+				out.push({
+					label: segmentLabel(s),
+					href: isLast
+						? undefined
+						: `/${orgSeg}/${projectSlug}/${rest.slice(0, j + 1).join("/")}`,
+				});
+			}
+			return out;
+		}
+
 		const raw = pathname.replace(/^\/dashboard\/?/, "").split("/").filter(Boolean);
 		if (raw.length === 0) return [];
 
@@ -58,30 +140,6 @@ export function HeaderBreadcrumbs() {
 					href: isLast ? undefined : `/dashboard/${raw.slice(0, i + 1).join("/")}`,
 				});
 				i++;
-				continue;
-			}
-
-			if (seg === "vineyards") {
-				const vineyardId = raw[i + 1];
-				if (vineyardId && UUID_RE.test(vineyardId)) {
-					const vy = vineyards.find((v) => v.id === vineyardId);
-					const vyName = vy?.name ?? vineyardId.slice(0, 8) + "…";
-					const vineId = raw[i + 2] === "vines" ? raw[i + 3] : undefined;
-
-					if (vineId && UUID_RE.test(vineId)) {
-						const vine = vy?.vines.find((v) => v.id === vineId);
-						const vineName = vine?.project_name ?? vineId.slice(0, 8) + "…";
-						result.push({ label: vyName, href: `/dashboard/vineyards/${vineyardId}` });
-						result.push({ label: vineName });
-						i += 4;
-					} else {
-						result.push({ label: vyName });
-						i += 2;
-					}
-				} else {
-					result.push({ label: "Zones" });
-					i++;
-				}
 				continue;
 			}
 
@@ -104,47 +162,18 @@ export function HeaderBreadcrumbs() {
 		}
 
 		return result;
-	}, [pathname, vineyards, jobs]);
+	}, [pathname, projects, jobs]);
 
-	const isHome = crumbs.length === 0;
+	// On /dashboard there are no route crumbs — the bar is just "[·] / Org".
+	if (crumbs.length === 0) return null;
 
 	return (
 		<Breadcrumb>
 			<BreadcrumbList className="flex-nowrap">
-				{/* Logo + "Alethia" — links to /dashboard */}
-				<BreadcrumbItem className="shrink-0">
-					{isHome ? (
-						<BreadcrumbPage className="flex items-center gap-1.5">
-							<AlethiaLogo className="h-5 w-5" />
-							<span className="font-semibold">Alethia</span>
-						</BreadcrumbPage>
-					) : (
-						<BreadcrumbLink asChild>
-							<Link href="/dashboard" className="flex items-center gap-1.5">
-								<AlethiaLogo className="h-5 w-5" />
-								<span className="font-semibold text-foreground">Alethia</span>
-							</Link>
-						</BreadcrumbLink>
-					)}
-				</BreadcrumbItem>
-
-				{/* "by Borislav Borisov" — separate from the Link to avoid nested <a> */}
-				<li className="hidden sm:inline-flex items-center gap-1.5 text-sm">
-					<span className="text-muted-foreground">by</span>
-					<a
-						href="https://www.linkedin.com/in/bborisov1/"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="text-muted-foreground hover:text-foreground transition-colors"
-					>
-						Borislav Borisov
-					</a>
-				</li>
-
-				{/* Route segments */}
+				{/* Separators sit between crumbs only — no leading chevron. */}
 				{crumbs.map((crumb, i) => (
 					<Fragment key={crumb.href ?? crumb.label}>
-						<BreadcrumbSeparator />
+						{i > 0 && <BreadcrumbSeparator />}
 						<BreadcrumbItem className="min-w-0">
 							{i < crumbs.length - 1 && crumb.href ? (
 								<BreadcrumbLink asChild>

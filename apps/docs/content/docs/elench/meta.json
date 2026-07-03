@@ -1,0 +1,14 @@
+{
+  "title": "Elench",
+  "icon": "BadgeCheck",
+  "root": true,
+  "pages": [
+    "index",
+    "architecture",
+    "engine-internals",
+    "control-catalog",
+    "agent-runtime",
+    "multi-cloud",
+    "extending"
+  ]
+}

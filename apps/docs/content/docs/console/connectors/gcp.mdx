@@ -1,0 +1,54 @@
+---
+title: GCP Connector
+description: Workload Identity Federation setup with OIDC token exchange.
+---
+
+# GCP Connector
+
+GCP integration uses **Workload Identity Federation (WIF)** to exchange OIDC tokens for temporary GCP credentials. No service account JSON keys are created or stored. See [Security Architecture](/concepts/security).
+
+## Setup
+
+<Steps>
+
+### Create Workload Identity Pool
+In your GCP project, create a Workload Identity Pool to group external identities.
+
+### Add OIDC Provider
+Add an OIDC Provider to the pool with:
+- **Issuer URL** — the Alethia platform's OIDC issuer
+- **Audience** — the platform's audience identifier
+- **Attribute mapping** — maps OIDC claims to Google attributes
+
+### Create Service Account
+Create a GCP service account with the required roles for infrastructure provisioning (Kubernetes Engine Admin, Cloud SQL Admin, etc.).
+
+### Bind Service Account
+Grant the Workload Identity Pool the `roles/iam.workloadIdentityUser` role on the service account. This allows OIDC-authenticated requests to impersonate the service account.
+
+### Export WIF Configuration
+Export the WIF configuration JSON from the Google Cloud Console.
+
+### Paste into Alethia
+Paste the WIF configuration JSON and click "Complete."
+
+</Steps>
+
+## Verification
+
+Alethia verifies the connection **instantly, server-side** (no runner):
+
+1. The console presents an OIDC token to GCP's Security Token Service (Workload Identity Federation)
+2. GCP validates the token against the registered issuer/subject and returns a short-lived access token
+3. A small Compute read confirms provisioning access → `Connected` / `Degraded` / `Disconnected`
+
+Existing resources (VPC networks, subnets, DNS zones) are discovered separately by the server-side
+[asset inventory](/console/connectors/health-and-inventory).
+
+## What's Stored
+
+- **GCP Project ID**
+- **Service account email**
+- **WIF configuration** (pool ID, provider ID, issuer details)
+
+No service account JSON keys. Access is revoked by deleting the WIF pool or unbinding the service account.

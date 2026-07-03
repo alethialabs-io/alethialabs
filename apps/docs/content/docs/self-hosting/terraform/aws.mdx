@@ -1,0 +1,41 @@
+---
+title: AWS
+description: Provision the Alethia control plane on an AWS Graviton EC2 instance.
+---
+
+# AWS (`infra/aws-cp`)
+
+A single Graviton **EC2 `t4g.medium`** (2 vCPU / 4 GB) with an Elastic IP, behind Caddy.
+**≈ $36/mo** (Infracost: instance + EBS $32, + ~$3.6 public IPv4); `t4g.large` ≈ $59 if you need
+more RAM.
+
+## What it creates
+- `aws_instance` (`t4g.medium`, Ubuntu 24.04 ARM64) with an encrypted 60 GB gp3 root volume
+- `aws_security_group` (22/80/443) + `aws_key_pair`
+- `aws_eip` (stable public IP) → DNS
+- `cloudflare_record` A for the apex + `www`
+- cloud-init: installs Docker, clones the repo (Docker data on the durable EBS root)
+
+## Prerequisites
+- AWS credentials for the target account (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`).
+- Cloudflare API token + zone id; an SSH public key.
+
+## Apply
+```bash
+cd infra/aws-cp
+cp backend.hcl.example backend.hcl
+cp terraform.tfvars.example terraform.tfvars # cloudflare_*, ssh_public_key, domain, aws_region
+export AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…
+terraform init -backend-config=backend.hcl
+terraform apply
+terraform output server_ipv4
+```
+
+## CI secrets (`terraform-aws-cp.yml`)
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (provider), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`,
+`DEPLOY_SSH_PUBLIC_KEY`, and the `TF_STATE_S3_*` backend secrets (passed via `-backend-config`, so
+they don't clash with the provider creds).
+
+## Tuning
+`instance_type` (`t4g.medium` default → `t4g.large`), `root_volume_size`, `aws_region`,
+`ssh_allowed_cidrs`. Runs in the account's default VPC.

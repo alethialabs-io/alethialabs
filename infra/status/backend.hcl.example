@@ -1,0 +1,11 @@
+# AWS-native S3 backend. Copy to backend.hcl (gitignored).
+#
+#   tofu init -backend-config=backend.hcl
+#
+# In CI the apply job assumes the alethia-cp-deployer OIDC role (infra/aws-oidc), which
+# grants status/* and authenticates this backend natively — no static state keys.
+
+bucket       = "alethia-tofu-state-270587882865"
+key          = "status/terraform.tfstate"
+region       = "eu-central-1"
+use_lockfile = true

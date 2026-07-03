@@ -6,11 +6,12 @@
     "index",
     "getting-started",
     "dashboard",
-    "design-spec",
-    "integrations",
+    "design-project",
+    "connectors",
     "jobs",
     "runners",
     "clusters",
+    "alerts",
     "api-reference"
   ]
 }

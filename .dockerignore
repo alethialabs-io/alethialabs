@@ -1,3 +1,6 @@
+# NOTE: bare patterns below (e.g. `.env.local`) only match the repo root. Nested
+# app files need `**/` — see the `**/.env*` block at the bottom, which keeps any
+# apps/*/.env*.local secrets out of image layers.
 node_modules
 .next
 .git
@@ -21,3 +24,20 @@ idp-installer/logs
 idp-installer/temp
 idp-installer/__pycache__
 **/.terraform
+**/.react-email
+**/.react-email-out
+**/test-results
+**/playwright-report
+.vercel
+apps/legacy-cli/venv
+
+# Nested env files + build artifacts (root-level patterns above don't catch these).
+# Critical: prevents apps/*/.env*.local secrets from being baked into image layers.
+# (The private investor dataroom lives OUTSIDE this repo at ../dataroom — not built here.)
+**/.env
+**/.env.*
+**/.env*.local
+**/node_modules
+**/.next
+**/.turbo
+**/.source

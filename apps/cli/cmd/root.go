@@ -5,67 +5,79 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/internal/update"
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/version"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
+)
+
+const (
+	websiteURL = "https://alethialabs.io"
+	docsURL    = "https://alethialabs.io/docs"
 )
 
 func init() {
 	rootCmd.Version = version.Version
+	rootCmd.PersistentFlags().StringP("output", "o", "table", "Output format: table, json, or csv")
+	rootCmd.PersistentFlags().Bool("no-input", false, "Disable interactive prompts (fail instead of prompting)")
 }
 
 var rootCmd = &cobra.Command{
 	Use:   "alethia",
-	Short: "alethia is a CLI for managing your infrastructure",
-	Long: `Alethia encompasses a CLI (alethia) and a Web Control Plane (console).
-It helps you automate, manage, and scale your cloud infrastructure easily.`,
+	Short: "alethia — multi-cloud Kubernetes control plane, from the terminal",
+	Long: `alethia is the command-line interface to the Alethia control plane.
+Configure infrastructure visually, then plan, deploy, and tear it down across
+AWS, GCP, and Azure from the terminal.`,
+	// Resolves the input mode (--no-input / non-TTY stdin) before any subcommand
+	// runs, so the interactive selectors know whether prompting is allowed.
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		resolveInputMode(cmd)
+	},
+	// Runs after any subcommand that doesn't override it — surfaces the upgrade
+	// notice once per day without ever blocking the command.
+	PersistentPostRun: func(cmd *cobra.Command, args []string) {
+		update.CheckAndNotify(version.Version)
+	},
 	Run: func(cmd *cobra.Command, args []string) {
-		logo := `
-   ______                           
-  / ____/________ _____  ___        
- / / __/ ___/ __ ` + "`" + `/ __ \/ _ \       
-/ /_/ / /  / /_/ / /_/ /  __/       
-\____/_/   \__,_/ .___/\___/        
-               /_/                  
-`
-		logoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("63")).Bold(true)
-		titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
-		linkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Underline(true)
-		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-		accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
-
-		fmt.Println(logoStyle.Render(logo))
-		fmt.Println(titleStyle.Render("Welcome to the Alethia CLI!"))
+		printBanner()
 		fmt.Println()
-		
-		fmt.Println(textStyle.Render("Developed by: ") + accentStyle.Render("Borislav Borisov"))
-		fmt.Println(textStyle.Render("Email:        ") + linkStyle.Render("borislav@tovr.eu"))
-		fmt.Println(textStyle.Render("GitHub:       ") + linkStyle.Render("https://github.com/bobikenobi12"))
-		fmt.Println(textStyle.Render("LinkedIn:     ") + linkStyle.Render("https://www.linkedin.com/in/bborisov1/"))
-		fmt.Println()
-		fmt.Println(textStyle.Render("This tool is open source and I'd love collaboration."))
-		fmt.Println(textStyle.Render("Alethia is designed to manage, provision, and automate complex cloud infrastructure effortlessly."))
-		fmt.Println(textStyle.Render("You can also set up things through our web platform: ") + linkStyle.Render("https://trellis.itgix.eu"))
-		fmt.Println()
-
 		cmd.Help()
 	},
 }
 
-const defaultWebOrigin = "https://beta.adp.itgix.com"
+// printBanner renders the grayscale Alethia lockup shown for a bare `alethia`.
+func printBanner() {
+	ver := version.Version
 
-func WebOrigin() string {
-	if v := os.Getenv("ALETHIA_WEB_ORIGIN"); v != "" {
-		return v
+	fmt.Println()
+	fmt.Printf("  %s %s   %s\n",
+		ui.RenderMark(),
+		ui.StrongStyle.Render("alethia"),
+		ui.Eyebrow("control plane"),
+	)
+	fmt.Printf("  %s\n", ui.SecondaryStyle.Render("Configure infrastructure visually. Deploy from the terminal."))
+	fmt.Println()
+
+	row := func(label, value string) {
+		fmt.Printf("  %s  %s\n", ui.MutedStyle.Render(fmt.Sprintf("%-9s", label)), value)
 	}
-	return defaultWebOrigin
+	row("version", ui.TextStyle.Render(ver))
+	row("website", ui.LinkStyle.Render(websiteURL))
+	row("docs", ui.LinkStyle.Render(docsURL))
+}
+
+// WebOrigin returns the Alethia control-plane URL, resolved as
+// ALETHIA_WEB_ORIGIN env > persisted config > the hosted default. Prod needs no
+// setup; self-host/dev override it via `alethia config set web-origin` or the env.
+func WebOrigin() string {
+	origin, _ := types.ResolveWebOrigin()
+	return origin
 }
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		fail(err)
 	}
 }

@@ -1,0 +1,110 @@
+name: Infra - CP Hetzner
+
+on:
+  pull_request:
+    paths:
+      - 'infra/cp-hetzner/**'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/cp-hetzner/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  TF_DIR: infra/cp-hetzner
+  TOFU_VERSION: "1.10.10"
+  ASM_SECRET_ID: alethia/prod/env
+  ASM_REGION: eu-central-1
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: OpenTofu Validate (no backend, no secrets)
+        working-directory: ${{ env.TF_DIR }}
+        # PR plans are validate-only: no backend, no cloud/state secrets reach a
+        # PR job (the repo is contributor-facing). Real plan+apply run on main.
+        run: |
+          tofu init -backend=false
+          tofu validate
+
+      - name: IaC checks (fmt + tflint + Trivy)
+        uses: ./.github/actions/iac-checks
+        with:
+          working-directory: ${{ env.TF_DIR }}
+
+  apply:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # assume the deploy role via GitHub OIDC — no stored AWS keys
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      # Least-priv OIDC role (infra/aws-oidc → alethia-cp-deployer): S3 state on
+      # hetzner/* + read/write the alethia/prod/env secret. No static keys anywhere.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.CP_HETZNER_DEPLOYER_ROLE_ARN }}
+          aws-region: ${{ env.ASM_REGION }}
+
+      # Load the infra TF-vars from the vault (Hetzner/Cloudflare tokens live in ASM,
+      # not GitHub). Masked, then exported for the tofu steps.
+      - name: Load TF-vars from Secrets Manager
+        run: |
+          set -euo pipefail
+          json="$(aws secretsmanager get-secret-value --secret-id "$ASM_SECRET_ID" --region "$ASM_REGION" --query SecretString --output text)"
+          load() {
+            local var="$1" key="$2" val
+            val="$(printf '%s' "$json" | jq -r --arg k "$key" '.[$k] // ""')"
+            echo "::add-mask::$val"
+            echo "$var=$val" >> "$GITHUB_ENV"
+          }
+          load TF_VAR_hcloud_token          HCLOUD_TOKEN
+          load TF_VAR_cloudflare_api_token  CLOUDFLARE_API_TOKEN
+          load TF_VAR_cloudflare_zone_id    CLOUDFLARE_ZONE_ID
+          load TF_VAR_cloudflare_account_id CLOUDFLARE_ACCOUNT_ID
+          load TF_VAR_ssh_public_key        DEPLOY_SSH_PUBLIC_KEY
+
+      - name: OpenTofu Init
+        working-directory: ${{ env.TF_DIR }}
+        # AWS-native S3 backend — the assumed OIDC role authenticates it; no static keys.
+        run: |
+          tofu init -upgrade \
+            -backend-config="bucket=alethia-tofu-state-270587882865" \
+            -backend-config="key=hetzner/terraform.tfstate" \
+            -backend-config="region=eu-central-1" \
+            -backend-config="use_lockfile=true"
+
+      - name: OpenTofu Apply
+        working-directory: ${{ env.TF_DIR }}
+        run: tofu apply -auto-approve
+
+      # Chain provisioned outputs back into the vault so deploy-console needs no manual
+      # editing: merge DEPLOY_HOST (server IP) + TUNNEL_TOKEN into alethia/prod/env.
+      - name: Chain outputs → Secrets Manager
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          set -euo pipefail
+          host="$(tofu output -raw server_ipv4)"
+          tok="$(tofu output -raw tunnel_token)"
+          cur="$(aws secretsmanager get-secret-value --secret-id "$ASM_SECRET_ID" --region "$ASM_REGION" --query SecretString --output text)"
+          tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
+          printf '%s' "$cur" | jq --arg h "$host" --arg t "$tok" '.DEPLOY_HOST=$h | .TUNNEL_TOKEN=$t' > "$tmp"
+          aws secretsmanager put-secret-value --secret-id "$ASM_SECRET_ID" --region "$ASM_REGION" --secret-string "file://$tmp" >/dev/null
+          echo "Merged DEPLOY_HOST + TUNNEL_TOKEN into $ASM_SECRET_ID."

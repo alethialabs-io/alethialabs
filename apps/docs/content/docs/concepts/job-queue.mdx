@@ -22,14 +22,12 @@ Infrastructure provisioning is slow (minutes to hours) and must be reliable. A j
 
 | Type | Purpose | Triggered By |
 |------|---------|-------------|
-| `CONNECTION_TEST` | Verify cloud credentials, cache discovered resources | Connecting a cloud provider |
-| `FETCH_RESOURCES` | Refresh cached VPCs, subnets, hosted zones | Manual refresh in UI |
-| `PLAN` | Run `terraform plan` + optional Infracost analysis | Clicking "Plan" on a Spec |
-| `DEPLOY` | Run `terraform apply` + install ArgoCD | Clicking "Apply" on a Spec |
-| `DESTROY` | Run `terraform destroy` | Clicking "Destroy" on a Spec |
-| `DEPLOY_WORKER` | Provision Runner infrastructure (ECS task, IAM roles) | Adding a cloud-hosted Runner |
-| `UPDATE_WORKER` | Update Runner to latest release | Clicking "Update" on a Runner |
-| `DESTROY_WORKER` | Tear down Runner infrastructure | Removing a cloud-hosted Runner |
+| `PLAN` | Run `terraform plan` + optional Infracost analysis | Clicking "Plan" on a Project |
+| `DEPLOY` | Run `terraform apply` + install ArgoCD | Clicking "Apply" on a Project |
+| `DESTROY` | Run `terraform destroy` | Clicking "Destroy" on a Project |
+| `DEPLOY_RUNNER` | Provision Runner infrastructure (ECS task, IAM roles) | Deploying a self-operated Runner |
+| `UPDATE_RUNNER` | Update Runner to latest release | Clicking "Update" on a Runner |
+| `DESTROY_RUNNER` | Tear down Runner infrastructure | Removing a deployed Runner |
 
 ## Job Lifecycle
 
@@ -55,22 +53,22 @@ QUEUED ──► CLAIMED ──► PROCESSING ──► SUCCESS
 The critical invariant: **exactly one Runner executes each job**. This is enforced by PostgreSQL's `FOR UPDATE SKIP LOCKED`:
 
 ```sql
-CREATE OR REPLACE FUNCTION claim_next_job(p_worker_id uuid)
-RETURNS provision_jobs AS $$
+CREATE OR REPLACE FUNCTION claim_next_job(p_runner_id uuid)
+RETURNS jobs AS $$
 DECLARE
-  job provision_jobs;
+  job jobs;
 BEGIN
   SELECT * INTO job
-  FROM provision_jobs
+  FROM jobs
   WHERE status = 'QUEUED'
   ORDER BY created_at ASC
   FOR UPDATE SKIP LOCKED
   LIMIT 1;
 
   IF job IS NOT NULL THEN
-    UPDATE provision_jobs
+    UPDATE jobs
     SET status = 'CLAIMED',
-        worker_id = p_worker_id,
+        runner_id = p_runner_id,
         claimed_at = now()
     WHERE id = job.id;
   END IF;
@@ -86,16 +84,16 @@ $$ LANGUAGE plpgsql;
 
 ## Config Snapshot
 
-When a job is created, the current Spec configuration is serialized as a **config_snapshot** in the job record. This ensures the Runner executes exactly the configuration that was planned, even if the user modifies the Spec after queuing.
+When a job is created, the current Project configuration is serialized as a **config_snapshot** in the job record. This ensures the Runner executes exactly the configuration that was planned, even if the user modifies the Project after queuing.
 
-For DEPLOY jobs, a **plan hash** is validated: if the Spec config changed since the plan was generated, the deploy fails with a hash mismatch error, forcing the user to re-plan.
+For DEPLOY jobs, a **plan hash** is validated: if the Project config changed since the plan was generated, the deploy fails with a hash mismatch error, forcing the user to re-plan.
 
 ## Job Execution Flow
 
 <Steps>
 
 ### Job Created
-User clicks "Plan" / "Apply" / "Destroy" in the UI (or runs `alethia plan` / `alethia apply` / `alethia destroy` in the CLI). A `provision_jobs` row is inserted with status `QUEUED`.
+User clicks "Plan" / "Apply" / "Destroy" in the UI (or runs `alethia plan` / `alethia apply` / `alethia destroy` in the CLI). A `jobs` row is inserted with status `QUEUED`.
 
 ### Runner Claims Job
 A Runner's poll loop calls `POST /api/jobs/claim`. The server executes `claim_next_job()`. If a job is returned, the Runner proceeds.
@@ -110,7 +108,7 @@ The Runner runs the job-type-specific logic (Terraform plan/apply/destroy, ArgoC
 On completion, the Runner calls `PUT /api/jobs/{id}/status` with SUCCESS or FAILED, plus execution metadata (Terraform outputs, cost data, cluster info).
 
 ### Finalization
-For DEPLOY jobs, Console calls `finalizeDeployment()` to extract cluster metadata from Terraform outputs and update the Spec's component tables (cluster endpoint, ArgoCD URL, database endpoints, etc.).
+For DEPLOY jobs, Console calls `finalizeDeployment()` to extract cluster metadata from Terraform outputs and update the Project's component tables (cluster endpoint, ArgoCD URL, database endpoints, etc.).
 
 </Steps>
 
@@ -122,8 +120,8 @@ When a Runner dies mid-job:
 2. Job stays in PROCESSING with no new log updates
 3. After 5 minutes of no log activity, Console marks the job FAILED
 4. User can **retry** the job — creates a new job with the same config
-5. Terraform state is preserved in Supabase S3, so the retry continues from the last successful state
+5. Terraform state is preserved in S3-compatible storage, so the retry continues from the last successful state
 
 ## Real-time Status Updates
 
-Job status changes are broadcast via [Supabase Realtime](/concepts/realtime). The UI subscribes to `provision_jobs` UPDATE events and updates the jobs store in real-time. The job detail page also subscribes to `provision_job_logs` INSERT events for live log streaming.
+Job status changes are broadcast via [Postgres LISTEN/NOTIFY → SSE](/concepts/realtime). The UI subscribes to `jobs` UPDATE events and updates the jobs store in real-time. The job detail page also subscribes to `job_logs` INSERT events for live log streaming.

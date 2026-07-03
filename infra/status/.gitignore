@@ -1,0 +1,9 @@
+# Never commit backend creds, tfvars, state, or plans.
+backend.hcl
+*.tfvars
+!*.tfvars.example
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+tfplan

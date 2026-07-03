@@ -1,0 +1,47 @@
+name: Infra - Project Templates
+
+on:
+  pull_request:
+    paths:
+      - 'infra/templates/**'
+      - 'infra/.tflint.hcl'
+      - 'infra/.trivy.yaml'
+      - '.github/actions/iac-checks/**'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/templates/**'
+
+# The customer project templates (infra/templates/project/{aws,gcp,azure}) are applied at
+# provision time by the runner, NOT by this repo's CI. So this workflow only gates them with
+# credential-free static checks: fmt + validate + tflint + Trivy misconfig. No apply.
+
+permissions:
+  contents: read
+
+env:
+  TOFU_VERSION: "1.10.10"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud: [aws, gcp, azure]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: OpenTofu Validate (no backend, no creds)
+        working-directory: infra/templates/project/${{ matrix.cloud }}
+        run: |
+          tofu init -backend=false
+          tofu validate
+
+      - name: IaC checks (fmt + tflint + Trivy)
+        uses: ./.github/actions/iac-checks
+        with:
+          working-directory: infra/templates/project/${{ matrix.cloud }}

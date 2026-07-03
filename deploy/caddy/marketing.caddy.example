@@ -1,0 +1,29 @@
+# Marketing zone — off-Vercel mirror of apps/console/microfrontends.json.
+#
+# The hosted site (Vercel) stitches console + marketing via microfrontends.json. This
+# file is the equivalent for self-hosting the marketing app behind Caddy. The OSS build
+# ships NO marketing, so this is an OPT-IN template:
+#
+#   1. Run a `marketing` service (the apps/marketing image) in your compose stack.
+#   2. Copy this file next to the active Caddyfile as `marketing.caddy`.
+#   3. Uncomment `import marketing*.caddy` in that Caddyfile (before the catch-all).
+#
+# Same path + asset-prefix map as microfrontends.json. Keep the two in sync.
+
+# Authed root: a Better Auth session cookie on `/` hands off to the console (which
+# resolves the active org and redirects to /{org}) — mirrors apps/marketing/proxy.ts.
+# Anonymous `/` falls through to the marketing landing below.
+@authed_root {
+	path /
+	header_regexp authcookie Cookie "(^|;\s*)(__Secure-)?better-auth\.session_token="
+}
+handle @authed_root {
+	reverse_proxy app:3000
+}
+
+# Marketing-owned root paths + the mkt-assets asset prefix. Must appear BEFORE the
+# catch-all `handle { reverse_proxy app:3000 }` in the Caddyfile.
+@marketing path / /pricing /enterprise /contact /contact/* /terms /privacy /cookies /acceptable-use /mkt-assets/* /robots.txt /sitemap.xml
+handle @marketing {
+	reverse_proxy marketing:3000
+}

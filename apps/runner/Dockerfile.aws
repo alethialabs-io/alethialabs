@@ -1,0 +1,73 @@
+# syntax=docker/dockerfile:1
+# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Lean AWS-only runner image (per-cloud routing). Same as the full image but carries
+# only the AWS CLI + the AWS provider/module cache — `runner-aws`. Declares
+# ALETHIA_RUNNER_PROVIDERS=aws so it only claims AWS jobs. The leading layers are
+# identical to the gcp/azure/full images, so the registry dedups them.
+
+FROM golang:1.25-alpine AS builder
+RUN apk add --no-cache git
+WORKDIR /app
+COPY go.work go.work
+COPY packages/core/ packages/core/
+COPY apps/cli/go.mod apps/cli/go.sum apps/cli/
+COPY apps/runner/go.mod apps/runner/go.sum apps/runner/
+RUN cd apps/runner && go mod download
+COPY apps/runner/ apps/runner/
+ARG VERSION=dev
+ARG TARGETARCH=arm64
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w -X github.com/alethialabs-io/alethialabs/apps/runner/internal/version.Version=${VERSION}" \
+    -o /runner ./apps/runner/cmd/runner
+
+FROM alpine:3.21
+
+# Shared tools (kubectl/helm for ArgoCD on every cloud) + AWS CLI (pulls python3).
+RUN apk add --no-cache \
+    bash curl unzip git openssh-client kubectl helm aws-cli \
+    && rm -rf /var/cache/apk/*
+
+# OpenTofu — baked in, SHA256-verified.
+ARG TOFU_VERSION=1.9.0
+RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
+    ASSET="tofu_${TOFU_VERSION}_linux_${ARCH}.zip" && \
+    cd /tmp && \
+    curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/${ASSET}" -o "${ASSET}" && \
+    curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_SHA256SUMS" -o SHA256SUMS && \
+    grep " ${ASSET}\$" SHA256SUMS | sha256sum -c - && \
+    unzip "${ASSET}" -d /usr/local/bin tofu && \
+    rm -f "${ASSET}" SHA256SUMS && \
+    chmod +x /usr/local/bin/tofu
+
+RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
+    curl -fsSL "https://github.com/infracost/infracost/releases/download/v0.10.39/infracost-linux-${ARCH}.tar.gz" | \
+    tar -xz -C /usr/local/bin && \
+    mv /usr/local/bin/infracost-linux-${ARCH} /usr/local/bin/infracost && \
+    chmod +x /usr/local/bin/infracost
+
+# AWS-only: EKS auth plugin.
+RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
+    curl -fsSL "https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v0.7.17/aws-iam-authenticator_0.7.17_linux_${ARCH}" \
+      -o /usr/local/bin/aws-iam-authenticator && \
+    chmod +x /usr/local/bin/aws-iam-authenticator
+
+COPY --from=builder /runner /usr/local/bin/runner
+
+RUN adduser -D -u 1000 runner
+USER runner
+WORKDIR /home/runner
+ENV TF_PLUGIN_CACHE_DIR=/home/runner/.terraform.d/plugin-cache
+
+COPY --chown=runner:runner infra/templates/project/aws/ /home/runner/project-templates/aws/
+COPY --chown=runner:runner infra/templates/runner/ /home/runner/runner-templates/
+COPY --chown=runner:runner infra/templates/argocd/ /home/runner/argocd-templates/
+
+# Pre-initialize only the AWS template (providers + modules) — see the full Dockerfile
+# for the rationale. Keeps the .terraform tree for the per-job copy.
+RUN mkdir -p "${TF_PLUGIN_CACHE_DIR}" && \
+    (cd /home/runner/project-templates/aws && tofu init -backend=false -input=false -upgrade)
+
+ENV ALETHIA_RUNNER_PROVIDERS=aws
+ENTRYPOINT ["runner"]

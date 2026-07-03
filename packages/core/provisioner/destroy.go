@@ -11,12 +11,11 @@ import (
 	"path/filepath"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
-	"github.com/alethialabs-io/alethialabs/packages/core/terraform"
+	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 )
 
 type DestroyParams struct {
-	VineyardID       string
-	VineyardName     string
+	ProjectName      string
 	Environment      string
 	Region           string
 	CleanupWorkspace bool
@@ -31,10 +30,7 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 		out = os.Stdout
 	}
 
-	workspaceName := fmt.Sprintf("%s-%s", params.VineyardName, params.Environment)
-	if params.VineyardName == "" {
-		workspaceName = fmt.Sprintf("%s-%s", params.VineyardID, params.Environment)
-	}
+	workspaceName := fmt.Sprintf("%s-%s", params.ProjectName, params.Environment)
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -59,14 +55,14 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 		}
 	}
 
-	tf, err := terraform.NewTerraformCLI(ctx, "1.15.5", workDir, out, out)
+	tf, err := tofu.NewTofuCLI(ctx, tofu.DefaultIaCVersion, workDir, out, out)
 	if err != nil {
-		return fmt.Errorf("failed to initialize Terraform CLI: %w", err)
+		return fmt.Errorf("failed to initialize OpenTofu CLI: %w", err)
 	}
 
 	fmt.Fprintln(out, "   Destroying Cloud Resources (this may take 10-15 mins)...")
-	if err := tf.Destroy(ctx, "terraform.tfvars"); err != nil {
-		return fmt.Errorf("terraform destroy failed: %w", err)
+	if err := tf.Destroy(ctx, "tofu.tfvars"); err != nil {
+		return fmt.Errorf("tofu destroy failed: %w", err)
 	}
 
 	if params.CleanupWorkspace {

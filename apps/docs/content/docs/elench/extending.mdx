@@ -1,0 +1,131 @@
+---
+title: Extending & running
+description: Adding a control, the injection seams that keep AI advisory, the elench-verify CLI for CI, and the gated live exercises.
+---
+
+# Extending & running elench
+
+<Enterprise />
+
+## Adding a control
+
+<Steps>
+
+<Step>
+### Write the control
+
+Add a `control…` function in `packages/core/verify` returning a `ControlResult`. Use `resolveStatus` so
+the pass / fail / warn / not_evaluable / vacuous-pass precedence stays consistent, and reuse the policy
+helpers (`parseIAMPolicy`, `attrUnknown`, `toStringSlice`) — they already handle string-vs-array IAM
+fields and unknown values.
+</Step>
+
+<Step>
+### Add a fixture and a test
+
+Drop a plan-JSON fixture under `testdata/` and a case in the test suite. **Always include a
+`not_evaluable` case** for any control that reads a body that can be computed — that path is the
+engine's honesty guarantee.
+</Step>
+
+<Step>
+### Bump the catalog version
+
+Change `CatalogVersion` whenever the new (or changed) control could alter a verdict. Old receipts are
+only meaningful against the catalog that produced them.
+</Step>
+
+</Steps>
+
+A **Kubernetes** control is the same shape in `packages/core/verify/k8s.go`: add a `control…` function over
+the decoded `k8sResource` list, wire it into `EvaluateManifests`, and add a fixture (an insecure manifest
+→ fail, a clean one → pass). Reuse the `podSpec` / `containers` helpers.
+
+## Adding a cloud
+
+Extending the provisioner + GitOps seam to a new cloud is a separate, documented checklist — the
+`CloudProvider` impl, the Terraform template + keyless workload-identity outputs, runner credential
+activation, and the per-cloud ArgoCD facts. See **[Multi-cloud](/elench/multi-cloud)** and
+`packages/core/cloud/README.md`.
+
+## The injection seams — "AI proposes, the gate disposes"
+
+Elench keeps AI strictly advisory through a set of injected interfaces, so the deterministic engine
+always has the final say:
+
+| Seam | Role |
+|---|---|
+| `PolicyChecker` | AWS Access Analyzer corroboration (real implementation in `packages/core/accessanalyzer`). |
+| `Remediator` | Proposes a fix + re-plans; the loop only accepts a gate-confirmed result. |
+| `SubAgentRunner` | Runs one delegated colony task; the supervisor decides what to do with the outcome. |
+| injected model call | The LLM in `explainFindings` / the agent runner — swappable, so logic is tested with a fake. |
+
+The safety spine is `ReVerify(original, candidatePlan)`: it re-runs the gate on a proposed fix and reports
+which original failures it **resolved**, which **still fail**, and which it made **newly fail**. A fix is
+`Accepted` only when every original failure is resolved with no regression. `RunRemediationLoop` wraps it
+in a bounded harness so "AI proposes, the gate disposes" can never loop forever or apply an unverified fix.
+
+## The `elench-verify` CLI
+
+`cmd/elench-verify` runs the gate over any plan JSON outside the runner — for local checks, CI gating, or
+producing the go/no-go corpus measurement:
+
+```bash
+go build -o elench-verify ./packages/core/verify/cmd/elench-verify
+tofu show -json tfplan | elench-verify          # human report; exit 2 if the verdict blocks
+elench-verify -json plan.json                    # machine-readable report on stdout
+elench-verify -manifests deploy.yaml             # audit Kubernetes manifests instead of a plan
+```
+
+The default mode accepts a **bring-your-own** plan (via `ParseCustomerPlan`), not just an Alethia-generated
+one — the same controls run either way. `-manifests` runs the k8s control set. Exit codes: `0`
+pass/warn/not_evaluable · `2` blocking (fail) · `1` usage/parse error — so it drops straight into a CI step.
+
+## Gated live exercises
+
+The deterministic logic is unit-tested with injected fakes; the live integrations are proven by **gated**
+tests (skipped in normal CI, run explicitly) that exercise the real services end-to-end:
+
+<Tabs items={["LLM / colony", "AWS Access Analyzer", "Real plan + remediation"]}>
+<Tab value="LLM / colony">
+
+```bash
+ELENCH_LIVE=1 ANTHROPIC_API_KEY=sk-ant-… \
+  pnpm -F console exec vitest run tests/lib/agent/llm-live.test.ts
+```
+
+Drives the supervisor → LLM sub-agent runner → **real Claude model** → parse → completion.
+
+</Tab>
+<Tab value="AWS Access Analyzer">
+
+```bash
+ELENCH_LIVE_AWS=1 AWS_REGION=us-east-1 \
+  go test ./packages/core/accessanalyzer -run TestLive -v
+```
+
+Calls the **real `CheckAccessNotGranted` API**: an admin policy is reported as granting the denied
+actions; a scoped policy grants none.
+
+</Tab>
+<Tab value="Real plan + remediation">
+
+```bash
+# verify a real OpenTofu plan
+tofu show -json plan.out | elench-verify          # blocks an admin policy (exit 2)
+
+# remediation re-verify across two real plans
+ELENCH_PLAN_BAD=bad.json ELENCH_PLAN_FIXED=fixed.json \
+  go test ./packages/core/verify -run TestLiveReVerifyRealPlans -v
+```
+
+`ReVerify(bad, fixed)` over genuine `tofu show -json` output resolves the failing control with no
+regression (`accepted=true`).
+
+</Tab>
+</Tabs>
+
+<Callout type="info">
+  These tests stay **gated** so CI remains deterministic and never spends credits or hits a cloud; the
+  env flags above run them on demand against real services.
+</Callout>

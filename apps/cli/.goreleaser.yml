@@ -24,7 +24,6 @@ builds:
           - -s -w -X github.com/alethialabs-io/alethialabs/apps/cli/internal/version.Version={{ trimprefix .Tag "cli-v" }}
       env:
           - CGO_ENABLED=0
-          - ALETHIA_WEB_ORIGIN=https://beta.adp.itgix.com
       goos:
           - linux
           - darwin

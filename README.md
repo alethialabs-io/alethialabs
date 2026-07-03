@@ -1,6 +1,9 @@
 # Alethia Labs
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![CI](https://github.com/alethialabs-io/alethialabs/actions/workflows/ci.yml/badge.svg)](https://github.com/alethialabs-io/alethialabs/actions/workflows/ci.yml)
+[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/.github/badges/coverage.json)](./TESTING.md)
+[![go coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/.github/badges/go-coverage.json)](./TESTING.md)
 
 An open-source, multi-cloud internal developer platform for provisioning and managing infrastructure through a web control plane and CLI, backed by GitOps reconciliation.
 
@@ -12,9 +15,9 @@ An open-source, multi-cloud internal developer platform for provisioning and man
 
 | Component | Role |
 | --- | --- |
-| **Alethia** (`apps/console`) | Web control plane — Next.js dashboard, Supabase state store, auth, configuration management, job orchestration |
-| **alethia** (`apps/cli`) | Go CLI — authentication, vineyard/vine management, plan/deploy/destroy operations, worker registration |
-| **Runner** (`apps/runner`) | Go worker — claims provisioning jobs from the queue, executes Terraform, streams logs back to Alethia |
+| **Alethia** (`apps/console`) | Web control plane — Next.js dashboard, Postgres (Drizzle) state store, Better Auth, configuration management, job orchestration |
+| **alethia** (`apps/cli`) | Go CLI — authentication, project management, plan/deploy/destroy operations, runner registration |
+| **Runner** (`apps/runner`) | Go runner — claims provisioning jobs from the queue, executes Terraform, streams logs back to Alethia |
 | **core** (`packages/core`) | Shared Go library — cloud provider interfaces, embedded Terraform templates, config types |
 | **docs** (`apps/docs`) | Documentation site (Next.js / Fumadocs) |
 | **ArgoCD** | In-cluster GitOps reconciler installed during bootstrap |
@@ -23,9 +26,9 @@ An open-source, multi-cloud internal developer platform for provisioning and man
 
 | Layer | Technology |
 | --- | --- |
-| Web Control Plane | Next.js 16, React 19, TypeScript 5.9, Supabase, Tailwind CSS 4, shadcn/ui |
+| Web Control Plane | Next.js 16, React 19, TypeScript 5.9, Postgres + Drizzle, Better Auth, Tailwind CSS 4, shadcn/ui |
 | CLI | Go 1.25, Cobra, Charmbracelet TUI (bubbletea, huh, lipgloss) |
-| Worker | Go 1.25, Terraform exec, multi-cloud SDKs (AWS, GCP, Azure) |
+| Runner | Go 1.25, Terraform exec, multi-cloud SDKs (AWS, GCP, Azure) |
 | Documentation | Next.js 16, Fumadocs, MDX |
 | Infrastructure | Terraform (AWS ECS Fargate, ECR, Lambda), ArgoCD |
 | Monorepo | pnpm workspaces, Turborepo, Go workspaces |
@@ -35,9 +38,9 @@ An open-source, multi-cloud internal developer platform for provisioning and man
 
 ```
 apps/
-  console/           — Web control plane (Next.js + Supabase)
+  console/           — Web control plane (Next.js + Postgres/Drizzle + Better Auth)
   alethia/             — CLI (Go + Cobra + Charmbracelet)
-  runner/           — Provisioning worker (Go)
+  runner/           — Provisioning runner (Go)
   docs/           — Documentation site (Fumadocs)
 packages/
   core/        — Shared Go library (cloud providers, Terraform templates)
@@ -47,10 +50,8 @@ packages/
   typescript-config/ — Shared tsconfig
 infra/
   platform/          — Platform infrastructure (ECR, ECS, Lambda scaler)
-  templates/         — Vine IaC templates (AWS, GCP, Azure)
-  onboarding/        — Cloud account bootstrap scripts
-supabase/
-  migrations/        — PostgreSQL schema migrations
+  templates/         — Project IaC templates (AWS, GCP, Azure)
+  connector/         — Cloud account bootstrap scripts
 spec/
   features/          — Active feature specs and architecture docs
   thesis/            — Academic thesis (static reference)
@@ -64,7 +65,7 @@ spec/
 - pnpm 9+
 - Go 1.25+
 - Turborepo (`npm i -g turbo`)
-- Supabase CLI (`brew install supabase/tap/supabase`)
+- Docker + Compose v2 (for the self-host bundle: Postgres + S3-compatible storage)
 
 ### Install the `alethia` CLI
 
@@ -131,16 +132,28 @@ cd apps/cli && go test ./...
 
 The `infra/` directory contains all Terraform configurations:
 
-- **`platform/`** — Core platform infrastructure: ECR container registry, ECS Fargate node workers (multi-region), Lambda auto-scaler (EventBridge-triggered, checks job queue depth every minute)
-- **`templates/vine/`** — Per-cloud IaC templates applied into user accounts (AWS EKS, GCP GKE, Azure AKS with associated networking, databases, and security groups)
-- **`templates/node/`** — Self-hosted worker deployment template
-- **`onboarding/`** — Cloud account bootstrap (IAM cross-account roles for AWS, workload identity federation for GCP, federated identity for Azure)
+- **`platform/`** — Core platform infrastructure: ECR container registry, ECS Fargate runners (multi-region), Lambda auto-scaler (EventBridge-triggered, checks job queue depth every minute)
+- **`templates/project/`** — Per-cloud IaC templates applied into user accounts (AWS EKS, GCP GKE, Azure AKS with associated networking, databases, and security groups)
+- **`templates/runner/`** — Self-hosted runner deployment template
+- **`connector/`** — Cloud account bootstrap (IAM cross-account roles for AWS, workload identity federation for GCP, federated identity for Azure)
+
+## Self-Hosting
+
+Run the whole platform (console · docs · Postgres · object storage · runner) as one
+docker-compose bundle on any cloud VM:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/install.sh \
+  | DOMAIN=alethia.example.com ACME_EMAIL=you@example.com sh
+```
+
+See the [Self-Hosting guide](./apps/docs/content/docs/self-hosting/) (quickstart, configuration,
+per-cloud Terraform, upgrading).
 
 ## Documentation
 
-- [docs docs site](./apps/docs/) — hosted documentation portal
-- [Feature specs](./spec/features/) — active project documentation
-- [Thesis chapters](./spec/thesis/) — academic reference
+- [Docs site](./apps/docs/) — hosted documentation portal
+- Product, GTM and feature specs live in the private `alethialabs-io/dataroom` repo.
 
 ## Licensing
 

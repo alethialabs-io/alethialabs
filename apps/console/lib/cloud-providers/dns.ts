@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import type { DnsProviderConfig } from "@/types/jsonb.types";
 import type { CloudProviderSlug } from "./registry";
 
 interface WafOption {
-	providerConfigKey: string;
+	providerConfigKey: keyof DnsProviderConfig;
 	label: string;
 	description: string;
 	cost: string;
@@ -45,7 +46,7 @@ export const WAF_OPTIONS: Record<CloudProviderSlug, WafOption[]> = {
 };
 
 interface CertOption {
-	providerConfigKey: string;
+	providerConfigKey: keyof DnsProviderConfig;
 	label: string;
 	description: string;
 }

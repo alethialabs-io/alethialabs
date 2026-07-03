@@ -1,0 +1,60 @@
+---
+title: Licensing
+description: How the Enterprise license works — entitlements, activation, and graceful degradation back to the open-source defaults.
+---
+
+# Licensing
+
+The <Enterprise>Enterprise</Enterprise> features are gated by a license. This page explains the mechanism;
+the [Enterprise setup runbook](/editions/enterprise-setup) walks through turning it all on.
+
+## Entitlements, not scattered checks
+
+Alethia never sprinkles `if (licensed)` through the code. Instead, the licensed layer answers a small set of
+**entitlements**, and the product reads those:
+
+| Entitlement | Unlocks |
+|---|---|
+| `organizations` | Multi-member orgs, members, invitations, the active-org switcher, teams |
+| `sso` | SSO sign-in (OIDC + SAML) |
+| `customRoles` | The custom-role editor + the access portal |
+| `activityExport` | CSV export of the Activity log |
+
+Without a license, **every entitlement is `false`** and the console shows the open-source experience: a single
+personal organization, the four built-in roles (read-only), and a browsable (non-exportable) Activity log. The
+features aren't hidden behind a paywalled binary — the open-source build simply has nothing to switch them on.
+
+## Where entitlements come from
+
+Entitlements are produced by the Enterprise package (`@alethia/ee`), which the core loads through **one
+tolerant seam** (`lib/enterprise.ts`). The rule that makes this open-core:
+
+> **The open-source core never imports the Enterprise package, and runs completely if it's absent.** The seam
+> tries to load `@alethia/ee`; if it isn't installed, the core falls back to the Community defaults — nothing
+> breaks.
+
+So there are really two ways a deployment is "Community":
+
+1. **The open-source build** — `@alethia/ee` isn't installed at all.
+2. **An Enterprise build without an active license** — `@alethia/ee` is present, but the entitlements resolve
+   to all-`false`.
+
+Both behave identically: the Community product. See the
+[open-core architecture](/access-control/open-core) for the boundary guarantees and CI guards.
+
+## Graceful degradation
+
+Because the seam is tolerant, an Enterprise deployment **never hard-fails** if the license is missing or
+expires — it degrades to Community behavior. Members already in an organization keep their data; the org
+simply stops accepting new enterprise-only operations until the license is restored.
+
+## Activating Enterprise
+
+At a high level, enabling Enterprise is: install `@alethia/ee`, provide a license, run the extra migrations,
+and (optionally) bring up OpenFGA. The full, ordered checklist is in the
+[**Enterprise setup runbook**](/editions/enterprise-setup).
+
+<Callout type="warn">
+  Self-hosting an Enterprise deployment requires a commercial license. Running the **open-source Community
+  edition** never does. If you only need a single-tenant Alethia, you never touch any of this.
+</Callout>

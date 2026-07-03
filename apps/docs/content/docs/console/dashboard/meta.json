@@ -2,7 +2,6 @@
   "title": "Dashboard",
   "pages": [
     "index",
-    "zones",
-    "spec-detail"
+    "project-detail"
   ]
 }

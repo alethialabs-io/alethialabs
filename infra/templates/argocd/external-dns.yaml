@@ -18,13 +18,23 @@ spec:
         fullnameOverride: external-dns
         interval: 30m
         policy: sync
-        provider: aws
+        provider: {{ .DNSProvider }}
         registry: txt
         triggerLoopOnEvent: true
         serviceAccount:
           name: external-dns-sa
           annotations:
+            {{- if eq .Provider "aws" }}
             eks.amazonaws.com/role-arn: arn:aws:iam::{{ .AWSAccountID }}:role/{{ .ClusterName }}-external-dns
+            {{- else if eq .Provider "gcp" }}
+            iam.gke.io/gcp-service-account: {{ .GCPExternalDNSSA }}
+            {{- else if eq .Provider "azure" }}
+            azure.workload.identity/client-id: {{ .AzureExternalDNSClient }}
+            {{- end }}
+        {{- if eq .Provider "azure" }}
+        podLabels:
+          azure.workload.identity/use: "true"
+        {{- end }}
         domainFilters:
           - {{ .DomainName }}
         txtOwnerId: {{ .Environment }}-{{ .Region }}-{{ .DNSZoneID }}

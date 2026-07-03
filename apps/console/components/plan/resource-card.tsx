@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@repo/ui/badge";
 import {
 	Collapsible,
 	CollapsibleContent,
 	CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+} from "@repo/ui/collapsible";
 import type { PlanResource } from "@/lib/plan/parse-plan";
 import {
 	Network,

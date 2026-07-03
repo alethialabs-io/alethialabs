@@ -1,0 +1,254 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Fully-dockerized hot-reload dev stack — every Next zone runs `next dev` in a
+# container (source bind-mounted, file-watch polling), Caddy stitches them, and a
+# Cloudflare tunnel + Stripe webhook listener front it. Orchestrated by
+# scripts/dev-stack.sh (`pnpm dev:stack`). Self-contained (does NOT extend the prod
+# docker-compose.yml) but shares the `alethia` project volumes so DB/storage data
+# carries across dev:up / compose:up.
+#
+#   docker compose -f docker-compose.dev.yml up        # (the script does the rest)
+
+name: alethia
+
+# ── Shared dev-app config (one image, source bind-mount, node_modules masks) ──────
+x-dev-volumes: &dev-volumes
+  - .:/app
+  # Mask every workspace node_modules so the IMAGE's linux deps win over the
+  # bind-mounted host (darwin) copies. Add a line when a new package is created.
+  - dev-nm-root:/app/node_modules
+  - dev-nm-console:/app/apps/console/node_modules
+  - dev-nm-marketing:/app/apps/marketing/node_modules
+  - dev-nm-docs:/app/apps/docs/node_modules
+  - dev-nm-blog:/app/apps/blog/node_modules
+  - dev-nm-assets:/app/packages/assets/node_modules
+  - dev-nm-brand:/app/packages/brand/node_modules
+  - dev-nm-email:/app/packages/email/node_modules
+  - dev-nm-eslint:/app/packages/eslint-config/node_modules
+  - dev-nm-plancatalog:/app/packages/plan-catalog/node_modules
+  - dev-nm-tsconfig:/app/packages/typescript-config/node_modules
+  - dev-nm-ui:/app/packages/ui/node_modules
+  - dev-nm-ee:/app/ee/node_modules
+  # Per-app .next as container-local volumes (fast, never touch the host).
+  - dev-next-console:/app/apps/console/.next
+  - dev-next-marketing:/app/apps/marketing/.next
+  - dev-next-docs:/app/apps/docs/.next
+  - dev-next-blog:/app/apps/blog/.next
+
+x-dev-env: &dev-env
+  NODE_ENV: development
+  # Turbopack/webpack file watching over bind mounts → polling.
+  WATCHPACK_POLLING: "true"
+  CHOKIDAR_USEPOLLING: "true"
+  # Datastores via container DNS.
+  ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+  ALETHIA_APP_DATABASE_URL: "postgres://alethia_app:${ALETHIA_APP_DB_PASSWORD:-alethia-app-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+  ALETHIA_STORAGE_ENDPOINT: "http://seaweedfs:8333"
+  OPENFGA_API_URL: "http://openfga:8080"
+  OPENFGA_STORE_ID: "${OPENFGA_STORE_ID-}"
+
+x-dev-app: &dev-app
+  image: alethia-dev
+  build:
+    context: .
+    dockerfile: Dockerfile.dev
+  pull_policy: never
+  env_file: .env
+  working_dir: /app
+  volumes: *dev-volumes
+  restart: unless-stopped
+
+services:
+  # ── Backends (shared with the prod compose's `alethia` project volumes) ──
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    command: >-
+      server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json
+      -master.volumeSizeLimitMB=1024 -ip.bind=0.0.0.0
+    ports:
+      - "${ALETHIA_STORAGE_PORT:-8333}:8333"
+    volumes:
+      - seaweedfs-data:/data
+      - ./deploy/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:9333/cluster/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: "${ALETHIA_DB_USER:-alethia}"
+      POSTGRES_PASSWORD: "${ALETHIA_DB_PASSWORD:-alethia-dev-secret}"
+      POSTGRES_DB: "${ALETHIA_DB_NAME:-alethia}"
+    ports:
+      - "${ALETHIA_DB_PORT:-5433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ALETHIA_DB_USER:-alethia} -d ${ALETHIA_DB_NAME:-alethia}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  openfga-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: openfga
+      POSTGRES_PASSWORD: "${OPENFGA_DB_PASSWORD:-openfga-dev-secret}"
+      POSTGRES_DB: openfga
+    volumes:
+      - openfga-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openfga -d openfga"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  openfga-migrate:
+    image: openfga/openfga:latest
+    command: migrate
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: "postgres://openfga:${OPENFGA_DB_PASSWORD:-openfga-dev-secret}@openfga-db:5432/openfga?sslmode=disable"
+    depends_on:
+      openfga-db:
+        condition: service_healthy
+    restart: "no"
+
+  openfga:
+    image: openfga/openfga:latest
+    command: run
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: "postgres://openfga:${OPENFGA_DB_PASSWORD:-openfga-dev-secret}@openfga-db:5432/openfga?sslmode=disable"
+    ports:
+      - "${OPENFGA_HTTP_PORT:-8082}:8080"
+    depends_on:
+      openfga-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=localhost:8081"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # One-shot DB migrate via the dev image (full node_modules → drizzle migrator).
+  migrate:
+    <<: *dev-app
+    restart: "no"
+    command: ["node", "apps/console/scripts/migrate.mjs"]
+    environment:
+      <<: *dev-env
+      ALETHIA_APP_DB_PASSWORD: "${ALETHIA_APP_DB_PASSWORD:-alethia-app-dev-secret}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── Next zones (hot reload via `next dev` + bind mount) ──
+  app:
+    <<: *dev-app
+    # `next dev` binds 0.0.0.0 by default (reachable from Caddy). Listens on :3000.
+    command: ["pnpm", "--filter", "console", "dev"]
+    environment:
+      <<: *dev-env
+      # Public origin (the cloudflare tunnel) — injected + recreated by dev-stack.sh.
+      NEXT_PUBLIC_APP_URL: "${ALETHIA_PUBLIC_URL:-}"
+      BETTER_AUTH_URL: "${ALETHIA_PUBLIC_URL:-}"
+      # The Stripe CLI listener's signing secret (from the stripe container's logs).
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  marketing:
+    <<: *dev-app
+    # marketing's dev script binds :3010 (and 0.0.0.0 by default).
+    command: ["pnpm", "--filter", "marketing", "dev"]
+    environment:
+      <<: *dev-env
+      NEXT_PUBLIC_APP_URL: "${ALETHIA_PUBLIC_URL:-}"
+      NEXT_PUBLIC_SITE_URL: "${ALETHIA_PUBLIC_URL:-}"
+
+  docs:
+    <<: *dev-app
+    # Drop the app's `--experimental-https` (Caddy reverse-proxies plain HTTP).
+    command: ["pnpm", "--filter", "docs", "exec", "next", "dev", "-p", "3000", "-H", "0.0.0.0"]
+
+  blog:
+    <<: *dev-app
+    # blog's dev script runs velite then `next dev --port 3002`.
+    command: ["pnpm", "--filter", "blog", "dev"]
+
+  # ── Ingress: stitch the zones (mirrors microfrontends.json) ──
+  caddy:
+    image: caddy:2-alpine
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile.dev"]
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/caddy:/etc/caddy:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+      - marketing
+      - docs
+      - blog
+    restart: unless-stopped
+
+  # ── Cloudflare quick tunnel → the stitched site ──
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: ["tunnel", "--no-autoupdate", "--url", "http://caddy:80"]
+    depends_on:
+      - caddy
+    restart: unless-stopped
+
+  # ── Stripe webhook listener → console (via Caddy). Only `up` when configured. ──
+  stripe:
+    image: stripe/stripe-cli:latest
+    command: >-
+      listen --api-key ${STRIPE_SECRET_KEY:-}
+      --forward-to http://caddy:80/api/webhooks/stripe
+    depends_on:
+      - caddy
+    restart: unless-stopped
+
+volumes:
+  seaweedfs-data:
+  postgres-data:
+  openfga-data:
+  caddy-data:
+  caddy-config:
+  dev-nm-root:
+  dev-nm-console:
+  dev-nm-marketing:
+  dev-nm-docs:
+  dev-nm-blog:
+  dev-nm-assets:
+  dev-nm-brand:
+  dev-nm-email:
+  dev-nm-eslint:
+  dev-nm-plancatalog:
+  dev-nm-tsconfig:
+  dev-nm-ui:
+  dev-nm-ee:
+  dev-next-console:
+  dev-next-marketing:
+  dev-next-docs:
+  dev-next-blog:

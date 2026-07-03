@@ -7,36 +7,85 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/runner/internal/agent"
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
-	"github.com/alethialabs-io/alethialabs/apps/runner/worker"
 )
 
 func main() {
-	cfg := worker.Config{
-		Mode:        envOrDefault("ALETHIA_WORKER_MODE", "self-hosted"),
-		TrellisURL:  envOrDefault("ALETHIA_WEB_ORIGIN", "https://adp.prod.itgix.eu"),
-		WorkerID:    os.Getenv("ALETHIA_WORKER_ID"),
-		WorkerToken: os.Getenv("ALETHIA_WORKER_TOKEN"),
+	cfg := agent.Config{
+		Operator:    runnerOperator(),
+		Providers:   runnerProviders(),
+		AlethiaURL:  os.Getenv("ALETHIA_WEB_ORIGIN"),
+		RunnerID:    os.Getenv("ALETHIA_RUNNER_ID"),
+		RunnerToken: os.Getenv("ALETHIA_RUNNER_TOKEN"),
 
-		SupabaseS3Endpoint:  envOrDefault("SUPABASE_S3_ENDPOINT", ""),
-		SupabaseS3Region:    envOrDefault("SUPABASE_S3_REGION", ""),
-		SupabaseS3AccessKey: os.Getenv("SUPABASE_STORAGE_KEY_ID"),
-		SupabaseS3SecretKey: os.Getenv("SUPABASE_STORAGE_SECRET_KEY"),
+		S3Endpoint:  envOrDefault("ALETHIA_STORAGE_ENDPOINT", ""),
+		S3Region:    envOrDefault("ALETHIA_STORAGE_REGION", ""),
+		S3AccessKey: os.Getenv("ALETHIA_STORAGE_ACCESS_KEY_ID"),
+		S3SecretKey: os.Getenv("ALETHIA_STORAGE_SECRET_ACCESS_KEY"),
 	}
 
-	fmt.Printf("runner-worker %s\n", version.Version)
+	fmt.Printf("runner %s\n", version.Version)
 
-	if cfg.WorkerID == "" || cfg.WorkerToken == "" {
-		fmt.Fprintln(os.Stderr, "Error: ALETHIA_WORKER_ID and ALETHIA_WORKER_TOKEN environment variables are required.")
+	if cfg.AlethiaURL == "" {
+		fmt.Fprintln(os.Stderr, "Error: ALETHIA_WEB_ORIGIN is required (set it to your Alethia control-plane URL).")
 		os.Exit(1)
 	}
 
-	w := worker.New(cfg)
-	if err := w.Run(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "Worker error: %v\n", err)
+	// A scaler-provisioned VM boots without credentials: self-register via the
+	// bootstrap token, then persist the result into the env so any worker subprocesses
+	// (ALETHIA_RUNNER_SLOTS > 1) inherit it rather than each re-bootstrapping.
+	if cfg.RunnerID == "" || cfg.RunnerToken == "" {
+		if bt := os.Getenv("ALETHIA_RUNNER_BOOTSTRAP_TOKEN"); bt != "" {
+			id, token, err := agent.BootstrapRunner(cfg.AlethiaURL, bt, cfg.Providers)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: runner bootstrap failed: %v\n", err)
+				os.Exit(1)
+			}
+			cfg.RunnerID = id
+			cfg.RunnerToken = token
+			_ = os.Setenv("ALETHIA_RUNNER_ID", id)
+			_ = os.Setenv("ALETHIA_RUNNER_TOKEN", token)
+			fmt.Println("runner self-registered via bootstrap token")
+		}
+	}
+
+	if cfg.RunnerID == "" || cfg.RunnerToken == "" {
+		fmt.Fprintln(os.Stderr, "Error: ALETHIA_RUNNER_ID and ALETHIA_RUNNER_TOKEN environment variables are required.")
 		os.Exit(1)
 	}
+
+	// Concurrency: a single logical runner can run N jobs as N worker subprocesses.
+	// A worker child (or the default single-slot runner) runs the agent loop in-process;
+	// otherwise this process supervises the worker pool. Default slots=1 → exactly the
+	// previous behavior (no subprocess).
+	slots := runnerSlots()
+	if os.Getenv("ALETHIA_RUNNER_WORKER") == "1" || slots <= 1 {
+		w := agent.New(cfg)
+		if err := w.Run(context.Background()); err != nil {
+			fmt.Fprintf(os.Stderr, "Runner error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	fmt.Printf("supervisor: running %d concurrent worker slots\n", slots)
+	if err := agent.SuperviseWorkers(context.Background(), slots, agent.RealWorkerSpawn); err != nil {
+		fmt.Fprintf(os.Stderr, "Supervisor error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// runnerSlots reads ALETHIA_RUNNER_SLOTS (concurrent jobs per runner). Defaults to 1
+// (and clamps invalid/low values to 1).
+func runnerSlots() int {
+	if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("ALETHIA_RUNNER_SLOTS"))); err == nil && n >= 1 {
+		return n
+	}
+	return 1
 }
 
 func envOrDefault(key, defaultVal string) string {
@@ -44,4 +93,38 @@ func envOrDefault(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+// runnerOperator resolves who operates this runner ("managed" | "self"), defaulting
+// to "self". Falls back to the legacy ALETHIA_RUNNER_MODE env var (cloud-hosted →
+// managed, self-hosted → self) so already-deployed task definitions keep working
+// until their next update rolls the new var.
+func runnerOperator() string {
+	if v := os.Getenv("ALETHIA_RUNNER_OPERATOR"); v != "" {
+		return v
+	}
+	switch os.Getenv("ALETHIA_RUNNER_MODE") {
+	case "cloud-hosted":
+		return "managed"
+	case "self-hosted":
+		return "self"
+	}
+	return "self"
+}
+
+// runnerProviders parses ALETHIA_RUNNER_PROVIDERS (comma-separated cloud providers,
+// e.g. "aws" on a lean per-cloud image). Empty/unset → nil → the runner claims any
+// provider (the full/self-host image).
+func runnerProviders() []string {
+	raw := os.Getenv("ALETHIA_RUNNER_PROVIDERS")
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }

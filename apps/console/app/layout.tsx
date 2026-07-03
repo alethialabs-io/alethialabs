@@ -6,7 +6,8 @@ import "@xyflow/react/dist/style.css";
 import { PublicEnvScript } from "next-runtime-env";
 import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
 import { ThemeProvider } from "next-themes";
-import { Toaster } from "@/components/ui/sonner";
+import { Toaster } from "@repo/ui/sonner";
+import { Providers } from "./providers";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -65,11 +66,14 @@ export default function RootLayout({
 			>
 				<ThemeProvider
 					attribute="class"
-					defaultTheme="dark"
-					enableSystem
+					defaultTheme="light"
+					enableSystem={false}
 				>
-					{children}
-					<Toaster />
+					<Providers>{children}</Providers>
+					{/* Bottom-center keeps toasts clear of the bottom-right floating chrome (setup
+					    guide card + assistant button) without a brittle fixed offset. Sonner already
+					    sits above everything (z-index ~1e9), so this is purely positional. */}
+					<Toaster position="bottom-center" closeButton />
 				</ThemeProvider>
 			</body>
 		</html>

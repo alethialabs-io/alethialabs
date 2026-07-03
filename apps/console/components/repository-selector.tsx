@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { GitProviderIcon } from "@/components/integrations/git-provider-icon";
-import { Button } from "@/components/ui/button";
+import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
+import { Button } from "@repo/ui/button";
 import {
 	Command,
 	CommandEmpty,
@@ -12,29 +12,28 @@ import {
 	CommandInput,
 	CommandItem,
 	CommandList,
-} from "@/components/ui/command";
-import { Input } from "@/components/ui/input";
+} from "@repo/ui/command";
+import { Input } from "@repo/ui/input";
 import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@repo/ui/popover";
 import {
 	Select,
 	SelectContent,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
-} from "@/components/ui/select";
-import { createClient } from "@/lib/supabase/client";
-import { cn } from "@/lib/utils";
-import { PublicGitProvider } from "@/lib/validations/db.schemas";
-import { env } from "next-runtime-env";
+} from "@repo/ui/select";
+import { authClient } from "@/lib/auth/client";
+import { cn } from "@repo/ui/utils";
+import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 
 import { fetchRepositoriesByProvider } from "@/app/server/actions/git/repositories";
 import { Repository } from "@/app/server/actions/git/types";
 import { getLinkedProviders } from "@/app/server/actions/identities";
-import { useRepositoryContext } from "@/components/plant-vine/repository-context";
+import { useRepositoryContext } from "@/components/design-project/repository-context";
 import { AlertCircle, Plus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -44,6 +43,26 @@ interface RepositorySelectorProps {
 	label: string;
 	placeholder?: string;
 	required?: boolean;
+}
+
+const PROVIDER_HOSTS: Record<string, PublicGitProvider> = {
+	"github.com": "github",
+	"gitlab.com": "gitlab",
+	"bitbucket.org": "bitbucket",
+};
+
+/** Maps a saved repo URL to its git provider by exact host match; null for
+ *  non-URLs (e.g. an `owner/repo` slug) or unrecognized hosts. */
+function providerFromRepoUrl(url: string): PublicGitProvider | null {
+	try {
+		const host = new URL(url).hostname.toLowerCase();
+		for (const [h, p] of Object.entries(PROVIDER_HOSTS)) {
+			if (host === h || host.endsWith(`.${h}`)) return p;
+		}
+	} catch {
+		// not a URL — fall through to null
+	}
+	return null;
 }
 
 export function RepositorySelector({
@@ -78,11 +97,8 @@ export function RepositorySelector({
 
 		if (sharedCtx.linkedProviders.length > 0 && !selectedProvider) {
 			let provider = sharedCtx.linkedProviders[0];
-			if (initialValue) {
-				if (initialValue.includes("github.com")) provider = "github";
-				else if (initialValue.includes("gitlab.com")) provider = "gitlab";
-				else if (initialValue.includes("bitbucket.org")) provider = "bitbucket";
-			}
+			const detected = initialValue ? providerFromRepoUrl(initialValue) : null;
+			if (detected) provider = detected;
 			if (sharedCtx.linkedProviders.includes(provider)) {
 				setSelectedProvider(provider);
 			} else {
@@ -113,14 +129,10 @@ export function RepositorySelector({
 
 			if (providers.length > 0) {
 				let initialProvider = providers[0];
-				if (initialValue) {
-					if (initialValue.includes("github.com"))
-						initialProvider = "github";
-					else if (initialValue.includes("gitlab.com"))
-						initialProvider = "gitlab";
-					else if (initialValue.includes("bitbucket.org"))
-						initialProvider = "bitbucket";
-				}
+				const detected = initialValue
+					? providerFromRepoUrl(initialValue)
+					: null;
+				if (detected) initialProvider = detected;
 
 				if (providers.includes(initialProvider)) {
 					setSelectedProvider(initialProvider as PublicGitProvider);
@@ -189,35 +201,26 @@ export function RepositorySelector({
 
 	const handleLinkAccount = async (providerName: PublicGitProvider) => {
 		try {
-			const supabase = await createClient();
+			const callbackURL = "/dashboard/configure";
 
-			// Verify session is valid before linking
-			const {
-				data: { user },
-				error: userError,
-			} = await supabase.auth.getUser();
+			// Better Auth account linking — native GitHub via linkSocial (repo
+			// scope); self-hosted GitLab + Bitbucket via the genericOAuth link
+			// endpoint (scopes are server-configured). Redirects to the provider.
+			const { error } =
+				providerName === "github"
+					? await authClient.linkSocial({
+							provider: providerName,
+							scopes: ["repo"],
+							callbackURL,
+						})
+					: await authClient.oauth2.link({
+							providerId: providerName,
+							callbackURL,
+						});
 
-			if (userError || !user) {
-				console.error("Session invalid, signing out:", userError);
-				await supabase.auth.signOut();
-				window.location.href = "/auth/signin"; // Redirect to login
-				return;
-			}
-
-			// Store provider in cookie so the callback knows which token to save
-			document.cookie = `auth_linking_provider=${providerName}; path=/; max-age=300; SameSite=Lax`;
-
-			const { error } = await supabase.auth.linkIdentity({
-				provider: providerName,
-				options: {
-					redirectTo: `${env("NEXT_PUBLIC_APP_URL") || window.location.origin}/api/auth/callback?next=/dashboard/configure&provider=${providerName}`,
-					scopes: providerName === "github" ? "repo" : providerName === "gitlab" ? "read_api read_user read_repository read_registry openid profile email" : undefined,
-				},
-			});
-
-			if (error) throw error;
+			if (error) throw new Error(error.message);
 		} catch (err) {
-			console.error(`Error linking ${providerName}:`, err);
+			console.error("Error linking provider:", providerName, err);
 			setError(
 				`Failed to link ${providerName} account. Please try signing out and back in.`,
 			);

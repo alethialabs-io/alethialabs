@@ -1,0 +1,12 @@
+{
+  "title": "Connectors",
+  "pages": [
+    "index",
+    "aws",
+    "gcp",
+    "azure",
+    "health-and-inventory",
+    "git-providers",
+    "pluggable"
+  ]
+}

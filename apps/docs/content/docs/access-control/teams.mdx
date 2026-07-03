@@ -1,0 +1,51 @@
+---
+title: Teams
+description: Group members so you can grant access to a whole team at once — group-based grants.
+---
+
+# Teams
+
+<Enterprise />
+
+A **team** is a named group of organization members. Grant access to a team, and **everyone on it inherits the
+grant** — add or remove people from the team and their access follows automatically.
+
+## Why teams
+
+Without teams, sharing a project with five engineers means five grants — and five revokes when the work ends.
+With a team, it's **one grant to the team**, and membership is the only thing you manage afterward.
+
+Teams are the natural principal for durable, role-based access: "the platform team can deploy the
+production projects" is one grant on one team.
+
+## Managing teams
+
+In **Settings → Teams**:
+
+<Steps>
+<Step>**New team** — give it a name (e.g. `platform`).</Step>
+<Step>**Manage** — add or remove organization members.</Step>
+<Step>Grant access to the team in the [Access portal](/access-portal) — pick the team as the principal.</Step>
+</Steps>
+
+## How team grants resolve
+
+A grant whose principal is a team applies to a user whenever they're a member of that team. This is resolved in
+**both** authorization engines:
+
+- The Postgres engine matches team grants by joining your team memberships at decision time.
+- The OpenFGA engine models a team as a group (`team:… # member`), so a team grant reaches members through the
+  relationship graph.
+
+Either way, removing someone from a team **immediately** removes the access that came from it.
+
+<Callout type="info">
+  Teams compose with everything else: grant a [custom role](/access-control/custom-roles) to a team, scope it
+  to a [project](/access-control/grants-and-scopes), and add per-member [deny](/access-control/access-portal)
+  exceptions on top.
+</Callout>
+
+## Next
+
+- Assign team grants in the [**Access portal**](/access-portal).
+- Bring people into the org first via [**members & invitations**](/access-control/members-and-invitations).

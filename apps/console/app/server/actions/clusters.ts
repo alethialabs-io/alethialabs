@@ -2,46 +2,170 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { and, desc, eq, inArray } from "drizzle-orm";
+import { getOwner } from "@/lib/auth/owner";
+import { withOwnerScope } from "@/lib/db";
+import {
+	cloudIdentities,
+	projectCaches,
+	projectCluster,
+	projectDatabases,
+	projectDns,
+	projectEnvironments,
+	projects,
+} from "@/lib/db/schema";
 
-import { createClient } from "@/lib/supabase/server";
-import type { QueryData } from "@supabase/supabase-js";
-
-/** Builds the clusters query — used to derive the return type via QueryData. */
-function clustersQuery(supabase: Awaited<ReturnType<typeof createClient>>) {
-	return supabase
-		.from("vines")
-		.select(
-			`
-			id, project_name, region, environment_stage, status,
-			cloud_identities ( provider ),
-			vine_cluster (
-				cluster_name, cluster_endpoint, cluster_arn, cluster_version,
-				argocd_url, argocd_admin_password, status
-			),
-			vine_databases (
-				name, engine, endpoint, reader_endpoint,
-				master_credentials_secret_arn, status
-			),
-			vine_caches (
-				name, engine, endpoint, status
-			),
-			vine_dns (
-				domain_name, enabled
-			)
-		`,
-		)
-		.eq("status", "ACTIVE")
-		.order("created_at", { ascending: false });
+export interface ClusterData {
+	id: string;
+	project_name: string;
+	region: string;
+	environment_stage: string;
+	status: string;
+	cloud_identities: { provider: string } | null;
+	project_cluster: {
+		cluster_name: string | null;
+		cluster_endpoint: string | null;
+		cluster_arn: string | null;
+		cluster_version: string | null;
+		argocd_url: string | null;
+		argocd_admin_password: string | null;
+		status: string;
+	} | null;
+	project_databases: {
+		name: string;
+		engine: string | null;
+		endpoint: string | null;
+		reader_endpoint: string | null;
+		master_credentials_secret_arn: string | null;
+		status: string;
+	}[];
+	project_caches: {
+		name: string;
+		engine: string | null;
+		endpoint: string | null;
+		status: string;
+	}[];
+	project_dns: { domain_name: string | null; enabled: boolean } | null;
 }
 
-type ClustersQueryRow = QueryData<ReturnType<typeof clustersQuery>>[number];
-
-export type ClusterData = ClustersQueryRow;
-
-/** Fetches all active vines with their cluster, database, cache, and DNS data. */
+/** Fetches all active projects with their cluster, database, cache, and DNS data. */
 export async function getClusters(): Promise<ClusterData[]> {
-	const supabase = await createClient();
-	const { data, error } = await clustersQuery(supabase);
-	if (error || !data) return [];
-	return data;
+	const owner = await getOwner();
+	if (!owner) return [];
+
+	return withOwnerScope(owner, async (tx) => {
+		// Project + to-one relations (cloud identity, cluster, dns) in one pass.
+		const baseRows = await tx
+			.select({
+				id: projects.id,
+				project_name: projects.project_name,
+				region: projects.region,
+				// M1: environment + status from the project's default environment. Its id scopes the
+				// component joins below (components are environment-scoped).
+				environment_stage: projectEnvironments.name,
+				environment_id: projectEnvironments.id,
+				status: projectEnvironments.status,
+				provider: cloudIdentities.provider,
+				cluster_name: projectCluster.cluster_name,
+				cluster_endpoint: projectCluster.cluster_endpoint,
+				cluster_outputs: projectCluster.provider_outputs,
+				cluster_version: projectCluster.cluster_version,
+				argocd_url: projectCluster.argocd_url,
+				argocd_admin_password: projectCluster.argocd_admin_password,
+				cluster_status: projectCluster.status,
+				dns_domain_name: projectDns.domain_name,
+				dns_enabled: projectDns.enabled,
+			})
+			.from(projects)
+			.leftJoin(cloudIdentities, eq(projects.cloud_identity_id, cloudIdentities.id))
+			.leftJoin(
+				projectEnvironments,
+				and(
+					eq(projectEnvironments.project_id, projects.id),
+					eq(projectEnvironments.is_default, true),
+				),
+			)
+			.leftJoin(
+				projectCluster,
+				and(
+					eq(projectCluster.project_id, projects.id),
+					eq(projectCluster.environment_id, projectEnvironments.id),
+				),
+			)
+			.leftJoin(
+				projectDns,
+				and(
+					eq(projectDns.project_id, projects.id),
+					eq(projectDns.environment_id, projectEnvironments.id),
+				),
+			)
+			.where(eq(projectEnvironments.status, "ACTIVE"))
+			.orderBy(desc(projects.created_at));
+
+		if (baseRows.length === 0) return [];
+
+		// The default-env ids scope the to-many component fetches below.
+		const envIds = baseRows
+			.map((r) => r.environment_id)
+			.filter((x): x is string => Boolean(x));
+
+		// To-many relations fetched in bulk, then grouped by project.
+		const [dbRows, cacheRows] = await Promise.all([
+			tx
+				.select({
+					project_id: projectDatabases.project_id,
+					name: projectDatabases.name,
+					engine: projectDatabases.engine,
+					endpoint: projectDatabases.endpoint,
+					reader_endpoint: projectDatabases.reader_endpoint,
+					provider_outputs: projectDatabases.provider_outputs,
+					status: projectDatabases.status,
+				})
+				.from(projectDatabases)
+				.where(inArray(projectDatabases.environment_id, envIds)),
+			tx
+				.select({
+					project_id: projectCaches.project_id,
+					name: projectCaches.name,
+					engine: projectCaches.engine,
+					endpoint: projectCaches.endpoint,
+					status: projectCaches.status,
+				})
+				.from(projectCaches)
+				.where(inArray(projectCaches.environment_id, envIds)),
+		]);
+
+		return baseRows.map((r) => ({
+			id: r.id,
+			project_name: r.project_name,
+			region: r.region,
+			environment_stage: r.environment_stage ?? "development",
+			status: r.status ?? "ACTIVE",
+			cloud_identities: r.provider ? { provider: r.provider } : null,
+			project_cluster: r.cluster_status
+				? {
+						cluster_name: r.cluster_name,
+						cluster_endpoint: r.cluster_endpoint,
+						cluster_arn: r.cluster_outputs?.arn ?? null,
+						cluster_version: r.cluster_version,
+						argocd_url: r.argocd_url,
+						argocd_admin_password: r.argocd_admin_password,
+						status: r.cluster_status,
+					}
+				: null,
+			project_databases: dbRows
+				.filter((d) => d.project_id === r.id)
+				.map(({ project_id: _s, provider_outputs, ...db }) => ({
+					...db,
+					master_credentials_secret_arn: provider_outputs?.secret_ref ?? null,
+				})),
+			project_caches: cacheRows
+				.filter((c) => c.project_id === r.id)
+				.map(({ project_id: _s, ...c }) => c),
+			project_dns:
+				r.dns_enabled !== null
+					? { domain_name: r.dns_domain_name, enabled: r.dns_enabled }
+					: null,
+		}));
+	});
 }

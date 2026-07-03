@@ -19,8 +19,8 @@ export const NOSQL: Record<CloudProviderSlug, NosqlConfig> = {
 		supportsRangeKey: true,
 		supportsGlobalTables: true,
 		billingModes: [
-			{ value: "PAY_PER_REQUEST", label: "On-Demand" },
-			{ value: "PROVISIONED", label: "Provisioned" },
+			{ value: "on_demand", label: "On-Demand" },
+			{ value: "provisioned", label: "Provisioned" },
 		],
 		keyTypes: [
 			{ value: "S", label: "String" },
@@ -34,7 +34,7 @@ export const NOSQL: Record<CloudProviderSlug, NosqlConfig> = {
 		supportsRangeKey: false,
 		supportsGlobalTables: false,
 		billingModes: [
-			{ value: "PAY_PER_REQUEST", label: "Native Mode" },
+			{ value: "on_demand", label: "Native Mode" },
 		],
 		keyTypes: [
 			{ value: "S", label: "String" },
@@ -48,8 +48,8 @@ export const NOSQL: Record<CloudProviderSlug, NosqlConfig> = {
 		supportsRangeKey: true,
 		supportsGlobalTables: true,
 		billingModes: [
-			{ value: "PAY_PER_REQUEST", label: "Serverless" },
-			{ value: "PROVISIONED", label: "Provisioned Throughput" },
+			{ value: "on_demand", label: "Serverless" },
+			{ value: "provisioned", label: "Provisioned Throughput" },
 		],
 		keyTypes: [
 			{ value: "S", label: "String" },

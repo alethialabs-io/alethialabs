@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { VineFormData } from "@/lib/validations/vine-form.schema";
+import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 import type { CloudProviderSlug } from "./registry";
 import { PROVIDERS } from "./registry";
 import { REGION_MAP, DEFAULT_REGION } from "./regions";
@@ -23,12 +23,12 @@ export interface ConversionWarning {
 	message: string;
 }
 
-/** Converts a vine form config from one cloud provider to another, mapping all provider-specific values. */
-export function convertVineConfig(
-	source: VineFormData,
+/** Converts a project form config from one cloud provider to another, mapping all provider-specific values. */
+export function convertProjectConfig(
+	source: ProjectFormData,
 	sourceProvider: CloudProviderSlug,
 	targetProvider: CloudProviderSlug,
-): { data: VineFormData; warnings: ConversionWarning[] } {
+): { data: ProjectFormData; warnings: ConversionWarning[] } {
 	if (sourceProvider === targetProvider) {
 		return { data: structuredClone(source), warnings: [] };
 	}
@@ -39,16 +39,16 @@ export function convertVineConfig(
 
 	// --- Region ---
 	const regionMap = REGION_MAP[sourceProvider]?.[targetProvider] ?? {};
-	const mappedRegion = regionMap[data.vine.region];
+	const mappedRegion = regionMap[data.project.region];
 	if (mappedRegion) {
-		data.vine.region = mappedRegion;
-	} else if (data.vine.region) {
+		data.project.region = mappedRegion;
+	} else if (data.project.region) {
 		warnings.push({
 			severity: "error",
 			component: "Region",
-			message: `Region "${data.vine.region}" has no equivalent on ${target.shortName}. Defaulting to ${DEFAULT_REGION[targetProvider]}.`,
+			message: `Region "${data.project.region}" has no equivalent on ${target.shortName}. Defaulting to ${DEFAULT_REGION[targetProvider]}.`,
 		});
-		data.vine.region = DEFAULT_REGION[targetProvider];
+		data.project.region = DEFAULT_REGION[targetProvider];
 	}
 
 	// --- Cluster ---
@@ -184,7 +184,7 @@ export function convertVineConfig(
 		}
 		if (!targetNosql.supportsRangeKey) {
 			for (const table of data.nosql_tables) {
-				if (table.range_key) {
+				if (table.sort_key) {
 					warnings.push({
 						severity: "warning",
 						component: "NoSQL",
@@ -197,7 +197,7 @@ export function convertVineConfig(
 
 	// --- Messaging ---
 	if (data.queues && data.queues.length > 0) {
-		const hasFireQueues = data.queues.some((q) => q.fifo);
+		const hasFireQueues = data.queues.some((q) => q.ordered);
 		if (hasFireQueues && targetProvider === "gcp") {
 			warnings.push({
 				severity: "warning",

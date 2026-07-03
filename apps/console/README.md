@@ -1,36 +1,69 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Alethia — Web Control Plane
 
-## Getting Started
+The Next.js control plane for **Alethia Labs**: the dashboard for provisioning and
+managing multi-cloud infrastructure, plus the API the `alethia` CLI and the runner
+talk to. Part of the [monorepo](../../README.md) — see the root README for the full
+architecture.
 
-First, run the development server:
+**Stack:** Next.js 16 · React 19 · TypeScript · PostgreSQL via Drizzle ORM · Better
+Auth · Tailwind CSS 4 / shadcn/ui · S3-compatible object storage. Authorization is a
+Policy Decision Point (PDP) with built-in roles + grants (open core); the licensed
+`@alethia/ee` package adds orgs, SSO, teams, custom roles, and the OpenFGA engine.
+
+## Local development
+
+The repo ships a self-host stack (Postgres + SeaweedFS S3) so a fresh checkout runs
+with zero manual setup. From the **repo root**:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env          # dev defaults work out of the box
+docker compose up -d          # Postgres + S3 (console auto-runs migrations on boot)
+pnpm install
+pnpm -F console dev           # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Configuration is read from the environment — see [`.env.example`](../../.env.example)
+for every variable. The essentials: `ALETHIA_DATABASE_URL`, `BETTER_AUTH_SECRET`,
+`NEXT_PUBLIC_APP_URL`, the `ALETHIA_STORAGE_*` S3 settings, `CLI_JWT_SECRET`, and
+`ALETHIA_CRED_ENCRYPTION_KEY`. Email (`ALETHIA_SES_*`) and OAuth providers
+(`GITHUB_*`/`GOOGLE_*`/`GITLAB_*`/`BITBUCKET_*`) are optional; `OPENFGA_*` is
+enterprise-only.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Database
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Schema lives in `lib/db/schema/*.ts` (Drizzle). Never hand-edit generated migrations.
 
-## Learn More
+```bash
+pnpm -F console db:generate   # diff schema → new SQL migration in lib/db/migrations/
+pnpm -F console db:migrate    # apply migrations + programmables.sql (functions, RLS)
+pnpm -F console db:studio     # browse the database
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Scripts
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Command | What |
+| --- | --- |
+| `pnpm -F console dev` / `build` / `start` | Next.js dev / production build / serve |
+| `pnpm -F console check-types` | `tsc --noEmit` |
+| `pnpm -F console lint` | ESLint |
+| `pnpm -F console test` | Vitest unit tests (`test:e2e` for Playwright) |
+| `pnpm -F console check:ee-boundary` | Guard: core never imports `@alethia/ee` |
+| `pnpm -F console check:authz-scope` | Guard: authorize via the PDP, not ad-hoc `user_id` |
+| `pnpm -F console check:no-supabase` | Guard: no Supabase references remain |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Layout
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+app/                  Next.js App Router
+  (private)/dashboard/  Authenticated UI
+  (public)/auth/        Sign-in
+  api/                  REST API (auth, jobs, runners, CLI)
+  server/actions/       Server actions (by domain)
+components/            UI (grouped by feature)
+lib/
+  db/                  Drizzle schema, migrations, client
+  auth/                Better Auth config + session/owner helpers
+  authz/               PDP, registry, grants, OpenFGA mapping
+  config/              Validated env config (zod)
+  cloud-providers/     AWS / GCP / Azure helpers
+```

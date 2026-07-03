@@ -2,11 +2,15 @@
   "title": "Commands",
   "pages": [
     "index",
-    "zone",
-    "spec",
+    "connector",
+    "project",
     "plan-and-apply",
     "jobs",
-    "workers",
-    "clusters"
+    "runners",
+    "clusters",
+    "organizations",
+    "notifications",
+    "access",
+    "billing"
   ]
 }

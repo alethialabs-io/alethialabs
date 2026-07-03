@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 32" fill="none" role="img" aria-label="Alethia Labs">
+  <path d="M11 6 H6.5 V26 H11" stroke="#0A0A0A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M21 6 H25.5 V26 H21" stroke="#0A0A0A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="16" cy="16" r="2.9" fill="#0A0A0A"/>
+  <text x="40" y="22.5" fill="#0A0A0A" font-family="'Space Grotesk', system-ui, sans-serif" font-size="20" font-weight="600" letter-spacing="-0.02em">Alethia</text>
+  <text x="112" y="21" fill="#0A0A0A" fill-opacity="0.55" font-family="'Geist Mono', ui-monospace, monospace" font-size="10" font-weight="500" letter-spacing="0.26em">LABS</text>
+</svg>

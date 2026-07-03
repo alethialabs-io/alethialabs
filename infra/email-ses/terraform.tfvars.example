@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in CI / .env.
+# AWS credentials come from the standard AWS_ACCESS_KEY_ID/SECRET env or profile
+# — these must be ADMIN creds for the SES account (270587882865); the runtime
+# send-only key cannot create anything.
+
+aws_region = "eu-central-1"
+domain     = "alethialabs.io"
+
+# DNS (DKIM / MAIL FROM / DMARC) is NOT managed here — set those records once with
+# your DNS provider (see README). This stack only manages AWS-side SES resources.
+
+# Inbox for reputation alarms (leave "" to skip the email subscription).
+alarm_email = "borislav@alethialabs.io"
+
+# SNS posts bounce/complaint events here. Defaulted in variables.tf; override or
+# set "" for a first apply before the console /api/webhooks/ses route is live.
+events_webhook_url = "https://alethialabs.io/api/webhooks/ses"

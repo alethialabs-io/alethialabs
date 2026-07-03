@@ -1,0 +1,13 @@
+# Status-page ingress — automatic HTTPS via Let's Encrypt.
+# Domain + ACME email come from the environment:
+#   ALETHIA_STATUS_DOMAIN=status.alethialabs.io  ALETHIA_ACME_EMAIL=you@example.com
+# If ALETHIA_STATUS_DOMAIN is unset it falls back to ":80" (plain HTTP) — handy
+# for a quick local/IP-only smoke test.
+{
+	email {$ALETHIA_ACME_EMAIL}
+}
+
+{$ALETHIA_STATUS_DOMAIN::80} {
+	encode zstd gzip
+	reverse_proxy gatus:8080
+}

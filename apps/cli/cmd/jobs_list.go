@@ -5,34 +5,39 @@ package cmd
 
 import (
 	"fmt"
-	"math"
+	"io"
 	"os"
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
-	"github.com/charmbracelet/bubbles/table"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 )
 
+var jobListColumns = []string{"Type", "Status", "Project", "Runner", "Created", "Duration"}
+
 var (
-	jobsListStatus     string
-	jobsListVineyardID string
-	jobsListLimit      int
+	jobsListStatus string
+	jobsListLimit  int
 )
 
+// jobTypeLabels maps every provision_job_type to a friendly table label. Keyed by the
+// generated types.JobType constants so a removed enum value is a compile error here; a
+// test (TestJobTypeLabels_CoverAllJobTypes) asserts every job type has a label, so an
+// added one fails the build.
 var jobTypeLabels = map[string]string{
-	"PLAN":            "Plan",
-	"DEPLOY":          "Deploy",
-	"DESTROY":         "Destroy",
-	"CONNECTION_TEST": "Test Conn.",
-	"FETCH_RESOURCES": "Fetch Res.",
-	"DEPLOY_WORKER":   "Deploy Tendril",
-	"UPDATE_WORKER":   "Update Tendril",
-	"DESTROY_WORKER":  "Destroy Tendril",
+	string(types.JobTypePlan):          "Plan",
+	string(types.JobTypeDeploy):        "Deploy",
+	string(types.JobTypeDestroy):       "Destroy",
+	string(types.JobTypeAnalyzeRepo):   "Analyze Repo",
+	string(types.JobTypeDetectDrift):   "Detect Drift",
+	string(types.JobTypeAudit):         "Audit",
+	string(types.JobTypeDeployRunner):  "Deploy Runner",
+	string(types.JobTypeUpdateRunner):  "Update Runner",
+	string(types.JobTypeDestroyRunner): "Destroy Runner",
 }
 
 var jobsListCmd = &cobra.Command{
@@ -41,8 +46,7 @@ var jobsListCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fail(err)
 		}
 
 		apiClient := api.NewClient(token)
@@ -53,15 +57,19 @@ var jobsListCmd = &cobra.Command{
 
 		var page *api.JobsPage
 
-		spinner.New().
-			Title("Fetching jobs...").
-			Action(func() {
-				page, err = apiClient.GetJobs(jobsListStatus, jobsListVineyardID, pageSize, 0)
-			}).Run()
+		ui.RunSpinner("Fetching jobs...", func() {
+			page, err = apiClient.GetJobs(jobsListStatus, pageSize, 0)
+		})
 
 		if err != nil {
-			ui.Error(fmt.Sprintf("Failed to fetch jobs: %v", err))
-			os.Exit(1)
+			failf("Failed to fetch jobs: %v", err)
+		}
+
+		if !interactiveTable(cmd) {
+			if err := renderJobs(os.Stdout, outputFormat(cmd), page.Jobs); err != nil {
+				fail(err)
+			}
+			return
 		}
 
 		if page.Total == 0 {
@@ -79,93 +87,56 @@ var jobsListCmd = &cobra.Command{
 			apiClient:           apiClient,
 			pageSize:            pageSize,
 			status:              jobsListStatus,
-			vineyardID:          jobsListVineyardID,
 		})
 		if _, err := p.Run(); err != nil {
-			ui.Error(fmt.Sprintf("Table error: %v", err))
-			os.Exit(1)
+			failf("Table error: %v", err)
 		}
 	},
 }
 
-type jobsPaginatedModel struct {
-	ui.PaginatedTableModel
-	apiClient  *api.Client
-	pageSize   int
-	status     string
-	vineyardID string
-}
-
-func (m jobsPaginatedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case ui.PageChangedMsg:
-		return m, m.fetchPage(msg.Page)
+// renderJobs writes a page of jobs to out in the requested format. Pagination is
+// interactive-only; non-interactive output returns up to --limit jobs.
+func renderJobs(out io.Writer, format string, jobs []api.ProvisionJob) error {
+	if len(jobs) == 0 && format == ui.FormatTable {
+		fmt.Fprintln(out, ui.MutedStyle.Render("No jobs found."))
+		return nil
 	}
-	updated, cmd := m.PaginatedTableModel.Update(msg)
-	m.PaginatedTableModel = updated.(ui.PaginatedTableModel)
-	return m, cmd
+	return ui.Render(out, format, ui.TableSpec{
+		Columns: jobListColumns,
+		Rows:    jobRowsPlain(jobs),
+	}, jobs)
 }
 
-func (m jobsPaginatedModel) fetchPage(page int) tea.Cmd {
-	return func() tea.Msg {
-		offset := (page - 1) * m.pageSize
-		result, err := m.apiClient.GetJobs(m.status, m.vineyardID, m.pageSize, offset)
-		if err != nil {
-			return nil
-		}
-		totalPages := int(math.Ceil(float64(result.Total) / float64(m.pageSize)))
-		if totalPages < 1 {
-			totalPages = 1
-		}
-		return ui.PageDataMsg{
-			Rows:       jobRows(result.Jobs),
-			Total:      result.Total,
-			Page:       page,
-			TotalPages: totalPages,
-		}
-	}
-}
-
-func jobColumns() []table.Column {
-	return []table.Column{
-		{Title: "Type", Width: 16},
-		{Title: "Status", Width: 12},
-		{Title: "Vine", Width: 18},
-		{Title: "Tendril", Width: 16},
-		{Title: "Created", Width: 16},
-		{Title: "Duration", Width: 10},
-	}
-}
-
-func jobRows(jobs []api.ProvisionJob) []table.Row {
-	rows := make([]table.Row, len(jobs))
+// jobRowsPlain projects each job into a plain table row.
+func jobRowsPlain(jobs []api.ProvisionJob) [][]string {
+	rows := make([][]string, len(jobs))
 	for i, j := range jobs {
 		typeLabel := jobTypeLabels[j.JobType]
 		if typeLabel == "" {
 			typeLabel = j.JobType
 		}
 
-		vine := j.VineName
-		if vine == "" && j.VineID != "" {
-			vine = truncID(j.VineID)
+		project := j.ProjectName
+		if project == "" && j.ProjectID != "" {
+			project = truncID(j.ProjectID)
 		}
-		if vine == "" {
-			vine = ui.SymbolDash
-		}
-
-		tendril := j.WorkerName
-		if tendril == "" && j.WorkerID != "" {
-			tendril = truncID(j.WorkerID)
-		}
-		if tendril == "" {
-			tendril = ui.SymbolDash
+		if project == "" {
+			project = ui.SymbolDash
 		}
 
-		rows[i] = table.Row{
+		runner := j.RunnerName
+		if runner == "" && j.RunnerID != "" {
+			runner = truncID(j.RunnerID)
+		}
+		if runner == "" {
+			runner = ui.SymbolDash
+		}
+
+		rows[i] = []string{
 			typeLabel,
 			j.Status,
-			vine,
-			tendril,
+			project,
+			runner,
 			humanize.Time(j.CreatedAt),
 			formatDuration(j.StartedAt, j.CompletedAt),
 		}
@@ -203,6 +174,5 @@ func formatDuration(started, completed *time.Time) string {
 func init() {
 	jobsCmd.AddCommand(jobsListCmd)
 	jobsListCmd.Flags().StringVar(&jobsListStatus, "status", "", "Filter by status (QUEUED, CLAIMED, PROCESSING, SUCCESS, FAILED, CANCELLED)")
-	jobsListCmd.Flags().StringVar(&jobsListVineyardID, "vineyard-id", "", "Filter by vineyard ID")
 	jobsListCmd.Flags().IntVarP(&jobsListLimit, "limit", "n", 20, "Jobs per page")
 }

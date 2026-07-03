@@ -1,12 +1,27 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-/** Supported cloud provider identifiers. */
+/**
+ * Clouds with full provisioning templates today. The per-cloud provisioning-option
+ * catalogs (instance types, regions, DB engines, …) are keyed by this set.
+ */
 export type CloudProviderSlug = "aws" | "gcp" | "azure";
+
+/**
+ * Every cloud a user can CONNECT (identity layer), including those whose OpenTofu
+ * provisioning templates are still "coming soon" (alibaba/digitalocean/hetzner/civo).
+ * The capability map (`PROVIDERS`) advertises service names for all of these.
+ */
+export type ConnectableCloudSlug =
+	| CloudProviderSlug
+	| "alibaba"
+	| "digitalocean"
+	| "hetzner"
+	| "civo";
 
 /** High-level metadata and service name mappings for a cloud provider. */
 export interface CloudProviderMeta {
-	slug: CloudProviderSlug;
+	slug: ConnectableCloudSlug;
 	name: string;
 	shortName: string;
 	icon: string;
@@ -24,7 +39,7 @@ export interface CloudProviderMeta {
 }
 
 /** Provider metadata keyed by slug. */
-export const PROVIDERS: Record<CloudProviderSlug, CloudProviderMeta> = {
+export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = {
 	aws: {
 		slug: "aws",
 		name: "Amazon Web Services",
@@ -75,6 +90,74 @@ export const PROVIDERS: Record<CloudProviderSlug, CloudProviderMeta> = {
 		topicService: "Service Bus",
 		registryService: "ACR",
 		secretsService: "Key Vault",
+	},
+	alibaba: {
+		slug: "alibaba",
+		name: "Alibaba Cloud",
+		shortName: "Alibaba",
+		icon: "/alibaba/favicon_64x64.png",
+		clusterService: "ACK",
+		networkName: "VPC",
+		dnsService: "Alibaba DNS",
+		certService: "SSL Certificates",
+		dbService: "ApsaraDB RDS",
+		cacheService: "ApsaraDB for Redis",
+		nosqlService: "Tablestore",
+		queueService: "MNS",
+		topicService: "MNS",
+		registryService: "Container Registry (ACR)",
+		secretsService: "KMS",
+	},
+	digitalocean: {
+		slug: "digitalocean",
+		name: "DigitalOcean",
+		shortName: "DO",
+		icon: "/digitalocean/favicon_64x64.png",
+		clusterService: "DOKS",
+		networkName: "VPC",
+		dnsService: "DigitalOcean DNS",
+		certService: "Let's Encrypt",
+		dbService: "Managed Databases",
+		cacheService: "Managed Redis",
+		nosqlService: "—",
+		queueService: "—",
+		topicService: "—",
+		registryService: "Container Registry",
+		secretsService: "—",
+	},
+	hetzner: {
+		slug: "hetzner",
+		name: "Hetzner Cloud",
+		shortName: "Hetzner",
+		icon: "/hetzner/favicon_64x64.png",
+		clusterService: "Talos / k3s (self-managed)",
+		networkName: "Network",
+		dnsService: "Hetzner DNS",
+		certService: "Let's Encrypt",
+		dbService: "—",
+		cacheService: "—",
+		nosqlService: "—",
+		queueService: "—",
+		topicService: "—",
+		registryService: "—",
+		secretsService: "—",
+	},
+	civo: {
+		slug: "civo",
+		name: "Civo",
+		shortName: "Civo",
+		icon: "/civo/favicon_64x64.png",
+		clusterService: "Civo K3s",
+		networkName: "Network",
+		dnsService: "Civo DNS",
+		certService: "Let's Encrypt",
+		dbService: "Managed Databases",
+		cacheService: "—",
+		nosqlService: "—",
+		queueService: "—",
+		topicService: "—",
+		registryService: "—",
+		secretsService: "—",
 	},
 };
 

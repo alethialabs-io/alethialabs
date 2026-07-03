@@ -1,0 +1,104 @@
+---
+title: Elench
+description: The verification layer and agent harness — Alethia generates infrastructure and proves it, then keeps proving it.
+---
+
+# Elench
+
+<Enterprise />
+
+**Elench** (Greek _elenchus_ — proof by cross-examination) is Alethia's verification layer and agent
+harness. The thesis is simple: don't just generate infrastructure — **scrutinise it and produce
+evidence**. Every change, human- or agent-initiated, runs through a deterministic gate between
+`tofu plan` and `tofu apply`, and leaves a signed evidence receipt; drift re-checks keep proving it
+after apply.
+
+<Callout type="info">
+  **Honest framing.** Elench produces *evidence that named, versioned controls passed on a specific
+  plan* — not a claim of "provably compliant" or "guaranteed least-privilege". A verdict is
+  reproducible **given the same plan**; compliance is an auditor's judgment, not a property of one
+  apply. The docs here are deliberately precise about what the engine can and cannot see.
+</Callout>
+
+## The load-bearing principle
+
+> The **deterministic engine is the trusted verdict. The LLM only proposes** — and every proposal is
+> re-validated by that engine before it is trusted.
+
+This division of labor runs through the whole system. The policy gate over the OpenTofu plan JSON is
+pure, reproducible code. An LLM may explain a failing control or suggest a fix, but a suggested fix is
+offered only if re-running the gate confirms it resolves the failure with no regression. The model is
+never the gate and has no write path.
+
+## Layered architecture
+
+```
+        ┌────────────────────────── consumers ──────────────────────────┐
+        │  in-app agent UI    Claude Code   ChatGPT   Codex   Gemini/Zed │
+        └──────┬──────────────────┴───────────┴────────┴────────┬───────┘
+               │ native (AI SDK)         all via remote MCP      │ via MCP
+        ┌──────▼──────────────────────────────────────────────────▼──────┐
+        │  EXPOSURE — one adapter: remote MCP server (READ-ONLY at launch) │
+        └───────────────────────────────┬─────────────────────────────────┘
+                                         │
+        ┌────────────────────────────────▼────────────────────────────────┐
+        │  ELENCH CORE                                                     │
+        │   • Tool Registry (SSOT): audience-scoped, PDP-gated             │
+        │   • Agent runtime: agent = DATA (persona·mission·scope·memory)   │
+        │   • Supervisor: ledger orchestrator; sub-agents-as-tools          │
+        └──────┬───────────────────────────────────────┬──────────────────┘
+               │ calls                                  │ calls
+        ┌──────▼─────────────┐              ┌───────────▼────────────────────┐
+        │ Platform actions   │              │ VERIFICATION ENGINE             │
+        │ (PDP-gated)        │              │  • deterministic plan-JSON gate │
+        └────────────────────┘              │  • override / exception         │
+                                            │  • signed evidence receipt      │
+                                            │  • continuous drift re-check    │
+                                            └───────────┬─────────────────────┘
+                                                        │ new `verify` stage
+                                            ┌───────────▼──────────┐
+                                            │ Go runner (OpenTofu)  │
+                                            └──────────────────────┘
+```
+
+Two halves, joined at the runner:
+
+- **The verification engine** (`packages/core/verify`, `packages/core/drift`,
+  `packages/core/accessanalyzer`) — the deterministic gate, the signed receipt, and continuous drift.
+  This is the headline.
+- **The agent harness** (`apps/console/lib/ai/tools`, `lib/agent/*`, `app/api/mcp`) — one tool registry
+  exposed read-only to external agents, scoped per-agent identities with isolated memory, and a
+  supervisor that delegates to a colony of sub-agents.
+
+## Where to go next
+
+Start with the **[Architecture](/elench/architecture)** page for the full repos → verified-GitOps-cluster
+system (the "A" infer-and-generate flow and the "B" bring-your-own + audit flow); the pages below go deep
+on each layer.
+
+<Cards>
+  <Card title="Architecture (start here)" href="/elench/architecture">
+    The whole A→B system — scan → provision → generate → GitOps → verify → drift — and where the elench
+    proof layer sits. Core; the proof layers are Enterprise.
+  </Card>
+  <Card title="Multi-cloud GitOps seam" href="/elench/multi-cloud">
+    How AWS / GCP / Azure all deploy apps: cloud-agnostic InfraFacts, per-cloud workload identity, and
+    manifest generation.
+  </Card>
+  <Card title="Verification engine" href="/elench/engine-internals">
+    The Evaluate seam, statuses and fail-closed gating, the override workflow, Access Analyzer
+    corroboration, signed receipts, and drift posture.
+  </Card>
+  <Card title="Control catalog" href="/elench/control-catalog">
+    The AWS / GCP / Azure controls, what each detects, the blind spots, framework mapping, and catalog
+    versioning.
+  </Card>
+  <Card title="Agent harness" href="/elench/agent-runtime">
+    The tool-registry SSOT, the read-only MCP surface, agents-as-data + memory isolation, the stateless
+    executor, and the supervisor/colony.
+  </Card>
+  <Card title="Extending & running" href="/elench/extending">
+    Adding a control, the injection seams ("AI proposes, the gate disposes"), the `elench-verify` CLI,
+    and the gated live exercises.
+  </Card>
+</Cards>

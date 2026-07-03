@@ -1,0 +1,42 @@
+# Cloudflare Tunnel overlay — the hosted alethialabs.io deploy. Layer AFTER the base
+# bundle and the prod overlay:
+#
+#   docker compose -f docker-compose.yml \
+#     -f deploy/prod/docker-compose.prod.yml \
+#     -f deploy/prod/docker-compose.tunnel.yml up -d
+#
+# vs the plain prod overlay (direct DNS + Caddy Let's Encrypt on public 80/443), this
+# fronts the origin with a Cloudflare Tunnel: `cloudflared` dials Cloudflare's edge
+# OUTBOUND (no inbound ports — the box firewall only allows SSH), TLS terminates at the
+# edge, Caddy becomes a plain-HTTP internal router (Caddyfile.tunnel, no ACME), and the
+# marketing zone is turned on. TUNNEL_TOKEN comes from `tofu output -raw tunnel_token`
+# (infra/cp-hetzner) and is delivered in the ALETHIA_DOTENV secret.
+name: alethia
+
+services:
+  # Outbound-only connector. Forwards the tunnel's ingress
+  # (alethialabs.io -> http://caddy:80) over the internal compose network. Reaches
+  # `caddy` by service name; no host port publishing involved.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN:?TUNNEL_TOKEN is required for the tunnel overlay}"
+    depends_on:
+      - caddy
+
+  # Cloudflare terminates TLS, so Caddy is a plain-:80 internal router. Swap in the
+  # tunnel Caddyfile (no ACME) and drop the public port publishing — unused behind the
+  # tunnel, and the Hetzner firewall blocks 80/443 anyway.
+  caddy:
+    ports: !reset []
+    volumes: !override
+      - ./deploy/prod/Caddyfile.tunnel:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  # Hosted alethialabs.io serves the marketing zone (OSS ships none). Clear the
+  # `marketing` profile so it runs without COMPOSE_PROFILES=marketing.
+  marketing:
+    profiles: !reset []

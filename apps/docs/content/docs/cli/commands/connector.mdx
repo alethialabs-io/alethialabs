@@ -1,0 +1,316 @@
+---
+title: Connector Commands
+description: Connect AWS, GCP, and Azure cloud accounts to Alethia entirely from the terminal.
+---
+
+# Connector Commands
+
+The `connector` command group connects your cloud accounts to Alethia so the platform can
+provision infrastructure into them. It drives the **same connection flow as the web console's
+[Connectors](/console/connectors) page**, but end-to-end from the CLI — there is no need to
+open a browser for the default flows.
+
+Every connection uses **short-lived, keyless credentials** — AWS cross-account roles, GCP
+Workload Identity Federation, and Azure federated identity. No access keys or client secrets are
+ever created or stored. For the security model and how the [Runner](/runner) consumes these
+credentials at provision time, see:
+
+- [AWS Connector](/console/connectors/aws), [GCP Connector](/console/connectors/gcp), [Azure Connector](/console/connectors/azure) — per-provider concepts
+- [Runner Cloud Credentials](/runner/cloud-credentials) — how credentials are exchanged at runtime
+- [Security Architecture](/concepts/security) — the overall trust model
+
+<Callout type="info">
+Connections made from the CLI and the web console are the same records. An account connected
+with `alethia connector gcp` immediately shows up in the console Connectors page, and vice
+versa.
+</Callout>
+
+## How It Works
+
+Each `connector` subcommand runs the same pipeline:
+
+<Steps>
+
+### Initialize
+The CLI creates (or reuses) a pending cloud identity for the provider and, for AWS, generates a
+unique **External ID**.
+
+### Run provider setup
+The CLI drives the provider's own tooling to create the resources Alethia needs (a cross-account
+role, a workload identity pool, or an app registration) and captures the resulting credential
+material.
+
+### Submit & verify
+The captured credentials are sent to Alethia, which verifies them **instantly, server-side** — an
+auth + provisioning-permission probe (no runner). The identity is marked `Connected`, `Degraded`, or
+`Disconnected` and is ready to provision into. Existing resources are discovered separately by the
+server-side [asset inventory](/console/connectors/health-and-inventory).
+
+</Steps>
+
+## Prerequisites
+
+- You must be authenticated: run [`alethia login`](/cli/authentication) first.
+- For the **default** flows, the matching provider CLI must be installed and authenticated
+  locally:
+  - GCP → `gcloud` (used to drive Google Cloud Shell)
+  - AWS → `aws`
+  - Azure → `az`
+- The `--manual` flows require **none** of the above — you run a one-liner in the provider's
+  browser shell and paste the result back.
+
+## Execution Models
+
+| Provider | Default | Why |
+|----------|---------|-----|
+| GCP | Runs the installer inside your **Google Cloud Shell** (via local `gcloud`) | Cloud Shell is already authenticated to your GCP org and has every tool preinstalled |
+| AWS | Deploys CloudFormation with the **local `aws` CLI** | AWS CloudShell is browser-only — there is no remote-exec CLI |
+| Azure | Runs the setup script with the **local `az` CLI** | Azure Cloud Shell is browser-only — there is no remote-exec CLI |
+
+Every provider also supports `--manual`, which prints a link + command to run in the browser shell
+and prompts you to paste the result. Use it when you cannot or prefer not to install the local
+CLI.
+
+## `alethia connector gcp`
+
+Connect a Google Cloud project using Workload Identity Federation.
+
+```bash
+alethia connector gcp --project my-gcp-project
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project` | No | GCP project ID. Prompted interactively if omitted. |
+| `--manual` | No | Run the installer in the browser Cloud Shell and paste the result instead of using local `gcloud`. |
+
+By default, the CLI runs an installer **inside your Google Cloud Shell**. Cloud Shell is
+authenticated as you, so the service account, workload identity pool, and AWS provider are created
+directly in your project — and the CLI captures the generated WIF credential config automatically.
+
+<Steps>
+
+### Enter the project
+Provide `--project`, or type it at the prompt.
+
+### Cloud Shell setup
+The CLI invokes `gcloud cloud-shell ssh`, pushes the installer, and runs it. The first run can take
+a minute while Cloud Shell provisions.
+
+### Connection test
+The captured WIF config is submitted, verified instantly server-side, and the identity is marked Connected (or Degraded/Disconnected).
+
+</Steps>
+
+Sample run:
+
+```
+◈ Project ── ◇ Cloud Shell setup ── ◇ Connection test
+
+Running installer via gcloud Cloud Shell (the first run can take a minute)...
+✔ Cloud Shell ready.
+✔ Installer running in Cloud Shell.
+...
+--- START CONFIG (copy everything below until END CONFIG) ---
+{ ...WIF credential config... }
+--- END CONFIG ---
+
+✓ Verifying connection (server-side)...
+✓ Connected
+
+✓ GCP project "my-gcp-project" connected
+```
+
+<Callout type="warn">
+If `gcloud` is not logged in, Cloud Shell cannot authenticate non-interactively and you will see a
+reauth error. Run `gcloud auth login`, then retry — or use `alethia connector gcp --manual`.
+
+```
+✗ gcloud is not authenticated
+Run this, then retry:
+
+  gcloud auth login
+```
+</Callout>
+
+### Manual GCP setup
+
+With `--manual`, the CLI prints a Cloud Shell link and a command, then waits for you to paste the
+WIF config:
+
+```bash
+alethia connector gcp --project my-gcp-project --manual
+```
+
+1. Open [Google Cloud Shell](https://shell.cloud.google.com/cloudshell/open?shellonly=true&show=terminal).
+2. Run the printed command:
+   ```bash
+   curl -sO https://alethia-connector-assets.s3.eu-west-1.amazonaws.com/alethia-gcp-setup.sh \
+     && bash alethia-gcp-setup.sh my-gcp-project
+   ```
+3. Paste everything between `--- START CONFIG ---` and `--- END CONFIG ---` at the prompt.
+
+## `alethia connector aws`
+
+Connect an AWS account using a cross-account IAM role with an External ID.
+
+```bash
+alethia connector aws
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--region` | No | AWS region for the CloudFormation stack. |
+| `--role-name` | No | Name for the cross-account IAM role. Defaults to `AlethiaProvisionerRole`. |
+| `--manual` | No | Deploy from the AWS console and paste the role ARN instead of using local `aws`. |
+
+<Tabs items={["Local aws CLI (default)", "Manual (console)"]}>
+  <Tab value="Local aws CLI (default)">
+
+The CLI deploys the bundled CloudFormation template with your local `aws` credentials, then reads
+the created role ARN from the stack outputs and submits it automatically.
+
+<Steps>
+
+### Initialize
+Alethia generates a unique External ID for this connection.
+
+### Create the IAM role
+The CLI runs `aws cloudformation deploy` (stack `AlethiaConnect`), creating a role that trusts the
+Alethia platform account, scoped by the External ID.
+
+### Connection test
+The role ARN is submitted, the connection is verified instantly server-side, and the identity is marked Connected (or Degraded/Disconnected).
+
+</Steps>
+
+```bash
+alethia connector aws --region eu-west-1
+```
+
+  </Tab>
+  <Tab value="Manual (console)">
+
+With `--manual`, the CLI prints a CloudFormation **quick-create** link pre-filled with your
+External ID and prompts for the resulting role ARN:
+
+```bash
+alethia connector aws --manual
+```
+
+1. Open the printed quick-create link (it pre-fills the template and External ID).
+2. Acknowledge the IAM capabilities checkbox and create the stack.
+3. Copy the `RoleArn` from the stack **Outputs** tab and paste it at the prompt:
+   ```
+   ? Role ARN: arn:aws:iam::123456789012:role/AlethiaProvisionerRole-<external-id>
+   ```
+
+  </Tab>
+</Tabs>
+
+## `alethia connector azure`
+
+Connect an Azure subscription using federated identity (no client secret).
+
+```bash
+alethia connector azure --subscription <subscription-id>
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--subscription` | No | Azure subscription ID. Prompted interactively if omitted. |
+| `--manual` | No | Run setup in Azure Cloud Shell and paste the result instead of using local `az`. |
+
+<Tabs items={["Local az CLI (default)", "Manual (Cloud Shell)"]}>
+  <Tab value="Local az CLI (default)">
+
+The CLI runs the setup script with your local `az` login. It creates an app registration, a
+federated credential trusting the Alethia AWS runners, and a Contributor role assignment, then
+captures the tenant, client, and subscription IDs automatically.
+
+<Steps>
+
+### Enter the subscription
+Provide `--subscription`, or type it at the prompt.
+
+### Create the app registration
+The CLI runs the setup script via `az`, creating the app registration, federated credential, and
+role assignment.
+
+### Connection test
+The captured IDs are submitted, the connection is verified instantly server-side, and the identity is marked Connected (or Degraded/Disconnected).
+
+</Steps>
+
+  </Tab>
+  <Tab value="Manual (Cloud Shell)">
+
+With `--manual`, the CLI prints a command to run in Azure Cloud Shell and prompts for the three
+IDs the script outputs:
+
+```bash
+alethia connector azure --subscription <subscription-id> --manual
+```
+
+1. Open [Azure Cloud Shell](https://shell.azure.com).
+2. Run the printed command:
+   ```bash
+   curl -sO https://alethia-connector-assets.s3.eu-west-1.amazonaws.com/alethia-azure-setup.sh \
+     && bash alethia-azure-setup.sh <subscription-id>
+   ```
+3. Paste the **Tenant ID**, **Client ID**, and **Subscription ID** it prints at the prompts.
+
+  </Tab>
+</Tabs>
+
+## `alethia connector list`
+
+List all connected (verified) cloud accounts.
+
+```bash
+alethia connector list
+```
+
+Output:
+
+```
+PROVIDER   ACCOUNT                              CONNECTED
+AWS        AWS (123456789012)                   2 hours ago
+GCP        GCP (my-gcp-project)                 5 days ago
+AZURE      Azure (3f9a1c2b-...)                 5 days ago
+```
+
+The table is interactive — sort and navigate with the keyboard (see [TUI Components](/cli/tui)).
+
+## `alethia connector remove`
+
+Disconnect a cloud account.
+
+```bash
+alethia connector remove gcp
+```
+
+If you omit the provider, the CLI shows a picker of connected accounts.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `-y`, `--yes` | No | Skip the confirmation prompt. |
+
+<Callout type="warn">
+Disconnecting resets the identity to a pending state and **orphans any projects** that referenced it
+(their `cloud_identity_id` is cleared). It does not destroy already-provisioned cloud resources —
+run [`alethia project destroy`](/cli/commands/plan-and-apply) first to tear those down. You can
+reconnect the same provider later.
+</Callout>
+
+## Troubleshooting
+
+| Symptom | Cause & fix |
+|---------|-------------|
+| `gcloud is not authenticated` / reauth error | Cloud Shell cannot prompt non-interactively. Run `gcloud auth login`, then retry — or use `--manual`. |
+| `gcloud CLI not found on PATH` | Install the [Google Cloud CLI](https://cloud.google.com/sdk/docs/install), or use `--manual`. |
+| `aws CLI not found on PATH` / `az CLI not found on PATH` | Install the provider CLI, or use `--manual` to set the connection up from the browser. |
+| `could not find WIF config in installer output` | The Cloud Shell installer did not finish. Re-run, or use `--manual` and paste the config yourself. |
+| `Captured WIF config is not valid JSON` | The pasted block was truncated. Copy everything between `--- START CONFIG ---` and `--- END CONFIG ---`. |
+| Connection test reaches `FAILED` | Alethia could not assume the credentials. Confirm the role trust policy / External ID (AWS), the workload identity binding (GCP), or the federated credential + Contributor role (Azure). Inspect with `alethia jobs logs <job-id>`. |
+| `Invalid format. Expected: arn:aws:iam::…` | The pasted role ARN is malformed — copy the exact `RoleArn` from the stack Outputs. |

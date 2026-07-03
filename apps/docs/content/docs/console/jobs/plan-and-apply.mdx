@@ -12,20 +12,20 @@ Infrastructure provisioning follows a strict **Plan-Review-Apply** workflow. Not
 <Steps>
 
 ### Generate Plan
-From the [spec detail page](/console/dashboard/spec-detail), click **Plan**. Select a Runner to execute. A `PLAN` job is queued.
+From the [project detail page](/console/dashboard/project-detail), click **Plan**. Select a Runner to execute. A `PLAN` job is queued.
 
 The Runner:
 1. Assumes cloud credentials ([how](/concepts/authentication))
-2. Generates Terraform variable files from the spec's config snapshot
-3. Runs `terraform init` with Supabase S3 backend ([state management](/concepts/terraform-state))
+2. Generates Terraform variable files from the project's config snapshot
+3. Runs `terraform init` with S3-compatible backend ([state management](/concepts/terraform-state))
 4. Runs `terraform plan -out=plan.tfplan`
 5. Runs `terraform show -json` for structured output
 6. Optionally runs Infracost for cost breakdown ([cost estimation](/concepts/cost-estimation))
-7. Uploads the plan artifact to Supabase S3
+7. Uploads the plan artifact to S3-compatible storage
 8. Reports resource change counts and costs
 
 ### Review Plan
-The Plan tab in spec detail shows:
+The Plan tab in project detail shows:
 
 **Plan Summary Bar:**
 - Resources to **create** (green count)
@@ -47,7 +47,7 @@ Click **Apply** to provision. Select a Runner. A `DEPLOY` job is queued.
 
 The Runner:
 1. Downloads the plan artifact from the PLAN job
-2. Validates the config hash — if the spec was modified after planning, the apply fails with a hash mismatch error
+2. Validates the config hash — if the project was modified after planning, the apply fails with a hash mismatch error
 3. Runs `terraform apply plan.tfplan`
 4. Extracts Terraform outputs (cluster endpoint, database endpoints, etc.)
 5. Installs ArgoCD via Helm ([GitOps](/concepts/gitops-argocd))
@@ -55,20 +55,20 @@ The Runner:
 
 ### Finalization
 On DEPLOY success, Alethia's `finalizeDeployment()` server action:
-- Updates `spec_cluster` with cluster name, endpoint, ARN, ArgoCD URL and password
-- Updates `spec_databases` with writer/reader endpoints, credentials ARNs
-- Updates `spec_caches` with primary/reader endpoints
-- Sets spec status to `ACTIVE`
+- Updates `project_cluster` with cluster name, endpoint, ARN, ArgoCD URL and password
+- Updates `project_databases` with writer/reader endpoints, credentials ARNs
+- Updates `project_caches` with primary/reader endpoints
+- Sets project status to `ACTIVE`
 
 </Steps>
 
 ## Config Hash Validation
 
 The DEPLOY job references a specific PLAN job. Before applying, the Runner compares:
-- The spec's current configuration hash
+- The project's current configuration hash
 - The plan's configuration hash (captured at plan time)
 
-If they differ (user modified the spec after planning), the job fails with:
+If they differ (user modified the project after planning), the job fails with:
 
 > "Configuration has changed since the plan was generated. Please re-plan."
 
@@ -78,11 +78,11 @@ This prevents applying a stale plan that doesn't match the current desired state
 
 Destroy follows a simpler flow — no plan step required:
 
-1. Click **Destroy** from spec detail
+1. Click **Destroy** from project detail
 2. Select a Runner
 3. A `DESTROY` job is queued
 4. The Runner runs `terraform destroy -auto-approve`
-5. Spec status → DESTROYING → DESTROYED
+5. Project status → DESTROYING → DESTROYED
 
 <Callout type="warn">
 Destroy permanently removes all cloud resources (VPC, cluster, databases, etc.). Terraform state is preserved so accidental destroys can be recovered by re-applying, but data in databases will be lost.

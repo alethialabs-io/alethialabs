@@ -11,8 +11,11 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 )
 
+// jobPollInterval is how often `--wait` polls a job's status.
+const jobPollInterval = 3 * time.Second
+
 func waitForJob(apiClient *api.Client, jobID string) error {
-	fmt.Printf("\n%s Waiting for job %s...\n", ui.WarningStyle.Render(ui.SymbolWaiting), jobID)
+	fmt.Printf("\n%s Waiting for job %s...\n", ui.MutedStyle.Render(ui.SymbolPoint), jobID)
 
 	lastStatus := ""
 	for {
@@ -47,7 +50,7 @@ func waitForJob(apiClient *api.Client, jobID string) error {
 			return fmt.Errorf("job was cancelled")
 		}
 
-		time.Sleep(3 * time.Second)
+		time.Sleep(jobPollInterval)
 	}
 }
 

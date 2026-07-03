@@ -1,0 +1,136 @@
+---
+title: Runner APIs
+description: API endpoints used by Runner agents for job claiming, heartbeat, and log streaming.
+---
+
+# Runner APIs
+
+These endpoints are called by Runner agents. Authentication is via `X-Runner-ID` and `X-Runner-Token` headers. The token is hashed with SHA-256 and compared against the stored `runners.token_hash`.
+
+## Job Claiming
+
+### `POST /api/jobs/claim`
+
+Claims the next available job. Uses the `claim_next_job()` PostgreSQL function with `FOR UPDATE SKIP LOCKED` for atomic claiming. See [Job Queue Pattern](/concepts/job-queue).
+
+**Response** (if job available):
+```json
+{
+  "job": {
+    "id": "uuid",
+    "job_type": "PLAN",
+    "config_snapshot": { ... },
+    "project_id": "uuid"
+  },
+  "cloud_identity": {
+    "provider": "aws",
+    "role_arn": "arn:aws:iam::123456789012:role/AlethiaProvisionerRole",
+    "external_id": "uuid"
+  }
+}
+```
+
+**Response** (no jobs): `204 No Content`
+
+## Heartbeat
+
+### `POST /api/runners/heartbeat`
+
+Sent every 30 seconds. Updates `runners.last_heartbeat` and `runners.version`.
+
+**Body:**
+```json
+{
+  "version": "0.1.0"
+}
+```
+
+If a heartbeat is not received for 60 seconds, Alethia marks the Runner OFFLINE.
+
+## Job Status
+
+### `PUT /api/jobs/{id}/status`
+
+Updates job status. Valid transitions: PROCESSING, SUCCESS, FAILED, CANCELLED.
+
+**Body:**
+```json
+{
+  "status": "SUCCESS",
+  "execution_metadata": {
+    "cluster_name": "api-backend-production",
+    "cluster_endpoint": "https://...",
+    "argocd_url": "https://...",
+    "outputs": { ... }
+  }
+}
+```
+
+On SUCCESS for DEPLOY jobs, the server automatically calls `finalizeDeployment()` to extract Terraform outputs and update project component tables.
+
+On FAILED, the project status is set to FAILED with the error message.
+
+## Log Streaming
+
+### `POST /api/jobs/{id}/logs`
+
+Receives log chunks from the Runner. See [Real-time Architecture](/concepts/realtime) for how these are delivered to the browser.
+
+**Body:**
+```json
+{
+  "log_chunk": "Creating VPC...\nVPC created: vpc-12345\n",
+  "stream_type": "STDOUT"
+}
+```
+
+Stream types: `STDOUT`, `STDERR`, `SYSTEM`.
+
+### `GET /api/jobs/{id}/logs`
+
+Retrieves all logs for a job, ordered by ID. Supports `?after={id}` pagination.
+
+## Plan Artifacts
+
+### `POST /api/jobs/{id}/plan-artifact`
+
+Uploads the binary `tofu.plan.out` file to S3-compatible storage (the `plan-artifacts` bucket, max 50MB).
+
+### `GET /api/jobs/{id}/plan-artifact`
+
+Downloads the plan artifact for apply execution.
+
+## Runner Registration
+
+### `POST /api/runners/register`
+
+Registers a new Runner. Returns the plaintext runner token (shown once). Used by Terraform during deployment; always creates an `operator=managed` runner — the request no longer takes a `mode` field.
+
+**Body:**
+```json
+{
+  "name": "eu-west-1-runner"
+}
+```
+
+**Response:**
+```json
+{
+  "runner_id": "uuid",
+  "runner_token": "plaintext-token"
+}
+```
+
+### `POST /api/runners/heartbeat`
+
+Also used for initial heartbeat after registration.
+
+## Runner Metadata
+
+### `GET /api/runners/{id}`
+
+Returns runner metadata including deploy configuration.
+
+### `POST /api/runners/{id}/metadata`
+
+Updates runner metadata (used for tracking deployment state).

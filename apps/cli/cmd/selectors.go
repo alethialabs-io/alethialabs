@@ -6,118 +6,63 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/huh/spinner"
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
-	"github.com/imroc/req/v3"
 )
 
-func getWebOrigin() string {
-	return WebOrigin()
+// runnerOperatorLabel renders a runner's operator/provisioning as a short label:
+// "managed", "self·deployed", or "self·registered".
+func runnerOperatorLabel(w api.Runner) string {
+	if w.Operator == "managed" {
+		return "managed"
+	}
+	if w.Provisioning != "" {
+		return "self·" + w.Provisioning
+	}
+	return "self"
 }
 
-func selectVineyard(token string) (vineyardID, vineyardName string, err error) {
-	webOrigin := getWebOrigin()
-	reqClient := req.C()
-
-	var vResult struct {
-		Vineyards []types.Vineyard `json:"vineyards"`
+// selectProject runs the interactive project picker shared by the project
+// plan/apply/destroy commands. Projects are listed flat (top-level projects).
+func selectProject(token string) (projectID string, err error) {
+	if err := requireInteractive(); err != nil {
+		return "", err
 	}
+	var configs []types.ConfigurationSummary
 
-	spinner.New().
-		Title("Fetching vineyards...").
-		Action(func() {
-			_, err = reqClient.R().
-				SetBearerAuthToken(token).
-				SetSuccessResult(&vResult).
-				Get(fmt.Sprintf("%s/api/cli/vineyards", webOrigin))
-		}).Run()
+	ui.RunSpinner("Fetching projects...", func() {
+		configs, err = api.NewClient(token).GetConfigurations()
+	})
 
 	if err != nil {
-		return "", "", fmt.Errorf("failed to fetch vineyards: %w", err)
+		return "", fmt.Errorf("failed to fetch projects: %w", err)
 	}
 
-	if len(vResult.Vineyards) == 0 {
-		return "", "", fmt.Errorf("no vineyards found — create one first via Alethia or `alethia vineyard create`")
+	projectOptions := []huh.Option[string]{}
+	for _, c := range configs {
+		projectOptions = append(projectOptions, huh.NewOption(
+			fmt.Sprintf("%s (%s)", c.ProjectName, c.EnvironmentStage),
+			c.ID,
+		))
 	}
 
-	vOptions := make([]huh.Option[string], len(vResult.Vineyards))
-	for i, v := range vResult.Vineyards {
-		vOptions[i] = huh.NewOption(v.Name, v.ID)
+	if len(projectOptions) == 0 {
+		return "", fmt.Errorf("no projects found — create one through Alethia")
 	}
 
-	err = huh.NewForm(
+	err = ui.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Select Vineyard").
-				Description("Which workspace to use").
-				Options(vOptions...).
-				Value(&vineyardID),
+				Title("Select Project").
+				Description("Which project to operate on").
+				Options(projectOptions...).
+				Value(&projectID),
 		),
 	).Run()
 
-	if err != nil {
-		return "", "", err
-	}
-
-	for _, v := range vResult.Vineyards {
-		if v.ID == vineyardID {
-			vineyardName = v.Name
-			break
-		}
-	}
-
-	return vineyardID, vineyardName, nil
-}
-
-func selectVine(token string, vineyardID string) (vineID string, err error) {
-	webOrigin := getWebOrigin()
-	reqClient := req.C()
-
-	var configsResult struct {
-		Configurations []types.ConfigurationSummary `json:"configurations"`
-	}
-
-	spinner.New().
-		Title("Fetching vines...").
-		Action(func() {
-			_, err = reqClient.R().
-				SetBearerAuthToken(token).
-				SetSuccessResult(&configsResult).
-				Get(fmt.Sprintf("%s/api/cli/configurations", webOrigin))
-		}).Run()
-
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch vines: %w", err)
-	}
-
-	vineOptions := []huh.Option[string]{}
-	for _, c := range configsResult.Configurations {
-		if vineyardID == "" || (c.VineyardID != nil && *c.VineyardID == vineyardID) {
-			vineOptions = append(vineOptions, huh.NewOption(
-				fmt.Sprintf("%s (%s)", c.ProjectName, c.EnvironmentStage),
-				c.ID,
-			))
-		}
-	}
-
-	if len(vineOptions) == 0 {
-		return "", fmt.Errorf("no vines found in this vineyard — create one through Alethia")
-	}
-
-	err = huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Select Vine").
-				Description("Which vine to operate on").
-				Options(vineOptions...).
-				Value(&vineID),
-		),
-	).Run()
-
-	return vineID, err
+	return projectID, err
 }
 
 var (
@@ -126,19 +71,20 @@ var (
 	statusDraining = ui.WarningStyle.Render(ui.SymbolPending)
 )
 
-func selectTendril(token string, excludeID string) (tendrilID string, err error) {
+func selectRunner(token string, excludeID string) (runnerID string, err error) {
+	if err := requireInteractive(); err != nil {
+		return "", err
+	}
 	apiClient := api.NewClient(token)
 
-	var workers []api.Worker
+	var runners []api.Runner
 
-	spinner.New().
-		Title("Fetching tendrils...").
-		Action(func() {
-			workers, err = apiClient.GetWorkers()
-		}).Run()
+	ui.RunSpinner("Fetching runners...", func() {
+		runners, err = apiClient.GetRunners()
+	})
 
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch tendrils: %w", err)
+		return "", fmt.Errorf("failed to fetch runners: %w", err)
 	}
 
 	options := []huh.Option[string]{
@@ -147,7 +93,7 @@ func selectTendril(token string, excludeID string) (tendrilID string, err error)
 
 	defaultValue := ""
 
-	for _, w := range workers {
+	for _, w := range runners {
 		if w.ID == excludeID {
 			continue
 		}
@@ -162,12 +108,7 @@ func selectTendril(token string, excludeID string) (tendrilID string, err error)
 			dot = statusOffline
 		}
 
-		modeLabel := "cloud"
-		if w.Mode == "self-hosted" {
-			modeLabel = "self"
-		}
-
-		label := fmt.Sprintf("%s %s (%s)", dot, w.Name, modeLabel)
+		label := fmt.Sprintf("%s %s (%s)", dot, w.Name, runnerOperatorLabel(w))
 		if w.IsDefault {
 			label += ui.DefaultBadge()
 		}
@@ -183,31 +124,58 @@ func selectTendril(token string, excludeID string) (tendrilID string, err error)
 		}
 	}
 
-	tendrilID = defaultValue
+	runnerID = defaultValue
 
-	err = huh.NewForm(
+	err = ui.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Select Tendril").
-				Description("Choose which tendril runs this job").
+				Title("Select Runner").
+				Description("Choose which runner runs this job").
 				Options(options...).
-				Value(&tendrilID),
+				Value(&runnerID),
 		),
 	).Run()
 
-	return tendrilID, err
+	return runnerID, err
+}
+
+// selectOrgInteractive shows a picker for the active organization.
+func selectOrgInteractive(orgs []api.OrgSummary) (*api.OrgSummary, error) {
+	options := make([]huh.Option[string], len(orgs))
+	for i, o := range orgs {
+		label := fmt.Sprintf("%s (%s)", o.Name, o.Role)
+		if o.IsActive {
+			label += ui.DefaultBadge()
+		}
+		options[i] = huh.NewOption(label, o.ID)
+	}
+	var id string
+	err := ui.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Select Organization").
+				Description("Set the active organization context").
+				Options(options...).
+				Value(&id),
+		),
+	).Run()
+	if err != nil {
+		return nil, err
+	}
+	return matchOrg(orgs, id), nil
 }
 
 func selectCloudIdentity(token string) (identityID string, err error) {
+	if err := requireInteractive(); err != nil {
+		return "", err
+	}
 	apiClient := api.NewClient(token)
 
 	var identities []api.CloudIdentity
 
-	spinner.New().
-		Title("Fetching cloud accounts...").
-		Action(func() {
-			identities, err = apiClient.GetCloudIdentities()
-		}).Run()
+	ui.RunSpinner("Fetching cloud accounts...", func() {
+		identities, err = apiClient.GetCloudIdentities()
+	})
 
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch cloud identities: %w", err)
@@ -222,7 +190,7 @@ func selectCloudIdentity(token string) (identityID string, err error) {
 		options[i] = huh.NewOption(id.Label, id.ID)
 	}
 
-	err = huh.NewForm(
+	err = ui.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Select Cloud Account").

@@ -1,0 +1,113 @@
+# Default values for the Alethia chart.
+# This is the same bundle as docker-compose, expressed for Kubernetes.
+
+# Published images are built linux/arm64 only, so pods must land on ARM nodes.
+# Override (or set to {}) if you publish multi-arch images.
+nodeSelector:
+  kubernetes.io/arch: arm64
+
+image:
+  registry: ghcr.io/alethialabs-io
+  # Pinned together; override per-component under each section if needed.
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Apex domain served by the ingress. Console at /, docs at /docs.
+domain: alethialabs.io
+
+# ---------------------------------------------------------------------------
+# Secrets. Either let the chart create a Secret from the values below, or point
+# at an existing Secret (existingSecret) that already holds these keys.
+# ---------------------------------------------------------------------------
+secrets:
+  existingSecret: ""
+  # Generate with: openssl rand -hex 32
+  cliJwtSecret: ""
+  betterAuthSecret: ""
+  # Extra app env (OAuth client IDs/secrets, ALETHIA_SES_* email, etc.) as a map.
+  extraEnv: {}
+
+# ---------------------------------------------------------------------------
+# Bundled Postgres (StatefulSet + PVC). Disable to use a managed Postgres and
+# set postgres.host/port to point at it.
+# ---------------------------------------------------------------------------
+postgres:
+  enabled: true
+  image: postgres:17-alpine
+  host: "" # defaults to the in-cluster service when enabled
+  port: 5432
+  user: alethia
+  password: change-me-postgres
+  database: alethia
+  # Password for the least-privileged app role (alethia_app), created by migrate.
+  appPassword: change-me-app
+  persistence:
+    size: 10Gi
+    storageClass: ""
+
+# ---------------------------------------------------------------------------
+# Bundled object store (SeaweedFS, S3-compatible). Disable to use AWS S3 / R2 /
+# Garage and set objectStore.endpoint to that endpoint.
+# ---------------------------------------------------------------------------
+objectStore:
+  enabled: true
+  image: chrislusf/seaweedfs:latest
+  endpoint: "" # defaults to the in-cluster service when enabled
+  # S3 identity for the bundled store. The app's storage-credential env vars
+  # (matching your .env) go in secrets.extraEnv and must use these same values.
+  accessKey: alethia
+  secretKey: change-me-storage
+  persistence:
+    size: 20Gi
+    storageClass: ""
+
+# ---------------------------------------------------------------------------
+# Console (Next.js control plane).
+# ---------------------------------------------------------------------------
+console:
+  replicas: 1
+  image: "" # defaults to {registry}/console:{tag}
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  # One-shot migrate runs as a pre-install/pre-upgrade Helm hook (console-migrate image).
+  migrate:
+    image: "" # defaults to {registry}/console-migrate:{tag}
+
+# ---------------------------------------------------------------------------
+# Docs (Next.js + Fumadocs).
+# ---------------------------------------------------------------------------
+docs:
+  replicas: 1
+  image: "" # defaults to {registry}/docs:{tag}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Runner (Go provisioning runner).
+# ---------------------------------------------------------------------------
+runner:
+  replicas: 1
+  image: "" # defaults to {registry}/runner:{tag}
+  mode: self-hosted
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Ingress. Routes /docs* → docs, everything else → console. TLS via cert-manager.
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  tls:
+    enabled: true
+    # cert-manager ClusterIssuer to request a certificate from.
+    clusterIssuer: letsencrypt-prod

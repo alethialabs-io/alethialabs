@@ -13,7 +13,7 @@ Every 10 seconds, the Runner calls `POST /api/jobs/claim`. The server runs `clai
 
 If a job is returned, the Runner:
 1. Updates status to PROCESSING
-2. Reads the spec configuration and cloud identity from the job
+2. Reads the project configuration and cloud identity from the job
 3. Assumes cloud credentials ([details](/runner/cloud-credentials))
 4. Executes job-type-specific logic
 5. Updates status to SUCCESS or FAILED
@@ -30,8 +30,8 @@ If a job is returned, the Runner:
   <Card title="Destroy Jobs" href="/runner/job-execution/destroy-jobs">
     terraform destroy + cleanup
   </Card>
-  <Card title="Worker Jobs" href="/runner/job-execution/worker-jobs">
-    DEPLOY_WORKER, UPDATE_WORKER, DESTROY_WORKER, CONNECTION_TEST
+  <Card title="Runner Lifecycle Jobs" href="/runner/job-execution/runner-jobs">
+    DEPLOY_RUNNER, UPDATE_RUNNER, DESTROY_RUNNER
   </Card>
 </Cards>
 
@@ -40,7 +40,7 @@ If a job is returned, the Runner:
 When any step fails:
 1. Error logged to STDERR stream
 2. Job status set to FAILED with error message
-3. Terraform state preserved (partial apply state saved to [Supabase S3](/concepts/terraform-state))
+3. Terraform state preserved (partial apply state saved to [S3-compatible state](/concepts/terraform-state))
 4. Cloud credentials cleared (deferred cleanup always runs)
 5. Runner returns to the poll loop for the next job
 

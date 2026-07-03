@@ -32,7 +32,7 @@ func NewLogger(apiClient *api.Client, deploymentID string) *Logger {
 func (l *Logger) Info(message, step string) {
 	fmt.Println(message)
 	if l.apiClient != nil {
-		l.apiClient.SendLog(l.deploymentID, api.LogEntry{Message: message, Level: "info", Step: step})
+		_ = l.apiClient.SendLog(l.deploymentID, api.LogEntry{Message: message, Level: "info", Step: step})
 	}
 }
 
@@ -40,7 +40,7 @@ func (l *Logger) Info(message, step string) {
 func (l *Logger) Warn(message, step string) {
 	fmt.Printf("Warning: %s\n", message)
 	if l.apiClient != nil {
-		l.apiClient.SendLog(l.deploymentID, api.LogEntry{Message: message, Level: "warn", Step: step})
+		_ = l.apiClient.SendLog(l.deploymentID, api.LogEntry{Message: message, Level: "warn", Step: step})
 	}
 }
 
@@ -48,7 +48,7 @@ func (l *Logger) Warn(message, step string) {
 func (l *Logger) Error(message, step string) {
 	fmt.Printf("Error: %s\n", message)
 	if l.apiClient != nil {
-		l.apiClient.SendLog(l.deploymentID, api.LogEntry{Message: message, Level: "error", Step: step})
+		_ = l.apiClient.SendLog(l.deploymentID, api.LogEntry{Message: message, Level: "error", Step: step})
 	}
 }
 

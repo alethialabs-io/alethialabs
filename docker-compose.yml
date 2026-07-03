@@ -1,0 +1,271 @@
+# Alethia self-host stack.
+#
+# This file grows phase-by-phase toward the full ~4-container deliverable
+# (app · postgres · s3 · runner). Today it bundles the storage tier (SeaweedFS)
+# and the app database (Postgres) so a fresh checkout runs with zero manual
+# setup:
+#
+#   cp .env.example .env && docker compose up -d
+#
+# The console + runner (run on the host for now, or added here in later phases)
+# auto-create their buckets on first use — no `aws s3 mb` required. The console
+# auto-runs DB migrations on boot — no `db push` required.
+
+name: alethia
+
+services:
+  # S3-compatible object store (Apache-2.0). Default self-host backend for
+  # Terraform/OpenTofu state + plan artifacts. Swappable for AWS S3 / R2 / Garage
+  # by pointing ALETHIA_STORAGE_* at another endpoint.
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    # -ip.bind=0.0.0.0 makes master + S3 listen on all interfaces (default binds
+    # only the container IP), so the localhost healthcheck below can reach them.
+    command: >-
+      server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json
+      -master.volumeSizeLimitMB=1024 -ip.bind=0.0.0.0
+    ports:
+      - "${ALETHIA_STORAGE_PORT:-8333}:8333" # S3 API
+    volumes:
+      - seaweedfs-data:/data
+      - ./deploy/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:9333/cluster/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # Application database (Postgres). Drizzle connects here
+  # directly; the console auto-runs migrations on boot. Self-host default — point
+  # ALETHIA_DATABASE_URL at a managed Postgres to swap.
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: "${ALETHIA_DB_USER:-alethia}"
+      POSTGRES_PASSWORD: "${ALETHIA_DB_PASSWORD:-alethia-dev-secret}"
+      POSTGRES_DB: "${ALETHIA_DB_NAME:-alethia}"
+    # Host port defaults to 5433 to avoid colliding with a host-native Postgres
+    # (e.g. Homebrew postgresql on 5432). Container still listens on 5432.
+    ports:
+      - "${ALETHIA_DB_PORT:-5433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ALETHIA_DB_USER:-alethia} -d ${ALETHIA_DB_NAME:-alethia}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # Browser DB UI (optional). Not part of the default/prod bring-up.
+  #   docker compose --profile tools up -d pgweb   →  http://localhost:8081
+  # Connects to the bundled Postgres as the superuser role (sees every table;
+  # the app role is RLS-restricted). For a Drizzle-native UI instead, run
+  # `pnpm -F console db:studio` (https://local.drizzle.studio).
+  pgweb:
+    image: sosedoff/pgweb:latest
+    profiles: ["tools"]
+    environment:
+      PGWEB_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}?sslmode=disable"
+    ports:
+      - "${ALETHIA_PGWEB_PORT:-8081}:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # One-shot DB migrate. Runs schema migrations + programmables (functions,
+  # triggers, RLS) then sets the app-role password, and exits. `app` waits for
+  # this to complete. Built from the console image's `build` stage because the
+  # drizzle migrator + lib/db/migrations aren't traced into the slim runtime.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/console/Dockerfile
+      target: migrate
+    environment:
+      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_APP_DB_PASSWORD: "${ALETHIA_APP_DB_PASSWORD:-alethia-app-dev-secret}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # OpenFGA — the Enterprise fine-grained authorization engine. Off by default
+  # (the community PostgresRbacPDP runs without it). Bring up with:
+  #   docker compose --profile enterprise up -d openfga
+  # then create a store + load the model at standup (sets OPENFGA_STORE_ID).
+  # Backed by its own Postgres so it never touches the app schema.
+  openfga-db:
+    image: postgres:17-alpine
+    profiles: ["enterprise"]
+    environment:
+      POSTGRES_USER: openfga
+      POSTGRES_PASSWORD: "${OPENFGA_DB_PASSWORD:-openfga-dev-secret}"
+      POSTGRES_DB: openfga
+    volumes:
+      - openfga-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openfga -d openfga"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # One-shot: create/upgrade the OpenFGA datastore schema, then exit.
+  openfga-migrate:
+    image: openfga/openfga:latest
+    profiles: ["enterprise"]
+    command: migrate
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: "postgres://openfga:${OPENFGA_DB_PASSWORD:-openfga-dev-secret}@openfga-db:5432/openfga?sslmode=disable"
+    depends_on:
+      openfga-db:
+        condition: service_healthy
+    restart: "no"
+
+  openfga:
+    image: openfga/openfga:latest
+    profiles: ["enterprise"]
+    command: run
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: "postgres://openfga:${OPENFGA_DB_PASSWORD:-openfga-dev-secret}@openfga-db:5432/openfga?sslmode=disable"
+    ports:
+      - "${OPENFGA_HTTP_PORT:-8082}:8080" # HTTP API (8082 host to avoid pgweb's 8081)
+    depends_on:
+      openfga-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Console (Next.js control plane). Internal URLs point at the bundled
+  # postgres/seaweedfs; secrets (OAuth, ALETHIA_SES_* email, CLI_JWT_SECRET, BETTER_AUTH_SECRET)
+  # come from .env.
+  app:
+    build:
+      context: .
+      dockerfile: apps/console/Dockerfile
+      args:
+        NEXT_PUBLIC_CANVAS_ENABLED: "${NEXT_PUBLIC_CANVAS_ENABLED:-false}"
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_APP_DATABASE_URL: "postgres://alethia_app:${ALETHIA_APP_DB_PASSWORD:-alethia-app-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_STORAGE_ENDPOINT: "http://seaweedfs:8333"
+      # AES-256-GCM key for api_key connector secrets (connector_credentials).
+      ALETHIA_CRED_ENCRYPTION_KEY: "${ALETHIA_CRED_ENCRYPTION_KEY:-/MkbZwf3J4Wv++DQILEGzBChaVvow+x7U1fv5f9HZpU=}"
+      # OpenFGA (Enterprise engine). Empty unless set in .env → OpenFGA disabled,
+      # community PostgresRbacPDP stays the engine. Set both to enable.
+      OPENFGA_API_URL: "${OPENFGA_API_URL-}"
+      OPENFGA_STORE_ID: "${OPENFGA_STORE_ID-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Docs (Next.js + Fumadocs). Stateless; served at basePath /docs.
+  docs:
+    build:
+      context: .
+      dockerfile: apps/docs/Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    restart: unless-stopped
+
+  # Blog (Next.js + velite). Stateless; served at basePath /blog.
+  blog:
+    build:
+      context: .
+      dockerfile: apps/blog/Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    restart: unless-stopped
+
+  # Marketing (Next.js public site). OPT-IN self-host path — the hosted
+  # alethialabs.io runs on Vercel. Enable with the `marketing` profile
+  # (e.g. `pnpm compose:up:site`) AND uncomment `import marketing*.caddy` in
+  # deploy/caddy/Caddyfile (copy marketing.caddy.example → marketing.caddy).
+  marketing:
+    profiles: ["marketing"]
+    build:
+      context: .
+      dockerfile: apps/marketing/Dockerfile
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    restart: unless-stopped
+
+  # Runner (Go). Talks to the console over HTTP + S3 only; self-registers on
+  # boot. Bundles Terraform/cloud CLIs, so the image is large to build.
+  runner:
+    build:
+      context: .
+      dockerfile: apps/runner/Dockerfile
+    # init reaps orphaned grandchildren (tofu/kubectl) if a worker subprocess dies —
+    # matters when ALETHIA_RUNNER_SLOTS > 1 makes this a supervisor of N workers.
+    init: true
+    env_file: .env
+    environment:
+      ALETHIA_WEB_ORIGIN: "http://app:3000"
+      ALETHIA_STORAGE_ENDPOINT: "http://seaweedfs:8333"
+      ALETHIA_RUNNER_MODE: self-hosted
+      # Concurrent jobs per runner (default 1). >1 runs N isolated worker subprocesses.
+      # ALETHIA_RUNNER_SLOTS: "2"
+    depends_on:
+      app:
+        condition: service_started
+    restart: unless-stopped
+
+  # Single ingress: /docs* → docs, everything else → console. Local Caddyfile
+  # serves plain HTTP on :80; the production (TLS) variant lives in deploy/hetzner/.
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Mount the whole config dir (not just the Caddyfile) so the optional
+      # `import marketing*.caddy` can resolve deploy/caddy/marketing.caddy when the
+      # marketing profile is enabled (copy marketing.caddy.example → marketing.caddy).
+      - ./deploy/caddy:/etc/caddy:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+      - docs
+      - blog
+    restart: unless-stopped
+
+  # Optional scale-out only (SSE fan-out). Never starts in the default profile.
+  redis:
+    image: redis:7-alpine
+    profiles: ["scale-out"]
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+volumes:
+  seaweedfs-data:
+  postgres-data:
+  openfga-data:
+  caddy-data:
+  caddy-config:
+  redis-data:

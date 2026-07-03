@@ -14,19 +14,55 @@ import (
 var (
 	tableHeaderStyle = lipgloss.NewStyle().
 				BorderStyle(lipgloss.NormalBorder()).
-				BorderForeground(lipgloss.Color(ColorMuted)).
+				BorderForeground(InkMuted).
 				BorderBottom(true).
+				Foreground(InkMuted).
 				Bold(true)
 
+	// Selection reads as an inverted ink block — no hue, just contrast.
 	tableSelectedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(ColorSelect)).
-				Background(lipgloss.Color(ColorAccent)).
-				Bold(false)
+				Foreground(InkInverse).
+				Background(InkPrimary).
+				Bold(true)
 
 	tableBorderStyle = lipgloss.NewStyle().
 				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color(ColorMuted))
+				BorderForeground(InkMuted)
 )
+
+// ShowTable runs the interactive bordered, navigable table for the given column
+// titles and plain string rows (auto-sizing each column to its widest cell). It
+// is the single entry point list commands use on a TTY, so every list looks
+// identical. Returns when the user quits.
+func ShowTable(columns []string, rows [][]string, entity string) error {
+	cols := make([]table.Column, len(columns))
+	for i, title := range columns {
+		w := lipgloss.Width(title)
+		for _, r := range rows {
+			if i < len(r) {
+				if cw := lipgloss.Width(Truncate(r[i], MaxColWidth)); cw > w {
+					w = cw
+				}
+			}
+		}
+		cols[i] = table.Column{Title: title, Width: w + 2}
+	}
+	trows := make([]table.Row, len(rows))
+	for i, r := range rows {
+		cells := make([]string, len(r))
+		for j, c := range r {
+			cells[j] = Truncate(c, MaxColWidth)
+		}
+		trows[i] = table.Row(cells)
+	}
+	sortName := ""
+	if len(columns) > 0 {
+		sortName = columns[0]
+	}
+	m := NewTableModel(cols, trows, entity, sortName, 0)
+	_, err := tea.NewProgram(m).Run()
+	return err
+}
 
 func NewStyledTable(columns []table.Column, rows []table.Row) table.Model {
 	height := len(rows) + 1

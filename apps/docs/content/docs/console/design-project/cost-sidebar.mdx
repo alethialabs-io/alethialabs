@@ -1,0 +1,53 @@
+---
+title: Cost Sidebar
+description: Real-time cost estimation sidebar with AWS Pricing API integration.
+---
+
+# Cost Sidebar
+
+The cost sidebar appears on the right side of the Design a Project form (visible on desktop screens). It shows the estimated monthly infrastructure cost, updating in real-time as you change configuration values.
+
+For a deeper technical explanation, see [Cost Estimation](/concepts/cost-estimation).
+
+## How It Works
+
+1. When a region is selected, pricing data is fetched from the AWS Pricing API via the `fetchPrices(region)` store action
+2. Prices are cached in the Zustand store with a 24-hour TTL
+3. Each form change triggers a recalculation
+4. Fallback hardcoded rates are used if the API call fails
+
+## Cost Breakdown
+
+The sidebar shows individual line items:
+
+| Component | Calculation | Example |
+|-----------|------------|---------|
+| **EKS Control Plane** | Fixed $0.10/hour × 730 | $73/mo |
+| **Compute Nodes** | avg_instance_rate × desired_nodes × 730 | $182/mo (3× t3.large) |
+| **NAT Gateway** | $0.048 × count × 730 | $35/mo (single) |
+| **Database (Aurora)** | min_ACU × $0.14 × 730 per instance | $51/mo (0.5 ACU) |
+| **Cache** | node_rate × count × 730 | $50/mo (1× cache.t3.medium) |
+| **WAF** | $5 per enabled option | $5–$10/mo |
+| **Secrets** | $0.40 per secret | $1.60/mo (4 secrets) |
+| **NoSQL/Queues/Topics** | Usage-based | $0 (not estimable) |
+
+**Total** is the sum of all line items.
+
+## Pricing Sources
+
+| Resource | Source | Fallback |
+|----------|--------|----------|
+| EC2 instances | AWS Pricing API (on-demand, Linux, shared tenancy) | Hardcoded rates per type |
+| EKS control plane | Hardcoded ($0.10/hr) | — |
+| NAT Gateway | AWS Pricing API | Hardcoded ($0.048/hr) |
+| Aurora ACU | AWS Pricing API | Hardcoded ($0.14/ACU-hr) |
+| ElastiCache | AWS Pricing API | Hardcoded rates per type |
+| WAF | Hardcoded ($5/mo) | — |
+| Secrets | Hardcoded ($0.40/secret) | — |
+
+## Limitations
+
+- Pricing is currently **AWS-only** — GCP and Azure sections show approximate costs based on similar resource profiles
+- Data transfer costs are not estimated (highly variable)
+- NoSQL, messaging, and storage costs are usage-based and show $0
+- Infracost provides more accurate post-plan costs — see [Cost Estimation](/concepts/cost-estimation)

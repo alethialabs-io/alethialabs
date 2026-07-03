@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/imroc/req/v3"
 )
@@ -90,42 +88,9 @@ func getAuthTokenInternal(promptLogin bool) (string, error) {
 	}
 
 	if needsLogin {
-		if !promptLogin {
-			return "", fmt.Errorf("authentication required. Please run `alethia login`")
-		}
-
-		errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-		fmt.Println(errorStyle.Render("✗ You are not logged in or your session has expired."))
-		fmt.Println()
-
-		var confirmLogin bool
-		err := huh.NewConfirm().
-			Title("Would you like to log in now?").
-			Affirmative("Yes").
-			Negative("No").
-			Value(&confirmLogin).
-			Run()
-
-		if err != nil || !confirmLogin {
-			return "", fmt.Errorf("authentication required. Please run `alethia login`")
-		}
-
-		if err := performLoginFlow(); err != nil {
-			return "", err
-		}
-
-		// Read credentials again after successful login
-		file, err := os.ReadFile(credsPath)
-		if err != nil {
-			return "", fmt.Errorf("error reading credentials file after login: %w", err)
-		}
-
-		var creds types.ExchangeResponse
-		if err := json.Unmarshal(file, &creds); err != nil {
-			return "", fmt.Errorf("error parsing credentials file after login: %w", err)
-		}
-
-		return creds.AccessToken, nil
+		// The interactive "log in now?" prompt + device flow is irreducible TUI
+		// glue (see resolveLogin in login.go); keep it out of this token-state logic.
+		return resolveLogin(credsPath, promptLogin)
 	}
 
 	return "", fmt.Errorf("unexpected authentication state")

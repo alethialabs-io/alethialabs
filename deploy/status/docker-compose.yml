@@ -1,0 +1,44 @@
+# Alethia status page — Gatus (https://github.com/TwiN/gatus) behind Caddy (TLS).
+#
+# Deploy on a host SEPARATE from production (see config.yaml + README). Caddy
+# terminates HTTPS for status.alethialabs.io and proxies to Gatus on the internal
+# network. Then point the Cloudflare DNS record `status` at this host (DNS-only,
+# so Caddy's ACME challenge reaches it).
+#
+#   ALETHIA_STATUS_DOMAIN=status.alethialabs.io ALETHIA_ACME_EMAIL=you@example.com \
+#     docker compose up -d
+#
+# With ALETHIA_STATUS_DOMAIN unset, Caddy serves plain HTTP on :80 (local smoke test).
+
+services:
+  gatus:
+    image: twinproduction/gatus:latest
+    container_name: alethia-status
+    restart: unless-stopped
+    expose:
+      - "8080"
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - gatus-data:/data
+
+  caddy:
+    image: caddy:2
+    container_name: alethia-status-caddy
+    restart: unless-stopped
+    depends_on:
+      - gatus
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      ALETHIA_STATUS_DOMAIN: "${ALETHIA_STATUS_DOMAIN:-}"
+      ALETHIA_ACME_EMAIL: "${ALETHIA_ACME_EMAIL:-}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  gatus-data:
+  caddy-data:
+  caddy-config:

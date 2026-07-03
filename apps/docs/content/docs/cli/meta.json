@@ -6,6 +6,7 @@
     "index",
     "installation",
     "authentication",
+    "identity",
     "commands",
     "configuration",
     "tui"

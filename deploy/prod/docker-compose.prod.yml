@@ -1,0 +1,53 @@
+# Production overrides for any single-VM deploy. Layer on top of the base bundle:
+#
+#   docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml pull
+#   docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml up -d
+#
+# Differences vs local: app/docs/runner run from prebuilt public GHCR images (no
+# on-box builds), Caddy serves the real domain with automatic TLS (ALETHIA_DOMAIN),
+# and the datastores are NOT published to the host (only Caddy's 80/443 are public).
+name: alethia
+
+services:
+  # Prebuilt images from CI (deploy-hetzner.yml). ALETHIA_IMAGE_TAG is the
+  # commit SHA the pipeline pushed; defaults to latest.
+  app:
+    image: "ghcr.io/alethialabs-io/console:${ALETHIA_IMAGE_TAG:-latest}"
+    pull_policy: always
+  docs:
+    image: "ghcr.io/alethialabs-io/docs:${ALETHIA_IMAGE_TAG:-latest}"
+    pull_policy: always
+  blog:
+    image: "ghcr.io/alethialabs-io/blog:${ALETHIA_IMAGE_TAG:-latest}"
+    pull_policy: always
+  runner:
+    image: "ghcr.io/alethialabs-io/runner:${ALETHIA_IMAGE_TAG:-latest}"
+    pull_policy: always
+  # Marketing public site — self-hosted (the tunnel overlay turns the zone on).
+  # Inactive unless the operator runs with COMPOSE_PROFILES=marketing AND enables
+  # the `import marketing*.caddy` line in deploy/prod/Caddyfile.
+  marketing:
+    profiles: ["marketing"]
+    image: "ghcr.io/alethialabs-io/marketing:${ALETHIA_IMAGE_TAG:-latest}"
+    pull_policy: always
+  # One-shot migrate — the console Dockerfile's `migrate` target (shares all
+  # build cache with console; the final stage is the only difference).
+  migrate:
+    image: "ghcr.io/alethialabs-io/console-migrate:${ALETHIA_IMAGE_TAG:-latest}"
+    pull_policy: always
+
+  caddy:
+    environment:
+      # Drive the Caddyfile; empty ALETHIA_DOMAIN → plain HTTP on :80.
+      ALETHIA_DOMAIN: "${ALETHIA_DOMAIN:-}"
+      ALETHIA_ACME_EMAIL: "${ALETHIA_ACME_EMAIL:-}"
+    volumes: !override
+      - ./deploy/prod/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  # Keep Postgres + object storage on the internal network only.
+  postgres:
+    ports: !reset []
+  seaweedfs:
+    ports: !reset []

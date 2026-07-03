@@ -1,27 +1,28 @@
 ---
 title: Terraform State Management
-description: How Terraform state is stored in Supabase S3, organized by Spec, and shared across Runner executions.
+description: How Terraform state is stored in S3-compatible object storage, organized by Project, and shared across Runner executions.
 ---
 
 # Terraform State Management
 
-Terraform tracks the real-world resources it manages in a **state file**. The platform stores state in Supabase's S3-compatible storage, enabling Runners to share state across executions and resume from failures.
+Terraform tracks the real-world resources it manages in a **state file**. The platform stores state in S3-compatible object storage (SeaweedFS by default, swappable for Garage, MinIO, AWS S3, or R2), enabling Runners to share state across executions and resume from failures.
 
 <img src="/docs/diagrams/concepts/terraform-state.svg" alt="Terraform State" />
 
 ## State Backend
 
-Terraform is configured with an S3 backend pointing to Supabase Storage:
+Terraform is configured with an S3 backend pointing at the configured S3-compatible endpoint:
 
 ```hcl
 terraform {
   backend "s3" {
-    bucket                      = "spec-terraform-state"
-    key                         = "{zone}/{project}/{stage}/{region}/terraform.tfstate"
-    endpoint                    = "{supabase_s3_endpoint}"
-    region                      = "{supabase_s3_region}"
-    access_key                  = "{supabase_storage_key_id}"
-    secret_key                  = "{supabase_storage_secret_key}"
+    bucket                      = "project-tofu-state"
+    key                         = "{project}-{environment}-{region}/tofu.tfstate"
+    endpoint                    = "{ALETHIA_STORAGE_ENDPOINT}"
+    region                      = "{ALETHIA_STORAGE_REGION}"
+    access_key                  = "{ALETHIA_STORAGE_ACCESS_KEY_ID}"
+    secret_key                  = "{ALETHIA_STORAGE_SECRET_ACCESS_KEY}"
+    use_lockfile                = true
     skip_credentials_validation = true
     skip_metadata_api_check     = true
     force_path_style            = true
@@ -32,25 +33,21 @@ terraform {
 ### Path Structure
 
 ```
-spec-terraform-state/
-├── my-zone/
-│   └── api-backend/
-│       ├── production/
-│       │   └── eu-west-1/
-│       │       └── terraform.tfstate
-│       └── staging/
-│           └── us-east-1/
-│               └── terraform.tfstate
+project-tofu-state/
+├── api-backend-production-eu-west-1/
+│   └── tofu.tfstate
+└── api-backend-staging-us-east-1/
+    └── tofu.tfstate
 ```
 
-Each Spec gets its own state file, keyed by zone name, project name, environment stage, and region. This ensures isolation between Specs and environments.
+Each Project gets its own state file, keyed by project name, environment stage, and region. This ensures isolation between Projects and environments.
 
 ## State Lifecycle
 
 ### During `terraform plan`
 
-1. Runner generates the backend configuration dynamically from the Spec's metadata
-2. `terraform init` downloads the existing state (if any) from Supabase S3
+1. Runner generates the backend configuration dynamically from the Project's metadata
+2. `terraform init` downloads the existing state (if any) from S3-compatible storage
 3. `terraform plan` compares the desired configuration against the current state
 4. The plan output describes what will change
 
@@ -65,12 +62,13 @@ Each Spec gets its own state file, keyed by zone name, project name, environment
 1. `terraform destroy` removes all resources tracked in the state
 2. The state file is left empty (or removed)
 
-## Why Supabase S3?
+## Why S3-compatible state?
 
-- **No additional infrastructure** — no need for a separate AWS S3 bucket or DynamoDB table for locking
-- **Consistent with the platform** — same Supabase project used for database, auth, and storage
-- **Cross-provider** — works regardless of whether the Spec targets AWS, GCP, or Azure
-- **Access control** — Runner credentials (S3 keys) are set as environment variables, not stored in the Spec config
+- **Portable** — any S3-compatible backend works (SeaweedFS, Garage, MinIO, AWS S3, R2); the endpoint is swappable, so you are never locked to one provider
+- **Lock-free coordination** — `use_lockfile = true` keeps concurrent runs safe without a separate DynamoDB table
+- **Consistent across Runners** — every Runner reads and writes the same state, so executions share a single source of truth
+- **Cross-provider** — works regardless of whether the Project targets AWS, GCP, or Azure
+- **Access control** — Runner credentials (S3 keys) are set as environment variables, not stored in the Project config
 
 ## State and Failure Recovery
 
@@ -84,10 +82,10 @@ This is why Terraform state is the foundation of the platform's reliability mode
 
 ## Plan Artifacts
 
-In addition to state, **plan artifacts** are stored in a separate Supabase Storage bucket (`plan-artifacts`). These are the binary `plan.tfplan` files that capture exactly what Terraform will do.
+In addition to state, **plan artifacts** are stored in a separate S3-compatible bucket (`plan-artifacts`). These are the binary `plan.tfplan` files that capture exactly what Terraform will do.
 
 When a user clicks "Apply" after reviewing a plan, the Runner downloads the plan artifact and passes it to `terraform apply plan.tfplan`. This ensures the apply executes exactly what was planned, even if the Terraform configuration has changed since the plan was generated.
 
 <Callout type="info">
-Plan artifacts are validated with a **config hash**. If the Spec configuration was modified after the plan was generated, the hash won't match and the apply will fail, forcing the user to re-plan. This prevents stale plans from being applied.
+Plan artifacts are validated with a **config hash**. If the Project configuration was modified after the plan was generated, the hash won't match and the apply will fail, forcing the user to re-plan. This prevents stale plans from being applied.
 </Callout>

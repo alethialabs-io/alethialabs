@@ -1,0 +1,59 @@
+---
+title: Pluggable Connectors
+description: Bring your own DNS, secrets, registry, and observability tools via API-key connectors.
+---
+
+# Pluggable Connectors
+
+Beyond cloud and Git, Alethia supports **pluggable per-category connectors** that let a Project mix in the tools you already use instead of the cloud-native default — Cloudflare for DNS, HashiCorp Vault for secrets, Docker Hub for a registry, and Datadog / Grafana Cloud / Prometheus for observability.
+
+These connectors authenticate with an **API key / token** (`auth_method = api_key`) rather than cloud federation or OAuth.
+
+## Categories and providers
+
+| Category | Cloud-native default | Pluggable provider | Credential fields |
+|----------|----------------------|--------------------|-------------------|
+| **DNS** | Route 53 / Cloud DNS / Azure DNS | **Cloudflare** | API token |
+| **Secrets** | Secrets Manager / Secret Manager / Key Vault | **HashiCorp Vault** | Address, token |
+| **Registry** | ECR / Artifact Registry / ACR | **Docker Hub** | Username, access token |
+| **Observability** | — (none) | **Datadog** | API key, app key |
+| **Observability** | — | **Grafana Cloud** | Instance ID, API token |
+| **Observability** | — | **Prometheus** | (optional) remote-write user/password |
+
+The catalog is data-driven — each provider is one row in the `connectors` table, seeded from a single manifest (`packages/core/categories/catalog.json`). See [Connectors Architecture](/concepts/connectors) for how this works end to end.
+
+## Connecting a provider
+
+1. Open **Connectors**, pick the provider card, and choose **Connect**.
+2. Fill in the API credential — the form fields are generated from the provider's credential specification.
+3. Alethia runs a lightweight **verification ping** against the provider's API (e.g. Cloudflare's token-verify endpoint, Vault's token lookup, Docker Hub login, Datadog's key-validate endpoint). A verified credential turns the card green; an unverified one is still saved so you can retry.
+
+## How credentials are stored
+
+Secret fields (tokens, passwords) are **encrypted at rest** with AES-256-GCM before being written to the `connector_credentials` table; non-secret fields (a Vault address, a Docker Hub username) are stored in clear. The encryption key comes from `ALETHIA_CRED_ENCRYPTION_KEY` (see [Configuration](/self-hosting/configuration)).
+
+<Callout type="info">
+Secrets are **never** placed in a Project's `config_snapshot`. They are decrypted and attached to a job only at **claim time**, then injected into the runner's OpenTofu variables in memory — preserving the [zero-credential model](/concepts/security).
+</Callout>
+
+## Using a connector in a Project
+
+Once connected, pick the provider per component in the [Project designer](/console/design-project):
+
+- [DNS & WAF](/console/design-project/dns) — choose **Cloudflare** instead of cloud-native DNS.
+- [Secrets](/console/design-project/secrets) — choose **Vault**.
+- [Container Registry](/console/design-project/container-registry) — choose **Docker Hub**.
+- [Observability](/console/design-project/observability) — choose **Datadog / Grafana / Prometheus**.
+
+At provision time the runner composes the chosen provider's module into the plan and **skips** the cloud-native resource for that category.
+
+## Adding a new provider
+
+Pluggable connectors are an open-ended catalog. Adding a seventh provider takes four steps and **no** changes to routes, the runner core, or the form engine:
+
+1. Add a row to `packages/core/categories/catalog.json` (category, slug, auth_method, icon, credential + provider_config fields).
+2. Add a `CategoryProvider` Go impl under `packages/core/categories/` (its `Tfvars`/`Validate` behavior).
+3. Add the OpenTofu module under `infra/templates/categories/<category>/<slug>/`.
+4. Run `pnpm -F console gen:connectors` to regenerate the registry + catalog seed.
+
+See [Connectors Architecture](/concepts/connectors) for the contract details.

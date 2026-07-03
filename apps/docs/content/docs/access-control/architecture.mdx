@@ -1,0 +1,149 @@
+---
+title: Architecture
+description: How the authorization layer is built — the PDP contract, the PostgresRbacPDP engine, registry-as-code, the open-core seams and enterprise loader, the request lifecycle, and the path to swapping the engine for OpenFGA.
+---
+
+# Architecture
+
+This page is for contributors and operators who want to know *how* authorization is implemented, not just how to use it. It maps the concepts from the rest of this section onto the code.
+
+## Where it lives
+
+<Files>
+  <Folder name="apps/console/lib/authz" defaultOpen>
+    <File name="types.ts — the Pdp contract, Actor, ResourceRef, Decision, ForbiddenError" />
+    <File name="registry.ts — registry-as-code: resources × actions, the matrix, role templates" />
+    <File name="postgres-rbac-pdp.ts — the community engine" />
+    <File name="evaluate.ts — pure decision helpers (unit-tested without a DB)" />
+    <File name="guard.ts — authorize() / authorizeCli() call-site helpers" />
+    <File name="seed.ts — seeds permissions + roles from the registry at boot" />
+    <File name="index.ts — getPdp() + the public surface" />
+  </Folder>
+  <Folder name="apps/console/lib">
+    <File name="enterprise.ts — the single open-core integration point + ee/ loader" />
+    <File name="auth/scope.ts — getActiveScope()" />
+    <File name="db/index.ts — withScope() / withOwnerScope() (RLS)" />
+  </Folder>
+  <Folder name="ee">
+    <File name="src/index.ts — register(core): the enterprise module" />
+  </Folder>
+</Files>
+
+## The PDP contract
+
+All authorization goes through one interface — the **Policy Decision Point**:
+
+```ts
+interface Pdp {
+  can(actor, action, resource): Promise<Decision>;        // boolean + reason
+  enforce(actor, action, resource): Promise<void>;        // throws ForbiddenError on deny
+  bulkCheck(actor, checks[]): Promise<Decision[]>;         // many at once; never loop can()
+  listAccessible(actor, action, resourceType): Promise<string[]>;  // ids you may act on
+}
+```
+
+Call sites depend on this interface only — never on a concrete engine. That's what makes the engine swappable.
+
+## The community engine: `PostgresRbacPDP`
+
+The default implementation answers a check with a single SQL gather followed by a pure decision:
+
+<Steps>
+<Step>
+**Gather grants.** One query selects the actor's grants that match the org, the principal, and the required permission key (`<resource>:<action>`), returning each grant's `resource_id` (where `NULL` = org-wide).
+</Step>
+<Step>
+**Walk the hierarchy.** A recursive CTE computes the target resource's ancestor ids (project → org).
+</Step>
+<Step>
+**Decide (pure).** `coversResource(grantResourceIds, resourceId, ancestorIds)`: a grant with `NULL` resource_id (org-wide) covers everything; otherwise a grant covers the resource if its id is the resource itself or one of its ancestors. No matching grant ⇒ **deny**.
+</Step>
+<Step>
+**Enforce & record.** `enforce` throws `ForbiddenError` (→ 403) on denial and writes the decision to the Activity log; every denial and every successful non-read action is recorded (successful reads are skipped).
+</Step>
+</Steps>
+
+<Callout type="info">
+The decision logic (`coversResource`, permission-key helpers) is a **pure function** in `evaluate.ts` with no database or IO, so it's exhaustively unit-tested (org-wide grants, exact match, hierarchy inheritance, default-deny, wildcards) without needing a live database. The SQL gathering is integration-tested at database standup.
+</Callout>
+
+`listAccessible` mirrors this: an org-wide grant returns every id of that type in the org; scoped grants return the granted resources plus their descendants.
+
+## Registry-as-code
+
+The resources, actions, the validity matrix, and the four role templates are defined once in `registry.ts` as **exhaustive string-literal unions**. From that single source:
+
+- the `permission` and `role` / `role_permission` tables are **seeded** at boot (idempotent, via `seed.ts`), so code and data never drift;
+- adding an action that isn't handled is a **compile error** until it's wired through;
+- the built-in roles use **fixed UUIDs** so the seed is a stable upsert.
+
+This is why "add a capability" is a one-line, type-checked diff rather than a migration-plus-code-plus-docs chore.
+
+## The open-core seams
+
+The core exposes extension points and consults them through small accessor functions, each with a community default:
+
+| Seam | Accessor | Community default | Enterprise fills with |
+|---|---|---|---|
+| Policy engine | `getPdp()` | `PostgresRbacPDP` | `OpenFgaPdp` (optional) |
+| Tenancy scope | `getActiveScope(userId)` | personal org (`orgId == userId`) | the member's active org |
+| Auth plugins | `getAuthPlugins()` | `[]` | Better Auth `organization()` (+ SSO later) |
+| Entitlements | `getEntitlements(actor)` | all off | license-derived flags |
+
+All four read from `lib/enterprise.ts` — if no enterprise module is registered, they return the community default.
+
+## The enterprise loader
+
+`lib/enterprise.ts` is the **only** file allowed to name the enterprise package. It performs one **tolerant, synchronous** load:
+
+```ts
+// lib/enterprise.ts (simplified)
+function loadEnterprise() {
+  const pkg = "@alethia/ee";                 // variable so the bundler can't statically resolve it
+  try {
+    const mod = createRequire(import.meta.url)(pkg);
+    registered = mod.register({ db, builtinRoleIds });   // CoreContext injected
+  } catch {
+    registered = null;                        // community build — package absent
+  }
+}
+```
+
+Two design points make this robust:
+
+- **Synchronous load.** Better Auth needs its plugins at construction time (module-eval), which happens before any async startup hook runs. A synchronous load (triggered lazily on first `getEnterprise()`, which occurs during auth construction) guarantees the `organization()` plugin is present when the auth instance is built.
+- **CoreContext dependency injection.** `register(core)` receives `{ db, builtinRoleIds }`. The enterprise package queries through `core.db` (raw SQL) and reads role ids from `core.builtinRoleIds`, so it imports **only erased TypeScript types** from the core — never runtime internals. The dependency direction stays one-way.
+
+In a Community build the package isn't installed, the `require` throws, `registered` stays `null`, and every seam keeps its default — verified by building and testing with the package absent.
+
+## Request lifecycle
+
+```
+HTTP request
+   │
+   ├─ server action:  authorize(action, resource)
+   │      └─ getActiveScope(requireOwner()) → actor → getPdp().enforce(...) → 403 on deny
+   │
+   └─ CLI / stream route:  authorizeCli(req, action, resource)
+          └─ verify token → getActiveScope → enforce → 403
+                                   │
+                          query runs under withScope()/withOwnerScope()
+                          → PostgreSQL RLS restricts rows to the active org
+```
+
+Two independent gates on every path: the **PDP** (permission) and **RLS** (tenancy). On the CLI/stream paths — which use the service connection that bypasses RLS — the route additionally scopes its query explicitly by the active org, so the tenancy guarantee holds there too.
+
+<Callout type="warn">
+There is a deliberate guard against regressions: a lint (`check:authz-scope`) fails the build if any server action, CLI route, or stream route does ad-hoc `user_id` ownership filtering instead of going through `authorize`/`enforce` + org scoping.
+</Callout>
+
+## Swapping the engine
+
+Because every call site depends only on the `Pdp` interface and obtains the engine via `getPdp()`, switching from the Postgres engine to **OpenFGA** (for relationship-based authorization at large scale) is a **binding flip plus a tuple backfill** — the enterprise module registers an `OpenFgaPdp`, and not a single call site changes. The community engine remains the default and the fallback.
+
+## See also
+
+- [Roles & Permissions](/access-control/roles-and-permissions) — the registry contents in user terms.
+- [Open-Core Model](/access-control/open-core) — the boundary and the CI guards.
+- [Security → Row-Level Security](/concepts/security) — the database-level blast wall.
+- [Authentication](/concepts/authentication) — how the actor's identity is established before authorization runs.

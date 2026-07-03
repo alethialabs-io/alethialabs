@@ -1,0 +1,63 @@
+---
+title: The Access portal
+description: The AWS-IAM-style UI for assigning access — pick a principal, a role or permission, a scope, and allow or deny.
+---
+
+# The Access portal
+
+<Enterprise />
+
+**Settings → Access** is where you assign access, the way you'd attach policies in the AWS IAM portal. It shows
+every grant in the organization and lets you create new ones.
+
+## Granting access
+
+Click **Grant access** and fill in the four parts of a [grant](/access-control/grants-and-scopes):
+
+<Steps>
+<Step>
+### Who
+Pick a **member** or a **team** <Enterprise />. A team grant reaches everyone on the team.
+</Step>
+<Step>
+### Allow or Deny
+**Allow** confers access; **Deny** is an explicit exception that overrides any inherited allow.
+</Step>
+<Step>
+### What
+Choose a **Role** (built-in or [custom](/access-control/custom-roles)) **or** a **single permission**
+(e.g. `project:deploy`).
+</Step>
+<Step>
+### Scope
+**Entire organization**, or a specific **project / runner / cloud identity**. A grant on a container flows
+down to its children.
+</Step>
+</Steps>
+
+The grants table lists each entry with its **principal**, **effect** (Allow/Deny), **role or permission**, and
+**scope**, and a button to revoke it.
+
+## The deny-exception workflow
+
+The portal is where you build the canonical exception — broad access with a precise carve-out:
+
+<Steps>
+<Step>Grant **Allow · viewer · organization** to Dana.</Step>
+<Step>Grant **Deny · `project:view` · project `S`** to Dana.</Step>
+<Step>Dana sees the other projects, but not `S`.</Step>
+</Steps>
+
+See [grants & scopes](/access-control/grants-and-scopes) for the precedence rules behind this.
+
+## What you can pick from
+
+- **Principals** — the org's members and teams.
+- **Roles** — the four built-ins plus your [custom roles](/access-control/custom-roles).
+- **Permissions** — the full `resource:action` catalog for single-permission grants.
+- **Resources** — your projects, runners, and cloud identities, for scoped grants.
+
+<Callout type="info">
+  In the open-source <Community>Community</Community> edition there's a single owner who already holds every
+  permission, so there's nothing to assign — the Access portal is an Enterprise surface.
+</Callout>

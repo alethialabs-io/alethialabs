@@ -1,0 +1,11 @@
+# Trivy ignore file (referenced by .github/actions/iac-checks via TRIVY_IGNOREFILE).
+# Reviewed, deliberately-accepted misconfiguration findings. IDs only match the resources
+# they describe, so this is safe to share across all infra template scans.
+#
+# Azure customer-provisioning template — two network-restriction checks that cannot be
+# default-on without breaking provisioning: the alethia runner applies these from OUTSIDE
+# Azure (Hetzner fleet), so a default-Deny key-vault ACL or an IP-locked AKS API server
+# would block the runner's own data-plane / control-plane access. Left customer-configurable
+# per environment. (RBAC — AVD-AZU-0042 — IS genuinely fixed in the AKS module.)
+AVD-AZU-0013
+AVD-AZU-0041

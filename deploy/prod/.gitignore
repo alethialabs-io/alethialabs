@@ -1,0 +1,6 @@
+# Local, untracked externals for scripts/bootstrap-secrets.sh — NEVER commit.
+secrets.local.env
+# Any generated deploy SSH key material.
+alethia-deploy
+alethia-deploy.pub
+*.pem

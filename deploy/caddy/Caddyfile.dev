@@ -1,0 +1,37 @@
+# Dev ingress for the fully-dockerized hot-reload stack (docker-compose.dev.yml).
+# Stitches all zones at :80 the same way production does, so the Cloudflare tunnel
+# serves one origin. Mirrors apps/console/microfrontends.json + marketing.caddy.example,
+# but targets the dev `next dev` ports (marketing :3010, blog :3002).
+{
+	auto_https off
+}
+
+:80 {
+	handle /docs* {
+		reverse_proxy docs:3000
+	}
+	handle /blog* {
+		reverse_proxy blog:3002
+	}
+
+	# Authed `/` → hand off to the console (resolves the active org). Mirrors
+	# apps/marketing/proxy.ts: a Better Auth session cookie on `/` goes to the app.
+	@authed_root {
+		path /
+		header_regexp authcookie Cookie "(^|;\s*)(__Secure-)?better-auth\.session_token="
+	}
+	handle @authed_root {
+		reverse_proxy app:3000
+	}
+
+	# Marketing-owned routes + the mkt-assets prefix (must precede the catch-all).
+	@marketing path / /pricing /enterprise /contact /contact/* /terms /privacy /cookies /acceptable-use /mkt-assets/* /robots.txt /sitemap.xml
+	handle @marketing {
+		reverse_proxy marketing:3010
+	}
+
+	# Everything else → console (the microfrontends default zone).
+	handle {
+		reverse_proxy app:3000
+	}
+}

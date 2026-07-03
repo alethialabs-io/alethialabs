@@ -8,10 +8,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
-	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 type awsProvider struct{}
@@ -22,7 +23,7 @@ func (p *awsProvider) RequiredCLIs() []string {
 	return []string{"aws-iam-authenticator", "kubectl", "helm"}
 }
 
-func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interface{} {
+func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	enableKarpenter := false
 	if v, ok := config.Cluster.ProviderConfig["enable_karpenter"]; ok {
 		if b, ok := v.(bool); ok {
@@ -56,12 +57,12 @@ func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 
 	tfvars := map[string]interface{}{
 		"project_name":   config.ProjectName,
-		"region":         config.Region,
+		"region":         resolveRegion("aws", config.Region),
 		"environment":    config.EnvironmentStage,
 		"aws_account_id": config.CloudAccountID,
 
 		// VPC
-		"provision_vpc":           provisionVPC,
+		"provision_vpc":          provisionVPC,
 		"vpc_cidr":               orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
 		"vpc_single_nat_gateway": config.Network.SingleNatGateway,
 
@@ -101,14 +102,14 @@ func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		"custom_secrets": buildSecrets(config.Secrets),
 
 		// DynamoDB
-		"ddb_create":                      len(config.NosqlTables) > 0,
-		"ddb_global_create":               hasGlobalTables(config.NosqlTables),
-		"ddb_table_configuration":         buildDDBTables(config.NosqlTables, "standard"),
-		"ddb_global_table_configuration":  buildDDBTables(config.NosqlTables, "global"),
+		"ddb_create":                     len(config.NosqlTables) > 0,
+		"ddb_global_create":              hasGlobalTables(config.NosqlTables),
+		"ddb_table_configuration":        buildDDBTables(config.NosqlTables, "standard"),
+		"ddb_global_table_configuration": buildDDBTables(config.NosqlTables, "global"),
 
 		// S3
-		"s3_create":             len(config.StorageBuckets) > 0,
-		"bucket_configuration":  buildS3Buckets(config.StorageBuckets),
+		"s3_create":            len(config.StorageBuckets) > 0,
+		"bucket_configuration": buildS3Buckets(config.StorageBuckets),
 
 		// RDS
 		"create_rds": len(config.Databases) > 0,
@@ -124,11 +125,15 @@ func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 			scalingConfig["max_capacity"] = *db.MaxCapacity
 		}
 		tfvars["rds_scaling_config"] = scalingConfig
+		engine, version := resolveDBEngine("aws", db)
 		tfvars["rds_config"] = map[string]interface{}{
-			"engine":         orDefault(db.Engine, "aurora-postgresql"),
-			"engine_version": orDefault(db.EngineVersion, "16.6"),
+			"engine":         orDefault(engine, "aurora-postgresql"),
+			"engine_version": orDefault(version, "16.6"),
 			"db_port":        derefIntOr(db.Port, 5432),
 			"db_name":        db.Name,
+		}
+		if db.InstanceClass != "" {
+			tfvars["rds_instance_type"] = db.InstanceClass
 		}
 		if db.BackupRetentionDays != nil {
 			tfvars["rds_backup_retention_period"] = *db.BackupRetentionDays
@@ -140,7 +145,13 @@ func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 
 	if len(config.Caches) > 0 {
 		cache := config.Caches[0]
-		tfvars["redis_instance_type"] = orDefault(cache.NodeType, "cache.t3.medium")
+		tfvars["redis_instance_type"] = orDefault(
+			resolveCacheNodeType("aws", cache),
+			"cache.t3.medium",
+		)
+		if cache.EngineVersion != "" {
+			tfvars["redis_engine_version"] = cache.EngineVersion
+		}
 		if cache.NumCacheNodes != nil {
 			tfvars["redis_cluster_size"] = *cache.NumCacheNodes
 		}
@@ -149,8 +160,8 @@ func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		}
 	}
 
-	if len(config.Cluster.InstanceTypes) > 0 {
-		tfvars["eks_instance_types"] = config.Cluster.InstanceTypes
+	if inst := resolveInstanceTypes("aws", config.Cluster); len(inst) > 0 {
+		tfvars["eks_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {
 		tfvars["eks_ng_min_size"] = config.Cluster.NodeMinSize
@@ -161,8 +172,42 @@ func (p *awsProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 	if config.Cluster.NodeDesiredSize > 0 {
 		tfvars["eks_ng_desired_size"] = config.Cluster.NodeDesiredSize
 	}
+	if config.Cluster.NodeDiskSizeGB != nil {
+		tfvars["eks_disk_size"] = *config.Cluster.NodeDiskSizeGB
+	}
+
+	// Generic passthrough: any provider_config key that names a template variable
+	// flows through verbatim (e.g. eks_volume_iops, a CMEK key id, WAF rule list)
+	// without a dedicated Go field. Reserved keys are consumed above under a
+	// different tfvar name, so they aren't injected as undeclared duplicates.
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, "enable_karpenter")
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "cloudfront_waf", "acm_certificate", "application_waf")
 
 	return tfvars
+}
+
+// mergeProviderConfig copies template-variable overrides from a component's
+// provider_config JSONB into the flat tfvars map, WITHOUT clobbering keys already
+// set by the typed mappings (merge-if-absent). This is the generic "passthrough"
+// that lets the UI drive any template variable by name without a dedicated Go field
+// per knob. `reserved` lists provider_config keys the typed code already consumed
+// under a different tfvar name, so they are skipped (no undeclared-var duplicates).
+func mergeProviderConfig(tfvars map[string]interface{}, pc map[string]any, reserved ...string) {
+	if len(pc) == 0 {
+		return
+	}
+	skip := make(map[string]bool, len(reserved))
+	for _, r := range reserved {
+		skip[r] = true
+	}
+	for k, v := range pc {
+		if skip[k] {
+			continue
+		}
+		if _, exists := tfvars[k]; !exists {
+			tfvars[k] = v
+		}
+	}
 }
 
 func ensureSlice(s []interface{}) []interface{} {
@@ -179,6 +224,43 @@ func orDefault(val, def string) string {
 	return def
 }
 
+// ddbCapacityMode translates the cloud-neutral capacity mode (on_demand /
+// provisioned) to the DynamoDB-style value the IaC templates expect. Defaults to
+// on-demand for empty/unknown input.
+func ddbCapacityMode(mode string) string {
+	if mode == "provisioned" {
+		return "PROVISIONED"
+	}
+	return "PAY_PER_REQUEST"
+}
+
+// providerInt reads an int from a provider_config JSONB map (JSON numbers
+// decode as float64). Returns false when absent or non-numeric.
+func providerInt(cfg map[string]any, key string) (int, bool) {
+	if cfg == nil {
+		return 0, false
+	}
+	switch v := cfg[key].(type) {
+	case float64:
+		return int(v), true
+	case int:
+		return v, true
+	}
+	return 0, false
+}
+
+// s3SSEAlgorithm resolves the S3 server-side-encryption algorithm from the
+// bucket's provider_config (encryption_algorithm), defaulting to AES256 when
+// encryption is enabled.
+func s3SSEAlgorithm(b types.ProjectStorageBucketConfig) string {
+	if b.ProviderConfig != nil {
+		if v, ok := b.ProviderConfig["encryption_algorithm"].(string); ok && v != "" {
+			return v
+		}
+	}
+	return "AES256"
+}
+
 func derefIntOr(p *int, def int) int {
 	if p != nil {
 		return *p
@@ -186,15 +268,15 @@ func derefIntOr(p *int, def int) int {
 	return def
 }
 
-func buildSQSQueues(queues []types.VineQueueConfig, topics []types.VineTopicConfig) map[string]interface{} {
+func buildSQSQueues(queues []types.ProjectQueueConfig, topics []types.ProjectTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, q := range queues {
 		cfg := map[string]interface{}{
 			"fifo_queue": false,
 			"dlq_enable": false,
 		}
-		if q.Fifo != nil {
-			cfg["fifo_queue"] = *q.Fifo
+		if q.Ordered != nil {
+			cfg["fifo_queue"] = *q.Ordered
 		}
 		if q.VisibilityTimeout != nil {
 			cfg["visibility_timeout_seconds"] = *q.VisibilityTimeout
@@ -202,15 +284,15 @@ func buildSQSQueues(queues []types.VineQueueConfig, topics []types.VineTopicConf
 		if q.MessageRetention != nil {
 			cfg["message_retention_seconds"] = *q.MessageRetention
 		}
-		if q.DelaySeconds != nil {
-			cfg["delay_seconds"] = *q.DelaySeconds
+		if d, ok := providerInt(q.ProviderConfig, "delay_seconds"); ok {
+			cfg["delay_seconds"] = d
 		}
 		result[q.Name] = cfg
 	}
 	return result
 }
 
-func buildSNSTopics(topics []types.VineTopicConfig) map[string]interface{} {
+func buildSNSTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
 		subs := []map[string]string{}
@@ -227,7 +309,7 @@ func buildSNSTopics(topics []types.VineTopicConfig) map[string]interface{} {
 	return result
 }
 
-func (p *awsProvider) ConfigureKubeconfig(ctx context.Context, config *types.VineConfig, outputs map[string]interface{}, stdout io.Writer) error {
+func (p *awsProvider) ConfigureKubeconfig(ctx context.Context, config *types.ProjectConfig, outputs map[string]interface{}, stdout io.Writer) error {
 	clusterName := ExtractClusterName(outputs)
 	if clusterName == "" {
 		return fmt.Errorf("no EKS cluster name in outputs")
@@ -245,7 +327,15 @@ func (p *awsProvider) ConfigureKubeconfig(ctx context.Context, config *types.Vin
 	}
 
 	cluster := resp.Cluster
-	kubeconfigPath := "temp/kubeconfig"
+	// Write under an absolute, HOME-based path (not the cwd-relative "temp/") so that
+	// concurrent worker subprocesses — which share a cwd but each have a private HOME —
+	// never read each other's kubeconfig. See dataroom/spec/mvp/21 §5 (concurrent slots).
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.TempDir()
+	}
+	kubeDir := filepath.Join(home, ".alethia")
+	kubeconfigPath := filepath.Join(kubeDir, "kubeconfig")
 	kubeconfig := fmt.Sprintf(`apiVersion: v1
 kind: Config
 clusters:
@@ -270,7 +360,7 @@ users:
 		*cluster.Arn, *cluster.Arn, *cluster.Arn, *cluster.Arn, *cluster.Arn, *cluster.Arn,
 		clusterName, config.Region)
 
-	if err := os.MkdirAll("temp", 0755); err != nil {
+	if err := os.MkdirAll(kubeDir, 0700); err != nil {
 		return err
 	}
 	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfig), 0600); err != nil {
@@ -281,7 +371,7 @@ users:
 	return nil
 }
 
-func buildSecrets(secrets []types.VineSecretConfig) []map[string]interface{} {
+func buildSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
 		entry := map[string]interface{}{
@@ -298,7 +388,7 @@ func buildSecrets(secrets []types.VineSecretConfig) []map[string]interface{} {
 	return result
 }
 
-func hasGlobalTables(tables []types.VineNosqlConfig) bool {
+func hasGlobalTables(tables []types.ProjectNosqlConfig) bool {
 	for _, t := range tables {
 		if t.TableType == "global" {
 			return true
@@ -307,7 +397,7 @@ func hasGlobalTables(tables []types.VineNosqlConfig) bool {
 	return false
 }
 
-func buildDDBTables(tables []types.VineNosqlConfig, tableType string) []map[string]interface{} {
+func buildDDBTables(tables []types.ProjectNosqlConfig, tableType string) []map[string]interface{} {
 	result := []map[string]interface{}{}
 	for _, t := range tables {
 		if t.TableType != tableType {
@@ -315,11 +405,11 @@ func buildDDBTables(tables []types.VineNosqlConfig, tableType string) []map[stri
 		}
 		entry := map[string]interface{}{
 			"table_name_suffix":             t.Name,
-			"hash_key":                      t.HashKey,
-			"hash_key_type":                 orDefault(t.HashKeyType, "S"),
-			"range_key":                     t.RangeKey,
-			"range_key_type":                orDefault(t.RangeKeyType, "S"),
-			"billing_mode":                  orDefault(t.BillingMode, "PAY_PER_REQUEST"),
+			"hash_key":                      t.PartitionKey,
+			"hash_key_type":                 orDefault(t.PartitionKeyType, "S"),
+			"range_key":                     t.SortKey,
+			"range_key_type":                orDefault(t.SortKeyType, "S"),
+			"billing_mode":                  ddbCapacityMode(t.CapacityMode),
 			"enable_point_in_time_recovery": t.PointInTimeRecovery,
 		}
 		result = append(result, entry)
@@ -327,7 +417,7 @@ func buildDDBTables(tables []types.VineNosqlConfig, tableType string) []map[stri
 	return result
 }
 
-func buildS3Buckets(buckets []types.VineStorageBucketConfig) []map[string]interface{} {
+func buildS3Buckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
 		blockPublic := !b.PublicAccess
@@ -346,7 +436,7 @@ func buildS3Buckets(buckets []types.VineStorageBucketConfig) []map[string]interf
 			"acl_type":                "private",
 			"create_s3_user":          false,
 			"versioning_enabled":      b.Versioning,
-			"sse_algorithm":           orDefault(b.Encryption, "AES256"),
+			"sse_algorithm":           s3SSEAlgorithm(b),
 			"store_access_key_in_ssm": false,
 			"block_public_acls":       blockPublic,
 			"block_public_policy":     blockPublic,
@@ -359,4 +449,3 @@ func buildS3Buckets(buckets []types.VineStorageBucketConfig) []map[string]interf
 }
 
 var _ CloudProvider = (*awsProvider)(nil)
-

@@ -1,24 +1,35 @@
 ---
 title: Job Commands
-description: List, stream logs, cancel, and wait for infrastructure jobs.
+description: List, stream logs, and cancel infrastructure jobs.
 ---
 
 # Job Commands
 
 Monitor and manage provision jobs from the terminal. For how jobs work internally, see [Job Queue Pattern](/concepts/job-queue).
 
+<Callout type="info">
+There is no `alethia jobs wait` command. To block until a job finishes, pass `-w/--wait` to the
+command that queues it — `project plan|apply|destroy` and `runner deploy|destroy`. See
+[Plan & Apply](/cli/commands/plan-and-apply).
+</Callout>
+
 ## `alethia jobs list`
 
-List all jobs for the authenticated user.
+List jobs for the active organization.
 
 ```bash
-alethia jobs list
+alethia jobs list [--status <S>] [-n/--limit <N>]
 ```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--status` | No | Filter by status: `QUEUED`, `CLAIMED`, `PROCESSING`, `SUCCESS`, `FAILED`, `CANCELLED`. |
+| `-n`, `--limit` | No | Jobs per page (default `20`). |
 
 Output:
 
 ```
-ID            TYPE     STATUS      SPEC            CREATED
+ID            TYPE     STATUS      PROJECT         CREATED
 a1b2...       PLAN     SUCCESS     api-backend     2 min ago
 c3d4...       DEPLOY   PROCESSING  api-backend     30 sec ago
 e5f6...       DESTROY  QUEUED      data-platform   just now
@@ -26,26 +37,26 @@ e5f6...       DESTROY  QUEUED      data-platform   just now
 
 ## `alethia jobs get`
 
-Get detailed information about a specific job.
+Get detailed information about a specific job. The job ID is a **positional argument**.
 
 ```bash
-alethia jobs get --id <job-id>
+alethia jobs get <job_id>
 ```
 
 Shows: type, status, assigned Runner, all timestamps, error message (if failed), and execution metadata (Terraform outputs, cost data).
 
 ## `alethia jobs logs`
 
-Stream job logs to the terminal.
+Stream job logs to the terminal. The job ID is a **positional argument**.
 
 ```bash
-alethia jobs logs --id <job-id> [--follow]
+alethia jobs logs <job_id> [-f/--follow]
 ```
 
-| Flag | Required | Description |
+| Argument / Flag | Required | Description |
 |------|----------|-------------|
-| `--id` | Yes | Job UUID |
-| `--follow` | No | Continuously stream new log entries (like `tail -f`) |
+| `<job_id>` | Yes | Job ID (positional) |
+| `-f`, `--follow` | No | Continuously stream new log entries (like `tail -f`) |
 
 Without `--follow`, prints all existing logs and exits. With `--follow`, the command blocks and prints new log lines as the Runner writes them. Logs include Terraform plan/apply output, resource creation progress, and error messages.
 
@@ -53,25 +64,22 @@ Press `Ctrl+C` to stop following.
 
 ## `alethia jobs cancel`
 
-Cancel a queued or in-progress job.
+Cancel a queued or in-progress job. The job ID is a **positional argument**.
 
 ```bash
-alethia jobs cancel --id <job-id>
+alethia jobs cancel <job_id>
 ```
 
 Sets the job status to CANCELLED. If the job is currently being executed by a Runner, the Runner detects the cancellation on its next status check and terminates Terraform gracefully.
 
-## `alethia jobs wait`
+## Waiting for jobs
 
-Block until a job reaches a terminal state.
-
-```bash
-alethia jobs wait --id <job-id>
-```
-
-Exits with code 0 on SUCCESS, non-zero on FAILED or CANCELLED. Useful in scripts:
+To block on a job from a script, queue it with `-w/--wait` rather than polling:
 
 ```bash
-alethia plan --spec-id $ID
-alethia jobs wait --id $PLAN_JOB && echo "Plan succeeded"
+# Plan and block until it finishes, then apply and block again
+alethia project plan --project-id $ID --wait
+alethia project apply --project-id $ID --plan-job-id $PLAN_JOB --wait
 ```
+
+See [Plan & Apply](/cli/commands/plan-and-apply) for the full workflow.

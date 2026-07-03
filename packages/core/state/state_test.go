@@ -4,80 +4,85 @@
 package state
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/utils"
+	"gopkg.in/yaml.v3"
 )
 
-func TestSensitiveFieldsFiltered(t *testing.T) {
-	fields := map[string]bool{
-		"applications_argo_access_token": true,
-		"gitops_argo_access_token":       true,
+// readInfraServices runs the REAL SaveInfraFacts in an isolated cwd and returns the written
+// infra-services map. Previously these tests re-implemented the filter inline and never called
+// the function (≈0 mutation score) — now they drive it end to end.
+func readInfraServices(t *testing.T, raw, outputs map[string]interface{}, dryRun bool) map[string]interface{} {
+	t.Helper()
+	t.Chdir(t.TempDir()) // SaveInfraFacts writes ./temp/infra-facts.yaml
+	if err := (&State{}).SaveInfraFacts(raw, outputs, dryRun, utils.NewLogger(nil, "")); err != nil {
+		t.Fatalf("SaveInfraFacts: %v", err)
 	}
+	data, err := os.ReadFile(filepath.Join("temp", "infra-facts.yaml"))
+	if err != nil {
+		t.Fatalf("read infra-facts.yaml: %v", err)
+	}
+	var parsed map[string]map[string]interface{}
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return parsed["infra-services"]
+}
 
-	rawConfig := map[string]interface{}{
+func TestSaveInfraFacts_FiltersSensitiveFields(t *testing.T) {
+	svc := readInfraServices(t, map[string]interface{}{
 		"project_name":                   "test",
 		"region":                         "eu-west-1",
 		"gitops_argo_access_token":       "secret-token-123",
 		"applications_argo_access_token": "another-secret",
-	}
+	}, map[string]interface{}{"cluster_endpoint": "https://x"}, false)
 
-	filtered := make(map[string]interface{})
-	for k, v := range rawConfig {
-		if fields[k] {
-			continue
-		}
-		switch v.(type) {
-		case float64, string, int, bool:
-			filtered[k] = v
-		}
+	if _, ok := svc["gitops_argo_access_token"]; ok {
+		t.Error("gitops_argo_access_token must be filtered out")
 	}
-
-	if _, ok := filtered["gitops_argo_access_token"]; ok {
-		t.Error("sensitive field gitops_argo_access_token should be filtered")
+	if _, ok := svc["applications_argo_access_token"]; ok {
+		t.Error("applications_argo_access_token must be filtered out")
 	}
-	if _, ok := filtered["applications_argo_access_token"]; ok {
-		t.Error("sensitive field applications_argo_access_token should be filtered")
+	if svc["project_name"] != "test" || svc["region"] != "eu-west-1" {
+		t.Errorf("scalar fields not preserved: %v", svc)
 	}
-	if filtered["project_name"] != "test" {
-		t.Errorf("expected project_name 'test', got %v", filtered["project_name"])
-	}
-	if filtered["region"] != "eu-west-1" {
-		t.Errorf("expected region 'eu-west-1', got %v", filtered["region"])
+	if svc["cluster_endpoint"] != "https://x" {
+		t.Errorf("OpenTofu outputs not merged in: %v", svc)
 	}
 }
 
-func TestOnlyScalarValuesKept(t *testing.T) {
-	rawConfig := map[string]interface{}{
+func TestSaveInfraFacts_OnlyScalarsKept(t *testing.T) {
+	svc := readInfraServices(t, map[string]interface{}{
 		"project_name": "test",
 		"count":        float64(42),
 		"enabled":      true,
 		"nested_map":   map[string]interface{}{"key": "val"},
 		"slice":        []string{"a", "b"},
-	}
+	}, map[string]interface{}{"out": "v"}, false)
 
-	filtered := make(map[string]interface{})
-	for k, v := range rawConfig {
-		if sensitiveFields[k] {
-			continue
-		}
-		switch v.(type) {
-		case float64, string, int, bool:
-			filtered[k] = v
-		}
+	if _, ok := svc["nested_map"]; ok {
+		t.Error("nested maps should be dropped")
 	}
+	if _, ok := svc["slice"]; ok {
+		t.Error("slices should be dropped")
+	}
+	if svc["project_name"] != "test" || svc["count"] != 42 || svc["enabled"] != true {
+		t.Errorf("scalars not kept: %v", svc)
+	}
+}
 
-	if _, ok := filtered["nested_map"]; ok {
-		t.Error("nested maps should be filtered out")
-	}
-	if _, ok := filtered["slice"]; ok {
-		t.Error("slices should be filtered out")
-	}
-	if filtered["project_name"] != "test" {
-		t.Error("string should be kept")
-	}
-	if filtered["count"] != float64(42) {
-		t.Error("float64 should be kept")
-	}
-	if filtered["enabled"] != true {
-		t.Error("bool should be kept")
+func TestSaveInfraFacts_RequiresOutputsWhenNotDryRun(t *testing.T) {
+	t.Chdir(t.TempDir())
+	err := (&State{}).SaveInfraFacts(
+		map[string]interface{}{"project_name": "test"},
+		map[string]interface{}{}, // no outputs
+		false,                    // not dry-run → must error
+		utils.NewLogger(nil, ""),
+	)
+	if err == nil {
+		t.Error("expected an error when outputs are empty and not in dry-run mode")
 	}
 }

@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in CI.
+# Tokens are also commonly provided as TF_VAR_hcloud_token / TF_VAR_cloudflare_api_token.
+
+hcloud_token          = "YOUR_HCLOUD_TOKEN"
+cloudflare_api_token  = "YOUR_CLOUDFLARE_API_TOKEN" # DNS edit + Cloudflare Tunnel (Zero Trust) + Email Routing (Rules zone + Addresses account) perms
+cloudflare_zone_id    = "YOUR_CLOUDFLARE_ZONE_ID"
+cloudflare_account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
+domain                = "alethialabs.io"
+
+# Inbound email: all apex receiving addresses (support@, sales@, …) forward here.
+email_forward_to = "you@example.com"
+
+# Public half of the CI deploy key (private half = GH secret HETZNER_SSH_KEY).
+ssh_public_key = "ssh-ed25519 AAAA... deploy@alethia"
+
+# Cost/size knobs (defaults are the cheapest viable bundle host).
+server_type      = "cax21" # Ampere ARM64 (cheapest that fits the bundle); cax31 if busy
+location         = "fsn1"
+data_volume_size = 25

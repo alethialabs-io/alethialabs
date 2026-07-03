@@ -20,7 +20,7 @@ func (p *gcpProvider) RequiredCLIs() []string {
 	return []string{"gcloud", "kubectl", "helm"}
 }
 
-func (p *gcpProvider) ProviderTfvars(config *types.VineConfig) map[string]interface{} {
+func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	enableAutopilot := false
 	if v, ok := config.Cluster.ProviderConfig["enable_autopilot"]; ok {
 		if b, ok := v.(bool); ok {
@@ -49,7 +49,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 	tfvars := map[string]interface{}{
 		"project_name": config.ProjectName,
 		"project_id":   config.CloudAccountID,
-		"region":       config.Region,
+		"region":       resolveRegion("gcp", config.Region),
 		"environment":  config.EnvironmentStage,
 
 		// Network
@@ -58,8 +58,8 @@ func (p *gcpProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		"single_cloud_nat":  config.Network.SingleNatGateway,
 
 		// GKE
-		"provision_gke":       true,
-		"gke_cluster_version": orDefault(config.Cluster.ClusterVersion, "1.31"),
+		"provision_gke":        true,
+		"gke_cluster_version":  orDefault(config.Cluster.ClusterVersion, "1.31"),
 		"gke_enable_autopilot": enableAutopilot,
 
 		// DNS
@@ -72,8 +72,8 @@ func (p *gcpProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		"cloud_armor_enabled": cloudArmorEnabled,
 
 		// Pub/Sub
-		"create_pubsub":  len(config.Queues) > 0 || len(config.Topics) > 0,
-		"pubsub_topics":  buildPubSubTopics(config.Topics, config.Queues),
+		"create_pubsub": len(config.Queues) > 0 || len(config.Topics) > 0,
+		"pubsub_topics": buildPubSubTopics(config.Topics, config.Queues),
 
 		// Memorystore
 		"create_memorystore": len(config.Caches) > 0,
@@ -83,7 +83,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		"firestore_databases": buildFirestoreDatabases(config.NosqlTables),
 
 		// Artifact Registry
-		// TODO: enable when VineConfig gains a ContainerRegistries field
+		// TODO: enable when ProjectConfig gains a ContainerRegistries field
 		// "provision_artifact_registry": len(config.ContainerRegistries) > 0,
 		"provision_artifact_registry": false,
 
@@ -96,19 +96,29 @@ func (p *gcpProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 
 		// Cloud SQL
 		"create_cloud_sql": len(config.Databases) > 0,
-		// TODO: wire from VineConfig when an AuthorizedNetworks field is added
+		// TODO: wire from ProjectConfig when an AuthorizedNetworks field is added
 		"cloud_sql_authorized_networks": []map[string]interface{}{},
 	}
 
 	if len(config.Databases) > 0 {
 		db := config.Databases[0]
+		fam := db.EngineFamily
+		if fam == "" {
+			fam = "postgres"
+			if db.Engine == "mysql" || db.Engine == "aurora-mysql" {
+				fam = "mysql"
+			}
+		}
 		engine := "POSTGRES"
-		if db.Engine == "mysql" || db.Engine == "aurora-mysql" {
+		if fam == "mysql" {
 			engine = "MYSQL"
 		}
 		tfvars["cloud_sql_engine"] = engine
-		if db.EngineVersion != "" {
-			tfvars["cloud_sql_engine_version"] = db.EngineVersion
+		if _, version := resolveDBEngine("gcp", db); version != "" {
+			tfvars["cloud_sql_engine_version"] = version
+		}
+		if db.InstanceClass != "" {
+			tfvars["cloud_sql_tier"] = db.InstanceClass
 		}
 		if db.Port != nil {
 			tfvars["cloud_sql_port"] = *db.Port
@@ -129,16 +139,19 @@ func (p *gcpProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 		if cache.Engine != "" {
 			tfvars["memorystore_engine"] = cache.Engine
 		}
-		if cache.NodeType != "" {
-			tfvars["memorystore_instance_type"] = cache.NodeType
+		if cache.EngineVersion != "" {
+			tfvars["memorystore_redis_version"] = cache.EngineVersion
+		}
+		if nt := resolveCacheNodeType("gcp", cache); nt != "" {
+			tfvars["memorystore_instance_type"] = nt
 		}
 		if cache.MultiAz != nil {
 			tfvars["memorystore_multi_az"] = *cache.MultiAz
 		}
 	}
 
-	if len(config.Cluster.InstanceTypes) > 0 {
-		tfvars["gke_instance_types"] = config.Cluster.InstanceTypes
+	if inst := resolveInstanceTypes("gcp", config.Cluster); len(inst) > 0 {
+		tfvars["gke_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {
 		tfvars["gke_node_min_size"] = config.Cluster.NodeMinSize
@@ -149,15 +162,23 @@ func (p *gcpProvider) ProviderTfvars(config *types.VineConfig) map[string]interf
 	if config.Cluster.NodeDesiredSize > 0 {
 		tfvars["gke_node_desired_size"] = config.Cluster.NodeDesiredSize
 	}
+	if config.Cluster.NodeDiskSizeGB != nil {
+		tfvars["gke_disk_size_gb"] = *config.Cluster.NodeDiskSizeGB
+	}
 
 	if !provisionNetwork && config.Network.NetworkID != "" {
 		tfvars["network_id"] = config.Network.NetworkID
 	}
 
+	// Generic passthrough — see mergeProviderConfig (aws_provider.go). Reserved keys
+	// are consumed above under a different tfvar name.
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, "enable_autopilot")
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "cloud_armor", "managed_certificate")
+
 	return tfvars
 }
 
-func (p *gcpProvider) ConfigureKubeconfig(ctx context.Context, config *types.VineConfig, outputs map[string]interface{}, stdout io.Writer) error {
+func (p *gcpProvider) ConfigureKubeconfig(ctx context.Context, config *types.ProjectConfig, outputs map[string]interface{}, stdout io.Writer) error {
 	clusterName := ExtractClusterName(outputs)
 	if clusterName == "" {
 		return fmt.Errorf("no GKE cluster name in outputs")
@@ -182,7 +203,7 @@ func (p *gcpProvider) ConfigureKubeconfig(ctx context.Context, config *types.Vin
 	return nil
 }
 
-func buildPubSubTopics(topics []types.VineTopicConfig, queues []types.VineQueueConfig) map[string]interface{} {
+func buildPubSubTopics(topics []types.ProjectTopicConfig, queues []types.ProjectQueueConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
 		subs := []map[string]interface{}{}
@@ -194,7 +215,7 @@ func buildPubSubTopics(topics []types.VineTopicConfig, queues []types.VineQueueC
 		}
 		result[t.Name] = map[string]interface{}{
 			"message_retention_duration": "86400s",
-			"subscriptions":             subs,
+			"subscriptions":              subs,
 		}
 	}
 	for _, q := range queues {
@@ -213,18 +234,18 @@ func buildPubSubTopics(topics []types.VineTopicConfig, queues []types.VineQueueC
 		}
 		result[q.Name] = map[string]interface{}{
 			"message_retention_duration": retention,
-			"subscriptions":             subs,
+			"subscriptions":              subs,
 		}
 	}
 	return result
 }
 
-func buildFirestoreDatabases(tables []types.VineNosqlConfig) []map[string]interface{} {
+func buildFirestoreDatabases(tables []types.ProjectNosqlConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(tables))
 	for _, t := range tables {
 		entry := map[string]interface{}{
 			"name":         t.Name,
-			"billing_mode": orDefault(t.BillingMode, "PAY_PER_REQUEST"),
+			"billing_mode": ddbCapacityMode(t.CapacityMode),
 		}
 		if t.PointInTimeRecovery {
 			entry["point_in_time_recovery"] = true
@@ -234,7 +255,7 @@ func buildFirestoreDatabases(tables []types.VineNosqlConfig) []map[string]interf
 	return result
 }
 
-func buildGCPSecrets(secrets []types.VineSecretConfig) []map[string]interface{} {
+func buildGCPSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
 		result = append(result, map[string]interface{}{
@@ -247,7 +268,7 @@ func buildGCPSecrets(secrets []types.VineSecretConfig) []map[string]interface{} 
 	return result
 }
 
-func buildGCSBuckets(buckets []types.VineStorageBucketConfig) []map[string]interface{} {
+func buildGCSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
 		entry := map[string]interface{}{

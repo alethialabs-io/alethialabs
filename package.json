@@ -5,13 +5,35 @@
 	"scripts": {
 		"build": "turbo run build",
 		"dev": "turbo run dev",
+		"dev:console": "turbo run dev --filter=console",
+		"dev:up": "bash scripts/dev-up.sh",
+		"dev:logs": "touch /tmp/alethia-dev-console.log && tail -n +1 -f /tmp/alethia-dev-console.log",
+		"dev:stripe-logs": "touch /tmp/alethia-stripe.log && tail -n +1 -f /tmp/alethia-stripe.log",
+		"dev:tunnel": "bash scripts/cf-tunnel.sh",
+		"dev:tunnel:named": "bash scripts/cf-named-tunnel.sh",
+		"dev:stitch": "bash scripts/dev-stitch.sh",
+		"dev:stitch:down": "bash scripts/dev-stitch-down.sh",
+		"dev:runner": "bash scripts/dev-runner.sh",
+		"dev:runner:logs": "bash scripts/dev-runner-logs.sh",
+		"dev:runner:down": "bash scripts/dev-runner-down.sh",
+		"dev:stack": "bash scripts/dev-stack.sh",
+		"dev:stack:logs": "docker compose -f docker-compose.dev.yml logs -f --tail=120",
+		"dev:stack:down": "docker compose -f docker-compose.dev.yml down --remove-orphans; rm -rf /tmp/alethia-dev-stack.lock",
 		"lint": "turbo run lint",
 		"format": "prettier --write \"**/*.{ts,tsx,md}\"",
 		"check-types": "turbo run check-types",
-		"dataroom": "node scripts/build-dataroom.mjs"
+		"db:up": "bash scripts/db-bootstrap.sh",
+		"db:reset": "docker compose down -v && bash scripts/db-bootstrap.sh",
+		"compose:up": "bash scripts/compose-up.sh",
+		"compose:up:full": "bash scripts/compose-up.sh caddy app docs blog runner",
+		"compose:up:site": "COMPOSE_PROFILES=marketing bash scripts/compose-up.sh caddy app docs blog marketing",
+		"compose:ps": "docker compose ps",
+		"compose:logs": "docker compose logs -f --tail=100",
+		"compose:down": "docker compose down",
+		"check:connector-assets": "node scripts/check-connector-assets.mjs",
+		"sync:connector-assets": "node scripts/sync-connector-assets.mjs"
 	},
 	"devDependencies": {
-		"marked": "^18.0.5",
 		"prettier": "^3.6.2",
 		"turbo": "^2.6.3",
 		"typescript": "5.9.2"
@@ -19,5 +41,14 @@
 	"packageManager": "pnpm@9.15.0",
 	"engines": {
 		"node": ">=22"
+	},
+	"pnpm": {
+		"overrides": {
+			"react": "19.2.3",
+			"react-dom": "19.2.3",
+			"@types/react": "19.2.8",
+			"@types/react-dom": "19.2.3",
+			"zod": "4.4.3"
+		}
 	}
 }

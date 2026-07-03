@@ -4,10 +4,10 @@
 
 
 import type { ClusterData } from "@/app/server/actions/clusters";
-import { ProviderIcon } from "@/components/provider-icon";
+import { ProviderIcon } from "@repo/ui/provider-icon";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
-import { Button } from "@/components/ui/button";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { Button } from "@repo/ui/button";
+import { StatusBadge } from "@repo/ui/status-badge";
 import {
 	Check,
 	Copy,
@@ -17,7 +17,6 @@ import {
 	Server,
 	Terminal,
 } from "lucide-react";
-import Image from "next/image";
 import { useState } from "react";
 
 function CopyButton({ value }: { value: string }) {
@@ -45,10 +44,9 @@ function CopyButton({ value }: { value: string }) {
 export function ClusterCard({ data }: { data: ClusterData }) {
 	const provider = data.cloud_identities?.provider ?? "aws";
 	const meta = getProvider(provider as CloudProviderSlug);
-	const cluster = Array.isArray(data.vine_cluster) ? data.vine_cluster[0] : data.vine_cluster;
-	const databases = data.vine_databases ?? [];
-	const caches = data.vine_caches ?? [];
-	const dns = Array.isArray(data.vine_dns) ? data.vine_dns[0] : data.vine_dns;
+	const cluster = Array.isArray(data.project_cluster) ? data.project_cluster[0] : data.project_cluster;
+	const databases = data.project_databases ?? [];
+	const caches = data.project_caches ?? [];
 
 	const kubeconfigCmd = cluster?.cluster_name
 		? `aws eks update-kubeconfig --name ${cluster.cluster_name} --region ${data.region}`

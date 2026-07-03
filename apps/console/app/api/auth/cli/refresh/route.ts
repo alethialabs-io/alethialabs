@@ -60,7 +60,7 @@ export async function POST(req: Request) {
 		return NextResponse.json({
 			access_token: newAccessToken,
 		});
-	} catch (err) {
+	} catch {
 		return new Response(
 			JSON.stringify({ error: "Invalid refresh token" }),
 			{

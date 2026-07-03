@@ -1,0 +1,65 @@
+---
+title: Container Registry
+description: ECR, Artifact Registry, and ACR configuration — tag mutability and image scanning.
+---
+
+# Container Registry
+
+The container registry section creates managed Docker image registries for your application containers. Multiple registries can be added per project.
+
+## Fields Per Registry
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **Name** | Text input | Repository name (e.g., `api`, `frontend`, `worker`) |
+| **Provider** | Select | Cloud-native registry or a [pluggable connector](/console/connectors/pluggable) |
+| **Tag Mutability** | Select | `MUTABLE` (tags can be overwritten) or `IMMUTABLE` (once pushed, a tag is permanent) |
+| **Scan on Push** | Toggle | Automatically scan images for vulnerabilities on push |
+
+## Registry Provider
+
+By default a cloud-native registry (ECR / Artifact Registry / ACR) is created. Select **Docker Hub** to use a Docker Hub repository instead:
+
+- Requires a connected [Docker Hub connector](/console/connectors/pluggable) (username + access token).
+- Optional **namespace / organization** (defaults to the username).
+- Instead of creating cloud registry repos, the composed module wires a Kubernetes `imagePullSecret` so workloads can pull from Docker Hub; the cloud-native registry is skipped.
+
+## Services by Provider
+
+<Tabs items={["AWS", "GCP", "Azure"]}>
+  <Tab value="AWS">
+    **ECR** (Elastic Container Registry)
+    - Private repositories with IAM-based access
+    - Lifecycle policies (auto-expire old images)
+    - Integration with EKS for pull authentication
+  </Tab>
+  <Tab value="GCP">
+    **Artifact Registry**
+    - Docker and OCI image support
+    - IAM-based access control
+    - Vulnerability scanning via Container Analysis
+  </Tab>
+  <Tab value="Azure">
+    **ACR** (Azure Container Registry)
+    - SKU tiers: Basic, Standard, Premium
+    - Geo-replication (Premium)
+    - Integration with AKS for pull authentication
+  </Tab>
+</Tabs>
+
+## Tag Mutability
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| **MUTABLE** | Same tag (e.g., `latest`) can be pushed multiple times | Development, CI/CD with `latest` tag |
+| **IMMUTABLE** | Once a tag is pushed, it cannot be overwritten | Production (ensures deployed image is never changed) |
+
+<Callout type="info">
+Immutable tags prevent accidental overwrites in production. A `v1.2.3` tag always points to the same image digest, making rollbacks deterministic.
+</Callout>
+
+## After Provisioning
+
+The registry card in project detail shows:
+- **Repository URL** — full push/pull endpoint (e.g., `123456789012.dkr.ecr.eu-west-1.amazonaws.com/api`)
+- **Status** — ACTIVE or CREATING

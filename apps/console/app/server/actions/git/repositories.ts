@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { createClient } from "@/lib/supabase/server";
-import { getValidProviderToken } from "../identities";
+import { getOwner } from "@/lib/auth/owner";
+import { getGitlabBaseUrl } from "@/lib/config/auth";
+import { getLinkedProviders, getValidProviderToken } from "../identities";
 import {
 	BitbucketRepo,
 	FetchRepositoriesResult,
@@ -18,25 +19,12 @@ export async function fetchAllRepositories(): Promise<{
 	error?: string;
 }> {
 	try {
-		const supabase = await createClient();
-
-		// Get linked providers
-		const { data: linkedProvidersData, error: providersError } =
-			await supabase.from("provider_tokens").select("provider");
-
-		if (providersError) {
-			console.error("Error fetching provider tokens:", providersError);
-			return {
-				repositories: [],
-				error: "Failed to fetch linked providers",
-			};
-		}
-
-		if (!linkedProvidersData || linkedProvidersData.length === 0) {
+		// Git providers the user has linked (Better Auth accounts).
+		const providers = await getLinkedProviders();
+		if (providers.length === 0) {
 			return { repositories: [] };
 		}
 
-		const providers = linkedProvidersData.map((p) => p.provider);
 		const allRepos: Repository[] = [];
 
 		await Promise.all(
@@ -71,7 +59,7 @@ export async function fetchAllRepositories(): Promise<{
 						}
 					} else if (provider === "gitlab") {
 						const res = await fetch(
-							"https://gitlab.itgix.com/api/v4/projects?membership=true&per_page=100&order_by=updated_at",
+							`${getGitlabBaseUrl()}/api/v4/projects?membership=true&per_page=100&order_by=updated_at`,
 							{
 								headers: {
 									Authorization: `Bearer ${token}`,
@@ -139,12 +127,8 @@ export async function createRepository(
 	data: { name: string; workspace?: string; projectKey?: string },
 ): Promise<{ repository?: Repository; error?: string }> {
 	try {
-		const supabase = await createClient();
-		const {
-			data: { session },
-		} = await supabase.auth.getSession();
-
-		if (!session) {
+		const userId = await getOwner();
+		if (!userId) {
 			return { error: "Unauthorized" };
 		}
 
@@ -190,7 +174,7 @@ export async function createRepository(
 			if (!data.name) return { error: "Repository name is required." };
 
 			const res = await fetch(
-				"https://gitlab.itgix.com/api/v4/projects",
+				`${getGitlabBaseUrl()}/api/v4/projects`,
 				{
 					method: "POST",
 					headers: {
@@ -227,7 +211,7 @@ export async function createRepository(
 			}
 
 			const res = await fetch(
-				`https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.name}`,
+				`https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(data.workspace)}/${encodeURIComponent(data.name)}`,
 				{
 					method: "POST",
 					headers: {
@@ -243,8 +227,16 @@ export async function createRepository(
 			);
 			if (!res.ok) {
 				const errorData = await res.json();
+				// Bitbucket errors come both nested ({error:{message}}) and flat
+				// ({message} / {error_description}); guard so a flat body doesn't throw
+				// (which would swallow the real message into the generic catch).
+				const detail =
+					errorData?.error?.message ??
+					errorData?.message ??
+					errorData?.error_description ??
+					res.statusText;
 				return {
-					error: `Failed to create Bitbucket repository: ${errorData.error.message}`,
+					error: `Failed to create Bitbucket repository: ${detail}`,
 				};
 			}
 			newRepo = await res.json();
@@ -263,7 +255,7 @@ export async function createRepository(
 
 		return { repository };
 	} catch (error) {
-		console.error(`Error creating ${provider} repository:`, error);
+		console.error("Error creating repository for provider:", provider, error);
 		return { error: "Failed to create repository" };
 	}
 }
@@ -318,7 +310,7 @@ export async function fetchRepositoriesByProvider(
 			}
 		} else if (provider === "gitlab") {
 			const res = await fetch(
-				"https://gitlab.itgix.com/api/v4/projects?membership=true&per_page=100&order_by=updated_at",
+				`${getGitlabBaseUrl()}/api/v4/projects?membership=true&per_page=100&order_by=updated_at`,
 				{
 					headers: {
 						Authorization: `Bearer ${token}`,
@@ -388,8 +380,14 @@ export async function fetchRepositoriesByProvider(
 		}
 
 		return { repositories: allRepos };
-	} catch (error: any) {
-		console.error(`Error fetching ${provider} repositories:`, error);
-		return { repositories: [], error: error.message || "Failed to fetch repositories" };
+	} catch (error) {
+		console.error("Error fetching repositories for provider:", provider, error);
+		return {
+			repositories: [],
+			error:
+				error instanceof Error
+					? error.message
+					: "Failed to fetch repositories",
+		};
 	}
 }

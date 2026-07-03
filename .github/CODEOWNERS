@@ -1,0 +1,21 @@
+# Code owners — auto-requested as reviewers on PRs that touch matching paths.
+# Required-review enforcement comes from the branch protection rulesets on
+# `main`/`staging` (see deploy/prod/README.md). Replace @bobikenobi12 with an
+# @alethialabs-io/<team> once teams exist.
+
+# Default owner for everything.
+*                           @bobikenobi12
+
+# Deploy / infra / CI — high-blast-radius paths.
+/deploy/                    @bobikenobi12
+/infra/                     @bobikenobi12
+/.github/                   @bobikenobi12
+/docker-compose*.yml        @bobikenobi12
+
+# Runner + fleet (provisioning-critical).
+/apps/runner/               @bobikenobi12
+/apps/console/lib/fleet/    @bobikenobi12
+/packages/core/             @bobikenobi12
+
+# DB schema / migrations — linear-chain sensitive.
+/apps/console/lib/db/       @bobikenobi12

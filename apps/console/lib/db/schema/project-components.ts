@@ -1,0 +1,594 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Per-Project component tables. All reference projects(project_id) ON DELETE CASCADE and carry an
+// environment_id (the environment of the project they configure) — singletons are UNIQUE on
+// (project_id, environment_id), multi-component tables UNIQUE on (project_id, environment_id, name).
+// So each environment owns an independent set of components; the composite/unique index also serves
+// project_id lookups, so no extra FK index.
+
+import { sql } from "drizzle-orm";
+import {
+	bigint,
+	boolean,
+	check,
+	index,
+	integer,
+	jsonb,
+	numeric,
+	pgTable,
+	text,
+	timestamp,
+	unique,
+	uuid,
+} from "drizzle-orm/pg-core";
+import type {
+	AuditChanges,
+	ClusterAdmin,
+	ClusterProviderConfig,
+	DetectedService,
+	DnsProviderConfig,
+	NodeSize,
+	NosqlProviderConfig,
+	ObservabilityProviderConfig,
+	ProviderOutputs,
+	QueueProviderConfig,
+	RegistryProviderConfig,
+	SecretsProviderConfig,
+	StagedChangePayload,
+	StorageProviderConfig,
+	TopicSubscription,
+} from "@/types/jsonb.types";
+import {
+	auditAction,
+	cacheEngine,
+	changeOp,
+	componentStatus,
+	gitCredentialMethod,
+	gitCredentialPurpose,
+	nosqlCapacityMode,
+	nosqlKeyType,
+	nosqlTableType,
+} from "./enums";
+import { cloudIdentities } from "./identities";
+import { projectEnvironments } from "./project-environments";
+import { projects } from "./projects";
+
+const projectRef = () =>
+	uuid()
+		.notNull()
+		.references(() => projects.id, { onDelete: "cascade" });
+// Per-resource cloud placement (the "versatile model"): each component may name
+// its own cloud identity instead of inheriting the project's primary one. NULL means
+// "inherit projects.cloud_identity_id". on delete set null so removing an identity
+// just re-inherits rather than cascading the component away.
+const ownerRef = () =>
+	uuid().references(() => cloudIdentities.id, { onDelete: "set null" });
+// Environment scope — each component row belongs to ONE environment of the project, so a
+// project's environments hold independent config. Nullable during the transition (the
+// programmables.sql backfill attaches existing rows to the project's default env); the app
+// always sets it. ON DELETE CASCADE so deleting an environment removes its component rows.
+const envRef = () =>
+	uuid().references(() => projectEnvironments.id, { onDelete: "cascade" });
+const cost = () => numeric({ precision: 12, scale: 2, mode: "number" });
+const ts = () => timestamp({ withTimezone: true }).defaultNow().notNull();
+
+// ── Singletons (1:1 per project environment) ────────────────────────────────────
+
+export const projectNetwork = pgTable(
+	"project_network",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
+		provision_network: boolean().default(true).notNull(),
+		network_id: text(),
+		cidr_block: text().default("10.0.0.0/16"),
+		single_nat_gateway: boolean().default(true),
+		allowed_cidr_blocks: text().array().default([]),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		estimated_monthly_cost: cost(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_network_project_id_environment_id_key").on(
+			t.project_id,
+			t.environment_id,
+		),
+	],
+);
+
+export const projectCluster = pgTable(
+	"project_cluster",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
+		// No cloud-specific defaults: the provider mapper resolves the K8s version /
+		// node instance types per cloud at provision time (the form supplies explicit
+		// values for a chosen provider).
+		cluster_version: text(),
+		cluster_admins: jsonb().$type<ClusterAdmin[]>().default([]),
+		// Cloud-indifferent node capability ({vcpu, memory_gb}); the Go resolver maps it to
+		// the nearest per-provider instance type at provision time.
+		node_size: jsonb().$type<NodeSize>(),
+		// Legacy concrete provider SKUs; the resolver falls back to these when node_size is unset.
+		instance_types: text().array(),
+		node_min_size: integer().default(2),
+		node_max_size: integer().default(5),
+		node_desired_size: integer().default(2),
+		// Worker-node root disk size (GB). NULL → the per-cloud template default applies
+		// (EKS 50 / GKE 50 / AKS 100). Maps to eks_disk_size / gke_disk_size_gb / aks_disk_size_gb.
+		node_disk_size_gb: integer(),
+		provider_config: jsonb().$type<ClusterProviderConfig>().default({}),
+		cluster_name: text(),
+		cluster_endpoint: text(),
+		argocd_url: text(),
+		argocd_admin_password: text(),
+		// Provider-specific resource identifiers (ARN/KMS/… on AWS) — cloud-agnostic.
+		provider_outputs: jsonb().$type<ProviderOutputs>().default({}),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		estimated_monthly_cost: cost(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_cluster_project_id_environment_id_key").on(
+			t.project_id,
+			t.environment_id,
+		),
+	],
+);
+
+export const projectDns = pgTable(
+	"project_dns",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
+		enabled: boolean().default(false).notNull(),
+		// Pluggable provider selector (connectors.slug). NULL / "native" = the cluster
+		// cloud's native DNS (Route 53 / Cloud DNS / Azure DNS).
+		provider: text(),
+		zone_id: text(),
+		domain_name: text(),
+		managed_certificate: boolean().default(false),
+		waf_enabled: boolean().default(false),
+		provider_config: jsonb().$type<DnsProviderConfig>().default({}),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		estimated_monthly_cost: cost(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_dns_project_id_environment_id_key").on(
+			t.project_id,
+			t.environment_id,
+		),
+	],
+);
+
+// Observability component — no cloud-native default today; provider chooses the
+// backend (datadog / grafana / prometheus). Singleton per project environment like DNS.
+export const projectObservability = pgTable(
+	"project_observability",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
+		enabled: boolean().default(false).notNull(),
+		provider: text(),
+		provider_config: jsonb().$type<ObservabilityProviderConfig>().default({}),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		estimated_monthly_cost: cost(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_observability_project_id_environment_id_key").on(
+			t.project_id,
+			t.environment_id,
+		),
+	],
+);
+
+export const projectRepositories = pgTable(
+	"project_repositories",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		apps_destination_repo: text(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_repositories_project_id_environment_id_key").on(
+			t.project_id,
+			t.environment_id,
+		),
+	],
+);
+
+// Source repos scanned to infer the project (1:N — a project may aggregate several
+// repos, and a monorepo yields per-service entries). Distinct from projectRepositories,
+// which is the single GitOps *destination* (apps_destination_repo) ArgoCD deploys from.
+export const projectSourceRepos = pgTable(
+	"project_source_repos",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		repo_url: text().notNull(),
+		// Branch/tag/sha; NULL = the repo's default branch.
+		ref: text(),
+		// Subpath scanned within the repo; "" = root. Lets one monorepo attach multiple
+		// times (once per service subtree) under distinct scan paths.
+		scan_path: text().default("").notNull(),
+		// Monorepo-aware services detected at scan time (path + name + runtime/port).
+		services: jsonb().$type<DetectedService[]>().default([]),
+		// Optional per-repo git credential (project_git_credentials.id) for a private repo;
+		// NULL = public / inherit. Soft reference (matches provider_identity_id's pattern).
+		git_credential_id: uuid(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique(
+			"project_source_repos_project_env_repo_path_key",
+		).on(t.project_id, t.environment_id, t.repo_url, t.scan_path),
+	],
+);
+
+// ── Multi (1:N per project environment, UNIQUE on (project_id, environment_id, name)) ──
+
+export const projectDatabases = pgTable(
+	"project_databases",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
+		// Cloud-indifferent engine family ("postgres" | "mysql") — the Go resolver maps it
+		// to the cloud's managed DB (Aurora / Cloud SQL / Azure DB) at provision time.
+		engine_family: text(),
+		// Legacy concrete provider engine (e.g. "aurora-postgresql"); kept for back-compat
+		// — the resolver falls back to it when engine_family is unset.
+		engine: text(),
+		engine_version: text(),
+		// Provider-neutral instance sizing. NULL → template default. Maps to
+		// rds_instance_type (AWS) / cloud_sql_tier (GCP) / azure_db_sku_name (Azure).
+		instance_class: text(),
+		min_capacity: numeric({ precision: 6, scale: 2, mode: "number" }).default(0.5),
+		max_capacity: numeric({ precision: 6, scale: 2, mode: "number" }).default(4),
+		port: integer().default(5432),
+		backup_retention_days: integer().default(7),
+		iam_auth: boolean().default(false),
+		endpoint: text(),
+		reader_endpoint: text(),
+		// Provider-specific resource identifiers (cluster ARN/identifier, credential
+		// secret refs, KMS key on AWS) — cloud-agnostic JSONB.
+		provider_outputs: jsonb().$type<ProviderOutputs>().default({}),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		estimated_monthly_cost: cost(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_databases_project_id_environment_id_name_key").on(
+			t.project_id,
+			t.environment_id,
+			t.name,
+		),
+	],
+);
+
+export const projectCaches = pgTable(
+	"project_caches",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
+		engine: cacheEngine().default("redis"),
+		// Engine version. NULL → template default (Redis 7.1 / Memorystore REDIS_7_0 /
+		// Azure 6). Maps to redis_engine_version / memorystore_redis_version / azure_cache_redis_version.
+		engine_version: text(),
+		// Provider-neutral: the mapper picks the cloud's cache node type/SKU.
+		// Cloud-indifferent size in GB; the Go resolver maps it to the nearest provider cache
+		// SKU. Legacy concrete node_type below is the resolver's fallback.
+		memory_gb: numeric({ precision: 8, scale: 2, mode: "number" }),
+		node_type: text(),
+		num_cache_nodes: integer().default(1),
+		multi_az: boolean().default(false),
+		allowed_cidr_blocks: text().array().default([]),
+		endpoint: text(),
+		// Redis/ElastiCache exposes a separate reader endpoint; the deploy finalizer
+		// persists it. Missing from the original vine_caches table (the write silently
+		// failed) — added during the Drizzle migration per the fix-as-you-go rule.
+		reader_endpoint: text(),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		estimated_monthly_cost: cost(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_caches_project_id_environment_id_name_key").on(
+			t.project_id,
+			t.environment_id,
+			t.name,
+		),
+	],
+);
+
+export const projectQueues = pgTable(
+	"project_queues",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
+		ordered: boolean().default(false),
+		// Cross-cloud: SQS visibility ≈ Azure lock_duration ≈ Pub/Sub ack deadline.
+		visibility_timeout: integer().default(30),
+		message_retention: integer().default(345600),
+		// Provider-specific queue knobs (SQS delay_seconds — no Azure/GCP equivalent).
+		provider_config: jsonb().$type<QueueProviderConfig>().default({}),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		estimated_monthly_cost: cost(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_queues_project_id_environment_id_name_key").on(
+			t.project_id,
+			t.environment_id,
+			t.name,
+		),
+	],
+);
+
+export const projectTopics = pgTable(
+	"project_topics",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
+		subscriptions: jsonb().$type<TopicSubscription[]>().default([]),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		estimated_monthly_cost: cost(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_topics_project_id_environment_id_name_key").on(
+			t.project_id,
+			t.environment_id,
+			t.name,
+		),
+	],
+);
+
+export const projectNosqlTables = pgTable(
+	"project_nosql_tables",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
+		table_type: nosqlTableType().default("standard"),
+		partition_key: text().notNull(),
+		partition_key_type: nosqlKeyType().default("S"),
+		sort_key: text(),
+		sort_key_type: nosqlKeyType(),
+		capacity_mode: nosqlCapacityMode().default("on_demand"),
+		point_in_time_recovery: boolean().default(true),
+		global_replicas: text().array().default([]),
+		provider_config: jsonb().$type<NosqlProviderConfig>().default({}),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		estimated_monthly_cost: cost(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_nosql_tables_project_id_environment_id_name_key").on(
+			t.project_id,
+			t.environment_id,
+			t.name,
+		),
+	],
+);
+
+export const projectContainerRegistries = pgTable(
+	"project_container_registries",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
+		// Pluggable provider selector (connectors.slug). NULL / "native" = the
+		// cluster cloud's native registry (ECR / Artifact Registry / ACR).
+		provider: text(),
+		repository_url: text(),
+		// Provider-specific knobs (immutable_tags, vulnerability_scanning) — neutral JSONB.
+		provider_config: jsonb().$type<RegistryProviderConfig>().default({}),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_container_registries_project_id_environment_id_name_key").on(
+			t.project_id,
+			t.environment_id,
+			t.name,
+		),
+	],
+);
+
+export const projectSecrets = pgTable(
+	"project_secrets",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
+		// Pluggable provider selector (connectors.slug). NULL / "native" = the
+		// cluster cloud's native secrets store (Secrets Manager / Secret Manager / Key Vault).
+		provider: text(),
+		generate: boolean().default(true),
+		length: integer().default(32),
+		special_chars: boolean().default(true),
+		// Pluggable-provider knobs (Vault mount_path / kv_version) — neutral JSONB.
+		provider_config: jsonb().$type<SecretsProviderConfig>().default({}),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_secrets_project_id_environment_id_name_key").on(
+			t.project_id,
+			t.environment_id,
+			t.name,
+		),
+	],
+);
+
+export const projectStorageBuckets = pgTable(
+	"project_storage_buckets",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		name: text().notNull(),
+		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
+		cloud_identity_id: ownerRef(),
+		region: text(),
+		versioning: boolean().default(false),
+		// Cross-cloud: whether at-rest encryption is on. The specific algorithm
+		// (AES256 / aws:kms / CMEK …) is a provider-specific knob in provider_config.
+		encryption_enabled: boolean().default(true),
+		public_access: boolean().default(false),
+		cors_origins: text().array().default([]),
+		provider_config: jsonb().$type<StorageProviderConfig>().default({}),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		estimated_monthly_cost: cost(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_storage_buckets_project_id_environment_id_name_key").on(
+			t.project_id,
+			t.environment_id,
+			t.name,
+		),
+	],
+);
+
+export const projectGitCredentials = pgTable(
+	"project_git_credentials",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		purpose: gitCredentialPurpose().notNull(),
+		method: gitCredentialMethod().notNull(),
+		provider_identity_id: uuid(),
+		secret_ref: text(),
+		created_at: ts(),
+	},
+	(t) => [
+		check(
+			"project_git_credentials_source_ck",
+			sql`${t.provider_identity_id} IS NOT NULL OR ${t.secret_ref} IS NOT NULL`,
+		),
+	],
+);
+
+// Durable staging for canvas edits before they go live — the diff (desired graph vs the
+// saved config) the Pending Changes bar reads. applyStagedChanges() writes them into the
+// component tables + clears these rows; Deploy then provisions the target environment.
+export const projectChanges = pgTable(
+	"project_changes",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		// The environment a change targets; NULL = project-level config (the default).
+		environment_id: uuid().references(() => projectEnvironments.id, {
+			onDelete: "cascade",
+		}),
+		user_id: uuid().notNull(),
+		org_id: uuid(),
+		// Canvas node kind (database, cache, cluster, …) the change applies to.
+		component_type: text().notNull(),
+		// Target component row for UPDATE/DELETE; NULL for CREATE.
+		component_id: uuid(),
+		op: changeOp().notNull(),
+		// The desired component config for CREATE/UPDATE (a cloud-indifferent delta).
+		payload: jsonb().$type<StagedChangePayload>(),
+		created_at: ts(),
+	},
+	(t) => [index("idx_project_changes_project").on(t.project_id)],
+);
+
+// Append-only audit trail (user-readable; runners write via the service role).
+export const auditLog = pgTable(
+	"audit_log",
+	{
+		id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity(),
+		project_id: projectRef(),
+		user_id: uuid().notNull(),
+		action: auditAction().notNull(),
+		component_type: text(),
+		component_id: uuid(),
+		changes: jsonb().$type<AuditChanges>(),
+		created_at: ts(),
+	},
+	(t) => [index("idx_audit_log_project").on(t.project_id)],
+);

@@ -16,17 +16,18 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write # assume the runner-release deploy role via GitHub OIDC — no stored AWS keys
 
 env:
   AWS_REGION: eu-west-1
-  ECR_REPOSITORY: runner-dev-runner
-  ECS_CLUSTER: runner-dev-eu-west-1-cluster
-  ECS_SERVICE: runner-dev-eu-west-1-service
+  ECR_REPOSITORY: alethia-runner-dev-runner
+  ECS_CLUSTER: alethia-runner-dev-eu-west-1-cluster
+  ECS_SERVICE: alethia-runner-dev-eu-west-1-service
   GHCR_IMAGE: ghcr.io/alethialabs-io/runner
 
 jobs:
   release:
-    runs-on: ubuntu-24.04-arm64
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,22 +36,23 @@ jobs:
 
       - name: Set version
         id: meta
-        run: echo "VERSION=${{ inputs.version }}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
 
       - name: Stage templates for Docker build
         run: |
-          cp -r infra/templates/vine apps/runner/vine-templates
-          cp -r infra/templates/runner apps/runner/tendril-templates
+          cp -r infra/templates/project apps/runner/project-templates
+          cp -r infra/templates/runner apps/runner/runner-templates
           cp -r infra/templates/argocd apps/runner/argocd-templates
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Configure AWS credentials
+      # Least-privilege OIDC role (infra/aws-oidc → alethia-runner-release-deployer):
+      # ECR push to the runner repo + ecs:UpdateService on the one service. No keys.
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.RUNNER_RELEASE_DEPLOYER_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -80,14 +82,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Publish release metadata to Trellis
+      - name: Publish release metadata to Alethia
         env:
-          TRELLIS_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
-          RELEASE_API_SECRET: ${{ secrets.RELEASE_API_SECRET }}
+          # URL is a non-secret repo variable; the bearer comes from the vault (the same
+          # OIDC role assumed above for ECR/ECS also has GetSecretValue).
+          ALETHIA_URL: ${{ vars.PUBLIC_APP_URL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          RELEASE_API_SECRET="$(aws secretsmanager get-secret-value --secret-id alethia/prod/env --region eu-central-1 --query SecretString --output text | jq -r '.RELEASE_API_SECRET // ""')"
+          echo "::add-mask::$RELEASE_API_SECRET"
           NOTES=$(gh release view "runner-v${{ steps.meta.outputs.VERSION }}" --json body -q .body 2>/dev/null || echo "")
-          curl -sf -X POST "${TRELLIS_URL}/api/releases/worker" \
+          curl -sf -X POST "${ALETHIA_URL}/api/releases/runner" \
             -H "Authorization: Bearer ${RELEASE_API_SECRET}" \
             -H "Content-Type: application/json" \
             -d "$(jq -n \
@@ -104,4 +109,4 @@ jobs:
             --service ${{ env.ECS_SERVICE }} \
             --force-new-deployment \
             --region ${{ env.AWS_REGION }}
-          echo "Deployment triggered for tendril v${{ steps.meta.outputs.VERSION }}"
+          echo "Deployment triggered for runner v${{ steps.meta.outputs.VERSION }}"

@@ -1,0 +1,18 @@
+image:
+  repository: lowkeyfaint/runner
+  pullPolicy: Always
+  tag: "latest"
+
+config:
+  clusterId: ""
+  apiToken: ""
+  alethiaApiOrigin: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "runner-sa"
+
+# IAM Role ARN for Service Account (IRSA)
+# This is critical for the agent to create AWS resources
+roleArn: "" 

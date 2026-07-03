@@ -1,0 +1,38 @@
+---
+title: Observability
+description: Ship cluster metrics, logs, and traces to Datadog, Grafana Cloud, or Prometheus.
+---
+
+# Observability
+
+The observability section installs a monitoring stack into the cluster. Unlike DNS or secrets, observability has **no cloud-native default** — it is a pluggable-only component, so enabling it means choosing a provider and connecting its credential.
+
+## Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **Enabled** | Toggle | Master switch for observability |
+| **Provider** | Select | Datadog, Grafana Cloud, or Prometheus |
+| **Provider options** | Varies | Provider-specific configuration (see below) |
+
+## Providers
+
+<Tabs items={["Datadog", "Grafana Cloud", "Prometheus"]}>
+  <Tab value="Datadog">
+    Installs the **Datadog agent** via Helm. Requires a connected [Datadog connector](/console/connectors/pluggable) (API key + application key). Choose the **site** (e.g. `datadoghq.com`, `datadoghq.eu`).
+  </Tab>
+  <Tab value="Grafana Cloud">
+    Installs the **Grafana Agent** remote-writing metrics to Grafana Cloud. Requires a connected [Grafana Cloud connector](/console/connectors/pluggable) (instance ID + API token) and the **remote-write URL**.
+  </Tab>
+  <Tab value="Prometheus">
+    Installs **kube-prometheus-stack** in-cluster, optionally remote-writing to an external Prometheus-compatible store. The remote-write URL and basic-auth credentials are optional — a local-only install is valid. Set the local **retention** window (days).
+  </Tab>
+</Tabs>
+
+## Credentials
+
+Provider credentials are connected on the [Connectors](/console/connectors/pluggable) page and encrypted at rest. They are decrypted and injected into the runner's OpenTofu variables at provision time — never stored in the Project snapshot.
+
+<Callout type="info">
+Observability is a **target-state** component — the connector backends and modules exist; the Project-designer selector is rolling out. Track the [Connectors Architecture](/concepts/connectors) page for the current contract.
+</Callout>

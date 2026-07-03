@@ -1,0 +1,19 @@
+{
+  "title": "Design a Project",
+  "pages": [
+    "index",
+    "project-basics",
+    "network",
+    "cluster",
+    "databases",
+    "caches",
+    "nosql",
+    "messaging",
+    "dns",
+    "secrets",
+    "container-registry",
+    "observability",
+    "repositories",
+    "cost-sidebar"
+  ]
+}

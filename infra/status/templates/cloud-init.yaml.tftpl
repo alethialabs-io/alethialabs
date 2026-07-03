@@ -1,0 +1,20 @@
+#cloud-config
+# Brings the Gatus status stack up directly (no CI/CD needed — it's a standalone
+# box). Installs Docker, clones the repo, writes deploy/status/.env, runs compose.
+package_update: true
+package_upgrade: true
+
+runcmd:
+  # Docker + compose plugin
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable --now docker
+  # Repo for the compose files (public OSS).
+  - git clone ${repo_url} /opt/alethia || true
+  # Domain + ACME email for Caddy's automatic HTTPS.
+  - |
+    cat > /opt/alethia/deploy/status/.env <<'EOF'
+    ALETHIA_STATUS_DOMAIN=${status_domain}
+    ALETHIA_ACME_EMAIL=${acme_email}
+    EOF
+  # Bring the status page up (compose auto-loads ./.env).
+  - cd /opt/alethia/deploy/status && docker compose up -d

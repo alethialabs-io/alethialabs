@@ -1,0 +1,16 @@
+{
+	"activity": [
+		{
+			"id": "string",
+			"actor_id": "00000000-0000-4000-8000-000000000000",
+			"actor_name": "string",
+			"actor_email": "string",
+			"action": "string",
+			"resource_type": "string",
+			"resource_id": "string",
+			"decision": false,
+			"reason": "string",
+			"ts": "2026-01-01T00:00:00.000Z"
+		}
+	]
+}

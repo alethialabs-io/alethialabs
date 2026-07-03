@@ -1,0 +1,55 @@
+---
+title: Runner Lifecycle Jobs
+description: DEPLOY_RUNNER, UPDATE_RUNNER, and DESTROY_RUNNER jobs.
+---
+
+# Runner Lifecycle Jobs
+
+These job types manage Runner infrastructure.
+
+<Callout type="info">
+  Connection verification and resource discovery are **not** runner jobs. Cloud connections are
+  verified server-side by the console the moment you connect (an instant auth + provisioning-permission
+  probe), and the asset inventory is maintained server-side + event-driven — see
+  [Connection health & inventory](/console/connectors/health-and-inventory). The runner is
+  provisioning-only.
+</Callout>
+
+## DEPLOY_RUNNER
+
+Provisions a new self-operated (deployed) Runner into the customer's cloud account in ECS Fargate.
+
+<Steps>
+
+### Use platform credentials
+Runner jobs use the platform's own cloud credentials (not the user's cloud identity).
+
+### Generate Terraform config
+Creates ECS task definition, IAM roles (execution + task), CloudWatch log group, security groups from the Runner templates.
+
+### terraform apply
+Provisions the infrastructure in the specified region.
+
+### Register with Alethia
+Calls `POST /api/runners/register` to create a runner record. Returns the runner ID and token, which are injected as environment variables into the ECS task.
+
+### Report results
+Job status → SUCCESS. The new Runner boots, registers its heartbeat, and appears as ONLINE in the [Runners page](/console/runners).
+
+</Steps>
+
+## UPDATE_RUNNER
+
+Updates an existing Runner to the latest release.
+
+1. Updates the ECS task definition with the latest Docker image tag
+2. Forces a new ECS Fargate deployment (`--force-new-deployment`)
+3. The old task drains gracefully, the new task starts with the updated image
+
+## DESTROY_RUNNER
+
+Tears down a Runner's infrastructure.
+
+1. Runs `terraform destroy` on the Runner's ECS resources
+2. Removes the runner registration from Alethia
+3. Any jobs assigned to this Runner are requeued to other available Runners

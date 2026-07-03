@@ -26,7 +26,7 @@ A full-height, monospace, auto-scrolling log area showing Terraform output in re
 - **STDERR** — errors and warnings (red)
 - **SYSTEM** — platform messages like "Assuming IAM role..." (blue)
 
-Logs are streamed via Supabase Realtime subscription on `provision_job_logs` INSERT events, filtered by `job_id`. New chunks appear within ~2–3 seconds of the Runner writing them.
+Logs are streamed via a Postgres LISTEN/NOTIFY → SSE subscription on `provision_job_logs` INSERT events, filtered by `job_id`. New chunks appear within ~2–3 seconds of the Runner writing them.
 
 Auto-scroll pins to the bottom as new logs arrive. Scrolling up manually disables auto-scroll until the user scrolls back to the bottom.
 
@@ -34,8 +34,8 @@ Auto-scroll pins to the bottom as new logs arrive. Scrolling up manually disable
 
 Three expandable sections below the logs:
 
-- **Job Details** — full metadata (ID, type, status, worker, all timestamps)
-- **Config Snapshot** — the spec configuration at time of job creation (JSON)
+- **Job Details** — full metadata (ID, type, status, runner, all timestamps)
+- **Config Snapshot** — the project configuration at time of job creation (JSON)
 - **Execution Metadata** — Terraform outputs, cost data, cluster info (JSON)
 
 ## Actions

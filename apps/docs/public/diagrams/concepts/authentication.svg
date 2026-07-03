@@ -25,7 +25,7 @@
   <line x1="147" y1="238" x2="147" y2="254" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
   <rect x="40" y="258" width="214" height="34" rx="6" fill="#27272A" stroke="#22C55E50"/>
-  <text x="147" y="279" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#22C55E">Supabase session (JWT)</text>
+  <text x="147" y="279" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#22C55E">Better Auth session</text>
   <line x1="147" y1="292" x2="147" y2="308" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
   <rect x="40" y="312" width="214" height="40" rx="6" fill="#27272A" stroke="#3F3F46"/>
@@ -73,7 +73,7 @@
   <line x1="673" y1="184" x2="673" y2="200" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
   <rect x="566" y="204" width="214" height="34" rx="6" fill="#27272A" stroke="#3F3F46"/>
-  <text x="673" y="225" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Send X-Worker-ID + Token</text>
+  <text x="673" y="225" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="11" fill="#FAFAFA">Send X-Runner-ID + Token</text>
   <line x1="673" y1="238" x2="673" y2="254" stroke="#52525B" stroke-width="1" marker-end="url(#arrow)"/>
 
   <rect x="566" y="258" width="214" height="34" rx="6" fill="#27272A" stroke="#F59E0B50"/>

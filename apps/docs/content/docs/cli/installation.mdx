@@ -8,7 +8,7 @@ description: Install Alethia via Homebrew, binary download, or from source.
 ## Homebrew (Recommended)
 
 ```bash
-brew install bobikenobi12/bb-thesis-2026/alethia
+brew install alethialabs-io/tap/alethia
 ```
 
 Updates via `brew upgrade alethia`. Works on macOS and Linux.
@@ -48,6 +48,6 @@ The GoReleaser config (`apps/cli/.goreleaser.yml`) defines:
 - 4 binary builds (2 OS x 2 arch) with CGO disabled
 - tar.gz archives with checksums
 - GitHub Release publication
-- Homebrew formula auto-update in the `bobikenobi12/bb-thesis-2026` tap
+- Homebrew formula auto-update in the `alethialabs-io/tap` tap
 
 The `ALETHIA_WEB_ORIGIN` build variable is baked into the binary, pointing to the production Alethia URL.

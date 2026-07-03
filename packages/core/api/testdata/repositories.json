@@ -1,0 +1,13 @@
+{
+	"repositories": [
+		{
+			"id": "string",
+			"name": "string",
+			"full_name": "string",
+			"url": "string",
+			"private": false,
+			"default_branch": "string",
+			"provider": "string"
+		}
+	]
+}

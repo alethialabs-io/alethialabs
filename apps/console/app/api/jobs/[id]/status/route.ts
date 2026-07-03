@@ -1,17 +1,28 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { finalizeDeploymentWithClient } from "@/app/server/actions/deployments";
-import { verifyWorkerToken } from "@/lib/workers/auth";
-import { createServiceRoleClient } from "@/lib/supabase/service-role-client";
+import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { finalizeDeployment } from "@/app/server/actions/deployments";
+import { recordDriftPosture } from "@/app/server/actions/drift";
+import {
+	advancePromotionOnPlan,
+	failPromotionForJob,
+	finalizePromotionOnDeploy,
+} from "@/app/server/actions/promotions";
+import { maybeAutoHeal } from "@/app/server/actions/reconcile";
+import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { reportJobUsageOnce } from "@/lib/billing/meter";
+import { getServiceDb } from "@/lib/db";
+import { jobs, projectEnvironments } from "@/lib/db/schema";
+import { verifyRunnerToken } from "@/lib/runners/auth";
 
 export async function PUT(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const { workerId, tokenHash, error: authError } =
-		await verifyWorkerToken(req);
+	const { runnerId, tokenHash, error: authError } =
+		await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	const { id: jobId } = await params;
@@ -26,12 +37,7 @@ export async function PUT(
 			);
 		}
 
-		const validStatuses = [
-			"PROCESSING",
-			"SUCCESS",
-			"FAILED",
-			"CANCELLED",
-		];
+		const validStatuses = ["PROCESSING", "SUCCESS", "FAILED", "CANCELLED"];
 		if (!validStatuses.includes(status)) {
 			return NextResponse.json(
 				{ error: `status must be one of: ${validStatuses.join(", ")}` },
@@ -39,61 +45,162 @@ export async function PUT(
 			);
 		}
 
-		const supabase = await createServiceRoleClient();
+		const db = getServiceDb();
 
-		const { error } = await supabase.rpc("update_job_status", {
-			p_worker_id: workerId,
-			p_worker_token_hash: tokenHash,
-			p_job_id: jobId,
-			p_status: status,
-			p_error_message: error_message || null,
-			p_execution_metadata: execution_metadata || null,
-		});
-
-		if (error) {
-			console.error("Update status RPC error:", error);
-			return NextResponse.json(
-				{ error: "Failed to update status: " + error.message },
-				{ status: 500 },
-			);
-		}
+		await db.execute(
+			sql`select update_job_status(${runnerId}::uuid, ${tokenHash}, ${jobId}::uuid, ${status}, ${error_message || null}, ${execution_metadata ? JSON.stringify(execution_metadata) : null}::jsonb)`,
+		);
 
 		if (status === "PROCESSING" || status === "SUCCESS" || status === "FAILED") {
-			const { data: job } = await supabase
-				.from("provision_jobs")
-				.select("job_type, vine_id")
-				.eq("id", jobId)
-				.single();
+			const [job] = await db
+				.select({
+					job_type: jobs.job_type,
+					project_id: jobs.project_id,
+					environment_id: jobs.environment_id,
+					org_id: jobs.org_id,
+					cloud_identity_id: jobs.cloud_identity_id,
+					execution_metadata: jobs.execution_metadata,
+				})
+				.from(jobs)
+				.where(eq(jobs.id, jobId))
+				.limit(1);
 
-			if (job?.vine_id) {
+			// Ops alerts (free in core): job start, terminal state, project destroy.
+			if (job?.org_id && status === "PROCESSING") {
+				emitAlertEventSafe(job.org_id, "system.job.started", {
+					title: `Job started: ${job.job_type}`,
+					severity: "info",
+					job_id: jobId,
+					job_type: job.job_type,
+					project_id: job.project_id ?? undefined,
+				});
+			}
+			if (job?.org_id && (status === "SUCCESS" || status === "FAILED")) {
+				const base = {
+					job_id: jobId,
+					job_type: job.job_type,
+					project_id: job.project_id ?? undefined,
+				};
+				if (status === "FAILED") {
+					emitAlertEventSafe(job.org_id, "system.job.failed", {
+						title: `Job failed: ${job.job_type}`,
+						summary: error_message || undefined,
+						severity: "critical",
+						...base,
+					});
+				} else {
+					emitAlertEventSafe(job.org_id, "system.job.succeeded", {
+						title: `Job succeeded: ${job.job_type}`,
+						severity: "info",
+						...base,
+					});
+					if (job.job_type === "DESTROY") {
+						emitAlertEventSafe(job.org_id, "system.project.destroyed", {
+							title: "Project destroyed",
+							severity: "warning",
+							...base,
+						});
+					}
+				}
+			}
+
+			// M1: provisioning status lives on the targeted environment (the job carries
+			// environment_id). Legacy / non-project jobs without one simply skip the update.
+			if (job?.project_id && job.environment_id) {
+				const environmentId = job.environment_id;
+				const setEnvStatus = (s: "PROVISIONING" | "FAILED" | "DRAFT") =>
+					db
+						.update(projectEnvironments)
+						.set({ status: s })
+						.where(eq(projectEnvironments.id, environmentId));
 				if (job.job_type === "DEPLOY") {
 					if (status === "PROCESSING") {
-						await supabase.from("vines").update({ status: "PROVISIONING" }).eq("id", job.vine_id);
+						await setEnvStatus("PROVISIONING");
 					} else if (status === "FAILED") {
-						await supabase.from("vines").update({ status: "FAILED" }).eq("id", job.vine_id);
+						await setEnvStatus("FAILED");
+						// A promotion's deploy failed → mark the promotion FAILED (no-op otherwise).
+						await failPromotionForJob(jobId).catch((err) =>
+							console.error("Fail promotion (deploy) error:", err),
+						);
 					} else if (status === "SUCCESS") {
 						try {
-							await finalizeDeploymentWithClient(supabase, jobId);
+							await finalizeDeployment(jobId);
 						} catch (err) {
 							console.error("Finalize deployment error:", err);
-							await supabase.from("vines").update({ status: "FAILED" }).eq("id", job.vine_id);
+							await setEnvStatus("FAILED");
 						}
+						// Mark a promotion SUCCEEDED if this deploy was one (no-op otherwise).
+						await finalizePromotionOnDeploy(jobId).catch((err) =>
+							console.error("Finalize promotion error:", err),
+						);
 					}
 				} else if (job.job_type === "PLAN") {
 					if (status === "FAILED") {
-						await supabase.from("vines").update({ status: "FAILED" }).eq("id", job.vine_id);
+						await setEnvStatus("FAILED");
+						await failPromotionForJob(jobId).catch((err) =>
+							console.error("Fail promotion (plan) error:", err),
+						);
 					} else if (status === "SUCCESS") {
-						await supabase.from("vines").update({ status: "DRAFT" }).eq("id", job.vine_id);
+						await setEnvStatus("DRAFT");
+						// If this PLAN backs a promotion, evaluate its gates now (deploy / await / block).
+						await advancePromotionOnPlan(jobId).catch((err) =>
+							console.error("Advance promotion error:", err),
+						);
 					}
 				}
+			}
+
+				// DETECT_DRIFT: persist the runner's drift posture (posted in execution_metadata
+				// by the refresh-only plan → drift.Analyze) into the per-environment day-2 record.
+				if (
+					job?.job_type === "DETECT_DRIFT" &&
+					status === "SUCCESS" &&
+					job.project_id
+				) {
+					const posture = job.execution_metadata?.drift_posture;
+					if (posture) {
+						try {
+							await recordDriftPosture({
+								projectId: job.project_id,
+								environmentId: job.environment_id ?? null,
+								inSync: posture.in_sync,
+								drifted: posture.drifted,
+								details: (posture.details ?? []).map((d) => ({
+									address: d.address,
+									type: d.type,
+									kind: String(d.kind),
+								})),
+								scannedAt: posture.scanned_at ?? new Date().toISOString(),
+							});
+						} catch (err) {
+							console.error("Persist drift posture error:", err);
+						}
+						// Day-2 reconcile: if the env drifted, consider auto-healing it (opt-in;
+						// prod stays approval-gated; guarded by backoff + circuit breaker).
+						if (!posture.in_sync && job.environment_id) {
+							await maybeAutoHeal(job.project_id, job.environment_id).catch(
+								(err) => console.error("Auto-heal error:", err),
+							);
+						}
+					}
+				}
+
+		}
+
+		// Bill managed-runner job-minutes once the job is terminal (best-effort; a
+		// metering failure must never fail the runner's status update).
+		if (status === "SUCCESS" || status === "FAILED") {
+			try {
+				await reportJobUsageOnce(jobId);
+			} catch (err) {
+				console.error("Usage metering failed:", err);
 			}
 		}
 
 		return NextResponse.json({ success: true });
-	} catch (err: any) {
-		return NextResponse.json(
-			{ error: err.message || "Internal Server Error" },
-			{ status: 500 },
-		);
+	} catch (err: unknown) {
+		const message =
+			err instanceof Error ? err.message : "Internal Server Error";
+		return NextResponse.json({ error: message }, { status: 500 });
 	}
 }

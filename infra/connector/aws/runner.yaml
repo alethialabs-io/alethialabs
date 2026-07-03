@@ -1,0 +1,216 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Runner: Fargate Task for Infrastructure Provisioning'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Runner Configuration"
+        Parameters:
+          - RunnerMode
+          - RunnerId
+          - RunnerToken
+          - AlethiaUrl
+          - RunnerVersion
+      - Label:
+          default: "Network Configuration"
+        Parameters:
+          - VpcId
+          - SubnetIds
+    ParameterLabels:
+      RunnerMode:
+        default: "Runner Mode"
+      RunnerId:
+        default: "Runner ID"
+      RunnerToken:
+        default: "Runner Token"
+      AlethiaUrl:
+        default: "Alethia URL"
+      RunnerVersion:
+        default: "Runner Image Tag"
+
+Parameters:
+  RunnerMode:
+    Type: String
+    Default: 'self-hosted'
+    AllowedValues: ['self-hosted', 'cloud-hosted']
+    Description: 'self-hosted: runner uses native AWS permissions. cloud-hosted: runner assumes roles into customer accounts.'
+
+  RunnerId:
+    Type: String
+    Description: 'Runner ID from `alethia runner register`.'
+
+  RunnerToken:
+    Type: String
+    NoEcho: true
+    Description: 'Runner token from `alethia runner register`.'
+
+  AlethiaUrl:
+    Type: String
+    Description: 'URL of the Alethia control plane.'
+
+  RunnerVersion:
+    Type: String
+    Default: 'latest'
+    Description: 'Docker image tag for the Runner.'
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: 'VPC where the Fargate task will run.'
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: 'Subnets for the Fargate task (must have internet access).'
+
+Resources:
+  RunnerCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub 'runner-${AWS::StackName}'
+      CapacityProviders:
+        - FARGATE
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/runner-${AWS::StackName}'
+      RetentionInDays: 30
+
+  RunnerTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub 'runner-token-${AWS::StackName}'
+      Description: 'Runner authentication token'
+      SecretString: !Ref RunnerToken
+
+  RunnerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'runner-exec-${AWS::StackName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref RunnerTokenSecret
+
+  RunnerTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'runner-task-${AWS::StackName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !If
+          - IsSelfHosted
+          - arn:aws:iam::aws:policy/AdministratorAccess
+          - !Ref AWS::NoValue
+      Policies:
+        - !If
+          - IsCloudHosted
+          - PolicyName: AssumeCustomerRoles
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: sts:AssumeRole
+                  Resource: 'arn:aws:iam::*:role/AlethiaProvisionerRole-*'
+          - !Ref AWS::NoValue
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Runner - outbound only'
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: '0.0.0.0/0'
+          Description: 'Allow all outbound (HTTPS to Alethia, git, registries, AWS APIs)'
+
+  RunnerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub 'runner-${AWS::StackName}'
+      Cpu: '1024'
+      Memory: '4096'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt RunnerExecutionRole.Arn
+      TaskRoleArn: !GetAtt RunnerTaskRole.Arn
+      ContainerDefinitions:
+        - Name: runner
+          Image: !Sub 'ghcr.io/alethialabs-io/runner:${RunnerVersion}'
+          # No command override — the image ENTRYPOINT runs the runner daemon.
+          Environment:
+            - Name: ALETHIA_RUNNER_MODE
+              Value: !Ref RunnerMode
+            - Name: ALETHIA_WEB_ORIGIN
+              Value: !Ref AlethiaUrl
+            - Name: ALETHIA_RUNNER_ID
+              Value: !Ref RunnerId
+          Secrets:
+            - Name: ALETHIA_RUNNER_TOKEN
+              ValueFrom: !Ref RunnerTokenSecret
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: runner
+          Essential: true
+
+  RunnerService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub 'runner-${AWS::StackName}'
+      Cluster: !Ref RunnerCluster
+      TaskDefinition: !Ref RunnerTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref SecurityGroup
+          Subnets: !Ref SubnetIds
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+
+Conditions:
+  IsSelfHosted: !Equals [!Ref RunnerMode, 'self-hosted']
+  IsCloudHosted: !Equals [!Ref RunnerMode, 'cloud-hosted']
+
+Outputs:
+  ClusterArn:
+    Description: 'ECS Cluster ARN'
+    Value: !GetAtt RunnerCluster.Arn
+
+  ServiceName:
+    Description: 'ECS Service Name'
+    Value: !GetAtt RunnerService.Name
+
+  LogGroupName:
+    Description: 'CloudWatch Log Group'
+    Value: !Ref LogGroup

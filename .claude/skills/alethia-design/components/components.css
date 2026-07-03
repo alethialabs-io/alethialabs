@@ -1,5 +1,5 @@
 /* ============================================================
-   ALETHIA — component classes
+   ALETHIA LABS — component classes
    Styling for the bundled React primitives. Ships to consumers
    via styles.css. Components carry these class names; all
    visual values resolve from design tokens.
@@ -16,8 +16,9 @@
   font-size: var(--text-base);
   line-height: 1;
   white-space: nowrap;
+  letter-spacing: 0.01em;
   border: var(--border-hairline) solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   cursor: pointer;
   user-select: none;
   transition: background var(--duration-fast) var(--ease-standard),
@@ -32,11 +33,11 @@
 .vx-btn svg { width: 1em; height: 1em; flex-shrink: 0; }
 
 /* sizes */
-.vx-btn--xs { height: 1.5rem;  padding: 0 var(--space-2);   font-size: var(--text-xs); border-radius: var(--radius-xs); }
+.vx-btn--xs { height: 1.5rem;  padding: 0 var(--space-2);   font-size: var(--text-xs); border-radius: 0; }
 .vx-btn--sm { height: 2rem;    padding: 0 var(--space-3);   font-size: var(--text-sm); }
-.vx-btn--md { height: 2.25rem; padding: 0 var(--space-4); }
-.vx-btn--lg { height: 2.5rem;  padding: 0 var(--space-6);   font-size: var(--text-md); }
-.vx-btn--icon { height: 2.25rem; width: 2.25rem; padding: 0; }
+.vx-btn--md { height: 2.375rem; padding: 0 var(--space-5); }
+.vx-btn--lg { height: 2.75rem;  padding: 0 var(--space-6);   font-size: var(--text-md); }
+.vx-btn--icon { height: 2.375rem; width: 2.375rem; padding: 0; }
 .vx-btn--icon.vx-btn--sm { height: 2rem; width: 2rem; }
 .vx-btn--icon.vx-btn--xs { height: 1.5rem; width: 1.5rem; }
 
@@ -89,7 +90,7 @@
 .vx-status--failed  .vx-status__dot { background: var(--signal-critical); position: relative; }
 .vx-status--failed  .vx-status__dot::after { content: ""; position: absolute; inset: 2px; background: var(--signal-critical-surface); border-radius: 1px; }
 .vx-status--disabled .vx-status__dot { background: var(--signal-faint); }
-.vx-status--live .vx-status__dot { background: var(--signal-strong); animation: alethia-blink 1.4s var(--ease-linear) infinite; }
+.vx-status--live .vx-status__dot { background: var(--signal-strong); animation: vertex-blink 1.4s var(--ease-linear) infinite; }
 
 /* ---------- Input / Textarea ---------- */
 .vx-input, .vx-textarea {
@@ -100,9 +101,9 @@
   color: var(--text-primary);
   background: transparent;
   border: var(--border-hairline) solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   padding: 0 var(--space-3);
-  height: 2.25rem;
+  height: 2.375rem;
   transition: border-color var(--duration-fast) var(--ease-standard),
               box-shadow var(--duration-fast) var(--ease-standard);
   outline: none;
@@ -128,9 +129,9 @@
   color: var(--text-primary);
   background: transparent;
   border: var(--border-hairline) solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   padding: 0 var(--space-8) 0 var(--space-3);
-  height: 2.25rem;
+  height: 2.375rem;
   cursor: pointer;
   outline: none;
   transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
@@ -257,5 +258,5 @@
 .vx-alert--critical .vx-alert__icon { color: var(--text-primary); }
 
 /* ---------- Spinner ---------- */
-.vx-spinner { display: inline-block; border-radius: var(--radius-full); border: 2px solid var(--border-strong); border-top-color: var(--text-primary); animation: alethia-spin 0.7s var(--ease-linear) infinite; }
-@keyframes alethia-spin { to { transform: rotate(360deg); } }
+.vx-spinner { display: inline-block; border-radius: var(--radius-full); border: 2px solid var(--border-strong); border-top-color: var(--text-primary); animation: vertex-spin 0.7s var(--ease-linear) infinite; }
+@keyframes vertex-spin { to { transform: rotate(360deg); } }

@@ -13,7 +13,7 @@ These endpoints implement the **Device Authorization Grant** (RFC 8628) for CLI 
 
 Called by the **browser** (authenticated user) to approve a CLI login attempt.
 
-**Requires:** Active browser session (Supabase auth cookie).
+**Requires:** Active browser session (Better Auth session cookie).
 
 **Body:**
 ```json
@@ -91,8 +91,8 @@ Both tokens are rotated on refresh — the old refresh token is invalidated.
 
 ## OAuth Callback
 
-### `GET /api/auth/callback`
+### `GET /api/auth/[...all]`
 
-Handles the OAuth redirect from Supabase after provider authentication. Captures the authorization code and provider token, then redirects to the intended page.
+Handles the OAuth redirect, handled by Better Auth at `/api/auth/[...all]` after provider authentication. Captures the authorization code and provider token, then redirects to the intended page.
 
 The middleware intercepts OAuth callbacks to save `provider_token` before the redirect reaches the final destination.

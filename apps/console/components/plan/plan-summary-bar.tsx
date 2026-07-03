@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@repo/ui/badge";
 import type { PlanSummary } from "@/lib/plan/parse-plan";
 import type { CostSummary } from "@/lib/plan/parse-cost";
 import { Plus, Pencil, Trash2, RefreshCw } from "lucide-react";

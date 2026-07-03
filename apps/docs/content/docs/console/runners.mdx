@@ -22,8 +22,8 @@ Filter by Runner name.
 | Column | Description |
 |--------|-------------|
 | Name | Runner identifier |
-| Type | `cloud-hosted` or `self-hosted` |
-| Region | AWS region (cloud-hosted only) |
+| Operator | `managed` (Alethia-operated fleet) or `self` — self runners also show provisioning: `self · deployed` or `self · registered` |
+| Region | AWS region (managed runners only) |
 | Status | Badge: ONLINE (green), DRAINING (yellow), OFFLINE (red) |
 | Version | Runner release version |
 | Created | Registration timestamp |
@@ -33,37 +33,41 @@ Filter by Runner name.
 A separate table showing jobs currently assigned to Runners (QUEUED, CLAIMED, or PROCESSING).
 
 ### Update Alert
-If outdated Runners are detected (version < latest release), an alert appears with an **"Update All"** button that queues `UPDATE_WORKER` jobs for each outdated Runner.
+If outdated Runners are detected (version < latest release), an alert appears with an **"Update All"** button that queues `UPDATE_RUNNER` jobs for each outdated Runner.
 
 ## Adding a Runner
 
 Click **"Add Runner"** to open the registration sheet with two tabs:
 
-<Tabs items={["Deploy (Cloud-Hosted)", "Register (Self-Hosted)"]}>
-  <Tab value="Deploy (Cloud-Hosted)">
-    Provisions a Runner automatically in ECS Fargate:
+<Tabs items={["Deploy (Self · Deployed)", "Register (Self · Registered)"]}>
+  <Tab value="Deploy (Self · Deployed)">
+    Provisions a Runner into your cloud account automatically (an existing runner runs Terraform to stand it up in ECS Fargate). This is a `self`-operated, `deployed` runner:
 
     1. Select a cloud identity and region
-    2. Click Deploy → queues a `DEPLOY_WORKER` job
+    2. Click Deploy → queues a `DEPLOY_RUNNER` job
     3. The job provisions: ECS task definition, IAM roles, CloudWatch log group, security groups
     4. After ~2 minutes, the Runner appears as ONLINE
 
-    Cloud-hosted Runners support [scale-to-zero](/runner/scale-to-zero) — they shut down when no jobs are queued and restart automatically when needed.
+    Deployed Runners support [scale-to-zero](/runner/scale-to-zero) — they shut down when no jobs are queued and restart automatically when needed.
   </Tab>
-  <Tab value="Register (Self-Hosted)">
-    For running a Runner on your own infrastructure:
+  <Tab value="Register (Self · Registered)">
+    For bringing your own Runner — your own Terraform, or just `alethia runner start` — on infrastructure you control. This creates a `self`-operated, `registered` runner:
 
     1. Enter a name for the Runner
-    2. Click Register → generates a `worker_id` and `worker_token`
+    2. Click Register → generates a `runner_id` and `runner_token`
     3. Copy the credentials (shown once, never stored in plaintext)
     4. Set the environment variables on your machine and run the Runner binary
 
-    See [Self-Hosted Mode](/runner/self-hosted) for full setup instructions.
+    See [Self-Operated Runners](/runner/self-hosted) for full setup instructions.
   </Tab>
 </Tabs>
 
+<Callout type="info">
+**Managed** runners are a third category: Alethia operates them in our own account and bills them by provisioned hours (online time). They don't appear under "Add Runner" — you opt into the managed fleet rather than registering or deploying them yourself.
+</Callout>
+
 <Callout type="warn">
-The worker token is shown **only once** at registration. If lost, the Runner must be re-registered. See [Authentication Flows](/concepts/authentication) for how token verification works.
+The runner token is shown **only once** at registration. If lost, the Runner must be re-registered. See [Authentication Flows](/concepts/authentication) for how token verification works.
 </Callout>
 
 ## Status Indicators
@@ -78,13 +82,13 @@ Status is determined by heartbeat recency:
 
 ## Real-time Updates
 
-The Runners page subscribes to `workers` table changes and `provision_jobs` changes via [Supabase Realtime](/concepts/realtime). Status changes, new registrations, and job assignments appear instantly.
+The Runners page subscribes to `runners` table changes and `jobs` changes via [Postgres LISTEN/NOTIFY → SSE](/concepts/realtime). Status changes, new registrations, and job assignments appear instantly.
 
 ## Version Tracking
 
 Each Runner reports its version on heartbeat. The page shows:
 - Current version per Runner
-- Latest available version (from `worker_releases` table)
+- Latest available version (from `runner_releases` table)
 - **Release Notes** dialog showing the changelog for each version
 
-When a new Runner release is published via the CI pipeline, existing cloud-hosted Runners are updated via `UPDATE_WORKER` jobs that trigger ECS force-new-deployment.
+When a new Runner release is published via the CI pipeline, existing deployed and managed Runners are updated via `UPDATE_RUNNER` jobs that trigger ECS force-new-deployment.

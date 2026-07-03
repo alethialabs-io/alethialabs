@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in CI.
+# AWS credentials come from the standard AWS_ACCESS_KEY_ID/SECRET env or profile.
+
+cloudflare_api_token = "YOUR_CLOUDFLARE_API_TOKEN"
+cloudflare_zone_id   = "YOUR_CLOUDFLARE_ZONE_ID"
+domain               = "alethialabs.io"
+
+# Public half of the CI deploy key (private half = GH secret DEPLOY_SSH_PRIVATE_KEY).
+ssh_public_key = "ssh-ed25519 AAAA... deploy@alethia"
+
+aws_region       = "eu-west-1"
+instance_type    = "t4g.large" # Graviton ARM64
+root_volume_size = 60

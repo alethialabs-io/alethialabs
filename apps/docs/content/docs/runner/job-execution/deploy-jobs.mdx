@@ -7,6 +7,16 @@ description: How Runner executes DEPLOY jobs — terraform apply, kubeconfig, an
 
 DEPLOY jobs apply the Terraform plan and install ArgoCD on the provisioned cluster.
 
+<Callout type="info">
+  **Brownfield attach.** A DEPLOY doesn't only create new infrastructure — it can attach to what you
+  **already have**. When the project config marks a component as "existing" (e.g. an existing VPC/VNet —
+  see [Reuse existing resources](/console/design-project/network#reuse-existing-resources)), the runner
+  passes the resource's id into the tofu template instead of creating it, and the template `data`-sources
+  the existing resource (and, for networks, resolves its subnets) so the rest of the graph wires into it.
+  The provision-vs-existing seam is a `count = var.provision_X ? 1 : 0` guard on the create path plus a
+  data source on the existing path. Today this covers networks on AWS/GCP/Azure.
+</Callout>
+
 ## Execution Flow
 
 <Steps>
@@ -15,10 +25,10 @@ DEPLOY jobs apply the Terraform plan and install ArgoCD on the provisioned clust
 Same as PLAN jobs.
 
 ### Download plan artifact
-Fetches the binary `plan.tfplan` from the PLAN job's Supabase Storage upload.
+Fetches the binary `plan.tfplan` from the PLAN job's S3-compatible storage upload.
 
 ### Validate config hash
-Compares the spec's current config hash against the plan's config hash. If they differ (spec was modified after planning), the job fails:
+Compares the project's current config hash against the plan's config hash. If they differ (project was modified after planning), the job fails:
 
 > "Configuration has changed since the plan was generated. Please re-plan."
 
@@ -75,9 +85,9 @@ Job status → SUCCESS with execution metadata:
 ## Finalization
 
 On the Alethia side, when the job reaches SUCCESS, the `finalizeDeployment()` server action:
-- Updates `spec_cluster` with cluster metadata and ArgoCD credentials
-- Updates `spec_databases` with writer/reader endpoints and credential ARNs
-- Updates `spec_caches` with primary/reader endpoints
-- Sets spec status to `ACTIVE`
+- Updates `project_cluster` with cluster metadata and ArgoCD credentials
+- Updates `project_databases` with writer/reader endpoints and credential ARNs
+- Updates `project_caches` with primary/reader endpoints
+- Sets project status to `ACTIVE`
 
-This data appears in the [Clusters page](/console/clusters) and spec detail.
+This data appears in the [Clusters page](/console/clusters) and project detail.

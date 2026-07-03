@@ -5,7 +5,12 @@ description: Complete reference for all alethia CLI commands organized by group.
 
 # Command Reference
 
-alethia provides 27 commands across 7 groups. All commands communicate with the Alethia API — they do not execute Terraform directly.
+alethia organizes its commands into groups (`connector`, `project`, `runner`, `jobs`, `cluster`,
+`org`, `members`, `teams`, `channels`, `alerts`, `roles`, `grants`, `sso`, `fleet`) plus top-level
+auth, identity, `billing`, `usage`, `activity`, and utility commands. All commands communicate with
+the Alethia API — they do not execute Terraform directly.
+
+Every command also accepts the [global flags](/cli/identity#output-formats) `-o, --output <table|json|csv>` and `--no-input`.
 
 ## Command Tree
 
@@ -13,67 +18,135 @@ alethia provides 27 commands across 7 groups. All commands communicate with the 
 alethia
 ├── login [--force]
 ├── logout
-├── zone
-│   ├── create --name <name>
+├── whoami                            # current user, active org, role, plan, default runner
+├── config                            # show CLI config + file paths
+│   └── clear-context                 # clear the active org
+├── version
+├── open [console|docs]               # aliases: docs, dashboard
+├── completion [bash|zsh|fish|powershell]
+├── org                               # aliases: orgs
 │   ├── list
-│   └── delete --id <id>
-├── spec
-│   ├── list [--zone-id <id>]
-│   └── get --id <id>
-├── plan [--spec-id <id>] [--worker-id <id>] [--wait]
-├── apply [--spec-id <id>] [--worker-id <id>] [--plan-job-id <id>] [--wait]
-├── destroy
-│   ├── spec --spec-id <id> [--worker-id <id>] [--wait]
-│   ├── worker --worker-id <id>
-│   └── zone --zone-id <id>
+│   └── switch [org]
+├── members                           # alias: member
+│   ├── list
+│   ├── add <email> [--role member]
+│   └── remove <member_id>
+├── teams                             # alias: team
+│   ├── list
+│   ├── create <name>
+│   └── delete <team_id>
+├── connector
+│   ├── gcp [--project <id>] [--manual]
+│   ├── aws [--region <r>] [--role-name <name>] [--manual]
+│   ├── azure [--subscription <id>] [--manual]
+│   ├── list
+│   └── remove [provider] [-y/--yes]
+├── project
+│   ├── list
+│   ├── get <project_name> [--open]
+│   ├── create <name> --region <r> [--cloud-identity-id <id>] [--stage <s>] [--iac-version <v>]
+│   ├── env                           # manage a project's environments (--project <p>)
+│   │   ├── list
+│   │   └── add <name> [--stage <s>] [--region <r>]
+│   ├── component                     # alias: components, comp (--project <p>)
+│   │   ├── kinds
+│   │   ├── list [--kind <k>] [--env <e>]
+│   │   ├── add --kind <k> [--name <n>] [--set key=value …]
+│   │   └── remove --kind <k> [--name <n>]
+│   ├── plan [--project-id <id>] [--runner-id <id>] [-w/--wait]
+│   ├── apply [--project-id <id>] [--runner-id <id>] [--plan-job-id <id>] [-w/--wait]
+│   └── destroy [--project-id <id>] [--runner-id <id>] [-w/--wait]
+├── runner
+│   ├── deploy [--cloud-identity-id <id>] [--name <name>] [--region <r>] [--assigned-runner-id <id>] [-w/--wait]
+│   ├── list
+│   ├── destroy [--runner-id <id>] [--assigned-runner-id <id>] [-w/--wait]
+│   └── remove [runner_id]
 ├── jobs
-│   ├── list
-│   ├── get --id <id>
-│   ├── logs --id <id> [--follow]
-│   ├── cancel --id <id>
-│   └── wait --id <id>
-├── worker
-│   ├── start
-│   ├── register
-│   ├── list
-│   ├── remove --id <id>
-│   └── config
-├── clusters
+│   ├── list [--status <S>] [-n/--limit <N>]
+│   ├── get <job_id>
+│   ├── logs <job_id> [-f/--follow]
+│   └── cancel <job_id>
+├── cluster                           # alias: clusters
 │   └── list
-└── selectors
+├── channels                          # alias: channel
+│   ├── list
+│   ├── create <name> --type <t> [--recipient <e>] [--url <u>] [--signing-secret <s>] [--routing-key <k>]
+│   ├── verify <id>
+│   └── delete <id>
+├── alerts                            # alias: alert
+│   ├── list
+│   ├── create <name> --event <pat> --channel <id> [--severity warning]
+│   └── delete <id>
+├── roles                             # alias: role
+│   ├── list                          # built-in templates + custom roles
+│   ├── create <name> --permission <key>…
+│   └── delete <id>
+├── grants                            # aliases: grant, access
+│   ├── list
+│   ├── add --principal <id> (--role <id> | --permission <key>) [--effect allow] [--resource-type org] [--resource <id>]
+│   └── remove <id>
+├── sso
+│   ├── list
+│   └── get <id>
+├── billing                           # active org plan, status, seats, period
+├── usage                             # seats, runner-minutes, projects, AI credits
+├── fleet                             # managed warm pools (self-managed only)
+│   ├── list
+│   └── set <provider> [--warm-min <n>] [--max <n>] [--slots <n>] [--enabled] [--channel <c>] [--version <v>]
+└── activity [-n/--limit <N>]         # org delivery/activity log
 ```
+
+<Callout type="info">
+`members`, `teams`, and the org-scoped commands operate on the **active organization** (set via
+`alethia org switch`). Override per-invocation with `--org <id>`. The `cluster` command is singular
+with a `clusters` alias, so both `alethia cluster list` and `alethia clusters list` work.
+</Callout>
 
 ## Interactive Selection
 
-When `--spec-id` is omitted from `plan`, `apply`, or `destroy`, alethia launches an interactive TUI selector. See [TUI Components](/cli/tui) for how this works.
+When `--project-id` (or `--runner-id`) is omitted from `project plan`, `project apply`, or
+`project destroy`, alethia launches an interactive TUI selector — provided stdin is a TTY and
+`--no-input` is off. See [TUI Components](/cli/tui) for how this works.
 
 ## Common Patterns
+
+### Connect a Cloud Account
+
+```bash
+# Connect a GCP project (runs the installer in your Cloud Shell)
+alethia connector gcp --project my-gcp-project
+
+# List connected accounts
+alethia connector list
+```
+
+See [Connector Commands](/cli/commands/connector) for AWS and Azure flows.
 
 ### Plan-Review-Apply
 
 ```bash
 # 1. Plan
-alethia plan --spec-id <id>
+alethia project plan --project-id <id>
 # Note the job ID from output
 
 # 2. Stream logs to review
-alethia jobs logs --id <plan-job-id> --follow
+alethia jobs logs <plan-job-id> --follow
 
 # 3. Apply
-alethia apply --spec-id <id> --plan-job-id <plan-job-id>
+alethia project apply --project-id <id> --plan-job-id <plan-job-id>
 ```
 
 ### Scripting with --wait
 
 ```bash
 # Block until plan completes, then apply
-alethia plan --spec-id <id> --wait
-alethia apply --spec-id <id> --plan-job-id <id> --wait
+alethia project plan --project-id <id> --wait
+alethia project apply --project-id <id> --plan-job-id <id> --wait
 ```
 
 ### Log Tailing
 
 ```bash
 # Stream logs like tail -f
-alethia jobs logs --id <job-id> --follow
+alethia jobs logs <job-id> --follow
 ```

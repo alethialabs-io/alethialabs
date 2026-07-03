@@ -1,0 +1,97 @@
+name: Release CLI
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      tag:
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 0.2.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write # assume the read-only vault role for the release-metadata bearer
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    env:
+      CLI_TAG: ${{ inputs.tag != '' && inputs.tag || format('cli-v{0}', inputs.version) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.CLI_TAG }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: apps/cli/go.sum
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mint tap token (GitHub App)
+        id: tap_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: alethialabs-io
+          repositories: homebrew-alethialabs
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean --skip=validate -f apps/cli/.goreleaser.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap_token.outputs.token }}
+          GORELEASER_CURRENT_TAG: ${{ env.CLI_TAG }}
+
+      - name: Configure AWS credentials (OIDC — read the release bearer)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.DEPLOY_READER_ROLE_ARN }}
+          aws-region: eu-central-1
+
+      - name: Publish release metadata to Alethia
+        env:
+          ALETHIA_URL: ${{ vars.PUBLIC_APP_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELEASE_API_SECRET="$(aws secretsmanager get-secret-value --secret-id alethia/prod/env --region eu-central-1 --query SecretString --output text | jq -r '.RELEASE_API_SECRET // ""')"
+          echo "::add-mask::$RELEASE_API_SECRET"
+          NOTES=$(gh release view "${CLI_TAG}" --json body -q .body 2>/dev/null || echo "")
+          curl -sf -X POST "${ALETHIA_URL}/api/releases/cli" \
+            -H "Authorization: Bearer ${RELEASE_API_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg v "${{ inputs.version }}" \
+              --arg n "$NOTES" \
+              --arg u "https://github.com/${{ github.repository }}/releases/tag/${CLI_TAG}" \
+              --arg s "${{ github.sha }}" \
+              '{version: $v, release_notes: $n, github_release_url: $u, commit_sha: $s}')"

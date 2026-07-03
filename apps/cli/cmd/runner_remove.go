@@ -1,0 +1,62 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package cmd
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/spf13/cobra"
+)
+
+var runnerRemoveCmd = &cobra.Command{
+	Use:   "remove [runner_id]",
+	Short: "Remove a runner record (no cloud teardown)",
+	Long:  `Removes the runner's database record only. Use 'alethia runner destroy' to tear down cloud resources first.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		token, err := getAuthToken()
+		if err != nil {
+			fail(err)
+		}
+
+		runnerID := ""
+		if len(args) > 0 {
+			runnerID = args[0]
+		} else {
+			runnerID, err = selectRunner(token, "")
+			if err != nil {
+				fail(err)
+			}
+			if runnerID == "" {
+				fmt.Println("Please select a specific runner, not 'Any available'.")
+				os.Exit(1)
+			}
+		}
+
+		if !confirm(
+			"Remove this runner record?",
+			"This only removes the database record. Cloud resources will NOT be torn down.",
+		) {
+			return
+		}
+
+		apiClient := api.NewClient(token)
+
+		ui.RunSpinner("Removing runner...", func() {
+			err = apiClient.RemoveRunner(runnerID)
+		})
+
+		if err != nil {
+			failf("Error: %v", err)
+		}
+
+		ui.Success(fmt.Sprintf("Runner record removed (ID: %s)", runnerID))
+	},
+}
+
+func init() {
+	runnerCmd.AddCommand(runnerRemoveCmd)
+}

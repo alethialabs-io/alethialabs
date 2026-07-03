@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import type { ClusterProviderConfig } from "@/types/jsonb.types";
 import type { CloudProviderSlug } from "./registry";
 
 interface InstanceTypeOption {
@@ -55,7 +56,7 @@ export const K8S_VERSIONS: Record<CloudProviderSlug, string[]> = {
 };
 
 interface AutoscalerMeta {
-	providerConfigKey: string;
+	providerConfigKey: keyof ClusterProviderConfig;
 	label: string;
 	description: string;
 }
@@ -79,7 +80,7 @@ export const AUTOSCALER: Record<CloudProviderSlug, AutoscalerMeta> = {
 	},
 };
 
-/** Default instance type per provider (used for new vine forms). */
+/** Default instance type per provider (used for new project forms). */
 export const DEFAULT_INSTANCE_TYPE: Record<CloudProviderSlug, string> = {
 	aws: "t3.medium",
 	gcp: "e2-medium",
@@ -93,7 +94,7 @@ export const DEFAULT_K8S_VERSION: Record<CloudProviderSlug, string> = {
 	azure: "1.31",
 };
 
-/** Cross-provider instance type mapping for vine conversion. */
+/** Cross-provider instance type mapping for project conversion. */
 export const INSTANCE_TYPE_MAP: Record<
 	CloudProviderSlug,
 	Record<CloudProviderSlug, Record<string, string>>

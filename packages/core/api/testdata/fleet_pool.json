@@ -1,0 +1,16 @@
+{
+	"pool": {
+		"provider": "string",
+		"warm_min": 0,
+		"max": 0,
+		"slots_per_runner": 0,
+		"locations": [
+			"string"
+		],
+		"surge": 0,
+		"buffer": 0,
+		"channel": "string",
+		"version": "string",
+		"enabled": false
+	}
+}

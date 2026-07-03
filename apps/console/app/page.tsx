@@ -1,26 +1,20 @@
-"use client";
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { redirect } from "next/navigation";
+import { getOwner } from "@/lib/auth/owner";
+import { getActiveOrgSlug } from "@/app/server/actions/resolve";
 
-import { Header } from "@/components/landing/header";
-import { Hero } from "@/components/landing/hero";
-import { FeatureOverview } from "@/components/landing/feature-overview";
-import { Ecosystem } from "@/components/landing/ecosystem";
-import { Testimonial } from "@/components/landing/testimonial";
-import { GetStarted } from "@/components/landing/get-started";
-import { Footer } from "@/components/landing/footer";
-
-export default function HomePage() {
-	return (
-		<div className="min-h-screen bg-background text-foreground selection:bg-primary selection:text-primary-foreground">
-			<Header />
-			<Hero />
-			<FeatureOverview />
-			<Ecosystem />
-			<Testimonial />
-			<GetStarted />
-			<Footer />
-		</div>
-	);
+/**
+ * Console root. The console ships no marketing — an authenticated visitor lands in
+ * their active organization, everyone else goes to sign-in. On the hosted build the
+ * marketing zone owns the anonymous `/`; this page only runs for an authenticated
+ * `/` handed back by the proxy/Caddy (see apps/console/microfrontends.json).
+ */
+export default async function HomePage() {
+	const userId = await getOwner();
+	if (userId) {
+		redirect(`/${await getActiveOrgSlug()}`);
+	}
+	redirect("/login");
 }

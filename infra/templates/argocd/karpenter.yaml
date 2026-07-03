@@ -1,4 +1,4 @@
-{{- if .EnableKarpenter }}
+{{- if and (eq .Provider "aws") .EnableKarpenter }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
