@@ -131,7 +131,8 @@ function makeStripe() {
 		paymentIntents: { create: vi.fn() },
 		setupIntents: { create: vi.fn() },
 		paymentMethods: { list: vi.fn(), retrieve: vi.fn(), detach: vi.fn() },
-		invoices: { list: vi.fn() },
+		invoices: { list: vi.fn(), create: vi.fn(), finalizeInvoice: vi.fn() },
+		invoiceItems: { create: vi.fn() },
 		charges: { list: vi.fn() },
 	};
 }
@@ -775,21 +776,24 @@ describe("setCustomerBillingAddress", () => {
 
 // ── createCreditPackIntent ───────────────────────────────────────────────────
 describe("createCreditPackIntent", () => {
-	it("creates a one-time PaymentIntent for the pack's real price + credits", async () => {
+	it("creates an invoiced credit pack for the pack's real price + credits", async () => {
 		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
-		stripe.paymentIntents.create.mockResolvedValue({
-			id: "pi_1",
-			client_secret: "pcs_1",
+		stripe.invoices.create.mockResolvedValue({ id: "in_1" } as never);
+		stripe.invoiceItems.create.mockResolvedValue({} as never);
+		stripe.invoices.finalizeInvoice.mockResolvedValue({
+			id: "in_1",
+			confirmation_secret: { client_secret: "ics_1" },
 		} as never);
 
 		const r = await createCreditPackIntent("m"); // 2000 credits / 2900 cents (real catalog)
 
-		expect(r).toEqual({ clientSecret: "pcs_1", paymentIntentId: "pi_1" });
-		expect(stripe.paymentIntents.create).toHaveBeenCalledWith({
+		expect(r).toEqual({ clientSecret: "ics_1", invoiceId: "in_1" });
+		expect(stripe.invoices.create).toHaveBeenCalledWith({
 			customer: "cus_1",
-			amount: 2900,
 			currency: "usd",
-			automatic_payment_methods: { enabled: true },
+			collection_method: "charge_automatically",
+			auto_advance: false,
+			description: "2,000 AI credits",
 			metadata: {
 				organization_id: "org-1",
 				user_id: "user-1",
@@ -797,13 +801,29 @@ describe("createCreditPackIntent", () => {
 				credits: "2000",
 			},
 		});
+		expect(stripe.invoiceItems.create).toHaveBeenCalledWith({
+			customer: "cus_1",
+			invoice: "in_1",
+			amount: 2900,
+			currency: "usd",
+			description: "2,000 AI credits",
+			metadata: {
+				organization_id: "org-1",
+				user_id: "user-1",
+				product_type: "ai_credits",
+				credits: "2000",
+			},
+		});
+		expect(stripe.invoices.finalizeInvoice).toHaveBeenCalledWith("in_1", {
+			expand: ["confirmation_secret"],
+		});
 	});
 
 	it("rejects an unknown pack id", async () => {
 		await expect(createCreditPackIntent("xxl")).rejects.toThrow(
 			/Unknown credit pack/,
 		);
-		expect(stripe.paymentIntents.create).not.toHaveBeenCalled();
+		expect(stripe.invoices.create).not.toHaveBeenCalled();
 	});
 
 	it("refuses the personal scope", async () => {
@@ -815,9 +835,11 @@ describe("createCreditPackIntent", () => {
 
 	it("throws when Stripe returns no client secret", async () => {
 		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
-		stripe.paymentIntents.create.mockResolvedValue({
-			id: "pi_1",
-			client_secret: null,
+		stripe.invoices.create.mockResolvedValue({ id: "in_1" } as never);
+		stripe.invoiceItems.create.mockResolvedValue({} as never);
+		stripe.invoices.finalizeInvoice.mockResolvedValue({
+			id: "in_1",
+			confirmation_secret: { client_secret: null },
 		} as never);
 		await expect(createCreditPackIntent("s")).rejects.toThrow(
 			/did not return a payment client secret/,

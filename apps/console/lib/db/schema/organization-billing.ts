@@ -46,6 +46,10 @@ export const organizationBilling = pgTable("organization_billing", {
 	// When true, the org pauses new jobs at its included allowance instead of
 	// billing overage (user-controlled "never surprise me"). Default off.
 	usageHardCap: boolean().default(false).notNull(),
+	// Set the first time the org reaches a paid plan (trial or paid) — the
+	// exactly-once claim for the "welcome to your plan" email, so it never re-sends
+	// on renewals/updates (see syncSubscriptionToBilling). Null until first activation.
+	welcomedAt: timestamp({ withTimezone: true }),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });

@@ -393,6 +393,20 @@
       "when": 1782892166439,
       "tag": "0055_environment_promotions",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1782892166440,
+      "tag": "0056_stripe_webhook_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1782892166441,
+      "tag": "0057_org_billing_welcomed_at",
+      "breakpoints": true
     }
   ]
 }

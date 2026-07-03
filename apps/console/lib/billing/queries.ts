@@ -6,7 +6,7 @@
 // service connection (bypasses RLS) and the org boundary is enforced by the caller
 // passing the resolved actor.orgId — never user input.
 
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import {
 	organizationBilling,
@@ -87,6 +87,26 @@ export async function upsertOrgBilling(input: BillingUpsert): Promise<void> {
 				updatedAt: now,
 			},
 		});
+}
+
+/**
+ * Atomically claims the one-time "welcome to your plan" email for an org: sets
+ * `welcomed_at` only if it was null, returning true for the single caller that won
+ * the claim. Makes the welcome exactly-once across the webhook, the synchronous
+ * trial-start path, and Stripe retries — no matter how many `sync` calls race.
+ */
+export async function claimPlanWelcome(orgId: string): Promise<boolean> {
+	const rows = await getServiceDb()
+		.update(organizationBilling)
+		.set({ welcomedAt: new Date() })
+		.where(
+			and(
+				eq(organizationBilling.organizationId, orgId),
+				isNull(organizationBilling.welcomedAt),
+			),
+		)
+		.returning({ id: organizationBilling.id });
+	return rows.length > 0;
 }
 
 /** Looks up the org a Stripe customer belongs to (set as subscription metadata). */
