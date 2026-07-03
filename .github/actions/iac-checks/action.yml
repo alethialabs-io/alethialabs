@@ -54,4 +54,7 @@ runs:
         TRIVY_CONFIG: ${{ github.workspace }}/infra/.trivy.yaml
         TRIVY_EXIT_CODE: "1"
         TRIVY_SEVERITY: HIGH,CRITICAL
+        # Skip the whole .terraform/ tree — `tofu init` pulls third-party modules
+        # (and their bundled k8s/example manifests) there; we scan OUR templates only.
+        TRIVY_SKIP_DIRS: "**/.terraform"
       run: trivy config .
