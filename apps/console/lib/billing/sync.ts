@@ -10,7 +10,8 @@
 import type Stripe from "stripe";
 import { planForPriceId } from "@/lib/billing/config";
 import { ensureIncludedCredit } from "@/lib/billing/credit-grants";
-import { upsertOrgBilling } from "@/lib/billing/queries";
+import { claimPlanWelcome, upsertOrgBilling } from "@/lib/billing/queries";
+import { sendPlanWelcomeEmail } from "@/lib/email/billing-email";
 import type { BillingStatus } from "@/lib/db/schema/enums";
 
 /** Stripe subscription.status → our billing_status. */
@@ -67,4 +68,17 @@ export async function syncSubscriptionToBilling(
 	// Grant the plan's monthly included usage credit for this period (idempotent,
 	// best-effort). Runs on activation + each renewal sync.
 	await ensureIncludedCredit(sub);
+
+	// First time this org reaches a paid plan (trial or paid) → welcome email, exactly
+	// once. The claim is atomic (welcomed_at IS NULL), so renewals/updates and racing
+	// sync calls never re-send; a mail failure is best-effort (never fails the sync).
+	if (status === "active" || status === "trialing") {
+		if (await claimPlanWelcome(orgId)) {
+			try {
+				await sendPlanWelcomeEmail(sub);
+			} catch (err) {
+				console.error(`[stripe] plan-welcome email failed for ${orgId}:`, err);
+			}
+		}
+	}
 }

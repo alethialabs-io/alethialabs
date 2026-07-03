@@ -894,14 +894,18 @@ export async function setCustomerBillingAddress(input: {
 /** A one-time credit-pack payment awaiting confirmation, for the embedded Payment Element. */
 export interface CreditPackIntent {
 	clientSecret: string;
-	paymentIntentId: string;
+	/** The Stripe invoice raised for this purchase (yields a compliant PDF). */
+	invoiceId: string;
 }
 
 /**
- * Creates a one-time PaymentIntent for an AI credit pack (a top-up beyond the plan's
- * included usage). The embedded <PaymentForm mode="payment"> confirms it inline; the
- * webhook's `payment_intent.succeeded` branch grants the credits (idempotent on the
- * intent id). Owner-gated; org-scoped; hosted billing only.
+ * Raises a one-time **invoice** for an AI credit pack (a top-up beyond the plan's
+ * included usage) so every purchase yields a compliant, numbered PDF. Flow: add an
+ * invoice item → create + finalize a `charge_automatically` invoice → return its
+ * PaymentIntent client secret. The embedded <PaymentForm mode="payment"> confirms it
+ * inline (unchanged — confirmPayment works the same for an invoice's PI); the webhook's
+ * `invoice.payment_succeeded` branch grants the credits (idempotent on the invoice id)
+ * and emails the receipt with the PDF attached. Owner-gated; org-scoped; hosted only.
  */
 export async function createCreditPackIntent(
 	packId: string,
@@ -915,22 +919,46 @@ export async function createCreditPackIntent(
 	if (!pack) throw new Error("Unknown credit pack.");
 
 	const customerId = await ensureCustomer(actor.orgId, actor.userId);
-	const intent = await getStripe().paymentIntents.create({
+	const stripe = getStripe();
+	// Metadata identifies the purchase on the invoice.payment_succeeded event.
+	const metadata = {
+		organization_id: actor.orgId,
+		user_id: actor.userId,
+		product_type: "ai_credits",
+		credits: String(pack.credits),
+	};
+
+	const description = `${pack.credits.toLocaleString("en-US")} AI credits`;
+	// Create the draft first (pin USD — the account's default currency is EUR), then
+	// attach the line item directly to it. In the current API version a manual invoice
+	// no longer auto-pulls pending items, so `invoice: draft.id` is required.
+	// auto_advance:false keeps the invoice `open` (no auto-charge even with a default
+	// card) so the customer always confirms via the embedded form.
+	const draft = await stripe.invoices.create({
 		customer: customerId,
+		currency: "usd",
+		collection_method: "charge_automatically",
+		auto_advance: false,
+		description,
+		metadata,
+	});
+	if (!draft.id) throw new Error("Stripe did not return an invoice id.");
+	await stripe.invoiceItems.create({
+		customer: customerId,
+		invoice: draft.id,
 		amount: pack.amountCents,
 		currency: "usd",
-		automatic_payment_methods: { enabled: true },
-		metadata: {
-			organization_id: actor.orgId,
-			user_id: actor.userId,
-			product_type: "ai_credits",
-			credits: String(pack.credits),
-		},
+		description,
+		metadata,
 	});
-	if (!intent.client_secret) {
-		throw new Error("Stripe did not return a payment client secret.");
+	const invoice = await stripe.invoices.finalizeInvoice(draft.id, {
+		expand: ["confirmation_secret"],
+	});
+	const clientSecret = invoice.confirmation_secret?.client_secret;
+	if (!clientSecret) {
+		throw new Error("Stripe did not return a payment client secret for the invoice.");
 	}
-	return { clientSecret: intent.client_secret, paymentIntentId: intent.id };
+	return { clientSecret, invoiceId: invoice.id ?? draft.id };
 }
 
 // ── Payment methods (embedded card management) ──────────────────────────────

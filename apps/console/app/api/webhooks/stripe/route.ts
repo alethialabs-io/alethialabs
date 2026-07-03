@@ -1,10 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Stripe webhook — the single write path that flips an org's entitlements. Verifies
-// the signature, then maps subscription lifecycle events onto the org's
-// organization_billing record (idempotent on organization_id). Entitlements resolve
-// fresh from that record on the next request (getActiveScope), so no cache to bust.
+// Stripe webhook — the single write path that flips an org's entitlements AND the
+// trigger for Alethia's branded billing emails (receipt / dunning / trial / cancel /
+// credit pack). Verifies the signature, then maps subscription lifecycle events onto
+// the org's organization_billing record (idempotent on organization_id). Entitlements
+// resolve fresh from that record on the next request (getActiveScope), so no cache to bust.
+//
+// Exactly-once: state upserts are idempotent, but emails are NOT — and Stripe retries /
+// duplicates deliveries. So every event is claimed in stripe_webhook_event first; an
+// already-`done` event is acknowledged (200) without re-running, so no double-sends.
 //
 // The org an event belongs to is carried as subscription.metadata.organization_id
 // (set by the checkout server action). Events without it are ignored (logged), so a
@@ -15,6 +20,113 @@ import { grantAiCredits } from "@/lib/billing/ai-quota";
 import { getStripeConfig, isStripeConfigured } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
+import {
+	claimWebhookEvent,
+	markWebhookEventDone,
+	markWebhookEventError,
+} from "@/lib/billing/webhook-events";
+import {
+	sendCreditPackReceiptEmail,
+	sendPaymentFailedEmail,
+	sendReceiptEmail,
+	sendSubscriptionCanceledEmail,
+	sendTrialEndingEmail,
+} from "@/lib/email/billing-email";
+
+/** Retrieves the subscription an invoice belongs to, or null (e.g. one-off invoices). */
+async function subForInvoice(
+	invoice: Stripe.Invoice,
+): Promise<Stripe.Subscription | null> {
+	const subRef = invoice.parent?.subscription_details?.subscription;
+	const subId = typeof subRef === "string" ? subRef : subRef?.id;
+	return subId ? await getStripe().subscriptions.retrieve(subId) : null;
+}
+
+/**
+ * Dispatches a single verified Stripe event: syncs billing state and sends the
+ * matching branded email. Email sends are wrapped so a mail failure logs but never
+ * fails the webhook — the state write has already committed and the event is marked
+ * done (Stripe should not retry just because an email hiccuped).
+ */
+async function handleEvent(event: Stripe.Event): Promise<void> {
+	switch (event.type) {
+		case "customer.subscription.created":
+		case "customer.subscription.updated":
+			await syncSubscriptionToBilling(event.data.object);
+			break;
+		case "customer.subscription.deleted": {
+			const sub = event.data.object;
+			await syncSubscriptionToBilling(sub);
+			await safeEmail("subscription canceled", () =>
+				sendSubscriptionCanceledEmail(sub),
+			);
+			break;
+		}
+		case "customer.subscription.trial_will_end":
+			await safeEmail("trial will end", () =>
+				sendTrialEndingEmail(event.data.object),
+			);
+			break;
+		case "checkout.session.completed": {
+			// First purchase: pull the full subscription, then apply.
+			const session = event.data.object;
+			if (typeof session.subscription === "string") {
+				await syncSubscriptionToBilling(
+					await getStripe().subscriptions.retrieve(session.subscription),
+				);
+			}
+			break;
+		}
+		case "invoice.payment_succeeded": {
+			const invoice = event.data.object;
+			// One-time AI credit-pack invoice → grant rollover credits (idempotent on the
+			// invoice id) + a branded receipt with the compliant invoice PDF attached.
+			if (invoice.metadata?.product_type === "ai_credits" && invoice.id) {
+				const orgId = invoice.metadata.organization_id;
+				const userId = invoice.metadata.user_id;
+				const credits = Number(invoice.metadata.credits ?? 0);
+				if (orgId && userId && credits > 0) {
+					await grantAiCredits({ orgId, userId, credits, stripeRef: invoice.id });
+					await safeEmail("credit pack receipt", () =>
+						sendCreditPackReceiptEmail(invoice),
+					);
+				}
+				break;
+			}
+			// Subscription renewal / first payment: re-sync (status active) + receipt w/ PDF.
+			const sub = await subForInvoice(invoice);
+			if (sub) {
+				await syncSubscriptionToBilling(sub);
+				await safeEmail("receipt", () => sendReceiptEmail(sub, invoice));
+			}
+			break;
+		}
+		case "invoice.payment_failed": {
+			// Dunning: re-sync (status past_due) + prompt to update the card.
+			const invoice = event.data.object;
+			const sub = await subForInvoice(invoice);
+			if (sub) {
+				await syncSubscriptionToBilling(sub);
+				await safeEmail("payment failed", () =>
+					sendPaymentFailedEmail(sub, invoice),
+				);
+			}
+			break;
+		}
+		default:
+			// Unhandled event types are acknowledged (200) so Stripe stops retrying.
+			break;
+	}
+}
+
+/** Runs an email send, swallowing (logging) failures so they never fail the webhook. */
+async function safeEmail(label: string, fn: () => Promise<void>): Promise<void> {
+	try {
+		await fn();
+	} catch (err) {
+		console.error(`[stripe] ${label} email failed:`, err);
+	}
+}
 
 export async function POST(req: Request): Promise<Response> {
 	if (!isStripeConfigured()) {
@@ -38,56 +150,21 @@ export async function POST(req: Request): Promise<Response> {
 		});
 	}
 
+	// Exactly-once claim: skip an already-processed delivery (no double emails).
+	const claim = await claimWebhookEvent(event.id, event.type);
+	if (!claim.claimed && claim.alreadyDone) {
+		return Response.json({ received: true, duplicate: true });
+	}
+
 	try {
-		switch (event.type) {
-			case "customer.subscription.created":
-			case "customer.subscription.updated":
-			case "customer.subscription.deleted":
-				await syncSubscriptionToBilling(event.data.object);
-				break;
-			case "checkout.session.completed": {
-				// First purchase: pull the full subscription, then apply.
-				const session = event.data.object;
-				if (typeof session.subscription === "string") {
-					const sub = await getStripe().subscriptions.retrieve(
-						session.subscription,
-					);
-					await syncSubscriptionToBilling(sub);
-				}
-				break;
-			}
-			case "invoice.payment_succeeded":
-			case "invoice.payment_failed": {
-				// Embedded first-payment / renewal / dunning: re-sync from the invoice's
-				// subscription so status (active / past_due) stays accurate.
-				const subRef = event.data.object.parent?.subscription_details?.subscription;
-				const subId = typeof subRef === "string" ? subRef : subRef?.id;
-				if (subId) {
-					await syncSubscriptionToBilling(await getStripe().subscriptions.retrieve(subId));
-				}
-				break;
-			}
-			case "payment_intent.succeeded": {
-				// One-time AI credit-pack purchase → grant rollover credits (idempotent).
-				const intent = event.data.object;
-				if (intent.metadata?.product_type === "ai_credits") {
-					const orgId = intent.metadata.organization_id;
-					const userId = intent.metadata.user_id;
-					const credits = Number(intent.metadata.credits ?? 0);
-					if (orgId && userId && credits > 0) {
-						await grantAiCredits({ orgId, userId, credits, stripeRef: intent.id });
-					}
-				}
-				break;
-			}
-			default:
-				// Unhandled event types are acknowledged (200) so Stripe stops retrying.
-				break;
-		}
+		await handleEvent(event);
 	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
 		console.error(`[stripe] handler error for ${event.type}:`, err);
+		await markWebhookEventError(event.id, message);
 		return new Response("handler error", { status: 500 });
 	}
 
+	await markWebhookEventDone(event.id);
 	return Response.json({ received: true });
 }

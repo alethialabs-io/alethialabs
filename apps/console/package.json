@@ -21,7 +21,7 @@
 		"db:migrate": "node scripts/migrate.mjs",
 		"db:reset": "node scripts/reset.mjs && node scripts/migrate.mjs",
 		"db:studio": "drizzle-kit studio",
-		"stripe:setup": "node scripts/stripe-setup.mjs",
+		"stripe:setup": "tsx scripts/stripe-setup.ts",
 		"org:set-plan": "node scripts/set-org-plan.mjs",
 		"test": "vitest run --coverage",
 		"test:watch": "vitest",
