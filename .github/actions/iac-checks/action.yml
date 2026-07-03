@@ -57,4 +57,7 @@ runs:
         # Skip the whole .terraform/ tree — `tofu init` pulls third-party modules
         # (and their bundled k8s/example manifests) there; we scan OUR templates only.
         TRIVY_SKIP_DIRS: "**/.terraform"
+        # Shared ignore file for reviewed, deliberately-accepted findings (IDs only match
+        # the resources they apply to, so it's safe to share across all template dirs).
+        TRIVY_IGNOREFILE: ${{ github.workspace }}/infra/.trivyignore
       run: trivy config .

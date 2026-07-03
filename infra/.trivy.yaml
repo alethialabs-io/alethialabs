@@ -22,5 +22,4 @@ misconfiguration:
     - AVD-AWS-0094 # S3 bucket should have block public policy
     - AVD-AWS-0132 # S3 bucket encryption (connector-assets serves public, non-secret files)
     # NB: the two azure key-vault/AKS network-restriction findings (AVD-AZU-0013/0041) are
-    # suppressed with inline `# trivy:ignore:` comments at the resources (see the azure module) —
-    # inline ignores are the mechanism trivy honors; this list is for provider-wide excludes.
+    # suppressed via infra/.trivyignore (TRIVY_IGNOREFILE) with justification — see that file.
