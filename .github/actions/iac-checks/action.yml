@@ -31,9 +31,13 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         TFLINT_CONFIG_FILE: ${{ github.workspace }}/infra/.tflint.hcl
+      # Gate on ERRORS only — the templates carry many style warnings (unused
+      # declarations, missing version constraints in sub-modules) that shouldn't
+      # fail CI. tflint exits 2 on any finding by default; --minimum-failure-severity
+      # limits the non-zero exit to real errors.
       run: |
         tflint --init
-        tflint --recursive --format compact
+        tflint --recursive --format compact --minimum-failure-severity=error
 
     # Install trivy explicitly + run it directly, instead of aquasecurity/trivy-action:
     # that action nests aquasecurity/setup-trivy@<sub-version>, and upstream deleted the
