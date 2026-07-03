@@ -20,6 +20,10 @@ regexes = [
   '''openfga-dev-secret''',
   '''-dev-secret''',
   '''-dev-password''',
+  # ASM_SECRET_ID is the AWS Secrets Manager secret PATH (alethia/prod/env), not a
+  # secret value — it's public config in the deploy/infra workflows. generic-api-key
+  # flags the `ASM_SECRET_ID: alethia/prod/env` assignment; allowlist the marker.
+  '''ASM_SECRET_ID''',
 ]
 paths = [
   '''(^|/).*_test\.go$''',
