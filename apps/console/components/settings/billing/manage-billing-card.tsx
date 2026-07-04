@@ -34,16 +34,17 @@ export function ManageBillingCard() {
 			<div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-surface p-5 shadow-sm">
 				<div>
 					<p className="text-[13px] font-medium text-text-primary">
-						Manage in the Stripe billing portal
+						Saved cards & billing address
 					</p>
 					<p className="mt-1 max-w-prose text-[12.5px] text-text-tertiary">
-						Update payment methods, your billing address, company VAT ID, and download
-						receipts — securely on Stripe.
+						Update your payment methods, billing address, and company VAT ID in
+						Stripe's secure, PCI-compliant portal. Your plan, invoices, and receipts
+						are managed right here in Alethia.
 					</p>
 				</div>
 				<Button onClick={() => void openPortal()} disabled={loading}>
 					<ExternalLink size={14} />
-					{loading ? "Opening…" : "Manage billing"}
+					{loading ? "Opening…" : "Manage payment methods"}
 				</Button>
 			</div>
 		</SettingsSection>

@@ -5,50 +5,26 @@
 // The Billing page — the authored claude.ai/design panel composed from the shared
 // settings primitives (shadcn + Tailwind tokens; no CSS module): page header, a
 // current-plan card with usage meters, payment methods + billing details (two-column),
-// plan-history timeline, transaction history, and invoices. Fully embedded (no Stripe
-// redirect): change/subscribe runs through PlanPicker → the embedded <PaymentForm>;
+// plan-history timeline, transaction history, and invoices. A Hobby→Pro upgrade opens the
+// shared in-place UpgradeOrgSheet (via useUpgradeSheet) rather than an inline plan dialog;
 // cancel/resume + saved cards + invoices are all in-app.
 
 import { Info } from "lucide-react";
-import {
-	type ReactNode,
-	useCallback,
-	useEffect,
-	useState,
-	useTransition,
-} from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
 	type BillingSummary,
 	cancelSubscription,
-	changeSubscriptionPlan,
-	createSubscriptionIntent,
 	getBillingSummary,
 	resumeSubscription,
-	saveTaxId,
-	updateBillingAddress,
 } from "@/app/server/actions/billing";
-import { updateOrgPrimaryAddress } from "@/app/server/actions/org-settings";
-import {
-	billingAddressFrom,
-	BillingCheckoutForm,
-	type CollectedBilling,
-} from "@/components/billing/billing-checkout-form";
-import { PlanPicker } from "@/components/billing/plan-picker";
-import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
+import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
-import {
-	Dialog,
-	DialogContent,
-	DialogHeader,
-	DialogTitle,
-} from "@repo/ui/dialog";
 import { Skeleton } from "@repo/ui/skeleton";
 import { planMeta } from "@repo/plan-catalog";
-import type { BillingPlan } from "@/lib/db/schema/enums";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { InvoicesTable } from "./invoices-table";
 import { ManageBillingCard } from "./manage-billing-card";
@@ -77,14 +53,9 @@ export function BillingPanel() {
 
 	const [summary, setSummary] = useState<BillingSummary | null>(null);
 	const [pending, startTransition] = useTransition();
-	const [pendingPlan, setPendingPlan] = useState<BillingPlan | null>(null);
 	const [createOpen, setCreateOpen] = useState(false);
-	const [changeOpen, setChangeOpen] = useState(false);
-
-	// Embedded subscribe dialog (for an org with no live subscription).
-	const [payOpen, setPayOpen] = useState(false);
-	const [paySecret, setPaySecret] = useState<string | null>(null);
-	const [payPlan, setPayPlan] = useState<BillingPlan | null>(null);
+	// Hobby → Pro upgrades open the shared in-place upgrade sheet (no inline plan dialog).
+	const { openUpgrade } = useUpgradeSheet();
 
 	const refresh = useCallback(() => {
 		getBillingSummary()
@@ -97,54 +68,6 @@ export function BillingPanel() {
 	}, [refresh]);
 
 	const liveSub = summary?.status === "active" || summary?.status === "trialing";
-
-	/** Change plan (live sub) or open the embedded subscribe dialog (no sub). */
-	function handleSelectPlan(plan: BillingPlan) {
-		if (plan === "community" || !summary) return;
-		setPendingPlan(plan);
-		startTransition(async () => {
-			try {
-				if (liveSub) {
-					await changeSubscriptionPlan(plan);
-					toast.success("Plan updated.");
-					setChangeOpen(false);
-					refresh();
-				} else {
-					const intent = await createSubscriptionIntent(plan);
-					setPaySecret(intent.clientSecret);
-					setPayPlan(plan);
-					setChangeOpen(false);
-					setPayOpen(true);
-				}
-			} catch (e) {
-				toast.error(e instanceof Error ? e.message : "Something went wrong.");
-			} finally {
-				setPendingPlan(null);
-			}
-		});
-	}
-
-	function onSubscribed() {
-		setPayOpen(false);
-		setPaySecret(null);
-		toast.success("Subscription active.");
-		refresh();
-	}
-
-	/** Persist the checkout's billing details on the active org's customer, then close. */
-	async function onCheckoutPaid(billing: CollectedBilling) {
-		try {
-			await updateBillingAddress(billingAddressFrom(billing)).catch(() => {});
-			if (billing.taxValue.trim()) {
-				await saveTaxId(billing.taxType, billing.taxValue).catch(() => {});
-			}
-			if (billing.useAsPrimary) {
-				await updateOrgPrimaryAddress(billingAddressFrom(billing)).catch(() => {});
-			}
-		} finally {
-			onSubscribed();
-		}
-	}
 
 	function toggleCancel() {
 		startTransition(async () => {
@@ -291,7 +214,7 @@ export function BillingPanel() {
 							Your cloud-resource spend is billed separately by your provider.
 						</div>
 						<div className="flex gap-2.5">
-							{liveSub && (
+							{liveSub ? (
 								<Button
 									variant="ghost"
 									size="sm"
@@ -300,14 +223,11 @@ export function BillingPanel() {
 								>
 									{summary.cancelAtPeriodEnd ? "Resume plan" : "Cancel plan"}
 								</Button>
+							) : (
+								<Button size="sm" onClick={openUpgrade}>
+									Upgrade to Pro
+								</Button>
 							)}
-							<Button
-								size="sm"
-								disabled={pending}
-								onClick={() => setChangeOpen(true)}
-							>
-								{liveSub ? "Change plan" : "Choose a plan"}
-							</Button>
 						</div>
 					</div>
 				</div>
@@ -327,43 +247,6 @@ export function BillingPanel() {
 				</>
 			)}
 
-			{/* change / subscribe plan dialog */}
-			<Dialog open={changeOpen} onOpenChange={setChangeOpen}>
-				<DialogContent className="sm:max-w-2xl">
-					<DialogHeader>
-						<DialogTitle>{liveSub ? "Change plan" : "Choose a plan"}</DialogTitle>
-					</DialogHeader>
-					<PlanPicker
-						currentPlan={summary.plan}
-						paidOnly
-						pendingPlan={pendingPlan}
-						disabled={pending}
-						ctaLabel={liveSub ? "Switch" : "Subscribe"}
-						onSelect={handleSelectPlan}
-					/>
-				</DialogContent>
-			</Dialog>
-
-			{/* embedded subscribe dialog */}
-			<Dialog open={payOpen} onOpenChange={setPayOpen}>
-				<DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-lg">
-					<DialogHeader>
-						<DialogTitle>
-							Subscribe to {payPlan ? planMeta(payPlan).name : ""}
-						</DialogTitle>
-					</DialogHeader>
-					{paySecret && payPlan && (
-						<StripeElementsProvider clientSecret={paySecret}>
-							<BillingCheckoutForm
-								clientSecret={paySecret}
-								meta={planMeta(payPlan)}
-								submitLabel="Subscribe"
-								onPaid={onCheckoutPaid}
-							/>
-						</StripeElementsProvider>
-					)}
-				</DialogContent>
-			</Dialog>
 		</div>
 	);
 }

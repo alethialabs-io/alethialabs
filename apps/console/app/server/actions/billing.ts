@@ -512,6 +512,16 @@ export async function createSubscriptionIntent(
 			"This organization already has an active subscription — change the plan instead.",
 		);
 	}
+	// A non-live leftover (incomplete/none/past_due/canceled) would otherwise pile up as a
+	// duplicate every time the upgrade sheet is opened. Void it before minting a fresh
+	// intent (best-effort — Stripe may already have expired it).
+	if (existing?.stripeSubscriptionId) {
+		try {
+			await getStripe().subscriptions.cancel(existing.stripeSubscriptionId);
+		} catch {
+			// already canceled/expired on Stripe's side — ignore.
+		}
+	}
 
 	const customerId = await ensureCustomer(
 		actor.orgId,
