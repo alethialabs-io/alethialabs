@@ -82,7 +82,11 @@ function reachLabel(resourceType: string): string {
 	}
 }
 
-export function AccessManager() {
+/**
+ * The Access surface. When `projectId` is given the grants list, stats, and grant builder are scoped
+ * to that single project (project-scoped Settings › Access); without it, the full org grants render.
+ */
+export function AccessManager({ projectId }: { projectId?: string } = {}) {
 	const entitled = useEntitlement("customRoles");
 	const [grants, setGrants] = useState<AccessGrantRow[] | null>(null);
 	const [options, setOptions] = useState<GrantOptions | null>(null);
@@ -92,13 +96,13 @@ export function AccessManager() {
 	const [deleting, setDeleting] = useState<AccessGrantRow | null>(null);
 
 	const load = useCallback(() => {
-		listAccessGrants()
+		listAccessGrants(projectId)
 			.then(setGrants)
 			.catch(() => setGrants([]));
 		getGrantOptions()
 			.then(setOptions)
 			.catch(() => setOptions(null));
-	}, []);
+	}, [projectId]);
 	useEffect(() => {
 		// Custom-scoped grants are Enterprise. Without the entitlement the server would
 		// reject the queries (requireAccessAdmin), so skip the load and show the upsell.
@@ -280,9 +284,19 @@ export function AccessManager() {
 			<div className="mb-[18px] flex gap-3 rounded-lg border border-border bg-surface-sunken p-4">
 				<Info size={16} className="mt-0.5 shrink-0 text-text-tertiary" />
 				<p className="text-[12.5px] leading-relaxed text-text-secondary">
-					<b className="font-medium text-text-primary">Org → Project inheritance.</b>{" "}
-					A grant on the org applies everywhere; a grant on a single Project is exact.
-					Lower scopes can add access, never remove it.
+					{projectId ? (
+						<>
+							<b className="font-medium text-text-primary">Grants on this Project.</b>{" "}
+							These bind a principal to a role or permission on this Project alone.
+							Org-wide grants also apply here but are managed in organization settings.
+						</>
+					) : (
+						<>
+							<b className="font-medium text-text-primary">Org → Project inheritance.</b>{" "}
+							A grant on the org applies everywhere; a grant on a single Project is exact.
+							Lower scopes can add access, never remove it.
+						</>
+					)}
 				</p>
 			</div>
 
@@ -297,7 +311,15 @@ export function AccessManager() {
 				<>
 					<StatStrip>
 						<StatCell label="Grants" value={stats.total} sub="active" />
-						<StatCell label="Org-wide" value={stats.org} sub="grants" />
+						{projectId ? (
+							<StatCell
+								label="Principals"
+								value={new Set(all.map((g) => g.principalId)).size}
+								sub="with access"
+							/>
+						) : (
+							<StatCell label="Org-wide" value={stats.org} sub="grants" />
+						)}
 						<StatCell label="Project-scoped" value={stats.project} sub="grants" />
 					</StatStrip>
 
@@ -310,17 +332,20 @@ export function AccessManager() {
 								placeholder="Search principal or scope"
 								className="w-[230px]"
 							/>
-							<SettingsSelect
-								aria-label="Filter by scope"
-								className="w-[150px]"
-								value={scopeFilter}
-								onChange={setScopeFilter}
-								options={[
-									{ value: "all", label: "All scopes" },
-									{ value: "org", label: "Org-wide" },
-									{ value: "project", label: "Project" },
-								]}
-							/>
+							{/* Scope filter is meaningless when the list is already scoped to one project. */}
+							{!projectId && (
+								<SettingsSelect
+									aria-label="Filter by scope"
+									className="w-[150px]"
+									value={scopeFilter}
+									onChange={setScopeFilter}
+									options={[
+										{ value: "all", label: "All scopes" },
+										{ value: "org", label: "Org-wide" },
+										{ value: "project", label: "Project" },
+									]}
+								/>
+							)}
 						</div>
 						<Button size="sm" onClick={() => setCreating((v) => !v)}>
 							<Plus size={13} />
@@ -333,6 +358,7 @@ export function AccessManager() {
 						<GrantBuilder
 							options={options}
 							resourceLabel={resourceLabel}
+							projectId={projectId}
 							onCancel={() => setCreating(false)}
 							onGranted={() => {
 								setCreating(false);
@@ -372,15 +398,18 @@ export function AccessManager() {
 	);
 }
 
-/** The inline grant builder — principal · effect · role/permission · scope + live preview. */
+/** The inline grant builder — principal · effect · role/permission · scope + live preview. When
+ * `projectId` is set the scope is fixed to that project (the picker is hidden). */
 function GrantBuilder({
 	options,
 	resourceLabel,
+	projectId,
 	onCancel,
 	onGranted,
 }: {
 	options: GrantOptions;
 	resourceLabel: (type: string, id: string | null) => string;
+	projectId?: string;
 	onCancel: () => void;
 	onGranted: () => void;
 }) {
@@ -389,8 +418,8 @@ function GrantBuilder({
 	const [mode, setMode] = useState<"role" | "permission">("role");
 	const [roleId, setRoleId] = useState("");
 	const [permissionKey, setPermissionKey] = useState("");
-	const [scopeType, setScopeType] = useState("org");
-	const [resourceId, setResourceId] = useState("");
+	const [scopeType, setScopeType] = useState(projectId ? "project" : "org");
+	const [resourceId, setResourceId] = useState(projectId ?? "");
 	const [saving, setSaving] = useState(false);
 
 	const principalOpts = options.principals.map((p) => ({
@@ -511,24 +540,33 @@ function GrantBuilder({
 				</div>
 				<div>
 					<div className="mb-1.5 text-[11.5px] text-text-tertiary">Scope</div>
-					<SettingsSelect
-						aria-label="Scope"
-						value={scopeType}
-						onChange={(v) => {
-							setScopeType(v);
-							setResourceId("");
-						}}
-						options={SCOPE_OPTIONS}
-					/>
-					{scopeType !== "org" && (
-						<div className="mt-2">
-							<Combobox
-								options={resourceOpts}
-								value={resourceId}
-								onChange={setResourceId}
-								placeholder="Select a resource…"
-							/>
+					{projectId ? (
+						// Fixed to this project — the list is already project-scoped.
+						<div className="flex h-9 items-center rounded-md border border-border bg-surface-sunken px-3 text-[12.5px] text-text-secondary">
+							{resourceLabel("project", projectId)}
 						</div>
+					) : (
+						<>
+							<SettingsSelect
+								aria-label="Scope"
+								value={scopeType}
+								onChange={(v) => {
+									setScopeType(v);
+									setResourceId("");
+								}}
+								options={SCOPE_OPTIONS}
+							/>
+							{scopeType !== "org" && (
+								<div className="mt-2">
+									<Combobox
+										options={resourceOpts}
+										value={resourceId}
+										onChange={setResourceId}
+										placeholder="Select a resource…"
+									/>
+								</div>
+							)}
+						</>
 					)}
 				</div>
 			</div>

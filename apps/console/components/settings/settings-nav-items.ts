@@ -34,15 +34,17 @@ export interface SettingsNavItem {
 // plan-gated surfaces (Teams, Roles, Access, SSO) render their own in-page upsell when
 // locked rather than hiding behind a wall, so the nav carries no lock state. Usage moved
 // out to a top-level route; Activity (the former Audit Log) is available on every plan.
-// Project scope currently exposes only Activity (this project's events); General/Access/
-// Members gain "project" as those project-scoped surfaces land.
+// Project scope exposes the project-scopable surfaces — General (rename/delete this project),
+// Access (grants on this project), and Activity (this project's events); org-wide concerns
+// (Billing/Members/Teams/Roles/SSO) stay org-only. The project order follows this list: General ·
+// Access · Activity.
 export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
-	{ label: "General", sub: "general", icon: Settings2, scopes: ["org"] },
+	{ label: "General", sub: "general", icon: Settings2, scopes: ["org", "project"] },
 	{ label: "Billing", sub: "billing", icon: CreditCard, scopes: ["org"] },
 	{ label: "Members", sub: "members", icon: Users, scopes: ["org"] },
 	{ label: "Teams", sub: "teams", icon: UsersRound, scopes: ["org"] },
 	{ label: "Roles", sub: "roles", icon: ShieldCheck, scopes: ["org"] },
-	{ label: "Access", sub: "access", icon: Network, scopes: ["org"] },
+	{ label: "Access", sub: "access", icon: Network, scopes: ["org", "project"] },
 	{ label: "Single Sign-On", sub: "sso", icon: KeyRound, scopes: ["org"] },
 	{ label: "Activity", sub: "activity", icon: ScrollText, scopes: ["org", "project"] },
 ];
