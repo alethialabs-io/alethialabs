@@ -28,7 +28,11 @@ env:
 
 jobs:
   build:
-    # Native arm64 — the box is Hetzner CAX (Ampere) and the runner image is arm64.
+    # Runs on an arm64 host so the per-cloud runner images (heavy: cloud CLIs) build
+    # NATIVELY for the ARM fleet; the light Next.js box images cross-build amd64 under
+    # QEMU. The control-plane box is Hetzner CX (x86) → its images are linux/amd64; the
+    # fleet VMs are Hetzner CAX (arm64) → runner images are linux/arm64. `runner` is
+    # multi-arch because it runs on BOTH (co-located on the box + on the fleet).
     runs-on: ubuntu-24.04-arm
     strategy:
       matrix:
@@ -36,36 +40,52 @@ jobs:
           - image: console
             file: apps/console/Dockerfile
             target: runner
+            platforms: linux/amd64
           - image: console-migrate
             file: apps/console/Dockerfile
             target: migrate
+            platforms: linux/amd64
           - image: docs
             file: apps/docs/Dockerfile
             target: ""
+            platforms: linux/amd64
           - image: blog
             file: apps/blog/Dockerfile
             target: ""
+            platforms: linux/amd64
           # Marketing public site — hosted alethialabs.io serves this image behind the
           # Cloudflare Tunnel (the tunnel overlay turns the marketing zone on).
           - image: marketing
             file: apps/marketing/Dockerfile
             target: ""
+            platforms: linux/amd64
+          # Multi-arch: the box runs a co-located runner (amd64) AND the ARM fleet pulls
+          # this same tag (arm64).
           - image: runner
             file: apps/runner/Dockerfile
             target: ""
+            platforms: linux/amd64,linux/arm64
           # Lean per-cloud runner images (per-cloud routing). Same artifacts, one
           # cloud's CLI + cache each. Shared leading layers dedup against `runner`.
+          # Fleet-only (arm64) — never pulled by the x86 box.
           - image: runner-aws
             file: apps/runner/Dockerfile.aws
             target: ""
+            platforms: linux/arm64
           - image: runner-gcp
             file: apps/runner/Dockerfile.gcp
             target: ""
+            platforms: linux/arm64
           - image: runner-azure
             file: apps/runner/Dockerfile.azure
             target: ""
+            platforms: linux/arm64
     steps:
       - uses: actions/checkout@v4
+
+      # QEMU lets this arm64 host cross-build the linux/amd64 box images (and the
+      # amd64 half of the multi-arch runner tag).
+      - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
@@ -82,7 +102,7 @@ jobs:
           context: .
           file: ${{ matrix.file }}
           target: ${{ matrix.target }}
-          platforms: linux/arm64
+          platforms: ${{ matrix.platforms }}
           push: true
           build-args: |
             VERSION=${{ github.sha }}
