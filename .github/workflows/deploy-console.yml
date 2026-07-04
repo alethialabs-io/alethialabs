@@ -264,6 +264,13 @@ jobs:
             emit GITHUB_CLIENT_SECRET
             emit GOOGLE_CLIENT_ID
             emit GOOGLE_CLIENT_SECRET
+            # GitLab + Bitbucket go through the genericOAuth plugin; without these the
+            # plugin isn't mounted and /api/auth/sign-in/oauth2 404s. Names match what
+            # lib/config/auth.ts reads (GitLab = APPLICATION_ID, Bitbucket = KEY).
+            emit GITLAB_APPLICATION_ID
+            emit GITLAB_SECRET
+            emit BITBUCKET_KEY
+            emit BITBUCKET_SECRET
             emit STRIPE_SECRET_KEY
             emit STRIPE_WEBHOOK_SECRET
             emit NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
