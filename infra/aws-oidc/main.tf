@@ -20,7 +20,15 @@ locals {
   oidc_provider_arn = var.oidc_provider_arn != "" ? var.oidc_provider_arn : data.aws_iam_openid_connect_provider.github.arn
 
   # Only Actions runs on the apply branch (never PRs, never forks) may assume a role.
-  oidc_sub = "repo:${var.github_repo}:ref:refs/heads/${var.github_branch}"
+  # A job that sets `environment: <env>` gets sub `...:environment:<env>`; a plain job
+  # on the apply branch gets `...:ref:refs/heads/<branch>`. Trust BOTH forms (a
+  # StringEquals value-list is an OR) so the same role works whether or not the job
+  # pins an environment. The environment is branch-restricted to the apply branch (GitHub
+  # deployment-branch policy), so the environment sub can't be minted off another branch.
+  oidc_subs = [
+    "repo:${var.github_repo}:ref:refs/heads/${var.github_branch}",
+    "repo:${var.github_repo}:environment:${var.github_environment}",
+  ]
 }
 
 data "aws_caller_identity" "current" {}
@@ -49,7 +57,7 @@ data "aws_iam_policy_document" "deployer_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = [local.oidc_sub]
+      values   = local.oidc_subs
     }
   }
 

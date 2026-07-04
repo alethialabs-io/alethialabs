@@ -64,6 +64,12 @@ variable "github_branch" {
   default     = "main"
 }
 
+variable "github_environment" {
+  description = "GitHub Actions environment whose jobs may assume the deploy role. The apply job sets `environment: <this>`, which yields an `...:environment:<this>` OIDC sub the trust also allows. Keep the environment branch-restricted to github_branch."
+  type        = string
+  default     = "production"
+}
+
 variable "admin_principal_arns" {
   description = "Extra IAM principals allowed to assume the deploy role (e.g. an admin user/role for local import/apply). Empty = OIDC only."
   type        = list(string)

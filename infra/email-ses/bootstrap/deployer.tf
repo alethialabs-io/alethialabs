@@ -23,7 +23,12 @@ data "aws_iam_policy_document" "deployer_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:ref:refs/heads/${var.github_branch}"]
+      # Trust both the branch ref sub and the environment sub (the apply job sets
+      # `environment: <github_environment>`). StringEquals value-list = OR.
+      values = [
+        "repo:${var.github_repo}:ref:refs/heads/${var.github_branch}",
+        "repo:${var.github_repo}:environment:${var.github_environment}",
+      ]
     }
   }
 
