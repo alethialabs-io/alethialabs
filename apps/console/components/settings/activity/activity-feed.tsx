@@ -49,7 +49,7 @@ export function ActivityFeed({
 
 	if (rows.length === 0) {
 		return (
-			<div className="rounded-lg border border-dashed border-border bg-surface-sunken px-6 py-16 text-center">
+			<div className="rounded-lg bg-surface-sunken px-6 py-16 text-center">
 				<ScrollText className="mx-auto mb-3 size-5 text-text-tertiary" />
 				<p className="text-[13px] text-text-tertiary">
 					No activity matches these filters.

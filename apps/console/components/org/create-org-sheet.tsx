@@ -352,7 +352,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			<SheetContent
 				side="right"
 				showCloseButton={false}
-				className="w-[92vw] gap-0 overflow-y-auto p-0 sm:max-w-3xl"
+				className="w-[92vw] gap-0 overflow-hidden p-0 sm:max-w-3xl"
 			>
 				<SheetTitle className="sr-only">Create a team</SheetTitle>
 				<SheetDescription className="sr-only">
@@ -392,14 +392,14 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 							/>
 						) : (
 							clientSecret && (
-								<div className="space-y-4">
+								<div className="flex min-h-0 flex-1 flex-col gap-4">
 									<button
 										type="button"
 										onClick={() => {
 											setView("name");
 											setClientSecret(null);
 										}}
-										className="text-[12.5px] text-text-tertiary transition-colors hover:text-text-primary"
+										className="shrink-0 text-left text-[12.5px] text-text-tertiary transition-colors hover:text-text-primary"
 									>
 										← Back
 									</button>
@@ -410,6 +410,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 											unitAmountUsd={teamPrice.unitAmountUsd}
 											ownerEmail={ownerEmail}
 											submitLabel="Create"
+											scrollable
 											onPaid={(b) => handlePaid(b)}
 										/>
 									</StripeElementsProvider>
