@@ -56,14 +56,14 @@ variable "ssh_public_key" {
 }
 
 variable "server_type" {
-  # CX32 = Intel x86 (4 vCPU / 8 GB) — the box images build linux/amd64 to match.
+  # CX33 = Intel x86 (4 vCPU / 8 GB) — the box images build linux/amd64 to match.
   # We moved off CAX (Ampere ARM64) because Hetzner ARM capacity in fsn1 is chronically
-  # out (resource_unavailable); x86 is abundant and ~EUR 0.40/mo more. Enough headroom
-  # to run the compose bundle plus an OpenTofu job; bump to cx42 if it gets busy.
-  # (The runner FLEET stays ARM/CAX — its images are still built arm64.)
+  # out (resource_unavailable); the Intel CX line is abundant. Enough headroom to run
+  # the compose bundle plus an OpenTofu job; bump to cx43 if it gets busy. (The runner
+  # FLEET stays ARM/CAX — its images are still built arm64.)
   description = "Hetzner server type."
   type        = string
-  default     = "cx32"
+  default     = "cx33"
 }
 
 variable "location" {
