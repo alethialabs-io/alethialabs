@@ -33,6 +33,12 @@ variable "github_branch" {
   default     = "main"
 }
 
+variable "github_environment" {
+  description = "GitHub Actions environment whose jobs may assume the deploy roles. A job that sets `environment: <this>` gets an `...:environment:<this>` OIDC sub, which the trust also allows. Keep the environment branch-restricted to github_branch."
+  type        = string
+  default     = "production"
+}
+
 variable "oidc_provider_arn" {
   description = "ARN of the existing GitHub OIDC provider. Empty = look it up by URL (it already exists from infra/email-ses/bootstrap)."
   type        = string
