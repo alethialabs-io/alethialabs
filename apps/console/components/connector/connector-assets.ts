@@ -28,7 +28,7 @@ export function connectorAssetUrl(file: string): string {
  * account via `NEXT_PUBLIC_ALETHIA_AWS_ACCOUNT_ID`.
  */
 export const ALETHIA_AWS_ACCOUNT_ID =
-	process.env.NEXT_PUBLIC_ALETHIA_AWS_ACCOUNT_ID ?? "787587782604";
+	process.env.NEXT_PUBLIC_ALETHIA_AWS_ACCOUNT_ID ?? "270587882865";
 
 /** Docs base for the connectors guides (per-cloud Terraform/CLI walk-throughs). */
 export const CONNECTOR_DOCS_BASE = "/docs/console/connectors";

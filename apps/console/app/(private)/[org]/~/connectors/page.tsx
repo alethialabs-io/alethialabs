@@ -17,8 +17,15 @@ export default async function ConnectorsRoute({
 }) {
 	const { org: orgSlug } = await params;
 
-	const { canManage, integrations, awsSetup, gcpSetup, azureSetup, extraSetup } =
-		await getCloudConnectSetup();
+	const {
+		canManage,
+		integrations,
+		awsSetup,
+		gcpSetup,
+		azureSetup,
+		extraSetup,
+		platformConfigured,
+	} = await getCloudConnectSetup();
 
 	return (
 		<ConnectorsPage
@@ -29,6 +36,7 @@ export default async function ConnectorsRoute({
 			gcpSetup={gcpSetup}
 			azureSetup={azureSetup}
 			extraSetup={extraSetup}
+			platformConfigured={platformConfigured}
 		/>
 	);
 }

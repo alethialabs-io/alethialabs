@@ -34,6 +34,39 @@ export interface CloudConnectSetup {
 	gcpSetup: { identityId: string } | null;
 	azureSetup: { identityId: string } | null;
 	extraSetup: Record<string, { identityId: string; externalId?: string }>;
+	/**
+	 * Whether THIS instance has the platform credentials a provider's server-side health
+	 * probe needs (keyed by connector slug). Managed clouds (aws/gcp/azure/alibaba) assume
+	 * the customer's role using Alethia's platform identity — without those creds a connect
+	 * can only ever fail, so the UI says "not enabled on this instance" up-front instead of
+	 * a generic failure. Token clouds (hetzner/digitalocean/civo) need none → always true.
+	 */
+	platformConfigured: Record<string, boolean>;
+}
+
+/** Per-provider platform-credential presence — mirrors what each session/health probe reads. */
+function computePlatformConfigured(): Record<string, boolean> {
+	const has = (...keys: string[]) => keys.every((k) => !!process.env[k]);
+	return {
+		aws: has("ALETHIA_AWS_ACCESS_KEY_ID", "ALETHIA_AWS_SECRET_ACCESS_KEY"),
+		azure: has(
+			"ALETHIA_AZURE_TENANT_ID",
+			"ALETHIA_AZURE_CLIENT_ID",
+			"ALETHIA_AZURE_CLIENT_SECRET",
+		),
+		alibaba: has(
+			"ALETHIA_ALIBABA_ACCESS_KEY_ID",
+			"ALETHIA_ALIBABA_ACCESS_KEY_SECRET",
+		),
+		// GCP federates via Alethia's own workload-identity OIDC source (a hosted-env
+		// setup, not a simple secret). Gate on an explicit marker so it reads "not enabled"
+		// until that's wired.
+		gcp: has("ALETHIA_GCP_WORKLOAD_IDENTITY_PROVIDER"),
+		// Token clouds need no platform credentials — the customer's own API token is used.
+		hetzner: true,
+		digitalocean: true,
+		civo: true,
+	};
 }
 
 /** Whether the actor may add/edit connections (clouds + api_key connectors). */
@@ -122,5 +155,13 @@ export async function getCloudConnectSetup(): Promise<CloudConnectSetup> {
 		);
 	}
 
-	return { canManage, integrations, awsSetup, gcpSetup, azureSetup, extraSetup };
+	return {
+		canManage,
+		integrations,
+		awsSetup,
+		gcpSetup,
+		azureSetup,
+		extraSetup,
+		platformConfigured: computePlatformConfigured(),
+	};
 }
