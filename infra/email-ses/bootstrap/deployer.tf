@@ -71,6 +71,7 @@ data "aws_iam_policy_document" "deployer_permissions" {
       "ses:CreateEmailIdentity",
       "ses:DeleteEmailIdentity",
       "ses:GetEmailIdentity",
+      "ses:ListTagsForResource",
       "ses:TagResource",
       "ses:UntagResource",
       "ses:PutEmailIdentityMailFromAttributes",
