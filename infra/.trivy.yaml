@@ -3,7 +3,7 @@
 #
 # Shared Trivy config for infra/ misconfiguration scanning (referenced by
 # .github/actions/iac-checks). Trivy absorbed tfsec; `scan-type: config` runs its
-# Terraform misconfiguration checks. Intentional design choices are excluded below.
+# Terraform misconfiguration checks.
 
 misconfiguration:
   # Scan OUR template code only, not the internals of downloaded third-party modules
@@ -11,15 +11,7 @@ misconfiguration:
   # upstream, and `tofu init` (run for `tofu validate`) pulls them into .terraform/.
   terraform:
     exclude-downloaded-modules: true
-  # IDs of checks that flag deliberate, reviewed design decisions.
-  exclude:
-    # The connector-assets bucket is intentionally public-read (serves the CloudFormation
-    # template + Cloud Shell setup scripts; AWS CFN quick-create requires an S3-hosted URL).
-    - AVD-AWS-0086 # No public access block so not blocking public policies
-    - AVD-AWS-0087 # S3 bucket does not block public ACLs
-    - AVD-AWS-0091 # S3 access block should block public policy
-    - AVD-AWS-0093 # S3 access block should restrict public bucket
-    - AVD-AWS-0094 # S3 bucket should have block public policy
-    - AVD-AWS-0132 # S3 bucket encryption (connector-assets serves public, non-secret files)
-    # NB: the two azure key-vault/AKS network-restriction findings (AVD-AZU-0013/0041) are
-    # suppressed via infra/.trivyignore (TRIVY_IGNOREFILE) with justification — see that file.
+
+# Suppressions for deliberate, reviewed design decisions live in infra/.trivyignore
+# (TRIVY_IGNOREFILE) — the mechanism trivy actually honors. A `misconfiguration.exclude:`
+# list here is silently ignored by trivy, so keep all accepted findings in .trivyignore.

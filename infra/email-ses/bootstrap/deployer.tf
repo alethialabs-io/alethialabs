@@ -127,6 +127,45 @@ data "aws_iam_policy_document" "deployer_permissions" {
     resources = ["arn:aws:cloudwatch:${local.region}:${local.account_id}:alarm:alethia-ses-*"]
   }
 
+  # KMS — the customer-managed key that encrypts the SNS topics (email-ses/kms.tf).
+  # CreateKey + ListAliases have no resource scope; alias ops need both the alias and its
+  # target key; key management is scoped to keys in this account/region.
+  statement {
+    sid       = "KMSCreate"
+    effect    = "Allow"
+    actions   = ["kms:CreateKey", "kms:ListAliases"]
+    resources = ["*"]
+  }
+  statement {
+    sid    = "KMSAlias"
+    effect = "Allow"
+    actions = [
+      "kms:CreateAlias",
+      "kms:DeleteAlias",
+      "kms:UpdateAlias",
+    ]
+    resources = [
+      "arn:aws:kms:${local.region}:${local.account_id}:alias/alethia-ses-*",
+      "arn:aws:kms:${local.region}:${local.account_id}:key/*",
+    ]
+  }
+  statement {
+    sid    = "KMSManageKey"
+    effect = "Allow"
+    actions = [
+      "kms:DescribeKey",
+      "kms:GetKeyPolicy",
+      "kms:PutKeyPolicy",
+      "kms:ScheduleKeyDeletion",
+      "kms:EnableKeyRotation",
+      "kms:GetKeyRotationStatus",
+      "kms:TagResource",
+      "kms:UntagResource",
+      "kms:ListResourceTags",
+    ]
+    resources = ["arn:aws:kms:${local.region}:${local.account_id}:key/*"]
+  }
+
   # verify.sh captures events through a throwaway queue.
   statement {
     sid    = "VerifyCaptureQueue"
