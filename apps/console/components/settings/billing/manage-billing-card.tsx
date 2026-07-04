@@ -37,8 +37,8 @@ export function ManageBillingCard() {
 						Saved cards & billing address
 					</p>
 					<p className="mt-1 max-w-prose text-[12.5px] text-text-tertiary">
-						Update your payment methods, billing address, and company VAT ID in
-						Stripe's secure, PCI-compliant portal. Your plan, invoices, and receipts
+						Update your payment methods, billing address, and company VAT ID in the
+						secure, PCI-compliant Stripe portal. Your plan, invoices, and receipts
 						are managed right here in Alethia.
 					</p>
 				</div>
