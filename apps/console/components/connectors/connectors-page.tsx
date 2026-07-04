@@ -78,6 +78,8 @@ interface ConnectorsPageProps {
 	gcpSetup: { identityId: string } | null;
 	azureSetup: { identityId: string } | null;
 	extraSetup?: Record<string, { identityId: string; externalId?: string }>;
+	/** Per-slug: does this instance have the platform creds the cloud's probe needs. */
+	platformConfigured?: Record<string, boolean>;
 }
 
 type GroupFilter = "all" | ConnectorGroup;
@@ -131,6 +133,7 @@ export function ConnectorsPage({
 	gcpSetup: gcpSetupProp,
 	azureSetup: azureSetupProp,
 	extraSetup: extraSetupProp,
+	platformConfigured,
 }: ConnectorsPageProps) {
 	const router = useRouter();
 	// Passive refresh: pick up sweep-driven connection-status changes (connected → degraded/disconnected,
@@ -414,6 +417,9 @@ export function ConnectorsPage({
 											key={integration.id}
 											integration={integration}
 											canManage={canManage}
+											platformConfigured={
+												platformConfigured?.[integration.slug] ?? true
+											}
 											isConnecting={
 													connectingSlug === integration.slug ||
 													cloudConnect.connectingSlug === integration.slug
