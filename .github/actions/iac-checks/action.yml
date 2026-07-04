@@ -21,10 +21,20 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       run: tofu fmt -check -recursive
 
+    # Install tflint directly (pinned) instead of terraform-linters/setup-tflint@v4:
+    # the current v4 tag rejects its OWN default `path` input ("must be a literal path…
+    # $HOME/~ not expanded"), failing every infra plan job before tflint even runs. Same
+    # class of upstream breakage the Trivy note below describes — a direct download is
+    # immune to the action's input-validation regressions.
     - name: Setup tflint
-      uses: terraform-linters/setup-tflint@v4
-      with:
-        tflint_version: v0.54.0
+      shell: bash
+      env:
+        TFLINT_VERSION: v0.54.0
+      run: |
+        curl -fsSL "https://github.com/terraform-linters/tflint/releases/download/${TFLINT_VERSION}/tflint_linux_amd64.zip" -o /tmp/tflint.zip
+        sudo unzip -o /tmp/tflint.zip -d /usr/local/bin
+        rm -f /tmp/tflint.zip
+        tflint --version
 
     - name: tflint
       shell: bash
