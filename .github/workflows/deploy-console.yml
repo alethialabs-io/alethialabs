@@ -27,82 +27,52 @@ env:
   IMAGE_PREFIX: ghcr.io/alethialabs-io
 
 jobs:
-  build:
-    # Runs on an arm64 host so the per-cloud runner images (heavy: cloud CLIs) build
-    # NATIVELY for the ARM fleet; the light Next.js box images cross-build amd64 under
-    # QEMU. The control-plane box is Hetzner CX (x86) → its images are linux/amd64; the
-    # fleet VMs are Hetzner CAX (arm64) → runner images are linux/arm64. `runner` is
-    # multi-arch because it runs on BOTH (co-located on the box + on the fleet).
-    runs-on: ubuntu-24.04-arm
+  # Native per-arch builds — NO QEMU. The control-plane box is Hetzner CX (x86) so its
+  # images are linux/amd64 (built natively on ubuntu-latest); the fleet VMs are Hetzner
+  # CAX (arm64) so the per-cloud runner images are linux/arm64 (built natively on the arm
+  # host). `runner` runs on BOTH (co-located on the box + the fleet), so it's built once
+  # per arch BY DIGEST and stitched into one multi-arch tag by `merge-runner`. Native
+  # builds keep the runner's build-time `tofu init` provider/module cache on EVERY arch
+  # (emulated tofu crashed `lfstack.push`, which is why the old QEMU path had to skip it).
+
+  # amd64 box images (single-arch, tagged) — native x86.
+  build-amd64:
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
           - image: console
             file: apps/console/Dockerfile
             target: runner
-            platforms: linux/amd64
           - image: console-migrate
             file: apps/console/Dockerfile
             target: migrate
-            platforms: linux/amd64
           - image: docs
             file: apps/docs/Dockerfile
             target: ""
-            platforms: linux/amd64
           - image: blog
             file: apps/blog/Dockerfile
             target: ""
-            platforms: linux/amd64
-          # Marketing public site — hosted alethialabs.io serves this image behind the
-          # Cloudflare Tunnel (the tunnel overlay turns the marketing zone on).
+          # Marketing public site — hosted alethialabs.io serves this behind the tunnel.
           - image: marketing
             file: apps/marketing/Dockerfile
             target: ""
-            platforms: linux/amd64
-          # Multi-arch: the box runs a co-located runner (amd64) AND the ARM fleet pulls
-          # this same tag (arm64).
-          - image: runner
-            file: apps/runner/Dockerfile
-            target: ""
-            platforms: linux/amd64,linux/arm64
-          # Lean per-cloud runner images (per-cloud routing). Same artifacts, one
-          # cloud's CLI + cache each. Shared leading layers dedup against `runner`.
-          # Fleet-only (arm64) — never pulled by the x86 box.
-          - image: runner-aws
-            file: apps/runner/Dockerfile.aws
-            target: ""
-            platforms: linux/arm64
-          - image: runner-gcp
-            file: apps/runner/Dockerfile.gcp
-            target: ""
-            platforms: linux/arm64
-          - image: runner-azure
-            file: apps/runner/Dockerfile.azure
-            target: ""
-            platforms: linux/arm64
     steps:
       - uses: actions/checkout@v4
-
-      # QEMU lets this arm64 host cross-build the linux/amd64 box images (and the
-      # amd64 half of the multi-arch runner tag).
-      - uses: docker/setup-qemu-action@v3
-
       - uses: docker/setup-buildx-action@v3
-
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push ${{ matrix.image }}
+      - name: Build and push ${{ matrix.image }} (amd64)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.file }}
           target: ${{ matrix.target }}
-          platforms: ${{ matrix.platforms }}
+          platforms: linux/amd64
           push: true
           build-args: |
             VERSION=${{ github.sha }}
@@ -112,8 +82,120 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
+  # arm64 fleet-only per-cloud runner images (single-arch, tagged) — native arm. Never
+  # pulled by the x86 box; lean per-cloud CLI + cache.
+  build-arm64:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      matrix:
+        include:
+          - image: runner-aws
+            file: apps/runner/Dockerfile.aws
+          - image: runner-gcp
+            file: apps/runner/Dockerfile.gcp
+          - image: runner-azure
+            file: apps/runner/Dockerfile.azure
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push ${{ matrix.image }} (arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          platforms: linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ github.sha }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  # `runner` amd64 half — native x86, pushed BY DIGEST (no tag) for the manifest merge.
+  runner-amd64:
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build runner (amd64) by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/runner/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ github.sha }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/runner,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=runner-amd64
+          cache-to: type=gha,mode=max,scope=runner-amd64
+
+  # `runner` arm64 half — native arm, pushed BY DIGEST.
+  runner-arm64:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build runner (arm64) by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/runner/Dockerfile
+          platforms: linux/arm64
+          build-args: |
+            VERSION=${{ github.sha }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/runner,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=runner-arm64
+          cache-to: type=gha,mode=max,scope=runner-arm64
+
+  # Stitch the two runner digests into one multi-arch tag (amd64 for the box, arm64 for the fleet).
+  merge-runner:
+    needs: [runner-amd64, runner-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-arch runner manifest
+        run: |
+          for tag in latest "${{ github.sha }}"; do
+            docker buildx imagetools create \
+              -t "${IMAGE_PREFIX}/runner:${tag}" \
+              "${IMAGE_PREFIX}/runner@${{ needs.runner-amd64.outputs.digest }}" \
+              "${IMAGE_PREFIX}/runner@${{ needs.runner-arm64.outputs.digest }}"
+          done
+
   deploy:
-    needs: build
+    needs: [build-amd64, build-arm64, merge-runner]
     runs-on: ubuntu-latest
     environment: production
     permissions:

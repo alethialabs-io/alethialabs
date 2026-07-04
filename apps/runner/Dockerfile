@@ -94,26 +94,17 @@ COPY --chown=runner:runner infra/templates/argocd/ /home/runner/argocd-templates
 # We KEEP the resulting .terraform tree; the per-job workdir copy includes it (copyDir
 # preserves the provider symlinks), so init only re-runs the S3 backend step (~2 s)
 # instead of re-fetching everything (~60–120 s). `-upgrade` pins the lock to this
-# build arch; `-backend=false` skips remote state.
-#
-# Cross-build guard: `runner` is a multi-arch tag (amd64 for the co-located box runner +
-# arm64 for the ARM fleet). Under QEMU emulation (the non-native half), tofu crashes with
-# `fatal error: lfstack.push`, so we run the pre-init ONLY on the NATIVE half
-# (BUILDPLATFORM == TARGETPLATFORM) and skip it on the emulated half — that image's
-# job-time `tofu init` fetches providers/modules on first use (~60–120 s once). The
-# native fleet image and the single-arch per-cloud images keep the baked cache.
-ARG BUILDPLATFORM
-ARG TARGETPLATFORM
+# build arch; `-backend=false` skips remote state. `runner` is a multi-arch tag but each
+# arch is built NATIVELY (deploy-console: runner-amd64 on x86, runner-arm64 on arm — no
+# QEMU), so `tofu init` runs on both and the baked tree matches that arch's runtime
+# exactly. (An emulated cross-build would crash here with `fatal error: lfstack.push`,
+# which is why the build is split per-arch rather than one emulated multi-platform build.)
 ENV TF_PLUGIN_CACHE_DIR=/home/runner/.terraform.d/plugin-cache
 RUN mkdir -p "${TF_PLUGIN_CACHE_DIR}" && \
-    if [ "${BUILDPLATFORM}" = "${TARGETPLATFORM}" ]; then \
-      for d in aws azure gcp; do \
-        echo "Pre-initializing ${d} template (providers + modules)..." && \
-        (cd "/home/runner/project-templates/${d}" && \
-          tofu init -backend=false -input=false -upgrade) ; \
-      done ; \
-    else \
-      echo "Cross-build ${BUILDPLATFORM} -> ${TARGETPLATFORM}: skipping tofu pre-init (emulated tofu crashes); job-time init will fetch on first use." ; \
-    fi
+    for d in aws azure gcp; do \
+      echo "Pre-initializing ${d} template (providers + modules)..." && \
+      (cd "/home/runner/project-templates/${d}" && \
+        tofu init -backend=false -input=false -upgrade) ; \
+    done
 
 ENTRYPOINT ["runner"]
