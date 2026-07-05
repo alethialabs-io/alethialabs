@@ -1,0 +1,39 @@
+name: Branch flow guard
+
+# Enforce the promotion flow: feature → dev → staging → main.
+# A PR into `main` may only come from `staging` (or a `hotfix/*` branch); a PR into `staging` only from
+# `dev` (or `hotfix/*`). Feature branches must target `dev` (which has no ruleset requiring this check).
+# This job is wired as a REQUIRED status check on the main + staging rulesets (infra/github), so a
+# mis-targeted PR (e.g. an agent opening feature → main) gets a red required check and is un-mergeable.
+
+on:
+  pull_request:
+    branches: [main, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  branch-flow-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce promotion source
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          case "$BASE" in
+            main)    allowed="staging" ;;
+            staging) allowed="dev" ;;
+            *)       echo "guard not applicable to base '$BASE'"; exit 0 ;;
+          esac
+          is_hotfix=false
+          case "$HEAD" in hotfix/*) is_hotfix=true ;; esac
+          if [ "$HEAD" = "$allowed" ] || [ "$is_hotfix" = true ]; then
+            echo "OK: '$HEAD' → '$BASE' is an allowed promotion."
+            exit 0
+          fi
+          echo "::error::PRs into '$BASE' must come from '$allowed' (or a hotfix/* branch), not '$HEAD'."
+          echo "::error::The flow is feature → dev → staging → main. For feature work, target 'dev'."
+          exit 1
