@@ -55,43 +55,54 @@ export function CostPanel() {
 	}, [form, prices, meta]);
 
 	return (
-		<div className="w-64 border border-border bg-background/90 backdrop-blur">
-			<div className="flex items-center justify-between border-b border-border px-3 py-2">
+		<div className="w-72 rounded-none border border-border bg-card/95 shadow-[0_1px_2px_rgba(0,0,0,0.06)] backdrop-blur">
+			<div className="flex items-center justify-between border-b border-border px-3.5 py-2.5">
 				<div className="flex items-center gap-2">
 					<DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
-					<span className="vx-eyebrow">Estimate</span>
+					<span className="vx-eyebrow">Monthly estimate</span>
 				</div>
 				{loadingPrices && (
 					<Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
 				)}
 			</div>
-			<div className="max-h-64 space-y-1.5 overflow-y-auto px-3 py-2">
-				{items.map((item) => (
-					<div
-						key={item.label}
-						className="flex items-center justify-between text-xs"
-					>
-						<div className="flex min-w-0 items-center gap-1.5">
-							<span className="truncate text-muted-foreground">{item.label}</span>
-							{item.detail && (
-								<Badge
-									variant="outline"
-									className="shrink-0 rounded-none px-1 py-0 text-[9px]"
-								>
-									{item.detail}
-								</Badge>
-							)}
+
+			{items.length === 0 ? (
+				<div className="px-3.5 py-4 text-xs text-muted-foreground">
+					Add services to estimate cost.
+				</div>
+			) : (
+				<div className="max-h-72 divide-y divide-border/50 overflow-y-auto">
+					{items.map((item) => (
+						<div
+							key={item.label}
+							className="flex items-center justify-between gap-2 px-3.5 py-2 text-xs"
+						>
+							<div className="flex min-w-0 items-center gap-1.5">
+								<span className="truncate text-text-secondary">{item.label}</span>
+								{item.detail && (
+									<Badge
+										variant="outline"
+										className="shrink-0 rounded-none px-1 py-0 font-mono text-[9px] font-normal text-muted-foreground"
+									>
+										{item.detail}
+									</Badge>
+								)}
+							</div>
+							<span className="shrink-0 font-mono tabular-nums text-foreground">
+								${item.cost.toFixed(0)}
+							</span>
 						</div>
-						<span className="ml-2 shrink-0 font-mono text-foreground">
-							${item.cost.toFixed(0)}
-						</span>
-					</div>
-				))}
-			</div>
-			<div className="flex items-center justify-between border-t border-border px-3 py-2">
-				<span className="text-sm font-medium">Total</span>
-				<span className="font-mono text-sm font-semibold">
-					~${total.toFixed(0)}/mo
+					))}
+				</div>
+			)}
+
+			<div className="flex items-baseline justify-between border-t border-border px-3.5 py-2.5">
+				<span className="text-[13px] font-medium">Total</span>
+				<span className="font-mono text-sm font-semibold tabular-nums">
+					~${total.toFixed(0)}
+					<span className="ml-0.5 text-[10px] font-normal text-muted-foreground">
+						/mo
+					</span>
 				</span>
 			</div>
 		</div>

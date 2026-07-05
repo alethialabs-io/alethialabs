@@ -13,6 +13,10 @@ import { Label } from "@repo/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
 import { cn } from "@repo/ui/utils";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
+import {
+	NODE_STATUS_META,
+	useNodeReadiness,
+} from "@/lib/canvas/node-status";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { CloudIdentitySelector } from "../cloud-identity-selector";
 import { NODE_REGISTRY } from "./graph/node-registry";
@@ -144,6 +148,8 @@ export function InspectorPanel({
 				</Button>
 			</div>
 
+			<StatusHeader nodeId={node.id} />
+
 			<Tabs
 				defaultValue="settings"
 				className="flex min-h-0 flex-1 flex-col gap-0"
@@ -274,6 +280,30 @@ function IdentityField({
 	);
 }
 
+/** A compact status strip under the inspector header: the node's resolved status pill + the most
+ * actionable line (the first config issue when incomplete, else a state hint). Phase 2 extends this
+ * with server-status actions (Deploy / Retry / Reconcile / View logs). */
+function StatusHeader({ nodeId }: { nodeId: string }) {
+	const readiness = useNodeReadiness(nodeId);
+	const meta = NODE_STATUS_META[readiness.state];
+	const message =
+		readiness.issue ??
+		(readiness.state === "gated"
+			? "Cross-cloud core placement — won't provision until colocated."
+			: "Configured and ready to deploy.");
+	return (
+		<div className="flex items-center gap-2.5 border-b border-border bg-surface-sunken/60 px-4 py-2.5">
+			<span className={cn("vx-status shrink-0", `vx-status--${meta.vx}`)}>
+				<span className="vx-status__dot" />
+				{meta.label}
+			</span>
+			<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+				{message}
+			</span>
+		</div>
+	);
+}
+
 /** Read-only summary of a node: placement + its primitive config values. Provisioned
  * outputs (endpoints/ARNs) will surface here once the node carries live status. */
 function Overview({
@@ -283,6 +313,8 @@ function Overview({
 	node: CanvasNode;
 	provider: CloudProviderSlug | null;
 }) {
+	const readiness = useNodeReadiness(node.id);
+	const status = NODE_STATUS_META[readiness.state];
 	const def = NODE_REGISTRY[node.data.kind];
 	// Only show scalar config (skip nested objects/arrays — those have their own UIs).
 	const rows = Object.entries(node.data.config).filter(
@@ -296,7 +328,10 @@ function Overview({
 				<dt className="text-muted-foreground">Cloud</dt>
 				<dd>{provider ? provider.toUpperCase() : "Inherits project"}</dd>
 				<dt className="text-muted-foreground">Status</dt>
-				<dd className="text-muted-foreground">Draft — not provisioned</dd>
+				<dd className="text-muted-foreground">
+					{status.label}
+					{readiness.issue ? ` — ${readiness.issue}` : ""}
+				</dd>
 			</dl>
 			{rows.length > 0 && (
 				<div className="space-y-2 border-t border-border/60 pt-3">
