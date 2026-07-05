@@ -89,3 +89,19 @@ variable "disk_size_gb" {
   description = "OS disk size in GB for each node"
   default     = 50
 }
+
+################################################################################
+# Cluster hardening
+################################################################################
+
+variable "api_server_authorized_ip_ranges" {
+  type        = list(string)
+  description = "CIDRs allowed to reach the public AKS API server (AVD-AZU-0041). Empty = unrestricted; a real deploy must set its operator/egress ranges or front a private cluster."
+  default     = []
+}
+
+variable "local_account_disabled" {
+  type        = bool
+  description = "Disable local admin accounts on the cluster (forces AAD auth). Left false so bootstrap tooling works; set true once AAD group access is wired."
+  default     = false
+}

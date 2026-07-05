@@ -10,6 +10,16 @@ resource "azurerm_key_vault" "this" {
   soft_delete_retention_days = 7
   rbac_authorization_enabled = true
 
+  # Default-deny network access (AVD-AZU-0013). Trusted Azure services still bypass; a real deploy
+  # allowlists the cluster's subnet via allowed_subnet_ids (that subnet must carry the
+  # Microsoft.KeyVault service endpoint) and/or specific ip_rules — or use a private endpoint.
+  network_acls {
+    default_action             = var.network_default_action
+    bypass                     = "AzureServices"
+    virtual_network_subnet_ids = var.allowed_subnet_ids
+    ip_rules                   = var.allowed_ip_rules
+  }
+
   tags = var.tags
 }
 

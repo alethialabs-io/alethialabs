@@ -65,6 +65,10 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         TRIVY_CONFIG: ${{ github.workspace }}/infra/.trivy.yaml
+        # Reviewed check-ID suppressions — the WORKING mechanism. The config-file
+        # `misconfiguration.exclude` key is a silent no-op in current Trivy, so suppressions live in
+        # a .trivyignore that Trivy actually honours. Absolute path (each stack runs from its own dir).
+        TRIVY_IGNOREFILE: ${{ github.workspace }}/infra/.trivyignore
         TRIVY_EXIT_CODE: "1"
         TRIVY_SEVERITY: HIGH,CRITICAL
         # Scan OUR templates only, not third-party code: trivy v0.5x+ RESOLVES + downloads remote
