@@ -45,6 +45,8 @@ variable "required_status_checks" {
     "Go (build · vet · test · lint) (apps/runner)",
     "Authz / open-core guards",
     "Secret scan (gitleaks)",
+    # Enforces feature → dev → staging → main (see .github/workflows/branch-flow-guard.yml).
+    "branch-flow-guard",
   ]
 }
 
