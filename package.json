@@ -34,8 +34,8 @@
 		"sync:connector-assets": "node scripts/sync-connector-assets.mjs"
 	},
 	"devDependencies": {
-		"prettier": "^3.6.2",
-		"turbo": "^2.6.3",
+		"prettier": "^3.9.4",
+		"turbo": "^2.10.3",
 		"typescript": "5.9.2"
 	},
 	"packageManager": "pnpm@9.15.0",
