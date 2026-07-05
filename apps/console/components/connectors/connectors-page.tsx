@@ -55,6 +55,7 @@ import {
 } from "@repo/ui/table";
 import { ViewToggle, type ViewMode } from "@repo/ui/view-toggle";
 import { authClient } from "@/lib/auth/client";
+import { track } from "@/lib/analytics/track";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 import {
 	BookOpen,
@@ -205,6 +206,7 @@ export function ConnectorsPage({
 	const handleConnect = async (integration: ConnectorWithConnection) => {
 		setDetailOpen(false);
 		const slug = integration.slug;
+		track("connector_connect_started", { provider: slug, category: integration.category });
 
 		if (integration.category === "git") {
 			setConnectingSlug(slug);

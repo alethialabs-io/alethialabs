@@ -251,6 +251,16 @@ jobs:
             emit ALETHIA_STORAGE_SECRET_ACCESS_KEY
             echo "ALETHIA_STORAGE_AUTO_CREATE_BUCKETS=true"
             emit TUNNEL_TOKEN
+            # Self-hosted analytics — Umami (co-located) + OpenReplay (own box, Part B). All optional:
+            # the console's analytics layer no-ops on any empty NEXT_PUBLIC_* value.
+            emit ANALYTICS_DB_PASSWORD
+            emit UMAMI_APP_SECRET
+            emit UMAMI_ADMIN_PASSWORD
+            echo "NEXT_PUBLIC_UMAMI_HOST=https://analytics.${APP_URL#https://}"
+            echo "UMAMI_WEBSITE_DOMAIN=${APP_URL#https://}"
+            emit NEXT_PUBLIC_UMAMI_WEBSITE_ID
+            emit NEXT_PUBLIC_OPENREPLAY_PROJECT_KEY
+            emit NEXT_PUBLIC_OPENREPLAY_INGEST
             echo "FLEET_PROVIDER=hcloud"
             echo "HCLOUD_TOKEN=$(val HCLOUD_FLEET_TOKEN)"   # runtime fleet token (not the CP token)
             emit HCLOUD_SSH_KEYS

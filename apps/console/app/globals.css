@@ -11,37 +11,6 @@
 @source "../../../packages/ui/src";
 @source "../../../packages/brand/src";
 
-/* ============================================================
-   Auth + onboarding blueprint backdrop (login / signup / onboarding) — console only.
-   ============================================================ */
-.auth-grid-bg {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background-image:
-    linear-gradient(var(--border-faint) 1px, transparent 1px),
-    linear-gradient(90deg, var(--border-faint) 1px, transparent 1px);
-  background-size: 46px 46px;
-  -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 42%, #000 8%, transparent 78%);
-  mask-image: radial-gradient(ellipse 75% 65% at 50% 42%, #000 8%, transparent 78%);
-}
-.auth-grid-bg::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    var(--border-faint) 22%,
-    var(--border-faint) 78%,
-    transparent
-  );
-}
-
 /* Animated step swap inside the auth/onboarding card (translate only, so a
    frozen clock still renders the pane fully). */
 .auth-pane-in {

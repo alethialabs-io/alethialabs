@@ -25,6 +25,7 @@ import {
 } from "@/app/server/actions/onboarding";
 import { updateOrgPrimaryAddress } from "@/app/server/actions/org-settings";
 import { setActiveOrganization } from "@/app/server/actions/workspace";
+import { track } from "@/lib/analytics/track";
 import {
 	billingAddressFrom,
 	BillingCheckoutForm,
@@ -93,6 +94,7 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 		try {
 			const res = await configureOnboardingOrg({ name, slug });
 			setSlug(res.slug);
+			track("org_created", { plan });
 			if (plan === "community") {
 				await markOnboardingComplete();
 				router.push(next ?? `/${res.slug}`);

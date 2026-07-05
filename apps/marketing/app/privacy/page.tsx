@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { LEGAL_ENTITY, legalField } from "@repo/brand/legal";
 import { LegalShell } from "@/components/legal/legal-shell";
 import type { Metadata } from "next";
 
@@ -20,10 +21,11 @@ export default function PrivacyPage() {
 	return (
 		<LegalShell title="Privacy Policy" lastUpdated="June 17, 2026">
 			<p>
-				This Privacy Policy explains how <strong>Alethia Labs OÜ</strong> (a
-				private limited company registered in Estonia, registration number{" "}
-				<mark>[PLACEHOLDER: company registration number]</mark>, registered
-				office <mark>[PLACEHOLDER: registered address]</mark>) (“we”, “us”)
+				This Privacy Policy explains how <strong>{LEGAL_ENTITY.legalName}</strong> (a
+				company registered in {LEGAL_ENTITY.jurisdiction}, registration number{" "}
+				<mark>{legalField(LEGAL_ENTITY.registrationNumber, "company registration number (EIK)")}</mark>,
+				registered office{" "}
+				<mark>{legalField(LEGAL_ENTITY.registeredAddress, "registered address")}</mark>) (“we”, “us”)
 				collects, uses, and protects personal data when you use the Alethia
 				control plane, the alethia CLI, and related services (the “Service”).
 				We act as the data controller for the personal data described here.
@@ -139,10 +141,8 @@ export default function PrivacyPage() {
 				Subject to applicable law, you have the right to access, correct,
 				delete, restrict, or object to the processing of your personal data,
 				to data portability, and to lodge a complaint with a supervisory
-				authority (in Estonia, the{" "}
-				<a href="https://www.aki.ee/en">
-					Estonian Data Protection Inspectorate
-				</a>
+				authority (in {LEGAL_ENTITY.jurisdiction}, the{" "}
+				<a href={LEGAL_ENTITY.dpa.url}>{LEGAL_ENTITY.dpa.name}</a>
 				). To exercise these rights, contact us using the details below.
 			</p>
 

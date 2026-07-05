@@ -15,7 +15,7 @@ export function GET() {
 		id: `${SITE}/blog`,
 		link: `${SITE}/blog`,
 		language: "en",
-		copyright: `© ${new Date().getFullYear()} Alethia Labs OÜ`,
+		copyright: `© ${new Date().getFullYear()} Alethia Labs`,
 		feedLinks: { rss: `${SITE}/blog/feed.xml` },
 	});
 

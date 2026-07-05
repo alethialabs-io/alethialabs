@@ -1,6 +1,6 @@
 <#
   Alethia CLI installer (Windows / PowerShell).
-  SPDX-License-Identifier: AGPL-3.0-only  ·  (c) 2026 Alethia Labs OU
+  SPDX-License-Identifier: AGPL-3.0-only  ·  (c) 2026 Alethia Labs
   Source: https://github.com/alethialabs-io/alethialabs/blob/main/apps/console/public/install.ps1
 
   Usage:

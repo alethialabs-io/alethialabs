@@ -5,6 +5,7 @@ import type React from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { LEGAL_ENTITY } from "@repo/brand/legal";
 import { cn } from "@repo/ui/utils";
 import { legalUrl } from "@/lib/legal";
 
@@ -33,9 +34,8 @@ interface AuthShellProps {
 
 /**
  * Shared chrome for the auth + onboarding screens (login / signup / onboarding):
- * a fixed blueprint grid backdrop, a topbar with the Alethia Labs lockup and an
- * optional sign-in/sign-up switch, the centered card area, and the legal +
- * status footer. Ports the Claude Design `auth.css` stage onto Alethia tokens.
+ * a topbar with the Alethia Labs lockup and an optional sign-in/sign-up switch,
+ * the centered card area, and the legal + status footer, over a plain background.
  */
 export function AuthShell({
 	switchPrompt,
@@ -46,8 +46,6 @@ export function AuthShell({
 }: AuthShellProps) {
 	return (
 		<div className="relative flex min-h-screen flex-col overflow-hidden bg-background">
-			<div className="auth-grid-bg" aria-hidden="true" />
-
 			{/* top bar */}
 			<header className="relative z-30 flex items-center justify-between px-8 py-6">
 				<Link
@@ -89,7 +87,7 @@ export function AuthShell({
 			{/* footer */}
 			<footer className="relative z-30 flex flex-wrap items-center justify-between gap-4 px-8 pb-7 pt-5">
 				<div className="flex items-center gap-4 font-mono text-[10.5px] tracking-[0.06em] text-text-tertiary">
-					<span>© 2026 Alethia Labs OÜ</span>
+					<span>© 2026 {LEGAL_ENTITY.tradingName}</span>
 					<a
 						href={legalUrl("/terms")}
 						className="transition-colors hover:text-text-primary"

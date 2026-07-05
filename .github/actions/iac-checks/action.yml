@@ -21,19 +21,13 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       run: tofu fmt -check -recursive
 
-    # Install tflint directly (pinned) instead of terraform-linters/setup-tflint@v4:
-    # the current v4 tag rejects its OWN default `path` input ("must be a literal path…
-    # $HOME/~ not expanded"), failing every infra plan job before tflint even runs. Same
-    # class of upstream breakage the Trivy note below describes — a direct download is
-    # immune to the action's input-validation regressions.
+    # Install tflint LATEST via its official installer (not terraform-linters/setup-tflint@v4 — that
+    # action's default `path` input regressed, $HOME/~ unexpanded, failing before tflint runs). We track
+    # latest rather than pin: pinning only meant chasing version bumps, and we don't support legacy.
     - name: Setup tflint
       shell: bash
-      env:
-        TFLINT_VERSION: v0.54.0
       run: |
-        curl -fsSL "https://github.com/terraform-linters/tflint/releases/download/${TFLINT_VERSION}/tflint_linux_amd64.zip" -o /tmp/tflint.zip
-        sudo unzip -o /tmp/tflint.zip -d /usr/local/bin
-        rm -f /tmp/tflint.zip
+        curl -fsSL https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
         tflint --version
 
     - name: tflint
@@ -41,33 +35,38 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         TFLINT_CONFIG_FILE: ${{ github.workspace }}/infra/.tflint.hcl
-      # Gate on ERRORS only — the templates carry many style warnings (unused
-      # declarations, missing version constraints in sub-modules) that shouldn't
-      # fail CI. tflint exits 2 on any finding by default; --minimum-failure-severity
-      # limits the non-zero exit to real errors.
+      # Gate on ERRORS only — the templates carry many style warnings (unused declarations, missing
+      # version constraints); tflint exits 2 on ANY finding by default, so limit the non-zero exit to
+      # real errors (matches the staging/main version; dev's copy was missing this).
       run: |
         tflint --init
         tflint --recursive --format compact --minimum-failure-severity=error
 
-    # Install trivy explicitly + run it directly, instead of aquasecurity/trivy-action:
-    # that action nests aquasecurity/setup-trivy@<sub-version>, and upstream deleted the
-    # sub-versions its releases pin (v0.2.1/v0.2.2), so the whole job fails to RESOLVE
-    # before any step runs. setup-trivy@v0.3.1 is a tag that still exists; trivy reads the
-    # same params from TRIVY_* env vars (exactly what trivy-action set internally).
+    # Install Trivy LATEST via its official installer — NOT aquasecurity/trivy-action / setup-trivy
+    # (those actions keep deleting the sub-version tags their releases pin, breaking the job at
+    # action-resolution time) and no longer a pinned binary either: version-pinning just meant chasing
+    # bumps, and we don't support legacy. The installer fetches the current release straight to PATH.
     - name: Setup Trivy
-      uses: aquasecurity/setup-trivy@v0.3.1
+      shell: bash
+      run: |
+        curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+        trivy --version
 
     - name: Trivy config scan (Terraform misconfig)
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         TRIVY_CONFIG: ${{ github.workspace }}/infra/.trivy.yaml
+        # Reviewed check-ID suppressions — the WORKING mechanism. The config-file
+        # `misconfiguration.exclude` key is a silent no-op in current Trivy, so suppressions live in
+        # a .trivyignore that Trivy actually honours. Absolute path (each stack runs from its own dir).
+        TRIVY_IGNOREFILE: ${{ github.workspace }}/infra/.trivyignore
         TRIVY_EXIT_CODE: "1"
         TRIVY_SEVERITY: HIGH,CRITICAL
-        # Skip the whole .terraform/ tree — `tofu init` pulls third-party modules
-        # (and their bundled k8s/example manifests) there; we scan OUR templates only.
+        # Scan OUR templates only, not third-party code: trivy v0.5x+ RESOLVES + downloads remote
+        # modules (terraform-aws-modules/*) and scans them — misconfigs there aren't ours to fix and
+        # broke the job. Exclude downloaded modules + skip any local .terraform. (trivy v0.28 via the
+        # old action didn't resolve remote modules, so this restores that intent.)
+        TRIVY_TF_EXCLUDE_DOWNLOADED_MODULES: "true"
         TRIVY_SKIP_DIRS: "**/.terraform"
-        # Shared ignore file for reviewed, deliberately-accepted findings (IDs only match
-        # the resources they apply to, so it's safe to share across all template dirs).
-        TRIVY_IGNOREFILE: ${{ github.workspace }}/infra/.trivyignore
       run: trivy config .
