@@ -1,0 +1,28 @@
+#cloud-config
+# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Preps a dedicated OpenReplay box: Docker + the OpenReplay source. The actual OpenReplay install is a
+# one-time interactive-ish step (version/domain-specific), run by hand after the box is up — see
+# infra/analytics-openreplay/README.md. cloud-init only gets Docker + the repo in place.
+package_update: true
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - ufw
+
+runcmd:
+  # Docker Engine + compose plugin (official convenience script).
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable --now docker
+  # OpenReplay source (the installer + docker-compose live under scripts/).
+  - git clone --depth 1 https://github.com/openreplay/openreplay /opt/openreplay
+  # Host firewall: SSH only. All ingress arrives via the cloudflared tunnel (outbound), so no
+  # public web ports are opened. cloudflared reaches OpenReplay over localhost.
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw --force enable
+  # Next: SSH in and run the OpenReplay installer against DOMAIN=${openreplay_domain}
+  # (see README). It prints the PROJECT_KEY + ingest URL to put in the console vault.

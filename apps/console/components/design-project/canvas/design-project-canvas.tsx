@@ -6,6 +6,7 @@ import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import { motion } from "motion/react";
 import { Plus, Settings, Sparkles } from "lucide-react";
 import { cn } from "@repo/ui/utils";
+import { track } from "@/lib/analytics/track";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -163,6 +164,7 @@ function CanvasInner({
 				parsed.data as unknown as CreateProjectInput,
 			);
 			await provisionProject(projectId, undefined, undefined, activeEnvId);
+			track("deploy_queued", { environmentId: activeEnvId });
 			useCanvasStore.getState().commitBaseline();
 			toast.success("Deploy queued");
 		} catch (e) {
