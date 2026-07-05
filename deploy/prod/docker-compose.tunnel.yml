@@ -40,3 +40,12 @@ services:
   # `marketing` profile so it runs without COMPOSE_PROFILES=marketing.
   marketing:
     profiles: !reset []
+
+  # Umami analytics (+ its DB) run co-located on the hosted box — clear the `analytics`
+  # profile so they come up without COMPOSE_PROFILES=analytics. Reached via the tunnel
+  # (analytics.<domain> → umami:3000, see infra/cp-hetzner/main.tf). OpenReplay is NOT
+  # here — it's too heavy for cx33 and lives on its own box (infra/analytics-openreplay).
+  umami-db:
+    profiles: !reset []
+  umami:
+    profiles: !reset []

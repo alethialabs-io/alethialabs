@@ -50,6 +50,23 @@ variable "manage_email_routing" {
   default     = false
 }
 
+variable "manage_analytics_access" {
+  # false (default): the Umami dashboard at analytics.<domain> is guarded ONLY by Umami's own
+  # login (rotate the admin/umami default!). Flip true to also put it behind Cloudflare Zero-Trust
+  # Access (team-email allowlist) — see access.tf. Requires the CF Zero Trust org (team domain) to
+  # exist (one-time dashboard setup) and analytics_access_emails to be set. The tracker ingest
+  # (/script.js + /api) is bypassed so browser events still flow.
+  description = "Whether Terraform manages the Cloudflare Access apps gating the Umami dashboard."
+  type        = bool
+  default     = false
+}
+
+variable "analytics_access_emails" {
+  description = "Emails allowed into the Umami dashboard via Cloudflare Access (when manage_analytics_access)."
+  type        = list(string)
+  default     = []
+}
+
 variable "ssh_public_key" {
   description = "SSH public key authorized on the server (CI deploy key)."
   type        = string

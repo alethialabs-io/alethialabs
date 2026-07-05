@@ -106,6 +106,13 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "cp" {
       hostname = "www.${var.domain}"
       service  = "http://caddy:80"
     }
+    # Umami analytics — dashboard + tracker ingest. Routed straight to the co-located
+    # `umami` container (cloudflared reaches it by service name on the compose network),
+    # keeping the apex stitch in Caddy untouched. Access-gated (see access.tf).
+    ingress_rule {
+      hostname = "analytics.${var.domain}"
+      service  = "http://umami:3000"
+    }
     # Required catch-all.
     ingress_rule {
       service = "http_status:404"
@@ -127,6 +134,15 @@ resource "cloudflare_record" "apex" {
 resource "cloudflare_record" "www" {
   zone_id = var.cloudflare_zone_id
   name    = "www"
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.cp.id}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
+}
+
+resource "cloudflare_record" "analytics" {
+  zone_id = var.cloudflare_zone_id
+  name    = "analytics"
   type    = "CNAME"
   content = "${cloudflare_zero_trust_tunnel_cloudflared.cp.id}.cfargotunnel.com"
   proxied = true
