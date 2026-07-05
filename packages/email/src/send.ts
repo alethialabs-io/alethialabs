@@ -3,6 +3,7 @@
 
 import { SendEmailCommand, SESv2Client } from "@aws-sdk/client-sesv2";
 import { render } from "@react-email/components";
+import MailComposer from "nodemailer/lib/mail-composer";
 import type { ReactElement } from "react";
 import { getEmailConfig, type SesConfig } from "./config";
 
@@ -25,6 +26,16 @@ function sesClient(ses: SesConfig): SESv2Client {
 	return cachedClient;
 }
 
+/** A file to attach to the email (e.g. a Stripe-hosted invoice PDF). */
+export interface EmailAttachment {
+	/** Downloaded filename shown to the recipient, e.g. `Invoice-2026-0001.pdf`. */
+	filename: string;
+	/** Raw bytes of the file. */
+	content: Uint8Array | Buffer;
+	/** MIME type; defaults to `application/octet-stream` when omitted. */
+	contentType?: string;
+}
+
 export interface SendEmailArgs {
 	/** Verified SES from-address for this stream (getEmailConfig().from.*). */
 	from: string;
@@ -37,6 +48,43 @@ export interface SendEmailArgs {
 	configurationSetName?: string;
 	/** Extra context logged in the dev (no-SES) fallback, e.g. an OTP code. */
 	devLog?: string;
+	/** Files to attach. When present the email is sent as raw MIME (multipart)
+	 * instead of the simple HTML path — used for invoice/receipt PDFs. */
+	attachments?: EmailAttachment[];
+}
+
+/**
+ * Builds a full MIME message (multipart/mixed) with the rendered HTML plus any
+ * attachments, using nodemailer's MailComposer. SES v2 only carries attachments
+ * through `Content.Raw`, so this is the raw-MIME path; the no-attachment path
+ * stays on `Content.Simple`.
+ */
+async function buildRawMime(args: {
+	from: string;
+	to: string;
+	subject: string;
+	html: string;
+	attachments: EmailAttachment[];
+}): Promise<Uint8Array> {
+	const mail = new MailComposer({
+		from: args.from,
+		to: args.to,
+		subject: args.subject,
+		html: args.html,
+		attachments: args.attachments.map((a) => ({
+			filename: a.filename,
+			content: Buffer.from(a.content),
+			contentType: a.contentType,
+		})),
+	});
+	// SES v2 `Content.Raw.Data` must be a Uint8Array — passing a Node Buffer trips a
+	// SerializationException ("Start of structure or map found where not expected").
+	return await new Promise<Uint8Array>((resolve, reject) => {
+		mail.compile().build((err, message) => {
+			if (err) reject(err);
+			else resolve(new Uint8Array(message));
+		});
+	});
 }
 
 /**
@@ -52,12 +100,14 @@ export async function sendEmail({
 	react,
 	configurationSetName,
 	devLog,
+	attachments,
 }: SendEmailArgs): Promise<void> {
 	const { ses } = getEmailConfig();
 
 	if (!ses) {
 		console.warn(
 			`[email] SES not configured — "${subject}" → ${to}` +
+				(attachments?.length ? ` [+${attachments.length} attachment(s)]` : "") +
 				(devLog ? ` (${devLog})` : ""),
 		);
 		return;
@@ -66,21 +116,42 @@ export async function sendEmail({
 	const html = await render(react);
 
 	try {
-		await sesClient(ses).send(
-			new SendEmailCommand({
-				FromEmailAddress: from,
-				Destination: { ToAddresses: [to] },
-				...(configurationSetName
-					? { ConfigurationSetName: configurationSetName }
-					: {}),
-				Content: {
-					Simple: {
-						Subject: { Data: subject, Charset: "UTF-8" },
-						Body: { Html: { Data: html, Charset: "UTF-8" } },
-					},
-				},
-			}),
-		);
+		// With attachments we must send raw MIME (SES Simple content can't carry
+		// files); without, the simpler Simple path keeps existing sends unchanged.
+		const command =
+			attachments && attachments.length > 0
+				? new SendEmailCommand({
+						FromEmailAddress: from,
+						Destination: { ToAddresses: [to] },
+						...(configurationSetName
+							? { ConfigurationSetName: configurationSetName }
+							: {}),
+						Content: {
+							Raw: {
+								Data: await buildRawMime({
+									from,
+									to,
+									subject,
+									html,
+									attachments,
+								}),
+							},
+						},
+					})
+				: new SendEmailCommand({
+						FromEmailAddress: from,
+						Destination: { ToAddresses: [to] },
+						...(configurationSetName
+							? { ConfigurationSetName: configurationSetName }
+							: {}),
+						Content: {
+							Simple: {
+								Subject: { Data: subject, Charset: "UTF-8" },
+								Body: { Html: { Data: html, Charset: "UTF-8" } },
+							},
+						},
+					});
+		await sesClient(ses).send(command);
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		// In dev, don't lose the email when SES fails (e.g. sandbox mode rejects

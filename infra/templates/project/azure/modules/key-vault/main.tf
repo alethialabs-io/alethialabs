@@ -1,5 +1,8 @@
 data "azurerm_client_config" "current" {}
 
+# Network-ACL default-deny (AVD-AZU-0013) is suppressed in infra/.trivyignore: the external
+# (Hetzner) runner needs data-plane write access at provision time, so access restriction is
+# left customer-configurable per environment rather than default-on.
 resource "azurerm_key_vault" "this" {
   name                       = "${var.project_name}-${var.environment}-kv"
   location                   = var.location
