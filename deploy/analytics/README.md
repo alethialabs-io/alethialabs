@@ -18,11 +18,25 @@ Fully IaC'd through the existing Cloudflare Tunnel + vault pipeline (no hand-edi
   + `NEXT_PUBLIC_UMAMI_WEBSITE_ID` flow through `.github/workflows/deploy-console.yml`.
 - **OpenReplay → `openreplay.alethialabs.io`**, on its **own box** — see `infra/analytics-openreplay/`.
 
-**Go-live order (Umami):** (1) `tofu apply infra/cp-hetzner` + `bootstrap-secrets.sh`; (2) deploy →
-Umami comes up behind Access; (3) log in at `analytics.alethialabs.io` (**rotate the `admin/umami`
-default**), create the "Alethia Console" website, put its ID in the vault as `NEXT_PUBLIC_UMAMI_WEBSITE_ID`;
-(4) redeploy the console → tracker activates. Prereq: a Cloudflare Zero-Trust org (team domain) must exist
-for `manage_analytics_access=true`; otherwise leave it off and rely on Umami's login.
+**Auto-provisions on merge to `main` (no manual steps):** the `analytics` DNS record + tunnel ingress
+(`infra-cp-hetzner.yml` → `tofu apply`), the `umami` + `umami-db` containers (`deploy-console.yml` →
+`compose up -d`; the `analytics` profile is cleared in the tunnel overlay), the Umami secrets
+(`bootstrap-secrets.sh` generates them once — a DB password, never rotated per-deploy), and any
+`NEXT_PUBLIC_OPENREPLAY_PROJECT_KEY` you put in `secrets.local.env`.
+
+**Manual (one-time, after first deploy):** open `analytics.alethialabs.io`, **rotate the `admin/umami`
+default**, create the "Alethia Console" website, put its ID in the vault as `NEXT_PUBLIC_UMAMI_WEBSITE_ID`,
+redeploy → tracker activates. (The website ID can't be automated — the website only exists once Umami is live.)
+
+### Cloudflare setup
+- **API token** (`CLOUDFLARE_API_TOKEN`): already has Zone·DNS·Edit + Account·Cloudflare Tunnel·Edit
+  (apex/www work) → DNS + ingress auto-apply. **Only to gate the dashboard:** add **Account · Access:
+  Apps and Policies · Edit** to that token (else `manage_analytics_access=true` fails the apply).
+- **Zero-Trust org** (one-time, dashboard): Cloudflare → Zero Trust → pick a team name. Required before
+  any Access app. Add a login method under Settings → Authentication (One-time-PIN email needs no IdP).
+- **Enable Access**: set repo Actions variables `MANAGE_ANALYTICS_ACCESS=true` +
+  `ANALYTICS_ACCESS_EMAILS=["you@alethialabs.io"]` → merge; the apply creates the dashboard gate
+  (`/script.js` + `/api` bypassed so ingest still works). Leave the var off to rely on Umami's own login.
 
 ---
 

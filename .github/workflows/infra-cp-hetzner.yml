@@ -93,6 +93,13 @@ jobs:
 
       - name: OpenTofu Apply
         working-directory: ${{ env.TF_DIR }}
+        # Cloudflare Access gating for the Umami dashboard — non-secret config via repo Actions
+        # variables (like the role ARNs), default OFF so the apply keeps working until enabled.
+        # To turn on: set repo vars MANAGE_ANALYTICS_ACCESS=true + ANALYTICS_ACCESS_EMAILS=["you@…"]
+        # (and add "Access: Apps and Policies: Edit" to CLOUDFLARE_API_TOKEN).
+        env:
+          TF_VAR_manage_analytics_access: ${{ vars.MANAGE_ANALYTICS_ACCESS || 'false' }}
+          TF_VAR_analytics_access_emails: ${{ vars.ANALYTICS_ACCESS_EMAILS || '[]' }}
         run: tofu apply -auto-approve
 
       # Chain provisioned outputs back into the vault so deploy-console needs no manual
