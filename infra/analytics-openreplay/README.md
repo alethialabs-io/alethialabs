@@ -1,5 +1,10 @@
 # OpenReplay box (session replay)
 
+> **Not the default.** For now the console uses **OpenReplay Cloud's free tier** (1,000 sessions/mo, $0,
+> zero ops) — just set `NEXT_PUBLIC_OPENREPLAY_PROJECT_KEY` in the vault (see `deploy/analytics/README.md`).
+> This module is for **later**, only once you outgrow the free tier and want to self-host for unlimited
+> sessions / full data ownership.
+
 A dedicated Hetzner VM for **OpenReplay** — session replay for the console. Its stack (ClickHouse +
 MinIO + Redis + Postgres + services) is too heavy for the shared `cx33` control-plane box, so it runs
 on its own `cpx41` (8 vCPU / 16 GB), fronted by its **own Cloudflare Tunnel** (outbound-only, like the

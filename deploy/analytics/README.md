@@ -51,35 +51,28 @@ ANALYTICS_DB_PASSWORD=<random>       # umami-db password
 Umami is cookieless/GDPR-friendly — no consent banner needed. Pageviews + custom events (funnels,
 `web_vitals`) show in its dashboard.
 
-## OpenReplay (session replay) — heavier, opt-in
-OpenReplay's self-host is a full stack (Postgres/ClickHouse/Redis/MinIO + services). **Do not hand-roll
-a compose file** — use the upstream installer, and for a resource-constrained box run it on a **separate
-small VM** (the ingest is just an HTTPS endpoint the console posts to):
+## OpenReplay (session replay) — **default: their Cloud free tier**
+OpenReplay self-hosting is a full stack (Postgres/ClickHouse/Redis/MinIO) that needs its own ~16 GB box
++ real ops. Their **Cloud free tier gives 1,000 session recordings/mo at $0**, so the default is Cloud —
+**no infrastructure**:
 
-```bash
-# On the analytics host (see https://docs.openreplay.com/en/deployment/):
-git clone https://github.com/openreplay/openreplay && cd openreplay/scripts/helmcharts
-# follow the docker or k8s install; it prints a PROJECT_KEY + ingest URL. Then set on the console:
-NEXT_PUBLIC_OPENREPLAY_PROJECT_KEY=<project-key>
-NEXT_PUBLIC_OPENREPLAY_INGEST=https://openreplay.<your-domain>/ingest   # optional if same origin
-```
-Privacy: the tracker obscures email/number inputs by default; Stripe card fields are cross-origin
-iframes (never captured). Add `data-openreplay-obscured` to any extra sensitive subtree, and gate
+1. Sign up at [openreplay.com](https://openreplay.com) and pick the **EU region** (GDPR — Alethia Labs OÜ
+   is EU). Create a project → copy its **project key**.
+2. Set in the console prod env (the vault; the deploy assembler already emits it):
+   ```bash
+   NEXT_PUBLIC_OPENREPLAY_PROJECT_KEY=<project-key>
+   # NEXT_PUBLIC_OPENREPLAY_INGEST is OPTIONAL — leave empty and the tracker posts to OpenReplay Cloud's
+   # default ingest; set it only for the EU-cloud ingest host or a self-hosted box.
+   ```
+That's it — the tracker (`components/providers/analytics-provider.tsx`, inputs obscured) starts recording.
+
+**Self-host later** (only once you outgrow 1,000 sessions/mo): the ready-to-apply box module is
+`infra/analytics-openreplay/` — a dedicated Hetzner `cpx41` + its own Cloudflare Tunnel + DNS + Access at
+`openreplay.alethialabs.io`. See its README.
+
+Privacy (either way): the tracker obscures email/number inputs by default; Stripe card fields are
+cross-origin iframes (never captured). Mark extra sensitive subtrees `data-openreplay-obscured`, and gate
 replay behind consent if your privacy policy requires it.
-
-## Ingress (Cloudflare Tunnel + Caddy)
-Expose Umami (and OpenReplay) on their own hostnames. Add a tunnel ingress + a Caddy route, e.g.:
-
-```caddy
-# deploy/prod/Caddyfile  (mirror of the marketing pattern)
-analytics.alethialabs.io {
-    encode zstd gzip
-    reverse_proxy umami:3000
-}
-# openreplay.alethialabs.io { reverse_proxy <openreplay-host>:8080 }
-```
-Then set `NEXT_PUBLIC_UMAMI_HOST=https://analytics.alethialabs.io` in the console's prod env
-(the vault / `deploy/prod` env), since `next-runtime-env` reads it at container start (no rebuild).
 
 ## Verify
 Load any console page → the `<script src=".../script.js" data-website-id=…>` renders and posts a
