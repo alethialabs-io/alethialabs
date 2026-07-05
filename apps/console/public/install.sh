@@ -1,6 +1,6 @@
 #!/bin/sh
 # Alethia CLI installer (macOS / Linux).
-# SPDX-License-Identifier: AGPL-3.0-only  ·  © 2026 Alethia Labs OÜ
+# SPDX-License-Identifier: AGPL-3.0-only  ·  © 2026 Alethia Labs
 # Source: https://github.com/alethialabs-io/alethialabs/blob/main/apps/console/public/install.sh
 #
 # Usage:

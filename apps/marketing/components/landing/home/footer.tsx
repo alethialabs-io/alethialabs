@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { LEGAL_ENTITY } from "@repo/brand/legal";
 import Link from "next/link";
 import { disp, eyebrow, Lockup, mono, Wrap } from "./primitives";
 
@@ -54,7 +55,7 @@ export function Footer() {
 				</div>
 				<div style={{ height: 1, background: "var(--border)" }} />
 				<div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 24, flexWrap: "wrap", gap: 12 }}>
-					<p style={{ ...eyebrow, fontSize: 10, margin: 0 }}>© 2026 Alethia Labs OÜ · AGPL-3.0 open core</p>
+					<p style={{ ...eyebrow, fontSize: 10, margin: 0 }}>© 2026 {LEGAL_ENTITY.tradingName} · AGPL-3.0 open core</p>
 					<p style={{ ...eyebrow, fontSize: 10, margin: 0, ...mono }}>aletheia · truth, brought into focus</p>
 				</div>
 			</Wrap>

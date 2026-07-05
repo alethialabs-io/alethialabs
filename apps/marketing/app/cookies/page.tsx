@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { LEGAL_ENTITY } from "@repo/brand/legal";
 import { LegalShell } from "@/components/legal/legal-shell";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -19,7 +20,7 @@ export default function CookiesPage() {
 	return (
 		<LegalShell title="Cookie Policy" lastUpdated="June 17, 2026">
 			<p>
-				This Cookie Policy explains how <strong>Alethia Labs OÜ</strong> uses
+				This Cookie Policy explains how <strong>{LEGAL_ENTITY.legalName}</strong> uses
 				cookies and similar technologies on the Alethia control plane and
 				related websites (the “Service”). It should be read together with our{" "}
 				<Link href="/privacy">Privacy Policy</Link>.

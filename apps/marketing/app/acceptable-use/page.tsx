@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { LEGAL_ENTITY } from "@repo/brand/legal";
 import { LegalShell } from "@/components/legal/legal-shell";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -21,7 +22,7 @@ export default function AcceptableUsePage() {
 			<p>
 				This Acceptable Use Policy (“AUP”) sets out the rules for using the
 				Alethia control plane, the alethia CLI, and related services (the
-				“Service”) provided by <strong>Alethia Labs OÜ</strong>. It is part
+				“Service”) provided by <strong>{LEGAL_ENTITY.legalName}</strong>. It is part
 				of, and incorporated by reference into, our{" "}
 				<Link href="/terms">Terms of Service</Link>. By using the Service you agree
 				to this AUP.
