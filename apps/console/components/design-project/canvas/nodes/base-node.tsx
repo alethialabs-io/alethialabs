@@ -64,12 +64,19 @@ export function BaseNode({
 			<div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
 				<Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
 				<span className="vx-eyebrow">{def.eyebrow}</span>
+				{/* Status is derived from the client store (persist/sessionStorage), so SSR and the first
+				    client paint can differ. Keep the DOM structure STABLE across hydration — always render
+				    the label span (hidden when nominal) rather than conditionally mounting it, and suppress
+				    the benign text/attr mismatch — so a store rehydration never throws a hydration error. */}
 				<span
 					className={cn("vx-status ml-auto min-w-0", `vx-status--${status.vx}`)}
 					title={readiness.issue ?? status.label}
+					suppressHydrationWarning
 				>
 					<span className="vx-status__dot" />
-					{showLabel && <span className="truncate">{status.label}</span>}
+					<span className={cn("truncate", !showLabel && "hidden")}>
+						{status.label}
+					</span>
 				</span>
 			</div>
 

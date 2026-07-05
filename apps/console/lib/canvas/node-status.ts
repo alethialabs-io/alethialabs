@@ -91,7 +91,14 @@ let cacheIssues: Record<string, string> = {};
  * graph-level concern surfaced at deploy, not a per-node badge.
  */
 function computeIssues(nodes: CanvasNode[]): Record<string, string> {
-	const result = projectFormSchema.safeParse(graphToForm(nodes));
+	// Readiness is a non-critical overlay — a malformed draft must never crash the canvas. Any
+	// unexpected throw (schema edge case, bad persisted config) degrades to "no issues" (all ready).
+	let result: ReturnType<typeof projectFormSchema.safeParse>;
+	try {
+		result = projectFormSchema.safeParse(graphToForm(nodes));
+	} catch {
+		return {};
+	}
 	if (result.success) return {};
 	const issues: Record<string, string> = {};
 	for (const issue of result.error.issues) {
