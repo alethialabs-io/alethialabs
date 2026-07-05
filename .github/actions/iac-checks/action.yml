@@ -21,17 +21,13 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       run: tofu fmt -check -recursive
 
-    # Install tflint DIRECTLY (pinned) instead of terraform-linters/setup-tflint@v4 — that action's
-    # own default `path` input regressed ($HOME/~ not expanded), failing the job before tflint runs.
-    # A direct download is immune to the action's input/tag regressions.
+    # Install tflint LATEST via its official installer (not terraform-linters/setup-tflint@v4 — that
+    # action's default `path` input regressed, $HOME/~ unexpanded, failing before tflint runs). We track
+    # latest rather than pin: pinning only meant chasing version bumps, and we don't support legacy.
     - name: Setup tflint
       shell: bash
-      env:
-        TFLINT_VERSION: v0.54.0
       run: |
-        curl -fsSL "https://github.com/terraform-linters/tflint/releases/download/${TFLINT_VERSION}/tflint_linux_amd64.zip" -o /tmp/tflint.zip
-        sudo unzip -o /tmp/tflint.zip -d /usr/local/bin
-        rm -f /tmp/tflint.zip
+        curl -fsSL https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
         tflint --version
 
     - name: tflint
@@ -46,18 +42,14 @@ runs:
         tflint --init
         tflint --recursive --format compact --minimum-failure-severity=error
 
-    # Install Trivy DIRECTLY (pinned) instead of aquasecurity/trivy-action / setup-trivy: those actions
-    # keep deleting the sub-version tags their releases pin (setup-trivy@v0.2.1 → v0.3.1 → …), breaking
-    # the job at action-RESOLUTION time before any step runs. A direct binary download never depends on
-    # those tags — the definitive fix for the recurring Trivy CI breakage.
+    # Install Trivy LATEST via its official installer — NOT aquasecurity/trivy-action / setup-trivy
+    # (those actions keep deleting the sub-version tags their releases pin, breaking the job at
+    # action-resolution time) and no longer a pinned binary either: version-pinning just meant chasing
+    # bumps, and we don't support legacy. The installer fetches the current release straight to PATH.
     - name: Setup Trivy
       shell: bash
-      env:
-        TRIVY_VERSION: v0.72.0
       run: |
-        curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VERSION}/trivy_${TRIVY_VERSION#v}_Linux-64bit.tar.gz" -o /tmp/trivy.tgz
-        sudo tar -xzf /tmp/trivy.tgz -C /usr/local/bin trivy
-        rm -f /tmp/trivy.tgz
+        curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
         trivy --version
 
     - name: Trivy config scan (Terraform misconfig)
