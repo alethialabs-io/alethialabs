@@ -98,7 +98,7 @@ export function buildSidebarNav(orgSlug: string): SidebarNavGroups {
 		],
 		pinned: [
 			{ label: "Usage", icon: Gauge, sub: "usage", href: globalHref(orgSlug, "usage") },
-			{ label: "Support", icon: LifeBuoy, disabled: true, badge: { text: "Soon", tone: "soon" } },
+			{ label: "Support", icon: LifeBuoy, sub: "support", href: globalHref(orgSlug, "support") },
 			{ label: "Settings", icon: Settings, drill: "settings", anchor: globalHref(orgSlug, "settings") },
 		],
 	};

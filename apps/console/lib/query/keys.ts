@@ -19,4 +19,7 @@ export const qk = {
 	pricing: (region: string) => ["pricing", region] as const,
 	cloudResources: (identityId: string) =>
 		["cloud-resources", identityId] as const,
+	supportCases: (filter: "all" | "active" | "resolved" = "all") =>
+		["support", "cases", filter] as const,
+	supportCase: (id: string) => ["support", "case", id] as const,
 } as const;

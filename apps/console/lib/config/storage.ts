@@ -60,3 +60,6 @@ export function getStorageConfig(): StorageConfig {
 	cached = parsed.data;
 	return cached;
 }
+
+/** Object-storage bucket holding support-case attachments (S3-compatible). */
+export const SUPPORT_ATTACHMENTS_BUCKET = "support-attachments";
