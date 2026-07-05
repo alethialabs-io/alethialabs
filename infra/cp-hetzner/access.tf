@@ -6,9 +6,21 @@
 # on alethialabs.io can still fetch the script and POST events. More-specific paths win in Access, so
 # the two bypass apps take precedence over the root dashboard app.
 #
+# ── WHY TWO LOGIN LAYERS (Access + Umami's own login) — deliberate, NOT redundant ──
+# The browser tracker must POST events *publicly* to /api/send, so the /api bypass app below is open to
+# `everyone`. Umami's ADMIN API lives under the same /api prefix, so it is publicly reachable too —
+# which means **Umami's own username/password is the real guard for your analytics DATA**, while
+# **Cloudflare Access only gates the dashboard HTML UI**. The two layers protect two DIFFERENT surfaces:
+#   * Cloudflare Access -> the dashboard UI (/, HTML)      : stops randoms from reaching the login page
+#   * Umami login       -> the admin API (/api/websites..) : the actual data guard (its /api is bypassed)
+# Dropping either weakens a distinct surface, so hitting the dashboard prompts twice by design.
+# Single-gate alternative (considered, NOT taken — we chose defense-in-depth): set Umami DISABLE_LOGIN=1
+# and narrow the /api bypass below from all-of-/api to just /api/send, making Access the sole gate.
+#
 # Gated on manage_analytics_access (default off) — requires a Cloudflare Zero-Trust org (team domain,
 # a one-time dashboard step) and analytics_access_emails to be set. Until then the dashboard is guarded
-# by Umami's own login (rotate the admin/umami default).
+# by Umami's own login only (admin / UMAMI_ADMIN_PASSWORD — auto-generated, stored in the AWS vault
+# alethia/prod/env; never a UI-set value). See deploy/analytics/README.md, section "Dashboard login".
 
 locals {
   analytics_host = "analytics.${var.domain}"
