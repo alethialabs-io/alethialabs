@@ -262,6 +262,42 @@ services:
       - redis-data:/data
     restart: unless-stopped
 
+  # ── Self-hosted analytics (opt-in) ─────────────────────────────────────────────
+  # Product analytics + funnels + Core Web Vitals via Umami. Never starts by default;
+  # bring up with:  COMPOSE_PROFILES=analytics pnpm compose:up   (or docker compose --profile analytics up -d)
+  # Then create a website in the Umami dashboard and set NEXT_PUBLIC_UMAMI_HOST + _WEBSITE_ID.
+  # (OpenReplay session replay is a separate, heavier overlay — deploy/analytics/docker-compose.openreplay.yml.)
+  umami-db:
+    image: postgres:17-alpine
+    profiles: ["analytics"]
+    environment:
+      POSTGRES_USER: umami
+      POSTGRES_PASSWORD: "${ANALYTICS_DB_PASSWORD:-analytics-dev-secret}"
+      POSTGRES_DB: umami
+    volumes:
+      - umami-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U umami -d umami"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  umami:
+    image: ghcr.io/umami-software/umami:postgresql-latest
+    profiles: ["analytics"]
+    environment:
+      DATABASE_URL: "postgresql://umami:${ANALYTICS_DB_PASSWORD:-analytics-dev-secret}@umami-db:5432/umami"
+      DATABASE_TYPE: postgresql
+      APP_SECRET: "${UMAMI_APP_SECRET:-umami-dev-secret-change-me}"
+    ports:
+      - "${ANALYTICS_PORT:-8888}:3000"
+    depends_on:
+      umami-db:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   seaweedfs-data:
   postgres-data:
@@ -269,3 +305,4 @@ volumes:
   caddy-data:
   caddy-config:
   redis-data:
+  umami-data:

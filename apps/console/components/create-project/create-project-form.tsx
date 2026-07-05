@@ -14,6 +14,7 @@ import { z } from "zod";
 import { createThread } from "@/app/server/actions/agent";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { addEnvironment, createProject } from "@/app/server/actions/projects";
+import { track } from "@/lib/analytics/track";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { ContainerPlatformSelector } from "@/components/design-project/container-platform-selector";
 import {
@@ -182,6 +183,7 @@ export function CreateProjectForm({
 				region,
 			});
 
+			track("project_created", { provider, template: values.template });
 			toast.success("Project created — start designing.");
 			router.push(projectHref(orgSlug, project.slug ?? ""));
 		} catch (err) {
