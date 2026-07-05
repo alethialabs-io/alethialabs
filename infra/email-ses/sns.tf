@@ -6,13 +6,15 @@
 # `alarms` carries CloudWatch reputation alarms (cloudwatch.tf) to an ops inbox.
 
 resource "aws_sns_topic" "events" {
-  name = "alethia-ses-events"
-  tags = local.tags
+  name              = "alethia-ses-events"
+  kms_master_key_id = aws_kms_key.sns.id # encrypt at rest (see kms.tf)
+  tags              = local.tags
 }
 
 resource "aws_sns_topic" "alarms" {
-  name = "alethia-ses-alarms"
-  tags = local.tags
+  name              = "alethia-ses-alarms"
+  kms_master_key_id = aws_kms_key.sns.id # encrypt at rest (see kms.tf)
+  tags              = local.tags
 }
 
 # Let SES publish event notifications to the events topic (scoped to this account).

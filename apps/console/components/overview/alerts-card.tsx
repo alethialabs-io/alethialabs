@@ -18,6 +18,7 @@ import {
 	getAlertsBootstrap,
 } from "@/app/server/actions/alerts";
 import { globalHref } from "@/lib/routing";
+import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 
 /** Delivery status → grayscale tier for the left-hand dot. */
 const DELIVERY_TIER: Record<string, StatusTier> = {
@@ -32,6 +33,7 @@ const MAX_ROWS = 4;
 
 /** Recent alert deliveries for the org. */
 export function AlertsCard({ orgSlug }: { orgSlug: string }) {
+	const { openUpgrade } = useUpgradeSheet();
 	const [deliveries, setDeliveries] = useState<DeliveryDTO[] | null>(null);
 	// null until loaded; true/false once the bootstrap resolves the plan's alerting grant.
 	const [alerting, setAlerting] = useState<boolean | null>(null);
@@ -84,12 +86,15 @@ export function AlertsCard({ orgSlug }: { orgSlug: string }) {
 					<p className="max-w-[34ch] text-xs text-muted-foreground">
 						Alerting — notification channels and policies — unlocks on the Pro plan.
 					</p>
-					<Link href={globalHref(orgSlug, "settings/billing")}>
-						<Button variant="outline" size="xs" className="gap-1.5 text-xs">
-							<Zap className="h-3 w-3" />
-							Upgrade
-						</Button>
-					</Link>
+					<Button
+						variant="outline"
+						size="xs"
+						className="gap-1.5 text-xs"
+						onClick={openUpgrade}
+					>
+						<Zap className="h-3 w-3" />
+						Upgrade
+					</Button>
 				</div>
 			) : deliveries.length === 0 ? (
 				<p className="px-4 py-8 text-center font-mono text-xs text-muted-foreground">

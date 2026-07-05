@@ -73,13 +73,14 @@ variable "ssh_public_key" {
 }
 
 variable "server_type" {
-  # CAX = Ampere ARM64 (matches the runner image's arm64 build). CAX21
-  # (4 vCPU / 8 GB) is the cheapest tier with enough headroom to run the bundle
-  # plus an OpenTofu job; bump to cax31 if it gets busy. CAX11 (4 GB) is too
-  # tight when the runner executes.
+  # CX33 = Intel x86 (4 vCPU / 8 GB) — the box images build linux/amd64 to match.
+  # We moved off CAX (Ampere ARM64) because Hetzner ARM capacity in fsn1 is chronically
+  # out (resource_unavailable); the Intel CX line is abundant. Enough headroom to run
+  # the compose bundle plus an OpenTofu job; bump to cx43 if it gets busy. (The runner
+  # FLEET stays ARM/CAX — its images are still built arm64.)
   description = "Hetzner server type."
   type        = string
-  default     = "cax21"
+  default     = "cx33"
 }
 
 variable "location" {

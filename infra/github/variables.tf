@@ -34,14 +34,19 @@ variable "rc_branch" {
 variable "required_status_checks" {
   description = "CI check contexts (ci.yml job names) that must pass before merge."
   type        = list(string)
+  # Matrix jobs report their status-check context WITH the matrix suffix, e.g.
+  # "Go (build · vet · test · lint) (apps/cli)" — the bare name is never reported, so
+  # requiring it would wedge every merge. List each matrix leg explicitly.
   default = [
     "TypeScript (lint · types · test · docs)",
     "Integration (real Postgres + RLS)",
-    "Go (build · vet · test · lint)",
+    "Go (build · vet · test · lint) (apps/cli)",
+    "Go (build · vet · test · lint) (packages/core)",
+    "Go (build · vet · test · lint) (apps/runner)",
     "Authz / open-core guards",
     "Secret scan (gitleaks)",
     # Enforces feature → dev → staging → main: fails a PR into main/staging from a disallowed source
-    # branch, so mis-targeted PRs (e.g. feature → main) are un-mergeable. See .github/workflows/branch-flow-guard.yml.
+    # branch → mis-targeted PRs (e.g. feature → main) are un-mergeable. See .github/workflows/branch-flow-guard.yml.
     "branch-flow-guard",
   ]
 }

@@ -50,7 +50,11 @@ jobs:
           working-directory: ${{ env.TF_DIR }}
 
   apply:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Gated OFF by default. This is the "run the Alethia control plane ON AWS" OSS option,
+    # NOT used by the hosted deploy (Hetzner) — its backend/creds are unconfigured, so an
+    # auto-apply on push only fails. Set repo variable INFRA_AWS_APPLY=true to enable when
+    # actually deploying the control plane on AWS. The PR `plan` job still validates the tf.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.INFRA_AWS_APPLY == 'true'
     runs-on: ubuntu-latest
     environment: production
     steps:
