@@ -49,3 +49,5 @@ services:
     profiles: !reset []
   umami:
     profiles: !reset []
+  umami-init:
+    profiles: !reset []

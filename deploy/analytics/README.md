@@ -18,15 +18,19 @@ Fully IaC'd through the existing Cloudflare Tunnel + vault pipeline (no hand-edi
   + `NEXT_PUBLIC_UMAMI_WEBSITE_ID` flow through `.github/workflows/deploy-console.yml`.
 - **OpenReplay → `openreplay.alethialabs.io`**, on its **own box** — see `infra/analytics-openreplay/`.
 
-**Auto-provisions on merge to `main` (no manual steps):** the `analytics` DNS record + tunnel ingress
-(`infra-cp-hetzner.yml` → `tofu apply`), the `umami` + `umami-db` containers (`deploy-console.yml` →
-`compose up -d`; the `analytics` profile is cleared in the tunnel overlay), the Umami secrets
-(`bootstrap-secrets.sh` generates them once — a DB password, never rotated per-deploy), and any
-`NEXT_PUBLIC_OPENREPLAY_PROJECT_KEY` you put in `secrets.local.env`.
+**Fully auto-provisions on merge to `main` — no manual steps, no redeploy:** the `analytics` DNS record +
+tunnel ingress (`infra-cp-hetzner.yml` → `tofu apply`), the `umami`/`umami-db`/`umami-init` containers
+(`deploy-console.yml` → `compose up -d`; the `analytics` profile is cleared in the tunnel overlay), the
+Umami secrets (`bootstrap-secrets.sh`, gen-once), and the `NEXT_PUBLIC_OPENREPLAY_PROJECT_KEY` from
+`secrets.local.env`.
 
-**Manual (one-time, after first deploy):** open `analytics.alethialabs.io`, **rotate the `admin/umami`
-default**, create the "Alethia Console" website, put its ID in the vault as `NEXT_PUBLIC_UMAMI_WEBSITE_ID`,
-redeploy → tracker activates. (The website ID can't be automated — the website only exists once Umami is live.)
+The **website ID + admin password are provisioned deterministically**: `bootstrap-secrets.sh` generates a
+UUID (`NEXT_PUBLIC_UMAMI_WEBSITE_ID`) + `UMAMI_ADMIN_PASSWORD`, and the **`umami-init`** one-shot
+(`deploy/analytics/umami-seed.sql`) seeds the website with that exact UUID and rotates the `admin/umami`
+default once Umami is healthy — so the console tracks correctly on the **first** deploy. The Umami dashboard
+login is then **`admin` / `UMAMI_ADMIN_PASSWORD`** (from the vault — the source of truth; don't change it
+in the UI). No dashboard step, no second deploy. (`umami-init` is idempotent: `ON CONFLICT DO NOTHING`
+for the website; the admin password is (re)set to the stable vault value each run.)
 
 ### Cloudflare setup
 - **API token** (`CLOUDFLARE_API_TOKEN`): already has Zone·DNS·Edit + Account·Cloudflare Tunnel·Edit
