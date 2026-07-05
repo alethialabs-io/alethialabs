@@ -408,3 +408,7 @@ Cloud account bootstrap scripts:
 - Shared code used by more than one app lives in `packages/@repo/*` — **promote, don't duplicate** across `apps/console` ↔ `apps/marketing` (see *Shared web packages*).
 - Feature planning goes in `dataroom/spec/features/` (the private `alethialabs-io/dataroom` repo) with checkable task lists.
 - Never start coding without a plan and explicit approval.
+- **Branch flow is `feature → dev → staging → main`.** Cut feature branches from `dev`, and open PRs
+  **ONLY into `dev`**. NEVER open or merge a PR into `main` or `staging` — those receive only the
+  `staging → main` / `dev → staging` promotions (or a `hotfix/*` branch). This is enforced by the
+  `branch-flow-guard` required check, but don't rely on it — target `dev`.

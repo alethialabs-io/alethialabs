@@ -40,6 +40,9 @@ variable "required_status_checks" {
     "Go (build · vet · test · lint)",
     "Authz / open-core guards",
     "Secret scan (gitleaks)",
+    # Enforces feature → dev → staging → main: fails a PR into main/staging from a disallowed source
+    # branch, so mis-targeted PRs (e.g. feature → main) are un-mergeable. See .github/workflows/branch-flow-guard.yml.
+    "branch-flow-guard",
   ]
 }
 
