@@ -24,7 +24,12 @@ data "aws_iam_policy_document" "deployer_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:ref:refs/heads/${var.github_branch}"]
+      # Trust both the branch ref sub and the environment sub (the apply job sets
+      # `environment: <github_environment>`). StringEquals value-list = OR.
+      values = [
+        "repo:${var.github_repo}:ref:refs/heads/${var.github_branch}",
+        "repo:${var.github_repo}:environment:${var.github_environment}",
+      ]
     }
   }
 
@@ -59,17 +64,23 @@ data "aws_iam_policy_document" "deployer_permissions" {
     actions = [
       "s3:CreateBucket",
       "s3:ListBucket",
-      "s3:GetBucketLocation",
-      "s3:GetBucketTagging",
+      # All bucket-READ actions the aws_s3_bucket refresh probes — CORS, website,
+      # versioning, logging, notification, object-lock, request-payment, policy-status,
+      # acl, policy, tagging, location, ownership, public-access-block, … The provider
+      # reads sub-resources the stack doesn't even manage (e.g. CORS), so an enumerated
+      # read list is brittle; GetBucket* + the four non-prefixed config reads cover the
+      # refresh without over-granting (all READS, scoped to this one bucket).
+      "s3:GetBucket*",
+      "s3:GetAccelerateConfiguration",
+      "s3:GetEncryptionConfiguration",
+      "s3:GetLifecycleConfiguration",
+      "s3:GetReplicationConfiguration",
+      # Writes stay tightly enumerated.
       "s3:PutBucketTagging",
-      "s3:GetBucketPolicy",
       "s3:PutBucketPolicy",
       "s3:DeleteBucketPolicy",
-      "s3:GetBucketPublicAccessBlock",
       "s3:PutBucketPublicAccessBlock",
-      "s3:GetBucketOwnershipControls",
       "s3:PutBucketOwnershipControls",
-      "s3:GetBucketAcl",
     ]
     resources = ["arn:aws:s3:::${var.bucket_name}"]
   }

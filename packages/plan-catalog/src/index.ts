@@ -208,6 +208,25 @@ export function planMeta(plan: PlanId): PlanCatalogEntry {
 	return community;
 }
 
+/**
+ * The plan's per-unit charge in the smallest currency unit (cents) — what Stripe's
+ * `unit_amount` expects. Derived from `priceMonthlyUsd` (the single-source-of-truth
+ * dollar figure) so the created Stripe price can never drift from the advertised one.
+ * Throws for custom/free plans that have no numeric price (Enterprise).
+ */
+export function planUnitAmountCents(plan: PlanId): number {
+	const usd = planMeta(plan).priceMonthlyUsd;
+	if (usd == null) {
+		throw new Error(`Plan "${plan}" has no numeric price (priceMonthlyUsd).`);
+	}
+	return Math.round(usd * 100);
+}
+
+/** The plan's monthly included usage credit in cents (0 when none). */
+export function planIncludedCreditCents(plan: PlanId): number {
+	return Math.round((planMeta(plan).includedCreditUsd ?? 0) * 100);
+}
+
 // ── Live-price formatting ────────────────────────────────────────────────────────
 // The authoritative price amount lives in Stripe; both the console and the marketing
 // site read it live and render it with these shared helpers (so a "$29 / seat / mo"

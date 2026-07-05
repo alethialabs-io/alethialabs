@@ -4,11 +4,14 @@
 # Shared Trivy config for infra/ misconfiguration scanning (referenced by
 # .github/actions/iac-checks). Trivy absorbed tfsec; `scan-type: config` runs its
 # Terraform misconfiguration checks.
-#
-# NOTE: reviewed check-ID suppressions do NOT live here — the config-file
-# `misconfiguration.exclude` key is a silent no-op in current Trivy. They live in
-# infra/.trivyignore (the mechanism Trivy actually honours), wired via TRIVY_IGNOREFILE.
 
 misconfiguration:
-  # Report only real failures (the suppressed IDs are in infra/.trivyignore).
-  include-non-failures: false
+  # Scan OUR template code only, not the internals of downloaded third-party modules
+  # (e.g. terraform-aws-modules/eks's egress-all security-group rule) — we can't fix
+  # upstream, and `tofu init` (run for `tofu validate`) pulls them into .terraform/.
+  terraform:
+    exclude-downloaded-modules: true
+
+# Suppressions for deliberate, reviewed design decisions live in infra/.trivyignore
+# (TRIVY_IGNOREFILE) — the mechanism trivy actually honors. A `misconfiguration.exclude:`
+# list here is silently ignored by trivy, so keep all accepted findings in .trivyignore.

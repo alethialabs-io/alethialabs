@@ -162,7 +162,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 				? `/onboarding?next=${encodeURIComponent(next)}`
 				: "/onboarding";
 		const errorCallbackURL = `${mode === "signup" ? "/signup" : "/login"}?error=oauth`;
-		const { error } =
+		const { data, error } =
 			provider === "github" || provider === "google"
 				? await authClient.signIn.social({
 						provider,
@@ -181,7 +181,18 @@ export function AuthForm({ mode }: AuthFormProps) {
 			setError(error.message ?? `Failed to sign in with ${provider}`);
 			setIsLoading(false);
 			setLoadingProvider(null);
+			return;
 		}
+		// Better Auth's redirect plugin normally navigates on `{ url, redirect: true }`,
+		// but don't depend on it — redirect explicitly so the button never hangs on the
+		// spinner. If there's neither a url nor an error, surface it instead of spinning.
+		if (data && "url" in data && typeof data.url === "string" && data.url) {
+			window.location.href = data.url;
+			return;
+		}
+		setError(`Could not start ${provider} sign-in. Please try again.`);
+		setIsLoading(false);
+		setLoadingProvider(null);
 	};
 
 	// `?provider=github` (etc.) auto-starts that OAuth provider once — one-click

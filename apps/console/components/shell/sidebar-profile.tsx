@@ -21,8 +21,7 @@ import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InlineThemeSwitcher } from "@/components/theme-menu";
 import { authClient } from "@/lib/auth/client";
 import { legalUrl } from "@/lib/legal";
-import { globalHref } from "@/lib/routing";
-import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { displayName, userInitials } from "@/lib/user-display";
 import { Avatar, AvatarFallback } from "@repo/ui/avatar";
 import { Button } from "@repo/ui/button";
@@ -51,7 +50,7 @@ const DEFAULT_ISSUES_URL = "https://github.com/alethialabs-io/alethia/issues/new
  */
 export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
 	const router = useRouter();
-	const orgSlug = useActiveOrgSlug();
+	const { openUpgrade } = useUpgradeSheet();
 	const { data: session } = authClient.useSession();
 	const user = session?.user ?? null;
 	const [menuOpen, setMenuOpen] = useState(false);
@@ -202,10 +201,14 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
 						<>
 							<DropdownMenuSeparator />
 							<div className="px-1 py-1">
-								<Button asChild className="w-full">
-									<Link href={globalHref(orgSlug, "settings/billing")}>
-										Upgrade to Pro
-									</Link>
+								<Button
+									className="w-full"
+									onClick={() => {
+										setMenuOpen(false);
+										openUpgrade();
+									}}
+								>
+									Upgrade to Pro
 								</Button>
 							</div>
 						</>

@@ -25,6 +25,7 @@ import {
 	getOrgUsage,
 } from "@/app/server/actions/billing";
 import { globalHref } from "@/lib/routing";
+import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { UsageRing } from "./usage-ring";
 
 /** A gauge row: a metered resource with a real plan allowance. */
@@ -155,6 +156,22 @@ export function UsageCard({
 }
 
 /** Plan-aware header CTA: Upgrade (free), plan pill + Manage (paid), nothing (self-managed). */
+/** Free-plan header CTA — opens the in-place Pro upgrade sheet (not a route to billing). */
+function UpgradeCta() {
+	const { openUpgrade } = useUpgradeSheet();
+	return (
+		<Button
+			variant="outline"
+			size="xs"
+			className="ml-auto gap-1.5 text-xs"
+			onClick={openUpgrade}
+		>
+			<Zap className="h-3 w-3" />
+			Upgrade
+		</Button>
+	);
+}
+
 function UsageHeaderCta({
 	orgSlug,
 	data,
@@ -166,14 +183,7 @@ function UsageHeaderCta({
 	const billingHref = globalHref(orgSlug, "settings/billing");
 
 	if (data.plan === "community") {
-		return (
-			<Link href={billingHref} className="ml-auto">
-				<Button variant="outline" size="xs" className="gap-1.5 text-xs">
-					<Zap className="h-3 w-3" />
-					Upgrade
-				</Button>
-			</Link>
-		);
+		return <UpgradeCta />;
 	}
 
 	return (

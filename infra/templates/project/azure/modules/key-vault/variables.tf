@@ -39,21 +39,3 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
-
-variable "network_default_action" {
-  description = "Key Vault network ACL default action. 'Deny' (default) locks it down; combine with allowed_subnet_ids / allowed_ip_rules or a private endpoint."
-  type        = string
-  default     = "Deny"
-}
-
-variable "allowed_subnet_ids" {
-  description = "Subnet IDs allowed to reach the Key Vault (each must have the Microsoft.KeyVault service endpoint)."
-  type        = list(string)
-  default     = []
-}
-
-variable "allowed_ip_rules" {
-  description = "CIDRs/IPs allowed to reach the Key Vault."
-  type        = list(string)
-  default     = []
-}

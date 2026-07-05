@@ -23,7 +23,12 @@ data "aws_iam_policy_document" "deployer_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:ref:refs/heads/${var.github_branch}"]
+      # Trust both the branch ref sub and the environment sub (the apply job sets
+      # `environment: <github_environment>`). StringEquals value-list = OR.
+      values = [
+        "repo:${var.github_repo}:ref:refs/heads/${var.github_branch}",
+        "repo:${var.github_repo}:environment:${var.github_environment}",
+      ]
     }
   }
 
@@ -66,6 +71,7 @@ data "aws_iam_policy_document" "deployer_permissions" {
       "ses:CreateEmailIdentity",
       "ses:DeleteEmailIdentity",
       "ses:GetEmailIdentity",
+      "ses:ListTagsForResource",
       "ses:TagResource",
       "ses:UntagResource",
       "ses:PutEmailIdentityMailFromAttributes",
@@ -119,6 +125,45 @@ data "aws_iam_policy_document" "deployer_permissions" {
       "cloudwatch:UntagResource",
     ]
     resources = ["arn:aws:cloudwatch:${local.region}:${local.account_id}:alarm:alethia-ses-*"]
+  }
+
+  # KMS — the customer-managed key that encrypts the SNS topics (email-ses/kms.tf).
+  # CreateKey + ListAliases have no resource scope; alias ops need both the alias and its
+  # target key; key management is scoped to keys in this account/region.
+  statement {
+    sid       = "KMSCreate"
+    effect    = "Allow"
+    actions   = ["kms:CreateKey", "kms:ListAliases"]
+    resources = ["*"]
+  }
+  statement {
+    sid    = "KMSAlias"
+    effect = "Allow"
+    actions = [
+      "kms:CreateAlias",
+      "kms:DeleteAlias",
+      "kms:UpdateAlias",
+    ]
+    resources = [
+      "arn:aws:kms:${local.region}:${local.account_id}:alias/alethia-ses-*",
+      "arn:aws:kms:${local.region}:${local.account_id}:key/*",
+    ]
+  }
+  statement {
+    sid    = "KMSManageKey"
+    effect = "Allow"
+    actions = [
+      "kms:DescribeKey",
+      "kms:GetKeyPolicy",
+      "kms:PutKeyPolicy",
+      "kms:ScheduleKeyDeletion",
+      "kms:EnableKeyRotation",
+      "kms:GetKeyRotationStatus",
+      "kms:TagResource",
+      "kms:UntagResource",
+      "kms:ListResourceTags",
+    ]
+    resources = ["arn:aws:kms:${local.region}:${local.account_id}:key/*"]
   }
 
   # verify.sh captures events through a throwaway queue.

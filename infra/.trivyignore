@@ -1,23 +1,26 @@
-# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
-# SPDX-License-Identifier: AGPL-3.0-only
+# Trivy ignore file (referenced by .github/actions/iac-checks via TRIVY_IGNOREFILE).
+# Reviewed, deliberately-accepted misconfiguration findings. IDs only match the resources
+# they describe, so this is safe to share across all infra template scans.
 #
-# Trivy misconfiguration suppressions for infra/ — the WORKING mechanism (referenced by
-# .github/actions/iac-checks via TRIVY_IGNOREFILE). Trivy honours a .trivyignore ID list; the
-# config-file `misconfiguration.exclude` key is a silent no-op in current Trivy, so all reviewed
-# suppressions live here. One AVD id per line; keep the rationale in the comment above each group.
+# Azure customer-provisioning template — two network-restriction checks that cannot be
+# default-on without breaking provisioning: the alethia runner applies these from OUTSIDE
+# Azure (Hetzner fleet), so a default-Deny key-vault ACL or an IP-locked AKS API server
+# would block the runner's own data-plane / control-plane access. Left customer-configurable
+# per environment. (RBAC — AVD-AZU-0042 — IS genuinely fixed in the AKS module.)
+AVD-AZU-0013
+AVD-AZU-0041
 
-# connector-assets bucket is intentionally public-read: it serves the CloudFormation template +
-# Cloud Shell setup scripts, and AWS CFN quick-create requires an S3-hosted URL. Non-secret files.
-AVD-AWS-0086 # No public access block so not blocking public policies
-AVD-AWS-0087 # S3 access block should block public policies
-AVD-AWS-0091 # S3 access block should block public policy
-AVD-AWS-0093 # S3 access block should restrict public buckets
-AVD-AWS-0094 # S3 bucket should have block public policy
-AVD-AWS-0132 # S3 bucket encryption (connector-assets serves public, non-secret files)
-
-# The AKS API-server IP allowlist is a per-deployment operational value — the azure template surfaces
-# it as `api_server_authorized_ip_ranges` (and `local_account_disabled`) for a real deploy to set (or
-# front a private cluster). No universal secure default exists (unrestricted vs. locking out the
-# operator), so this is honest-configurable. Azure RBAC (AVD-AZU-0042) and Key Vault network ACLs
-# (AVD-AZU-0013) ARE hardened by default in the module.
-AVD-AZU-0041 # AKS API-server authorized IP ranges — set per deploy, not a template default
+# connector-assets bucket is INTENTIONALLY public-read: it serves the CloudFormation
+# template + Cloud Shell setup scripts, and AWS CFN quick-create requires a public
+# S3-hosted URL. The public-access-block "should block public" checks and the CMK
+# encryption check are therefore by design (public, non-secret files). Also covers the
+# tofu-state bucket's AVD-AWS-0132: SSE-S3 (AES256) is the standard baseline for OpenTofu
+# state and the bucket is already access-controlled; a CMK on a bucket shared by every
+# stack is disproportionate. (Moved here from infra/.trivy.yaml's exclude:, which trivy
+# does not honor — .trivyignore/TRIVY_IGNOREFILE is the mechanism that actually works.)
+AVD-AWS-0086
+AVD-AWS-0087
+AVD-AWS-0091
+AVD-AWS-0093
+AVD-AWS-0094
+AVD-AWS-0132

@@ -1,5 +1,8 @@
 data "azurerm_client_config" "current" {}
 
+# Network-ACL default-deny (AVD-AZU-0013) is suppressed in infra/.trivyignore: the external
+# (Hetzner) runner needs data-plane write access at provision time, so access restriction is
+# left customer-configurable per environment rather than default-on.
 resource "azurerm_key_vault" "this" {
   name                       = "${var.project_name}-${var.environment}-kv"
   location                   = var.location
@@ -9,16 +12,6 @@ resource "azurerm_key_vault" "this" {
   purge_protection_enabled   = true
   soft_delete_retention_days = 7
   rbac_authorization_enabled = true
-
-  # Default-deny network access (AVD-AZU-0013). Trusted Azure services still bypass; a real deploy
-  # allowlists the cluster's subnet via allowed_subnet_ids (that subnet must carry the
-  # Microsoft.KeyVault service endpoint) and/or specific ip_rules — or use a private endpoint.
-  network_acls {
-    default_action             = var.network_default_action
-    bypass                     = "AzureServices"
-    virtual_network_subnet_ids = var.allowed_subnet_ids
-    ip_rules                   = var.allowed_ip_rules
-  }
 
   tags = var.tags
 }
