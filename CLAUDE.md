@@ -378,6 +378,29 @@ Cloud account bootstrap scripts:
 - `aws/` — IAM cross-account roles and trust policies
 - `gcp/` — Workload identity federation setup
 
+### IaC / Terraform rules (OpenTofu)
+
+Every change under `infra/` follows these — they keep the templates reviewable and the CI
+`iac-checks` (fmt + tflint + Trivy) green:
+
+1. **Format + validate after every change.** Run `tofu fmt -recursive`, then `tofu init` and
+   `tofu validate` on each touched stack/template before committing.
+2. **Add `check` blocks in `checks.tf` for all new resources** — assert the resource's invariants
+   (naming, hardening, expected attributes) so drift/misconfig fails loudly.
+3. **`tofu/terraform apply` and `plan -destroy` are FORBIDDEN for agents.** Only humans apply, from
+   the correct branch with the required `-var`s. Never run a bare/destructive plan or apply.
+4. **One file per component.** Split by resource group — `iam.tf`, `instances.tf`, `databases.tf`,
+   `network.tf`, `provider.tf`, `variables.tf`, `outputs.tf`, `checks.tf` — not one monolith.
+5. **Validate module/provider versions and inputs.** Check the module out (or its registry docs) and
+   confirm the argument names against the pinned provider version; new components use the **latest**
+   version. (e.g. azurerm 4.x renamed/removed several AKS args — validate, don't assume.)
+6. **Update docs + examples every iteration.** Refresh the stack's README + `*.example` files (and
+   improve them, don't just append) so they match the config.
+
+Reviewed Trivy suppressions live in **`infra/.trivyignore`** (the mechanism Trivy honours — the
+config-file `misconfiguration.exclude` key is a silent no-op), wired via `TRIVY_IGNOREFILE` in
+`.github/actions/iac-checks`. Add an id there only with a one-line rationale, never to hide a real fix.
+
 ---
 
 ## CI/CD (`.github/workflows/`)
@@ -408,3 +431,7 @@ Cloud account bootstrap scripts:
 - Shared code used by more than one app lives in `packages/@repo/*` — **promote, don't duplicate** across `apps/console` ↔ `apps/marketing` (see *Shared web packages*).
 - Feature planning goes in `dataroom/spec/features/` (the private `alethialabs-io/dataroom` repo) with checkable task lists.
 - Never start coding without a plan and explicit approval.
+- **Branch flow is `feature → dev → staging → main`.** Cut feature branches from `dev`, and open PRs
+  **ONLY into `dev`**. NEVER open or merge a PR into `main` or `staging` — those receive only the
+  `staging → main` / `dev → staging` promotions (or a `hotfix/*` branch). This is enforced by the
+  `branch-flow-guard` required check, but don't rely on it — target `dev`.

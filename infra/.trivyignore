@@ -9,3 +9,18 @@
 # per environment. (RBAC — AVD-AZU-0042 — IS genuinely fixed in the AKS module.)
 AVD-AZU-0013
 AVD-AZU-0041
+
+# connector-assets bucket is INTENTIONALLY public-read: it serves the CloudFormation
+# template + Cloud Shell setup scripts, and AWS CFN quick-create requires a public
+# S3-hosted URL. The public-access-block "should block public" checks and the CMK
+# encryption check are therefore by design (public, non-secret files). Also covers the
+# tofu-state bucket's AVD-AWS-0132: SSE-S3 (AES256) is the standard baseline for OpenTofu
+# state and the bucket is already access-controlled; a CMK on a bucket shared by every
+# stack is disproportionate. (Moved here from infra/.trivy.yaml's exclude:, which trivy
+# does not honor — .trivyignore/TRIVY_IGNOREFILE is the mechanism that actually works.)
+AVD-AWS-0086
+AVD-AWS-0087
+AVD-AWS-0091
+AVD-AWS-0093
+AVD-AWS-0094
+AVD-AWS-0132

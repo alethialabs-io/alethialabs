@@ -27,9 +27,17 @@ env:
   IMAGE_PREFIX: ghcr.io/alethialabs-io
 
 jobs:
-  build:
-    # Native arm64 — the box is Hetzner CAX (Ampere) and the runner image is arm64.
-    runs-on: ubuntu-24.04-arm
+  # Native per-arch builds — NO QEMU. The control-plane box is Hetzner CX (x86) so its
+  # images are linux/amd64 (built natively on ubuntu-latest); the fleet VMs are Hetzner
+  # CAX (arm64) so the per-cloud runner images are linux/arm64 (built natively on the arm
+  # host). `runner` runs on BOTH (co-located on the box + the fleet), so it's built once
+  # per arch BY DIGEST and stitched into one multi-arch tag by `merge-runner`. Native
+  # builds keep the runner's build-time `tofu init` provider/module cache on EVERY arch
+  # (emulated tofu crashed `lfstack.push`, which is why the old QEMU path had to skip it).
+
+  # amd64 box images (single-arch, tagged) — native x86.
+  build-amd64:
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
@@ -45,43 +53,62 @@ jobs:
           - image: blog
             file: apps/blog/Dockerfile
             target: ""
-          # Marketing public site — hosted alethialabs.io serves this image behind the
-          # Cloudflare Tunnel (the tunnel overlay turns the marketing zone on).
+          # Marketing public site — hosted alethialabs.io serves this behind the tunnel.
           - image: marketing
             file: apps/marketing/Dockerfile
             target: ""
-          - image: runner
-            file: apps/runner/Dockerfile
-            target: ""
-          # Lean per-cloud runner images (per-cloud routing). Same artifacts, one
-          # cloud's CLI + cache each. Shared leading layers dedup against `runner`.
-          - image: runner-aws
-            file: apps/runner/Dockerfile.aws
-            target: ""
-          - image: runner-gcp
-            file: apps/runner/Dockerfile.gcp
-            target: ""
-          - image: runner-azure
-            file: apps/runner/Dockerfile.azure
-            target: ""
     steps:
       - uses: actions/checkout@v4
-
       - uses: docker/setup-buildx-action@v3
-
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push ${{ matrix.image }}
+      - name: Build and push ${{ matrix.image }} (amd64)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.file }}
           target: ${{ matrix.target }}
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            VERSION=${{ github.sha }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  # arm64 fleet-only per-cloud runner images (single-arch, tagged) — native arm. Never
+  # pulled by the x86 box; lean per-cloud CLI + cache.
+  build-arm64:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      matrix:
+        include:
+          - image: runner-aws
+            file: apps/runner/Dockerfile.aws
+          - image: runner-gcp
+            file: apps/runner/Dockerfile.gcp
+          - image: runner-azure
+            file: apps/runner/Dockerfile.azure
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push ${{ matrix.image }} (arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
           platforms: linux/arm64
           push: true
           build-args: |
@@ -92,8 +119,83 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
+  # `runner` amd64 half — native x86, pushed BY DIGEST (no tag) for the manifest merge.
+  runner-amd64:
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build runner (amd64) by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/runner/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ github.sha }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/runner,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=runner-amd64
+          cache-to: type=gha,mode=max,scope=runner-amd64
+
+  # `runner` arm64 half — native arm, pushed BY DIGEST.
+  runner-arm64:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build runner (arm64) by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/runner/Dockerfile
+          platforms: linux/arm64
+          build-args: |
+            VERSION=${{ github.sha }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/runner,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=runner-arm64
+          cache-to: type=gha,mode=max,scope=runner-arm64
+
+  # Stitch the two runner digests into one multi-arch tag (amd64 for the box, arm64 for the fleet).
+  merge-runner:
+    needs: [runner-amd64, runner-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-arch runner manifest
+        run: |
+          for tag in latest "${{ github.sha }}"; do
+            docker buildx imagetools create \
+              -t "${IMAGE_PREFIX}/runner:${tag}" \
+              "${IMAGE_PREFIX}/runner@${{ needs.runner-amd64.outputs.digest }}" \
+              "${IMAGE_PREFIX}/runner@${{ needs.runner-arm64.outputs.digest }}"
+          done
+
   deploy:
-    needs: build
+    needs: [build-amd64, build-arm64, merge-runner]
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -149,6 +251,16 @@ jobs:
             emit ALETHIA_STORAGE_SECRET_ACCESS_KEY
             echo "ALETHIA_STORAGE_AUTO_CREATE_BUCKETS=true"
             emit TUNNEL_TOKEN
+            # Self-hosted analytics — Umami (co-located) + OpenReplay (own box, Part B). All optional:
+            # the console's analytics layer no-ops on any empty NEXT_PUBLIC_* value.
+            emit ANALYTICS_DB_PASSWORD
+            emit UMAMI_APP_SECRET
+            emit UMAMI_ADMIN_PASSWORD
+            echo "NEXT_PUBLIC_UMAMI_HOST=https://analytics.${APP_URL#https://}"
+            echo "UMAMI_WEBSITE_DOMAIN=${APP_URL#https://}"
+            emit NEXT_PUBLIC_UMAMI_WEBSITE_ID
+            emit NEXT_PUBLIC_OPENREPLAY_PROJECT_KEY
+            emit NEXT_PUBLIC_OPENREPLAY_INGEST
             echo "FLEET_PROVIDER=hcloud"
             echo "HCLOUD_TOKEN=$(val HCLOUD_FLEET_TOKEN)"   # runtime fleet token (not the CP token)
             emit HCLOUD_SSH_KEYS
@@ -162,6 +274,24 @@ jobs:
             emit GITHUB_CLIENT_SECRET
             emit GOOGLE_CLIENT_ID
             emit GOOGLE_CLIENT_SECRET
+            # GitLab + Bitbucket go through the genericOAuth plugin; without these the
+            # plugin isn't mounted and /api/auth/sign-in/oauth2 404s. Names match what
+            # lib/config/auth.ts reads (GitLab = APPLICATION_ID, Bitbucket = KEY).
+            emit GITLAB_APPLICATION_ID
+            emit GITLAB_SECRET
+            emit BITBUCKET_KEY
+            emit BITBUCKET_SECRET
+            # Platform cloud creds for SERVER-SIDE connection health + inventory (the console
+            # assumes the customer's role / federates). Managed clouds only; token clouds
+            # (Hetzner/DO/Civo) need none. Empty when unset → the connectors board shows
+            # "not enabled on this instance".
+            emit ALETHIA_AWS_ACCESS_KEY_ID
+            emit ALETHIA_AWS_SECRET_ACCESS_KEY
+            emit ALETHIA_AZURE_TENANT_ID
+            emit ALETHIA_AZURE_CLIENT_ID
+            emit ALETHIA_AZURE_CLIENT_SECRET
+            emit ALETHIA_ALIBABA_ACCESS_KEY_ID
+            emit ALETHIA_ALIBABA_ACCESS_KEY_SECRET
             emit STRIPE_SECRET_KEY
             emit STRIPE_WEBHOOK_SECRET
             emit NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY

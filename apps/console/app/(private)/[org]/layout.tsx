@@ -7,6 +7,7 @@ import { resolveOrgScope } from "@/app/server/actions/resolve";
 import { getOwner } from "@/lib/auth/owner";
 import { deploymentMode } from "@/lib/billing/config";
 import { AppShell } from "@/components/shell/app-shell";
+import { UpgradeSheetProvider } from "@/components/org/upgrade-sheet-provider";
 
 /**
  * C2 slug-tree layout. Resolves the `{org}` segment to a scope and syncs the
@@ -34,5 +35,9 @@ export default async function OrgLayout({
 	// Feedback is a hosted-only feature (it emails Alethia Labs); the shell hides it
 	// off the hosted control plane. Resolved server-side and passed to the client shell.
 	const isHosted = deploymentMode() === "hosted";
-	return <AppShell isHosted={isHosted}>{children}</AppShell>;
+	return (
+		<UpgradeSheetProvider>
+			<AppShell isHosted={isHosted}>{children}</AppShell>
+		</UpgradeSheetProvider>
+	);
 }

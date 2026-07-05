@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { LEGAL_ENTITY, legalField } from "@repo/brand/legal";
 import { LegalShell } from "@/components/legal/legal-shell";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -23,10 +24,11 @@ export default function TermsPage() {
 				the Alethia hosted control plane, the alethia command-line
 				interface, and related websites and services (together, the
 				“Service”) provided by{" "}
-				<strong>Alethia Labs OÜ</strong>, a private limited company
-				registered in Estonia (registration number{" "}
-				<mark>[PLACEHOLDER: company registration number]</mark>, registered
-				office <mark>[PLACEHOLDER: registered address]</mark>) (“Alethia
+				<strong>{LEGAL_ENTITY.legalName}</strong>, a company registered in{" "}
+				{LEGAL_ENTITY.jurisdiction} (registration number{" "}
+				<mark>{legalField(LEGAL_ENTITY.registrationNumber, "company registration number (EIK)")}</mark>,
+				registered office{" "}
+				<mark>{legalField(LEGAL_ENTITY.registeredAddress, "registered address")}</mark>) (“Alethia
 				Labs”, “we”, “us”). By creating an account or using the Service you
 				agree to these Terms. If you do not agree, do not use the Service.
 			</p>
@@ -68,7 +70,7 @@ export default function TermsPage() {
 				<strong>GNU Affero General Public License v3.0 (AGPL-3.0-only)</strong>
 				. A small set of enterprise features (the <code>ee/</code> directory
 				of our source code) is commercially licensed and requires a paid
-				subscription for production use. Alethia Labs OÜ owns the copyright
+				subscription for production use. {LEGAL_ENTITY.legalName} owns the copyright
 				to the codebase; contributions are consolidated under a Contributor
 				License Agreement.
 			</p>
@@ -122,7 +124,7 @@ export default function TermsPage() {
 
 			<h2>9. Limitation of liability</h2>
 			<p>
-				To the maximum extent permitted by law, Alethia Labs OÜ will not be
+				To the maximum extent permitted by law, {LEGAL_ENTITY.legalName} will not be
 				liable for any indirect, incidental, special, consequential, or
 				punitive damages, or for any loss of profits, revenue, data, or
 				goodwill, arising out of or related to your use of the Service. Our
@@ -144,7 +146,7 @@ export default function TermsPage() {
 
 			<h2>11. Governing law</h2>
 			<p>
-				These Terms are governed by the laws of Estonia, without regard to
+				These Terms are governed by the laws of {LEGAL_ENTITY.governingLaw}, without regard to
 				conflict-of-laws rules. The courts of{" "}
 				<mark>[PLACEHOLDER: dispute venue / competent court]</mark> will have
 				exclusive jurisdiction over any dispute arising out of or relating to

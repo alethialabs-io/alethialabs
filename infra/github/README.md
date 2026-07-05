@@ -27,6 +27,14 @@ Secrets Manager, so nothing in CI needs to write GitHub secrets.)
 
 ## Apply
 
+> **Apply from an up-to-date `main`, and only with the role-ARN `-var`s below.** A bare
+> `tofu apply` (no vars, or from a `dev`/`staging` checkout) plans a **destroy** of the
+> deployer-role Actions vars (they are `count`-gated on those vars) and — if the checkout
+> predates a resource here — of the `production` environment (`environments.tf`), which is
+> the OIDC deploy control. `environments.tf` lives on every branch now, but the vars still
+> make apply non-destructive, so never bare-apply. (`plan -destroy`/`apply` from an agent is
+> forbidden — see root `CLAUDE.md`.)
+
 Normally run by `bootstrap.yml`. Locally:
 
 ```bash

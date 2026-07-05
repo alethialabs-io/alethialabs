@@ -19,6 +19,11 @@ interface ConnectorCardProps {
 	onManage: () => void;
 	/** Re-run the verification for a failed cloud connector (no credential re-entry). */
 	onReverify?: () => void;
+	/**
+	 * False when this instance lacks the platform credentials this cloud's server-side probe
+	 * needs (managed clouds only) — the tile then says so instead of offering a doomed connect.
+	 */
+	platformConfigured?: boolean;
 	isConnecting?: boolean;
 }
 
@@ -33,12 +38,16 @@ export function ConnectorCard({
 	onConnect,
 	onManage,
 	onReverify,
+	platformConfigured = true,
 	isConnecting,
 }: ConnectorCardProps) {
 	const isComingSoon = integration.status === "coming_soon";
 	const isConnected = integration.connected;
 	const isGit = integration.category === "git";
 	const isCloud = integration.category === "cloud";
+	// Managed cloud whose platform credentials aren't configured on this instance: a connect
+	// can only fail, so the tile is honest about it (self-hosters: see the docs to enable).
+	const platformUnavailable = isCloud && !platformConfigured && !isConnected;
 	const needsReconnection =
 		integration.token_health === "expired" ||
 		integration.token_health === "refresh_failed";
@@ -105,23 +114,35 @@ export function ConnectorCard({
 						</span>
 					)}
 					<span
-						className={cn("truncate", cloudFailed && "text-destructive")}
+						className={cn(
+							"truncate",
+							cloudFailed && !platformUnavailable && "text-destructive",
+						)}
 					>
 						{isComingSoon
 							? "Coming soon"
-							: needsReconnection
-								? "Needs reconnection"
-								: isConnected
-									? "Connected"
-									: cloudFailed
-										? "Verification failed"
-										: cloudTesting
-											? "Verifying…"
-											: "Not connected"}
+							: platformUnavailable
+								? "Not enabled on this instance"
+								: needsReconnection
+									? "Needs reconnection"
+									: isConnected
+										? "Connected"
+										: cloudFailed
+											? "Verification failed"
+											: cloudTesting
+												? "Verifying…"
+												: "Not connected"}
 					</span>
 				</div>
 
-				{isComingSoon ? null : isConnected && needsReconnection && canManage ? (
+				{isComingSoon ? null : platformUnavailable ? (
+					<span
+						title="This cloud needs Alethia platform credentials, which aren't configured on this instance. See the docs to enable managed cloud connections."
+						className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+					>
+						Unavailable
+					</span>
+				) : isConnected && needsReconnection && canManage ? (
 					<Button
 						size="sm"
 						className="h-7 px-2.5 text-xs"

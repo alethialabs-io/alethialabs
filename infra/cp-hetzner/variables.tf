@@ -50,19 +50,37 @@ variable "manage_email_routing" {
   default     = false
 }
 
+variable "manage_analytics_access" {
+  # false (default): the Umami dashboard at analytics.<domain> is guarded ONLY by Umami's own
+  # login (rotate the admin/umami default!). Flip true to also put it behind Cloudflare Zero-Trust
+  # Access (team-email allowlist) — see access.tf. Requires the CF Zero Trust org (team domain) to
+  # exist (one-time dashboard setup) and analytics_access_emails to be set. The tracker ingest
+  # (/script.js + /api) is bypassed so browser events still flow.
+  description = "Whether Terraform manages the Cloudflare Access apps gating the Umami dashboard."
+  type        = bool
+  default     = false
+}
+
+variable "analytics_access_emails" {
+  description = "Emails allowed into the Umami dashboard via Cloudflare Access (when manage_analytics_access)."
+  type        = list(string)
+  default     = []
+}
+
 variable "ssh_public_key" {
   description = "SSH public key authorized on the server (CI deploy key)."
   type        = string
 }
 
 variable "server_type" {
-  # CAX = Ampere ARM64 (matches the runner image's arm64 build). CAX21
-  # (4 vCPU / 8 GB) is the cheapest tier with enough headroom to run the bundle
-  # plus an OpenTofu job; bump to cax31 if it gets busy. CAX11 (4 GB) is too
-  # tight when the runner executes.
+  # CX33 = Intel x86 (4 vCPU / 8 GB) — the box images build linux/amd64 to match.
+  # We moved off CAX (Ampere ARM64) because Hetzner ARM capacity in fsn1 is chronically
+  # out (resource_unavailable); the Intel CX line is abundant. Enough headroom to run
+  # the compose bundle plus an OpenTofu job; bump to cx43 if it gets busy. (The runner
+  # FLEET stays ARM/CAX — its images are still built arm64.)
   description = "Hetzner server type."
   type        = string
-  default     = "cax21"
+  default     = "cx33"
 }
 
 variable "location" {

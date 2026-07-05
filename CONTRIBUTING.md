@@ -21,8 +21,8 @@ hosted at `github.com/alethialabs-io/alethialabs`.)
   only the Individual CLA.
 
 **Why a CLA?** Alethia Labs offers both an AGPL core and a commercial edition. To
-keep offering both, Alethia Labs OÜ needs the right to license your contribution under
-both licenses. The CLA grants Alethia Labs OÜ that right while **you keep the copyright
+keep offering both, Alethia Labs DPK needs the right to license your contribution under
+both licenses. The CLA grants Alethia Labs DPK that right while **you keep the copyright
 to your contribution** — it is a license, not an assignment. Without it, a single
 AGPL-only contribution would block us from shipping the commercial edition.
 
@@ -33,7 +33,7 @@ AGPL-only contribution would block us from shipping the commercial edition.
 2. Make your change. Add an SPDX header to every new source file:
    - Core code: `SPDX-License-Identifier: AGPL-3.0-only`
    - Code under `ee/`: `SPDX-License-Identifier: LicenseRef-Alethia-Commercial`
-   - Plus a copyright line: `SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>`
+   - Plus a copyright line: `SPDX-FileCopyrightText: 2026 Alethia Labs DPK <legal@alethialabs.io>`
 3. Match the existing code style and run the relevant checks:
    `turbo build`, `turbo lint`, and `go test ./...` for Go packages.
 4. Use [Conventional Commits](https://www.conventionalcommits.org/) — releases are
@@ -73,5 +73,5 @@ security@alethialabs.io instead.
 ## License
 
 By contributing, you agree that your contributions are licensed under
-`AGPL-3.0-only` and, per the CLA, may also be offered by Alethia Labs OÜ under its
+`AGPL-3.0-only` and, per the CLA, may also be offered by Alethia Labs DPK under its
 commercial license. See [LICENSE](LICENSE) and [LICENSING.md](LICENSING.md).

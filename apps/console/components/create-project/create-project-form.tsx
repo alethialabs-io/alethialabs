@@ -14,6 +14,7 @@ import { z } from "zod";
 import { createThread } from "@/app/server/actions/agent";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { addEnvironment, createProject } from "@/app/server/actions/projects";
+import { track } from "@/lib/analytics/track";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { ContainerPlatformSelector } from "@/components/design-project/container-platform-selector";
 import {
@@ -27,6 +28,7 @@ import {
 	type ConnectableCloudSlug,
 } from "@/lib/cloud-providers";
 import { globalHref, projectHref, slugify } from "@/lib/routing";
+import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
@@ -101,6 +103,7 @@ export function CreateProjectForm({
 	extraSetup,
 }: CreateProjectFormProps) {
 	const router = useRouter();
+	const { openUpgrade } = useUpgradeSheet();
 	const [creating, setCreating] = useState(false);
 	const [creatingEmpty, setCreatingEmpty] = useState(false);
 	const [launching, setLaunching] = useState(false);
@@ -182,6 +185,7 @@ export function CreateProjectForm({
 				region,
 			});
 
+			track("project_created", { provider, template: values.template });
 			toast.success("Project created — start designing.");
 			router.push(projectHref(orgSlug, project.slug ?? ""));
 		} catch (err) {
@@ -228,18 +232,27 @@ export function CreateProjectForm({
 					<h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
 						Provision the future.
 					</h1>
-					<Link
-						href={globalHref(orgSlug, canCollaborate ? "settings/members" : "settings/billing")}
-						className="inline-flex h-8 shrink-0 items-center gap-2 rounded-full border border-border bg-card px-3 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-					>
-						<Users className="size-3.5" />
-						Collaborate
-						{!canCollaborate && (
+					{canCollaborate ? (
+						<Link
+							href={globalHref(orgSlug, "settings/members")}
+							className="inline-flex h-8 shrink-0 items-center gap-2 rounded-full border border-border bg-card px-3 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						>
+							<Users className="size-3.5" />
+							Collaborate
+						</Link>
+					) : (
+						<button
+							type="button"
+							onClick={openUpgrade}
+							className="inline-flex h-8 shrink-0 items-center gap-2 rounded-full border border-border bg-card px-3 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						>
+							<Users className="size-3.5" />
+							Collaborate
 							<span className="rounded-full border border-border px-1.5 py-0.5 font-mono text-[8.5px] uppercase tracking-wider text-muted-foreground">
 								Pro
 							</span>
-						)}
-					</Link>
+						</button>
+					)}
 				</div>
 
 				<div className="rounded-xl border border-border bg-card shadow-sm focus-within:border-ring">

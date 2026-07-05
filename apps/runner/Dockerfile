@@ -94,8 +94,11 @@ COPY --chown=runner:runner infra/templates/argocd/ /home/runner/argocd-templates
 # We KEEP the resulting .terraform tree; the per-job workdir copy includes it (copyDir
 # preserves the provider symlinks), so init only re-runs the S3 backend step (~2 s)
 # instead of re-fetching everything (~60–120 s). `-upgrade` pins the lock to this
-# build arch; `-backend=false` skips remote state. The image is single-arch, so the
-# baked tree matches the runtime exactly.
+# build arch; `-backend=false` skips remote state. `runner` is a multi-arch tag but each
+# arch is built NATIVELY (deploy-console: runner-amd64 on x86, runner-arm64 on arm — no
+# QEMU), so `tofu init` runs on both and the baked tree matches that arch's runtime
+# exactly. (An emulated cross-build would crash here with `fatal error: lfstack.push`,
+# which is why the build is split per-arch rather than one emulated multi-platform build.)
 ENV TF_PLUGIN_CACHE_DIR=/home/runner/.terraform.d/plugin-cache
 RUN mkdir -p "${TF_PLUGIN_CACHE_DIR}" && \
     for d in aws azure gcp; do \

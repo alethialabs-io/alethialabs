@@ -43,6 +43,7 @@
 		"@hookform/resolvers": "^5.2.2",
 		"@modelcontextprotocol/sdk": "^1.26.0",
 		"@octokit/rest": "^22.0.1",
+		"@openreplay/tracker": "^18.1.0",
 		"@radix-ui/react-use-controllable-state": "^1.2.3",
 		"@react-email/components": "^1.0.12",
 		"@repo/assets": "workspace:*",

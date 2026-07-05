@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { LEGAL_ENTITY } from "@repo/brand/legal";
 import type { ReactNode } from "react";
 import Link from "next/link";
 
@@ -63,7 +64,7 @@ export function LegalShell({ title, lastUpdated, children }: LegalShellProps) {
 					>
 						← Back to home
 					</Link>
-					<span>Alethia · Alethia Labs OÜ</span>
+					<span>Alethia · {LEGAL_ENTITY.tradingName}</span>
 				</footer>
 			</main>
 		</div>
