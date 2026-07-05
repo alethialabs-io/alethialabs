@@ -21,25 +21,56 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       run: tofu fmt -check -recursive
 
+    # Install tflint DIRECTLY (pinned) instead of terraform-linters/setup-tflint@v4 — that action's
+    # own default `path` input regressed ($HOME/~ not expanded), failing the job before tflint runs.
+    # A direct download is immune to the action's input/tag regressions.
     - name: Setup tflint
-      uses: terraform-linters/setup-tflint@v4
-      with:
-        tflint_version: v0.54.0
+      shell: bash
+      env:
+        TFLINT_VERSION: v0.54.0
+      run: |
+        curl -fsSL "https://github.com/terraform-linters/tflint/releases/download/${TFLINT_VERSION}/tflint_linux_amd64.zip" -o /tmp/tflint.zip
+        sudo unzip -o /tmp/tflint.zip -d /usr/local/bin
+        rm -f /tmp/tflint.zip
+        tflint --version
 
     - name: tflint
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         TFLINT_CONFIG_FILE: ${{ github.workspace }}/infra/.tflint.hcl
+      # Gate on ERRORS only — the templates carry many style warnings (unused declarations, missing
+      # version constraints); tflint exits 2 on ANY finding by default, so limit the non-zero exit to
+      # real errors (matches the staging/main version; dev's copy was missing this).
       run: |
         tflint --init
-        tflint --recursive --format compact
+        tflint --recursive --format compact --minimum-failure-severity=error
+
+    # Install Trivy DIRECTLY (pinned) instead of aquasecurity/trivy-action / setup-trivy: those actions
+    # keep deleting the sub-version tags their releases pin (setup-trivy@v0.2.1 → v0.3.1 → …), breaking
+    # the job at action-RESOLUTION time before any step runs. A direct binary download never depends on
+    # those tags — the definitive fix for the recurring Trivy CI breakage.
+    - name: Setup Trivy
+      shell: bash
+      env:
+        TRIVY_VERSION: v0.72.0
+      run: |
+        curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VERSION}/trivy_${TRIVY_VERSION#v}_Linux-64bit.tar.gz" -o /tmp/trivy.tgz
+        sudo tar -xzf /tmp/trivy.tgz -C /usr/local/bin trivy
+        rm -f /tmp/trivy.tgz
+        trivy --version
 
     - name: Trivy config scan (Terraform misconfig)
-      uses: aquasecurity/trivy-action@v0.28.0
-      with:
-        scan-type: config
-        scan-ref: ${{ inputs.working-directory }}
-        trivy-config: ${{ github.workspace }}/infra/.trivy.yaml
-        exit-code: "1"
-        severity: HIGH,CRITICAL
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TRIVY_CONFIG: ${{ github.workspace }}/infra/.trivy.yaml
+        TRIVY_EXIT_CODE: "1"
+        TRIVY_SEVERITY: HIGH,CRITICAL
+        # Scan OUR templates only, not third-party code: trivy v0.5x+ RESOLVES + downloads remote
+        # modules (terraform-aws-modules/*) and scans them — misconfigs there aren't ours to fix and
+        # broke the job. Exclude downloaded modules + skip any local .terraform. (trivy v0.28 via the
+        # old action didn't resolve remote modules, so this restores that intent.)
+        TRIVY_TF_EXCLUDE_DOWNLOADED_MODULES: "true"
+        TRIVY_SKIP_DIRS: "**/.terraform"
+      run: trivy config .
