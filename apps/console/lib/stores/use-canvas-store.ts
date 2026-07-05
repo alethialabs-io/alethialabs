@@ -272,7 +272,9 @@ export const useCanvasStore = create<CanvasStore>()(
 			future: [],
 			baseline: [makeProjectNode()],
 			identities: [],
-			showConnections: true,
+			// Nodes render unconnected by default — the derived dependency edges stay computed (used
+			// for cross-cloud gating) but hidden until the user toggles connections on.
+			showConnections: false,
 			hiddenKinds: [],
 
 			setIdentities: (identities) => set({ identities }),

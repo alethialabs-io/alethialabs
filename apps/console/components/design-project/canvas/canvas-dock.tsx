@@ -59,7 +59,7 @@ export function CanvasDock({
 		>
 			<div className="h-full pl-3" style={{ width: PANEL_W + PANEL_GAP }}>
 				<div
-					className="flex h-full flex-col overflow-hidden rounded-lg border border-border bg-background"
+					className="flex h-full flex-col overflow-hidden rounded-none border border-border bg-background"
 					style={{ width: PANEL_W }}
 				>
 					{dock === "inspector" && (
