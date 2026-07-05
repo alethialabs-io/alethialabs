@@ -286,7 +286,9 @@ services:
 
   umami:
     # Pinned (not :postgresql-latest) — the umami-init seed SQL is coupled to Umami's schema.
-    image: ghcr.io/umami-software/umami:postgresql-v3.2.0
+    # v2.16 is the latest tag on GHCR (Umami has no v3; the old v3.2.0 pin never existed there,
+    # so prod `compose pull` 404'd). v2 schema (website/"user" tables) matches umami-seed.sql.
+    image: ghcr.io/umami-software/umami:postgresql-v2.16
     profiles: ["analytics"]
     environment:
       DATABASE_URL: "postgresql://umami:${ANALYTICS_DB_PASSWORD:-analytics-dev-secret}@umami-db:5432/umami"
