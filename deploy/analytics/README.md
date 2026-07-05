@@ -42,6 +42,34 @@ for the website; the admin password is (re)set to the stable vault value each ru
   `ANALYTICS_ACCESS_EMAILS=["you@alethialabs.io"]` → merge; the apply creates the dashboard gate
   (`/script.js` + `/api` bypassed so ingest still works). Leave the var off to rely on Umami's own login.
 
+### Dashboard login (why it prompts twice)
+
+Opening `analytics.alethialabs.io` asks for auth **twice** — this is deliberate defense-in-depth, not a
+misconfig:
+
+1. **Cloudflare Access** (email one-time-PIN) — gates the dashboard **UI**. The code is emailed to an
+   address in `ANALYTICS_ACCESS_EMAILS`; `borislav@alethialabs.io` forwards via Cloudflare Email-Routing
+   to gmail (check spam if it's slow). This layer stops randoms from ever reaching the login page.
+2. **Umami's own login** — `admin` / `UMAMI_ADMIN_PASSWORD`. This is the layer that actually guards your
+   **data**: the tracker needs a public `POST /api/send`, so Access bypasses all of `/api` — which means
+   Umami's admin API is internet-reachable and only Umami's password protects it.
+
+So the two layers protect two different surfaces (UI vs. admin API). Dropping either weakens one of them.
+A single-gate setup is possible (Umami `DISABLE_LOGIN=1` + narrow the Access `/api` bypass to `/api/send`)
+but we chose to keep both. See the header of `infra/cp-hetzner/access.tf`.
+
+The Umami password is **auto-generated** (`scripts/bootstrap-secrets.sh` → random b64) and lives only in
+the AWS vault — never committed, never a UI-set value. Retrieve it (needs prod AWS creds):
+
+```bash
+aws secretsmanager get-secret-value --secret-id alethia/prod/env --region eu-central-1 \
+  --query SecretString --output text | jq -r '.UMAMI_ADMIN_PASSWORD'
+```
+
+**Don't change the password in the Umami UI** — the vault is the source of truth and `umami-init`
+re-applies it on every deploy (a UI change gets overwritten). To rotate, update `UMAMI_ADMIN_PASSWORD`
+in `alethia/prod/env` instead.
+
 ---
 
 
