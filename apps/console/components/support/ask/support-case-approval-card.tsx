@@ -41,7 +41,7 @@ export function SupportCaseApprovalCard({
 				severity: proposal.severity,
 				subject: proposal.subject,
 				description: proposal.description,
-				context: proposal.context,
+				context: proposal.context ?? {},
 			});
 			setCaseId(id);
 			setCaseNumber(caseNumber);

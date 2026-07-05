@@ -80,10 +80,16 @@ async function sessionAuthor(): Promise<{ name: string; email: string }> {
 	};
 }
 
-/** Absolute console deep link to a case (used in notifications). */
-function caseUrl(caseNumber: number): string {
+/**
+ * Absolute console link used in notifications. Returns the console root (which
+ * redirects to the caller's active org after login) rather than a case deep link:
+ * the case detail lives at `/{orgSlug}/~/support/cases/{id}`, and neither the org
+ * SLUG nor a resolvable slug for a personal org is available here without a lookup.
+ * TODO(support): resolve the org slug + case id and build the precise deep link.
+ */
+function caseUrl(_caseNumber: number): string {
 	const base = getAuthConfig().baseURL?.replace(/\/$/, "") ?? "";
-	return `${base}/support/cases/${caseNumber}`;
+	return base || "/";
 }
 
 /** Runs a best-effort notification, logging (never throwing) on failure. */
