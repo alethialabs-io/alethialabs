@@ -67,7 +67,10 @@ runs:
         TRIVY_CONFIG: ${{ github.workspace }}/infra/.trivy.yaml
         TRIVY_EXIT_CODE: "1"
         TRIVY_SEVERITY: HIGH,CRITICAL
-        # tofu init pulls third-party modules (+ their bundled example manifests) into .terraform/ —
-        # scan OUR templates only.
+        # Scan OUR templates only, not third-party code: trivy v0.5x+ RESOLVES + downloads remote
+        # modules (terraform-aws-modules/*) and scans them — misconfigs there aren't ours to fix and
+        # broke the job. Exclude downloaded modules + skip any local .terraform. (trivy v0.28 via the
+        # old action didn't resolve remote modules, so this restores that intent.)
+        TRIVY_TF_EXCLUDE_DOWNLOADED_MODULES: "true"
         TRIVY_SKIP_DIRS: "**/.terraform"
       run: trivy config .
