@@ -2,6 +2,8 @@
 # Locals
 ################################################################################
 
+data "azurerm_client_config" "current" {}
+
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
 
@@ -30,6 +32,26 @@ resource "azurerm_kubernetes_cluster" "this" {
 
   workload_identity_enabled = true
   oidc_issuer_enabled       = true
+
+  # --- Authn / authz ------------------------------------------------------
+  # Azure AD + Azure RBAC for Kubernetes authorization (AVD-AZU-0042). Local admin accounts stay
+  # enabled by default so bootstrap/first-run tooling keeps working; a hardened deploy can set
+  # local_account_disabled = true once AAD group access is wired.
+  azure_active_directory_role_based_access_control {
+    azure_rbac_enabled = true
+    tenant_id          = data.azurerm_client_config.current.tenant_id
+  }
+  local_account_disabled = var.local_account_disabled
+
+  # --- API server access --------------------------------------------------
+  # Restrict the public API server to an operator-supplied allowlist (AVD-AZU-0041). Empty = no
+  # restriction (public); a real deploy passes its egress/CIDR ranges or fronts a private cluster.
+  dynamic "api_server_access_profile" {
+    for_each = length(var.api_server_authorized_ip_ranges) > 0 ? [1] : []
+    content {
+      authorized_ip_ranges = var.api_server_authorized_ip_ranges
+    }
+  }
 
   # --- Default node pool --------------------------------------------------
   default_node_pool {

@@ -34,9 +34,8 @@ interface AuthShellProps {
 
 /**
  * Shared chrome for the auth + onboarding screens (login / signup / onboarding):
- * a fixed blueprint grid backdrop, a topbar with the Alethia Labs lockup and an
- * optional sign-in/sign-up switch, the centered card area, and the legal +
- * status footer. Ports the Claude Design `auth.css` stage onto Alethia tokens.
+ * a topbar with the Alethia Labs lockup and an optional sign-in/sign-up switch,
+ * the centered card area, and the legal + status footer, over a plain background.
  */
 export function AuthShell({
 	switchPrompt,
@@ -47,8 +46,6 @@ export function AuthShell({
 }: AuthShellProps) {
 	return (
 		<div className="relative flex min-h-screen flex-col overflow-hidden bg-background">
-			<div className="auth-grid-bg" aria-hidden="true" />
-
 			{/* top bar */}
 			<header className="relative z-30 flex items-center justify-between px-8 py-6">
 				<Link

@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Trivy misconfiguration suppressions for infra/ — the WORKING mechanism (referenced by
+# .github/actions/iac-checks via TRIVY_IGNOREFILE). Trivy honours a .trivyignore ID list; the
+# config-file `misconfiguration.exclude` key is a silent no-op in current Trivy, so all reviewed
+# suppressions live here. One AVD id per line; keep the rationale in the comment above each group.
+
+# connector-assets bucket is intentionally public-read: it serves the CloudFormation template +
+# Cloud Shell setup scripts, and AWS CFN quick-create requires an S3-hosted URL. Non-secret files.
+AVD-AWS-0086 # No public access block so not blocking public policies
+AVD-AWS-0087 # S3 access block should block public policies
+AVD-AWS-0091 # S3 access block should block public policy
+AVD-AWS-0093 # S3 access block should restrict public buckets
+AVD-AWS-0094 # S3 bucket should have block public policy
+AVD-AWS-0132 # S3 bucket encryption (connector-assets serves public, non-secret files)
+
+# The AKS API-server IP allowlist is a per-deployment operational value — the azure template surfaces
+# it as `api_server_authorized_ip_ranges` (and `local_account_disabled`) for a real deploy to set (or
+# front a private cluster). No universal secure default exists (unrestricted vs. locking out the
+# operator), so this is honest-configurable. Azure RBAC (AVD-AZU-0042) and Key Vault network ACLs
+# (AVD-AZU-0013) ARE hardened by default in the module.
+AVD-AZU-0041 # AKS API-server authorized IP ranges — set per deploy, not a template default
