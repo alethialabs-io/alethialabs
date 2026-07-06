@@ -129,10 +129,16 @@ export async function getEnvReconcileStates(
 				.orderBy(desc(environmentDrift.scanned_at))
 				.limit(1);
 			// config-vs-desired: hash the current design and compare to what was last deployed.
+			// Reading the design can throw (e.g. a since-deleted cloud identity); degrade that env
+			// to "not pending" rather than failing the whole project's reconcile view.
 			let deployPending = false;
 			if (env.deployed_config_hash) {
-				const design = (await getProjectAsFormData(projectId, env.id)).formData;
-				deployPending = structuralHash(design) !== env.deployed_config_hash;
+				try {
+					const design = (await getProjectAsFormData(projectId, env.id)).formData;
+					deployPending = structuralHash(design) !== env.deployed_config_hash;
+				} catch {
+					deployPending = false;
+				}
 			}
 			return {
 				environmentId: env.id,

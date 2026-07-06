@@ -24,6 +24,9 @@ export const agentThreads = pgTable(
 		org_id: uuid(),
 		title: text().notNull(),
 		status: text().default("active").notNull(),
+		// Thread flavour: 'agent' = the infra agent (elench), 'support' = the support
+		// assistant persona. Lets listThreads separate the two surfaces from one table.
+		kind: text().default("agent").notNull(),
 		messages: jsonb().$type<UIMessage[]>().default([]).notNull(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),

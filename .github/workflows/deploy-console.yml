@@ -261,6 +261,10 @@ jobs:
             emit NEXT_PUBLIC_UMAMI_WEBSITE_ID
             emit NEXT_PUBLIC_OPENREPLAY_PROJECT_KEY
             emit NEXT_PUBLIC_OPENREPLAY_INGEST
+            # PostHog — the all-in-one suite (analytics + replay + web vitals). One external project key;
+            # host defaults to eu.i.posthog.com. When set, the console runs PostHog (leave Umami unset).
+            emit NEXT_PUBLIC_POSTHOG_KEY
+            emit NEXT_PUBLIC_POSTHOG_HOST
             echo "FLEET_PROVIDER=hcloud"
             echo "HCLOUD_TOKEN=$(val HCLOUD_FLEET_TOKEN)"   # runtime fleet token (not the CP token)
             emit HCLOUD_SSH_KEYS

@@ -194,8 +194,12 @@ export interface AccessGrantRow {
 	createdAt: string;
 }
 
-/** Every grant in the active org, enriched for the Access table. */
-export async function listAccessGrants(): Promise<AccessGrantRow[]> {
+/**
+ * Every grant in the active org, enriched for the Access table. When `projectId` is given the list
+ * is scoped to grants bound to that project (`resource_type = "project"` and `resource_id`), for the
+ * project-scoped Access surface; without it, every org grant is returned.
+ */
+export async function listAccessGrants(projectId?: string): Promise<AccessGrantRow[]> {
 	const actor = await currentActor();
 	const rows = await getServiceDb()
 		.select({
@@ -214,7 +218,15 @@ export async function listAccessGrants(): Promise<AccessGrantRow[]> {
 		.from(grants)
 		.leftJoin(user, eq(grants.principal_id, user.id))
 		.leftJoin(role, eq(grants.role_id, role.id))
-		.where(eq(grants.org_id, actor.orgId))
+		.where(
+			projectId
+				? and(
+						eq(grants.org_id, actor.orgId),
+						eq(grants.resource_type, "project"),
+						eq(grants.resource_id, projectId),
+					)
+				: eq(grants.org_id, actor.orgId),
+		)
 		.orderBy(desc(grants.created_at));
 
 	return rows.map((r) => ({

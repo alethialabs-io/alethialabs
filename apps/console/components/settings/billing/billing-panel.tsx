@@ -26,15 +26,16 @@ import { Card } from "@repo/ui/card";
 import { Skeleton } from "@repo/ui/skeleton";
 import { planMeta } from "@repo/plan-catalog";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
-import { InvoicesTable } from "./invoices-table";
-import { ManageBillingCard } from "./manage-billing-card";
+import { RecentInvoices } from "./recent-invoices";
+import { PaymentMethodsCard } from "./payment-methods-card";
 import { PlanHistoryTimeline } from "./plan-history-timeline";
 import { TransactionsTable } from "./transactions-table";
 
-const STATUS_LABEL: Record<BillingSummary["status"], string> = {
+const STATE_LABEL: Record<BillingSummary["state"], string> = {
 	none: "No subscription",
 	trialing: "Trialing",
 	active: "Active",
+	canceling: "Canceling",
 	past_due: "Past due",
 	canceled: "Canceled",
 };
@@ -67,7 +68,12 @@ export function BillingPanel() {
 		refresh();
 	}, [refresh]);
 
-	const liveSub = summary?.status === "active" || summary?.status === "trialing";
+	// A subscription exists to manage (show a period + Cancel/Resume) for any live-ish state.
+	const hasSub =
+		summary?.state === "active" ||
+		summary?.state === "trialing" ||
+		summary?.state === "canceling" ||
+		summary?.state === "past_due";
 
 	function toggleCancel() {
 		startTransition(async () => {
@@ -138,9 +144,24 @@ export function BillingPanel() {
 	const seatCount = summary.seats ?? Math.max(1, summary.memberCount);
 	const unit = summary.unitAmountUsd;
 	const monthly = unit === null ? null : meta.perSeat ? unit * seatCount : unit;
+	const { state } = summary;
+	// The Hobby tier is the free baseline — its card shows only the plan name + tagline + an
+	// Upgrade CTA (no lifecycle badge, no price figure). Only paid tiers show state + price.
+	const isHobby = summary.plan === "community";
+	// The plan is currently entitled (filled badge) for any live-ish state.
+	const isEntitled =
+		state === "active" || state === "trialing" || state === "canceling";
+	// currentPeriodEnd is only populated while the sub is live, so this label is only ever
+	// shown for active/trialing ("Renews") or canceling ("Cancels") — never a contradiction.
 	const periodLabel = summary.currentPeriodEnd
-		? `${summary.cancelAtPeriodEnd ? "Cancels" : "Renews"} ${formatDate(summary.currentPeriodEnd)}`
+		? `${state === "canceling" ? "Cancels" : "Renews"} ${formatDate(summary.currentPeriodEnd)}`
 		: null;
+	// A future charge only exists while renewing — never when canceling / canceled / past_due.
+	const showNextCharge =
+		(state === "active" || state === "trialing") &&
+		monthly !== null &&
+		monthly > 0 &&
+		Boolean(summary.currentPeriodEnd);
 
 	return (
 		<div>
@@ -153,19 +174,23 @@ export function BillingPanel() {
 								<span className="font-display text-[21px] font-semibold tracking-[-0.02em] text-text-primary">
 									{meta.name}
 								</span>
-								<span
-									className={
-										liveSub
-											? "rounded-full border border-ink bg-ink px-2 py-[3px] font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-foreground"
-											: "rounded-full border border-border-strong px-2 py-[3px] font-mono text-[9.5px] uppercase tracking-[0.1em] text-text-secondary"
-									}
-								>
-									{STATUS_LABEL[summary.status]}
-								</span>
-								{liveSub && (
-									<span className="rounded-full border border-border-strong px-2 py-[3px] font-mono text-[9.5px] uppercase tracking-[0.1em] text-text-secondary">
-										Monthly
-									</span>
+								{!isHobby && (
+									<>
+										<span
+											className={
+												isEntitled
+													? "rounded-full border border-ink bg-ink px-2 py-[3px] font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-foreground"
+													: "rounded-full border border-border-strong px-2 py-[3px] font-mono text-[9.5px] uppercase tracking-[0.1em] text-text-secondary"
+											}
+										>
+											{STATE_LABEL[state]}
+										</span>
+										{isEntitled && (
+											<span className="rounded-full border border-border-strong px-2 py-[3px] font-mono text-[9.5px] uppercase tracking-[0.1em] text-text-secondary">
+												Monthly
+											</span>
+										)}
+									</>
 								)}
 							</div>
 							<div className="flex flex-wrap items-center gap-2 text-[12.5px] text-text-tertiary">
@@ -178,34 +203,34 @@ export function BillingPanel() {
 								)}
 							</div>
 						</div>
-						<div className="flex flex-col items-end gap-[3px] text-right">
-							<div className="font-display text-[26px] font-semibold tracking-[-0.03em] text-text-primary">
-								{monthly === null ? (
-									meta.priceLabel
-								) : monthly === 0 ? (
-									"Free"
-								) : (
-									<>
-										${monthly.toLocaleString()}
-										<span className="font-mono text-[12px] font-normal text-text-tertiary">
-											/mo
-										</span>
-									</>
+						{!isHobby && (
+							<div className="flex flex-col items-end gap-[3px] text-right">
+								<div className="font-display text-[26px] font-semibold tracking-[-0.03em] text-text-primary">
+									{monthly === null ? (
+										meta.priceLabel
+									) : (
+										<>
+											${monthly.toLocaleString()}
+											<span className="font-mono text-[12px] font-normal text-text-tertiary">
+												/mo
+											</span>
+										</>
+									)}
+								</div>
+								{meta.perSeat && unit !== null && monthly !== null && monthly > 0 && (
+									<div className="font-mono text-[10.5px] text-text-tertiary">
+										${unit.toLocaleString()}/seat · {seatCount} seat
+										{seatCount === 1 ? "" : "s"}
+									</div>
+								)}
+								{showNextCharge && summary.currentPeriodEnd && (
+									<div className="font-mono text-[10.5px] text-text-tertiary">
+										next charge ${monthly?.toLocaleString()} ·{" "}
+										{formatDate(summary.currentPeriodEnd)}
+									</div>
 								)}
 							</div>
-							{meta.perSeat && unit !== null && monthly !== null && monthly > 0 && (
-								<div className="font-mono text-[10.5px] text-text-tertiary">
-									${unit.toLocaleString()}/seat · {seatCount} seat
-									{seatCount === 1 ? "" : "s"}
-								</div>
-							)}
-							{monthly !== null && monthly > 0 && summary.currentPeriodEnd && (
-								<div className="font-mono text-[10.5px] text-text-tertiary">
-									next charge ${monthly.toLocaleString()} ·{" "}
-									{formatDate(summary.currentPeriodEnd)}
-								</div>
-							)}
-						</div>
+						)}
 					</div>
 
 					<div className="flex flex-wrap items-center justify-between gap-4 border-t border-border bg-surface-sunken px-6 py-[14px]">
@@ -214,14 +239,14 @@ export function BillingPanel() {
 							Your cloud-resource spend is billed separately by your provider.
 						</div>
 						<div className="flex gap-2.5">
-							{liveSub ? (
+							{hasSub ? (
 								<Button
 									variant="ghost"
 									size="sm"
 									disabled={pending}
 									onClick={toggleCancel}
 								>
-									{summary.cancelAtPeriodEnd ? "Resume plan" : "Cancel plan"}
+									{state === "canceling" ? "Resume plan" : "Cancel plan"}
 								</Button>
 							) : (
 								<Button size="sm" onClick={openUpgrade}>
@@ -234,7 +259,7 @@ export function BillingPanel() {
 			</SettingsSection>
 
 			{/* payment + billing details → Stripe Customer Portal (once a customer exists) */}
-			{summary.canManage && <ManageBillingCard />}
+			{summary.canManage && <PaymentMethodsCard />}
 
 			{/* plan history */}
 			<PlanHistoryTimeline />
@@ -243,7 +268,7 @@ export function BillingPanel() {
 			{summary.canManage && (
 				<>
 					<TransactionsTable />
-					<InvoicesTable />
+					<RecentInvoices />
 				</>
 			)}
 

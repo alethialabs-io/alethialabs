@@ -175,7 +175,7 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 			<SheetContent
 				side="right"
 				showCloseButton={false}
-				className="w-[92vw] gap-0 overflow-y-auto p-0 sm:max-w-3xl"
+				className="w-[92vw] gap-0 overflow-hidden p-0 sm:max-w-3xl"
 			>
 				<SheetTitle className="sr-only">Upgrade to Pro</SheetTitle>
 				<SheetDescription className="sr-only">
@@ -210,6 +210,7 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 									unitAmountUsd={teamPrice.unitAmountUsd}
 									ownerEmail={ownerEmail}
 									submitLabel="Upgrade"
+									scrollable
 									onPaid={(b) => handlePaid(b)}
 								/>
 							</StripeElementsProvider>

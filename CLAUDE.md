@@ -25,6 +25,39 @@ two `docker compose up --build` racing the same builder at once.
   cloud creds) is opt-in via `pnpm compose:up:full`.
 - `pnpm compose:down` stops the stack (keeps data); `db:reset` / `compose:down -v` wipe volumes.
 
+### One worktree per instance (source isolation — enforced)
+
+The stack is shared, but the **source tree must not be**. Multiple Claude/human sessions in the
+same checkout tangle: a single `git add -A` once swept three features into one mega-commit. So:
+
+- **`app/` (the main checkout) is pinned to `dev`** — the integration branch. **Never commit
+  feature work there**, and **never `git add -A` there**.
+- **Each piece of work gets its own worktree:** `pnpm wt <name>` creates a sibling
+  `../wt-<name>` on `feat/<name>` off `dev`, and prints the `cd` + a free `PORT`
+  (`PORT=3100 pnpm dev:up` — one console per worktree; separate `.next` = no lock clash).
+  `pnpm wt:ls` lists them, `pnpm wt:rm <name>` removes one. Commit there, push, PR into `dev`.
+- **This is enforced**, not just advised:
+  - `.githooks/pre-commit` (wired via `core.hooksPath`, set by the root `prepare` script) blocks
+    commits on `dev`/`staging`/`main`, blocks any commit in the main checkout, and runs the
+    migration-chain guard when a migration is staged. `.githooks/pre-push` blocks direct pushes to
+    protected branches.
+  - `.claude/hooks/guard-worktree.sh` (a `PreToolUse` Bash hook) blocks a Claude instance from
+    `git commit` / `git add -A` while it's launched in the main checkout.
+  - **Escape hatch** (emergencies only): `git commit --no-verify` (all), or
+    `ALETHIA_ALLOW_MAIN_COMMIT=1 git commit …` (the main-checkout rule only). These are for the
+    maintainer — **instances must not use them.**
+- **Merging into `dev`:** the `protect-dev` ruleset (`infra/github`) requires **green CI** but **no
+  approval** — so once your PR's checks pass, **self-merge it**. The maintainer reviews the integrated
+  `dev` (served at `dev.alethialabs.io`) and promotes `dev → staging → main`. Never merge a red PR;
+  never target `staging`/`main` directly (`branch-flow-guard` blocks it).
+- **Instance kickoff (parallel sessions):** if you're one of several instances, your first move is
+  `pnpm wt <name>` → `cd ../wt-<name>` → work there → open a PR into `dev`, self-merge on green. One
+  worktree per piece of work; never work in `app/` or touch another instance's worktree.
+- **Migrations stay serial:** `pnpm -F console db:generate` is lock-guarded
+  (`scripts/db-generate.sh`, atomic `/tmp/alethia-migrate.lock`) and warns if you're not rebased on
+  `dev` — never generate in two worktrees at once (the drizzle snapshot chain is un-mergeable; see
+  the DB pipeline section).
+
 ### Two run modes — prefer the light one for daily work
 
 The full dockerized stack builds heavy production images (Next.js build pegs CPU). Use it only for

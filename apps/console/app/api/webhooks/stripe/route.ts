@@ -18,6 +18,8 @@
 import type Stripe from "stripe";
 import { grantAiCredits } from "@/lib/billing/ai-quota";
 import { getStripeConfig, isStripeConfigured } from "@/lib/billing/config";
+import { mirrorPaidInvoice, setInvoiceStatus } from "@/lib/billing/invoices";
+import { attemptBackupPayment } from "@/lib/billing/payment-methods";
 import { getStripe } from "@/lib/billing/stripe";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 import {
@@ -32,6 +34,13 @@ import {
 	sendSubscriptionCanceledEmail,
 	sendTrialEndingEmail,
 } from "@/lib/email/billing-email";
+
+/** The default payment method id on an invoice (the card that was charged), or null. */
+function paymentMethodIdOf(invoice: Stripe.Invoice): string | null {
+	const ref = invoice.default_payment_method;
+	if (!ref) return null;
+	return typeof ref === "string" ? ref : ref.id;
+}
 
 /** Retrieves the subscription an invoice belongs to, or null (e.g. one-off invoices). */
 async function subForInvoice(
@@ -87,6 +96,9 @@ async function handleEvent(event: Stripe.Event): Promise<void> {
 				const credits = Number(invoice.metadata.credits ?? 0);
 				if (orgId && userId && credits > 0) {
 					await grantAiCredits({ orgId, userId, credits, stripeRef: invoice.id });
+					// Mirror the paid invoice locally (idempotent) so it shows on the billing
+					// page — best-effort, never fails the webhook.
+					await safeMirror(invoice, orgId);
 					await safeEmail("credit pack receipt", () =>
 						sendCreditPackReceiptEmail(invoice),
 					);
@@ -97,20 +109,42 @@ async function handleEvent(event: Stripe.Event): Promise<void> {
 			const sub = await subForInvoice(invoice);
 			if (sub) {
 				await syncSubscriptionToBilling(sub);
+				const orgId = sub.metadata?.organization_id;
+				if (orgId) await safeMirror(invoice, orgId);
 				await safeEmail("receipt", () => sendReceiptEmail(sub, invoice));
 			}
 			break;
 		}
 		case "invoice.payment_failed": {
-			// Dunning: re-sync (status past_due) + prompt to update the card.
+			// Re-sync (status past_due), then try failing over to a backup card BEFORE
+			// dunning — only if no backup pays do we email the "update your card" prompt.
 			const invoice = event.data.object;
 			const sub = await subForInvoice(invoice);
 			if (sub) {
 				await syncSubscriptionToBilling(sub);
-				await safeEmail("payment failed", () =>
-					sendPaymentFailedEmail(sub, invoice),
-				);
+				const customerId =
+					typeof sub.customer === "string" ? sub.customer : sub.customer.id;
+				const failedPm = paymentMethodIdOf(invoice);
+				const paid = invoice.id
+					? await attemptBackupPayment(customerId, invoice.id, failedPm).catch(
+							() => null,
+						)
+					: null;
+				if (!paid) {
+					await safeEmail("payment failed", () =>
+						sendPaymentFailedEmail(sub, invoice),
+					);
+				}
 			}
+			break;
+		}
+		case "invoice.voided": {
+			// A finalized/paid invoice was voided upstream → reflect it in our mirror. (A
+			// refund, by contrast, doesn't change an invoice's status in Stripe's model — it
+			// surfaces in the transactions/charges ledger — so there's no charge.refunded
+			// case here.)
+			const invoice = event.data.object;
+			if (invoice.id) await setInvoiceStatus(invoice.id, "void");
 			break;
 		}
 		default:
@@ -125,6 +159,19 @@ async function safeEmail(label: string, fn: () => Promise<void>): Promise<void> 
 		await fn();
 	} catch (err) {
 		console.error(`[stripe] ${label} email failed:`, err);
+	}
+}
+
+/** Mirrors a paid invoice locally, swallowing (logging) failures — the entitlement sync
+ *  has already committed, so a mirror/PDF hiccup must never fail the webhook. */
+async function safeMirror(
+	invoice: Stripe.Invoice,
+	orgId: string,
+): Promise<void> {
+	try {
+		await mirrorPaidInvoice(invoice, orgId);
+	} catch (err) {
+		console.error(`[stripe] invoice mirror failed for ${invoice.id}:`, err);
 	}
 }
 

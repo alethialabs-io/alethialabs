@@ -24,7 +24,8 @@ export type CategoryIcon =
 	| "Fingerprint"
 	| "CircleDollarSign"
 	| "Cpu"
-	| "LogIn";
+	| "LogIn"
+	| "LifeBuoy";
 
 export interface CatalogEvent {
 	/** Stable display id (e.g. "deploy.failed"). */
@@ -140,6 +141,20 @@ export const CATEGORIES: CatalogCategory[] = [
 			ev("sso.failed", "system.auth.sso_failed", "SSO sign-in failed", "warning"),
 			ev("login.new_device", "system.auth.new_device", "New-device sign-in", "info"),
 			ev("login.blocked", "system.auth.login_blocked", "Sign-in blocked", "warning"),
+		],
+	},
+	{
+		id: "support",
+		label: "Support",
+		icon: "LifeBuoy",
+		events: [
+			ev("support.opened", "system.support.case.opened", "Support case opened", "info", true),
+			ev("support.replied", "system.support.case.replied", "Support case reply", "info", true),
+			ev("support.resolved", "system.support.case.resolved", "Support case resolved", "info", true),
+			ev("support.reopened", "system.support.case.reopened", "Support case reopened", "warning", true),
+			ev("support.closed", "system.support.case.closed", "Support case closed", "info", true),
+			// Emitter ships with the staff assignment write-path (P2).
+			ev("support.assigned", "system.support.case.assigned", "Support case assigned", "info"),
 		],
 	},
 ];

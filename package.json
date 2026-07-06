@@ -31,7 +31,11 @@
 		"compose:logs": "docker compose logs -f --tail=100",
 		"compose:down": "docker compose down",
 		"check:connector-assets": "node scripts/check-connector-assets.mjs",
-		"sync:connector-assets": "node scripts/sync-connector-assets.mjs"
+		"sync:connector-assets": "node scripts/sync-connector-assets.mjs",
+		"wt": "bash scripts/worktree.sh",
+		"wt:ls": "git worktree list",
+		"wt:rm": "bash scripts/worktree.sh --remove",
+		"prepare": "git config core.hooksPath .githooks || true"
 	},
 	"devDependencies": {
 		"prettier": "^3.6.2",

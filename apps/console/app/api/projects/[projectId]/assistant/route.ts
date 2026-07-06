@@ -5,6 +5,11 @@ import { convertToModelMessages, stepCountIs, streamText, type UIMessage } from 
 import { saveThreadMessages } from "@/app/server/actions/agent";
 import type { CanvasContext } from "@/lib/ai/canvas-context";
 import { summarizeCanvas } from "@/lib/ai/canvas-context";
+import {
+	formatMentionsForPrompt,
+	type Mention,
+	mentionsSchema,
+} from "@/lib/ai/mentions";
 import { buildProjectAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
@@ -21,6 +26,8 @@ interface ProjectAssistantBody {
 	canvas?: CanvasContext;
 	/** When set, the transcript is persisted to this (project-scoped) thread on finish. */
 	threadId?: string;
+	/** Resources the user @-referenced in the latest message. */
+	mentions?: Mention[];
 }
 
 /** Project-page assistant system prompt — drives the "A" loop for one project. */
@@ -106,12 +113,21 @@ export async function POST(
 		);
 	}
 
-	const { messages, canvas, threadId }: ProjectAssistantBody = await req.json();
+	const { messages, canvas, threadId, mentions }: ProjectAssistantBody =
+		await req.json();
 	const modelId = getAiModel();
+
+	const parsedMentions = mentionsSchema.safeParse(mentions);
+	const mentionBlock = parsedMentions.success
+		? formatMentionsForPrompt(parsedMentions.data)
+		: "";
+	const system = mentionBlock
+		? `${systemPrompt(projectId, canvas)}\n\n${mentionBlock}`
+		: systemPrompt(projectId, canvas);
 
 	const result = streamText({
 		model: modelId,
-		system: systemPrompt(projectId, canvas),
+		system,
 		messages: await convertToModelMessages(messages),
 		tools: buildProjectAgentTools(canvas),
 		stopWhen: stepCountIs(8),
