@@ -44,7 +44,15 @@ same checkout tangle: a single `git add -A` once swept three features into one m
   - `.claude/hooks/guard-worktree.sh` (a `PreToolUse` Bash hook) blocks a Claude instance from
     `git commit` / `git add -A` while it's launched in the main checkout.
   - **Escape hatch** (emergencies only): `git commit --no-verify` (all), or
-    `ALETHIA_ALLOW_MAIN_COMMIT=1 git commit …` (the main-checkout rule only).
+    `ALETHIA_ALLOW_MAIN_COMMIT=1 git commit …` (the main-checkout rule only). These are for the
+    maintainer — **instances must not use them.**
+- **Merging into `dev`:** the `protect-dev` ruleset (`infra/github`) requires **green CI** but **no
+  approval** — so once your PR's checks pass, **self-merge it**. The maintainer reviews the integrated
+  `dev` (served at `dev.alethialabs.io`) and promotes `dev → staging → main`. Never merge a red PR;
+  never target `staging`/`main` directly (`branch-flow-guard` blocks it).
+- **Instance kickoff (parallel sessions):** if you're one of several instances, your first move is
+  `pnpm wt <name>` → `cd ../wt-<name>` → work there → open a PR into `dev`, self-merge on green. One
+  worktree per piece of work; never work in `app/` or touch another instance's worktree.
 - **Migrations stay serial:** `pnpm -F console db:generate` is lock-guarded
   (`scripts/db-generate.sh`, atomic `/tmp/alethia-migrate.lock`) and warns if you're not rebased on
   `dev` — never generate in two worktrees at once (the drizzle snapshot chain is un-mergeable; see
