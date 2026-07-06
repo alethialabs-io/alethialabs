@@ -38,7 +38,6 @@ import { CanvasCommandPalette } from "./canvas-command-palette";
 import { CanvasControls } from "./canvas-controls";
 import { CanvasDock, useDockState } from "./canvas-dock";
 import { CanvasFlow } from "./canvas-flow";
-import { CostPanel } from "./cost-panel";
 import { PendingChangesBar } from "./pending-changes-bar";
 import { graphToForm } from "./graph/graph-to-form";
 import { NodePalette } from "./node-palette";
@@ -296,10 +295,6 @@ function CanvasInner({
 				deploying={deploying}
 				onDiscard={projectId ? () => void handleDiscardStaged() : undefined}
 			/>
-
-			<div className="absolute bottom-3 right-3 z-10">
-				<CostPanel />
-			</div>
 
 			<NodePalette
 				open={paletteOpen}
