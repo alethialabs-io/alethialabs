@@ -8,6 +8,7 @@
 #   R1  commits on protected branches (dev/staging/main) — they only take PR merges.
 #   R2  any commit in the MAIN checkout (app/) — feature work must live in a worktree.
 #   R3  a migration change that forks the drizzle snapshot chain.
+#   R4  a staged SPDX header that carries a legal form (OÜ/DPK/…) — headers stay form-agnostic.
 #
 # Escape hatches:
 #   git commit --no-verify              # bypass everything (emergencies)
@@ -51,6 +52,28 @@ if git diff --cached --name-only | grep -Eq '^apps/console/lib/db/migrations/'; 
 			exit 1
 		fi
 	fi
+fi
+
+# R4 — SPDX copyright headers stay legal-form-AGNOSTIC ("Alethia Labs <legal@…>"). The volatile
+# legal form (OÜ / DPK / …) lives only in NOTICE / LICENSE / packages/brand/src/legal.ts, never in
+# headers. Inspect only the STAGED content of files staged in THIS commit, so it blocks only drift
+# this commit introduces (unrelated pre-existing files are the CI guard's job). The 4-digit-year
+# anchor keeps it off prose/regex that merely mention the header string.
+form_re='SPDX-FileCopyrightText:[[:space:]]*[0-9]{4}[[:space:]]+Alethia Labs[[:space:]]+[^[:space:]<][^<]*<'
+bad=""
+while IFS= read -r f; do
+	[ -n "$f" ] || continue
+	if git show ":$f" 2>/dev/null | grep -Eq "$form_re"; then
+		bad="$bad $f"
+	fi
+done < <(git diff --cached --name-only --diff-filter=ACM || true)
+if [ -n "$bad" ]; then
+	echo "✗ pre-commit: SPDX header(s) carry a legal form (must be form-agnostic 'Alethia Labs <legal@…>'):" >&2
+	for f in $bad; do echo "    $f" >&2; done
+	echo "  The legal form (OÜ / DPK / …) belongs only in NOTICE / LICENSE / legal.ts." >&2
+	echo "  Fix with:  node scripts/normalize-copyright-headers.mjs   (then re-stage)" >&2
+	echo "  (emergency override: git commit --no-verify)" >&2
+	exit 1
 fi
 
 exit 0
