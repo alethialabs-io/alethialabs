@@ -421,6 +421,13 @@
       "when": 1782892166443,
       "tag": "0059_support_cases",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1783369549592,
+      "tag": "0060_reset_unconfigured_cloud_identities",
+      "breakpoints": true
     }
   ]
 }
