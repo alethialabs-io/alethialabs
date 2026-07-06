@@ -53,12 +53,6 @@ gen_if_absent ALETHIA_CRED_ENCRYPTION_KEY "$(b64)"   # base64, decodes to 32 byt
 gen_if_absent ALETHIA_DB_PASSWORD "$(hex)"
 gen_if_absent ALETHIA_APP_DB_PASSWORD "$(hex)"
 gen_if_absent OPENFGA_DB_PASSWORD "$(hex)"
-gen_if_absent ANALYTICS_DB_PASSWORD "$(hex)"   # umami-db
-gen_if_absent UMAMI_APP_SECRET "$(b64)"        # umami session secret
-gen_if_absent UMAMI_ADMIN_PASSWORD "$(b64)"    # rotated onto the admin/umami default by umami-init
-# Deterministic Umami website id — seeded into Umami by umami-init, so the console has it on first
-# deploy (no dashboard step). A UUID; python3 with a uuidgen fallback.
-gen_if_absent NEXT_PUBLIC_UMAMI_WEBSITE_ID "$(python3 -c 'import uuid;print(uuid.uuid4())' 2>/dev/null || uuidgen | tr 'A-Z' 'a-z')"
 gen_if_absent ALETHIA_STORAGE_ACCESS_KEY_ID "$(hex)"
 gen_if_absent ALETHIA_STORAGE_SECRET_ACCESS_KEY "$(b64)"
 gen_if_absent ALETHIA_RUNNER_BOOTSTRAP_TOKEN "$(hex)"

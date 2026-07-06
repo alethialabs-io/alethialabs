@@ -262,75 +262,6 @@ services:
       - redis-data:/data
     restart: unless-stopped
 
-  # ── Self-hosted analytics (opt-in) ─────────────────────────────────────────────
-  # Product analytics + funnels + Core Web Vitals via Umami. Never starts by default; bring up the
-  # `analytics` profile (docker compose --profile analytics create/start — not `up`, see README).
-  # umami-init seeds the website with the deterministic NEXT_PUBLIC_UMAMI_WEBSITE_ID + rotates the admin
-  # password on first boot, so NO manual dashboard step is needed. (Session replay = OpenReplay Cloud.)
-  umami-db:
-    image: postgres:17-alpine
-    profiles: ["analytics"]
-    environment:
-      POSTGRES_USER: umami
-      POSTGRES_PASSWORD: "${ANALYTICS_DB_PASSWORD:-analytics-dev-secret}"
-      POSTGRES_DB: umami
-    volumes:
-      - umami-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U umami -d umami"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
-    restart: unless-stopped
-
-  umami:
-    # Pinned (not :postgresql-latest) — the umami-init seed SQL is coupled to Umami's schema.
-    # v2.16 is the latest tag on GHCR (Umami has no v3; the old v3.2.0 pin never existed there,
-    # so prod `compose pull` 404'd). v2 schema (website/"user" tables) matches umami-seed.sql.
-    image: ghcr.io/umami-software/umami:postgresql-v2.16
-    profiles: ["analytics"]
-    environment:
-      DATABASE_URL: "postgresql://umami:${ANALYTICS_DB_PASSWORD:-analytics-dev-secret}@umami-db:5432/umami"
-      DATABASE_TYPE: postgresql
-      APP_SECRET: "${UMAMI_APP_SECRET:-umami-dev-secret-change-me}"
-    ports:
-      - "${ANALYTICS_PORT:-8888}:3000"
-    depends_on:
-      umami-db:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/api/heartbeat',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 20s
-    restart: unless-stopped
-
-  # One-shot: seed the console website (deterministic id) + set the admin password once Umami is healthy,
-  # so the console works on the FIRST deploy (no UI step, no redeploy). Idempotent — ON CONFLICT DO
-  # NOTHING for the website; the admin password is always set to UMAMI_ADMIN_PASSWORD (vault-managed).
-  umami-init:
-    image: postgres:17-alpine
-    profiles: ["analytics"]
-    environment:
-      PGPASSWORD: "${ANALYTICS_DB_PASSWORD:-analytics-dev-secret}"
-      WID: "${NEXT_PUBLIC_UMAMI_WEBSITE_ID:-}"
-      ADMIN_PW: "${UMAMI_ADMIN_PASSWORD:-}"
-      DOM: "${UMAMI_WEBSITE_DOMAIN:-}"
-    volumes:
-      - ./deploy/analytics/umami-seed.sql:/seed.sql:ro
-    depends_on:
-      umami:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        if [ -z "$$WID" ]; then echo "umami-init: NEXT_PUBLIC_UMAMI_WEBSITE_ID unset — skipping seed"; exit 0; fi
-        psql -h umami-db -U umami -d umami -v ON_ERROR_STOP=1 -v wid="$$WID" -v pw="$$ADMIN_PW" -v dom="$$DOM" -f /seed.sql
-        echo "umami-init: seeded website $$WID"
-    restart: "no"
-
 volumes:
   seaweedfs-data:
   postgres-data:
@@ -338,4 +269,3 @@ volumes:
   caddy-data:
   caddy-config:
   redis-data:
-  umami-data:
