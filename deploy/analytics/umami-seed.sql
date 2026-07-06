@@ -17,8 +17,11 @@ SET password = crypt(:'pw', gen_salt('bf', 10)), updated_at = now()
 WHERE username = 'admin' AND :'pw' <> '';
 
 -- Seed the console's website with our deterministic id (admin looked up dynamically). Idempotent.
-INSERT INTO website (website_id, name, domain, user_id, created_by, recorder_enabled, created_at, updated_at)
-SELECT :'wid'::uuid, 'Alethia Console', NULLIF(:'dom', ''), u.user_id, u.user_id, false, now(), now()
+-- Columns match Umami v2.x's `website` table (website_id, name, domain, user_id, created_by, timestamps).
+-- NB: do NOT add `recorder_enabled` — that column does not exist in v2.16 (it 500'd the seed in prod);
+-- Umami's own session recorder is unused here (replay = OpenReplay).
+INSERT INTO website (website_id, name, domain, user_id, created_by, created_at, updated_at)
+SELECT :'wid'::uuid, 'Alethia Console', NULLIF(:'dom', ''), u.user_id, u.user_id, now(), now()
 FROM "user" u
 WHERE u.username = 'admin'
 ON CONFLICT (website_id) DO NOTHING;
