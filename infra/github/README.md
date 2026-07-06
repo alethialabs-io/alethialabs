@@ -13,7 +13,10 @@ manual fallback only.
 - **`main`**: PR required, **0 approvals** (solo repo — CI is the gate), all CI checks
   green, linear history, no force-push/deletion, admins included.
 - **`staging`**: PR + CI (lighter — allows hotfix merges).
-- **`dev`**: created off `staging`; feature PRs target it.
+- **`dev`** (`protect-dev`): created off `staging`; feature PRs target it. **PR + green CI, 0 approvals**
+  — instances self-merge once CI is green (the CI list minus `branch-flow-guard`, which only runs on
+  PRs into main/staging). No force-push/deletion. This is the gate into the shared integration branch;
+  the maintainer reviews the integrated `dev` (dev.alethialabs.io) and promotes `dev → staging → main`.
 
 `github_owner`/`repository` are variables → switching to an org repo is a var change.
 
