@@ -56,7 +56,7 @@ export function ProjectShell({
 	};
 
 	return (
-		<div className="-m-4 flex h-[calc(100dvh-3.5rem)] w-full sm:-m-6 lg:-m-8 xl:-m-10">
+		<div className="-m-4 flex h-[calc(100dvh-3.5rem)] sm:-m-6 lg:-m-8 xl:-m-10">
 			<div
 				className={cn(
 					"relative min-w-0 flex-1",

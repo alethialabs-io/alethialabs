@@ -180,7 +180,7 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	return (
 		<div className="space-y-6">
 			{jobs.length === 0 ? (
-				<Empty className="min-h-[60vh] border border-dashed">
+				<Empty className="min-h-[60vh]">
 					<EmptyHeader>
 						<EmptyMedia variant="icon">
 							<ClipboardList />

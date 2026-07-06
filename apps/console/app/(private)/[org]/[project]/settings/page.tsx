@@ -3,12 +3,12 @@
 
 import { redirect } from "next/navigation";
 
-/** /{org}/{project}/settings → Activity, the only project-scoped section so far. */
+/** /{org}/{project}/settings → General, the first project-scoped settings section. */
 export default async function ProjectSettingsIndex({
 	params,
 }: {
 	params: Promise<{ org: string; project: string }>;
 }) {
 	const { org, project } = await params;
-	redirect(`/${org}/${project}/settings/activity`);
+	redirect(`/${org}/${project}/settings/general`);
 }

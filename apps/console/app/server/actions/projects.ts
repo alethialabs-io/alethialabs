@@ -1038,10 +1038,30 @@ export async function detectDrift(
 // Delete
 // ============================================================
 
+// Environment states that mean live (or in-flight) cloud infrastructure — a project can't be
+// deleted from under them; the environments must be destroyed first.
+const LIVE_ENV_STATUSES = new Set(["QUEUED", "PROVISIONING", "ACTIVE", "DESTROYING"]);
+
+/**
+ * Permanently deletes a project record. Child rows (environments, components, promotions, drift)
+ * cascade; jobs keep their history with a null project reference. This does NOT tear down
+ * provisioned cloud infrastructure — it refuses while any environment is live/in-flight, so the
+ * caller must destroy those environments first.
+ */
 export async function deleteProject(projectId: string) {
 	const actor = await authorize("destroy", { type: "project", id: projectId });
 	const owner = actor.userId;
 	return withOwnerScope(owner, async (tx) => {
+		// Refuse while any environment is live/in-flight — deleting would orphan cloud resources.
+		const envs = await tx
+			.select({ status: projectEnvironments.status })
+			.from(projectEnvironments)
+			.where(eq(projectEnvironments.project_id, projectId));
+		if (envs.some((e) => LIVE_ENV_STATUSES.has(e.status))) {
+			throw new Error(
+				"This project has live or in-flight environments. Destroy them before deleting the project.",
+			);
+		}
 		// CASCADE handles all component tables.
 		await tx.delete(projects).where(eq(projects.id, projectId));
 		return { success: true };
@@ -1434,10 +1454,21 @@ export async function getEnvConsistency(projectId: string): Promise<EnvConsisten
 	await authorize("view", { type: "project", id: projectId });
 	const { environments } = await getProjectEnvironments(projectId);
 	const designs = await Promise.all(
-		environments.map(async (e) => ({
-			env: e,
-			inventory: designInventory((await getProjectAsFormData(projectId, e.id)).formData),
-		})),
+		environments.map(async (e) => {
+			// Reading an env's design can throw (e.g. a since-deleted cloud identity). Degrade that
+			// env to an empty inventory (its components read as "absent") instead of failing the
+			// whole consistency matrix — the environments list must always render.
+			try {
+				return {
+					env: e,
+					inventory: designInventory(
+						(await getProjectAsFormData(projectId, e.id)).formData,
+					),
+				};
+			} catch {
+				return { env: e, inventory: [] as ReturnType<typeof designInventory> };
+			}
+		}),
 	);
 
 	// composite key ("type name") → { present sigs per env }
@@ -1498,6 +1529,54 @@ export async function deleteEnvironment(projectId: string, environmentId: string
 			throw new Error("Cannot delete the project's default environment");
 		await tx.delete(projectEnvironments).where(eq(projectEnvironments.id, environmentId));
 		return { success: true };
+	});
+}
+
+// ============================================================
+// Project settings — General tab.
+// ============================================================
+
+/** The editable general fields for a project (project → Settings → General). */
+export async function getProjectGeneral(
+	projectId: string,
+): Promise<{ id: string; project_name: string; slug: string | null }> {
+	const actor = await authorize("view", { type: "project", id: projectId });
+	return withOwnerScope(actor.userId, async (tx) => {
+		const [row] = await tx
+			.select({
+				id: projects.id,
+				project_name: projects.project_name,
+				slug: projects.slug,
+			})
+			.from(projects)
+			.where(eq(projects.id, projectId))
+			.limit(1);
+		if (!row) throw new Error("Project not found");
+		return row;
+	});
+}
+
+/**
+ * Renames a project. The slug is intentionally left stable so existing URLs / bookmarks keep
+ * resolving — only the display name changes.
+ */
+export async function updateProjectName(
+	projectId: string,
+	name: string,
+): Promise<{ project_name: string }> {
+	const actor = await authorize("edit", { type: "project", id: projectId });
+	const project_name = name.trim();
+	if (!project_name) throw new Error("A project name is required");
+	if (project_name.length > 100)
+		throw new Error("Project name must be 100 characters or fewer");
+	return withOwnerScope(actor.userId, async (tx) => {
+		const [row] = await tx
+			.update(projects)
+			.set({ project_name, updated_at: new Date() })
+			.where(eq(projects.id, projectId))
+			.returning({ project_name: projects.project_name });
+		if (!row) throw new Error("Project not found");
+		return row;
 	});
 }
 

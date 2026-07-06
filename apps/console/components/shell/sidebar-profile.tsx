@@ -23,7 +23,7 @@ import { authClient } from "@/lib/auth/client";
 import { legalUrl } from "@/lib/legal";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { displayName, userInitials } from "@/lib/user-display";
-import { Avatar, AvatarFallback } from "@repo/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@repo/ui/avatar";
 import { Button } from "@repo/ui/button";
 import {
 	DropdownMenu,
@@ -74,6 +74,7 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
 		<div className="flex h-14 shrink-0 items-center gap-1.5 border-t px-2.5">
 			<div className="flex min-w-0 flex-1 items-center gap-2.5 px-1.5 py-1.5">
 				<Avatar className="h-7 w-7">
+					<AvatarImage src={user?.image ?? undefined} alt="" />
 					<AvatarFallback className="bg-muted text-[10px] font-medium text-muted-foreground">
 						{userInitials(user)}
 					</AvatarFallback>
