@@ -110,6 +110,25 @@ describe("getGettingStartedState", () => {
 		expect(s.canInvite).toBe(false); // community entitlements
 	});
 
+	it("counts only verified clouds for hasCloud — a pending/failed placeholder doesn't tick it", async () => {
+		// The four counts resolve FIFO in query order [clouds, projects, deploys, members]. Zero
+		// *verified* clouds → hasCloud false even though projects/deploys exist (a pending placeholder
+		// identity, which the query now filters out via is_verified=true, must not tick the step).
+		const results: unknown[][] = [[{ n: 0 }], [{ n: 3 }], [{ n: 1 }], [{ n: 1 }]];
+		const db: Record<string, unknown> = {};
+		Object.assign(db, {
+			select: () => db,
+			from: () => db,
+			where: () => db,
+			then: (resolve: (v: unknown) => void) => resolve(results.shift() ?? [{ n: 0 }]),
+		});
+		vi.mocked(getServiceDb).mockReturnValue(db as never);
+		const s = await getGettingStartedState();
+		expect(s.hasCloud).toBe(false);
+		expect(s.hasProject).toBe(true);
+		expect(s.hasProvisioned).toBe(true);
+	});
+
 	it("ticks the checklist when resources exist, and gates invite on the plan", async () => {
 		mockDb([{ n: 2 }]);
 		vi.mocked(currentActor).mockResolvedValue({

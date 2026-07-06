@@ -24,6 +24,7 @@ import {
 } from "@/app/(private)/dashboard/providers/extra-cloud-actions";
 import { currentActor } from "@/lib/authz/guard";
 import { getPdp } from "@/lib/authz";
+import { getAuthConfig } from "@/lib/config/auth";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 
 /** The connect-flow setup bundle shared by the connectors board and the create-project form. */
@@ -35,18 +36,25 @@ export interface CloudConnectSetup {
 	azureSetup: { identityId: string } | null;
 	extraSetup: Record<string, { identityId: string; externalId?: string }>;
 	/**
-	 * Whether THIS instance has the platform credentials a provider's server-side health
-	 * probe needs (keyed by connector slug). Managed clouds (aws/gcp/azure/alibaba) assume
-	 * the customer's role using Alethia's platform identity — without those creds a connect
-	 * can only ever fail, so the UI says "not enabled on this instance" up-front instead of
-	 * a generic failure. Token clouds (hetzner/digitalocean/civo) need none → always true.
+	 * Whether THIS instance is configured to support a provider's connect flow (keyed by connector
+	 * slug). Managed clouds (aws/gcp/azure/alibaba) assume the customer's role using Alethia's
+	 * platform identity — without those creds a connect can only ever fail. Git providers
+	 * (github/gitlab/bitbucket) need an OAuth app registered in Better Auth — without its
+	 * client id/secret `linkSocial` rejects. In both cases the UI says "not enabled on this
+	 * instance" up-front instead of offering a doomed Connect. Token clouds
+	 * (hetzner/digitalocean/civo) need nothing → always true.
 	 */
 	platformConfigured: Record<string, boolean>;
 }
 
-/** Per-provider platform-credential presence — mirrors what each session/health probe reads. */
+/**
+ * Per-provider connect-availability on this instance — mirrors what each session/health probe reads
+ * (clouds) and what Better Auth has registered (git OAuth apps). Slugs absent from the map default to
+ * available at the call site.
+ */
 function computePlatformConfigured(): Record<string, boolean> {
 	const has = (...keys: string[]) => keys.every((k) => !!process.env[k]);
+	const gitProviders = getAuthConfig().providers;
 	return {
 		aws: has("ALETHIA_AWS_ACCESS_KEY_ID", "ALETHIA_AWS_SECRET_ACCESS_KEY"),
 		azure: has(
@@ -66,6 +74,12 @@ function computePlatformConfigured(): Record<string, boolean> {
 		hetzner: true,
 		digitalocean: true,
 		civo: true,
+		// Git providers are connectable only when their OAuth app is registered (client id + secret
+		// present). Otherwise `authClient.linkSocial` rejects → the tile would toast "Failed to
+		// connect". google is login-only (not a connector), so it's intentionally omitted.
+		github: !!gitProviders.github,
+		gitlab: !!gitProviders.gitlab,
+		bitbucket: !!gitProviders.bitbucket,
 	};
 }
 

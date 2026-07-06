@@ -449,6 +449,9 @@ export function ConnectorsPage({
 													key={integration.id}
 													integration={integration}
 													canManage={canManage}
+													platformConfigured={
+														platformConfigured?.[integration.slug] ?? true
+													}
 													isConnecting={
 													connectingSlug === integration.slug ||
 													cloudConnect.connectingSlug === integration.slug
