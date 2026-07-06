@@ -22,4 +22,7 @@ export const qk = {
 	supportCases: (filter: "all" | "active" | "resolved" = "all") =>
 		["support", "cases", filter] as const,
 	supportCase: (id: string) => ["support", "case", id] as const,
+	classificationDimensions: () => ["classification", "dimensions"] as const,
+	classificationAssignments: (kind: string, id: string) =>
+		["classification", "assignments", kind, id] as const,
 } as const;

@@ -12,6 +12,7 @@ import {
 	ScrollText,
 	Settings2,
 	ShieldCheck,
+	Tags,
 	Users,
 	UsersRound,
 	type LucideIcon,
@@ -46,6 +47,7 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
 	{ label: "Roles", sub: "roles", icon: ShieldCheck, scopes: ["org"] },
 	{ label: "Access", sub: "access", icon: Network, scopes: ["org", "project"] },
 	{ label: "Single Sign-On", sub: "sso", icon: KeyRound, scopes: ["org"] },
+	{ label: "Classification", sub: "classification", icon: Tags, scopes: ["org"] },
 	{ label: "Activity", sub: "activity", icon: ScrollText, scopes: ["org", "project"] },
 ];
 

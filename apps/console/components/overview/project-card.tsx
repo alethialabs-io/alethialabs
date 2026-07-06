@@ -18,6 +18,7 @@ import {
 } from "@repo/ui/dropdown-menu";
 import { StatusBadge } from "@repo/ui/status-badge";
 import type { ProjectWithProvider } from "@/app/server/actions/projects";
+import { ClassificationChips } from "@/components/classification/classification-chips";
 import { DuplicateProjectDialog } from "@/components/projects/duplicate-project-dialog";
 import { orgHref, projectHref } from "@/lib/routing";
 
@@ -84,6 +85,13 @@ export function ProjectCard({
 						</span>
 					) : null}
 				</div>
+
+				{/* Structured classification (Workstream B) — read-only chips. */}
+				<ClassificationChips
+					kind="project"
+					id={project.id}
+					className="mt-2"
+				/>
 			</div>
 
 			{/* Favorite star — above the link so it stays clickable. */}

@@ -9,6 +9,8 @@ import { ArrowLeft, Download, Paperclip } from "lucide-react";
 import Link from "next/link";
 import { useEffect } from "react";
 import { getCase } from "@/app/server/actions/support";
+import { ClassificationChips } from "@/components/classification/classification-chips";
+import { ClassificationPicker } from "@/components/classification/classification-picker";
 import type { SupportAuthorType } from "@/lib/db/schema/enums";
 import { qk } from "@/lib/query/keys";
 import type { CaseWithThread, PublicMessage } from "@/lib/queries/support";
@@ -128,6 +130,11 @@ export function CaseDetail({
 							<span>
 								Opened {format(new Date(supportCase.created_at), "MMM d, yyyy")}
 							</span>
+						</div>
+						{/* Structured classification (Workstream B) — read-only chips + a picker. */}
+						<div className="flex flex-wrap items-center gap-2">
+							<ClassificationChips kind="support_case" id={caseId} />
+							<ClassificationPicker kind="support_case" id={caseId} />
 						</div>
 					</div>
 					<CaseActions caseId={caseId} status={supportCase.status} />

@@ -40,6 +40,7 @@ describe("settingsNavItemsForScope", () => {
 			"roles",
 			"access",
 			"sso",
+			"classification",
 			"activity",
 		]);
 	});
