@@ -7,7 +7,7 @@ import { getServiceDb } from "@/lib/db";
 import { aiCreditGrant, aiUsageLedger } from "@/lib/db/schema";
 import { aiCostMicros } from "@/lib/billing/model-costs";
 
-export type AiUsageKind = "scan" | "agent";
+export type AiUsageKind = "scan" | "agent" | "support";
 export type CreditSource = "included" | "purchased";
 
 /** Sum credits an org spent from a budget source since a cutoff (service-db; trusted). */

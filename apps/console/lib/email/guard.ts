@@ -21,5 +21,16 @@ export async function sendGuardedEmail(args: SendEmailArgs): Promise<void> {
 		);
 		return;
 	}
-	await sendEmail(args);
+	// Drop suppressed CC recipients too, so a bounced/complained address on a case's
+	// ccEmails list never gets re-sent (the primary `to` is already checked above).
+	const cc = args.cc?.length
+		? (
+				await Promise.all(
+					args.cc.map(async (addr) =>
+						(await isSuppressed(addr)) ? null : addr,
+					),
+				)
+			).filter((addr): addr is string => addr !== null)
+		: undefined;
+	await sendEmail({ ...args, cc: cc?.length ? cc : undefined });
 }

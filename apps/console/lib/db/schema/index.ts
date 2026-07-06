@@ -34,3 +34,4 @@ export * from "./alerts";
 export * from "./connector-health";
 export * from "./email";
 export * from "./stripe-webhook-event";
+export * from "./support";

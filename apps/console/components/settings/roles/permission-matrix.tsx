@@ -19,6 +19,7 @@ const RESOURCE_LABEL: Record<Resource, string> = {
 	billing: "Billing",
 	alert: "Alerts",
 	fleet: "Fleet",
+	support_case: "Support",
 };
 
 const GROUPS = RESOURCES.map((resource) => ({
