@@ -7,11 +7,13 @@
 // settings modal. Persists across every project view; the full sidebar returns on org routes.
 
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { PanelLeftOpen } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { authClient } from "@/lib/auth/client";
 import { orgHref } from "@/lib/routing";
+import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { displayName, userInitials } from "@/lib/user-display";
 import { Avatar, AvatarFallback, AvatarImage } from "@repo/ui/avatar";
@@ -109,6 +111,7 @@ export function SidebarRail() {
 	const pathname = usePathname();
 	const searchParams = useSearchParams();
 	const orgSlug = useActiveOrgSlug();
+	const { toggle, canToggle } = useSidebarCollapse();
 	const projectSlug = projectScope(pathname)?.projectSlug ?? null;
 	const groups = useMemo(
 		() =>
@@ -138,6 +141,22 @@ export function SidebarRail() {
 
 				{/* Icon nav — all project items sit at the top */}
 				<nav className="flex w-full flex-1 flex-col items-center gap-1 overflow-y-auto py-3">
+					{/* Expand back to the full sidebar. */}
+					{canToggle && (
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									aria-label="Expand sidebar"
+									onClick={toggle}
+									className={cn(ICON_BUTTON, "mb-1")}
+								>
+									<PanelLeftOpen className="h-4 w-4" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="right">Expand sidebar</TooltipContent>
+						</Tooltip>
+					)}
 					{groups.top.map((item) => (
 						<RailLink
 							key={item.label}

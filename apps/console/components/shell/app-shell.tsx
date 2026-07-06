@@ -7,18 +7,17 @@
 // tree. Replaces the legacy header-centric `DashboardChrome`.
 
 import type React from "react";
-import { usePathname } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { Sheet, SheetContent, SheetTitle } from "@repo/ui/sheet";
 import { cn } from "@repo/ui/utils";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
+import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { ElenchSurface } from "@/components/agent/elench/elench-surface";
 import { SetupGuideCard } from "@/components/onboarding/setup-guide";
 import { AppSidebar } from "./app-sidebar";
 import { CommandPalette } from "./command-palette";
 import { JobToaster } from "./job-toaster";
-import { projectScope } from "./nav-config";
 import { SidebarRail } from "./sidebar-rail";
 import { SupportToaster } from "./support-toaster";
 import { Topbar } from "./topbar";
@@ -34,11 +33,10 @@ export function AppShell({
 }) {
 	const [mobileOpen, setMobileOpen] = useState(false);
 
-	// Inside a project (`/{org}/{project}/…`) the sidebar collapses to an icon rail — the project
-	// workspace navigates via that rail while its views render in the content area. Org routes keep
-	// the full sidebar.
-	const pathname = usePathname();
-	const collapsed = projectScope(pathname) != null;
+	// Inside a project the sidebar can collapse to a 56px icon rail (the Architecture canvas wants the
+	// width); it stays the full sidebar on every other project view and always at org scope. A nested
+	// drill (Settings) force-expands it, and a manual toggle pins the user's choice. See useSidebarCollapse.
+	const { collapsed } = useSidebarCollapse();
 
 	// Load the workspace once here so every nav href resolves to the active org even
 	// before the org switcher mounts (the switcher used to be the only loader).

@@ -344,7 +344,7 @@ function EmptyState({
 	action: React.ReactNode;
 }) {
 	return (
-		<div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-16 text-center">
+		<div className="flex flex-col items-center justify-center py-16 text-center">
 			<div className="mb-4 flex size-11 items-center justify-center rounded-full bg-muted/50 text-muted-foreground">
 				<Bell className="size-5" />
 			</div>

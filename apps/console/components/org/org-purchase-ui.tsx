@@ -50,6 +50,7 @@ export function PurchaseLayout({
 			{/* Left strip runs full height (grid rows stretch): checklist up top, a plan
 			    summary anchored at the bottom so the panel never looks cut off / empty. */}
 			<aside className="hidden border-r border-border-strong bg-surface-sunken px-7 py-8 lg:flex lg:flex-col">
+
 				<PlanChecklist meta={meta} />
 				<div className="mt-auto border-t border-border pt-5">
 					<div className="flex items-baseline justify-between gap-2">
@@ -65,16 +66,16 @@ export function PurchaseLayout({
 					</p>
 				</div>
 			</aside>
-			<div className="relative px-7 py-8">
+			<div className="relative flex h-full min-h-0 flex-col px-7 pt-8">
 				<button
 					type="button"
 					aria-label="Close"
 					onClick={onClose}
-					className="absolute right-5 top-5 rounded-sm p-1.5 text-text-tertiary transition-colors hover:bg-surface-muted hover:text-text-primary"
+					className="absolute right-5 top-5 z-10 rounded-sm p-1.5 text-text-tertiary transition-colors hover:bg-surface-muted hover:text-text-primary"
 				>
 					<X size={15} />
 				</button>
-				<div className="mx-auto flex w-full max-w-[420px] flex-col">
+				<div className="mx-auto w-full max-w-[420px] shrink-0">
 					<div className="mb-6 flex flex-col items-center text-center">
 						<span className="rounded-full border border-border-strong px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-text-secondary">
 							{meta.name}
@@ -86,6 +87,9 @@ export function PurchaseLayout({
 							{subheading ?? "Unlock collaboration and improved performance."}
 						</p>
 					</div>
+				</div>
+				{/* Fills the remaining height so a child form can scroll its fields and pin its CTA. */}
+				<div className="mx-auto flex w-full min-h-0 max-w-[420px] flex-1 flex-col pb-8">
 					{children}
 				</div>
 			</div>
