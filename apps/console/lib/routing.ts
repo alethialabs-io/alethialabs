@@ -23,9 +23,6 @@ const STATIC_RESERVED_SLUGS = [
 	"start",
 	"cli",
 	"invites",
-	// The cross-tenant staff support console (app/(private)/support-admin) — a static
-	// sibling of [org], so no org may claim this slug.
-	"support-admin",
 	"_next",
 	"blog",
 	"docs",

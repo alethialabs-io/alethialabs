@@ -14,28 +14,28 @@ import { sendGuardedEmail } from "./guard";
 import {
 	SupportCaseAssignedEmail,
 	subject as assignedSubject,
-} from "@/emails/support-case-assigned";
+} from "@repo/support/emails/support-case-assigned";
 import {
 	SupportCaseClosedEmail,
 	subject as closedSubject,
-} from "@/emails/support-case-closed";
+} from "@repo/support/emails/support-case-closed";
 import {
 	SupportCaseCreatedEmail,
 	subject as createdSubject,
-} from "@/emails/support-case-created";
+} from "@repo/support/emails/support-case-created";
 import {
 	type ReplyAudience,
 	SupportCaseReplyEmail,
 	subject as replySubject,
-} from "@/emails/support-case-reply";
+} from "@repo/support/emails/support-case-reply";
 import {
 	SupportCaseReopenedEmail,
 	subject as reopenedSubject,
-} from "@/emails/support-case-reopened";
+} from "@repo/support/emails/support-case-reopened";
 import {
 	SupportCaseResolvedEmail,
 	subject as resolvedSubject,
-} from "@/emails/support-case-resolved";
+} from "@repo/support/emails/support-case-resolved";
 
 /** The inbox new-case notifications go to (override via SUPPORT_EMAIL). */
 const DEFAULT_SUPPORT_EMAIL = "support@alethialabs.io";
