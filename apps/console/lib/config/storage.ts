@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { env } from "next-runtime-env";
@@ -61,5 +61,6 @@ export function getStorageConfig(): StorageConfig {
 	return cached;
 }
 
-/** Object-storage bucket holding support-case attachments (S3-compatible). */
-export const SUPPORT_ATTACHMENTS_BUCKET = "support-attachments";
+// The support-attachments bucket name lives in @repo/support (shared with the admin app);
+// re-exported here so the console's existing `@/lib/config/storage` import sites keep working.
+export { SUPPORT_ATTACHMENTS_BUCKET } from "@repo/support/storage";

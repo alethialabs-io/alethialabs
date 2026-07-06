@@ -1,0 +1,21 @@
+# Admin zone — the internal STAFF support dashboard on its own subdomain.
+#
+# The dashboard is cross-tenant (staff view/answer every org's cases). Its ONLY gate is
+# Cloudflare Access + the SUPPORT_STAFF_EMAILS allowlist — the same pattern as the Umami
+# analytics dashboard. Put a Cloudflare Access application in front of this hostname (Zero
+# Trust → Access → Applications) restricted to your staff emails; Access then injects the
+# verified identity in the `Cf-Access-Authenticated-User-Email` header, which the app
+# trusts (lib/auth/staff.ts). Without an Access app in front, this hostname is UNGATED —
+# do not expose it publicly.
+#
+# OPT-IN self-host template:
+#   1. Run an `admin` service (the apps/admin image) in your compose stack
+#      (COMPOSE_PROFILES=admin).
+#   2. Copy this file next to the active Caddyfile as `admin.caddy`.
+#   3. Uncomment `import admin*.caddy` in that Caddyfile.
+#   4. Replace admin.alethialabs.io with your real staff subdomain and add the
+#      matching Cloudflare Access application.
+
+admin.alethialabs.io {
+	reverse_proxy admin:3000
+}

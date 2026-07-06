@@ -3,11 +3,16 @@ name: Release Please
 on:
   push:
     branches: [main]
+  workflow_dispatch: # manual trigger for testing the release pipeline
 
 permissions:
   contents: write
   pull-requests: write
   packages: write
+  # The reusable release-runner.yml / release-cli.yml request `id-token: write` (OIDC into the
+  # AWS deploy/vault roles). A called workflow can never exceed the caller's granted permissions,
+  # so omitting it here made every run fail at STARTUP (0 jobs) — grant it at the caller.
+  id-token: write
 
 jobs:
   release-please:

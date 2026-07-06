@@ -1,0 +1,12 @@
+/* SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+/* Shared Alethia design foundation (theme tokens, base, .vx-* brand devices). */
+@import "@repo/brand/tokens.css";
+
+/* Scan shared workspace packages so their Tailwind classes are generated. */
+@source "../../../packages/ui/src";
+@source "../../../packages/brand/src";
