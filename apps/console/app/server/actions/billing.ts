@@ -27,13 +27,15 @@ import type { TaxIdType } from "@/lib/billing/tax-ids";
 import { planMeta } from "@repo/plan-catalog";
 import { resolvePlanEntitlements } from "@/lib/billing/plan";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
+import { getOrgInvoice, listOrgInvoices } from "@/lib/billing/invoices";
+import { backupRankOf, setBackupOrder } from "@/lib/billing/payment-methods";
 import {
 	getAllPlanPrices,
 	getPlanPrice,
 	type LivePlanPriceMap,
 } from "@/lib/billing/pricing";
 import { getStripe } from "@/lib/billing/stripe";
-import { syncSubscriptionToBilling } from "@/lib/billing/sync";
+import { mapStatus, syncSubscriptionToBilling } from "@/lib/billing/sync";
 import { computeUsage, type UsageSummary } from "@/lib/billing/usage";
 import {
 	queryJobMinutesByOrg,
@@ -51,8 +53,43 @@ import {
 } from "@/lib/queries/usage-counts";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
-import { member, organization, organizationBilling, user } from "@/lib/db/schema";
+import type {
+	BillingPlan,
+	BillingStatus,
+	InvoiceStatus,
+} from "@/lib/db/schema/enums";
+import {
+	type Invoice,
+	member,
+	organization,
+	organizationBilling,
+	user,
+} from "@/lib/db/schema";
+
+/**
+ * The single, coherent plan lifecycle state the billing card renders off — derived from the
+ * live subscription so the badge, period wording, "next charge" line, and CTA can never
+ * disagree. `canceling` = live but set to cancel at period end (show "Cancels …" + "Resume");
+ * the rest map straight from `BillingStatus`.
+ */
+export type PlanState =
+	| "none"
+	| "trialing"
+	| "active"
+	| "canceling"
+	| "past_due"
+	| "canceled";
+
+/** Collapses status + the cancel-at-period-end flag into one coherent lifecycle state. */
+function derivePlanState(
+	status: BillingStatus,
+	cancelAtPeriodEnd: boolean,
+): PlanState {
+	if (cancelAtPeriodEnd && (status === "active" || status === "trialing")) {
+		return "canceling";
+	}
+	return status;
+}
 
 /** Read-only billing state for the active org, for the /settings/billing page. */
 export interface BillingSummary {
@@ -62,6 +99,8 @@ export interface BillingSummary {
 	hasOrg: boolean;
 	plan: BillingPlan;
 	status: BillingStatus;
+	/** The one coherent lifecycle state that drives every label + CTA on the plan card. */
+	state: PlanState;
 	/** ISO timestamp the current paid period ends, if subscribed. */
 	currentPeriodEnd: string | null;
 	/** A Stripe customer exists → cards/invoices are available. */
@@ -98,7 +137,13 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 	}
 
 	const plan = billing?.plan ?? "community";
+	// Default to the DB row, then let a readable live subscription override the fields the
+	// card renders (status / period / cancel flag) — so a stale or half-synced DB row can
+	// never produce a self-contradictory card (e.g. "Canceled" next to "Renews …").
+	let status: BillingStatus = billing?.status ?? "none";
 	let cancelAtPeriodEnd = false;
+	let currentPeriodEnd: string | null =
+		billing?.currentPeriodEnd?.toISOString() ?? null;
 	// Authoritative price: the subscription's OWN flat (non-metered) Stripe price — this
 	// reflects what the org is actually charged, including grandfathered amounts.
 	let unitAmountUsd: number | null = null;
@@ -107,6 +152,7 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 			const sub = await getStripe().subscriptions.retrieve(
 				billing.stripeSubscriptionId,
 			);
+			status = mapStatus(sub.status);
 			cancelAtPeriodEnd = sub.cancel_at_period_end;
 			const flat = sub.items.data.find(
 				(i) => i.price.recurring?.usage_type !== "metered",
@@ -114,8 +160,15 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 			if (typeof flat?.price.unit_amount === "number") {
 				unitAmountUsd = flat.price.unit_amount / 100;
 			}
+			// A period end only means something while the sub is live (active/trialing); a
+			// past_due/canceled sub shows no renewal or cancellation date.
+			const live = status === "active" || status === "trialing";
+			currentPeriodEnd =
+				live && flat?.current_period_end
+					? new Date(flat.current_period_end * 1000).toISOString()
+					: null;
 		} catch {
-			// Subscription unreadable (deleted upstream) — treat as not pending-cancel.
+			// Subscription unreadable (deleted upstream) — fall back to the DB row.
 		}
 	}
 	// No live sub price (or no sub yet) → fall back to the plan's live Stripe price.
@@ -127,8 +180,9 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 		hosted: isStripeConfigured(),
 		hasOrg,
 		plan,
-		status: billing?.status ?? "none",
-		currentPeriodEnd: billing?.currentPeriodEnd?.toISOString() ?? null,
+		status,
+		state: derivePlanState(status, cancelAtPeriodEnd),
+		currentPeriodEnd,
 		canManage: Boolean(billing?.stripeCustomerId),
 		cancelAtPeriodEnd,
 		seats: billing?.seats ?? null,
@@ -439,6 +493,29 @@ async function ensureCustomer(
 }
 
 /**
+ * Cancels a customer's dangling `incomplete` subscriptions — the never-paid first-invoice
+ * subs that a re-opened checkout / upgrade sheet would otherwise pile up (each one Stripe
+ * auto-generates a draft invoice for). Stateless: it lists Stripe directly rather than the
+ * DB, so it cleans up even the subs that were never persisted to organization_billing — the
+ * exact leak the old DB-only guard missed. Best-effort per subscription.
+ */
+async function cancelIncompleteSubscriptions(customerId: string): Promise<void> {
+	const stripe = getStripe();
+	const subs = await stripe.subscriptions.list({
+		customer: customerId,
+		status: "incomplete",
+		limit: 100,
+	});
+	for (const s of subs.data) {
+		try {
+			await stripe.subscriptions.cancel(s.id);
+		} catch {
+			// Already gone / expired on Stripe's side — ignore.
+		}
+	}
+}
+
+/**
  * Starts a Stripe Checkout to subscribe the active org to a paid plan. Requires a real
  * org (not the personal scope — create a workspace first). Returns the redirect URL.
  */
@@ -512,22 +589,16 @@ export async function createSubscriptionIntent(
 			"This organization already has an active subscription — change the plan instead.",
 		);
 	}
-	// A non-live leftover (incomplete/none/past_due/canceled) would otherwise pile up as a
-	// duplicate every time the upgrade sheet is opened. Void it before minting a fresh
-	// intent (best-effort — Stripe may already have expired it).
-	if (existing?.stripeSubscriptionId) {
-		try {
-			await getStripe().subscriptions.cancel(existing.stripeSubscriptionId);
-		} catch {
-			// already canceled/expired on Stripe's side — ignore.
-		}
-	}
-
 	const customerId = await ensureCustomer(
 		actor.orgId,
 		actor.userId,
 		opts?.billingEmail,
 	);
+	// Void every dangling incomplete sub for this customer before minting a fresh intent, so
+	// re-opening the upgrade sheet can never pile up never-paid subs (and their draft
+	// invoices). Stateless — works even though an incomplete sub is never persisted to the DB,
+	// which is why the old organization_billing-only guard leaked.
+	await cancelIncompleteSubscriptions(customerId);
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
 		: {};
@@ -756,6 +827,10 @@ export async function createNewOrgSubscriptionIntent(
 			// Already gone / expired — nothing to clean up.
 		}
 	}
+	// Belt-and-suspenders: void any other dangling incomplete subs on this customer (e.g. a
+	// prior attempt whose id wasn't threaded back), so they can't accumulate as FAILED draft
+	// invoices.
+	await cancelIncompleteSubscriptions(customerId);
 
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
@@ -981,6 +1056,8 @@ export interface PaymentMethodInfo {
 	expMonth: number;
 	expYear: number;
 	isDefault: boolean;
+	/** Backup order (0-based) for dunning failover; null when this card isn't a backup. */
+	backupRank: number | null;
 }
 
 /** Creates a SetupIntent to add/save a card via the embedded Payment Element. */
@@ -1022,14 +1099,38 @@ export async function listPaymentMethods(): Promise<PaymentMethodInfo[]> {
 		customer: billing.stripeCustomerId,
 		type: "card",
 	});
-	return pms.data.map((pm) => ({
-		id: pm.id,
-		brand: pm.card?.brand ?? "card",
-		last4: pm.card?.last4 ?? "••••",
-		expMonth: pm.card?.exp_month ?? 0,
-		expYear: pm.card?.exp_year ?? 0,
-		isDefault: pm.id === defaultId,
-	}));
+	return pms.data
+		.map((pm) => ({
+			id: pm.id,
+			brand: pm.card?.brand ?? "card",
+			last4: pm.card?.last4 ?? "••••",
+			expMonth: pm.card?.exp_month ?? 0,
+			expYear: pm.card?.exp_year ?? 0,
+			isDefault: pm.id === defaultId,
+			backupRank: backupRankOf(pm),
+		}))
+		// Default (primary) first, then ranked backups ascending, then any unranked cards.
+		.sort((a, b) => {
+			if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+			const ar = a.backupRank ?? Number.MAX_SAFE_INTEGER;
+			const br = b.backupRank ?? Number.MAX_SAFE_INTEGER;
+			return ar - br;
+		});
+}
+
+/**
+ * Sets the org's backup-card order (for dunning failover) — the given ids become the
+ * ordered backups; every other card is cleared. Owner-gated; org-scoped.
+ */
+export async function setBackupCards(
+	orderedPmIds: string[],
+): Promise<{ ok: true }> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	const billing = await getOrgBilling(actor.orgId);
+	if (!billing?.stripeCustomerId) throw new Error("No billing account yet.");
+	await setBackupOrder(billing.stripeCustomerId, orderedPmIds);
+	return { ok: true };
 }
 
 /** Makes a saved card the default for invoices + the active subscription. */
@@ -1138,40 +1239,73 @@ export async function changeSubscriptionPlan(
 
 // ── Invoices + billing details / VAT ────────────────────────────────────────
 
-/** An invoice row for the billing UI. */
+/** An invoice row for the billing UI — sourced from our locally-mirrored `invoice` table
+ *  (only invoices for which money moved), never a live Stripe API call. */
 export interface InvoiceInfo {
+	/** Our invoice id (used for the preview + PDF-download route). */
 	id: string;
 	number: string | null;
 	/** Total in the smallest currency unit (e.g. cents). */
 	total: number;
 	currency: string;
-	status: string;
-	created: string;
-	invoicePdf: string | null;
+	status: InvoiceStatus;
+	/** ISO instant the invoice was paid — the primary display/sort date. */
+	paidAt: string;
+	/** Billing period the invoice covers (ISO), if known. */
+	periodStart: string | null;
+	periodEnd: string | null;
+	description: string | null;
+	/** A self-hosted PDF is available at the download route. */
+	hasPdf: boolean;
+	/** Stripe's hosted invoice URL — a fallback link only. */
 	hostedInvoiceUrl: string | null;
 }
 
-/** Lists the active org's recent invoices (with PDF links). */
-export async function listInvoices(): Promise<InvoiceInfo[]> {
+/** Maps a mirrored invoice row to the UI shape. */
+function toInvoiceInfo(row: Invoice): InvoiceInfo {
+	return {
+		id: row.id,
+		number: row.number,
+		total: row.amountTotal,
+		currency: row.currency,
+		status: row.status,
+		paidAt: (row.paidAt ?? row.createdAt).toISOString(),
+		periodStart: row.periodStart?.toISOString() ?? null,
+		periodEnd: row.periodEnd?.toISOString() ?? null,
+		description: row.description,
+		hasPdf: Boolean(row.pdfKey) || Boolean(row.hostedInvoiceUrl),
+		hostedInvoiceUrl: row.hostedInvoiceUrl,
+	};
+}
+
+/** Optional filters for the invoices list (period range + status). */
+export interface InvoiceListParams {
+	status?: InvoiceStatus[];
+	paidFrom?: string;
+	paidTo?: string;
+	limit?: number;
+}
+
+/**
+ * Lists the active org's mirrored invoices (newest paid first), from the local table — no
+ * Stripe call, so it's fast and only ever shows real paid invoices. Filterable by period
+ * range + status.
+ */
+export async function listInvoices(
+	params: InvoiceListParams = {},
+): Promise<InvoiceInfo[]> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
-	const billing = await getOrgBilling(actor.orgId);
-	if (!billing?.stripeCustomerId) return [];
+	const rows = await listOrgInvoices(actor.orgId, params);
+	return rows.map(toInvoiceInfo);
+}
 
-	const invoices = await getStripe().invoices.list({
-		customer: billing.stripeCustomerId,
-		limit: 24,
-	});
-	return invoices.data.map((inv) => ({
-		id: inv.id ?? "",
-		number: inv.number ?? null,
-		total: inv.total,
-		currency: inv.currency,
-		status: inv.status ?? "draft",
-		created: new Date(inv.created * 1000).toISOString(),
-		invoicePdf: inv.invoice_pdf ?? null,
-		hostedInvoiceUrl: inv.hosted_invoice_url ?? null,
-	}));
+/** Loads one invoice for the active org (preview dialog), or null if it isn't theirs. */
+export async function getInvoice(id: string): Promise<InvoiceInfo | null> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	const row = await getOrgInvoice(actor.orgId, id);
+	return row ? toInvoiceInfo(row) : null;
 }
 
 // ── Transactions (Stripe charges) ───────────────────────────────────────────

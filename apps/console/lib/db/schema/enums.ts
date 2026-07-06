@@ -225,6 +225,14 @@ export const billingStatus = pgEnum("billing_status", [
 	"past_due",
 	"canceled",
 ]);
+// Status of a locally-mirrored invoice. We only ever record invoices once money has
+// moved, so there is no `draft`/`open` here: `paid` is the norm, `refunded` when a
+// charge is reversed, and `void` if a finalized+paid invoice is later voided.
+export const invoiceStatus = pgEnum("invoice_status", [
+	"paid",
+	"refunded",
+	"void",
+]);
 
 // Environment promotion (Phase 2). A promotion writes a source env's structural changes onto a
 // target env, runs a PLAN to produce verify + cost, evaluates the target's protection gates, then
@@ -266,6 +274,7 @@ export type CacheEngine = (typeof cacheEngine.enumValues)[number];
 export type LogStreamType = (typeof logStreamType.enumValues)[number];
 export type BillingPlan = (typeof billingPlan.enumValues)[number];
 export type BillingStatus = (typeof billingStatus.enumValues)[number];
+export type InvoiceStatus = (typeof invoiceStatus.enumValues)[number];
 export type AlertChannelType = (typeof alertChannelType.enumValues)[number];
 export type AlertSeverity = (typeof alertSeverity.enumValues)[number];
 export type CredentialScope = (typeof credentialScope.enumValues)[number];

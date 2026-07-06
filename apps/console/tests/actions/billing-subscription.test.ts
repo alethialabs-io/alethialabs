@@ -16,6 +16,10 @@ vi.mock("@/lib/authz/guard", () => ({
 	authorize: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+vi.mock("@/lib/billing/invoices", () => ({
+	listOrgInvoices: vi.fn(),
+	getOrgInvoice: vi.fn(),
+}));
 vi.mock("@/lib/billing/queries", () => ({
 	getOrgBilling: vi.fn(),
 	upsertOrgBilling: vi.fn(),
@@ -53,6 +57,7 @@ import {
 	getProOffer,
 	isOrgSlugAvailable,
 	linkSubscriptionToNewOrg,
+	getInvoice,
 	listInvoices,
 	listPaymentMethods,
 	listTransactions,
@@ -66,6 +71,7 @@ import {
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
+import { getOrgInvoice, listOrgInvoices } from "@/lib/billing/invoices";
 import { getStripe } from "@/lib/billing/stripe";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 import { countBillableSeats } from "@/lib/billing/seats";
@@ -79,6 +85,8 @@ import {
 const authz = vi.mocked(authorize);
 const actor = vi.mocked(currentActor);
 const orgBilling = vi.mocked(getOrgBilling);
+const orgInvoicesList = vi.mocked(listOrgInvoices);
+const orgInvoiceGet = vi.mocked(getOrgInvoice);
 
 /** A thenable drizzle-ish chain whose terminal `await` pops the next queued result set. */
 function makeDb() {
@@ -117,6 +125,7 @@ function makeStripe() {
 			retrieve: vi.fn(),
 			update: vi.fn(),
 			cancel: vi.fn(),
+			list: vi.fn(),
 		},
 		customers: {
 			create: vi.fn(),
@@ -147,6 +156,8 @@ beforeEach(() => {
 	db = makeDb();
 	vi.mocked(getStripe).mockReturnValue(stripe as never);
 	vi.mocked(getServiceDb).mockReturnValue(db.db as never);
+	// Default: no dangling incomplete subs to clean up (cancelIncompleteSubscriptions).
+	stripe.subscriptions.list.mockResolvedValue({ data: [] } as never);
 	// Default: a real org with the manage_billing permission.
 	authz.mockResolvedValue({ orgId: "org-1", userId: "user-1" } as never);
 	actor.mockResolvedValue({ orgId: "org-1", userId: "user-1" } as never);
@@ -904,8 +915,8 @@ describe("listPaymentMethods", () => {
 
 		const r = await listPaymentMethods();
 		expect(r).toEqual([
-			{ id: "pm_def", brand: "visa", last4: "4242", expMonth: 5, expYear: 2030, isDefault: true },
-			{ id: "pm_2", brand: "amex", last4: "0005", expMonth: 1, expYear: 2029, isDefault: false },
+			{ id: "pm_def", brand: "visa", last4: "4242", expMonth: 5, expYear: 2030, isDefault: true, backupRank: null },
+			{ id: "pm_2", brand: "amex", last4: "0005", expMonth: 1, expYear: 2029, isDefault: false, backupRank: null },
 		]);
 	});
 
@@ -1068,45 +1079,91 @@ describe("changeSubscriptionPlan", () => {
 
 // ── listInvoices ─────────────────────────────────────────────────────────────
 describe("listInvoices", () => {
-	it("returns [] without a customer", async () => {
-		orgBilling.mockResolvedValue({ stripeCustomerId: null } as never);
+	it("returns [] when the org has no mirrored invoices", async () => {
+		orgInvoicesList.mockResolvedValue([]);
 		expect(await listInvoices()).toEqual([]);
+		// Reads the local table for the active org — no Stripe call.
+		expect(orgInvoicesList).toHaveBeenCalledWith("org-1", {});
+		expect(stripe.invoices.list).not.toHaveBeenCalled();
 	});
 
-	it("maps invoices (created → ISO, null-safe fields)", async () => {
-		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
-		stripe.invoices.list.mockResolvedValue({
-			data: [
-				{
-					id: "in_1",
-					number: "ALE-001",
-					total: 2000,
-					currency: "usd",
-					status: "paid",
-					created: 1_700_000_000,
-					invoice_pdf: "https://pdf",
-					hosted_invoice_url: "https://hosted",
-				},
-				{ id: "in_2", number: null, total: 0, currency: "usd", status: null, created: 1_700_000_500 },
-			],
-		} as never);
+	it("maps locally-mirrored invoice rows to the UI shape and forwards filters", async () => {
+		const paidAt = new Date("2026-07-01T00:00:00.000Z");
+		const periodStart = new Date("2026-06-01T00:00:00.000Z");
+		const periodEnd = new Date("2026-07-01T00:00:00.000Z");
+		orgInvoicesList.mockResolvedValue([
+			{
+				id: "uuid-1",
+				organizationId: "org-1",
+				stripeInvoiceId: "in_1",
+				stripeCustomerId: "cus_1",
+				number: "ALE-001",
+				status: "paid",
+				amountTotal: 2000,
+				currency: "usd",
+				periodStart,
+				periodEnd,
+				description: "Team plan",
+				pdfKey: "org-1/in_1.pdf",
+				hostedInvoiceUrl: "https://hosted",
+				paidAt,
+				createdAt: paidAt,
+				updatedAt: paidAt,
+			},
+		] as never);
 
-		const r = await listInvoices();
-		expect(stripe.invoices.list).toHaveBeenCalledWith({
-			customer: "cus_1",
-			limit: 24,
-		});
-		expect(r[0]).toEqual({
-			id: "in_1",
-			number: "ALE-001",
-			total: 2000,
-			currency: "usd",
-			status: "paid",
-			created: new Date(1_700_000_000 * 1000).toISOString(),
-			invoicePdf: "https://pdf",
-			hostedInvoiceUrl: "https://hosted",
-		});
-		expect(r[1]).toMatchObject({ number: null, status: "draft", invoicePdf: null });
+		const r = await listInvoices({ status: ["paid"] });
+		expect(orgInvoicesList).toHaveBeenCalledWith("org-1", { status: ["paid"] });
+		expect(r).toEqual([
+			{
+				id: "uuid-1",
+				number: "ALE-001",
+				total: 2000,
+				currency: "usd",
+				status: "paid",
+				paidAt: paidAt.toISOString(),
+				periodStart: periodStart.toISOString(),
+				periodEnd: periodEnd.toISOString(),
+				description: "Team plan",
+				hasPdf: true,
+				hostedInvoiceUrl: "https://hosted",
+			},
+		]);
+	});
+
+	it("marks hasPdf false when there is neither a stored PDF nor a hosted URL", async () => {
+		const paidAt = new Date("2026-07-01T00:00:00.000Z");
+		orgInvoicesList.mockResolvedValue([
+			{
+				id: "uuid-2",
+				organizationId: "org-1",
+				stripeInvoiceId: "in_2",
+				stripeCustomerId: "cus_1",
+				number: null,
+				status: "void",
+				amountTotal: 0,
+				currency: "usd",
+				periodStart: null,
+				periodEnd: null,
+				description: null,
+				pdfKey: null,
+				hostedInvoiceUrl: null,
+				paidAt,
+				createdAt: paidAt,
+				updatedAt: paidAt,
+			},
+		] as never);
+		const [row] = await listInvoices();
+		expect(row.hasPdf).toBe(false);
+		expect(row.periodStart).toBeNull();
+	});
+});
+
+describe("getInvoice", () => {
+	it("maps a single mirrored invoice, or null when it isn't the org's", async () => {
+		orgInvoiceGet.mockResolvedValue(null);
+		expect(await getInvoice("nope")).toBeNull();
+		expect(orgInvoiceGet).toHaveBeenCalledWith("org-1", "nope");
 	});
 });
 
