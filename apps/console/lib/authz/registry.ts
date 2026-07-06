@@ -126,12 +126,11 @@ export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 			p.action === "view_alerts" ||
 			(p.resource === "support_case" && SUPPORT_MEMBER_ACTIONS.includes(p.action)),
 	).map((p) => p.key),
-	// Read-only (including alert config), but may still open + reply to their own support cases.
+	// Read-only (including alert config). `support_case:view` is already covered by the
+	// `view` clause; create/reply stay operator+ (viewers act on their own cases via
+	// their personal org, where they are owner).
 	viewer: PERMISSIONS.filter(
-		(p) =>
-			p.action === "view" ||
-			p.action === "view_alerts" ||
-			(p.resource === "support_case" && SUPPORT_MEMBER_ACTIONS.includes(p.action)),
+		(p) => p.action === "view" || p.action === "view_alerts",
 	).map((p) => p.key),
 };
 
