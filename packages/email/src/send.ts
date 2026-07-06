@@ -40,6 +40,8 @@ export interface SendEmailArgs {
 	/** Verified SES from-address for this stream (getEmailConfig().from.*). */
 	from: string;
 	to: string;
+	/** Optional CC recipients (e.g. a case author's ccEmails list). */
+	cc?: string[];
 	subject: string;
 	/** react-email element, rendered to HTML. */
 	react: ReactElement;
@@ -62,6 +64,7 @@ export interface SendEmailArgs {
 async function buildRawMime(args: {
 	from: string;
 	to: string;
+	cc?: string[];
 	subject: string;
 	html: string;
 	attachments: EmailAttachment[];
@@ -69,6 +72,7 @@ async function buildRawMime(args: {
 	const mail = new MailComposer({
 		from: args.from,
 		to: args.to,
+		...(args.cc?.length ? { cc: args.cc } : {}),
 		subject: args.subject,
 		html: args.html,
 		attachments: args.attachments.map((a) => ({
@@ -96,6 +100,7 @@ async function buildRawMime(args: {
 export async function sendEmail({
 	from,
 	to,
+	cc,
 	subject,
 	react,
 	configurationSetName,
@@ -107,6 +112,7 @@ export async function sendEmail({
 	if (!ses) {
 		console.warn(
 			`[email] SES not configured — "${subject}" → ${to}` +
+				(cc?.length ? ` [cc: ${cc.join(", ")}]` : "") +
 				(attachments?.length ? ` [+${attachments.length} attachment(s)]` : "") +
 				(devLog ? ` (${devLog})` : ""),
 		);
@@ -122,7 +128,10 @@ export async function sendEmail({
 			attachments && attachments.length > 0
 				? new SendEmailCommand({
 						FromEmailAddress: from,
-						Destination: { ToAddresses: [to] },
+						Destination: {
+							ToAddresses: [to],
+							...(cc?.length ? { CcAddresses: cc } : {}),
+						},
 						...(configurationSetName
 							? { ConfigurationSetName: configurationSetName }
 							: {}),
@@ -131,6 +140,7 @@ export async function sendEmail({
 								Data: await buildRawMime({
 									from,
 									to,
+									cc,
 									subject,
 									html,
 									attachments,
@@ -140,7 +150,10 @@ export async function sendEmail({
 					})
 				: new SendEmailCommand({
 						FromEmailAddress: from,
-						Destination: { ToAddresses: [to] },
+						Destination: {
+							ToAddresses: [to],
+							...(cc?.length ? { CcAddresses: cc } : {}),
+						},
 						...(configurationSetName
 							? { ConfigurationSetName: configurationSetName }
 							: {}),

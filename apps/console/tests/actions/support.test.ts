@@ -18,10 +18,20 @@ vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: vi.fn() } } }));
 vi.mock("@/lib/config/auth", () => ({
 	getAuthConfig: () => ({ baseURL: "http://localhost:3000" }),
 }));
+// getActiveOrgSlug (used by caseUrl) needs a session/DB — stub it.
+vi.mock("@/app/server/actions/resolve", () => ({ getActiveOrgSlug: vi.fn() }));
+// Layer B org-observability emit — assert on it, don't run the real DB path.
+vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
 vi.mock("@/lib/email/support-email", () => ({
 	sendCaseCreatedAck: vi.fn(),
 	sendCaseRepliedEmail: vi.fn(),
+	sendCaseResolvedEmail: vi.fn(),
+	sendCaseReopenedEmail: vi.fn(),
+	sendCaseClosedEmail: vi.fn(),
 	notifySupportInboxEmail: vi.fn(),
+	// The real predicate: email unless the customer chose the in-app channel.
+	wantsEmail: (contact?: { channel?: string } | null) =>
+		contact?.channel !== "in_app",
 }));
 vi.mock("@/lib/support/slack-notify", () => ({
 	slackCaseCreated: vi.fn(),
@@ -35,13 +45,18 @@ import {
 	resolveCase,
 	submitCase,
 } from "@/app/server/actions/support";
+import { getActiveOrgSlug } from "@/app/server/actions/resolve";
+import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { auth } from "@/lib/auth";
 import { authorizeQuiet } from "@/lib/authz/guard";
 import { withOwnerScope } from "@/lib/db";
 import {
 	notifySupportInboxEmail,
+	sendCaseClosedEmail,
 	sendCaseCreatedAck,
+	sendCaseReopenedEmail,
 	sendCaseRepliedEmail,
+	sendCaseResolvedEmail,
 } from "@/lib/email/support-email";
 import { slackCaseCreated, slackCaseReplied } from "@/lib/support/slack-notify";
 
@@ -100,9 +115,13 @@ beforeEach(() => {
 	vi.mocked(auth.api.getSession).mockResolvedValue({
 		user: { name: "Ada Lovelace", email: "ada@acme.io" },
 	} as never);
+	vi.mocked(getActiveOrgSlug).mockResolvedValue("acme");
 	// notifications resolve as no-ops by default
 	vi.mocked(sendCaseCreatedAck).mockResolvedValue(undefined);
 	vi.mocked(sendCaseRepliedEmail).mockResolvedValue(undefined);
+	vi.mocked(sendCaseResolvedEmail).mockResolvedValue(undefined);
+	vi.mocked(sendCaseReopenedEmail).mockResolvedValue(undefined);
+	vi.mocked(sendCaseClosedEmail).mockResolvedValue(undefined);
 	vi.mocked(notifySupportInboxEmail).mockResolvedValue(undefined);
 	vi.mocked(slackCaseCreated).mockResolvedValue(undefined);
 	vi.mocked(slackCaseReplied).mockResolvedValue(undefined);
@@ -169,6 +188,44 @@ describe("submitCase", () => {
 		);
 		expect(notifySupportInboxEmail).toHaveBeenCalledWith(
 			expect.objectContaining({ caseNumber: 42, severity: "high" }),
+		);
+	});
+
+	it("passes ccEmails to the ack and emits the opened event with a deep link", async () => {
+		mockDb([[{ id: "case-1", case_number: 42 }], []]);
+		await submitCase({
+			...submitInput,
+			contact: {
+				notifyEmail: "ada@acme.io",
+				channel: "email",
+				ccEmails: ["cto@acme.io"],
+			},
+		});
+		expect(sendCaseCreatedAck).toHaveBeenCalledWith(
+			"ada@acme.io",
+			expect.objectContaining({
+				cc: ["cto@acme.io"],
+				url: "http://localhost:3000/acme/~/support/cases/case-1",
+			}),
+		);
+		expect(emitAlertEventSafe).toHaveBeenCalledWith(
+			"org-1",
+			"system.support.case.opened",
+			expect.objectContaining({ resource_id: "case-1" }),
+		);
+	});
+
+	it("suppresses the ack email for the in_app channel but still emits opened", async () => {
+		mockDb([[{ id: "case-1", case_number: 42 }], []]);
+		await submitCase({
+			...submitInput,
+			contact: { notifyEmail: "ada@acme.io", channel: "in_app" },
+		});
+		expect(sendCaseCreatedAck).not.toHaveBeenCalled();
+		expect(emitAlertEventSafe).toHaveBeenCalledWith(
+			"org-1",
+			"system.support.case.opened",
+			expect.anything(),
 		);
 	});
 
@@ -262,8 +319,18 @@ describe("postCaseMessage — customer reply reopens settled cases", () => {
 			id: caseId,
 		});
 		expect(sendCaseRepliedEmail).toHaveBeenCalledTimes(1);
+		// A customer reply pings the vendor inbox (inbox audience), not the customer.
+		expect(sendCaseRepliedEmail).toHaveBeenCalledWith(
+			expect.any(String),
+			expect.objectContaining({ audience: "inbox", caseNumber: 5 }),
+		);
 		expect(slackCaseReplied).toHaveBeenCalledWith(
 			expect.objectContaining({ caseNumber: 5 }),
+		);
+		expect(emitAlertEventSafe).toHaveBeenCalledWith(
+			"org-1",
+			"system.support.case.replied",
+			expect.objectContaining({ resource_id: caseId }),
 		);
 	});
 
@@ -276,9 +343,16 @@ describe("postCaseMessage — customer reply reopens settled cases", () => {
 
 describe("transitionCase via resolve/reopen/close — assertTransition gate", () => {
 	const id = "22222222-2222-4222-8222-222222222222";
+	/** A case row as the refactored transitionCase selects it (status + notify fields). */
+	const row = (status: string) => ({
+		status,
+		case_number: 9,
+		subject: "Cluster is unreachable",
+		contact: { notifyEmail: "ada@acme.io", channel: "email", ccEmails: ["cto@acme.io"] },
+	});
 
 	it("resolveCase moves an open case to resolved (stamps resolved_at)", async () => {
-		const { setSpy } = mockDb([[{ status: "open" }], []]);
+		const { setSpy } = mockDb([[row("open")], []]);
 		await resolveCase(id);
 		expect(setSpy).toHaveBeenCalledWith(
 			expect.objectContaining({ status: "resolved", resolved_at: expect.any(Date) }),
@@ -286,7 +360,7 @@ describe("transitionCase via resolve/reopen/close — assertTransition gate", ()
 	});
 
 	it("closeCase moves a resolved case to closed (stamps closed_at)", async () => {
-		const { setSpy } = mockDb([[{ status: "resolved" }], []]);
+		const { setSpy } = mockDb([[row("resolved")], []]);
 		await closeCase(id);
 		expect(setSpy).toHaveBeenCalledWith(
 			expect.objectContaining({ status: "closed", closed_at: expect.any(Date) }),
@@ -294,13 +368,13 @@ describe("transitionCase via resolve/reopen/close — assertTransition gate", ()
 	});
 
 	it("reopenCase moves a closed case back to open", async () => {
-		const { setSpy } = mockDb([[{ status: "closed" }], []]);
+		const { setSpy } = mockDb([[row("closed")], []]);
 		await reopenCase(id);
 		expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ status: "open" }));
 	});
 
 	it("throws on an illegal transition (closed → resolved) and does not write", async () => {
-		const { setSpy } = mockDb([[{ status: "closed" }]]);
+		const { setSpy } = mockDb([[row("closed")]]);
 		await expect(resolveCase(id)).rejects.toThrow(
 			/Illegal support-case transition: closed → resolved/,
 		);
@@ -311,5 +385,58 @@ describe("transitionCase via resolve/reopen/close — assertTransition gate", ()
 		const { setSpy } = mockDb([[]]);
 		await expect(resolveCase(id)).rejects.toThrow(/Case not found/);
 		expect(setSpy).not.toHaveBeenCalled();
+	});
+
+	it("resolveCase emails the customer (with cc) + emits the resolved event", async () => {
+		mockDb([[row("open")], []]);
+		await resolveCase(id);
+		expect(sendCaseResolvedEmail).toHaveBeenCalledWith(
+			"ada@acme.io",
+			expect.objectContaining({ caseNumber: 9, cc: ["cto@acme.io"] }),
+		);
+		expect(emitAlertEventSafe).toHaveBeenCalledWith(
+			"org-1",
+			"system.support.case.resolved",
+			expect.objectContaining({ resource_type: "support_case", resource_id: id }),
+		);
+	});
+
+	it("reopenCase emails + emits the reopened event (warning severity)", async () => {
+		mockDb([[row("resolved")], []]);
+		await reopenCase(id);
+		expect(sendCaseReopenedEmail).toHaveBeenCalledWith("ada@acme.io", expect.anything());
+		expect(emitAlertEventSafe).toHaveBeenCalledWith(
+			"org-1",
+			"system.support.case.reopened",
+			expect.objectContaining({ severity: "warning" }),
+		);
+	});
+
+	it("closeCase emails + emits the closed event", async () => {
+		mockDb([[row("resolved")], []]);
+		await closeCase(id);
+		expect(sendCaseClosedEmail).toHaveBeenCalledWith("ada@acme.io", expect.anything());
+		expect(emitAlertEventSafe).toHaveBeenCalledWith(
+			"org-1",
+			"system.support.case.closed",
+			expect.anything(),
+		);
+	});
+
+	it("suppresses email when the customer chose the in_app channel (still emits the event)", async () => {
+		const inApp = {
+			status: "open",
+			case_number: 9,
+			subject: "S",
+			contact: { notifyEmail: "ada@acme.io", channel: "in_app" },
+		};
+		mockDb([[inApp], []]);
+		await resolveCase(id);
+		expect(sendCaseResolvedEmail).not.toHaveBeenCalled();
+		expect(emitAlertEventSafe).toHaveBeenCalledWith(
+			"org-1",
+			"system.support.case.resolved",
+			expect.anything(),
+		);
 	});
 });

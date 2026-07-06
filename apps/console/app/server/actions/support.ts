@@ -9,6 +9,7 @@
 
 import { eq, sql } from "drizzle-orm";
 import { headers } from "next/headers";
+import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { auth } from "@/lib/auth";
 import { authorizeQuiet } from "@/lib/authz/guard";
 import { getAuthConfig } from "@/lib/config/auth";
@@ -17,8 +18,12 @@ import { supportCaseReads, supportCases, supportMessages } from "@/lib/db/schema
 import type { SupportCaseStatus } from "@/lib/db/schema/enums";
 import {
 	notifySupportInboxEmail,
+	sendCaseClosedEmail,
 	sendCaseCreatedAck,
+	sendCaseReopenedEmail,
 	sendCaseRepliedEmail,
+	sendCaseResolvedEmail,
+	wantsEmail,
 } from "@/lib/email/support-email";
 import {
 	type CaseListItem,
@@ -27,6 +32,7 @@ import {
 	listCasesForOwner,
 	type PublicMessage,
 } from "@/lib/queries/support";
+import { globalHref } from "@/lib/routing";
 import { slackCaseCreated, slackCaseReplied } from "@/lib/support/slack-notify";
 import {
 	type PostMessageInput,
@@ -34,7 +40,10 @@ import {
 	type SubmitCaseInput,
 	submitCaseSchema,
 } from "@/lib/validations/support";
+import type { AlertSeverity } from "@/lib/db/schema/enums";
 import type { SupportCase } from "@/lib/db/schema";
+import type { SupportContactPrefs } from "@/types/jsonb.types";
+import { getActiveOrgSlug } from "./resolve";
 
 /**
  * Legal status transitions. Each key lists the statuses a case may move to from that
@@ -80,16 +89,20 @@ async function sessionAuthor(): Promise<{ name: string; email: string }> {
 	};
 }
 
+/** `CASE-000123` display form of a case number. */
+function caseLabel(caseNumber: number): string {
+	return `CASE-${String(caseNumber).padStart(6, "0")}`;
+}
+
 /**
- * Absolute console link used in notifications. Returns the console root (which
- * redirects to the caller's active org after login) rather than a case deep link:
- * the case detail lives at `/{orgSlug}/~/support/cases/{id}`, and neither the org
- * SLUG nor a resolvable slug for a personal org is available here without a lookup.
- * TODO(support): resolve the org slug + case id and build the precise deep link.
+ * Absolute console deep link to a case — `${baseURL}/{orgSlug}/~/support/cases/{id}`.
+ * The route is keyed by the case UUID (not the number); the org slug is resolved from
+ * the caller's active session (personal orgs fall back to `~` inside getActiveOrgSlug).
  */
-function caseUrl(_caseNumber: number): string {
+async function caseUrl(caseId: string): Promise<string> {
 	const base = getAuthConfig().baseURL?.replace(/\/$/, "") ?? "";
-	return base || "/";
+	const slug = await getActiveOrgSlug();
+	return `${base}${globalHref(slug, `support/cases/${caseId}`)}`;
 }
 
 /** Runs a best-effort notification, logging (never throwing) on failure. */
@@ -99,6 +112,33 @@ async function safeNotify(label: string, fn: () => Promise<void>): Promise<void>
 	} catch (err) {
 		console.warn(`[support] ${label} failed:`, err);
 	}
+}
+
+/**
+ * Emits a `system.support.case.*` org-observability event (Layer B) so admins can route
+ * case activity to their configured alert channels. Fire-and-forget — never blocks the
+ * customer action. Distinct from the transactional participant emails (Layer A).
+ */
+function emitCaseEvent(
+	orgId: string,
+	event: "opened" | "replied" | "resolved" | "reopened" | "closed",
+	args: { caseId: string; caseNumber: number; subject: string; url: string; severity?: AlertSeverity },
+): void {
+	const titles: Record<typeof event, string> = {
+		opened: `Support case ${caseLabel(args.caseNumber)} opened`,
+		replied: `New reply on support case ${caseLabel(args.caseNumber)}`,
+		resolved: `Support case ${caseLabel(args.caseNumber)} resolved`,
+		reopened: `Support case ${caseLabel(args.caseNumber)} reopened`,
+		closed: `Support case ${caseLabel(args.caseNumber)} closed`,
+	};
+	emitAlertEventSafe(orgId, `system.support.case.${event}`, {
+		title: titles[event],
+		summary: args.subject,
+		severity: args.severity ?? (event === "reopened" ? "warning" : "info"),
+		resource_type: "support_case",
+		resource_id: args.caseId,
+		link: args.url,
+	});
 }
 
 /**
@@ -149,14 +189,19 @@ export async function submitCase(
 		return row;
 	});
 
-	const url = caseUrl(created.case_number);
-	await safeNotify("case-created ack", () =>
-		sendCaseCreatedAck(contact.notifyEmail, {
-			caseNumber: created.case_number,
-			subject: data.subject,
-			url,
-		}),
-	);
+	const url = await caseUrl(created.id);
+	// Layer A — customer ack (respect the channel choice + CC list).
+	if (wantsEmail(contact)) {
+		await safeNotify("case-created ack", () =>
+			sendCaseCreatedAck(contact.notifyEmail, {
+				caseNumber: created.case_number,
+				subject: data.subject,
+				url,
+				cc: contact.ccEmails,
+			}),
+		);
+	}
+	// Vendor inbox (Alethia's own help-desk) — email + env Slack webhook.
 	await safeNotify("case-created Slack", () =>
 		slackCaseCreated({
 			caseNumber: created.case_number,
@@ -175,6 +220,13 @@ export async function submitCase(
 			url,
 		}),
 	);
+	// Layer B — org-observability event (admins route via their alert channels).
+	emitCaseEvent(actor.orgId, "opened", {
+		caseId: created.id,
+		caseNumber: created.case_number,
+		subject: data.subject,
+		url,
+	});
 
 	return { id: created.id, caseNumber: created.case_number };
 }
@@ -273,7 +325,8 @@ export async function postCaseMessage(
 		};
 	});
 
-	const url = caseUrl(result.caseNumber);
+	const url = await caseUrl(data.caseId);
+	// A customer reply notifies the vendor's help-desk inbox (email + Slack).
 	const supportInbox = process.env.SUPPORT_EMAIL || "support@alethialabs.io";
 	await safeNotify("case-reply email", () =>
 		sendCaseRepliedEmail(supportInbox, {
@@ -281,6 +334,7 @@ export async function postCaseMessage(
 			author: author.name,
 			snippet: data.body.slice(0, 500),
 			url,
+			audience: "inbox",
 		}),
 	);
 	await safeNotify("case-reply Slack", () =>
@@ -292,20 +346,43 @@ export async function postCaseMessage(
 			url,
 		}),
 	);
+	// Layer B — org-observability event.
+	emitCaseEvent(actor.orgId, "replied", {
+		caseId: data.caseId,
+		caseNumber: result.caseNumber,
+		subject: result.subject,
+		url,
+	});
 
 	return { id: result.id };
 }
 
-/** Updates a case's status through an owner-scoped, transition-checked write. */
+/** The case fields a transition loads so its notifications can address the customer. */
+interface TransitionResult {
+	caseNumber: number;
+	subject: string;
+	contact: SupportContactPrefs;
+	orgId: string;
+}
+
+/**
+ * Updates a case's status through an owner-scoped, transition-checked write, returning
+ * the case's number/subject/contact so the caller can notify the participant.
+ */
 async function transitionCase(
 	id: string,
 	to: SupportCaseStatus,
 	extra: Partial<Pick<typeof supportCases.$inferInsert, "resolved_at" | "closed_at">> = {},
-): Promise<void> {
+): Promise<TransitionResult> {
 	const actor = await authorizeQuiet("reply", { type: "support_case", id });
-	await withOwnerScope(actor.userId, async (tx) => {
+	const info = await withOwnerScope(actor.userId, async (tx) => {
 		const [caseRow] = await tx
-			.select({ status: supportCases.status })
+			.select({
+				status: supportCases.status,
+				case_number: supportCases.case_number,
+				subject: supportCases.subject,
+				contact: supportCases.contact,
+			})
 			.from(supportCases)
 			.where(eq(supportCases.id, id))
 			.limit(1);
@@ -315,22 +392,66 @@ async function transitionCase(
 			.update(supportCases)
 			.set({ status: to, updated_at: sql`now()`, ...extra })
 			.where(eq(supportCases.id, id));
+		return caseRow;
 	});
+	return {
+		caseNumber: info.case_number,
+		subject: info.subject,
+		contact: info.contact,
+		orgId: actor.orgId,
+	};
 }
 
-/** Marks a case resolved (stamps resolved_at). */
+/** Marks a case resolved (stamps resolved_at) + notifies the customer. */
 export async function resolveCase(id: string): Promise<void> {
-	await transitionCase(id, "resolved", { resolved_at: new Date() });
+	const { caseNumber, subject, contact, orgId } = await transitionCase(id, "resolved", {
+		resolved_at: new Date(),
+	});
+	const url = await caseUrl(id);
+	if (wantsEmail(contact)) {
+		await safeNotify("case-resolved email", () =>
+			sendCaseResolvedEmail(contact.notifyEmail, {
+				caseNumber,
+				url,
+				cc: contact.ccEmails,
+			}),
+		);
+	}
+	emitCaseEvent(orgId, "resolved", { caseId: id, caseNumber, subject, url });
 }
 
-/** Reopens a resolved/closed case back to `open`. */
+/** Reopens a resolved/closed case back to `open` + notifies the customer. */
 export async function reopenCase(id: string): Promise<void> {
-	await transitionCase(id, "open");
+	const { caseNumber, subject, contact, orgId } = await transitionCase(id, "open");
+	const url = await caseUrl(id);
+	if (wantsEmail(contact)) {
+		await safeNotify("case-reopened email", () =>
+			sendCaseReopenedEmail(contact.notifyEmail, {
+				caseNumber,
+				url,
+				cc: contact.ccEmails,
+			}),
+		);
+	}
+	emitCaseEvent(orgId, "reopened", { caseId: id, caseNumber, subject, url });
 }
 
-/** Closes a case (stamps closed_at). */
+/** Closes a case (stamps closed_at) + notifies the customer. */
 export async function closeCase(id: string): Promise<void> {
-	await transitionCase(id, "closed", { closed_at: new Date() });
+	const { caseNumber, subject, contact, orgId } = await transitionCase(id, "closed", {
+		closed_at: new Date(),
+	});
+	const url = await caseUrl(id);
+	if (wantsEmail(contact)) {
+		await safeNotify("case-closed email", () =>
+			sendCaseClosedEmail(contact.notifyEmail, {
+				caseNumber,
+				url,
+				cc: contact.ccEmails,
+			}),
+		);
+	}
+	emitCaseEvent(orgId, "closed", { caseId: id, caseNumber, subject, url });
 }
 
 /** Advances the caller's read watermark for a case (unread badge clearing). */

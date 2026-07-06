@@ -20,6 +20,7 @@ import { CommandPalette } from "./command-palette";
 import { JobToaster } from "./job-toaster";
 import { projectScope } from "./nav-config";
 import { SidebarRail } from "./sidebar-rail";
+import { SupportToaster } from "./support-toaster";
 import { Topbar } from "./topbar";
 
 /** The authenticated dashboard chrome: sidebar + topbar + scrolling content canvas. */
@@ -102,6 +103,9 @@ export function AppShell({
 
 			{/* The global Elench assistant surface (modal / docked panel), one per session. */}
 			<ElenchSurface />
+
+			{/* Single support-reply toast driver (staff/AI reply → "New reply on CASE-…"). */}
+			<SupportToaster />
 
 			{/* First-run "Setup guide" — toggled from the topbar button, floats bottom-right. */}
 			<SetupGuideCard />
