@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Committed pre-commit hook — wired via `core.hooksPath=.githooks` (set by the root
+# package.json `prepare` script). Enforces the one-worktree-per-instance policy so
+# parallel Claude/human sessions can't tangle their WIP in the shared main checkout.
+# See CLAUDE.md → "Local stack (multi-instance rule)".
+#
+# Blocks:
+#   R1  commits on protected branches (dev/staging/main) — they only take PR merges.
+#   R2  any commit in the MAIN checkout (app/) — feature work must live in a worktree.
+#   R3  a migration change that forks the drizzle snapshot chain.
+#
+# Escape hatches:
+#   git commit --no-verify              # bypass everything (emergencies)
+#   ALETHIA_ALLOW_MAIN_COMMIT=1 git …   # bypass R2 only (a deliberate main commit)
+set -euo pipefail
+
+branch="$(git symbolic-ref --short -q HEAD || echo DETACHED)"
+
+# R1 — protected branches never take a direct commit.
+case "$branch" in
+	dev | staging | main)
+		echo "✗ pre-commit: direct commits to '$branch' are not allowed." >&2
+		echo "  '$branch' only receives PR merges / promotions (feature → dev)." >&2
+		echo "  Do the work on a feature branch in a worktree:  pnpm wt <name>" >&2
+		echo "  (emergency override: git commit --no-verify)" >&2
+		exit 1
+		;;
+esac
+
+# R2 — the main checkout (app/) must not hold feature work. A linked worktree has
+# git-dir=.git/worktrees/<name>, so git-dir != git-common-dir only outside main.
+if [ "$(git rev-parse --git-dir)" = "$(git rev-parse --git-common-dir)" ] &&
+	[ "${ALETHIA_ALLOW_MAIN_COMMIT:-}" != "1" ]; then
+	echo "✗ pre-commit: this is the shared main checkout — don't commit feature work here." >&2
+	echo "  Parallel Claude/human sessions share this tree; committing here tangles their WIP" >&2
+	echo "  (that is how the ba0c664 mega-commit happened)." >&2
+	echo "  Create your own worktree:  pnpm wt <name>   →   ../wt-<name>, then work there." >&2
+	echo "  (deliberate main commit: ALETHIA_ALLOW_MAIN_COMMIT=1 git commit … · or --no-verify)" >&2
+	exit 1
+fi
+
+# R3 — migration-chain integrity, only when a migration file is staged. Uses the
+# repo's own dependency-free guard (scripts/check-migrations.mjs).
+if git diff --cached --name-only | grep -Eq '^apps/console/lib/db/migrations/'; then
+	toplevel="$(git rev-parse --show-toplevel)"
+	guard="$toplevel/apps/console/scripts/check-migrations.mjs"
+	if [ -f "$guard" ] && command -v node >/dev/null 2>&1; then
+		if ! node "$guard"; then
+			echo "✗ pre-commit: migration chain check failed (forked drizzle snapshots)." >&2
+			echo "  Rebase on dev, delete your migration + snapshot, and re-run pnpm db:generate." >&2
+			exit 1
+		fi
+	fi
+fi
+
+exit 0

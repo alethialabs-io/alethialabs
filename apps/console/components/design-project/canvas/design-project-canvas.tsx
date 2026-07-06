@@ -4,7 +4,7 @@
 
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import { motion } from "motion/react";
-import { Plus, Settings, Sparkles } from "lucide-react";
+import { Plus, Settings } from "lucide-react";
 import { cn } from "@repo/ui/utils";
 import { track } from "@/lib/analytics/track";
 import { useRouter } from "next/navigation";
@@ -28,7 +28,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@repo/ui/dialog";
-import { useAssistantStore } from "@/lib/stores/use-assistant-store";
+import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { orgHref, projectHref } from "@/lib/routing";
@@ -38,7 +38,6 @@ import { CanvasCommandPalette } from "./canvas-command-palette";
 import { CanvasControls } from "./canvas-controls";
 import { CanvasDock, useDockState } from "./canvas-dock";
 import { CanvasFlow } from "./canvas-flow";
-import { CostPanel } from "./cost-panel";
 import { PendingChangesBar } from "./pending-changes-bar";
 import { graphToForm } from "./graph/graph-to-form";
 import { NodePalette } from "./node-palette";
@@ -77,7 +76,7 @@ function CanvasInner({
 	const { fitView } = useReactFlow();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [cmdOpen, setCmdOpen] = useState(false);
-	const openAssistant = useAssistantStore((s) => s.setOpen);
+	const openPanel = useElenchStore((s) => s.openPanel);
 	const [shortcutsOpen, setShortcutsOpen] = useState(false);
 	const [deploying, setDeploying] = useState(false);
 	const selectedIds = useCanvasStore((s) => s.selectedIds);
@@ -87,21 +86,19 @@ function CanvasInner({
 	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
 
 	// The standalone (create-flow) dock — the project shell owns it otherwise (`dockInShell`).
-	const dock = useDockState(true, !!projectId);
+	const dock = useDockState(true);
 
-	/** Open the assistant, closing the inspector — they share the single docked region. */
+	/** Open the Elench assistant as a docked panel for this project (or org pre-creation). */
 	const openAssistantExclusive = useCallback(() => {
-		openInspector(null);
-		openAssistant(true);
-	}, [openInspector, openAssistant]);
+		openPanel(projectId ? { kind: "project", projectId } : { kind: "org" });
+	}, [openPanel, projectId]);
 
-	/** Open a node's inspector, closing the assistant. */
+	/** Open a node's inspector (the assistant is a separate overlay now). */
 	const openInspectorExclusive = useCallback(
 		(id: string) => {
-			openAssistant(false);
 			openInspector(id);
 		},
-		[openAssistant, openInspector],
+		[openInspector],
 	);
 
 	// Shortcut hints render with OS-correct modifiers (⌘ on macOS, Ctrl elsewhere). The key
@@ -265,7 +262,7 @@ function CanvasInner({
 			{/* Bottom-left: scanned source repos + monorepo services (hidden when none). */}
 			<SourceReposCard />
 
-			{/* Top-right: project settings + add a service + ask AI */}
+			{/* Top-right: project settings + add a service. (Ask AI lives in the app shell now.) */}
 			<div className="absolute right-3 top-3 z-10 flex items-center gap-2">
 				<Button
 					type="button"
@@ -287,18 +284,6 @@ function CanvasInner({
 					<Plus className="mr-1 h-3.5 w-3.5" />
 					Add
 				</Button>
-				{projectId && (
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						className="h-8 text-xs"
-						onClick={openAssistantExclusive}
-					>
-						<Sparkles className="mr-1 h-3.5 w-3.5" />
-						AI
-					</Button>
-				)}
 			</div>
 
 			{/* Bottom-left: settings / zoom / fit / undo-redo / layers */}
@@ -310,10 +295,6 @@ function CanvasInner({
 				deploying={deploying}
 				onDiscard={projectId ? () => void handleDiscardStaged() : undefined}
 			/>
-
-			<div className="absolute bottom-3 right-3 z-10">
-				<CostPanel />
-			</div>
 
 			<NodePalette
 				open={paletteOpen}

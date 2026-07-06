@@ -14,6 +14,51 @@ resource "github_branch" "dev" {
   source_branch = var.rc_branch
 }
 
+locals {
+  # dev requires the same CI as main/staging MINUS branch-flow-guard: that check only runs on PRs into
+  # main/staging (its `on: pull_request: branches: [main, staging]`), so requiring it on a dev PR would
+  # wedge the merge — the check would be "expected" but never report.
+  dev_required_status_checks = [for c in var.required_status_checks : c if c != "branch-flow-guard"]
+}
+
+# ── dev — integration branch. PR + green CI, NO approval (instances self-merge on green). ──
+# Closes the gate into the shared integration branch: feature PRs can't land red or via direct push.
+# The maintainer reviews the integrated dev (dev.alethialabs.io) and promotes dev → staging → main.
+resource "github_repository_ruleset" "dev" {
+  name        = "protect-dev"
+  repository  = var.repository
+  target      = "branch"
+  enforcement = "active"
+
+  conditions {
+    ref_name {
+      include = ["refs/heads/dev"]
+      exclude = []
+    }
+  }
+
+  rules {
+    deletion         = true
+    non_fast_forward = true
+    # No required_linear_history: dev takes squash OR merge commits from feature PRs.
+
+    pull_request {
+      required_approving_review_count = 0 # CI is the gate; instances self-merge once green
+      dismiss_stale_reviews_on_push   = true
+    }
+
+    required_status_checks {
+      strict_required_status_checks_policy = false
+      dynamic "required_check" {
+        for_each = local.dev_required_status_checks
+        content {
+          context = required_check.value
+        }
+      }
+    }
+  }
+}
+
 # ── main — production. PR + green CI + linear history; no force-push/deletion. ──
 resource "github_repository_ruleset" "main" {
   name        = "protect-main"

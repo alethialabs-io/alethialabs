@@ -2,10 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { PanelLeftClose } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 import { OrgSwitcher } from "@/components/org-switcher";
+import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "@repo/ui/tooltip";
 import { cn } from "@repo/ui/utils";
 import {
 	buildDrills,
@@ -49,6 +57,8 @@ export function AppSidebar({ isHosted = false }: { isHosted?: boolean }) {
 		[orgSlug, projectSlug],
 	);
 
+	const { toggle, canToggle } = useSidebarCollapse();
+
 	const routeDrill = routeOwnedDrill(pathname);
 	// A click-opened drill (Observability) is scoped to the path it was opened on, so any
 	// navigation transparently returns to the main view — no reset effect needed.
@@ -61,8 +71,28 @@ export function AppSidebar({ isHosted = false }: { isHosted?: boolean }) {
 
 	return (
 		<div className="flex h-full w-full flex-col bg-background">
-			<div className="flex h-[53px] shrink-0 items-center border-b px-2.5">
-				<OrgSwitcher />
+			<div className="flex h-[53px] shrink-0 items-center gap-1 border-b px-2.5">
+				<div className="min-w-0 flex-1">
+					<OrgSwitcher />
+				</div>
+				{/* Collapse to the icon rail — only inside a project (org scope stays full-width). */}
+				{canToggle && (
+					<TooltipProvider delayDuration={0}>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									type="button"
+									aria-label="Collapse sidebar"
+									onClick={toggle}
+									className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground lg:flex"
+								>
+									<PanelLeftClose className="h-4 w-4" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="right">Collapse sidebar</TooltipContent>
+						</Tooltip>
+					</TooltipProvider>
+				)}
 			</div>
 
 			<div className="relative min-h-0 flex-1 overflow-hidden">

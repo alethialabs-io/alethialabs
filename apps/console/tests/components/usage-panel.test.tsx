@@ -43,6 +43,7 @@ const summary = (over: Partial<BillingSummary> = {}): BillingSummary => ({
 	hasOrg: true,
 	plan: "team",
 	status: "active",
+	state: "active",
 	currentPeriodEnd: "2026-07-01T00:00:00.000Z",
 	canManage: true,
 	cancelAtPeriodEnd: false,

@@ -8,10 +8,12 @@
 // description, stored slug and role-tag have no backend yet — omitted
 // and tracked in dataroom/spec/features/settings-design-port.md.
 
+import type { ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Plus, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { getTeams, type TeamRow } from "@/app/server/actions/teams";
+import { DataTable } from "@/components/data-table";
 import {
 	SettingsSearch,
 	settingsControl,
@@ -111,6 +113,98 @@ export function TeamsList() {
 		return { count: list.length, grouped: distinct.size, largest };
 	}, [teams]);
 
+	const columns: ColumnDef<TeamRow>[] = [
+		{
+			accessorKey: "name",
+			header: "Team",
+			cell: ({ row }) => {
+				const t = row.original;
+				return (
+					<div className="flex min-w-0 items-center gap-3">
+						<span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-ink font-display text-[12px] font-semibold text-ink-foreground">
+							{monogram(t.name)}
+						</span>
+						<div className="flex min-w-0 flex-col">
+							<span className="truncate text-[13px] font-medium text-text-primary">
+								{t.name}
+							</span>
+							<span className="font-mono text-[10.5px] text-text-tertiary">
+								{slugify(t.name)}
+							</span>
+						</div>
+					</div>
+				);
+			},
+		},
+		{
+			accessorKey: "memberCount",
+			header: "Members",
+			cell: ({ row }) => {
+				const t = row.original;
+				return (
+					<div className="flex items-center gap-3">
+						{t.members.length > 0 && (
+							<div className="flex -space-x-2">
+								{t.members.slice(0, 4).map((m) => (
+									<span
+										key={m.userId}
+										className="flex size-6 items-center justify-center rounded-full border-2 border-surface bg-surface-muted font-mono text-[9.5px] text-text-secondary"
+									>
+										{m.initials}
+									</span>
+								))}
+								{t.members.length > 4 && (
+									<span className="flex size-6 items-center justify-center rounded-full border-2 border-surface bg-surface-sunken font-mono text-[9.5px] text-text-tertiary">
+										+{t.members.length - 4}
+									</span>
+								)}
+							</div>
+						)}
+						<span className="whitespace-nowrap font-mono text-[11px] text-text-tertiary">
+							{t.memberCount} member{t.memberCount === 1 ? "" : "s"}
+						</span>
+					</div>
+				);
+			},
+		},
+		{
+			id: "actions",
+			header: "",
+			enableSorting: false,
+			cell: ({ row }) => {
+				const t = row.original;
+				return (
+					<div className="text-right">
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild disabled={!entitled}>
+								<Button
+									variant="ghost"
+									size="icon"
+									className="size-7"
+									aria-label="Manage team"
+									disabled={!entitled}
+								>
+									<MoreHorizontal size={16} />
+								</Button>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="end" className="w-44">
+								<DropdownMenuItem onClick={() => setManage(t)}>
+									Manage members
+								</DropdownMenuItem>
+								<DropdownMenuItem
+									className="text-destructive focus:text-destructive"
+									onClick={() => setDeleting(t)}
+								>
+									Delete team
+								</DropdownMenuItem>
+							</DropdownMenuContent>
+						</DropdownMenu>
+					</div>
+				);
+			},
+		},
+	];
+
 	if (teams === null) {
 		return (
 			<div className="space-y-4">
@@ -201,12 +295,12 @@ export function TeamsList() {
 				</div>
 			)}
 
-			{/* grid */}
+			{/* table */}
 			{filtered.length === 0 ? (
 				!entitled && teams.length === 0 ? (
 					<FeatureUpsell feature="teams" />
 				) : (
-					<div className="rounded-lg border border-dashed border-border bg-surface-sunken px-6 py-12 text-center">
+					<div className="rounded-lg bg-surface-sunken px-6 py-12 text-center">
 						<Users className="mx-auto mb-3 size-5 text-text-tertiary" />
 						<p className="text-[13px] text-text-tertiary">
 							{teams.length === 0
@@ -216,91 +310,7 @@ export function TeamsList() {
 					</div>
 				)
 			) : (
-				<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-					{filtered.map((t) => (
-						<div
-							key={t.id}
-							className="flex flex-col gap-4 rounded-lg border border-border bg-surface p-4 shadow-sm"
-						>
-							<div className="flex items-start justify-between gap-2">
-								<div className="flex min-w-0 items-center gap-3">
-									<span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-ink font-display text-[13px] font-semibold text-ink-foreground">
-										{monogram(t.name)}
-									</span>
-									<div className="flex min-w-0 flex-col">
-										<span className="truncate text-[14px] font-medium text-text-primary">
-											{t.name}
-										</span>
-										<span className="font-mono text-[10.5px] text-text-tertiary">
-											{slugify(t.name)}
-										</span>
-									</div>
-								</div>
-								<DropdownMenu>
-									<DropdownMenuTrigger asChild disabled={!entitled}>
-										<button
-											type="button"
-											aria-label="Manage team"
-											disabled={!entitled}
-											className="inline-flex size-7 shrink-0 items-center justify-center rounded-sm text-text-disabled transition-colors hover:bg-surface-muted hover:text-text-primary disabled:pointer-events-none disabled:opacity-40"
-										>
-											<MoreHorizontal size={16} />
-										</button>
-									</DropdownMenuTrigger>
-									<DropdownMenuContent align="end" className="w-44">
-										<DropdownMenuItem onClick={() => setManage(t)}>
-											Manage members
-										</DropdownMenuItem>
-										<DropdownMenuItem
-											className="text-destructive focus:text-destructive"
-											onClick={() => setDeleting(t)}
-										>
-											Delete team
-										</DropdownMenuItem>
-									</DropdownMenuContent>
-								</DropdownMenu>
-							</div>
-
-							<div className="flex items-center gap-3">
-								{t.members.length > 0 ? (
-									<div className="flex -space-x-2">
-										{t.members.slice(0, 4).map((m) => (
-											<span
-												key={m.userId}
-												className="flex size-7 items-center justify-center rounded-full border-2 border-surface bg-surface-muted font-mono text-[10px] text-text-secondary"
-											>
-												{m.initials}
-											</span>
-										))}
-										{t.members.length > 4 && (
-											<span className="flex size-7 items-center justify-center rounded-full border-2 border-surface bg-surface-sunken font-mono text-[10px] text-text-tertiary">
-												+{t.members.length - 4}
-											</span>
-										)}
-									</div>
-								) : (
-									<span className="font-mono text-[11px] text-text-disabled">
-										No members yet
-									</span>
-								)}
-							</div>
-
-							<div className="mt-auto flex items-center justify-between border-t border-border pt-3">
-								<span className="font-mono text-[11px] text-text-tertiary">
-									{t.memberCount} member{t.memberCount === 1 ? "" : "s"}
-								</span>
-								<Button
-									variant="outline"
-									size="sm"
-									disabled={!entitled}
-									onClick={() => setManage(t)}
-								>
-									Manage
-								</Button>
-							</div>
-						</div>
-					))}
-				</div>
+				<DataTable columns={columns} data={filtered} pageSize={10} />
 			)}
 
 			{manage && (

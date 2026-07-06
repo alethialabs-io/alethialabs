@@ -8,6 +8,11 @@ import {
 	type UIMessage,
 } from "ai";
 import { saveThreadMessages } from "@/app/server/actions/agent";
+import {
+	formatMentionsForPrompt,
+	type Mention,
+	mentionsSchema,
+} from "@/lib/ai/mentions";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
@@ -23,6 +28,8 @@ interface AgentBody {
 	mode?: AgentMode;
 	/** Selected gateway model id (validated against the allowlist). */
 	model?: string;
+	/** Resources the user @-referenced in the latest message. */
+	mentions?: Mention[];
 }
 
 /** System prompt for the general Agent page (infra Q&A + project design + Act-mode ops). */
@@ -103,12 +110,27 @@ export async function POST(req: Request) {
 		);
 	}
 
-	const { messages, threadId, mode = "ask", model }: AgentBody = await req.json();
+	const {
+		messages,
+		threadId,
+		mode = "ask",
+		model,
+		mentions,
+	}: AgentBody = await req.json();
 	const modelId = getAiModel(model);
+
+	// Resolve @-mentions into a prompt block so the model knows what each ref points to.
+	const parsedMentions = mentionsSchema.safeParse(mentions);
+	const mentionBlock = parsedMentions.success
+		? formatMentionsForPrompt(parsedMentions.data)
+		: "";
+	const system = mentionBlock
+		? `${systemPrompt(mode)}\n\n${mentionBlock}`
+		: systemPrompt(mode);
 
 	const result = streamText({
 		model: modelId,
-		system: systemPrompt(mode),
+		system,
 		messages: await convertToModelMessages(messages),
 		tools: buildAgentTools({ mode }),
 		stopWhen: stepCountIs(8),

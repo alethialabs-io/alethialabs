@@ -8,16 +8,33 @@ import { NotificationsPopover } from "@/components/shell/notifications-popover";
 import { useNotificationsStore } from "@/lib/stores/use-notifications-store";
 import { makeJob } from "../fixtures/jobs";
 
-const { useJobsQuery } = vi.hoisted(() => ({ useJobsQuery: vi.fn() }));
+const { useJobsQuery, useSupportNotifications } = vi.hoisted(() => ({
+	useJobsQuery: vi.fn(),
+	useSupportNotifications: vi.fn(),
+}));
 vi.mock("@/lib/query/use-jobs-query", () => ({
 	useJobsQuery: () => useJobsQuery(),
 }));
+// The popover composes support notifications too; default it to an empty feed so these
+// job-focused tests stay isolated (support wiring is covered in its own hook test).
+vi.mock("@/hooks/use-support-notifications", () => ({
+	useSupportNotifications: () => useSupportNotifications(),
+}));
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "acme" }) }));
+
+const EMPTY_SUPPORT = {
+	notifications: [],
+	unreadCount: 0,
+	markAsRead: vi.fn(),
+	markAllRead: vi.fn(),
+};
 
 beforeEach(() => {
 	localStorage.clear();
-	useNotificationsStore.setState({ readJobIds: [] });
+	useNotificationsStore.setState({ readJobIds: [], readSupportCaseIds: [] });
 	useJobsQuery.mockReset();
+	useSupportNotifications.mockReset();
+	useSupportNotifications.mockReturnValue(EMPTY_SUPPORT);
 });
 
 describe("NotificationsPopover", () => {

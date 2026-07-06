@@ -56,6 +56,8 @@ interface DataTableProps<TData extends { id?: string }, TValue> {
 	onPageIndexChange?: (index: number) => void;
 	/** Tailwind height class (e.g. "h-[70vh]"). When set, wraps the table in a ScrollArea and makes the header sticky. */
 	scrollHeight?: string;
+	/** Message shown in the empty-state row when `data` is empty (default "No results."). */
+	emptyMessage?: string;
 }
 
 export function DataTable<TData extends { id?: string }, TValue>({
@@ -69,6 +71,7 @@ export function DataTable<TData extends { id?: string }, TValue>({
 	pageIndex: externalPageIndex,
 	onPageIndexChange,
 	scrollHeight,
+	emptyMessage = "No results.",
 }: DataTableProps<TData, TValue>) {
 	const [sorting, setSorting] = useState<SortingState>([]);
 	const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(
@@ -162,7 +165,7 @@ export function DataTable<TData extends { id?: string }, TValue>({
 				) : (
 					<TableRow>
 						<TableCell colSpan={columns.length} className="h-24 text-center text-muted-foreground">
-							No results.
+							{emptyMessage}
 						</TableCell>
 					</TableRow>
 				)}

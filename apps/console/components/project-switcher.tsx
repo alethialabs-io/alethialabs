@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Check, Component, Plus } from "lucide-react";
+import { Check, Plus } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { SwitcherTrigger } from "@/components/shell/switcher-trigger";
@@ -89,15 +89,6 @@ export function ProjectSwitcher() {
 											onSelect={() => p.slug && handleSelect(p.slug)}
 											className="gap-2"
 										>
-											{p.cloud_provider ? (
-												<ProviderIcon
-													provider={p.cloud_provider}
-													size={16}
-													className="shrink-0"
-												/>
-											) : (
-												<Component className="h-4 w-4 text-muted-foreground" />
-											)}
 											<span className="flex-1 truncate">{p.project_name}</span>
 											{p.id === active?.id && (
 												<Check className="h-4 w-4 shrink-0" />

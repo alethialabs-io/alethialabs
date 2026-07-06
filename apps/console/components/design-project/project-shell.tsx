@@ -36,7 +36,7 @@ export function ProjectShell({
 
 	// Architecture is the only env-scoped design surface; the inspector belongs to it alone.
 	const onArchitecture = pathname.endsWith("/architecture");
-	const dock = useDockState(onArchitecture, true);
+	const dock = useDockState(onArchitecture);
 
 	// Leaving Architecture closes the canvas-only inspector (the assistant stays open).
 	useEffect(() => {
@@ -56,7 +56,7 @@ export function ProjectShell({
 	};
 
 	return (
-		<div className="-m-4 flex h-[calc(100dvh-3.5rem)] w-full sm:-m-6 lg:-m-8 xl:-m-10">
+		<div className="-m-4 flex h-[calc(100dvh-3.5rem)] sm:-m-6 lg:-m-8 xl:-m-10">
 			<div
 				className={cn(
 					"relative min-w-0 flex-1",

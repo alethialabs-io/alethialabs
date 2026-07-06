@@ -115,6 +115,12 @@ interface BillingCheckoutFormProps {
 	ownerEmail?: string;
 	submitLabel?: string;
 	/**
+	 * When true (inside the purchase sheets), the form fills its flex parent: the fields
+	 * scroll and the submit button is pinned in a sticky footer. Default false → normal
+	 * flow (onboarding), where the button sits at the end of the fields.
+	 */
+	scrollable?: boolean;
+	/**
 	 * Called after the card is confirmed (charge done). The consumer persists the billing
 	 * details (address / tax id / primary address) and advances the view. Awaited — keep
 	 * the button in its processing state until it resolves; never re-charges.
@@ -128,6 +134,7 @@ export function BillingCheckoutForm({
 	unitAmountUsd,
 	ownerEmail,
 	submitLabel,
+	scrollable = false,
 	onPaid,
 }: BillingCheckoutFormProps) {
 	const stripe = useStripe();
@@ -215,8 +222,17 @@ export function BillingCheckoutForm({
 
 	return (
 		<TooltipProvider>
-			<form onSubmit={form.handleSubmit(onValid)} className="space-y-5">
-				{/* included credit */}
+			<form
+				onSubmit={form.handleSubmit(onValid)}
+				className={cn("flex flex-col", scrollable ? "min-h-0 flex-1" : "gap-5")}
+			>
+				<div
+					className={cn(
+						"space-y-5",
+						scrollable && "min-h-0 flex-1 overflow-y-auto pr-1",
+					)}
+				>
+					{/* included credit */}
 				{credit > 0 && (
 					<div className="flex items-center justify-between rounded-lg border border-border px-4 py-3">
 						<div className="flex items-center gap-2 text-[13px] text-text-secondary">
@@ -427,15 +443,24 @@ export function BillingCheckoutForm({
 					</div>
 				</div>
 
-				{form.formState.errors.root?.message && (
-					<p className="text-[12px] text-destructive">
-						{form.formState.errors.root.message}
-					</p>
-				)}
+				</div>
 
-				<Button type="submit" className="w-full" disabled={!stripe || submitting}>
-					{submitting ? "Processing…" : (submitLabel ?? `Create — ${money(total)}`)}
-				</Button>
+				<div
+					className={cn(
+						"space-y-3",
+						scrollable && "shrink-0 border-t border-border bg-background pt-4",
+					)}
+				>
+					{form.formState.errors.root?.message && (
+						<p className="text-[12px] text-destructive">
+							{form.formState.errors.root.message}
+						</p>
+					)}
+
+					<Button type="submit" className="w-full" disabled={!stripe || submitting}>
+						{submitting ? "Processing…" : (submitLabel ?? `Create — ${money(total)}`)}
+					</Button>
+				</div>
 			</form>
 		</TooltipProvider>
 	);

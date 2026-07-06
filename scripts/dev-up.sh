@@ -107,6 +107,17 @@ done
 echo "→ migrating app database…"
 pnpm -C apps/console db:migrate
 
+# Enterprise plugins (organization + SSO) load at console boot from @alethia/ee's built
+# dist (a serverExternalPackages module, required via createRequire in lib/enterprise.ts). A
+# fresh worktree LINKS the workspace package but never BUILDS its dist, so build it once when
+# it's present but unbuilt — otherwise loadEnterprise() throws, getAuthPlugins() returns [],
+# the console mounts NO organization plugin, and /api/auth/organization/* (→ orgs, billing,
+# SSO) 404s. The community/open-core build has no ee/ and correctly skips this.
+if [[ -f ee/package.json && ! -f ee/dist/index.js ]]; then
+  echo "→ building @alethia/ee (enterprise plugins)…"
+  pnpm -F @alethia/ee build
+fi
+
 echo "→ waiting for OpenFGA…"
 for i in $(seq 1 60); do
   if curl -fs "$OPENFGA_URL/healthz" >/dev/null 2>&1; then break; fi

@@ -10,6 +10,9 @@
  *                project cleanly onto a single stateless MCP `tools/call`.
  * - `external` — safe to expose to a customer's own agent over MCP.
  * - `both`     — read-only, PDP-gated, stateless: usable everywhere.
+ * - `support`  — in-app support (Ask-AI) surface only. HITL escalation proposals
+ *                (client-applied via `submitCase`) live here, like other in-app
+ *                proposals — never projected onto the read-only external MCP surface.
  *
  * The external projection is **read-only at launch** (see the plan's A5): the MCP
  * surface is a remote, authenticated, internet-facing endpoint, so we expose only
@@ -19,7 +22,7 @@
  * (`assertAudienceCoverage`) guarantees no tool ships unclassified.
  */
 
-export type ToolAudience = "in-app" | "external" | "both";
+export type ToolAudience = "in-app" | "external" | "both" | "support";
 
 /** Audience classification for every tool the agent harness can expose. */
 export const TOOL_AUDIENCE: Record<string, ToolAudience> = {
@@ -47,6 +50,9 @@ export const TOOL_AUDIENCE: Record<string, ToolAudience> = {
 
 	// Operations — HITL plan/deploy proposals (multi-turn approval).
 	propose_operation: "in-app",
+
+	// Support (Ask-AI) — HITL escalation: proposes a case the user submits client-side.
+	create_support_case: "support",
 
 	// Scanner — scan_repo QUEUES a runner job (a write) so it stays in-app for the
 	// read-only launch; its results are reads and are externally safe.

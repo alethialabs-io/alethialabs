@@ -1,10 +1,28 @@
-# Self-hosted analytics (Umami + OpenReplay)
+# Analytics — PostHog (hosted suite) or Umami + OpenReplay (OSS self-host)
 
-Open-source, self-hostable telemetry for the console — **product analytics** (events, funnels,
-journeys, retention) + **Core Web Vitals** via **Umami**, and **session replay** (watch where users
-get stuck) via **OpenReplay**. Both are **off by default**: the app's analytics layer no-ops unless the
-`NEXT_PUBLIC_*` env is set (`apps/console/lib/analytics/config.ts`), so the open-source build ships
-zero telemetry.
+The console's analytics layer is **provider-agnostic** (`apps/console/lib/analytics/config.ts` →
+`track()`/`identify()`), and everything is **off by default** — no `NEXT_PUBLIC_*` env ⇒ zero telemetry
+(the OSS build ships none). Three providers, enabled by env:
+
+- **PostHog** — the all-in-one suite hosted **alethialabs.io runs in prod**: product analytics + funnels
+  + **session replay** + **web-vitals/performance** + error tracking, in one dashboard. Setup is a single
+  project key — no infra. Set `NEXT_PUBLIC_POSTHOG_KEY` (+ optional `NEXT_PUBLIC_POSTHOG_HOST`, default
+  `https://eu.i.posthog.com`) and leave Umami/OpenReplay unset (the provider won't double-track).
+  - **1-time setup:** create a PostHog project (EU) → copy the `phc_…` project API key; in project
+    settings enable **Session Replay**, set a **billing limit** = free tier (1M events / 5k recordings —
+    with no card PostHog hard-stops at the cap, so never a surprise bill), and a replay **sample rate**
+    to stretch recordings. Put the key in the vault (`NEXT_PUBLIC_POSTHOG_KEY`) → redeploy.
+  - Session replay masks all inputs by default; add `data-ph-mask` to any element whose *text* is
+    sensitive (billing amounts, tokens). Web Vitals populate PostHog's Web Vitals dashboard natively.
+  - **Future — move to AWS CloudWatch RUM:** because the layer is provider-agnostic, it's a provider
+    swap, not a rewrite — add a RUM provider (Cognito identity pool + app-monitor snippet) and switch
+    `NEXT_PUBLIC_POSTHOG_*` for the RUM config. Considered for when the free tier is outgrown.
+
+The **OSS self-host** path (no third-party cloud) stays fully supported below:
+
+Open-source, self-hostable telemetry — **product analytics** (events, funnels, journeys, retention) +
+**Core Web Vitals** via **Umami**, and **session replay** via **OpenReplay**. Enabled by their own
+`NEXT_PUBLIC_*` env (`apps/console/lib/analytics/config.ts`).
 
 ## Production (alethialabs.io) — the proper wiring
 
@@ -41,6 +59,34 @@ for the website; the admin password is (re)set to the stable vault value each ru
 - **Enable Access**: set repo Actions variables `MANAGE_ANALYTICS_ACCESS=true` +
   `ANALYTICS_ACCESS_EMAILS=["you@alethialabs.io"]` → merge; the apply creates the dashboard gate
   (`/script.js` + `/api` bypassed so ingest still works). Leave the var off to rely on Umami's own login.
+
+### Dashboard login (why it prompts twice)
+
+Opening `analytics.alethialabs.io` asks for auth **twice** — this is deliberate defense-in-depth, not a
+misconfig:
+
+1. **Cloudflare Access** (email one-time-PIN) — gates the dashboard **UI**. The code is emailed to an
+   address in `ANALYTICS_ACCESS_EMAILS`; `borislav@alethialabs.io` forwards via Cloudflare Email-Routing
+   to gmail (check spam if it's slow). This layer stops randoms from ever reaching the login page.
+2. **Umami's own login** — `admin` / `UMAMI_ADMIN_PASSWORD`. This is the layer that actually guards your
+   **data**: the tracker needs a public `POST /api/send`, so Access bypasses all of `/api` — which means
+   Umami's admin API is internet-reachable and only Umami's password protects it.
+
+So the two layers protect two different surfaces (UI vs. admin API). Dropping either weakens one of them.
+A single-gate setup is possible (Umami `DISABLE_LOGIN=1` + narrow the Access `/api` bypass to `/api/send`)
+but we chose to keep both. See the header of `infra/cp-hetzner/access.tf`.
+
+The Umami password is **auto-generated** (`scripts/bootstrap-secrets.sh` → random b64) and lives only in
+the AWS vault — never committed, never a UI-set value. Retrieve it (needs prod AWS creds):
+
+```bash
+aws secretsmanager get-secret-value --secret-id alethia/prod/env --region eu-central-1 \
+  --query SecretString --output text | jq -r '.UMAMI_ADMIN_PASSWORD'
+```
+
+**Don't change the password in the Umami UI** — the vault is the source of truth and `umami-init`
+re-applies it on every deploy (a UI change gets overwritten). To rotate, update `UMAMI_ADMIN_PASSWORD`
+in `alethia/prod/env` instead.
 
 ---
 
