@@ -254,7 +254,7 @@ export const approvalStatus = pgEnum("approval_status", [
 	"rejected",
 ]);
 
-// Support-case enums moved to @repo/support (shared with the support-admin app); re-export
+// Support-case enums moved to @repo/support (shared with the admin app); re-export
 // so `@/lib/db/schema/enums` keeps surfacing them (supportCaseType/Status/Severity/… + their
 // TS unions).
 export * from "@repo/support/enums";

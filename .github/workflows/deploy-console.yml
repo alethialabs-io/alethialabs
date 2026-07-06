@@ -10,7 +10,7 @@ on:
     paths:
       - 'apps/console/**'
       - 'apps/marketing/**'
-      - 'apps/support-admin/**'
+      - 'apps/admin/**'
       - 'apps/docs/**'
       - 'apps/blog/**'
       - 'apps/runner/**'
@@ -58,9 +58,9 @@ jobs:
           - image: marketing
             file: apps/marketing/Dockerfile
             target: ""
-          # Support-admin internal staff dashboard — served behind Cloudflare Access.
-          - image: support-admin
-            file: apps/support-admin/Dockerfile
+          # Admin internal staff dashboard — served behind Cloudflare Access.
+          - image: admin
+            file: apps/admin/Dockerfile
             target: ""
     steps:
       - uses: actions/checkout@v4

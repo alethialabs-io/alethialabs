@@ -61,14 +61,14 @@ export function StaffCaseDetail({
 }) {
 	const queryClient = useQueryClient();
 	const { data } = useQuery({
-		queryKey: ["support-admin", "case", caseId],
+		queryKey: ["admin", "case", caseId],
 		queryFn: () => getStaffCase(caseId),
 	});
 
 	// Live thread: append SSE messages into the case cache, deduped by message id.
 	useEffect(() => {
 		const source = new EventSource(`/api/stream/cases/${caseId}`);
-		const key = ["support-admin", "case", caseId] as const;
+		const key = ["admin", "case", caseId] as const;
 
 		source.onmessage = (event: MessageEvent<string>) => {
 			let incoming: StreamMessage;
@@ -182,7 +182,7 @@ export function StaffCaseDetail({
 						{attachments.map((att) => (
 							<li key={att.id}>
 								<a
-									href={`/api/support/attachments/${att.id}`}
+									href={`/api/attachments/${att.id}`}
 									className="flex items-center gap-2 text-sm text-foreground hover:underline"
 								>
 									<Download className="size-3.5 text-muted-foreground" />

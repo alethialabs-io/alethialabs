@@ -29,7 +29,7 @@ type StaffMessage = StaffCaseDetail["messages"][number];
  * The staff reply composer: a textarea, an "Internal note" toggle (an internal note is
  * inserted without emailing/showing the customer, and never changes status), a canned-reply
  * picker that inserts a placeholder-filled macro, and a Send button. On send it optimistically
- * appends the message to the `["support-admin","case",id]` cache, calls `postStaffReply`, and
+ * appends the message to the `["admin","case",id]` cache, calls `postStaffReply`, and
  * invalidates on settle. Public replies are blocked once the case is closed; internal notes
  * are still allowed.
  */
@@ -52,7 +52,7 @@ export function StaffCaseComposer({
 	const [isInternal, setIsInternal] = useState(false);
 	const queryClient = useQueryClient();
 	const internalCheckboxId = useId();
-	const key = ["support-admin", "case", caseId] as const;
+	const key = ["admin", "case", caseId] as const;
 
 	// A public reply can't go out on a closed case; an internal note always can.
 	const sendDisabled = caseStatus === "closed" && !isInternal;
@@ -95,7 +95,7 @@ export function StaffCaseComposer({
 		onSettled: () => {
 			void queryClient.invalidateQueries({ queryKey: key });
 			void queryClient.invalidateQueries({
-				queryKey: ["support-admin", "cases"],
+				queryKey: ["admin", "cases"],
 			});
 		},
 	});

@@ -35,7 +35,7 @@ export const metadata: Metadata = {
 };
 
 /**
- * The support-admin root layout — a minimal grayscale/dark chrome (html/body + fonts +
+ * The admin root layout — a minimal grayscale/dark chrome (html/body + fonts +
  * ThemeProvider), the shared toaster, and the TanStack QueryClient provider so every page
  * hydrates server-prefetched cases. Cloudflare Access gates the whole subdomain; the
  * per-page `getStaff()` check is defense-in-depth.

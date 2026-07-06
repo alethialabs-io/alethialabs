@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The support-case status machine + display helpers. Shared by the console customer
-// actions and the support-admin staff actions so both respect one state machine.
+// actions and the admin staff actions so both respect one state machine.
 
 import type { SupportCaseStatus } from "./enums";
 

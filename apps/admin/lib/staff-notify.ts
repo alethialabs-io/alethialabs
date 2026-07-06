@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Staff-side support notifications — the customer-facing side effects that run when a
-// support AGENT replies to, assigns, or transitions a case from the support-admin
+// support AGENT replies to, assigns, or transitions a case from the admin
 // dashboard. The staff path has no user session, so it reads through getServiceDb()
 // (RLS-bypass; the allowlist behind Cloudflare Access is the trust boundary) and resolves
 // the case's customer-facing deep link from the org's slug. Unlike the console's

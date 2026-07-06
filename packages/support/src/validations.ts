@@ -4,7 +4,7 @@
 // Validation + display copy for the support-cases feature. drizzle-zod derives the
 // case-submit contract from the supportCases schema (JSONB columns refined with their
 // interface types); the message + label maps are hand-authored zod / display copy shared
-// by the console (submit dialog + thread + actions) and the support-admin app.
+// by the console (submit dialog + thread + actions) and the admin app.
 
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";

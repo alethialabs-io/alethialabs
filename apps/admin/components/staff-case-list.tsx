@@ -45,7 +45,7 @@ type SeverityFilter = "all" | SupportCaseSeverity;
  * The staff cross-tenant case list. Reads the server-prefetched `listStaffCases` cache and
  * exposes a filter bar — status tabs (All + every lifecycle status), a severity select, an
  * "Assigned to me" toggle, and a ~300ms-debounced search. Each distinct filter is its own
- * query key (`["support-admin","cases",filter]`) so switching is instant once cached; the
+ * query key (`["admin","cases",filter]`) so switching is instant once cached; the
  * empty-filter key matches the page's prefetch. Renders one `StaffCaseListItem` per row.
  */
 export function StaffCaseList() {
@@ -73,7 +73,7 @@ export function StaffCaseList() {
 	}, [statusTab, severity, mine, search]);
 
 	const { data: cases = [], isPending } = useQuery({
-		queryKey: ["support-admin", "cases", filter],
+		queryKey: ["admin", "cases", filter],
 		queryFn: () => listStaffCases(filter),
 	});
 

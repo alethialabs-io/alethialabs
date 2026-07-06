@@ -7,6 +7,7 @@
     "./enums": "./src/enums.ts",
     "./types": "./src/types.ts",
     "./status": "./src/status.ts",
+    "./storage": "./src/storage.ts",
     "./validations": "./src/validations.ts",
     "./emails/*": "./src/emails/*.tsx"
   },

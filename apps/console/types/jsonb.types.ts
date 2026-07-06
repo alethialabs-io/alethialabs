@@ -59,7 +59,7 @@ export interface DetectedService {
 
 // ── Support cases ───────────────────────────────────────────────────
 // SupportContactPrefs / SupportCaseContext / SupportAbuseDetails moved to @repo/support
-// (shared with the support-admin app); re-exported so `@/types/jsonb.types` still surfaces them.
+// (shared with the admin app); re-exported so `@/types/jsonb.types` still surfaces them.
 export * from "@repo/support/types";
 
 /**

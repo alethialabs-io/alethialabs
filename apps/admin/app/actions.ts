@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Staff-side support actions — the cross-tenant write-path behind the support-admin
+// Staff-side support actions — the cross-tenant write-path behind the admin
 // dashboard. Every action gates on assertStaff() (the SUPPORT_STAFF_EMAILS allowlist
 // behind Cloudflare Access is the trust boundary; staff aren't org members, so there's no
 // PDP grant to check) and writes via getServiceDb() (RLS-bypass — staff act on every org's
