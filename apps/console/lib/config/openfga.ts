@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // OpenFGA connection config. Entirely optional: when OPENFGA_API_URL / OPENFGA_STORE_ID

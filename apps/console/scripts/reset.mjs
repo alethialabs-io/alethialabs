@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 // DESTRUCTIVE dev reset: drops the app schema + drizzle migration journal so the next

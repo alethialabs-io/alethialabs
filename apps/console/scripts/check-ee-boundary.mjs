@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Open-core boundary guard (project 12): the AGPL core must NEVER import the

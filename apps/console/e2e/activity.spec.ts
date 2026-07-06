@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // E2E: the Settings → Activity feed. Asserts the page-level wiring on a fresh authed org: the

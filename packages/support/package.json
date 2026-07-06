@@ -1,0 +1,33 @@
+{
+  "name": "@repo/support",
+  "version": "0.0.0",
+  "private": true,
+  "exports": {
+    "./schema": "./src/schema.ts",
+    "./enums": "./src/enums.ts",
+    "./types": "./src/types.ts",
+    "./status": "./src/status.ts",
+    "./storage": "./src/storage.ts",
+    "./validations": "./src/validations.ts",
+    "./emails/*": "./src/emails/*.tsx"
+  },
+  "scripts": {
+    "lint": "eslint . --max-warnings 0",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-email/components": "^1.0.12",
+    "@repo/email": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "drizzle-zod": "^0.8.3",
+    "react": "^19.2.1",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/react": "^19.2.2",
+    "eslint": "^9.39.1",
+    "typescript": "5.9.2"
+  }
+}

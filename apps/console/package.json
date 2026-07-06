@@ -50,6 +50,7 @@
 		"@repo/brand": "workspace:*",
 		"@repo/email": "workspace:*",
 		"@repo/plan-catalog": "workspace:*",
+		"@repo/support": "workspace:*",
 		"@repo/ui": "workspace:*",
 		"@streamdown/cjk": "^1.0.3",
 		"@streamdown/code": "^1.1.1",

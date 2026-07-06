@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Component test for the scope-aware Activity feed: when pinned to a project, the feed forces the

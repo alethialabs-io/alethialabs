@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // C2 slug routing — the single source of truth for the Vercel-style drilldown URLs
@@ -23,9 +23,6 @@ const STATIC_RESERVED_SLUGS = [
 	"start",
 	"cli",
 	"invites",
-	// The cross-tenant staff support console (app/(private)/support-admin) — a static
-	// sibling of [org], so no org may claim this slug.
-	"support-admin",
 	"_next",
 	"blog",
 	"docs",

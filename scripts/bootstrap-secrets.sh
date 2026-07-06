@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # One-time (idempotent) population of the prod secret vault in AWS Secrets Manager.
