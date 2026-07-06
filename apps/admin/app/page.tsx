@@ -36,7 +36,7 @@ export default async function SupportAdminHome() {
 
 	const queryClient = getQueryClient();
 	await queryClient.prefetchQuery({
-		queryKey: ["support-admin", "cases", {}],
+		queryKey: ["admin", "cases", {}],
 		queryFn: () => listStaffCases({}),
 	});
 

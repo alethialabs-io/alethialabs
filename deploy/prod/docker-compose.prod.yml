@@ -30,12 +30,12 @@ services:
     profiles: ["marketing"]
     image: "ghcr.io/alethialabs-io/marketing:${ALETHIA_IMAGE_TAG:-latest}"
     pull_policy: always
-  # Support-admin internal staff dashboard — self-hosted behind Cloudflare Access.
+  # Admin internal staff dashboard — self-hosted behind Cloudflare Access.
   # Inactive unless the operator runs with COMPOSE_PROFILES=admin AND enables the
-  # `import support-admin*.caddy` line in deploy/prod/Caddyfile.
-  support-admin:
+  # `import admin*.caddy` line in deploy/prod/Caddyfile.
+  admin:
     profiles: ["admin"]
-    image: "ghcr.io/alethialabs-io/support-admin:${ALETHIA_IMAGE_TAG:-latest}"
+    image: "ghcr.io/alethialabs-io/admin:${ALETHIA_IMAGE_TAG:-latest}"
     pull_policy: always
   # One-shot migrate — the console Dockerfile's `migrate` target (shares all
   # build cache with console; the final stage is the only difference).

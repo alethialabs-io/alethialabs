@@ -6,7 +6,7 @@ import Link from "next/link";
 import type React from "react";
 
 /**
- * The minimal chrome for the support-admin console — a slim top bar with the "Support
+ * The minimal chrome for the admin console — a slim top bar with the "Support
  * admin" title + a "Cases" link back to the list (the app root), the acting staff email on
  * the right, and a centered max-width content column. This dashboard is cross-tenant and
  * has no org sidebar; the whole subdomain sits behind Cloudflare Access.

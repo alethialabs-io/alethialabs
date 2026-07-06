@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Realtime fan-out over Postgres LISTEN/NOTIFY for the support-admin app — the
+// Realtime fan-out over Postgres LISTEN/NOTIFY for the admin app — the
 // support-messages half of the console's lib/realtime (job_logs / runner_wake dropped;
 // this app only streams case threads). A Postgres trigger does
 // notify_support_message() → pg_notify('support_messages', {caseId, messageId}) on

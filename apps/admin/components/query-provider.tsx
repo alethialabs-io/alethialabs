@@ -7,7 +7,7 @@ import type React from "react";
 import { getQueryClient } from "@/lib/query-client";
 
 /**
- * The client-side data layer for the support-admin app. Wraps the tree in a single
+ * The client-side data layer for the admin app. Wraps the tree in a single
  * QueryClient (request-scoped on the server, singleton in the browser via
  * `getQueryClient`) so server-prefetched cases hydrate into the same cache the client
  * reads. Mirrors the console's Providers, minus analytics/devtools.

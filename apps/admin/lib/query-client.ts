@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-query";
 
 /**
- * Builds a QueryClient with the support-admin defaults. A 30s `staleTime` lets a freshly
+ * Builds a QueryClient with the admin defaults. A 30s `staleTime` lets a freshly
  * navigated page trust server-prefetched data without an immediate refetch, while
  * `refetchOnWindowFocus` keeps a long-lived staff tab current. Pending queries are allowed
  * to dehydrate so a server prefetch that hasn't resolved yet still streams to the client.

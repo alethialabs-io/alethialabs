@@ -33,7 +33,7 @@ export default async function SupportAdminCaseRoute({
 	const queryClient = getQueryClient();
 	const initial = await getStaffCase(id);
 	if (!initial) notFound();
-	queryClient.setQueryData(["support-admin", "case", id], initial);
+	queryClient.setQueryData(["admin", "case", id], initial);
 
 	return (
 		<StaffShell staffEmail={staff.email}>

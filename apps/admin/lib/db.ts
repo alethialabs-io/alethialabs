@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The support-admin DB client. This app is inherently CROSS-TENANT (staff view/answer
+// The admin DB client. This app is inherently CROSS-TENANT (staff view/answer
 // every org's cases), so it keeps ONLY the service (RLS-bypass) connection — there is no
 // per-owner app role here; the SUPPORT_STAFF_EMAILS allowlist behind Cloudflare Access is
 // the trust boundary (see lib/auth/staff.ts). Reads the same Postgres as the console via

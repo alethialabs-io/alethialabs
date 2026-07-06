@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Support-case pg enums + their TS unions. Shared by the console (customer support) and
-// the support-admin app (staff). The console re-exports these from its schema/enums.ts so
+// the admin app (staff). The console re-exports these from its schema/enums.ts so
 // every existing `@/lib/db/schema/enums` import site keeps working.
 
 import { pgEnum } from "drizzle-orm/pg-core";

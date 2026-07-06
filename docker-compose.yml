@@ -213,16 +213,16 @@ services:
       HOSTNAME: 0.0.0.0
     restart: unless-stopped
 
-  # Support-admin (internal staff support dashboard). OPT-IN internal path —
+  # Admin (internal staff support dashboard). OPT-IN internal path —
   # runs on its own subdomain behind Cloudflare Access (like the Umami dashboard);
   # the app trusts Cf-Access-Authenticated-User-Email + SUPPORT_STAFF_EMAILS. Enable
-  # with the `admin` profile AND uncomment `import support-admin*.caddy` in the active
-  # Caddyfile (copy support-admin.caddy.example → support-admin.caddy).
-  support-admin:
+  # with the `admin` profile AND uncomment `import admin*.caddy` in the active
+  # Caddyfile (copy admin.caddy.example → admin.caddy).
+  admin:
     profiles: ["admin"]
     build:
       context: .
-      dockerfile: apps/support-admin/Dockerfile
+      dockerfile: apps/admin/Dockerfile
     env_file: .env
     environment:
       NODE_ENV: production

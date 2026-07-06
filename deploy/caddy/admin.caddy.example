@@ -1,4 +1,4 @@
-# Support-admin zone — the internal STAFF support dashboard on its own subdomain.
+# Admin zone — the internal STAFF support dashboard on its own subdomain.
 #
 # The dashboard is cross-tenant (staff view/answer every org's cases). Its ONLY gate is
 # Cloudflare Access + the SUPPORT_STAFF_EMAILS allowlist — the same pattern as the Umami
@@ -9,13 +9,13 @@
 # do not expose it publicly.
 #
 # OPT-IN self-host template:
-#   1. Run a `support-admin` service (the apps/support-admin image) in your compose stack
+#   1. Run an `admin` service (the apps/admin image) in your compose stack
 #      (COMPOSE_PROFILES=admin).
-#   2. Copy this file next to the active Caddyfile as `support-admin.caddy`.
-#   3. Uncomment `import support-admin*.caddy` in that Caddyfile.
-#   4. Replace support-admin.example.com with your real staff subdomain and add the
+#   2. Copy this file next to the active Caddyfile as `admin.caddy`.
+#   3. Uncomment `import admin*.caddy` in that Caddyfile.
+#   4. Replace admin.alethialabs.io with your real staff subdomain and add the
 #      matching Cloudflare Access application.
 
-support-admin.example.com {
-	reverse_proxy support-admin:3000
+admin.alethialabs.io {
+	reverse_proxy admin:3000
 }

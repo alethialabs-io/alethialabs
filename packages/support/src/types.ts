@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Typed JSONB shapes for the support-case schema's `.$type<>()` columns. Shared by the
-// console and the support-admin app; the console re-exports them from types/jsonb.types.ts.
+// console and the admin app; the console re-exports them from types/jsonb.types.ts.
 
 /** Where + how the customer wants to be reached about a support case. */
 export interface SupportContactPrefs {

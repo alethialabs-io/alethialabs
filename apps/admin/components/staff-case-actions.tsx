@@ -109,10 +109,10 @@ export function StaffCaseActions({
 			toast.success(ACTION_META[action].success);
 			await Promise.all([
 				queryClient.invalidateQueries({
-					queryKey: ["support-admin", "case", caseId],
+					queryKey: ["admin", "case", caseId],
 				}),
 				queryClient.invalidateQueries({
-					queryKey: ["support-admin", "cases"],
+					queryKey: ["admin", "cases"],
 				}),
 			]);
 		},
