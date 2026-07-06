@@ -14,7 +14,7 @@ import { graphToForm } from "@/components/design-project/canvas/graph/graph-to-f
  * about the current design. Returns `undefined` when the canvas is empty (form-only
  * view) — the route degrades gracefully (summarizeCanvas(undefined) = "empty").
  */
-function snapshotCanvas(): CanvasContext | undefined {
+export function snapshotCanvas(): CanvasContext | undefined {
 	const store = useCanvasStore.getState();
 	if (store.nodes.length === 0) return undefined;
 	return {
@@ -29,6 +29,16 @@ function snapshotCanvas(): CanvasContext | undefined {
 				| undefined,
 		})),
 	};
+}
+
+/**
+ * Stable `prepareBody` factory for a project's assistant transport — injects the
+ * project id + a live canvas snapshot (read fresh at send time). A plain factory (not
+ * a hook) so the shared Elench conversation can select it by context without breaking
+ * the rules of hooks.
+ */
+export function projectPrepareBody(projectId: string) {
+	return () => ({ projectId, canvas: snapshotCanvas() });
 }
 
 /**

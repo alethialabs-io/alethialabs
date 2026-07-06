@@ -2,46 +2,34 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The inline docked side panel shared by the project shell (persistent, across all project views)
-// and the standalone create-flow canvas. It shows the node inspector OR the AI assistant (never
-// both). The assistant is kept mounted (hidden when inactive) so its chat survives closing /
-// switching; the parent decides which is active via `useDockState`.
+// The inline docked side panel for the node inspector, shared by the project shell (persistent,
+// across all project views) and the standalone create-flow canvas. The AI assistant is no longer
+// docked here — it moved to the global Elench overlay surface (modal / floating panel), so this
+// dock is now inspector-only. The inspector is canvas-only (Architecture view).
 
 import { motion } from "motion/react";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
-import { AssistantPanel } from "@/components/project-assistant/project-assistant";
-import { useAssistantStore } from "@/lib/stores/use-assistant-store";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
-import { cn } from "@repo/ui/utils";
 import { InspectorPanel } from "./node-inspector";
 
 /** Docked panel geometry: the bordered panel width + the gap between it and the canvas. */
 export const PANEL_W = 400;
 export const PANEL_GAP = 12;
 
-export type DockContent = "inspector" | "assistant" | null;
+export type DockContent = "inspector" | null;
 
 /**
- * Which panel the dock should show. `inspectorAllowed` gates the (canvas-only) inspector — false on
- * non-Architecture views. The assistant needs a real project (the create flow has none).
+ * Which panel the dock should show. `inspectorAllowed` gates the (canvas-only) inspector —
+ * false on non-Architecture views. The AI assistant is a separate global overlay now.
  */
-export function useDockState(
-	inspectorAllowed: boolean,
-	hasProject: boolean,
-): DockContent {
+export function useDockState(inspectorAllowed: boolean): DockContent {
 	const inspectorNodeId = useCanvasStore((s) => s.inspectorNodeId);
-	const assistantOpen = useAssistantStore((s) => s.open);
-	return inspectorAllowed && inspectorNodeId
-		? "inspector"
-		: assistantOpen && hasProject
-			? "assistant"
-			: null;
+	return inspectorAllowed && inspectorNodeId ? "inspector" : null;
 }
 
-/** The bordered, width-animated dock. Width → 0 when closed; the assistant stays mounted. */
+/** The bordered, width-animated dock. Width → 0 when closed. */
 export function CanvasDock({
 	dock,
-	projectId,
 	identities,
 	onDestroyEnvironment,
 }: {
@@ -68,15 +56,6 @@ export function CanvasDock({
 							onDestroyEnvironment={onDestroyEnvironment}
 						/>
 					)}
-					{/* Kept mounted (just hidden) to preserve the agent conversation. */}
-					<div
-						className={cn(
-							"flex h-full min-h-0 flex-col",
-							dock !== "assistant" && "hidden",
-						)}
-					>
-						{projectId && <AssistantPanel projectId={projectId} />}
-					</div>
 				</div>
 			</div>
 		</motion.div>
