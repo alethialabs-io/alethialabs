@@ -11,7 +11,10 @@ This is the source of truth — the `gh api` snippets in `deploy/prod/README.md`
 manual fallback only.
 
 - **`main`**: PR required, **0 approvals** (solo repo — CI is the gate), all CI checks
-  green, linear history, no force-push/deletion, admins included.
+  green, no force-push/deletion, admins included. **Merge commits allowed** (NOT linear
+  history) — `staging → main` promotes as a merge so main stays convergent with dev/staging;
+  requiring linear history forced squash promotions that diverged the graph and made the next
+  promotion falsely conflict.
 - **`staging`**: PR + CI (lighter — allows hotfix merges).
 - **`dev`** (`protect-dev`): created off `staging`; feature PRs target it. **PR + green CI, 0 approvals**
   — instances self-merge once CI is green (the CI list minus `branch-flow-guard`, which only runs on
