@@ -10,6 +10,7 @@ on:
     paths:
       - 'apps/console/**'
       - 'apps/marketing/**'
+      - 'apps/support-admin/**'
       - 'apps/docs/**'
       - 'apps/blog/**'
       - 'apps/runner/**'
@@ -56,6 +57,10 @@ jobs:
           # Marketing public site — hosted alethialabs.io serves this behind the tunnel.
           - image: marketing
             file: apps/marketing/Dockerfile
+            target: ""
+          # Support-admin internal staff dashboard — served behind Cloudflare Access.
+          - image: support-admin
+            file: apps/support-admin/Dockerfile
             target: ""
     steps:
       - uses: actions/checkout@v4
