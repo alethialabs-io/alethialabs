@@ -40,44 +40,15 @@ import {
 	type SubmitCaseInput,
 	submitCaseSchema,
 } from "@/lib/validations/support";
+import {
+	assertTransition,
+	caseLabel,
+	nextStatusAfterCustomerReply,
+} from "@/lib/support/case-status";
 import type { AlertSeverity } from "@/lib/db/schema/enums";
 import type { SupportCase } from "@/lib/db/schema";
 import type { SupportContactPrefs } from "@/types/jsonb.types";
 import { getActiveOrgSlug } from "./resolve";
-
-/**
- * Legal status transitions. Each key lists the statuses a case may move to from that
- * state (self-transitions included so idempotent updates pass). Enforced by
- * {@link assertTransition}; illegal jumps throw.
- */
-const TRANSITIONS: Record<SupportCaseStatus, SupportCaseStatus[]> = {
-	open: ["open", "pending_support", "resolved", "closed"],
-	pending_support: ["pending_support", "resolved", "closed"],
-	pending_customer: ["pending_customer", "pending_support", "resolved", "closed"],
-	resolved: ["resolved", "open", "pending_support", "closed"],
-	closed: ["closed", "open", "pending_support"],
-};
-
-/** Throws when `to` is not a legal successor of `from`. */
-function assertTransition(from: SupportCaseStatus, to: SupportCaseStatus): void {
-	if (!TRANSITIONS[from].includes(to)) {
-		throw new Error(`Illegal support-case transition: ${from} → ${to}`);
-	}
-}
-
-/** The status a case advances to when the customer replies (reopens a settled case). */
-function nextStatusAfterCustomerReply(
-	current: SupportCaseStatus,
-): SupportCaseStatus {
-	if (
-		current === "resolved" ||
-		current === "closed" ||
-		current === "pending_customer"
-	) {
-		return "pending_support";
-	}
-	return current;
-}
 
 /** The session user's display name + email, for the message author snapshot. */
 async function sessionAuthor(): Promise<{ name: string; email: string }> {
@@ -87,11 +58,6 @@ async function sessionAuthor(): Promise<{ name: string; email: string }> {
 		name: user?.name || user?.email || "Customer",
 		email: user?.email ?? "",
 	};
-}
-
-/** `CASE-000123` display form of a case number. */
-function caseLabel(caseNumber: number): string {
-	return `CASE-${String(caseNumber).padStart(6, "0")}`;
 }
 
 /**
