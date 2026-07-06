@@ -98,7 +98,7 @@ export async function notifyStaffReply(
 			link: url,
 		});
 	} catch (err) {
-		console.warn(`[support] staff-reply notify failed (${caseId}):`, err);
+		console.warn("[support] staff-reply notify failed", { caseId }, err);
 	}
 }
 
@@ -132,7 +132,7 @@ export async function notifyAssigned(
 			link: url,
 		});
 	} catch (err) {
-		console.warn(`[support] assigned notify failed (${caseId}):`, err);
+		console.warn("[support] assigned notify failed", { caseId }, err);
 	}
 }
 
@@ -170,6 +170,6 @@ export async function notifyStatusChange(
 			link: url,
 		});
 	} catch (err) {
-		console.warn(`[support] status-change notify failed (${caseId}):`, err);
+		console.warn("[support] status-change notify failed", { caseId }, err);
 	}
 }
