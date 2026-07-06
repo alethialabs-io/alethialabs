@@ -59,7 +59,12 @@ resource "github_repository_ruleset" "dev" {
   }
 }
 
-# ── main — production. PR + green CI + linear history; no force-push/deletion. ──
+# ── main — production. PR + green CI; no force-push/deletion. ──
+# NOTE: linear history is intentionally NOT required. `staging → main` is promoted as a normal MERGE
+# commit so main shares staging's/dev's history — required_linear_history=true forced squash promotions,
+# and each squash then diverged main's graph from dev/staging, making the NEXT promotion falsely conflict
+# (hit twice: the umami #110 and the consolidated-release #126, both needing a hotfix-off-main). Allowing
+# merge commits keeps the branches convergent so promotions merge cleanly.
 resource "github_repository_ruleset" "main" {
   name        = "protect-main"
   repository  = var.repository
@@ -74,9 +79,8 @@ resource "github_repository_ruleset" "main" {
   }
 
   rules {
-    deletion                = true
-    non_fast_forward        = true
-    required_linear_history = true
+    deletion         = true
+    non_fast_forward = true
 
     pull_request {
       required_approving_review_count = 0 # solo repo: CI is the gate, not a self-approval
