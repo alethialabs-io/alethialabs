@@ -16,6 +16,7 @@ import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { ElenchSurface } from "@/components/agent/elench/elench-surface";
 import { SetupGuideCard } from "@/components/onboarding/setup-guide";
 import { AppSidebar } from "./app-sidebar";
+import { AskAiButton } from "./ask-ai-button";
 import { CommandPalette } from "./command-palette";
 import { JobToaster } from "./job-toaster";
 import { projectScope } from "./nav-config";
@@ -102,6 +103,9 @@ export function AppShell({
 
 			{/* The global Elench assistant surface (modal / docked panel), one per session. */}
 			<ElenchSurface />
+
+			{/* Global "Ask AI" launcher — floats bottom-right beside the setup guide. */}
+			<AskAiButton />
 
 			{/* First-run "Setup guide" — toggled from the topbar button, floats bottom-right. */}
 			<SetupGuideCard />
