@@ -43,16 +43,16 @@ export async function GET(
 	const actor = await getActiveScope(owner);
 	const db = getServiceDb();
 
-	// Tenancy wall: the case must be the owner's own, or belong to the owner's org.
+	// Tenancy wall (org-scoped, like the jobs stream): support_case is an org-level PDP
+	// capability, so authorizeUserId above proves "can view support cases in the org" —
+	// this confirms the specific case belongs to the actor's org. Personal orgs backfill
+	// org_id = user_id (set_org_id trigger), so org_id is the correct boundary for both.
 	const [supportCase] = await db
-		.select({ user_id: supportCases.user_id, org_id: supportCases.org_id })
+		.select({ org_id: supportCases.org_id })
 		.from(supportCases)
 		.where(eq(supportCases.id, caseId))
 		.limit(1);
-	if (
-		!supportCase ||
-		(supportCase.user_id !== owner && supportCase.org_id !== actor.orgId)
-	) {
+	if (!supportCase || supportCase.org_id !== actor.orgId) {
 		return new Response("Not found", { status: 404 });
 	}
 
