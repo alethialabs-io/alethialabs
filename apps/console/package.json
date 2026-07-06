@@ -17,7 +17,7 @@
 		"gen:catalog": "node scripts/gen-catalog.mjs",
 		"gen:cli-fixtures": "tsx scripts/gen-cli-fixtures.ts",
 		"gen:go-enums": "tsx scripts/gen-go-enums.ts",
-		"db:generate": "drizzle-kit generate && node scripts/check-migrations.mjs",
+		"db:generate": "bash ../../scripts/db-generate.sh",
 		"db:migrate": "node scripts/migrate.mjs",
 		"db:reset": "node scripts/reset.mjs && node scripts/migrate.mjs",
 		"db:studio": "drizzle-kit studio",

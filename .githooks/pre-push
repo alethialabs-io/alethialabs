@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Committed pre-push hook — reject direct pushes to protected branches, reinforcing the
+# `feature → dev` flow locally (ahead of the branch-flow-guard CI check). Escape:
+# `git push --no-verify`.
+#
+# git feeds one line per pushed ref on stdin: <local ref> <local sha> <remote ref> <remote sha>
+set -euo pipefail
+
+while read -r _localref _localsha remoteref _remotesha; do
+	case "$remoteref" in
+		refs/heads/dev | refs/heads/staging | refs/heads/main)
+			echo "✗ pre-push: direct push to '${remoteref#refs/heads/}' is not allowed." >&2
+			echo "  Open a PR instead (feature → dev). (emergency override: git push --no-verify)" >&2
+			exit 1
+			;;
+	esac
+done
+
+exit 0
