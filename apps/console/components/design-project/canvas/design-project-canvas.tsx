@@ -28,7 +28,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@repo/ui/dialog";
-import { useAssistantStore } from "@/lib/stores/use-assistant-store";
+import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { orgHref, projectHref } from "@/lib/routing";
@@ -77,7 +77,7 @@ function CanvasInner({
 	const { fitView } = useReactFlow();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [cmdOpen, setCmdOpen] = useState(false);
-	const openAssistant = useAssistantStore((s) => s.setOpen);
+	const openPanel = useElenchStore((s) => s.openPanel);
 	const [shortcutsOpen, setShortcutsOpen] = useState(false);
 	const [deploying, setDeploying] = useState(false);
 	const selectedIds = useCanvasStore((s) => s.selectedIds);
@@ -87,21 +87,19 @@ function CanvasInner({
 	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
 
 	// The standalone (create-flow) dock — the project shell owns it otherwise (`dockInShell`).
-	const dock = useDockState(true, !!projectId);
+	const dock = useDockState(true);
 
-	/** Open the assistant, closing the inspector — they share the single docked region. */
+	/** Open the Elench assistant as a docked panel for this project (or org pre-creation). */
 	const openAssistantExclusive = useCallback(() => {
-		openInspector(null);
-		openAssistant(true);
-	}, [openInspector, openAssistant]);
+		openPanel(projectId ? { kind: "project", projectId } : { kind: "org" });
+	}, [openPanel, projectId]);
 
-	/** Open a node's inspector, closing the assistant. */
+	/** Open a node's inspector (the assistant is a separate overlay now). */
 	const openInspectorExclusive = useCallback(
 		(id: string) => {
-			openAssistant(false);
 			openInspector(id);
 		},
-		[openAssistant, openInspector],
+		[openInspector],
 	);
 
 	// Shortcut hints render with OS-correct modifiers (⌘ on macOS, Ctrl elsewhere). The key

@@ -13,6 +13,7 @@ import { Sheet, SheetContent, SheetTitle } from "@repo/ui/sheet";
 import { cn } from "@repo/ui/utils";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
+import { ElenchSurface } from "@/components/agent/elench/elench-surface";
 import { SetupGuideCard } from "@/components/onboarding/setup-guide";
 import { AppSidebar } from "./app-sidebar";
 import { CommandPalette } from "./command-palette";
@@ -98,6 +99,9 @@ export function AppShell({
 
 			{/* Single job-lifecycle toast driver (loading → success/failed in place). */}
 			<JobToaster />
+
+			{/* The global Elench assistant surface (modal / docked panel), one per session. */}
+			<ElenchSurface />
 
 			{/* First-run "Setup guide" — toggled from the topbar button, floats bottom-right. */}
 			<SetupGuideCard />

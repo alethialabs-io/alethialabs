@@ -36,7 +36,7 @@ export function ProjectShell({
 
 	// Architecture is the only env-scoped design surface; the inspector belongs to it alone.
 	const onArchitecture = pathname.endsWith("/architecture");
-	const dock = useDockState(onArchitecture, true);
+	const dock = useDockState(onArchitecture);
 
 	// Leaving Architecture closes the canvas-only inspector (the assistant stays open).
 	useEffect(() => {

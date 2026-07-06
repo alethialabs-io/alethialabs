@@ -3,20 +3,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { ToolUIPart } from "ai";
-import { Check, Sparkles, Telescope, X } from "lucide-react";
+import { Check, Telescope } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
 import { z } from "zod";
-import { AgentChat, AgentToolCard } from "@/components/agent/agent-chat";
-import { TOOL_VIEW_TYPES, ToolView } from "@/components/agent/agent-tool-views";
+import { AgentToolCard } from "@/components/agent/agent-chat";
+import type { RenderToolPart } from "@/components/agent/agent-chat";
+import {
+	TOOL_VIEW_TYPES,
+	ToolView,
+} from "@/components/agent/agent-tool-views";
 import { ApprovalCard } from "@/components/agent/approval-card";
 import { VerifyBlock } from "@/components/agent/artifact-panel";
 import { applyProposal } from "@/components/design-project/canvas/ai/apply-proposal";
-import { aiProposalSchema } from "@/lib/ai/proposal";
 import { operationProposalSchema } from "@/lib/ai/operation";
-import { useAssistantStore } from "@/lib/stores/use-assistant-store";
+import { aiProposalSchema } from "@/lib/ai/proposal";
 import { Button } from "@repo/ui/button";
-import { useProjectAssistant } from "./use-project-assistant";
 
 const scanResultSchema = z.object({ openInCanvasUrl: z.string().optional() });
 
@@ -51,27 +52,24 @@ const planResultSchema = z.object({
 	verify_result: verifyReportSchema.nullish(),
 });
 
-const SUGGESTIONS = [
-	"Scan my repo: https://github.com/…",
-	"Add a Postgres database",
-	"Plan this project and show me the verification",
-	"What clusters are running?",
-];
+interface ProjectToolPartsDeps {
+	/** Accepted-proposal map (id → true) so re-renders keep the "Added" state. */
+	accepted: Record<string, boolean>;
+	setAccepted: (updater: (a: Record<string, boolean>) => Record<string, boolean>) => void;
+}
 
 /**
- * The project-page assistant — the agent body of the canvas's inline docked side panel. Drives
- * the MVP loop for THIS project: scan repos → propose infra, edit the design (propose_changes →
- * canvas), and propose plan/deploy (ApprovalCard) with the elench verdict. Reuses the shared
- * `<AgentChat>` + the canvas/agent proposal renderers. Stays mounted so chat state survives the
- * panel closing/switching to the inspector.
+ * The project-assistant tool-render lanes: design proposal → Accept (applies to the
+ * canvas), plan/deploy proposal → approval card, plan result → inline elench verdict
+ * (VerifyBlock), repo scan → review link, and polished tables/chips for list_* tools.
+ * Extracted from the docked assistant so the shared Elench surface selects it by context.
  */
-export function AssistantPanel({ projectId }: { projectId: string }) {
-	const setOpen = useAssistantStore((s) => s.setOpen);
-	const { messages, sendMessage, status, error, regenerate } =
-		useProjectAssistant(projectId);
-	const [accepted, setAccepted] = useState<Record<string, boolean>>({});
-
-	const renderToolPart = (part: ToolUIPart) => {
+export function projectRenderToolPart({
+	accepted,
+	setAccepted,
+}: ProjectToolPartsDeps): RenderToolPart {
+	// eslint-disable-next-line react/display-name
+	return function renderProjectToolPart(part: ToolUIPart) {
 		// Design proposal → accept lane (applies to the canvas).
 		if (part.type === "tool-propose_changes") {
 			if (part.state !== "output-available") return null;
@@ -160,47 +158,4 @@ export function AssistantPanel({ projectId }: { projectId: string }) {
 		if (TOOL_VIEW_TYPES.has(part.type)) return <ToolView part={part} />;
 		return undefined;
 	};
-
-	return (
-		<div className="flex h-full flex-col">
-			<div className="flex items-start justify-between gap-2 border-b border-border p-4">
-				<div className="min-w-0">
-					<span className="vx-eyebrow flex items-center gap-1.5">
-						<Sparkles className="h-3 w-3" />
-						Project assistant
-					</span>
-					<h2 className="mt-1 text-base font-semibold">
-						Build & operate this project
-					</h2>
-					<p className="mt-0.5 text-xs text-muted-foreground">
-						Scan a repo to infer infrastructure, edit the design, and
-						plan/deploy with verification — you approve every change.
-					</p>
-				</div>
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					className="h-7 w-7 shrink-0"
-					onClick={() => setOpen(false)}
-					aria-label="Close assistant"
-				>
-					<X className="h-4 w-4" />
-				</Button>
-			</div>
-
-			<div className="flex min-h-0 flex-1 flex-col">
-				<AgentChat
-					messages={messages}
-					status={status}
-					error={error}
-					onSend={(t) => sendMessage({ text: t })}
-					onRetry={() => void regenerate()}
-					suggestions={SUGGESTIONS}
-					placeholder="Scan a repo, edit the design, or ask about this project…"
-					renderToolPart={renderToolPart}
-				/>
-			</div>
-		</div>
-	);
 }
