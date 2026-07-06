@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Admin (internal staff Next.js dashboard) self-host image. Build context = repo root:
