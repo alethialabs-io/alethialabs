@@ -27,6 +27,7 @@ export * from "./oauth";
 export * from "./authz";
 export * from "./organizations";
 export * from "./organization-billing";
+export * from "./invoices";
 export * from "./teams";
 export * from "./sso";
 export * from "./alerts";
