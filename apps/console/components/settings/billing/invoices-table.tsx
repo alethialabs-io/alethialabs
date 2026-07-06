@@ -91,10 +91,13 @@ export function InvoicesTable({
 	rows,
 	onPreview,
 	pageSize = 10,
+	emptyMessage,
 }: {
 	rows: InvoiceInfo[];
 	onPreview: (row: InvoiceInfo) => void;
 	pageSize?: number;
+	/** Empty-state row text (unified empty table). */
+	emptyMessage?: string;
 }) {
 	const { org } = useParams<{ org: string }>();
 
@@ -182,6 +185,7 @@ export function InvoicesTable({
 			data={rows}
 			onRowClick={onPreview}
 			pageSize={pageSize}
+			emptyMessage={emptyMessage}
 		/>
 	);
 }

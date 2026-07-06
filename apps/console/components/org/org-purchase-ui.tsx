@@ -46,9 +46,24 @@ export function PurchaseLayout({
 	children: React.ReactNode;
 }) {
 	return (
-		<div className="grid grid-cols-1 lg:grid-cols-[260px_1fr]">
-			<aside className="hidden border-r border-border bg-surface-sunken px-7 py-8 lg:block">
+		<div className="grid grid-cols-1 lg:min-h-full lg:grid-cols-[260px_1fr]">
+			{/* Left strip runs full height (grid rows stretch): checklist up top, a plan
+			    summary anchored at the bottom so the panel never looks cut off / empty. */}
+			<aside className="hidden border-r border-border-strong bg-surface-sunken px-7 py-8 lg:flex lg:flex-col">
 				<PlanChecklist meta={meta} />
+				<div className="mt-auto border-t border-border pt-5">
+					<div className="flex items-baseline justify-between gap-2">
+						<span className="font-display text-[15px] font-semibold tracking-[-0.01em] text-text-primary">
+							{meta.name}
+						</span>
+						<span className="font-mono text-[11px] text-text-tertiary">
+							{meta.priceLabel}
+						</span>
+					</div>
+					<p className="mt-1.5 text-[11.5px] leading-snug text-text-tertiary">
+						{meta.tagline}
+					</p>
+				</div>
 			</aside>
 			<div className="relative px-7 py-8">
 				<button

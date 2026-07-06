@@ -56,12 +56,13 @@ export function RecentInvoices() {
 		<SettingsSection title="Invoices" action={rows && rows.length > 0 ? viewAll : undefined}>
 			{rows === null ? (
 				<Skeleton className="h-40 w-full" />
-			) : rows.length === 0 ? (
-				<p className="text-[13px] text-text-tertiary">
-					No invoices yet — they appear here after your first payment.
-				</p>
 			) : (
-				<InvoicesTable rows={rows} onPreview={openPreview} pageSize={5} />
+				<InvoicesTable
+					rows={rows}
+					onPreview={openPreview}
+					pageSize={5}
+					emptyMessage="No invoices yet — they appear here after your first payment."
+				/>
 			)}
 
 			<InvoicePreviewDialog

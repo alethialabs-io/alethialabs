@@ -146,14 +146,17 @@ export function InvoicesPanel() {
 
 			{rows === null ? (
 				<Skeleton className="h-56 w-full" />
-			) : rows.length === 0 ? (
-				<div className="rounded-lg border border-border bg-surface px-6 py-10 text-center text-[13px] text-text-tertiary">
-					{filtersActive
-						? "No invoices match these filters."
-						: "No invoices yet — invoices appear here after your first payment."}
-				</div>
 			) : (
-				<InvoicesTable rows={rows} onPreview={openPreview} pageSize={20} />
+				<InvoicesTable
+					rows={rows}
+					onPreview={openPreview}
+					pageSize={20}
+					emptyMessage={
+						filtersActive
+							? "No invoices match these filters."
+							: "No invoices yet — invoices appear here after your first payment."
+					}
+				/>
 			)}
 
 			<InvoicePreviewDialog

@@ -109,7 +109,12 @@ export function TransactionsTable() {
 			{!rows ? (
 				<Skeleton className="h-40 w-full" />
 			) : (
-				<DataTable columns={columns} data={rows} pageSize={10} />
+				<DataTable
+					columns={columns}
+					data={rows}
+					pageSize={10}
+					emptyMessage="No transactions yet."
+				/>
 			)}
 		</SettingsSection>
 	);

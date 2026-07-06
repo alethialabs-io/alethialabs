@@ -157,12 +157,14 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 			const flat = sub.items.data.find(
 				(i) => i.price.recurring?.usage_type !== "metered",
 			);
-			if (typeof flat?.price.unit_amount === "number") {
+			// Only a LIVE (active/trialing) sub reflects what the org is actually billed. A
+			// canceled/past_due sub has reverted to Hobby, so its old price must NOT leak
+			// through (otherwise a canceled org shows "Hobby · $20/mo"). Same gate applies to
+			// the period end — a lapsed sub shows no renewal/cancellation date.
+			const live = status === "active" || status === "trialing";
+			if (live && typeof flat?.price.unit_amount === "number") {
 				unitAmountUsd = flat.price.unit_amount / 100;
 			}
-			// A period end only means something while the sub is live (active/trialing); a
-			// past_due/canceled sub shows no renewal or cancellation date.
-			const live = status === "active" || status === "trialing";
 			currentPeriodEnd =
 				live && flat?.current_period_end
 					? new Date(flat.current_period_end * 1000).toISOString()
