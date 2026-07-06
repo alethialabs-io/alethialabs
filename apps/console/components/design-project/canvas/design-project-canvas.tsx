@@ -4,7 +4,7 @@
 
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import { motion } from "motion/react";
-import { Plus, Settings, Sparkles } from "lucide-react";
+import { Plus, Settings } from "lucide-react";
 import { cn } from "@repo/ui/utils";
 import { track } from "@/lib/analytics/track";
 import { useRouter } from "next/navigation";
@@ -262,7 +262,7 @@ function CanvasInner({
 			{/* Bottom-left: scanned source repos + monorepo services (hidden when none). */}
 			<SourceReposCard />
 
-			{/* Top-right: project settings + add a service + ask AI */}
+			{/* Top-right: project settings + add a service. (Ask AI lives in the app shell now.) */}
 			<div className="absolute right-3 top-3 z-10 flex items-center gap-2">
 				<Button
 					type="button"
@@ -284,18 +284,6 @@ function CanvasInner({
 					<Plus className="mr-1 h-3.5 w-3.5" />
 					Add
 				</Button>
-				{projectId && (
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						className="h-8 text-xs"
-						onClick={openAssistantExclusive}
-					>
-						<Sparkles className="mr-1 h-3.5 w-3.5" />
-						AI
-					</Button>
-				)}
 			</div>
 
 			{/* Bottom-left: settings / zoom / fit / undo-redo / layers */}
