@@ -213,6 +213,23 @@ services:
       HOSTNAME: 0.0.0.0
     restart: unless-stopped
 
+  # Support-admin (internal staff support dashboard). OPT-IN internal path —
+  # runs on its own subdomain behind Cloudflare Access (like the Umami dashboard);
+  # the app trusts Cf-Access-Authenticated-User-Email + SUPPORT_STAFF_EMAILS. Enable
+  # with the `admin` profile AND uncomment `import support-admin*.caddy` in the active
+  # Caddyfile (copy support-admin.caddy.example → support-admin.caddy).
+  support-admin:
+    profiles: ["admin"]
+    build:
+      context: .
+      dockerfile: apps/support-admin/Dockerfile
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    restart: unless-stopped
+
   # Runner (Go). Talks to the console over HTTP + S3 only; self-registers on
   # boot. Bundles Terraform/cloud CLIs, so the image is large to build.
   runner:
