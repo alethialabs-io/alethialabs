@@ -1,10 +1,28 @@
-# Self-hosted analytics (Umami + OpenReplay)
+# Analytics — PostHog (hosted suite) or Umami + OpenReplay (OSS self-host)
 
-Open-source, self-hostable telemetry for the console — **product analytics** (events, funnels,
-journeys, retention) + **Core Web Vitals** via **Umami**, and **session replay** (watch where users
-get stuck) via **OpenReplay**. Both are **off by default**: the app's analytics layer no-ops unless the
-`NEXT_PUBLIC_*` env is set (`apps/console/lib/analytics/config.ts`), so the open-source build ships
-zero telemetry.
+The console's analytics layer is **provider-agnostic** (`apps/console/lib/analytics/config.ts` →
+`track()`/`identify()`), and everything is **off by default** — no `NEXT_PUBLIC_*` env ⇒ zero telemetry
+(the OSS build ships none). Three providers, enabled by env:
+
+- **PostHog** — the all-in-one suite hosted **alethialabs.io runs in prod**: product analytics + funnels
+  + **session replay** + **web-vitals/performance** + error tracking, in one dashboard. Setup is a single
+  project key — no infra. Set `NEXT_PUBLIC_POSTHOG_KEY` (+ optional `NEXT_PUBLIC_POSTHOG_HOST`, default
+  `https://eu.i.posthog.com`) and leave Umami/OpenReplay unset (the provider won't double-track).
+  - **1-time setup:** create a PostHog project (EU) → copy the `phc_…` project API key; in project
+    settings enable **Session Replay**, set a **billing limit** = free tier (1M events / 5k recordings —
+    with no card PostHog hard-stops at the cap, so never a surprise bill), and a replay **sample rate**
+    to stretch recordings. Put the key in the vault (`NEXT_PUBLIC_POSTHOG_KEY`) → redeploy.
+  - Session replay masks all inputs by default; add `data-ph-mask` to any element whose *text* is
+    sensitive (billing amounts, tokens). Web Vitals populate PostHog's Web Vitals dashboard natively.
+  - **Future — move to AWS CloudWatch RUM:** because the layer is provider-agnostic, it's a provider
+    swap, not a rewrite — add a RUM provider (Cognito identity pool + app-monitor snippet) and switch
+    `NEXT_PUBLIC_POSTHOG_*` for the RUM config. Considered for when the free tier is outgrown.
+
+The **OSS self-host** path (no third-party cloud) stays fully supported below:
+
+Open-source, self-hostable telemetry — **product analytics** (events, funnels, journeys, retention) +
+**Core Web Vitals** via **Umami**, and **session replay** via **OpenReplay**. Enabled by their own
+`NEXT_PUBLIC_*` env (`apps/console/lib/analytics/config.ts`).
 
 ## Production (alethialabs.io) — the proper wiring
 
