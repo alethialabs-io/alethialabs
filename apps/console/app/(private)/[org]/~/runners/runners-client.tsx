@@ -311,7 +311,7 @@ export function RunnersClient() {
 /** First-run state when no runners exist at all. */
 function EmptyRunners() {
 	return (
-		<div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center">
+		<div className="flex flex-col items-center justify-center py-16 text-center">
 			<div className="mb-4 rounded-full bg-muted/50 p-3">
 				<Server className="h-7 w-7 text-muted-foreground" />
 			</div>

@@ -35,7 +35,8 @@ BEGIN
     'project_repositories', 'project_databases', 'project_caches', 'project_queues', 'project_topics',
     'project_nosql_tables', 'project_container_registries', 'project_secrets',
     'project_storage_buckets', 'jobs',
-    'environment_protection_rules', 'environment_promotions'
+    'environment_protection_rules', 'environment_promotions',
+    'support_cases'
   ]) LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS %1$s_updated_at ON public.%1$I', tbl);
     EXECUTE format(
@@ -584,7 +585,7 @@ $$ LANGUAGE plpgsql;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['projects','cloud_identities', 'connector_credentials', 'jobs', 'runners']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['projects','cloud_identities', 'connector_credentials', 'jobs', 'runners', 'support_cases']) LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS %1$s_set_org_id ON public.%1$I', tbl);
     EXECUTE format(
       'CREATE TRIGGER %1$s_set_org_id BEFORE INSERT ON public.%1$I
@@ -604,7 +605,7 @@ END $$;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['projects','jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['projects','jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant', 'support_cases']) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(
@@ -720,6 +721,48 @@ CREATE POLICY logs_select ON public.job_logs FOR SELECT
     WHERE j.id = job_logs.job_id
       AND (j.user_id = current_setting('app.current_owner', true)::uuid
            OR j.org_id = current_setting('app.current_org', true)::uuid)));
+
+-- Support case child tables: tenancy flows through the parent support_cases (like
+-- job_logs). FOR ALL because customers INSERT replies/reads. `is_internal` staff notes
+-- ARE visible under this policy, so the customer query builder always filters them out
+-- (lib/queries/support.ts) — RLS is the tenancy wall, the query is the visibility filter.
+-- Staff writes go through the RLS-bypassing service role, so this policy never needs to
+-- permit staff.
+DO $$
+DECLARE tbl TEXT;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY['support_messages','support_case_attachments','support_case_reads']) LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
+    EXECUTE format(
+      'CREATE POLICY owner_all ON public.%I FOR ALL
+         USING (case_id IN (SELECT id FROM public.support_cases
+                WHERE user_id = current_setting(''app.current_owner'', true)::uuid
+                   OR org_id = current_setting(''app.current_org'', true)::uuid))
+         WITH CHECK (case_id IN (SELECT id FROM public.support_cases
+                WHERE user_id = current_setting(''app.current_owner'', true)::uuid
+                   OR org_id = current_setting(''app.current_org'', true)::uuid))', tbl);
+  END LOOP;
+END $$;
+
+-- SSE fan-out: notify listeners on every new thread message (one LISTEN conn per app
+-- instance fans out). Payload carries ids only (8 KB cap); the stream route fetches the
+-- row since its last seen id. Mirrors insert_job_log's job_logs notify.
+CREATE OR REPLACE FUNCTION public.notify_support_message()
+RETURNS TRIGGER AS $$
+BEGIN
+  PERFORM pg_notify('support_messages', json_build_object(
+    'caseId', NEW.case_id,
+    'messageId', NEW.id
+  )::text);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS support_messages_notify ON public.support_messages;
+CREATE TRIGGER support_messages_notify
+  AFTER INSERT ON public.support_messages
+  FOR EACH ROW EXECUTE FUNCTION public.notify_support_message();
 
 ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS audit_select ON public.audit_log;

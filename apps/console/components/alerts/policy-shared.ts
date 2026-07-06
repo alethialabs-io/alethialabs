@@ -11,6 +11,7 @@ import {
 	Cpu,
 	Fingerprint,
 	KeyRound,
+	LifeBuoy,
 	LogIn,
 	type LucideIcon,
 	ShieldCheck,
@@ -29,6 +30,7 @@ export const CATEGORY_ICON: Record<CategoryIcon, LucideIcon> = {
 	CircleDollarSign,
 	Cpu,
 	LogIn,
+	LifeBuoy,
 };
 
 /** Narrows a select value to a real severity (drops the "any" sentinel). */

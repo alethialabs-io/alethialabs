@@ -6,7 +6,7 @@ import { useNotificationsStore } from "@/lib/stores/use-notifications-store";
 
 beforeEach(() => {
 	localStorage.clear();
-	useNotificationsStore.setState({ readJobIds: [] });
+	useNotificationsStore.setState({ readJobIds: [], readSupportCaseIds: [] });
 });
 
 describe("useNotificationsStore", () => {
@@ -25,13 +25,15 @@ describe("useNotificationsStore", () => {
 		expect(new Set(ids)).toEqual(new Set(["a", "b", "c"]));
 	});
 
-	it("persists only readJobIds to localStorage (partialize)", () => {
+	it("persists only the read-id sets to localStorage (partialize)", () => {
 		useNotificationsStore.getState().markRead("x");
 		const raw = localStorage.getItem("notifications-store");
 		expect(raw).toBeTruthy();
 		const parsed = JSON.parse(raw ?? "{}");
 		expect(parsed.state.readJobIds).toContain("x");
-		expect(Object.keys(parsed.state)).toEqual(["readJobIds"]);
+		expect(new Set(Object.keys(parsed.state))).toEqual(
+			new Set(["readJobIds", "readSupportCaseIds"]),
+		);
 	});
 
 	it("caps the remembered set at 200 ids", () => {

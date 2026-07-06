@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Provider-agnostic tracking entry point. Instrumentation calls track()/identify() and never names a
-// vendor; this fans out to whichever providers are live (Umami's global + OpenReplay's tracker). It is
-// SSR-safe and defensively wrapped — analytics must NEVER throw into the app.
+// vendor; this fans out to whichever providers are live (PostHog, and/or Umami's global + OpenReplay's
+// tracker). It is SSR-safe and defensively wrapped — analytics must NEVER throw into the app.
 
 import type { AnalyticsEvent } from "./events";
 
@@ -21,10 +21,18 @@ interface OpenReplayLike {
 	setUserID: (id: string) => void;
 }
 
+/** The subset of the PostHog browser SDK we use (set on window by AnalyticsProvider). */
+interface PostHogLike {
+	capture: (event: string, props?: Record<string, unknown>) => void;
+	identify: (id: string, props?: Record<string, unknown>) => void;
+	reset?: () => void;
+}
+
 declare global {
 	interface Window {
 		umami?: UmamiGlobal;
 		__openreplay?: OpenReplayLike;
+		__posthog?: PostHogLike;
 	}
 }
 
@@ -32,9 +40,14 @@ declare global {
 export function track(event: AnalyticsEvent, props?: AnalyticsProps): void {
 	if (typeof window === "undefined") return;
 	try {
-		window.umami?.track(event, props);
+		window.__posthog?.capture(event, props);
 	} catch {
 		/* analytics must never break the app */
+	}
+	try {
+		window.umami?.track(event, props);
+	} catch {
+		/* noop */
 	}
 	try {
 		window.__openreplay?.event(event, props ?? {});
@@ -46,6 +59,11 @@ export function track(event: AnalyticsEvent, props?: AnalyticsProps): void {
 /** Associate the current session with a user id (call after sign-in). */
 export function identify(userId: string, traits?: AnalyticsProps): void {
 	if (typeof window === "undefined") return;
+	try {
+		window.__posthog?.identify(userId, traits);
+	} catch {
+		/* noop */
+	}
 	try {
 		window.umami?.identify?.(userId, traits);
 	} catch {

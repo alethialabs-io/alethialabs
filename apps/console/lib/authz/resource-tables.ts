@@ -8,13 +8,20 @@
 import { eq } from "drizzle-orm";
 import type { Resource } from "@/lib/authz/registry";
 import { getServiceDb } from "@/lib/db";
-import { cloudIdentities, jobs, runners, projects } from "@/lib/db/schema";
+import {
+	cloudIdentities,
+	jobs,
+	runners,
+	projects,
+	supportCases,
+} from "@/lib/db/schema";
 
 const RESOURCE_TABLE = {
 	project: projects,
 	job: jobs,
 	runner: runners,
 	cloud_identity: cloudIdentities,
+	support_case: supportCases,
 } as const;
 
 /** Every instance id of `resourceType` in the org (empty for non-listable types). */

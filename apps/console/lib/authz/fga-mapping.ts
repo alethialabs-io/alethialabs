@@ -22,6 +22,10 @@ const ORG_LEVEL: ReadonlySet<Resource> = new Set<Resource>([
 	"alert",
 	// Fleet pools are global operator config — no per-instance object, resolved org-wide.
 	"fleet",
+	// Support cases are owner-scoped (RLS is the tenancy/visibility wall) and never
+	// individually shared with specific members, so their permissions resolve org-wide —
+	// the check with a case id still asks "can this member view/reply support cases".
+	"support_case",
 ]);
 
 export interface FgaCheck {

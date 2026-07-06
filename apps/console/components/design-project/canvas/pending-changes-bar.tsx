@@ -60,60 +60,59 @@ export function PendingChangesBar({
 	if (changes.length === 0) return null;
 
 	return (
-		<div className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2">
-			<div className="flex items-center gap-1 border border-border bg-background/95 px-1.5 py-1.5 shadow-lg backdrop-blur">
+		<div className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2">
+			<div className="flex items-center gap-1 rounded-none border border-border bg-card/95 p-1 shadow-[0_2px_10px_rgba(0,0,0,0.10)] backdrop-blur">
 				<Popover>
 					<PopoverTrigger asChild>
 						<button
 							type="button"
-							className="flex items-center gap-2 px-2 py-1 text-sm hover:bg-muted"
+							className="flex items-center gap-2 rounded-sm px-2.5 py-1.5 text-sm transition-colors hover:bg-muted"
 						>
 							<span className="font-medium">Pending changes</span>
-							<span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-foreground px-1 font-mono text-[10px] text-background">
+							<span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-foreground px-1 font-mono text-[10px] tabular-nums text-background">
 								{changes.length}
 							</span>
 						</button>
 					</PopoverTrigger>
-					<PopoverContent side="top" align="center" className="w-80 p-0">
-						<div className="border-b border-border px-3 py-2.5">
-							<p className="text-sm font-medium">Pending Changes</p>
-							<p className="mt-0.5 text-xs text-muted-foreground">
-								Changes are staged here before going live. Review what&apos;s
-								changed, then hit Deploy.
+					<PopoverContent side="top" align="center" className="w-80 rounded-none p-0">
+						<div className="border-b border-border px-3.5 py-3">
+							<div className="flex items-center justify-between">
+								<p className="text-[13px] font-medium">Pending changes</p>
+								{newCount > 0 && (
+									<span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+										+{newCount} new
+									</span>
+								)}
+							</div>
+							<p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+								Staged before going live. Review, then Deploy.
 							</p>
-							{newCount > 0 && (
-								<span className="mt-1.5 inline-block font-mono text-[11px] text-muted-foreground">
-									+{newCount} new
-								</span>
-							)}
 						</div>
-						<div className="max-h-64 space-y-0.5 overflow-y-auto p-1">
+						<div className="max-h-72 overflow-y-auto py-1">
 							{changes.map((c) => {
 								const def = NODE_REGISTRY[c.kind];
 								const Icon = def.icon;
 								return (
 									<div
 										key={`${c.op}-${c.id}`}
-										className="flex items-start gap-2 rounded-sm px-2 py-1.5"
+										className="flex items-center gap-2.5 px-3.5 py-2"
 									>
 										<span
 											className={cn(
-												"mt-0.5 font-mono text-xs",
+												"flex h-4 w-4 shrink-0 items-center justify-center border font-mono text-[11px] leading-none",
 												c.op === "removed"
-													? "text-destructive"
-													: "text-muted-foreground",
+													? "border-destructive/40 text-destructive"
+													: "border-border text-muted-foreground",
 											)}
+											aria-hidden
 										>
 											{OP_GLYPH[c.op]}
 										</span>
-										<Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+										<Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
 										<div className="min-w-0 flex-1">
-											<div className="truncate text-sm">
-												{c.name}{" "}
-												<span className="text-muted-foreground">({def.label})</span>
-											</div>
-											<div className="text-[11px] text-muted-foreground">
-												{OP_LABEL[c.op]} {def.label.toLowerCase()}
+											<div className="truncate text-[13px] leading-tight">{c.name}</div>
+											<div className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+												{OP_LABEL[c.op]} · {def.label}
 											</div>
 										</div>
 									</div>

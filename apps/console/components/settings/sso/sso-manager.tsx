@@ -140,7 +140,7 @@ export function SsoManager() {
 					<Skeleton className="h-48 w-full" />
 				</div>
 			) : providers.length === 0 ? (
-				<div className="rounded-lg border border-dashed border-border bg-surface-sunken px-6 py-12 text-center">
+				<div className="rounded-lg bg-surface-sunken px-6 py-12 text-center">
 					<KeyRound className="mx-auto mb-3 size-5 text-text-tertiary" />
 					<p className="mb-1 text-[14px] font-medium text-text-primary">
 						No identity provider connected
