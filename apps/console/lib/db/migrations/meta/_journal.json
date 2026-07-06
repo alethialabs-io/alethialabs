@@ -414,6 +414,13 @@
       "when": 1782892166442,
       "tag": "0058_own_invoices",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1782892166443,
+      "tag": "0059_support_cases",
+      "breakpoints": true
     }
   ]
 }

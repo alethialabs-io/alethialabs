@@ -22,6 +22,9 @@ export const RESOURCES = [
 	// Managed warm-pool config (dataroom/spec/mvp/26-fleet-controller.md). Provisions real cloud
 	// VMs (cost), so it is an owner/admin-only operator capability — excluded from operators.
 	"fleet",
+	// Support cases (help-desk). Any org member may open/track/reply to their own cases;
+	// `manage` is the staff-triage capability (owner/admin only — staff answer out-of-band).
+	"support_case",
 ] as const;
 export type Resource = (typeof RESOURCES)[number];
 
@@ -45,6 +48,9 @@ export const ACTIONS = [
 	"manage_alerts",
 	// Cloud-identity connection verify (server-side; re-run via the "Re-verify" affordance).
 	"test",
+	// Support cases: post a reply to a case thread vs triage/assign/resolve (staff).
+	"reply",
+	"manage_support",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -72,7 +78,11 @@ const MATRIX: Partial<Record<Resource, readonly Action[]>> = {
 	billing: ["manage_billing"],
 	alert: ["view_alerts", "manage_alerts"],
 	fleet: ["view", "create", "edit", "destroy"],
+	support_case: ["view", "create", "reply", "manage_support"],
 };
+
+/** Customer-facing support actions every org member holds on their own cases. */
+const SUPPORT_MEMBER_ACTIONS: readonly Action[] = ["view", "create", "reply"];
 
 /** The full permission registry, derived from the matrix. */
 export const PERMISSIONS: PermissionDef[] = RESOURCES.flatMap((resource) =>
@@ -113,11 +123,15 @@ export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 				p.action,
 			) &&
 				!["cloud_identity", "member", "billing", "activity", "fleet"].includes(p.resource)) ||
-			p.action === "view_alerts",
+			p.action === "view_alerts" ||
+			(p.resource === "support_case" && SUPPORT_MEMBER_ACTIONS.includes(p.action)),
 	).map((p) => p.key),
-	// Read-only (including alert config).
+	// Read-only (including alert config), but may still open + reply to their own support cases.
 	viewer: PERMISSIONS.filter(
-		(p) => p.action === "view" || p.action === "view_alerts",
+		(p) =>
+			p.action === "view" ||
+			p.action === "view_alerts" ||
+			(p.resource === "support_case" && SUPPORT_MEMBER_ACTIONS.includes(p.action)),
 	).map((p) => p.key),
 };
 
