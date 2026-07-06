@@ -17,7 +17,10 @@ import { getServiceDb } from "@/lib/db";
 import { organization, supportCases } from "@/lib/db/schema";
 import {
 	sendCaseAssignedEmail,
+	sendCaseClosedEmail,
+	sendCaseReopenedEmail,
 	sendCaseRepliedEmail,
+	sendCaseResolvedEmail,
 	wantsEmail,
 } from "@/lib/email/support-email";
 import { globalHref, PERSONAL_ORG_SLUG } from "@/lib/routing";
@@ -95,7 +98,7 @@ export async function notifyStaffReply(
 			link: url,
 		});
 	} catch (err) {
-		console.warn(`[support] staff-reply notify failed (${caseId}):`, err);
+		console.warn("[support] staff-reply notify failed", { caseId }, err);
 	}
 }
 
@@ -129,6 +132,44 @@ export async function notifyAssigned(
 			link: url,
 		});
 	} catch (err) {
-		console.warn(`[support] assigned notify failed (${caseId}):`, err);
+		console.warn("[support] assigned notify failed", { caseId }, err);
+	}
+}
+
+/**
+ * Notifies the customer that staff changed their case's lifecycle status (resolved /
+ * reopened / closed) — the Layer A email + the Layer B org event, mirroring the
+ * customer-driven transitions in support.ts. Best-effort.
+ */
+export async function notifyStatusChange(
+	caseId: string,
+	kind: "resolved" | "reopened" | "closed",
+): Promise<void> {
+	try {
+		const row = await loadCase(caseId);
+		if (!row) return;
+		const orgId = row.org_id ?? row.user_id;
+		const url = await resolveCaseUrlForOrg(caseId, orgId);
+		if (wantsEmail(row.contact)) {
+			const args = {
+				caseNumber: row.case_number,
+				url,
+				cc: row.contact.ccEmails,
+			};
+			const to = row.contact.notifyEmail;
+			if (kind === "resolved") await sendCaseResolvedEmail(to, args);
+			else if (kind === "reopened") await sendCaseReopenedEmail(to, args);
+			else await sendCaseClosedEmail(to, args);
+		}
+		emitAlertEventSafe(orgId, `system.support.case.${kind}`, {
+			title: `Support case ${caseLabel(row.case_number)} ${kind}`,
+			summary: row.subject,
+			severity: kind === "reopened" ? "warning" : "info",
+			resource_type: "support_case",
+			resource_id: caseId,
+			link: url,
+		});
+	} catch (err) {
+		console.warn("[support] status-change notify failed", { caseId }, err);
 	}
 }
