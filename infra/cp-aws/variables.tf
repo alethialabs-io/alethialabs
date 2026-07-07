@@ -48,3 +48,13 @@ variable "repo_url" {
   type        = string
   default     = "https://github.com/alethialabs-io/alethialabs.git"
 }
+
+variable "environment" {
+  description = "Deployment environment tag (FinOps) — Dev, Stage, or Prod."
+  type        = string
+  default     = "Prod"
+  validation {
+    condition     = contains(["Dev", "Stage", "Prod"], var.environment)
+    error_message = "environment must be Dev, Stage, or Prod."
+  }
+}

@@ -7,9 +7,11 @@
 
 locals {
   labels = {
-    project = "alethia"
-    role    = "control-plane"
-    managed = "opentofu"
+    project     = "alethia"
+    role        = "control-plane"
+    managed     = "opentofu"
+    Service     = "alethia-control-plane"
+    Environment = var.environment
   }
 }
 

@@ -17,3 +17,6 @@ ssh_public_key = "ssh-ed25519 AAAA... deploy@alethia"
 server_type      = "cax21" # Ampere ARM64 (cheapest that fits the bundle); cax31 if busy
 location         = "fsn1"
 data_volume_size = 25
+
+# Deployment environment tag (FinOps) — Dev, Stage, or Prod.
+# environment = "Prod"
