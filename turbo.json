@@ -28,13 +28,16 @@
 			]
 		},
 		"lint": {
-			"dependsOn": ["^lint"]
+			"dependsOn": ["^lint"],
+			"inputs": ["$TURBO_DEFAULT$", "!**/*.md", "!**/*.mdx"]
 		},
 		"check-types": {
-			"dependsOn": ["^check-types"]
+			"dependsOn": ["^check-types"],
+			"inputs": ["$TURBO_DEFAULT$", "!**/*.md", "!**/*.mdx"]
 		},
 		"test": {
 			"dependsOn": ["^build"],
+			"inputs": ["$TURBO_DEFAULT$", "!**/*.md", "!**/*.mdx"],
 			"outputs": ["coverage/**"]
 		},
 		"dev": {
