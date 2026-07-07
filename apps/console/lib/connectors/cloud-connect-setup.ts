@@ -65,10 +65,10 @@ export function computePlatformConfigured(): Record<string, boolean> {
 		// Azure is keyless: the platform app (ALETHIA_AZURE_CLIENT_ID) authenticates via a minted OIDC
 		// assertion from the issuer — no client secret. Available when the app id + issuer are configured.
 		azure: has("ALETHIA_AZURE_CLIENT_ID") && oidcIssuerConfigured(),
-		alibaba: has(
-			"ALETHIA_ALIBABA_ACCESS_KEY_ID",
-			"ALETHIA_ALIBABA_ACCESS_KEY_SECRET",
-		),
+		// Alibaba is keyless + account-free: the console assumes the customer RAM role via
+		// AssumeRoleWithOIDC with a minted assertion — no Alibaba account / platform AccessKey.
+		// Available whenever the issuer is configured.
+		alibaba: oidcIssuerConfigured(),
 		// GCP federates THROUGH the platform AWS identity: the customer's Workload Identity pool
 		// trusts an AWS provider (`create-aws --account-id=<platform aws acct>`), so the console
 		// mints the GCP subject token from the platform AWS creds (google-auth's `--aws` source
