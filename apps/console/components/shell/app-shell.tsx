@@ -16,7 +16,6 @@ import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { ElenchSurface } from "@/components/agent/elench/elench-surface";
 import { SetupGuideCard } from "@/components/onboarding/setup-guide";
 import { AppSidebar } from "./app-sidebar";
-import { AskAiButton } from "./ask-ai-button";
 import { CommandPalette } from "./command-palette";
 import { JobToaster } from "./job-toaster";
 import { SidebarRail } from "./sidebar-rail";
@@ -94,19 +93,20 @@ export function AppShell({
 				</main>
 			</div>
 
+			{/* The global Elench assistant surface. In panel view it renders as an in-flow flex
+			    child here — its width animates from 0 and squeezes the main column (true seam
+			    border, like the canvas inspector). In modal view it portals out (Radix Dialog),
+			    leaving this slot empty. One surface per session. */}
+			<ElenchSurface />
+
 			{/* Global command palette (the sidebar "Find…" box + ⌘K / F). */}
 			<CommandPalette />
 
 			{/* Single job-lifecycle toast driver (loading → success/failed in place). */}
 			<JobToaster />
 
-			{/* The global Elench assistant surface (modal / docked panel), one per session. */}
-			<ElenchSurface />
-
 			{/* Single support-reply toast driver (staff/AI reply → "New reply on CASE-…"). */}
 			<SupportToaster />
-			{/* Global "Ask AI" launcher — floats bottom-right beside the setup guide. */}
-			<AskAiButton />
 
 			{/* First-run "Setup guide" — toggled from the topbar button, floats bottom-right. */}
 			<SetupGuideCard />

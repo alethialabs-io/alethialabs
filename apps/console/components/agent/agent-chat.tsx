@@ -99,6 +99,9 @@ export interface AgentChatProps {
 	hideComposer?: boolean;
 	/** Replace the default composer (e.g. the Elench composer with @-mentions). */
 	renderComposer?: ReactNode;
+	/** Override the composer container's classes (default: a top-bordered bar). The modal
+	 * passes a padded, border-less variant so the composer floats as a card over the canvas. */
+	composerClassName?: string;
 	/** Per-message thumbs feedback (up/down). Shown on completed assistant turns. */
 	onFeedback?: (messageId: string, value: "up" | "down") => void;
 	/** When set, a "Support" action links here from each assistant turn. */
@@ -137,6 +140,7 @@ export function AgentChat({
 	composerRight,
 	hideComposer,
 	renderComposer,
+	composerClassName,
 	onFeedback,
 	supportHref,
 }: AgentChatProps) {
@@ -322,7 +326,7 @@ export function AgentChat({
 			</Conversation>
 
 			{!hideComposer && (
-				<div className="border-t border-border p-3">
+				<div className={cn("border-t border-border p-3", composerClassName)}>
 					{renderComposer ?? (
 						<PromptInput
 							className="rounded-none"

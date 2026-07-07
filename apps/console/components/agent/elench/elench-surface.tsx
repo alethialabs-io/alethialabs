@@ -21,9 +21,12 @@ export function ElenchSurface() {
 	const ctx = useElenchStore((s) => s.ctx);
 	const threadId = useElenchStore((s) => s.threadId);
 	const epoch = useElenchStore((s) => s.epoch);
-	const threadApi = useElenchThreads();
+	const { ready, ...threadApi } = useElenchThreads();
 
-	if (!open) return null;
+	// Wait for the initial thread to resolve before mounting the keyed conversation. This
+	// makes the conversation mount exactly once (with the resumed thread already staged),
+	// eliminating the open→resume remount that flashed an empty chat before the thread loaded.
+	if (!open || !ready) return null;
 
 	return (
 		<ElenchConversation
