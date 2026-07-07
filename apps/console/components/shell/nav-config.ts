@@ -24,7 +24,6 @@ import {
 	Server,
 	Settings,
 	ShieldAlert,
-	Sparkles,
 	Waypoints,
 	Webhook,
 	Workflow,
@@ -93,7 +92,6 @@ export function buildSidebarNav(orgSlug: string): SidebarNavGroups {
 		connect: [
 			{ label: "Connectors", icon: Blocks, sub: "connectors", href: globalHref(orgSlug, "connectors") },
 			{ label: "Alerts", icon: Bell, drill: "alerts", anchor: globalHref(orgSlug, "alerts") },
-			{ label: "Agent", icon: Sparkles, sub: "agent", href: globalHref(orgSlug, "agent") },
 			{ label: "Sandboxes", icon: FlaskConical, disabled: true, badge: { text: "Soon", tone: "soon" } },
 		],
 		pinned: [

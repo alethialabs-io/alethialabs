@@ -50,6 +50,12 @@ interface ElenchState {
 	seedPrompt: string | null;
 	/** Resources @-referenced in the latest sent message (ride with the request). */
 	pendingMentions: Mention[];
+	/**
+	 * Whether the modal's thread rail is expanded. Lives here (not in `ElenchModal`'s local
+	 * state) so it survives a minimize→maximize round-trip — the modal remounts on every view
+	 * flip, which would otherwise reset the rail to open.
+	 */
+	railOpen: boolean;
 
 	/** Open as a docked panel in the given context. */
 	openPanel: (ctx: ElenchCtx) => void;
@@ -66,6 +72,8 @@ interface ElenchState {
 
 	setMode: (mode: AgentMode) => void;
 	setModel: (model: string) => void;
+	/** Expand/collapse the modal thread rail. */
+	setRailOpen: (open: boolean) => void;
 	/** Resume a persisted org thread. */
 	selectThread: (id: string | null) => void;
 	/** Start a fresh conversation (org: unnamed thread; project: new ephemeral). */
@@ -93,6 +101,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	epoch: 0,
 	seedPrompt: null,
 	pendingMentions: [],
+	railOpen: true,
 
 	openPanel: (ctx) => {
 		const cur = get();
@@ -132,6 +141,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 
 	setMode: (mode) => set({ mode }),
 	setModel: (model) => set({ model }),
+	setRailOpen: (railOpen) => set({ railOpen }),
 	selectThread: (id) => set({ threadId: id }),
 	newChat: () => set((s) => ({ threadId: null, epoch: s.epoch + 1 })),
 	setSeedPrompt: (seedPrompt) => set({ seedPrompt }),
