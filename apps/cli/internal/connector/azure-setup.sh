@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ALETHIA_AWS_ACCOUNT_ID="787587782604"
+ALETHIA_AWS_ACCOUNT_ID="${ALETHIA_AWS_ACCOUNT_ID:-270587882865}"
 APP_NAME="alethia-provisioner"
 
 if [ -z "${1:-}" ]; then

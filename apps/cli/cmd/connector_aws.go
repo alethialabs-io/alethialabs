@@ -103,7 +103,7 @@ func awsManualFlow(externalID string) (string, error) {
 	templateURL := connectorBaseURL + "/alethia-bootstrap.yaml"
 	quickCreate := fmt.Sprintf(
 		"https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateURL=%s&stackName=AlethiaConnect&param_ExternalId=%s&param_AlethiaAwsAccountId=%s",
-		url.QueryEscape(templateURL), url.QueryEscape(externalID), alethiaAwsAccount,
+		url.QueryEscape(templateURL), url.QueryEscape(externalID), alethiaAwsAccount(),
 	)
 
 	ui.Info("Manual setup:")

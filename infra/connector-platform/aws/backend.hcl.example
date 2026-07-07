@@ -1,0 +1,5 @@
+# Copy to backend.hcl and `tofu init -backend-config=backend.hcl`.
+# Same S3 state bucket as the other platform stacks (account 270587882865).
+bucket = "alethia-tofu-state-270587882865"
+key    = "connector-platform/aws/terraform.tfstate"
+region = "eu-central-1"

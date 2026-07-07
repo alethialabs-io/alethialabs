@@ -37,7 +37,7 @@ variable "subscription_id" {
 
 variable "alethia_aws_account_id" {
   type        = string
-  default     = "787587782604"
+  default     = "270587882865"
   description = "The AWS account id of the Alethia platform (the federated-credential subject)."
 }
 
