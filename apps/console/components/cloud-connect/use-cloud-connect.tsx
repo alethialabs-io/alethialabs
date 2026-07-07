@@ -346,10 +346,7 @@ export function useCloudConnect({
 							/>
 							<div className="px-6 py-6">
 								{extraSetup?.alibaba && (
-									<AlibabaConnection
-										externalId={extraSetup.alibaba.externalId}
-										onSave={handleAlibabaConnect}
-									/>
+									<AlibabaConnection onSave={handleAlibabaConnect} />
 								)}
 							</div>
 						</>

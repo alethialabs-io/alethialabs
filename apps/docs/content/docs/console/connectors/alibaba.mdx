@@ -1,0 +1,55 @@
+---
+title: Alibaba Connector
+description: Keyless + account-free access via a RAM OIDC provider and AssumeRoleWithOIDC.
+---
+
+# Alibaba Connector
+
+Alibaba integration is **keyless and account-free**. Alethia's control plane is its own OIDC issuer;
+you register a **RAM OIDC provider** that trusts it and a **RAM role** that trusts that provider. Alethia
+assumes the role by presenting a short-lived minted assertion (STS `AssumeRoleWithOIDC`) — Alethia holds
+no Alibaba account, generates no AccessKey, and stores nothing but the role ARN. See
+[Security Architecture](/concepts/security).
+
+## Setup
+
+Apply the Terraform module (Download it from the connect dialog). It creates everything in **your**
+Alibaba account:
+
+<Steps>
+
+### Create the RAM OIDC provider
+A RAM OIDC provider named `alethia` trusting Alethia's issuer (`https://alethialabs.io/api/oidc`), with
+client id `sts.aliyuncs.com`. The provider name is fixed — Alethia derives its ARN from your role ARN.
+
+### Create the RAM role
+A role whose trust policy allows `AssumeRoleWithOIDC` from that provider, scoped to Alethia's workload
+identity (`oidc:sub = alethia-connector`, `oidc:aud = sts.aliyuncs.com`) — a wrong subject/audience is
+rejected.
+
+### Attach provisioning permissions
+The module attaches the RAM policies Alethia needs (ACK, VPC, ECS, SLB, EIP by default; tighten or
+extend to match your Projects).
+
+### Paste the role ARN into Alethia
+Run `terraform output` and paste `role_arn` — it looks like `acs:ram::<account>:role/<name>`. That's the
+only value Alethia needs (the OIDC-provider ARN is derived from it).
+
+</Steps>
+
+## Verification
+
+Alethia verifies the connection **instantly, server-side** (no runner):
+
+1. The console mints an OIDC assertion (audience `sts.aliyuncs.com`) and calls Alibaba STS
+   `AssumeRoleWithOIDC` with your role + provider ARNs
+2. Alibaba validates the assertion against the RAM OIDC provider and returns temporary credentials
+3. A successful assume is the proof of access → `Connected` / `Disconnected`
+
+## What's Stored
+
+- The **RAM role ARN**
+- The derived **RAM OIDC provider ARN** (`acs:ram::<account>:oidc-provider/alethia`)
+- The **account id** (parsed from the role ARN)
+
+**No credentials, ever.** Revoke access by deleting the RAM role (or the OIDC provider) in your account.

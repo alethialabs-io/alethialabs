@@ -19,7 +19,6 @@ import {
 	FormMessage,
 } from "@repo/ui/form";
 import { Input } from "@repo/ui/input";
-import { CopyButton } from "@repo/ui/copy-button";
 import { FieldHelp } from "@repo/ui/field-help";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -32,7 +31,7 @@ import {
 	type VerifyOutcome,
 	useConnectionTest,
 } from "@/components/connector/use-connection-test";
-import { ExternalLink, ShieldCheck } from "lucide-react";
+import { Download, ExternalLink, ShieldCheck } from "lucide-react";
 import { type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -226,10 +225,8 @@ const alibabaSchema = z.object({
 });
 
 export function AlibabaConnection({
-	externalId,
 	onSave,
 }: {
-	externalId?: string;
 	onSave: (roleArn: string) => Promise<SaveResult>;
 }) {
 	const { state, run, cancel } = useConnectionTest();
@@ -241,6 +238,16 @@ export function AlibabaConnection({
 
 	const retry = state.phase === "failed";
 
+	/** Downloads the customer setup Terraform module (served from public/). */
+	const downloadModule = () => {
+		const a = document.createElement("a");
+		a.href = "/connector-terraform/alibaba.tf";
+		a.download = "alethia-alibaba.tf";
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+	};
+
 	return (
 		<div className="max-w-[800px] mx-auto space-y-6 w-full">
 			<Card className="border-border/40 shadow-sm bg-background">
@@ -250,41 +257,50 @@ export function AlibabaConnection({
 						Setup Instructions
 					</CardTitle>
 					<CardDescription className="text-xs">
-						Alethia assumes a RAM role in your account — no Alibaba credentials are stored.
-						Create the role, then paste its ARN.
+						Keyless: you create a RAM OIDC provider trusting Alethia&apos;s issuer + a RAM
+						role. Alethia assumes it with a short-lived minted token — no Alibaba credentials
+						are stored. Create the resources, then paste the role ARN.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-6 pt-6">
 					<div className="space-y-8">
-						<Step n={1} title="Create a RAM role that trusts Alethia">
+						<Step n={1} title="Create the RAM OIDC provider + role">
 							<p className="text-xs text-muted-foreground max-w-sm">
-								In the RAM console, create a role for a trusted Alibaba Cloud account and
-								add a condition requiring the External ID below (prevents the
-								confused-deputy problem).
+								Apply the Terraform module below. It registers a RAM OIDC provider that
+								trusts Alethia&apos;s issuer and a role that trusts that provider (scoped
+								to Alethia&apos;s workload identity), then attaches provisioning
+								permissions.
 							</p>
-							{externalId && (
-								<div className="flex items-center gap-2 p-2.5 bg-muted/30 border border-border/40 rounded-md font-mono text-[11px]">
-									<span className="text-muted-foreground shrink-0">External ID:</span>
-									<span className="break-all min-w-0">{externalId}</span>
-									<CopyButton
-										text={externalId}
-										className="ml-auto shrink-0 rounded p-1"
-									/>
-								</div>
-							)}
+							<div className="mt-2 flex flex-wrap items-center gap-3">
+								<Button
+									type="button"
+									size="sm"
+									className="h-8 text-xs font-medium"
+									onClick={downloadModule}
+								>
+									<Download className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+									Download module
+								</Button>
+								<a
+									href="/docs/console/connectors/alibaba"
+									target="_blank"
+									rel="noopener noreferrer"
+									className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+								>
+									Full guide
+									<ExternalLink className="w-3 h-3" />
+								</a>
+							</div>
 						</Step>
 
-						<Step n={2} title="Attach provisioning permissions">
+						<Step n={2} title="Paste the role ARN below">
 							<p className="text-xs text-muted-foreground max-w-sm">
-								Grant the role the permissions Alethia needs (ACK, VPC, and the managed
-								services your Projects use).
-							</p>
-						</Step>
-
-						<Step n={3} title="Paste the role ARN below">
-							<p className="text-xs text-muted-foreground max-w-sm">
-								Copy the role ARN from the RAM console — it looks like
-								<code className="mx-1 bg-muted px-1 py-0.5 border border-border/50 rounded">acs:ram::&lt;account&gt;:role/&lt;name&gt;</code>.
+								Run{" "}
+								<code className="bg-muted px-1 py-0.5 border border-border/50 rounded">terraform output</code>{" "}
+								and copy <code className="bg-muted px-1 py-0.5 border border-border/50 rounded">role_arn</code> — it
+								looks like{" "}
+								<code className="bg-muted px-1 py-0.5 border border-border/50 rounded">acs:ram::&lt;account&gt;:role/&lt;name&gt;</code>.
+								(Alethia derives the OIDC-provider ARN from it.)
 							</p>
 						</Step>
 					</div>
@@ -292,8 +308,8 @@ export function AlibabaConnection({
 					<VerifySection
 						state={state}
 						onCancel={cancel}
-						successText="Alethia recorded your RAM role and verified it with a real STS AssumeRole — zero stored credentials."
-						verifyingText="Assuming the RAM role via Alibaba STS."
+						successText="Alethia recorded your RAM role and verified it with a real STS AssumeRoleWithOIDC — zero stored credentials."
+						verifyingText="Assuming the RAM role via Alibaba STS (AssumeRoleWithOIDC)."
 					>
 						<Form {...form}>
 							<form
