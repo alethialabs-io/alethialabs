@@ -30,5 +30,16 @@ export function connectorAssetUrl(file: string): string {
 export const ALETHIA_AWS_ACCOUNT_ID =
 	process.env.NEXT_PUBLIC_ALETHIA_AWS_ACCOUNT_ID ?? "270587882865";
 
+/**
+ * The Application (client) ID of Alethia's ONE multi-tenant Entra app — the identity the
+ * console (and runner) authenticate as, keylessly, via a minted OIDC assertion. The customer
+ * grants THIS app a role in their tenant (they create no app of their own), so the connect
+ * UI shows it in the setup command rather than asking the customer to paste it. Set by the
+ * operator via `NEXT_PUBLIC_ALETHIA_AZURE_CLIENT_ID`; empty on an instance that hasn't
+ * registered the app (Azure connect is gated off there anyway).
+ */
+export const ALETHIA_AZURE_CLIENT_ID =
+	process.env.NEXT_PUBLIC_ALETHIA_AZURE_CLIENT_ID ?? "";
+
 /** Docs base for the connectors guides (per-cloud Terraform/CLI walk-throughs). */
 export const CONNECTOR_DOCS_BASE = "/docs/console/connectors";

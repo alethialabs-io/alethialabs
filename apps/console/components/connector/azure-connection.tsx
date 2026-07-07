@@ -30,7 +30,10 @@ import {
 	type VerifyOutcome,
 	useConnectionTest,
 } from "@/components/connector/use-connection-test";
-import { connectorAssetUrl } from "@/components/connector/connector-assets";
+import {
+	ALETHIA_AZURE_CLIENT_ID,
+	connectorAssetUrl,
+} from "@/components/connector/connector-assets";
 import { CopyButton } from "@repo/ui/copy-button";
 import { FieldHelp } from "@repo/ui/field-help";
 import {
@@ -51,26 +54,25 @@ const GUID_REGEX =
 const GUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
 /**
- * Extracts the tenant/client/subscription GUIDs from a pasted setup-script output
- * block (`Tenant ID: … / Client ID: … / Subscription ID: …`). Falls back to "three
- * bare GUIDs in order" when the labels aren't present.
+ * Extracts the tenant/subscription GUIDs from a pasted setup-script output block
+ * (`Tenant ID: … / Subscription ID: …`). The Client ID is no longer collected — the
+ * customer authorizes Alethia's own multi-tenant app, so its id is fixed. Falls back
+ * to "two bare GUIDs in order" (tenant, then subscription) when the labels aren't present.
  */
 function parseAzureIds(text: string): Partial<AzureFormValues> {
 	const grab = (label: string) =>
 		text.match(new RegExp(`${label}[^0-9a-fA-F]*(${GUID})`, "i"))?.[1];
 	let tenantId = grab("tenant");
-	let clientId = grab("client");
 	let subscriptionId = grab("subscription");
-	if (!tenantId && !clientId && !subscriptionId) {
+	if (!tenantId && !subscriptionId) {
 		const all = text.match(new RegExp(GUID, "g")) ?? [];
-		if (all.length >= 3) [tenantId, clientId, subscriptionId] = all;
+		if (all.length >= 2) [tenantId, subscriptionId] = all;
 	}
-	return { tenantId, clientId, subscriptionId };
+	return { tenantId, subscriptionId };
 }
 
 const azureSchema = z.object({
 	tenantId: z.string().regex(GUID_REGEX, "Invalid Tenant ID. Expected a UUID."),
-	clientId: z.string().regex(GUID_REGEX, "Invalid Client ID. Expected a UUID."),
 	subscriptionId: z.string().regex(GUID_REGEX, "Invalid Subscription ID. Expected a UUID."),
 });
 
@@ -89,7 +91,12 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 	const { state: verifyState, run, cancel } = useConnectionTest();
 
 	const scriptUrl = connectorAssetUrl("alethia-azure-setup.sh");
-	const cloudShellCmd = `curl -sO ${scriptUrl} && bash alethia-azure-setup.sh YOUR_SUBSCRIPTION_ID`;
+	// The platform app id is baked into the command (the customer authorizes Alethia's app —
+	// they don't create one). When the operator hasn't set NEXT_PUBLIC_ALETHIA_AZURE_CLIENT_ID
+	// the script falls back to its own built-in default, so an empty value is still runnable.
+	const cloudShellCmd = ALETHIA_AZURE_CLIENT_ID
+		? `curl -sO ${scriptUrl} && ALETHIA_AZURE_CLIENT_ID=${ALETHIA_AZURE_CLIENT_ID} bash alethia-azure-setup.sh YOUR_SUBSCRIPTION_ID`
+		: `curl -sO ${scriptUrl} && bash alethia-azure-setup.sh YOUR_SUBSCRIPTION_ID`;
 	const cloudShellUrl =
 		"https://shell.azure.com";
 
@@ -97,7 +104,6 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 		resolver: zodResolver(azureSchema),
 		defaultValues: {
 			tenantId: "",
-			clientId: "",
 			subscriptionId: "",
 		},
 		mode: "onChange",
@@ -113,8 +119,9 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 	};
 
 	const onSubmit = async (data: AzureFormValues) => {
+		// The client id is fixed — Alethia's own multi-tenant app, not a per-customer one.
 		await run(() =>
-			onComplete(data.tenantId, data.clientId, data.subscriptionId),
+			onComplete(data.tenantId, ALETHIA_AZURE_CLIENT_ID, data.subscriptionId),
 		);
 	};
 
@@ -125,7 +132,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 	const fillFromText = (text: string): number => {
 		const ids = parseAzureIds(text);
 		let n = 0;
-		for (const key of ["tenantId", "clientId", "subscriptionId"] as const) {
+		for (const key of ["tenantId", "subscriptionId"] as const) {
 			const value = ids[key];
 			if (value) {
 				form.setValue(key, value, { shouldValidate: true, shouldDirty: true });
@@ -144,13 +151,11 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 		}
 	};
 
-	/** Paste into any field: if it's the whole block, split it across all three. */
+	/** Paste into any field: if it's the whole block, split it across both fields. */
 	const handleFieldPaste = (e: ClipboardEvent<HTMLInputElement>) => {
 		const text = e.clipboardData.getData("text");
 		const ids = parseAzureIds(text);
-		const found = [ids.tenantId, ids.clientId, ids.subscriptionId].filter(
-			Boolean,
-		).length;
+		const found = [ids.tenantId, ids.subscriptionId].filter(Boolean).length;
 		if (found >= 2) {
 			e.preventDefault();
 			fillFromText(text);
@@ -315,12 +320,8 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 											Copy the{" "}
 											<b className="text-foreground font-medium">
 												Tenant ID
-											</b>
-											,{" "}
-											<b className="text-foreground font-medium">
-												Client ID
-											</b>
-											, and{" "}
+											</b>{" "}
+											and{" "}
 											<b className="text-foreground font-medium">
 												Subscription ID
 											</b>{" "}
@@ -429,7 +430,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 												<p className="text-[11px] text-muted-foreground">
 													{pasteMissed
 														? "No IDs found on the clipboard — paste the script output, or fill the fields manually."
-														: "Paste all three at once — we'll split them across the fields."}
+														: "Paste both at once — we'll split them across the fields."}
 												</p>
 												<Button
 													type="button"
@@ -474,40 +475,6 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 											/>
 											<FormField
 												control={form.control}
-												name="clientId"
-												render={({ field }) => (
-													<FormItem>
-														<div className="flex items-center gap-1.5">
-															<FormLabel className="text-xs font-medium">
-																Client ID (Application ID)
-															</FormLabel>
-															<FieldHelp title="Client ID (Application ID)">
-																The{" "}
-																<b className="text-foreground">
-																	Application (client) ID
-																</b>{" "}
-																of the{" "}
-																<code className="text-foreground">
-																	alethia-provisioner
-																</code>{" "}
-																app registration — the second value the script
-																prints.
-															</FieldHelp>
-														</div>
-														<FormControl>
-															<Input
-																placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-																className="h-9 text-sm font-mono border-border/50"
-																{...field}
-																onPaste={handleFieldPaste}
-															/>
-														</FormControl>
-														<FormMessage className="text-xs" />
-													</FormItem>
-												)}
-											/>
-											<FormField
-												control={form.control}
 												name="subscriptionId"
 												render={({ field }) => (
 													<FormItem>
@@ -518,7 +485,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 															<FieldHelp title="Subscription ID">
 																The Azure{" "}
 																<b className="text-foreground">subscription</b>{" "}
-																Alethia provisions into — the third value the
+																Alethia provisions into — the second value the
 																script prints (the ID you passed to it).
 															</FieldHelp>
 														</div>

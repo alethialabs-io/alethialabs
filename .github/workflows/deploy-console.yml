@@ -465,9 +465,13 @@ jobs:
             # UI shows it in the customer setup templates. Configurable; defaults to the live account.
             AWS_ACCT="$(val ALETHIA_AWS_ACCOUNT_ID)"; AWS_ACCT="${AWS_ACCT:-270587882865}"
             echo "NEXT_PUBLIC_ALETHIA_AWS_ACCOUNT_ID=$AWS_ACCT"
-            emit ALETHIA_AZURE_TENANT_ID
+            # Azure is KEYLESS: the console + runner authenticate as ONE multi-tenant Entra app
+            # (ALETHIA_AZURE_CLIENT_ID) via a minted OIDC assertion — no tenant/secret. The client
+            # id is also surfaced to the browser (the connect UI bakes it into the customer setup
+            # command). No ALETHIA_AZURE_TENANT_ID/CLIENT_SECRET — the console auths against the
+            # customer's stored tenant.
             emit ALETHIA_AZURE_CLIENT_ID
-            emit ALETHIA_AZURE_CLIENT_SECRET
+            echo "NEXT_PUBLIC_ALETHIA_AZURE_CLIENT_ID=$(val ALETHIA_AZURE_CLIENT_ID)"
             emit ALETHIA_ALIBABA_ACCESS_KEY_ID
             emit ALETHIA_ALIBABA_ACCESS_KEY_SECRET
             # GCP needs NO separate secret — it federates through the platform AWS identity above
