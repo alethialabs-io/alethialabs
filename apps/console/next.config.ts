@@ -62,7 +62,18 @@ const nextConfig: NextConfig = {
 					{ source: "/docs/:path*", destination: `${docsUrl}/docs/:path*` },
 				]
 			: [];
-		return { beforeFiles: getHost, afterFiles: docs };
+		// PostHog reverse-proxy: serve analytics ingestion from our own origin so ad-blockers
+		// (which block eu.i.posthog.com) stop dropping events. The browser SDK points at
+		// `/ingest` (NEXT_PUBLIC_POSTHOG_HOST). PostHog's EU assets live on a separate host from
+		// ingest, so the /static/* rule must target eu-assets.
+		const posthog = [
+			{
+				source: "/ingest/static/:path*",
+				destination: "https://eu-assets.i.posthog.com/static/:path*",
+			},
+			{ source: "/ingest/:path*", destination: "https://eu.i.posthog.com/:path*" },
+		];
+		return { beforeFiles: getHost, afterFiles: [...docs, ...posthog] };
 	},
 };
 

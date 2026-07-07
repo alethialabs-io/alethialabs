@@ -9,6 +9,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import { captureException } from "@/lib/analytics/track";
 import { ErrorState } from "@/components/errors/error-state";
 import { Button } from "@repo/ui/button";
 
@@ -21,6 +22,7 @@ export default function AppError({
 }) {
 	useEffect(() => {
 		console.error("[app] render error:", error.digest ?? error.message, error);
+		captureException(error, { boundary: "app", digest: error.digest });
 	}, [error]);
 
 	return (

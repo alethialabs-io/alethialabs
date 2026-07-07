@@ -9,6 +9,7 @@
 
 import { useEffect } from "react";
 import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
+import { captureException } from "@/lib/analytics/track";
 import { ErrorState } from "@/components/errors/error-state";
 import { Button } from "@repo/ui/button";
 import "./globals.css";
@@ -30,6 +31,7 @@ export default function GlobalError({
 }) {
 	useEffect(() => {
 		console.error("[global] root error:", error.digest ?? error.message, error);
+		captureException(error, { boundary: "global", digest: error.digest });
 	}, [error]);
 
 	return (

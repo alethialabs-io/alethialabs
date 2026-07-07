@@ -22,9 +22,13 @@ function getClient(): PostHog | null {
 		client = null;
 		return client;
 	}
-	const host = (
-		process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://eu.i.posthog.com"
-	).replace(/\/$/, "");
+	// The browser host may be the reverse-proxy path ("/ingest"); that's a browser-only rewrite, so
+	// the server must talk to the real cloud host directly (a relative path isn't a valid ingest URL).
+	const rawHost = process.env.NEXT_PUBLIC_POSTHOG_HOST;
+	const host =
+		rawHost && rawHost.startsWith("http")
+			? rawHost.replace(/\/$/, "")
+			: "https://eu.i.posthog.com";
 	// flushAt:1 → send on every capture (serverless has no long-lived process to batch across).
 	client = new PostHog(key, { host, flushAt: 1, flushInterval: 0 });
 	return client;
@@ -54,5 +58,70 @@ export async function captureServer(
 		await ph.flush();
 	} catch {
 		/* analytics must never break a webhook */
+	}
+}
+
+/** Report a server-side exception to PostHog Error tracking. Best-effort; never throws. */
+export async function captureServerException(
+	error: unknown,
+	ctx?: { distinctId?: string; orgId?: string; props?: AnalyticsProps },
+): Promise<void> {
+	const ph = getClient();
+	if (!ph) return;
+	try {
+		ph.captureException(
+			error,
+			ctx?.distinctId,
+			ctx?.orgId ? { $groups: { organization: ctx.orgId }, ...ctx?.props } : ctx?.props,
+		);
+		await ph.flush();
+	} catch {
+		/* telemetry must never break the caller */
+	}
+}
+
+/** Fields for one LLM generation (mirrors recordAiUsage — the single AI chokepoint). */
+export interface AiGenerationInput {
+	userId: string;
+	orgId: string;
+	kind: string;
+	model?: string;
+	refId?: string;
+	inputTokens?: number;
+	outputTokens?: number;
+	cachedInputTokens?: number;
+	costMicros?: number | null;
+	latencyMs?: number;
+}
+
+/**
+ * Emit PostHog's reserved `$ai_generation` event so the LLM-analytics product (cost/tokens/latency by
+ * model, org, feature) lights up. Uses the `$ai_*` property convention. distinct_id = the acting user so
+ * these stitch to their client timeline; attached to the org group. Best-effort; never throws.
+ */
+export async function captureAiGeneration(input: AiGenerationInput): Promise<void> {
+	const ph = getClient();
+	if (!ph) return;
+	try {
+		ph.capture({
+			distinctId: input.userId,
+			event: "$ai_generation",
+			properties: {
+				$ai_provider: "anthropic",
+				$ai_model: input.model,
+				$ai_input_tokens: input.inputTokens,
+				$ai_output_tokens: input.outputTokens,
+				$ai_cache_read_input_tokens: input.cachedInputTokens,
+				$ai_total_cost_usd:
+					input.costMicros != null ? input.costMicros / 1_000_000 : undefined,
+				$ai_latency: input.latencyMs != null ? input.latencyMs / 1000 : undefined,
+				$ai_trace_id: input.refId,
+				$ai_span_name: input.kind,
+			},
+			groups: { organization: input.orgId },
+		});
+		await ph.flush();
+	} catch {
+		/* telemetry must never break an LLM call */
 	}
 }

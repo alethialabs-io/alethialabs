@@ -7,6 +7,7 @@
 // area shows the error + retry — not a full-page takeover.
 
 import { useEffect } from "react";
+import { captureException } from "@/lib/analytics/track";
 import { ErrorState } from "@/components/errors/error-state";
 import { Button } from "@repo/ui/button";
 
@@ -19,6 +20,7 @@ export default function OrgError({
 }) {
 	useEffect(() => {
 		console.error("[dashboard] error:", error.digest ?? error.message, error);
+		captureException(error, { boundary: "org", digest: error.digest });
 	}, [error]);
 
 	return (

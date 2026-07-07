@@ -6,6 +6,7 @@ import { and, eq, gte, sql, sum } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { aiCreditGrant, aiUsageLedger } from "@/lib/db/schema";
 import { aiCostMicros } from "@/lib/billing/model-costs";
+import { captureAiGeneration } from "@/lib/analytics/server";
 
 export type AiUsageKind = "scan" | "agent" | "support";
 export type CreditSource = "included" | "purchased";
@@ -129,4 +130,22 @@ export async function recordAiUsage(input: {
 			cached_input_tokens: input.cachedInputTokens ?? null,
 			cost_micros: costMicros,
 		});
+
+	// Mirror the generation into PostHog LLM-analytics (cost/tokens by model + org). This is the single
+	// chokepoint every AI call site funnels through, so instrumenting here covers the agent, project
+	// assistant, support Ask-AI, verify-explain, and colony sub-agents at once. Fire-and-forget and
+	// env-gated (no-op with no PostHog key); only when a model was actually used.
+	if (input.model) {
+		void captureAiGeneration({
+			userId: input.userId,
+			orgId: input.orgId,
+			kind: input.kind,
+			model: input.model,
+			refId: input.refId,
+			inputTokens: input.inputTokens,
+			outputTokens: input.outputTokens,
+			cachedInputTokens: input.cachedInputTokens,
+			costMicros,
+		});
+	}
 }

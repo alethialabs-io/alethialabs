@@ -29,12 +29,19 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 				const posthog = (await import("posthog-js")).default;
 				if (cancelled) return;
 				posthog.init(cfg.posthog!.key, {
+					// When NEXT_PUBLIC_POSTHOG_HOST is the reverse-proxy path ("/ingest"), ingestion
+					// rides our own origin (beats ad-blockers). ui_host keeps "view in PostHog" links
+					// pointing at the real dashboard.
 					api_host: cfg.posthog!.host,
+					ui_host: "https://eu.posthog.com",
 					person_profiles: "identified_only",
 					capture_pageview: true,
 					capture_pageleave: true,
 					autocapture: true,
 					capture_performance: { web_vitals: true },
+					// Surface unhandled errors + promise rejections in PostHog Error tracking (with the
+					// session replay attached). Replaces a separate Sentry.
+					capture_exceptions: true,
 					session_recording: { maskAllInputs: true, maskTextSelector: "[data-ph-mask]" },
 				});
 				window.__posthog = posthog as unknown as Window["__posthog"];
