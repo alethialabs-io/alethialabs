@@ -23,6 +23,8 @@ export interface ClusterData {
 	status: string;
 	cloud_identities: { provider: string } | null;
 	project_cluster: {
+		/** project_cluster row id — the classifiable `project_cluster` resource. */
+		id: string;
 		cluster_name: string | null;
 		cluster_endpoint: string | null;
 		cluster_arn: string | null;
@@ -66,6 +68,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 				environment_id: projectEnvironments.id,
 				status: projectEnvironments.status,
 				provider: cloudIdentities.provider,
+				cluster_id: projectCluster.id,
 				cluster_name: projectCluster.cluster_name,
 				cluster_endpoint: projectCluster.cluster_endpoint,
 				cluster_outputs: projectCluster.provider_outputs,
@@ -144,6 +147,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 			cloud_identities: r.provider ? { provider: r.provider } : null,
 			project_cluster: r.cluster_status
 				? {
+						id: r.cluster_id ?? "",
 						cluster_name: r.cluster_name,
 						cluster_endpoint: r.cluster_endpoint,
 						cluster_arn: r.cluster_outputs?.arn ?? null,

@@ -254,6 +254,27 @@ export const approvalStatus = pgEnum("approval_status", [
 	"rejected",
 ]);
 
+// Structured resource classification (Workstream B). The kind of resource an assignment
+// pins a classification value to. Each value maps to a table whose PK is a uuid, so a
+// single `resource_id uuid` addresses every kind. Adding a new classifiable surface is a
+// one-line edit here (+ a migration) — the assignment row is otherwise kind-agnostic.
+export const resourceKind = pgEnum("resource_kind", [
+	"cloud_identity",
+	"connector_credential",
+	"alert_rule",
+	"alert_channel",
+	"alert_delivery",
+	"member",
+	"project",
+	"project_environment",
+	"project_cluster",
+	"cloud_kubernetes_cluster",
+	"role",
+	"runner",
+	"runner_usage_session",
+	"support_case",
+]);
+
 // Support-case enums moved to @repo/support (shared with the admin app); re-export
 // so `@/lib/db/schema/enums` keeps surfacing them (supportCaseType/Status/Severity/… + their
 // TS unions).
@@ -291,5 +312,6 @@ export type ConnectorHealthStatus =
 	(typeof connectorHealthStatus.enumValues)[number];
 export type AlertDeliveryStatus =
 	(typeof alertDeliveryStatus.enumValues)[number];
+export type ResourceKind = (typeof resourceKind.enumValues)[number];
 // SupportCase* / SupportAuthorType / SupportAbuseCategory unions come via the
 // `export * from "@repo/support/enums"` re-export above.

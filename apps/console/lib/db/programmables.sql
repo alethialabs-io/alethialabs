@@ -817,3 +817,48 @@ UPDATE public."user"
 UPDATE public.cloud_identities
    SET status = 'connected'
  WHERE is_verified = true AND status <> 'connected';
+
+-- ── Structured resource classification (Workstream B) ──────────────────────────────
+-- classification_dimension is an "owned" table (has an author, created_by); its coarse
+-- tenancy org_id is backfilled from created_by the same way set_org_id backfills owned
+-- tables from user_id (community: org_id = author = personal org). The server actions
+-- always set org_id explicitly (real orgs), so this trigger is the community fall-back.
+CREATE OR REPLACE FUNCTION public.classification_set_org_id()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.org_id IS NULL THEN NEW.org_id = NEW.created_by; END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS classification_dimension_set_org_id ON public.classification_dimension;
+CREATE TRIGGER classification_dimension_set_org_id BEFORE INSERT ON public.classification_dimension
+  FOR EACH ROW EXECUTE FUNCTION public.classification_set_org_id();
+UPDATE public.classification_dimension SET org_id = created_by WHERE org_id IS NULL;
+
+-- Dimensions: coarse org-isolation owner_all (org_id = current_org). No per-user column —
+-- classification is org-wide taxonomy, so the blast wall is purely org-scoped; the PDP
+-- (org:view / org:edit in the server actions) is the fine-grained gate.
+ALTER TABLE public.classification_dimension ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS owner_all ON public.classification_dimension;
+CREATE POLICY owner_all ON public.classification_dimension FOR ALL
+  USING (org_id = current_setting('app.current_org', true)::uuid)
+  WITH CHECK (org_id = current_setting('app.current_org', true)::uuid);
+
+-- Values + assignments: child tables whose tenancy flows through the parent dimension
+-- (mirrors the project child-table pattern that scopes via public.projects). org_id is
+-- also stored denormalized (indexed) but the RLS wall is the parent membership.
+DO $$
+DECLARE tbl TEXT;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY['classification_value','classification_assignment']) LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
+    EXECUTE format(
+      'CREATE POLICY owner_all ON public.%I FOR ALL
+         USING (dimension_id IN (SELECT id FROM public.classification_dimension
+                WHERE org_id = current_setting(''app.current_org'', true)::uuid))
+         WITH CHECK (dimension_id IN (SELECT id FROM public.classification_dimension
+                WHERE org_id = current_setting(''app.current_org'', true)::uuid))', tbl);
+  END LOOP;
+END $$;

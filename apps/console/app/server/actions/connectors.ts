@@ -97,6 +97,9 @@ export type ConnectorWithConnection = Connector & {
 	token_health?: GitTokenHealth;
 	/** Visibility of the backing credential (cloud / api_key). Undefined for git. */
 	scope?: CredentialScope;
+	/** The connector_credential row id for a connected api_key connector — the
+	 *  classifiable `connector_credential` resource. Undefined for cloud/git. */
+	credential_id?: string;
 	/** The presentation group (clouds / secrets / registries / apps). */
 	group: ConnectorGroup;
 	/** Connected accounts for cloud connectors (a provider can hold several). */
@@ -206,6 +209,7 @@ export async function getConnectorsWithStatus(): Promise<
 		? await withScope({ ownerId: scope.userId, orgId: scope.orgId }, (tx) =>
 				tx
 					.select({
+						id: connectorCredentials.id,
 						slug: connectorsTable.slug,
 						is_verified: connectorCredentials.is_verified,
 						scope: connectorCredentials.scope,
@@ -220,7 +224,7 @@ export async function getConnectorsWithStatus(): Promise<
 	const credentialBySlug = new Map(
 		credentialRows.map((c) => [
 			c.slug,
-			{ verified: c.is_verified ?? false, scope: c.scope },
+			{ id: c.id, verified: c.is_verified ?? false, scope: c.scope },
 		]),
 	);
 
@@ -319,6 +323,7 @@ export async function getConnectorsWithStatus(): Promise<
 				group,
 				connected: true,
 				scope: cred?.scope,
+				credential_id: cred?.id,
 				connection_details: null,
 				token_health: cred?.verified ? "healthy" : "refresh_failed",
 			};

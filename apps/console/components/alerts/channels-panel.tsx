@@ -19,6 +19,10 @@ import {
 	updateChannel,
 } from "@/app/server/actions/alerts";
 import { ChannelIcon } from "@/components/alerts/channel-icon";
+import { ClassificationChips } from "@/components/classification/classification-chips";
+import { ClassificationControl } from "@/components/classification/classification-control";
+import type { AssignedValue } from "@/lib/queries/classification";
+import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { ChannelSheet } from "@/components/alerts/channel-sheet";
 import { ChannelVerify } from "@/components/alerts/channel-verify";
 import { CHANNEL_TYPE_META } from "@/components/alerts/channel-meta";
@@ -70,6 +74,11 @@ export function ChannelsPanel({
 
 	const selected =
 		channels.find((c) => c.id === selectedId) ?? channels[0] ?? null;
+	// One batched query hydrates every channel row's classification chips.
+	const { data: classMap = {} } = useAssignmentsForKind(
+		"alert_channel",
+		channels.map((c) => c.id),
+	);
 	const filtered = channels.filter(
 		(c) =>
 			!query.trim() ||
@@ -139,6 +148,7 @@ export function ChannelsPanel({
 										channel={c}
 										selected={selected?.id === c.id}
 										onSelect={() => setSelectedId(c.id)}
+										assignments={classMap[c.id]}
 									/>
 								))
 							)}
@@ -198,10 +208,12 @@ function ChannelRow({
 	channel,
 	selected,
 	onSelect,
+	assignments,
 }: {
 	channel: ChannelDTO;
 	selected: boolean;
 	onSelect: () => void;
+	assignments?: AssignedValue[];
 }) {
 	return (
 		<button
@@ -220,6 +232,12 @@ function ChannelRow({
 				<span className="truncate font-mono text-[10px] text-muted-foreground">
 					{targetOf(channel)}
 				</span>
+				<ClassificationChips
+					kind="alert_channel"
+					id={channel.id}
+					initialAssignments={assignments}
+					className="mt-1 flex"
+				/>
 			</span>
 			<StatusDot
 				tone={!channel.enabled ? "idle" : channel.is_verified ? "ok" : "idle"}
@@ -378,6 +396,13 @@ function ChannelDetail({
 						<p className="max-w-prose text-muted-foreground text-xs leading-relaxed">
 							{meta.desc}
 						</p>
+						{/* Classification (Workstream B) — chips + a picker for managers. */}
+						<ClassificationControl
+							kind="alert_channel"
+							id={channel.id}
+							canEdit={canManage}
+							className="pt-1"
+						/>
 					</div>
 				</div>
 				<span className="flex flex-none items-center gap-1.5 font-mono text-[10px] uppercase text-muted-foreground">

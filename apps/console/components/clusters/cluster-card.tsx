@@ -4,6 +4,8 @@
 
 
 import type { ClusterData } from "@/app/server/actions/clusters";
+import { ClassificationControl } from "@/components/classification/classification-control";
+import type { AssignedValue } from "@/lib/queries/classification";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
 import { Button } from "@repo/ui/button";
@@ -41,7 +43,13 @@ function CopyButton({ value }: { value: string }) {
 	);
 }
 
-export function ClusterCard({ data }: { data: ClusterData }) {
+export function ClusterCard({
+	data,
+	initialAssignments,
+}: {
+	data: ClusterData;
+	initialAssignments?: AssignedValue[];
+}) {
 	const provider = data.cloud_identities?.provider ?? "aws";
 	const meta = getProvider(provider as CloudProviderSlug);
 	const cluster = Array.isArray(data.project_cluster) ? data.project_cluster[0] : data.project_cluster;
@@ -72,6 +80,17 @@ export function ClusterCard({ data }: { data: ClusterData }) {
 								? ` · K8s ${cluster.cluster_version}`
 								: ""}
 						</p>
+						{/* Classification (Workstream B) — chips + a picker for org editors. */}
+						{cluster?.id && (
+							<ClassificationControl
+								kind="project_cluster"
+								id={cluster.id}
+								canEdit
+								initialAssignments={initialAssignments}
+								className="mt-1.5"
+								compact
+							/>
+						)}
 					</div>
 				</div>
 			</div>
