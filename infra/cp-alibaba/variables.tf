@@ -15,7 +15,7 @@ variable "zone_id" {
 }
 
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token with DNS edit on the zone."
+  description = "Cloudflare API token with DNS edit + Cloudflare Tunnel (Zero Trust) perms."
   type        = string
   sensitive   = true
 }
@@ -25,15 +25,15 @@ variable "cloudflare_zone_id" {
   type        = string
 }
 
+variable "cloudflare_account_id" {
+  description = "Cloudflare account ID that owns the Zero Trust tunnel."
+  type        = string
+}
+
 variable "domain" {
   description = "Apex domain served by the control plane."
   type        = string
   default     = "alethialabs.io"
-}
-
-variable "ssh_public_key" {
-  description = "SSH public key authorized on the VM (CI deploy key)."
-  type        = string
 }
 
 variable "instance_type" {
@@ -47,12 +47,6 @@ variable "system_disk_size" {
   description = "System disk size (GB) — holds Docker data (Postgres + object store)."
   type        = number
   default     = 40
-}
-
-variable "ssh_allowed_cidrs" {
-  description = "CIDRs allowed to reach SSH (22)."
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
 }
 
 variable "repo_url" {

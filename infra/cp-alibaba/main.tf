@@ -1,8 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# alethialabs.io control plane on Alibaba Cloud — a single Yitian 710 ARM (g8y)
-# ECS instance running the same self-host bundle as the other hosts.
+# alethialabs.io control plane on Alibaba Cloud — a single Yitian 710 ARM (g8y) ECS instance
+# running the same self-host bundle (app · docs · postgres · s3 · runner) behind Caddy, fronted by
+# a Cloudflare Tunnel. Ported from infra/cp-hetzner but shaped for Alibaba: the box has NO public
+# web ingress (the security group has NO inbound rules), and there is NO open SSH. Admin / deploy is
+# via ECS Session Manager + Cloud Assistant RunCommand (over the Cloud Assistant agent — preinstalled
+# on Alibaba's official Ubuntu images — which dials OUT, no open port). The auto-assigned public IP is
+# egress-only (image pulls, git clone, dialing the tunnel + CA out). The encrypted system disk holds
+# Postgres + object storage.
 
 locals {
   tags = {
@@ -41,41 +47,13 @@ resource "alicloud_vswitch" "cp" {
   tags         = local.tags
 }
 
+# Security group with NO inbound rules — web is Cloudflare-Tunnel-fronted and admin is ECS Session
+# Manager / Cloud Assistant (the CA agent dials out). Alibaba security groups deny inbound by default,
+# so the absence of ingress rules IS the closed posture; egress is allowed by default.
 resource "alicloud_security_group" "cp" {
   security_group_name = "alethia-cp"
   vpc_id              = alicloud_vpc.cp.id
   tags                = local.tags
-}
-
-resource "alicloud_security_group_rule" "ssh" {
-  count             = length(var.ssh_allowed_cidrs)
-  type              = "ingress"
-  ip_protocol       = "tcp"
-  port_range        = "22/22"
-  security_group_id = alicloud_security_group.cp.id
-  cidr_ip           = var.ssh_allowed_cidrs[count.index]
-}
-
-resource "alicloud_security_group_rule" "http" {
-  type              = "ingress"
-  ip_protocol       = "tcp"
-  port_range        = "80/80"
-  security_group_id = alicloud_security_group.cp.id
-  cidr_ip           = "0.0.0.0/0"
-}
-
-resource "alicloud_security_group_rule" "https" {
-  type              = "ingress"
-  ip_protocol       = "tcp"
-  port_range        = "443/443"
-  security_group_id = alicloud_security_group.cp.id
-  cidr_ip           = "0.0.0.0/0"
-}
-
-resource "alicloud_ecs_key_pair" "cp" {
-  key_pair_name = "alethia-cp"
-  public_key    = var.ssh_public_key
-  tags          = local.tags
 }
 
 resource "alicloud_instance" "cp" {
@@ -84,12 +62,13 @@ resource "alicloud_instance" "cp" {
   image_id        = data.alicloud_images.ubuntu.images[0].id
   vswitch_id      = alicloud_vswitch.cp.id
   security_groups = [alicloud_security_group.cp.id]
-  key_name        = alicloud_ecs_key_pair.cp.key_pair_name
 
-  system_disk_category = "cloud_essd"
-  system_disk_size     = var.system_disk_size
+  system_disk_category  = "cloud_essd"
+  system_disk_size      = var.system_disk_size
+  system_disk_encrypted = true
 
-  # Public IPv4 (pay-by-traffic, minimal bandwidth — Caddy needs inbound only).
+  # Auto-assigned public IPv4 for EGRESS only (image pulls, git, tunnel + Cloud Assistant dial-out).
+  # Inbound is closed by the security group; ingress is the tunnel, admin is Session Manager.
   internet_max_bandwidth_out = 5
   internet_charge_type       = "PayByTraffic"
 
@@ -100,21 +79,60 @@ resource "alicloud_instance" "cp" {
   tags = local.tags
 }
 
-# DNS — unproxied so Caddy's ACME challenge reaches the box directly.
-resource "cloudflare_record" "apex_a" {
-  zone_id = var.cloudflare_zone_id
-  name    = "@"
-  type    = "A"
-  content = alicloud_instance.cp.public_ip
-  proxied = false
-  ttl     = 300
+# ── Cloudflare Tunnel ──────────────────────────────────────────────────────────
+# The origin is never exposed: cloudflared (a compose service on the box) dials OUT to Cloudflare
+# and forwards the tunnel's ingress to Caddy over the internal network. TLS terminates at
+# Cloudflare's edge. config_src = "cloudflare" = remotely-managed config, so the connector only
+# needs the token (see the tunnel_token output → TUNNEL_TOKEN env).
+resource "random_id" "tunnel_secret" {
+  byte_length = 35
 }
 
-resource "cloudflare_record" "www_a" {
+resource "cloudflare_zero_trust_tunnel_cloudflared" "cp" {
+  account_id = var.cloudflare_account_id
+  name       = "alethia-cp-alibaba"
+  secret     = random_id.tunnel_secret.b64_std
+  config_src = "cloudflare"
+}
+
+resource "cloudflare_zero_trust_tunnel_cloudflared_config" "cp" {
+  account_id = var.cloudflare_account_id
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.cp.id
+
+  config {
+    # Apex + www forward to Caddy, which stitches console + marketing + docs + blog into the one
+    # origin.
+    ingress_rule {
+      hostname = var.domain
+      service  = "http://caddy:80"
+    }
+    ingress_rule {
+      hostname = "www.${var.domain}"
+      service  = "http://caddy:80"
+    }
+    # Required catch-all.
+    ingress_rule {
+      service = "http_status:404"
+    }
+  }
+}
+
+# DNS — proxied CNAMEs onto the tunnel (Cloudflare flattens the apex CNAME). Proxied is mandatory
+# for cfargotunnel.com targets; ttl must be 1 (auto) when proxied.
+resource "cloudflare_record" "apex" {
+  zone_id = var.cloudflare_zone_id
+  name    = "@"
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.cp.id}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
+}
+
+resource "cloudflare_record" "www" {
   zone_id = var.cloudflare_zone_id
   name    = "www"
-  type    = "A"
-  content = alicloud_instance.cp.public_ip
-  proxied = false
-  ttl     = 300
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.cp.id}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
 }
