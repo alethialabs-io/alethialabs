@@ -31,11 +31,18 @@ import { SidebarProfile } from "./sidebar-profile";
 /**
  * The Vercel-style sidebar: org switcher on top, a sliding drill-in nav in the middle, and
  * the profile bar pinned at the bottom. The active drill is derived from the pathname
- * (route-owned drills auto-open on deep links); click-only drills (Observability) open via
- * local state and reset on any navigation. The off-screen panel is inert so focus and the
- * pointer never reach it.
+ * (route-owned drills auto-open on deep links); any future click-only drill opens via local
+ * state and resets on navigation. The off-screen panel is inert so focus and the pointer
+ * never reach it.
  */
-export function AppSidebar({ isHosted = false }: { isHosted?: boolean }) {
+export function AppSidebar({
+	isHosted = false,
+	selfRunners = false,
+}: {
+	isHosted?: boolean;
+	/** Org runs its own runners — surfaces the gated Runners nav item. */
+	selfRunners?: boolean;
+}) {
 	const pathname = usePathname();
 	const orgSlug = useActiveOrgSlug();
 
@@ -46,8 +53,8 @@ export function AppSidebar({ isHosted = false }: { isHosted?: boolean }) {
 		() =>
 			projectSlug
 				? buildProjectSidebarNav(orgSlug, projectSlug)
-				: buildSidebarNav(orgSlug),
-		[orgSlug, projectSlug],
+				: buildSidebarNav(orgSlug, { selfRunners }),
+		[orgSlug, projectSlug, selfRunners],
 	);
 	const drills = useMemo(
 		() =>
@@ -60,8 +67,9 @@ export function AppSidebar({ isHosted = false }: { isHosted?: boolean }) {
 	const { toggle, canToggle } = useSidebarCollapse();
 
 	const routeDrill = routeOwnedDrill(pathname);
-	// A click-opened drill (Observability) is scoped to the path it was opened on, so any
-	// navigation transparently returns to the main view — no reset effect needed.
+	// A click-opened drill is scoped to the path it was opened on, so any navigation
+	// transparently returns to the main view — no reset effect needed. (No nav item opens a
+	// click-only drill today; the machinery stays generic for future ones.)
 	const [manual, setManual] = useState<{ drill: DrillId; path: string } | null>(null);
 	const manualDrill = manual?.path === pathname ? manual.drill : null;
 
