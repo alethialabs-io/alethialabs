@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The sidebar navigation model for the Vercel-style app shell. Pure data + structural
@@ -21,7 +21,6 @@ import {
 	Settings,
 	ShieldAlert,
 	ShieldCheck,
-	Sparkles,
 	Waypoints,
 	Webhook,
 	Workflow,
@@ -101,7 +100,6 @@ export function buildSidebarNav(
 		connect: [
 			{ label: "Connectors", icon: Blocks, sub: "connectors", href: globalHref(orgSlug, "connectors") },
 			{ label: "Alerts", icon: Bell, drill: "alerts", anchor: globalHref(orgSlug, "alerts") },
-			{ label: "Agent", icon: Sparkles, sub: "agent", href: globalHref(orgSlug, "agent") },
 			// Runners is a self-operator surface only — appended when the org runs its own runners.
 			...(capabilities.selfRunners
 				? [

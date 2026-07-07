@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The background refresh task — re-verifies health + re-syncs inventory for connections that are due,
@@ -7,7 +7,7 @@
 // it catches revoked access (→ DISCONNECTED), missed events, and resources deleted in-cloud
 // (soft-removed). No runner, no jobs.
 
-import { and, eq, lt, or, sql } from "drizzle-orm";
+import { and, eq, lt, ne, or, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
 import { hasServerSideHealth, probeHealth } from "./health";
@@ -40,14 +40,22 @@ async function dueConnections() {
 		})
 		.from(cloudIdentities)
 		.where(
-			// Any verified-or-pending connection whose health/inventory is stale. `probeHealth` returns
-			// null for providers without a server-side path (GCP/Azure/self-managed) → the sweep skips
-			// them, so no provider filter is needed here.
-			or(
-				sql`${cloudIdentities.last_tested_at} is null`,
-				lt(cloudIdentities.last_tested_at, sql`now() - ${HEALTH_TTL}`),
-				sql`${cloudIdentities.inventory_synced_at} is null`,
-				lt(cloudIdentities.inventory_synced_at, sql`now() - ${INVENTORY_TTL}`),
+			and(
+				// Never probe a `pending` row: it's a dangling connect-sheet placeholder created by
+				// initIdentity with empty credentials and no submitted account. Probing it would fail
+				// (no role/token) and poison it to `disconnected`, surfacing a phantom "Verification
+				// failed" for a provider the user never attempted. A real submit sets status→'testing'
+				// first, so genuine connections are still swept.
+				ne(cloudIdentities.status, "pending"),
+				// Any submitted connection whose health/inventory is stale. `probeHealth` returns null
+				// for providers without a server-side path (self-managed) → the sweep skips them, so no
+				// provider filter is needed here.
+				or(
+					sql`${cloudIdentities.last_tested_at} is null`,
+					lt(cloudIdentities.last_tested_at, sql`now() - ${HEALTH_TTL}`),
+					sql`${cloudIdentities.inventory_synced_at} is null`,
+					lt(cloudIdentities.inventory_synced_at, sql`now() - ${INVENTORY_TTL}`),
+				),
 			),
 		)
 		.limit(BATCH);

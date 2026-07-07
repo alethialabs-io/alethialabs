@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Continuous integration — validates every PR + push to main. The CD/release/infra
@@ -172,6 +172,8 @@ jobs:
         run: node scripts/check-test-imports.mjs
       - name: Connector setup artifacts in sync (infra/connector ⇄ console public)
         run: node scripts/check-connector-assets.mjs
+      - name: SPDX headers are legal-form-agnostic (Alethia Labs, no OÜ/DPK)
+        run: node scripts/check-license-headers.mjs
 
   go:
     name: Go (build · vet · test · lint)

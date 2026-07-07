@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Mocked-boundary tests for the connectors actions: stub the authz guard, a thenable drizzle chain
@@ -409,7 +409,16 @@ describe("getConnectorsWithStatus", () => {
 			[connector({ slug: "gcp", category: "cloud", auth_method: "wif" })],
 			[],
 			[], // no verified identities
-			[{ id: "h-1", provider: "gcp", status: "failed", last_error: "boom" }],
+			[
+				{
+					id: "h-1",
+					provider: "gcp",
+					status: "failed",
+					last_error: "boom",
+					// A genuinely-configured identity (has creds) whose verification failed.
+					credentials: { project_id: "p-1" },
+				},
+			],
 			[],
 		]);
 		const [row] = await getConnectorsWithStatus();
@@ -418,6 +427,52 @@ describe("getConnectorsWithStatus", () => {
 		expect(row.last_error).toBe("boom");
 		expect(row.reverify_identity_id).toBe("h-1");
 		expect(row.accounts).toEqual([]);
+	});
+
+	it("ignores never-configured placeholder identities (no phantom 'Verification failed')", async () => {
+		// A `disconnected` unverified row with EMPTY credentials — the sweeper poisoning an eager
+		// connect-sheet placeholder. It must NOT surface as a failed verification.
+		dbh.setQueue([
+			[connector({ slug: "digitalocean", category: "cloud", auth_method: "token" })],
+			[],
+			[], // no verified identities
+			[
+				{
+					id: "ph-1",
+					provider: "digitalocean",
+					status: "disconnected",
+					last_error: "No API token is stored for this connection.",
+					credentials: {},
+				},
+			],
+			[],
+		]);
+		const [row] = await getConnectorsWithStatus();
+		expect(row.connected).toBe(false);
+		expect(row.cloud_health).toBeUndefined();
+		expect(row.last_error).toBeUndefined();
+		expect(row.reverify_identity_id).toBeUndefined();
+	});
+
+	it("still surfaces a genuine lost-access (disconnected) token cloud that has credentials", async () => {
+		dbh.setQueue([
+			[connector({ slug: "hetzner", category: "cloud", auth_method: "token" })],
+			[],
+			[], // no verified identities
+			[
+				{
+					id: "d-1",
+					provider: "hetzner",
+					status: "disconnected",
+					last_error: "Token rejected by hetzner (HTTP 401).",
+					credentials: { token: "enc:…" },
+				},
+			],
+			[],
+		]);
+		const [row] = await getConnectorsWithStatus();
+		expect(row.cloud_health).toBe("failed");
+		expect(row.reverify_identity_id).toBe("d-1");
 	});
 
 	it("marks an api_key connector connected from a verified stored credential", async () => {

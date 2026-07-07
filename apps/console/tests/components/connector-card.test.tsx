@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Component test for ConnectorCard: a connected connector renders its logo in
@@ -90,6 +90,49 @@ describe("ConnectorCard", () => {
 		expect(screen.getByText(/verification failed/i)).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: /re-verify/i }));
 		expect(onReverify).toHaveBeenCalledTimes(1);
+	});
+
+	it("gates an unconfigured git provider — 'Not enabled on this instance', no Connect", () => {
+		render(
+			<ConnectorCard
+				integration={connector({
+					category: "git",
+					slug: "github",
+					name: "GitHub",
+					connected: false,
+				})}
+				canManage
+				platformConfigured={false}
+				onConnect={() => {}}
+				onManage={() => {}}
+			/>,
+		);
+		expect(screen.getByText(/not enabled on this instance/i)).toBeInTheDocument();
+		expect(screen.getByText(/unavailable/i)).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /connect/i }),
+		).not.toBeInTheDocument();
+	});
+
+	it("offers Connect for a configured git provider", () => {
+		render(
+			<ConnectorCard
+				integration={connector({
+					category: "git",
+					slug: "github",
+					name: "GitHub",
+					connected: false,
+				})}
+				canManage
+				platformConfigured
+				onConnect={() => {}}
+				onManage={() => {}}
+			/>,
+		);
+		expect(screen.getByRole("button", { name: /connect/i })).toBeInTheDocument();
+		expect(
+			screen.queryByText(/not enabled on this instance/i),
+		).not.toBeInTheDocument();
 	});
 
 	it("shows a Verifying… state with no action while a test is in flight", () => {

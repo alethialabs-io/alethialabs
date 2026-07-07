@@ -1,5 +1,5 @@
 "use server";
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, asc, desc, eq, sql } from "drizzle-orm";
@@ -47,6 +47,34 @@ export type CloudAccount = {
 	/** Short descriptor — account id / project / subscription. */
 	label?: string;
 };
+
+/**
+ * Whether a cloud identity was ever actually configured (a credential was submitted), vs. a bare
+ * connect-sheet placeholder pre-created by initIdentity (empty credentials + an external_id at most).
+ * Role clouds need a role_arn, token clouds a token, GCP a project/SA, Azure a subscription/tenant.
+ * Used to keep never-configured placeholders from surfacing a phantom "Verification failed".
+ */
+function identityWasConfigured(
+	provider: string,
+	credentials: typeof cloudIdentities.$inferSelect["credentials"],
+): boolean {
+	const c = credentials ?? {};
+	switch (provider) {
+		case "aws":
+		case "alibaba":
+			return !!c.role_arn;
+		case "digitalocean":
+		case "hetzner":
+		case "civo":
+			return !!c.token || !!c.self_managed;
+		case "gcp":
+			return !!c.project_id || !!c.service_account_email;
+		case "azure":
+			return !!c.subscription_id || !!c.tenant_id;
+		default:
+			return false;
+	}
+}
 
 /** Maps a catalog category to its presentation group on the connectors page. */
 function groupForCategory(category: ConnectorCategory): ConnectorGroup {
@@ -143,6 +171,7 @@ export async function getConnectorsWithStatus(): Promise<
 						provider: cloudIdentities.provider,
 						status: cloudIdentities.status,
 						last_error: cloudIdentities.last_error,
+						credentials: cloudIdentities.credentials,
 					})
 					.from(cloudIdentities)
 					.where(eq(cloudIdentities.is_verified, false))
@@ -154,6 +183,13 @@ export async function getConnectorsWithStatus(): Promise<
 		{ status: string; last_error: string | null; identityId: string }
 	>();
 	for (const r of cloudHealthRows) {
+		// Skip never-configured placeholders. initIdentity pre-creates a `pending` identity per
+		// provider (with empty credentials) just so the connect sheet has an id to bind to. If the
+		// background sweep ever probed one it would fail and flip it to `disconnected` — a phantom
+		// "Verification failed" for a connection the user never attempted. Only an identity that was
+		// actually submitted (has real credentials) may surface a failed/testing health here; the
+		// rest read as "Not connected". This also self-heals any rows already poisoned in prod.
+		if (!identityWasConfigured(r.provider, r.credentials)) continue;
 		if (!cloudHealthByProvider.has(r.provider)) {
 			cloudHealthByProvider.set(r.provider, {
 				status: r.status,

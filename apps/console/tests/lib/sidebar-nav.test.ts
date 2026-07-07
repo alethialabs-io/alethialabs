@@ -32,6 +32,7 @@ describe("buildSidebarNav", () => {
 	});
 
 	it("keeps the surfaces we ship", () => {
+		// NB: Agent is no longer a nav item — it's a persistent launcher (topbar + ⌘K).
 		expect(labels("acme")).toEqual(
 			expect.arrayContaining([
 				"Overview",
@@ -40,7 +41,6 @@ describe("buildSidebarNav", () => {
 				"Evidence",
 				"Connectors",
 				"Alerts",
-				"Agent",
 				"Usage",
 				"Support",
 				"Settings",

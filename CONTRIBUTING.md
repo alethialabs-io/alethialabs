@@ -33,7 +33,7 @@ AGPL-only contribution would block us from shipping the commercial edition.
 2. Make your change. Add an SPDX header to every new source file:
    - Core code: `SPDX-License-Identifier: AGPL-3.0-only`
    - Code under `ee/`: `SPDX-License-Identifier: LicenseRef-Alethia-Commercial`
-   - Plus a copyright line: `SPDX-FileCopyrightText: 2026 Alethia Labs DPK <legal@alethialabs.io>`
+   - Plus a copyright line: `SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>`
 3. Match the existing code style and run the relevant checks:
    `turbo build`, `turbo lint`, and `go test ./...` for Go packages.
 4. Use [Conventional Commits](https://www.conventionalcommits.org/) — releases are

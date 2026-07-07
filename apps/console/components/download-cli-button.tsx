@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { CopyButton } from "@repo/ui/copy-button";
@@ -50,20 +50,13 @@ export function DownloadCliButton() {
 			<PopoverTrigger asChild>
 				<Button
 					variant="ghost"
-					size="sm"
-					className="h-9 gap-2 text-muted-foreground hover:text-foreground"
+					size="icon"
+					aria-label="Download alethia CLI"
+					title="Download alethia CLI"
+					className="h-9 w-9 text-muted-foreground hover:text-foreground"
 				>
 					{/* `>_` prompt glyph (borderless) — mirrors the CLI itself. */}
 					<Terminal className="h-4 w-4" />
-					<span className="hidden sm:inline-flex items-center">
-						Download alethia
-						{/* Blinking terminal caret (reuses the alethia-blink keyframe). */}
-						<span
-							aria-hidden
-							className="ml-0.5 inline-block h-4 w-[0.5ch] bg-current animate-[alethia-blink_1.1s_steps(1,end)_infinite] motion-reduce:animate-none"
-						/>
-					</span>
-					<span className="sr-only sm:hidden">Download alethia CLI</span>
 				</Button>
 			</PopoverTrigger>
 			<PopoverContent className="w-96 p-0" align="end">

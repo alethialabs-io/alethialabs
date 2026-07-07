@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Bootstrap for the connector-assets stack (account 270587882865). Owns all IAM so the

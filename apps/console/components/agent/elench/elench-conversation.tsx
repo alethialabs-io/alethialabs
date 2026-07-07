@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { UIMessage } from "ai";
@@ -144,6 +144,10 @@ export function ElenchConversation({
 
 	const isEmpty = messages.length === 0;
 	const suggestions = isOrg ? ORG_SUGGESTIONS : PROJECT_SUGGESTIONS;
+	// The centered title in the modal's active-conversation top bar.
+	const convoTitle = isOrg
+		? (threads.find((t) => t.id === activeId)?.title ?? "New chat")
+		: "Assistant";
 
 	// The chat body: the modal empty landing owns its own composer; every other state
 	// uses the shared transcript + docked composer (with the Ask-mode pill).
@@ -168,7 +172,10 @@ export function ElenchConversation({
 				renderToolPart={renderToolPart}
 				placeholder={PLACEHOLDER}
 				className={
-					view === "modal" ? "mx-auto w-full max-w-3xl" : undefined
+					view === "modal" ? "mx-auto w-full max-w-[720px]" : undefined
+				}
+				composerClassName={
+					view === "modal" ? "border-t-0 px-6 pb-6 pt-2" : undefined
 				}
 				renderComposer={
 					<ElenchComposer
@@ -197,6 +204,8 @@ export function ElenchConversation({
 				isOrg={isOrg}
 				threads={threads}
 				activeId={activeId}
+				isEmpty={isEmpty}
+				title={convoTitle}
 				onSelectThread={selectThread}
 				onNewChat={newChat}
 				onDeleteThread={deleteThread}

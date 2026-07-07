@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-FileCopyrightText: 2026 Alethia Labs OU <legal@alethialabs.io>
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Serve the PRODUCTION-accurate stitched site (console + marketing behind the

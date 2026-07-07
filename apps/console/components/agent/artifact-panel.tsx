@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { X } from "lucide-react";
@@ -43,10 +43,11 @@ function toSlug(p: string): CloudProviderSlug {
 }
 
 /**
- * The agent's right-hand artifact panel — Config / Plan / Cost / Logs for the
+ * The agent's generative-UI split pane — Config / Plan / Cost / Logs for the
  * active project/job (from `useArtifactStore`). All four tabs read existing server
  * actions + pure parsers; Logs streams over the shared `useJobLogStream` SSE.
- * Grayscale/squared; sheds below `xl` (matches the design).
+ * Grayscale/squared; fills the resizable split column the Elench modal gives it,
+ * and self-hides (returns null) when no artifact is open.
  */
 export function ArtifactPanel() {
 	const artifact = useArtifactStore((s) => s.artifact);
@@ -150,7 +151,7 @@ export function ArtifactPanel() {
 	const title = project?.project.project_name ?? (jobId ? `Job ${jobId.slice(0, 8)}` : "Artifact");
 
 	return (
-		<aside className="hidden w-[420px] flex-none flex-col border-l border-border bg-card xl:flex">
+		<aside className="flex h-full w-full flex-col bg-card">
 			<header className="flex h-[52px] flex-none items-center justify-between gap-2 border-b border-border px-4">
 				<span className="truncate text-sm font-medium">{title}</span>
 				<button

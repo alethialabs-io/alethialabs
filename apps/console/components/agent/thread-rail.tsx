@@ -1,5 +1,5 @@
 "use client";
-// SPDX-FileCopyrightText: 2026 Alethia Labs OÜ <legal@alethialabs.io>
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Plus, Search, Trash2 } from "lucide-react";
@@ -78,7 +78,7 @@ export function ThreadRail({
 	}, [threads, q]);
 
 	return (
-		<aside className="hidden w-[246px] flex-none flex-col border-r border-border bg-card lg:flex">
+		<aside className="hidden w-[284px] flex-none flex-col border-r border-border bg-card lg:flex">
 			<div className="p-3.5 pb-2.5">
 				<Button
 					variant="outline"
