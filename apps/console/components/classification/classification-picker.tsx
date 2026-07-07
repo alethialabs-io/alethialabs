@@ -19,6 +19,7 @@ import { Check, Tags } from "lucide-react";
 import type { ReactNode } from "react";
 import type { DimensionDTO } from "@/app/server/actions/classification/dimensions";
 import type { ResourceKind } from "@/lib/db/schema/enums";
+import type { AssignedValue } from "@/lib/queries/classification";
 import {
 	useAssignmentMutations,
 	useAssignmentsQuery,
@@ -71,14 +72,16 @@ export function ClassificationPicker({
 	id,
 	trigger,
 	align = "start",
+	initialAssignments,
 }: {
 	kind: ResourceKind;
 	id: string;
 	trigger?: ReactNode;
 	align?: "start" | "center" | "end";
+	initialAssignments?: AssignedValue[];
 }) {
 	const dimensionsQuery = useDimensionsQuery();
-	const assignmentsQuery = useAssignmentsQuery(kind, id);
+	const assignmentsQuery = useAssignmentsQuery(kind, id, initialAssignments);
 	const dimensions = dimensionsQuery.data ?? [];
 	const { assign, unassign } = useAssignmentMutations(kind, id, dimensions);
 

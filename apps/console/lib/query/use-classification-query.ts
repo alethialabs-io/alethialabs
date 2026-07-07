@@ -12,7 +12,9 @@ import type { DimensionDTO } from "@/app/server/actions/classification/dimension
 import { listDimensions } from "@/app/server/actions/classification/dimensions";
 import {
 	assignClassification,
+	canEditClassification,
 	getAssignments,
+	getAssignmentsForKind,
 	unassignClassification,
 } from "@/app/server/actions/classification/assignments";
 import type { ResourceKind } from "@/lib/db/schema/enums";
@@ -30,16 +32,52 @@ export function useDimensionsQuery(): UseQueryResult<DimensionDTO[]> {
 	});
 }
 
-/** The classification chips assigned to a single resource. */
+/**
+ * Whether the caller holds `org:edit` — the server-side gate every assign/clear enforces.
+ * The control ANDs this with a resource's own edit flag; one org-level key so N controls
+ * dedupe to a single request.
+ */
+export function useCanEditClassification(): UseQueryResult<boolean> {
+	return useQuery({
+		queryKey: qk.classificationCanEdit(),
+		queryFn: () => canEditClassification(),
+		staleTime: 5 * 60_000,
+	});
+}
+
+/**
+ * The classification chips assigned to a single resource. Pass `initialData` (e.g. a row
+ * from a batched `assignmentsForKind` hydration) to seed the cache so the first paint is
+ * instant and the query still stays reactive to picker mutations.
+ */
 export function useAssignmentsQuery(
 	kind: ResourceKind,
 	resourceId: string,
-	enabled = true,
+	initialData?: AssignedValue[],
 ): UseQueryResult<AssignedValue[]> {
 	return useQuery({
 		queryKey: qk.classificationAssignments(kind, resourceId),
 		queryFn: () => getAssignments(kind, resourceId),
-		enabled,
+		initialData,
+		// Mark seeded data fresh so a batch-hydrated list of N rows costs zero per-row
+		// fetches (each row trusts its slice until the 30s staleTime elapses).
+		initialDataUpdatedAt: initialData ? Date.now() : undefined,
+	});
+}
+
+/**
+ * One-query batched hydration for a client list: the chips for every `resourceIds` entry of
+ * one kind. Callers pass `map[id]` into each row's `initialAssignments` so per-row chips +
+ * pickers read seeded-fresh data (zero per-row fetches). Empty ids short-circuit.
+ */
+export function useAssignmentsForKind(
+	kind: ResourceKind,
+	resourceIds: string[],
+): UseQueryResult<Record<string, AssignedValue[]>> {
+	return useQuery({
+		queryKey: qk.classificationAssignmentsForKind(kind, resourceIds),
+		queryFn: () => getAssignmentsForKind(kind, resourceIds),
+		enabled: resourceIds.length > 0,
 	});
 }
 

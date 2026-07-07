@@ -4,8 +4,9 @@
 
 // Read-only classification chips for a resource. Renders one squared outline Badge per
 // assigned value; a value's optional `color` shows as a small leading dot (the label stays
-// grayscale to match the design system). Feed `assignments` for server-hydrated list rows
-// (no per-row fetch), or omit it to lazily fetch via TanStack Query.
+// grayscale to match the design system). Always query-backed (so a picker's optimistic
+// mutation reflects instantly); pass `initialAssignments` from a batched `assignmentsForKind`
+// hydration to seed the cache and avoid a per-row fetch.
 
 import { Badge } from "@repo/ui/badge";
 import { cn } from "@repo/ui/utils";
@@ -13,7 +14,7 @@ import type { ResourceKind } from "@/lib/db/schema/enums";
 import type { AssignedValue } from "@/lib/queries/classification";
 import { useAssignmentsQuery } from "@/lib/query/use-classification-query";
 
-/** One squared chip: an optional colour dot + the value label, prefixed by its dimension. */
+/** One squared chip: an optional colour dot + the value label. */
 function Chip({ chip }: { chip: AssignedValue }) {
 	return (
 		<Badge
@@ -34,30 +35,32 @@ function Chip({ chip }: { chip: AssignedValue }) {
 }
 
 /**
- * The chip row for a resource's classification assignments. Pass `assignments` to render a
- * batch-hydrated list (from `assignmentsForKind`) without a fetch; otherwise it fetches the
- * resource's chips itself. Renders nothing when there are no assignments.
+ * The chip row for a resource's classification assignments. `initialAssignments` seeds the
+ * cache (batch-hydrated list rows) for an instant first paint; the row still stays reactive.
+ * Renders nothing when there are no assignments.
  */
 export function ClassificationChips({
 	kind,
 	id,
-	assignments,
+	initialAssignments,
 	className,
 }: {
 	kind: ResourceKind;
 	id: string;
-	assignments?: AssignedValue[];
+	initialAssignments?: AssignedValue[];
 	className?: string;
 }) {
-	const query = useAssignmentsQuery(kind, id, assignments === undefined);
-	const chips = assignments ?? query.data ?? [];
+	const { data } = useAssignmentsQuery(kind, id, initialAssignments);
+	const chips = data ?? [];
 	if (chips.length === 0) return null;
 
+	// A <span> container (not <div>) so chips are valid phrasing content inside a <button>
+	// (e.g. the alerts rail rows).
 	return (
-		<div className={cn("flex flex-wrap items-center gap-1", className)}>
+		<span className={cn("inline-flex flex-wrap items-center gap-1", className)}>
 			{chips.map((chip) => (
 				<Chip key={chip.assignment_id} chip={chip} />
 			))}
-		</div>
+		</span>
 	);
 }

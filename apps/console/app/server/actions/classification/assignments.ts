@@ -8,7 +8,8 @@
 // while the DB's (kind, id, value) unique blocks exact duplicates. All via withScope (RLS wall).
 
 import { and, eq } from "drizzle-orm";
-import { authorize } from "@/lib/authz/guard";
+import { getPdp } from "@/lib/authz";
+import { authorize, currentActor } from "@/lib/authz/guard";
 import { withScope } from "@/lib/db";
 import {
 	classificationAssignment,
@@ -18,6 +19,7 @@ import {
 import type { ResourceKind } from "@/lib/db/schema/enums";
 import {
 	type AssignedValue,
+	assignmentsForKind,
 	listAssignmentsFor,
 } from "@/lib/queries/classification";
 import {
@@ -26,6 +28,17 @@ import {
 	type UnassignInput,
 	unassignInputSchema,
 } from "@/lib/validations/classification";
+
+/**
+ * Whether the caller may assign/clear classifications at all — the SAME `org:edit` the assign
+ * actions enforce. The UI ANDs this with each resource's own edit gate so a picker only shows
+ * when the user can actually use it (never a control that would 403). Non-throwing.
+ */
+export async function canEditClassification(): Promise<boolean> {
+	const actor = await currentActor();
+	const decision = await getPdp().can(actor, "edit", { type: "org" });
+	return decision.allowed;
+}
 
 /** Lists the classification chips assigned to a single resource. */
 export async function getAssignments(
@@ -36,6 +49,24 @@ export async function getAssignments(
 	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, (tx) =>
 		listAssignmentsFor(tx, kind, resourceId),
 	);
+}
+
+/**
+ * Batched hydration for list views: the chips for MANY resources of one kind in a single
+ * round-trip, keyed by resource_id (ids with no assignments are omitted). Seed each row's
+ * per-resource query cache with this so a list of N rows costs one query, not N.
+ */
+export async function getAssignmentsForKind(
+	kind: ResourceKind,
+	resourceIds: string[],
+): Promise<Record<string, AssignedValue[]>> {
+	if (resourceIds.length === 0) return {};
+	const actor = await authorize("view", { type: "org" });
+	const map = await withScope(
+		{ ownerId: actor.userId, orgId: actor.orgId },
+		(tx) => assignmentsForKind(tx, kind, resourceIds),
+	);
+	return Object.fromEntries(map);
 }
 
 /**

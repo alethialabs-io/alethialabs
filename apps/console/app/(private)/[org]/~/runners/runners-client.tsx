@@ -21,6 +21,7 @@ import {
 import { RunnersPager } from "@/components/runners/runners-pager";
 import { VersionsPanel } from "@/components/runners/versions-panel";
 import { useRunnersQuery, type ActiveJob } from "@/lib/query/use-runners-query";
+import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import {
 	useFleetQuery,
@@ -176,6 +177,12 @@ export function RunnersClient() {
 
 	const hasPools = poolViews.length > 0;
 
+	// One batched query hydrates the visible runner cards' classification chips.
+	const { data: classMap = {} } = useAssignmentsForKind(
+		"runner",
+		pageItems.map((r) => r.id),
+	);
+
 	// Hosted tenants without the BYO-runners entitlement get the upsell in place of the page.
 	// (Self-managed operators are never gated here.)
 	if (isHosted && !canByoRunners) {
@@ -282,7 +289,11 @@ export function RunnersClient() {
 						<>
 							<div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(340px,1fr))]">
 								{pageItems.map((runner) => (
-									<RunnerCard key={runner.id} runner={runner} />
+									<RunnerCard
+										key={runner.id}
+										runner={runner}
+										initialAssignments={classMap[runner.id]}
+									/>
 								))}
 							</div>
 							<RunnersPager

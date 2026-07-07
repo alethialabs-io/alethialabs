@@ -9,7 +9,9 @@
 
 import { useState } from "react";
 import type { AlertsBootstrap, DeliveryDTO } from "@/app/server/actions/alerts";
+import { ClassificationChips } from "@/components/classification/classification-chips";
 import type { AlertDeliveryStatus } from "@/lib/db/schema/enums";
+import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { cn } from "@repo/ui/utils";
 
 type Filter = "all" | "delivered" | "failed";
@@ -28,6 +30,11 @@ function isFailed(d: DeliveryDTO): boolean {
 /** Delivery activity log. */
 export function ActivityPanel({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 	const { deliveries } = bootstrap;
+	// One batched query hydrates every delivery row's classification chips (read-only).
+	const { data: classMap = {} } = useAssignmentsForKind(
+		"alert_delivery",
+		deliveries.map((d) => d.id),
+	);
 	const [filter, setFilter] = useState<Filter>("all");
 
 	const rows = deliveries.filter((d) => {
@@ -94,6 +101,12 @@ export function ActivityPanel({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 									<div className="truncate font-mono text-[10.5px] text-muted-foreground">
 										{d.event_key}
 									</div>
+									<ClassificationChips
+										kind="alert_delivery"
+										id={d.id}
+										initialAssignments={classMap[d.id]}
+										className="mt-1 flex"
+									/>
 								</div>
 							</div>
 							<div className="font-mono text-[11px] uppercase text-muted-foreground">

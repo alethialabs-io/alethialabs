@@ -11,6 +11,8 @@ import { StatusBadge } from "@repo/ui/status-badge";
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
 import { JOB_TYPES } from "@/components/jobs/columns";
+import { ClassificationControl } from "@/components/classification/classification-control";
+import type { AssignedValue } from "@/lib/queries/classification";
 import {
 	RunnerActions,
 	RunnerVersion,
@@ -48,7 +50,13 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 	);
 }
 
-export function RunnerCard({ runner }: { runner: RunnerRow }) {
+export function RunnerCard({
+	runner,
+	initialAssignments,
+}: {
+	runner: RunnerRow;
+	initialAssignments?: AssignedValue[];
+}) {
 	const isManaged = runner.operator === "managed";
 	const OperatorIcon = isManaged ? Cloud : Server;
 	const providers = runner.supported_providers ?? [];
@@ -129,7 +137,15 @@ export function RunnerCard({ runner }: { runner: RunnerRow }) {
 			)}
 
 			{/* actions */}
-			<div className={cn("flex items-center justify-end border-t border-border px-3 py-2", job && jobInfo && "border-t-0")}>
+			<div className={cn("flex items-center justify-between gap-2 border-t border-border px-3 py-2", job && jobInfo && "border-t-0")}>
+				{/* Classification (Workstream B) — chips + a picker for org editors. */}
+				<ClassificationControl
+					kind="runner"
+					id={runner.id}
+					canEdit
+					initialAssignments={initialAssignments}
+					compact
+				/>
 				<RunnerActions runner={runner} />
 			</div>
 		</Card>

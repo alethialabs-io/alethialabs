@@ -37,7 +37,14 @@ import {
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
 import { Skeleton } from "@repo/ui/skeleton";
-import { BUILT_IN_ROLES, type BuiltInRole, PERMISSIONS } from "@/lib/authz/registry";
+import {
+	BUILT_IN_ROLES,
+	BUILTIN_ROLE_IDS,
+	type BuiltInRole,
+	PERMISSIONS,
+} from "@/lib/authz/registry";
+import { ClassificationChips } from "@/components/classification/classification-chips";
+import { ClassificationControl } from "@/components/classification/classification-control";
 import { cn } from "@repo/ui/utils";
 import { PermissionMatrix } from "./permission-matrix";
 
@@ -341,12 +348,21 @@ export function RolesManager() {
 				{/* detail */}
 				<div className="rounded-lg border border-border bg-surface shadow-sm">
 					{builtinSel ? (
-						<RoleDetail
-							title={cap(builtinSel)}
-							badge="Built-in"
-							description={ROLE_META[builtinSel]}
-							perms={builtinKeys(builtinSel)}
-						/>
+						<>
+							<RoleDetail
+								title={cap(builtinSel)}
+								badge="Built-in"
+								description={ROLE_META[builtinSel]}
+								perms={builtinKeys(builtinSel)}
+							/>
+							{/* Classification (Workstream B) — built-in roles are read-only. */}
+							<div className="border-t border-border px-5 py-4">
+								<ClassificationChips
+									kind="role"
+									id={BUILTIN_ROLE_IDS[builtinSel]}
+								/>
+							</div>
+						</>
 					) : customSel || isNew ? (
 						<div>
 							<div className="border-b border-border px-5 py-4">
@@ -366,6 +382,16 @@ export function RolesManager() {
 									autoComplete="off"
 								/>
 							</div>
+							{/* Classification (Workstream B) — custom roles get chips + a picker. */}
+							{customSel && (
+								<div className="border-b border-border px-5 py-4">
+									<ClassificationControl
+										kind="role"
+										id={customSel.id}
+										canEdit={entitled}
+									/>
+								</div>
+							)}
 							<div className="px-5 py-4">
 								<p className="mb-3 text-[13px] font-medium text-text-primary">
 									Permissions
