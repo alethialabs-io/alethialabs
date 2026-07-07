@@ -82,7 +82,7 @@ OpenReplay self-hosting is a full stack (Postgres/ClickHouse/Redis/MinIO) that n
 + real ops. Their **Cloud free tier gives 1,000 session recordings/mo at $0**, so the default is Cloud —
 **no infrastructure**:
 
-1. Sign up at [openreplay.com](https://openreplay.com) and pick the **EU region** (GDPR — Alethia Labs OÜ
+1. Sign up at [openreplay.com](https://openreplay.com) and pick the **EU region** (GDPR — Alethia Labs DPK
    is EU). Create a project → copy its **project key**.
 2. Set in the console prod env (the vault; the deploy assembler already emits it):
    ```bash
