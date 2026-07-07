@@ -50,6 +50,14 @@ reads it via OIDC and the box never holds AWS creds. TF state is AWS-native S3 (
 assumed role authenticates it). See `.env.production.example` for the vault-key catalog
 (`[auto] / [chain] / [ext] / [const]`) and `secrets.local.env.example` for the externals.
 
+> **The emit list is the real gate.** A vault key only reaches the app if the "Assemble .env"
+> step in `.github/workflows/deploy-console.yml` explicitly `emit`s/`echo`s it into the box `.env`
+> (the console reads it via `env_file: .env`). When you add a feature-gating env var, add it in
+> **all three** places — the emit list, `.env.production.example` (catalog), and
+> `secrets.local.env.example` (if operator-supplied) — or the feature silently stays off in prod
+> with no signal. (This is how AI/GCP/metered-billing/support-Slack were dark; AI is now dark **on
+> purpose** until it's monetized — see the note in the emit step.)
+
 **Root of trust — done once, LOCALLY (the only manual bits):**
 | What | Why / how |
 |---|---|

@@ -244,6 +244,10 @@ jobs:
             echo "BETTER_AUTH_URL=$APP_URL"
             echo "NEXT_PUBLIC_SITE_URL=$APP_URL"
             echo "NEXT_PUBLIC_LEGAL_URL=$APP_URL"
+            # This IS the hosted control plane. Without it deploymentMode() defaults to "self-managed"
+            # (lib/billing/config.ts), which hides the feedback widget and exposes self-managed runner /
+            # fleet UI to customers. Constant here — the box is always hosted.
+            echo "ALETHIA_DEPLOYMENT_MODE=hosted"
             emit BETTER_AUTH_SECRET
             emit CLI_JWT_SECRET
             emit ALETHIA_CRED_ENCRYPTION_KEY
@@ -295,13 +299,29 @@ jobs:
             emit ALETHIA_AZURE_CLIENT_SECRET
             emit ALETHIA_ALIBABA_ACCESS_KEY_ID
             emit ALETHIA_ALIBABA_ACCESS_KEY_SECRET
+            # GCP is workload-identity-federated: this marker gates the connector's availability
+            # (lib/connectors/cloud-connect-setup.ts). Full functioning ALSO needs the platform OIDC
+            # subject-token source wired in this env (see health/gcp.ts) — set the marker to surface
+            # the connector; provision the WIF source separately.
+            emit ALETHIA_GCP_WORKLOAD_IDENTITY_PROVIDER
+            # NOTE: AI (AI_GATEWAY_API_KEY) is DELIBERATELY not wired on hosted — the AI tier isn't
+            # monetized yet, so the agent/assistant/Ask-AI features stay off in prod ON PURPOSE. Do
+            # not add the emit without the pricing decision. (lib/config/ai.ts isAiConfigured.)
             emit STRIPE_SECRET_KEY
             emit STRIPE_WEBHOOK_SECRET
             emit NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
             emit STRIPE_PRICE_TEAM
+            # Metered (usage-based) prices for managed-runner minutes — without these the usage is
+            # metered but never charged through Stripe (lib/billing/config.ts meterPriceIdForPlan).
+            emit STRIPE_PRICE_METER_TEAM
+            emit STRIPE_PRICE_METER_ENTERPRISE
             emit ALETHIA_SES_REGION
             emit ALETHIA_SES_ACCESS_KEY_ID
             emit ALETHIA_SES_SECRET_ACCESS_KEY
+            # Support: staff Slack ping on a new case/reply (lib/support/slack-notify.ts). Unset → no-op.
+            emit SUPPORT_SLACK_WEBHOOK_URL
+            # Community card link on the support page (app/(private)/[org]/~/support). Unset → "coming soon".
+            emit NEXT_PUBLIC_COMMUNITY_URL
             echo "AUTH_EMAIL_FROM=Alethia <no-reply@auth.alethialabs.io>"
             echo "EMAIL_FROM=Alethia <hello@mail.alethialabs.io>"
             echo "ALETHIA_IMAGE_TAG=$IMAGE_TAG"
