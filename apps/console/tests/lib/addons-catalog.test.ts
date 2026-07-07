@@ -9,6 +9,7 @@ import {
 	ADDON_CATALOG,
 	deepMerge,
 	getAddOn,
+	parseValuesYaml,
 	resolveAddOnInstall,
 } from "@/lib/addons/catalog";
 
@@ -79,6 +80,43 @@ describe("resolveAddOnInstall", () => {
 		});
 		expect(spec?.version).toBe("9.9.9");
 		expect(spec?.mode).toBe("gitops");
+	});
+
+	it("deep-merges raw values_yaml on top of the knobs (raw wins)", () => {
+		const spec = resolveAddOnInstall({
+			addon_id: "kube-prometheus-stack",
+			mode: "managed",
+			values: { grafana: true },
+			values_yaml:
+				"grafana:\n  adminPassword: s3cr3t\nprometheus:\n  prometheusSpec:\n    retention: 90d\n",
+		});
+		const v = spec?.values as {
+			grafana: { enabled: boolean; adminPassword: string };
+			prometheus: { prometheusSpec: { retention: string } };
+		};
+		// Raw YAML extends (adminPassword) and overrides (retention) the knob values.
+		expect(v.grafana.adminPassword).toBe("s3cr3t");
+		expect(v.grafana.enabled).toBe(true); // knob preserved where raw didn't touch it
+		expect(v.prometheus.prometheusSpec.retention).toBe("90d");
+	});
+
+	it("ignores malformed / non-mapping values_yaml (never blocks a deploy)", () => {
+		const spec = resolveAddOnInstall({
+			addon_id: "loki",
+			mode: "managed",
+			values_yaml: ":\n  - not valid yaml: [",
+		});
+		expect(spec).not.toBeNull();
+	});
+});
+
+describe("parseValuesYaml", () => {
+	it("parses a YAML mapping, rejects empty/scalar/list", () => {
+		expect(parseValuesYaml("a: 1\nb:\n  c: 2")).toEqual({ a: 1, b: { c: 2 } });
+		expect(parseValuesYaml("")).toBeNull();
+		expect(parseValuesYaml("   ")).toBeNull();
+		expect(parseValuesYaml("just a scalar")).toBeNull();
+		expect(parseValuesYaml("- a\n- b")).toBeNull();
 	});
 });
 

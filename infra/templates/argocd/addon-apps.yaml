@@ -1,0 +1,43 @@
+{{- if .AppsDestinationRepo }}
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: addons
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Marketplace add-ons synced from the apps repo (customer-owned, GitOps mode)
+  sourceRepos:
+    - "{{ .AppsDestinationRepo }}"
+    - "*"
+  destinations:
+    - namespace: "*"
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: addons
+  namespace: argocd
+spec:
+  project: addons
+  source:
+    repoURL: {{ .AppsDestinationRepo }}
+    targetRevision: HEAD
+    path: addons
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}

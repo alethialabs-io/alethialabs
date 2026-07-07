@@ -622,6 +622,7 @@ async function buildConfigSnapshot(
 					mode: r.mode,
 					version: r.version,
 					values: r.values,
+					values_yaml: r.values_yaml,
 				}),
 			)
 			.filter((s): s is AddOnInstallSpec => s !== null);

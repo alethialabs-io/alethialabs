@@ -8,6 +8,7 @@
 // observability stack; the broader backlog (security/secrets/networking/…) lands per the
 // plan's catalog table.
 
+import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import type { AddOnDef, AddOnInstallSpec, AddOnMode } from "./types";
 
@@ -177,6 +178,144 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		syncWave: 3,
 		requires: ["storage"],
 	}),
+	defineAddOn({
+		id: "trivy-operator",
+		name: "Trivy Operator",
+		category: "security",
+		icon: "ShieldCheck",
+		summary:
+			"Continuous in-cluster security scanning — vulnerabilities + misconfigurations, surfaced as Kubernetes reports.",
+		docsUrl: "https://aquasecurity.github.io/trivy-operator/latest/",
+		license: "Apache-2.0",
+		chartRepo: "https://aquasecurity.github.io/helm-charts/",
+		chart: "trivy-operator",
+		version: "0.24.1",
+		namespace: "trivy-system",
+		defaultValues: { trivy: { ignoreUnfixed: true } },
+		configSchema: z.object({
+			/** Skip vulnerabilities with no available fix (reduces noise). */
+			ignoreUnfixed: z.boolean().default(true),
+		}),
+		toValues: (c) => ({ trivy: { ignoreUnfixed: c.ignoreUnfixed } }),
+		fields: [
+			{
+				key: "ignoreUnfixed",
+				label: "Ignore unfixed vulnerabilities",
+				type: "boolean",
+				default: true,
+			},
+		],
+		syncWave: 2,
+	}),
+	defineAddOn({
+		id: "vault",
+		name: "HashiCorp Vault",
+		category: "secrets",
+		icon: "KeyRound",
+		summary:
+			"In-cluster secrets management — dynamic secrets, encryption, and a UI (complements external-secrets-operator).",
+		docsUrl: "https://developer.hashicorp.com/vault/docs/platform/k8s/helm",
+		license: "BUSL-1.1",
+		chartRepo: "https://helm.releases.hashicorp.com",
+		chart: "vault",
+		version: "0.28.1",
+		namespace: "vault",
+		defaultValues: { server: {} },
+		configSchema: z.object({
+			/** Enable the Vault web UI (ClusterIP service). */
+			ui: z.boolean().default(true),
+			/** High-availability (Raft) server instead of a single standalone pod. */
+			ha: z.boolean().default(false),
+		}),
+		toValues: (c) => ({
+			ui: { enabled: c.ui },
+			server: { ha: { enabled: c.ha } },
+		}),
+		fields: [
+			{ key: "ui", label: "Enable Vault UI", type: "boolean", default: true },
+			{
+				key: "ha",
+				label: "High availability (Raft)",
+				type: "boolean",
+				default: false,
+			},
+		],
+		syncWave: 2,
+		requires: ["storage"],
+	}),
+	defineAddOn({
+		id: "cert-manager",
+		name: "cert-manager",
+		category: "networking",
+		icon: "Lock",
+		summary:
+			"Automated TLS certificates for the cluster — issues and renews certs (e.g. Let's Encrypt) for your ingress.",
+		docsUrl: "https://cert-manager.io/docs/installation/helm/",
+		license: "Apache-2.0",
+		chartRepo: "https://charts.jetstack.io",
+		chart: "cert-manager",
+		version: "v1.15.3",
+		namespace: "cert-manager",
+		// Install the CRDs with the chart so ClusterIssuers/Certificates work out of the box.
+		defaultValues: { crds: { enabled: true } },
+		configSchema: z.object({}),
+		fields: [],
+		syncWave: 1,
+	}),
+	defineAddOn({
+		id: "ingress-nginx",
+		name: "Ingress NGINX",
+		category: "networking",
+		icon: "Network",
+		summary:
+			"The community NGINX ingress controller — routes external HTTP(S) traffic to your in-cluster services.",
+		docsUrl: "https://kubernetes.github.io/ingress-nginx/",
+		license: "Apache-2.0",
+		chartRepo: "https://kubernetes.github.io/ingress-nginx",
+		chart: "ingress-nginx",
+		version: "4.11.2",
+		namespace: "ingress-nginx",
+		configSchema: z.object({}),
+		fields: [],
+		syncWave: 1,
+		requires: ["ingress"],
+	}),
+	defineAddOn({
+		id: "velero",
+		name: "Velero",
+		category: "backup",
+		icon: "Archive",
+		summary:
+			"Cluster backup + restore + migration. Requires a cloud object-store backup location — set it under Advanced (raw values).",
+		docsUrl: "https://velero.io/docs/latest/",
+		license: "Apache-2.0",
+		chartRepo: "https://vmware-tanzu.github.io/helm-charts",
+		chart: "velero",
+		version: "7.2.1",
+		namespace: "velero",
+		defaultValues: { snapshotsEnabled: true },
+		configSchema: z.object({}),
+		fields: [],
+		syncWave: 3,
+		requires: ["storage"],
+	}),
+	defineAddOn({
+		id: "kyverno",
+		name: "Kyverno",
+		category: "policy",
+		icon: "ShieldCheck",
+		summary:
+			"Kubernetes-native admission policy — validate, mutate, and generate resources with policies (no new language).",
+		docsUrl: "https://kyverno.io/docs/installation/methods/",
+		license: "Apache-2.0",
+		chartRepo: "https://kyverno.github.io/kyverno/",
+		chart: "kyverno",
+		version: "3.2.6",
+		namespace: "kyverno",
+		configSchema: z.object({}),
+		fields: [],
+		syncWave: 1,
+	}),
 ];
 
 /** A catalog add-on id (the `project_addons.addon_id`). */
@@ -185,6 +324,26 @@ export type AddOnId = string;
 /** Looks up a catalog entry by id, or null when the id is unknown/retired. */
 export function getAddOn(id: string): AddOnDef | null {
 	return ADDON_CATALOG.find((a) => a.id === id) ?? null;
+}
+
+/**
+ * Parses a raw Helm-values YAML override into a plain object, or null when it's empty or not a
+ * YAML mapping (a scalar/list is not a valid Helm values override). Never throws — resolution
+ * treats a bad override as "no override".
+ */
+export function parseValuesYaml(
+	yaml: string | null | undefined,
+): Record<string, unknown> | null {
+	if (!yaml || !yaml.trim()) return null;
+	try {
+		const parsed = parseYaml(yaml);
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			return parsed as Record<string, unknown>;
+		}
+	} catch {
+		// Malformed YAML — ignore (the enable action validates before persisting).
+	}
+	return null;
 }
 
 /**
@@ -198,6 +357,7 @@ export function resolveAddOnInstall(row: {
 	mode: AddOnMode;
 	version?: string | null;
 	values?: Record<string, unknown> | null;
+	values_yaml?: string | null;
 }): AddOnInstallSpec | null {
 	const def = getAddOn(row.addon_id);
 	if (!def) return null;
@@ -206,7 +366,12 @@ export function resolveAddOnInstall(row: {
 	const parsed = def.configSchema.safeParse(row.values ?? {});
 	const config = parsed.success ? parsed.data : def.configSchema.parse({});
 	const knobValues = def.toValues ? def.toValues(config) : {};
-	const values = deepMerge(def.defaultValues ?? {}, knobValues);
+	// Precedence (low → high): chart defaults → schema knobs → the user's raw Helm-values YAML.
+	// Unparseable raw YAML is ignored (the save-time action validates it) so it never blocks a
+	// deploy.
+	let values = deepMerge(def.defaultValues ?? {}, knobValues);
+	const rawOverride = parseValuesYaml(row.values_yaml);
+	if (rawOverride) values = deepMerge(values, rawOverride);
 	return {
 		id: def.id,
 		mode: row.mode,

@@ -10,9 +10,14 @@
 import { and, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { withOwnerScope } from "@/lib/db";
-import { type AddonMode, type ComponentStatus, projectAddons } from "@/lib/db/schema";
+import {
+	type AddonMode,
+	type ComponentStatus,
+	projectAddons,
+	projectRepositories,
+} from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
-import { ADDON_CATALOG, getAddOn } from "@/lib/addons/catalog";
+import { ADDON_CATALOG, getAddOn, parseValuesYaml } from "@/lib/addons/catalog";
 import type {
 	AddOnCategory,
 	AddOnField,
@@ -25,6 +30,8 @@ export interface AddonInstallState {
 	enabled: boolean;
 	mode: AddonMode;
 	values: Record<string, unknown>;
+	/** Raw Helm-values YAML override (Advanced), or null. */
+	valuesYaml: string | null;
 	status: ComponentStatus;
 	health: string | null;
 	sync: string | null;
@@ -51,6 +58,8 @@ export interface AddonMarketItem {
 export interface ProjectAddonsView {
 	environmentId: string;
 	items: AddonMarketItem[];
+	/** Whether the environment has a GitOps apps repo configured — gates GitOps mode. */
+	hasAppsRepo: boolean;
 }
 
 /**
@@ -65,16 +74,31 @@ export async function getProjectAddons(
 	const actor = await authorize("view", { type: "project", id: projectId });
 	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
 
-	const rows = await withOwnerScope(actor.userId, async (tx) =>
-		tx
-			.select()
-			.from(projectAddons)
-			.where(
-				and(
-					eq(projectAddons.project_id, projectId),
-					eq(projectAddons.environment_id, envId),
-				),
-			),
+	const { rows, hasAppsRepo } = await withOwnerScope(
+		actor.userId,
+		async (tx) => {
+			const rows = await tx
+				.select()
+				.from(projectAddons)
+				.where(
+					and(
+						eq(projectAddons.project_id, projectId),
+						eq(projectAddons.environment_id, envId),
+					),
+				);
+			// GitOps mode needs a destination apps repo on this environment.
+			const [repo] = await tx
+				.select({ repo: projectRepositories.apps_destination_repo })
+				.from(projectRepositories)
+				.where(
+					and(
+						eq(projectRepositories.project_id, projectId),
+						eq(projectRepositories.environment_id, envId),
+					),
+				)
+				.limit(1);
+			return { rows, hasAppsRepo: Boolean(repo?.repo) };
+		},
 	);
 	const byId = new Map(rows.map((r) => [r.addon_id, r]));
 
@@ -85,6 +109,7 @@ export async function getProjectAddons(
 					enabled: row.enabled,
 					mode: row.mode,
 					values: row.values ?? {},
+					valuesYaml: row.values_yaml,
 					status: row.status,
 					health: row.health,
 					sync: row.sync_status,
@@ -108,7 +133,7 @@ export async function getProjectAddons(
 		};
 	});
 
-	return { environmentId: envId, items };
+	return { environmentId: envId, items, hasAppsRepo };
 }
 
 /**
@@ -122,6 +147,8 @@ export async function enableAddon(input: {
 	addonId: string;
 	mode?: AddonMode;
 	values?: Record<string, unknown>;
+	/** Raw Helm-values YAML override (Advanced). Validated as YAML here. */
+	valuesYaml?: string | null;
 }): Promise<{ ok: true }> {
 	const actor = await authorize("edit", {
 		type: "project",
@@ -134,6 +161,13 @@ export async function enableAddon(input: {
 	const parsed = def.configSchema.safeParse(input.values ?? {});
 	if (!parsed.success) {
 		throw new Error(`Invalid add-on configuration: ${parsed.error.message}`);
+	}
+	// Validate the raw YAML override parses to a mapping (reject a scalar/list/garbage here).
+	const valuesYaml = input.valuesYaml?.trim() ? input.valuesYaml : null;
+	if (valuesYaml && !parseValuesYaml(valuesYaml)) {
+		throw new Error(
+			"Advanced values must be valid YAML describing a mapping (key: value).",
+		);
 	}
 	const envId = await resolveActiveEnvironmentId(
 		input.projectId,
@@ -151,6 +185,7 @@ export async function enableAddon(input: {
 				enabled: true,
 				mode,
 				values: parsed.data as Record<string, unknown>,
+				values_yaml: valuesYaml,
 				namespace: def.namespace,
 				status: "PENDING",
 			})
@@ -164,6 +199,7 @@ export async function enableAddon(input: {
 					enabled: true,
 					mode,
 					values: parsed.data as Record<string, unknown>,
+					values_yaml: valuesYaml,
 					status: "PENDING",
 					updated_at: new Date(),
 				},
@@ -173,9 +209,9 @@ export async function enableAddon(input: {
 }
 
 /**
- * Disables an add-on: removes the project_addons row so it is no longer rendered on deploy.
- * NB: this does not yet prune the live ArgoCD Application in-cluster (Phase 2 adds a runner
- * prune step); until then a disabled add-on stops being managed but its workloads remain.
+ * Disables an add-on: removes the project_addons row so it is no longer in the desired set.
+ * The live cluster is reconciled on the next Deploy — managed add-ons are pruned
+ * (`argocd.PruneManagedAddOns`) and gitops manifests are removed from the apps repo.
  */
 export async function disableAddon(input: {
 	projectId: string;

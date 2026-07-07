@@ -232,6 +232,9 @@ export const projectAddons = pgTable(
 		// The user's tuned knobs (validated per add-on by its Zod configSchema), or a raw
 		// Helm-values override in gitops mode.
 		values: jsonb().$type<AddOnValues>().default({}),
+		// Raw Helm-values YAML the user typed (Advanced) — deep-merged on top of the schema
+		// knobs at resolve time (highest precedence). NULL = none.
+		values_yaml: text(),
 		namespace: text(),
 		status: componentStatus().default("PENDING").notNull(),
 		status_message: text(),

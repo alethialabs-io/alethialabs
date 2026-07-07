@@ -412,10 +412,11 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 			fmt.Fprintf(stderr, "Warning: app manifest generation skipped: %v\n", genErr)
 		}
 
-		// Marketplace add-ons — render the customer's enabled OSS charts as ArgoCD Helm
-		// Applications and apply them, then read their health back for the console. Non-fatal
-		// (like app-manifest generation): a bad add-on must not fail an otherwise-healthy
-		// cluster; its sync status surfaces on the add-ons page instead.
+		// Marketplace add-ons — MANAGED mode: render the customer's enabled OSS charts as
+		// ArgoCD Helm Applications and apply them; GITOPS mode: seed the manifests into the
+		// customer's apps repo (they own + edit them). Then prune disabled managed add-ons and
+		// read health back for the console. Non-fatal (like app-manifest generation): a bad
+		// add-on must not fail an otherwise-healthy cluster; status surfaces on the add-ons page.
 		if len(vc.AddOns) > 0 {
 			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns)
 			if addonErr != nil {
@@ -425,14 +426,25 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 				if applyErr := argocd.ApplyAddOns(addonDir, stdout, stderr); applyErr != nil {
 					fmt.Fprintf(stderr, "Warning: marketplace add-ons apply failed: %v\n", applyErr)
 				}
-				// Read ArgoCD health/sync for the applied add-ons so the console can show
-				// real status (best-effort — a read failure just leaves status Unknown).
-				result.AddOnStatus = argocd.ReadAddOnHealth(
-					argocd.ManagedAddOnNames(vc.AddOns),
-					stdout,
-					stderr,
-				)
 			}
+			// GitOps-mode add-ons → seed/prune into the customer's apps repo.
+			if gitErr := writeAddOnGitOps(vc, params.GitAccessToken, stdout, stderr); gitErr != nil {
+				fmt.Fprintf(stderr, "Warning: GitOps add-on sync skipped: %v\n", gitErr)
+			}
+		}
+		// Prune managed add-ons the user disabled (removed from the desired set). Runs even
+		// when vc.AddOns is empty, so disabling the last add-on still cleans it up.
+		if pruneErr := argocd.PruneManagedAddOns(argocd.ManagedAddOnNames(vc.AddOns), stdout, stderr); pruneErr != nil {
+			fmt.Fprintf(stderr, "Warning: add-on prune failed: %v\n", pruneErr)
+		}
+		// Read ArgoCD health/sync for every enabled add-on (managed + gitops) so the console
+		// shows real status (best-effort — a read failure just leaves status Unknown).
+		if len(vc.AddOns) > 0 {
+			result.AddOnStatus = argocd.ReadAddOnHealth(
+				argocd.AllAddOnNames(vc.AddOns),
+				stdout,
+				stderr,
+			)
 		}
 	}
 

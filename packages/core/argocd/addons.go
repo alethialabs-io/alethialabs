@@ -5,6 +5,7 @@ package argocd
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"text/template"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,6 +32,7 @@ metadata:
   labels:
     alethia.io/managed-by: addon-marketplace
     alethia.io/addon-id: {{ .ID }}
+    alethia.io/addon-mode: {{ .Mode }}
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
@@ -57,6 +60,7 @@ spec:
 type addonTmplData struct {
 	Name           string
 	ID             string
+	Mode           string
 	Chart          string
 	ChartRepo      string
 	Version        string
@@ -86,7 +90,7 @@ func RenderManagedAddOns(addons []types.AddOnInstall) (string, error) {
 		if a.Mode != "managed" {
 			continue
 		}
-		manifest, err := renderAddOnApplication(a)
+		manifest, err := RenderAddOnApplication(a)
 		if err != nil {
 			return "", fmt.Errorf("failed to render add-on %s: %w", a.ID, err)
 		}
@@ -99,16 +103,22 @@ func RenderManagedAddOns(addons []types.AddOnInstall) (string, error) {
 	return outDir, nil
 }
 
-// renderAddOnApplication produces the ArgoCD Application YAML for a single add-on: the Helm
+// RenderAddOnApplication produces the ArgoCD Application YAML for a single add-on: the Helm
 // values map is marshalled to YAML and indented under `helm.values: |` (a literal block).
-func renderAddOnApplication(a types.AddOnInstall) (string, error) {
+// Exported so gitops-mode writes reuse the exact same manifest body the managed apply uses.
+func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 	valuesYAML, err := marshalValues(a.Values)
 	if err != nil {
 		return "", err
 	}
+	mode := a.Mode
+	if mode == "" {
+		mode = "managed"
+	}
 	data := addonTmplData{
 		Name:           AddOnAppName(a.ID),
 		ID:             a.ID,
+		Mode:           mode,
 		Chart:          a.Chart,
 		ChartRepo:      a.ChartRepo,
 		Version:        a.Version,
@@ -170,8 +180,7 @@ func splitLines(s string) []string {
 	return out
 }
 
-// ManagedAddOnNames returns the ArgoCD Application names for the managed add-ons, sorted, so
-// the deploy step can read their health back after apply.
+// ManagedAddOnNames returns the ArgoCD Application names for the managed add-ons, sorted.
 func ManagedAddOnNames(addons []types.AddOnInstall) []string {
 	var names []string
 	for _, a := range addons {
@@ -181,6 +190,66 @@ func ManagedAddOnNames(addons []types.AddOnInstall) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// AllAddOnNames returns the ArgoCD Application names for every enabled add-on (managed +
+// gitops), sorted — the health read-back reads them all (gitops child apps are named the
+// same `addon-<id>`, created by the app-of-apps).
+func AllAddOnNames(addons []types.AddOnInstall) []string {
+	names := make([]string, 0, len(addons))
+	for _, a := range addons {
+		names = append(names, AddOnAppName(a.ID))
+	}
+	sort.Strings(names)
+	return names
+}
+
+// PruneManagedAddOns deletes ArgoCD Applications this marketplace manages directly (label
+// `alethia.io/addon-mode=managed`) that are NOT in `desiredNames` — i.e. add-ons the user
+// disabled. The Application's finalizer cascades cleanup of its workloads. Best-effort: a
+// read/delete hiccup is logged, not fatal (a failed prune must not fail an otherwise-healthy
+// deploy). Gitops add-ons are pruned via their repo files, not here.
+func PruneManagedAddOns(desiredNames []string, stdout, stderr io.Writer) error {
+	desired := make(map[string]struct{}, len(desiredNames))
+	for _, n := range desiredNames {
+		desired[n] = struct{}{}
+	}
+
+	raw, err := utils.ExecuteCommandWithOutput(
+		"kubectl get applications.argoproj.io -n argocd -l alethia.io/managed-by=addon-marketplace,alethia.io/addon-mode=managed -o json",
+		".",
+		nil,
+	)
+	if err != nil {
+		fmt.Fprintf(stderr, "Warning: could not list add-ons to prune: %v\n", err)
+		return nil
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		fmt.Fprintf(stderr, "Warning: could not parse add-on list to prune: %v\n", err)
+		return nil
+	}
+
+	for _, item := range list.Items {
+		if _, keep := desired[item.Metadata.Name]; keep {
+			continue
+		}
+		fmt.Fprintf(stdout, "Pruning disabled add-on: %s\n", item.Metadata.Name)
+		cmd := fmt.Sprintf(
+			"kubectl delete applications.argoproj.io -n argocd %s --ignore-not-found=true",
+			item.Metadata.Name,
+		)
+		if delErr := utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); delErr != nil {
+			fmt.Fprintf(stderr, "Warning: failed to prune %s: %v\n", item.Metadata.Name, delErr)
+		}
+	}
+	return nil
 }
 
 // ApplyAddOns applies the rendered managed add-on manifests (kubectl apply). A thin alias over
