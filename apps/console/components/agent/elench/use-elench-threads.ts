@@ -32,6 +32,11 @@ export function useElenchThreads() {
 	const [threads, setThreads] = useState<AgentThread[]>([]);
 	const [initialMessages, setInitialMessages] = useState<UIMessage[]>([]);
 	const initialized = useRef(false);
+	// Whether the initial org resolution (list → resume/create) has settled. Until it has,
+	// the surface must NOT mount the keyed conversation: threadId is still null, so mounting
+	// now and flipping it to the resumed thread would remount the whole chat (the open flash).
+	// Project context has no threads to resolve, so it is ready immediately.
+	const [initialResolved, setInitialResolved] = useState(false);
 
 	/** Load a thread's transcript, then switch to it (order matters — the conversation
 	 * is keyed by threadId, so messages must be staged before the key flips). */
@@ -64,6 +69,7 @@ export function useElenchThreads() {
 				setInitialMessages([]);
 				selectStore(t.id);
 			}
+			if (!cancelled) setInitialResolved(true);
 		})();
 		return () => {
 			cancelled = true;
@@ -72,7 +78,10 @@ export function useElenchThreads() {
 
 	// Reset when the surface closes so reopening re-resumes cleanly.
 	useEffect(() => {
-		if (!open) initialized.current = false;
+		if (!open) {
+			initialized.current = false;
+			setInitialResolved(false);
+		}
 	}, [open]);
 
 	/** Resume a persisted thread (loads its transcript first). */
@@ -117,6 +126,10 @@ export function useElenchThreads() {
 	}, []);
 
 	return {
+		// Ready once there is a resolved conversation to mount (project: always; org: after
+		// the initial list → resume/create settles). The surface gates the keyed conversation
+		// on this so it mounts exactly once, with the right thread — no empty→resumed flash.
+		ready: !isOrg || initialResolved,
 		threads,
 		activeId: threadId,
 		initialMessages,
