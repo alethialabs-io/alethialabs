@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import type { JobWithMeta } from "@/app/server/actions/jobs";
 import type { ProvisionJobStatus } from "@/lib/db/schema";
+import { track } from "@/lib/analytics/track";
 import { NOTIFY_JOB_TYPES, jobPhase, jobToastContent } from "@/lib/jobs/toast-copy";
 
 /**
@@ -77,9 +78,24 @@ export function useJobToasts(): void {
 					break;
 				case "success":
 					toast.success(title, { id, description, action, duration: 6000 });
+					// The value moment: a project deploy actually succeeded (vs. `deploy_queued` = intent).
+					if (job.job_type === "DEPLOY") {
+						track("deploy_succeeded", {
+							jobId: job.id,
+							provider: job.cloud_provider,
+							stage: job.environment_stage,
+						});
+					}
 					break;
 				case "failed":
 					toast.error(title, { id, description, action, duration: 10000 });
+					if (job.job_type === "DEPLOY") {
+						track("deploy_failed", {
+							jobId: job.id,
+							provider: job.cloud_provider,
+							stage: job.environment_stage,
+						});
+					}
 					break;
 				case "cancelled":
 					toast(title, { id, description });

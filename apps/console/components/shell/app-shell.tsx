@@ -14,6 +14,7 @@ import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { ElenchSurface } from "@/components/agent/elench/elench-surface";
+import { AnalyticsIdentity } from "@/components/analytics/analytics-identity";
 import { SetupGuideCard } from "@/components/onboarding/setup-guide";
 import { AppSidebar } from "./app-sidebar";
 import { CommandPalette } from "./command-palette";
@@ -111,6 +112,9 @@ export function AppShell({
 
 			{/* Single job-lifecycle toast driver (loading → success/failed in place). */}
 			<JobToaster />
+
+			{/* Ties the analytics session to the person + active org (identify + group). Headless. */}
+			<AnalyticsIdentity />
 
 			{/* Single support-reply toast driver (staff/AI reply → "New reply on CASE-…"). */}
 			<SupportToaster />

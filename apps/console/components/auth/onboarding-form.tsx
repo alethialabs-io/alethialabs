@@ -103,11 +103,13 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 			// Pro with the trial still available → card-less trial.
 			if (trialAvailable) {
 				await startProTrial();
+				track("trial_started", { plan: "team" });
 				await markOnboardingComplete();
 				router.push(next ?? `/${res.slug}`);
 				return;
 			}
 			// Pro, trial used → reveal the shared checkout form (primary org already exists).
+			track("upgrade_started", { plan: "team", context: "onboarding" });
 			const intent = await createSubscriptionIntent("team");
 			setClientSecret(intent.clientSecret);
 			setBusy(false);
@@ -185,7 +187,10 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 			<div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
 				<PlanTile
 					selected={plan === "community"}
-					onSelect={() => setPlan("community")}
+					onSelect={() => {
+						setPlan("community");
+						track("onboarding_plan_selected", { plan: "community" });
+					}}
 					icon={<User className="size-4" />}
 					useCase="Personal projects"
 					planName="Hobby"
@@ -194,7 +199,11 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 				/>
 				<PlanTile
 					selected={plan === "team"}
-					onSelect={() => proAvailable && setPlan("team")}
+					onSelect={() => {
+						if (!proAvailable) return;
+						setPlan("team");
+						track("onboarding_plan_selected", { plan: "team" });
+					}}
 					disabled={!proAvailable}
 					icon={<Building2 className="size-4" />}
 					useCase="Commercial projects"

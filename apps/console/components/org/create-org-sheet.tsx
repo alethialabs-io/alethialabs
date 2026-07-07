@@ -47,6 +47,7 @@ import {
 } from "@/components/org/org-purchase-ui";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { authClient } from "@/lib/auth/client";
+import { track } from "@/lib/analytics/track";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { orgHost, slugify } from "@/lib/org-url";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
@@ -244,6 +245,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			if (!org) return;
 			try {
 				await startProTrial();
+				track("trial_started", { plan: "team", context: "create_org" });
 			} catch (trialErr) {
 				// Roll back the just-created org — a failed trial must not orphan it.
 				await authClient.organization
