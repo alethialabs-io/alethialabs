@@ -119,10 +119,90 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
+  # Shared runner BASE — the Go binary + tofu + infracost + kubectl/helm + user + shared templates that all
+  # four runner images used to re-download 4×. Built once per arch (native, by digest) then stitched into a
+  # multi-arch tag the runner images build FROM. Gated on the runner group like the rest.
+  runner-base-amd64:
+    needs: changes
+    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build runner-base (amd64) by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/runner/Dockerfile.base
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ github.sha }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/runner-base,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=runner-base-amd64
+          cache-to: type=gha,mode=max,scope=runner-base-amd64
+
+  runner-base-arm64:
+    needs: changes
+    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build runner-base (arm64) by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/runner/Dockerfile.base
+          platforms: linux/arm64
+          build-args: |
+            VERSION=${{ github.sha }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/runner-base,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=runner-base-arm64
+          cache-to: type=gha,mode=max,scope=runner-base-arm64
+
+  # Stitch the runner-base digests into the multi-arch tag the runner images build FROM.
+  merge-runner-base:
+    needs: [changes, runner-base-amd64, runner-base-arm64]
+    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-arch runner-base manifest
+        run: |
+          docker buildx imagetools create \
+            -t "${IMAGE_PREFIX}/runner-base:${{ github.sha }}" \
+            -t "${IMAGE_PREFIX}/runner-base:latest" \
+            "${IMAGE_PREFIX}/runner-base@${{ needs.runner-base-amd64.outputs.digest }}" \
+            "${IMAGE_PREFIX}/runner-base@${{ needs.runner-base-arm64.outputs.digest }}"
+
   # arm64 fleet-only per-cloud runner images (single-arch, tagged) — native arm. Never
   # pulled by the x86 box; lean per-cloud CLI + cache. Skipped when no runner source changed.
   build-arm64:
-    needs: changes
+    needs: [changes, merge-runner-base]
     if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04-arm
     strategy:
@@ -152,6 +232,7 @@ jobs:
           push: true
           build-args: |
             VERSION=${{ github.sha }}
+            RUNNER_BASE=${{ env.IMAGE_PREFIX }}/runner-base:${{ github.sha }}
           tags: |
             ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest
             ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ github.sha }}
@@ -160,7 +241,7 @@ jobs:
 
   # `runner` amd64 half — native x86, pushed BY DIGEST (no tag) for the manifest merge.
   runner-amd64:
-    needs: changes
+    needs: [changes, merge-runner-base]
     if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     outputs:
@@ -183,13 +264,14 @@ jobs:
           platforms: linux/amd64
           build-args: |
             VERSION=${{ github.sha }}
+            RUNNER_BASE=${{ env.IMAGE_PREFIX }}/runner-base:${{ github.sha }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/runner,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=runner-amd64
           cache-to: type=gha,mode=max,scope=runner-amd64
 
   # `runner` arm64 half — native arm, pushed BY DIGEST.
   runner-arm64:
-    needs: changes
+    needs: [changes, merge-runner-base]
     if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04-arm
     outputs:
@@ -212,6 +294,7 @@ jobs:
           platforms: linux/arm64
           build-args: |
             VERSION=${{ github.sha }}
+            RUNNER_BASE=${{ env.IMAGE_PREFIX }}/runner-base:${{ github.sha }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/runner,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=runner-arm64
           cache-to: type=gha,mode=max,scope=runner-arm64
