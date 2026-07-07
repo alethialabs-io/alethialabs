@@ -25,6 +25,7 @@ import {
 import { currentActor } from "@/lib/authz/guard";
 import { getPdp } from "@/lib/authz";
 import { getAuthConfig } from "@/lib/config/auth";
+import { oidcIssuerConfigured } from "@/lib/oidc/issuer";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 
 /** The connect-flow setup bundle shared by the connectors board and the create-project form. */
@@ -61,11 +62,9 @@ export function computePlatformConfigured(): Record<string, boolean> {
 	);
 	return {
 		aws: awsPlatform,
-		azure: has(
-			"ALETHIA_AZURE_TENANT_ID",
-			"ALETHIA_AZURE_CLIENT_ID",
-			"ALETHIA_AZURE_CLIENT_SECRET",
-		),
+		// Azure is keyless: the platform app (ALETHIA_AZURE_CLIENT_ID) authenticates via a minted OIDC
+		// assertion from the issuer — no client secret. Available when the app id + issuer are configured.
+		azure: has("ALETHIA_AZURE_CLIENT_ID") && oidcIssuerConfigured(),
 		alibaba: has(
 			"ALETHIA_ALIBABA_ACCESS_KEY_ID",
 			"ALETHIA_ALIBABA_ACCESS_KEY_SECRET",

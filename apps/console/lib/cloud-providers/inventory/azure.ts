@@ -4,27 +4,21 @@
 // Azure inventory — virtual networks + their subnets via ARM, using the platform app token. Upserts
 // into the shared typed tables. Verifiable in a hosted env with ALETHIA_AZURE_* configured.
 
-import { ClientSecretCredential } from "@azure/identity";
 import { getServiceDb } from "@/lib/db";
 import {
 	type CloudIdentity,
 	cloudNetworks,
 	cloudSubnets,
 } from "@/lib/db/schema";
+import { assumeAzureIdentity } from "../session/azure";
 import { sealSensitive, softRemoveUnseen } from "./upsert";
 
 const TIMEOUT_MS = 15_000;
 const ARM = "https://management.azure.com";
 
-/** Acquires an ARM bearer token via the platform Azure app, or throws. */
-async function azureToken(): Promise<string> {
-	const tenantId = process.env.ALETHIA_AZURE_TENANT_ID;
-	const clientId = process.env.ALETHIA_AZURE_CLIENT_ID;
-	const clientSecret = process.env.ALETHIA_AZURE_CLIENT_SECRET;
-	if (!tenantId || !clientId || !clientSecret) {
-		throw new Error("Platform Azure credentials are not configured");
-	}
-	const cred = new ClientSecretCredential(tenantId, clientId, clientSecret);
+/** Acquires an ARM bearer token as the platform app against the customer tenant (keyless), or throws. */
+async function azureToken(tenantId: string): Promise<string> {
+	const cred = assumeAzureIdentity(tenantId);
 	const t = await cred.getToken("https://management.azure.com/.default");
 	if (!t?.token) throw new Error("Azure token acquisition returned no token");
 	return t.token;
@@ -63,7 +57,9 @@ export async function syncAzureInventory(
 ): Promise<void> {
 	const subscriptionId = identity.credentials.subscription_id;
 	if (!subscriptionId) throw new Error("No Azure subscription id");
-	const token = await azureToken();
+	const tenantId = identity.credentials.tenant_id;
+	if (!tenantId) throw new Error("No Azure tenant id");
+	const token = await azureToken(tenantId);
 	const db = getServiceDb();
 	const identityId = identity.id;
 
