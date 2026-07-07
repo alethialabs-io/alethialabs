@@ -16,6 +16,8 @@ export const qk = {
 	clusters: (org: string) => ["clusters", org] as const,
 	fleet: (org: string) => ["fleet", org] as const,
 	evidence: (org: string) => ["evidence", org] as const,
+	addons: (projectId: string, environmentId?: string | null) =>
+		["addons", projectId, environmentId ?? "default"] as const,
 	projects: (org: string) => ["projects", org] as const,
 	pricing: (region: string) => ["pricing", region] as const,
 	cloudResources: (identityId: string) =>

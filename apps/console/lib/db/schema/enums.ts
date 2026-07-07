@@ -48,6 +48,11 @@ export const componentStatus = pgEnum("component_status", [
 	"DESTROYED",
 ]);
 
+// How a marketplace add-on is delivered into the cluster: `managed` = Alethia renders +
+// applies the ArgoCD Application directly; `gitops` = the manifest is written into the
+// customer's apps repo for them to own + edit, and ArgoCD syncs it from there.
+export const addonMode = pgEnum("addon_mode", ["managed", "gitops"]);
+
 export const cacheEngine = pgEnum("cache_engine", ["redis", "valkey"]);
 
 export const nosqlTableType = pgEnum("nosql_table_type", ["standard", "global"]);
@@ -293,6 +298,7 @@ export type RunnerProvisioning = (typeof runnerProvisioning.enumValues)[number];
 export type RunnerStatus = (typeof runnerStatus.enumValues)[number];
 export type ProjectStatus = (typeof projectStatus.enumValues)[number];
 export type ComponentStatus = (typeof componentStatus.enumValues)[number];
+export type AddonMode = (typeof addonMode.enumValues)[number];
 export type EnvironmentStage = (typeof environmentStage.enumValues)[number];
 export type PromotionStatus = (typeof promotionStatus.enumValues)[number];
 export type ApprovalStatus = (typeof approvalStatus.enumValues)[number];

@@ -443,6 +443,9 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		if result.VerifyReceipt != nil {
 			metadata["verify_receipt"] = result.VerifyReceipt
 		}
+		if len(result.AddOnStatus) > 0 {
+			metadata["addon_status"] = result.AddOnStatus
+		}
 		if len(metadata) > 0 {
 			_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
 		}
