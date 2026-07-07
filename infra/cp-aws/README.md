@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # cp-aws
 
-AWS control-plane box (single EC2 Graviton instance) running the Alethia control plane. One of the
+AWS control-plane box (single x86 EC2 instance) running the Alethia control plane. One of the
 per-cloud `cp-*` siblings — see [`infra/README.md`](../README.md). It ports the working
 [`cp-hetzner`](../cp-hetzner) design (Cloudflare Tunnel ingress) to AWS, shaped for what's best on
 AWS rather than a 1:1 clone.

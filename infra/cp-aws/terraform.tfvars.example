@@ -10,5 +10,5 @@ domain                = "alethialabs.io"
 #   aws ssm start-session --target <instance_id>
 
 aws_region       = "eu-west-1"
-instance_type    = "t4g.large" # Graviton ARM64
+instance_type    = "t3.large" # x86 (amd64 images)
 root_volume_size = 60

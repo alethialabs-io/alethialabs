@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# alethialabs.io control plane on AWS — a single Graviton EC2 box running the same self-host
+# alethialabs.io control plane on AWS — a single x86 EC2 box running the same self-host
 # bundle (app · docs · postgres · s3 · runner) behind Caddy, fronted by a Cloudflare Tunnel.
 # Ported from infra/cp-hetzner but shaped for AWS: the box has NO public web ingress (the
 # security group has NO inbound rules at all), SSH is via SSM Session Manager (the agent dials
@@ -22,14 +22,14 @@ data "aws_vpc" "default" {
   default = true
 }
 
-# Latest Ubuntu 24.04 (noble) ARM64, Canonical. The amazon-ssm-agent ships preinstalled on
+# Latest Ubuntu 24.04 (noble) x86_64, Canonical. The amazon-ssm-agent ships preinstalled on
 # these AMIs, so Session Manager works as soon as the instance profile below is attached.
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"]
   filter {
     name   = "name"
-    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-arm64-server-*"]
+    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
   }
   filter {
     name   = "virtualization-type"

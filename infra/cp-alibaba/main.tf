@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# alethialabs.io control plane on Alibaba Cloud — a single Yitian 710 ARM (g8y) ECS instance
+# alethialabs.io control plane on Alibaba Cloud — a single x86 (g7) ECS instance
 # running the same self-host bundle (app · docs · postgres · s3 · runner) behind Caddy, fronted by
 # a Cloudflare Tunnel. Ported from infra/cp-hetzner but shaped for Alibaba: the box has NO public
 # web ingress (the security group has NO inbound rules), and there is NO open SSH. Admin / deploy is
@@ -18,19 +18,19 @@ locals {
   }
 }
 
-# Ubuntu 24.04 LTS, ARM64, from the system image catalogue.
+# Ubuntu 24.04 LTS, x86_64, from the system image catalogue.
 data "alicloud_images" "ubuntu" {
   owners       = "system"
-  architecture = "arm64"
-  name_regex   = "^ubuntu_24_04_arm64"
+  architecture = "x86_64"
+  name_regex   = "^ubuntu_24_04_x64"
   most_recent  = true
 }
 
-# Zones that actually offer the ARM instance type (used when zone_id is unset).
+# Zones that actually offer the x86 instance type (used when zone_id is unset).
 data "alicloud_instance_types" "arm" {
   instance_type        = var.instance_type
   availability_zone    = var.zone_id != "" ? var.zone_id : null
-  instance_type_family = "ecs.g8y"
+  instance_type_family = "ecs.g7"
 }
 
 resource "alicloud_vpc" "cp" {

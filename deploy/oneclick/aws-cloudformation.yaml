@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Alethia self-host control plane — a single Graviton (ARM) EC2 instance running
+  Alethia self-host control plane — a single x86 EC2 instance running
   the docker-compose bundle (console + docs + runner + Postgres + object store),
   behind Caddy with automatic HTTPS. One-click via "Launch Stack".
 
@@ -26,9 +26,9 @@ Parameters:
     Default: ""
   InstanceType:
     Type: String
-    # Graviton (ARM) — the published images are arm64-only.
-    Default: t4g.medium
-    AllowedValues: [t4g.small, t4g.medium, t4g.large, t4g.xlarge]
+    # x86 — the published app-bundle images are linux/amd64.
+    Default: t3.medium
+    AllowedValues: [t3.small, t3.medium, t3.large, t3.xlarge]
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
     Description: Existing EC2 key pair for SSH access.
@@ -42,9 +42,9 @@ Parameters:
     Default: 30
     MinValue: 20
   UbuntuAmi:
-    # Ubuntu 24.04 LTS arm64, resolved from Canonical's public SSM parameter.
+    # Ubuntu 24.04 LTS amd64, resolved from Canonical's public SSM parameter.
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
 
 Conditions:
   HasDomain: !Not [!Equals [!Ref Domain, ""]]
