@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (or pass -var). All have sensible defaults — override only if you run the
+# platform in a different AWS account or renamed the customer provisioner role.
+# aws_region                = "eu-central-1"
+# platform_account_id       = "270587882865"
+# user_name                 = "alethia-connector-assumer"
+# customer_role_name_prefix = "AlethiaProvisionerRole-"

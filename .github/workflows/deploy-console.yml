@@ -294,16 +294,26 @@ jobs:
             # "not enabled on this instance".
             emit ALETHIA_AWS_ACCESS_KEY_ID
             emit ALETHIA_AWS_SECRET_ACCESS_KEY
+            # The whole managed-cloud model hubs through the platform AWS identity. Export it under the
+            # standard AWS_* names too so google-auth-library can mint the GCP Workload-Identity subject
+            # token (the customer's WIF pool trusts an AWS provider; the `--aws` cred source reads these
+            # env vars). Without this, GCP connections can't verify on the box (they worked in dev only
+            # because the dev machine had ambient AWS creds). Same value as ALETHIA_AWS_*.
+            emit AWS_ACCESS_KEY_ID ALETHIA_AWS_ACCESS_KEY_ID
+            emit AWS_SECRET_ACCESS_KEY ALETHIA_AWS_SECRET_ACCESS_KEY
+            echo "AWS_REGION=us-east-1"
+            # Platform AWS account id (the account every managed cloud federates through). The connect
+            # UI shows it in the customer setup templates. Configurable; defaults to the live account.
+            AWS_ACCT="$(val ALETHIA_AWS_ACCOUNT_ID)"; AWS_ACCT="${AWS_ACCT:-270587882865}"
+            echo "NEXT_PUBLIC_ALETHIA_AWS_ACCOUNT_ID=$AWS_ACCT"
             emit ALETHIA_AZURE_TENANT_ID
             emit ALETHIA_AZURE_CLIENT_ID
             emit ALETHIA_AZURE_CLIENT_SECRET
             emit ALETHIA_ALIBABA_ACCESS_KEY_ID
             emit ALETHIA_ALIBABA_ACCESS_KEY_SECRET
-            # GCP is workload-identity-federated: this marker gates the connector's availability
-            # (lib/connectors/cloud-connect-setup.ts). Full functioning ALSO needs the platform OIDC
-            # subject-token source wired in this env (see health/gcp.ts) — set the marker to surface
-            # the connector; provision the WIF source separately.
-            emit ALETHIA_GCP_WORKLOAD_IDENTITY_PROVIDER
+            # GCP needs NO separate secret — it federates through the platform AWS identity above
+            # (customer WIF pool trusts AWS acct ALETHIA_AWS_ACCOUNT_ID; console mints the subject token
+            # from the AWS_* creds). Availability tracks the AWS creds (cloud-connect-setup.ts).
             # NOTE: AI (AI_GATEWAY_API_KEY) is DELIBERATELY not wired on hosted — the AI tier isn't
             # monetized yet, so the agent/assistant/Ask-AI features stay off in prod ON PURPOSE. Do
             # not add the emit without the pricing decision. (lib/config/ai.ts isAiConfigured.)

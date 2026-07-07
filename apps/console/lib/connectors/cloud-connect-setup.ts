@@ -52,11 +52,15 @@ export interface CloudConnectSetup {
  * (clouds) and what Better Auth has registered (git OAuth apps). Slugs absent from the map default to
  * available at the call site.
  */
-function computePlatformConfigured(): Record<string, boolean> {
+export function computePlatformConfigured(): Record<string, boolean> {
 	const has = (...keys: string[]) => keys.every((k) => !!process.env[k]);
 	const gitProviders = getAuthConfig().providers;
+	const awsPlatform = has(
+		"ALETHIA_AWS_ACCESS_KEY_ID",
+		"ALETHIA_AWS_SECRET_ACCESS_KEY",
+	);
 	return {
-		aws: has("ALETHIA_AWS_ACCESS_KEY_ID", "ALETHIA_AWS_SECRET_ACCESS_KEY"),
+		aws: awsPlatform,
 		azure: has(
 			"ALETHIA_AZURE_TENANT_ID",
 			"ALETHIA_AZURE_CLIENT_ID",
@@ -66,10 +70,12 @@ function computePlatformConfigured(): Record<string, boolean> {
 			"ALETHIA_ALIBABA_ACCESS_KEY_ID",
 			"ALETHIA_ALIBABA_ACCESS_KEY_SECRET",
 		),
-		// GCP federates via Alethia's own workload-identity OIDC source (a hosted-env
-		// setup, not a simple secret). Gate on an explicit marker so it reads "not enabled"
-		// until that's wired.
-		gcp: has("ALETHIA_GCP_WORKLOAD_IDENTITY_PROVIDER"),
+		// GCP federates THROUGH the platform AWS identity: the customer's Workload Identity pool
+		// trusts an AWS provider (`create-aws --account-id=<platform aws acct>`), so the console
+		// mints the GCP subject token from the platform AWS creds (google-auth's `--aws` source
+		// reads AWS_ACCESS_KEY_ID/SECRET). There is no separate GCP secret — availability tracks the
+		// AWS platform creds (which the deploy also exports as AWS_* for google-auth to read).
+		gcp: awsPlatform,
 		// Token clouds need no platform credentials — the customer's own API token is used.
 		hetzner: true,
 		digitalocean: true,
