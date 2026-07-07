@@ -6,7 +6,7 @@ description: Provision the Alethia control plane on an x86 EC2 instance, closed-
 # AWS (`infra/cp-aws`)
 
 A single x86 **EC2 `t3.large`** (2 vCPU / 8 GB) fronted by a Cloudflare Tunnel — **no bastion, no
-open port**. **≈ $65/mo** (approx, region-dependent; `t3.medium` ≈ half if 4 GB fits).
+open port**. **≈ $72/mo** (t3.large + 60 GB gp3; Infracost, on-demand, `eu-west-1`; `t3.medium` ≈ half if 4 GB fits).
 
 ## What it creates
 - `aws_instance` (`t3.large`, Ubuntu 24.04 amd64) with an encrypted 60 GB gp3 root; **IMDSv2 required**

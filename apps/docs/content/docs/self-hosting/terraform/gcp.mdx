@@ -6,7 +6,7 @@ description: Provision the Alethia control plane on an x86 Compute Engine VM, cl
 # GCP (`infra/cp-gcp`)
 
 A single x86 **`e2-standard-2`** (2 vCPU / 8 GB) Compute Engine VM fronted by a Cloudflare Tunnel.
-**≈ $50/mo** (approx, region-dependent).
+**≈ $57/mo** (e2-standard-2 + 30 GB pd-balanced; Infracost, on-demand, `europe-west4`).
 
 ## What it creates
 - `google_compute_instance` (`e2-standard-2`, Ubuntu 24.04 amd64) with a 30 GB `pd-balanced` boot
