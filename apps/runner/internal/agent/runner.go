@@ -446,6 +446,9 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		if len(result.AddOnStatus) > 0 {
 			metadata["addon_status"] = result.AddOnStatus
 		}
+		if result.SecurityPosture != nil {
+			metadata["security_report"] = result.SecurityPosture
+		}
 		if len(metadata) > 0 {
 			_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
 		}

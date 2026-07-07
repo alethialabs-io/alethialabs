@@ -7,6 +7,7 @@ import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
 import {
 	type ComponentStatus,
+	environmentSecurity,
 	jobs,
 	projectAddons,
 	projectCaches,
@@ -41,6 +42,18 @@ const deployMetaSchema = z.object({
 			z.string(),
 			z.object({ health: z.string(), sync: z.string() }),
 		)
+		.optional()
+		.catch(undefined),
+	// Cluster Trivy-Operator vulnerability posture (L9).
+	security_report: z
+		.object({
+			critical: z.number(),
+			high: z.number(),
+			medium: z.number(),
+			low: z.number(),
+			report_count: z.number(),
+			scanned: z.boolean(),
+		})
 		.optional()
 		.catch(undefined),
 });
@@ -130,6 +143,41 @@ export async function finalizeDeployment(jobId: string) {
 					),
 				);
 		}
+	}
+
+	// Security posture (L9) — upsert the cluster's Trivy vulnerability counts for this env.
+	if (meta.security_report) {
+		const s = meta.security_report;
+		const now = new Date();
+		await db
+			.insert(environmentSecurity)
+			.values({
+				project_id: projectId,
+				environment_id: environmentId,
+				critical: s.critical,
+				high: s.high,
+				medium: s.medium,
+				low: s.low,
+				report_count: s.report_count,
+				scanned: s.scanned,
+				scanned_at: now,
+			})
+			.onConflictDoUpdate({
+				target: [
+					environmentSecurity.project_id,
+					environmentSecurity.environment_id,
+				],
+				set: {
+					critical: s.critical,
+					high: s.high,
+					medium: s.medium,
+					low: s.low,
+					report_count: s.report_count,
+					scanned: s.scanned,
+					scanned_at: now,
+					updated_at: now,
+				},
+			});
 	}
 
 	if (outputs) {

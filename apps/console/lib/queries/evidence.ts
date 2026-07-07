@@ -6,6 +6,7 @@ import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import {
 	environmentDrift,
+	environmentSecurity,
 	jobs,
 	projectEnvironments,
 	projects,
@@ -43,6 +44,17 @@ export interface EvidenceDrift {
 	scannedAt: string;
 }
 
+/** The current security posture for an environment (latest Trivy scan; L9). `scanned=false`
+ * when Trivy-Operator isn't installed. */
+export interface EvidenceSecurity {
+	critical: number;
+	high: number;
+	medium: number;
+	low: number;
+	scanned: boolean;
+	scannedAt: string;
+}
+
 /** One environment row in the Verify / Drift tables. */
 export interface EvidenceEnvRow {
 	projectId: string;
@@ -55,6 +67,8 @@ export interface EvidenceEnvRow {
 	verify: EvidenceVerify | null;
 	/** Null when the env has never been drift-scanned. */
 	drift: EvidenceDrift | null;
+	/** Null when the env has never had a security scan recorded. */
+	security: EvidenceSecurity | null;
 }
 
 /** A recorded verification waiver (an authorized, time-boxed control override). */
@@ -86,6 +100,10 @@ export interface EvidenceSummary {
 	/** Environments never drift-scanned. */
 	driftUnknown: number;
 	activeWaivers: number;
+	/** Σ critical + high vulnerabilities across scanned environments. */
+	criticalHighVulns: number;
+	/** Environments with no Trivy scan on record. */
+	securityUnknown: number;
 }
 
 export interface OrgEvidence {
@@ -98,7 +116,8 @@ export interface OrgEvidence {
 export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 	const db = getServiceDb();
 
-	const [envs, verifyRows, driftRows, waiverRows] = await Promise.all([
+	const [envs, verifyRows, driftRows, securityRows, waiverRows] =
+		await Promise.all([
 		// Every environment across the org's projects.
 		db
 			.select({
@@ -142,6 +161,20 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 			.from(environmentDrift)
 			.innerJoin(projects, eq(environmentDrift.project_id, projects.id))
 			.where(eq(projects.org_id, orgId)),
+		// Current security posture per environment (latest Trivy scan; L9).
+		db
+			.select({
+				environmentId: environmentSecurity.environment_id,
+				critical: environmentSecurity.critical,
+				high: environmentSecurity.high,
+				medium: environmentSecurity.medium,
+				low: environmentSecurity.low,
+				scanned: environmentSecurity.scanned,
+				scannedAt: environmentSecurity.scanned_at,
+			})
+			.from(environmentSecurity)
+			.innerJoin(projects, eq(environmentSecurity.project_id, projects.id))
+			.where(eq(projects.org_id, orgId)),
 		// Recorded verification waivers, newest first.
 		db
 			.select({
@@ -171,6 +204,10 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 	for (const r of driftRows) {
 		if (r.environmentId) driftByEnv.set(r.environmentId, r);
 	}
+	const securityByEnv = new Map<string, (typeof securityRows)[number]>();
+	for (const r of securityRows) {
+		if (r.environmentId) securityByEnv.set(r.environmentId, r);
+	}
 
 	const rows: EvidenceEnvRow[] = envs.map((env) => {
 		const v = verifyByEnv.get(env.environmentId);
@@ -191,6 +228,17 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 		const drift: EvidenceDrift | null = d
 			? { inSync: d.inSync, drifted: d.drifted, scannedAt: d.scannedAt.toISOString() }
 			: null;
+		const sec = securityByEnv.get(env.environmentId);
+		const security: EvidenceSecurity | null = sec
+			? {
+					critical: sec.critical,
+					high: sec.high,
+					medium: sec.medium,
+					low: sec.low,
+					scanned: sec.scanned,
+					scannedAt: sec.scannedAt.toISOString(),
+				}
+			: null;
 		return {
 			projectId: env.projectId,
 			projectName: env.projectName,
@@ -200,6 +248,7 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 			stage: env.stage,
 			verify,
 			drift,
+			security,
 		};
 	});
 
@@ -236,6 +285,12 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 		drifted: rows.filter((r) => r.drift && !r.drift.inSync).length,
 		driftUnknown: rows.filter((r) => !r.drift).length,
 		activeWaivers: waivers.filter((w) => w.active).length,
+		criticalHighVulns: rows.reduce(
+			(n, r) =>
+				n + (r.security?.scanned ? r.security.critical + r.security.high : 0),
+			0,
+		),
+		securityUnknown: rows.filter((r) => !r.security?.scanned).length,
 	};
 
 	return { rows, waivers, summary };

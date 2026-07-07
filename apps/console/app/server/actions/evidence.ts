@@ -28,6 +28,8 @@ export async function getOrgEvidence(): Promise<OrgEvidence> {
 				drifted: 0,
 				driftUnknown: 0,
 				activeWaivers: 0,
+				criticalHighVulns: 0,
+				securityUnknown: 0,
 			},
 		};
 	}
