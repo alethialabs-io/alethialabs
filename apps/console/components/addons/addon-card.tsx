@@ -56,6 +56,11 @@ export function AddonCard({
 								health={item.install!.health}
 							/>
 						)}
+						{installed && item.install!.mode === "gitops" && (
+							<Badge variant="outline" className="text-[10px] uppercase">
+								GitOps
+							</Badge>
+						)}
 					</div>
 					<div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
 						<Badge variant="outline" className="text-[10px] uppercase">

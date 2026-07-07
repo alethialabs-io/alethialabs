@@ -32,7 +32,7 @@ func sampleAddOn() types.AddOnInstall {
 }
 
 func TestRenderAddOnApplication(t *testing.T) {
-	manifest, err := renderAddOnApplication(sampleAddOn())
+	manifest, err := RenderAddOnApplication(sampleAddOn())
 	if err != nil {
 		t.Fatalf("render failed: %v", err)
 	}
@@ -46,6 +46,7 @@ func TestRenderAddOnApplication(t *testing.T) {
 		"namespace: monitoring",
 		`sync-wave: "2"`,
 		"alethia.io/addon-id: kube-prometheus-stack",
+		"alethia.io/addon-mode: managed",
 		"retention: 15d", // the merged values, indented under helm.values
 	} {
 		if !strings.Contains(manifest, want) {
@@ -88,6 +89,29 @@ func TestManagedAddOnNames(t *testing.T) {
 	// Only managed add-ons, sorted, prefixed.
 	if len(names) != 2 || names[0] != "addon-kube-prometheus-stack" || names[1] != "addon-loki" {
 		t.Errorf("unexpected names: %v", names)
+	}
+}
+
+func TestAllAddOnNames(t *testing.T) {
+	names := AllAddOnNames([]types.AddOnInstall{
+		{ID: "loki", Mode: "managed"},
+		{ID: "vault", Mode: "gitops"},
+	})
+	// Every mode, sorted.
+	if len(names) != 2 || names[0] != "addon-loki" || names[1] != "addon-vault" {
+		t.Errorf("unexpected names: %v", names)
+	}
+}
+
+func TestRenderGitopsModeLabel(t *testing.T) {
+	a := sampleAddOn()
+	a.Mode = "gitops"
+	manifest, err := RenderAddOnApplication(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(manifest, "alethia.io/addon-mode: gitops") {
+		t.Errorf("expected gitops mode label\n%s", manifest)
 	}
 }
 

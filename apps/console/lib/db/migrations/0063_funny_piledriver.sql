@@ -1,0 +1,1 @@
+ALTER TABLE "project_addons" ADD COLUMN "values_yaml" text;

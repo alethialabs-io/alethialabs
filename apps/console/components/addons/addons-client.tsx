@@ -107,6 +107,7 @@ export function AddonsClient({
 				item={configuring}
 				projectId={projectId}
 				environmentId={data.environmentId}
+				hasAppsRepo={data.hasAppsRepo}
 				open={sheetOpen}
 				onOpenChange={setSheetOpen}
 			/>
