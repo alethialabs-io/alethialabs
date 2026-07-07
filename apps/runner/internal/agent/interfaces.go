@@ -15,6 +15,7 @@ type JobAPI interface {
 	Heartbeat() error
 	GetJob(jobID string) (*Job, error)
 	FetchGitToken(jobID string) (string, error)
+	FetchAzureToken() (string, error)
 	UploadPlanArtifact(jobID, filePath string) error
 	DownloadPlanArtifact(jobID, destPath string) error
 	UpdateRunnerMetadata(runnerID string, metadata map[string]any) error

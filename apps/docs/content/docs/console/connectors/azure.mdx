@@ -1,44 +1,47 @@
 ---
 title: Azure Connector
-description: Federated Identity setup via Azure Entra ID with OIDC credentials.
+description: Keyless Azure access — authorize Alethia's federated app, no client secrets.
 ---
 
 # Azure Connector
 
-Azure integration uses **Federated Identity Credentials** in Azure Entra ID (formerly Azure AD). The Runner presents an OIDC token, Azure validates it, and issues a short-lived access token. No client secrets are generated. See [Security Architecture](/concepts/security).
+Azure integration is **keyless**. Alethia registers **one multi-tenant Entra app** whose Federated
+Identity Credential trusts the Alethia OIDC issuer. Both the console (verification) and the runner
+(provisioning) authenticate **as that app** by presenting a short-lived OIDC assertion; Azure validates
+it and issues an ARM access token. **You register no app and store no client secret** — you only grant
+Alethia's app a role in your tenant. See [Security Architecture](/concepts/security).
 
 ## Setup
 
+The connect dialog gives you a one-line `az` command (or a Terraform module). It does two things in your
+tenant — no app registration, no federated credential on your side:
+
 <Steps>
 
-### Create App Registration
-In Azure Entra ID, create a new App Registration. Note the **Application (client) ID** and **Directory (tenant) ID**.
+### Create a service principal for Alethia's app
+`az ad sp create --id <ALETHIA_AZURE_CLIENT_ID>` creates a service principal for Alethia's multi-tenant
+app in **your** tenant. The app itself lives in Alethia's tenant; you're just consenting to it.
 
-### Add Federated Credential
-Add a Federated Credential to the App Registration with:
-- **Issuer** — the Alethia platform's OIDC issuer URL
-- **Subject** — the expected subject claim identifier
-- **Audience** — the platform's audience identifier
-
-### Assign RBAC Roles
-Grant the App Registration appropriate RBAC roles on your Azure subscription:
+### Assign RBAC roles
+Grant that service principal appropriate roles on your subscription:
 - Contributor (or more granular roles for specific resource types)
 - User Access Administrator (for AKS AAD integration)
 
-### Enter Details in Alethia
-Provide:
-- **Tenant ID** — Azure AD directory ID
-- **Client ID** — App Registration application ID
-- **Subscription ID** — Target Azure subscription
+### Enter details in Alethia
+Paste back the two values the script prints:
+- **Tenant ID** — your Entra directory ID
+- **Subscription ID** — the target Azure subscription
+
+(The Client ID is Alethia's own app id — fixed, not something you provide.)
 
 </Steps>
 
 ## Verification
 
-Same as other providers — Alethia verifies the federated identity **instantly, server-side** (no runner):
+Same as other providers — Alethia verifies access **instantly, server-side** (no runner):
 
-1. The console presents an OIDC token to Azure
-2. Azure validates against the registered issuer/subject and returns an ARM access token
+1. The console mints an OIDC assertion for Alethia's app and presents it to your tenant
+2. Azure validates it against the app's federated credential and returns an ARM access token
 3. A small ARM read confirms provisioning access → `Connected` / `Degraded` / `Disconnected`
 
 Existing VNets, subnets, and DNS zones are discovered separately by the server-side
@@ -47,7 +50,8 @@ Existing VNets, subnets, and DNS zones are discovered separately by the server-s
 ## What's Stored
 
 - **Tenant ID**
-- **Client ID**
 - **Subscription ID**
+- The platform **Client ID** (Alethia's app id — the same for every connection)
 
-No client secrets. Revoke access by deleting the App Registration or removing the Federated Credential.
+**No client secrets, ever.** Revoke access by deleting the service principal (or its role assignment)
+in your tenant.
