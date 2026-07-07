@@ -80,13 +80,22 @@ describe("built-in role templates", () => {
 		expect(operator).toContain("project:deploy");
 	});
 
-	it("viewer is read-only", () => {
+	it("viewer is read-only, apart from opening/replying to their own support cases", () => {
 		const viewer = BUILT_IN_ROLES.viewer;
 		if (viewer === "*") throw new Error("viewer should be an explicit set");
-		// Read-only = every action is a `view*` action (view, view_alerts).
-		expect(viewer.every((k) => (k.split(":")[1] ?? "").startsWith("view"))).toBe(
-			true,
-		);
+		// Read-only = every action is a `view*` action (view, view_alerts) — EXCEPT
+		// support_case create/reply: support is a right, so even a read-only teammate can
+		// open + answer their own cases (the tiered RLS keeps them to their own cases).
+		expect(
+			viewer.every((k) => {
+				const [resource, action] = k.split(":");
+				return (
+					(action ?? "").startsWith("view") ||
+					(resource === "support_case" &&
+						(action === "create" || action === "reply"))
+				);
+			}),
+		).toBe(true);
 	});
 
 	it("has a stable UUID per built-in role", () => {

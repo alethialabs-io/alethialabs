@@ -53,7 +53,7 @@ function getAppDb(): Db {
 	return globalForDb.__alethiaAppDb;
 }
 
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 /** Active tenancy scope. Community: `orgId === ownerId` (personal org). */
 export interface Scope {

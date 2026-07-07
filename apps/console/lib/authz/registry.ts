@@ -126,11 +126,15 @@ export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 			p.action === "view_alerts" ||
 			(p.resource === "support_case" && SUPPORT_MEMBER_ACTIONS.includes(p.action)),
 	).map((p) => p.key),
-	// Read-only (including alert config). `support_case:view` is already covered by the
-	// `view` clause; create/reply stay operator+ (viewers act on their own cases via
-	// their personal org, where they are owner).
+	// Read-only (including alert config), PLUS opening/replying to their OWN support cases —
+	// support is a right, not a privilege, so even a read-only teammate can ask for help.
+	// The tiered support RLS keeps a viewer's visibility to cases they opened; `manage_support`
+	// (see-all + triage) stays owner/admin-only.
 	viewer: PERMISSIONS.filter(
-		(p) => p.action === "view" || p.action === "view_alerts",
+		(p) =>
+			p.action === "view" ||
+			p.action === "view_alerts" ||
+			(p.resource === "support_case" && SUPPORT_MEMBER_ACTIONS.includes(p.action)),
 	).map((p) => p.key),
 };
 

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Mocked-boundary tests for the support-case actions. Stubs the authz guard, the auth session,
-// the request headers, the auth config, and a thenable drizzle chain run via withOwnerScope
+// the request headers, the auth config, and a thenable drizzle chain run via withSupportScope
 // (each await pulls the next seeded result set). Exercises the internal status machine
 // (TRANSITIONS / assertTransition / nextStatusAfterCustomerReply) THROUGH the exported actions:
 // customer replies reopen settled cases, illegal transitions throw, submitCase inserts the case +
@@ -12,7 +12,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorizeQuiet: vi.fn() }));
-vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn() }));
+vi.mock("@/lib/support/scope", () => ({ withSupportScope: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: vi.fn() }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: vi.fn() } } }));
 vi.mock("@/lib/config/auth", () => ({
@@ -49,7 +49,7 @@ import { getActiveOrgSlug } from "@/app/server/actions/resolve";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { auth } from "@/lib/auth";
 import { authorizeQuiet } from "@/lib/authz/guard";
-import { withOwnerScope } from "@/lib/db";
+import { withSupportScope } from "@/lib/support/scope";
 import {
 	notifySupportInboxEmail,
 	sendCaseClosedEmail,
@@ -63,7 +63,7 @@ import { slackCaseCreated, slackCaseReplied } from "@/lib/support/slack-notify";
 /**
  * A drizzle-ish chain whose every builder returns itself; each `await` (then) shifts the next
  * seeded result set. Records `.values()`/`.set()`/`.where()` writes for assertions and drives the
- * withOwnerScope callback.
+ * withSupportScope callback.
  */
 function mockDb(resultSets: unknown[][]) {
 	const setSpy = vi.fn();
@@ -100,7 +100,7 @@ function mockDb(resultSets: unknown[][]) {
 			return resolve(r);
 		},
 	});
-	vi.mocked(withOwnerScope).mockImplementation(
+	vi.mocked(withSupportScope).mockImplementation(
 		((_owner: unknown, cb: (tx: unknown) => unknown) => cb(db)) as never,
 	);
 	return { setSpy, valuesSpy, whereSpy };
@@ -262,7 +262,7 @@ describe("submitCase", () => {
 			submitCase({ ...submitInput, subject: "ab" } as never),
 		).rejects.toThrow();
 		expect(authorizeQuiet).not.toHaveBeenCalled();
-		expect(withOwnerScope).not.toHaveBeenCalled();
+		expect(withSupportScope).not.toHaveBeenCalled();
 	});
 });
 
