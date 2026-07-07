@@ -13,17 +13,14 @@ import {
 	Bell,
 	Blocks,
 	ClipboardList,
-	Eye,
-	FlaskConical,
 	Gauge,
 	Layers,
 	LayoutDashboard,
 	LifeBuoy,
-	LineChart,
-	ScrollText,
 	Server,
 	Settings,
 	ShieldAlert,
+	ShieldCheck,
 	Sparkles,
 	Waypoints,
 	Webhook,
@@ -32,7 +29,7 @@ import {
 import { globalHref, orgHref, projectGlobalHref } from "@/lib/routing";
 
 /** A sidebar section that slides in as a nested sub-sidebar. */
-export type DrillId = "observability" | "alerts" | "settings";
+export type DrillId = "alerts" | "settings";
 
 /** A small uppercase tag on a nav item. */
 export interface NavBadge {
@@ -80,21 +77,42 @@ export interface DrillDef {
 	items?: NavItem[];
 }
 
-/** Builds the three main-view nav groups for an org slug. */
-export function buildSidebarNav(orgSlug: string): SidebarNavGroups {
+/** Capabilities that toggle conditional nav items on/off. Derived server-side and threaded
+ * through the shell so the sidebar only advertises surfaces that are real for this org. */
+export interface NavCapabilities {
+	/** The org runs its own (`operator = 'self'`) runners — only then is Runners a customer
+	 * surface. Managed warm pools are internal (support-admin), so the item stays hidden. */
+	selfRunners?: boolean;
+}
+
+/** Builds the three main-view nav groups for an org slug. Runners is gated behind
+ * `capabilities.selfRunners`; the `/{org}/~/runners` route itself stays reachable by deep link. */
+export function buildSidebarNav(
+	orgSlug: string,
+	capabilities: NavCapabilities = {},
+): SidebarNavGroups {
 	return {
 		top: [
 			{ label: "Overview", icon: LayoutDashboard, href: orgHref(orgSlug), exact: true },
 			{ label: "Clusters", icon: Server, sub: "clusters", href: globalHref(orgSlug, "clusters") },
 			{ label: "Jobs", icon: ClipboardList, sub: "jobs", href: globalHref(orgSlug, "jobs") },
-			{ label: "Observability", icon: Eye, drill: "observability" },
-			{ label: "Runners", icon: Workflow, sub: "runners", href: globalHref(orgSlug, "runners") },
+			{ label: "Evidence", icon: ShieldCheck, sub: "evidence", href: globalHref(orgSlug, "evidence") },
 		],
 		connect: [
 			{ label: "Connectors", icon: Blocks, sub: "connectors", href: globalHref(orgSlug, "connectors") },
 			{ label: "Alerts", icon: Bell, drill: "alerts", anchor: globalHref(orgSlug, "alerts") },
 			{ label: "Agent", icon: Sparkles, sub: "agent", href: globalHref(orgSlug, "agent") },
-			{ label: "Sandboxes", icon: FlaskConical, disabled: true, badge: { text: "Soon", tone: "soon" } },
+			// Runners is a self-operator surface only — appended when the org runs its own runners.
+			...(capabilities.selfRunners
+				? [
+						{
+							label: "Runners",
+							icon: Workflow,
+							sub: "runners",
+							href: globalHref(orgSlug, "runners"),
+						} satisfies NavItem,
+					]
+				: []),
 		],
 		pinned: [
 			{ label: "Usage", icon: Gauge, sub: "usage", href: globalHref(orgSlug, "usage") },
@@ -131,20 +149,7 @@ export function buildProjectSidebarNav(
 
 /** Builds the drill-in sub-view definitions for an org slug. */
 export function buildDrills(orgSlug: string): Record<DrillId, DrillDef> {
-	const soon: NavBadge = { text: "Soon", tone: "soon" };
 	return {
-		observability: {
-			id: "observability",
-			title: "Observability",
-			routeOwned: false,
-			items: [
-				{ label: "Jobs", icon: ClipboardList, sub: "jobs", href: globalHref(orgSlug, "jobs") },
-				{ label: "Logs", icon: ScrollText, disabled: true, badge: soon },
-				{ label: "Metrics", icon: LineChart, disabled: true, badge: soon },
-				{ label: "Traces", icon: Waypoints, disabled: true, badge: soon },
-				{ label: "Activity", icon: Activity, disabled: true, badge: soon },
-			],
-		},
 		alerts: {
 			id: "alerts",
 			title: "Alerts",
@@ -180,32 +185,13 @@ export function buildDrills(orgSlug: string): Record<DrillId, DrillDef> {
 	};
 }
 
-/** Builds the drill-in sub-views scoped to a single project. Observability points its Jobs item
- * at the project jobs page (the rest stay "Soon" stubs); Settings reuses the scope-aware
+/** Builds the drill-in sub-views scoped to a single project. Settings reuses the scope-aware
  * `<SettingsNav/>`. Alerts is org-only, so it has no project variant. */
 export function buildProjectDrills(
-	orgSlug: string,
-	projectSlug: string,
+	_orgSlug: string,
+	_projectSlug: string,
 ): Record<DrillId, DrillDef> {
-	const soon: NavBadge = { text: "Soon", tone: "soon" };
 	return {
-		observability: {
-			id: "observability",
-			title: "Observability",
-			routeOwned: false,
-			items: [
-				{
-					label: "Jobs",
-					icon: ClipboardList,
-					sub: "jobs",
-					href: projectGlobalHref(orgSlug, projectSlug, "jobs"),
-				},
-				{ label: "Logs", icon: ScrollText, disabled: true, badge: soon },
-				{ label: "Metrics", icon: LineChart, disabled: true, badge: soon },
-				{ label: "Traces", icon: Waypoints, disabled: true, badge: soon },
-				{ label: "Activity", icon: Activity, disabled: true, badge: soon },
-			],
-		},
 		// Org-only — never rendered in project scope, but the map shape requires an entry.
 		alerts: { id: "alerts", title: "Alerts", routeOwned: true, items: [] },
 		settings: { id: "settings", title: "Settings", routeOwned: true },

@@ -27,10 +27,13 @@ import { Topbar } from "./topbar";
 export function AppShell({
 	children,
 	isHosted = false,
+	selfRunners = false,
 }: {
 	children: React.ReactNode;
 	/** Hosted control plane → enables the in-app feedback widget in the sidebar. */
 	isHosted?: boolean;
+	/** Org runs its own runners → surfaces the gated Runners nav item. */
+	selfRunners?: boolean;
 }) {
 	const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -58,7 +61,11 @@ export function AppShell({
 					collapsed ? "w-[56px]" : "w-[252px]",
 				)}
 			>
-				{collapsed ? <SidebarRail /> : <AppSidebar isHosted={isHosted} />}
+				{collapsed ? (
+					<SidebarRail selfRunners={selfRunners} />
+				) : (
+					<AppSidebar isHosted={isHosted} selfRunners={selfRunners} />
+				)}
 			</aside>
 
 			{/* Mobile sidebar */}
@@ -74,7 +81,7 @@ export function AppShell({
 					}}
 				>
 					<SheetTitle className="sr-only">Navigation</SheetTitle>
-					<AppSidebar isHosted={isHosted} />
+					<AppSidebar isHosted={isHosted} selfRunners={selfRunners} />
 				</SheetContent>
 			</Sheet>
 
@@ -95,7 +102,7 @@ export function AppShell({
 			</div>
 
 			{/* Global command palette (the sidebar "Find…" box + ⌘K / F). */}
-			<CommandPalette />
+			<CommandPalette selfRunners={selfRunners} />
 
 			{/* Single job-lifecycle toast driver (loading → success/failed in place). */}
 			<JobToaster />
