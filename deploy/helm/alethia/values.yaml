@@ -1,10 +1,10 @@
 # Default values for the Alethia chart.
 # This is the same bundle as docker-compose, expressed for Kubernetes.
 
-# Published images are built linux/arm64 only, so pods must land on ARM nodes.
+# Published app-bundle images are built linux/amd64 only, so pods must land on x86 nodes.
 # Override (or set to {}) if you publish multi-arch images.
 nodeSelector:
-  kubernetes.io/arch: arm64
+  kubernetes.io/arch: amd64
 
 image:
   registry: ghcr.io/alethialabs-io

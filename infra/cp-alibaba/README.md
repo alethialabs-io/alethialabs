@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # cp-alibaba
 
-Alibaba Cloud control-plane box (single Yitian 710 ARM ECS instance) running the Alethia control
+Alibaba Cloud control-plane box (single x86 ECS instance) running the Alethia control
 plane. One of the per-cloud `cp-*` siblings — see [`infra/README.md`](../README.md). It ports the
 working [`cp-hetzner`](../cp-hetzner) design (Cloudflare Tunnel ingress) to Alibaba Cloud, shaped for
 what's best on Alibaba rather than a 1:1 clone.

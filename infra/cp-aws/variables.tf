@@ -30,11 +30,11 @@ variable "domain" {
 }
 
 variable "instance_type" {
-  # t4g = Graviton ARM64 — matches the arm64 images; cheapest ARM general-purpose. Use an x86
-  # t3.large only if amd64 images are what you deploy (pin an x86 AMI filter accordingly).
-  description = "EC2 instance type."
+  # t3 = x86 burstable — matches the linux/amd64 self-host bundle images. t3.large = 2 vCPU / 8 GB,
+  # the cheapest general-purpose tier with headroom for the compose bundle plus a TF run.
+  description = "EC2 instance type (x86 — the app images are amd64)."
   type        = string
-  default     = "t4g.large"
+  default     = "t3.large"
 }
 
 variable "root_volume_size" {
