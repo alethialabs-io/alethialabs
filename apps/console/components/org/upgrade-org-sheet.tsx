@@ -33,6 +33,7 @@ import {
 } from "@/components/org/org-purchase-ui";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { authClient } from "@/lib/auth/client";
+import { track } from "@/lib/analytics/track";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { planMeta } from "@repo/plan-catalog";
@@ -84,6 +85,7 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 		setView("pay");
 		setClientSecret(null);
 		setError(null);
+		track("upgrade_started", { plan: "team", context: "upgrade_sheet" });
 		createSubscriptionIntent("team")
 			.then((intent) => active && setClientSecret(intent.clientSecret))
 			.catch(

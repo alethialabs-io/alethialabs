@@ -25,6 +25,7 @@ interface OpenReplayLike {
 interface PostHogLike {
 	capture: (event: string, props?: Record<string, unknown>) => void;
 	identify: (id: string, props?: Record<string, unknown>) => void;
+	group: (type: string, key: string, props?: Record<string, unknown>) => void;
 	reset?: () => void;
 }
 
@@ -71,6 +72,30 @@ export function identify(userId: string, traits?: AnalyticsProps): void {
 	}
 	try {
 		window.__openreplay?.setUserID(userId);
+	} catch {
+		/* noop */
+	}
+}
+
+/**
+ * Associate subsequent events with an organization group so PostHog can segment funnels/retention by
+ * org (and plan). PostHog-only — Umami/OpenReplay have no group concept, so they no-op. Call after the
+ * active org is known (and again on org switch).
+ */
+export function group(orgId: string, props?: AnalyticsProps): void {
+	if (typeof window === "undefined") return;
+	try {
+		window.__posthog?.group("organization", orgId, props);
+	} catch {
+		/* noop */
+	}
+}
+
+/** Clear the identified person + group on sign-out so the next session starts anonymous. */
+export function reset(): void {
+	if (typeof window === "undefined") return;
+	try {
+		window.__posthog?.reset?.();
 	} catch {
 		/* noop */
 	}
