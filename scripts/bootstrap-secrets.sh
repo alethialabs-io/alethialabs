@@ -46,6 +46,9 @@ gen_if_absent() {
 }
 b64() { openssl rand -base64 32; }   # 32 bytes → AES-256 key / auth secret
 hex() { openssl rand -hex 32; }      # 64-char hex token
+# base64(PKCS8 RSA-2048 PEM) on ONE line — the workload-identity OIDC issuer signing key
+# (lib/oidc/issuer.ts). Asymmetric so clouds verify via the published JWKS; never shared.
+rsa_b64() { openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null | openssl base64 -A; }
 
 gen_if_absent BETTER_AUTH_SECRET "$(b64)"
 gen_if_absent CLI_JWT_SECRET "$(hex)"
@@ -58,6 +61,7 @@ gen_if_absent ALETHIA_STORAGE_SECRET_ACCESS_KEY "$(b64)"
 gen_if_absent ALETHIA_RUNNER_BOOTSTRAP_TOKEN "$(hex)"
 gen_if_absent ALETHIA_CRON_SECRET "$(hex)"
 gen_if_absent RELEASE_API_SECRET "$(hex)"
+gen_if_absent ALETHIA_OIDC_SIGNING_KEY "$(rsa_b64)"
 
 # Merge externals (KEY=VALUE lines) — these OVERRIDE, so editing the file + re-running
 # updates them. Do NOT quote values in the file; everything after the first '=' is the value.
