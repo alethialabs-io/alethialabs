@@ -19,6 +19,7 @@
             "/",
             "/pricing",
             "/enterprise",
+            "/open-source",
             "/contact",
             "/contact/:path*",
             "/terms",
