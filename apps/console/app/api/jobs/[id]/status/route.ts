@@ -11,6 +11,10 @@ import {
 	finalizePromotionOnDeploy,
 } from "@/app/server/actions/promotions";
 import { maybeAutoHeal } from "@/app/server/actions/reconcile";
+import {
+	recordAddonHealth,
+	recordSecurityPosture,
+} from "@/lib/addons/inspection-persistence";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { reportJobUsageOnce } from "@/lib/billing/meter";
 import { getServiceDb } from "@/lib/db";
@@ -183,6 +187,32 @@ export async function PUT(
 							);
 						}
 					}
+						// Continuous day-2 refresh (Phase 4): the drift job also inspected the live
+						// cluster (ArgoCD add-on health + Trivy security), posted alongside the posture.
+						// Persist them so the Add-ons page + Evidence Security tab stay current between
+						// deploys. Best-effort — never fail the status update.
+						if (job.environment_id) {
+							const addonStatus = job.execution_metadata?.addon_status;
+							if (addonStatus) {
+								await recordAddonHealth(
+									job.project_id,
+									job.environment_id,
+									addonStatus,
+								).catch((err) =>
+									console.error("Persist add-on health (drift) error:", err),
+								);
+							}
+							const security = job.execution_metadata?.security_report;
+							if (security) {
+								await recordSecurityPosture(
+									job.project_id,
+									job.environment_id,
+									security,
+								).catch((err) =>
+									console.error("Persist security posture (drift) error:", err),
+								);
+							}
+						}
 				}
 
 		}

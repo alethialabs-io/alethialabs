@@ -94,6 +94,9 @@ type NodeSize struct {
 type ProjectClusterConfig struct {
 	Placement
 	ClusterVersion string `json:"cluster_version"`
+	// Provisioned cluster name (populated on the snapshot after the first deploy). Lets a
+	// day-2 job (drift inspection) acquire kubeconfig standalone via ConfigureKubeconfig.
+	ClusterName string `json:"cluster_name"`
 	// Concrete provider SKUs (legacy / explicit override). When empty, NodeSize resolves.
 	InstanceTypes []string `json:"instance_types"`
 	// Cloud-indifferent node capability (preferred); resolved to InstanceTypes per provider.

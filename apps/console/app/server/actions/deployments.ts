@@ -6,10 +6,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
 import {
-	type ComponentStatus,
-	environmentSecurity,
 	jobs,
-	projectAddons,
 	projectCaches,
 	projectCluster,
 	projectDatabases,
@@ -21,6 +18,10 @@ import {
 	projectSourceRepos,
 	projectTopics,
 } from "@/lib/db/schema";
+import {
+	recordAddonHealth,
+	recordSecurityPosture,
+} from "@/lib/addons/inspection-persistence";
 import { structuralHash } from "@/lib/promotions/diff";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 import type { ProviderOutputs } from "@/types/jsonb.types";
@@ -57,14 +58,6 @@ const deployMetaSchema = z.object({
 		.optional()
 		.catch(undefined),
 });
-
-/** Maps an ArgoCD health status onto the component status the add-ons UI shows. */
-function addonComponentStatus(health: string): ComponentStatus {
-	if (health === "Healthy") return "ACTIVE";
-	if (health === "Degraded" || health === "Missing") return "FAILED";
-	// Progressing / Suspended / Unknown → still converging.
-	return "CREATING";
-}
 
 /**
  * After a DEPLOY job succeeds, persist terraform outputs to the project component
@@ -120,64 +113,13 @@ export async function finalizeDeployment(jobId: string) {
 
 	await db.update(projectCluster).set(clusterUpdate).where(inEnv(projectCluster));
 
-	// Marketplace add-ons — persist the ArgoCD health/sync the runner read back. Keys are
-	// ArgoCD Application names ("addon-<id>"); strip the prefix to match project_addons.addon_id.
+	// Marketplace add-on health + Trivy security posture — the runner read them back post-apply.
+	// Shared with the day-2 DETECT_DRIFT refresh path (lib/addons/inspection-persistence).
 	if (meta.addon_status) {
-		const now = new Date();
-		for (const [appName, s] of Object.entries(meta.addon_status)) {
-			const addonId = appName.replace(/^addon-/, "");
-			await db
-				.update(projectAddons)
-				.set({
-					health: s.health,
-					sync_status: s.sync,
-					status: addonComponentStatus(s.health),
-					last_synced_at: now,
-					updated_at: now,
-				})
-				.where(
-					and(
-						eq(projectAddons.project_id, projectId),
-						eq(projectAddons.environment_id, environmentId),
-						eq(projectAddons.addon_id, addonId),
-					),
-				);
-		}
+		await recordAddonHealth(projectId, environmentId, meta.addon_status);
 	}
-
-	// Security posture (L9) — upsert the cluster's Trivy vulnerability counts for this env.
 	if (meta.security_report) {
-		const s = meta.security_report;
-		const now = new Date();
-		await db
-			.insert(environmentSecurity)
-			.values({
-				project_id: projectId,
-				environment_id: environmentId,
-				critical: s.critical,
-				high: s.high,
-				medium: s.medium,
-				low: s.low,
-				report_count: s.report_count,
-				scanned: s.scanned,
-				scanned_at: now,
-			})
-			.onConflictDoUpdate({
-				target: [
-					environmentSecurity.project_id,
-					environmentSecurity.environment_id,
-				],
-				set: {
-					critical: s.critical,
-					high: s.high,
-					medium: s.medium,
-					low: s.low,
-					report_count: s.report_count,
-					scanned: s.scanned,
-					scanned_at: now,
-					updated_at: now,
-				},
-			});
+		await recordSecurityPosture(projectId, environmentId, meta.security_report);
 	}
 
 	if (outputs) {
