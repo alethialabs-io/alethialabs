@@ -2,10 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Support-case server actions — the customer half of the help-desk. Every action is
-// guarded via authorizeQuiet (RLS scopes the writes through withOwnerScope). Staff
-// answer out of band (Slack + the service-role ingest path); notifications here are
-// best-effort so a failed email/Slack never fails the customer's submit or reply.
+// Support-case server actions — the customer half of the help-desk. Cases are ORG-OWNED
+// with tiered visibility: every action is guarded via authorizeQuiet, then scoped through
+// withSupportScope (RLS to the active org; owners/admins with manage_support see ALL the
+// org's cases, everyone else only the ones they opened). Staff answer out of band (Slack +
+// the service-role ingest path); notifications here are best-effort so a failed email/Slack
+// never fails the customer's submit or reply.
 
 import { eq, sql } from "drizzle-orm";
 import { headers } from "next/headers";
@@ -13,7 +15,7 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { auth } from "@/lib/auth";
 import { authorizeQuiet } from "@/lib/authz/guard";
 import { getAuthConfig } from "@/lib/config/auth";
-import { withOwnerScope } from "@/lib/db";
+import { withSupportScope } from "@/lib/support/scope";
 import { supportCaseReads, supportCases, supportMessages } from "@/lib/db/schema";
 import type { SupportCaseStatus } from "@/lib/db/schema/enums";
 import {
@@ -126,12 +128,12 @@ export async function submitCase(
 		channel: "email" as const,
 	};
 
-	const created = await withOwnerScope(actor.userId, async (tx) => {
+	const created = await withSupportScope(actor, async (tx) => {
 		const [row] = await tx
 			.insert(supportCases)
 			.values({
 				user_id: actor.userId,
-				org_id: actor.userId,
+				org_id: actor.orgId,
 				type: data.type,
 				category: data.category,
 				severity: data.severity ?? "normal",
@@ -202,7 +204,7 @@ export async function listMyCases(filter?: {
 	status?: "active" | "resolved";
 }): Promise<CaseListItem[]> {
 	const actor = await authorizeQuiet("view", { type: "support_case" });
-	return withOwnerScope(actor.userId, (tx) =>
+	return withSupportScope(actor, (tx) =>
 		listCasesForOwner(tx, actor.userId, filter ?? {}),
 	);
 }
@@ -217,7 +219,7 @@ export async function getCase(id: string): Promise<{
 	attachments: CaseWithThread["attachments"];
 } | null> {
 	const actor = await authorizeQuiet("view", { type: "support_case", id });
-	return withOwnerScope(actor.userId, async (tx) => {
+	return withSupportScope(actor, async (tx) => {
 		const result = await getCaseWithThread(tx, id);
 		if (!result) return null;
 		await tx
@@ -246,7 +248,7 @@ export async function postCaseMessage(
 	});
 	const author = await sessionAuthor();
 
-	const result = await withOwnerScope(actor.userId, async (tx) => {
+	const result = await withSupportScope(actor, async (tx) => {
 		const [caseRow] = await tx
 			.select({
 				case_number: supportCases.case_number,
@@ -341,7 +343,7 @@ async function transitionCase(
 	extra: Partial<Pick<typeof supportCases.$inferInsert, "resolved_at" | "closed_at">> = {},
 ): Promise<TransitionResult> {
 	const actor = await authorizeQuiet("reply", { type: "support_case", id });
-	const info = await withOwnerScope(actor.userId, async (tx) => {
+	const info = await withSupportScope(actor, async (tx) => {
 		const [caseRow] = await tx
 			.select({
 				status: supportCases.status,
@@ -423,7 +425,7 @@ export async function closeCase(id: string): Promise<void> {
 /** Advances the caller's read watermark for a case (unread badge clearing). */
 export async function markCaseRead(id: string): Promise<void> {
 	const actor = await authorizeQuiet("view", { type: "support_case", id });
-	await withOwnerScope(actor.userId, async (tx) => {
+	await withSupportScope(actor, async (tx) => {
 		await tx
 			.insert(supportCaseReads)
 			.values({ case_id: id, user_id: actor.userId, last_read_at: new Date() })

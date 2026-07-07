@@ -64,6 +64,14 @@ export function CaseListItem({
 							addSuffix: true,
 						})}
 					</span>
+					{/* Whose case — shown only on rows the caller didn't open (i.e. an admin
+					    viewing the whole org's cases); their own rows stay uncluttered. */}
+					{!item.is_mine && item.requester_name && (
+						<>
+							<span aria-hidden>·</span>
+							<span>Opened by {item.requester_name}</span>
+						</>
+					)}
 				</div>
 			</div>
 

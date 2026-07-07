@@ -605,7 +605,7 @@ END $$;
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['projects','jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant', 'support_cases']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['projects','jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant']) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(
@@ -615,6 +615,27 @@ BEGIN
          WITH CHECK (user_id = current_setting(''app.current_owner'', true)::uuid
                 OR org_id = current_setting(''app.current_org'', true)::uuid)', tbl);
   END LOOP;
+END $$;
+
+-- Support cases (tiered): org-owned, but visibility depends on the caller's role. The
+-- app sets a third GUC `app.support_all` = 'true' when the caller holds the PDP
+-- `support_case:manage_support` capability (owner/admin) — they see EVERY case in the
+-- org; everyone else sees only cases they opened (user_id = current_owner). Always
+-- org-scoped first (org_id = current_org). `support_all` unset → own-only (fail closed).
+-- Community/personal orgs: org_id == user_id == current_owner, so this collapses to
+-- exactly today's behavior. WITH CHECK mirrors USING so an admin can update (resolve/
+-- reply-bump) a member's case, while the app pins user_id to the requester on insert.
+DO $$
+BEGIN
+  ALTER TABLE public.support_cases ENABLE ROW LEVEL SECURITY;
+  DROP POLICY IF EXISTS owner_all ON public.support_cases;
+  CREATE POLICY owner_all ON public.support_cases FOR ALL
+    USING (org_id = current_setting('app.current_org', true)::uuid
+           AND (coalesce(current_setting('app.support_all', true), '') = 'true'
+                OR user_id = current_setting('app.current_owner', true)::uuid))
+    WITH CHECK (org_id = current_setting('app.current_org', true)::uuid
+           AND (coalesce(current_setting('app.support_all', true), '') = 'true'
+                OR user_id = current_setting('app.current_owner', true)::uuid));
 END $$;
 
 -- Credential tables (scope-aware): a `personal` row is visible only to its author
@@ -722,9 +743,11 @@ CREATE POLICY logs_select ON public.job_logs FOR SELECT
       AND (j.user_id = current_setting('app.current_owner', true)::uuid
            OR j.org_id = current_setting('app.current_org', true)::uuid)));
 
--- Support case child tables: tenancy flows through the parent support_cases (like
--- job_logs). FOR ALL because customers INSERT replies/reads. `is_internal` staff notes
--- ARE visible under this policy, so the customer query builder always filters them out
+-- Support case child tables: tenancy + visibility flow through the parent support_cases
+-- (like job_logs) — the subquery uses the SAME tiered predicate (org-scoped, then
+-- support_all-or-own), so a reply/attachment/read is visible exactly when its case is.
+-- FOR ALL because customers INSERT replies/reads. `is_internal` staff notes ARE visible
+-- under this policy, so the customer query builder always filters them out
 -- (lib/queries/support.ts) — RLS is the tenancy wall, the query is the visibility filter.
 -- Staff writes go through the RLS-bypassing service role, so this policy never needs to
 -- permit staff.
@@ -737,11 +760,13 @@ BEGIN
     EXECUTE format(
       'CREATE POLICY owner_all ON public.%I FOR ALL
          USING (case_id IN (SELECT id FROM public.support_cases
-                WHERE user_id = current_setting(''app.current_owner'', true)::uuid
-                   OR org_id = current_setting(''app.current_org'', true)::uuid))
+                WHERE org_id = current_setting(''app.current_org'', true)::uuid
+                  AND (coalesce(current_setting(''app.support_all'', true), '''') = ''true''
+                       OR user_id = current_setting(''app.current_owner'', true)::uuid)))
          WITH CHECK (case_id IN (SELECT id FROM public.support_cases
-                WHERE user_id = current_setting(''app.current_owner'', true)::uuid
-                   OR org_id = current_setting(''app.current_org'', true)::uuid))', tbl);
+                WHERE org_id = current_setting(''app.current_org'', true)::uuid
+                  AND (coalesce(current_setting(''app.support_all'', true), '''') = ''true''
+                       OR user_id = current_setting(''app.current_owner'', true)::uuid)))', tbl);
   END LOOP;
 END $$;
 

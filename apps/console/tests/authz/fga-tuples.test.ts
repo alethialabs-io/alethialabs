@@ -61,7 +61,7 @@ describe("expandGrant (role → permission tuples)", () => {
 		}
 	});
 
-	it("viewer role expands to view-only tuples", () => {
+	it("viewer role expands to view tuples plus own-support create/reply", () => {
 		const tuples = expandGrant(
 			{ ...base, effect: "allow", resourceType: "org", resourceId: null },
 			viewerKeys,
@@ -71,7 +71,10 @@ describe("expandGrant (role → permission tuples)", () => {
 				(t) =>
 					t.relation.endsWith("_view") ||
 					t.relation.endsWith("_view_activity") ||
-					t.relation.endsWith("_view_alerts"),
+					t.relation.endsWith("_view_alerts") ||
+					// support is a right — viewers may open + reply to their own cases.
+					t.relation === "support_case_create" ||
+					t.relation === "support_case_reply",
 			),
 		).toBe(true);
 	});
