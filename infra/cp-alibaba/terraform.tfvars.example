@@ -14,3 +14,6 @@ domain                = "alethialabs.io"
 
 instance_type    = "ecs.g7.large" # x86 general-purpose, 2 vCPU / 8 GB
 system_disk_size = 40
+
+# Deployment environment tag (FinOps) — Dev, Stage, or Prod.
+# environment = "Prod"

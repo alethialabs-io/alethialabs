@@ -17,3 +17,6 @@ ssh_public_key = "ssh-ed25519 AAAA... deploy@alethia"
 # Cost/size knobs (defaults are the cheapest viable bundle host).
 machine_type   = "e2-standard-2" # x86, 2 vCPU / 8 GB (cost-optimized E2 family)
 boot_disk_size = 30
+
+# Deployment environment tag (FinOps) — Dev, Stage, or Prod.
+# environment = "Prod"

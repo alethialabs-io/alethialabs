@@ -12,9 +12,11 @@
 
 locals {
   labels = {
-    project = "alethia"
-    role    = "control-plane"
-    managed = "opentofu"
+    project     = "alethia"
+    role        = "control-plane"
+    managed     = "opentofu"
+    service     = "alethia-control-plane"
+    environment = lower(var.environment)
   }
   # Google Identity-Aware Proxy TCP-forwarding source range — the only CIDR allowed to
   # reach SSH. Connect with `gcloud compute ssh alethia-cp --tunnel-through-iap`.
