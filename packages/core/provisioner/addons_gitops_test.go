@@ -26,7 +26,7 @@ func TestPruneOrphanAddOnManifests(t *testing.T) {
 		}
 	}
 	write("loki.yaml", ours)
-	write("kyverno.yaml", ours)          // disabled → prune
+	write("kyverno.yaml", ours)                       // disabled → prune
 	write("my-custom-app.yaml", "kind: Deployment\n") // customer's own → keep
 
 	desired := map[string]types.AddOnInstall{
