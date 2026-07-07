@@ -21,9 +21,11 @@ export interface CloudCredentials {
 	tenant_id?: string | null;
 	client_id?: string | null;
 	subscription_id?: string | null;
+	// Alibaba (RAM role via AssumeRoleWithOIDC) — keyless + account-free: the role_arn above plus the
+	// customer's RAM OIDC provider ARN. Zero stored credentials (the assertion is minted per-call).
+	oidc_provider_arn?: string | null;
 	// DigitalOcean / Hetzner / Civo — no role-federation exists for these clouds, so a
 	// scoped API token is stored ENCRYPTED at rest (decrypted only on the runner at claim).
-	// Alibaba uses role_arn/external_id above (RAM role = zero stored credentials).
 	token?: EncryptedSecret | null;
 	// Self-managed mode (token clouds only): no token is stored in Alethia at all — the
 	// customer's self-hosted runner supplies it from its own environment (HCLOUD_TOKEN,

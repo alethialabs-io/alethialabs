@@ -472,8 +472,9 @@ jobs:
             # customer's stored tenant.
             emit ALETHIA_AZURE_CLIENT_ID
             echo "NEXT_PUBLIC_ALETHIA_AZURE_CLIENT_ID=$(val ALETHIA_AZURE_CLIENT_ID)"
-            emit ALETHIA_ALIBABA_ACCESS_KEY_ID
-            emit ALETHIA_ALIBABA_ACCESS_KEY_SECRET
+            # Alibaba is KEYLESS + ACCOUNT-FREE: the console assumes the customer RAM role via
+            # AssumeRoleWithOIDC with a minted assertion (issuer above) — Alethia holds no Alibaba
+            # account / AccessKey, so nothing is emitted; availability tracks the OIDC issuer.
             # GCP needs NO separate secret — it federates through the platform AWS identity above
             # (customer WIF pool trusts AWS acct ALETHIA_AWS_ACCOUNT_ID; console mints the subject token
             # from the AWS_* creds). Availability tracks the AWS creds (cloud-connect-setup.ts).
