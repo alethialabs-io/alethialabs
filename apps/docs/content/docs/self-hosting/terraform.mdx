@@ -1,0 +1,117 @@
+---
+title: Terraform (per-cloud)
+description: Provision a hardened control-plane VM on any of five clouds — closed-origin behind a Cloudflare Tunnel — with OpenTofu.
+---
+
+# Terraform — per-cloud control plane
+
+The repeatable IaC path. Each cloud has a self-contained OpenTofu stack under
+`infra/cp-<cloud>/` that provisions **one** control-plane VM and everything around it, then fronts it
+with a **Cloudflare Tunnel** so the box has **no public web ports**. It lands on the same
+[bundle](./index) as the [one-click](./one-click) VM and the [Helm](./helm) chart — pick this one when
+you want version-controlled infrastructure with a plan/apply CI loop.
+
+Five stacks, one model:
+
+- `infra/cp-hetzner/` · `infra/cp-gcp/` · `infra/cp-aws/` · `infra/cp-azure/` · `infra/cp-alibaba/`
+
+> **Pick one.** The stacks all serve the **same domain/zone**, so they are alternatives — apply **one
+> instead of another**, never two at once (two would fight over the apex DNS + tunnel). The hosted
+> alethialabs.io runs on Hetzner.
+
+## The model — closed origin, zero standing inbound
+
+Every stack follows the same shape, adapted to each cloud:
+
+- **Ingress is a Cloudflare Tunnel.** `cloudflared` (a service in the compose bundle) dials **out** to
+  Cloudflare; nothing dials in. The firewall / security group exposes **no 80/443**. Apex and `www`
+  are **proxied** `CNAME`s onto `<tunnel_id>.cfargotunnel.com`, and TLS terminates at Cloudflare's
+  edge — so there is no public origin to reach and no inbound web port to attack.
+- **The connector token is an output.** The stack creates the tunnel and exports `tunnel_token`
+  (sensitive). Set it as `TUNNEL_TOKEN` in the box's `.env` and the compose `cloudflared` connects
+  with nothing else — the tunnel config is managed remotely (`config_src = "cloudflare"`).
+- **The public IP is egress-only.** The VM keeps a public IP purely so it can pull images, `git`, and
+  dial the tunnel out. Inbound is closed. (A NAT gateway would remove the IP but costs ~10× for a
+  single box, so the egress IP is the cost-correct choice — this mirrors the reference Hetzner box.)
+- **The box is hardened and asserted.** Each stack ships a `checks.tf` that fails the plan if the
+  posture regresses (no web ingress, disk encryption / verified boot on, tunnel remotely-managed).
+
+## Choose a cloud
+
+Access to the box never uses an open SSH port on the internet — each cloud has a native, no-inbound
+admin channel:
+
+| Cloud | Default box | Admin access (no open web port) | Hardening | Provider auth (env) |
+|---|---|---|---|---|
+| **Hetzner** | `cx33` (x86) | SSH, **key-only**, firewall restricts `:22` | firewall SSH-only | `HCLOUD_TOKEN` |
+| **GCP** | `e2-standard-2` | **IAP** — `gcloud compute ssh … --tunnel-through-iap` (`:22` from the IAP range only) | Shielded VM (secure boot + vTPM) | `GOOGLE_CREDENTIALS`, `TF_VAR_gcp_project` |
+| **AWS** | `t4g.large` (Graviton) | **SSM** — `aws ssm start-session --target <id>` (SG has **no ingress**) | IMDSv2 + encrypted gp3 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` |
+| **Azure** | `Standard_D2s_v5` | **`az vm run-command`** + Serial Console (NSG has **no inbound**) | Trusted Launch (secure boot + vTPM) | `ARM_CLIENT_ID` / `ARM_CLIENT_SECRET` / `ARM_SUBSCRIPTION_ID` / `ARM_TENANT_ID` |
+| **Alibaba** | `ecs.g8y.large` (Yitian ARM) | **Session Manager** / Cloud Assistant (SG has **no ingress**) | encrypted system disk | `ALICLOUD_ACCESS_KEY` / `ALICLOUD_SECRET_KEY` |
+
+> **Hetzner is the reference.** It's the one host prod runs on; it keeps a key-only SSH port (firewall
+> restricted) rather than a cloud-native session broker. The other four have **zero standing inbound** —
+> the session channel (IAP / SSM / run-command / Session Manager) rides the cloud's control plane, so
+> port 22 is never open to the internet.
+
+## Prerequisites
+
+- A **Cloudflare account + zone** for your domain, and an **API token** with **DNS edit** and **Zero
+  Trust (Cloudflare Tunnel)** permissions. You'll pass `cloudflare_account_id` and
+  `cloudflare_zone_id`. (For inbound email on Hetzner, the token also needs **Email Routing** perms —
+  see [Email](./email).)
+- An **S3-compatible state backend** for the OpenTofu state (any S3 API — AWS S3, a self-hosted
+  SeaweedFS/MinIO, etc.). Configure it in `backend.hcl`.
+- The chosen cloud's own credentials (the env vars in the table above).
+
+## Apply it
+
+Each stack is the same three steps — from the repo root, in the stack for your cloud:
+
+```bash
+cd infra/cp-aws               # or cp-gcp / cp-azure / cp-alibaba / cp-hetzner
+
+cp backend.hcl.example backend.hcl          # fill in your S3-compatible state endpoint + creds
+cp terraform.tfvars.example terraform.tfvars # domain, cloudflare_* ids, box size
+
+tofu init -backend-config=backend.hcl
+tofu plan
+tofu apply
+```
+
+Then wire the tunnel token into the box's bundle `.env`:
+
+```bash
+export TUNNEL_TOKEN="$(tofu output -raw tunnel_token)"
+```
+
+The `cloudflared` service reads `TUNNEL_TOKEN`, dials out, and your domain comes up over the tunnel —
+no ports opened, no certificates to manage. See [Configuration](./configuration) for the rest of the
+bundle's `.env`.
+
+## CI
+
+Each stack has a workflow at `.github/workflows/infra-cp-<cloud>.yml`:
+
+- On a **pull request**, the `plan` job runs `tofu validate` + the shared IaC checks (**`tofu fmt`**,
+  **tflint**, **Trivy**) — no cloud/state secrets reach a PR.
+- The `apply` job is **gated off** by default behind a repo variable (`vars.INFRA_<CLOUD>_APPLY`), since
+  prod runs on Hetzner. Flip it on only for the cloud you're actually deploying.
+
+## What's not in these stacks
+
+- **Inbound email** is Cloudflare Email Routing, which is zone-global (one config per domain). It lives
+  only in `cp-hetzner` so the stacks don't collide on the shared zone — see [Email](./email).
+- **The runner fleet, Postgres, object storage** are all in the compose bundle on the box, not
+  separate cloud resources — that's the point of the single-VM control plane.
+
+## When to use what
+
+| | [One-click](./one-click) | **Terraform (this page)** | [Helm](./helm) |
+|---|---|---|---|
+| Best for | a quick managed VM, no tooling | repeatable IaC + CI, **hardened tunnel** | an existing Kubernetes cluster |
+| Ingress | opens `:80/:443` on the box | **Cloudflare Tunnel, no web ports** | your Ingress controller |
+| Admin access | SSH (key pair) | cloud-native, no open port (see table) | `kubectl` |
+| State | the cloud's stack/deployment | your S3-compatible state bucket | the cluster |
+
+All three land on the same bundle — you can move between them later without reinstalling.
