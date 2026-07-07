@@ -1,0 +1,15 @@
+#cloud-config
+# Prepares the box; it does NOT bring the stack up. The deploy workflow writes
+# /opt/alethia/.env from CI secrets and runs compose (images are public on GHCR).
+# Ubuntu reads this from the `user-data` metadata key.
+package_update: true
+package_upgrade: true
+
+runcmd:
+  # Docker + compose plugin. The boot disk is durable + snapshottable, so Docker's
+  # default data-root already persists Postgres + object storage (no extra volume).
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable --now docker
+  # Repo for the compose files (public OSS). The CD workflow git-pulls + deploys.
+  - git clone ${repo_url} /opt/alethia || true
+  - test -f /opt/alethia/.env || cp /opt/alethia/.env.example /opt/alethia/.env

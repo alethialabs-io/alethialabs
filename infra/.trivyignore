@@ -24,3 +24,11 @@ AVD-AWS-0091
 AVD-AWS-0093
 AVD-AWS-0094
 AVD-AWS-0132
+
+# cp-gcp control-plane box (infra/cp-gcp) INTENTIONALLY has a public IP. It is the single
+# ephemeral external IP the VM needs for EGRESS (image pulls, git clone, dialing the Cloudflare
+# Tunnel out) — inbound web is firewalled shut (ingress is tunnel-only) and inbound SSH is
+# IAP-gated (tcp/22 from 35.235.240.0/20 only). A Cloud NAT gateway would remove the IP but cost
+# ~10x for a single box, so the egress-only public IP is the cost-correct choice. This mirrors the
+# accepted cp-hetzner posture (its box also has a public IP; Trivy simply has no hcloud checks).
+AVD-GCP-0031
