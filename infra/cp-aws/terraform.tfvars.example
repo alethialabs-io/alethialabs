@@ -1,12 +1,13 @@
 # Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in CI.
 # AWS credentials come from the standard AWS_ACCESS_KEY_ID/SECRET env or profile.
 
-cloudflare_api_token = "YOUR_CLOUDFLARE_API_TOKEN"
-cloudflare_zone_id   = "YOUR_CLOUDFLARE_ZONE_ID"
-domain               = "alethialabs.io"
+cloudflare_api_token  = "YOUR_CLOUDFLARE_API_TOKEN" # DNS edit + Cloudflare Tunnel (Zero Trust) perms
+cloudflare_zone_id    = "YOUR_CLOUDFLARE_ZONE_ID"
+cloudflare_account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
+domain                = "alethialabs.io"
 
-# Public half of the CI deploy key (private half = GH secret DEPLOY_SSH_PRIVATE_KEY).
-ssh_public_key = "ssh-ed25519 AAAA... deploy@alethia"
+# SSH is via SSM Session Manager (no key pair, no open port):
+#   aws ssm start-session --target <instance_id>
 
 aws_region       = "eu-west-1"
 instance_type    = "t4g.large" # Graviton ARM64

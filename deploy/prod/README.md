@@ -6,13 +6,14 @@ by OpenTofu and deployed by a GitHub Action. Hosted alethialabs.io fronts that b
 a **Cloudflare Tunnel** (no public 80/443 — cloudflared dials out). The runner **fleet**
 is separate: ephemeral Hetzner Cloud VMs sized by the in-app scaler.
 
-Host-agnostic — the same compose + SSH deploy runs on **Hetzner** (`infra/cp-hetzner`,
-≈€11–18/mo) or **AWS EC2** (`infra/cp-aws`). Pick one; both target the same `DEPLOY_HOST`.
+Host-agnostic — the same compose bundle runs on **Hetzner** (`infra/cp-hetzner`, ≈€11–18/mo,
+SSH deploy to `DEPLOY_HOST`) or **AWS EC2** (`infra/cp-aws`, access via **SSM Session Manager** —
+no `DEPLOY_HOST` SSH). Pick one; both front the origin with a Cloudflare Tunnel.
 
 ## Pieces
-- **`infra/cp-hetzner/`** / **`infra/cp-aws/`** — OpenTofu for the VM + firewall + cloud-init
-  (installs Docker, clones the repo). `cp-hetzner` also creates the **Cloudflare Tunnel**
-  (+ proxied CNAMEs) and outputs `tunnel_token`. Apply **one**.
+- **`infra/cp-hetzner/`** / **`infra/cp-aws/`** — OpenTofu for the VM + cloud-init (installs
+  Docker, clones the repo). Each creates the **Cloudflare Tunnel** (+ proxied CNAMEs) and outputs
+  `tunnel_token`. Apply **one**.
 - **`.github/workflows/infra-cp-hetzner.yml`** / **`infra-cp-aws.yml`** — plan-on-PR /
   apply-on-`main`.
 - **`.github/workflows/deploy-console.yml`** — on `main`/manual: builds `console`,

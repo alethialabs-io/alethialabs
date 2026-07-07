@@ -8,7 +8,7 @@ variable "aws_region" {
 }
 
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token with DNS edit on the zone."
+  description = "Cloudflare API token with DNS edit + Cloudflare Tunnel (Zero Trust) perms."
   type        = string
   sensitive   = true
 }
@@ -18,19 +18,20 @@ variable "cloudflare_zone_id" {
   type        = string
 }
 
+variable "cloudflare_account_id" {
+  description = "Cloudflare account ID that owns the Zero Trust tunnel."
+  type        = string
+}
+
 variable "domain" {
   description = "Apex domain served by the control plane."
   type        = string
   default     = "alethialabs.io"
 }
 
-variable "ssh_public_key" {
-  description = "SSH public key authorized on the instance (CI deploy key)."
-  type        = string
-}
-
 variable "instance_type" {
-  # t4g = Graviton ARM64 — matches the arm64 images; cheapest ARM general-purpose.
+  # t4g = Graviton ARM64 — matches the arm64 images; cheapest ARM general-purpose. Use an x86
+  # t3.large only if amd64 images are what you deploy (pin an x86 AMI filter accordingly).
   description = "EC2 instance type."
   type        = string
   default     = "t4g.large"
@@ -40,12 +41,6 @@ variable "root_volume_size" {
   description = "Root gp3 EBS size (GB) — holds Docker data (Postgres + object store)."
   type        = number
   default     = 60
-}
-
-variable "ssh_allowed_cidrs" {
-  description = "CIDRs allowed to reach SSH (22)."
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
 }
 
 variable "repo_url" {
