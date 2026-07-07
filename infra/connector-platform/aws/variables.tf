@@ -13,10 +13,28 @@ variable "platform_account_id" {
   default     = "270587882865"
 }
 
-variable "user_name" {
-  description = "Name of the platform IAM user the console/runner authenticate as to assume customer roles."
+variable "role_name" {
+  description = "Name of the platform IAM role the console federates into (keyless, via the OIDC issuer) to assume customer roles."
   type        = string
   default     = "alethia-connector-assumer"
+}
+
+variable "oidc_issuer_url" {
+  description = "The Alethia control-plane OIDC issuer URL (the web-identity trust root). Must be publicly reachable (AWS fetches its JWKS)."
+  type        = string
+  default     = "https://alethialabs.io/api/oidc"
+}
+
+variable "oidc_audience" {
+  description = "The audience the console mints into the web-identity token (the OIDC provider client id)."
+  type        = string
+  default     = "sts.amazonaws.com"
+}
+
+variable "workload_subject" {
+  description = "The fixed OIDC subject the console mints (WORKLOAD_SUBJECT in lib/oidc/issuer.ts). The role trusts only this subject."
+  type        = string
+  default     = "alethia-connector"
 }
 
 variable "customer_role_name_prefix" {

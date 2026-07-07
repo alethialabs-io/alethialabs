@@ -12,6 +12,7 @@ import {
 	cloudNetworks,
 	cloudSubnets,
 } from "@/lib/db/schema";
+import { ensurePlatformAwsEnv } from "../session/aws-platform";
 import { sealSensitive, softRemoveUnseen } from "./upsert";
 
 const TIMEOUT_MS = 15_000;
@@ -20,6 +21,8 @@ const TIMEOUT_MS = 15_000;
 async function gcpToken(identity: Pick<CloudIdentity, "credentials">): Promise<string> {
 	const wif = identity.credentials.wif_config;
 	if (!wif) throw new Error("No GCP WIF config");
+	// GCP federates through the platform AWS identity — refresh the keyless AWS_* env before minting.
+	await ensurePlatformAwsEnv();
 	const client = ExternalAccountClient.fromJSON(
 		wif as unknown as Parameters<typeof ExternalAccountClient.fromJSON>[0],
 	);

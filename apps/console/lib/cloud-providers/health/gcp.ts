@@ -9,6 +9,7 @@
 
 import { ExternalAccountClient } from "google-auth-library";
 import type { CloudIdentity } from "@/lib/db/schema";
+import { ensurePlatformAwsEnv } from "../session/aws-platform";
 import { type HealthResult, errorMessage } from "./types";
 
 const TIMEOUT_MS = 12_000;
@@ -29,6 +30,10 @@ export async function probeGcpHealth(
 
 	let token: string;
 	try {
+		// GCP federates THROUGH the platform AWS identity: google-auth's `--aws` subject-token source
+		// reads the platform creds from AWS_* env. Refresh them (keyless — minted via the OIDC issuer,
+		// incl. the session token) before minting the GCP token.
+		await ensurePlatformAwsEnv();
 		// `fromJSON` accepts an external_account credential config (the stored WIF JSON). The stored
 		// shape is an opaque JSONB blob (no generated type), so this is a library-boundary cast.
 		const client = ExternalAccountClient.fromJSON(

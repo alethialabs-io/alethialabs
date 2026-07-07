@@ -26,6 +26,7 @@ import { currentActor } from "@/lib/authz/guard";
 import { getPdp } from "@/lib/authz";
 import { getAuthConfig } from "@/lib/config/auth";
 import { oidcIssuerConfigured } from "@/lib/oidc/issuer";
+import { awsPlatformConfigured } from "@/lib/cloud-providers/session/aws-platform";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 
 /** The connect-flow setup bundle shared by the connectors board and the create-project form. */
@@ -56,10 +57,9 @@ export interface CloudConnectSetup {
 export function computePlatformConfigured(): Record<string, boolean> {
 	const has = (...keys: string[]) => keys.every((k) => !!process.env[k]);
 	const gitProviders = getAuthConfig().providers;
-	const awsPlatform = has(
-		"ALETHIA_AWS_ACCESS_KEY_ID",
-		"ALETHIA_AWS_SECRET_ACCESS_KEY",
-	);
+	// AWS is now KEYLESS too: the console federates into the platform AWS account via the OIDC issuer
+	// (AssumeRoleWithWebIdentity) — no static key. Available when the issuer + platform role ARN are set.
+	const awsPlatform = awsPlatformConfigured();
 	return {
 		aws: awsPlatform,
 		// Azure is keyless: the platform app (ALETHIA_AZURE_CLIENT_ID) authenticates via a minted OIDC
@@ -72,8 +72,8 @@ export function computePlatformConfigured(): Record<string, boolean> {
 		// GCP federates THROUGH the platform AWS identity: the customer's Workload Identity pool
 		// trusts an AWS provider (`create-aws --account-id=<platform aws acct>`), so the console
 		// mints the GCP subject token from the platform AWS creds (google-auth's `--aws` source
-		// reads AWS_ACCESS_KEY_ID/SECRET). There is no separate GCP secret — availability tracks the
-		// AWS platform creds (which the deploy also exports as AWS_* for google-auth to read).
+		// reads AWS_ACCESS_KEY_ID/SECRET/SESSION_TOKEN, refreshed at runtime by ensurePlatformAwsEnv).
+		// No separate GCP secret — availability tracks the same keyless AWS platform identity.
 		gcp: awsPlatform,
 		// Token clouds need no platform credentials — the customer's own API token is used.
 		hetzner: true,
