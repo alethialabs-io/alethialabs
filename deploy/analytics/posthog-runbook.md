@@ -109,3 +109,71 @@ trialing orgs. (These are the server-side events, so they reflect Stripe truth, 
 - **Provider attribution on `connector_connected`**: the shared `useConnectionTest.run(save, meta)` accepts
   a `meta` arg — pass `{ provider }` from the per-cloud connection components to break the activation funnel
   down by cloud.
+
+---
+
+# Platform adoption — the rest of PostHog
+
+The console now uses PostHog as more than analytics. Each capability is wired in code; this section is what
+you configure/verify in the PostHog UI.
+
+## 10. Session replay + surveys (why the project can look empty)
+
+- **Enable replay**: **Settings → Session Replay → "Record user sessions"** must be **ON** — the SDK asks to
+  record, but PostHog only stores replays if the project toggle is on. This is the usual reason "no replays"
+  appear. Start at 100% sampling, add a billing limit, dial down as volume grows.
+- **Reverse-proxy is live**: ingestion rides `alethialabs.io/ingest/*` (`next.config.ts` rewrites; browser
+  `NEXT_PUBLIC_POSTHOG_HOST=/ingest`) so **ad-blockers no longer drop events** — the other reason a project
+  looks empty. Verify: DevTools → Network shows POSTs to `/ingest/*` (not `eu.i.posthog.com`).
+- **Surveys**: no code — build a survey in **Surveys**, and posthog-js auto-renders it to targeted users.
+  Good for NPS / "why did you cancel" on the *Stuck*/canceled cohorts.
+
+## 11. Error tracking (replaces Sentry)
+
+Wired: `capture_exceptions: true` catches unhandled client errors + promise rejections; the four React
+error boundaries call `captureException(error, {boundary})`; the Stripe webhook reports server errors via
+`captureServerException`. In PostHog: open **Error tracking** — issues are auto-grouped with **the session
+replay attached** (watch what the user did before it broke). Add an **alert** on *new issue* and on an error
+spike. (No Sentry needed; one less vendor + bill.)
+
+## 12. LLM analytics (Elench, Ask-AI, verify, colony)
+
+Wired: every AI call funnels through `recordAiUsage()` (`lib/billing/ai-quota.ts`), which now also emits the
+reserved **`$ai_generation`** event (model, in/out/cached tokens, `$ai_total_cost_usd`, `$ai_trace_id`,
+`$ai_span_name` = the usage kind), on the org group, as the acting user. Open **LLM analytics** (or build
+insights on `$ai_generation`):
+- **Spend**: sum `$ai_total_cost_usd` over time, **broken down by `$ai_span_name`** (agent vs support vs
+  scan) and by `organization` — see which orgs/features cost you.
+- **Volume/mix**: generations by `$ai_model` (sonnet vs opus).
+- **Alert** on daily AI cost crossing a threshold. (Latency is emitted when available.)
+
+## 13. Revenue analytics (Stripe) — Odoo stays the book of record
+
+PostHog can show **MRR / ARR / churn / LTV** natively from Stripe, alongside our `subscription_active` /
+`payment_failed` events — great for "do *activated* orgs convert, and which cohort churns." **This does not
+replace Odoo** (ledger, invoices, VAT, statutory filing stay in Odoo). Setup (no app code):
+1. In Stripe, create a **restricted API key** with **read-only** on Core/Billing (Customers, Subscriptions,
+   Invoices, Charges, Products, Prices).
+2. PostHog → **Data pipeline → Sources → Stripe** → paste the restricted key → sync.
+3. Use **Revenue analytics** for MRR/churn, and join it against product cohorts (e.g. Activated → Paying
+   conversion).
+
+## 14. Feature flags & experiments
+
+Wired: `lib/analytics/flags.ts` → `useFeatureFlag("key")` (React) + `isFeatureEnabled("key")` (imperative),
+evaluated against the identified person + org group. To use: create a flag in **Feature flags**, target a
+cohort (e.g. *Paying* orgs or a % rollout), then gate a surface with `const on = useFeatureFlag("new-x")`.
+Promote to an **Experiment** to A/B against a metric (e.g. `deploy_succeeded`). Nothing is gated yet — the
+helper is ready for the first rollout.
+
+## 15. Cost control (set this once)
+
+PostHog is usage-based with a monthly free tier (1M events, 5k replays, 1M flag requests). To stay
+predictable: set a **billing limit** per product; keep **replay sampling** sane as traffic grows (the main
+cost driver alongside autocapture); the reverse-proxy doesn't change cost, only capture rate.
+
+## Deferred (not yet wired)
+
+- **Marketing web analytics**: `apps/marketing` loads no PostHog, so the top-of-funnel (landing → signup)
+  isn't captured. Follow-up: add a slim pageview-only init to marketing (promote the analytics layer to a
+  shared `@repo` package) for GA-style web analytics.

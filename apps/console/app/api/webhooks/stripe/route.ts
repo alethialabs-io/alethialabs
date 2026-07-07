@@ -16,7 +16,7 @@
 // stray Stripe object can never mutate the wrong tenant.
 
 import type Stripe from "stripe";
-import { captureServer } from "@/lib/analytics/server";
+import { captureServer, captureServerException } from "@/lib/analytics/server";
 import type { AnalyticsEvent } from "@/lib/analytics/events";
 import { grantAiCredits } from "@/lib/billing/ai-quota";
 import { getStripeConfig, isStripeConfigured } from "@/lib/billing/config";
@@ -238,6 +238,9 @@ export async function POST(req: Request): Promise<Response> {
 		const message = err instanceof Error ? err.message : String(err);
 		console.error(`[stripe] handler error for ${event.type}:`, err);
 		await markWebhookEventError(event.id, message);
+		await captureServerException(err, {
+			props: { source: "stripe_webhook", event_type: event.type },
+		});
 		return new Response("handler error", { status: 500 });
 	}
 
