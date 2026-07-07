@@ -32,3 +32,17 @@ check "policy_is_least_privilege" {
     error_message = "The assumer policy must grant only sts:AssumeRole."
   }
 }
+
+# The web-identity trust MUST pin both the OIDC subject and audience — otherwise any identity the issuer
+# vouches for (or any audience) could assume the platform role. Assert each trust statement's
+# StringEquals carries exactly a :sub and an :aud condition.
+check "trust_pins_sub_and_aud" {
+  assert {
+    condition = alltrue([
+      for s in jsondecode(aws_iam_role.assumer.assume_role_policy).Statement :
+      can(s.Condition.StringEquals) &&
+      length([for k in keys(s.Condition.StringEquals) : k if endswith(k, ":sub") || endswith(k, ":aud")]) == 2
+    ])
+    error_message = "The role trust policy must pin both the OIDC :sub and :aud conditions."
+  }
+}

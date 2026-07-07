@@ -20,45 +20,41 @@ it:
 
 | Cloud | How it uses the platform AWS identity |
 |---|---|
-| **AWS** | assumes the customer role: `sts:AssumeRole` on `AlethiaProvisionerRole-<externalId>` (ExternalId-gated) |
-| **GCP** | the customer Workload-Identity pool trusts an **AWS provider** for your account; the console signs the WIF subject token with the AWS creds (google-auth's `--aws` source). **No separate GCP secret.** |
-| **Azure** | **does not** ride the AWS hub — Alethia's own [OIDC issuer](#azure-keyless-via-the-alethia-oidc-issuer) is the trust root. One multi-tenant Entra app federates against it; the customer grants that app a role. Needs `ALETHIA_AZURE_CLIENT_ID` (no secret). |
+| **AWS** | the console federates in via `AssumeRoleWithWebIdentity` (keyless, minted by the OIDC issuer), then `sts:AssumeRole` on the customer's `AlethiaProvisionerRole-<externalId>` (ExternalId-gated) |
+| **GCP** | the customer Workload-Identity pool trusts an **AWS provider** for your account; the console signs the WIF subject token with the platform AWS creds (google-auth's `--aws` source). **No separate GCP secret.** |
+| **Azure / Alibaba** | do **not** ride the AWS hub — they federate directly against Alethia's own [OIDC issuer](#azure-keyless-via-the-alethia-oidc-issuer) ([Azure](#azure-keyless-via-the-alethia-oidc-issuer) app, [Alibaba](#alibaba--keyless--account-free) RAM OIDC). |
 
-So **setting the AWS identity lights up AWS and GCP together.** (This is why, in development, a single
-AWS credential was enough to connect AWS *and* GCP — the dev machine's ambient AWS creds signed the GCP
-token.)
+So **the platform AWS identity lights up AWS and GCP together** — and it too is now **keyless**: no static
+access key anywhere. The console federates into the platform AWS account with a minted assertion (the same
+issuer Azure/Alibaba use); the resulting temporary creds back the customer AssumeRole **and** are what
+google-auth reads (incl. the session token) to sign the GCP subject token.
 
-## AWS + GCP — set the platform AWS identity
+## AWS + GCP — set the platform AWS identity (keyless)
 
-### 1. Create the identity (IaC)
+### 1. Create the identity (IaC — one time)
 
 ```bash
 cd infra/connector-platform/aws
 cp backend.hcl.example backend.hcl
 tofu init -backend-config=backend.hcl
-tofu apply        # creates alethia-connector-assumer + a least-priv sts:AssumeRole policy
+tofu apply        # creates an IAM OIDC provider (Alethia's issuer) + a least-priv role trusting it
 ```
 
-The module creates an IAM **user** allowed **only** `sts:AssumeRole` on
-`arn:aws:iam::*:role/AlethiaProvisionerRole-*`. It does **not** create an access key (so no secret lands
-in state) — you make it in the next step. A `check` block refuses an apply in the wrong account.
+The module registers `https://alethialabs.io/api/oidc` as an IAM OIDC provider and creates a role whose
+trust policy allows **only** `AssumeRoleWithWebIdentity` from that provider, pinned to the Alethia workload
+subject + audience (`sub = alethia-connector`, `aud = sts.amazonaws.com`). The role's permission policy is
+**only** `sts:AssumeRole` on `arn:aws:iam::*:role/AlethiaProvisionerRole-*`. **No access key is created —
+there is no secret to store or rotate.** `check` blocks refuse an apply in the wrong account or a trust
+policy that doesn't pin both `sub` and `aud`.
 
-*(Manual alternative: create an IAM user, attach a policy allowing `sts:AssumeRole` on
-`arn:aws:iam::*:role/AlethiaProvisionerRole-*`.)*
+### 2. Wire the role ARN
 
-### 2. Wire the key
-
-```bash
-aws iam create-access-key --user-name alethia-connector-assumer
-```
-
-Put it in `deploy/prod/secrets.local.env`:
+Put the module's `assumer_role_arn` output in `deploy/prod/secrets.local.env`:
 
 ```bash
-ALETHIA_AWS_ACCESS_KEY_ID=<AccessKeyId>
-ALETHIA_AWS_SECRET_ACCESS_KEY=<SecretAccessKey>
+ALETHIA_AWS_PLATFORM_ROLE_ARN=<assumer_role_arn>
 # ALETHIA_AWS_ACCOUNT_ID defaults to 270587882865 — the account customers trust. Override only if you
-# run the platform in a different AWS account (it flows to the customer setup templates + GCP/Azure trust).
+# run the platform in a different AWS account (it flows to the customer AWS/GCP setup templates).
 ```
 
 Then push it to the vault and redeploy:
@@ -68,32 +64,34 @@ Then push it to the vault and redeploy:
 gh workflow run deploy-console.yml
 ```
 
-`deploy-console` also exports the creds under the standard `AWS_*` names so google-auth can mint the GCP
-subject token — this is the step that was missing in production.
+The console mints a fresh assertion per ~1h session and writes/refreshes the `AWS_*` env (incl. the
+session token) at runtime for google-auth — nothing is baked into the box `.env`.
 
 ### 3. Verify
 
 In the console → **Connectors**, the **AWS** and **GCP** tiles now show **Connect**. Connect a test AWS
 account and a GCP project (customer side: [AWS](/console/connectors/aws) ·
 [GCP](/console/connectors/gcp)); both should verify to **Connected** (a server-side probe — no runner).
+GCP verifying is the real proof the session token threads correctly.
 
 Check each hop if a tile stays "Not enabled":
 
 ```bash
-# vault has the key?
+# vault has the role ARN?
 aws secretsmanager get-secret-value --secret-id alethia/prod/env --region eu-central-1 \
-  --query SecretString --output text | jq -r '.ALETHIA_AWS_ACCESS_KEY_ID'
-# box .env has AWS_* (not just ALETHIA_AWS_*)?
-ssh root@<DEPLOY_HOST> "grep -c '^AWS_ACCESS_KEY_ID=' /opt/alethia/.env"
+  --query SecretString --output text | jq -r '.ALETHIA_AWS_PLATFORM_ROLE_ARN'
+# the issuer's JWKS is reachable (AWS validates the assertion against it)?
+curl -fsS https://alethialabs.io/api/oidc/jwks >/dev/null && echo OK
 ```
 
 ## The platform account id
 
-One account is the hub for all three clouds. It defaults to Alethia's live account **270587882865** and
-is **configurable** — set `ALETHIA_AWS_ACCOUNT_ID` (self-hosters running their own platform account).
-It flows to the console UI (`NEXT_PUBLIC_ALETHIA_AWS_ACCOUNT_ID`), the customer AWS CloudFormation trust,
-the GCP WIF provider (`create-aws --account-id=…`), and the Azure federated-credential subject — so they
-must all agree. The `infra/connector/{aws,gcp,azure}` scripts read the same variable.
+One account is the hub for **AWS + GCP**. It defaults to Alethia's live account **270587882865** and is
+**configurable** — set `ALETHIA_AWS_ACCOUNT_ID` (self-hosters running their own platform account). It
+flows to the console UI (`NEXT_PUBLIC_ALETHIA_AWS_ACCOUNT_ID`), the customer AWS CloudFormation trust, and
+the GCP WIF provider (`create-aws --account-id=…`) — so they must agree. **The platform assumer role must
+live in this account** (`ALETHIA_AWS_PLATFORM_ROLE_ARN`), or the customer GCP pools (which trust the
+account) reject it. Azure + Alibaba don't use the account id — they trust the OIDC issuer directly.
 
 ## Azure — keyless via the Alethia OIDC issuer
 
