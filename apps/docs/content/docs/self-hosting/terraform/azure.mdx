@@ -1,43 +1,51 @@
 ---
 title: Azure
-description: Provision the Alethia control plane on an Azure Dpsv5 (Ampere ARM) Linux VM.
+description: Provision the Alethia control plane on an x86 Gen2 Linux VM, closed-origin behind a Cloudflare Tunnel, admin via run-command.
 ---
 
-# Azure (`infra/azure-cp`)
+# Azure (`infra/cp-azure`)
 
-A single **Dpsv5** (Ampere Altra ARM) Linux VM — `Standard_D2ps_v5` (2 vCPU / 8 GB) — with a static
-public IP, behind Caddy. **≈ $60–70/mo** (`Standard_D2pls_v5`, 2 vCPU / 4 GB, ≈ $45 if it fits).
-Dpsv5/Dplsv5 are region-limited, so pick a region that offers them.
+A single x86 Gen2 **`Standard_D2s_v5`** (2 vCPU / 8 GB) Linux VM fronted by a Cloudflare Tunnel.
+**≈ $75/mo** (approx, region-dependent).
 
 ## What it creates
-- `azurerm_linux_virtual_machine` (`Standard_D2ps_v5`, Ubuntu 24.04 ARM64) with a 30 GB StandardSSD OS disk
+- `azurerm_linux_virtual_machine` (`Standard_D2s_v5`, Ubuntu 24.04 amd64) with a 30 GB StandardSSD OS
+  disk; **Trusted Launch** (secure boot + vTPM); a system-assigned **managed identity**; boot
+  diagnostics (for Serial Console)
 - `azurerm_resource_group`, `azurerm_virtual_network` + `azurerm_subnet`
-- `azurerm_public_ip` (Static / Standard) → DNS
-- `azurerm_network_security_group` (22/80/443) + NIC association
-- `cloudflare_record` A for the apex + `www`
+- `azurerm_network_security_group` with **no inbound rules** + NIC association
+- `azurerm_public_ip` (Standard) — egress only
+- `cloudflare_zero_trust_tunnel_cloudflared` (+ config) and **proxied** CNAMEs (apex + `www`)
 - cloud-init via `custom_data` (installs Docker, clones the repo)
+
+## Access — no open port
+No Bastion, no open SSH. Automation via **`az vm run-command`** (control-plane, no port); interactive
+break-glass via the **Serial Console**:
+```bash
+az vm run-command invoke -g <rg> -n alethia-cp --command-id RunShellScript --scripts '…'
+az serial-console connect -g <rg> -n alethia-cp
+```
 
 ## Prerequisites
 - An Azure **subscription** and a **service principal** with Contributor on it.
-- Cloudflare API token + zone id; an SSH public key.
-- A region offering **Dpsv5** (e.g. `westeurope`, `northeurope`, `eastus`).
+- A Cloudflare **API token** (DNS edit + Zero Trust), the **zone id**, and the **account id**.
 
 ## Apply
 ```bash
-cd infra/azure-cp
+cd infra/cp-azure
 cp backend.hcl.example backend.hcl
-cp terraform.tfvars.example terraform.tfvars  # location, cloudflare_*, ssh_public_key
+cp terraform.tfvars.example terraform.tfvars  # location, cloudflare_* (token/zone/account)
 export ARM_CLIENT_ID=... ARM_CLIENT_SECRET=... ARM_SUBSCRIPTION_ID=... ARM_TENANT_ID=...
-terraform init -backend-config=backend.hcl
-terraform apply
-terraform output server_ipv4
+tofu init -backend-config=backend.hcl
+tofu plan && tofu apply
+export TUNNEL_TOKEN="$(tofu output -raw tunnel_token)"
 ```
 
-## CI secrets (`terraform-azure.yml`)
+## CI secrets (`infra-cp-azure.yml`)
 `ARM_CLIENT_ID`, `ARM_CLIENT_SECRET`, `ARM_SUBSCRIPTION_ID`, `ARM_TENANT_ID` (service principal),
-`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`, `DEPLOY_SSH_PUBLIC_KEY`, and the `TF_STATE_S3_*`
-backend secrets.
+`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_ACCOUNT_ID`, and the `TF_STATE_S3_*` backend
+secrets. `apply` is gated behind `vars.INFRA_AZURE_APPLY`.
 
 ## Tuning
-`vm_size` (`Standard_D2ps_v5` default; `Standard_D2pls_v5` to save), `os_disk_size`, `location`
-(must have Dpsv5), `ssh_allowed_cidrs`.
+`vm_size` (`Standard_D2s_v5` default — **must be x86 Gen2** for Trusted Launch), `os_disk_size`,
+`location`.

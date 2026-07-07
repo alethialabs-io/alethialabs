@@ -6,11 +6,11 @@ description: Launch the Alethia bundle on AWS or Azure with a single button — 
 # One-click deploy
 
 The fastest way to stand up a control plane on a public cloud: a button that opens the cloud's own
-console with a prefilled template. Each template provisions **one ARM VM**, opens 22/80/443, and runs
+console with a prefilled template. Each template provisions **one x86 VM**, opens 22/80/443, and runs
 the [installer](./index) via cloud-init — the same bundle as everywhere else.
 
-> **ARM only.** The published images are `linux/arm64`, so both templates default to ARM instances
-> (AWS Graviton `t4g`, Azure Ampere `Dpsv5`).
+> **x86 only.** The published app-bundle images are `linux/amd64`, so both templates default to x86
+> instances (AWS `t3`, Azure `Dsv5`).
 
 > **Domain afterwards.** Leave the domain blank to come up on HTTP at the public IP first, then point
 > DNS at it and redeploy with the domain set for automatic HTTPS. Or pre-create the DNS record so the
@@ -22,7 +22,7 @@ the [installer](./index) via cloud-init — the same bundle as everywhere else.
 
 Template: [`deploy/oneclick/aws-cloudformation.yaml`](https://github.com/alethialabs-io/alethialabs/blob/main/deploy/oneclick/aws-cloudformation.yaml)
 
-Creates an EC2 `t4g.medium` (Ubuntu 24.04 arm64, gp3 root), a security group (22/80/443), and an
+Creates an EC2 `t3.medium` (Ubuntu 24.04 amd64, gp3 root), a security group (22/80/443), and an
 Elastic IP. Parameters: `Domain`, `AcmeEmail`, `InstanceType`, `KeyName` (an existing key pair),
 `AllowedSshCidr`, `VolumeSize`. The AMI resolves from Canonical's public SSM parameter, so it's
 current in every region. Read `PublicIp` from the stack **Outputs**.
@@ -41,7 +41,7 @@ aws cloudformation deploy --stack-name alethia \
 
 Template: [`deploy/oneclick/azure-arm.json`](https://github.com/alethialabs-io/alethialabs/blob/main/deploy/oneclick/azure-arm.json)
 
-Creates a `Standard_D2ps_v5` (Ampere ARM, Ubuntu 24.04 arm64) VM with a static public IP, VNet,
+Creates a `Standard_D2s_v5` (x86, Ubuntu 24.04 amd64) VM with a static public IP, VNet,
 and an NSG (22/80/443). Parameters: `domain`, `acmeEmail`, `adminUsername`, `sshPublicKey`,
 `vmSize`, `location`. Read `publicIp` from the deployment **Outputs**.
 
