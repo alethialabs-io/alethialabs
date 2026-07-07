@@ -47,6 +47,19 @@ func (w *Runner) executeDriftDetection(ctx context.Context, job *Job, provider s
 		return err
 	}
 
-	_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{"drift_posture": posture})
+	// Day-2 continuous refresh (best-effort): while we have the cluster's creds, read the
+	// live ArgoCD add-on health + Trivy security posture so the console's Add-ons page and
+	// Evidence Security tab stay current between deploys. Posted alongside drift_posture in one
+	// update so it rides the same persistence path (the status route reads all three on SUCCESS).
+	metadata := map[string]any{"drift_posture": posture}
+	addonStatus, security := provisioner.InspectCluster(ctx, vc, provider, stdout, stderr)
+	if len(addonStatus) > 0 {
+		metadata["addon_status"] = addonStatus
+	}
+	if security != nil {
+		metadata["security_report"] = security
+	}
+
+	_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
 	return nil
 }

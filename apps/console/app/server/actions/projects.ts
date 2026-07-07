@@ -752,6 +752,10 @@ async function buildConfigSnapshot(
 			cluster: {
 				...resolvePlacement(cluster),
 				cluster_version: cluster?.cluster_version,
+				// Provisioned cluster name/endpoint (set after the first deploy) — lets a
+				// day-2 drift job acquire kubeconfig to inspect add-on health + security.
+				cluster_name: cluster?.cluster_name ?? null,
+				cluster_endpoint: cluster?.cluster_endpoint ?? null,
 				instance_types: cluster?.instance_types ?? [],
 				node_min_size: cluster?.node_min_size ?? 2,
 				node_max_size: cluster?.node_max_size ?? 5,
