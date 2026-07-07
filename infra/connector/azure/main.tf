@@ -1,14 +1,15 @@
-# Alethia Azure connector — Terraform parity with alethia-azure-setup.sh.
-# Creates an Entra app registration + service principal, a federated identity
-# credential trusting Alethia's AWS runners (OIDC issuer sts.amazonaws.com, subject =
-# Alethia's AWS account id, audience api://AzureADTokenExchange), and a Contributor
-# role assignment on the subscription. No client secrets are stored — Alethia
-# authenticates via the federated credential. Outputs the tenant/client/subscription
-# ids to paste back into the connect sheet.
+# Alethia Azure connector — Terraform parity with alethia-azure-setup.sh (keyless).
+# Alethia registers ONE multi-tenant Entra app whose federated-identity credential trusts
+# the Alethia OIDC issuer; the console + runner authenticate AS that app with a minted
+# assertion — no client secret. This module does NOT create an app or a federated
+# credential: it creates a service principal for Alethia's app in YOUR tenant and grants it
+# Contributor on the subscription. Outputs the tenant/subscription ids to paste back.
 #
 # Usage:
-#   terraform init && terraform apply -var "subscription_id=YOUR_SUBSCRIPTION_ID"
-#   terraform output            # tenant_id / client_id / subscription_id
+#   terraform init && terraform apply \
+#     -var "subscription_id=YOUR_SUBSCRIPTION_ID" \
+#     -var "alethia_client_id=ALETHIA_APP_ID"      # shown in the connect dialog
+#   terraform output            # tenant_id / subscription_id
 
 terraform {
   required_providers {
@@ -35,35 +36,19 @@ variable "subscription_id" {
   description = "The Azure subscription Alethia will provision into."
 }
 
-variable "alethia_aws_account_id" {
+variable "alethia_client_id" {
   type        = string
-  default     = "270587882865"
-  description = "The AWS account id of the Alethia platform (the federated-credential subject)."
-}
-
-variable "app_name" {
-  type        = string
-  default     = "alethia-provisioner"
-  description = "Display name for the Entra app registration."
+  description = "The Application (client) ID of Alethia's platform Entra app (shown in the connect dialog)."
 }
 
 data "azurerm_subscription" "current" {}
 
-resource "azuread_application" "alethia" {
-  display_name = var.app_name
-}
-
+# Creates the service principal (enterprise application) for Alethia's multi-tenant app in
+# THIS tenant. use_existing reconciles an already-present SP. No app object is registered
+# locally — the app lives in Alethia's tenant.
 resource "azuread_service_principal" "alethia" {
-  client_id = azuread_application.alethia.client_id
-}
-
-resource "azuread_application_federated_identity_credential" "alethia_aws" {
-  application_id = azuread_application.alethia.id
-  display_name   = "alethia-aws-federation"
-  description    = "Trust Alethia AWS runners to authenticate as this app"
-  issuer         = "https://sts.amazonaws.com"
-  subject        = var.alethia_aws_account_id
-  audiences      = ["api://AzureADTokenExchange"]
+  client_id    = var.alethia_client_id
+  use_existing = true
 }
 
 resource "azurerm_role_assignment" "alethia_contributor" {
@@ -75,11 +60,6 @@ resource "azurerm_role_assignment" "alethia_contributor" {
 output "tenant_id" {
   value       = data.azurerm_subscription.current.tenant_id
   description = "Paste this into the Alethia connect sheet as Tenant ID."
-}
-
-output "client_id" {
-  value       = azuread_application.alethia.client_id
-  description = "Paste this into the Alethia connect sheet as Client ID."
 }
 
 output "subscription_id" {
