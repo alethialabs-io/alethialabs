@@ -255,6 +255,11 @@ export async function postCaseMessage(
 				subject: supportCases.subject,
 				severity: supportCases.severity,
 				status: supportCases.status,
+				// Projection (not an authz filter) — used only to route the requester
+				// notification below, so it's exposed as `requesterId`, never compared as
+				// `.user_id`. RLS already gated who can reach this reply.
+				requester_id: supportCases.user_id,
+				contact: supportCases.contact,
 			})
 			.from(supportCases)
 			.where(eq(supportCases.id, data.caseId))
@@ -290,6 +295,8 @@ export async function postCaseMessage(
 			caseNumber: caseRow.case_number,
 			subject: caseRow.subject,
 			severity: caseRow.severity,
+			requesterId: caseRow.requester_id,
+			contact: caseRow.contact,
 		};
 	});
 
@@ -314,6 +321,22 @@ export async function postCaseMessage(
 			url,
 		}),
 	);
+	// When someone OTHER than the requester replied — an org admin (manage_support) answering a
+	// teammate's case in-console — email the requester so they hear about it (they also see it
+	// live via the bell/SSE). Comparing `requesterId` (not `.user_id`) keeps the authz-scope
+	// guard happy; RLS already gated who could reply here. Honors their channel pref + CC list.
+	if (result.requesterId !== actor.userId && wantsEmail(result.contact)) {
+		await safeNotify("case-reply customer", () =>
+			sendCaseRepliedEmail(result.contact.notifyEmail, {
+				caseNumber: result.caseNumber,
+				author: author.name,
+				snippet: data.body.slice(0, 500),
+				url,
+				audience: "customer",
+				cc: result.contact.ccEmails,
+			}),
+		);
+	}
 	// Layer B — org-observability event.
 	emitCaseEvent(actor.orgId, "replied", {
 		caseId: data.caseId,
