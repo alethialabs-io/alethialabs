@@ -28,6 +28,36 @@ env:
   IMAGE_PREFIX: ghcr.io/alethialabs-io
 
 jobs:
+  # What changed in this push? Gates the expensive builds so a console-only deploy doesn't rebuild the
+  # 7-8min runner images (and vice-versa). Two coarse groups: the box Next images (`apps`) and the runner
+  # images (`runner`). Images whose group didn't change are re-tagged latest→sha by `retag-unchanged` so the
+  # deploy's `:${sha}` pull always resolves. `packages/**` is conservatively treated as affecting the apps;
+  # `packages/core` (Go, shared by the runner) additionally triggers the runner group.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      apps: ${{ steps.filter.outputs.apps }}
+      runner: ${{ steps.filter.outputs.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            apps:
+              - 'apps/console/**'
+              - 'apps/marketing/**'
+              - 'apps/admin/**'
+              - 'apps/docs/**'
+              - 'apps/blog/**'
+              - 'packages/**'
+              - 'docker-compose.yml'
+              - 'deploy/prod/**'
+            runner:
+              - 'apps/runner/**'
+              - 'packages/core/**'
+              - 'infra/templates/**'
+
   # Native per-arch builds — NO QEMU. The control-plane box is Hetzner CX (x86) so its
   # images are linux/amd64 (built natively on ubuntu-latest); the fleet VMs are Hetzner
   # CAX (arm64) so the per-cloud runner images are linux/arm64 (built natively on the arm
@@ -36,8 +66,10 @@ jobs:
   # builds keep the runner's build-time `tofu init` provider/module cache on EVERY arch
   # (emulated tofu crashed `lfstack.push`, which is why the old QEMU path had to skip it).
 
-  # amd64 box images (single-arch, tagged) — native x86.
+  # amd64 box images (single-arch, tagged) — native x86. Skipped when no app/package changed.
   build-amd64:
+    needs: changes
+    if: ${{ needs.changes.outputs.apps == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -88,8 +120,10 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
   # arm64 fleet-only per-cloud runner images (single-arch, tagged) — native arm. Never
-  # pulled by the x86 box; lean per-cloud CLI + cache.
+  # pulled by the x86 box; lean per-cloud CLI + cache. Skipped when no runner source changed.
   build-arm64:
+    needs: changes
+    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04-arm
     strategy:
       matrix:
@@ -126,6 +160,8 @@ jobs:
 
   # `runner` amd64 half — native x86, pushed BY DIGEST (no tag) for the manifest merge.
   runner-amd64:
+    needs: changes
+    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.build.outputs.digest }}
@@ -153,6 +189,8 @@ jobs:
 
   # `runner` arm64 half — native arm, pushed BY DIGEST.
   runner-arm64:
+    needs: changes
+    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04-arm
     outputs:
       digest: ${{ steps.build.outputs.digest }}
@@ -180,7 +218,8 @@ jobs:
 
   # Stitch the two runner digests into one multi-arch tag (amd64 for the box, arm64 for the fleet).
   merge-runner:
-    needs: [runner-amd64, runner-arm64]
+    needs: [changes, runner-amd64, runner-arm64]
+    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v3
@@ -199,8 +238,42 @@ jobs:
               "${IMAGE_PREFIX}/runner@${{ needs.runner-arm64.outputs.digest }}"
           done
 
+  # For each image group that did NOT rebuild this push, copy its current :latest to :${sha} so the deploy's
+  # `:${sha}` pull resolves for every service. Cheap manifest copies (no rebuild). Runs whenever at least one
+  # group was skipped; a no-op when both groups changed.
+  retag-unchanged:
+    needs: changes
+    if: ${{ github.event_name != 'workflow_dispatch' && (needs.changes.outputs.apps != 'true' || needs.changes.outputs.runner != 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Retag unchanged images latest → sha
+        env:
+          SHA: ${{ github.sha }}
+          APPS_CHANGED: ${{ needs.changes.outputs.apps }}
+          RUNNER_CHANGED: ${{ needs.changes.outputs.runner }}
+        run: |
+          set -euo pipefail
+          retag() { echo "retag $1: latest -> ${SHA}"; docker buildx imagetools create -t "${IMAGE_PREFIX}/$1:${SHA}" "${IMAGE_PREFIX}/$1:latest"; }
+          if [ "${APPS_CHANGED}" != "true" ]; then
+            for img in console console-migrate docs blog marketing admin; do retag "$img"; done
+          fi
+          if [ "${RUNNER_CHANGED}" != "true" ]; then
+            for img in runner runner-aws runner-gcp runner-azure; do retag "$img"; done
+          fi
+
   deploy:
-    needs: [build-amd64, build-arm64, merge-runner]
+    needs: [changes, build-amd64, build-arm64, merge-runner, retag-unchanged]
+    # Run when the build/retag jobs succeeded OR were skipped (a skipped group is retagged instead of built);
+    # only a real FAILURE (or cancel) blocks the deploy. Without this, a skipped `needs` job would auto-skip
+    # deploy.
+    if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-latest
     environment: production
     permissions:
