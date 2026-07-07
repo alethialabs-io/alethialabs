@@ -311,6 +311,9 @@ export interface ExecutionMetadata {
 	// the ArgoCD Application name ("addon-<id>"). Written back to project_addons by the
 	// deploy finalizer. Mirrors the Go `argocd.AddOnHealth`.
 	addon_status?: Record<string, AddOnStatusEntry>;
+	// DEPLOY jobs: the cluster's aggregated Trivy-Operator vulnerability posture (L9), written
+	// back to environment_security by the deploy finalizer. Mirrors Go `argocd.SecurityPosture`.
+	security_report?: SecurityReport;
 }
 
 // One managed add-on's ArgoCD status (packages/core/argocd `AddOnHealth`). Health ∈
@@ -319,6 +322,17 @@ export interface ExecutionMetadata {
 export interface AddOnStatusEntry {
 	health: string;
 	sync: string;
+}
+
+// The cluster's aggregated Trivy-Operator vulnerability posture (packages/core/argocd
+// `SecurityPosture`). `scanned=false` means Trivy-Operator isn't installed / no reports yet.
+export interface SecurityReport {
+	critical: number;
+	high: number;
+	medium: number;
+	low: number;
+	report_count: number;
+	scanned: boolean;
 }
 
 // Mirrors the Go `drift.Posture` (packages/core/drift). `unmanaged_known` is false

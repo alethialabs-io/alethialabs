@@ -168,6 +168,64 @@ function DriftTable({ rows }: { rows: EvidenceEnvRow[] }) {
 	);
 }
 
+/** Security tab — the latest Trivy vulnerability posture per environment (L9). */
+function SecurityTable({ rows }: { rows: EvidenceEnvRow[] }) {
+	if (rows.length === 0) {
+		return (
+			<EvidenceEmpty
+				title="No environments yet"
+				description="Enable the Trivy-Operator add-on on an environment to see continuous vulnerability scanning here."
+			/>
+		);
+	}
+	return (
+		<Table>
+			<TableHeader>
+				<TableRow>
+					<TableHead>Environment</TableHead>
+					<TableHead>Vulnerabilities</TableHead>
+					<TableHead>Last scanned</TableHead>
+				</TableRow>
+			</TableHeader>
+			<TableBody>
+				{rows.map((row) => (
+					<TableRow key={row.environmentId}>
+						<TableCell>
+							<EnvCell row={row} />
+						</TableCell>
+						<TableCell>
+							{row.security?.scanned ? (
+								<div className="flex flex-wrap items-center gap-1.5">
+									<Badge
+										variant={
+											row.security.critical > 0 ? "destructive" : "secondary"
+										}
+									>
+										{row.security.critical} critical
+									</Badge>
+									<Badge variant={row.security.high > 0 ? "destructive" : "outline"}>
+										{row.security.high} high
+									</Badge>
+									<Badge variant="outline" className="text-muted-foreground">
+										{row.security.medium} med · {row.security.low} low
+									</Badge>
+								</div>
+							) : (
+								<Badge variant="outline" className="gap-1.5 text-muted-foreground">
+									Not scanned
+								</Badge>
+							)}
+						</TableCell>
+						<TableCell className="text-sm text-muted-foreground">
+							{row.security?.scanned ? ago(row.security.scannedAt) : "—"}
+						</TableCell>
+					</TableRow>
+				))}
+			</TableBody>
+		</Table>
+	);
+}
+
 /** Waivers tab — recorded, time-boxed verification control overrides. */
 function WaiversTable({ waivers }: { waivers: EvidenceWaiver[] }) {
 	if (waivers.length === 0) {
@@ -274,6 +332,14 @@ export function EvidenceClient() {
 				<TabsList>
 					<TabsTrigger value="verify">Verify</TabsTrigger>
 					<TabsTrigger value="drift">Drift</TabsTrigger>
+					<TabsTrigger value="security">
+						Security
+						{data.summary.criticalHighVulns > 0 && (
+							<Badge variant="destructive" className="ml-2">
+								{data.summary.criticalHighVulns}
+							</Badge>
+						)}
+					</TabsTrigger>
 					<TabsTrigger value="waivers">
 						Waivers
 						{data.summary.activeWaivers > 0 && (
@@ -288,6 +354,9 @@ export function EvidenceClient() {
 				</TabsContent>
 				<TabsContent value="drift" className="mt-4">
 					<DriftTable rows={data.rows} />
+				</TabsContent>
+				<TabsContent value="security" className="mt-4">
+					<SecurityTable rows={data.rows} />
 				</TabsContent>
 				<TabsContent value="waivers" className="mt-4">
 					<WaiversTable waivers={data.waivers} />

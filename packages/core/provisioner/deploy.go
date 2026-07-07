@@ -74,6 +74,9 @@ type PlanResult struct {
 	// (keyed by ArgoCD Application name). Empty when no add-ons were installed or the
 	// health read failed; the runner forwards it so the console can show real status.
 	AddOnStatus map[string]argocd.AddOnHealth
+	// SecurityPosture is the cluster's aggregated Trivy-Operator vulnerability posture
+	// (nil when the read wasn't attempted). `Scanned=false` when Trivy isn't installed.
+	SecurityPosture *argocd.SecurityPosture
 }
 
 // RunDeployV2 executes a deployment using the provider-agnostic ProjectConfig and CloudProvider interface.
@@ -446,6 +449,12 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 				stderr,
 			)
 		}
+		// Read the cluster's Trivy-Operator vulnerability posture (L9). Best-effort +
+		// unconditional: `Scanned=false` when Trivy isn't installed, so the Evidence Security
+		// tab shows an honest "not scanned" rather than a misleading all-clear. Refreshed on
+		// every deploy (Trivy scans asynchronously after it's installed).
+		sec := argocd.ReadSecurityPosture(stdout, stderr)
+		result.SecurityPosture = &sec
 	}
 
 	fmt.Fprintln(stdout, "Deployment completed successfully.")
