@@ -62,6 +62,7 @@ const PRODUCT_MENU_FOOT: { ic: IconKey; name: string }[] = [
 
 const RESOURCE_MENU: MenuLink[] = [
 	{ ic: "book", name: "Docs", desc: "Guides, concepts, and the full CLI reference", href: "/docs", badge: true },
+	{ ic: "layers", name: "Open source", desc: "AGPL core — self-host on any cloud", href: "/open-source" },
 	{ ic: "building", name: "About", desc: "The team and mission behind Alethia Labs", href: "/about" },
 	{ ic: "pen", name: "Blog", desc: "Engineering notes and product updates", href: "/blog" },
 	{ ic: "list", name: "Changelog", desc: "What shipped, every week", href: "/changelog" },

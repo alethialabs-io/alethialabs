@@ -12,6 +12,7 @@ export const MARKETING_SITEMAP_PATHS = [
 	"/",
 	"/pricing",
 	"/enterprise",
+	"/open-source",
 	"/contact/sales",
 	"/contact/enterprise",
 	"/terms",
