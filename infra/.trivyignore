@@ -32,3 +32,10 @@ AVD-AWS-0132
 # ~10x for a single box, so the egress-only public IP is the cost-correct choice. This mirrors the
 # accepted cp-hetzner posture (its box also has a public IP; Trivy simply has no hcloud checks).
 AVD-GCP-0031
+
+# cp-aws control-plane box (infra/cp-aws) needs UNRESTRICTED EGRESS. The single box pulls container
+# images (GHCR + many CDN IPs), git-clones, and dials the Cloudflare Tunnel + SSM Session Manager out
+# — all to large, dynamic IP ranges that cannot be pinned to CIDRs without breaking updates/pulls.
+# Inbound is fully closed (the SG has NO ingress; web is tunnel-fronted, SSH is SSM), so the box is an
+# origin, not a pivot — egress-all is the accepted, cost-correct posture for a single self-contained VM.
+AVD-AWS-0104
