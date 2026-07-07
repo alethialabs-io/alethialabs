@@ -208,6 +208,11 @@ export interface ObservabilityProviderConfig {
 	retention_days?: string;
 }
 
+// project_addons.values — the user's tuned knobs for a marketplace add-on. Validated + typed
+// per add-on by its Zod `configSchema` (lib/addons/catalog.ts); stored open here since the
+// shape varies by add-on. In gitops mode this may instead hold a raw Helm-values override.
+export type AddOnValues = Record<string, unknown>;
+
 // AES-256-GCM envelope for the secret fields of a connector credential
 // (lib/crypto/secrets.ts). The plaintext is a JSON map of {fieldKey: value}.
 export interface EncryptedSecret {
@@ -302,6 +307,18 @@ export interface ExecutionMetadata {
 	verify_receipt?: SignedReceipt;
 	// DETECT_DRIFT jobs: the per-environment drift posture (packages/core/drift).
 	drift_posture?: DriftPosture;
+	// DEPLOY jobs: post-apply ArgoCD health/sync per managed marketplace add-on, keyed by
+	// the ArgoCD Application name ("addon-<id>"). Written back to project_addons by the
+	// deploy finalizer. Mirrors the Go `argocd.AddOnHealth`.
+	addon_status?: Record<string, AddOnStatusEntry>;
+}
+
+// One managed add-on's ArgoCD status (packages/core/argocd `AddOnHealth`). Health ∈
+// {Healthy, Progressing, Degraded, Suspended, Missing, Unknown}; sync ∈ {Synced, OutOfSync,
+// Unknown}.
+export interface AddOnStatusEntry {
+	health: string;
+	sync: string;
 }
 
 // Mirrors the Go `drift.Posture` (packages/core/drift). `unmanaged_known` is false

@@ -70,6 +70,10 @@ type PlanResult struct {
 	// plan hash + tool versions. Signed when a signing key is configured
 	// (Algorithm "ed25519"); otherwise attached unsigned (Algorithm "none").
 	VerifyReceipt *verify.SignedReceipt
+	// AddOnStatus is the post-apply ArgoCD health/sync per managed marketplace add-on
+	// (keyed by ArgoCD Application name). Empty when no add-ons were installed or the
+	// health read failed; the runner forwards it so the console can show real status.
+	AddOnStatus map[string]argocd.AddOnHealth
 }
 
 // RunDeployV2 executes a deployment using the provider-agnostic ProjectConfig and CloudProvider interface.
@@ -406,6 +410,29 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		// otherwise-healthy cluster — the operator can add manifests later.
 		if genErr := generateAppManifests(vc, params.GitAccessToken, stdout, stderr); genErr != nil {
 			fmt.Fprintf(stderr, "Warning: app manifest generation skipped: %v\n", genErr)
+		}
+
+		// Marketplace add-ons — render the customer's enabled OSS charts as ArgoCD Helm
+		// Applications and apply them, then read their health back for the console. Non-fatal
+		// (like app-manifest generation): a bad add-on must not fail an otherwise-healthy
+		// cluster; its sync status surfaces on the add-ons page instead.
+		if len(vc.AddOns) > 0 {
+			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns)
+			if addonErr != nil {
+				fmt.Fprintf(stderr, "Warning: marketplace add-ons skipped: %v\n", addonErr)
+			} else {
+				defer os.RemoveAll(addonDir)
+				if applyErr := argocd.ApplyAddOns(addonDir, stdout, stderr); applyErr != nil {
+					fmt.Fprintf(stderr, "Warning: marketplace add-ons apply failed: %v\n", applyErr)
+				}
+				// Read ArgoCD health/sync for the applied add-ons so the console can show
+				// real status (best-effort — a read failure just leaves status Unknown).
+				result.AddOnStatus = argocd.ReadAddOnHealth(
+					argocd.ManagedAddOnNames(vc.AddOns),
+					stdout,
+					stderr,
+				)
+			}
 		}
 	}
 

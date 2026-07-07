@@ -29,6 +29,11 @@ type ProjectConfig struct {
 	ContainerRegistries []ProjectContainerRegistryConfig `json:"container_registries"`
 	StorageBuckets      []ProjectStorageBucketConfig     `json:"storage_buckets"`
 
+	// Marketplace add-ons — free OSS Helm charts (Grafana, Loki, …) resolved by the console
+	// into install specs. The runner renders one ArgoCD Application per entry after the
+	// cluster + ArgoCD are up. Empty for projects that enabled no add-ons.
+	AddOns []AddOnInstall `json:"addons,omitempty"`
+
 	GitAccessToken string `json:"git_access_token"`
 
 	// Populated at runtime from CloudIdentity, not from snapshot

@@ -23,6 +23,7 @@ import {
 	uuid,
 } from "drizzle-orm/pg-core";
 import type {
+	AddOnValues,
 	AuditChanges,
 	ClusterAdmin,
 	ClusterProviderConfig,
@@ -40,6 +41,7 @@ import type {
 	TopicSubscription,
 } from "@/types/jsonb.types";
 import {
+	addonMode,
 	auditAction,
 	cacheEngine,
 	changeOp,
@@ -205,6 +207,48 @@ export const projectObservability = pgTable(
 		unique("project_observability_project_id_environment_id_key").on(
 			t.project_id,
 			t.environment_id,
+		),
+	],
+);
+
+// Marketplace add-ons — free OSS apps (Grafana, Loki, Vault, …) the cluster comes up with,
+// deployed as ArgoCD Helm Applications. One row per enabled catalog add-on per environment
+// (UNIQUE on (project_id, environment_id, addon_id)). `addon_id` references the code catalog
+// (lib/addons/catalog.ts), NOT a DB enum, so the catalog grows without a migration. Health +
+// sync_status are read back from ArgoCD after deploy. Multi-component (1:N per env) like the
+// databases/caches tables.
+export const projectAddons = pgTable(
+	"project_addons",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		// Catalog id (lib/addons/catalog.ts) — e.g. "kube-prometheus-stack". Not a DB enum.
+		addon_id: text().notNull(),
+		enabled: boolean().default(true).notNull(),
+		mode: addonMode().default("managed").notNull(),
+		// Chart version override; NULL = the catalog's pinned default.
+		version: text(),
+		// The user's tuned knobs (validated per add-on by its Zod configSchema), or a raw
+		// Helm-values override in gitops mode.
+		values: jsonb().$type<AddOnValues>().default({}),
+		namespace: text(),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		// ArgoCD Application health read back after deploy: Healthy | Progressing | Degraded |
+		// Missing | Unknown. NULL until the first post-deploy read.
+		health: text(),
+		// ArgoCD sync state: Synced | OutOfSync | Unknown.
+		sync_status: text(),
+		last_synced_at: timestamp({ withTimezone: true }),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_addons_project_id_environment_id_addon_id_key").on(
+			t.project_id,
+			t.environment_id,
+			t.addon_id,
 		),
 	],
 );

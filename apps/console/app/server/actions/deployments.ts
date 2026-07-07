@@ -6,7 +6,9 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
 import {
+	type ComponentStatus,
 	jobs,
+	projectAddons,
 	projectCaches,
 	projectCluster,
 	projectDatabases,
@@ -33,7 +35,23 @@ const deployMetaSchema = z.object({
 	argocd_url: z.string().optional().catch(undefined),
 	argocd_admin_password: z.string().optional().catch(undefined),
 	outputs: z.record(z.string(), z.unknown()).optional().catch(undefined),
+	// Managed marketplace add-on health, keyed by ArgoCD Application name ("addon-<id>").
+	addon_status: z
+		.record(
+			z.string(),
+			z.object({ health: z.string(), sync: z.string() }),
+		)
+		.optional()
+		.catch(undefined),
 });
+
+/** Maps an ArgoCD health status onto the component status the add-ons UI shows. */
+function addonComponentStatus(health: string): ComponentStatus {
+	if (health === "Healthy") return "ACTIVE";
+	if (health === "Degraded" || health === "Missing") return "FAILED";
+	// Progressing / Suspended / Unknown → still converging.
+	return "CREATING";
+}
 
 /**
  * After a DEPLOY job succeeds, persist terraform outputs to the project component
@@ -88,6 +106,31 @@ export async function finalizeDeployment(jobId: string) {
 	}
 
 	await db.update(projectCluster).set(clusterUpdate).where(inEnv(projectCluster));
+
+	// Marketplace add-ons — persist the ArgoCD health/sync the runner read back. Keys are
+	// ArgoCD Application names ("addon-<id>"); strip the prefix to match project_addons.addon_id.
+	if (meta.addon_status) {
+		const now = new Date();
+		for (const [appName, s] of Object.entries(meta.addon_status)) {
+			const addonId = appName.replace(/^addon-/, "");
+			await db
+				.update(projectAddons)
+				.set({
+					health: s.health,
+					sync_status: s.sync,
+					status: addonComponentStatus(s.health),
+					last_synced_at: now,
+					updated_at: now,
+				})
+				.where(
+					and(
+						eq(projectAddons.project_id, projectId),
+						eq(projectAddons.environment_id, environmentId),
+						eq(projectAddons.addon_id, addonId),
+					),
+				);
+		}
+	}
 
 	if (outputs) {
 		const rdsEndpoint = extractOutputValue(outputs, "rds_cluster_endpoint");

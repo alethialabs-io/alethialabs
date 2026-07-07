@@ -20,6 +20,7 @@ import {
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
+	projectAddons,
 	projectNetwork,
 	projectNosqlTables,
 	projectObservability,
@@ -30,6 +31,8 @@ import {
 	projectTopics,
 	projects,
 } from "@/lib/db/schema";
+import { resolveAddOnInstall } from "@/lib/addons/catalog";
+import type { AddOnInstallSpec } from "@/lib/addons/types";
 import {
 	type CloudProviderSlug,
 	type ConversionWarning,
@@ -599,6 +602,29 @@ async function buildConfigSnapshot(
 			.from(projectObservability)
 			.where(envScope(projectObservability, projectId, envId))
 			.limit(1);
+		// Marketplace add-ons enabled for this environment, resolved against the code catalog
+		// into runner-facing install specs (chart coords + merged Helm values). The runner
+		// renders one ArgoCD Application per spec on DEPLOY; a retired catalog id resolves to
+		// null and is skipped.
+		const addonRows = await tx
+			.select()
+			.from(projectAddons)
+			.where(
+				and(
+					envScope(projectAddons, projectId, envId),
+					eq(projectAddons.enabled, true),
+				),
+			);
+		const addons: AddOnInstallSpec[] = addonRows
+			.map((r) =>
+				resolveAddOnInstall({
+					addon_id: r.addon_id,
+					mode: r.mode,
+					version: r.version,
+					values: r.values,
+				}),
+			)
+			.filter((s): s is AddOnInstallSpec => s !== null);
 
 		// ── Resolve per-resource placement ("versatile model") ───────────────
 		// Each component may carry its own cloud_identity_id/region; NULL inherits
@@ -769,6 +795,9 @@ async function buildConfigSnapshot(
 				...r,
 				...resolvePlacement(r),
 			})),
+			// Marketplace add-ons (resolved install specs) — the runner renders each as an
+			// ArgoCD Helm Application after the cluster + ArgoCD are up.
+			addons,
 			// Token is fetched at runtime by the runner via POST /api/jobs/[id]/git-token.
 			git_access_token: "",
 		};
