@@ -21,6 +21,14 @@ const TIMEOUT_MS = 12_000;
  */
 export const ALIBABA_TOKEN_AUDIENCE = "sts.aliyuncs.com";
 
+/**
+ * The fixed name of the RAM OIDC provider the customer setup (`infra/connector/alibaba`) creates.
+ * Because it's fixed, the console derives the provider ARN from the role ARN's account id instead of
+ * asking the customer to paste it — so the connect form stays a single field. The IaC MUST use this
+ * exact name (`oidc_provider_name = "alethia"`) or the derived ARN won't resolve.
+ */
+export const ALIBABA_OIDC_PROVIDER_NAME = "alethia";
+
 /** Result of assuming the customer RAM role. */
 export interface AlibabaSession {
 	/** The account id we authenticated into (from the role ARN). */
@@ -28,10 +36,19 @@ export interface AlibabaSession {
 }
 
 /** acs:ram::<account>:role/Name → <account>. */
-function accountIdFromArn(roleArn: string | null | undefined): string | null {
+export function accountIdFromArn(roleArn: string | null | undefined): string | null {
 	if (!roleArn) return null;
 	const m = roleArn.match(/^acs:ram::(\d+):role\//);
 	return m?.[1] ?? null;
+}
+
+/**
+ * Derives the RAM OIDC provider ARN from a role ARN's account id + the fixed provider name — so the
+ * connect flow only needs the role ARN. Returns null if the account id can't be parsed.
+ */
+export function deriveOidcProviderArn(roleArn: string | null | undefined): string | null {
+	const accountId = accountIdFromArn(roleArn);
+	return accountId ? `acs:ram::${accountId}:oidc-provider/${ALIBABA_OIDC_PROVIDER_NAME}` : null;
 }
 
 /**

@@ -10,7 +10,10 @@
 import { generateKeyPairSync } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetIssuerCache } from "@/lib/oidc/issuer";
-import { assumeAlibabaRole } from "@/lib/cloud-providers/session/alibaba";
+import {
+	assumeAlibabaRole,
+	deriveOidcProviderArn,
+} from "@/lib/cloud-providers/session/alibaba";
 
 const saved: Record<string, string | undefined> = {};
 
@@ -93,5 +96,18 @@ describe("assumeAlibabaRole (AssumeRoleWithOIDC)", () => {
 			}),
 		);
 		await expect(assumeAlibabaRole(identity)).rejects.toThrow(/bad token/i);
+	});
+});
+
+describe("deriveOidcProviderArn", () => {
+	it("derives the provider ARN from the role ARN's account id + fixed name", () => {
+		expect(deriveOidcProviderArn("acs:ram::1234567890123456:role/AlethiaProvisioner")).toBe(
+			"acs:ram::1234567890123456:oidc-provider/alethia",
+		);
+	});
+
+	it("returns null when the account id can't be parsed", () => {
+		expect(deriveOidcProviderArn("not-an-arn")).toBeNull();
+		expect(deriveOidcProviderArn(null)).toBeNull();
 	});
 });

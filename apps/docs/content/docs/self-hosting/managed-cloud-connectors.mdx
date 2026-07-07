@@ -135,17 +135,17 @@ Then both halves authenticate as that app with a minted assertion — no secret,
 The customer runs the connect script, which only creates a **service principal for Alethia's app** in
 their tenant and grants it Contributor — they register no app and store nothing.
 
-## Alibaba — keyless + account-free (partial)
+## Alibaba — keyless + account-free
 
 Alibaba is **keyless and account-free**: the console assumes the customer RAM role via STS
 `AssumeRoleWithOIDC` with an assertion minted by the **same OIDC issuer** as Azure — Alethia holds **no
 Alibaba account** and no AccessKey. There is **nothing to set here** (no `ALETHIA_ALIBABA_*`); availability
-tracks the OIDC issuer key alone.
+tracks the OIDC issuer key alone (`ALETHIA_OIDC_SIGNING_KEY`, auto-generated).
 
-**Not yet end-to-end — leave it off.** Only the console auth half has shipped. Connecting an Alibaba
-account also needs, on the *customer* side, a **RAM OIDC provider** trusting the Alethia issuer + a RAM
-role, and the connect flow to carry that provider ARN (`oidc_provider_arn`) — that customer setup is not
-built yet, so a connection can't verify. Keep Alibaba disabled until it lands.
+**Customer side** (documented at [Connectors → Alibaba](/console/connectors/alibaba)): the customer applies
+a Terraform module that creates a **RAM OIDC provider** (fixed name `alethia`) trusting the Alethia issuer
++ a **RAM role**, then pastes the role ARN — Alethia derives the provider ARN from it. No operator action
+beyond having the issuer key.
 
 ## Reference
 
