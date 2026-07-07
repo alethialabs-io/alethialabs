@@ -17,16 +17,20 @@ plan/apply CI loop.
 
 ## Status
 
-| Cloud | Module | Box (x86) | Admin access (no open web port) | Page |
-|---|---|---|---|---|
-| Hetzner | `infra/cp-hetzner` | `cx33` | SSH, key-only (firewall SSH-only) | [Hetzner](./hetzner) |
-| AWS | `infra/cp-aws` | `t3.large` | SSM Session Manager | [AWS](./aws) |
-| GCP | `infra/cp-gcp` | `e2-standard-2` | IAP tunnel | [GCP](./gcp) |
-| Azure | `infra/cp-azure` | `Standard_D2s_v5` | `az vm run-command` + Serial Console | [Azure](./azure) |
-| Alibaba | `infra/cp-alibaba` | `ecs.g7.large` | ECS Session Manager | [Alibaba](./alibaba) |
+| Cloud | Module | Box (x86) | Cost/mo | Admin access (no open web port) | Page |
+|---|---|---|---|---|---|
+| Hetzner | `infra/cp-hetzner` | `cx33` | ≈ €14 | SSH, key-only (firewall SSH-only) | [Hetzner](./hetzner) |
+| AWS | `infra/cp-aws` | `t3.large` | ≈ $72 | SSM Session Manager | [AWS](./aws) |
+| GCP | `infra/cp-gcp` | `e2-standard-2` | ≈ $57 | IAP tunnel | [GCP](./gcp) |
+| Azure | `infra/cp-azure` | `Standard_D2s_v5` | ≈ $90 | `az vm run-command` + Serial Console | [Azure](./azure) |
+| Alibaba | `infra/cp-alibaba` | `ecs.g7.large` | ≈ $75–95 | ECS Session Manager | [Alibaba](./alibaba) |
 
 > **x86 boxes.** The published app-bundle images are `linux/amd64`, so every module provisions an x86
 > host (the per-cloud *runner* images are arm64, but they run on the managed fleet, not this box).
+
+> **Costs** are on-demand estimates at each module's default region. AWS/GCP/Azure are from
+> **Infracost**; Hetzner and Alibaba (which Infracost doesn't price) are **list prices**. See each
+> cloud's page for the breakdown; a monthly/subscription commitment is cheaper on most clouds.
 
 ## The model — closed origin, zero standing inbound
 

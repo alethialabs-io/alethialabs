@@ -6,7 +6,7 @@ description: Provision the Alethia control plane on an x86 Gen2 Linux VM, closed
 # Azure (`infra/cp-azure`)
 
 A single x86 Gen2 **`Standard_D2s_v5`** (2 vCPU / 8 GB) Linux VM fronted by a Cloudflare Tunnel.
-**≈ $75/mo** (approx, region-dependent).
+**≈ $90/mo** (D2s_v5 + OS disk + public IP; Infracost, on-demand, `westeurope`).
 
 ## What it creates
 - `azurerm_linux_virtual_machine` (`Standard_D2s_v5`, Ubuntu 24.04 amd64) with a 30 GB StandardSSD OS

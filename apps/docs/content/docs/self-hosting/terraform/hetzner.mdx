@@ -6,7 +6,8 @@ description: Provision the Alethia control plane on a Hetzner Cloud x86 VM, clos
 # Hetzner (`infra/cp-hetzner`)
 
 The cheapest target, and the one the hosted alethialabs.io runs on: a Hetzner Cloud **CX33** (Intel
-x86, 4 vCPU / 8 GB) with an attached data volume, fronted by a Cloudflare Tunnel. **≈ €13/mo.**
+x86, 4 vCPU / 8 GB) with an attached data volume, fronted by a Cloudflare Tunnel. **≈ €14/mo**
+(Hetzner list price: `cx33` €13.10 + 25 GB volume €1.19; not priced by Infracost).
 
 ## What it creates
 - `hcloud_server` (`cx33`) + `hcloud_volume` (25 GB, holds Postgres + object storage) + attachment
