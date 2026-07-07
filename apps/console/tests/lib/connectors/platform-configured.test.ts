@@ -2,49 +2,60 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The managed-cloud model hubs through ONE platform AWS identity: AWS assumes customer roles, and GCP
-// federates through the SAME identity (its customer WIF pool trusts an AWS provider). So GCP
-// availability must track the AWS platform creds — there is no separate GCP secret. These tests pin
-// that contract so a future edit can't silently re-gate GCP on the (removed) WIF marker.
+// federates through the SAME identity (its customer WIF pool trusts an AWS provider). That identity is
+// now KEYLESS — the console federates in via the OIDC issuer (AssumeRoleWithWebIdentity), so availability
+// tracks the issuer + the platform role ARN, not a static key. These tests pin that contract, and that
+// GCP still rides the same identity (no separate GCP secret).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { issuerState } = vi.hoisted(() => ({ issuerState: { on: false } }));
 
 vi.mock("@/lib/config/auth", () => ({
 	getAuthConfig: () => ({
 		providers: { github: null, google: null, gitlab: null, bitbucket: null },
 	}),
 }));
+vi.mock("@/lib/oidc/issuer", () => ({
+	oidcIssuerConfigured: () => issuerState.on,
+	mintWorkloadToken: vi.fn(),
+}));
 
 import { computePlatformConfigured } from "@/lib/connectors/cloud-connect-setup";
 
-const AWS_KEYS = ["ALETHIA_AWS_ACCESS_KEY_ID", "ALETHIA_AWS_SECRET_ACCESS_KEY"];
+const ROLE_ARN = "arn:aws:iam::270587882865:role/alethia-connector-assumer";
 
-describe("computePlatformConfigured — GCP rides the AWS hub", () => {
-	const saved: Record<string, string | undefined> = {};
+describe("computePlatformConfigured — keyless AWS hub (GCP rides it)", () => {
+	const saved: string | undefined = process.env.ALETHIA_AWS_PLATFORM_ROLE_ARN;
 	beforeEach(() => {
-		for (const k of AWS_KEYS) {
-			saved[k] = process.env[k];
-			delete process.env[k];
-		}
+		issuerState.on = false;
+		delete process.env.ALETHIA_AWS_PLATFORM_ROLE_ARN;
 	});
 	afterEach(() => {
-		for (const k of AWS_KEYS) {
-			if (saved[k] === undefined) delete process.env[k];
-			else process.env[k] = saved[k];
-		}
+		if (saved === undefined) delete process.env.ALETHIA_AWS_PLATFORM_ROLE_ARN;
+		else process.env.ALETHIA_AWS_PLATFORM_ROLE_ARN = saved;
 	});
 
-	it("aws and gcp are BOTH false without the platform AWS creds", () => {
+	it("aws and gcp are BOTH false without the platform identity", () => {
 		const c = computePlatformConfigured();
 		expect(c.aws).toBe(false);
 		expect(c.gcp).toBe(false);
 	});
 
-	it("the AWS platform creds enable BOTH aws and gcp (no separate GCP secret)", () => {
-		process.env.ALETHIA_AWS_ACCESS_KEY_ID = "AKIAEXAMPLE";
-		process.env.ALETHIA_AWS_SECRET_ACCESS_KEY = "secret";
+	it("the keyless platform identity (issuer + role ARN) enables BOTH aws and gcp", () => {
+		issuerState.on = true;
+		process.env.ALETHIA_AWS_PLATFORM_ROLE_ARN = ROLE_ARN;
 		const c = computePlatformConfigured();
 		expect(c.aws).toBe(true);
 		expect(c.gcp).toBe(true);
+	});
+
+	it("a role ARN without a configured issuer is not enough (both false)", () => {
+		process.env.ALETHIA_AWS_PLATFORM_ROLE_ARN = ROLE_ARN;
+		issuerState.on = false;
+		const c = computePlatformConfigured();
+		expect(c.aws).toBe(false);
+		expect(c.gcp).toBe(false);
 	});
 
 	it("token clouds are always available (customer's own token)", () => {
