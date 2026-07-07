@@ -25,9 +25,12 @@ check "assume_role_is_scoped" {
 # The policy grants exactly the one action it needs (sts:AssumeRole) — nothing broader.
 check "policy_is_least_privilege" {
   assert {
+    # NB: compare as SETS — OpenTofu's `==` treats a list(string) (from tolist/flatten) as unequal to a
+    # tuple literal `["sts:AssumeRole"]`, so the old `tolist(...) == [...]` was a false-negative that
+    # fired on the correct single-action policy. `toset == toset` is type-consistent and order-free.
     condition = alltrue([
       for s in jsondecode(aws_iam_policy.assume_customer_roles.policy).Statement :
-      tolist(flatten([s.Action])) == ["sts:AssumeRole"]
+      toset(flatten([s.Action])) == toset(["sts:AssumeRole"])
     ])
     error_message = "The assumer policy must grant only sts:AssumeRole."
   }
