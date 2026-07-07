@@ -1,0 +1,83 @@
+---
+title: Run the whole control plane yourself — on any of five clouds
+description: Alethia is open source under the AGPL, and the entire control plane self-hosts closed-origin behind a Cloudflare Tunnel with zero standing inbound. Here's the model, and how to stand it up on Hetzner, AWS, GCP, Azure, or Alibaba.
+date: 2026-07-07
+author: Alethia Labs Engineering
+tags: [open-source, self-hosting, infrastructure, security]
+excerpt: Alethia is AGPL open source, and the whole control plane self-hosts on any of five clouds — closed-origin behind a Cloudflare Tunnel, no standing inbound. Here's the model and how to run it.
+---
+
+Alethia's whole premise is that **you own your infrastructure**. We host nothing that matters: your
+clusters live in your accounts, and the value is day-2 operations, not a place to park your data. So
+it would be strange if the *control plane* were something only we could run. It isn't. Alethia is
+open source under the **AGPL**, and the entire platform — console, the `alethia` CLI, the runners,
+multi-cloud provisioning — self-hosts on your own infrastructure.
+
+This post is about the part we're most proud of: **how** it self-hosts. Not a public box with a
+firewall you hope you configured right — a closed origin with **zero standing inbound**, on any of
+five clouds.
+
+## The model: the origin dials out
+
+The bundle is one `docker-compose` stack behind Caddy. The twist is ingress: instead of opening
+`80`/`443` to the internet, a `cloudflared` service **dials out** to Cloudflare and the public
+hostname is a **proxied CNAME** onto the tunnel. TLS terminates at Cloudflare's edge. There is no
+open web port on the box, and no public origin to scan.
+
+```
+browser ─▶ Cloudflare edge ─▶ (tunnel, outbound) ─▶ cloudflared ─▶ Caddy ─▶ app
+```
+
+The box keeps a public IP for **egress only** — pulling images, cloning the repo, dialing the tunnel
+out. Inbound stays closed. The Terraform for each cloud ships a `checks.tf` that fails the plan if
+that posture ever regresses.
+
+## Admin without an open SSH port
+
+If `80`/`443` are closed and the box still needs administering, how do you get in? Not through a
+standing SSH port on `0.0.0.0/0`. Each cloud has a native control-plane channel that needs **no open
+port** — the agent dials out, exactly like the tunnel does:
+
+| Cloud | Box | Admin access | Hardening |
+|---|---|---|---|
+| Hetzner | `cx33` | SSH, key-only (firewall SSH-only) | firewall SSH-only |
+| AWS | `t3.large` | **SSM Session Manager** (no ingress) | IMDSv2 · encrypted EBS |
+| GCP | `e2-standard-2` | **IAP** tunnel | Shielded VM |
+| Azure | `Standard_D2s_v5` | **`az vm run-command`** + Serial Console | Trusted Launch |
+| Alibaba | `ecs.g7.large` | **Session Manager** (Cloud Assistant) | encrypted disk |
+
+Four of the five have **no inbound rule at all**. Hetzner keeps a key-only SSH port (firewall
+restricted) because it's the reference host the hosted service runs on; the rest reach the box
+through the cloud's own session broker — SSM, IAP, `run-command`, Cloud Assistant — which rides the
+provider's control plane, not a port you expose.
+
+We picked each shape for that cloud rather than cloning one design everywhere: a Cloud NAT would be
+~10× the cost of an egress IP for a single box, and Azure Bastion (~$140/mo) makes no sense for a
+control-plane VM — so the egress-only public IP plus a broker channel is the cost-correct, cloud-
+native answer each time.
+
+## Genuinely open source, with one honest boundary
+
+The core is **AGPL-3.0** — OSI-approved open source, not "source-available." You can read it, run it,
+and modify it, forever, no license key. The only commercially-licensed code lives under `ee/`
+(multi-member orgs, SSO, custom roles, the fine-grained access engine), and that boundary is
+**enforced in CI**: the open-source core never imports the enterprise package and runs completely
+without it. If you only need a single-tenant Alethia, you never touch any of that.
+
+## Run it
+
+Pick the path that fits:
+
+- **Docker Compose** — one command on a fresh VM.
+  ```bash
+  curl -fsSL https://alethialabs.io/install.sh | sh
+  ```
+- **Terraform (per-cloud)** — version-controlled OpenTofu, closed-origin behind the tunnel. See the
+  [per-cloud guide](/docs/self-hosting/terraform).
+- **Helm** — the same bundle on an existing Kubernetes cluster.
+- **One-click** — launch on AWS or Azure from a prefilled template.
+
+The full story — the why, the proof, and the licensing — is on the
+[open-source page](/open-source); the how-to lives in the [self-hosting docs](/docs/self-hosting).
+
+Your clusters were always yours. Now the control plane is too.

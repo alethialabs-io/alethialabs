@@ -1,42 +1,49 @@
 ---
 title: GCP
-description: Provision the Alethia control plane on a GCP Tau T2A (Ampere ARM) Compute Engine VM.
+description: Provision the Alethia control plane on an x86 Compute Engine VM, closed-origin behind a Cloudflare Tunnel, SSH via IAP.
 ---
 
-# GCP (`infra/gcp-cp`)
+# GCP (`infra/cp-gcp`)
 
-A single **Tau T2A** (Ampere ARM) Compute Engine VM — `t2a-standard-2` (2 vCPU / 8 GB) — with a
-static external IP, behind Caddy. **≈ $45–55/mo** (`t2a-standard-1`, 1 vCPU / 4 GB, ≈ $28 if it
-fits). T2A is region-limited, so pick a region that has it.
+A single x86 **`e2-standard-2`** (2 vCPU / 8 GB) Compute Engine VM fronted by a Cloudflare Tunnel.
+**≈ $50/mo** (approx, region-dependent).
 
 ## What it creates
-- `google_compute_instance` (`t2a-standard-2`, Ubuntu 24.04 ARM64) with a 30 GB `pd-balanced` boot disk
-- `google_compute_address` (static external IP) → DNS
-- `google_compute_firewall` (22/80/443, by network tag `alethia-cp`)
-- `cloudflare_record` A for the apex + `www`
+- `google_compute_instance` (`e2-standard-2`, Ubuntu 24.04 amd64) with a 30 GB `pd-balanced` boot
+  disk; **Shielded VM** (secure boot + vTPM); a dedicated least-priv service account
+- `google_compute_firewall` — **SSH (`22`) from the IAP range `35.235.240.0/20` only**; no 80/443
+- an ephemeral external IP (egress only)
+- `cloudflare_zero_trust_tunnel_cloudflared` (+ config) and **proxied** CNAMEs (apex + `www`)
 - cloud-init via the `user-data` metadata key (installs Docker, clones the repo)
 
+## Access — IAP (no public SSH)
+```bash
+gcloud compute ssh alethia-cp --zone <zone> --tunnel-through-iap
+```
+
 ## Prerequisites
-- A GCP **project** with the Compute Engine API enabled.
-- A **service-account JSON key** with Compute Admin (provider auth → `GOOGLE_CREDENTIALS`).
-- Cloudflare API token + zone id; an SSH public key.
-- A **T2A region** (e.g. `europe-west4`, `us-central1`, `asia-southeast1`).
+- A GCP **project** with the Compute Engine + IAP APIs enabled.
+- A **service-account JSON key** (provider auth → `GOOGLE_CREDENTIALS`).
+- A Cloudflare **API token** (DNS edit + Zero Trust), the **zone id**, and the **account id**.
 
 ## Apply
 ```bash
-cd infra/gcp-cp
+cd infra/cp-gcp
 cp backend.hcl.example backend.hcl
-cp terraform.tfvars.example terraform.tfvars  # gcp_project, gcp_region/zone, cloudflare_*, ssh_public_key
+cp terraform.tfvars.example terraform.tfvars  # gcp_project, gcp_region/zone, cloudflare_* (token/zone/account)
 export GOOGLE_CREDENTIALS="$(cat service-account.json)"
-terraform init -backend-config=backend.hcl
-terraform apply
-terraform output server_ipv4
+tofu init -backend-config=backend.hcl
+tofu plan && tofu apply
+export TUNNEL_TOKEN="$(tofu output -raw tunnel_token)"
 ```
 
-## CI secrets (`terraform-gcp.yml`)
+## CI secrets (`infra-cp-gcp.yml`)
 `GOOGLE_CREDENTIALS` (SA JSON), `GCP_PROJECT`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`,
-`DEPLOY_SSH_PUBLIC_KEY`, and the `TF_STATE_S3_*` backend secrets.
+`CLOUDFLARE_ACCOUNT_ID`, and the `TF_STATE_S3_*` backend secrets. `apply` is gated behind
+`vars.INFRA_GCP_APPLY`.
 
 ## Tuning
-`machine_type` (`t2a-standard-2` default; `t2a-standard-1` to save), `boot_disk_size`,
-`gcp_region`/`gcp_zone` (must have T2A), `ssh_allowed_cidrs`.
+`machine_type` (`e2-standard-2` default — **must be x86**), `boot_disk_size`, `gcp_region`/`gcp_zone`.
+
+> The egress-only public IP is a single reviewed Trivy exception (`AVD-GCP-0031`) — inbound is closed
+> (web via tunnel, SSH via IAP), so a Cloud NAT (~10× the cost for one box) isn't worth it.

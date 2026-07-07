@@ -1,41 +1,47 @@
 ---
 title: AWS
-description: Provision the Alethia control plane on an AWS Graviton EC2 instance.
+description: Provision the Alethia control plane on an x86 EC2 instance, closed-origin behind a Cloudflare Tunnel, SSH-free via SSM.
 ---
 
-# AWS (`infra/aws-cp`)
+# AWS (`infra/cp-aws`)
 
-A single Graviton **EC2 `t4g.medium`** (2 vCPU / 4 GB) with an Elastic IP, behind Caddy.
-**≈ $36/mo** (Infracost: instance + EBS $32, + ~$3.6 public IPv4); `t4g.large` ≈ $59 if you need
-more RAM.
+A single x86 **EC2 `t3.large`** (2 vCPU / 8 GB) fronted by a Cloudflare Tunnel — **no bastion, no
+open port**. **≈ $65/mo** (approx, region-dependent; `t3.medium` ≈ half if 4 GB fits).
 
 ## What it creates
-- `aws_instance` (`t4g.medium`, Ubuntu 24.04 ARM64) with an encrypted 60 GB gp3 root volume
-- `aws_security_group` (22/80/443) + `aws_key_pair`
-- `aws_eip` (stable public IP) → DNS
-- `cloudflare_record` A for the apex + `www`
+- `aws_instance` (`t3.large`, Ubuntu 24.04 amd64) with an encrypted 60 GB gp3 root; **IMDSv2 required**
+- `aws_security_group` with **no ingress** (egress only) — web is the tunnel, SSH is SSM
+- IAM role + instance profile with **`AmazonSSMManagedInstanceCore`** only (Session Manager)
+- `cloudflare_zero_trust_tunnel_cloudflared` (+ config) and **proxied** CNAMEs (apex + `www`)
 - cloud-init: installs Docker, clones the repo (Docker data on the durable EBS root)
+
+## Access — SSM Session Manager
+No SSH port is open. The SSM agent (preinstalled on the AMI) dials out; connect with:
+```bash
+aws ssm start-session --target <instance_id>
+```
 
 ## Prerequisites
 - AWS credentials for the target account (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`).
-- Cloudflare API token + zone id; an SSH public key.
+- A Cloudflare **API token** with **DNS edit + Zero Trust (Tunnel)** perms, the **zone id**, and the
+  **account id**.
 
 ## Apply
 ```bash
-cd infra/aws-cp
+cd infra/cp-aws
 cp backend.hcl.example backend.hcl
-cp terraform.tfvars.example terraform.tfvars # cloudflare_*, ssh_public_key, domain, aws_region
+cp terraform.tfvars.example terraform.tfvars # cloudflare_* (token/zone/account), domain, aws_region
 export AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…
-terraform init -backend-config=backend.hcl
-terraform apply
-terraform output server_ipv4
+tofu init -backend-config=backend.hcl
+tofu plan && tofu apply
+export TUNNEL_TOKEN="$(tofu output -raw tunnel_token)"
 ```
 
-## CI secrets (`terraform-aws-cp.yml`)
+## CI secrets (`infra-cp-aws.yml`)
 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (provider), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`,
-`DEPLOY_SSH_PUBLIC_KEY`, and the `TF_STATE_S3_*` backend secrets (passed via `-backend-config`, so
-they don't clash with the provider creds).
+`CLOUDFLARE_ACCOUNT_ID`, and the `TF_STATE_S3_*` backend secrets. `apply` is gated behind
+`vars.INFRA_AWS_APPLY`.
 
 ## Tuning
-`instance_type` (`t4g.medium` default → `t4g.large`), `root_volume_size`, `aws_region`,
-`ssh_allowed_cidrs`. Runs in the account's default VPC.
+`instance_type` (`t3.large` default — **must be x86**), `root_volume_size`, `aws_region`. Runs in the
+account's default VPC with an auto-assigned public IP (egress only).
