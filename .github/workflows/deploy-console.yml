@@ -472,9 +472,12 @@ jobs:
             # GCP needs NO separate secret — it federates through the platform AWS identity above
             # (customer WIF pool trusts AWS acct ALETHIA_AWS_ACCOUNT_ID; console mints the subject token
             # from the AWS_* creds). Availability tracks the AWS creds (cloud-connect-setup.ts).
-            # NOTE: AI (AI_GATEWAY_API_KEY) is DELIBERATELY not wired on hosted — the AI tier isn't
-            # monetized yet, so the agent/assistant/Ask-AI features stay off in prod ON PURPOSE. Do
-            # not add the emit without the pricing decision. (lib/config/ai.ts isAiConfigured.)
+            # AI: direct-to-provider (no Vercel AI Gateway). Once the vault has ANTHROPIC_API_KEY the
+            # agent/assistant/Ask-AI features run at the **Free tier** in prod (lib/config/ai.ts
+            # isAiConfigured). OPENAI_API_KEY is only used for openai/* model overrides (emit tolerates
+            # empty). The paid AI tiers (Plus/Max) stay dark until STRIPE_PRICE_AI_* below are set.
+            emit ANTHROPIC_API_KEY
+            emit OPENAI_API_KEY
             emit STRIPE_SECRET_KEY
             emit STRIPE_WEBHOOK_SECRET
             emit NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
@@ -483,6 +486,9 @@ jobs:
             # metered but never charged through Stripe (lib/billing/config.ts meterPriceIdForPlan).
             emit STRIPE_PRICE_METER_TEAM
             emit STRIPE_PRICE_METER_ENTERPRISE
+            # Standalone AI subscription prices — unset ⇒ AI Plus/Max stay dark (AI Free needs none).
+            emit STRIPE_PRICE_AI_PLUS
+            emit STRIPE_PRICE_AI_MAX
             emit ALETHIA_SES_REGION
             emit ALETHIA_SES_ACCESS_KEY_ID
             emit ALETHIA_SES_SECRET_ACCESS_KEY
