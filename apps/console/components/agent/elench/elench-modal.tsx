@@ -63,10 +63,11 @@ export function ElenchModal({
 	// Both contexts persist threads now, so the rail shows for project as well as org.
 	const showSidebar = sidebarOpen;
 
-	// The generative-UI split pane is present whenever an artifact is open (org only).
+	// The generative-UI split pane is present whenever an artifact is open (both
+	// contexts — a project dashboard opens the split pane too).
 	const artifact = useArtifactStore((s) => s.artifact);
 	const closeArtifact = useArtifactStore((s) => s.close);
-	const splitOpen = isOrg && !!artifact;
+	const splitOpen = !!artifact;
 
 	// Drag-resize the split pane from its left edge (distance from the modal's right gutter).
 	const [splitW, setSplitW] = useState(SPLIT_DEFAULT);
@@ -154,17 +155,15 @@ export function ElenchModal({
 								{title}
 							</div>
 							<div className="flex flex-1 items-center justify-end gap-1">
-								{isOrg && (
-									<button
-										type="button"
-										aria-label={splitOpen ? "Close split view" : "Split view"}
-										onClick={() => splitOpen && closeArtifact()}
-										disabled={!splitOpen}
-										className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
-									>
-										<LayoutGrid className="h-4 w-4" />
-									</button>
-								)}
+								<button
+									type="button"
+									aria-label={splitOpen ? "Close split view" : "Split view"}
+									onClick={() => splitOpen && closeArtifact()}
+									disabled={!splitOpen}
+									className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+								>
+									<LayoutGrid className="h-4 w-4" />
+								</button>
 								<button
 									type="button"
 									aria-label="Minimize to panel"

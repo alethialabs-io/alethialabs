@@ -624,3 +624,50 @@ export interface GateEvaluation {
 	/** RFC3339 timestamp of the evaluation. */
 	evaluated_at: string;
 }
+
+// ── Generative dashboard DSL (Elench "build_dashboard" tool) ─────────
+// A small, renderable block list the AI agent emits; the console interprets it with
+// grayscale primitives (no charting library). Kept intentionally minimal.
+
+/** A single headline metric (big number/value + optional caption). */
+export interface DashboardStatBlock {
+	kind: "stat";
+	title: string;
+	value: string | number;
+	sub?: string;
+}
+
+/** A categorical comparison rendered as vertical grayscale bars. */
+export interface DashboardBarBlock {
+	kind: "bar";
+	title: string;
+	data: Array<{ label: string; value: number }>;
+}
+
+/** A trend rendered as an ink-weight sparkline. */
+export interface DashboardLineBlock {
+	kind: "line";
+	title: string;
+	points: number[];
+	label?: string;
+}
+
+/** A compact key/value grid (a set of labelled cells). */
+export interface DashboardGridBlock {
+	kind: "grid";
+	title: string;
+	cells: Array<{ label: string; value: string | number }>;
+}
+
+/** One renderable dashboard block (discriminated by `kind`). */
+export type DashboardBlock =
+	| DashboardStatBlock
+	| DashboardBarBlock
+	| DashboardLineBlock
+	| DashboardGridBlock;
+
+/** A full generative dashboard: a title and an ordered list of blocks. */
+export interface DashboardSpec {
+	title: string;
+	blocks: DashboardBlock[];
+}

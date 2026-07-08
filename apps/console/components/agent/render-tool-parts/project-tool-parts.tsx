@@ -13,12 +13,14 @@ import {
 	ToolView,
 } from "@/components/agent/agent-tool-views";
 import { ApprovalCard } from "@/components/agent/approval-card";
+import { DashboardReadyCard } from "@/components/agent/render-tool-parts/dashboard-card";
 import { ToolPending } from "@/components/agent/render-tool-parts/tool-pending";
 import type { AddToolResult } from "@/components/agent/use-agent-chat";
 import { VerifyBlock } from "@/components/agent/artifact-panel";
 import { applyProposal } from "@/components/design-project/canvas/ai/apply-proposal";
 import { proposeOperationInputSchema } from "@/lib/ai/operation";
 import { proposeChangesInputSchema } from "@/lib/ai/proposal";
+import type { Artifact, ArtifactTab } from "@/lib/stores/use-artifact-store";
 import { Button } from "@repo/ui/button";
 
 const scanResultSchema = z.object({ openInCanvasUrl: z.string().optional() });
@@ -60,6 +62,8 @@ interface ProjectToolPartsDeps {
 	setAccepted: (updater: (a: Record<string, boolean>) => Record<string, boolean>) => void;
 	/** Feed a HITL tool's outcome back to the model so it continues after approval. */
 	addToolResult: AddToolResult;
+	/** Open the artifact panel (dashboard/config/plan/logs) — used by build_dashboard. */
+	openArtifact: (artifact: Artifact, tab: ArtifactTab) => void;
 }
 
 /**
@@ -72,9 +76,24 @@ export function projectRenderToolPart({
 	accepted,
 	setAccepted,
 	addToolResult,
+	openArtifact,
 }: ProjectToolPartsDeps): RenderToolPart {
 	// eslint-disable-next-line react/display-name
 	return function renderProjectToolPart(part: ToolUIPart) {
+		// Generative dashboard ready → an "Open dashboard" card opening the split pane.
+		if (
+			part.type === "tool-build_dashboard" &&
+			part.state === "output-available"
+		) {
+			return (
+				<DashboardReadyCard
+					part={part}
+					openArtifact={openArtifact}
+					context="project"
+				/>
+			);
+		}
+
 		// Design proposal → accept lane (HITL: applies to the canvas, then feeds the
 		// accepted outcome back so the model continues).
 		if (part.type === "tool-propose_changes") {

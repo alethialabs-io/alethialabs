@@ -47,6 +47,13 @@ export const TOOL_AUDIENCE: Record<string, ToolAudience> = {
 	list_connectors: "both",
 	list_cloud_identities: "both",
 	get_cached_resources: "both",
+	// Metrics reads — usage/billing standing for dashboards (secret-free, PDP-gated).
+	get_org_usage: "both",
+	get_ai_usage: "both",
+	get_billing_summary: "both",
+
+	// Generative dashboard — client-rendered viz (spec passthrough), in-app only.
+	build_dashboard: "in-app",
 
 	// Operations — HITL plan/deploy proposals (multi-turn approval).
 	propose_operation: "in-app",
