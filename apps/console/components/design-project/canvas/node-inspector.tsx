@@ -22,7 +22,7 @@ import { CloudIdentitySelector } from "../cloud-identity-selector";
 import { NODE_REGISTRY } from "./graph/node-registry";
 import type { CanvasNode } from "./graph/types";
 import { configName } from "./graph/node-config";
-import { CONFIG_SCHEMA } from "./inspector/config-schema";
+import { getKindConfig } from "./inspector/config-schema";
 import { ConfigFields } from "./inspector/config-fields";
 import { DangerZone } from "./inspector/danger-zone";
 
@@ -72,7 +72,7 @@ export function InspectorPanel({
 	const core = useCanvasStore((s) => s.getCoreIdentity());
 	const provider = node ? getEffectiveProvider(node.id) : null;
 	const def = node ? NODE_REGISTRY[node.data.kind] : null;
-	const schema = node ? CONFIG_SCHEMA[node.data.kind] : undefined;
+	const schema = node ? getKindConfig(node.data.kind) : undefined;
 	if (!node || !def) return null;
 
 	const gated =

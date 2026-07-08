@@ -15,18 +15,26 @@ import {
 	NOSQL,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
-import type { NodeKind } from "../graph/types";
+import type { NodeConfigMap, NodeKind } from "../graph/types";
 
-type Config = Record<string, unknown>;
+/**
+ * The field engine is generic over the node kind's config type `C`. Each per-kind
+ * schema entry (CONFIG_SCHEMA below) is typed to its `NodeConfigMap` fragment, so the
+ * `summary`/`get`/`set`/`visibleWhen` closures read fully-typed config — no casts. The
+ * generic renderer (config-fields.tsx) and the inspector consume the widened default
+ * (`Record<string, unknown>`) via `getKindConfig`, since the node kind is only known at
+ * runtime there — that single erasure is the boundary inherent to a key-driven engine.
+ */
+type AnyConfig = Record<string, unknown>;
 
 /** Context handed to every resolvable field attribute. */
-export interface FieldCtx {
+export interface FieldCtx<C = AnyConfig> {
 	provider: CloudProviderSlug | null;
-	config: Config;
+	config: C;
 }
 
 /** A value that's either static or derived from the field context (provider/config). */
-export type Resolvable<T> = T | ((ctx: FieldCtx) => T);
+export type Resolvable<T, C = AnyConfig> = T | ((ctx: FieldCtx<C>) => T);
 
 export interface FieldOption {
 	value: string;
@@ -43,7 +51,7 @@ export type FieldType =
 	| "region"
 	| "repository";
 
-export interface FieldDef {
+export interface FieldDef<C = AnyConfig> {
 	key: string;
 	type: FieldType;
 	label: string;
@@ -51,11 +59,11 @@ export interface FieldDef {
 	/** Monospace text input (names, CIDR, ids). */
 	mono?: boolean;
 	placeholder?: string;
-	unit?: Resolvable<string>;
-	options?: Resolvable<FieldOption[]>;
-	min?: Resolvable<number>;
-	max?: Resolvable<number>;
-	step?: Resolvable<number>;
+	unit?: Resolvable<string, C>;
+	options?: Resolvable<FieldOption[], C>;
+	min?: Resolvable<number, C>;
+	max?: Resolvable<number, C>;
+	step?: Resolvable<number, C>;
 	/** Parse numeric input as float (default: int unless a fractional step is set). */
 	float?: boolean;
 	/** Field needs an effective cloud provider; renders a notice when none is set. */
@@ -63,32 +71,38 @@ export interface FieldDef {
 	/** Span the full section width (radio-card/region/repository/switch already do). */
 	full?: boolean;
 	/** Hide the field unless the predicate holds (e.g. only when a toggle is on). */
-	visibleWhen?: (config: Config) => boolean;
+	visibleWhen?: (config: C) => boolean;
 	/** Normalize raw text input (e.g. lowercasing a name). */
 	transform?: (raw: string) => string;
 	/** Nested read escape hatch (e.g. `instance_types[0]`). */
-	get?: (config: Config) => unknown;
+	get?: (config: C) => unknown;
 	/** Nested write escape hatch — returns the patch to merge into config. */
-	set?: (value: unknown, config: Config) => Config;
+	set?: (value: unknown, config: C) => Partial<C>;
 }
 
-export interface SectionDef {
+export interface SectionDef<C = AnyConfig> {
 	id: string;
 	title: string;
 	defaultOpen?: boolean;
-	fields: FieldDef[];
+	fields: FieldDef<C>[];
 }
 
-export interface KindConfig {
-	sections: SectionDef[];
+export interface KindConfig<C = AnyConfig> {
+	sections: SectionDef<C>[];
 	/** One-line live summary for the sheet header (e.g. "PostgreSQL · 0.5–4 ACU"). */
-	summary: (config: Config, provider: CloudProviderSlug | null) => string;
+	summary: (config: C, provider: CloudProviderSlug | null) => string;
 }
+
+/** Per-kind schema map: each entry typed to its NodeConfigMap fragment. */
+type ConfigSchemaMap = { [K in NodeKind]?: KindConfig<NodeConfigMap[K]> };
 
 // ── shared field helpers ────────────────────────────────────────────────────
 
-/** A lowercase, monospace resource-name field. */
-const nameField = (transform?: (v: string) => string): FieldDef => ({
+/** A lowercase, monospace resource-name field. Generic so it slots into any kind's
+ * typed field list (the config type is inferred from the surrounding schema entry). */
+const nameField = <C = AnyConfig>(
+	transform?: (v: string) => string,
+): FieldDef<C> => ({
 	key: "name",
 	type: "text",
 	label: "Name",
@@ -128,9 +142,12 @@ const CAPACITY_MODE_DESC: Record<string, string> = {
 };
 
 /** Human label for the current DB engine family. */
-function engineLabel(config: Config): string {
+function engineLabel(config: {
+	engine_family?: string | null;
+	engine?: string | null;
+}): string {
 	const fam =
-		(config.engine_family as string) ??
+		config.engine_family ??
 		(typeof config.engine === "string" && config.engine.includes("mysql")
 			? "mysql"
 			: "postgres");
@@ -139,7 +156,7 @@ function engineLabel(config: Config): string {
 
 // ── per-kind config ─────────────────────────────────────────────────────────
 
-export const CONFIG_SCHEMA: Partial<Record<NodeKind, KindConfig>> = {
+export const CONFIG_SCHEMA: ConfigSchemaMap = {
 	project: {
 		sections: [
 			{
@@ -191,7 +208,7 @@ export const CONFIG_SCHEMA: Partial<Record<NodeKind, KindConfig>> = {
 				],
 			},
 		],
-		summary: (c) => (c.project_name as string) || "Project",
+		summary: (c) => c.project_name || "Project",
 	},
 
 	network: {
@@ -235,8 +252,8 @@ export const CONFIG_SCHEMA: Partial<Record<NodeKind, KindConfig>> = {
 		],
 		summary: (c) =>
 			c.provision_network === false
-				? (c.network_id as string) || "existing network"
-				: (c.cidr_block as string) || "new network",
+				? c.network_id || "existing network"
+				: c.cidr_block || "new network",
 	},
 
 	cluster: {
@@ -261,8 +278,8 @@ export const CONFIG_SCHEMA: Partial<Record<NodeKind, KindConfig>> = {
 						type: "select",
 						label: "Instance type",
 						requiresProvider: true,
-						get: (c) => (c.instance_types as string[] | undefined)?.[0] ?? "",
-						set: (v) => ({ instance_types: [v as string] }),
+						get: (c) => c.instance_types?.[0] ?? "",
+						set: (v) => ({ instance_types: [String(v)] }),
 						options: ({ provider }) =>
 							provider
 								? INSTANCE_TYPES[provider].map((it) => ({
@@ -291,8 +308,8 @@ export const CONFIG_SCHEMA: Partial<Record<NodeKind, KindConfig>> = {
 			},
 		],
 		summary: (c) =>
-			`k8s ${(c.cluster_version as string) ?? "—"} · ${(c.node_min_size as number) ?? 1}–${
-				(c.node_max_size as number) ?? 1
+			`k8s ${c.cluster_version ?? "—"} · ${c.node_min_size ?? 1}–${
+				c.node_max_size ?? 1
 			} nodes`,
 	},
 
@@ -362,8 +379,8 @@ export const CONFIG_SCHEMA: Partial<Record<NodeKind, KindConfig>> = {
 			},
 		],
 		summary: (c) =>
-			`${engineLabel(c)} · ${(c.min_capacity as number) ?? "?"}–${
-				(c.max_capacity as number) ?? "?"
+			`${engineLabel(c)} · ${c.min_capacity ?? "?"}–${
+				c.max_capacity ?? "?"
 			}`,
 	},
 
@@ -407,8 +424,8 @@ export const CONFIG_SCHEMA: Partial<Record<NodeKind, KindConfig>> = {
 			},
 		],
 		summary: (c) =>
-			`${(c.engine as string) === "valkey" ? "Valkey" : "Redis"} · ${
-				(c.node_type as string) ?? "—"
+			`${c.engine === "valkey" ? "Valkey" : "Redis"} · ${
+				c.node_type ?? "—"
 			}`,
 	},
 
@@ -437,7 +454,7 @@ export const CONFIG_SCHEMA: Partial<Record<NodeKind, KindConfig>> = {
 			},
 		],
 		summary: (c) =>
-			`${c.ordered ? "FIFO" : "Standard"} · ${(c.visibility_timeout as number) ?? 30}s`,
+			`${c.ordered ? "FIFO" : "Standard"} · ${c.visibility_timeout ?? 30}s`,
 	},
 
 	topic: {
@@ -449,7 +466,7 @@ export const CONFIG_SCHEMA: Partial<Record<NodeKind, KindConfig>> = {
 				fields: [nameField()],
 			},
 		],
-		summary: (c) => (c.name as string) || "topic",
+		summary: (c) => c.name || "topic",
 	},
 
 	nosql: {
@@ -507,8 +524,8 @@ export const CONFIG_SCHEMA: Partial<Record<NodeKind, KindConfig>> = {
 			},
 		],
 		summary: (c) =>
-			`${(c.partition_key as string) || "id"} · ${
-				(c.capacity_mode as string) === "provisioned" ? "Provisioned" : "On-demand"
+			`${c.partition_key || "id"} · ${
+				c.capacity_mode === "provisioned" ? "Provisioned" : "On-demand"
 			}`,
 	},
 
@@ -544,7 +561,7 @@ export const CONFIG_SCHEMA: Partial<Record<NodeKind, KindConfig>> = {
 			},
 		],
 		summary: (c) =>
-			c.generate === false ? "manual value" : `generated · ${(c.length as number) ?? 32} chars`,
+			c.generate === false ? "manual value" : `generated · ${c.length ?? 32} chars`,
 	},
 
 	dns: {
@@ -572,7 +589,7 @@ export const CONFIG_SCHEMA: Partial<Record<NodeKind, KindConfig>> = {
 			},
 		],
 		summary: (c) =>
-			(c.domain_name as string) || (c.enabled === false ? "disabled" : "enabled"),
+			c.domain_name || (c.enabled === false ? "disabled" : "enabled"),
 	},
 
 	repositories: {
@@ -591,6 +608,16 @@ export const CONFIG_SCHEMA: Partial<Record<NodeKind, KindConfig>> = {
 				],
 			},
 		],
-		summary: (c) => (c.apps_destination_repo as string) || "no repository",
+		summary: (c) => c.apps_destination_repo || "no repository",
 	},
 };
+
+/**
+ * Look up a kind's config schema, widened to the generic renderer's
+ * `Record<string, unknown>` seam. The inspector + config-fields hold a node whose kind
+ * is only known at runtime, so they can't narrow to a specific `NodeConfigMap` fragment;
+ * this single, documented widening is the erasure boundary of the key-driven engine.
+ */
+export function getKindConfig(kind: NodeKind): KindConfig | undefined {
+	return CONFIG_SCHEMA[kind] as KindConfig | undefined;
+}
