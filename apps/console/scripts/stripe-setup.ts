@@ -55,8 +55,8 @@ const LK_METER_PRO = "alethia_runner_minutes_pro";
 const PRO_SEAT_LABEL = `${formatMoney(PRO_UNIT_AMOUNT, "usd")} / seat / mo`;
 
 // ── Standalone AI subscription tiers — flat monthly `licensed` prices. Amounts come from
-// the catalog SSOT (@repo/plan-catalog `aiPlanUnitAmountCents`), which is PLACEHOLDER
-// pricing the maintainer finalizes before go-live. AI Free needs no Stripe price. ──
+// the catalog SSOT (@repo/plan-catalog `aiPlanUnitAmountCents`) — the final maintainer-
+// approved pricing (AI Plus $20/€18, AI Max $100/€90). AI Free needs no Stripe price. ──
 const AI_PLUS_UNIT_AMOUNT = aiPlanUnitAmountCents("ai_plus"); // $ / month
 const AI_PLUS_UNIT_AMOUNT_EUR = aiPlanUnitAmountCents("ai_plus", "eur"); // € / month
 const AI_MAX_UNIT_AMOUNT = aiPlanUnitAmountCents("ai_max"); // $ / month

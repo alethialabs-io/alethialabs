@@ -797,7 +797,7 @@ describe("createCreditPackIntent", () => {
 			confirmation_secret: { client_secret: "ics_1" },
 		} as never);
 
-		const r = await createCreditPackIntent("m"); // 2000 credits / 2900 cents (real catalog)
+		const r = await createCreditPackIntent("m"); // 500 credits / 9900 cents (real catalog)
 
 		expect(r).toEqual({ clientSecret: "ics_1", invoiceId: "in_1" });
 		expect(stripe.invoices.create).toHaveBeenCalledWith({
@@ -805,25 +805,25 @@ describe("createCreditPackIntent", () => {
 			currency: "usd",
 			collection_method: "charge_automatically",
 			auto_advance: false,
-			description: "2,000 AI credits",
+			description: "500 AI credits",
 			metadata: {
 				organization_id: "org-1",
 				user_id: "user-1",
 				product_type: "ai_credits",
-				credits: "2000",
+				credits: "500",
 			},
 		});
 		expect(stripe.invoiceItems.create).toHaveBeenCalledWith({
 			customer: "cus_1",
 			invoice: "in_1",
-			amount: 2900,
+			amount: 9900,
 			currency: "usd",
-			description: "2,000 AI credits",
+			description: "500 AI credits",
 			metadata: {
 				organization_id: "org-1",
 				user_id: "user-1",
 				product_type: "ai_credits",
-				credits: "2000",
+				credits: "500",
 			},
 		});
 		expect(stripe.invoices.finalizeInvoice).toHaveBeenCalledWith("in_1", {

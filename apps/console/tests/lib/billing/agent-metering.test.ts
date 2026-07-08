@@ -94,6 +94,30 @@ describe("recordAgentTurnUsage", () => {
 		});
 	});
 
+	it("records the deep-reasoning 2-credit charge on the first (advisor) row", async () => {
+		// A deep-reasoning turn passes a 2-credit charge; it's booked once, on the advisor row.
+		await recordAgentTurnUsage({
+			orgId: "org-1",
+			userId: "user-1",
+			kind: "agent",
+			charge: { source: "included", credits: 2 },
+			refId: "thread-1",
+			steps: [
+				{ model: SONNET, usage: { inputTokens: 100, outputTokens: 40 } }, // advisor (step 0)
+				{ model: HAIKU, usage: { inputTokens: 300, outputTokens: 80 } }, // executor
+			],
+		});
+		expect(recordAiUsage).toHaveBeenCalledTimes(2);
+		expect(recordAiUsage).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining({ model: SONNET, credits: 2 }),
+		);
+		expect(recordAiUsage).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({ model: HAIKU, credits: 0 }),
+		);
+	});
+
 	it("books the full charge on the single row for a one-model turn", async () => {
 		await recordAgentTurnUsage({
 			orgId: "org-1",

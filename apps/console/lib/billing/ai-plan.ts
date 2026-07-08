@@ -10,7 +10,8 @@
 // All AI spends **AI credits** from one budget (a scan is heavy, a message is light —
 // see ai-credits.ts). Two FIXED epoch buckets scaled by the tier: a **daily** cap and a
 // **weekly** cap. Burn freely until empty, then wait for the reset, upgrade, or buy
-// top-up credits (NO silent overage). Numbers are placeholders — tune here.
+// top-up credits (NO silent overage). These allowances are final (maintainer-approved) —
+// tune here.
 //
 // Pure data + a thin DB read (resolveAiTier). NOT marked `server-only` so the schema can
 // type-import `AiTier`; the client display copy lives in @repo/plan-catalog, so client
@@ -30,7 +31,8 @@ export type AiAdvisor = "none" | "sonnet" | "opus";
 export interface AiTierSpec {
 	/** AI usable at all on this tier (always true today; future-proofs a disabled tier). */
 	enabled: boolean;
-	/** Advisor (planning) model — `none` on free (executor-only), Sonnet on Plus, Opus on Max. */
+	/** Advisor (planning) model — `none` on free (executor-only), Sonnet on Plus and Max
+	 *  (Max upgrades to Opus per-message via the deep-reasoning opt-in). */
 	advisor: AiAdvisor;
 	/** Included AI credits per fixed calendar day (the daily-% denominator). */
 	dailyCredits: number;
@@ -47,42 +49,43 @@ export interface AiTierSpec {
 }
 
 /**
- * The AI-tier ladder (PLACEHOLDER allowances — tunable here; credits: message=1, scan=20):
+ * The AI-tier ladder (final maintainer-approved allowances; credits: message=1,
+ * deep-reasoning message=2, scan=20):
  *  - ai_free → everyone: a usable daily/weekly allowance, Haiku executor only (no advisor).
  *  - ai_plus → paid AI subscription: bigger caps + a Sonnet advisor.
- *  - ai_max  → top AI subscription: the largest caps + an Opus advisor.
+ *  - ai_max  → top AI subscription: the largest caps + a Sonnet advisor (Opus on demand,
+ *    per-message via the deep-reasoning opt-in — see lib/config/ai.ts `getAdvisorModel`).
  *
- * The `perUser*` sub-caps are ALSO PLACEHOLDERS — a fraction (~60–35%) of the org cap that
- * bounds any single seat so it can't exhaust the whole workspace's allowance. Exact fractions
- * are set at go-live; do not read pricing intent into these numbers.
+ * The `perUser*` sub-caps bound any single seat to a fraction of the org cap so one member
+ * can't exhaust the whole workspace's included allowance.
  */
 export const AI_TIERS: Record<AiTier, AiTierSpec> = {
 	ai_free: {
 		enabled: true,
 		advisor: "none",
-		dailyCredits: 25,
-		weeklyCredits: 100,
-		// PLACEHOLDER per-seat sub-cap (~60% of the org cap: free orgs are usually one seat).
-		perUserDailyCredits: 15,
-		perUserWeeklyCredits: 60,
+		dailyCredits: 5,
+		weeklyCredits: 15,
+		// Per-seat sub-cap = the full org cap (free orgs are usually a single seat).
+		perUserDailyCredits: 5,
+		perUserWeeklyCredits: 15,
 	},
 	ai_plus: {
 		enabled: true,
 		advisor: "sonnet",
-		dailyCredits: 200,
-		weeklyCredits: 1_500,
-		// PLACEHOLDER per-seat sub-cap (~40% of the org cap: paid orgs have several seats).
-		perUserDailyCredits: 80,
-		perUserWeeklyCredits: 600,
+		dailyCredits: 40,
+		weeklyCredits: 180,
+		// Per-seat sub-cap (paid orgs have several seats sharing the pool).
+		perUserDailyCredits: 25,
+		perUserWeeklyCredits: 110,
 	},
 	ai_max: {
 		enabled: true,
-		advisor: "opus",
-		dailyCredits: 1_000,
-		weeklyCredits: 8_000,
-		// PLACEHOLDER per-seat sub-cap (~30% of the org cap: larger teams share the pool).
-		perUserDailyCredits: 300,
-		perUserWeeklyCredits: 2_500,
+		advisor: "sonnet",
+		dailyCredits: 200,
+		weeklyCredits: 900,
+		// Per-seat sub-cap (larger teams share the pool).
+		perUserDailyCredits: 130,
+		perUserWeeklyCredits: 550,
 	},
 };
 

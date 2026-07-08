@@ -124,6 +124,32 @@ describe("assertAiAllowed", () => {
 		expect(sumCreditsForUser).not.toHaveBeenCalled();
 	});
 
+	describe("deep reasoning", () => {
+		it("threads the deepReasoning flag into creditsFor so the booked charge reflects it", async () => {
+			// A deep-reasoning agent turn costs 2 credits vs 1 for a normal message.
+			vi.mocked(creditsFor).mockImplementation((_kind, opts) =>
+				opts?.deepReasoning ? 2 : 1,
+			);
+			vi.mocked(sumCredits).mockResolvedValue(0);
+
+			const charge = await assertAiAllowed("org-1", "agent", "user-1", {
+				deepReasoning: true,
+			});
+			expect(creditsFor).toHaveBeenCalledWith("agent", { deepReasoning: true });
+			expect(charge).toEqual({ source: "included", credits: 2 });
+		});
+
+		it("books the normal 1-credit charge when deepReasoning is unset (back-compat)", async () => {
+			vi.mocked(creditsFor).mockImplementation((_kind, opts) =>
+				opts?.deepReasoning ? 2 : 1,
+			);
+			vi.mocked(sumCredits).mockResolvedValue(0);
+
+			const charge = await assertAiAllowed("org-1", "agent", "user-1");
+			expect(charge).toEqual({ source: "included", credits: 1 });
+		});
+	});
+
 	describe("per-user sub-caps", () => {
 		it("charges included when the seat is within its personal caps (org has room too)", async () => {
 			vi.mocked(sumCredits).mockResolvedValue(0); // org empty

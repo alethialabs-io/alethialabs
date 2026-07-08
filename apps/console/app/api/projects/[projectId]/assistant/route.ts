@@ -111,7 +111,19 @@ export async function POST(
 
 	const { projectId } = await params;
 	const actor = await currentActor();
-	const charge = await assertAiAllowed(actor.orgId, "agent", actor.userId).catch((e: unknown) => {
+	const {
+		messages,
+		canvas,
+		threadId,
+		mentions,
+		deepReasoning: deepReasoningRaw,
+	}: ProjectAssistantBody = await req.json();
+	const deepReasoning = deepReasoningSchema.parse(deepReasoningRaw);
+
+	// Book the up-front budget check at the deep-reasoning-aware cost (Opus turn = 2 credits).
+	const charge = await assertAiAllowed(actor.orgId, "agent", actor.userId, {
+		deepReasoning,
+	}).catch((e: unknown) => {
 		if (e instanceof AiBudgetError) return e;
 		throw e;
 	});
@@ -126,15 +138,6 @@ export async function POST(
 			{ status: 402, headers: { "content-type": "application/json" } },
 		);
 	}
-
-	const {
-		messages,
-		canvas,
-		threadId,
-		mentions,
-		deepReasoning: deepReasoningRaw,
-	}: ProjectAssistantBody = await req.json();
-	const deepReasoning = deepReasoningSchema.parse(deepReasoningRaw);
 
 	// Cost-optimized orchestration: a tier-derived ADVISOR plans step 0, then a cheap Haiku
 	// EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor). The advisor
