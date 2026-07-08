@@ -132,8 +132,9 @@ async function ensureMeterPrice(
 ): Promise<Stripe.Price> {
 	const tiers = (overageDecimal: string): Stripe.PriceCreateParams.Tier[] => [
 		{ up_to: RUNNER_INCLUDED_PRO, unit_amount: 0 },
-		// Sub-cent per-minute overage → the branded Decimal (serializes to e.g. "1.2").
-		{ up_to: "inf", unit_amount_decimal: Stripe.Decimal.from(overageDecimal) },
+		// Sub-cent per-minute overage as a plain decimal string — a Stripe.Decimal object
+		// serializes wrong when nested under currency_options (sends {_exponent,_coefficient}).
+		{ up_to: "inf", unit_amount_decimal: overageDecimal },
 	];
 	const found = await stripe.prices.list({
 		lookup_keys: [LK_METER_PRO],
