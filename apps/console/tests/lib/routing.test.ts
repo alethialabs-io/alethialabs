@@ -54,13 +54,19 @@ describe("href builders", () => {
 	it("build the C2 drilldown paths", () => {
 		expect(orgHref("acme")).toBe("/acme");
 		expect(globalHref("acme", "settings/billing")).toBe("/acme/~/settings/billing");
-		expect(projectHref("acme", "api")).toBe("/acme/api");
 		expect(envHref("acme", "api", "env-123")).toBe(
 			"/acme/api/architecture?environment_id=env-123",
 		);
 		expect(projectSettingsHref("acme", "api", "activity")).toBe(
 			"/acme/api/settings/activity",
 		);
+	});
+
+	it("targets a project's Architecture directly (not the bare /{org}/{project})", () => {
+		// In-app project links point at the final destination so a client navigation never makes
+		// Next's Router process the bare-URL server redirect mid-nav — that mid-nav redirect threw
+		// "Rendered more hooks than during the previous render" on soft clicks (fine on hard reload).
+		expect(projectHref("acme", "api")).toBe("/acme/api/architecture");
 	});
 });
 

@@ -24,3 +24,26 @@ Object.assign(process.env, TEST_ENV);
 vi.mock("next-runtime-env", () => ({
 	env: (key: string) => process.env[key],
 }));
+
+// jsdom lacks a few DOM APIs that Radix UI / cmdk touch on mount (ResizeObserver, layout
+// measurement, pointer capture). Stub them so dialog/command/select-based components render in
+// component tests. Purely additive — only fills gaps jsdom doesn't provide.
+if (!globalThis.ResizeObserver) {
+	globalThis.ResizeObserver = class {
+		observe() {}
+		unobserve() {}
+		disconnect() {}
+	};
+}
+// Element only exists in the jsdom project; node-environment tests skip these DOM stubs.
+if (typeof Element !== "undefined") {
+	if (!Element.prototype.scrollIntoView) {
+		Element.prototype.scrollIntoView = () => {};
+	}
+	if (!Element.prototype.hasPointerCapture) {
+		Element.prototype.hasPointerCapture = () => false;
+	}
+	if (!Element.prototype.releasePointerCapture) {
+		Element.prototype.releasePointerCapture = () => {};
+	}
+}
