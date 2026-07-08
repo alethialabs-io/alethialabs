@@ -14,6 +14,7 @@ import { getEmailConfig } from "@repo/email/config";
 import type { EmailAttachment } from "@repo/email/send";
 import { eq } from "drizzle-orm";
 import { planForPriceId } from "@/lib/billing/config";
+import { issueFactura } from "@/lib/billing/odoo-invoice";
 import { getStripe } from "@/lib/billing/stripe";
 import { getServiceDb } from "@/lib/db";
 import { organization } from "@/lib/db/schema";
@@ -91,19 +92,24 @@ async function recipient(
 	return c.deleted ? null : (c.email ?? null);
 }
 
-/** Downloads a Stripe-hosted invoice PDF as an attachment (best-effort — null on
- *  any failure so a fetch hiccup never blocks the receipt email). The invoice_pdf
- *  URL is tokenized and needs no API key. */
+/** The invoice PDF to attach to the receipt: the branded Odoo фактура when Odoo is
+ *  configured, else Stripe's hosted PDF. Best-effort — null on any failure so a hiccup
+ *  never blocks the receipt email. */
 async function invoicePdfAttachment(
 	invoice: Stripe.Invoice,
 ): Promise<EmailAttachment | null> {
+	const factura = await issueFactura(invoice);
+	if (factura) {
+		const name = (factura.number ?? invoice.number ?? invoice.id ?? "invoice").replace(/\//g, "-");
+		return { filename: `Invoice-${name}.pdf`, content: factura.pdf, contentType: "application/pdf" };
+	}
 	const url = invoice.invoice_pdf;
 	if (!url) return null;
 	try {
 		const res = await fetch(url);
 		if (!res.ok) return null;
 		const content = new Uint8Array(await res.arrayBuffer());
-		const name = invoice.number ?? invoice.id ?? "invoice";
+		const name = (invoice.number ?? invoice.id ?? "invoice").replace(/\//g, "-");
 		return { filename: `Invoice-${name}.pdf`, content, contentType: "application/pdf" };
 	} catch {
 		return null;

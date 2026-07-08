@@ -3,12 +3,14 @@
 
 // The mirror + typed reads for locally-owned invoices. Stripe remains the payment rail,
 // but every invoice for which money actually moved is mirrored into our `invoice` table
-// by the Stripe webhook (mirrorPaidInvoice), with Stripe's finalized PDF captured into
-// object storage so the billing UI owns the document and never hits the Stripe API at
-// page load. Idempotent on stripe_invoice_id, so a replayed webhook converges to one row.
+// by the Stripe webhook (mirrorPaidInvoice). The stored document + number are the branded
+// Odoo фактура (issueFactura) when Odoo is configured, else Stripe's finalized PDF — either
+// way captured into object storage so the billing UI owns the document and never hits the
+// Stripe API at page load. Idempotent on stripe_invoice_id, so a replay converges to one row.
 
 import type Stripe from "stripe";
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
+import { type OdooFactura, issueFactura } from "@/lib/billing/odoo-invoice";
 import { getServiceDb } from "@/lib/db";
 import { type Invoice, invoice } from "@/lib/db/schema";
 import type { InvoiceStatus } from "@/lib/db/schema/enums";
@@ -27,26 +29,35 @@ function toDate(epochSeconds: number | null | undefined): Date | null {
 	return epochSeconds ? new Date(epochSeconds * 1000) : null;
 }
 
-/**
- * Captures Stripe's finalized, tokenized invoice PDF into object storage (best-effort:
- * returns the stored key, or null so a fetch hiccup never blocks recording the invoice —
- * the hosted URL is kept as a fallback). The invoice_pdf URL needs no API key.
- */
-async function captureInvoicePdf(
-	orgId: string,
-	inv: Stripe.Invoice,
-): Promise<string | null> {
-	if (!inv.invoice_pdf || !inv.id) return null;
+/** Fetches Stripe's finalized, tokenized invoice PDF bytes (best-effort; the URL needs no
+ *  API key). Used as the fallback when the Odoo фактура isn't available. */
+async function fetchStripePdf(inv: Stripe.Invoice): Promise<Uint8Array | null> {
+	if (!inv.invoice_pdf) return null;
 	try {
 		const res = await fetch(inv.invoice_pdf);
 		if (!res.ok) return null;
-		const bytes = new Uint8Array(await res.arrayBuffer());
-		const key = invoicePdfKey(orgId, inv.id);
-		await storage.put(INVOICE_PDF_BUCKET, key, bytes, "application/pdf");
-		return key;
+		return new Uint8Array(await res.arrayBuffer());
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * Stores the invoice document (the branded Odoo фактура when issued, else Stripe's PDF) into
+ * object storage (best-effort: returns the stored key, or null so a hiccup never blocks
+ * recording the invoice — the hosted URL is kept as a fallback).
+ */
+async function storeInvoicePdf(
+	orgId: string,
+	inv: Stripe.Invoice,
+	factura: OdooFactura | null,
+): Promise<string | null> {
+	if (!inv.id) return null;
+	const bytes = factura?.pdf ?? (await fetchStripePdf(inv));
+	if (!bytes) return null;
+	const key = invoicePdfKey(orgId, inv.id);
+	await storage.put(INVOICE_PDF_BUCKET, key, bytes, "application/pdf");
+	return key;
 }
 
 /**
@@ -61,12 +72,15 @@ export async function mirrorPaidInvoice(
 	orgId: string,
 ): Promise<void> {
 	if (!inv.id) return;
-	const pdfKey = await captureInvoicePdf(orgId, inv);
+	// The branded Odoo фактура is the invoice of record (its number + PDF); Stripe is the
+	// fallback when Odoo isn't configured/reachable.
+	const factura = await issueFactura(inv);
+	const pdfKey = await storeInvoicePdf(orgId, inv, factura);
 	const values = {
 		organizationId: orgId,
 		stripeInvoiceId: inv.id,
 		stripeCustomerId: customerIdOf(inv),
-		number: inv.number ?? null,
+		number: factura?.number ?? inv.number ?? null,
 		status: "paid" as InvoiceStatus,
 		amountTotal: inv.total,
 		currency: inv.currency,
