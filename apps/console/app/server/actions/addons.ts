@@ -24,12 +24,13 @@ import type {
 	AddOnIcon,
 	AddOnRequirement,
 } from "@/lib/addons/types";
+import type { AddOnValues } from "@/types/jsonb.types";
 
 /** The install state of an add-on on an environment (null when not enabled). */
 export interface AddonInstallState {
 	enabled: boolean;
 	mode: AddonMode;
-	values: Record<string, unknown>;
+	values: AddOnValues;
 	/** Raw Helm-values YAML override (Advanced), or null. */
 	valuesYaml: string | null;
 	status: ComponentStatus;
@@ -146,7 +147,7 @@ export async function enableAddon(input: {
 	environmentId?: string | null;
 	addonId: string;
 	mode?: AddonMode;
-	values?: Record<string, unknown>;
+	values?: AddOnValues;
 	/** Raw Helm-values YAML override (Advanced). Validated as YAML here. */
 	valuesYaml?: string | null;
 }): Promise<{ ok: true }> {
@@ -184,7 +185,7 @@ export async function enableAddon(input: {
 				addon_id: def.id,
 				enabled: true,
 				mode,
-				values: parsed.data as Record<string, unknown>,
+				values: parsed.data as AddOnValues,
 				values_yaml: valuesYaml,
 				namespace: def.namespace,
 				status: "PENDING",
@@ -198,7 +199,7 @@ export async function enableAddon(input: {
 				set: {
 					enabled: true,
 					mode,
-					values: parsed.data as Record<string, unknown>,
+					values: parsed.data as AddOnValues,
 					values_yaml: valuesYaml,
 					status: "PENDING",
 					updated_at: new Date(),

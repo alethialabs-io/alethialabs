@@ -8,6 +8,7 @@ import { authClient } from "@/lib/auth/client";
 import { requestEmailCode } from "@/app/server/actions/auth";
 import { track } from "@/lib/analytics/track";
 import { safeNext } from "@/lib/auth/safe-next";
+import { arrayIncludes } from "@/lib/type-guards";
 import { AuthCard } from "@/components/auth/auth-shell";
 import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
 import { Button } from "@repo/ui/button";
@@ -202,9 +203,9 @@ export function AuthForm({ mode }: AuthFormProps) {
 	useEffect(() => {
 		if (providerHintFired.current) return;
 		const hinted = searchParams.get("provider");
-		if (hinted && (oauthProviders as string[]).includes(hinted)) {
+		if (hinted && arrayIncludes(oauthProviders, hinted)) {
 			providerHintFired.current = true;
-			void handleOAuthLogin(hinted as AuthProvider);
+			void handleOAuthLogin(hinted);
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);

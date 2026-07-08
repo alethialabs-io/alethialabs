@@ -1282,8 +1282,7 @@ export async function duplicateProjectForProvider(
 	converted.project.region = targetRegion;
 	converted.project.cloud_identity_id = targetCloudIdentityId;
 
-	const input = converted as unknown as CreateProjectInput;
-	const { project } = await createProject(input);
+	const { project } = await createProject(converted);
 	if (!project.slug) throw new Error("Duplicated project is missing a slug");
 
 	return {
@@ -1438,12 +1437,7 @@ export async function duplicateEnvironment(
 		if (!env) throw new Error("Failed to create environment");
 		// Copy the base env's components into the new env (fresh rows, status defaults to PENDING).
 		if (baseConfig)
-			await writeComponents(
-				tx,
-				projectId,
-				env.id,
-				baseConfig as unknown as CreateProjectInput,
-			);
+			await writeComponents(tx, projectId, env.id, baseConfig);
 		return { environment: env };
 	});
 }

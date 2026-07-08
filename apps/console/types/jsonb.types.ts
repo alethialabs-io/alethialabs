@@ -7,6 +7,40 @@ import type { AlertSeverity } from "@/lib/db/schema/enums";
 
 // ── Typed JSONB interfaces ─────────────────────────────────────────
 
+/**
+ * The `credential_source` block of a GCP Workload Identity Federation
+ * `external_account` credential — the union of the file/url/aws/executable
+ * source shapes Google's client library accepts. All fields optional: the
+ * concrete subset present depends on the federation type.
+ */
+export interface WifCredentialSource {
+	file?: string;
+	url?: string;
+	headers?: Record<string, string>;
+	environment_id?: string;
+	region_url?: string;
+	regional_cred_verification_url?: string;
+	executable?: { command: string; timeout_millis?: number; output_file?: string };
+	format?: { type?: string; subject_token_field_name?: string };
+}
+
+/**
+ * A GCP Workload Identity Federation credential config (the pasted
+ * `external_account` JSON). Fields are optional because the value is parsed
+ * from untrusted input and validated field-by-field in `parseWifConfig`.
+ */
+export interface WifCredentialConfig {
+	type?: string;
+	audience?: string;
+	subject_token_type?: string;
+	token_url?: string;
+	token_info_url?: string;
+	service_account_impersonation_url?: string;
+	service_account_impersonation?: { token_lifetime_seconds?: number };
+	credential_source?: WifCredentialSource;
+	universe_domain?: string;
+}
+
 export interface CloudCredentials {
 	// AWS
 	role_arn?: string | null;
@@ -16,7 +50,7 @@ export interface CloudCredentials {
 	project_id?: string | null;
 	project_number?: string | null;
 	service_account_email?: string | null;
-	wif_config?: Record<string, unknown> | null;
+	wif_config?: WifCredentialConfig | null;
 	// Azure (Federated Identity)
 	tenant_id?: string | null;
 	client_id?: string | null;
