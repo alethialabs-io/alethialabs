@@ -10,6 +10,7 @@
 import { useMemo } from "react";
 import { graphToForm } from "@/components/design-project/canvas/graph/graph-to-form";
 import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-registry";
+import { configName } from "@/components/design-project/canvas/graph/node-config";
 import type {
 	CanvasNode,
 	NodeKind,
@@ -75,7 +76,7 @@ const ARRAY_SCHEMA_KIND: Record<string, NodeKind> = {
 export function nodeStatusKey(node: CanvasNode): string {
 	const def = NODE_REGISTRY[node.data.kind];
 	if (def.cardinality === "singleton") return node.data.kind;
-	const name = (node.data.config.name as string | undefined) ?? "";
+	const name = configName(node.data) ?? "";
 	return `${node.data.kind}:${name}`;
 }
 

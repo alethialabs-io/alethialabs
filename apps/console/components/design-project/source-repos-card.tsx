@@ -30,7 +30,8 @@ export function SourceReposCard() {
 	const nodes = useCanvasStore((s) => s.nodes);
 	const repos = useMemo<SourceRepoRow[]>(() => {
 		const project = nodes.find((n) => n.id === PROJECT_NODE_ID);
-		const sr = project?.data.config.source_repos;
+		const sr =
+			project?.data.kind === "project" ? project.data.config.source_repos : undefined;
 		return Array.isArray(sr) ? (sr as SourceRepoRow[]) : [];
 	}, [nodes]);
 

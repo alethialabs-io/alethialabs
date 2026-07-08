@@ -7,17 +7,17 @@ import type { CanvasNode } from "../graph/types";
 import { BaseNode } from "./base-node";
 
 /** Secret node (periphery). */
-export function SecretNode({ id, data, selected }: NodeProps<CanvasNode>) {
+export function SecretNode({ id, data, selected }: NodeProps<CanvasNode<"secret">>) {
 	const c = data.config;
 	return (
 		<BaseNode
 			id={id}
-			title={(c.name as string) || "secret"}
+			title={c.name || "secret"}
 			selected={selected}
 			handles={{ target: true }}
 		>
 			<div className="font-mono text-[10px] text-muted-foreground">
-				{c.generate ? `generated · ${(c.length as number) ?? 32} chars` : "manual"}
+				{c.generate ? `generated · ${c.length ?? 32} chars` : "manual"}
 			</div>
 		</BaseNode>
 	);

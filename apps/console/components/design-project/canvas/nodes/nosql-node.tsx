@@ -7,18 +7,18 @@ import type { CanvasNode } from "../graph/types";
 import { BaseNode } from "./base-node";
 
 /** NoSQL table node. */
-export function NosqlNode({ id, data, selected }: NodeProps<CanvasNode>) {
+export function NosqlNode({ id, data, selected }: NodeProps<CanvasNode<"nosql">>) {
 	const c = data.config;
 	return (
 		<BaseNode
 			id={id}
-			title={(c.name as string) || "table"}
+			title={c.name || "table"}
 			selected={selected}
 			handles={{ target: true }}
 		>
 			<div className="font-mono text-[10px] text-muted-foreground">
-				pk: {(c.partition_key as string) || "id"}
-				{c.sort_key ? ` · sk: ${c.sort_key as string}` : ""}
+				pk: {c.partition_key || "id"}
+				{c.sort_key ? ` · sk: ${c.sort_key}` : ""}
 			</div>
 		</BaseNode>
 	);

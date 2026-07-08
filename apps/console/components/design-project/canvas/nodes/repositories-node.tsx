@@ -7,9 +7,9 @@ import type { CanvasNode } from "../graph/types";
 import { BaseNode } from "./base-node";
 
 /** GitOps repository node (not cloud-scoped). */
-export function RepositoriesNode({ id, data, selected }: NodeProps<CanvasNode>) {
+export function RepositoriesNode({ id, data, selected }: NodeProps<CanvasNode<"repositories">>) {
 	const c = data.config;
-	const repo = (c.apps_destination_repo as string) || "";
+	const repo = c.apps_destination_repo || "";
 	const short = repo.replace(/^https?:\/\//, "").replace(/\.git$/, "");
 	return (
 		<BaseNode
