@@ -1,48 +1,37 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Live LLM exercise (opt-in): drives the supervisor + LLM sub-agent runner against
-// the REAL AI gateway, end-to-end. Gated behind ELENCH_LIVE=1 (and a configured key)
-// so it is SKIPPED in normal CI — it makes a non-deterministic, credit-spending
-// network call. Run explicitly: ELENCH_LIVE=1 AI_GATEWAY_API_KEY=… pnpm -F console \
+// Live LLM exercise (opt-in): drives the supervisor + LLM sub-agent runner against the
+// REAL model, end-to-end — through the SAME direct-to-provider path production uses
+// (lib/config/ai `getExecutorModel()` → `@ai-sdk/anthropic` → api.anthropic.com, no
+// Vercel AI Gateway). Gated behind ELENCH_LIVE=1 and a direct Anthropic key so it is
+// SKIPPED in normal CI (it makes a non-deterministic, credit-spending network call).
+// Run explicitly: ELENCH_LIVE=1 ANTHROPIC_API_KEY=sk-ant-… pnpm -F console \
 //   exec vitest run tests/lib/agent/llm-live.test.ts
 
+import { generateText } from "ai";
 import { describe, expect, it } from "vitest";
 import { createLlmSubAgentRunner } from "@/lib/agent/llm-subagent";
 import { runSupervisor } from "@/lib/agent/supervisor";
+import { getExecutorModel } from "@/lib/config/ai";
 
-// Production routes call the model through the Vercel AI Gateway. For an offline
-// live EXERCISE we inject a raw Anthropic Messages-API call (the injection seam's
-// whole point) when a direct Anthropic key is present — proving the supervisor →
-// sub-agent runner → real model → parse → completion path runs end-to-end.
-const key =
-	process.env.ANTHROPIC_API_KEY || process.env.AI_GATEWAY_API_KEY || "";
+// A direct Anthropic key (sk-ant…) is required: this proves the gateway-free path works
+// with a native provider key — the whole point of the de-gateway refactor.
+const key = process.env.ANTHROPIC_API_KEY || "";
 const live = process.env.ELENCH_LIVE === "1" && key.startsWith("sk-ant");
 
-async function anthropicGenerate(prompt: string): Promise<string> {
-	const res = await fetch("https://api.anthropic.com/v1/messages", {
-		method: "POST",
-		headers: {
-			"content-type": "application/json",
-			"x-api-key": key,
-			"anthropic-version": "2023-06-01",
-		},
-		body: JSON.stringify({
-			model: "claude-sonnet-4-6",
-			max_tokens: 256,
-			messages: [{ role: "user", content: prompt }],
-		}),
-	});
-	if (!res.ok) throw new Error(`anthropic ${res.status}: ${await res.text()}`);
-	const data = (await res.json()) as { content?: { text?: string }[] };
-	return data.content?.[0]?.text ?? "";
+/** Generate via the production resolver — direct to the provider, no gateway. */
+async function generate(prompt: string): Promise<string> {
+	const { model } = getExecutorModel();
+	const { text } = await generateText({ model, prompt });
+	return text;
 }
 
-describe.runIf(live)("live LLM colony exercise", () => {
+describe.runIf(live)("live LLM colony exercise (direct provider)", () => {
 	it(
-		"runs the supervisor end-to-end against the real model",
+		"runs the supervisor end-to-end against the real model via the direct provider",
 		async () => {
-			const runner = createLlmSubAgentRunner(anthropicGenerate);
+			const runner = createLlmSubAgentRunner(generate);
 
 			const res = await runSupervisor(
 				[

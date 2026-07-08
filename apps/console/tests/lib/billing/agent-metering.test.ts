@@ -17,8 +17,8 @@ import {
 } from "@/lib/billing/agent-metering";
 import { recordAiUsage } from "@/lib/billing/ai-quota";
 
-const HAIKU = "anthropic/claude-haiku-4.5";
-const SONNET = "anthropic/claude-sonnet-4.6";
+const HAIKU = "anthropic/claude-haiku-4-5";
+const SONNET = "anthropic/claude-sonnet-4-6";
 
 beforeEach(() => vi.clearAllMocks());
 

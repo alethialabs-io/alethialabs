@@ -17,7 +17,7 @@ describe("ChatError", () => {
 	it("classifies a 503 'not configured' body as missing-key", () => {
 		render(
 			<ChatError
-				error={new Error("AI is not configured. Set AI_GATEWAY_API_KEY to enable the agent.")}
+				error={new Error("AI is not configured. Set ANTHROPIC_API_KEY to enable the agent.")}
 			/>,
 		);
 		expect(screen.getByText("AI is not configured")).toBeInTheDocument();
@@ -113,7 +113,7 @@ describe("ChatError", () => {
 	});
 
 	it("reports the surfaced error kind to analytics (kind only, no raw message)", () => {
-		render(<ChatError error={new Error("Set AI_GATEWAY_API_KEY")} />);
+		render(<ChatError error={new Error("Set ANTHROPIC_API_KEY")} />);
 		expect(vi.mocked(track)).toHaveBeenCalledWith("elench_error", {
 			kind: "missing-key",
 		});
