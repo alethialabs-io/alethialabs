@@ -495,18 +495,28 @@ describe("get_org_usage", () => {
 });
 
 describe("get_ai_usage", () => {
-	it("maps the AI credit standing to the trimmed shape (no secret fields)", async () => {
+	it("maps the AI standing to the trimmed shape (tier + daily/weekly, no secret fields)", async () => {
 		vi.mocked(getAiUsageSummary).mockResolvedValue({
 			enabled: true,
-			windowUsed: 42,
-			weeklyBudget: 100,
+			tier: "ai_plus",
+			dailyUsed: 12,
+			dailyBudget: 200,
+			dailyResetAt: "2100-01-01T00:00:00.000Z",
+			weeklyUsed: 42,
+			weeklyBudget: 1500,
+			weeklyResetAt: "2100-01-02T00:00:00.000Z",
 			purchasedBalance: 250,
 		} as never);
 		const out = (await run(readTools().get_ai_usage, {})) as Record<string, unknown>;
 		expect(out).toEqual({
 			enabled: true,
-			window_used: 42,
-			weekly_budget: 100,
+			tier: "ai_plus",
+			daily_used: 12,
+			daily_budget: 200,
+			daily_reset_at: "2100-01-01T00:00:00.000Z",
+			weekly_used: 42,
+			weekly_budget: 1500,
+			weekly_reset_at: "2100-01-02T00:00:00.000Z",
 			purchased_balance: 250,
 		});
 	});

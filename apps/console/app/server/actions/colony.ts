@@ -10,7 +10,7 @@ import {
 	runSupervisor,
 } from "@/lib/agent/supervisor";
 import { currentActor } from "@/lib/authz/guard";
-import { assertAiAllowed } from "@/lib/billing/ai-guard";
+import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
 import { recordAiUsage } from "@/lib/billing/ai-quota";
 import { getAiModel, isAiConfigured } from "@/lib/config/ai";
 
@@ -36,8 +36,12 @@ export async function runColonyTasks(
 		throw new Error("at least one objective is required");
 	}
 
-	// Budget-gate the run (throws AiBudgetError when over the window/weekly limit).
-	const charge = await assertAiAllowed(actor.orgId, "agent");
+	// Budget-gate the run. Surface a clean budget message (never a raw AiBudgetError) so the
+	// caller can toast "You're out of AI usage…" with the reset time instead of a stack.
+	const charge = await assertAiAllowed(actor.orgId, "agent").catch((e: unknown) => {
+		if (e instanceof AiBudgetError) throw new Error(e.message);
+		throw e;
+	});
 
 	const modelId = getAiModel();
 	let inputTokens = 0;

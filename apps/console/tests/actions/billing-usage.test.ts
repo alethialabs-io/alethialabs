@@ -173,23 +173,33 @@ describe("getAiUsageSummary", () => {
 		actor.mockResolvedValue({ orgId: "user-1", userId: "user-1" } as never);
 		orgBilling.mockResolvedValue(null);
 		const r = await getAiUsageSummary();
-		expect(r.windowUsed).toBe(0);
+		expect(r.tier).toBe("ai_free");
+		expect(r.dailyUsed).toBe(0);
+		expect(r.weeklyUsed).toBe(0);
 		expect(r.purchasedBalance).toBe(0);
-		expect(r.weeklyBudget).toBe(AI_TIERS.ai_free.weeklyCredits); // ai_free weekly
+		expect(r.dailyBudget).toBe(AI_TIERS.ai_free.dailyCredits);
+		expect(r.weeklyBudget).toBe(AI_TIERS.ai_free.weeklyCredits);
+		// Reset timestamps are valid ISO strings in the future.
+		expect(new Date(r.dailyResetAt).getTime()).toBeGreaterThan(Date.now());
+		expect(new Date(r.weeklyResetAt).getTime()).toBeGreaterThan(Date.now());
 		expect(sumCredits).not.toHaveBeenCalled();
 	});
 
-	it("reports the trailing-week spend + purchased balance against the AI tier's budget", async () => {
-		// The AI budget is the STANDALONE tier's weekly grant, independent of the org plan.
+	it("reports daily + weekly included spend against the AI tier's caps", async () => {
+		// The AI budget is the STANDALONE tier's daily/weekly grant, independent of the org plan.
 		orgBilling.mockResolvedValue(
 			billing({ aiTier: "ai_plus", aiSubscriptionStatus: "active" }),
 		);
-		vi.mocked(sumCredits).mockResolvedValue(1240);
+		// getAiUsageSummary sums daily first, then weekly, then purchased balance.
+		vi.mocked(sumCredits).mockResolvedValueOnce(40).mockResolvedValueOnce(1240);
 		vi.mocked(purchasedBalance).mockResolvedValue(800);
 
 		const r = await getAiUsageSummary();
-		expect(r.weeklyBudget).toBe(AI_TIERS.ai_plus.weeklyCredits); // ai_plus weekly
-		expect(r.windowUsed).toBe(1240);
+		expect(r.tier).toBe("ai_plus");
+		expect(r.dailyBudget).toBe(AI_TIERS.ai_plus.dailyCredits);
+		expect(r.weeklyBudget).toBe(AI_TIERS.ai_plus.weeklyCredits);
+		expect(r.dailyUsed).toBe(40);
+		expect(r.weeklyUsed).toBe(1240);
 		expect(r.purchasedBalance).toBe(800);
 		expect(sumCredits).toHaveBeenCalledWith("org-1", "included", expect.any(Date));
 	});

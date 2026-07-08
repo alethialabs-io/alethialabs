@@ -76,8 +76,13 @@ const overTime: UsageOverTime = {
 
 const ai: AiUsageSummary = {
 	enabled: true,
-	windowUsed: 1200,
-	weeklyBudget: 3000,
+	tier: "ai_plus",
+	dailyUsed: 40,
+	dailyBudget: 200,
+	dailyResetAt: "2100-01-01T00:00:00.000Z",
+	weeklyUsed: 1200,
+	weeklyBudget: 1500,
+	weeklyResetAt: "2100-01-01T00:00:00.000Z",
 	purchasedBalance: 500,
 };
 
@@ -101,7 +106,7 @@ describe("UsagePanel", () => {
 		expect(screen.getByText("Plan & limits")).toBeInTheDocument();
 		expect(screen.getByText("Resources")).toBeInTheDocument();
 		expect(screen.getByText("Usage over time")).toBeInTheDocument();
-		expect(screen.getByText("AI usage")).toBeInTheDocument();
+		expect(screen.getByText("AI plan & usage")).toBeInTheDocument();
 		// Resource counters + AI budget are wired from the mocked numbers.
 		expect(screen.getByText("Projects")).toBeInTheDocument();
 		expect(screen.getByText("9")).toBeInTheDocument(); // projects (projects)

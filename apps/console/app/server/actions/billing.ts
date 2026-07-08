@@ -23,7 +23,7 @@ import {
 	priceIdForPlan,
 } from "@/lib/billing/config";
 import { creditPack } from "@/lib/billing/ai-credits";
-import { aiTierSpec, resolveAiTier } from "@/lib/billing/ai-plan";
+import { type AiTier, aiTierSpec, resolveAiTier } from "@/lib/billing/ai-plan";
 import { canOrgInvite } from "@/lib/billing/collaboration";
 import { countBillableSeats } from "@/lib/billing/seats";
 import type { TaxIdType } from "@/lib/billing/tax-ids";
@@ -345,44 +345,76 @@ export async function getUsageOverTime(input: {
 	return { series, totals };
 }
 
-/** AI credit standing for the active org: this week's spend vs budget + purchased balance. */
+/**
+ * The active org's STANDALONE AI standing — daily + weekly included spend vs the AI tier's
+ * caps (the % denominators), on the SAME fixed epoch buckets the guard (ai-guard.ts)
+ * enforces, plus the remaining purchased top-up balance and the tier. Read-only; any
+ * member. The single canonical AI-usage action (drives the overview card, the Usage panel,
+ * and the billing AI section).
+ */
 export interface AiUsageSummary {
-	/** AI present on this plan (always true today; future-proofs a no-AI tier). */
+	/** AI enabled for this org's tier (always true today; future-proofs a disabled tier). */
 	enabled: boolean;
-	/** Included credits consumed in the trailing 7-day window. */
-	windowUsed: number;
-	/** The plan's weekly included-credit budget. */
+	/** The org's standalone AI tier (independent of the org plan). */
+	tier: AiTier;
+	/** Included credits used in the current fixed day. */
+	dailyUsed: number;
+	/** The tier's daily included-credit cap (the daily-% denominator). */
+	dailyBudget: number;
+	/** When the daily bucket resets (ISO). */
+	dailyResetAt: string;
+	/** Included credits used in the current fixed week. */
+	weeklyUsed: number;
+	/** The tier's weekly included-credit cap (the weekly-% denominator). */
 	weeklyBudget: number;
+	/** When the weekly bucket resets (ISO). */
+	weeklyResetAt: string;
 	/** Remaining purchased top-up credits (Σ grants − Σ purchased usage). */
 	purchasedBalance: number;
 }
 
-/**
- * The active org's AI credit standing — trailing-week included spend against the plan's
- * weekly budget, plus the remaining purchased top-up balance. AI is its own budget model
- * (separate from the seat/runner plan allowances). Read-only; any member.
- */
+const AI_DAY_MS = 24 * 60 * 60 * 1000;
+const AI_WEEK_MS = 7 * AI_DAY_MS;
+
 export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 	const actor = await currentActor();
-	const spec = aiTierSpec(await resolveAiTier(actor.orgId).catch(() => "ai_free"));
+	const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as AiTier);
+	const spec = aiTierSpec(tier);
+
+	const now = Date.now();
+	const dayStart = new Date(Math.floor(now / AI_DAY_MS) * AI_DAY_MS);
+	const weekStart = new Date(Math.floor(now / AI_WEEK_MS) * AI_WEEK_MS);
+	const dailyResetAt = new Date(dayStart.getTime() + AI_DAY_MS).toISOString();
+	const weeklyResetAt = new Date(weekStart.getTime() + AI_WEEK_MS).toISOString();
+
 	if (actor.orgId === actor.userId) {
 		return {
 			enabled: spec.enabled,
-			windowUsed: 0,
+			tier,
+			dailyUsed: 0,
+			dailyBudget: spec.dailyCredits,
+			dailyResetAt,
+			weeklyUsed: 0,
 			weeklyBudget: spec.weeklyCredits,
+			weeklyResetAt,
 			purchasedBalance: 0,
 		};
 	}
 
-	const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-	const [windowUsed, purchased] = await Promise.all([
-		sumCredits(actor.orgId, "included", weekAgo),
+	const [dailyUsed, weeklyUsed, purchased] = await Promise.all([
+		sumCredits(actor.orgId, "included", dayStart),
+		sumCredits(actor.orgId, "included", weekStart),
 		purchasedBalance(actor.orgId),
 	]);
 	return {
 		enabled: spec.enabled,
-		windowUsed,
+		tier,
+		dailyUsed,
+		dailyBudget: spec.dailyCredits,
+		dailyResetAt,
+		weeklyUsed,
 		weeklyBudget: spec.weeklyCredits,
+		weeklyResetAt,
 		purchasedBalance: purchased,
 	};
 }
