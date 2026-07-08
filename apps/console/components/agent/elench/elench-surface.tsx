@@ -7,6 +7,7 @@ import {
 	useElenchStore,
 } from "@/lib/stores/use-elench-store";
 import { ElenchConversation } from "./elench-conversation";
+import { ElenchErrorBoundary } from "./elench-error-boundary";
 import { useElenchThreads } from "./use-elench-threads";
 
 /**
@@ -21,6 +22,7 @@ export function ElenchSurface() {
 	const ctx = useElenchStore((s) => s.ctx);
 	const threadId = useElenchStore((s) => s.threadId);
 	const epoch = useElenchStore((s) => s.epoch);
+	const close = useElenchStore((s) => s.close);
 	const { ready, ...threadApi } = useElenchThreads();
 
 	// Wait for the initial thread to resolve before mounting the keyed conversation. This
@@ -28,10 +30,12 @@ export function ElenchSurface() {
 	// eliminating the open→resume remount that flashed an empty chat before the thread loaded.
 	if (!open || !ready) return null;
 
+	// Key the boundary by the conversation lineage so a fresh conversation clears any
+	// prior render error instead of staying stuck on the fallback.
+	const key = elenchConversationKey(ctx, threadId, epoch);
 	return (
-		<ElenchConversation
-			key={elenchConversationKey(ctx, threadId, epoch)}
-			{...threadApi}
-		/>
+		<ElenchErrorBoundary key={key} onReset={close}>
+			<ElenchConversation {...threadApi} />
+		</ElenchErrorBoundary>
 	);
 }
