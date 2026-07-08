@@ -296,7 +296,7 @@ describe("createSubscriptionIntent", () => {
 
 		const r = await createSubscriptionIntent("team" as never);
 
-		expect(r).toEqual({ clientSecret: "cs_1", subscriptionId: "sub_1" });
+		expect(r).toEqual({ clientSecret: "cs_1", subscriptionId: "sub_1", currency: "usd" });
 		const args = stripe.subscriptions.create.mock.calls[0][0];
 		expect(args).toMatchObject({
 			customer: "cus_1",
@@ -513,6 +513,7 @@ describe("createNewOrgSubscriptionIntent", () => {
 			clientSecret: "cs_2",
 			subscriptionId: "sub_2",
 			customerId: "cus_new",
+			currency: "usd",
 		});
 		expect(stripe.customers.create).toHaveBeenCalledWith({
 			email: "owner@test.io",
