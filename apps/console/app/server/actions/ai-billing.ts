@@ -3,49 +3,46 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { currentActor } from "@/lib/authz/guard";
+import { type AiTier, aiTierSpec, resolveAiTier } from "@/lib/billing/ai-plan";
 import { purchasedBalance, sumCredits } from "@/lib/billing/ai-quota";
 import { isStripeConfigured } from "@/lib/billing/config";
-import { resolvePlanEntitlements } from "@/lib/billing/plan";
-import { getOrgBilling } from "@/lib/billing/queries";
 
 const HOUR_MS = 3_600_000;
-const WEEK_MS = 7 * 24 * HOUR_MS;
+const DAY_MS = 24 * HOUR_MS;
+const WEEK_MS = 7 * DAY_MS;
 
 /**
  * AI usage for the active org's usage surface — PROPORTIONS + resets only (never raw
- * included credit counts; the multiplier tier is the only "amount" shown). The purchased
- * balance is surfaced because it's a thing the user bought.
+ * included credit counts; the AI tier is the only "amount" shown). The purchased balance
+ * is surfaced because it's a thing the user bought. Computed on the SAME fixed daily +
+ * weekly buckets the guard (ai-guard.ts) enforces, so display never diverges from the cap.
  */
 export interface AiUsageSummary {
 	hosted: boolean;
 	enabled: boolean;
-	/** Display multiplier tier — trial / standard / 5× / 20×. */
-	tier: "trial" | "standard" | "plus" | "max";
-	/** Short-window usage, 0–100, + when it resets. */
-	windowPctUsed: number;
-	windowResetAt: string;
+	/** The org's standalone AI tier (independent of the org plan). */
+	tier: AiTier;
+	/** Daily usage, 0–100, + when it resets. */
+	dailyPctUsed: number;
+	dailyResetAt: string;
 	/** Weekly usage, 0–100, + when it resets. */
-	weekPctUsed: number;
-	weekResetAt: string;
+	weeklyPctUsed: number;
+	weeklyResetAt: string;
 	/** Remaining purchased top-up credits. */
 	purchasedBalance: number;
 }
 
 export async function getAiUsage(): Promise<AiUsageSummary> {
 	const actor = await currentActor();
-	const billing = await getOrgBilling(actor.orgId).catch(() => null);
-	const ai = resolvePlanEntitlements(
-		billing?.plan ?? "community",
-		billing?.status ?? "none",
-	).ai;
+	const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as const);
+	const spec = aiTierSpec(tier);
 
 	const now = Date.now();
-	const windowMs = ai.windowHours * HOUR_MS;
-	const windowStart = new Date(Math.floor(now / windowMs) * windowMs);
+	const dayStart = new Date(Math.floor(now / DAY_MS) * DAY_MS);
 	const weekStart = new Date(Math.floor(now / WEEK_MS) * WEEK_MS);
 
-	const [windowUsed, weekUsed, purchased] = await Promise.all([
-		sumCredits(actor.orgId, "included", windowStart),
+	const [dayUsed, weekUsed, purchased] = await Promise.all([
+		sumCredits(actor.orgId, "included", dayStart),
 		sumCredits(actor.orgId, "included", weekStart),
 		purchasedBalance(actor.orgId),
 	]);
@@ -55,12 +52,12 @@ export async function getAiUsage(): Promise<AiUsageSummary> {
 
 	return {
 		hosted: isStripeConfigured(),
-		enabled: ai.enabled,
-		tier: ai.tier,
-		windowPctUsed: pct(windowUsed, ai.windowCredits),
-		windowResetAt: new Date(windowStart.getTime() + windowMs).toISOString(),
-		weekPctUsed: pct(weekUsed, ai.weeklyCredits),
-		weekResetAt: new Date(weekStart.getTime() + WEEK_MS).toISOString(),
+		enabled: spec.enabled,
+		tier,
+		dailyPctUsed: pct(dayUsed, spec.dailyCredits),
+		dailyResetAt: new Date(dayStart.getTime() + DAY_MS).toISOString(),
+		weeklyPctUsed: pct(weekUsed, spec.weeklyCredits),
+		weeklyResetAt: new Date(weekStart.getTime() + WEEK_MS).toISOString(),
 		purchasedBalance: purchased,
 	};
 }

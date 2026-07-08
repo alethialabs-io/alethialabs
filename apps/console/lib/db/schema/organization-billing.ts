@@ -20,6 +20,7 @@ import {
 	timestamp,
 	uuid,
 } from "drizzle-orm/pg-core";
+import type { AiTier } from "@/lib/billing/ai-plan";
 import { billingPlan, billingStatus } from "./enums";
 import { organization } from "./organizations";
 
@@ -46,6 +47,17 @@ export const organizationBilling = pgTable("organization_billing", {
 	// When true, the org pauses new jobs at its included allowance instead of
 	// billing overage (user-controlled "never surprise me"). Default off.
 	usageHardCap: boolean().default(false).notNull(),
+	// Standalone AI product state (ORTHOGONAL to `plan` above). `ai_tier` is the AI
+	// subscription tier (default `ai_free` — everyone's free allowance); the paid tiers
+	// (`ai_plus`/`ai_max`) are their own Stripe subscription, tracked separately from the
+	// org-plan subscription so an org can be e.g. Hobby plan + AI Plus. See lib/billing/ai-plan.ts.
+	aiTier: text().$type<AiTier>().default("ai_free").notNull(),
+	// The Stripe subscription id backing a paid AI tier (null on `ai_free`). Unique so an
+	// AI subscription maps back to exactly one org from webhook events.
+	aiStripeSubscriptionId: text().unique(),
+	// Lifecycle of the AI subscription (mirrors Stripe). Only `trialing`/`active` keep a
+	// paid `ai_tier` effective; anything else falls back to `ai_free` (effectiveAiTier).
+	aiSubscriptionStatus: billingStatus().default("none").notNull(),
 	// Set the first time the org reaches a paid plan (trial or paid) — the
 	// exactly-once claim for the "welcome to your plan" email, so it never re-sends
 	// on renewals/updates (see syncSubscriptionToBilling). Null until first activation.

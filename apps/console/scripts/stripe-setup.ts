@@ -14,7 +14,9 @@
 //   • Billing Meter "alethia_runner_minutes" (sum, by stripe_customer_id)
 //   • Pro runner-minutes graduated Price (free ≤500 min, then $0.012/min)
 //                                                                  → STRIPE_PRICE_METER_TEAM
-//   (Enterprise is invoiced off-Stripe — no Stripe objects.)
+//   • Product "Alethia AI Plus" + flat monthly Price (aiPlanUnitAmountCents) → STRIPE_PRICE_AI_PLUS
+//   • Product "Alethia AI Max"  + flat monthly Price (aiPlanUnitAmountCents) → STRIPE_PRICE_AI_MAX
+//   (Enterprise is invoiced off-Stripe; AI Free + credit packs need no Stripe price.)
 //
 // Usage:
 //   pnpm -F console stripe:setup                 # print the env block
@@ -29,7 +31,12 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { formatMoney, planUnitAmountCents } from "@repo/plan-catalog";
+import {
+	aiPlanMeta,
+	aiPlanUnitAmountCents,
+	formatMoney,
+	planUnitAmountCents,
+} from "@repo/plan-catalog";
 import Stripe from "stripe";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -46,6 +53,16 @@ const METER_EVENT = "alethia_runner_minutes"; // RUNNER_MINUTES_METER_EVENT
 const LK_PRO = "alethia_pro_monthly";
 const LK_METER_PRO = "alethia_runner_minutes_pro";
 const PRO_SEAT_LABEL = `${formatMoney(PRO_UNIT_AMOUNT, "usd")} / seat / mo`;
+
+// ── Standalone AI subscription tiers — flat monthly `licensed` prices. Amounts come from
+// the catalog SSOT (@repo/plan-catalog `aiPlanUnitAmountCents`), which is PLACEHOLDER
+// pricing the maintainer finalizes before go-live. AI Free needs no Stripe price. ──
+const AI_PLUS_UNIT_AMOUNT = aiPlanUnitAmountCents("ai_plus"); // $ / month
+const AI_PLUS_UNIT_AMOUNT_EUR = aiPlanUnitAmountCents("ai_plus", "eur"); // € / month
+const AI_MAX_UNIT_AMOUNT = aiPlanUnitAmountCents("ai_max"); // $ / month
+const AI_MAX_UNIT_AMOUNT_EUR = aiPlanUnitAmountCents("ai_max", "eur"); // € / month
+const LK_AI_PLUS = "alethia_ai_plus_monthly";
+const LK_AI_MAX = "alethia_ai_max_monthly";
 
 const WEBHOOK_EVENTS: Stripe.WebhookEndpointCreateParams.EnabledEvent[] = [
 	"customer.subscription.created",
@@ -147,19 +164,20 @@ async function ensureMeterPrice(
 }
 
 /**
- * Ensures the flat per-seat Price matches the catalog amount. Stripe prices are
- * immutable, so when a stale price under the lookup_key has a different `unit_amount`
- * we mint a new price, transfer the lookup_key onto it, and archive the old one — so
- * re-running reconciles Stripe to the SSOT catalog instead of silently keeping the old
- * amount. Existing subscriptions on the archived price keep their price; new signups
- * use the new one.
+ * Ensures a flat recurring-monthly `licensed` Price (USD + EUR) matches the catalog amount.
+ * Stripe prices are immutable, so when a stale price under the lookup_key has a different
+ * `unit_amount` (or lacks the EUR option) we mint a new price, transfer the lookup_key onto
+ * it, and archive the old one — so re-running reconciles Stripe to the SSOT catalog instead
+ * of silently keeping the old amount. Existing subscriptions on the archived price keep it;
+ * new signups use the new one. Shared by the Pro per-seat price and the AI tier prices.
  */
-async function ensureSeatPrice(
+async function ensureFlatLicensedPrice(
 	stripe: Stripe,
 	lookupKey: string,
 	product: string,
 	unitAmount: number,
 	eurAmount: number,
+	nickname: string,
 ): Promise<Stripe.Price> {
 	const found = await stripe.prices.list({
 		lookup_keys: [lookupKey],
@@ -177,14 +195,14 @@ async function ensureSeatPrice(
 		unit_amount: unitAmount,
 		currency_options: { eur: { unit_amount: eurAmount } },
 		recurring: { interval: "month", usage_type: "licensed" },
-		nickname: `Alethia Pro — ${PRO_SEAT_LABEL}`,
+		nickname,
 		lookup_key: lookupKey,
 		transfer_lookup_key: Boolean(existing),
 	});
 	if (existing) {
 		await stripe.prices.update(existing.id, { active: false });
 		console.log(
-			`  ↻ reconciled Pro price to the catalog: archived ${existing.id} → ${created.id} ` +
+			`  ↻ reconciled ${lookupKey} to the catalog: archived ${existing.id} → ${created.id} ` +
 				`(${formatMoney(unitAmount, "usd")} / ${formatMoney(eurAmount, "eur")})`,
 		);
 	}
@@ -222,7 +240,14 @@ async function main(): Promise<void> {
 
 	// 1) Pro product + per-seat price (amount from the catalog SSOT; reconciles if stale).
 	const proProduct = await ensureProduct(stripe, "pro", "Alethia Pro");
-	const proPrice = await ensureSeatPrice(stripe, LK_PRO, proProduct.id, PRO_UNIT_AMOUNT, PRO_UNIT_AMOUNT_EUR);
+	const proPrice = await ensureFlatLicensedPrice(
+		stripe,
+		LK_PRO,
+		proProduct.id,
+		PRO_UNIT_AMOUNT,
+		PRO_UNIT_AMOUNT_EUR,
+		`Alethia Pro — ${PRO_SEAT_LABEL}`,
+	);
 	console.log(`✓ Pro product ${proProduct.id}`);
 	console.log(
 		`✓ Pro price   ${proPrice.id}  (${LK_PRO}, ${formatMoney(PRO_UNIT_AMOUNT, "usd")} / ${formatMoney(PRO_UNIT_AMOUNT_EUR, "eur")})`,
@@ -237,7 +262,35 @@ async function main(): Promise<void> {
 	const meterPrice = await ensureMeterPrice(stripe, runnerProduct.id, meter.id);
 	console.log(`✓ Meter price ${meterPrice.id}  (${LK_METER_PRO})`);
 
-	// 4) Optional webhook endpoint (for the live runbook).
+	// 4) Standalone AI subscription tiers — flat monthly `licensed` prices (USD + EUR) from the
+	// catalog SSOT. Separate product per tier so an org can hold an AI sub independent of its plan.
+	const aiPlusProduct = await ensureProduct(stripe, "ai_plus", "Alethia AI Plus");
+	const aiPlusPrice = await ensureFlatLicensedPrice(
+		stripe,
+		LK_AI_PLUS,
+		aiPlusProduct.id,
+		AI_PLUS_UNIT_AMOUNT,
+		AI_PLUS_UNIT_AMOUNT_EUR,
+		`Alethia AI Plus — ${aiPlanMeta("ai_plus").priceLabel}`,
+	);
+	console.log(
+		`✓ AI Plus     ${aiPlusPrice.id}  (${LK_AI_PLUS}, ${formatMoney(AI_PLUS_UNIT_AMOUNT, "usd")} / ${formatMoney(AI_PLUS_UNIT_AMOUNT_EUR, "eur")})`,
+	);
+
+	const aiMaxProduct = await ensureProduct(stripe, "ai_max", "Alethia AI Max");
+	const aiMaxPrice = await ensureFlatLicensedPrice(
+		stripe,
+		LK_AI_MAX,
+		aiMaxProduct.id,
+		AI_MAX_UNIT_AMOUNT,
+		AI_MAX_UNIT_AMOUNT_EUR,
+		`Alethia AI Max — ${aiPlanMeta("ai_max").priceLabel}`,
+	);
+	console.log(
+		`✓ AI Max      ${aiMaxPrice.id}  (${LK_AI_MAX}, ${formatMoney(AI_MAX_UNIT_AMOUNT, "usd")} / ${formatMoney(AI_MAX_UNIT_AMOUNT_EUR, "eur")})`,
+	);
+
+	// 5) Optional webhook endpoint (for the live runbook).
 	let webhookSecret: string | undefined;
 	if (webhookUrl) {
 		const existing = await stripe.webhookEndpoints.list({ limit: 100 });
@@ -266,16 +319,21 @@ async function main(): Promise<void> {
 	const envPairs: Record<string, string> = {
 		STRIPE_PRICE_TEAM: proPrice.id,
 		STRIPE_PRICE_METER_TEAM: meterPrice.id,
+		STRIPE_PRICE_AI_PLUS: aiPlusPrice.id,
+		STRIPE_PRICE_AI_MAX: aiMaxPrice.id,
 	};
 	console.log(`\n── ${mode} env ${"─".repeat(40)}`);
 	for (const [k, v] of Object.entries(envPairs)) console.log(`${k}=${v}`);
 	if (webhookSecret) console.log(`STRIPE_WEBHOOK_SECRET=${webhookSecret}`);
 	console.log("# Enterprise is invoiced off-Stripe — STRIPE_PRICE_ENTERPRISE intentionally unset.");
+	console.log("# AI Free needs no price; credit packs are ad-hoc invoice items (no Stripe price).");
 	console.log("─".repeat(52));
 
 	if (writeEnv) {
 		patchRootEnv(envPairs);
-		console.log(`\n✓ Patched ${ROOT_ENV} (STRIPE_PRICE_TEAM, STRIPE_PRICE_METER_TEAM).`);
+		console.log(
+			`\n✓ Patched ${ROOT_ENV} (STRIPE_PRICE_TEAM, STRIPE_PRICE_METER_TEAM, STRIPE_PRICE_AI_PLUS, STRIPE_PRICE_AI_MAX).`,
+		);
 	} else {
 		console.log("\n(Use --write-env to patch the root .env, or copy the block above.)");
 	}

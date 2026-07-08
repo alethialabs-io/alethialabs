@@ -23,10 +23,9 @@ import {
 import type { CreditPack } from "@/lib/billing/ai-credits";
 
 const TIER_LABEL: Record<AiUsageSummary["tier"], string> = {
-	trial: "Trial",
-	standard: "Standard",
-	plus: "5×",
-	max: "20×",
+	ai_free: "AI Free",
+	ai_plus: "AI Plus",
+	ai_max: "AI Max",
 };
 
 function resetsIn(iso: string): string {
@@ -110,14 +109,14 @@ export function UsagePanel({
 				</div>
 				<div className="space-y-4 px-5 py-4">
 					<Bar
-						label="Current window"
-						pct={usage.windowPctUsed}
-						reset={resetsIn(usage.windowResetAt)}
+						label="Today"
+						pct={usage.dailyPctUsed}
+						reset={resetsIn(usage.dailyResetAt)}
 					/>
 					<Bar
 						label="This week"
-						pct={usage.weekPctUsed}
-						reset={resetsIn(usage.weekResetAt)}
+						pct={usage.weeklyPctUsed}
+						reset={resetsIn(usage.weeklyResetAt)}
 					/>
 					{usage.purchasedBalance > 0 && (
 						<div className="flex items-center justify-between border-t border-border pt-3 text-xs">
