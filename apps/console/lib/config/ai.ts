@@ -16,8 +16,8 @@ export interface AiModel {
  * default. Verified against the gateway model list (Jun 2026).
  */
 export const AI_MODELS: AiModel[] = [
+	{ id: "anthropic/claude-haiku-4.5", name: "Claude Haiku 4.5", provider: "anthropic" },
 	{ id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6", provider: "anthropic" },
-	{ id: "anthropic/claude-opus-4.8", name: "Claude Opus 4.8", provider: "anthropic" },
 ];
 
 const ALLOWED_MODELS = new Set(AI_MODELS.map((m) => m.id));
@@ -25,8 +25,8 @@ const ALLOWED_MODELS = new Set(AI_MODELS.map((m) => m.id));
 /**
  * Resolve the model for an assistant request, via the Vercel AI Gateway
  * (`provider/model` string). A client `override` wins only if it's in the
- * allowlist; otherwise env `AI_MODEL`, then the default (Sonnet — fast + strong
- * tool-calling at lower cost than Opus for this workload).
+ * allowlist; otherwise env `AI_MODEL`, then the default (Haiku 4.5 — the cheapest
+ * tool-capable model; Sonnet 4.6 is the opt-in upgrade).
  */
 export function getAiModel(override?: string): string {
 	if (override && ALLOWED_MODELS.has(override)) return override;

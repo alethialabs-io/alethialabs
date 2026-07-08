@@ -85,10 +85,7 @@ export function ElenchModal({
 
 	return (
 		<Dialog open onOpenChange={(o) => !o && close()}>
-			<DialogContent
-				showCloseButton={false}
-				className="left-[7px] top-[7px] flex h-[calc(100dvh-14px)] w-[calc(100vw-14px)] max-w-none translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-[13px] border border-border bg-background p-0 sm:max-w-none"
-			>
+			<DialogContent size="fullscreen" showCloseButton={false}>
 				<DialogTitle className="sr-only">Elench</DialogTitle>
 
 				{showSidebar && (
