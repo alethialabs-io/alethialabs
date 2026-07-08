@@ -47,6 +47,8 @@ export interface ResolvedModel {
 	model: LanguageModel;
 	/** The canonical `provider/native-id` key — the ledger/cost/analytics key. */
 	key: string;
+	/** The provider the key resolves to (gates provider-specific `providerOptions`). */
+	provider: ProviderId;
 }
 
 // Lazily-built provider singletons. Constructed on first use (not at import) so `env()`
@@ -97,7 +99,7 @@ export function resolveModel(key: string): ResolvedModel {
 	const { provider, id } = parseKey(key);
 	const model =
 		provider === "openai" ? getOpenAiProvider()(id) : getAnthropicProvider()(id);
-	return { model, key };
+	return { model, key, provider };
 }
 
 /**

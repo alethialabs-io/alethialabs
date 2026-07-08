@@ -11,6 +11,7 @@ import {
 import { eq } from "drizzle-orm";
 import { saveThreadMessages } from "@/app/server/actions/agent";
 import { buildAgentSystemPrompt, scopeToolsToAgent } from "@/lib/agent/executor";
+import { cachedSystemMessage } from "@/lib/ai/provider-options";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
@@ -80,8 +81,14 @@ export async function POST(
 
 	const result = streamText({
 		model: model.model,
-		system: buildAgentSystemPrompt(agent),
-		messages: await convertToModelMessages(messages),
+		// Cache the (stable, per-agent) system prompt so repeated turns read it from cache.
+		messages: [
+			cachedSystemMessage(buildAgentSystemPrompt(agent)),
+			...(await convertToModelMessages(messages)),
+		],
+		// Our own system prompt (cached) is intentionally a system message; user turns are
+		// never system-role, so this is not a prompt-injection surface.
+		allowSystemInMessages: true,
 		tools,
 		stopWhen: stepCountIs(8),
 		onFinish: ({ usage }) => {

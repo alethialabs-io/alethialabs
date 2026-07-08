@@ -13,7 +13,8 @@ import { generateText } from "ai";
 import { describe, expect, it } from "vitest";
 import { createLlmSubAgentRunner } from "@/lib/agent/llm-subagent";
 import { runSupervisor } from "@/lib/agent/supervisor";
-import { getExecutorModel } from "@/lib/config/ai";
+import { cachedSystemMessage } from "@/lib/ai/provider-options";
+import { getExecutorModel, resolveModel } from "@/lib/config/ai";
 
 // A direct Anthropic key (sk-ant…) is required: this proves the gateway-free path works
 // with a native provider key — the whole point of the de-gateway refactor.
@@ -55,5 +56,49 @@ describe.runIf(live)("live LLM colony exercise (direct provider)", () => {
 			);
 		},
 		60_000,
+	);
+
+	it(
+		"caches the stable system prompt (cachedInputTokens on a repeat) and streams with adaptive thinking",
+		async () => {
+			// A distinct advisor (Sonnet) with adaptive extended thinking, over a stable system
+			// prompt large enough to clear Anthropic's minimum cacheable size (~1024 tokens).
+			const { model } = resolveModel("anthropic/claude-sonnet-4-6");
+			const bigSystem = "You are a terse assistant. Reply with exactly OK. ".repeat(300);
+			const messages = [
+				cachedSystemMessage(bigSystem),
+				{ role: "user" as const, content: "Reply with OK." },
+			];
+			const providerOptions = {
+				anthropic: { thinking: { type: "adaptive" as const } },
+			};
+
+			// First call writes the cache; the identical second call should read it.
+			const first = await generateText({
+				model,
+				messages,
+				allowSystemInMessages: true,
+				maxOutputTokens: 2048,
+				providerOptions,
+			});
+			expect(first.text.length).toBeGreaterThan(0); // thinking didn't break the stream
+
+			const second = await generateText({
+				model,
+				messages,
+				allowSystemInMessages: true,
+				maxOutputTokens: 2048,
+				providerOptions,
+			});
+			console.log(
+				"LIVE cache tokens — first cache_read:",
+				first.usage.cachedInputTokens,
+				"second cache_read:",
+				second.usage.cachedInputTokens,
+			);
+			// The repeat reads the cached system prefix (cache-read tokens > 0).
+			expect(second.usage.cachedInputTokens ?? 0).toBeGreaterThan(0);
+		},
+		90_000,
 	);
 });
