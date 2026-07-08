@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { getRegionPrices } from "@/app/server/actions/pricing";
 import { getPlanResult } from "@/app/server/actions/jobs";
@@ -153,12 +153,15 @@ export function ArtifactPanel() {
 	// artifact reads as a single Dashboard view.
 	const hasProject = !!projectId;
 	const hasJob = !!jobId;
-	const hasDashboard = !!dashboard;
+	// A `null` dashboard is a pending artifact (opened ahead of its spec) — still a dashboard.
+	const hasDashboard = dashboard !== undefined;
 
-	const title =
-		dashboard?.title ??
-		project?.project.project_name ??
-		(jobId ? `Job ${jobId.slice(0, 8)}` : "Artifact");
+	const title = dashboard
+		? dashboard.title
+		: dashboard === null
+			? "Dashboard"
+			: (project?.project.project_name ??
+				(jobId ? `Job ${jobId.slice(0, 8)}` : "Artifact"));
 
 	return (
 		<aside className="flex h-full w-full flex-col bg-card">
@@ -221,7 +224,7 @@ export function ArtifactPanel() {
 						<TabsContent value="dashboard" className="m-0 h-full">
 							<ScrollArea className="h-full">
 								<div className="p-4">
-									{dashboard && <DashboardPane spec={dashboard} />}
+									<DashboardPane spec={dashboard ?? null} />
 								</div>
 							</ScrollArea>
 						</TabsContent>
@@ -744,8 +747,24 @@ function DashboardBlockView({ block }: { block: DashboardBlock }) {
  * The generative dashboard pane — interprets a `DashboardSpec` (from the
  * `build_dashboard` tool) with grayscale primitives: stat/grid blocks as cards,
  * bar blocks as vertical bars, line blocks as sparklines. No charting library.
+ * A `null` spec is the pending state (the pane was opened ahead of the result, e.g. the
+ * landing's "Try now") — it shows a building affordance until the tool result arrives.
  */
-function DashboardPane({ spec }: { spec: DashboardSpec }) {
+function DashboardPane({ spec }: { spec: DashboardSpec | null }) {
+	if (!spec) {
+		return (
+			<div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+				<Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+				<div className="text-sm font-medium text-foreground">
+					Building your dashboard…
+				</div>
+				<div className="max-w-[220px] text-xs text-muted-foreground">
+					Elench is gathering your data and composing the views. This pane fills in
+					as soon as the result is ready.
+				</div>
+			</div>
+		);
+	}
 	if (spec.blocks.length === 0) return <Empty text="Empty dashboard." />;
 	return (
 		<div className="space-y-4">

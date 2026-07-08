@@ -10,8 +10,12 @@ export type ArtifactTab = "config" | "plan" | "cost" | "logs" | "dashboard";
 export interface Artifact {
 	projectId?: string;
 	jobId?: string;
-	/** A generative dashboard spec (from the `build_dashboard` tool) to render. */
-	dashboard?: DashboardSpec;
+	/**
+	 * A generative dashboard (from the `build_dashboard` tool). `null` = the pane was opened
+	 * ahead of the result (e.g. the landing's "Try now") and is awaiting the spec — the panel
+	 * renders a loading state until the tool result replaces it with the built spec.
+	 */
+	dashboard?: DashboardSpec | null;
 }
 
 interface ArtifactState {
@@ -26,9 +30,10 @@ interface ArtifactState {
 	close: () => void;
 }
 
-/** Pick the default tab for an artifact from what it carries. */
+/** Pick the default tab for an artifact from what it carries (a pending `null` dashboard
+ * still defaults to the Dashboard tab so the loading state is visible). */
 function defaultTab(artifact: Artifact): ArtifactTab {
-	if (artifact.dashboard) return "dashboard";
+	if (artifact.dashboard !== undefined) return "dashboard";
 	return artifact.projectId ? "config" : "logs";
 }
 

@@ -8,6 +8,7 @@ import { AlethiaLogo } from "@repo/brand/alethia-logo";
 import type { Mention } from "@/lib/ai/mentions";
 import { track } from "@/lib/analytics/track";
 import type { AgentThread } from "@/lib/db/schema";
+import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
 import { ElenchComposer } from "./elench-composer";
@@ -55,35 +56,6 @@ function ElenchMark({ className }: { className?: string }) {
 	);
 }
 
-/** A faint grayscale sparkline — decorative demo content for the viz grid. */
-function DemoChart() {
-	return (
-		<svg
-			viewBox="0 0 300 150"
-			preserveAspectRatio="none"
-			className="block h-full w-full text-foreground"
-			aria-hidden
-		>
-			<title>Worker traffic</title>
-			<path
-				d="M0 122 L20 114 L40 120 L60 101 L80 109 L100 88 L120 96 L140 73 L160 83 L180 59 L200 69 L220 49 L240 43 L260 53 L280 33 L300 40 L300 150 L0 150 Z"
-				fill="currentColor"
-				fillOpacity="0.06"
-			/>
-			<path
-				d="M0 122 L20 114 L40 120 L60 101 L80 109 L100 88 L120 96 L140 73 L160 83 L180 59 L200 69 L220 49 L240 43 L260 53 L280 33 L300 40"
-				fill="none"
-				stroke="currentColor"
-				strokeOpacity="0.5"
-				strokeWidth="2"
-				strokeLinejoin="round"
-				strokeLinecap="round"
-				vectorEffect="non-scaling-stroke"
-			/>
-		</svg>
-	);
-}
-
 interface ModalLandingProps {
 	onSend: (text: string, mentions?: Mention[]) => void;
 	suggestions: ElenchSuggestion[];
@@ -116,7 +88,7 @@ export function ElenchModalLanding({
 	return (
 		<div className="h-full overflow-y-auto">
 			<div className="mx-auto max-w-[830px] px-6 pb-16 pt-24">
-				<ElenchMark className="mb-6 h-16 w-auto" />
+				<ElenchMark className="mb-6 h-20 w-auto" />
 			<h1 className="mb-10 text-center text-4xl font-semibold tracking-tight">
 				What should we do today?
 			</h1>
@@ -172,42 +144,32 @@ export function ElenchModalLanding({
 
 			<DotDivider />
 
-			{/* Draw, describe, go — the visualization grid, with a "Try now" button that
-				    asks the agent for a full generative dashboard. */}
-			<section className="border border-border bg-muted/40 p-5">
-				<div className="flex items-start justify-between gap-3">
-					<div>
-						<div className="text-base font-semibold">Draw, describe, go.</div>
-						<div className="mt-0.5 text-[13px] text-muted-foreground">
-							Generate different views of your data using the visualization grid.
-						</div>
+			{/* Draw, describe, go — a clean CTA that opens the split pane in a loading state and
+				    asks the agent for a full generative dashboard (which then fills the pane). */}
+			<section className="flex items-center justify-between gap-4 border border-border bg-muted/40 p-5">
+				<div>
+					<div className="text-base font-semibold">Draw, describe, go.</div>
+					<div className="mt-0.5 text-[13px] text-muted-foreground">
+						Build a live dashboard of your infrastructure — Elench gathers the data and
+						composes it into stat cards and charts in the side panel.
 					</div>
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						className="flex-none gap-1.5 rounded-none"
-						onClick={() => {
-							track("elench_try_now_used", { context });
-							onSend(tryNowPrompt(context));
-						}}
-					>
-						<Sparkles className="h-3.5 w-3.5" />
-						Try now
-					</Button>
 				</div>
-				<div className="mt-4 grid grid-cols-3 gap-3.5">
-					<div className="flex h-[200px] flex-col overflow-hidden border border-border bg-background p-3">
-						<span className="text-xs text-muted-foreground">
-							Worker traffic · last 24h
-						</span>
-						<div className="mt-2 flex-1">
-							<DemoChart />
-						</div>
-					</div>
-					<div className="h-[200px] border border-border bg-muted" />
-					<div className="h-[200px] border border-dashed border-border" />
-				</div>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					className="flex-none gap-1.5 rounded-none"
+					onClick={() => {
+						track("elench_try_now_used", { context });
+						// Open the split pane immediately in the pending dashboard state; the model's
+						// build_dashboard result fills it via the DashboardReadyCard → openArtifact lane.
+						useArtifactStore.getState().open({ dashboard: null }, "dashboard");
+						onSend(tryNowPrompt(context));
+					}}
+				>
+					<Sparkles className="h-3.5 w-3.5" />
+					Try now
+				</Button>
 			</section>
 			</div>
 		</div>
@@ -259,7 +221,7 @@ export function ElenchPanelEmpty({
 			</div>
 
 			<div className="py-10 text-center">
-				<ElenchMark className="mb-4 h-12 w-auto" />
+				<ElenchMark className="mb-4 h-14 w-auto" />
 				<div className="text-lg font-semibold">{greeting()}</div>
 				<div className="mt-1 text-sm text-muted-foreground">
 					What are we doing today?

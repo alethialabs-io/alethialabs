@@ -7,6 +7,7 @@
 // AI-dependent streaming is not asserted (the route is 503 without ANTHROPIC_API_KEY);
 // the optimistic user message is enough to prove the conversation survives a view flip.
 
+import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures/auth";
 import {
 	proposeOperationChunks,
@@ -15,9 +16,22 @@ import {
 } from "./helpers/ai-stream";
 import type { DashboardSpec } from "../types/jsonb.types";
 
+/** Open the Elench surface as a docked panel via the topbar "Ask AI" button. */
+async function openElenchPanel(page: Page): Promise<void> {
+	await page.getByRole("button", { name: "Ask AI" }).click();
+	await expect(page.getByRole("dialog", { name: /elench assistant/i })).toBeVisible();
+}
+
+/** Open the Elench surface, then maximize the panel to the fullscreen modal. */
+async function openElenchModal(page: Page): Promise<void> {
+	await openElenchPanel(page);
+	await page.getByRole("button", { name: /expand to full screen/i }).click();
+	await expect(page.getByTestId("elench-modal")).toBeVisible();
+}
+
 test.describe("Elench agent — modal (org)", () => {
-	test.beforeEach(async ({ authedPage: page, orgSlug }) => {
-		await page.goto(`/${orgSlug}/~/agent`);
+	test.beforeEach(async ({ authedPage: page }) => {
+		await openElenchModal(page);
 	});
 
 	test("opens as a fullscreen modal with the empty landing", async ({
@@ -67,7 +81,7 @@ test.describe("Elench agent — modal (org)", () => {
 		await composer.press("Enter");
 		await expect(page.getByText("elench e2e ping")).toBeVisible();
 
-		// Minimize to the docked panel — the opener leaves the blank route for the org home.
+		// Minimize to the docked panel — the surface floats over the org home (no route hop).
 		await page.getByRole("button", { name: /minimize to panel/i }).click();
 		const panel = page.getByRole("dialog", { name: /elench assistant/i });
 		await expect(panel).toBeVisible();
@@ -91,9 +105,8 @@ test.describe("Elench agent — modal (org)", () => {
 
 // ─── Deterministic AI-off flows (no stubbing; the stack serves the modal + a 503 route) ───
 test.describe("Elench agent — AI-off deterministic flows (org)", () => {
-	test.beforeEach(async ({ authedPage: page, orgSlug }) => {
-		await page.goto(`/${orgSlug}/~/agent`);
-		await expect(page.getByTestId("elench-modal")).toBeVisible();
+	test.beforeEach(async ({ authedPage: page }) => {
+		await openElenchModal(page);
 	});
 
 	test("the suggestion carousel pages through its cards", async ({
@@ -128,21 +141,21 @@ test.describe("Elench agent — AI-off deterministic flows (org)", () => {
 
 	test("a sent thread persists across a reload", async ({
 		authedPage: page,
-		orgSlug,
 	}) => {
 		const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
 		await composer.fill("persisted elench thread");
 		await composer.press("Enter");
 		await expect(page.getByText("persisted elench thread")).toBeVisible();
 
-		// The thread is created + titled from the first message → it shows in the rail.
+		// The thread is created LAZILY on this first send + titled from it → it shows in the rail.
 		const row = page
 			.getByTestId("thread-rail-row")
 			.filter({ hasText: /persisted elench thread/i });
 		await expect(row.first()).toBeVisible();
 
-		// Reload → the persisted thread resumes (rail row + message survive).
-		await page.goto(`/${orgSlug}/~/agent`);
+		// Reload + reopen → the persisted thread resumes (rail row + message survive).
+		await page.reload();
+		await openElenchModal(page);
 		await expect(
 			page
 				.getByTestId("thread-rail-row")
@@ -186,14 +199,12 @@ test.describe("Elench agent — stubbed streaming (org)", () => {
 
 	test("streams text + a build_dashboard tool part → Open dashboard opens the split pane", async ({
 		authedPage: page,
-		orgSlug,
 	}) => {
 		await stubAgentStream(
 			page,
 			textThenDashboardChunks("Here is your infrastructure overview.", SPEC),
 		);
-		await page.goto(`/${orgSlug}/~/agent`);
-		await expect(page.getByTestId("elench-modal")).toBeVisible();
+		await openElenchModal(page);
 
 		const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
 		await composer.fill("build me a dashboard");
@@ -214,7 +225,6 @@ test.describe("Elench agent — stubbed streaming (org)", () => {
 
 	test("streams a HITL propose_operation → Approve fires the addToolResult follow-up request", async ({
 		authedPage: page,
-		orgSlug,
 	}) => {
 		const stub = await stubAgentStream(
 			page,
@@ -224,8 +234,7 @@ test.describe("Elench agent — stubbed streaming (org)", () => {
 				stats: { add: 3, change: 1, destroy: 0, monthly: 120 },
 			}),
 		);
-		await page.goto(`/${orgSlug}/~/agent`);
-		await expect(page.getByTestId("elench-modal")).toBeVisible();
+		await openElenchModal(page);
 
 		const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
 		await composer.fill("plan my project");

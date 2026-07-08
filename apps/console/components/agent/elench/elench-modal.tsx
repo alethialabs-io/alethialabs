@@ -97,7 +97,7 @@ export function ElenchModal({
 				{showSidebar && (
 					<div className="hidden w-[284px] flex-none flex-col border-r border-border bg-card lg:flex">
 						<div className="flex items-center gap-2 px-3.5 py-3">
-							<AlethiaLogo className="h-4 w-auto text-foreground" />
+							<AlethiaLogo className="h-6 w-auto text-foreground" />
 							<span className="text-sm font-semibold">Chat</span>
 							<button
 								type="button"

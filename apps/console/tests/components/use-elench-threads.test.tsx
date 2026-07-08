@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Hook test for useElenchThreads — the Phase-2 thread orchestration. Mocks the four agent
-// server actions, the Elench zustand store (a controlled state object per test), and track().
-// Asserts: org context lists org-level threads → resumes the latest (or creates when empty);
-// PROJECT context now does the SAME (no longer ephemeral), scoped by projectId; and `ready`
-// flips true only after the initial list→resume/create settles.
+// Hook test for useElenchThreads — the lazy thread orchestration. Mocks the agent server
+// actions, the Elench zustand store (a controlled state object per test), and track().
+// Asserts: org context lists org-level threads → resumes the latest; an EMPTY list resolves
+// to an ephemeral conversation (nothing persisted — no createThread); PROJECT context does
+// the SAME, scoped by projectId; and `ready` flips true only after the initial list→resume
+// settles.
 
 import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,23 +23,28 @@ vi.mock("@/app/server/actions/agent", () => ({
 	getThread: vi.fn(),
 	createThread: vi.fn(),
 	deleteThread: vi.fn(),
-	renameThread: vi.fn(),
 }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
 
-// A controlled Elench store: the hook reads open/ctx/threadId/selectThread via selectors, so
-// the mock simply applies each selector to a per-test state object.
+// A controlled Elench store: the hook reads open/ctx/threadId + the selectThread/attachThread/
+// newChat actions via selectors, so the mock applies each selector to a per-test state object.
 const selectThread = vi.fn();
+const attachThread = vi.fn();
+const newChat = vi.fn();
 const storeState: {
 	open: boolean;
 	ctx: ElenchCtx;
 	threadId: string | null;
 	selectThread: (id: string | null) => void;
+	attachThread: (id: string) => void;
+	newChat: () => void;
 } = {
 	open: true,
 	ctx: { kind: "org" },
 	threadId: null,
 	selectThread,
+	attachThread,
+	newChat,
 };
 vi.mock("@/lib/stores/use-elench-store", () => ({
 	useElenchStore: (selector: (s: typeof storeState) => unknown) =>
@@ -75,16 +81,18 @@ describe("useElenchThreads — org context", () => {
 		expect(result.current.initialMessages).toHaveLength(1);
 	});
 
-	it("creates a fresh org thread when the list is empty", async () => {
+	it("resolves to an ephemeral conversation when the list is empty (persists nothing)", async () => {
 		vi.mocked(listThreads).mockResolvedValue([] as never);
-		vi.mocked(createThread).mockResolvedValue({ id: "t-fresh" } as never);
 
 		const { result } = renderHook(() => useElenchThreads());
 
 		await waitFor(() => expect(result.current.ready).toBe(true));
-		expect(createThread).toHaveBeenCalledWith(undefined, undefined);
-		expect(selectThread).toHaveBeenCalledWith("t-fresh");
+		// Nothing is created until the first send — no empty thread litters the rail.
+		expect(createThread).not.toHaveBeenCalled();
+		expect(selectThread).not.toHaveBeenCalled();
 		expect(getThread).not.toHaveBeenCalled();
+		expect(result.current.activeId).toBeNull();
+		expect(result.current.initialMessages).toHaveLength(0);
 	});
 });
 
@@ -107,17 +115,33 @@ describe("useElenchThreads — project context (Phase-2 un-gating)", () => {
 		expect(createThread).not.toHaveBeenCalled();
 	});
 
-	it("creates a project-scoped thread when the project has none", async () => {
+	it("resolves to an ephemeral conversation when the project has no threads", async () => {
+		storeState.ctx = { kind: "project", projectId: "proj-1" };
+		vi.mocked(listThreads).mockResolvedValue([] as never);
+
+		const { result } = renderHook(() => useElenchThreads());
+
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		// A project thread is created lazily on the first send (via startThread), not on open.
+		expect(createThread).not.toHaveBeenCalled();
+		expect(selectThread).not.toHaveBeenCalled();
+		expect(result.current.activeId).toBeNull();
+	});
+
+	it("lazily creates + attaches a project thread on the first send (startThread)", async () => {
 		storeState.ctx = { kind: "project", projectId: "proj-1" };
 		vi.mocked(listThreads).mockResolvedValue([] as never);
 		vi.mocked(createThread).mockResolvedValue({ id: "pt-fresh" } as never);
 
 		const { result } = renderHook(() => useElenchThreads());
-
 		await waitFor(() => expect(result.current.ready).toBe(true));
-		// createThread carries the projectId so the new thread persists under the project.
-		expect(createThread).toHaveBeenCalledWith(undefined, "proj-1");
-		expect(selectThread).toHaveBeenCalledWith("pt-fresh");
+
+		await result.current.startThread("scale my cluster");
+		// createThread carries the first message (title) + projectId; the id attaches WITHOUT
+		// bumping the lineage so the in-flight send is not recreated.
+		expect(createThread).toHaveBeenCalledWith("scale my cluster", "proj-1");
+		expect(attachThread).toHaveBeenCalledWith("pt-fresh");
+		expect(selectThread).not.toHaveBeenCalled();
 	});
 });
 
