@@ -20,6 +20,7 @@ vi.mock("@/app/server/actions/billing", () => ({
 	getResourceCounts: vi.fn(),
 	getUsageOverTime: vi.fn(),
 	getAiUsageSummary: vi.fn(),
+	getLiveAiPrices: vi.fn(),
 	setUsageHardCap: vi.fn(),
 }));
 vi.mock("@/lib/stores/use-workspace-store", () => ({
@@ -37,10 +38,12 @@ import { UsagePanel } from "@/components/settings/usage/usage-panel";
 import {
 	getAiUsageSummary,
 	getBillingSummary,
+	getLiveAiPrices,
 	getOrgUsage,
 	getResourceCounts,
 	getUsageOverTime,
 } from "@/app/server/actions/billing";
+import type { LiveAiPriceMap } from "@/lib/billing/pricing";
 
 const summary = (over: Partial<BillingSummary> = {}): BillingSummary => ({
 	hosted: true,
@@ -91,6 +94,30 @@ const ai: AiUsageSummary = {
 	paidTiersEnabled: true,
 };
 
+const aiPrices: LiveAiPriceMap = {
+	ai_free: {
+		unitAmountUsd: 0,
+		unitAmountEur: 0,
+		currency: "usd",
+		interval: "month",
+		label: "Free",
+	},
+	ai_plus: {
+		unitAmountUsd: 20,
+		unitAmountEur: 18,
+		currency: "usd",
+		interval: "month",
+		label: "$20 / mo",
+	},
+	ai_max: {
+		unitAmountUsd: 100,
+		unitAmountEur: 90,
+		currency: "usd",
+		interval: "month",
+		label: "$100 / mo",
+	},
+};
+
 beforeEach(() => {
 	vi.mocked(getOrgUsage).mockResolvedValue(usage);
 	vi.mocked(getResourceCounts).mockResolvedValue({
@@ -100,6 +127,7 @@ beforeEach(() => {
 	});
 	vi.mocked(getUsageOverTime).mockResolvedValue(overTime);
 	vi.mocked(getAiUsageSummary).mockResolvedValue(ai);
+	vi.mocked(getLiveAiPrices).mockResolvedValue(aiPrices);
 });
 
 describe("UsagePanel", () => {
