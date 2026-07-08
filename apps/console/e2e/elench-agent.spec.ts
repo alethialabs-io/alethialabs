@@ -4,7 +4,7 @@
 // E2E for the Elench agent surface (modal + docked panel). Covers the ported design's
 // chrome + interactions: the modal empty landing, the composer (Ask Elench + @-mention
 // affordance), the Ask-mode popover, minimize/maximize shared state, and the panel.
-// AI-dependent streaming is not asserted (the route is 503 without AI_GATEWAY_API_KEY);
+// AI-dependent streaming is not asserted (the route is 503 without ANTHROPIC_API_KEY);
 // the optimistic user message is enough to prove the conversation survives a view flip.
 
 import { test, expect } from "./fixtures/auth";

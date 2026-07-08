@@ -24,6 +24,7 @@ import {
 	getExecutorModel,
 	isAiConfigured,
 	isSelectableModel,
+	resolveModel,
 } from "@/lib/config/ai";
 
 interface AgentBody {
@@ -32,7 +33,7 @@ interface AgentBody {
 	threadId?: string;
 	/** Ask = read-only; Act = may propose plan/deploy operations. */
 	mode?: AgentMode;
-	/** Selected gateway model id (validated against the allowlist). */
+	/** Selected model id (validated against the allowlist). */
 	model?: string;
 	/** Resources the user @-referenced in the latest message. */
 	mentions?: Mention[];
@@ -92,7 +93,7 @@ export async function POST(req: Request) {
 	if (!owner) return new Response("Unauthorized", { status: 401 });
 	if (!isAiConfigured()) {
 		return new Response(
-			"AI is not configured. Set AI_GATEWAY_API_KEY to enable the agent.",
+			"AI is not configured. Set ANTHROPIC_API_KEY to enable the agent.",
 			{ status: 503 },
 		);
 	}
@@ -128,13 +129,15 @@ export async function POST(req: Request) {
 	// cheap Haiku EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor).
 	// An explicit client model pick overrides orchestration with that single deliberate choice.
 	const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as const);
-	const executorModel = getExecutorModel();
-	const advisorModel = getAdvisorModel(tier);
+	const executor = getExecutorModel();
+	const advisor = getAdvisorModel(tier);
 	const clientPick = isSelectableModel(model) ? model : null;
-	const baseModel = clientPick ?? executorModel;
-	/** The model actually used on a given step (step 0 = advisor unless the user forced a pick). */
+	// The base run: the client's explicit pick, else the cheap executor. Step 0 upgrades to the
+	// advisor (via prepareStep) unless the user forced a pick.
+	const base = clientPick ? resolveModel(clientPick) : executor;
+	/** The canonical key metered for a given step (step 0 = advisor unless the user forced a pick). */
 	const modelForStep = (stepNumber: number): string =>
-		!clientPick && stepNumber === 0 ? advisorModel : baseModel;
+		!clientPick && stepNumber === 0 ? advisor.key : base.key;
 
 	// Resolve @-mentions into a prompt block so the model knows what each ref points to.
 	const parsedMentions = mentionsSchema.safeParse(mentions);
@@ -146,7 +149,7 @@ export async function POST(req: Request) {
 		: systemPrompt(mode);
 
 	const result = streamText({
-		model: baseModel,
+		model: base.model,
 		system,
 		messages: await convertToModelMessages(messages),
 		tools: buildAgentTools({ mode }),
@@ -154,7 +157,7 @@ export async function POST(req: Request) {
 		// Step 0 runs on the advisor (unless the user forced a model); the rest use the executor.
 		prepareStep: clientPick
 			? undefined
-			: ({ stepNumber }) => (stepNumber === 0 ? { model: advisorModel } : {}),
+			: ({ stepNumber }) => (stepNumber === 0 ? { model: advisor.model } : {}),
 		// Meter PER MODEL: advisor + executor tokens are ledgered separately (correct cost_micros).
 		onFinish: ({ steps }) => {
 			void recordAgentTurnUsage({

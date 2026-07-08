@@ -15,11 +15,17 @@ interface ModelPrice {
 /** Cache reads bill at ~10% of the input price (Anthropic prompt caching). */
 const CACHE_READ_MULTIPLIER = 0.1;
 
-/** $/MTok by AI Gateway model id (the `provider/model` ids in lib/config/ai.ts). */
+/** $/MTok by canonical `provider/native-id` key (the ledger keys from lib/config/ai.ts). */
 const MODEL_PRICES: Record<string, ModelPrice> = {
-	"anthropic/claude-haiku-4.5": { inputPerMTok: 1, outputPerMTok: 5 },
-	"anthropic/claude-sonnet-4.6": { inputPerMTok: 3, outputPerMTok: 15 },
-	"anthropic/claude-opus-4.8": { inputPerMTok: 5, outputPerMTok: 25 },
+	"anthropic/claude-haiku-4-5": { inputPerMTok: 1, outputPerMTok: 5 },
+	"anthropic/claude-sonnet-4-6": { inputPerMTok: 3, outputPerMTok: 15 },
+	"anthropic/claude-opus-4-8": { inputPerMTok: 5, outputPerMTok: 25 },
+	// TODO(pricing): the OpenAI executor is wired but not the default (set via
+	// AI_EXECUTOR_MODEL=openai/gpt-5-mini + OPENAI_API_KEY). No list price is committed here
+	// yet — confirm OpenAI's published gpt-5-mini $/MTok (https://openai.com/api/pricing) before
+	// adding it; until then an `openai/*` key falls through to DEFAULT_PRICE (never $0). Do not
+	// invent a rate. e.g.:
+	// "openai/gpt-5-mini": { inputPerMTok: <TBD>, outputPerMTok: <TBD> },
 };
 
 /** Fallback (Sonnet-tier) so an unknown model never silently costs $0. */

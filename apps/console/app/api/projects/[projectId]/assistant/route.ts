@@ -91,7 +91,7 @@ export async function POST(
 	if (!owner) return new Response("Unauthorized", { status: 401 });
 	if (!isAiConfigured()) {
 		return new Response(
-			"AI is not configured. Set AI_GATEWAY_API_KEY to enable the assistant.",
+			"AI is not configured. Set ANTHROPIC_API_KEY to enable the assistant.",
 			{ status: 503 },
 		);
 	}
@@ -120,11 +120,11 @@ export async function POST(
 	// Cost-optimized orchestration: a tier-derived ADVISOR (Sonnet/Opus) plans step 0, then a
 	// cheap Haiku EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor).
 	const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as const);
-	const executorModel = getExecutorModel();
-	const advisorModel = getAdvisorModel(tier);
-	/** The model actually used on a given step (step 0 = advisor; the rest = executor). */
+	const executor = getExecutorModel();
+	const advisor = getAdvisorModel(tier);
+	/** The canonical key metered for a given step (step 0 = advisor; the rest = executor). */
 	const modelForStep = (stepNumber: number): string =>
-		stepNumber === 0 ? advisorModel : executorModel;
+		stepNumber === 0 ? advisor.key : executor.key;
 
 	const parsedMentions = mentionsSchema.safeParse(mentions);
 	const mentionBlock = parsedMentions.success
@@ -135,14 +135,14 @@ export async function POST(
 		: systemPrompt(projectId, canvas);
 
 	const result = streamText({
-		model: executorModel,
+		model: executor.model,
 		system,
 		messages: await convertToModelMessages(messages),
 		tools: buildProjectAgentTools(canvas),
 		stopWhen: stepCountIs(8),
 		// Step 0 runs on the advisor; the rest use the executor.
 		prepareStep: ({ stepNumber }) =>
-			stepNumber === 0 ? { model: advisorModel } : {},
+			stepNumber === 0 ? { model: advisor.model } : {},
 		// Meter PER MODEL: advisor + executor tokens are ledgered separately (correct cost_micros).
 		onFinish: ({ steps }) => {
 			void recordAgentTurnUsage({

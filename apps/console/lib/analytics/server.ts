@@ -107,7 +107,8 @@ export async function captureAiGeneration(input: AiGenerationInput): Promise<voi
 			distinctId: input.userId,
 			event: "$ai_generation",
 			properties: {
-				$ai_provider: "anthropic",
+				// Derive the provider from the canonical `provider/native-id` model key.
+				$ai_provider: input.model ? input.model.split("/")[0] : undefined,
 				$ai_model: input.model,
 				$ai_input_tokens: input.inputTokens,
 				$ai_output_tokens: input.outputTokens,

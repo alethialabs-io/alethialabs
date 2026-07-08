@@ -22,15 +22,15 @@ import { getAiModel, isAiConfigured } from "@/lib/config/ai";
  *
  * This is the live wiring of the supervisor + LLM sub-agent runner. The control-flow
  * and parsing logic are unit-tested with injected fakes (lib/agent/supervisor +
- * llm-subagent); here the runner binds the real AI-gateway call, mirroring the agent
- * route. Returns the supervisor result.
+ * llm-subagent); here the runner binds the real direct-to-provider call, mirroring the
+ * agent route. Returns the supervisor result.
  */
 export async function runColonyTasks(
 	objectives: string[],
 ): Promise<SupervisorResult> {
 	const actor = await currentActor();
 	if (!isAiConfigured()) {
-		throw new Error("AI is not configured (set AI_GATEWAY_API_KEY)");
+		throw new Error("AI is not configured (set ANTHROPIC_API_KEY)");
 	}
 	if (objectives.length === 0) {
 		throw new Error("at least one objective is required");
@@ -43,12 +43,12 @@ export async function runColonyTasks(
 		throw e;
 	});
 
-	const modelId = getAiModel();
+	const resolved = getAiModel();
 	let inputTokens = 0;
 	let outputTokens = 0;
 	let cachedInputTokens = 0;
 	const runner = createLlmSubAgentRunner(async (prompt) => {
-		const { text, usage } = await generateText({ model: modelId, prompt });
+		const { text, usage } = await generateText({ model: resolved.model, prompt });
 		inputTokens += usage.inputTokens ?? 0;
 		outputTokens += usage.outputTokens ?? 0;
 		cachedInputTokens += usage.cachedInputTokens ?? 0;
@@ -70,7 +70,7 @@ export async function runColonyTasks(
 		kind: "agent",
 		credits: charge.credits,
 		source: charge.source,
-		model: modelId,
+		model: resolved.key,
 		inputTokens,
 		outputTokens,
 		cachedInputTokens,

@@ -6,7 +6,7 @@ import { aiCostMicros, aiCostUsd, modelPrice } from "@/lib/billing/model-costs";
 
 describe("modelPrice", () => {
 	it("returns list pricing for a known model", () => {
-		expect(modelPrice("anthropic/claude-sonnet-4.6")).toEqual({
+		expect(modelPrice("anthropic/claude-sonnet-4-6")).toEqual({
 			inputPerMTok: 3,
 			outputPerMTok: 15,
 		});
@@ -19,7 +19,7 @@ describe("modelPrice", () => {
 	});
 
 	it("prices Haiku 4.5 at its own (cheap) list rate, not the Sonnet fallback", () => {
-		expect(modelPrice("anthropic/claude-haiku-4.5")).toEqual({
+		expect(modelPrice("anthropic/claude-haiku-4-5")).toEqual({
 			inputPerMTok: 1,
 			outputPerMTok: 5,
 		});
@@ -30,13 +30,13 @@ describe("aiCostUsd", () => {
 	const M = 1_000_000;
 
 	it("bills input/output at the per-MTok rate", () => {
-		expect(aiCostUsd({ model: "anthropic/claude-sonnet-4.6", inputTokens: M })).toBeCloseTo(3);
-		expect(aiCostUsd({ model: "anthropic/claude-sonnet-4.6", outputTokens: M })).toBeCloseTo(15);
+		expect(aiCostUsd({ model: "anthropic/claude-sonnet-4-6", inputTokens: M })).toBeCloseTo(3);
+		expect(aiCostUsd({ model: "anthropic/claude-sonnet-4-6", outputTokens: M })).toBeCloseTo(15);
 	});
 
 	it("bills cache-read input at ~10% of the input rate", () => {
 		expect(
-			aiCostUsd({ model: "anthropic/claude-sonnet-4.6", cachedInputTokens: M }),
+			aiCostUsd({ model: "anthropic/claude-sonnet-4-6", cachedInputTokens: M }),
 		).toBeCloseTo(0.3);
 	});
 
@@ -44,7 +44,7 @@ describe("aiCostUsd", () => {
 		// 1M uncached ($3) + 1M cached ($0.3) + 1M output ($15) = $18.3
 		expect(
 			aiCostUsd({
-				model: "anthropic/claude-sonnet-4.6",
+				model: "anthropic/claude-sonnet-4-6",
 				inputTokens: M,
 				cachedInputTokens: M,
 				outputTokens: M,
@@ -53,20 +53,20 @@ describe("aiCostUsd", () => {
 	});
 
 	it("is zero when no tokens were used", () => {
-		expect(aiCostUsd({ model: "anthropic/claude-sonnet-4.6" })).toBe(0);
+		expect(aiCostUsd({ model: "anthropic/claude-sonnet-4-6" })).toBe(0);
 	});
 
 	it("uses the more expensive Opus rate", () => {
-		const sonnet = aiCostUsd({ model: "anthropic/claude-sonnet-4.6", outputTokens: M });
-		const opus = aiCostUsd({ model: "anthropic/claude-opus-4.8", outputTokens: M });
+		const sonnet = aiCostUsd({ model: "anthropic/claude-sonnet-4-6", outputTokens: M });
+		const opus = aiCostUsd({ model: "anthropic/claude-opus-4-8", outputTokens: M });
 		expect(opus).toBeGreaterThan(sonnet);
 	});
 
 	it("bills Haiku 4.5 at $1/MTok input and $5/MTok output (much cheaper than Sonnet)", () => {
-		expect(aiCostUsd({ model: "anthropic/claude-haiku-4.5", inputTokens: M })).toBeCloseTo(1);
-		expect(aiCostUsd({ model: "anthropic/claude-haiku-4.5", outputTokens: M })).toBeCloseTo(5);
-		const haiku = aiCostUsd({ model: "anthropic/claude-haiku-4.5", outputTokens: M });
-		const sonnet = aiCostUsd({ model: "anthropic/claude-sonnet-4.6", outputTokens: M });
+		expect(aiCostUsd({ model: "anthropic/claude-haiku-4-5", inputTokens: M })).toBeCloseTo(1);
+		expect(aiCostUsd({ model: "anthropic/claude-haiku-4-5", outputTokens: M })).toBeCloseTo(5);
+		const haiku = aiCostUsd({ model: "anthropic/claude-haiku-4-5", outputTokens: M });
+		const sonnet = aiCostUsd({ model: "anthropic/claude-sonnet-4-6", outputTokens: M });
 		expect(haiku).toBeLessThan(sonnet);
 	});
 });
@@ -74,13 +74,13 @@ describe("aiCostUsd", () => {
 describe("aiCostMicros", () => {
 	it("converts to integer USD micros", () => {
 		// $3 → 3,000,000 micros
-		expect(aiCostMicros({ model: "anthropic/claude-sonnet-4.6", inputTokens: 1_000_000 })).toBe(
+		expect(aiCostMicros({ model: "anthropic/claude-sonnet-4-6", inputTokens: 1_000_000 })).toBe(
 			3_000_000,
 		);
 	});
 
 	it("rounds to the nearest micro", () => {
-		const v = aiCostMicros({ model: "anthropic/claude-sonnet-4.6", inputTokens: 1 });
+		const v = aiCostMicros({ model: "anthropic/claude-sonnet-4-6", inputTokens: 1 });
 		expect(Number.isInteger(v)).toBe(true);
 	});
 });

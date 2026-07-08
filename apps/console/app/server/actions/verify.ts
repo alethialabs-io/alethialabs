@@ -19,7 +19,7 @@ import { jobs } from "@/lib/db/schema";
  * explanation/remediation via the model — it is never the gate and writes nothing.
  * Returns [] when AI is unconfigured or there is nothing to explain. The
  * orchestration is unit-tested via lib/ai/explain-findings (injected model); this
- * wrapper supplies the real AI-gateway call, mirroring the agent route.
+ * wrapper supplies the real direct-to-provider call, mirroring the agent route.
  */
 export async function explainJobFindings(jobId: string) {
 	const actor = await authorize("view", { type: "job", id: jobId });
@@ -43,12 +43,12 @@ export async function explainJobFindings(jobId: string) {
 	});
 	if (!charge) return [];
 
-	const modelId = getAiModel();
+	const resolved = getAiModel();
 	let inputTokens = 0;
 	let outputTokens = 0;
 	let cachedInputTokens = 0;
 	const explanations = await explainFindings(report, async (prompt) => {
-		const { text, usage } = await generateText({ model: modelId, prompt });
+		const { text, usage } = await generateText({ model: resolved.model, prompt });
 		inputTokens += usage.inputTokens ?? 0;
 		outputTokens += usage.outputTokens ?? 0;
 		cachedInputTokens += usage.cachedInputTokens ?? 0;
@@ -62,7 +62,7 @@ export async function explainJobFindings(jobId: string) {
 		credits: charge.credits,
 		source: charge.source,
 		refId: jobId,
-		model: modelId,
+		model: resolved.key,
 		inputTokens,
 		outputTokens,
 		cachedInputTokens,

@@ -72,14 +72,14 @@ export async function POST(
 	}
 
 	const { messages, mode = "ask", threadId }: AgentChatBody = await req.json();
-	const modelId = getAiModel();
+	const model = getAiModel();
 	const tools = scopeToolsToAgent(
 		buildAgentTools({ mode }),
 		agent.tool_scope,
 	) as ToolSet;
 
 	const result = streamText({
-		model: modelId,
+		model: model.model,
 		system: buildAgentSystemPrompt(agent),
 		messages: await convertToModelMessages(messages),
 		tools,
@@ -92,7 +92,7 @@ export async function POST(
 				credits: charge.credits,
 				source: charge.source,
 				refId: threadId ?? agentId,
-				model: modelId,
+				model: model.key,
 				inputTokens: usage.inputTokens,
 				outputTokens: usage.outputTokens,
 				cachedInputTokens: usage.cachedInputTokens,

@@ -20,7 +20,7 @@ interface SupportAskBody {
 	messages: UIMessage[];
 	/** When set, the full transcript is persisted to this (kind:"support") thread. */
 	threadId?: string;
-	/** Selected gateway model id (validated against the allowlist). */
+	/** Selected model id (validated against the allowlist). */
 	model?: string;
 }
 
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
 	if (!owner) return new Response("Unauthorized", { status: 401 });
 	if (!isAiConfigured()) {
 		return new Response(
-			"AI is not configured. Set AI_GATEWAY_API_KEY to enable the assistant.",
+			"AI is not configured. Set ANTHROPIC_API_KEY to enable the assistant.",
 			{ status: 503 },
 		);
 	}
@@ -61,10 +61,10 @@ export async function POST(req: Request) {
 	}
 
 	const { messages, threadId, model }: SupportAskBody = await req.json();
-	const modelId = getAiModel(model);
+	const resolved = getAiModel(model);
 
 	const result = streamText({
-		model: modelId,
+		model: resolved.model,
 		system: supportSystemPrompt(),
 		messages: await convertToModelMessages(messages),
 		tools: buildSupportTools(),
@@ -78,7 +78,7 @@ export async function POST(req: Request) {
 				credits: charge.credits,
 				source: charge.source,
 				refId: threadId,
-				model: modelId,
+				model: resolved.key,
 				inputTokens: usage.inputTokens,
 				outputTokens: usage.outputTokens,
 				cachedInputTokens: usage.cachedInputTokens,

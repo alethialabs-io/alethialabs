@@ -65,7 +65,7 @@ function parseBudget(error: Error): ParsedBudget | null {
 function classify(error: Error): ChatErrorKind {
 	if (parseBudget(error)) return "budget";
 	const msg = error.message ?? "";
-	if (/not configured|AI_GATEWAY_API_KEY/i.test(msg)) return "missing-key";
+	if (/not configured|ANTHROPIC_API_KEY/i.test(msg)) return "missing-key";
 	if (/budget|quota|credit|reason|upgradable|"error"/i.test(msg)) return "budget";
 	return "network";
 }
@@ -89,7 +89,7 @@ const COPY: Record<
 		icon: KeyRound,
 		title: "AI is not configured",
 		description:
-			"Set AI_GATEWAY_API_KEY in your environment to enable the assistant, then retry.",
+			"Set ANTHROPIC_API_KEY in your environment to enable the assistant, then retry.",
 	},
 	budget: {
 		icon: AlertTriangle,
