@@ -19,6 +19,9 @@ export const qk = {
 	addons: (projectId: string, environmentId?: string | null) =>
 		["addons", projectId, environmentId ?? "default"] as const,
 	projects: (org: string) => ["projects", org] as const,
+	projectUsage: (projectId: string) => ["project-usage", projectId] as const,
+	projectUsageOverTime: (projectId: string, from: string, to: string) =>
+		["project-usage", projectId, "over-time", from, to] as const,
 	pricing: (region: string) => ["pricing", region] as const,
 	cloudResources: (identityId: string) =>
 		["cloud-resources", identityId] as const,

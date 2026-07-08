@@ -44,6 +44,75 @@ export async function queryResourceCounts(orgId: string): Promise<ResourceCounts
 	};
 }
 
+/** Point-in-time resource counts for one project — the project-scoped Usage view. */
+export interface ProjectResourceCounts {
+	/** Provisioned cluster components in this project. */
+	clusters: number;
+	/** This project's estimated monthly cloud cost (USD). */
+	estimatedMonthlyCost: number;
+}
+
+/**
+ * Counts clusters and reads the estimated monthly cost for a single project — the
+ * project analogue of {@link queryResourceCounts}. Clusters are scoped by
+ * `project_cluster.project_id`; the cost is the project's own rolled-up estimate.
+ * Service path with an explicit `project_id` filter (the caller verifies the project
+ * belongs to the actor's org before calling).
+ */
+export async function queryProjectResourceCounts(
+	projectId: string,
+): Promise<ProjectResourceCounts> {
+	const db = getServiceDb();
+	const [clusterRow, projectRow] = await Promise.all([
+		db
+			.select({ n: count() })
+			.from(projectCluster)
+			.where(eq(projectCluster.project_id, projectId)),
+		db
+			.select({ cost: projects.estimated_monthly_cost })
+			.from(projects)
+			.where(eq(projects.id, projectId))
+			.limit(1),
+	]);
+	return {
+		clusters: clusterRow[0]?.n ?? 0,
+		estimatedMonthlyCost: Number(projectRow[0]?.cost ?? 0),
+	};
+}
+
+/** Jobs a project ran in a window (by creation time) — the cumulative "Jobs" counter. */
+export async function queryProjectJobCount(
+	projectId: string,
+	from: Date,
+	to: Date,
+): Promise<number> {
+	const [row] = await getServiceDb()
+		.select({ n: count() })
+		.from(jobs)
+		.where(
+			and(
+				eq(jobs.project_id, projectId),
+				gte(jobs.created_at, from),
+				lt(jobs.created_at, to),
+			),
+		);
+	return row?.n ?? 0;
+}
+
+/** Jobs currently in flight for a project (CLAIMED/PROCESSING) — the concurrency gauge. */
+export async function queryProjectRunningJobs(projectId: string): Promise<number> {
+	const [row] = await getServiceDb()
+		.select({ n: count() })
+		.from(jobs)
+		.where(
+			and(
+				eq(jobs.project_id, projectId),
+				inArray(jobs.status, ["CLAIMED", "PROCESSING"]),
+			),
+		);
+	return row?.n ?? 0;
+}
+
 /** Jobs an org ran in a window (by creation time) — the cumulative "Jobs" counter. */
 export async function queryJobCount(
 	orgId: string,

@@ -239,3 +239,63 @@ export async function queryJobMinutesByOrg(
 		order by job_minutes desc
 	`);
 }
+
+/** A project's job-minutes total over a window (single-row rollup). */
+export type ProjectJobMinutesRow = { job_minutes: number; job_count: number };
+
+/**
+ * Per-**project** job-minutes rollup over [from, to) — the project-scoped analogue of
+ * {@link queryJobMinutesByOrg}, filtering jobs by `project_id` instead of `org_id`. Same
+ * managed-only, completed-jobs basis (self-operated runners never count), so the number is
+ * directly comparable to the org meter. An aggregate with no `group by` always returns one
+ * row, so the caller can read `[0]` unconditionally. Service path.
+ */
+export async function queryJobMinutesByProject(
+	db: ServiceDb,
+	filters: { from: Date; to: Date; projectId: string },
+): Promise<ProjectJobMinutesRow> {
+	const minutes = sql`extract(epoch from (j.completed_at - j.started_at)) / 60.0`;
+	const rows = await db.execute<ProjectJobMinutesRow>(sql`
+		select
+			coalesce(sum(greatest(${minutes}, 0)), 0)::float8 as job_minutes,
+			count(*)::int as job_count
+		from public.jobs j
+		join public.runners r on r.id = j.runner_id
+		where r.operator = 'managed'
+		  and j.started_at is not null
+		  and j.completed_at is not null
+		  and j.completed_at >= ${ts(filters.from)}
+		  and j.completed_at < ${ts(filters.to)}
+		  and j.project_id = ${filters.projectId}
+	`);
+	return rows[0] ?? { job_minutes: 0, job_count: 0 };
+}
+
+/**
+ * Day-bucketed job-minutes for one **project** over [from, to) — the project analogue of
+ * {@link queryJobMinutesSeries}, filtering by `project_id`. Same managed-only, completed-jobs
+ * basis grouped by `completed_at`'s day; only active days are returned (the caller zero-fills
+ * the axis). Service path.
+ */
+export async function queryJobMinutesSeriesByProject(
+	db: ServiceDb,
+	filters: { from: Date; to: Date; projectId: string },
+): Promise<JobMinutesDayRow[]> {
+	const minutes = sql`extract(epoch from (j.completed_at - j.started_at)) / 60.0`;
+	return db.execute<JobMinutesDayRow>(sql`
+		select
+			to_char(date_trunc('day', j.completed_at), 'YYYY-MM-DD') as day,
+			coalesce(sum(greatest(${minutes}, 0)), 0)::float8 as job_minutes,
+			count(*)::int as job_count
+		from public.jobs j
+		join public.runners r on r.id = j.runner_id
+		where r.operator = 'managed'
+		  and j.started_at is not null
+		  and j.completed_at is not null
+		  and j.completed_at >= ${ts(filters.from)}
+		  and j.completed_at < ${ts(filters.to)}
+		  and j.project_id = ${filters.projectId}
+		group by 1
+		order by 1
+	`);
+}

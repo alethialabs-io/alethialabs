@@ -84,6 +84,73 @@ export async function aiCreditsSeries(
 	`);
 }
 
+/**
+ * Sum AI credits attributable to ONE **project** since a cutoff. `ai_usage_ledger` has no
+ * `project_id`, so attribution is best-effort via `ref_id`: a `scan` row's ref_id is a
+ * `jobs.id` (→ `jobs.project_id`) and an `agent` row's ref_id is an `agent_threads.id`
+ * (→ `agent_threads.project_id`). Rows whose ref_id matches neither (support Ask-AI, legacy
+ * rows with a NULL ref_id, or a ref that no longer resolves) are EXCLUDED — the project view
+ * notes this coverage caveat. `ref_id` is `text`, so it's compared against `id::text` to avoid
+ * a uuid-cast error on non-uuid refs. Service path (trusted; the caller scopes the project).
+ */
+export async function sumCreditsByProject(
+	projectId: string,
+	source: CreditSource,
+	since: Date,
+): Promise<number> {
+	const [row] = await getServiceDb().execute<{ credits: number }>(sql`
+		select coalesce(sum(l.credits), 0)::int as credits
+		from public.ai_usage_ledger l
+		where l.source = ${source}
+		  and l.created_at >= ${since.toISOString()}::timestamptz
+		  and (
+			(l.kind = 'scan' and exists (
+				select 1 from public.jobs j
+				where j.id::text = l.ref_id and j.project_id = ${projectId}
+			))
+			or (l.kind = 'agent' and exists (
+				select 1 from public.agent_threads t
+				where t.id::text = l.ref_id and t.project_id = ${projectId}
+			))
+		  )
+	`);
+	return Number(row?.credits ?? 0);
+}
+
+/**
+ * Day-bucketed AI credits attributable to one **project** over [from, to) — the project
+ * analogue of {@link aiCreditsSeries}. Both budget sources combined, grouped by `created_at`'s
+ * day. Attribution is best-effort via `ref_id` (scan→jobs.project_id, agent→agent_threads.
+ * project_id); rows matching neither are excluded (see {@link sumCreditsByProject}). Only
+ * active days are returned; the caller zero-fills the axis. Service path.
+ */
+export async function aiCreditsSeriesByProject(
+	projectId: string,
+	from: Date,
+	to: Date,
+): Promise<AiCreditsDayRow[]> {
+	return getServiceDb().execute<AiCreditsDayRow>(sql`
+		select
+			to_char(date_trunc('day', l.created_at), 'YYYY-MM-DD') as day,
+			coalesce(sum(l.credits), 0)::int as credits
+		from public.ai_usage_ledger l
+		where l.created_at >= ${from.toISOString()}::timestamptz
+		  and l.created_at < ${to.toISOString()}::timestamptz
+		  and (
+			(l.kind = 'scan' and exists (
+				select 1 from public.jobs j
+				where j.id::text = l.ref_id and j.project_id = ${projectId}
+			))
+			or (l.kind = 'agent' and exists (
+				select 1 from public.agent_threads t
+				where t.id::text = l.ref_id and t.project_id = ${projectId}
+			))
+		  )
+		group by 1
+		order by 1
+	`);
+}
+
 /** Remaining purchased top-up credits: Σ grants − Σ purchased usage (all time). */
 export async function purchasedBalance(orgId: string): Promise<number> {
 	const [granted] = await getServiceDb()

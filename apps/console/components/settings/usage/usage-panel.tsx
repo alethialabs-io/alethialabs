@@ -15,14 +15,7 @@
 
 import { ArrowUpRight, Info } from "lucide-react";
 import Link from "next/link";
-import {
-	type ReactNode,
-	useCallback,
-	useEffect,
-	useMemo,
-	useState,
-	useTransition,
-} from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
 	type BillingSummary,
@@ -38,6 +31,7 @@ import {
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
 import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
+import { Bars, Meter, Stat } from "@/components/settings/usage/usage-primitives";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { planMeta } from "@repo/plan-catalog";
@@ -53,87 +47,6 @@ import {
 	RANGE_PRESETS,
 } from "@repo/ui/range";
 import { Skeleton } from "@repo/ui/skeleton";
-
-/** One usage meter cell (key, value, fill %, sub note). */
-function Meter({
-	label,
-	value,
-	sub,
-	fill,
-}: {
-	label: string;
-	value: ReactNode;
-	sub: ReactNode;
-	/** 0–100 fill percentage. */
-	fill: number;
-}) {
-	return (
-		<div className="border-r border-border px-6 py-4 last:border-r-0">
-			<div className="mb-[9px] flex items-baseline justify-between">
-				<span className="font-mono text-[10px] uppercase tracking-[0.1em] text-text-tertiary">
-					{label}
-				</span>
-				<span className="text-[12.5px] text-text-secondary">{value}</span>
-			</div>
-			<div className="h-[5px] overflow-hidden rounded-full border border-border bg-surface-sunken">
-				<div
-					className="h-full rounded-full bg-text-primary"
-					style={{ width: `${Math.min(100, Math.max(0, fill))}%` }}
-				/>
-			</div>
-			<div className="mt-2 font-mono text-[10px] text-text-tertiary">{sub}</div>
-		</div>
-	);
-}
-
-/** A compact resource stat (count + label + optional sub). */
-function Stat({
-	label,
-	value,
-	sub,
-}: {
-	label: string;
-	value: ReactNode;
-	sub?: ReactNode;
-}) {
-	return (
-		<div className="border-r border-border px-6 py-4 last:border-r-0">
-			<div className="font-mono text-[10px] uppercase tracking-[0.1em] text-text-tertiary">
-				{label}
-			</div>
-			<div className="mt-1.5 font-display text-[20px] font-semibold tracking-[-0.02em] text-text-primary">
-				{value}
-			</div>
-			{sub && <div className="mt-0.5 font-mono text-[10px] text-text-tertiary">{sub}</div>}
-		</div>
-	);
-}
-
-/** A lightweight CSS bar chart for one over-time metric (no chart dependency). */
-function Bars({
-	points,
-	pick,
-}: {
-	points: UsageOverTime["series"];
-	pick: (p: UsageOverTime["series"][number]) => number;
-}) {
-	const max = Math.max(1, ...points.map(pick));
-	return (
-		<div className="flex h-28 items-end gap-px">
-			{points.map((p) => {
-				const v = pick(p);
-				return (
-					<div
-						key={p.date}
-						title={`${p.date}: ${v.toLocaleString()}`}
-						className="min-w-[2px] flex-1 rounded-t-[1px] bg-text-primary/80 transition-colors hover:bg-text-primary"
-						style={{ height: `${Math.max(2, (v / max) * 100)}%` }}
-					/>
-				);
-			})}
-		</div>
-	);
-}
 
 type Metric = "runnerMinutes" | "jobs" | "aiCredits";
 const METRICS: { id: Metric; label: string }[] = [
