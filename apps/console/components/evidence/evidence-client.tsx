@@ -2,366 +2,209 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The Evidence surface — the org-wide "keep proving it" roll-up. Three tabs over one
-// fetched roll-up: Verify (latest elench verdict per environment, linking to the job's
-// Plan tab for the full report + downloadable signed receipt), Drift (current posture per
-// environment), and Waivers (recorded, time-boxed control overrides). Read-only; the data
-// is produced by the PLAN/DEPLOY + DETECT_DRIFT jobs — this page never mutates anything.
+// The Evidence surface — the org-wide "keep proving it" roll-up. One fetched roll-up drives
+// three distribution meters, a triage strip, a search/group/sort/stage toolbar, a single
+// grouped environment-posture table (with an inline peek + full detail drawer), and the
+// recorded-waivers panel. Read-only: the data is produced by the PLAN/DEPLOY + DETECT_DRIFT
+// jobs — this page never mutates anything.
 
-import { formatDistanceToNow } from "date-fns";
-import { FileCheck2, ShieldCheck } from "lucide-react";
-import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { Badge } from "@repo/ui/badge";
-import {
-	Empty,
-	EmptyDescription,
-	EmptyHeader,
-	EmptyMedia,
-	EmptyTitle,
-} from "@repo/ui/empty";
 import { Skeleton } from "@repo/ui/skeleton";
 import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "@repo/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
-import type {
-	EvidenceEnvRow,
-	EvidenceWaiver,
-} from "@/lib/queries/evidence";
+	buildMeters,
+	buildTriage,
+	deriveGroups,
+	stageLabel,
+	type EvidenceEnvRow,
+	type GroupMode,
+	type SortKey,
+	type TriageKey,
+} from "./evidence-derive";
+import { EvidenceDrawer } from "./evidence-drawer";
+import { EvidenceMeters } from "./evidence-meters";
+import { EvIcon } from "./evidence-status";
+import { EvidenceTable } from "./evidence-table";
+import { EvidenceToolbar, type StagePill } from "./evidence-toolbar";
+import { EvidenceTriage } from "./evidence-triage";
+import { EvidenceWaivers } from "./evidence-waivers";
+import { downloadReceipt } from "./receipt-download";
 import { useEvidenceQuery } from "@/lib/query/use-evidence-query";
-import { EvidenceSummaryStrip } from "./evidence-summary";
-import {
-	DriftBadge,
-	DriftUnknownBadge,
-	UnverifiedBadge,
-	VerdictBadge,
-} from "./verdict-badge";
+import type { OrgEvidence } from "@/lib/queries/evidence";
 
-/** Relative-time label from an ISO timestamp (e.g. "3 hours ago"). */
-function ago(iso: string): string {
-	return formatDistanceToNow(new Date(iso), { addSuffix: true });
+const STAGE_ORDER = ["production", "staging", "development"];
+
+/** The default drawer tab for a row — Report if verified, else Receipt, else Drift. */
+function defaultTab(row: EvidenceEnvRow): string {
+	if (row.verify?.report) return "report";
+	if (row.verify?.receipt) return "receipt";
+	return "drift";
 }
 
-/** The environment's project + name, stacked, for the leftmost table cell. */
-function EnvCell({ row }: { row: EvidenceEnvRow }) {
+/** The Evidence page body once data has loaded. */
+function EvidenceLoaded({ data, org }: { data: OrgEvidence; org: string }) {
+	const [search, setSearch] = useState("");
+	const [group, setGroup] = useState<GroupMode>("triage");
+	const [sort, setSort] = useState<SortKey>("worst");
+	const [stage, setStage] = useState("all");
+	const [triage, setTriage] = useState<TriageKey>("all");
+	const [expandedId, setExpandedId] = useState<string | null>(null);
+	const [drawerId, setDrawerId] = useState<string | null>(null);
+	const [drawerTab, setDrawerTab] = useState("report");
+	const [toast, setToast] = useState("");
+
+	useEffect(() => {
+		if (!toast) return;
+		const t = setTimeout(() => setToast(""), 2400);
+		return () => clearTimeout(t);
+	}, [toast]);
+
+	const meters = useMemo(() => buildMeters(data), [data]);
+	const triageClusters = useMemo(
+		() => buildTriage(data.summary),
+		[data.summary],
+	);
+	const { groups, resultCount } = useMemo(
+		() => deriveGroups(data, { search, stage, triage, group, sort }),
+		[data, search, stage, triage, group, sort],
+	);
+
+	const stages: StagePill[] = useMemo(() => {
+		const counts = new Map<string, number>();
+		for (const r of data.rows) counts.set(r.stage, (counts.get(r.stage) ?? 0) + 1);
+		const present = [...counts.keys()].sort(
+			(a, b) => STAGE_ORDER.indexOf(a) - STAGE_ORDER.indexOf(b),
+		);
+		return [
+			{ key: "all", label: "All stages", count: data.rows.length },
+			...present.map((s) => ({
+				key: s,
+				label: stageLabel(s),
+				count: counts.get(s) ?? 0,
+			})),
+		];
+	}, [data.rows]);
+
+	const projectCount = useMemo(
+		() => new Set(data.rows.map((r) => r.projectId)).size,
+		[data.rows],
+	);
+
+	const drawerRow =
+		data.rows.find((r) => r.environmentId === drawerId) ?? null;
+	const filtered = search !== "" || stage !== "all" || triage !== "all";
+
+	/** Opens the detail drawer on a valid default tab for the row. */
+	const openDrawer = (row: EvidenceEnvRow) => {
+		setDrawerTab(defaultTab(row));
+		setDrawerId(row.environmentId);
+	};
+
+	/** Downloads the row's signed receipt and shows a confirmation toast. */
+	const download = (row: EvidenceEnvRow) => {
+		if (!row.verify?.receipt) return;
+		setToast(downloadReceipt(row.verify.receipt, row.verify.jobId));
+	};
+
+	const resetFilters = () => {
+		setSearch("");
+		setStage("all");
+		setTriage("all");
+	};
+
 	return (
-		<div className="flex flex-col">
-			<span className="font-medium">{row.environmentName}</span>
-			<span className="text-xs text-muted-foreground">
-				{row.projectName} · {row.stage}
-			</span>
+		<div className="pb-20">
+			{/* identity line */}
+			<div className="mb-5 flex items-center gap-3">
+				<EvIcon name="shield-check" size={17} className="text-text-primary" />
+				<span className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-text-tertiary">
+					Org evidence
+				</span>
+				<span className="h-3 w-px bg-border-strong" />
+				<span className="font-mono text-[11px] text-text-secondary">{org}</span>
+				<span className="font-mono text-[11px] text-text-disabled">
+					· {data.summary.environments} environments · {projectCount} projects
+				</span>
+				<span className="flex-1" />
+				<span className="hidden font-mono text-[10px] uppercase tracking-wide text-text-disabled sm:inline">
+					Read-only · Keep proving it
+				</span>
+			</div>
+
+			<div className="flex flex-col gap-3.5">
+				<EvidenceMeters meters={meters} />
+				<EvidenceTriage
+					clusters={triageClusters}
+					active={triage}
+					onSelect={setTriage}
+				/>
+			</div>
+
+			<div className="mt-5 flex flex-col gap-3.5">
+				<EvidenceToolbar
+					search={search}
+					onSearch={setSearch}
+					group={group}
+					onGroup={setGroup}
+					sort={sort}
+					onSort={setSort}
+					stage={stage}
+					onStage={setStage}
+					stages={stages}
+					resultCount={resultCount}
+					total={data.summary.environments}
+					filtered={filtered}
+					onReset={resetFilters}
+				/>
+				<EvidenceTable
+					groups={groups}
+					expandedId={expandedId}
+					onToggle={(id) =>
+						setExpandedId((cur) => (cur === id ? null : id))
+					}
+					onOpen={openDrawer}
+					onDownload={download}
+				/>
+			</div>
+
+			<div className="mt-6">
+				<EvidenceWaivers waivers={data.waivers} />
+			</div>
+
+			<EvidenceDrawer
+				org={org}
+				row={drawerRow}
+				tab={drawerTab}
+				onTab={setDrawerTab}
+				onClose={() => setDrawerId(null)}
+				onDownload={download}
+			/>
+
+			{toast && (
+				<div className="fixed bottom-6 left-1/2 z-[95] flex -translate-x-1/2 items-center gap-2 rounded-sm bg-ink px-4 py-2.5 text-[12.5px] text-ink-foreground shadow-lg">
+					<EvIcon name="check-circle" size={14} />
+					{toast}
+				</div>
+			)}
 		</div>
 	);
 }
 
-/** Verify tab — latest verdict per environment, each linking to the job's Plan tab. */
-function VerifyTable({ rows, org }: { rows: EvidenceEnvRow[]; org: string }) {
-	if (rows.length === 0) {
-		return (
-			<EvidenceEmpty
-				title="Nothing to verify yet"
-				description="Once you plan or deploy an environment, its verification verdict and signed receipt appear here."
-			/>
-		);
-	}
-	return (
-		<Table>
-			<TableHeader>
-				<TableRow>
-					<TableHead>Environment</TableHead>
-					<TableHead>Verdict</TableHead>
-					<TableHead>Receipt</TableHead>
-					<TableHead>Evaluated</TableHead>
-					<TableHead className="text-right">Report</TableHead>
-				</TableRow>
-			</TableHeader>
-			<TableBody>
-				{rows.map((row) => (
-					<TableRow key={row.environmentId}>
-						<TableCell>
-							<EnvCell row={row} />
-						</TableCell>
-						<TableCell>
-							{row.verify ? (
-								<VerdictBadge verdict={row.verify.verdict} />
-							) : (
-								<UnverifiedBadge />
-							)}
-						</TableCell>
-						<TableCell>
-							{row.verify?.hasReceipt ? (
-								<Badge variant="outline" className="gap-1.5">
-									<FileCheck2 className="h-3.5 w-3.5" />
-									Signed
-								</Badge>
-							) : (
-								<span className="text-xs text-muted-foreground">—</span>
-							)}
-						</TableCell>
-						<TableCell className="text-sm text-muted-foreground">
-							{row.verify ? ago(row.verify.evaluatedAt) : "—"}
-						</TableCell>
-						<TableCell className="text-right">
-							{row.verify ? (
-								<Link
-									href={`/${org}/~/jobs/${row.verify.jobId}`}
-									className="text-sm underline-offset-4 hover:underline"
-								>
-									View
-								</Link>
-							) : (
-								<span className="text-xs text-muted-foreground">—</span>
-							)}
-						</TableCell>
-					</TableRow>
-				))}
-			</TableBody>
-		</Table>
-	);
-}
-
-/** Drift tab — current posture per environment from the latest refresh-only scan. */
-function DriftTable({ rows }: { rows: EvidenceEnvRow[] }) {
-	if (rows.length === 0) {
-		return (
-			<EvidenceEmpty
-				title="No environments yet"
-				description="Provisioned environments are drift-scanned on a day-2 cadence; their posture shows here."
-			/>
-		);
-	}
-	return (
-		<Table>
-			<TableHeader>
-				<TableRow>
-					<TableHead>Environment</TableHead>
-					<TableHead>Posture</TableHead>
-					<TableHead>Last scanned</TableHead>
-				</TableRow>
-			</TableHeader>
-			<TableBody>
-				{rows.map((row) => (
-					<TableRow key={row.environmentId}>
-						<TableCell>
-							<EnvCell row={row} />
-						</TableCell>
-						<TableCell>
-							{row.drift ? (
-								<DriftBadge inSync={row.drift.inSync} drifted={row.drift.drifted} />
-							) : (
-								<DriftUnknownBadge />
-							)}
-						</TableCell>
-						<TableCell className="text-sm text-muted-foreground">
-							{row.drift ? ago(row.drift.scannedAt) : "—"}
-						</TableCell>
-					</TableRow>
-				))}
-			</TableBody>
-		</Table>
-	);
-}
-
-/** Security tab — the latest Trivy vulnerability posture per environment (L9). */
-function SecurityTable({ rows }: { rows: EvidenceEnvRow[] }) {
-	if (rows.length === 0) {
-		return (
-			<EvidenceEmpty
-				title="No environments yet"
-				description="Enable the Trivy-Operator add-on on an environment to see continuous vulnerability scanning here."
-			/>
-		);
-	}
-	return (
-		<Table>
-			<TableHeader>
-				<TableRow>
-					<TableHead>Environment</TableHead>
-					<TableHead>Vulnerabilities</TableHead>
-					<TableHead>Last scanned</TableHead>
-				</TableRow>
-			</TableHeader>
-			<TableBody>
-				{rows.map((row) => (
-					<TableRow key={row.environmentId}>
-						<TableCell>
-							<EnvCell row={row} />
-						</TableCell>
-						<TableCell>
-							{row.security?.scanned ? (
-								<div className="flex flex-wrap items-center gap-1.5">
-									<Badge
-										variant={
-											row.security.critical > 0 ? "destructive" : "secondary"
-										}
-									>
-										{row.security.critical} critical
-									</Badge>
-									<Badge variant={row.security.high > 0 ? "destructive" : "outline"}>
-										{row.security.high} high
-									</Badge>
-									<Badge variant="outline" className="text-muted-foreground">
-										{row.security.medium} med · {row.security.low} low
-									</Badge>
-								</div>
-							) : (
-								<Badge variant="outline" className="gap-1.5 text-muted-foreground">
-									Not scanned
-								</Badge>
-							)}
-						</TableCell>
-						<TableCell className="text-sm text-muted-foreground">
-							{row.security?.scanned ? ago(row.security.scannedAt) : "—"}
-						</TableCell>
-					</TableRow>
-				))}
-			</TableBody>
-		</Table>
-	);
-}
-
-/** Waivers tab — recorded, time-boxed verification control overrides. */
-function WaiversTable({ waivers }: { waivers: EvidenceWaiver[] }) {
-	if (waivers.length === 0) {
-		return (
-			<EvidenceEmpty
-				title="No waivers"
-				description="When an apply proceeds despite a failing control, the authorized, time-boxed waiver is recorded here."
-			/>
-		);
-	}
-	return (
-		<Table>
-			<TableHeader>
-				<TableRow>
-					<TableHead>Environment</TableHead>
-					<TableHead>Controls</TableHead>
-					<TableHead>Reason</TableHead>
-					<TableHead>By</TableHead>
-					<TableHead>Status</TableHead>
-				</TableRow>
-			</TableHeader>
-			<TableBody>
-				{waivers.map((w) => (
-					<TableRow key={w.jobId}>
-						<TableCell>
-							<div className="flex flex-col">
-								<span className="font-medium">
-									{w.environmentName ?? "—"}
-								</span>
-								<span className="text-xs text-muted-foreground">
-									{w.projectName ?? "—"}
-								</span>
-							</div>
-						</TableCell>
-						<TableCell>
-							<div className="flex flex-wrap gap-1">
-								{w.controls.map((c) => (
-									<Badge key={c} variant="outline" className="font-mono text-[11px]">
-										{c}
-									</Badge>
-								))}
-							</div>
-						</TableCell>
-						<TableCell className="max-w-[280px] text-sm text-muted-foreground">
-							{w.reason}
-						</TableCell>
-						<TableCell className="text-sm text-muted-foreground">{w.by}</TableCell>
-						<TableCell>
-							{w.active ? (
-								<Badge variant="secondary">Active</Badge>
-							) : (
-								<Badge variant="outline" className="text-muted-foreground">
-									Expired
-								</Badge>
-							)}
-						</TableCell>
-					</TableRow>
-				))}
-			</TableBody>
-		</Table>
-	);
-}
-
-/** Shared empty state for the three tabs. */
-function EvidenceEmpty({
-	title,
-	description,
-}: {
-	title: string;
-	description: string;
-}) {
-	return (
-		<Empty className="rounded-md border">
-			<EmptyHeader>
-				<EmptyMedia variant="icon">
-					<ShieldCheck />
-				</EmptyMedia>
-				<EmptyTitle>{title}</EmptyTitle>
-				<EmptyDescription>{description}</EmptyDescription>
-			</EmptyHeader>
-		</Empty>
-	);
-}
-
-/** The Evidence page body: summary strip + Verify / Drift / Waivers tabs. */
+/** The Evidence page: loading skeleton until the roll-up hydrates, then the full surface. */
 export function EvidenceClient() {
 	const { org } = useParams<{ org: string }>();
 	const { data, isPending } = useEvidenceQuery();
 
 	if (isPending || !data) {
 		return (
-			<div className="space-y-6">
-				<Skeleton className="h-24 w-full rounded-lg" />
-				<Skeleton className="h-9 w-64 rounded-md" />
-				<Skeleton className="h-64 w-full rounded-lg" />
+			<div className="space-y-4">
+				<Skeleton className="h-4 w-64" />
+				<Skeleton className="h-28 w-full rounded-lg" />
+				<Skeleton className="h-20 w-full rounded-lg" />
+				<Skeleton className="h-72 w-full rounded-lg" />
 			</div>
 		);
 	}
 
-	return (
-		<div className="space-y-6">
-			<EvidenceSummaryStrip summary={data.summary} />
-			<Tabs defaultValue="verify">
-				<TabsList>
-					<TabsTrigger value="verify">Verify</TabsTrigger>
-					<TabsTrigger value="drift">Drift</TabsTrigger>
-					<TabsTrigger value="security">
-						Security
-						{data.summary.criticalHighVulns > 0 && (
-							<Badge variant="destructive" className="ml-2">
-								{data.summary.criticalHighVulns}
-							</Badge>
-						)}
-					</TabsTrigger>
-					<TabsTrigger value="waivers">
-						Waivers
-						{data.summary.activeWaivers > 0 && (
-							<Badge variant="secondary" className="ml-2">
-								{data.summary.activeWaivers}
-							</Badge>
-						)}
-					</TabsTrigger>
-				</TabsList>
-				<TabsContent value="verify" className="mt-4">
-					<VerifyTable rows={data.rows} org={org} />
-				</TabsContent>
-				<TabsContent value="drift" className="mt-4">
-					<DriftTable rows={data.rows} />
-				</TabsContent>
-				<TabsContent value="security" className="mt-4">
-					<SecurityTable rows={data.rows} />
-				</TabsContent>
-				<TabsContent value="waivers" className="mt-4">
-					<WaiversTable waivers={data.waivers} />
-				</TabsContent>
-			</Tabs>
-		</div>
-	);
+	return <EvidenceLoaded data={data} org={org} />;
 }
