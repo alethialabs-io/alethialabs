@@ -15,6 +15,9 @@
 /** The billing plan tiers, matching the `billing_plan` pgEnum in the console schema. */
 export type PlanId = "community" | "team" | "enterprise";
 
+/** Currencies we present + charge in. USD is the default; EU customers are billed in EUR. */
+export type SupportedCurrency = "usd" | "eur";
+
 /** A titled group of features for the "What's included" slice. */
 export interface PlanFeatureGroup {
 	label: string;
@@ -35,6 +38,9 @@ export interface PlanCatalogEntry {
 	/** Per-period USD unit for in-app math — per **seat** when `perSeat`, flat otherwise.
 	 *  `undefined` = custom / "Let's talk" (Enterprise). Keep in step with `priceLabel`. */
 	priceMonthlyUsd?: number;
+	/** Per-period EUR unit (FX-adjusted from USD; billed to EU customers). Same shape as
+	 *  `priceMonthlyUsd`; `undefined` = custom. Tune independently of the USD figure. */
+	priceMonthlyEur?: number;
 	/** Whether `priceMonthlyUsd` is multiplied by the seat count (per-seat billing). */
 	perSeat?: boolean;
 	/** Monthly usage credit (USD) included with the plan — offsets metered charges. */
@@ -60,6 +66,7 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 		name: "Hobby",
 		priceLabel: "Free",
 		priceMonthlyUsd: 0,
+		priceMonthlyEur: 0,
 		tagline: "Your own Projects — just you.",
 		paid: false,
 		highlights: [
@@ -88,6 +95,7 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 		name: "Pro",
 		priceLabel: "$20 / seat / mo",
 		priceMonthlyUsd: 20,
+		priceMonthlyEur: 18,
 		perSeat: true,
 		includedCreditUsd: 20,
 		tagline: "Collaborate in a shared organization.",
@@ -210,16 +218,20 @@ export function planMeta(plan: PlanId): PlanCatalogEntry {
 
 /**
  * The plan's per-unit charge in the smallest currency unit (cents) — what Stripe's
- * `unit_amount` expects. Derived from `priceMonthlyUsd` (the single-source-of-truth
- * dollar figure) so the created Stripe price can never drift from the advertised one.
- * Throws for custom/free plans that have no numeric price (Enterprise).
+ * `unit_amount` expects — for the given currency (default USD). Derived from the catalog
+ * SSOT (`priceMonthlyUsd` / `priceMonthlyEur`) so the created Stripe price can never drift
+ * from the advertised one. Throws for custom/free plans with no numeric price (Enterprise).
  */
-export function planUnitAmountCents(plan: PlanId): number {
-	const usd = planMeta(plan).priceMonthlyUsd;
-	if (usd == null) {
-		throw new Error(`Plan "${plan}" has no numeric price (priceMonthlyUsd).`);
+export function planUnitAmountCents(
+	plan: PlanId,
+	currency: SupportedCurrency = "usd",
+): number {
+	const meta = planMeta(plan);
+	const amount = currency === "eur" ? meta.priceMonthlyEur : meta.priceMonthlyUsd;
+	if (amount == null) {
+		throw new Error(`Plan "${plan}" has no ${currency.toUpperCase()} price.`);
 	}
-	return Math.round(usd * 100);
+	return Math.round(amount * 100);
 }
 
 /** The plan's monthly included usage credit in cents (0 when none). */
