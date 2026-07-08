@@ -38,7 +38,7 @@ export async function runColonyTasks(
 
 	// Budget-gate the run. Surface a clean budget message (never a raw AiBudgetError) so the
 	// caller can toast "You're out of AI usage…" with the reset time instead of a stack.
-	const charge = await assertAiAllowed(actor.orgId, "agent").catch((e: unknown) => {
+	const charge = await assertAiAllowed(actor.orgId, "agent", actor.userId).catch((e: unknown) => {
 		if (e instanceof AiBudgetError) throw new Error(e.message);
 		throw e;
 	});

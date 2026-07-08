@@ -14,9 +14,9 @@ import { env } from "next-runtime-env";
 import postgres from "postgres";
 import { z } from "zod";
 import * as supportSchema from "@repo/support/schema";
-import { organization, user } from "./db-schema";
+import { aiUsageLedger, organization, user } from "./db-schema";
 
-const schema = { ...supportSchema, organization, user };
+const schema = { ...supportSchema, aiUsageLedger, organization, user };
 
 type Db = PostgresJsDatabase<typeof schema>;
 

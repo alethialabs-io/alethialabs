@@ -37,7 +37,7 @@ export async function explainJobFindings(jobId: string) {
 
 	// Budget-gate + meter the model call. This is an advisory feature, so an
 	// over-budget org degrades to no explanation rather than an error.
-	const charge = await assertAiAllowed(actor.orgId, "agent").catch((e: unknown) => {
+	const charge = await assertAiAllowed(actor.orgId, "agent", actor.userId).catch((e: unknown) => {
 		if (e instanceof AiBudgetError) return null;
 		throw e;
 	});

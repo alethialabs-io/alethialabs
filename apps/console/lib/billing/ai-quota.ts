@@ -7,6 +7,7 @@ import { getServiceDb } from "@/lib/db";
 import { aiCreditGrant, aiUsageLedger } from "@/lib/db/schema";
 import { aiCostMicros } from "@/lib/billing/model-costs";
 import { captureAiGeneration } from "@/lib/analytics/server";
+import { checkAiSpendThreshold } from "@/lib/billing/ai-spend-alert";
 
 export type AiUsageKind = "scan" | "agent" | "support";
 export type CreditSource = "included" | "purchased";
@@ -23,6 +24,31 @@ export async function sumCredits(
 		.where(
 			and(
 				eq(aiUsageLedger.org_id, orgId),
+				eq(aiUsageLedger.source, source),
+				gte(aiUsageLedger.created_at, since),
+			),
+		);
+	return Number(row?.s ?? 0);
+}
+
+/**
+ * Sum credits ONE user spent from a budget source in an org since a cutoff — the per-seat
+ * variant of {@link sumCredits}, filtered by `user_id` (served by `idx_ai_usage_user`).
+ * Drives the guard's per-user daily/weekly sub-caps so a single seat can't drain the org.
+ */
+export async function sumCreditsForUser(
+	orgId: string,
+	userId: string,
+	source: CreditSource,
+	since: Date,
+): Promise<number> {
+	const [row] = await getServiceDb()
+		.select({ s: sum(aiUsageLedger.credits) })
+		.from(aiUsageLedger)
+		.where(
+			and(
+				eq(aiUsageLedger.org_id, orgId),
+				eq(aiUsageLedger.user_id, userId),
 				eq(aiUsageLedger.source, source),
 				gte(aiUsageLedger.created_at, since),
 			),
@@ -146,6 +172,15 @@ export async function recordAiUsage(input: {
 			outputTokens: input.outputTokens,
 			cachedInputTokens: input.cachedInputTokens,
 			costMicros,
+		});
+	}
+
+	// Spend-threshold alert (deliverable 3): from the same chokepoint, check whether this
+	// included spend pushed the org across a % of its weekly allowance and, if so, enqueue a
+	// `system.cost.budget_threshold` alert. Fire-and-forget — must never slow/fail the AI call.
+	if (input.credits > 0 && input.source === "included") {
+		void checkAiSpendThreshold(input.orgId).catch(() => {
+			/* alerting must never break an AI call */
 		});
 	}
 }

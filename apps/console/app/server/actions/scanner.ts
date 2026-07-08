@@ -40,7 +40,7 @@ export async function scanRepo(repoUrl: string, opts?: { ref?: string }) {
 	if (!url) throw new Error("A repository URL is required.");
 	// Surface a clean budget message (never a raw AiBudgetError) so the scan UI can toast
 	// "You're out of AI usage…" with the reset time instead of a stack trace.
-	const charge = await assertAiAllowed(actor.orgId, "scan").catch((e: unknown) => {
+	const charge = await assertAiAllowed(actor.orgId, "scan", actor.userId).catch((e: unknown) => {
 		if (e instanceof AiBudgetError) throw new Error(e.message);
 		throw e;
 	});
