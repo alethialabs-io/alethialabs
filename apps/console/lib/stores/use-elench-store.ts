@@ -75,9 +75,18 @@ interface ElenchState {
 	setModel: (model: string) => void;
 	/** Expand/collapse the modal thread rail. */
 	setRailOpen: (open: boolean) => void;
-	/** Resume a persisted org thread. */
+	/**
+	 * Resume a persisted thread: point at it AND bump `epoch` so the chat lineage token
+	 * changes, recreating the underlying chat with the resumed transcript (no chrome remount).
+	 */
 	selectThread: (id: string | null) => void;
-	/** Start a fresh conversation (org: unnamed thread; project: new ephemeral). */
+	/**
+	 * Attach a lazily-created thread id WITHOUT bumping `epoch` — used on the first send of an
+	 * ephemeral conversation so the new id rides subsequent requests while the in-flight chat
+	 * (and its just-sent message) survives intact.
+	 */
+	attachThread: (id: string) => void;
+	/** Start a fresh conversation (ephemeral — nothing is persisted until the first send). */
 	newChat: () => void;
 	/** Stage a prompt to auto-send once into the next conversation. */
 	setSeedPrompt: (prompt: string | null) => void;
@@ -145,19 +154,21 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	setMode: (mode) => set({ mode }),
 	setModel: (model) => set({ model }),
 	setRailOpen: (railOpen) => set({ railOpen }),
-	selectThread: (id) => set({ threadId: id }),
+	selectThread: (id) => set((s) => ({ threadId: id, epoch: s.epoch + 1 })),
+	attachThread: (id) => set({ threadId: id }),
 	newChat: () => set((s) => ({ threadId: null, epoch: s.epoch + 1 })),
 	setSeedPrompt: (seedPrompt) => set({ seedPrompt }),
 	setPendingMentions: (pendingMentions) => set({ pendingMentions }),
 }));
 
-/** Stable key for the conversation lineage — excludes `view` (so a modal↔panel
- * flip never remounts the chat) and includes ctx + thread + epoch. */
-export function elenchConversationKey(
-	ctx: ElenchCtx,
-	threadId: string | null,
-	epoch: number,
-): string {
+/**
+ * The chat lineage token — a stable id for the underlying `useChat` instance, derived from
+ * the context anchor + `epoch` (NOT the live `threadId`). It changes on new-chat / resume
+ * (both bump `epoch`), recreating the chat with fresh/loaded messages, but stays put on a
+ * lazy thread-attach and on a modal↔panel `view` flip — so an in-flight send survives and
+ * the chrome never remounts.
+ */
+export function elenchChatId(ctx: ElenchCtx, epoch: number): string {
 	const anchor = ctx.kind === "project" ? `project:${ctx.projectId}` : "org";
-	return `${anchor}:${threadId ?? "ephemeral"}:${epoch}`;
+	return `${anchor}:${epoch}`;
 }

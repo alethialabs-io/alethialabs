@@ -217,7 +217,7 @@ export function ElenchComposer({
 					onClick={(e) =>
 						recompute(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)
 					}
-					className="field-sizing-content max-h-40 min-h-[44px] w-full resize-none bg-transparent px-3.5 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+					className="field-sizing-content max-h-56 min-h-[72px] w-full resize-none bg-transparent px-3.5 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
 				/>
 				<div className="flex items-center justify-between px-2.5 pb-2.5">
 					<ElenchAskMode />
