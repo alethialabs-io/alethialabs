@@ -102,7 +102,7 @@ export async function POST(
 
 	const { projectId } = await params;
 	const actor = await currentActor();
-	const charge = await assertAiAllowed(actor.orgId, "agent").catch((e: unknown) => {
+	const charge = await assertAiAllowed(actor.orgId, "agent", actor.userId).catch((e: unknown) => {
 		if (e instanceof AiBudgetError) return e;
 		throw e;
 	});

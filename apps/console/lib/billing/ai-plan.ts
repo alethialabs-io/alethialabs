@@ -36,6 +36,14 @@ export interface AiTierSpec {
 	dailyCredits: number;
 	/** Included AI credits per fixed 7-day week (the weekly-% denominator). */
 	weeklyCredits: number;
+	/**
+	 * Per-USER daily sub-cap — the most included credits ONE seat may burn in a fixed day,
+	 * so a single member can't drain the shared org allowance. A fraction of `dailyCredits`.
+	 * The guard enforces this on top of the org cap when a `userId` is supplied.
+	 */
+	perUserDailyCredits: number;
+	/** Per-USER weekly sub-cap — the same fairness bound over the fixed 7-day week. */
+	perUserWeeklyCredits: number;
 }
 
 /**
@@ -43,11 +51,39 @@ export interface AiTierSpec {
  *  - ai_free → everyone: a usable daily/weekly allowance, Haiku executor only (no advisor).
  *  - ai_plus → paid AI subscription: bigger caps + a Sonnet advisor.
  *  - ai_max  → top AI subscription: the largest caps + an Opus advisor.
+ *
+ * The `perUser*` sub-caps are ALSO PLACEHOLDERS — a fraction (~60–35%) of the org cap that
+ * bounds any single seat so it can't exhaust the whole workspace's allowance. Exact fractions
+ * are set at go-live; do not read pricing intent into these numbers.
  */
 export const AI_TIERS: Record<AiTier, AiTierSpec> = {
-	ai_free: { enabled: true, advisor: "none", dailyCredits: 25, weeklyCredits: 100 },
-	ai_plus: { enabled: true, advisor: "sonnet", dailyCredits: 200, weeklyCredits: 1_500 },
-	ai_max: { enabled: true, advisor: "opus", dailyCredits: 1_000, weeklyCredits: 8_000 },
+	ai_free: {
+		enabled: true,
+		advisor: "none",
+		dailyCredits: 25,
+		weeklyCredits: 100,
+		// PLACEHOLDER per-seat sub-cap (~60% of the org cap: free orgs are usually one seat).
+		perUserDailyCredits: 15,
+		perUserWeeklyCredits: 60,
+	},
+	ai_plus: {
+		enabled: true,
+		advisor: "sonnet",
+		dailyCredits: 200,
+		weeklyCredits: 1_500,
+		// PLACEHOLDER per-seat sub-cap (~40% of the org cap: paid orgs have several seats).
+		perUserDailyCredits: 80,
+		perUserWeeklyCredits: 600,
+	},
+	ai_max: {
+		enabled: true,
+		advisor: "opus",
+		dailyCredits: 1_000,
+		weeklyCredits: 8_000,
+		// PLACEHOLDER per-seat sub-cap (~30% of the org cap: larger teams share the pool).
+		perUserDailyCredits: 300,
+		perUserWeeklyCredits: 2_500,
+	},
 };
 
 /** The spec for a tier (never throws — every AiTier has an entry). */
@@ -77,4 +113,31 @@ export async function resolveAiTier(orgId: string): Promise<AiTier> {
 		billing.aiTier ?? "ai_free",
 		billing.aiSubscriptionStatus ?? "none",
 	);
+}
+
+/** An org's effective AI tier plus its AI-spend hard-cap policy — one billing read. */
+export interface AiPlanContext {
+	tier: AiTier;
+	/**
+	 * The org's "never surprise me" spend policy (`organization_billing.usageHardCap`,
+	 * shared with the runner-minutes guard). When ON, the AI guard pauses at the included
+	 * allowance instead of auto-spending purchased top-up packs.
+	 */
+	hardCap: boolean;
+}
+
+/**
+ * Resolve BOTH the effective AI tier and the org's AI-spend hard-cap policy in a single
+ * billing read — the guard needs both per call. No row → free tier, hard-cap off.
+ */
+export async function resolveAiPlan(orgId: string): Promise<AiPlanContext> {
+	const billing = await getOrgBilling(orgId).catch(() => null);
+	if (!billing) return { tier: "ai_free", hardCap: false };
+	return {
+		tier: effectiveAiTier(
+			billing.aiTier ?? "ai_free",
+			billing.aiSubscriptionStatus ?? "none",
+		),
+		hardCap: billing.usageHardCap ?? false,
+	};
 }
