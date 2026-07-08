@@ -21,8 +21,10 @@ afterEach(() => {
 
 describe("getAiModel", () => {
 	it("honors an override only if it's in the allowlist", () => {
-		expect(getAiModel("anthropic/claude-opus-4.8")).toBe("anthropic/claude-opus-4.8");
+		expect(getAiModel("anthropic/claude-sonnet-4.6")).toBe("anthropic/claude-sonnet-4.6");
 		// A non-allowlisted override is rejected (anti-injection) → falls through to the default.
+		// Opus was dropped from the allowlist, so it no longer passes through either.
+		expect(getAiModel("anthropic/claude-opus-4.8")).toBe(AI_MODELS[0].id);
 		expect(getAiModel("evil/jailbreak-model")).toBe(AI_MODELS[0].id);
 	});
 
@@ -33,8 +35,8 @@ describe("getAiModel", () => {
 		expect(getAiModel()).toBe(AI_MODELS[0].id);
 	});
 
-	it("defaults to Claude Sonnet at index 0", () => {
-		expect(AI_MODELS[0].id).toBe("anthropic/claude-sonnet-4.6");
+	it("defaults to Claude Haiku 4.5 at index 0 (cheapest tool-capable model)", () => {
+		expect(AI_MODELS[0].id).toBe("anthropic/claude-haiku-4.5");
 	});
 });
 
