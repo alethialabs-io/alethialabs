@@ -20,6 +20,8 @@ import type { ResourceKind } from "@/lib/db/schema/enums";
 import {
 	type AssignedValue,
 	assignmentsForKind,
+	countAssignmentsByKindForValue,
+	countResourcesByKindForDimension,
 	listAssignmentsFor,
 } from "@/lib/queries/classification";
 import {
@@ -38,6 +40,38 @@ export async function canEditClassification(): Promise<boolean> {
 	const actor = await currentActor();
 	const decision = await getPdp().can(actor, "edit", { type: "org" });
 	return decision.allowed;
+}
+
+/** One resource-kind's share of the resources carrying a value (drill-down breakdown). */
+export interface ValueKindCount {
+	resource_kind: ResourceKind;
+	count: number;
+}
+
+/**
+ * The per-resource-kind breakdown of the resources carrying a value — e.g. "24 resources:
+ * 12 projects · 8 clusters · 4 runners". Gates on `org:view`. Empty for an unused value.
+ */
+export async function getValueResourceBreakdown(
+	valueId: string,
+): Promise<ValueKindCount[]> {
+	const actor = await authorize("view", { type: "org" });
+	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, (tx) =>
+		countAssignmentsByKindForValue(tx, valueId),
+	);
+}
+
+/**
+ * Distinct resources per kind carrying any value of a dimension — the "coverage by resource
+ * kind" panel for the selected dimension. Gates on `org:view`.
+ */
+export async function getDimensionResourceBreakdown(
+	dimensionId: string,
+): Promise<ValueKindCount[]> {
+	const actor = await authorize("view", { type: "org" });
+	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, (tx) =>
+		countResourcesByKindForDimension(tx, dimensionId),
+	);
 }
 
 /** Lists the classification chips assigned to a single resource. */
