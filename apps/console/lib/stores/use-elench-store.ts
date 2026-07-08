@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import type { AgentMode } from "@/lib/ai/tools";
 import type { Mention } from "@/lib/ai/mentions";
+import { track } from "@/lib/analytics/track";
 import { AI_MODELS } from "@/lib/config/ai";
 
 /**
@@ -108,6 +109,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 		// Switching context starts a fresh conversation (org tools must not bleed
 		// into a project conversation and vice-versa).
 		const fresh = !sameCtx(cur.ctx, ctx);
+		track("elench_chat_opened", { context: ctx.kind, view: "panel" });
 		set({
 			open: true,
 			view: "panel",
@@ -120,6 +122,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	openModal: (ctx) => {
 		const cur = get();
 		const fresh = !sameCtx(cur.ctx, ctx);
+		track("elench_chat_opened", { context: ctx.kind, view: "modal" });
 		set({
 			open: true,
 			view: "modal",

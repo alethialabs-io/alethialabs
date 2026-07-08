@@ -31,6 +31,16 @@ export const ANALYTICS_EVENTS = [
 	"payment_failed",
 	/** Core Web Vitals sample (LCP/CLS/INP/FCP/TTFB) — see components/analytics/web-vitals.tsx. */
 	"web_vitals",
+	// ── Elench AI chat surface (client-instrumented; spend/tokens stay server-side) ──
+	"elench_chat_opened",
+	"elench_message_sent",
+	"elench_suggestion_clicked",
+	"elench_try_now_used",
+	"elench_tool_approved",
+	"elench_tool_denied",
+	"elench_thread_created",
+	"elench_dashboard_built",
+	"elench_error",
 ] as const;
 
 export type AnalyticsEvent = (typeof ANALYTICS_EVENTS)[number];

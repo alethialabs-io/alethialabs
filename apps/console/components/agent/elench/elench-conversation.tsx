@@ -9,6 +9,7 @@ import { orgRenderToolPart } from "@/components/agent/render-tool-parts/org-tool
 import { projectRenderToolPart } from "@/components/agent/render-tool-parts/project-tool-parts";
 import { useAgentChat } from "@/components/agent/use-agent-chat";
 import { snapshotCanvas } from "@/components/project-assistant/use-project-assistant";
+import { track } from "@/lib/analytics/track";
 import type { Mention } from "@/lib/ai/mentions";
 import type { AgentThread } from "@/lib/db/schema";
 import {
@@ -127,9 +128,14 @@ export function ElenchConversation({
 			setPendingMentions(mentions);
 			// Name a fresh thread from its first message (both contexts now persist).
 			if (messages.length === 0 && activeId) handleFirstMessage(activeId, text);
+			track("elench_message_sent", {
+				context: isOrg ? "org" : "project",
+				model: useElenchStore.getState().model,
+				project: projectId || undefined,
+			});
 			sendMessage({ text });
 		},
-		[messages.length, activeId, handleFirstMessage, sendMessage, setPendingMentions],
+		[messages.length, activeId, handleFirstMessage, sendMessage, setPendingMentions, isOrg, projectId],
 	);
 
 	// Auto-send a staged seed prompt once into an otherwise-empty conversation.
@@ -179,7 +185,7 @@ export function ElenchConversation({
 				recents={threads}
 				onOpenThread={selectThread}
 				showModel={isOrg}
-				onPanelRight={() => useElenchStore.getState().minimize()}
+				context={isOrg ? "org" : "project"}
 				status={status}
 			/>
 		) : (

@@ -60,7 +60,8 @@ export function ElenchModal({
 	// Rail state lives in the store so it survives a minimize→maximize round-trip.
 	const sidebarOpen = useElenchStore((s) => s.railOpen);
 	const setSidebarOpen = useElenchStore((s) => s.setRailOpen);
-	const showSidebar = isOrg && sidebarOpen;
+	// Both contexts persist threads now, so the rail shows for project as well as org.
+	const showSidebar = sidebarOpen;
 
 	// The generative-UI split pane is present whenever an artifact is open (org only).
 	const artifact = useArtifactStore((s) => s.artifact);
@@ -115,7 +116,7 @@ export function ElenchModal({
 				<main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
 					{isEmpty ? (
 						<>
-							{isOrg && !sidebarOpen && (
+							{!sidebarOpen && (
 								<button
 									type="button"
 									aria-label="Open sidebar"
@@ -138,7 +139,7 @@ export function ElenchModal({
 						/* Active-conversation top bar: centered title, split-view + minimize. */
 						<div className="flex flex-none items-center gap-2 border-b border-border px-3 py-2.5">
 							<div className="flex flex-1 items-center gap-1">
-								{isOrg && !sidebarOpen && (
+								{!sidebarOpen && (
 									<button
 										type="button"
 										aria-label="Open sidebar"

@@ -4,6 +4,8 @@
 
 import { AlertTriangle, KeyRound, RefreshCcw, WifiOff } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { useEffect } from "react";
+import { track } from "@/lib/analytics/track";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 
@@ -59,6 +61,10 @@ export function ChatError({
 	onRetry?: () => void;
 }) {
 	const kind = classify(error);
+	// Report the surfaced error (kind only — never the raw message) once per occurrence.
+	useEffect(() => {
+		track("elench_error", { kind });
+	}, [kind]);
 	const { icon: Icon, title, description } = COPY[kind];
 	return (
 		<Alert className="rounded-none">

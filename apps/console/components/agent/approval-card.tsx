@@ -6,6 +6,7 @@ import { Check, ShieldCheck, X } from "lucide-react";
 import { useState } from "react";
 import { planProject, provisionProject } from "@/app/server/actions/projects";
 import { Button } from "@repo/ui/button";
+import { track } from "@/lib/analytics/track";
 import type { OperationProposal } from "@/lib/ai/operation";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { cn } from "@repo/ui/utils";
@@ -33,6 +34,7 @@ export function ApprovalCard({
 	const isDeploy = proposal.operation.operation === "provision_project";
 
 	const approve = async () => {
+		track("elench_tool_approved", { tool: "propose_operation" });
 		setPhase("running");
 		setReason(null);
 		try {
@@ -58,6 +60,7 @@ export function ApprovalCard({
 	};
 
 	const reject = () => {
+		track("elench_tool_denied", { tool: "propose_operation" });
 		setPhase("rejected");
 		onResolve?.({ status: "rejected" });
 	};
