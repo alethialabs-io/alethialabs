@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { ChatStatus } from "ai";
-import { ChevronRight, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { Sparkles } from "lucide-react";
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
 import type { Mention } from "@/lib/ai/mentions";
 import { track } from "@/lib/analytics/track";
@@ -13,6 +12,7 @@ import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
 import { ElenchComposer } from "./elench-composer";
 import type { ElenchSuggestion } from "./elench-suggestions";
+import { SuggestionCarousel } from "./suggestion-carousel";
 
 /** Which Elench context the landing is rendered for (drives analytics + the Try-now prompt). */
 export type ElenchContext = "org" | "project";
@@ -97,11 +97,6 @@ interface ModalLandingProps {
 	status?: ChatStatus;
 }
 
-/** How many suggestion cards show per carousel page. */
-const CARDS_PER_PAGE = 3;
-/** Total carousel pages (9 suggestions ÷ 3 cards). */
-const PAGE_COUNT = 3;
-
 /**
  * The modal empty landing — the hero (mark + "What should we do today?" + composer),
  * a paged suggestion carousel (3 cards × 3 pages with dot indicators, cycled by the
@@ -118,12 +113,6 @@ export function ElenchModalLanding({
 	context,
 	status,
 }: ModalLandingProps) {
-	// The visible carousel page; the right-hand button cycles 0→1→2→0 (pure slice swap).
-	const [page, setPage] = useState(0);
-	const pageCards = suggestions.slice(
-		page * CARDS_PER_PAGE,
-		page * CARDS_PER_PAGE + CARDS_PER_PAGE,
-	);
 	return (
 		<div className="h-full overflow-y-auto">
 			<div className="mx-auto max-w-[830px] px-6 pb-16 pt-24">
@@ -139,58 +128,16 @@ export function ElenchModalLanding({
 				autoFocus
 			/>
 
-			{/* Paged suggestion carousel — a windowed slice of 3, a cycle button, and dot
-				    indicators below (no horizontal scroll; the right button swaps pages). */}
-			<div className="mt-4 flex gap-2.5">
-				{pageCards.map((s) => (
-					<button
-						key={s.title}
-						type="button"
-						onClick={() => {
-							track("elench_suggestion_clicked", { title: s.title, context });
-							onSend(s.prompt);
-						}}
-						className="flex min-w-0 flex-1 items-center gap-3 border border-border bg-muted/40 px-3 py-2.5 text-left transition-colors hover:bg-muted"
-					>
-						<span className="flex size-8 flex-none items-center justify-center border border-border bg-background text-muted-foreground">
-							<s.icon className="h-4 w-4" />
-						</span>
-						<span className="min-w-0">
-							<span className="block truncate text-[13px] font-medium text-foreground">
-								{s.title}
-							</span>
-							<span className="block truncate text-xs text-muted-foreground">
-								{s.sub}
-							</span>
-						</span>
-					</button>
-				))}
-				<button
-					type="button"
-					aria-label="Next suggestions"
-					onClick={() => setPage((p) => (p + 1) % PAGE_COUNT)}
-					className="flex w-11 flex-none items-center justify-center border border-border bg-muted/40 text-muted-foreground transition-colors hover:bg-muted"
-				>
-					<ChevronRight className="h-4 w-4" />
-				</button>
-			</div>
-
-			{/* Carousel page dots — active page filled, matching the DotDivider dot style. */}
-			<div className="mt-3 flex justify-center gap-1.5">
-				{Array.from({ length: PAGE_COUNT }, (_, i) => (
-					<button
-						key={i}
-						type="button"
-						aria-label={`Suggestions page ${i + 1}`}
-						aria-current={i === page}
-						onClick={() => setPage(i)}
-						className={cn(
-							"size-1 rounded-full transition-colors",
-							i === page ? "bg-foreground" : "bg-border",
-						)}
-					/>
-				))}
-			</div>
+{/* Paged suggestion carousel — 3 cards × 3 pages, cycled by its own button
+				    (no scroll). Selecting a card records analytics + sends its prompt. */}
+				<SuggestionCarousel
+					suggestions={suggestions}
+					onSelect={(prompt) => {
+						const s = suggestions.find((x) => x.prompt === prompt);
+						track("elench_suggestion_clicked", { title: s?.title, context });
+						onSend(prompt);
+					}}
+				/>
 
 			<DotDivider />
 

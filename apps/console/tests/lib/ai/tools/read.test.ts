@@ -31,6 +31,14 @@ vi.mock("@/app/server/actions/projects", () => ({
 	getProject: vi.fn(),
 	getProjects: vi.fn(),
 }));
+vi.mock("@/app/server/actions/drift", () => ({
+	getLatestDriftPosture: vi.fn(),
+}));
+vi.mock("@/app/server/actions/billing", () => ({
+	getOrgUsage: vi.fn(),
+	getAiUsageSummary: vi.fn(),
+	getBillingSummary: vi.fn(),
+}));
 
 import { readTools } from "@/lib/ai/tools/read";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
@@ -40,6 +48,11 @@ import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
 import { getJob, getJobs, getPlanResult } from "@/app/server/actions/jobs";
 import { getRunnersWithReleases } from "@/app/server/actions/runners";
 import { getProject, getProjects } from "@/app/server/actions/projects";
+import {
+	getAiUsageSummary,
+	getBillingSummary,
+	getOrgUsage,
+} from "@/app/server/actions/billing";
 
 // Helper: invoke a tool's execute handler regardless of the ai-SDK options arg.
 const run = (t: { execute?: unknown }, args: unknown) =>
@@ -427,5 +440,112 @@ describe("get_cached_resources", () => {
 		});
 		expect(getCloudIdentityInventory).toHaveBeenCalledWith("ci1");
 		expect(out).toBe(inventory);
+	});
+});
+
+describe("get_org_usage", () => {
+	it("maps the usage report to the trimmed snake_case metrics shape", async () => {
+		vi.mocked(getOrgUsage).mockResolvedValue({
+			plan: "team",
+			usedMinutes: 120,
+			includedMinutes: 500,
+			overageMinutes: 0,
+			overageCost: 0,
+			pct: 0.24,
+			runningJobs: 2,
+			maxConcurrentJobs: 5,
+			periodStart: "2026-07-01",
+			periodEnd: "2026-07-31",
+			approaching: false,
+			hardCap: false,
+		} as never);
+		const out = (await run(readTools().get_org_usage, {})) as Record<string, unknown>;
+		expect(out).toEqual({
+			plan: "team",
+			used_minutes: 120,
+			included_minutes: 500,
+			overage_minutes: 0,
+			overage_cost_usd: 0,
+			pct: 0.24,
+			running_jobs: 2,
+			max_concurrent_jobs: 5,
+			period_start: "2026-07-01",
+			period_end: "2026-07-31",
+		});
+	});
+
+	it("guards a non-finite pct (Infinity → null) so the dashboard never renders NaN", async () => {
+		vi.mocked(getOrgUsage).mockResolvedValue({
+			plan: "community",
+			usedMinutes: 30,
+			includedMinutes: 0,
+			overageMinutes: 30,
+			overageCost: 1.5,
+			pct: Number.POSITIVE_INFINITY,
+			runningJobs: 0,
+			maxConcurrentJobs: null,
+			periodStart: "2026-07-01",
+			periodEnd: "2026-07-31",
+			approaching: true,
+			hardCap: false,
+		} as never);
+		const out = (await run(readTools().get_org_usage, {})) as { pct: number | null };
+		expect(out.pct).toBeNull();
+	});
+});
+
+describe("get_ai_usage", () => {
+	it("maps the AI credit standing to the trimmed shape (no secret fields)", async () => {
+		vi.mocked(getAiUsageSummary).mockResolvedValue({
+			enabled: true,
+			windowUsed: 42,
+			weeklyBudget: 100,
+			purchasedBalance: 250,
+		} as never);
+		const out = (await run(readTools().get_ai_usage, {})) as Record<string, unknown>;
+		expect(out).toEqual({
+			enabled: true,
+			window_used: 42,
+			weekly_budget: 100,
+			purchased_balance: 250,
+		});
+	});
+});
+
+describe("get_billing_summary", () => {
+	it("maps the secret-free billing state (drops stripe ids / card data)", async () => {
+		// Extra secret-bearing fields on the source must NOT survive the trim.
+		vi.mocked(getBillingSummary).mockResolvedValue({
+			hosted: true,
+			hasOrg: true,
+			plan: "team",
+			status: "active",
+			state: "active",
+			seats: 5,
+			memberCount: 3,
+			unitAmountUsd: 20,
+			cancelAtPeriodEnd: false,
+			currentPeriodEnd: "2026-08-01",
+			canManage: true,
+			stripeCustomerId: "cus_secret",
+			defaultCard: "4242",
+		} as never);
+		const out = (await run(readTools().get_billing_summary, {})) as Record<string, unknown>;
+		expect(out).toEqual({
+			hosted: true,
+			has_org: true,
+			plan: "team",
+			status: "active",
+			state: "active",
+			seats: 5,
+			member_count: 3,
+			unit_amount_usd: 20,
+			cancel_at_period_end: false,
+			current_period_end: "2026-08-01",
+		});
+		// Confirm no secret-bearing fields leaked through.
+		expect(out).not.toHaveProperty("stripeCustomerId");
+		expect(out).not.toHaveProperty("defaultCard");
+		expect(out).not.toHaveProperty("canManage");
 	});
 });

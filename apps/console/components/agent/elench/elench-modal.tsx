@@ -87,7 +87,11 @@ export function ElenchModal({
 
 	return (
 		<Dialog open onOpenChange={(o) => !o && close()}>
-			<DialogContent size="fullscreen" showCloseButton={false}>
+			<DialogContent
+				size="fullscreen"
+				showCloseButton={false}
+				data-testid="elench-modal"
+			>
 				<DialogTitle className="sr-only">Elench</DialogTitle>
 
 				{showSidebar && (
