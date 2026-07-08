@@ -12,6 +12,14 @@ import { track } from "@/lib/analytics/track";
 import { ChatError } from "@/components/agent/chat-error";
 
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
+// The CTAs open the shared purchase surfaces (Stripe + server actions) — stubbed here;
+// they're covered by their own tests. This keeps ChatError focused on classify + CTA.
+vi.mock("@/components/billing/upgrade-ai-sheet", () => ({
+	UpgradeAiSheet: () => null,
+}));
+vi.mock("@/components/billing/credit-pack-dialog", () => ({
+	CreditPackDialog: () => null,
+}));
 
 describe("ChatError", () => {
 	it("classifies a 503 'not configured' body as missing-key", () => {
@@ -51,8 +59,10 @@ describe("ChatError", () => {
 		expect(
 			screen.getByText(/out of AI usage for this week.*Resets in/i),
 		).toBeInTheDocument();
-		const cta = screen.getByRole("link", { name: /buy credits/i });
-		expect(cta).toHaveAttribute("href", expect.stringContaining("/settings/billing"));
+		// The credit-limit reasons open the Buy-credits dialog (a button, not a link).
+		expect(
+			screen.getByRole("button", { name: /buy credits/i }),
+		).toBeInTheDocument();
 	});
 
 	it("shows an Upgrade AI plan CTA when the reason is not_enabled (subscribe)", () => {
@@ -71,10 +81,10 @@ describe("ChatError", () => {
 			/>,
 		);
 		expect(
-			screen.getByRole("link", { name: /upgrade ai plan/i }),
+			screen.getByRole("button", { name: /upgrade ai plan/i }),
 		).toBeInTheDocument();
 		expect(
-			screen.queryByRole("link", { name: /buy credits/i }),
+			screen.queryByRole("button", { name: /buy credits/i }),
 		).not.toBeInTheDocument();
 	});
 
@@ -88,7 +98,7 @@ describe("ChatError", () => {
 				onRetry={onRetry}
 			/>,
 		);
-		expect(screen.getByRole("link", { name: /buy credits/i })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /buy credits/i })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
 	});
 

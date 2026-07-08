@@ -1,0 +1,259 @@
+"use client";
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// The AI credit-pack top-up dialog. Credit packs are ONE-TIME top-ups that stack on any AI
+// tier and never expire (independent of the subscription). Pick a pack → raise a one-time
+// invoice (createCreditPackIntent → the ad-hoc-invoice path) → confirm inline through the
+// SHARED embedded <PaymentForm> (mode="payment") → refresh the purchased balance. Owner-gated
+// server-side. Gated behind the same `paidTiersEnabled` switch as the tier chooser: until the
+// deployment mints its Stripe AI prices the packs render disabled ("Coming soon").
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import {
+	type AiUsageSummary,
+	createCreditPackIntent,
+	getAiUsageSummary,
+} from "@/app/server/actions/billing";
+import { PaymentForm } from "@/components/billing/payment-form";
+import { StripeElementsProvider } from "@/components/billing/stripe-elements";
+import { track } from "@/lib/analytics/track";
+import { AI_CREDIT_PACKS, type CreditPack } from "@/lib/billing/ai-credits";
+import { Badge } from "@repo/ui/badge";
+import { Button } from "@repo/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+} from "@repo/ui/dialog";
+import { Skeleton } from "@repo/ui/skeleton";
+import { cn } from "@repo/ui/utils";
+
+interface CreditPackDialogProps {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	/** Called after a confirmed purchase so the caller can refetch its AI summary. */
+	onPurchased?: () => void;
+}
+
+/** Format a USD-cent amount as a plain dollar figure (packs are billed in USD). */
+function usd(cents: number): string {
+	return `$${(cents / 100).toLocaleString("en-US")}`;
+}
+
+/**
+ * The credit-pack top-up dialog. Self-fetches the AI summary on open for the current purchased
+ * balance + the `paidTiersEnabled` gate, lists the packs, and runs the chosen pack through the
+ * shared embedded PaymentForm. No subscription — a single invoice per purchase.
+ */
+export function CreditPackDialog({ open, onOpenChange, onPurchased }: CreditPackDialogProps) {
+	const router = useRouter();
+	const [summary, setSummary] = useState<AiUsageSummary | null>(null);
+	const [pack, setPack] = useState<CreditPack | null>(null);
+	const [clientSecret, setClientSecret] = useState<string | null>(null);
+	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (!open) return;
+		let alive = true;
+		getAiUsageSummary()
+			.then((s) => alive && setSummary(s))
+			.catch(() => {
+				/* best-effort — the list just shows skeletons */
+			});
+		return () => {
+			alive = false;
+		};
+	}, [open]);
+
+	/** Reset transient state (called on close). */
+	function reset() {
+		setPack(null);
+		setClientSecret(null);
+		setError(null);
+	}
+
+	function handleOpenChange(next: boolean) {
+		if (!next) reset();
+		onOpenChange(next);
+	}
+
+	/** Raise the one-time invoice for the chosen pack and reveal the embedded payment form. */
+	async function choose(next: CreditPack) {
+		setPack(next);
+		setClientSecret(null);
+		setError(null);
+		track("upgrade_started", { plan: `credits_${next.id}`, context: "credit_pack_dialog" });
+		try {
+			const intent = await createCreditPackIntent(next.id);
+			setClientSecret(intent.clientSecret);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Couldn't start the purchase.");
+		}
+	}
+
+	/** Invoice paid — the webhook grants the credits; refresh the balance and close. */
+	function handleSuccess() {
+		onPurchased?.();
+		router.refresh();
+		toast.success(
+			pack ? `Added ${pack.credits.toLocaleString("en-US")} AI credits.` : "Credits added.",
+		);
+		handleOpenChange(false);
+	}
+
+	const paidTiersEnabled = summary?.paidTiersEnabled ?? false;
+
+	return (
+		<Dialog open={open} onOpenChange={handleOpenChange}>
+			<DialogContent className="sm:max-w-md">
+				<DialogHeader>
+					<DialogTitle>{pack ? "Confirm your purchase" : "Buy AI credits"}</DialogTitle>
+					<DialogDescription>
+						{pack
+							? `${pack.credits.toLocaleString("en-US")} credits for ${usd(pack.amountCents)}. One-time — they stack on your tier and never expire.`
+							: "Top-up credits stack on any AI tier and never expire. A one-time charge with a receipt."}
+					</DialogDescription>
+				</DialogHeader>
+
+				{pack ? (
+					<PurchaseStep
+						clientSecret={clientSecret}
+						error={error}
+						onSuccess={handleSuccess}
+						onError={setError}
+						onBack={() => {
+							setPack(null);
+							setClientSecret(null);
+							setError(null);
+						}}
+					/>
+				) : (
+					<PackList
+						summary={summary}
+						paidTiersEnabled={paidTiersEnabled}
+						onChoose={choose}
+					/>
+				)}
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+/** The pack picker — a row per pack, gated behind `paidTiersEnabled` ("Coming soon"). */
+function PackList({
+	summary,
+	paidTiersEnabled,
+	onChoose,
+}: {
+	summary: AiUsageSummary | null;
+	paidTiersEnabled: boolean;
+	onChoose: (pack: CreditPack) => void;
+}) {
+	if (!summary) {
+		return (
+			<div className="space-y-2">
+				{AI_CREDIT_PACKS.map((p) => (
+					<Skeleton key={p.id} className="h-14 w-full" />
+				))}
+			</div>
+		);
+	}
+	return (
+		<div className="space-y-3">
+			<div className="space-y-2">
+				{AI_CREDIT_PACKS.map((p) => (
+					<button
+						key={p.id}
+						type="button"
+						disabled={!paidTiersEnabled}
+						onClick={() => onChoose(p)}
+						className={cn(
+							"flex w-full items-center justify-between rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors",
+							paidTiersEnabled
+								? "hover:border-border-strong"
+								: "cursor-not-allowed opacity-60",
+						)}
+					>
+						<span className="flex flex-col">
+							<span className="text-[13px] font-medium text-text-primary">
+								{p.credits.toLocaleString("en-US")} credits
+							</span>
+							<span className="font-mono text-[10.5px] text-text-tertiary">One-time top-up</span>
+						</span>
+						<span className="flex items-center gap-2">
+							{!paidTiersEnabled && (
+								<Badge variant="outline" className="font-mono text-[9px] uppercase">
+									Coming soon
+								</Badge>
+							)}
+							<span className="font-mono text-[13px] text-text-secondary">
+								{usd(p.amountCents)}
+							</span>
+						</span>
+					</button>
+				))}
+			</div>
+			<div className="flex items-center justify-between border-t border-border pt-3 text-[12px] text-text-tertiary">
+				<span>Current balance</span>
+				<span className="font-mono text-text-secondary">
+					{summary.purchasedBalance.toLocaleString("en-US")} credits
+				</span>
+			</div>
+		</div>
+	);
+}
+
+/** The confirm step — the shared embedded PaymentForm for the raised invoice. */
+function PurchaseStep({
+	clientSecret,
+	error,
+	onSuccess,
+	onError,
+	onBack,
+}: {
+	clientSecret: string | null;
+	error: string | null;
+	onSuccess: () => void;
+	onError: (message: string) => void;
+	onBack: () => void;
+}) {
+	if (error) {
+		return (
+			<div className="space-y-3">
+				<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-[12.5px] text-text-secondary">
+					{error}
+				</p>
+				<Button variant="outline" className="w-full" onClick={onBack}>
+					Back
+				</Button>
+			</div>
+		);
+	}
+	if (!clientSecret) {
+		return (
+			<div className="space-y-3">
+				<Skeleton className="h-10 w-full" />
+				<Skeleton className="h-24 w-full" />
+			</div>
+		);
+	}
+	return (
+		<div className="space-y-3">
+			<StripeElementsProvider clientSecret={clientSecret}>
+				<PaymentForm mode="payment" submitLabel="Pay" onSuccess={onSuccess} onError={onError} />
+			</StripeElementsProvider>
+			<button
+				type="button"
+				onClick={onBack}
+				className="w-full text-center text-[12px] text-text-tertiary transition-colors hover:text-text-primary"
+			>
+				← Choose a different pack
+			</button>
+		</div>
+	);
+}

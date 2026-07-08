@@ -9,12 +9,13 @@
 // (raise the caps). AI is metered independently of the org plan (lib/billing/ai-plan.ts).
 
 import { ArrowUpRight, Zap } from "lucide-react";
-import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
 	type AiUsageSummary,
 	getAiUsageSummary,
 } from "@/app/server/actions/billing";
+import { CreditPackDialog } from "@/components/billing/credit-pack-dialog";
+import { UpgradeAiSheet } from "@/components/billing/upgrade-ai-sheet";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { aiPlanMeta } from "@repo/plan-catalog";
 import { Skeleton } from "@repo/ui/skeleton";
@@ -73,10 +74,13 @@ const pctOf = (used: number, budget: number) =>
  * daily/weekly % + purchased balance + Buy-credits / Upgrade-AI-plan CTAs. Rendered on both
  * the Usage and Billing settings pages (one source of truth — no twin panel).
  */
-export function AiUsageSection({ orgSlug }: { orgSlug: string }) {
+export function AiUsageSection() {
 	const [ai, setAi] = useState<AiUsageSummary | null>(null);
+	const [upgradeOpen, setUpgradeOpen] = useState(false);
+	const [creditsOpen, setCreditsOpen] = useState(false);
 
-	useEffect(() => {
+	/** (Re)load the canonical AI summary — also called after an upgrade / credit purchase. */
+	const refetch = useCallback(() => {
 		let alive = true;
 		getAiUsageSummary()
 			.then((s) => alive && setAi(s))
@@ -88,7 +92,8 @@ export function AiUsageSection({ orgSlug }: { orgSlug: string }) {
 		};
 	}, []);
 
-	const billingHref = `/${orgSlug}/settings/billing`;
+	useEffect(() => refetch(), [refetch]);
+
 	const meta = ai ? aiPlanMeta(ai.tier) : null;
 	// Free/Plus can still upgrade the AI tier; Max is the top.
 	const canUpgrade = ai ? ai.tier !== "ai_max" : false;
@@ -109,21 +114,23 @@ export function AiUsageSection({ orgSlug }: { orgSlug: string }) {
 						)}
 					</div>
 					<div className="flex items-center gap-2">
-						<Link
-							href={billingHref}
+						<button
+							type="button"
+							onClick={() => setCreditsOpen(true)}
 							className="inline-flex items-center gap-1 text-[12.5px] text-text-secondary transition-colors hover:text-text-primary"
 						>
 							Buy credits
 							<ArrowUpRight size={13} />
-						</Link>
+						</button>
 						{canUpgrade && (
-							<Link
-								href={billingHref}
+							<button
+								type="button"
+								onClick={() => setUpgradeOpen(true)}
 								className="inline-flex items-center gap-1 rounded-md border border-border-strong px-2.5 py-1 text-[12px] text-text-primary transition-colors hover:bg-surface-muted"
 							>
 								<Zap size={12} />
 								Upgrade AI plan
-							</Link>
+							</button>
 						)}
 					</div>
 				</div>
@@ -158,6 +165,17 @@ export function AiUsageSection({ orgSlug }: { orgSlug: string }) {
 					</span>
 				</div>
 			</div>
+
+			<UpgradeAiSheet
+				open={upgradeOpen}
+				onOpenChange={setUpgradeOpen}
+				onUpgraded={refetch}
+			/>
+			<CreditPackDialog
+				open={creditsOpen}
+				onOpenChange={setCreditsOpen}
+				onPurchased={refetch}
+			/>
 		</SettingsSection>
 	);
 }
