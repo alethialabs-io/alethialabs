@@ -17,6 +17,13 @@ describe("modelPrice", () => {
 		expect(p.inputPerMTok).toBeGreaterThan(0);
 		expect(p.outputPerMTok).toBeGreaterThan(0);
 	});
+
+	it("prices Haiku 4.5 at its own (cheap) list rate, not the Sonnet fallback", () => {
+		expect(modelPrice("anthropic/claude-haiku-4.5")).toEqual({
+			inputPerMTok: 1,
+			outputPerMTok: 5,
+		});
+	});
 });
 
 describe("aiCostUsd", () => {
@@ -53,6 +60,14 @@ describe("aiCostUsd", () => {
 		const sonnet = aiCostUsd({ model: "anthropic/claude-sonnet-4.6", outputTokens: M });
 		const opus = aiCostUsd({ model: "anthropic/claude-opus-4.8", outputTokens: M });
 		expect(opus).toBeGreaterThan(sonnet);
+	});
+
+	it("bills Haiku 4.5 at $1/MTok input and $5/MTok output (much cheaper than Sonnet)", () => {
+		expect(aiCostUsd({ model: "anthropic/claude-haiku-4.5", inputTokens: M })).toBeCloseTo(1);
+		expect(aiCostUsd({ model: "anthropic/claude-haiku-4.5", outputTokens: M })).toBeCloseTo(5);
+		const haiku = aiCostUsd({ model: "anthropic/claude-haiku-4.5", outputTokens: M });
+		const sonnet = aiCostUsd({ model: "anthropic/claude-sonnet-4.6", outputTokens: M });
+		expect(haiku).toBeLessThan(sonnet);
 	});
 });
 
