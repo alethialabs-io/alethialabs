@@ -12,12 +12,15 @@ import {
 	ThumbsDown,
 	ThumbsUp,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { Fragment, type ReactNode, useState } from "react";
 import { Action, Actions } from "@/components/ai-elements/actions";
 import {
 	Conversation,
 	ConversationContent,
+	ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
+import { ChatError } from "@/components/agent/chat-error";
 import {
 	Message,
 	MessageContent,
@@ -88,8 +91,12 @@ export interface AgentChatProps {
 	renderToolPart?: RenderToolPart;
 	/** Shown when `error` is set (defaults to a generic unavailable message). */
 	errorMessage?: ReactNode;
-	/** When provided, the last assistant message gets a Retry action that re-runs it. */
+	/** When provided, the last assistant message gets a Retry action that re-runs it.
+	 * Also drives the error state's always-present Retry. */
 	onRetry?: () => void;
+	/** Abort the in-flight stream. When set, the composer's submit becomes a Stop
+	 * control while generating. */
+	onStop?: () => void;
 	className?: string;
 	/** Rendered on the left of the composer footer (e.g. the Ask-mode pill). */
 	composerLeft?: ReactNode;
@@ -135,6 +142,7 @@ export function AgentChat({
 	renderToolPart,
 	errorMessage,
 	onRetry,
+	onStop,
 	className,
 	composerLeft,
 	composerRight,
@@ -182,7 +190,13 @@ export function AgentChat({
 							) : null))}
 
 					{messages.map((m) => (
-						<Message key={m.id} from={m.role}>
+						<motion.div
+							key={m.id}
+							initial={{ opacity: 0, y: 4 }}
+							animate={{ opacity: 1, y: 0 }}
+							transition={{ duration: 0.18, ease: "easeOut" }}
+						>
+							<Message from={m.role}>
 							<MessageContent>
 								{m.parts.map((part, i) => {
 									const key = `${m.id}-${i}`;
@@ -308,21 +322,29 @@ export function AgentChat({
 									</Actions>
 								)}
 						</Message>
+						</motion.div>
 					))}
 
 					{status === "submitted" && (
-						<div className="flex items-center gap-2 text-xs text-muted-foreground">
+						<motion.div
+							initial={{ opacity: 0 }}
+							animate={{ opacity: 1 }}
+							className="flex items-center gap-2 text-xs text-muted-foreground"
+						>
 							<Loader2 className="h-3 w-3 animate-spin" />
 							Thinking…
-						</div>
+						</motion.div>
 					)}
-					{error && (
-						<div className="border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
-							{errorMessage ??
-								"The assistant is unavailable. Confirm AI is configured (AI_GATEWAY_API_KEY) and try again."}
-						</div>
-					)}
+					{error &&
+						(errorMessage ? (
+							<div className="border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
+								{errorMessage}
+							</div>
+						) : (
+							<ChatError error={error} onRetry={onRetry} />
+						))}
 				</ConversationContent>
+				<ConversationScrollButton />
 			</Conversation>
 
 			{!hideComposer && (
@@ -343,7 +365,11 @@ export function AgentChat({
 								{composerLeft}
 								<div className="flex items-center gap-1">
 									{composerRight}
-									<PromptInputSubmit status={status} disabled={pending} />
+									<PromptInputSubmit
+										status={status}
+										onStop={onStop}
+										disabled={pending && !onStop}
+									/>
 								</div>
 							</PromptInputFooter>
 						</PromptInput>

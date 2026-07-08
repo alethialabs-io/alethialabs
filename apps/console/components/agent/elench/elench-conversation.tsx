@@ -93,12 +93,23 @@ export function ElenchConversation({
 		[isOrg, projectId],
 	);
 
-	const { messages, sendMessage, status, error, regenerate } = useAgentChat({
-		api,
-		id: activeId ?? undefined,
-		initialMessages,
-		prepareBody,
-	});
+	const { messages, sendMessage, status, error, regenerate, stop, resumeStream } =
+		useAgentChat({
+			api,
+			id: activeId ?? undefined,
+			initialMessages,
+			prepareBody,
+		});
+
+	// Resume an interrupted stream after a reload: if the resumed transcript ends on a
+	// user turn, the assistant reply never landed — try to reconnect once. Guarded so a
+	// settled thread (last message is the assistant's) never fires a needless request.
+	const resumedRef = useRef(false);
+	useEffect(() => {
+		if (resumedRef.current) return;
+		resumedRef.current = true;
+		if (initialMessages.at(-1)?.role === "user") void resumeStream();
+	}, [initialMessages, resumeStream]);
 
 	const setPendingMentions = useElenchStore((s) => s.setPendingMentions);
 
@@ -170,6 +181,7 @@ export function ElenchConversation({
 				error={error}
 				onSend={onSend}
 				onRetry={() => void regenerate()}
+				onStop={() => void stop()}
 				renderToolPart={renderToolPart}
 				placeholder={PLACEHOLDER}
 				className={
@@ -181,6 +193,7 @@ export function ElenchConversation({
 				renderComposer={
 					<ElenchComposer
 						onSend={onSend}
+						onStop={() => void stop()}
 						showModel={isOrg}
 						status={status}
 					/>

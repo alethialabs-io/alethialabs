@@ -5,6 +5,10 @@
 import type { ToolUIPart } from "ai";
 import { useCallback } from "react";
 import { AgentChat } from "@/components/agent/agent-chat";
+import {
+	isToolPreparing,
+	ToolPending,
+} from "@/components/agent/render-tool-parts/tool-pending";
 import { useAgentChat } from "@/components/agent/use-agent-chat";
 import { SupportCaseApprovalCard } from "@/components/support/ask/support-case-approval-card";
 import { supportCaseProposalSchema } from "@/lib/ai/support/case";
@@ -23,7 +27,7 @@ const SUGGESTIONS = [
  * `SupportCaseApprovalCard`, which calls `submitCase` on approval and links to the case.
  */
 export function SupportAskChat({ orgSlug }: { orgSlug: string }) {
-	const { messages, sendMessage, status, error, regenerate } = useAgentChat({
+	const { messages, sendMessage, status, error, regenerate, stop } = useAgentChat({
 		api: "/api/support/ask",
 	});
 
@@ -37,6 +41,7 @@ export function SupportAskChat({ orgSlug }: { orgSlug: string }) {
 	const renderToolPart = useCallback(
 		(part: ToolUIPart) => {
 			if (part.type === "tool-create_support_case") {
+				if (isToolPreparing(part)) return <ToolPending label="Preparing case" />;
 				if (part.state !== "output-available") return null;
 				const parsed = supportCaseProposalSchema.safeParse(part.output);
 				if (!parsed.success) return null;
@@ -57,6 +62,7 @@ export function SupportAskChat({ orgSlug }: { orgSlug: string }) {
 			error={error}
 			onSend={onSend}
 			onRetry={() => void regenerate()}
+			onStop={() => void stop()}
 			suggestions={SUGGESTIONS}
 			placeholder="Ask a question, or describe what's not working…"
 			renderToolPart={renderToolPart}

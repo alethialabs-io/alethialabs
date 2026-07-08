@@ -13,6 +13,10 @@ import {
 	ToolView,
 } from "@/components/agent/agent-tool-views";
 import { ApprovalCard } from "@/components/agent/approval-card";
+import {
+	isToolPreparing,
+	ToolPending,
+} from "@/components/agent/render-tool-parts/tool-pending";
 import { operationProposalSchema } from "@/lib/ai/operation";
 import type { ArtifactTab } from "@/lib/stores/use-artifact-store";
 import { Button } from "@repo/ui/button";
@@ -41,6 +45,7 @@ export function orgRenderToolPart({
 	// eslint-disable-next-line react/display-name
 	return function renderOrgToolPart(part: ToolUIPart) {
 		if (part.type === "tool-propose_operation") {
+			if (isToolPreparing(part)) return <ToolPending label="Preparing operation" />;
 			if (part.state !== "output-available") return null;
 			const parsed = operationProposalSchema.safeParse(part.output);
 			if (!parsed.success) return null;
