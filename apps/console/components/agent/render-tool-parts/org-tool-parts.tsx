@@ -13,11 +13,9 @@ import {
 	ToolView,
 } from "@/components/agent/agent-tool-views";
 import { ApprovalCard } from "@/components/agent/approval-card";
-import {
-	isToolPreparing,
-	ToolPending,
-} from "@/components/agent/render-tool-parts/tool-pending";
-import { operationProposalSchema } from "@/lib/ai/operation";
+import { ToolPending } from "@/components/agent/render-tool-parts/tool-pending";
+import type { AddToolResult } from "@/components/agent/use-agent-chat";
+import { proposeOperationInputSchema } from "@/lib/ai/operation";
 import type { ArtifactTab } from "@/lib/stores/use-artifact-store";
 import { Button } from "@repo/ui/button";
 
@@ -31,6 +29,8 @@ interface OrgToolPartsDeps {
 		artifact: { projectId?: string; jobId?: string },
 		tab: ArtifactTab,
 	) => void;
+	/** Feed a HITL tool's outcome back to the model so it continues after approval. */
+	addToolResult: AddToolResult;
 }
 
 /**
@@ -41,15 +41,29 @@ interface OrgToolPartsDeps {
  */
 export function orgRenderToolPart({
 	openArtifact,
+	addToolResult,
 }: OrgToolPartsDeps): RenderToolPart {
 	// eslint-disable-next-line react/display-name
 	return function renderOrgToolPart(part: ToolUIPart) {
+		// HITL proposal (no execute): pending while its input streams, then the approval
+		// card — which feeds the outcome back via addToolResult so the model continues.
 		if (part.type === "tool-propose_operation") {
-			if (isToolPreparing(part)) return <ToolPending label="Preparing operation" />;
-			if (part.state !== "output-available") return null;
-			const parsed = operationProposalSchema.safeParse(part.output);
+			if (part.state === "input-streaming")
+				return <ToolPending label="Preparing operation" />;
+			const parsed = proposeOperationInputSchema.safeParse(part.input);
 			if (!parsed.success) return null;
-			return <ApprovalCard proposal={parsed.data} />;
+			return (
+				<ApprovalCard
+					proposal={{ id: part.toolCallId, ...parsed.data }}
+					onResolve={(output) =>
+						addToolResult({
+							tool: "propose_operation",
+							toolCallId: part.toolCallId,
+							output,
+						})
+					}
+				/>
+			);
 		}
 
 		// Repo scan ready → an "Open in canvas" link to review the proposed project.

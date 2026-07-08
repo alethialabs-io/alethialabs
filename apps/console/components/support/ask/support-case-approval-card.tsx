@@ -21,9 +21,12 @@ type Phase = "idle" | "running" | "done" | "rejected" | "denied";
 export function SupportCaseApprovalCard({
 	proposal,
 	orgSlug,
+	onResolve,
 }: {
 	proposal: SupportCaseProposal;
 	orgSlug: string;
+	/** Feed the outcome back to the model (closes the HITL loop → it continues). */
+	onResolve?: (output: unknown) => void;
 }) {
 	const router = useRouter();
 	const [phase, setPhase] = useState<Phase>("idle");
@@ -46,10 +49,18 @@ export function SupportCaseApprovalCard({
 			setCaseId(id);
 			setCaseNumber(caseNumber);
 			setPhase("done");
+			onResolve?.({ status: "submitted", caseId: id, caseNumber });
 		} catch (err) {
+			const message = err instanceof Error ? err.message : "Could not open the case.";
 			setPhase("denied");
-			setReason(err instanceof Error ? err.message : "Could not open the case.");
+			setReason(message);
+			onResolve?.({ status: "failed", reason: message });
 		}
+	};
+
+	const dismiss = () => {
+		setPhase("rejected");
+		onResolve?.({ status: "dismissed" });
 	};
 
 	return (
@@ -122,7 +133,7 @@ export function SupportCaseApprovalCard({
 								size="sm"
 								className="h-8 rounded-none"
 								disabled={phase === "running"}
-								onClick={() => setPhase("rejected")}
+								onClick={dismiss}
 							>
 								Dismiss
 							</Button>

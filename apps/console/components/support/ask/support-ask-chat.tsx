@@ -5,13 +5,10 @@
 import type { ToolUIPart } from "ai";
 import { useCallback } from "react";
 import { AgentChat } from "@/components/agent/agent-chat";
-import {
-	isToolPreparing,
-	ToolPending,
-} from "@/components/agent/render-tool-parts/tool-pending";
+import { ToolPending } from "@/components/agent/render-tool-parts/tool-pending";
 import { useAgentChat } from "@/components/agent/use-agent-chat";
 import { SupportCaseApprovalCard } from "@/components/support/ask/support-case-approval-card";
-import { supportCaseProposalSchema } from "@/lib/ai/support/case";
+import { createSupportCaseInputSchema } from "@/lib/ai/support/case";
 
 /** Starter prompts for the empty state — a spread of ask/diagnose/escalate. */
 const SUGGESTIONS = [
@@ -27,9 +24,10 @@ const SUGGESTIONS = [
  * `SupportCaseApprovalCard`, which calls `submitCase` on approval and links to the case.
  */
 export function SupportAskChat({ orgSlug }: { orgSlug: string }) {
-	const { messages, sendMessage, status, error, regenerate, stop } = useAgentChat({
-		api: "/api/support/ask",
-	});
+	const { messages, sendMessage, status, error, regenerate, stop, addToolResult } =
+		useAgentChat({
+			api: "/api/support/ask",
+		});
 
 	const onSend = useCallback(
 		(text: string) => {
@@ -41,18 +39,28 @@ export function SupportAskChat({ orgSlug }: { orgSlug: string }) {
 	const renderToolPart = useCallback(
 		(part: ToolUIPart) => {
 			if (part.type === "tool-create_support_case") {
-				if (isToolPreparing(part)) return <ToolPending label="Preparing case" />;
-				if (part.state !== "output-available") return null;
-				const parsed = supportCaseProposalSchema.safeParse(part.output);
+				if (part.state === "input-streaming")
+					return <ToolPending label="Preparing case" />;
+				const parsed = createSupportCaseInputSchema.safeParse(part.input);
 				if (!parsed.success) return null;
 				return (
-					<SupportCaseApprovalCard proposal={parsed.data} orgSlug={orgSlug} />
+					<SupportCaseApprovalCard
+						proposal={{ id: part.toolCallId, ...parsed.data }}
+						orgSlug={orgSlug}
+						onResolve={(output) =>
+							addToolResult({
+								tool: "create_support_case",
+								toolCallId: part.toolCallId,
+								output,
+							})
+						}
+					/>
 				);
 			}
 			// Everything else (read tools) falls back to the default tool card.
 			return undefined;
 		},
-		[orgSlug],
+		[orgSlug, addToolResult],
 	);
 
 	return (

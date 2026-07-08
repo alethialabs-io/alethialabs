@@ -179,11 +179,8 @@ export function composeTools(ctx: CanvasContext | undefined) {
 			description:
 				"Propose one or more canvas changes (e.g. add a database) for the user to accept or dismiss. Use add_node for new resources; reference existing node ids (from the canvas summary) for set_identity/update_config.",
 			inputSchema: proposeChangesInputSchema,
-			execute: async ({ label, actions }) => ({
-				id: crypto.randomUUID(),
-				label,
-				actions,
-			}),
+			// No execute (HITL) — the user accepts client-side, applying the actions to the
+			// canvas; the accepted outcome returns via addToolResult so the model continues.
 		}),
 	};
 }

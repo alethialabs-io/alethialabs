@@ -2,15 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { ToolUIPart } from "ai";
 import { Loader2 } from "lucide-react";
 
 /**
- * A lightweight "preparing…" affordance for a proposal tool while its arguments are
- * still streaming in (`input-streaming` / `input-available`), shown in place of the
- * eventual approval/accept card. Before this, the custom lanes rendered `null` until
- * `output-available`, so a proposal appeared to hang with no feedback. Grayscale and
- * squared, consistent with the AI Elements tool cards.
+ * A lightweight "preparing…" affordance for a HITL proposal tool while its arguments
+ * are still streaming in (`input-streaming`), shown in place of the eventual approval/
+ * accept card (which renders once the input is complete, at `input-available`). Before
+ * this, the custom lanes rendered `null` until the proposal was ready, so it appeared to
+ * hang with no feedback. Grayscale and squared, consistent with the AI Elements cards.
  */
 export function ToolPending({
 	label = "Preparing proposal",
@@ -23,9 +22,4 @@ export function ToolPending({
 			{label}…
 		</div>
 	);
-}
-
-/** Whether a tool part is still forming its input (not yet ready to render its card). */
-export function isToolPreparing(part: ToolUIPart): boolean {
-	return part.state === "input-streaming" || part.state === "input-available";
 }
