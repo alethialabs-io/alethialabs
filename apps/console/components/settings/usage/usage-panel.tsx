@@ -25,9 +25,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import {
-	type AiUsageSummary,
 	type BillingSummary,
-	getAiUsageSummary,
 	getBillingSummary,
 	getOrgUsage,
 	getResourceCounts,
@@ -39,6 +37,7 @@ import {
 } from "@/app/server/actions/billing";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
+import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { planMeta } from "@repo/plan-catalog";
@@ -148,7 +147,6 @@ export function UsagePanel() {
 	const [summary, setSummary] = useState<BillingSummary | null>(null);
 	const [usage, setUsage] = useState<UsageReport | null>(null);
 	const [counts, setCounts] = useState<ResourceCountsReport | null>(null);
-	const [ai, setAi] = useState<AiUsageSummary | null>(null);
 	const [overTime, setOverTime] = useState<UsageOverTime | null>(null);
 
 	const [range, setRange] = useState<DateRange>(() => presetRange(DEFAULT_PRESET));
@@ -173,11 +171,6 @@ export function UsagePanel() {
 			});
 		getResourceCounts()
 			.then(setCounts)
-			.catch(() => {
-				/* best-effort */
-			});
-		getAiUsageSummary()
-			.then(setAi)
 			.catch(() => {
 				/* best-effort */
 			});
@@ -467,45 +460,8 @@ export function UsagePanel() {
 				</div>
 			</SettingsSection>
 
-			{/* AI usage — its own budget model (weekly window + purchased balance). */}
-			<SettingsSection title="AI usage">
-				<div className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
-					<div className="grid grid-cols-1 sm:grid-cols-2">
-						<Meter
-							label="AI credits this week"
-							value={
-								ai ? (
-									<>
-										<b className="font-medium text-text-primary">
-											{ai.windowUsed.toLocaleString()}
-										</b>
-										{` / ${ai.weeklyBudget.toLocaleString()}`}
-									</>
-								) : (
-									<b className="font-medium text-text-primary">—</b>
-								)
-							}
-							fill={ai && ai.weeklyBudget > 0 ? (ai.windowUsed / ai.weeklyBudget) * 100 : 0}
-							sub="included credits used in the last 7 days"
-						/>
-						<Stat
-							label="Purchased balance"
-							value={ai ? ai.purchasedBalance.toLocaleString() : "—"}
-							sub="top-up credits remaining"
-						/>
-					</div>
-					<div className="flex items-center justify-between border-t border-border bg-surface-sunken px-6 py-3 text-[12px] text-text-tertiary">
-						<span>Need more? Top up with a credit pack — credits never expire.</span>
-						<Link
-							href={`/${orgSlug}/settings/billing`}
-							className="inline-flex items-center gap-1 text-text-secondary transition-colors hover:text-text-primary"
-						>
-							Buy credits
-							<ArrowUpRight size={13} />
-						</Link>
-					</div>
-				</div>
-			</SettingsSection>
+			{/* AI plan & usage — standalone metered product (daily/weekly % + top-ups). */}
+			<AiUsageSection orgSlug={orgSlug} />
 
 			<UpgradeOrgSheet
 				open={upgradeOpen}

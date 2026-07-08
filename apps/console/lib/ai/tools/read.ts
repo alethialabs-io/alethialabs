@@ -298,14 +298,19 @@ export function readTools() {
 
 		get_ai_usage: tool({
 			description:
-				"Get the active org's AI credit standing: included credits used in the trailing 7 days vs the plan's weekly budget, plus the remaining purchased top-up balance. PDP-gated read.",
+				"Get the active org's standalone AI standing: the AI tier, included credits used today and this week vs that tier's daily/weekly caps (with reset times), plus the remaining purchased top-up balance. PDP-gated read.",
 			inputSchema: z.object({}),
 			execute: async () => {
 				const a = await getAiUsageSummary();
 				return {
 					enabled: a.enabled,
-					window_used: a.windowUsed,
+					tier: a.tier,
+					daily_used: a.dailyUsed,
+					daily_budget: a.dailyBudget,
+					daily_reset_at: a.dailyResetAt,
+					weekly_used: a.weeklyUsed,
 					weekly_budget: a.weeklyBudget,
+					weekly_reset_at: a.weeklyResetAt,
 					purchased_balance: a.purchasedBalance,
 				};
 			},

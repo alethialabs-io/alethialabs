@@ -26,10 +26,70 @@ describe("ChatError", () => {
 	it("classifies a 402 budget/quota body as budget", () => {
 		render(
 			<ChatError
-				error={new Error('{"error":"blocked","reason":"weekly budget exhausted"}')}
+				error={new Error('{"error":"blocked","reason":"weekly"}')}
 			/>,
 		);
 		expect(screen.getByText("AI limit reached")).toBeInTheDocument();
+	});
+
+	it("renders the parsed 402 message + reset time and a Buy credits CTA for a weekly cap", () => {
+		const resetAt = new Date(Date.now() + 2 * 3_600_000).toISOString();
+		render(
+			<ChatError
+				error={
+					new Error(
+						JSON.stringify({
+							error: "You're out of AI usage for this week.",
+							reason: "weekly",
+							resetAt,
+							upgradable: true,
+						}),
+					)
+				}
+			/>,
+		);
+		expect(
+			screen.getByText(/out of AI usage for this week.*Resets in/i),
+		).toBeInTheDocument();
+		const cta = screen.getByRole("link", { name: /buy credits/i });
+		expect(cta).toHaveAttribute("href", expect.stringContaining("/settings/billing"));
+	});
+
+	it("shows an Upgrade AI plan CTA when the reason is not_enabled (subscribe)", () => {
+		render(
+			<ChatError
+				error={
+					new Error(
+						JSON.stringify({
+							error: "AI features are not enabled for this workspace.",
+							reason: "not_enabled",
+							resetAt: null,
+							upgradable: true,
+						}),
+					)
+				}
+			/>,
+		);
+		expect(
+			screen.getByRole("link", { name: /upgrade ai plan/i }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("link", { name: /buy credits/i }),
+		).not.toBeInTheDocument();
+	});
+
+	it("keeps Retry alongside the budget CTA", () => {
+		const onRetry = vi.fn();
+		render(
+			<ChatError
+				error={
+					new Error('{"error":"out of usage","reason":"daily","resetAt":null,"upgradable":true}')
+				}
+				onRetry={onRetry}
+			/>,
+		);
+		expect(screen.getByRole("link", { name: /buy credits/i })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
 	});
 
 	it("classifies a dropped fetch (generic TypeError) as network", () => {

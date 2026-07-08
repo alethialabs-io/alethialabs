@@ -20,12 +20,16 @@ import {
 } from "@/app/server/actions/billing";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
+import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
 import { Skeleton } from "@repo/ui/skeleton";
 import { planMeta } from "@repo/plan-catalog";
-import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
+import {
+	useActiveOrgSlug,
+	useWorkspaceStore,
+} from "@/lib/stores/use-workspace-store";
 import { RecentInvoices } from "./recent-invoices";
 import { PaymentMethodsCard } from "./payment-methods-card";
 import { PlanHistoryTimeline } from "./plan-history-timeline";
@@ -51,6 +55,7 @@ function formatDate(iso: string): string {
 
 export function BillingPanel() {
 	const fetchWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
+	const orgSlug = useActiveOrgSlug();
 
 	const [summary, setSummary] = useState<BillingSummary | null>(null);
 	const [pending, startTransition] = useTransition();
@@ -257,6 +262,9 @@ export function BillingPanel() {
 					</div>
 				</div>
 			</SettingsSection>
+
+			{/* AI plan & usage — the standalone metered AI product (tier + daily/weekly %). */}
+			<AiUsageSection orgSlug={orgSlug} />
 
 			{/* payment + billing details → Stripe Customer Portal (once a customer exists) */}
 			{summary.canManage && <PaymentMethodsCard />}

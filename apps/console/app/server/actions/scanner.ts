@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
 import { requireOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
-import { assertAiAllowed } from "@/lib/billing/ai-guard";
+import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
 import { recordAiUsage } from "@/lib/billing/ai-quota";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { withOwnerScope } from "@/lib/db";
@@ -38,7 +38,12 @@ export async function scanRepo(repoUrl: string, opts?: { ref?: string }) {
 	const actor = await currentActor();
 	const url = repoUrl.trim();
 	if (!url) throw new Error("A repository URL is required.");
-	const charge = await assertAiAllowed(actor.orgId, "scan");
+	// Surface a clean budget message (never a raw AiBudgetError) so the scan UI can toast
+	// "You're out of AI usage…" with the reset time instead of a stack trace.
+	const charge = await assertAiAllowed(actor.orgId, "scan").catch((e: unknown) => {
+		if (e instanceof AiBudgetError) throw new Error(e.message);
+		throw e;
+	});
 
 	const jobId = await withOwnerScope(actor.userId, async (tx) => {
 		const [job] = await tx
