@@ -44,7 +44,7 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 					capture_exceptions: true,
 					session_recording: { maskAllInputs: true, maskTextSelector: "[data-ph-mask]" },
 				});
-				window.__posthog = posthog as unknown as Window["__posthog"];
+				window.__posthog = posthog;
 			} catch {
 				/* analytics is best-effort — never break the app */
 			}
@@ -79,7 +79,7 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 				});
 				if (cancelled) return;
 				tracker.start();
-				window.__openreplay = tracker as unknown as Window["__openreplay"];
+				window.__openreplay = tracker;
 				stop = () => tracker.stop();
 			} catch {
 				/* session replay is best-effort — never break the app */
