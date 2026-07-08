@@ -461,7 +461,7 @@ export function UsagePanel() {
 			</SettingsSection>
 
 			{/* AI plan & usage — standalone metered product (daily/weekly % + top-ups). */}
-			<AiUsageSection orgSlug={orgSlug} />
+			<AiUsageSection />
 
 			<UpgradeOrgSheet
 				open={upgradeOpen}

@@ -159,6 +159,20 @@ export function aiPriceIdForTier(tier: PaidAiTier): string {
 	return id;
 }
 
+/**
+ * Whether the STANDALONE AI paid tiers (Plus/Max) are self-serve subscribable — true only
+ * when BOTH Stripe AI prices are configured. When false the upgrade UI still ships, but
+ * renders the paid tiers + credit packs as disabled "Coming soon" (structure now, prices
+ * light it up automatically at go-live). Server-only; the value crosses to the client as a
+ * plain boolean via the AI usage summary — never the price ids themselves.
+ */
+export function aiPaidTiersEnabled(): boolean {
+	return (
+		Boolean(process.env.STRIPE_PRICE_AI_PLUS) &&
+		Boolean(process.env.STRIPE_PRICE_AI_MAX)
+	);
+}
+
 /** The AI tier a Stripe Price ID maps to (`ai_plus`/`ai_max`), or null if it isn't one. */
 export function aiTierForPriceId(priceId: string): PaidAiTier | null {
 	const ai = getStripeConfig().aiPrices;

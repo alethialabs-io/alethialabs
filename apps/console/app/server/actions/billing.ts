@@ -12,6 +12,7 @@ import { and, count, eq } from "drizzle-orm";
 import type Stripe from "stripe";
 import { RESERVED_SLUGS } from "@/lib/routing";
 import {
+	aiPaidTiersEnabled,
 	aiPriceIdForTier,
 	deploymentMode,
 	getStripeConfig,
@@ -371,6 +372,12 @@ export interface AiUsageSummary {
 	weeklyResetAt: string;
 	/** Remaining purchased top-up credits (Σ grants − Σ purchased usage). */
 	purchasedBalance: number;
+	/**
+	 * Whether the paid AI tiers + credit packs are self-serve on this deployment (both
+	 * Stripe AI prices configured). Drives the upgrade UI's "Coming soon" gate — the only
+	 * config signal that crosses to the client (a plain boolean, never the price ids).
+	 */
+	paidTiersEnabled: boolean;
 }
 
 const AI_DAY_MS = 24 * 60 * 60 * 1000;
@@ -380,6 +387,7 @@ export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 	const actor = await currentActor();
 	const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as AiTier);
 	const spec = aiTierSpec(tier);
+	const paidTiersEnabled = aiPaidTiersEnabled();
 
 	const now = Date.now();
 	const dayStart = new Date(Math.floor(now / AI_DAY_MS) * AI_DAY_MS);
@@ -398,6 +406,7 @@ export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 			weeklyBudget: spec.weeklyCredits,
 			weeklyResetAt,
 			purchasedBalance: 0,
+			paidTiersEnabled,
 		};
 	}
 
@@ -416,6 +425,7 @@ export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 		weeklyBudget: spec.weeklyCredits,
 		weeklyResetAt,
 		purchasedBalance: purchased,
+		paidTiersEnabled,
 	};
 }
 

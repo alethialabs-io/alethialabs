@@ -28,6 +28,10 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 // The purchase sheets pull in Stripe + many actions — stub them; they're covered elsewhere.
 vi.mock("@/components/org/create-org-sheet", () => ({ CreateOrgSheet: () => null }));
 vi.mock("@/components/org/upgrade-org-sheet", () => ({ UpgradeOrgSheet: () => null }));
+vi.mock("@/components/billing/upgrade-ai-sheet", () => ({ UpgradeAiSheet: () => null }));
+vi.mock("@/components/billing/credit-pack-dialog", () => ({
+	CreditPackDialog: () => null,
+}));
 
 import { UsagePanel } from "@/components/settings/usage/usage-panel";
 import {
@@ -84,6 +88,7 @@ const ai: AiUsageSummary = {
 	weeklyBudget: 1500,
 	weeklyResetAt: "2100-01-01T00:00:00.000Z",
 	purchasedBalance: 500,
+	paidTiersEnabled: true,
 };
 
 beforeEach(() => {

@@ -4,10 +4,10 @@
 
 import { AlertTriangle, KeyRound, RefreshCcw, WifiOff } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { CreditPackDialog } from "@/components/billing/credit-pack-dialog";
+import { UpgradeAiSheet } from "@/components/billing/upgrade-ai-sheet";
 import { track } from "@/lib/analytics/track";
-import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 
@@ -121,7 +121,8 @@ export function ChatError({
 }) {
 	const kind = classify(error);
 	const budget = kind === "budget" ? parseBudget(error) : null;
-	const orgSlug = useActiveOrgSlug();
+	const [upgradeOpen, setUpgradeOpen] = useState(false);
+	const [creditsOpen, setCreditsOpen] = useState(false);
 	// Report the surfaced error (kind only — never the raw message) once per occurrence.
 	useEffect(() => {
 		track("elench_error", { kind });
@@ -134,10 +135,9 @@ export function ChatError({
 	const description = budget
 		? `${budget.message}${reset ? ` Resets in ${reset}.` : ""}`
 		: base.description;
-	// `not_enabled` means "subscribe to an AI plan"; the credit-limit reasons mean "wait or
-	// buy credits". Both surfaces live on the billing settings page (AI section).
+	// `not_enabled` means "subscribe to an AI plan" (open the tier sheet); the credit-limit
+	// reasons mean "wait or buy credits" (open the credit-pack dialog).
 	const subscribe = budget?.reason === "not_enabled";
-	const billingHref = orgSlug ? `/${orgSlug}/settings/billing` : null;
 
 	return (
 		<Alert className="rounded-none">
@@ -146,16 +146,17 @@ export function ChatError({
 			<AlertDescription>
 				<p>{description}</p>
 				<div className="mt-2 flex flex-wrap gap-2">
-					{budget && billingHref && (
+					{budget && (
 						<Button
-							asChild
+							type="button"
 							variant="outline"
 							size="sm"
 							className="rounded-none"
+							onClick={() =>
+								subscribe ? setUpgradeOpen(true) : setCreditsOpen(true)
+							}
 						>
-							<Link href={billingHref}>
-								{subscribe ? "Upgrade AI plan" : "Buy credits"}
-							</Link>
+							{subscribe ? "Upgrade AI plan" : "Buy credits"}
 						</Button>
 					)}
 					{onRetry && (
@@ -172,6 +173,8 @@ export function ChatError({
 					)}
 				</div>
 			</AlertDescription>
+			<UpgradeAiSheet open={upgradeOpen} onOpenChange={setUpgradeOpen} />
+			<CreditPackDialog open={creditsOpen} onOpenChange={setCreditsOpen} />
 		</Alert>
 	);
 }
