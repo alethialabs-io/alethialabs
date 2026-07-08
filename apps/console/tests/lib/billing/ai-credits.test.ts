@@ -6,6 +6,7 @@ import {
 	AI_CREDIT_PACKS,
 	creditPack,
 	creditsFor,
+	DEEP_REASONING_CREDITS,
 	MESSAGE_CREDITS,
 	SCAN_CREDITS,
 } from "@/lib/billing/ai-credits";
@@ -16,11 +17,25 @@ describe("creditsFor", () => {
 		expect(creditsFor("agent")).toBe(MESSAGE_CREDITS);
 		expect(SCAN_CREDITS).toBeGreaterThan(MESSAGE_CREDITS);
 	});
+
+	it("pins the flat costs: scan=20, message=1, deep-reasoning message=2", () => {
+		expect(creditsFor("scan")).toBe(20);
+		expect(creditsFor("agent")).toBe(1);
+		expect(creditsFor("agent", { deepReasoning: true })).toBe(2);
+		expect(DEEP_REASONING_CREDITS).toBe(2);
+	});
+
+	it("charges double for a deep-reasoning turn, but a scan stays flat", () => {
+		expect(creditsFor("agent", { deepReasoning: false })).toBe(MESSAGE_CREDITS);
+		expect(creditsFor("agent", { deepReasoning: true })).toBe(DEEP_REASONING_CREDITS);
+		// Deep reasoning never changes the scan cost (heavy flat rate).
+		expect(creditsFor("scan", { deepReasoning: true })).toBe(SCAN_CREDITS);
+	});
 });
 
 describe("creditPack", () => {
 	it("looks up a known pack", () => {
-		expect(creditPack("s")).toEqual({ id: "s", credits: 500, amountCents: 900 });
+		expect(creditPack("s")).toEqual({ id: "s", credits: 100, amountCents: 2500 });
 	});
 
 	it("returns undefined for an unknown id", () => {

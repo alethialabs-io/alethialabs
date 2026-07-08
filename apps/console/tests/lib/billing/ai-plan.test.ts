@@ -23,11 +23,36 @@ describe("AI_TIERS ladder", () => {
 		expect(AI_TIERS.ai_free.advisor).toBe("none");
 	});
 
-	it("raises the caps and upgrades the advisor up the ladder", () => {
+	it("raises the caps up the ladder with a Sonnet advisor on the paid tiers", () => {
 		expect(AI_TIERS.ai_plus.dailyCredits).toBeGreaterThan(AI_TIERS.ai_free.dailyCredits);
 		expect(AI_TIERS.ai_max.dailyCredits).toBeGreaterThan(AI_TIERS.ai_plus.dailyCredits);
+		expect(AI_TIERS.ai_plus.weeklyCredits).toBeGreaterThan(AI_TIERS.ai_free.weeklyCredits);
+		expect(AI_TIERS.ai_max.weeklyCredits).toBeGreaterThan(AI_TIERS.ai_plus.weeklyCredits);
+		// Both paid tiers default to the Sonnet advisor; Max upgrades to Opus on demand
+		// (per-message deep-reasoning opt-in — not a tier-static field).
 		expect(AI_TIERS.ai_plus.advisor).toBe("sonnet");
-		expect(AI_TIERS.ai_max.advisor).toBe("opus");
+		expect(AI_TIERS.ai_max.advisor).toBe("sonnet");
+	});
+
+	it("pins the final maintainer-approved allowances", () => {
+		expect(AI_TIERS.ai_free).toMatchObject({
+			dailyCredits: 5,
+			weeklyCredits: 15,
+			perUserDailyCredits: 5,
+			perUserWeeklyCredits: 15,
+		});
+		expect(AI_TIERS.ai_plus).toMatchObject({
+			dailyCredits: 40,
+			weeklyCredits: 180,
+			perUserDailyCredits: 25,
+			perUserWeeklyCredits: 110,
+		});
+		expect(AI_TIERS.ai_max).toMatchObject({
+			dailyCredits: 200,
+			weeklyCredits: 900,
+			perUserDailyCredits: 130,
+			perUserWeeklyCredits: 550,
+		});
 	});
 });
 

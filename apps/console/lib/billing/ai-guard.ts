@@ -70,6 +70,11 @@ export async function isAiSurfaceEnabled(orgId: string): Promise<boolean> {
  * lift a per-seat cap; it clears on the bucket reset). Omitting `userId` preserves the exact
  * prior org-only behaviour (back-compat).
  *
+ * When `opts.deepReasoning` is set the up-front budget check books the higher deep-reasoning
+ * cost (an Opus "deep reasoning" turn costs 2 credits vs 1 for a normal message — see
+ * `creditsFor`), so the returned charge is deep-reasoning-aware and enforced consistently.
+ * Defaults to the normal per-kind cost (back-compat).
+ *
  * Respects the org's **AI-spend hard cap** (`organization_billing.usageHardCap`, shared with
  * the runner-minutes guard): when on, the guard pauses at the included allowance instead of
  * auto-spending purchased top-up packs.
@@ -81,6 +86,7 @@ export async function assertAiAllowed(
 	orgId: string,
 	kind: AiUsageKind,
 	userId?: string,
+	opts?: { deepReasoning?: boolean },
 ): Promise<AiCharge> {
 	if (!isStripeConfigured()) return { source: "included", credits: 0 };
 
@@ -95,7 +101,7 @@ export async function assertAiAllowed(
 		);
 	}
 
-	const cost = creditsFor(kind);
+	const cost = creditsFor(kind, opts);
 	const now = Date.now();
 	const dayStart = bucketStart(now, DAY_MS);
 	const weekStart = bucketStart(now, WEEK_MS);

@@ -263,10 +263,9 @@ export function resolveCurrency(country?: string | null): SupportedCurrency {
 // charge amount in Stripe (STRIPE_PRICE_AI_*). Kept structurally identical to the console's
 // `AiTier` union so it stays a zero-dependency package.
 //
-// PLACEHOLDER PRICING: every customer-facing amount below (USD + EUR) is a seed the
-// maintainer will set in a dedicated pricing session before go-live — DO NOT treat these
-// as final. The EUR figures mirror the plan catalog's placeholder USD→EUR ratio (Pro
-// $20→€18). Only lib/billing/model-costs.ts (cost-of-serve) is authoritative.
+// Prices below (USD + EUR) are the FINAL maintainer-approved customer amounts (AI Plus
+// $20/€18, AI Max $100/€90). They drive display + Stripe provisioning; the cost-of-serve
+// (lib/billing/model-costs.ts) remains the authoritative per-model cost basis.
 
 /** The standalone AI tiers, matching the console's `AiTier` union (lib/billing/ai-plan.ts). */
 export type AiPlanId = "ai_free" | "ai_plus" | "ai_max";
@@ -277,9 +276,9 @@ export interface AiPlanCatalogEntry {
 	name: string;
 	/** Display price (the authoritative amount is the Stripe AI price). `undefined` = free. */
 	priceLabel: string;
-	/** PLACEHOLDER monthly USD amount (the Stripe-provisioning SSOT). `0` = free. */
+	/** Monthly USD amount (the Stripe-provisioning SSOT). `0` = free. */
 	priceMonthlyUsd?: number;
-	/** PLACEHOLDER monthly EUR amount (for EU-billed customers). Tune with the USD figure. */
+	/** Monthly EUR amount (for EU-billed customers). Keep in step with the USD figure. */
 	priceMonthlyEur?: number;
 	tagline: string;
 	/** Whether this tier is a paid AI subscription (has a Stripe price). */
@@ -309,9 +308,9 @@ export const AI_PLAN_CATALOG: AiPlanCatalogEntry[] = [
 	{
 		id: "ai_plus",
 		name: "AI Plus",
-		priceLabel: "$20 / mo", // PLACEHOLDER
-		priceMonthlyUsd: 20, // PLACEHOLDER — maintainer sets final pricing
-		priceMonthlyEur: 18, // PLACEHOLDER
+		priceLabel: "$20 / mo",
+		priceMonthlyUsd: 20,
+		priceMonthlyEur: 18,
 		tagline: "More AI, with a smarter advisor.",
 		paid: true,
 		advisor: "Sonnet advisor + fast executor",
@@ -324,12 +323,12 @@ export const AI_PLAN_CATALOG: AiPlanCatalogEntry[] = [
 	{
 		id: "ai_max",
 		name: "AI Max",
-		priceLabel: "$100 / mo", // PLACEHOLDER
-		priceMonthlyUsd: 100, // PLACEHOLDER — maintainer sets final pricing
-		priceMonthlyEur: 90, // PLACEHOLDER
+		priceLabel: "$100 / mo",
+		priceMonthlyUsd: 100,
+		priceMonthlyEur: 90,
 		tagline: "The most AI, with the best advisor.",
 		paid: true,
-		advisor: "Opus advisor + fast executor",
+		advisor: "Sonnet advisor · Opus on demand",
 		highlights: [
 			"The largest daily & weekly caps",
 			"Best-in-class planning (Opus advisor)",
