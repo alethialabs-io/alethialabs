@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Settings · Classification — CRUD the org's classification taxonomy: dimensions (axes) and
-// their allowed values. One panel per dimension; values render as squared chips with an
-// inline add-value form and per-value delete. Reads/writes via the classification server
-// actions through TanStack Query (shared cache with every picker).
+// Settings · Classification — author the org's classification taxonomy (dimensions = axes ×
+// their allowed values) and see how it is actually used. A master/detail: the dimension rail
+// selects, the detail edits values (drag-reorder, color, usage drill), and a stat strip +
+// coverage panels surface adoption. Read-only without `org:edit`. Reads/writes through the
+// classification server actions via TanStack Query (shared cache with every picker).
 
-import { zodResolver } from "@hookform/resolvers/zod";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -17,31 +17,43 @@ import {
 	AlertDialogFooter,
 	AlertDialogHeader,
 	AlertDialogTitle,
-	AlertDialogTrigger,
 } from "@repo/ui/alert-dialog";
-import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
-import { Input } from "@repo/ui/input";
 import { Skeleton } from "@repo/ui/skeleton";
+import { cn } from "@repo/ui/utils";
 import { useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Tags, Trash2, X } from "lucide-react";
-import { useForm } from "react-hook-form";
+import { Lock, Plus, Search } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import type {
 	DimensionDTO,
 	ValueDTO,
 } from "@/app/server/actions/classification/dimensions";
 import {
+	createDimensionWithValues,
 	createValue,
 	deleteDimension,
 	deleteValue,
+	reorderDimensions,
+	reorderValues,
+	updateDimension,
 } from "@/app/server/actions/classification/dimensions";
 import { qk } from "@/lib/query/keys";
-import { useDimensionsQuery } from "@/lib/query/use-classification-query";
-import { type ValueInput, valueInputSchema } from "@/lib/validations/classification";
+import {
+	useCanEditClassification,
+	useDimensionsQuery,
+} from "@/lib/query/use-classification-query";
+import {
+	CLASSIFICATION_TEMPLATES,
+	type ClassificationTemplate,
+} from "./classification-templates";
+import { DimensionDetail } from "./dimension-detail";
 import { DimensionDialog } from "./dimension-dialog";
+import { DimensionRail } from "./dimension-rail";
+import { ValueDrillDrawer } from "./value-drill-drawer";
+import { ValueEditor } from "./value-editor";
 
-/** Slugifies a value label into its `value` slug candidate. */
+/** Lowercases + hyphenates a label into a slug candidate. */
 function slugify(input: string): string {
 	return input
 		.toLowerCase()
@@ -51,258 +63,454 @@ function slugify(input: string): string {
 		.slice(0, 64);
 }
 
-/** A single value chip with a delete affordance. */
-function ValueChip({ value, onDeleted }: { value: ValueDTO; onDeleted: () => void }) {
-	return (
-		<Badge variant="outline" className="gap-1.5 font-normal">
-			{value.color ? (
-				<span
-					aria-hidden
-					className="size-1.5 shrink-0 rounded-full"
-					style={{ backgroundColor: value.color }}
-				/>
-			) : null}
-			<span className="text-foreground">{value.label}</span>
-			<span className="font-mono text-[10px] text-muted-foreground">
-				{value.value}
-			</span>
-			<button
-				type="button"
-				aria-label={`Delete ${value.label}`}
-				className="text-muted-foreground transition-colors hover:text-foreground"
-				onClick={async () => {
-					try {
-						await deleteValue(value.id);
-						onDeleted();
-					} catch (e) {
-						toast.error(e instanceof Error ? e.message : "Couldn't delete value.");
-					}
-				}}
-			>
-				<X className="size-3" />
-			</button>
-		</Badge>
-	);
-}
-
-/** Inline "add a value" form for a dimension. */
-function AddValueForm({
-	dimensionId,
-	onAdded,
-}: {
-	dimensionId: string;
-	onAdded: () => void;
-}) {
-	const form = useForm<ValueInput>({
-		resolver: zodResolver(valueInputSchema),
-		defaultValues: { value: "", label: "", color: undefined, position: 0 },
-	});
-
-	const onSubmit = async (data: ValueInput) => {
-		try {
-			await createValue(dimensionId, {
-				...data,
-				value: data.value || slugify(data.label),
-			});
-			form.reset({ value: "", label: "", color: undefined, position: 0 });
-			onAdded();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Couldn't add value.");
-		}
-	};
-
-	return (
-		<form
-			onSubmit={form.handleSubmit(onSubmit)}
-			className="flex items-center gap-2"
-		>
-			<Input
-				placeholder="Value label (e.g. Production)"
-				className="h-8 max-w-[220px] text-xs"
-				{...form.register("label")}
-			/>
-			<Input
-				placeholder="#888 (optional)"
-				className="h-8 w-28 font-mono text-xs"
-				{...form.register("color")}
-			/>
-			<Button
-				type="submit"
-				size="sm"
-				variant="outline"
-				disabled={form.formState.isSubmitting || !form.watch("label")}
-				className="h-8 gap-1"
-			>
-				<Plus className="size-3.5" />
-				Add
-			</Button>
-		</form>
-	);
-}
-
-/** A dimension panel: header (label/key/mode + edit/delete) and its values. */
-function DimensionPanel({
-	dimension,
-	onChanged,
-}: {
-	dimension: DimensionDTO;
-	onChanged: () => void;
-}) {
-	return (
-		<div className="rounded-lg border bg-surface p-4 shadow-sm">
-			<div className="flex items-start justify-between gap-3">
-				<div className="min-w-0">
-					<div className="flex items-center gap-2">
-						<span className="font-display text-[14px] font-semibold text-foreground">
-							{dimension.label}
-						</span>
-						<span className="font-mono text-[11px] text-muted-foreground">
-							{dimension.key}
-						</span>
-						<Badge
-							variant="outline"
-							className="h-4 px-1 text-[10px] font-normal text-muted-foreground"
-						>
-							{dimension.multi ? "multi" : "single"}
-						</Badge>
-					</div>
-					{dimension.description ? (
-						<p className="mt-1 text-[12px] text-muted-foreground">
-							{dimension.description}
-						</p>
-					) : null}
-				</div>
-				<div className="flex shrink-0 items-center gap-1">
-					<DimensionDialog
-						dimension={dimension}
-						onSaved={onChanged}
-						trigger={
-							<Button variant="ghost" size="icon" aria-label="Edit dimension" className="size-8">
-								<Pencil className="size-3.5" />
-							</Button>
-						}
-					/>
-					<AlertDialog>
-						<AlertDialogTrigger asChild>
-							<Button variant="ghost" size="icon" aria-label="Delete dimension" className="size-8">
-								<Trash2 className="size-3.5 text-muted-foreground" />
-							</Button>
-						</AlertDialogTrigger>
-						<AlertDialogContent>
-							<AlertDialogHeader>
-								<AlertDialogTitle>Delete “{dimension.label}”?</AlertDialogTitle>
-								<AlertDialogDescription>
-									This removes the dimension, its values, and every assignment of
-									those values across all resources. This cannot be undone.
-								</AlertDialogDescription>
-							</AlertDialogHeader>
-							<AlertDialogFooter>
-								<AlertDialogCancel>Cancel</AlertDialogCancel>
-								<AlertDialogAction
-									onClick={async () => {
-										try {
-											await deleteDimension(dimension.id);
-											toast.success("Dimension deleted.");
-											onChanged();
-										} catch (e) {
-											toast.error(
-												e instanceof Error ? e.message : "Couldn't delete.",
-											);
-										}
-									}}
-								>
-									Delete
-								</AlertDialogAction>
-							</AlertDialogFooter>
-						</AlertDialogContent>
-					</AlertDialog>
-				</div>
-			</div>
-
-			<div className="mt-3 flex flex-wrap items-center gap-1.5">
-				{dimension.values.length === 0 ? (
-					<span className="text-[12px] text-muted-foreground">
-						No values yet.
-					</span>
-				) : (
-					dimension.values.map((v) => (
-						<ValueChip key={v.id} value={v} onDeleted={onChanged} />
-					))
-				)}
-			</div>
-
-			<div className="mt-3 border-t border-border/60 pt-3">
-				<AddValueForm dimensionId={dimension.id} onAdded={onChanged} />
-			</div>
-		</div>
-	);
-}
+type DimDialog =
+	| { mode: "create" }
+	| { mode: "edit"; dimension: DimensionDTO }
+	| null;
+type DeleteTarget =
+	| { kind: "dimension" | "value"; id: string; title: string; message: string }
+	| null;
 
 /** The Settings · Classification page body. */
 export function ClassificationManager() {
 	const qc = useQueryClient();
 	const { data: dimensions, isPending } = useDimensionsQuery();
+	const { data: canEdit = false } = useCanEditClassification();
 
-	/** Refetch the taxonomy after any mutation (shared cache for the pickers too). */
+	const [selectedId, setSelectedId] = useState<string | null>(null);
+	const [search, setSearch] = useState("");
+	const [dimDialog, setDimDialog] = useState<DimDialog>(null);
+	const [valueEditor, setValueEditor] = useState<{
+		dimensionId: string;
+		dimensionLabel: string;
+		value?: ValueDTO;
+	} | null>(null);
+	const [drill, setDrill] = useState<{
+		value: ValueDTO;
+		dimensionLabel: string;
+	} | null>(null);
+	const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
+
 	const refresh = () =>
 		qc.invalidateQueries({ queryKey: qk.classificationDimensions() });
 
+	const dims = useMemo(() => dimensions ?? [], [dimensions]);
+
+	const filtered = useMemo(() => {
+		const q = search.trim().toLowerCase();
+		if (!q) return dims;
+		return dims.filter(
+			(d) =>
+				d.label.toLowerCase().includes(q) ||
+				d.key.toLowerCase().includes(q) ||
+				d.values.some(
+					(v) =>
+						v.label.toLowerCase().includes(q) ||
+						v.value.toLowerCase().includes(q),
+				),
+		);
+	}, [dims, search]);
+
+	const selectedDim =
+		filtered.find((d) => d.id === selectedId) ?? filtered[0] ?? null;
+
+	const stats = useMemo(() => {
+		const values = dims.flatMap((d) => d.values);
+		const used = values.filter((v) => v.assignmentCount > 0).length;
+		return {
+			dims: dims.length,
+			values: values.length,
+			assignments: values.reduce((n, v) => n + v.assignmentCount, 0),
+			unused: values.length - used,
+			coverage: values.length > 0 ? Math.round((used / values.length) * 100) : 0,
+		};
+	}, [dims]);
+
+	/** Optimistically reorder cached dimensions, then persist. */
+	const onReorderDims = (ids: string[]) => {
+		qc.setQueryData<DimensionDTO[]>(qk.classificationDimensions(), (old) =>
+			old ? [...old].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)) : old,
+		);
+		reorderDimensions(ids)
+			.then(refresh)
+			.catch((e) => {
+				refresh();
+				toast.error(e instanceof Error ? e.message : "Couldn't reorder.");
+			});
+	};
+
+	/** Optimistically reorder a dimension's cached values, then persist. */
+	const onReorderVals = (dimId: string, ids: string[]) => {
+		qc.setQueryData<DimensionDTO[]>(qk.classificationDimensions(), (old) =>
+			old?.map((d) =>
+				d.id === dimId
+					? {
+							...d,
+							values: [...d.values].sort(
+								(a, b) => ids.indexOf(a.id) - ids.indexOf(b.id),
+							),
+						}
+					: d,
+			),
+		);
+		reorderValues(ids)
+			.then(refresh)
+			.catch((e) => {
+				refresh();
+				toast.error(e instanceof Error ? e.message : "Couldn't reorder.");
+			});
+	};
+
+	/** Quick-add a value to a dimension from the inline input. */
+	const onAddValue = (dim: DimensionDTO, label: string) => {
+		createValue(dim.id, {
+			value: slugify(label),
+			label,
+			color: undefined,
+			position: dim.values.length,
+		})
+			.then(refresh)
+			.catch((e) =>
+				toast.error(e instanceof Error ? e.message : "Couldn't add value."),
+			);
+	};
+
+	/** Flip a dimension's single/multi mode. */
+	const onToggleMulti = (dim: DimensionDTO) => {
+		updateDimension(dim.id, {
+			key: dim.key,
+			label: dim.label,
+			description: dim.description ?? undefined,
+			multi: !dim.multi,
+			position: dim.position,
+		})
+			.then(refresh)
+			.catch((e) =>
+				toast.error(e instanceof Error ? e.message : "Couldn't update."),
+			);
+	};
+
+	/** Seed a dimension + values from a starter template. */
+	const applyTemplate = (t: ClassificationTemplate) => {
+		createDimensionWithValues(
+			{ key: t.key, label: t.label, description: t.description, multi: t.multi },
+			t.values,
+		)
+			.then(({ id }) => {
+				setSelectedId(id);
+				refresh();
+				toast.success(`Added “${t.label}”.`);
+			})
+			.catch((e) =>
+				toast.error(
+					e instanceof Error ? e.message : `Couldn't add “${t.label}”.`,
+				),
+			);
+	};
+
+	/** Confirm-and-delete the pending dimension or value. */
+	const confirmDelete = async () => {
+		if (!deleteTarget) return;
+		try {
+			if (deleteTarget.kind === "dimension") {
+				await deleteDimension(deleteTarget.id);
+			} else {
+				await deleteValue(deleteTarget.id);
+			}
+			toast.success("Deleted.");
+			setDeleteTarget(null);
+			refresh();
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Couldn't delete.");
+		}
+	};
+
 	return (
 		<div>
-			<div className="mb-5 flex flex-wrap items-start justify-between gap-4">
-				<div>
-					<h1 className="font-display text-[19px] font-semibold tracking-[-0.01em] text-text-primary">
-						Classification
-					</h1>
-					<p className="mt-1 max-w-xl text-[13px] text-muted-foreground">
-						Define the axes (dimensions) and allowed values used to classify
-						resources across your organization.
-					</p>
+			{/* page header */}
+			<header className="mb-5">
+				<div className="mb-2 font-mono text-[10px] uppercase tracking-[0.16em] text-text-tertiary">
+					Governance · Taxonomy
 				</div>
-				<DimensionDialog
-					onSaved={refresh}
-					trigger={
-						<Button size="sm" className="gap-1.5">
-							<Plus className="size-3.5" />
-							New dimension
-						</Button>
-					}
-				/>
-			</div>
+				<h1 className="m-0 font-display text-[26px] font-semibold tracking-tight text-text-primary">
+					Classification
+				</h1>
+				<p className="m-0 mt-2 max-w-[64ch] text-[13.5px] leading-relaxed text-text-secondary">
+					Define the axes and allowed values every resource is classified by.
+					Authored once here — consumed across connectors, projects, clusters,
+					runners, members and more.
+				</p>
+			</header>
+
+			{!canEdit && (
+				<div className="mb-[18px] flex items-center gap-3 rounded-[3px] border border-border-strong bg-surface-sunken px-3.5 py-3">
+					<Lock className="size-[15px] shrink-0 text-text-tertiary" />
+					<span className="text-[12.5px] text-text-secondary">
+						Read-only. You need the{" "}
+						<b className="font-semibold text-text-primary">Editor</b> role (
+						<span className="font-mono text-[11.5px]">org:edit</span>) to change the
+						taxonomy.
+					</span>
+				</div>
+			)}
 
 			{isPending ? (
 				<div className="space-y-3">
-					<Skeleton className="h-28 w-full" />
-					<Skeleton className="h-28 w-full" />
+					<Skeleton className="h-16 w-full rounded-lg" />
+					<Skeleton className="h-72 w-full rounded-lg" />
 				</div>
-			) : !dimensions || dimensions.length === 0 ? (
-				<div className="flex flex-col items-center gap-3 rounded-lg border border-dashed py-14 text-center">
-					<Tags className="size-6 text-muted-foreground" />
-					<div>
-						<p className="text-sm font-medium text-foreground">
-							No dimensions yet
-						</p>
-						<p className="mt-1 text-[12.5px] text-muted-foreground">
-							Create your first axis (e.g. Environment, Team, Data
-							classification).
-						</p>
+			) : dims.length === 0 ? (
+				<EmptyState
+					canEdit={canEdit}
+					onTemplate={applyTemplate}
+					onCreate={() => setDimDialog({ mode: "create" })}
+				/>
+			) : (
+				<div>
+					{/* stat strip */}
+					<div className="mb-[18px] flex overflow-hidden rounded-lg border bg-surface shadow-sm">
+						<Stat label="Dimensions" value={stats.dims} unit="axes" />
+						<Stat label="Values" value={stats.values} unit="allowed" />
+						<Stat label="Assignments" value={stats.assignments} unit="pinned" />
+						<Stat
+							label="Coverage"
+							value={`${stats.coverage}%`}
+							unit="of values used"
+							bar={stats.coverage}
+						/>
+						<Stat label="Unused" value={stats.unused} unit="values" last />
 					</div>
-					<DimensionDialog
-						onSaved={refresh}
-						trigger={
-							<Button size="sm" variant="outline" className="gap-1.5">
+
+					{/* toolbar */}
+					<div className="mb-3.5 flex items-center gap-3">
+						<div className="flex h-[34px] w-[250px] items-center gap-2 rounded-[2px] border border-border-strong bg-surface-sunken px-[11px]">
+							<Search className="size-[15px] shrink-0 text-text-tertiary" />
+							<input
+								value={search}
+								onChange={(e) => setSearch(e.target.value)}
+								placeholder="Search dimensions & values"
+								className="w-full border-none bg-transparent text-[13px] text-text-primary outline-none"
+							/>
+						</div>
+						<span className="font-mono text-[11px] text-text-tertiary">
+							{filtered.length === dims.length
+								? `${dims.length} dimension${dims.length === 1 ? "" : "s"}`
+								: `${filtered.length} of ${dims.length}`}
+						</span>
+						<div className="flex-1" />
+						{canEdit && (
+							<Button
+								size="sm"
+								className="gap-1.5"
+								onClick={() => setDimDialog({ mode: "create" })}
+							>
 								<Plus className="size-3.5" />
 								New dimension
 							</Button>
-						}
+						)}
+					</div>
+
+					{/* master-detail */}
+					<div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[296px_1fr]">
+						<DimensionRail
+							dims={filtered}
+							selectedId={selectedDim?.id ?? null}
+							onSelect={setSelectedId}
+							canEdit={canEdit}
+							onReorder={onReorderDims}
+						/>
+						{selectedDim ? (
+							<DimensionDetail
+								dim={selectedDim}
+								canEdit={canEdit}
+								onEditDimension={() =>
+									setDimDialog({ mode: "edit", dimension: selectedDim })
+								}
+								onDeleteDimension={() =>
+									setDeleteTarget({
+										kind: "dimension",
+										id: selectedDim.id,
+										title: `Delete “${selectedDim.label}”?`,
+										message:
+											"This removes the dimension, its values, and every assignment of those values across all resources. This cannot be undone.",
+									})
+								}
+								onToggleMulti={() => onToggleMulti(selectedDim)}
+								onReorderValues={(ids) => onReorderVals(selectedDim.id, ids)}
+								onAddValue={(label) => onAddValue(selectedDim, label)}
+								onEditValue={(value) =>
+									setValueEditor({
+										dimensionId: selectedDim.id,
+										dimensionLabel: selectedDim.label,
+										value,
+									})
+								}
+								onDeleteValue={(value) =>
+									setDeleteTarget({
+										kind: "value",
+										id: value.id,
+										title: `Delete “${value.label}”?`,
+										message:
+											"This removes the value and clears it from every resource it was assigned to.",
+									})
+								}
+								onDrill={(value) =>
+									setDrill({ value, dimensionLabel: selectedDim.label })
+								}
+							/>
+						) : (
+							<div className="rounded-lg border border-dashed p-10 text-center font-mono text-[12px] text-text-tertiary">
+								No dimensions match “{search}”.
+							</div>
+						)}
+					</div>
+				</div>
+			)}
+
+			{/* overlays */}
+			<DimensionDialog
+				open={Boolean(dimDialog)}
+				onOpenChange={(o) => !o && setDimDialog(null)}
+				dimension={dimDialog?.mode === "edit" ? dimDialog.dimension : undefined}
+				onSaved={refresh}
+			/>
+			{valueEditor && (
+				<ValueEditor
+					open
+					onOpenChange={(o) => !o && setValueEditor(null)}
+					dimensionId={valueEditor.dimensionId}
+					dimensionLabel={valueEditor.dimensionLabel}
+					value={valueEditor.value}
+					onSaved={refresh}
+				/>
+			)}
+			<ValueDrillDrawer
+				value={drill?.value ?? null}
+				dimensionLabel={drill?.dimensionLabel ?? ""}
+				onClose={() => setDrill(null)}
+			/>
+			<AlertDialog
+				open={Boolean(deleteTarget)}
+				onOpenChange={(o) => !o && setDeleteTarget(null)}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>{deleteTarget?.title}</AlertDialogTitle>
+						<AlertDialogDescription>
+							{deleteTarget?.message}
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>Cancel</AlertDialogCancel>
+						<AlertDialogAction onClick={confirmDelete}>Delete</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+		</div>
+	);
+}
+
+/** One cell of the stat strip. */
+function Stat({
+	label,
+	value,
+	unit,
+	bar,
+	last,
+}: {
+	label: string;
+	value: number | string;
+	unit: string;
+	bar?: number;
+	last?: boolean;
+}) {
+	return (
+		<div className={cn("flex-1 px-[18px] py-3.5", !last && "border-r")}>
+			<div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-text-tertiary">
+				{label}
+			</div>
+			<div className="mt-[7px] font-display text-[22px] font-semibold tracking-tight">
+				{value}
+				<span className="ml-[7px] font-mono text-[11px] font-normal text-text-tertiary">
+					{unit}
+				</span>
+			</div>
+			{typeof bar === "number" && (
+				<div className="mt-2.5 h-1 overflow-hidden rounded-full border bg-surface-sunken">
+					<div
+						className="h-full rounded-full bg-text-tertiary"
+						style={{ width: `${bar}%` }}
 					/>
 				</div>
-			) : (
-				<div className="space-y-3">
-					{dimensions.map((d) => (
-						<DimensionPanel key={d.id} dimension={d} onChanged={refresh} />
-					))}
+			)}
+		</div>
+	);
+}
+
+/** The blank-slate: starter templates + create-from-scratch. */
+function EmptyState({
+	canEdit,
+	onTemplate,
+	onCreate,
+}: {
+	canEdit: boolean;
+	onTemplate: (t: ClassificationTemplate) => void;
+	onCreate: () => void;
+}) {
+	return (
+		<div className="rounded-md border border-dashed border-border-strong bg-surface px-[30px] py-[34px]">
+			<div className="max-w-[60ch]">
+				<div className="mb-2 font-mono text-[10px] uppercase tracking-[0.16em] text-text-tertiary">
+					No dimensions yet
 				</div>
+				<h2 className="m-0 mb-[7px] font-display text-[19px] font-semibold tracking-tight">
+					Start your taxonomy
+				</h2>
+				<p className="m-0 mb-[22px] text-[13px] leading-relaxed text-text-secondary">
+					A classification is a set of named axes (dimensions) and their allowed
+					values. Begin from a common template — everything stays editable — or
+					author one from scratch.
+				</p>
+			</div>
+			{canEdit && (
+				<>
+					<div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+						{CLASSIFICATION_TEMPLATES.map((t) => (
+							<div
+								key={t.key}
+								className="flex flex-col gap-2.5 rounded-[4px] border bg-surface-sunken px-4 py-[15px]"
+							>
+								<div className="flex items-baseline justify-between gap-2.5">
+									<span className="text-[13.5px] font-semibold text-text-primary">
+										{t.label}
+									</span>
+									<span className="rounded-full border border-border-strong px-[7px] py-0.5 font-mono text-[9px] uppercase tracking-wide text-text-tertiary">
+										{t.multi ? "multi" : "single"}
+									</span>
+								</div>
+								<div className="min-h-[34px] text-[11.5px] leading-relaxed text-text-tertiary">
+									{t.description}
+								</div>
+								<div className="flex items-center justify-between gap-2.5">
+									<span className="font-mono text-[10.5px] text-text-tertiary">
+										{t.values.map((v) => v.label).join(" · ")}
+									</span>
+									<Button
+										size="sm"
+										variant="outline"
+										onClick={() => onTemplate(t)}
+									>
+										Use template
+									</Button>
+								</div>
+							</div>
+						))}
+					</div>
+					<Button className="gap-1.5" onClick={onCreate}>
+						<Plus className="size-3.5" />
+						Create a dimension
+					</Button>
+				</>
 			)}
 		</div>
 	);

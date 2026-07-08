@@ -5,7 +5,7 @@
 // withScope/withOwnerScope (RLS is the tenancy wall — org-scoped dimensions + parent-scoped
 // values/assignments); these are the shaping/hydration helpers on top.
 
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 import type { getServiceDb } from "@/lib/db";
 import {
 	type ClassificationDimension,
@@ -180,4 +180,92 @@ export async function listResourceIdsByValue(
 		})
 		.from(classificationAssignment)
 		.where(eq(classificationAssignment.value_id, valueId));
+}
+
+// ── Usage / coverage counts (powers the settings coverage view) ──────────────────────
+
+/**
+ * Assignment count per value across the org scope — i.e. how many resources carry each
+ * value. The (kind, id, value) unique means one assignment == one distinct resource, so a
+ * plain COUNT(*) is the distinct-resource count. Values with no assignments are absent from
+ * the map (→ treat as 0 / "unused").
+ */
+export async function countAssignmentsByValue(
+	tx: Tx,
+): Promise<Map<string, number>> {
+	const rows = await tx
+		.select({ value_id: classificationAssignment.value_id, n: count() })
+		.from(classificationAssignment)
+		.groupBy(classificationAssignment.value_id);
+	const out = new Map<string, number>();
+	for (const r of rows) out.set(r.value_id, Number(r.n));
+	return out;
+}
+
+/**
+ * Distinct resources carrying ANY value of each dimension (its coverage). A `multi`
+ * dimension can pin two values to one resource, so this counts distinct (kind, id) pairs —
+ * NOT the sum of the per-value counts. Dimensions with no assignments are absent (→ 0).
+ */
+export async function countResourcesByDimension(
+	tx: Tx,
+): Promise<Map<string, number>> {
+	const rows = await tx
+		.select({
+			dimension_id: classificationAssignment.dimension_id,
+			n: sql<number>`count(distinct (${classificationAssignment.resource_kind}, ${classificationAssignment.resource_id}))`,
+		})
+		.from(classificationAssignment)
+		.groupBy(classificationAssignment.dimension_id);
+	const out = new Map<string, number>();
+	for (const r of rows) out.set(r.dimension_id, Number(r.n));
+	return out;
+}
+
+/**
+ * Per-resource-kind breakdown of the resources carrying a given value — the drill-down
+ * behind "24 resources: 12 projects · 8 clusters · 4 runners". Ordered by kind for a stable
+ * list.
+ */
+export async function countAssignmentsByKindForValue(
+	tx: Tx,
+	valueId: string,
+): Promise<{ resource_kind: ResourceKind; count: number }[]> {
+	const rows = await tx
+		.select({
+			resource_kind: classificationAssignment.resource_kind,
+			n: count(),
+		})
+		.from(classificationAssignment)
+		.where(eq(classificationAssignment.value_id, valueId))
+		.groupBy(classificationAssignment.resource_kind)
+		.orderBy(asc(classificationAssignment.resource_kind));
+	return rows.map((r) => ({
+		resource_kind: r.resource_kind,
+		count: Number(r.n),
+	}));
+}
+
+/**
+ * Distinct resources per kind carrying ANY value of a dimension — the "coverage by resource
+ * kind" panel for the selected dimension. Counts distinct resource_id per kind (a multi
+ * dimension can pin two values to one resource, so plain COUNT would double-count).
+ */
+export async function countResourcesByKindForDimension(
+	tx: Tx,
+	dimensionId: string,
+): Promise<{ resource_kind: ResourceKind; count: number }[]> {
+	const rows = await tx
+		.select({
+			resource_kind: classificationAssignment.resource_kind,
+			n: sql<number>`count(distinct ${classificationAssignment.resource_id})`,
+		})
+		.from(classificationAssignment)
+		.where(eq(classificationAssignment.dimension_id, dimensionId))
+		.groupBy(classificationAssignment.resource_kind)
+		.orderBy(asc(classificationAssignment.resource_kind));
+	return rows.map((r) => ({
+		resource_kind: r.resource_kind,
+		count: Number(r.n),
+	}));
 }

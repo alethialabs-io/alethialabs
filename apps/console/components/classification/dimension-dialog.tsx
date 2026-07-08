@@ -46,18 +46,25 @@ function slugify(input: string): string {
 
 /**
  * The dimension editor dialog. Pass an existing `dimension` to edit, or omit it to create.
- * Calls `onSaved` after a successful write so the manager can refetch.
+ * Works uncontrolled (via `trigger`) or controlled (via `open` / `onOpenChange`). Calls
+ * `onSaved` after a successful write so the manager can refetch.
  */
 export function DimensionDialog({
 	dimension,
 	trigger,
+	open: controlledOpen,
+	onOpenChange,
 	onSaved,
 }: {
 	dimension?: DimensionDTO;
-	trigger: ReactNode;
+	trigger?: ReactNode;
+	open?: boolean;
+	onOpenChange?: (open: boolean) => void;
 	onSaved: () => void;
 }) {
-	const [open, setOpen] = useState(false);
+	const [internalOpen, setInternalOpen] = useState(false);
+	const open = controlledOpen ?? internalOpen;
+	const setOpen = onOpenChange ?? setInternalOpen;
 	const isEdit = Boolean(dimension);
 
 	const form = useForm<DimensionInput>({
@@ -102,7 +109,7 @@ export function DimensionDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
-			<DialogTrigger asChild>{trigger}</DialogTrigger>
+			{trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle>{isEdit ? "Edit dimension" : "New dimension"}</DialogTitle>
