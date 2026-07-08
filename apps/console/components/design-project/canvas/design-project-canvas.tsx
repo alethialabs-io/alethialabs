@@ -13,7 +13,6 @@ import { toast } from "sonner";
 import {
 	createProject,
 	provisionProject,
-	type CreateProjectInput,
 } from "@/app/server/actions/projects";
 import {
 	applyStagedChanges,
@@ -135,7 +134,7 @@ function CanvasInner({
 		}
 		try {
 			const { project } = await createProject(
-				parsed.data as unknown as CreateProjectInput,
+				parsed.data,
 			);
 			toast.success("Project created!");
 			useCanvasStore.getState().reset();
@@ -171,7 +170,7 @@ function CanvasInner({
 			await applyStagedChanges(
 				projectId,
 				activeEnvId,
-				parsed.data as unknown as CreateProjectInput,
+				parsed.data,
 			);
 			await provisionProject(projectId, undefined, undefined, activeEnvId);
 			track("deploy_queued", { environmentId: activeEnvId });

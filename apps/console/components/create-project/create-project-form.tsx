@@ -28,6 +28,7 @@ import {
 	type ConnectableCloudSlug,
 } from "@/lib/cloud-providers";
 import { globalHref, projectHref, slugify } from "@/lib/routing";
+import { arrayIncludes } from "@/lib/type-guards";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
@@ -131,9 +132,7 @@ export function CreateProjectForm({
 	const template = form.watch("template");
 	const cloud = form.watch("cloud");
 
-	const provider = (PROVISIONABLE as string[]).includes(cloud)
-		? (cloud as CloudProviderSlug)
-		: null;
+	const provider = arrayIncludes(PROVISIONABLE, cloud) ? cloud : null;
 
 	/** Starts a design-agent thread from the hero prompt and opens the agent surface. */
 	const onAskAgent = async () => {
@@ -451,7 +450,7 @@ function CloudTile({
 	onConnect,
 }: CloudTileProps) {
 	const connected = integration.connected;
-	const provisionable = (PROVISIONABLE as string[]).includes(integration.slug);
+	const provisionable = arrayIncludes(PROVISIONABLE, integration.slug);
 	const selectable = connected && provisionable;
 	const label =
 		PROVIDERS[integration.slug as ConnectableCloudSlug]?.shortName ?? integration.name;

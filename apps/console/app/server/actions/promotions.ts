@@ -36,7 +36,6 @@ import {
 } from "@/lib/promotions/gates";
 import type { ApproverSpec, PromotionDiff } from "@/types/jsonb.types";
 import {
-	type CreateProjectInput,
 	getProjectAsFormData,
 	planProject,
 	reconcileEnvironmentComponents,
@@ -143,11 +142,7 @@ export async function promoteEnvironment(
 	}
 
 	// Write the candidate design into the target env, then queue the PLAN for it.
-	await reconcileEnvironmentComponents(
-		projectId,
-		targetEnvId,
-		merged as unknown as CreateProjectInput,
-	);
+	await reconcileEnvironmentComponents(projectId, targetEnvId, merged);
 	const { jobId } = await planProject(projectId, opts?.runnerId ?? null, targetEnvId);
 	await withOwnerScope(owner, (tx) =>
 		tx

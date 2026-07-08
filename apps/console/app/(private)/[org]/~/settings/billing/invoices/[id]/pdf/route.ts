@@ -42,7 +42,10 @@ export async function GET(
 		if (bytes) {
 			const download = new URL(req.url).searchParams.get("download") === "1";
 			const filename = `Invoice-${row.number ?? id}.pdf`;
-			return new Response(bytes as unknown as BodyInit, {
+			// Copy into a fresh (ArrayBuffer-backed) view so the bytes satisfy BlobPart —
+			// storage returns `Uint8Array<ArrayBufferLike>`, which TS won't narrow to the
+			// ArrayBuffer-backed view Blob requires.
+			return new Response(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }), {
 				status: 200,
 				headers: {
 					"Content-Type": "application/pdf",

@@ -13,7 +13,7 @@ import {
 	purgeCloudInventory,
 	syncCloudInventory,
 } from "@/lib/cloud-providers/inventory";
-import type { CloudCredentials } from "@/types/jsonb.types";
+import type { CloudCredentials, WifCredentialConfig } from "@/types/jsonb.types";
 
 /**
  * Cloud connection logic shared by the web console server actions and the CLI
@@ -398,7 +398,7 @@ export async function saveAwsIdentity(
 
 /** Validates a WIF credential config JSON and extracts its key fields. */
 export function parseWifConfig(wifConfigJson: string) {
-	let parsed: Record<string, unknown>;
+	let parsed: WifCredentialConfig;
 	try {
 		parsed = JSON.parse(wifConfigJson);
 	} catch {
