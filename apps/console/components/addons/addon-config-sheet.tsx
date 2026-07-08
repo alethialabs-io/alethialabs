@@ -2,15 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The enable / configure sheet for one add-on: the add-on's schema'd knobs + a delivery-mode
-// selector (Managed apply vs GitOps into the customer's apps repo) + an Advanced raw Helm-values
-// (YAML) override. Submitting writes a PENDING project_addons row; the add-on reconciles on the
-// next Deploy. Knobs mirror the Zod schema (re-validated server-side); the YAML is validated on
-// save and deep-merged on top of the knobs at resolve time.
+// The enable / configure / remove sheet for one cluster add-on, opened from the Architecture
+// canvas's Add palette (the standalone Add-ons page was retired — add-ons now live on the canvas).
+// It renders the add-on's schema'd knobs + a delivery-mode selector (Managed apply vs GitOps into
+// the customer's apps repo) + an Advanced raw Helm-values (YAML) override. Submitting writes a
+// PENDING project_addons row that reconciles on the next Deploy. The knobs mirror the Zod schema
+// (re-validated server-side); the YAML is validated on save and deep-merged on top of the knobs at
+// resolve time. Squared corners (`rounded-none`) to match the canvas chrome.
 
 import { ChevronsUpDown } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
+import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
 import {
 	Collapsible,
@@ -39,7 +42,11 @@ import { Switch } from "@repo/ui/switch";
 import { Textarea } from "@repo/ui/textarea";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import type { AddOnMode } from "@/lib/addons/types";
-import { useEnableAddon } from "@/lib/query/use-addons-query";
+import {
+	useDisableAddon,
+	useEnableAddon,
+} from "@/lib/query/use-addons-query";
+import { AddonIcon, AddonStatusBadge } from "./addon-visuals";
 
 /** Reserved RHF field names (kept distinct from add-on knob keys). */
 type FormShape = Record<string, unknown> & {
@@ -60,10 +67,10 @@ function initialValues(item: AddonMarketItem): FormShape {
 }
 
 /**
- * The configure sheet. Controlled by the parent (open/onOpenChange) so a single sheet serves
- * whichever add-on the user is enabling. `item` null-guards the closed state.
+ * The add-on config sheet. Controlled by the canvas (open/onOpenChange) so a single sheet serves
+ * whichever add-on the user picked from the Add palette. `item` null-guards the closed state.
  */
-export function ConfigureSheet({
+export function AddonConfigSheet({
 	item,
 	projectId,
 	environmentId,
@@ -79,6 +86,7 @@ export function ConfigureSheet({
 	onOpenChange: (open: boolean) => void;
 }) {
 	const enable = useEnableAddon(projectId, environmentId);
+	const disable = useDisableAddon(projectId, environmentId);
 	const form = useForm<FormShape>({
 		values: item
 			? initialValues(item)
@@ -111,14 +119,48 @@ export function ConfigureSheet({
 		}
 	});
 
+	/** Remove the add-on from this environment (reconciled away on the next Deploy). */
+	const onRemove = async () => {
+		try {
+			await disable.mutateAsync({
+				projectId,
+				environmentId,
+				addonId: item.id,
+			});
+			toast.success(`${item.name} removed`);
+			onOpenChange(false);
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Failed to remove add-on");
+		}
+	};
+
 	return (
 		<Sheet open={open} onOpenChange={onOpenChange}>
-			<SheetContent className="flex w-full flex-col sm:max-w-md">
+			<SheetContent className="flex w-full flex-col rounded-none sm:max-w-md">
 				<SheetHeader>
-					<SheetTitle>
-						{isInstalled ? "Configure" : "Enable"} {item.name}
-					</SheetTitle>
-					<SheetDescription>
+					<div className="flex items-start gap-3">
+						<span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-md border bg-muted/30 text-muted-foreground">
+							<AddonIcon icon={item.icon} className="h-5 w-5" />
+						</span>
+						<div className="min-w-0 flex-1">
+							<SheetTitle className="flex flex-wrap items-center gap-2">
+								{item.name}
+								{item.install && (
+									<AddonStatusBadge
+										status={item.install.status}
+										health={item.install.health}
+									/>
+								)}
+							</SheetTitle>
+							<div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+								<Badge variant="outline" className="text-[10px] uppercase">
+									Free · OSS
+								</Badge>
+								<span>{item.license}</span>
+							</div>
+						</div>
+					</div>
+					<SheetDescription className="pt-1">
 						{item.summary} Installs the <code>{item.chart}</code> chart into{" "}
 						<code>{item.namespace}</code>. Reconciles on your next Deploy.
 					</SheetDescription>
@@ -213,12 +255,24 @@ export function ConfigureSheet({
 						</Collapsible>
 					</div>
 
-					<SheetFooter className="mt-auto flex-row justify-end gap-2 px-0">
-						<SheetClose asChild>
-							<Button type="button" variant="ghost">
-								Cancel
+					<SheetFooter className="mt-auto flex-row items-center justify-between gap-2 px-0">
+						{isInstalled ? (
+							<Button
+								type="button"
+								variant="ghost"
+								className="text-muted-foreground hover:text-destructive"
+								onClick={onRemove}
+								disabled={disable.isPending}
+							>
+								Remove
 							</Button>
-						</SheetClose>
+						) : (
+							<SheetClose asChild>
+								<Button type="button" variant="ghost">
+									Cancel
+								</Button>
+							</SheetClose>
+						)}
 						<Button type="submit" disabled={enable.isPending}>
 							{enable.isPending
 								? "Saving…"

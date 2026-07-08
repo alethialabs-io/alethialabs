@@ -22,13 +22,15 @@ import { qk } from "./keys";
  * deploy without a manual refresh.
  */
 export function useAddonsQuery(
-	projectId: string,
+	projectId: string | undefined,
 	environmentId?: string | null,
 ): UseQueryResult<ProjectAddonsView> {
 	return useQuery({
-		queryKey: qk.addons(projectId, environmentId),
-		queryFn: () => getProjectAddons(projectId, environmentId),
+		queryKey: qk.addons(projectId ?? "none", environmentId),
+		queryFn: () => getProjectAddons(projectId as string, environmentId),
 		refetchInterval: 15_000,
+		// Absent in the create flow (no project/environment yet) — don't fetch.
+		enabled: !!projectId,
 	});
 }
 

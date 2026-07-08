@@ -48,10 +48,14 @@ export function globalHref(orgSlug: string, sub: string): string {
 	return `/${orgSlug}/~/${sub}`;
 }
 
-/** `/{org}/{project}` — project (project) detail; resolves to its default environment. A
- * project is the top-level unit under the org. */
+/** `/{org}/{project}` — a project's home. Targets the project's default view (**Architecture**, the
+ * design canvas) directly rather than the bare `/{org}/{project}`. The bare URL still works (its page
+ * server-`redirect()`s to architecture) for direct / deep-link hits, but in-app navigation goes
+ * straight to the final URL so Next's client Router never has to process a redirect mid-navigation —
+ * that mid-nav redirect is what threw "Rendered more hooks than during the previous render" on soft
+ * clicks (a hard reload was fine because the redirect is then a plain server 307). */
 export function projectHref(orgSlug: string, projectSlug: string): string {
-	return `/${orgSlug}/${projectSlug}`;
+	return `/${orgSlug}/${projectSlug}/architecture`;
 }
 
 /** `/{org}/{project}/{sub}` — a project-scoped global page (jobs, clusters, usage,
