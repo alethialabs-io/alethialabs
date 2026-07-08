@@ -121,6 +121,16 @@ async function ensureProduct(
 	return stripe.products.create({ name, metadata: { alethia: tag } });
 }
 
+// The SDK types `unit_amount_decimal` as its branded `Decimal`, but a `Stripe.Decimal` instance
+// serializes wrong on the wire: request bodies are form-encoded (not JSON), and the SDK's encoder
+// walks an object's own keys without calling `toString`/`toJSON` — so a Decimal emits
+// `unit_amount_decimal[_coefficient]=…&unit_amount_decimal[_exponent]=…`, which Stripe rejects as
+// "Invalid decimal" (this bites anywhere a Decimal is nested — top-level tiers and `currency_options`
+// alike). The REST API accepts `unit_amount_decimal` as a plain string, so we pass the string and
+// shim it to the SDK's type (the third-party-type-mismatch pattern used across lib/cloud-providers).
+// Isolated to this one helper.
+const decimalString = (value: string): Stripe.Decimal => value as unknown as Stripe.Decimal;
+
 /** Ensures the graduated runner-minutes metered Price exists WITH the EUR currency option
  *  (free ≤ included, then the per-minute overage in USD + EUR). Mints a fresh multi-currency
  *  price + transfers the lookup_key when a stale one lacks the EUR tiers (prices are
@@ -132,8 +142,7 @@ async function ensureMeterPrice(
 ): Promise<Stripe.Price> {
 	const tiers = (overageDecimal: string): Stripe.PriceCreateParams.Tier[] => [
 		{ up_to: RUNNER_INCLUDED_PRO, unit_amount: 0 },
-		// Sub-cent per-minute overage → the branded Decimal (serializes to e.g. "1.2").
-		{ up_to: "inf", unit_amount_decimal: Stripe.Decimal.from(overageDecimal) },
+		{ up_to: "inf", unit_amount_decimal: decimalString(overageDecimal) },
 	];
 	const found = await stripe.prices.list({
 		lookup_keys: [LK_METER_PRO],
