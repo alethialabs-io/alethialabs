@@ -13,6 +13,7 @@ import { track } from "@/lib/analytics/track";
 import type { Mention } from "@/lib/ai/mentions";
 import type { AgentThread } from "@/lib/db/schema";
 import {
+	type Artifact,
 	type ArtifactTab,
 	useArtifactStore,
 } from "@/lib/stores/use-artifact-store";
@@ -152,7 +153,9 @@ export function ElenchConversation({
 	// artifact panel needs the modal's room).
 	const artifactOpen = useArtifactStore((s) => s.open);
 	const openArtifact = useCallback(
-		(artifact: { projectId?: string; jobId?: string }, tab: ArtifactTab) => {
+		(artifact: Artifact, tab: ArtifactTab) => {
+			// The artifact panel (incl. a generative dashboard) needs the modal's room —
+			// maximize a docked panel first so the split pane has somewhere to open.
 			if (useElenchStore.getState().view === "panel")
 				useElenchStore.getState().maximize();
 			artifactOpen(artifact, tab);
@@ -164,7 +167,12 @@ export function ElenchConversation({
 		() =>
 			isOrg
 				? orgRenderToolPart({ openArtifact, addToolResult })
-				: projectRenderToolPart({ accepted, setAccepted, addToolResult }),
+				: projectRenderToolPart({
+						accepted,
+						setAccepted,
+						addToolResult,
+						openArtifact,
+					}),
 		[isOrg, openArtifact, accepted, addToolResult],
 	);
 

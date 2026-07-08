@@ -7,6 +7,7 @@ import { operationTools } from "./operations";
 import { readTools } from "./read";
 import { externalToolsOnly } from "./registry";
 import { scannerTools } from "./scanner";
+import { visualizeTools } from "./visualize";
 
 /** Agent chat mode: Ask = read-only; Act = may propose plan/deploy operations. */
 export type AgentMode = "ask" | "act";
@@ -26,6 +27,7 @@ export function buildProjectAgentTools(ctx: CanvasContext | undefined) {
 		...scannerTools(),
 		...composeTools(ctx),
 		...operationTools(),
+		...visualizeTools(),
 	};
 }
 
@@ -41,6 +43,7 @@ export function buildAgentTools(opts?: { mode?: AgentMode }) {
 		...readTools(),
 		...scannerTools(),
 		...(opts?.mode === "act" ? operationTools() : {}),
+		...visualizeTools(),
 	};
 }
 

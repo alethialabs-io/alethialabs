@@ -13,10 +13,11 @@ import {
 	ToolView,
 } from "@/components/agent/agent-tool-views";
 import { ApprovalCard } from "@/components/agent/approval-card";
+import { DashboardReadyCard } from "@/components/agent/render-tool-parts/dashboard-card";
 import { ToolPending } from "@/components/agent/render-tool-parts/tool-pending";
 import type { AddToolResult } from "@/components/agent/use-agent-chat";
 import { proposeOperationInputSchema } from "@/lib/ai/operation";
-import type { ArtifactTab } from "@/lib/stores/use-artifact-store";
+import type { Artifact, ArtifactTab } from "@/lib/stores/use-artifact-store";
 import { Button } from "@repo/ui/button";
 
 const projectIdSchema = z.object({ projectId: z.string() });
@@ -24,11 +25,8 @@ const jobIdSchema = z.object({ jobId: z.string() });
 const scanResultSchema = z.object({ openInCanvasUrl: z.string().optional() });
 
 interface OrgToolPartsDeps {
-	/** Open the artifact panel (config/plan/logs) for a project/job. */
-	openArtifact: (
-		artifact: { projectId?: string; jobId?: string },
-		tab: ArtifactTab,
-	) => void;
+	/** Open the artifact panel (dashboard/config/plan/logs) for a project/job/spec. */
+	openArtifact: (artifact: Artifact, tab: ArtifactTab) => void;
 	/** Feed a HITL tool's outcome back to the model so it continues after approval. */
 	addToolResult: AddToolResult;
 }
@@ -62,6 +60,20 @@ export function orgRenderToolPart({
 							output,
 						})
 					}
+				/>
+			);
+		}
+
+		// Generative dashboard ready → an "Open dashboard" card opening the split pane.
+		if (
+			part.type === "tool-build_dashboard" &&
+			part.state === "output-available"
+		) {
+			return (
+				<DashboardReadyCard
+					part={part}
+					openArtifact={openArtifact}
+					context="org"
 				/>
 			);
 		}
