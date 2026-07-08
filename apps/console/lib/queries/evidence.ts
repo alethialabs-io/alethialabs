@@ -5,6 +5,7 @@ import "server-only";
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import {
+	cloudIdentities,
 	environmentDrift,
 	environmentSecurity,
 	jobs,
@@ -12,18 +13,22 @@ import {
 	projects,
 } from "@/lib/db/schema";
 import type {
+	DriftDetail,
 	ExecutionMetadata,
+	SignedReceipt,
 	VerifyOverrideInput,
+	VerifyReport,
 	VerifyStatus,
 	VerifySummary,
 } from "@/types/jsonb.types";
 
 // The org-wide "keep proving it" roll-up behind the Evidence surface. Read-only over
 // existing tables — no new state. Per environment we surface the latest verification
-// verdict (from the most recent PLAN/DEPLOY job's elench report) and the current drift
-// posture (environment_drift); org-wide we list the active verification waivers
-// (jobs.verify_override). All service-path with an explicit org_id filter, since the
-// service role bypasses RLS.
+// report + signed receipt (from the most recent PLAN/DEPLOY job's elench result), the
+// current drift posture (environment_drift, incl. per-resource details), and the latest
+// security posture (environment_security); org-wide we list the active verification
+// waivers (jobs.verify_override). All service-path with an explicit org_id filter, since
+// the service role bypasses RLS.
 
 /** The latest verification verdict for an environment, from its most recent PLAN/DEPLOY job. */
 export interface EvidenceVerify {
@@ -35,6 +40,10 @@ export interface EvidenceVerify {
 	/** A signed evidence receipt was sealed to this report. */
 	hasReceipt: boolean;
 	summary: VerifySummary | null;
+	/** The full per-control elench report — powers the drawer's Report tab in-place. */
+	report: VerifyReport;
+	/** The signed evidence receipt sealed to this report, if any (drawer Receipt tab). */
+	receipt: SignedReceipt | null;
 }
 
 /** The current drift posture for an environment (latest DETECT_DRIFT scan). */
@@ -42,6 +51,8 @@ export interface EvidenceDrift {
 	inSync: boolean;
 	drifted: number;
 	scannedAt: string;
+	/** Per-resource drift (address/type/kind) — powers the drawer's Drift tab in-place. */
+	details: DriftDetail[];
 }
 
 /** The current security posture for an environment (latest Trivy scan; L9). `scanned=false`
@@ -53,9 +64,11 @@ export interface EvidenceSecurity {
 	low: number;
 	scanned: boolean;
 	scannedAt: string;
+	/** Number of VulnerabilityReports that fed the aggregate (a credibility signal). */
+	reportCount: number;
 }
 
-/** One environment row in the Verify / Drift tables. */
+/** One environment row in the org posture table. */
 export interface EvidenceEnvRow {
 	projectId: string;
 	projectName: string;
@@ -63,6 +76,11 @@ export interface EvidenceEnvRow {
 	environmentId: string;
 	environmentName: string;
 	stage: string;
+	/** Cloud provider for the row's logo — the connected identity's provider, falling
+	 * back to the verify report's detected provider ("mixed" for multi-cloud plans). */
+	provider: string | null;
+	/** The environment's region (its own, or the project's when it inherits). */
+	region: string;
 	/** Null when the env has never been verified (a PLAN/DEPLOY carrying a report). */
 	verify: EvidenceVerify | null;
 	/** Null when the env has never been drift-scanned. */
@@ -118,18 +136,26 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 
 	const [envs, verifyRows, driftRows, securityRows, waiverRows] =
 		await Promise.all([
-		// Every environment across the org's projects.
+		// Every environment across the org's projects (+ the connected identity's
+		// provider for the row logo, and the effective region).
 		db
 			.select({
 				environmentId: projectEnvironments.id,
 				environmentName: projectEnvironments.name,
 				stage: projectEnvironments.stage,
+				envRegion: projectEnvironments.region,
 				projectId: projects.id,
 				projectName: projects.project_name,
 				projectSlug: projects.slug,
+				projectRegion: projects.region,
+				provider: cloudIdentities.provider,
 			})
 			.from(projectEnvironments)
 			.innerJoin(projects, eq(projectEnvironments.project_id, projects.id))
+			.leftJoin(
+				cloudIdentities,
+				eq(projects.cloud_identity_id, cloudIdentities.id),
+			)
 			.where(eq(projects.org_id, orgId)),
 		// Latest verify-bearing PLAN/DEPLOY job per environment (DISTINCT ON keeps the
 		// most recent row per environment_id, newest first).
@@ -156,6 +182,7 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 				environmentId: environmentDrift.environment_id,
 				inSync: environmentDrift.in_sync,
 				drifted: environmentDrift.drifted,
+				details: environmentDrift.details,
 				scannedAt: environmentDrift.scanned_at,
 			})
 			.from(environmentDrift)
@@ -169,6 +196,7 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 				high: environmentSecurity.high,
 				medium: environmentSecurity.medium,
 				low: environmentSecurity.low,
+				reportCount: environmentSecurity.report_count,
 				scanned: environmentSecurity.scanned,
 				scannedAt: environmentSecurity.scanned_at,
 			})
@@ -211,22 +239,28 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 
 	const rows: EvidenceEnvRow[] = envs.map((env) => {
 		const v = verifyByEnv.get(env.environmentId);
-		const report = (v?.meta as ExecutionMetadata | null)?.verify_result ?? null;
+		const meta = (v?.meta as ExecutionMetadata | null) ?? null;
+		const report = meta?.verify_result ?? null;
 		const verify: EvidenceVerify | null =
 			v && report
 				? {
 						jobId: v.jobId,
 						verdict: report.verdict,
 						evaluatedAt: v.createdAt.toISOString(),
-						hasReceipt: Boolean(
-							(v.meta as ExecutionMetadata | null)?.verify_receipt,
-						),
+						hasReceipt: Boolean(meta?.verify_receipt),
 						summary: report.summary ?? null,
+						report,
+						receipt: meta?.verify_receipt ?? null,
 					}
 				: null;
 		const d = driftByEnv.get(env.environmentId);
 		const drift: EvidenceDrift | null = d
-			? { inSync: d.inSync, drifted: d.drifted, scannedAt: d.scannedAt.toISOString() }
+			? {
+					inSync: d.inSync,
+					drifted: d.drifted,
+					details: d.details ?? [],
+					scannedAt: d.scannedAt.toISOString(),
+				}
 			: null;
 		const sec = securityByEnv.get(env.environmentId);
 		const security: EvidenceSecurity | null = sec
@@ -237,6 +271,7 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 					low: sec.low,
 					scanned: sec.scanned,
 					scannedAt: sec.scannedAt.toISOString(),
+					reportCount: sec.reportCount,
 				}
 			: null;
 		return {
@@ -246,6 +281,9 @@ export async function queryOrgEvidence(orgId: string): Promise<OrgEvidence> {
 			environmentId: env.environmentId,
 			environmentName: env.environmentName,
 			stage: env.stage,
+			// The connected identity's provider, else the report's detected provider.
+			provider: env.provider ?? report?.provider ?? null,
+			region: env.envRegion ?? env.projectRegion,
 			verify,
 			drift,
 			security,
