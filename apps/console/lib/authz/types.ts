@@ -116,26 +116,10 @@ export interface Entitlements {
 		 */
 		activityRetentionDays: number;
 	};
-	/**
-	 * AI entitlements (repo-scanner + agent + Ask AI). All AI spends **AI credits** from
-	 * one budget (a scan is heavy, a message is light). Two fixed windows scaled by the
-	 * plan's multiplier `tier`: a short **window** (burn-it-all-then-wait) and a **weekly**
-	 * cap. Burn freely until empty, then upgrade or buy top-up credits (NO silent overage).
-	 * Numbers are never shown to users — only a usage bar + the multiplier tier. Enforced
-	 * only when hosted billing is configured; self-host with a BYO gateway key is unlimited
-	 * (the operator pays their own model tokens — the open-core deal).
-	 */
-	ai: {
-		enabled: boolean;
-		/** Display multiplier tier — never raw numbers (trial / standard / 5× / 20×). */
-		tier: "trial" | "standard" | "plus" | "max";
-		/** Included credits per short window. */
-		windowCredits: number;
-		/** Length of the short window, hours. */
-		windowHours: number;
-		/** Included credits per 7-day week (the headline cap). */
-		weeklyCredits: number;
-	};
+	// NOTE: AI is NO LONGER an org-plan entitlement. It is a STANDALONE metered product
+	// with its own tier ladder (lib/billing/ai-plan.ts — `ai_free`/`ai_plus`/`ai_max`),
+	// resolved per-org via resolveAiTier() and enforced by lib/billing/ai-guard.ts —
+	// orthogonal to the Hobby/Pro/Enterprise org plan above.
 }
 
 /** Thrown by enforce() on denial; mapped to 403 at route/action boundaries. */

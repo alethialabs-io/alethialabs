@@ -12,15 +12,18 @@ import { and, count, eq } from "drizzle-orm";
 import type Stripe from "stripe";
 import { RESERVED_SLUGS } from "@/lib/routing";
 import {
+	aiPriceIdForTier,
 	deploymentMode,
 	getStripeConfig,
 	isStripeConfigured,
 	isStripeTaxEnabled,
 	meterPriceIdForPlan,
+	type PaidAiTier,
 	type PaidPlan,
 	priceIdForPlan,
 } from "@/lib/billing/config";
 import { creditPack } from "@/lib/billing/ai-credits";
+import { aiTierSpec, resolveAiTier } from "@/lib/billing/ai-plan";
 import { canOrgInvite } from "@/lib/billing/collaboration";
 import { countBillableSeats } from "@/lib/billing/seats";
 import type { TaxIdType } from "@/lib/billing/tax-ids";
@@ -361,16 +364,12 @@ export interface AiUsageSummary {
  */
 export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 	const actor = await currentActor();
-	const billing = await getOrgBilling(actor.orgId).catch(() => null);
-	const ai = resolvePlanEntitlements(
-		billing?.plan ?? "community",
-		billing?.status ?? "none",
-	).ai;
+	const spec = aiTierSpec(await resolveAiTier(actor.orgId).catch(() => "ai_free"));
 	if (actor.orgId === actor.userId) {
 		return {
-			enabled: ai.enabled,
+			enabled: spec.enabled,
 			windowUsed: 0,
-			weeklyBudget: ai.weeklyCredits,
+			weeklyBudget: spec.weeklyCredits,
 			purchasedBalance: 0,
 		};
 	}
@@ -381,9 +380,9 @@ export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 		purchasedBalance(actor.orgId),
 	]);
 	return {
-		enabled: ai.enabled,
+		enabled: spec.enabled,
 		windowUsed,
-		weeklyBudget: ai.weeklyCredits,
+		weeklyBudget: spec.weeklyCredits,
 		purchasedBalance: purchased,
 	};
 }
@@ -629,6 +628,69 @@ export async function createSubscriptionIntent(
 	const invoice = sub.latest_invoice;
 	if (!invoice || typeof invoice === "string") {
 		throw new Error("Stripe did not return an invoice for the subscription.");
+	}
+	const clientSecret = invoice.confirmation_secret?.client_secret;
+	if (!clientSecret) {
+		throw new Error("Stripe did not return a payment client secret.");
+	}
+	return { clientSecret, subscriptionId: sub.id, currency };
+}
+
+/**
+ * Creates an incomplete STANDALONE AI subscription (ai_plus/ai_max) for the active org and
+ * returns the client secret for its first payment — the embedded Payment Element flow. This
+ * is a SEPARATE Stripe subscription from the org plan (its own price IDs), so an org can be
+ * e.g. community plan + AI Plus. The webhook (sync.ts → aiTierForPriceId) routes its events
+ * to the org's AI columns only. Owner-gated; org-scoped; refuses if a live AI subscription
+ * already exists. Mirrors createSubscriptionIntent.
+ */
+export async function createAiSubscriptionIntent(
+	tier: PaidAiTier,
+	opts?: { billingEmail?: string; currency?: SupportedCurrency },
+): Promise<SubscriptionIntent> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	if (actor.orgId === actor.userId) {
+		throw new Error("Create an organization before subscribing to an AI plan.");
+	}
+	const existing = await getOrgBilling(actor.orgId);
+	if (
+		existing?.aiStripeSubscriptionId &&
+		(existing.aiSubscriptionStatus === "active" ||
+			existing.aiSubscriptionStatus === "trialing")
+	) {
+		throw new Error(
+			"This organization already has an active AI subscription — change it instead.",
+		);
+	}
+	const customerId = await ensureCustomer(
+		actor.orgId,
+		actor.userId,
+		opts?.billingEmail,
+	);
+	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
+		? { automatic_tax: { enabled: true } }
+		: {};
+	// Resolve the billing currency before creating the sub (Stripe locks it): an explicit
+	// selection wins, else the request's geo. The AI Price must carry this currency's option
+	// (scripts/stripe-setup.ts provisions USD + EUR).
+	const currency = opts?.currency ?? (await currencyFromRequest());
+	const sub = await getStripe().subscriptions.create({
+		customer: customerId,
+		items: [{ price: aiPriceIdForTier(tier), quantity: 1 }],
+		currency,
+		payment_behavior: "default_incomplete",
+		payment_settings: { save_default_payment_method: "on_subscription" },
+		expand: ["latest_invoice.confirmation_secret"],
+		// product_type lets the webhook recognise an AI sub even before it inspects the
+		// price; organization_id resolves the tenant (same as the org-plan sub).
+		metadata: { organization_id: actor.orgId, product_type: "ai_subscription" },
+		...taxParam,
+	});
+
+	const invoice = sub.latest_invoice;
+	if (!invoice || typeof invoice === "string") {
+		throw new Error("Stripe did not return an invoice for the AI subscription.");
 	}
 	const clientSecret = invoice.confirmation_secret?.client_secret;
 	if (!clientSecret) {

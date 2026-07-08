@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Mocked-boundary test for getAiUsage: stub the actor + ledger reads, keep the plan/entitlement
-// math real, and assert the proportions/tier the AI usage surface shows.
+// Mocked-boundary test for getAiUsage: stub the actor + ledger reads, keep the AI-tier
+// math real, and assert the proportions/tier the AI usage surface shows. AI is now a
+// STANDALONE tier (ai-plan.ts), independent of the org plan.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OrganizationBilling } from "@/lib/db/schema";
@@ -16,6 +17,7 @@ vi.mock("@/lib/billing/queries", () => ({ getOrgBilling: vi.fn() }));
 
 import { getAiUsage } from "@/app/server/actions/ai-billing";
 import { currentActor } from "@/lib/authz/guard";
+import { AI_TIERS } from "@/lib/billing/ai-plan";
 import { purchasedBalance, sumCredits } from "@/lib/billing/ai-quota";
 import { getOrgBilling } from "@/lib/billing/queries";
 
@@ -31,31 +33,47 @@ afterEach(() => {
 });
 
 describe("getAiUsage", () => {
-	it("uses community AI entitlements when the org has no billing", async () => {
+	it("defaults to the free AI tier when the org has no billing", async () => {
 		vi.mocked(getOrgBilling).mockResolvedValue(null);
 		vi.mocked(sumCredits).mockResolvedValue(0);
 
 		const r = await getAiUsage();
-		expect(r.tier).toBe("trial"); // community AI tier
+		expect(r.tier).toBe("ai_free");
 		expect(r.enabled).toBe(true);
-		expect(r.windowPctUsed).toBe(0);
-		expect(r.weekPctUsed).toBe(0);
+		expect(r.dailyPctUsed).toBe(0);
+		expect(r.weeklyPctUsed).toBe(0);
 	});
 
-	it("computes window/week proportions and caps at 100", async () => {
-		vi.mocked(getOrgBilling).mockResolvedValue({ plan: "team", status: "active" } as OrganizationBilling);
-		// Team window cap is 300, weekly 3000. Return more than the window cap → caps at 100.
-		vi.mocked(sumCredits).mockResolvedValue(600);
+	it("computes daily/weekly proportions off the tier caps and caps at 100", async () => {
+		vi.mocked(getOrgBilling).mockResolvedValue({
+			aiTier: "ai_plus",
+			aiSubscriptionStatus: "active",
+		} as OrganizationBilling);
+		const plus = AI_TIERS.ai_plus; // daily 200, weekly 1500
+		// Return more than the daily cap → capped at 100; weekly is a partial fraction.
+		vi.mocked(sumCredits).mockResolvedValue(plus.dailyCredits * 2);
 		vi.mocked(purchasedBalance).mockResolvedValue(250);
 
 		const r = await getAiUsage();
-		expect(r.tier).toBe("standard");
-		expect(r.windowPctUsed).toBe(100); // 600/300 → capped
-		expect(r.weekPctUsed).toBe(20); // 600/3000
+		expect(r.tier).toBe("ai_plus");
+		expect(r.dailyPctUsed).toBe(100); // 400/200 → capped
+		expect(r.weeklyPctUsed).toBe(
+			Math.round(((plus.dailyCredits * 2) / plus.weeklyCredits) * 100),
+		);
 		expect(r.purchasedBalance).toBe(250);
 		// Reset timestamps are valid ISO strings in the future.
-		expect(new Date(r.windowResetAt).getTime()).toBeGreaterThan(Date.now());
-		expect(new Date(r.weekResetAt).getTime()).toBeGreaterThan(Date.now());
+		expect(new Date(r.dailyResetAt).getTime()).toBeGreaterThan(Date.now());
+		expect(new Date(r.weeklyResetAt).getTime()).toBeGreaterThan(Date.now());
+	});
+
+	it("falls back to ai_free when a paid AI subscription is not live", async () => {
+		vi.mocked(getOrgBilling).mockResolvedValue({
+			aiTier: "ai_max",
+			aiSubscriptionStatus: "canceled",
+		} as OrganizationBilling);
+		vi.mocked(sumCredits).mockResolvedValue(0);
+
+		expect((await getAiUsage()).tier).toBe("ai_free");
 	});
 
 	it("reflects whether hosted billing is configured", async () => {
