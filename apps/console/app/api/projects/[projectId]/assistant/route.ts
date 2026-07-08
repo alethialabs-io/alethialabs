@@ -10,6 +10,10 @@ import {
 	type Mention,
 	mentionsSchema,
 } from "@/lib/ai/mentions";
+import {
+	advisorThinkingOptions,
+	cachedSystemMessage,
+} from "@/lib/ai/provider-options";
 import { buildProjectAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
@@ -136,13 +140,25 @@ export async function POST(
 
 	const result = streamText({
 		model: executor.model,
-		system,
-		messages: await convertToModelMessages(messages),
+		// Cache the (stable) system prompt so repeated turns read it from cache.
+		messages: [
+			cachedSystemMessage(system),
+			...(await convertToModelMessages(messages)),
+		],
+		// Our own system prompt (cached) is intentionally a system message; user turns are
+		// never system-role, so this is not a prompt-injection surface.
+		allowSystemInMessages: true,
 		tools: buildProjectAgentTools(canvas),
 		stopWhen: stepCountIs(8),
-		// Step 0 runs on the advisor; the rest use the executor.
+		// Step 0 runs on the advisor; the rest use the executor. A distinct Anthropic advisor
+		// also gets adaptive extended thinking for the planning step.
 		prepareStep: ({ stepNumber }) =>
-			stepNumber === 0 ? { model: advisor.model } : {},
+			stepNumber === 0
+				? {
+						model: advisor.model,
+						providerOptions: advisorThinkingOptions(advisor, executor),
+					}
+				: {},
 		// Meter PER MODEL: advisor + executor tokens are ledgered separately (correct cost_micros).
 		onFinish: ({ steps }) => {
 			void recordAgentTurnUsage({
