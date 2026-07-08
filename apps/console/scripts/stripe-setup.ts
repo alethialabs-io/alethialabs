@@ -38,8 +38,10 @@ const ROOT_ENV = join(here, "../../../.env"); // apps/console/scripts → repo r
 // ── Pricing — the per-seat amount is the SSOT (@repo/plan-catalog); the runner-minutes
 // free tier + overage mirror lib/billing/{plan,meter}.ts. ──
 const PRO_UNIT_AMOUNT = planUnitAmountCents("team"); // $ / seat / month (from the catalog)
+const PRO_UNIT_AMOUNT_EUR = planUnitAmountCents("team", "eur"); // € / seat (FX-adjusted, from the catalog)
 const RUNNER_INCLUDED_PRO = 500; // free runner-minutes/month on Pro (plan.ts includedRunnerMinutes)
 const RUNNER_OVERAGE_CENTS = "1.2"; // $0.012 / minute beyond included (meter.ts)
+const RUNNER_OVERAGE_CENTS_EUR = "1.1"; // €0.011 / minute (FX-adjusted from $0.012)
 const METER_EVENT = "alethia_runner_minutes"; // RUNNER_MINUTES_METER_EVENT
 const LK_PRO = "alethia_pro_monthly";
 const LK_METER_PRO = "alethia_runner_minutes_pro";
@@ -102,15 +104,46 @@ async function ensureProduct(
 	return stripe.products.create({ name, metadata: { alethia: tag } });
 }
 
-/** Finds an active Price by lookup_key, creating it (with that key) on first run. */
-async function ensurePrice(
+/** Ensures the graduated runner-minutes metered Price exists WITH the EUR currency option
+ *  (free ≤ included, then the per-minute overage in USD + EUR). Mints a fresh multi-currency
+ *  price + transfers the lookup_key when a stale one lacks the EUR tiers (prices are
+ *  immutable); existing subscriptions keep theirs. */
+async function ensureMeterPrice(
 	stripe: Stripe,
-	lookupKey: string,
-	create: Stripe.PriceCreateParams,
+	product: string,
+	meterId: string,
 ): Promise<Stripe.Price> {
-	const found = await stripe.prices.list({ lookup_keys: [lookupKey], active: true, limit: 1 });
-	if (found.data[0]) return found.data[0];
-	return stripe.prices.create({ ...create, lookup_key: lookupKey });
+	const tiers = (overageDecimal: string): Stripe.PriceCreateParams.Tier[] => [
+		{ up_to: RUNNER_INCLUDED_PRO, unit_amount: 0 },
+		// Sub-cent per-minute overage → the branded Decimal (serializes to e.g. "1.2").
+		{ up_to: "inf", unit_amount_decimal: Stripe.Decimal.from(overageDecimal) },
+	];
+	const found = await stripe.prices.list({
+		lookup_keys: [LK_METER_PRO],
+		active: true,
+		limit: 1,
+		expand: ["data.currency_options"],
+	});
+	const existing = found.data[0];
+	if (existing?.currency_options?.eur) return existing;
+
+	const created = await stripe.prices.create({
+		product,
+		currency: "usd",
+		billing_scheme: "tiered",
+		tiers_mode: "graduated",
+		tiers: tiers(RUNNER_OVERAGE_CENTS),
+		currency_options: { eur: { tiers: tiers(RUNNER_OVERAGE_CENTS_EUR) } },
+		recurring: { interval: "month", usage_type: "metered", meter: meterId },
+		nickname: "Alethia runner minutes — Pro overage ($0.012 / €0.011 per min)",
+		lookup_key: LK_METER_PRO,
+		transfer_lookup_key: Boolean(existing),
+	});
+	if (existing) {
+		await stripe.prices.update(existing.id, { active: false });
+		console.log(`  ↻ minted a multi-currency meter price ${created.id} (archived ${existing.id})`);
+	}
+	return created;
 }
 
 /**
@@ -126,15 +159,23 @@ async function ensureSeatPrice(
 	lookupKey: string,
 	product: string,
 	unitAmount: number,
+	eurAmount: number,
 ): Promise<Stripe.Price> {
-	const found = await stripe.prices.list({ lookup_keys: [lookupKey], active: true, limit: 1 });
+	const found = await stripe.prices.list({
+		lookup_keys: [lookupKey],
+		active: true,
+		limit: 1,
+		expand: ["data.currency_options"],
+	});
 	const existing = found.data[0];
-	if (existing && existing.unit_amount === unitAmount) return existing;
+	const eurOk = existing?.currency_options?.eur?.unit_amount === eurAmount;
+	if (existing && existing.unit_amount === unitAmount && eurOk) return existing;
 
 	const created = await stripe.prices.create({
 		product,
 		currency: "usd",
 		unit_amount: unitAmount,
+		currency_options: { eur: { unit_amount: eurAmount } },
 		recurring: { interval: "month", usage_type: "licensed" },
 		nickname: `Alethia Pro — ${PRO_SEAT_LABEL}`,
 		lookup_key: lookupKey,
@@ -143,8 +184,8 @@ async function ensureSeatPrice(
 	if (existing) {
 		await stripe.prices.update(existing.id, { active: false });
 		console.log(
-			`  ↻ reconciled Pro price to the catalog: archived ${existing.id} ` +
-				`(${formatMoney(existing.unit_amount ?? 0, "usd")}) → ${created.id} (${formatMoney(unitAmount, "usd")})`,
+			`  ↻ reconciled Pro price to the catalog: archived ${existing.id} → ${created.id} ` +
+				`(${formatMoney(unitAmount, "usd")} / ${formatMoney(eurAmount, "eur")})`,
 		);
 	}
 	return created;
@@ -181,29 +222,19 @@ async function main(): Promise<void> {
 
 	// 1) Pro product + per-seat price (amount from the catalog SSOT; reconciles if stale).
 	const proProduct = await ensureProduct(stripe, "pro", "Alethia Pro");
-	const proPrice = await ensureSeatPrice(stripe, LK_PRO, proProduct.id, PRO_UNIT_AMOUNT);
+	const proPrice = await ensureSeatPrice(stripe, LK_PRO, proProduct.id, PRO_UNIT_AMOUNT, PRO_UNIT_AMOUNT_EUR);
 	console.log(`✓ Pro product ${proProduct.id}`);
-	console.log(`✓ Pro price   ${proPrice.id}  (${LK_PRO}, ${formatMoney(proPrice.unit_amount ?? PRO_UNIT_AMOUNT, "usd")})`);
+	console.log(
+		`✓ Pro price   ${proPrice.id}  (${LK_PRO}, ${formatMoney(PRO_UNIT_AMOUNT, "usd")} / ${formatMoney(PRO_UNIT_AMOUNT_EUR, "eur")})`,
+	);
 
 	// 2) Runner-minutes meter.
 	const meter = await ensureMeter(stripe);
 	console.log(`✓ Meter       ${meter.id}  (${METER_EVENT})`);
 
-	// 3) Pro runner-minutes graduated metered price (free ≤ included, then overage).
+	// 3) Pro runner-minutes graduated metered price (free ≤ included, then overage), USD + EUR.
 	const runnerProduct = await ensureProduct(stripe, "runner_minutes", "Alethia runner minutes");
-	const meterPrice = await ensurePrice(stripe, LK_METER_PRO, {
-		product: runnerProduct.id,
-		currency: "usd",
-		billing_scheme: "tiered",
-		tiers_mode: "graduated",
-		tiers: [
-			{ up_to: RUNNER_INCLUDED_PRO, unit_amount: 0 },
-			// Sub-cent per-minute overage → the branded Decimal (serializes to "1.2").
-			{ up_to: "inf", unit_amount_decimal: Stripe.Decimal.from(RUNNER_OVERAGE_CENTS) },
-		],
-		recurring: { interval: "month", usage_type: "metered", meter: meter.id },
-		nickname: "Alethia runner minutes — Pro overage ($0.012/min)",
-	});
+	const meterPrice = await ensureMeterPrice(stripe, runnerProduct.id, meter.id);
 	console.log(`✓ Meter price ${meterPrice.id}  (${LK_METER_PRO})`);
 
 	// 4) Optional webhook endpoint (for the live runbook).

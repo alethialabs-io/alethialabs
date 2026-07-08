@@ -5,7 +5,7 @@
 // from the console suite, the same way @repo/ui/range is tested here.
 
 import { describe, expect, it } from "vitest";
-import { PAID_PLANS, PLAN_CATALOG, planMeta } from "../src/index";
+import { PAID_PLANS, PLAN_CATALOG, planMeta, planUnitAmountCents } from "../src/index";
 
 describe("planMeta", () => {
 	it("resolves each known plan to its display entry", () => {
@@ -31,6 +31,26 @@ describe("PLAN_CATALOG invariants", () => {
 		expect(team.perSeat).toBe(true);
 		expect(team.priceMonthlyUsd).toBeGreaterThan(0);
 		expect(team.includedCreditUsd).toBeGreaterThan(0);
+	});
+
+	it("prices Pro in both USD and EUR", () => {
+		const team = planMeta("team");
+		expect(team.priceMonthlyEur).toBeGreaterThan(0);
+		// EUR is FX-adjusted, not parity.
+		expect(team.priceMonthlyEur).not.toBe(team.priceMonthlyUsd);
+	});
+});
+
+describe("planUnitAmountCents", () => {
+	it("returns the per-currency amount in cents (default USD)", () => {
+		expect(planUnitAmountCents("team")).toBe((planMeta("team").priceMonthlyUsd ?? 0) * 100);
+		expect(planUnitAmountCents("team", "usd")).toBe(planUnitAmountCents("team"));
+		expect(planUnitAmountCents("team", "eur")).toBe((planMeta("team").priceMonthlyEur ?? 0) * 100);
+	});
+
+	it("throws for a plan without a numeric price (Enterprise)", () => {
+		expect(() => planUnitAmountCents("enterprise")).toThrow();
+		expect(() => planUnitAmountCents("enterprise", "eur")).toThrow();
 	});
 
 	it("treats community as the only free tier", () => {

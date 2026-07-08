@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { Metadata } from "next";
+import { headers } from "next/headers";
+import { resolveCurrency } from "@repo/plan-catalog";
 import { Header } from "@/components/landing/home/header";
 import { Pricing } from "@/components/landing/pricing";
 import { Footer } from "@/components/landing/home/footer";
 import { getGitHubStars } from "@/lib/github-stars";
-import { getTeamPriceLabel } from "@/lib/billing/pricing-display";
+import { getTeamPrice } from "@/lib/billing/pricing-display";
 
 export const metadata: Metadata = {
 	title: "Pricing · Alethia",
@@ -20,15 +22,18 @@ export const metadata: Metadata = {
  * billing picker. The Pricing body renders its own hero. Served at /pricing.
  */
 export default async function PricingPage() {
-	const [stars, teamPriceLabel] = await Promise.all([
+	const [stars, teamPrice, headerList] = await Promise.all([
 		getGitHubStars(),
-		getTeamPriceLabel(),
+		getTeamPrice(),
+		headers(),
 	]);
+	// Default the currency from the visitor's region (Cloudflare geo); the toggle overrides.
+	const initialCurrency = resolveCurrency(headerList.get("cf-ipcountry"));
 	return (
 		<div className="min-h-screen bg-background text-foreground selection:bg-primary selection:text-primary-foreground">
 			<Header stars={stars} />
 			<main>
-				<Pricing teamPriceLabel={teamPriceLabel} />
+				<Pricing teamPrice={teamPrice} initialCurrency={initialCurrency} />
 			</main>
 			<Footer />
 		</div>

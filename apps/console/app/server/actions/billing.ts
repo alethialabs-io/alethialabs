@@ -24,7 +24,8 @@ import { creditPack } from "@/lib/billing/ai-credits";
 import { canOrgInvite } from "@/lib/billing/collaboration";
 import { countBillableSeats } from "@/lib/billing/seats";
 import type { TaxIdType } from "@/lib/billing/tax-ids";
-import { planMeta } from "@repo/plan-catalog";
+import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
+import { currencyFromRequest } from "@/lib/billing/currency";
 import { resolvePlanEntitlements } from "@/lib/billing/plan";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { getOrgInvoice, listOrgInvoices } from "@/lib/billing/invoices";
@@ -564,6 +565,8 @@ export async function createCheckoutSession(
 export interface SubscriptionIntent {
 	clientSecret: string;
 	subscriptionId: string;
+	/** The currency the subscription was created in (Stripe locks it) — drives the UI toggle. */
+	currency: SupportedCurrency;
 }
 
 /**
@@ -575,7 +578,7 @@ export interface SubscriptionIntent {
  */
 export async function createSubscriptionIntent(
 	plan: PaidPlan,
-	opts?: { billingEmail?: string },
+	opts?: { billingEmail?: string; currency?: SupportedCurrency },
 ): Promise<SubscriptionIntent> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
@@ -608,9 +611,14 @@ export async function createSubscriptionIntent(
 	// org that already has a team is billed for them at subscribe time. Enterprise is flat.
 	const quantity =
 		plan === "team" ? Math.max(1, await countBillableSeats(actor.orgId)) : 1;
+	// Resolve the billing currency BEFORE creating the subscription (Stripe locks it): an
+	// explicit checkout selection wins, else the request's geo (Cloudflare CF-IPCountry).
+	// The Price must carry this currency's option (scripts/stripe-setup.ts).
+	const currency = opts?.currency ?? (await currencyFromRequest());
 	const sub = await getStripe().subscriptions.create({
 		customer: customerId,
 		items: planCreateItems(plan, quantity),
+		currency,
 		payment_behavior: "default_incomplete",
 		payment_settings: { save_default_payment_method: "on_subscription" },
 		expand: ["latest_invoice.confirmation_secret"],
@@ -626,7 +634,7 @@ export async function createSubscriptionIntent(
 	if (!clientSecret) {
 		throw new Error("Stripe did not return a payment client secret.");
 	}
-	return { clientSecret, subscriptionId: sub.id };
+	return { clientSecret, subscriptionId: sub.id, currency };
 }
 
 /**
@@ -641,7 +649,9 @@ export async function createSubscriptionIntent(
  * live/trialing subscription already exists. No automatic_tax here — there's no
  * address/invoice yet; tax is computed when the customer later adds payment.
  */
-export async function startProTrial(): Promise<void> {
+export async function startProTrial(opts?: {
+	currency?: SupportedCurrency;
+}): Promise<void> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
 	if (actor.orgId === actor.userId) {
@@ -670,9 +680,13 @@ export async function startProTrial(): Promise<void> {
 	}
 
 	const customerId = await ensureCustomer(actor.orgId, actor.userId);
+	// Pin the currency now so the trial's eventual paid invoice bills correctly (Stripe
+	// locks it at creation); explicit selection wins, else the request geo.
+	const currency = opts?.currency ?? (await currencyFromRequest());
 	const sub = await getStripe().subscriptions.create({
 		customer: customerId,
 		items: planCreateItems("team", 1),
+		currency,
 		trial_period_days: 30,
 		trial_settings: { end_behavior: { missing_payment_method: "cancel" } },
 		metadata: { organization_id: actor.orgId },
@@ -790,6 +804,7 @@ export async function createNewOrgSubscriptionIntent(
 		orgName: string;
 		priorSubscriptionId?: string;
 		customerId?: string;
+		currency?: SupportedCurrency;
 	},
 ): Promise<NewOrgSubscriptionIntent> {
 	const actor = await currentActor();
@@ -837,11 +852,15 @@ export async function createNewOrgSubscriptionIntent(
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
 		: {};
+	// Resolve the billing currency before creating the sub (Stripe locks it): explicit
+	// selection wins, else the request geo.
+	const currency = opts.currency ?? (await currencyFromRequest());
 	// The org doesn't exist yet (owner only) — start at 1 seat; per-seat sync grows the
 	// quantity as invited members accept (lib/billing/seats syncOrgSeats via org hooks).
 	const sub = await getStripe().subscriptions.create({
 		customer: customerId,
 		items: planCreateItems(plan, 1),
+		currency,
 		payment_behavior: "default_incomplete",
 		payment_settings: { save_default_payment_method: "on_subscription" },
 		expand: ["latest_invoice.confirmation_secret"],
@@ -857,7 +876,7 @@ export async function createNewOrgSubscriptionIntent(
 	if (!clientSecret) {
 		throw new Error("Stripe did not return a payment client secret.");
 	}
-	return { clientSecret, subscriptionId: sub.id, customerId };
+	return { clientSecret, subscriptionId: sub.id, customerId, currency };
 }
 
 /**

@@ -1,10 +1,13 @@
+"use client";
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import Link from "next/link";
+import { useState } from "react";
 import { Button } from "@repo/ui/button";
 import { Badge } from "@repo/ui/badge";
 import { ProviderIcon } from "@repo/ui/provider-icon";
+import { cn } from "@repo/ui/utils";
 import {
 	disp,
 	eyebrow,
@@ -15,7 +18,11 @@ import {
 	SecMark,
 	Wrap,
 } from "@/components/landing/home/primitives";
-import { PLAN_CATALOG, type PlanId } from "@repo/plan-catalog";
+import {
+	PLAN_CATALOG,
+	type PlanId,
+	type SupportedCurrency,
+} from "@repo/plan-catalog";
 
 const SALES = "/contact/sales";
 
@@ -367,20 +374,62 @@ function PricingCTA() {
 }
 
 interface PricingProps {
-	/** Team per-seat label, read live from Stripe (falls back to the catalog label). */
-	teamPriceLabel: string;
+	/** Team per-seat label per currency, read live from Stripe (catalog fallback). */
+	teamPrice: Record<SupportedCurrency, string>;
+	/** Currency to show first (from the visitor's region); the toggle overrides. */
+	initialCurrency: SupportedCurrency;
+}
+
+/** A small USD/EUR segmented toggle for the pricing page. */
+function CurrencyToggle({
+	value,
+	onChange,
+}: {
+	value: SupportedCurrency;
+	onChange: (c: SupportedCurrency) => void;
+}) {
+	return (
+		<div
+			role="group"
+			aria-label="Currency"
+			className="inline-flex items-center rounded-md border border-border bg-surface-sunken p-0.5"
+			style={mono}
+		>
+			{(["usd", "eur"] as const).map((c) => (
+				<button
+					key={c}
+					type="button"
+					aria-pressed={value === c}
+					onClick={() => onChange(c)}
+					className={cn(
+						"rounded px-2.5 py-1 text-[11px] uppercase tracking-wide transition-colors",
+						value === c
+							? "bg-surface text-text-primary shadow-sm"
+							: "text-text-secondary hover:text-text-primary",
+					)}
+				>
+					{c}
+				</button>
+			))}
+		</div>
+	);
 }
 
 /**
  * Public pricing page body (between Header/Footer). Tiers come from PLAN_CATALOG — the
  * same source of truth as the in-app billing picker — so marketing never drifts from the
- * enforced entitlement ladder. Equal-height cards via a stretch grid; verified-only
- * comparison matrix (no fabricated usage metrics).
+ * enforced entitlement ladder. The EUR/USD toggle (defaulted from the visitor's region)
+ * switches the Team per-seat label.
  */
-export function Pricing({ teamPriceLabel }: PricingProps) {
+export function Pricing({ teamPrice, initialCurrency }: PricingProps) {
+	const [currency, setCurrency] = useState<SupportedCurrency>(initialCurrency);
+	const teamPriceLabel = teamPrice[currency];
 	return (
 		<div id="pricing">
 			<PricingHero />
+			<div className="mx-auto flex w-full max-w-6xl justify-end px-6">
+				<CurrencyToggle value={currency} onChange={setCurrency} />
+			</div>
 			<PlanCards teamPriceLabel={teamPriceLabel} />
 			<Matrix teamPriceLabel={teamPriceLabel} />
 			<OpenCore />
