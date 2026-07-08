@@ -490,6 +490,12 @@ jobs:
             emit SUPPORT_SLACK_WEBHOOK_URL
             # Community card link on the support page (app/(private)/[org]/~/support). Unset → "coming soon".
             emit NEXT_PUBLIC_COMMUNITY_URL
+            # Admin staff dashboard @ admin.alethialabs.io (apps/admin): the Cloudflare-Access allowlist
+            # (apps/admin/lib/auth/staff.ts) + the console URL its case deep-links target. COMPOSE_PROFILES
+            # activates the profiled `admin` service on the box (docker compose reads it from this .env).
+            emit SUPPORT_STAFF_EMAILS
+            echo "NEXT_PUBLIC_CONSOLE_URL=$APP_URL"
+            echo "COMPOSE_PROFILES=admin"
             echo "AUTH_EMAIL_FROM=Alethia <no-reply@auth.alethialabs.io>"
             echo "EMAIL_FROM=Alethia <hello@mail.alethialabs.io>"
             echo "ALETHIA_IMAGE_TAG=$IMAGE_TAG"

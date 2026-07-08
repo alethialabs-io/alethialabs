@@ -108,6 +108,12 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "cp" {
       hostname = "www.${var.domain}"
       service  = "http://caddy:80"
     }
+    # Internal staff support dashboard (apps/admin). Also forwards to Caddy, which host-routes
+    # admin.<domain> → the admin container; Cloudflare Access gates who may reach it.
+    ingress_rule {
+      hostname = "admin.${var.domain}"
+      service  = "http://caddy:80"
+    }
     # Required catch-all.
     ingress_rule {
       service = "http_status:404"
@@ -129,6 +135,18 @@ resource "cloudflare_record" "apex" {
 resource "cloudflare_record" "www" {
   zone_id = var.cloudflare_zone_id
   name    = "www"
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.cp.id}.cfargotunnel.com"
+  proxied = true
+  ttl     = 1
+}
+
+# admin.<domain> — the internal staff support dashboard, onto the same tunnel. Put a
+# Cloudflare Zero-Trust Access application in front of this hostname (staff-email allowlist)
+# before it serves; the app itself trusts the Cf-Access-Authenticated-User-Email header.
+resource "cloudflare_record" "admin" {
+  zone_id = var.cloudflare_zone_id
+  name    = "admin"
   type    = "CNAME"
   content = "${cloudflare_zero_trust_tunnel_cloudflared.cp.id}.cfargotunnel.com"
   proxied = true
