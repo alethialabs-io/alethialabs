@@ -17,6 +17,7 @@ import {
 import { CreditPackDialog } from "@/components/billing/credit-pack-dialog";
 import { UpgradeAiSheet } from "@/components/billing/upgrade-ai-sheet";
 import { SettingsSection } from "@/components/settings/settings-ui";
+import { useLiveAiPrice } from "@/lib/billing/use-live-plan-price";
 import { aiPlanMeta } from "@repo/plan-catalog";
 import { Skeleton } from "@repo/ui/skeleton";
 
@@ -95,6 +96,10 @@ export function AiUsageSection() {
 	useEffect(() => refetch(), [refetch]);
 
 	const meta = ai ? aiPlanMeta(ai.tier) : null;
+	// The tier's live (Stripe-authoritative) price in USD — placeholder catalog price until
+	// the AI Stripe prices are cut over; the upgrade sheet owns the currency choice. Hooks
+	// must run unconditionally, so resolve against the free tier until the summary loads.
+	const aiPrice = useLiveAiPrice(ai?.tier ?? "ai_free");
 	// Free/Plus can still upgrade the AI tier; Max is the top.
 	const canUpgrade = ai ? ai.tier !== "ai_max" : false;
 
@@ -104,9 +109,16 @@ export function AiUsageSection() {
 				{/* tier header */}
 				<div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
 					<div className="flex flex-col gap-0.5">
-						<span className="font-display text-[15px] font-semibold text-text-primary">
-							{meta ? meta.name : <Skeleton className="h-4 w-20" />}
-						</span>
+						<div className="flex items-baseline gap-2">
+							<span className="font-display text-[15px] font-semibold text-text-primary">
+								{meta ? meta.name : <Skeleton className="h-4 w-20" />}
+							</span>
+							{meta && (
+								<span className="font-mono text-[11px] text-text-secondary">
+									· {aiPrice.label}
+								</span>
+							)}
+						</div>
 						{meta && (
 							<span className="font-mono text-[10.5px] text-text-tertiary">
 								{meta.advisor}

@@ -9,6 +9,8 @@
 
 import { useEffect, useState } from "react";
 import {
+	type AiPlanId,
+	aiPlanMeta,
 	type PlanId,
 	type SupportedCurrency,
 	formatMoney,
@@ -16,8 +18,13 @@ import {
 	planMeta,
 	shortInterval,
 } from "@repo/plan-catalog";
-import { getLivePlanPrices } from "@/app/server/actions/billing";
-import type { LivePlanPrice, LivePlanPriceMap } from "@/lib/billing/pricing";
+import { getLiveAiPrices, getLivePlanPrices } from "@/app/server/actions/billing";
+import type {
+	LiveAiPrice,
+	LiveAiPriceMap,
+	LivePlanPrice,
+	LivePlanPriceMap,
+} from "@/lib/billing/pricing";
 
 let pending: Promise<LivePlanPriceMap> | null = null;
 
@@ -79,6 +86,60 @@ export function useLivePlanPrice(
 			: meta.perSeat
 				? formatSeatPrice(Math.round(unitAmount * 100), currency, interval)
 				: `${formatMoney(Math.round(unitAmount * 100), currency)} / ${shortInterval(interval)}`;
+
+	return { unitAmount, currency, label, loading: data === null };
+}
+
+let aiPending: Promise<LiveAiPriceMap> | null = null;
+
+/** Fetch the live AI price map once and share it across all hook consumers. */
+function loadAiPrices(): Promise<LiveAiPriceMap> {
+	if (!aiPending) {
+		aiPending = getLiveAiPrices().catch((e) => {
+			aiPending = null; // allow a retry on the next mount after a transient failure
+			throw e;
+		});
+	}
+	return aiPending;
+}
+
+/**
+ * The live price for a standalone AI tier in the given currency (default USD), with the AI
+ * catalog value as the loading/offline fallback. The whole AI price map is fetched once and
+ * shared. Free renders "Free"; the paid tiers show the Stripe amount (placeholder catalog
+ * price pre-cutover). Formats identically to the org-plan hook.
+ */
+export function useLiveAiPrice(
+	tier: AiPlanId,
+	currency: SupportedCurrency = "usd",
+): LivePlanPriceView {
+	const meta = aiPlanMeta(tier);
+	const [data, setData] = useState<LiveAiPrice | null>(null);
+
+	useEffect(() => {
+		let active = true;
+		loadAiPrices()
+			.then((m: LiveAiPriceMap) => {
+				if (active) setData(m[tier]);
+			})
+			.catch(() => {
+				// Keep the catalog fallback on failure.
+			});
+		return () => {
+			active = false;
+		};
+	}, [tier]);
+
+	const unitAmount =
+		currency === "eur"
+			? (data?.unitAmountEur ?? meta.priceMonthlyEur ?? null)
+			: (data?.unitAmountUsd ?? meta.priceMonthlyUsd ?? null);
+	const interval = data?.interval ?? "month";
+	// The free tier (unitAmount 0) shows its catalog label ("Free"), not "$0 / mo".
+	const label =
+		unitAmount == null || unitAmount === 0
+			? meta.priceLabel
+			: `${formatMoney(Math.round(unitAmount * 100), currency)} / ${shortInterval(interval)}`;
 
 	return { unitAmount, currency, label, loading: data === null };
 }

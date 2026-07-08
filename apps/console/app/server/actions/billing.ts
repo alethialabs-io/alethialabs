@@ -35,8 +35,10 @@ import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { getOrgInvoice, listOrgInvoices } from "@/lib/billing/invoices";
 import { backupRankOf, setBackupOrder } from "@/lib/billing/payment-methods";
 import {
+	getAllAiPrices,
 	getAllPlanPrices,
 	getPlanPrice,
+	type LiveAiPriceMap,
 	type LivePlanPriceMap,
 } from "@/lib/billing/pricing";
 import { getStripe } from "@/lib/billing/stripe";
@@ -202,6 +204,13 @@ export async function getBillingSummary(): Promise<BillingSummary> {
  *  single fetch, consumed client-side via useLivePlanPrice. Any caller. */
 export async function getLivePlanPrices(): Promise<LivePlanPriceMap> {
 	return getAllPlanPrices();
+}
+
+/** Live prices for every standalone AI tier (Stripe-authoritative, catalog fallback) —
+ *  consumed client-side via useLiveAiPrice. Degrades to the placeholder catalog prices when
+ *  the AI Stripe prices aren't configured (pre-cutover). Any caller. */
+export async function getLiveAiPrices(): Promise<LiveAiPriceMap> {
+	return getAllAiPrices();
 }
 
 /** Managed-runner usage for the active org's current period (read-only; any member). */
