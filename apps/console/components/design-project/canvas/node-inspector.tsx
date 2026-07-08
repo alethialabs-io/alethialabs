@@ -21,6 +21,7 @@ import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { CloudIdentitySelector } from "../cloud-identity-selector";
 import { NODE_REGISTRY } from "./graph/node-registry";
 import type { CanvasNode } from "./graph/types";
+import { configName } from "./graph/node-config";
 import { CONFIG_SCHEMA } from "./inspector/config-schema";
 import { ConfigFields } from "./inspector/config-fields";
 import { DangerZone } from "./inspector/danger-zone";
@@ -83,7 +84,7 @@ export function InspectorPanel({
 	const nameKey =
 		node.data.kind === "project"
 			? "project_name"
-			: typeof node.data.config.name === "string"
+			: NODE_REGISTRY[node.data.kind].cardinality === "array"
 				? "name"
 				: null;
 
@@ -104,7 +105,7 @@ export function InspectorPanel({
 					<div className="flex flex-wrap items-center gap-2">
 						{nameKey ? (
 							<Input
-								value={(node.data.config[nameKey] as string) ?? ""}
+								value={configName(node.data) ?? ""}
 								maxLength={nameKey === "project_name" ? 50 : undefined}
 								placeholder={nameKey === "project_name" ? "My Project" : "name"}
 								onChange={(e) =>
