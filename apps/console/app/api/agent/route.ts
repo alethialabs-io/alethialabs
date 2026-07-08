@@ -7,6 +7,7 @@ import {
 	streamText,
 	type UIMessage,
 } from "ai";
+import { z } from "zod";
 import { saveThreadMessages } from "@/app/server/actions/agent";
 import {
 	formatMentionsForPrompt,
@@ -41,7 +42,15 @@ interface AgentBody {
 	model?: string;
 	/** Resources the user @-referenced in the latest message. */
 	mentions?: Mention[];
+	/**
+	 * Per-message opt-in to the Opus advisor ("deep reasoning"). Only effective on `ai_max`
+	 * (the advisor selection guards it); ignored on every other tier.
+	 */
+	deepReasoning?: boolean;
 }
+
+/** Parse the optional `deepReasoning` flag from a request body — defaults to false. */
+const deepReasoningSchema = z.boolean().catch(false);
 
 /** System prompt for the general Agent page (infra Q&A + project design + Act-mode ops). */
 function systemPrompt(mode: AgentMode): string {
@@ -127,14 +136,17 @@ export async function POST(req: Request) {
 		mode = "ask",
 		model,
 		mentions,
+		deepReasoning: deepReasoningRaw,
 	}: AgentBody = await req.json();
+	const deepReasoning = deepReasoningSchema.parse(deepReasoningRaw);
 
-	// Cost-optimized orchestration: a tier-derived ADVISOR (Sonnet/Opus) plans step 0, then a
-	// cheap Haiku EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor).
+	// Cost-optimized orchestration: a tier-derived ADVISOR plans step 0, then a cheap Haiku
+	// EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor). The advisor
+	// is Sonnet by default; on ai_max the per-message `deepReasoning` opt-in upgrades it to Opus.
 	// An explicit client model pick overrides orchestration with that single deliberate choice.
 	const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as const);
 	const executor = getExecutorModel();
-	const advisor = getAdvisorModel(tier);
+	const advisor = getAdvisorModel(tier, { deepReasoning });
 	const clientPick = isSelectableModel(model) ? model : null;
 	// The base run: the client's explicit pick, else the cheap executor. Step 0 upgrades to the
 	// advisor (via prepareStep) unless the user forced a pick.

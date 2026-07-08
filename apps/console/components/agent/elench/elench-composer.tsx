@@ -27,7 +27,11 @@ import type {
 	MentionType,
 } from "@/lib/ai/mentions";
 import { cn } from "@repo/ui/utils";
-import { ElenchAskMode, ElenchModelButton } from "./elench-controls";
+import {
+	ElenchAskMode,
+	ElenchDeepReasoning,
+	ElenchModelButton,
+} from "./elench-controls";
 import {
 	detectMention,
 	type MentionAnchor,
@@ -220,7 +224,11 @@ export function ElenchComposer({
 					className="field-sizing-content max-h-56 min-h-[72px] w-full resize-none bg-transparent px-3.5 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
 				/>
 				<div className="flex items-center justify-between px-2.5 pb-2.5">
-					<ElenchAskMode />
+					<div className="flex items-center gap-1.5">
+						<ElenchAskMode />
+						{/* Max-only per-message Opus opt-in (org context); the control self-hides otherwise. */}
+						{showModel && <ElenchDeepReasoning />}
+					</div>
 					<div className="flex items-center gap-1">
 						{showModel && <ElenchModelButton />}
 						<button

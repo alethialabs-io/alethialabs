@@ -102,16 +102,36 @@ describe("getExecutorModel", () => {
 });
 
 describe("getAdvisorModel", () => {
-	it("maps each AI tier to its advisor model (native keys)", () => {
+	it("maps each AI tier to its DEFAULT advisor model (native keys)", () => {
 		// ai_free has no distinct advisor → the executor (Haiku).
 		expect(getAdvisorModel("ai_free").key).toBe(getExecutorModel().key);
 		expect(getAdvisorModel("ai_plus").key).toBe("anthropic/claude-sonnet-4-6");
-		expect(getAdvisorModel("ai_max").key).toBe("anthropic/claude-opus-4-8");
+		// Max defaults to the Sonnet advisor (like Plus, just larger allowances) — NOT Opus.
+		expect(getAdvisorModel("ai_max").key).toBe("anthropic/claude-sonnet-4-6");
+	});
+
+	it("upgrades ai_max to the Opus advisor ONLY with deepReasoning", () => {
+		// The per-message opt-in swaps Max's advisor to Opus (a distinct, higher-cost ledger row).
+		expect(getAdvisorModel("ai_max", { deepReasoning: true }).key).toBe(
+			"anthropic/claude-opus-4-8",
+		);
+		// deepReasoning is a no-op on the lower tiers (the config guards it to ai_max).
+		expect(getAdvisorModel("ai_plus", { deepReasoning: true }).key).toBe(
+			"anthropic/claude-sonnet-4-6",
+		);
+		expect(getAdvisorModel("ai_free", { deepReasoning: true }).key).toBe(
+			getExecutorModel().key,
+		);
 	});
 
 	it("honors per-tier env overrides", () => {
-		process.env.AI_ADVISOR_MODEL_MAX = "openai/gpt-5-mini";
+		// The Plus default also backs Max's default advisor now.
+		process.env.AI_ADVISOR_MODEL_PLUS = "openai/gpt-5-mini";
+		expect(getAdvisorModel("ai_plus").key).toBe("openai/gpt-5-mini");
 		expect(getAdvisorModel("ai_max").key).toBe("openai/gpt-5-mini");
+		// The Max override applies only on the deep-reasoning (Opus) path.
+		process.env.AI_ADVISOR_MODEL_MAX = "openai/gpt-5";
+		expect(getAdvisorModel("ai_max", { deepReasoning: true }).key).toBe("openai/gpt-5");
 	});
 });
 
