@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AI_MODELS, getAiModel, isAiConfigured } from "@/lib/config/ai";
+import {
+	AI_MODELS,
+	getAdvisorModel,
+	getAiModel,
+	getExecutorModel,
+	isAiConfigured,
+	isSelectableModel,
+} from "@/lib/config/ai";
 
 const KEYS = ["AI_MODEL", "AI_GATEWAY_API_KEY", "VERCEL_OIDC_TOKEN"];
 const saved: Record<string, string | undefined> = {};
@@ -37,6 +44,32 @@ describe("getAiModel", () => {
 
 	it("defaults to Claude Haiku 4.5 at index 0 (cheapest tool-capable model)", () => {
 		expect(AI_MODELS[0].id).toBe("anthropic/claude-haiku-4.5");
+	});
+});
+
+describe("isSelectableModel", () => {
+	it("is true only for allowlisted model ids", () => {
+		expect(isSelectableModel("anthropic/claude-sonnet-4.6")).toBe(true);
+		expect(isSelectableModel("anthropic/claude-haiku-4.5")).toBe(true);
+		expect(isSelectableModel("anthropic/claude-opus-4.8")).toBe(false); // not selectable
+		expect(isSelectableModel("evil/jailbreak")).toBe(false);
+		expect(isSelectableModel(undefined)).toBe(false);
+		expect(isSelectableModel(null)).toBe(false);
+	});
+});
+
+describe("getExecutorModel", () => {
+	it("is the cheap Haiku executor (matches MODEL_PRICES / AI_MODELS default)", () => {
+		expect(getExecutorModel()).toBe("anthropic/claude-haiku-4.5");
+	});
+});
+
+describe("getAdvisorModel", () => {
+	it("maps each AI tier to its advisor model", () => {
+		// ai_free has no distinct advisor → the executor (Haiku).
+		expect(getAdvisorModel("ai_free")).toBe(getExecutorModel());
+		expect(getAdvisorModel("ai_plus")).toBe("anthropic/claude-sonnet-4.6");
+		expect(getAdvisorModel("ai_max")).toBe("anthropic/claude-opus-4.8");
 	});
 });
 

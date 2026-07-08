@@ -13,9 +13,10 @@ import {
 import { buildProjectAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
+import { recordAgentTurnUsage } from "@/lib/billing/agent-metering";
 import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
-import { recordAiUsage } from "@/lib/billing/ai-quota";
-import { getAiModel, isAiConfigured } from "@/lib/config/ai";
+import { resolveAiTier } from "@/lib/billing/ai-plan";
+import { getAdvisorModel, getExecutorModel, isAiConfigured } from "@/lib/config/ai";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -115,7 +116,15 @@ export async function POST(
 
 	const { messages, canvas, threadId, mentions }: ProjectAssistantBody =
 		await req.json();
-	const modelId = getAiModel();
+
+	// Cost-optimized orchestration: a tier-derived ADVISOR (Sonnet/Opus) plans step 0, then a
+	// cheap Haiku EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor).
+	const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as const);
+	const executorModel = getExecutorModel();
+	const advisorModel = getAdvisorModel(tier);
+	/** The model actually used on a given step (step 0 = advisor; the rest = executor). */
+	const modelForStep = (stepNumber: number): string =>
+		stepNumber === 0 ? advisorModel : executorModel;
 
 	const parsedMentions = mentionsSchema.safeParse(mentions);
 	const mentionBlock = parsedMentions.success
@@ -126,23 +135,30 @@ export async function POST(
 		: systemPrompt(projectId, canvas);
 
 	const result = streamText({
-		model: modelId,
+		model: executorModel,
 		system,
 		messages: await convertToModelMessages(messages),
 		tools: buildProjectAgentTools(canvas),
 		stopWhen: stepCountIs(8),
-		onFinish: ({ usage }) => {
-			void recordAiUsage({
+		// Step 0 runs on the advisor; the rest use the executor.
+		prepareStep: ({ stepNumber }) =>
+			stepNumber === 0 ? { model: advisorModel } : {},
+		// Meter PER MODEL: advisor + executor tokens are ledgered separately (correct cost_micros).
+		onFinish: ({ steps }) => {
+			void recordAgentTurnUsage({
 				orgId: actor.orgId,
 				userId: actor.userId,
 				kind: "agent",
-				credits: charge.credits,
-				source: charge.source,
+				charge,
 				refId: threadId ?? projectId,
-				model: modelId,
-				inputTokens: usage.inputTokens,
-				outputTokens: usage.outputTokens,
-				cachedInputTokens: usage.cachedInputTokens,
+				steps: steps.map((s, i) => ({
+					model: modelForStep(i),
+					usage: {
+						inputTokens: s.usage.inputTokens,
+						outputTokens: s.usage.outputTokens,
+						cachedInputTokens: s.usage.cachedInputTokens,
+					},
+				})),
 			});
 		},
 	});

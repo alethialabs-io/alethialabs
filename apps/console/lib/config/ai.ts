@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { env } from "next-runtime-env";
+import type { AiTier } from "@/lib/billing/ai-plan";
 
 export interface AiModel {
 	/** AI Gateway `provider/model` id. */
@@ -31,6 +32,30 @@ const ALLOWED_MODELS = new Set(AI_MODELS.map((m) => m.id));
 export function getAiModel(override?: string): string {
 	if (override && ALLOWED_MODELS.has(override)) return override;
 	return env("AI_MODEL") || AI_MODELS[0].id;
+}
+
+/** Whether `id` is a selectable model — i.e. a deliberate client-picker choice (allowlist). */
+export function isSelectableModel(id: string | undefined | null): id is string {
+	return Boolean(id && ALLOWED_MODELS.has(id));
+}
+
+/**
+ * The cheap **executor** model that runs the agent tool loop — the cost-optimized default
+ * that does most of the tokens. Haiku 4.5 (priced in lib/billing/model-costs.ts via C0).
+ */
+export function getExecutorModel(): string {
+	return "anthropic/claude-haiku-4.5";
+}
+
+/**
+ * The **advisor** (planning/review) model for an org's AI tier: Sonnet 4.6 on `ai_plus`,
+ * Opus 4.8 on `ai_max`, and the executor (Haiku — i.e. NO distinct advisor) on `ai_free`.
+ * The agent's step 0 (planning) runs on the advisor; the tool loop runs on the executor.
+ */
+export function getAdvisorModel(tier: AiTier): string {
+	if (tier === "ai_max") return "anthropic/claude-opus-4.8";
+	if (tier === "ai_plus") return "anthropic/claude-sonnet-4.6";
+	return getExecutorModel();
 }
 
 /**

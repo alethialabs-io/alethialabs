@@ -16,9 +16,15 @@ import {
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
+import { recordAgentTurnUsage } from "@/lib/billing/agent-metering";
 import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
-import { recordAiUsage } from "@/lib/billing/ai-quota";
-import { getAiModel, isAiConfigured } from "@/lib/config/ai";
+import { resolveAiTier } from "@/lib/billing/ai-plan";
+import {
+	getAdvisorModel,
+	getExecutorModel,
+	isAiConfigured,
+	isSelectableModel,
+} from "@/lib/config/ai";
 
 interface AgentBody {
 	messages: UIMessage[];
@@ -117,7 +123,18 @@ export async function POST(req: Request) {
 		model,
 		mentions,
 	}: AgentBody = await req.json();
-	const modelId = getAiModel(model);
+
+	// Cost-optimized orchestration: a tier-derived ADVISOR (Sonnet/Opus) plans step 0, then a
+	// cheap Haiku EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor).
+	// An explicit client model pick overrides orchestration with that single deliberate choice.
+	const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as const);
+	const executorModel = getExecutorModel();
+	const advisorModel = getAdvisorModel(tier);
+	const clientPick = isSelectableModel(model) ? model : null;
+	const baseModel = clientPick ?? executorModel;
+	/** The model actually used on a given step (step 0 = advisor unless the user forced a pick). */
+	const modelForStep = (stepNumber: number): string =>
+		!clientPick && stepNumber === 0 ? advisorModel : baseModel;
 
 	// Resolve @-mentions into a prompt block so the model knows what each ref points to.
 	const parsedMentions = mentionsSchema.safeParse(mentions);
@@ -129,24 +146,31 @@ export async function POST(req: Request) {
 		: systemPrompt(mode);
 
 	const result = streamText({
-		model: modelId,
+		model: baseModel,
 		system,
 		messages: await convertToModelMessages(messages),
 		tools: buildAgentTools({ mode }),
 		stopWhen: stepCountIs(8),
-		// Record once the run completes, with the real token usage for cost-of-serve.
-		onFinish: ({ usage }) => {
-			void recordAiUsage({
+		// Step 0 runs on the advisor (unless the user forced a model); the rest use the executor.
+		prepareStep: clientPick
+			? undefined
+			: ({ stepNumber }) => (stepNumber === 0 ? { model: advisorModel } : {}),
+		// Meter PER MODEL: advisor + executor tokens are ledgered separately (correct cost_micros).
+		onFinish: ({ steps }) => {
+			void recordAgentTurnUsage({
 				orgId: actor.orgId,
 				userId: actor.userId,
 				kind: "agent",
-				credits: charge.credits,
-				source: charge.source,
+				charge,
 				refId: threadId,
-				model: modelId,
-				inputTokens: usage.inputTokens,
-				outputTokens: usage.outputTokens,
-				cachedInputTokens: usage.cachedInputTokens,
+				steps: steps.map((s, i) => ({
+					model: modelForStep(i),
+					usage: {
+						inputTokens: s.usage.inputTokens,
+						outputTokens: s.usage.outputTokens,
+						cachedInputTokens: s.usage.cachedInputTokens,
+					},
+				})),
 			});
 		},
 	});
