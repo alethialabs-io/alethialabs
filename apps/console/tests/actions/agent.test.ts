@@ -105,10 +105,22 @@ describe("createThread", () => {
 		// Owner scope is passed through to withOwnerScope.
 		expect(vi.mocked(withOwnerScope).mock.calls[0][0]).toBe("user-1");
 		// Inserted values: owner used for both user_id and org_id, normalized title.
+		// No projectId → the org-level path omits project_id entirely.
 		expect(calls.values).toHaveBeenCalledWith({
 			user_id: "user-1",
 			org_id: "user-1",
 			title: "Hello world",
+		});
+	});
+
+	it("scopes the thread to a project when a projectId is given", async () => {
+		const { calls } = useChain([{ id: "t-p" }]);
+		await createThread("Deploy prod", "proj-9");
+		expect(calls.values).toHaveBeenCalledWith({
+			user_id: "user-1",
+			org_id: "user-1",
+			title: "Deploy prod",
+			project_id: "proj-9",
 		});
 	});
 
@@ -141,6 +153,17 @@ describe("listThreads", () => {
 		const { calls } = useChain(rows);
 		const result = await listThreads();
 		expect(result).toBe(rows);
+		// Org-level listing filters (kind='agent' AND project_id IS NULL) then orders.
+		expect(calls.where).toHaveBeenCalledTimes(1);
+		expect(calls.orderBy).toHaveBeenCalledTimes(1);
+	});
+
+	it("filters by project when a projectId is given", async () => {
+		const rows = [{ id: "t-p" }];
+		const { calls } = useChain(rows);
+		const result = await listThreads("proj-9");
+		expect(result).toBe(rows);
+		expect(calls.where).toHaveBeenCalledTimes(1);
 		expect(calls.orderBy).toHaveBeenCalledTimes(1);
 	});
 });

@@ -15,27 +15,29 @@ import type { AgentThread } from "@/lib/db/schema";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 
 /**
- * Org-thread orchestration for the Elench surface: lists the owner's threads (for the
- * modal rail + panel switcher), resumes the most recent on open (or starts a fresh
- * one), and loads a thread's transcript BEFORE switching so the keyed conversation
- * mounts with the right `initialMessages`. Project context is ephemeral — no threads,
- * empty transcript. Lifted from the former `AgentPage`.
+ * Thread orchestration for the Elench surface, in BOTH contexts: lists the owner's
+ * threads (for the modal rail + panel switcher), resumes the most recent on open (or
+ * starts a fresh one), and loads a thread's transcript BEFORE switching so the keyed
+ * conversation mounts with the right `initialMessages`. Org context lists org-level
+ * threads (project_id IS NULL); project context lists + creates threads scoped to the
+ * project id, so project conversations persist and resume just like org ones. Lifted
+ * from the former `AgentPage`.
  */
 export function useElenchThreads() {
 	const open = useElenchStore((s) => s.open);
 	const ctx = useElenchStore((s) => s.ctx);
 	const threadId = useElenchStore((s) => s.threadId);
 	const selectStore = useElenchStore((s) => s.selectThread);
-	const newChatStore = useElenchStore((s) => s.newChat);
 
-	const isOrg = ctx.kind === "org";
+	// The project this surface is scoped to (undefined in org context) — threads are
+	// listed/created against it so a project's conversations persist independently.
+	const projectId = ctx.kind === "project" ? ctx.projectId : undefined;
 	const [threads, setThreads] = useState<AgentThread[]>([]);
 	const [initialMessages, setInitialMessages] = useState<UIMessage[]>([]);
 	const initialized = useRef(false);
-	// Whether the initial org resolution (list → resume/create) has settled. Until it has,
+	// Whether the initial resolution (list → resume/create) has settled. Until it has,
 	// the surface must NOT mount the keyed conversation: threadId is still null, so mounting
 	// now and flipping it to the resumed thread would remount the whole chat (the open flash).
-	// Project context has no threads to resolve, so it is ready immediately.
 	const [initialResolved, setInitialResolved] = useState(false);
 
 	/** Load a thread's transcript, then switch to it (order matters — the conversation
@@ -49,13 +51,14 @@ export function useElenchThreads() {
 		[selectStore],
 	);
 
-	// Initial load: list threads, resume the most recent, or create a fresh one.
+	// Initial load: list threads (org-level or this project's), resume the most recent,
+	// or create a fresh one.
 	useEffect(() => {
-		if (!open || !isOrg || initialized.current) return;
+		if (!open || initialized.current) return;
 		initialized.current = true;
 		let cancelled = false;
 		(async () => {
-			const list = await listThreads();
+			const list = await listThreads(projectId);
 			if (cancelled) return;
 			setThreads(list);
 			if (threadId) {
@@ -63,7 +66,7 @@ export function useElenchThreads() {
 			} else if (list.length > 0) {
 				await loadInto(list[0].id);
 			} else {
-				const t = await createThread();
+				const t = await createThread(undefined, projectId);
 				if (cancelled) return;
 				setThreads([t]);
 				setInitialMessages([]);
@@ -74,7 +77,7 @@ export function useElenchThreads() {
 		return () => {
 			cancelled = true;
 		};
-	}, [open, isOrg, threadId, loadInto, selectStore]);
+	}, [open, projectId, threadId, loadInto, selectStore]);
 
 	// Reset when the surface closes so reopening re-resumes cleanly.
 	useEffect(() => {
@@ -92,17 +95,14 @@ export function useElenchThreads() {
 		[loadInto],
 	);
 
-	/** Start a fresh conversation. Org → a new persisted thread; project → ephemeral. */
+	/** Start a fresh conversation — a new persisted thread in the current scope
+	 * (org-level or project-scoped). */
 	const newChat = useCallback(async () => {
-		if (!isOrg) {
-			newChatStore();
-			return;
-		}
-		const t = await createThread();
+		const t = await createThread(undefined, projectId);
 		setThreads((prev) => [t, ...prev]);
 		setInitialMessages([]);
 		selectStore(t.id);
-	}, [isOrg, newChatStore, selectStore]);
+	}, [projectId, selectStore]);
 
 	/** Delete a thread; reselect a neighbor (or start fresh) if it was active. */
 	const deleteThread = useCallback(
@@ -126,10 +126,10 @@ export function useElenchThreads() {
 	}, []);
 
 	return {
-		// Ready once there is a resolved conversation to mount (project: always; org: after
-		// the initial list → resume/create settles). The surface gates the keyed conversation
-		// on this so it mounts exactly once, with the right thread — no empty→resumed flash.
-		ready: !isOrg || initialResolved,
+		// Ready once the initial list → resume/create settles (both contexts). The surface
+		// gates the keyed conversation on this so it mounts exactly once, with the right
+		// thread — no empty→resumed flash.
+		ready: initialResolved,
 		threads,
 		activeId: threadId,
 		initialMessages,

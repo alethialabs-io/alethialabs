@@ -86,6 +86,7 @@ export function ElenchConversation({
 					}
 				: () => ({
 						projectId,
+						threadId: useElenchStore.getState().threadId,
 						canvas: snapshotCanvas(),
 						mentions: useElenchStore.getState().pendingMentions,
 					}),
@@ -94,7 +95,7 @@ export function ElenchConversation({
 
 	const { messages, sendMessage, status, error, regenerate } = useAgentChat({
 		api,
-		id: isOrg ? (activeId ?? undefined) : undefined,
+		id: activeId ?? undefined,
 		initialMessages,
 		prepareBody,
 	});
@@ -105,11 +106,11 @@ export function ElenchConversation({
 		(text: string, mentions: Mention[] = []) => {
 			// Stage the @-referenced resources so prepareBody sends them with the request.
 			setPendingMentions(mentions);
-			if (isOrg && messages.length === 0 && activeId)
-				handleFirstMessage(activeId, text);
+			// Name a fresh thread from its first message (both contexts now persist).
+			if (messages.length === 0 && activeId) handleFirstMessage(activeId, text);
 			sendMessage({ text });
 		},
-		[isOrg, messages.length, activeId, handleFirstMessage, sendMessage, setPendingMentions],
+		[messages.length, activeId, handleFirstMessage, sendMessage, setPendingMentions],
 	);
 
 	// Auto-send a staged seed prompt once into an otherwise-empty conversation.

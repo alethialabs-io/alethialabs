@@ -9,6 +9,7 @@ import {
 	type UIMessage,
 } from "ai";
 import { eq } from "drizzle-orm";
+import { saveThreadMessages } from "@/app/server/actions/agent";
 import { buildAgentSystemPrompt, scopeToolsToAgent } from "@/lib/agent/executor";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
@@ -26,6 +27,8 @@ export const maxDuration = 300;
 interface AgentChatBody {
 	messages: UIMessage[];
 	mode?: AgentMode;
+	/** When set, the full transcript is persisted to this thread on finish. */
+	threadId?: string;
 }
 
 /**
@@ -68,7 +71,7 @@ export async function POST(
 		});
 	}
 
-	const { messages, mode = "ask" }: AgentChatBody = await req.json();
+	const { messages, mode = "ask", threadId }: AgentChatBody = await req.json();
 	const modelId = getAiModel();
 	const tools = scopeToolsToAgent(
 		buildAgentTools({ mode }),
@@ -88,7 +91,7 @@ export async function POST(
 				kind: "agent",
 				credits: charge.credits,
 				source: charge.source,
-				refId: agentId,
+				refId: threadId ?? agentId,
 				model: modelId,
 				inputTokens: usage.inputTokens,
 				outputTokens: usage.outputTokens,
@@ -97,5 +100,10 @@ export async function POST(
 		},
 	});
 
-	return result.toUIMessageStreamResponse({ originalMessages: messages });
+	return result.toUIMessageStreamResponse({
+		originalMessages: messages,
+		onFinish: ({ messages }) => {
+			if (threadId) void saveThreadMessages(threadId, messages);
+		},
+	});
 }
