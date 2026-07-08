@@ -3,14 +3,29 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { ChatStatus } from "ai";
-import { PanelRight } from "lucide-react";
+import { ChevronRight, Sparkles } from "lucide-react";
+import { useState } from "react";
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
 import type { Mention } from "@/lib/ai/mentions";
+import { track } from "@/lib/analytics/track";
 import type { AgentThread } from "@/lib/db/schema";
 import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
 import { ElenchComposer } from "./elench-composer";
 import type { ElenchSuggestion } from "./elench-suggestions";
+
+/** Which Elench context the landing is rendered for (drives analytics + the Try-now prompt). */
+export type ElenchContext = "org" | "project";
+
+/**
+ * A viz-forcing "Try now" prompt that always asks for a generative dashboard, tailored
+ * to the current context so the model fetches the right metrics before it builds.
+ */
+function tryNowPrompt(context: ElenchContext): string {
+	return context === "org"
+		? "Build a dashboard of my infrastructure — clusters, jobs, cost, and drift — as stat cards and charts."
+		: "Build a dashboard for this project — cost breakdown, plan/verify status, and cluster topology — as stat cards and charts.";
+}
 
 /** "9m", "3h", "2d" since a timestamp. */
 function relTime(d: Date): string {
@@ -77,15 +92,22 @@ interface ModalLandingProps {
 	onOpenThread: (id: string) => void;
 	/** Show the model picker in the hero composer (org only). */
 	showModel?: boolean;
-	/** The panel-right button in the chip row (docks the surface as a panel). */
-	onPanelRight?: () => void;
+	/** Org vs project — drives the Try-now prompt + analytics context. */
+	context: ElenchContext;
 	status?: ChatStatus;
 }
 
+/** How many suggestion cards show per carousel page. */
+const CARDS_PER_PAGE = 3;
+/** Total carousel pages (9 suggestions ÷ 3 cards). */
+const PAGE_COUNT = 3;
+
 /**
  * The modal empty landing — the hero (mark + "What should we do today?" + composer),
- * suggestion chips, "Ready to keep going?" recents, and the "Draw, describe, go!" viz
- * grid. Ported from the Elench design, rebranded to the grayscale system.
+ * a paged suggestion carousel (3 cards × 3 pages with dot indicators, cycled by the
+ * right-hand button — no scroll), "Ready to keep going?" recents, and the
+ * "Draw, describe, go!" viz section with a "Try now" generative-dashboard button.
+ * Ported from the Elench design, rebranded to the grayscale system.
  */
 export function ElenchModalLanding({
 	onSend,
@@ -93,9 +115,15 @@ export function ElenchModalLanding({
 	recents,
 	onOpenThread,
 	showModel,
-	onPanelRight,
+	context,
 	status,
 }: ModalLandingProps) {
+	// The visible carousel page; the right-hand button cycles 0→1→2→0 (pure slice swap).
+	const [page, setPage] = useState(0);
+	const pageCards = suggestions.slice(
+		page * CARDS_PER_PAGE,
+		page * CARDS_PER_PAGE + CARDS_PER_PAGE,
+	);
 	return (
 		<div className="h-full overflow-y-auto">
 			<div className="mx-auto max-w-[830px] px-6 pb-16 pt-24">
@@ -111,13 +139,17 @@ export function ElenchModalLanding({
 				autoFocus
 			/>
 
-			{/* Suggestion chips + panel-right toggle. */}
+			{/* Paged suggestion carousel — a windowed slice of 3, a cycle button, and dot
+				    indicators below (no horizontal scroll; the right button swaps pages). */}
 			<div className="mt-4 flex gap-2.5">
-				{suggestions.map((s) => (
+				{pageCards.map((s) => (
 					<button
 						key={s.title}
 						type="button"
-						onClick={() => onSend(s.prompt)}
+						onClick={() => {
+							track("elench_suggestion_clicked", { title: s.title, context });
+							onSend(s.prompt);
+						}}
 						className="flex min-w-0 flex-1 items-center gap-3 border border-border bg-muted/40 px-3 py-2.5 text-left transition-colors hover:bg-muted"
 					>
 						<span className="flex size-8 flex-none items-center justify-center border border-border bg-background text-muted-foreground">
@@ -135,12 +167,29 @@ export function ElenchModalLanding({
 				))}
 				<button
 					type="button"
-					aria-label="Dock as panel"
-					onClick={onPanelRight}
+					aria-label="Next suggestions"
+					onClick={() => setPage((p) => (p + 1) % PAGE_COUNT)}
 					className="flex w-11 flex-none items-center justify-center border border-border bg-muted/40 text-muted-foreground transition-colors hover:bg-muted"
 				>
-					<PanelRight className="h-4 w-4" />
+					<ChevronRight className="h-4 w-4" />
 				</button>
+			</div>
+
+			{/* Carousel page dots — active page filled, matching the DotDivider dot style. */}
+			<div className="mt-3 flex justify-center gap-1.5">
+				{Array.from({ length: PAGE_COUNT }, (_, i) => (
+					<button
+						key={i}
+						type="button"
+						aria-label={`Suggestions page ${i + 1}`}
+						aria-current={i === page}
+						onClick={() => setPage(i)}
+						className={cn(
+							"size-1 rounded-full transition-colors",
+							i === page ? "bg-foreground" : "bg-border",
+						)}
+					/>
+				))}
 			</div>
 
 			<DotDivider />
@@ -176,7 +225,8 @@ export function ElenchModalLanding({
 
 			<DotDivider />
 
-			{/* Draw, describe, go — the visualization grid (decorative demo). */}
+			{/* Draw, describe, go — the visualization grid, with a "Try now" button that
+				    asks the agent for a full generative dashboard. */}
 			<section className="border border-border bg-muted/40 p-5">
 				<div className="flex items-start justify-between gap-3">
 					<div>
@@ -185,6 +235,19 @@ export function ElenchModalLanding({
 							Generate different views of your data using the visualization grid.
 						</div>
 					</div>
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						className="flex-none gap-1.5 rounded-none"
+						onClick={() => {
+							track("elench_try_now_used", { context });
+							onSend(tryNowPrompt(context));
+						}}
+					>
+						<Sparkles className="h-3.5 w-3.5" />
+						Try now
+					</Button>
 				</div>
 				<div className="mt-4 grid grid-cols-3 gap-3.5">
 					<div className="flex h-[200px] flex-col overflow-hidden border border-border bg-background p-3">

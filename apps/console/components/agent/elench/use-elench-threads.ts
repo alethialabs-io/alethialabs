@@ -11,6 +11,7 @@ import {
 	listThreads,
 	renameThread,
 } from "@/app/server/actions/agent";
+import { track } from "@/lib/analytics/track";
 import type { AgentThread } from "@/lib/db/schema";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 
@@ -99,6 +100,7 @@ export function useElenchThreads() {
 	 * (org-level or project-scoped). */
 	const newChat = useCallback(async () => {
 		const t = await createThread(undefined, projectId);
+		track("elench_thread_created", { context: projectId ? "project" : "org" });
 		setThreads((prev) => [t, ...prev]);
 		setInitialMessages([]);
 		selectStore(t.id);
