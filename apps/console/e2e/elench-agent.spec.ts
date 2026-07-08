@@ -8,6 +8,12 @@
 // the optimistic user message is enough to prove the conversation survives a view flip.
 
 import { test, expect } from "./fixtures/auth";
+import {
+	proposeOperationChunks,
+	stubAgentStream,
+	textThenDashboardChunks,
+} from "./helpers/ai-stream";
+import type { DashboardSpec } from "../types/jsonb.types";
 
 test.describe("Elench agent — modal (org)", () => {
 	test.beforeEach(async ({ authedPage: page, orgSlug }) => {
@@ -80,5 +86,160 @@ test.describe("Elench agent — modal (org)", () => {
 		await expect(panel).toBeVisible();
 		await page.getByRole("button", { name: /close assistant/i }).click();
 		await expect(panel).toBeHidden();
+	});
+});
+
+// ─── Deterministic AI-off flows (no stubbing; the stack serves the modal + a 503 route) ───
+test.describe("Elench agent — AI-off deterministic flows (org)", () => {
+	test.beforeEach(async ({ authedPage: page, orgSlug }) => {
+		await page.goto(`/${orgSlug}/~/agent`);
+		await expect(page.getByTestId("elench-modal")).toBeVisible();
+	});
+
+	test("the suggestion carousel pages through its cards", async ({
+		authedPage: page,
+	}) => {
+		const cards = page.getByTestId("elench-suggestion");
+		await expect(cards).toHaveCount(3);
+		// Page 1 (org suggestions) leads with the connectors chip; dot 1 is current.
+		await expect(
+			page.getByRole("button", { name: /are my connectors healthy/i }),
+		).toBeVisible();
+		await expect(
+			page.getByRole("button", { name: /suggestions page 1/i }),
+		).toHaveAttribute("aria-current", "true");
+
+		await page.getByRole("button", { name: /next suggestions/i }).click();
+		// The visible 3 cards changed and the active dot advanced to page 2.
+		await expect(
+			page.getByRole("button", { name: /are my connectors healthy/i }),
+		).toHaveCount(0);
+		await expect(page.getByTestId("elench-suggestion")).toHaveCount(3);
+		await expect(
+			page.getByRole("button", { name: /suggestions page 2/i }),
+		).toHaveAttribute("aria-current", "true");
+
+		// A dot jumps directly to that page.
+		await page.getByRole("button", { name: /suggestions page 3/i }).click();
+		await expect(
+			page.getByRole("button", { name: /suggestions page 3/i }),
+		).toHaveAttribute("aria-current", "true");
+	});
+
+	test("a sent thread persists across a reload", async ({
+		authedPage: page,
+		orgSlug,
+	}) => {
+		const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
+		await composer.fill("persisted elench thread");
+		await composer.press("Enter");
+		await expect(page.getByText("persisted elench thread")).toBeVisible();
+
+		// The thread is created + titled from the first message → it shows in the rail.
+		const row = page
+			.getByTestId("thread-rail-row")
+			.filter({ hasText: /persisted elench thread/i });
+		await expect(row.first()).toBeVisible();
+
+		// Reload → the persisted thread resumes (rail row + message survive).
+		await page.goto(`/${orgSlug}/~/agent`);
+		await expect(
+			page
+				.getByTestId("thread-rail-row")
+				.filter({ hasText: /persisted elench thread/i })
+				.first(),
+		).toBeVisible();
+	});
+
+	test("sending with no AI key surfaces the 'AI not configured' error + Retry", async ({
+		authedPage: page,
+	}) => {
+		// The stack runs AI-off by default → /api/agent returns 503; ChatError classifies it
+		// as missing-key ("AI is not configured") and always offers a Retry.
+		const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
+		await composer.fill("anything at all");
+		await composer.press("Enter");
+		await expect(page.getByText(/ai is not configured/i)).toBeVisible();
+		await expect(page.getByRole("button", { name: /retry/i })).toBeVisible();
+	});
+});
+
+// ─── Stubbed streaming flows: page.route() fulfills a canned AI-SDK UI-message stream ───
+// These do NOT need a live model/key — the SSE stub (helpers/ai-stream) replays exactly what
+// `toUIMessageStreamResponse` frames and `useChat` parses.
+test.describe("Elench agent — stubbed streaming (org)", () => {
+	const SPEC: DashboardSpec = {
+		title: "Infrastructure overview",
+		blocks: [
+			{ kind: "stat", title: "Clusters", value: 4, sub: "live" },
+			{
+				kind: "bar",
+				title: "Jobs by provider",
+				data: [
+					{ label: "aws", value: 12 },
+					{ label: "gcp", value: 3 },
+				],
+			},
+			{ kind: "line", title: "Runner minutes", points: [10, 20, 30, 25] },
+		],
+	};
+
+	test("streams text + a build_dashboard tool part → Open dashboard opens the split pane", async ({
+		authedPage: page,
+		orgSlug,
+	}) => {
+		await stubAgentStream(
+			page,
+			textThenDashboardChunks("Here is your infrastructure overview.", SPEC),
+		);
+		await page.goto(`/${orgSlug}/~/agent`);
+		await expect(page.getByTestId("elench-modal")).toBeVisible();
+
+		const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
+		await composer.fill("build me a dashboard");
+		await composer.press("Enter");
+
+		// The streamed assistant text renders, then the generative-dashboard result card.
+		await expect(
+			page.getByText("Here is your infrastructure overview."),
+		).toBeVisible();
+		await expect(page.getByText("Dashboard ready")).toBeVisible();
+		await page.getByRole("button", { name: /open dashboard/i }).click();
+
+		// The artifact split pane opens with the stat/bar/line block titles from the spec.
+		await expect(page.getByText("Clusters")).toBeVisible();
+		await expect(page.getByText("Jobs by provider")).toBeVisible();
+		await expect(page.getByText("Runner minutes")).toBeVisible();
+	});
+
+	test("streams a HITL propose_operation → Approve fires the addToolResult follow-up request", async ({
+		authedPage: page,
+		orgSlug,
+	}) => {
+		const stub = await stubAgentStream(
+			page,
+			proposeOperationChunks({
+				label: "Plan ai-platform",
+				operation: { operation: "plan_project", projectId: "proj-e2e" },
+				stats: { add: 3, change: 1, destroy: 0, monthly: 120 },
+			}),
+		);
+		await page.goto(`/${orgSlug}/~/agent`);
+		await expect(page.getByTestId("elench-modal")).toBeVisible();
+
+		const composer = page.getByPlaceholder(/ask elench.*tag a resource/i);
+		await composer.fill("plan my project");
+		await composer.press("Enter");
+
+		// The HITL approval card renders from the input-available tool part.
+		await expect(page.getByText("Plan ai-platform")).toBeVisible();
+		const approve = page.getByRole("button", { name: /approve & plan/i });
+		await expect(approve).toBeVisible();
+		await approve.click();
+
+		// Approving feeds the outcome back via addToolResult; sendAutomaticallyWhen resumes the
+		// run → a SECOND request to the streaming route. (The plan action may deny a fake project,
+		// but the outcome still resolves the HITL loop, so the follow-up request fires either way.)
+		await expect.poll(() => stub.callCount()).toBeGreaterThanOrEqual(2);
 	});
 });

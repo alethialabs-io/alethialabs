@@ -12,6 +12,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn() }));
 
+// Spy on the drizzle predicate builders (keeping their real behavior) so the tests can assert
+// the ACTUAL scoping predicate each query builds — `eq(project_id, id)` vs `isNull(project_id)` —
+// rather than only counting `.where()` calls. The schema module imports the same (spread) module,
+// so table/column construction is unaffected.
+vi.mock("drizzle-orm", async (importActual) => {
+	const actual = await importActual<typeof import("drizzle-orm")>();
+	return {
+		...actual,
+		eq: vi.fn(actual.eq),
+		isNull: vi.fn(actual.isNull),
+	};
+});
+
 import {
 	createThread,
 	deleteThread,
@@ -22,6 +35,8 @@ import {
 } from "@/app/server/actions/agent";
 import { requireOwner } from "@/lib/auth/owner";
 import { withOwnerScope } from "@/lib/db";
+import { eq, isNull } from "drizzle-orm";
+import { agentThreads } from "@/lib/db/schema";
 
 /**
  * A drizzle-ish chain whose every builder returns itself, awaits to `rows`, and records the
@@ -148,7 +163,7 @@ describe("createThread", () => {
 });
 
 describe("listThreads", () => {
-	it("returns the owner's threads ordered by the chain (RLS scoped)", async () => {
+	it("returns the owner's threads and scopes org-level listing to project_id IS NULL", async () => {
 		const rows = [{ id: "t-1" }, { id: "t-2" }];
 		const { calls } = useChain(rows);
 		const result = await listThreads();
@@ -156,15 +171,25 @@ describe("listThreads", () => {
 		// Org-level listing filters (kind='agent' AND project_id IS NULL) then orders.
 		expect(calls.where).toHaveBeenCalledTimes(1);
 		expect(calls.orderBy).toHaveBeenCalledTimes(1);
+		// The actual predicate: kind='agent' + project_id IS NULL (no eq on project_id).
+		expect(vi.mocked(eq)).toHaveBeenCalledWith(agentThreads.kind, "agent");
+		expect(vi.mocked(isNull)).toHaveBeenCalledWith(agentThreads.project_id);
+		expect(vi.mocked(eq)).not.toHaveBeenCalledWith(
+			agentThreads.project_id,
+			expect.anything(),
+		);
 	});
 
-	it("filters by project when a projectId is given", async () => {
+	it("scopes listing to eq(project_id, id) when a projectId is given (no IS NULL)", async () => {
 		const rows = [{ id: "t-p" }];
 		const { calls } = useChain(rows);
 		const result = await listThreads("proj-9");
 		expect(result).toBe(rows);
 		expect(calls.where).toHaveBeenCalledTimes(1);
 		expect(calls.orderBy).toHaveBeenCalledTimes(1);
+		// The actual predicate: kind='agent' + project_id = 'proj-9'; never IS NULL.
+		expect(vi.mocked(eq)).toHaveBeenCalledWith(agentThreads.project_id, "proj-9");
+		expect(vi.mocked(isNull)).not.toHaveBeenCalledWith(agentThreads.project_id);
 	});
 });
 

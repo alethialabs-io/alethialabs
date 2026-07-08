@@ -118,6 +118,7 @@ export function ThreadRail({
 								<button
 									key={t.id}
 									type="button"
+									data-testid="thread-rail-row"
 									onClick={() => onSelect(t.id)}
 									className={cn(
 										"group flex w-full flex-col gap-0.5 border-l-2 border-transparent px-2.5 py-2 text-left transition-colors hover:bg-muted",
