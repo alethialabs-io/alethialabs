@@ -45,6 +45,8 @@ export interface PlanCatalogEntry {
 	perSeat?: boolean;
 	/** Monthly usage credit (USD) included with the plan — offsets metered charges. */
 	includedCreditUsd?: number;
+	/** Same included usage credit, in EUR (for EU-billed customers). */
+	includedCreditEur?: number;
 	tagline: string;
 	/** Paid tier (has a Stripe price) vs the free community baseline. */
 	paid: boolean;
@@ -98,6 +100,7 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 		priceMonthlyEur: 18,
 		perSeat: true,
 		includedCreditUsd: 20,
+		includedCreditEur: 18,
 		tagline: "Collaborate in a shared organization.",
 		paid: true,
 		popular: true,
@@ -237,6 +240,23 @@ export function planUnitAmountCents(
 /** The plan's monthly included usage credit in cents (0 when none). */
 export function planIncludedCreditCents(plan: PlanId): number {
 	return Math.round((planMeta(plan).includedCreditUsd ?? 0) * 100);
+}
+
+// ── Currency resolution (shared by the console billing flow + the marketing pricing page) ──
+
+/** EU + EEA country codes billed in EUR (ISO 3166-1 alpha-2). */
+export const EU_COUNTRIES: ReadonlySet<string> = new Set([
+	// EU
+	"AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU",
+	"IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE",
+	// EEA (euro-adjacent) — bill in EUR too
+	"IS", "LI", "NO",
+]);
+
+/** The billing currency for a country code — EUR for the EU/EEA, USD otherwise. */
+export function resolveCurrency(country?: string | null): SupportedCurrency {
+	const cc = country?.trim().toUpperCase();
+	return cc && EU_COUNTRIES.has(cc) ? "eur" : "usd";
 }
 
 // ── Live-price formatting ────────────────────────────────────────────────────────

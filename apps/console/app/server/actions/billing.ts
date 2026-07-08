@@ -565,6 +565,8 @@ export async function createCheckoutSession(
 export interface SubscriptionIntent {
 	clientSecret: string;
 	subscriptionId: string;
+	/** The currency the subscription was created in (Stripe locks it) — drives the UI toggle. */
+	currency: SupportedCurrency;
 }
 
 /**
@@ -632,7 +634,7 @@ export async function createSubscriptionIntent(
 	if (!clientSecret) {
 		throw new Error("Stripe did not return a payment client secret.");
 	}
-	return { clientSecret, subscriptionId: sub.id };
+	return { clientSecret, subscriptionId: sub.id, currency };
 }
 
 /**
@@ -802,6 +804,7 @@ export async function createNewOrgSubscriptionIntent(
 		orgName: string;
 		priorSubscriptionId?: string;
 		customerId?: string;
+		currency?: SupportedCurrency;
 	},
 ): Promise<NewOrgSubscriptionIntent> {
 	const actor = await currentActor();
@@ -849,11 +852,15 @@ export async function createNewOrgSubscriptionIntent(
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
 		: {};
+	// Resolve the billing currency before creating the sub (Stripe locks it): explicit
+	// selection wins, else the request geo.
+	const currency = opts.currency ?? (await currencyFromRequest());
 	// The org doesn't exist yet (owner only) — start at 1 seat; per-seat sync grows the
 	// quantity as invited members accept (lib/billing/seats syncOrgSeats via org hooks).
 	const sub = await getStripe().subscriptions.create({
 		customer: customerId,
 		items: planCreateItems(plan, 1),
+		currency,
 		payment_behavior: "default_incomplete",
 		payment_settings: { save_default_payment_method: "on_subscription" },
 		expand: ["latest_invoice.confirmation_secret"],
@@ -869,7 +876,7 @@ export async function createNewOrgSubscriptionIntent(
 	if (!clientSecret) {
 		throw new Error("Stripe did not return a payment client secret.");
 	}
-	return { clientSecret, subscriptionId: sub.id, customerId };
+	return { clientSecret, subscriptionId: sub.id, customerId, currency };
 }
 
 /**

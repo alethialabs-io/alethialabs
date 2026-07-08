@@ -31,7 +31,7 @@ import {
 	type TaxIdType,
 	taxIdOption,
 } from "@/lib/billing/tax-ids";
-import type { PlanCatalogEntry } from "@repo/plan-catalog";
+import type { PlanCatalogEntry, SupportedCurrency } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
 import { Checkbox } from "@repo/ui/checkbox";
 import { CountrySelect } from "@repo/ui/country-select";
@@ -100,8 +100,9 @@ const schema = z.object({
 });
 type FormData = z.infer<typeof schema>;
 
-function money(n: number): string {
-	return `$${n.toLocaleString("en-US")}`;
+function money(n: number, currency: SupportedCurrency): string {
+	const symbol = currency === "eur" ? "€" : "$";
+	return `${symbol}${n.toLocaleString("en-US")}`;
 }
 
 interface BillingCheckoutFormProps {
@@ -109,8 +110,10 @@ interface BillingCheckoutFormProps {
 	clientSecret: string;
 	/** Plan catalog entry — drives the name, included credit, and feature copy. */
 	meta: PlanCatalogEntry;
-	/** Live per-seat price (USD) from Stripe — authoritative; falls back to the catalog. */
-	unitAmountUsd?: number | null;
+	/** Live per-seat price (in `currency`) from Stripe — authoritative; falls back to the catalog. */
+	unitAmount?: number | null;
+	/** The billing currency (drives the money formatting + fallback). */
+	currency: SupportedCurrency;
 	/** Owner email for the "1 member" summary row. */
 	ownerEmail?: string;
 	submitLabel?: string;
@@ -131,7 +134,8 @@ interface BillingCheckoutFormProps {
 export function BillingCheckoutForm({
 	clientSecret,
 	meta,
-	unitAmountUsd,
+	unitAmount,
+	currency,
 	ownerEmail,
 	submitLabel,
 	scrollable = false,
@@ -162,9 +166,12 @@ export function BillingCheckoutForm({
 		mode: "onChange",
 	});
 
-	// Stripe-authoritative seat price (catalog only as a fallback while it loads / offline).
-	const unit = unitAmountUsd ?? meta.priceMonthlyUsd ?? 0;
-	const credit = meta.includedCreditUsd ?? 0;
+	// Stripe-authoritative seat price in the selected currency (catalog fallback while it
+	// loads / offline).
+	const unit =
+		unitAmount ?? (currency === "eur" ? meta.priceMonthlyEur : meta.priceMonthlyUsd) ?? 0;
+	const credit =
+		(currency === "eur" ? meta.includedCreditEur : meta.includedCreditUsd) ?? 0;
 	// Order summary line items — base seat (the owner) + the included member at $0.
 	const lineItems = [
 		{ label: meta.name, cost: unit },
@@ -250,7 +257,7 @@ export function BillingCheckoutForm({
 							</Tooltip>
 						</div>
 						<span className="font-mono text-[13px] text-text-primary">
-							{money(credit)}
+							{money(credit, currency)}
 						</span>
 					</div>
 				)}
@@ -376,7 +383,7 @@ export function BillingCheckoutForm({
 				{/* legal paragraph */}
 				<p className="text-[11px] leading-relaxed text-text-tertiary">
 					By clicking {submitLabel ?? "Create"}, you authorize a charge of{" "}
-					{money(total)} now and the same amount each month until you cancel. Any
+					{money(total, currency)} now and the same amount each month until you cancel. Any
 					applicable tax is estimated and finalized on your invoice.
 				</p>
 
@@ -392,7 +399,7 @@ export function BillingCheckoutForm({
 					<div className="flex items-center justify-between px-4 py-3 text-[12.5px]">
 						<span className="font-medium text-text-primary">{meta.name}</span>
 						<span className="font-mono text-[12px] text-text-secondary">
-							{money(unit)}
+							{money(unit, currency)}
 						</span>
 					</div>
 
@@ -414,7 +421,7 @@ export function BillingCheckoutForm({
 								1 member
 							</span>
 							<span className="font-mono text-[12px] text-text-secondary">
-								{money(0)}
+								{money(0, currency)}
 							</span>
 						</button>
 						{membersExpanded && ownerEmail && (
@@ -434,7 +441,7 @@ export function BillingCheckoutForm({
 					<div className="flex items-center justify-end gap-3 border-t border-border px-4 py-3">
 						<span className="text-[13px] font-medium text-text-primary">Total</span>
 						<span className="font-display text-[16px] font-semibold text-text-primary">
-							{money(total)}
+							{money(total, currency)}
 							<span className="font-mono text-[11px] font-normal text-text-tertiary">
 								{" "}
 								/ month
@@ -458,7 +465,7 @@ export function BillingCheckoutForm({
 					)}
 
 					<Button type="submit" className="w-full" disabled={!stripe || submitting}>
-						{submitting ? "Processing…" : (submitLabel ?? `Create — ${money(total)}`)}
+						{submitting ? "Processing…" : (submitLabel ?? `Create — ${money(total, currency)}`)}
 					</Button>
 				</div>
 			</form>
