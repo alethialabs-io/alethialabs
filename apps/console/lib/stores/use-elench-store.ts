@@ -37,6 +37,11 @@ interface ElenchState {
 	mode: AgentMode;
 	/** Selected org model id (allowlisted in AI_MODELS). */
 	model: string;
+	/**
+	 * Per-message "deep reasoning" opt-in — rides the request as `deepReasoning`. Only meaningful
+	 * on the `ai_max` tier, where it swaps the planning advisor from Sonnet to Opus for that turn.
+	 */
+	deepReasoning: boolean;
 	/** Active org thread id; null = a fresh (not-yet-persisted) conversation. */
 	threadId: string | null;
 	/**
@@ -73,6 +78,8 @@ interface ElenchState {
 
 	setMode: (mode: AgentMode) => void;
 	setModel: (model: string) => void;
+	/** Toggle the per-message deep-reasoning (Opus) opt-in. */
+	setDeepReasoning: (deepReasoning: boolean) => void;
 	/** Expand/collapse the modal thread rail. */
 	setRailOpen: (open: boolean) => void;
 	/**
@@ -107,6 +114,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	ctx: { kind: "org" },
 	mode: "ask",
 	model: AI_MODELS[0].id,
+	deepReasoning: false,
 	threadId: null,
 	epoch: 0,
 	seedPrompt: null,
@@ -153,6 +161,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 
 	setMode: (mode) => set({ mode }),
 	setModel: (model) => set({ model }),
+	setDeepReasoning: (deepReasoning) => set({ deepReasoning }),
 	setRailOpen: (railOpen) => set({ railOpen }),
 	selectThread: (id) => set((s) => ({ threadId: id, epoch: s.epoch + 1 })),
 	attachThread: (id) => set({ threadId: id }),

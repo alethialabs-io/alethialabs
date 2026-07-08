@@ -127,16 +127,26 @@ export function getExecutorModel(): ResolvedModel {
 }
 
 /**
- * The **advisor** (planning/review) model for an org's AI tier: Sonnet 4.6 on `ai_plus`,
- * Opus 4.8 on `ai_max`, and the executor (Haiku — i.e. NO distinct advisor) on `ai_free`.
- * The agent's step 0 (planning) runs on the advisor; the tool loop runs on the executor.
+ * The **advisor** (planning/review) model for an org's AI tier. The agent's step 0 (planning)
+ * runs on the advisor; the tool loop runs on the executor. Per model:
+ *  - `ai_plus` → Sonnet 4.6 (`AI_ADVISOR_MODEL_PLUS`).
+ *  - `ai_max`  → Sonnet 4.6 by DEFAULT (same as Plus, just larger allowances), upgrading to the
+ *    Opus advisor (`AI_ADVISOR_MODEL_MAX`) ONLY when `opts.deepReasoning` is set — the per-message
+ *    "deep reasoning" opt-in. Metering is per-model, so an Opus turn tracks its own (higher) cost.
+ *  - `ai_free` → no distinct advisor → the executor (Haiku).
  * Each tier is overridable via `AI_ADVISOR_MODEL_MAX` / `AI_ADVISOR_MODEL_PLUS`.
+ *
+ * @param tier - the org's effective AI tier.
+ * @param opts.deepReasoning - when true AND `tier === "ai_max"`, bind the Opus advisor; ignored otherwise.
  */
-export function getAdvisorModel(tier: AiTier): ResolvedModel {
-	if (tier === "ai_max") {
+export function getAdvisorModel(
+	tier: AiTier,
+	opts: { deepReasoning?: boolean } = {},
+): ResolvedModel {
+	if (tier === "ai_max" && opts.deepReasoning) {
 		return resolveModel(env("AI_ADVISOR_MODEL_MAX") || DEFAULT_ADVISOR_MAX);
 	}
-	if (tier === "ai_plus") {
+	if (tier === "ai_max" || tier === "ai_plus") {
 		return resolveModel(env("AI_ADVISOR_MODEL_PLUS") || DEFAULT_ADVISOR_PLUS);
 	}
 	return getExecutorModel();

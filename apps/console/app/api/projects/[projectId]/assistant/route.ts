@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { convertToModelMessages, stepCountIs, streamText, type UIMessage } from "ai";
+import { z } from "zod";
 import { saveThreadMessages } from "@/app/server/actions/agent";
 import type { CanvasContext } from "@/lib/ai/canvas-context";
 import { summarizeCanvas } from "@/lib/ai/canvas-context";
@@ -33,7 +34,15 @@ interface ProjectAssistantBody {
 	threadId?: string;
 	/** Resources the user @-referenced in the latest message. */
 	mentions?: Mention[];
+	/**
+	 * Per-message opt-in to the Opus advisor ("deep reasoning"). Only effective on `ai_max`
+	 * (the advisor selection guards it); ignored on every other tier.
+	 */
+	deepReasoning?: boolean;
 }
+
+/** Parse the optional `deepReasoning` flag from a request body — defaults to false. */
+const deepReasoningSchema = z.boolean().catch(false);
 
 /** Project-page assistant system prompt — drives the "A" loop for one project. */
 function systemPrompt(projectId: string, canvas: CanvasContext | undefined): string {
@@ -118,14 +127,21 @@ export async function POST(
 		);
 	}
 
-	const { messages, canvas, threadId, mentions }: ProjectAssistantBody =
-		await req.json();
+	const {
+		messages,
+		canvas,
+		threadId,
+		mentions,
+		deepReasoning: deepReasoningRaw,
+	}: ProjectAssistantBody = await req.json();
+	const deepReasoning = deepReasoningSchema.parse(deepReasoningRaw);
 
-	// Cost-optimized orchestration: a tier-derived ADVISOR (Sonnet/Opus) plans step 0, then a
-	// cheap Haiku EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor).
+	// Cost-optimized orchestration: a tier-derived ADVISOR plans step 0, then a cheap Haiku
+	// EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor). The advisor
+	// is Sonnet by default; on ai_max the per-message `deepReasoning` opt-in upgrades it to Opus.
 	const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as const);
 	const executor = getExecutorModel();
-	const advisor = getAdvisorModel(tier);
+	const advisor = getAdvisorModel(tier, { deepReasoning });
 	/** The canonical key metered for a given step (step 0 = advisor; the rest = executor). */
 	const modelForStep = (stepNumber: number): string =>
 		stepNumber === 0 ? advisor.key : executor.key;

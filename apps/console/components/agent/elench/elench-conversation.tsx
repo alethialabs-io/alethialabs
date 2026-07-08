@@ -93,6 +93,7 @@ export function ElenchConversation({
 							mode: s.mode,
 							model: s.model,
 							mentions: s.pendingMentions,
+							deepReasoning: s.deepReasoning,
 						};
 					}
 				: () => ({
