@@ -17,6 +17,7 @@ const CACHE_READ_MULTIPLIER = 0.1;
 
 /** $/MTok by AI Gateway model id (the `provider/model` ids in lib/config/ai.ts). */
 const MODEL_PRICES: Record<string, ModelPrice> = {
+	"anthropic/claude-haiku-4.5": { inputPerMTok: 1, outputPerMTok: 5 },
 	"anthropic/claude-sonnet-4.6": { inputPerMTok: 3, outputPerMTok: 15 },
 	"anthropic/claude-opus-4.8": { inputPerMTok: 5, outputPerMTok: 25 },
 };
