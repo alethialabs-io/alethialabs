@@ -9,6 +9,7 @@ import {
 	lastChecked,
 	matchesTriage,
 	rowScore,
+	sumSeverities,
 	type EvidenceEnvRow,
 } from "@/components/evidence/evidence-derive";
 import type { OrgEvidence } from "@/lib/queries/evidence";
@@ -228,5 +229,94 @@ describe("lastChecked / isStale", () => {
 		const never = mkRow({ id: "c" });
 		expect(lastChecked(never)).toBeNull();
 		expect(isStale(never)).toBe(true);
+	});
+});
+
+describe("deriveGroups — waived filter + project grouping", () => {
+	it("filters to environments named by an active waiver", () => {
+		const rows = [
+			mkRow({ id: "a", projectName: "payments", environmentName: "prod" }),
+			mkRow({ id: "b", projectName: "ledger", environmentName: "prod" }),
+		];
+		const data: OrgEvidence = {
+			...ev(rows),
+			waivers: [
+				{
+					jobId: "w1",
+					projectName: "payments",
+					environmentName: "prod",
+					controls: ["KEYLESS-001"],
+					reason: "temp",
+					by: "admin",
+					expiry: null,
+					active: true,
+					createdAt: NOW,
+				},
+			],
+		};
+		const { resultCount } = deriveGroups(data, {
+			search: "",
+			stage: "all",
+			triage: "waived",
+			group: "triage",
+			sort: "worst",
+		});
+		expect(resultCount).toBe(1); // only the payments/prod env is waived
+	});
+
+	it("buckets by project when grouping by project", () => {
+		const rows = [
+			mkRow({ id: "a", projectId: "p1", projectName: "payments" }),
+			mkRow({ id: "b", projectId: "p2", projectName: "ledger" }),
+			mkRow({ id: "c", projectId: "p1", projectName: "payments" }),
+		];
+		const { groups } = deriveGroups(ev(rows), {
+			search: "",
+			stage: "all",
+			triage: "all",
+			group: "project",
+			sort: "name",
+		});
+		expect(groups).toHaveLength(2);
+		expect(groups.map((g) => g.label)).toEqual(["ledger", "payments"]);
+		expect(groups.find((g) => g.key === "p1")?.rows).toHaveLength(2);
+	});
+});
+
+describe("sumSeverities", () => {
+	it("sums severities only across scanned environments", () => {
+		const rows = [
+			mkRow({
+				id: "a",
+				security: {
+					critical: 1,
+					high: 2,
+					medium: 3,
+					low: 4,
+					scanned: true,
+					scannedAt: NOW,
+					reportCount: 1,
+				},
+			}),
+			mkRow({
+				id: "b",
+				security: {
+					critical: 9,
+					high: 9,
+					medium: 9,
+					low: 9,
+					scanned: false, // must be ignored
+					scannedAt: NOW,
+					reportCount: 0,
+				},
+			}),
+			mkRow({ id: "c" }), // no security at all
+		];
+		expect(sumSeverities(rows)).toEqual({
+			critical: 1,
+			high: 2,
+			medium: 3,
+			low: 4,
+		});
 	});
 });
