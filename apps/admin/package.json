@@ -11,7 +11,6 @@
 	},
 	"dependencies": {
 		"@aws-sdk/client-s3": "^3.1080.0",
-		"@aws-sdk/s3-request-presigner": "^3.1080.0",
 		"@repo/brand": "workspace:*",
 		"@repo/email": "workspace:*",
 		"@repo/support": "workspace:*",
