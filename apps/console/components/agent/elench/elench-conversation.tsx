@@ -93,13 +93,21 @@ export function ElenchConversation({
 		[isOrg, projectId],
 	);
 
-	const { messages, sendMessage, status, error, regenerate, stop, resumeStream } =
-		useAgentChat({
-			api,
-			id: activeId ?? undefined,
-			initialMessages,
-			prepareBody,
-		});
+	const {
+		messages,
+		sendMessage,
+		status,
+		error,
+		regenerate,
+		stop,
+		resumeStream,
+		addToolResult,
+	} = useAgentChat({
+		api,
+		id: activeId ?? undefined,
+		initialMessages,
+		prepareBody,
+	});
 
 	// Resume an interrupted stream after a reload: if the resumed transcript ends on a
 	// user turn, the assistant reply never landed — try to reconnect once. Guarded so a
@@ -149,9 +157,9 @@ export function ElenchConversation({
 	const renderToolPart = useMemo(
 		() =>
 			isOrg
-				? orgRenderToolPart({ openArtifact })
-				: projectRenderToolPart({ accepted, setAccepted }),
-		[isOrg, openArtifact, accepted],
+				? orgRenderToolPart({ openArtifact, addToolResult })
+				: projectRenderToolPart({ accepted, setAccepted, addToolResult }),
+		[isOrg, openArtifact, accepted, addToolResult],
 	);
 
 	const isEmpty = messages.length === 0;

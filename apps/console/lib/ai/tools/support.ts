@@ -27,9 +27,9 @@ export function buildSupportTools() {
 				"type/category/severity, and attach any ids you looked up as context. " +
 				"Never claim a case was created; say you're proposing one.",
 			inputSchema: createSupportCaseInputSchema,
-			// Emits the proposal (does not write) — the UI renders an approval card and
-			// calls `submitCase(...)` on approval, mirroring `propose_operation`.
-			execute: async (input) => ({ id: crypto.randomUUID(), ...input }),
+			// No execute (HITL) — the UI renders an approval card and calls `submitCase(...)`
+			// on approval, then feeds the outcome back via addToolResult, mirroring
+			// `propose_operation`. The model's turn pauses on the proposal until then.
 		}),
 	};
 }

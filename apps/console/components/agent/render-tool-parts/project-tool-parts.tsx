@@ -13,14 +13,12 @@ import {
 	ToolView,
 } from "@/components/agent/agent-tool-views";
 import { ApprovalCard } from "@/components/agent/approval-card";
-import {
-	isToolPreparing,
-	ToolPending,
-} from "@/components/agent/render-tool-parts/tool-pending";
+import { ToolPending } from "@/components/agent/render-tool-parts/tool-pending";
+import type { AddToolResult } from "@/components/agent/use-agent-chat";
 import { VerifyBlock } from "@/components/agent/artifact-panel";
 import { applyProposal } from "@/components/design-project/canvas/ai/apply-proposal";
-import { operationProposalSchema } from "@/lib/ai/operation";
-import { aiProposalSchema } from "@/lib/ai/proposal";
+import { proposeOperationInputSchema } from "@/lib/ai/operation";
+import { proposeChangesInputSchema } from "@/lib/ai/proposal";
 import { Button } from "@repo/ui/button";
 
 const scanResultSchema = z.object({ openInCanvasUrl: z.string().optional() });
@@ -60,6 +58,8 @@ interface ProjectToolPartsDeps {
 	/** Accepted-proposal map (id → true) so re-renders keep the "Added" state. */
 	accepted: Record<string, boolean>;
 	setAccepted: (updater: (a: Record<string, boolean>) => Record<string, boolean>) => void;
+	/** Feed a HITL tool's outcome back to the model so it continues after approval. */
+	addToolResult: AddToolResult;
 }
 
 /**
@@ -71,16 +71,18 @@ interface ProjectToolPartsDeps {
 export function projectRenderToolPart({
 	accepted,
 	setAccepted,
+	addToolResult,
 }: ProjectToolPartsDeps): RenderToolPart {
 	// eslint-disable-next-line react/display-name
 	return function renderProjectToolPart(part: ToolUIPart) {
-		// Design proposal → accept lane (applies to the canvas).
+		// Design proposal → accept lane (HITL: applies to the canvas, then feeds the
+		// accepted outcome back so the model continues).
 		if (part.type === "tool-propose_changes") {
-			if (isToolPreparing(part)) return <ToolPending label="Preparing changes" />;
-			if (part.state !== "output-available") return null;
-			const parsed = aiProposalSchema.safeParse(part.output);
+			if (part.state === "input-streaming")
+				return <ToolPending label="Preparing changes" />;
+			const parsed = proposeChangesInputSchema.safeParse(part.input);
 			if (!parsed.success) return null;
-			const proposal = parsed.data;
+			const proposal = { id: part.toolCallId, ...parsed.data };
 			const isAccepted = accepted[proposal.id];
 			return (
 				<div className="flex w-full items-center justify-between border border-border px-2.5 py-1.5">
@@ -98,6 +100,11 @@ export function projectRenderToolPart({
 							onClick={() => {
 								applyProposal(proposal);
 								setAccepted((a) => ({ ...a, [proposal.id]: true }));
+								addToolResult({
+									tool: "propose_changes",
+									toolCallId: part.toolCallId,
+									output: { status: "accepted", label: proposal.label },
+								});
 							}}
 						>
 							<Check className="mr-1 h-3 w-3" />
@@ -108,13 +115,25 @@ export function projectRenderToolPart({
 			);
 		}
 
-		// Plan/deploy proposal → approval card (runs plan/deploy on the user's click).
+		// Plan/deploy proposal → approval card (HITL: runs plan/deploy on the user's click,
+		// then feeds the outcome back so the model continues).
 		if (part.type === "tool-propose_operation") {
-			if (isToolPreparing(part)) return <ToolPending label="Preparing operation" />;
-			if (part.state !== "output-available") return null;
-			const parsed = operationProposalSchema.safeParse(part.output);
+			if (part.state === "input-streaming")
+				return <ToolPending label="Preparing operation" />;
+			const parsed = proposeOperationInputSchema.safeParse(part.input);
 			if (!parsed.success) return null;
-			return <ApprovalCard proposal={parsed.data} />;
+			return (
+				<ApprovalCard
+					proposal={{ id: part.toolCallId, ...parsed.data }}
+					onResolve={(output) =>
+						addToolResult({
+							tool: "propose_operation",
+							toolCallId: part.toolCallId,
+							output,
+						})
+					}
+				/>
+			);
 		}
 
 		// Plan result → render the elench verification verdict inline (the proof beat),

@@ -177,15 +177,12 @@ describe("composeTools.estimate_cost", () => {
 });
 
 describe("composeTools.propose_changes", () => {
-	it("echoes the label + actions and assigns a uuid id", async () => {
-		const actions = [{ kind: "add_node" as const, nodeKind: "database" as const, config: { engine: "pg" } }];
-		const out = (await run(composeTools(undefined).propose_changes, {
-			label: "Add a Postgres database",
-			actions,
-		})) as { id: string; label: string; actions: unknown };
-		expect(out.label).toBe("Add a Postgres database");
-		expect(out.actions).toEqual(actions);
-		expect(out.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+	it("is a HITL tool with NO execute (the user accepts client-side)", () => {
+		// Removing execute makes the model's turn pause on the proposal until the user
+		// accepts it on the canvas; the accepted outcome returns via addToolResult.
+		expect(
+			(composeTools(undefined).propose_changes as { execute?: unknown }).execute,
+		).toBeUndefined();
 	});
 
 	it("wires the real proposal schema as its input contract (min 1 action)", () => {
