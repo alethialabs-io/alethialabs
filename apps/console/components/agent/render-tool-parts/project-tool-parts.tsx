@@ -13,6 +13,10 @@ import {
 	ToolView,
 } from "@/components/agent/agent-tool-views";
 import { ApprovalCard } from "@/components/agent/approval-card";
+import {
+	isToolPreparing,
+	ToolPending,
+} from "@/components/agent/render-tool-parts/tool-pending";
 import { VerifyBlock } from "@/components/agent/artifact-panel";
 import { applyProposal } from "@/components/design-project/canvas/ai/apply-proposal";
 import { operationProposalSchema } from "@/lib/ai/operation";
@@ -72,6 +76,7 @@ export function projectRenderToolPart({
 	return function renderProjectToolPart(part: ToolUIPart) {
 		// Design proposal → accept lane (applies to the canvas).
 		if (part.type === "tool-propose_changes") {
+			if (isToolPreparing(part)) return <ToolPending label="Preparing changes" />;
 			if (part.state !== "output-available") return null;
 			const parsed = aiProposalSchema.safeParse(part.output);
 			if (!parsed.success) return null;
@@ -105,6 +110,7 @@ export function projectRenderToolPart({
 
 		// Plan/deploy proposal → approval card (runs plan/deploy on the user's click).
 		if (part.type === "tool-propose_operation") {
+			if (isToolPreparing(part)) return <ToolPending label="Preparing operation" />;
 			if (part.state !== "output-available") return null;
 			const parsed = operationProposalSchema.safeParse(part.output);
 			if (!parsed.success) return null;

@@ -54,12 +54,15 @@ const TYPE_ICON: Record<MentionType, LucideIcon> = {
  */
 export function ElenchComposer({
 	onSend,
+	onStop,
 	placeholder = "Ask Elench, or type @ to tag a resource",
 	showModel = false,
 	status,
 	autoFocus = false,
 }: {
 	onSend: (text: string, mentions: Mention[]) => void;
+	/** Abort the in-flight stream — wired to the Square button while generating. */
+	onStop?: () => void;
 	placeholder?: string;
 	/** Show the model picker (sliders) — org context only. */
 	showModel?: boolean;
@@ -222,9 +225,11 @@ export function ElenchComposer({
 						{showModel && <ElenchModelButton />}
 						<button
 							type="button"
-							aria-label="Send"
-							onClick={submit}
-							disabled={pending || value.trim().length === 0}
+							aria-label={pending && onStop ? "Stop" : "Send"}
+							onClick={pending ? onStop : submit}
+							disabled={
+								pending ? !onStop : value.trim().length === 0
+							}
 							className="flex size-8 items-center justify-center bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
 						>
 							{pending ? (
