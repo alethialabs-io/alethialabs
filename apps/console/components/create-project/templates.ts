@@ -21,6 +21,7 @@ const GPU_INSTANCE: Record<CloudProviderSlug, string> = {
 	azure: "Standard_NC4as_T4_v3",
 	// Hetzner has no GPU instances — the AI template falls back to the default node type.
 	hetzner: "",
+	alibaba: "ecs.gn6i-c4g1.xlarge",
 };
 
 /** Picks the node instance type for a template + provider (GPU for AI, default otherwise). */

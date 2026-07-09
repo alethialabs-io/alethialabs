@@ -53,6 +53,14 @@ export const INSTANCE_TYPES: Record<CloudProviderSlug, InstanceTypeOption[]> = {
 		{ value: "cx23", label: "CX23 (x86)", vcpu: 2, memoryGb: 4, cost: "~€5/mo" },
 		{ value: "cx33", label: "CX33 (x86)", vcpu: 4, memoryGb: 8, cost: "~€8/mo" },
 	],
+	alibaba: [
+		{ value: "ecs.c6.large", label: "c6.large", vcpu: 2, memoryGb: 4, cost: "~$35/mo" },
+		{ value: "ecs.g6.large", label: "g6.large", vcpu: 2, memoryGb: 8, cost: "~$50/mo" },
+		{ value: "ecs.g6.xlarge", label: "g6.xlarge", vcpu: 4, memoryGb: 16, cost: "~$100/mo" },
+		{ value: "ecs.c6.xlarge", label: "c6.xlarge", vcpu: 4, memoryGb: 8, cost: "~$70/mo" },
+		{ value: "ecs.r6.large", label: "r6.large", vcpu: 2, memoryGb: 16, cost: "~$75/mo" },
+		{ value: "ecs.g6.2xlarge", label: "g6.2xlarge", vcpu: 8, memoryGb: 32, cost: "~$200/mo" },
+	],
 };
 
 /** Supported Kubernetes versions per provider (latest first). */
@@ -61,6 +69,7 @@ export const K8S_VERSIONS: Record<CloudProviderSlug, string[]> = {
 	gcp: ["1.31", "1.30", "1.29", "1.28"],
 	azure: ["1.31", "1.30", "1.29", "1.28"],
 	hetzner: ["1.32", "1.31", "1.30"],
+	alibaba: ["1.31", "1.30", "1.28"],
 };
 
 interface AutoscalerMeta {
@@ -91,6 +100,11 @@ export const AUTOSCALER: Record<CloudProviderSlug, AutoscalerMeta> = {
 		label: "Cluster Autoscaler",
 		description: "hcloud autoscaler adds/removes nodes based on pending pods",
 	},
+	alibaba: {
+		providerConfigKey: "enable_cluster_autoscaler",
+		label: "Cluster Autoscaler",
+		description: "ACK auto-scales node pools by pending pods",
+	},
 };
 
 /** Default instance type per provider (used for new project forms). */
@@ -99,6 +113,7 @@ export const DEFAULT_INSTANCE_TYPE: Record<CloudProviderSlug, string> = {
 	gcp: "e2-medium",
 	azure: "Standard_D2s_v5",
 	hetzner: "cax11",
+	alibaba: "ecs.g6.large",
 };
 
 /** Default K8s version per provider. */
@@ -107,6 +122,7 @@ export const DEFAULT_K8S_VERSION: Record<CloudProviderSlug, string> = {
 	gcp: "1.31",
 	azure: "1.31",
 	hetzner: "1.32",
+	alibaba: "1.30",
 };
 
 /** Cross-provider instance type mapping for project conversion. */
@@ -149,6 +165,17 @@ export const INSTANCE_TYPE_MAP: Record<
 			"r5.large": "cax11",
 			"g4dn.xlarge": "cax11",
 		},
+		alibaba: {
+			"t3.medium": "ecs.g6.large",
+			"t3.large": "ecs.g6.large",
+			"t3.xlarge": "ecs.g6.xlarge",
+			"m5a.large": "ecs.g6.large",
+			"m5a.xlarge": "ecs.g6.xlarge",
+			"c5.large": "ecs.c6.large",
+			"c5.xlarge": "ecs.c6.xlarge",
+			"r5.large": "ecs.r6.large",
+			"g4dn.xlarge": "ecs.g6.2xlarge",
+		},
 	},
 	gcp: {
 		gcp: {},
@@ -180,6 +207,16 @@ export const INSTANCE_TYPE_MAP: Record<
 			"c2-standard-4": "cax31",
 			"n2-highmem-2": "cax11",
 			"n1-standard-1": "cax11",
+		},
+		alibaba: {
+			"e2-medium": "ecs.g6.large",
+			"e2-standard-2": "ecs.g6.large",
+			"e2-standard-4": "ecs.g6.xlarge",
+			"n2-standard-2": "ecs.g6.large",
+			"n2-standard-4": "ecs.g6.xlarge",
+			"c2-standard-4": "ecs.c6.xlarge",
+			"n2-highmem-2": "ecs.r6.large",
+			"n1-standard-1": "ecs.c6.large",
 		},
 	},
 	azure: {
@@ -214,6 +251,16 @@ export const INSTANCE_TYPE_MAP: Record<
 			"Standard_E2s_v5": "cax11",
 			"Standard_NC4as_T4_v3": "cax11",
 		},
+		alibaba: {
+			"Standard_D2s_v5": "ecs.g6.large",
+			"Standard_D4s_v5": "ecs.g6.xlarge",
+			"Standard_D8s_v5": "ecs.g6.2xlarge",
+			"Standard_D2as_v5": "ecs.g6.large",
+			"Standard_D4as_v5": "ecs.g6.xlarge",
+			"Standard_F2s_v2": "ecs.c6.large",
+			"Standard_E2s_v5": "ecs.r6.large",
+			"Standard_NC4as_T4_v3": "ecs.g6.2xlarge",
+		},
 	},
 	hetzner: {
 		hetzner: {},
@@ -237,6 +284,48 @@ export const INSTANCE_TYPE_MAP: Record<
 			cax31: "Standard_D8s_v5",
 			cx23: "Standard_D2s_v5",
 			cx33: "Standard_D4s_v5",
+		},
+		alibaba: {
+			cax11: "ecs.g6.large",
+			cax21: "ecs.g6.xlarge",
+			cax31: "ecs.g6.2xlarge",
+			cx23: "ecs.g6.large",
+			cx33: "ecs.g6.xlarge",
+		},
+	},
+	alibaba: {
+		alibaba: {},
+		hetzner: {
+			"ecs.c6.large": "cx23",
+			"ecs.g6.large": "cax11",
+			"ecs.g6.xlarge": "cax21",
+			"ecs.c6.xlarge": "cx33",
+			"ecs.r6.large": "cax21",
+			"ecs.g6.2xlarge": "cax31",
+		},
+		aws: {
+			"ecs.c6.large": "c5.large",
+			"ecs.g6.large": "t3.large",
+			"ecs.g6.xlarge": "t3.xlarge",
+			"ecs.c6.xlarge": "c5.xlarge",
+			"ecs.r6.large": "r5.large",
+			"ecs.g6.2xlarge": "m5a.xlarge",
+		},
+		gcp: {
+			"ecs.c6.large": "c2-standard-4",
+			"ecs.g6.large": "e2-standard-2",
+			"ecs.g6.xlarge": "e2-standard-4",
+			"ecs.c6.xlarge": "c2-standard-4",
+			"ecs.r6.large": "n2-highmem-2",
+			"ecs.g6.2xlarge": "n2-standard-4",
+		},
+		azure: {
+			"ecs.c6.large": "Standard_F2s_v2",
+			"ecs.g6.large": "Standard_D2s_v5",
+			"ecs.g6.xlarge": "Standard_D4s_v5",
+			"ecs.c6.xlarge": "Standard_F2s_v2",
+			"ecs.r6.large": "Standard_E2s_v5",
+			"ecs.g6.2xlarge": "Standard_D8s_v5",
 		},
 	},
 };
