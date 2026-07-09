@@ -110,6 +110,10 @@ func (m *mockAPI) FetchAlibabaToken() (string, error) {
 	return "test-alibaba-token", nil
 }
 
+func (m *mockAPI) FetchGcpToken() (string, error) {
+	return "test-gcp-token", nil
+}
+
 func (m *mockAPI) UploadPlanArtifact(jobID, filePath string) error {
 	return nil
 }
