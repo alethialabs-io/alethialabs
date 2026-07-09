@@ -14,6 +14,16 @@ output "eks_cluster_endpoint" {
   value = module.eks[0].eks_cluster_endpoint
 }
 
+output "route53_zone_id" {
+  description = "The Route 53 hosted zone id (created in-template when cloud_dns_enabled, else the existing dns_hosted_zone)."
+  value       = var.cloud_dns_enabled ? module.route53[0].zone_id : var.dns_hosted_zone
+}
+
+output "route53_name_servers" {
+  description = "Authoritative name servers for the created zone (delegate these at the registrar); empty when using an existing zone."
+  value       = var.cloud_dns_enabled ? module.route53[0].name_servers : []
+}
+
 #output "eks_cluster_version" {
 #  value = module.eks[0].eks_cluster_version
 #}

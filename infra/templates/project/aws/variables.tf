@@ -595,6 +595,18 @@ variable "dns_main_domain" {
   default     = "example.com"
 }
 
+variable "cloud_dns_enabled" {
+  type        = bool
+  default     = false
+  description = "Create and manage the Route 53 hosted zone in-template (parity with GCP/Azure, which create their managed zone). When false, an existing zone id (dns_hosted_zone) is used."
+}
+
+variable "cloud_dns_zone_name" {
+  type        = string
+  default     = ""
+  description = "Optional Name-tag label for the created Route 53 hosted zone; defaults to the domain."
+}
+
 ################################################################################
 # Karpenter
 ################################################################################
