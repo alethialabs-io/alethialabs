@@ -33,6 +33,7 @@ import {
 } from "@/lib/db/schema";
 import { resolveAddOnInstall } from "@/lib/addons/catalog";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
+import { hetznerDataServicesToAddOns } from "@/lib/cloud-providers/hetzner-services";
 import {
 	type CloudProviderSlug,
 	type ConversionWarning,
@@ -626,6 +627,17 @@ async function buildConfigSnapshot(
 				}),
 			)
 			.filter((s): s is AddOnInstallSpec => s !== null);
+
+		// Hetzner is compute-only: canvas database/cache/queue nodes have no managed cloud
+		// service, so they deploy as in-cluster Helm charts (CloudNativePG / Valkey / RabbitMQ).
+		// Map them to install specs and append — the runner renders each as an ArgoCD
+		// Application via the same generic add-on path (packages/core/argocd). The data-component
+		// rows still ride the snapshot for the UI; the Hetzner tofu template ignores them.
+		if (identity.provider === "hetzner") {
+			addons.push(
+				...hetznerDataServicesToAddOns({ databases, caches, queues }),
+			);
+		}
 
 		// ── Resolve per-resource placement ("versatile model") ───────────────
 		// Each component may carry its own cloud_identity_id/region; NULL inherits

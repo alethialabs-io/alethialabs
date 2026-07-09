@@ -32,6 +32,11 @@ export const CACHE_NODE_TYPES: Record<CloudProviderSlug, CacheNodeOption[]> = {
 		{ value: "C3", label: "Standard C3", memoryGb: 6, cost: "~$155/mo" },
 		{ value: "P1", label: "Premium P1", memoryGb: 6, cost: "~$210/mo" },
 	],
+	hetzner: [
+		{ value: "1", label: "1 GiB", memoryGb: 1, cost: "~€2/mo" },
+		{ value: "2", label: "2 GiB", memoryGb: 2, cost: "~€4/mo" },
+		{ value: "4", label: "4 GiB", memoryGb: 4, cost: "~€8/mo" },
+	],
 };
 
 /** Default cache node type per provider. */
@@ -39,6 +44,7 @@ export const DEFAULT_CACHE_NODE: Record<CloudProviderSlug, string> = {
 	aws: "cache.t3.medium",
 	gcp: "M1",
 	azure: "C1",
+	hetzner: "1",
 };
 
 /** Cross-provider cache node mapping for project conversion. */
@@ -62,15 +68,30 @@ export const CACHE_NODE_MAP: Record<
 			"cache.r6g.large": "C3",
 			"cache.r6g.xlarge": "P1",
 		},
+		hetzner: {
+			"cache.t3.micro": "1",
+			"cache.t3.small": "1",
+			"cache.t3.medium": "2",
+			"cache.r6g.large": "4",
+			"cache.r6g.xlarge": "4",
+		},
 	},
 	gcp: {
 		gcp: {},
 		aws: { M1: "cache.t3.small", M2: "cache.t3.medium", M3: "cache.r6g.large", M4: "cache.r6g.xlarge" },
 		azure: { M1: "C1", M2: "C2", M3: "C3", M4: "P1" },
+		hetzner: { M1: "1", M2: "2", M3: "4", M4: "4" },
 	},
 	azure: {
 		azure: {},
 		aws: { C0: "cache.t3.micro", C1: "cache.t3.small", C2: "cache.t3.medium", C3: "cache.r6g.large", P1: "cache.r6g.xlarge" },
 		gcp: { C0: "M1", C1: "M1", C2: "M2", C3: "M3", P1: "M4" },
+		hetzner: { C0: "1", C1: "1", C2: "2", C3: "4", P1: "4" },
+	},
+	hetzner: {
+		hetzner: {},
+		aws: { "1": "cache.t3.small", "2": "cache.t3.medium", "4": "cache.r6g.large" },
+		gcp: { "1": "M1", "2": "M2", "4": "M3" },
+		azure: { "1": "C1", "2": "C2", "4": "C3" },
 	},
 };

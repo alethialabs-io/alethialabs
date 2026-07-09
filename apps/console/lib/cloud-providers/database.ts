@@ -23,6 +23,9 @@ export const DB_ENGINES: Record<CloudProviderSlug, DbEngineOption[]> = {
 		{ value: "azure-postgresql", label: "Azure Database for PostgreSQL", defaultVersion: "16" },
 		{ value: "azure-mysql", label: "Azure Database for MySQL", defaultVersion: "8.0" },
 	],
+	hetzner: [
+		{ value: "postgres", label: "PostgreSQL (CloudNativePG)", defaultVersion: "16" },
+	],
 };
 
 interface CapacityModel {
@@ -39,6 +42,7 @@ export const DB_CAPACITY: Record<CloudProviderSlug, CapacityModel> = {
 	aws: { unit: "ACU", min: 0.5, max: 128, step: 0.5, defaultMin: 0.5, defaultMax: 4 },
 	gcp: { unit: "vCPU", min: 1, max: 96, step: 1, defaultMin: 1, defaultMax: 4 },
 	azure: { unit: "vCores", min: 1, max: 64, step: 1, defaultMin: 2, defaultMax: 4 },
+	hetzner: { unit: "GiB", min: 5, max: 500, step: 5, defaultMin: 10, defaultMax: 10 },
 };
 
 /** Cross-provider database engine mapping for project conversion. */
@@ -56,6 +60,9 @@ export const ENGINE_MAP: Record<
 			"aurora-postgresql": "azure-postgresql",
 			"aurora-mysql": "azure-mysql",
 		},
+		hetzner: {
+			"aurora-postgresql": "postgres",
+		},
 	},
 	gcp: {
 		gcp: {},
@@ -66,6 +73,9 @@ export const ENGINE_MAP: Record<
 		azure: {
 			"cloudsql-postgresql": "azure-postgresql",
 			"cloudsql-mysql": "azure-mysql",
+		},
+		hetzner: {
+			"cloudsql-postgresql": "postgres",
 		},
 	},
 	azure: {
@@ -78,5 +88,14 @@ export const ENGINE_MAP: Record<
 			"azure-postgresql": "cloudsql-postgresql",
 			"azure-mysql": "cloudsql-mysql",
 		},
+		hetzner: {
+			"azure-postgresql": "postgres",
+		},
+	},
+	hetzner: {
+		hetzner: {},
+		aws: { postgres: "aurora-postgresql" },
+		gcp: { postgres: "cloudsql-postgresql" },
+		azure: { postgres: "azure-postgresql" },
 	},
 };
