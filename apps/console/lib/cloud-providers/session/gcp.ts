@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ExternalAccountClient } from "google-auth-library";
+import { ExternalAccountClient, IdentityPoolClient } from "google-auth-library";
+import { mintWorkloadToken } from "@/lib/oidc/issuer";
 import type { WifCredentialConfig } from "@/types/jsonb.types";
 
 /**
@@ -31,6 +32,22 @@ export function isOidcWif(wif: WifCredentialConfig | null | undefined): boolean 
  * Returns `null` if google-auth rejects the config as a valid external account.
  */
 export function externalAccountClientFromWif(wif: WifCredentialConfig) {
+	// DIRECT OIDC: supply the subject token programmatically — a freshly minted Alethia assertion — so no
+	// AWS source credential is needed. google-auth exchanges it for a GCP token (and refreshes by calling
+	// the supplier again). This is the keyless, refreshing path (parity with Azure/Alibaba).
+	if (isOidcWif(wif)) {
+		return new IdentityPoolClient({
+			audience: wif.audience ?? "",
+			subject_token_type: wif.subject_token_type ?? GCP_JWT_SUBJECT_TOKEN_TYPE,
+			token_url: wif.token_url ?? "https://sts.googleapis.com/v1/token",
+			service_account_impersonation_url: wif.service_account_impersonation_url,
+			subject_token_supplier: {
+				getSubjectToken: () => mintWorkloadToken({ audience: GCP_TOKEN_AUDIENCE }),
+			},
+		});
+	}
+	// LEGACY AWS-hub: fromJSON reads the aws4_request credential_source, which signs a GetCallerIdentity
+	// with the platform AWS creds — callers ensurePlatformAwsEnv() first (skipped for OIDC configs).
 	return ExternalAccountClient.fromJSON(
 		wif as Parameters<typeof ExternalAccountClient.fromJSON>[0],
 	);
