@@ -69,12 +69,12 @@ export function computePlatformConfigured(): Record<string, boolean> {
 		// AssumeRoleWithOIDC with a minted assertion — no Alibaba account / platform AccessKey.
 		// Available whenever the issuer is configured.
 		alibaba: oidcIssuerConfigured(),
-		// GCP federates THROUGH the platform AWS identity: the customer's Workload Identity pool
-		// trusts an AWS provider (`create-aws --account-id=<platform aws acct>`), so the console
-		// mints the GCP subject token from the platform AWS creds (google-auth's `--aws` source
-		// reads AWS_ACCESS_KEY_ID/SECRET/SESSION_TOKEN, refreshed at runtime by ensurePlatformAwsEnv).
-		// No separate GCP secret — availability tracks the same keyless AWS platform identity.
-		gcp: awsPlatform,
+		// GCP is keyless via DIRECT OIDC: the customer's Workload Identity pool trusts the Alethia
+		// issuer directly (an OIDC provider), so the console/runner federate with a minted assertion —
+		// no AWS hop. Available whenever the issuer is configured. Legacy AWS-hub GCP connections (which
+		// still need the platform AWS identity) keep working; `|| awsPlatform` keeps the tile available
+		// on an AWS-hub-only instance.
+		gcp: oidcIssuerConfigured() || awsPlatform,
 		// Token clouds need no platform credentials — the customer's own API token is used.
 		hetzner: true,
 		digitalocean: true,
