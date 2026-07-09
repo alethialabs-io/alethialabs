@@ -49,6 +49,8 @@ export const TOOL_AUDIENCE: Record<string, ToolAudience> = {
 	get_cached_resources: "both",
 	// Docs retrieval — read-only, stateless: usable everywhere (incl. MCP).
 	search_docs: "both",
+	// Connect action — opens the in-app connect sheet, so dashboard-only (no MCP surface can open UI).
+	connect_cloud: "in-app",
 	// Metrics reads — usage/billing standing for dashboards (secret-free, PDP-gated).
 	get_org_usage: "both",
 	get_ai_usage: "both",
