@@ -227,7 +227,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			defer cleanup()
 		case types.CloudProviderAzure:
 			fmt.Fprintf(stdoutLogger, "Activating Azure federated identity for tenant %s (subscription: %s)...\n", claim.CloudIdentity.TenantID, claim.CloudIdentity.SubscriptionID)
-			cleanup, err := ActivateAzureFederated(w.api, claim.CloudIdentity.TenantID, claim.CloudIdentity.ClientID, claim.CloudIdentity.SubscriptionID)
+			cleanup, err := ActivateAzureFederated(ctx, w.api, claim.CloudIdentity.TenantID, claim.CloudIdentity.ClientID, claim.CloudIdentity.SubscriptionID)
 			if err != nil {
 				errMsg := fmt.Sprintf("Failed to activate Azure federated identity: %v", err)
 				fmt.Fprintln(stderrLogger, errMsg)
