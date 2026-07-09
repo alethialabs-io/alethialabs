@@ -31,7 +31,7 @@ import {
 	projectTopics,
 	projects,
 } from "@/lib/db/schema";
-import { resolveAddOnInstall } from "@/lib/addons/catalog";
+import { resolveAddOnInstall, resolveByoChartInstall } from "@/lib/addons/catalog";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
 import { hetznerDataServicesToAddOns } from "@/lib/cloud-providers/hetzner-services";
 import {
@@ -618,13 +618,26 @@ async function buildConfigSnapshot(
 			);
 		const addons: AddOnInstallSpec[] = addonRows
 			.map((r) =>
-				resolveAddOnInstall({
-					addon_id: r.addon_id,
-					mode: r.mode,
-					version: r.version,
-					values: r.values,
-					values_yaml: r.values_yaml,
-				}),
+				// A bring-your-own chart (source='byo') resolves to a git-source spec (chart from the
+				// customer's repo); a catalog add-on resolves against the code catalog.
+				r.source === "byo"
+					? resolveByoChartInstall({
+							addon_id: r.addon_id,
+							mode: r.mode,
+							version: r.version,
+							chart_repo: r.chart_repo,
+							chart_path: r.chart_path,
+							namespace: r.namespace,
+							values: r.values,
+							values_yaml: r.values_yaml,
+						})
+					: resolveAddOnInstall({
+							addon_id: r.addon_id,
+							mode: r.mode,
+							version: r.version,
+							values: r.values,
+							values_yaml: r.values_yaml,
+						}),
 			)
 			.filter((s): s is AddOnInstallSpec => s !== null);
 
