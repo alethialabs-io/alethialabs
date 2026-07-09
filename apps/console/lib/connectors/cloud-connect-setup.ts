@@ -69,12 +69,10 @@ export function computePlatformConfigured(): Record<string, boolean> {
 		// AssumeRoleWithOIDC with a minted assertion — no Alibaba account / platform AccessKey.
 		// Available whenever the issuer is configured.
 		alibaba: oidcIssuerConfigured(),
-		// GCP is keyless via DIRECT OIDC: the customer's Workload Identity pool trusts the Alethia
-		// issuer directly (an OIDC provider), so the console/runner federate with a minted assertion —
-		// no AWS hop. Available whenever the issuer is configured. Legacy AWS-hub GCP connections (which
-		// still need the platform AWS identity) keep working; `|| awsPlatform` keeps the tile available
-		// on an AWS-hub-only instance.
-		gcp: oidcIssuerConfigured() || awsPlatform,
+		// GCP is keyless via DIRECT OIDC: the customer's Workload Identity pool trusts the Alethia issuer
+		// directly (an OIDC provider), so the console/runner federate with a minted assertion — no AWS hop.
+		// Available whenever the issuer is configured. (The legacy AWS-hub GCP path is retired.)
+		gcp: oidcIssuerConfigured(),
 		// Token clouds need no platform credentials — the customer's own API token is used.
 		hetzner: true,
 		digitalocean: true,
