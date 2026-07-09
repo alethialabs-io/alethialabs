@@ -5,7 +5,8 @@ import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { PROJECT_NODE_ID } from "@/lib/stores/use-canvas-store";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
-import type { CanvasNode, NodeKind } from "./types";
+import { configName } from "./node-config";
+import type { CanvasNode, CanvasNodeData, NodeConfigMap, NodeKind } from "./types";
 
 /**
  * Seeds the canvas from a ProjectFormData object (initial mount / source project / the
@@ -25,24 +26,30 @@ export function formToGraph(
 
 	const coreId = form.project.cloud_identity_id || null;
 
-	const makeNode = (
-		kind: NodeKind,
-		config: Record<string, unknown>,
+	const makeNode = <K extends NodeKind>(
+		kind: K,
+		config: NodeConfigMap[K],
 		position: { x: number; y: number },
 		ownIdentity?: string | null,
 	): CanvasNode => {
 		const own = ownIdentity ?? null;
+		// The kind↔config correlation can't be carried into the union type for a generic
+		// K, so the assembled data asserts its membership (both come from the same K).
+		const data = {
+			kind,
+			config,
+			cloud_identity_id: own,
+			provider: providerOf(own ?? coreId),
+		} as CanvasNodeData;
 		return {
-			id: kind === "project" ? PROJECT_NODE_ID : `${kind}-${config.name ?? kind}`,
+			id:
+				kind === "project"
+					? PROJECT_NODE_ID
+					: `${kind}-${configName(data) ?? kind}`,
 			type: kind,
 			position,
 			deletable: kind !== "project",
-			data: {
-				kind,
-				config,
-				cloud_identity_id: own,
-				provider: providerOf(own ?? coreId),
-			},
+			data,
 		};
 	};
 
@@ -83,27 +90,27 @@ export function formToGraph(
 			makeNode("repositories", { ...form.repositories }, { x: 900, y: 180 }),
 		);
 
-	// Array kinds laid out in rows below the cluster.
-	const rows: { kind: NodeKind; items: Array<{ cloud_identity_id?: string | null }> }[] = [
-		{ kind: "database", items: form.databases ?? [] },
-		{ kind: "cache", items: form.caches ?? [] },
-		{ kind: "queue", items: form.queues ?? [] },
-		{ kind: "topic", items: form.topics ?? [] },
-		{ kind: "nosql", items: form.nosql_tables ?? [] },
-		{ kind: "secret", items: form.secrets ?? [] },
-	];
-	rows.forEach((row, rowIdx) => {
-		row.items.forEach((item, i) => {
+	// Array kinds laid out in rows below the cluster. Each call correlates the literal
+	// kind with its matching item array, so `makeNode` stays fully typed per kind.
+	const pushItems = <
+		K extends "database" | "cache" | "queue" | "topic" | "nosql" | "secret",
+	>(
+		kind: K,
+		items: NodeConfigMap[K][],
+		rowIdx: number,
+	) => {
+		items.forEach((item, i) => {
 			nodes.push(
-				makeNode(
-					row.kind,
-					{ ...item },
-					{ x: 120 + i * 220, y: 340 + rowIdx * 130 },
-					ownOf(item),
-				),
+				makeNode(kind, item, { x: 120 + i * 220, y: 340 + rowIdx * 130 }, ownOf(item)),
 			);
 		});
-	});
+	};
+	pushItems("database", form.databases ?? [], 0);
+	pushItems("cache", form.caches ?? [], 1);
+	pushItems("queue", form.queues ?? [], 2);
+	pushItems("topic", form.topics ?? [], 3);
+	pushItems("nosql", form.nosql_tables ?? [], 4);
+	pushItems("secret", form.secrets ?? [], 5);
 
 	return { nodes };
 }

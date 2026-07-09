@@ -10,10 +10,12 @@ import {
 	NODE_REGISTRY,
 	SINGLETON_KINDS,
 } from "@/components/design-project/canvas/graph/node-registry";
+import { configName } from "@/components/design-project/canvas/graph/node-config";
 import type {
 	CanvasEdge,
 	CanvasNode,
 	CanvasNodeData,
+	NodeConfigMap,
 	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
 
@@ -144,11 +146,63 @@ export interface PendingChange {
 
 /** Human label for a node from its config (resource name, else project name, else kind). */
 function nodeName(n: CanvasNode): string {
-	return (
-		(n.data.config.name as string) ||
-		(n.data.config.project_name as string) ||
-		n.data.kind
+	return configName(n.data) || n.data.kind;
+}
+
+// ── discriminant/config reunion helpers ─────────────────────────────────────
+// TypeScript can't correlate a node's runtime `kind` with its `config` type through
+// an object spread (the classic discriminated-union limitation), so the few spots that
+// rebuild a node's data from an edited config/placement assert the reunion here, once.
+
+/** Assemble a node's data payload from a kind + config (+ placement). */
+function buildNodeData(
+	kind: NodeKind,
+	config: NodeConfigMap[NodeKind] | Record<string, unknown>,
+	cloudIdentityId: string | null,
+	provider: CloudProviderSlug | null,
+): CanvasNodeData {
+	return {
+		kind,
+		config,
+		cloud_identity_id: cloudIdentityId,
+		provider,
+	} as CanvasNodeData;
+}
+
+/** Merge a (partial) config patch into a node's data, keeping its kind. */
+function withConfig(data: CanvasNodeData, patch: Record<string, unknown>): CanvasNodeData {
+	return { ...data, config: { ...data.config, ...patch } } as CanvasNodeData;
+}
+
+/** Update a node's placement (identity + derived provider), keeping its kind + config. */
+function withPlacement(
+	data: CanvasNodeData,
+	cloudIdentityId: string | null,
+	provider: CloudProviderSlug | null,
+): CanvasNodeData {
+	return { ...data, cloud_identity_id: cloudIdentityId, provider } as CanvasNodeData;
+}
+
+/** For array kinds, suffix the config's `name` so it's unique among same-kind nodes. */
+function applyUniqueName<K extends NodeKind>(
+	kind: K,
+	config: NodeConfigMap[K],
+	nodes: CanvasNode[],
+): NodeConfigMap[K] {
+	const current = configName({
+		kind,
+		config,
+		cloud_identity_id: null,
+		provider: null,
+	} as CanvasNodeData);
+	if (NODE_REGISTRY[kind].cardinality !== "array" || !current) return config;
+	const taken = new Set(
+		nodes
+			.filter((n) => n.data.kind === kind)
+			.map((n) => configName(n.data))
+			.filter((v): v is string => typeof v === "string"),
 	);
+	return { ...config, name: uniqueName(current, taken) } as NodeConfigMap[K];
 }
 
 /**
@@ -334,21 +388,17 @@ export const useCanvasStore = create<CanvasStore>()(
 				get().commit();
 				const provider = get().getEffectiveProvider(PROJECT_NODE_ID) ?? "aws";
 				const count = nodes.length;
-				const config = NODE_REGISTRY[kind].defaultData(provider);
+				const config = applyUniqueName(
+					kind,
+					NODE_REGISTRY[kind].defaultData(provider),
+					nodes,
+				);
 				// Array kinds are UNIQUE on (project, name) — suffix to avoid clashes.
-				if (typeof config.name === "string") {
-					const taken = new Set(
-						nodes
-							.filter((n) => n.data.kind === kind)
-							.map((n) => n.data.config.name as string),
-					);
-					config.name = uniqueName(config.name, taken);
-				}
 				const node: CanvasNode = {
 					id: newId(kind),
 					type: kind,
 					position: position ?? { x: 120 + count * 48, y: 180 + count * 36 },
-					data: { kind, config, cloud_identity_id: null, provider: null },
+					data: buildNodeData(kind, config, null, null),
 				};
 				const next = [...nodes, node];
 				set({
@@ -376,12 +426,16 @@ export const useCanvasStore = create<CanvasStore>()(
 					: null;
 				const provider =
 					ownProvider ?? get().getEffectiveProvider(PROJECT_NODE_ID) ?? "aws";
-				const merged = { ...NODE_REGISTRY[kind].defaultData(provider), ...config };
+				const merged: Record<string, unknown> = {
+					...NODE_REGISTRY[kind].defaultData(provider),
+					...config,
+				};
 				if (typeof merged.name === "string") {
 					const taken = new Set(
 						nodes
 							.filter((n) => n.data.kind === kind)
-							.map((n) => n.data.config.name as string),
+							.map((n) => configName(n.data))
+							.filter((v): v is string => typeof v === "string"),
 					);
 					merged.name = uniqueName(merged.name, taken);
 				}
@@ -390,12 +444,7 @@ export const useCanvasStore = create<CanvasStore>()(
 					id: newId(kind),
 					type: kind,
 					position: { x: 120 + count * 48, y: 180 + count * 36 },
-					data: {
-						kind,
-						config: merged,
-						cloud_identity_id: cloudIdentityId ?? null,
-						provider: ownProvider,
-					},
+					data: buildNodeData(kind, merged, cloudIdentityId ?? null, ownProvider),
 				};
 				const next = [...nodes, node];
 				set({
@@ -410,7 +459,7 @@ export const useCanvasStore = create<CanvasStore>()(
 			updateNodeConfig: (id, patch) => {
 				const next = get().nodes.map((n) =>
 					n.id === id
-						? { ...n, data: { ...n.data, config: { ...n.data.config, ...patch } } }
+						? { ...n, data: withConfig(n.data, patch) }
 						: n,
 				);
 				set({ nodes: next, edges: deriveEdges(next), dirty: true });
@@ -420,14 +469,7 @@ export const useCanvasStore = create<CanvasStore>()(
 				get().commit();
 				const next = get().nodes.map((n) =>
 					n.id === id
-						? {
-								...n,
-								data: {
-									...n.data,
-									cloud_identity_id: cloudIdentityId,
-									provider,
-								} satisfies CanvasNodeData,
-							}
+						? { ...n, data: withPlacement(n.data, cloudIdentityId, provider) }
 						: n,
 				);
 				set({ nodes: next, edges: deriveEdges(next), dirty: true });
@@ -461,11 +503,11 @@ export const useCanvasStore = create<CanvasStore>()(
 				get().commit();
 				const taken = new Set(
 					get().nodes
-						.map((n) => n.data.config.name)
+						.map((n) => configName(n.data))
 						.filter((v): v is string => typeof v === "string"),
 				);
 				const clones = dupable.map((n) => {
-					const base = `${(n.data.config.name as string) || n.data.kind}-copy`;
+					const base = `${configName(n.data) || n.data.kind}-copy`;
 					const name = uniqueName(base, taken);
 					taken.add(name);
 					return {
@@ -473,7 +515,7 @@ export const useCanvasStore = create<CanvasStore>()(
 						id: newId(n.data.kind),
 						position: { x: n.position.x + 48, y: n.position.y + 48 },
 						selected: false,
-						data: { ...n.data, config: { ...n.data.config, name } },
+						data: withConfig(n.data, { name }),
 					} satisfies CanvasNode;
 				});
 				const next = [...get().nodes, ...clones];

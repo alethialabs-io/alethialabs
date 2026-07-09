@@ -46,11 +46,13 @@ import {
 	type SentInvite,
 } from "@/components/org/org-purchase-ui";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
+import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { authClient } from "@/lib/auth/client";
+import { track } from "@/lib/analytics/track";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { orgHost, slugify } from "@/lib/org-url";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
-import { planMeta } from "@repo/plan-catalog";
+import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import {
@@ -102,6 +104,11 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const [clientSecret, setClientSecret] = useState<string | null>(null);
 	const [customerId, setCustomerId] = useState<string | null>(null);
 	const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
+	// Billing currency of the open intent (Stripe locks it) + the validated org name, so the
+	// currency toggle can re-create the intent for the same org.
+	const [currency, setCurrency] = useState<SupportedCurrency>("usd");
+	const [switchingCurrency, setSwitchingCurrency] = useState(false);
+	const [checkoutOrgName, setCheckoutOrgName] = useState("");
 	const [createdOrgId, setCreatedOrgId] = useState<string | null>(null);
 	const [createdSlug, setCreatedSlug] = useState("");
 	// Payment succeeded but the org create / link then failed — offer a retry (no second
@@ -116,7 +123,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const [sent, setSent] = useState<SentInvite[]>([]);
 
 	const meta = planMeta("team");
-	const teamPrice = useLivePlanPrice("team");
+	const teamPrice = useLivePlanPrice("team", currency);
 	const trialAvailable = offer?.kind === "trial";
 
 	// Resolve the account's Pro offer (trial vs pay) when the sheet opens.
@@ -223,11 +230,36 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			setSubscriptionId(intent.subscriptionId);
 			setCustomerId(intent.customerId);
 			setClientSecret(intent.clientSecret);
+			setCurrency(intent.currency);
+			setCheckoutOrgName(data.name);
 			setView("pay");
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Something went wrong");
 		} finally {
 			setBusy(false);
+		}
+	}
+
+	/** Switch the checkout currency by re-creating the intent for the same org (Stripe locks
+	 *  a sub's currency). Reuses the customer + cancels the prior incomplete sub. */
+	async function changeCurrency(next: SupportedCurrency) {
+		if (next === currency || switchingCurrency || !checkoutOrgName) return;
+		setSwitchingCurrency(true);
+		try {
+			const intent = await createNewOrgSubscriptionIntent("team", {
+				orgName: checkoutOrgName,
+				priorSubscriptionId: subscriptionId ?? undefined,
+				customerId: customerId ?? undefined,
+				currency: next,
+			});
+			setSubscriptionId(intent.subscriptionId);
+			setCustomerId(intent.customerId);
+			setClientSecret(intent.clientSecret);
+			setCurrency(intent.currency);
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Couldn't switch currency.");
+		} finally {
+			setSwitchingCurrency(false);
 		}
 	}
 
@@ -244,6 +276,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			if (!org) return;
 			try {
 				await startProTrial();
+				track("trial_started", { plan: "team", context: "create_org" });
 			} catch (trialErr) {
 				// Roll back the just-created org — a failed trial must not orphan it.
 				await authClient.organization
@@ -393,21 +426,29 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 						) : (
 							clientSecret && (
 								<div className="flex min-h-0 flex-1 flex-col gap-4">
-									<button
-										type="button"
-										onClick={() => {
-											setView("name");
-											setClientSecret(null);
-										}}
-										className="shrink-0 text-left text-[12.5px] text-text-tertiary transition-colors hover:text-text-primary"
-									>
-										← Back
-									</button>
+									<div className="flex shrink-0 items-center justify-between">
+										<button
+											type="button"
+											onClick={() => {
+												setView("name");
+												setClientSecret(null);
+											}}
+											className="text-left text-[12.5px] text-text-tertiary transition-colors hover:text-text-primary"
+										>
+											← Back
+										</button>
+										<CurrencyToggle
+											value={currency}
+											onChange={changeCurrency}
+											disabled={switchingCurrency}
+										/>
+									</div>
 									<StripeElementsProvider clientSecret={clientSecret}>
 										<BillingCheckoutForm
 											clientSecret={clientSecret}
 											meta={meta}
-											unitAmountUsd={teamPrice.unitAmountUsd}
+											unitAmount={teamPrice.unitAmount}
+											currency={currency}
 											ownerEmail={ownerEmail}
 											submitLabel="Create"
 											scrollable

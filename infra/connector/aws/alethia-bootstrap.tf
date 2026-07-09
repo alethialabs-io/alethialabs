@@ -1,6 +1,6 @@
 variable "alethia_aws_account_id" {
   type        = string
-  default     = "787587782604"
+  default     = "270587882865"
   description = "The AWS Account ID of the Alethia Platform."
 }
 

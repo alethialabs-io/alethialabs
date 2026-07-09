@@ -11,7 +11,6 @@ import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 
-import { createThread } from "@/app/server/actions/agent";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { addEnvironment, createProject } from "@/app/server/actions/projects";
 import { track } from "@/lib/analytics/track";
@@ -28,6 +27,8 @@ import {
 	type ConnectableCloudSlug,
 } from "@/lib/cloud-providers";
 import { globalHref, projectHref, slugify } from "@/lib/routing";
+import { useElenchStore } from "@/lib/stores/use-elench-store";
+import { arrayIncludes } from "@/lib/type-guards";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
@@ -131,25 +132,20 @@ export function CreateProjectForm({
 	const template = form.watch("template");
 	const cloud = form.watch("cloud");
 
-	const provider = (PROVISIONABLE as string[]).includes(cloud)
-		? (cloud as CloudProviderSlug)
-		: null;
+	const provider = arrayIncludes(PROVISIONABLE, cloud) ? cloud : null;
 
-	/** Starts a design-agent thread from the hero prompt and opens the agent surface. */
-	const onAskAgent = async () => {
+	/** Hands the hero prompt to the global Elench surface as a seed (auto-sent on open) and
+	 * opens it as a fullscreen modal in org context — no route hop; the thread is created
+	 * lazily on that first send. */
+	const onAskAgent = () => {
 		const prompt = form.getValues("prompt")?.trim();
 		if (!prompt) {
 			toast.error("Describe what you want to run first.");
 			return;
 		}
 		setLaunching(true);
-		try {
-			await createThread(prompt);
-			router.push(`${globalHref(orgSlug, "agent")}?prompt=${encodeURIComponent(prompt)}`);
-		} catch {
-			toast.error("Couldn't start a design session. Try again.");
-			setLaunching(false);
-		}
+		useElenchStore.getState().setSeedPrompt(prompt);
+		useElenchStore.getState().openModal({ kind: "org" });
 	};
 
 	/** Creates the project from the manual path (Production + Preview envs) and opens its design page. */
@@ -451,7 +447,7 @@ function CloudTile({
 	onConnect,
 }: CloudTileProps) {
 	const connected = integration.connected;
-	const provisionable = (PROVISIONABLE as string[]).includes(integration.slug);
+	const provisionable = arrayIncludes(PROVISIONABLE, integration.slug);
 	const selectable = connected && provisionable;
 	const label =
 		PROVIDERS[integration.slug as ConnectableCloudSlug]?.shortName ?? integration.name;

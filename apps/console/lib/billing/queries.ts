@@ -14,6 +14,7 @@ import {
 	type OrganizationBillingInsert,
 } from "@/lib/db/schema";
 import type { Entitlements } from "@/lib/authz/types";
+import type { AiTier } from "@/lib/billing/ai-plan";
 import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
 import { COMMUNITY_ENTITLEMENTS, resolvePlanEntitlements } from "./plan";
 
@@ -84,6 +85,44 @@ export async function upsertOrgBilling(input: BillingUpsert): Promise<void> {
 				stripeSubscriptionId: values.stripeSubscriptionId,
 				seats: values.seats,
 				currentPeriodEnd: values.currentPeriodEnd,
+				updatedAt: now,
+			},
+		});
+}
+
+/** Fields the Stripe webhook writes for an org's STANDALONE AI subscription. */
+export interface AiSubscriptionUpsert {
+	organizationId: string;
+	aiTier: AiTier;
+	aiSubscriptionStatus: BillingStatus;
+	aiStripeSubscriptionId: string | null;
+}
+
+/**
+ * Upserts ONLY the standalone-AI columns on an org's billing record, leaving the org-plan
+ * columns (plan/status/seats/…) untouched — the AI product is orthogonal to the org plan,
+ * so an org can be e.g. community plan + AI Plus. Creates the row (plan defaults to
+ * community) if the org has none. Idempotent on organization_id (webhook-safe).
+ */
+export async function upsertOrgAiSubscription(
+	input: AiSubscriptionUpsert,
+): Promise<void> {
+	const now = new Date();
+	await getServiceDb()
+		.insert(organizationBilling)
+		.values({
+			organizationId: input.organizationId,
+			aiTier: input.aiTier,
+			aiSubscriptionStatus: input.aiSubscriptionStatus,
+			aiStripeSubscriptionId: input.aiStripeSubscriptionId,
+			updatedAt: now,
+		})
+		.onConflictDoUpdate({
+			target: organizationBilling.organizationId,
+			set: {
+				aiTier: input.aiTier,
+				aiSubscriptionStatus: input.aiSubscriptionStatus,
+				aiStripeSubscriptionId: input.aiStripeSubscriptionId,
 				updatedAt: now,
 			},
 		});

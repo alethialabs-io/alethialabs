@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Mocked-boundary tests for the support-case actions. Stubs the authz guard, the auth session,
-// the request headers, the auth config, and a thenable drizzle chain run via withOwnerScope
+// the request headers, the auth config, and a thenable drizzle chain run via withSupportScope
 // (each await pulls the next seeded result set). Exercises the internal status machine
 // (TRANSITIONS / assertTransition / nextStatusAfterCustomerReply) THROUGH the exported actions:
 // customer replies reopen settled cases, illegal transitions throw, submitCase inserts the case +
@@ -12,7 +12,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorizeQuiet: vi.fn() }));
-vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn() }));
+vi.mock("@/lib/support/scope", () => ({ withSupportScope: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: vi.fn() }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: vi.fn() } } }));
 vi.mock("@/lib/config/auth", () => ({
@@ -49,7 +49,7 @@ import { getActiveOrgSlug } from "@/app/server/actions/resolve";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { auth } from "@/lib/auth";
 import { authorizeQuiet } from "@/lib/authz/guard";
-import { withOwnerScope } from "@/lib/db";
+import { withSupportScope } from "@/lib/support/scope";
 import {
 	notifySupportInboxEmail,
 	sendCaseClosedEmail,
@@ -63,7 +63,7 @@ import { slackCaseCreated, slackCaseReplied } from "@/lib/support/slack-notify";
 /**
  * A drizzle-ish chain whose every builder returns itself; each `await` (then) shifts the next
  * seeded result set. Records `.values()`/`.set()`/`.where()` writes for assertions and drives the
- * withOwnerScope callback.
+ * withSupportScope callback.
  */
 function mockDb(resultSets: unknown[][]) {
 	const setSpy = vi.fn();
@@ -100,7 +100,7 @@ function mockDb(resultSets: unknown[][]) {
 			return resolve(r);
 		},
 	});
-	vi.mocked(withOwnerScope).mockImplementation(
+	vi.mocked(withSupportScope).mockImplementation(
 		((_owner: unknown, cb: (tx: unknown) => unknown) => cb(db)) as never,
 	);
 	return { setSpy, valuesSpy, whereSpy };
@@ -262,7 +262,7 @@ describe("submitCase", () => {
 			submitCase({ ...submitInput, subject: "ab" } as never),
 		).rejects.toThrow();
 		expect(authorizeQuiet).not.toHaveBeenCalled();
-		expect(withOwnerScope).not.toHaveBeenCalled();
+		expect(withSupportScope).not.toHaveBeenCalled();
 	});
 });
 
@@ -272,7 +272,17 @@ describe("postCaseMessage — customer reply reopens settled cases", () => {
 	/** Runs a reply against a case seeded in `status` and returns the update `.set()` payload. */
 	async function replyOn(status: string) {
 		const { setSpy } = mockDb([
-			[{ case_number: 5, subject: "S", severity: "normal", status }], // select case
+			// select case — requester_id === the actor (user-1), i.e. a self-reply.
+			[
+				{
+					case_number: 5,
+					subject: "S",
+					severity: "normal",
+					status,
+					requester_id: "user-1",
+					contact: { notifyEmail: "ada@acme.io", channel: "email" },
+				},
+			],
 			[{ id: "msg-1" }], // insert reply … returning
 			[], // update case
 		]);
@@ -308,7 +318,16 @@ describe("postCaseMessage — customer reply reopens settled cases", () => {
 
 	it("returns the new message id and notifies support", async () => {
 		mockDb([
-			[{ case_number: 5, subject: "S", severity: "normal", status: "open" }],
+			[
+				{
+					case_number: 5,
+					subject: "S",
+					severity: "normal",
+					status: "open",
+					requester_id: "user-1", // self-reply (actor === requester)
+					contact: { notifyEmail: "ada@acme.io", channel: "email" },
+				},
+			],
 			[{ id: "msg-1" }],
 			[],
 		]);
@@ -318,8 +337,8 @@ describe("postCaseMessage — customer reply reopens settled cases", () => {
 			type: "support_case",
 			id: caseId,
 		});
+		// A self-reply pings only the vendor inbox (inbox audience), not the requester.
 		expect(sendCaseRepliedEmail).toHaveBeenCalledTimes(1);
-		// A customer reply pings the vendor inbox (inbox audience), not the customer.
 		expect(sendCaseRepliedEmail).toHaveBeenCalledWith(
 			expect.any(String),
 			expect.objectContaining({ audience: "inbox", caseNumber: 5 }),
@@ -331,6 +350,62 @@ describe("postCaseMessage — customer reply reopens settled cases", () => {
 			"org-1",
 			"system.support.case.replied",
 			expect.objectContaining({ resource_id: caseId }),
+		);
+	});
+
+	it("emails the requester when a DIFFERENT user (an org admin) replies on their case", async () => {
+		mockDb([
+			[
+				{
+					case_number: 5,
+					subject: "S",
+					severity: "normal",
+					status: "open",
+					requester_id: "user-2", // ≠ the acting admin (user-1)
+					contact: {
+						notifyEmail: "req@acme.io",
+						channel: "email",
+						ccEmails: ["cc@acme.io"],
+					},
+				},
+			],
+			[{ id: "msg-1" }],
+			[],
+		]);
+		await postCaseMessage({ caseId, body: "Here's an update." });
+		// Inbox ping (audience inbox) + the requester's own copy (audience customer).
+		expect(sendCaseRepliedEmail).toHaveBeenCalledTimes(2);
+		expect(sendCaseRepliedEmail).toHaveBeenCalledWith(
+			"req@acme.io",
+			expect.objectContaining({
+				audience: "customer",
+				caseNumber: 5,
+				cc: ["cc@acme.io"],
+			}),
+		);
+	});
+
+	it("does NOT email a foreign requester who chose the in-app channel", async () => {
+		mockDb([
+			[
+				{
+					case_number: 5,
+					subject: "S",
+					severity: "normal",
+					status: "open",
+					requester_id: "user-2",
+					contact: { notifyEmail: "req@acme.io", channel: "in_app" },
+				},
+			],
+			[{ id: "msg-1" }],
+			[],
+		]);
+		await postCaseMessage({ caseId, body: "Here's an update." });
+		// Only the vendor inbox — the requester's channel pref suppresses the customer email.
+		expect(sendCaseRepliedEmail).toHaveBeenCalledTimes(1);
+		expect(sendCaseRepliedEmail).not.toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ audience: "customer" }),
 		);
 	});
 

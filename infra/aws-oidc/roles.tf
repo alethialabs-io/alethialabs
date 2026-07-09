@@ -140,3 +140,71 @@ resource "aws_iam_role_policy" "deploy_reader" {
   role   = aws_iam_role.deploy_reader.id
   policy = data.aws_iam_policy_document.deploy_reader.json
 }
+
+# ── Connector-platform deploy role ───────────────────────────────────────────
+# infra-connector-platform applies infra/connector-platform/aws — the ONE platform assumer IAM user +
+# its AssumeRole policy (the identity the console/runner use to reach customer clouds). Scoped to exactly
+# that user + policy + the connector-platform state prefix. NO create-access-key here: the key is minted
+# + vaulted out of band (bootstrap-secrets.sh), so no long-lived secret enters TF state or a CI log.
+resource "aws_iam_role" "connector_platform_deployer" {
+  name               = "alethia-connector-platform-deployer"
+  description        = "Least-priv OIDC role for infra-connector-platform - manage the assumer IAM user + policy + its state."
+  assume_role_policy = data.aws_iam_policy_document.deployer_trust.json
+  tags               = local.tags
+}
+
+data "aws_iam_policy_document" "connector_platform_deployer" {
+  statement {
+    sid       = "TofuStateBucket"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket", "s3:GetBucketVersioning"]
+    resources = ["arn:aws:s3:::${var.state_bucket_name}"]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["connector-platform/*"]
+    }
+  }
+  statement {
+    sid       = "TofuStateObjects"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = ["arn:aws:s3:::${var.state_bucket_name}/connector-platform/*"]
+  }
+  # Manage ONLY the assumer user (create/read/tag/attach/delete) — never create-access-key.
+  statement {
+    sid    = "AssumerUser"
+    effect = "Allow"
+    actions = [
+      "iam:CreateUser",
+      "iam:GetUser",
+      "iam:TagUser",
+      "iam:ListAttachedUserPolicies",
+      "iam:AttachUserPolicy",
+      "iam:DetachUserPolicy",
+      "iam:DeleteUser",
+    ]
+    resources = ["arn:aws:iam::${local.account_id}:user/alethia-connector-assumer"]
+  }
+  # Manage ONLY the assumer's AssumeRole policy.
+  statement {
+    sid    = "AssumerPolicy"
+    effect = "Allow"
+    actions = [
+      "iam:CreatePolicy",
+      "iam:GetPolicy",
+      "iam:GetPolicyVersion",
+      "iam:ListPolicyVersions",
+      "iam:CreatePolicyVersion",
+      "iam:DeletePolicyVersion",
+      "iam:DeletePolicy",
+    ]
+    resources = ["arn:aws:iam::${local.account_id}:policy/alethia-connector-assumer-assume-role"]
+  }
+}
+
+resource "aws_iam_role_policy" "connector_platform_deployer" {
+  name   = "alethia-connector-platform-deploy"
+  role   = aws_iam_role.connector_platform_deployer.id
+  policy = data.aws_iam_policy_document.connector_platform_deployer.json
+}

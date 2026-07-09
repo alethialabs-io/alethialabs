@@ -24,12 +24,19 @@ import { CaseListItem } from "./case-list-item";
 type CaseFilter = "all" | "active" | "resolved";
 
 /**
- * The "My cases" list. Reads the server-prefetched/hydrated `listMyCases` cache and lets
+ * The support case list. Reads the server-prefetched/hydrated `listMyCases` cache and lets
  * the caller switch between All / Active / Resolved lifecycle buckets (each tab is its own
  * query key so switching is instant once cached). Renders one `CaseListItem` per row, or a
- * submit call-to-action when there are none.
+ * submit call-to-action when there are none. When `seeAll` (the caller holds manage_support),
+ * the list is the whole org's cases — a caption says so and each foreign row shows its opener.
  */
-export function CaseList({ orgSlug }: { orgSlug: string }) {
+export function CaseList({
+	orgSlug,
+	seeAll = false,
+}: {
+	orgSlug: string;
+	seeAll?: boolean;
+}) {
 	const [filter, setFilter] = useState<CaseFilter>("all");
 
 	const { data: cases = [], isPending } = useQuery({
@@ -40,6 +47,11 @@ export function CaseList({ orgSlug }: { orgSlug: string }) {
 
 	return (
 		<div className="space-y-4">
+			{seeAll && (
+				<p className="text-xs text-muted-foreground">
+					Showing all support cases in this organization.
+				</p>
+			)}
 			<Tabs
 				value={filter}
 				onValueChange={(v) => setFilter(v as CaseFilter)}

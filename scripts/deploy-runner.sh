@@ -35,11 +35,19 @@ should_deploy() {
 }
 
 echo "==> Building Docker image (${GIT_SHA})..."
+# The runner image builds FROM a shared runner-base (Go binary + tofu + infracost + shared tools); build it
+# locally first so the FROM resolves without needing GHCR's published base.
+docker build \
+  -f "${REPO_ROOT}/apps/runner/Dockerfile.base" \
+  -t alethia-runner-base:local \
+  --build-arg VERSION="${GIT_SHA}" \
+  "${REPO_ROOT}"
 docker build \
   -f "${REPO_ROOT}/apps/runner/Dockerfile" \
   -t "${GHCR_IMAGE}:latest" \
   -t "${GHCR_IMAGE}:${GIT_SHA}" \
   --build-arg VERSION=dev \
+  --build-arg RUNNER_BASE=alethia-runner-base:local \
   "${REPO_ROOT}"
 
 echo "==> Pushing to GHCR..."

@@ -15,6 +15,9 @@
 /** The billing plan tiers, matching the `billing_plan` pgEnum in the console schema. */
 export type PlanId = "community" | "team" | "enterprise";
 
+/** Currencies we present + charge in. USD is the default; EU customers are billed in EUR. */
+export type SupportedCurrency = "usd" | "eur";
+
 /** A titled group of features for the "What's included" slice. */
 export interface PlanFeatureGroup {
 	label: string;
@@ -35,10 +38,15 @@ export interface PlanCatalogEntry {
 	/** Per-period USD unit for in-app math — per **seat** when `perSeat`, flat otherwise.
 	 *  `undefined` = custom / "Let's talk" (Enterprise). Keep in step with `priceLabel`. */
 	priceMonthlyUsd?: number;
+	/** Per-period EUR unit (FX-adjusted from USD; billed to EU customers). Same shape as
+	 *  `priceMonthlyUsd`; `undefined` = custom. Tune independently of the USD figure. */
+	priceMonthlyEur?: number;
 	/** Whether `priceMonthlyUsd` is multiplied by the seat count (per-seat billing). */
 	perSeat?: boolean;
 	/** Monthly usage credit (USD) included with the plan — offsets metered charges. */
 	includedCreditUsd?: number;
+	/** Same included usage credit, in EUR (for EU-billed customers). */
+	includedCreditEur?: number;
 	tagline: string;
 	/** Paid tier (has a Stripe price) vs the free community baseline. */
 	paid: boolean;
@@ -60,6 +68,7 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 		name: "Hobby",
 		priceLabel: "Free",
 		priceMonthlyUsd: 0,
+		priceMonthlyEur: 0,
 		tagline: "Your own Projects — just you.",
 		paid: false,
 		highlights: [
@@ -88,8 +97,10 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 		name: "Pro",
 		priceLabel: "$20 / seat / mo",
 		priceMonthlyUsd: 20,
+		priceMonthlyEur: 18,
 		perSeat: true,
 		includedCreditUsd: 20,
+		includedCreditEur: 18,
 		tagline: "Collaborate in a shared organization.",
 		paid: true,
 		popular: true,
@@ -103,7 +114,7 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 		checkoutFeatures: [
 			{
 				title: "Flexible usage credit",
-				detail: "$20/mo toward metered runner-minutes & AI",
+				detail: "$20/mo toward metered runner-minutes",
 			},
 			{
 				title: "Organizations & teams",
@@ -116,10 +127,6 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 			{
 				title: "Included runner-minutes",
 				detail: "500 managed build-minutes / month",
-			},
-			{
-				title: "Standard AI",
-				detail: "3,000 AI credits / week for repo scans & chat",
 			},
 			{
 				title: "Priority provisioning",
@@ -210,21 +217,154 @@ export function planMeta(plan: PlanId): PlanCatalogEntry {
 
 /**
  * The plan's per-unit charge in the smallest currency unit (cents) — what Stripe's
- * `unit_amount` expects. Derived from `priceMonthlyUsd` (the single-source-of-truth
- * dollar figure) so the created Stripe price can never drift from the advertised one.
- * Throws for custom/free plans that have no numeric price (Enterprise).
+ * `unit_amount` expects — for the given currency (default USD). Derived from the catalog
+ * SSOT (`priceMonthlyUsd` / `priceMonthlyEur`) so the created Stripe price can never drift
+ * from the advertised one. Throws for custom/free plans with no numeric price (Enterprise).
  */
-export function planUnitAmountCents(plan: PlanId): number {
-	const usd = planMeta(plan).priceMonthlyUsd;
-	if (usd == null) {
-		throw new Error(`Plan "${plan}" has no numeric price (priceMonthlyUsd).`);
+export function planUnitAmountCents(
+	plan: PlanId,
+	currency: SupportedCurrency = "usd",
+): number {
+	const meta = planMeta(plan);
+	const amount = currency === "eur" ? meta.priceMonthlyEur : meta.priceMonthlyUsd;
+	if (amount == null) {
+		throw new Error(`Plan "${plan}" has no ${currency.toUpperCase()} price.`);
 	}
-	return Math.round(usd * 100);
+	return Math.round(amount * 100);
 }
 
 /** The plan's monthly included usage credit in cents (0 when none). */
 export function planIncludedCreditCents(plan: PlanId): number {
 	return Math.round((planMeta(plan).includedCreditUsd ?? 0) * 100);
+}
+
+// ── Currency resolution (shared by the console billing flow + the marketing pricing page) ──
+
+/** EU + EEA country codes billed in EUR (ISO 3166-1 alpha-2). */
+export const EU_COUNTRIES: ReadonlySet<string> = new Set([
+	// EU
+	"AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU",
+	"IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE",
+	// EEA (euro-adjacent) — bill in EUR too
+	"IS", "LI", "NO",
+]);
+
+/** The billing currency for a country code — EUR for the EU/EEA, USD otherwise. */
+export function resolveCurrency(country?: string | null): SupportedCurrency {
+	const cc = country?.trim().toUpperCase();
+	return cc && EU_COUNTRIES.has(cc) ? "eur" : "usd";
+}
+
+// ── Standalone AI product catalog ──────────────────────────────────────────────────
+// AI is a SEPARATE metered product from the org plan (Hobby/Pro/Enterprise): everyone
+// gets a usable free allowance (AI Free), and AI Plus / AI Max are their own subscription
+// that raises the daily/weekly caps + upgrades the advisor model. Display copy only — the
+// authoritative allowances live in the console (lib/billing/ai-plan.ts `AI_TIERS`) and the
+// charge amount in Stripe (STRIPE_PRICE_AI_*). Kept structurally identical to the console's
+// `AiTier` union so it stays a zero-dependency package.
+//
+// Prices below (USD + EUR) are the FINAL maintainer-approved customer amounts (AI Plus
+// $20/€18, AI Max $100/€90). They drive display + Stripe provisioning; the cost-of-serve
+// (lib/billing/model-costs.ts) remains the authoritative per-model cost basis.
+
+/** The standalone AI tiers, matching the console's `AiTier` union (lib/billing/ai-plan.ts). */
+export type AiPlanId = "ai_free" | "ai_plus" | "ai_max";
+
+/** Display copy for one AI tier — never raw credit numbers (proportions/tier only). */
+export interface AiPlanCatalogEntry {
+	id: AiPlanId;
+	name: string;
+	/** Display price (the authoritative amount is the Stripe AI price). `undefined` = free. */
+	priceLabel: string;
+	/** Monthly USD amount (the Stripe-provisioning SSOT). `0` = free. */
+	priceMonthlyUsd?: number;
+	/** Monthly EUR amount (for EU-billed customers). Keep in step with the USD figure. */
+	priceMonthlyEur?: number;
+	tagline: string;
+	/** Whether this tier is a paid AI subscription (has a Stripe price). */
+	paid: boolean;
+	/** The advisor (planning) model this tier unlocks, in human copy. */
+	advisor: string;
+	/** Short punchy highlights for the AI upgrade UI. */
+	highlights: string[];
+}
+
+export const AI_PLAN_CATALOG: AiPlanCatalogEntry[] = [
+	{
+		id: "ai_free",
+		name: "AI Free",
+		priceLabel: "Free",
+		priceMonthlyUsd: 0,
+		priceMonthlyEur: 0,
+		tagline: "A usable daily allowance for everyone.",
+		paid: false,
+		advisor: "Fast executor model",
+		highlights: [
+			"Daily + weekly AI allowance",
+			"Repo scans, agent & Ask AI",
+			"Buy credit packs any time",
+		],
+	},
+	{
+		id: "ai_plus",
+		name: "AI Plus",
+		priceLabel: "$20 / mo",
+		priceMonthlyUsd: 20,
+		priceMonthlyEur: 18,
+		tagline: "More AI, with a smarter advisor.",
+		paid: true,
+		advisor: "Sonnet advisor + fast executor",
+		highlights: [
+			"Much higher daily & weekly caps",
+			"Smarter planning (Sonnet advisor)",
+			"Credit packs stack on top",
+		],
+	},
+	{
+		id: "ai_max",
+		name: "AI Max",
+		priceLabel: "$100 / mo",
+		priceMonthlyUsd: 100,
+		priceMonthlyEur: 90,
+		tagline: "The most AI, with the best advisor.",
+		paid: true,
+		advisor: "Sonnet advisor · Opus on demand",
+		highlights: [
+			"The largest daily & weekly caps",
+			"Best-in-class planning (Opus advisor)",
+			"Credit packs stack on top",
+		],
+	},
+];
+
+/** The paid AI tiers, in upgrade order (the AI upgrade UI). */
+export const PAID_AI_PLANS = AI_PLAN_CATALOG.filter((p) => p.paid);
+
+/** Catalog copy for an AI tier (falls back to AI Free — the first entry). */
+export function aiPlanMeta(tier: AiPlanId): AiPlanCatalogEntry {
+	const found = AI_PLAN_CATALOG.find((p) => p.id === tier);
+	if (found) return found;
+	const [free] = AI_PLAN_CATALOG;
+	if (!free) throw new Error("AI_PLAN_CATALOG is empty");
+	return free;
+}
+
+/**
+ * The AI tier's per-month charge in the smallest currency unit (cents) for the given
+ * currency (default USD) — what Stripe's `unit_amount` expects. Sourced from the catalog
+ * SSOT (`priceMonthlyUsd` / `priceMonthlyEur`) so the provisioned Stripe AI price never
+ * drifts from the advertised one. Throws for the free tier (no numeric price).
+ */
+export function aiPlanUnitAmountCents(
+	tier: AiPlanId,
+	currency: SupportedCurrency = "usd",
+): number {
+	const meta = aiPlanMeta(tier);
+	const amount = currency === "eur" ? meta.priceMonthlyEur : meta.priceMonthlyUsd;
+	if (amount == null) {
+		throw new Error(`AI tier "${tier}" has no ${currency.toUpperCase()} price.`);
+	}
+	return Math.round(amount * 100);
 }
 
 // ── Live-price formatting ────────────────────────────────────────────────────────

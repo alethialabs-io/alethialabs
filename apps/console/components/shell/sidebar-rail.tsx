@@ -107,7 +107,7 @@ function RailAccount() {
 }
 
 /** The collapsed icon rail shown across a project's views. */
-export function SidebarRail() {
+export function SidebarRail({ selfRunners = false }: { selfRunners?: boolean }) {
 	const pathname = usePathname();
 	const searchParams = useSearchParams();
 	const orgSlug = useActiveOrgSlug();
@@ -117,8 +117,8 @@ export function SidebarRail() {
 		() =>
 			projectSlug
 				? buildProjectSidebarNav(orgSlug, projectSlug)
-				: buildSidebarNav(orgSlug),
-		[orgSlug, projectSlug],
+				: buildSidebarNav(orgSlug, { selfRunners }),
+		[orgSlug, projectSlug, selfRunners],
 	);
 
 	// Keep the active environment when moving between views.

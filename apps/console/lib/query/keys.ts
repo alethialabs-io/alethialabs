@@ -15,11 +15,23 @@ export const qk = {
 	runners: (org: string) => ["runners", org] as const,
 	clusters: (org: string) => ["clusters", org] as const,
 	fleet: (org: string) => ["fleet", org] as const,
+	evidence: (org: string) => ["evidence", org] as const,
+	addons: (projectId: string, environmentId?: string | null) =>
+		["addons", projectId, environmentId ?? "default"] as const,
 	projects: (org: string) => ["projects", org] as const,
+	projectUsage: (projectId: string) => ["project-usage", projectId] as const,
+	projectUsageOverTime: (projectId: string, from: string, to: string) =>
+		["project-usage", projectId, "over-time", from, to] as const,
 	pricing: (region: string) => ["pricing", region] as const,
 	cloudResources: (identityId: string) =>
 		["cloud-resources", identityId] as const,
 	supportCases: (filter: "all" | "active" | "resolved" = "all") =>
 		["support", "cases", filter] as const,
 	supportCase: (id: string) => ["support", "case", id] as const,
+	classificationDimensions: () => ["classification", "dimensions"] as const,
+	classificationAssignments: (kind: string, id: string) =>
+		["classification", "assignments", kind, id] as const,
+	classificationAssignmentsForKind: (kind: string, ids: string[]) =>
+		["classification", "assignments-batch", kind, ids] as const,
+	classificationCanEdit: () => ["classification", "can-edit"] as const,
 } as const;

@@ -1,14 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// AWS session — the server-side equivalent of the runner's `credentials.go`. Uses Alethia's PLATFORM
-// IAM creds (ALETHIA_AWS_*) to assume the customer's cross-account role (zero customer secrets stored;
-// the role + external id are metadata). The resulting short-lived session backs the health probe + the
-// asset inventory sync, so a connection test no longer needs a runner. Self-managed has no equivalent —
-// every connection is platform-managed (hosted = Alethia's account; OSS = the operator's).
+// AWS session — the server-side equivalent of the runner's `credentials.go`. The console assumes the
+// customer's cross-account role (zero customer secrets stored; the role + external id are metadata). The
+// platform identity it assumes FROM is KEYLESS — federated into the platform AWS account via the OIDC
+// issuer (session/aws-platform.ts), not a static key. The resulting short-lived session backs the health
+// probe + the asset inventory sync, so a connection test no longer needs a runner. Every connection is
+// platform-managed (hosted = Alethia's account; OSS = the operator's).
 
 import { STSClient } from "@aws-sdk/client-sts";
 import { AssumeRoleCommand } from "@aws-sdk/client-sts";
+import { platformCredentialProvider } from "@/lib/cloud-providers/session/aws-platform";
 import type { CloudIdentity } from "@/lib/db/schema";
 
 /** Short-lived AWS credentials + the region they were minted for. */
@@ -28,18 +30,6 @@ const TIMEOUT_MS = 12_000;
 
 /** The default region for control-plane calls (STS/regions enumeration is global-ish). */
 export const DEFAULT_AWS_REGION = "us-east-1";
-
-/** Reads the platform AWS creds Alethia uses to assume customer roles, or throws a clear error. */
-function platformCredentials() {
-	const accessKeyId = process.env.ALETHIA_AWS_ACCESS_KEY_ID;
-	const secretAccessKey = process.env.ALETHIA_AWS_SECRET_ACCESS_KEY;
-	if (!accessKeyId || !secretAccessKey) {
-		throw new Error(
-			"Platform AWS credentials are not configured (ALETHIA_AWS_ACCESS_KEY_ID / ALETHIA_AWS_SECRET_ACCESS_KEY).",
-		);
-	}
-	return { accessKeyId, secretAccessKey };
-}
 
 /** Extracts the 12-digit account id from a role ARN (arn:aws:iam::<account>:role/...). */
 function accountIdFromArn(roleArn: string | null | undefined): string | null {
@@ -63,7 +53,7 @@ export async function assumeAwsRole(
 
 	const sts = new STSClient({
 		region,
-		credentials: platformCredentials(),
+		credentials: platformCredentialProvider(),
 		requestHandler: { requestTimeout: TIMEOUT_MS },
 		maxAttempts: 2,
 	});

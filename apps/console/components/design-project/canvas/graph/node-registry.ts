@@ -23,7 +23,7 @@ import {
 	DEFAULT_K8S_VERSION,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
-import type { NodeKind } from "./types";
+import type { NodeConfigMap, NodeKind } from "./types";
 
 /** Where a node's config lands in ProjectFormData. */
 export type SchemaKey =
@@ -39,8 +39,8 @@ export type SchemaKey =
 	| "nosql_tables"
 	| "secrets";
 
-export interface NodeKindDef {
-	kind: NodeKind;
+export interface NodeKindDef<K extends NodeKind = NodeKind> {
+	kind: K;
 	schemaKey: SchemaKey;
 	cardinality: "singleton" | "array";
 	/** CORE must colocate on the project identity; PERIPHERY may diverge. */
@@ -50,8 +50,9 @@ export interface NodeKindDef {
 	eyebrow: string;
 	label: string;
 	icon: LucideIcon;
-	/** Default config for a freshly-added node, given the effective provider. */
-	defaultData: (provider: CloudProviderSlug) => Record<string, unknown>;
+	/** Default config for a freshly-added node, given the effective provider. Typed to the
+	 * kind's ProjectFormData fragment (the schema's optional/defaulted columns may be omitted). */
+	defaultData: (provider: CloudProviderSlug) => NodeConfigMap[K];
 	/** Optional pre-add step: pick a value for `key` (e.g. the DB engine) before the node is
 	 * created + configured. Kinds without variants are added straight to the canvas. */
 	variants?: {
@@ -60,11 +61,14 @@ export interface NodeKindDef {
 	};
 }
 
+/** Per-kind registry: each entry's `defaultData` is typed to that kind's config fragment. */
+export type NodeRegistry = { [K in NodeKind]: NodeKindDef<K> };
+
 /**
  * Single source of truth for node kinds. The palette, command palette, React Flow
  * nodeTypes, and the graph⇄form mappers all derive from this table.
  */
-export const NODE_REGISTRY: Record<NodeKind, NodeKindDef> = {
+export const NODE_REGISTRY: NodeRegistry = {
 	project: {
 		kind: "project",
 		schemaKey: "project",

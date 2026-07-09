@@ -6,7 +6,7 @@ variable "project_id" {
 variable "alethia_aws_account_id" {
   description = "Alethia platform AWS account ID"
   type        = string
-  default     = "787587782604"
+  default     = "270587882865"
 }
 
 variable "pool_id" {

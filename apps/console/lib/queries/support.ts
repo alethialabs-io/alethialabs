@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Typed query builders for support cases. All take the owner-scoped transaction from
-// withOwnerScope (RLS is the tenancy wall); these are the visibility filters — most
+// Typed query builders for support cases. All take the scoped transaction from
+// withSupportScope (tiered RLS is the tenancy + visibility wall — requester-own or, for
+// manage_support holders, org-wide); these builders add the customer-facing filters — most
 // importantly, the customer thread NEVER selects is_internal staff notes.
 
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
@@ -42,6 +43,10 @@ export interface CaseListItem {
 	created_at: Date;
 	/** True when there's a newer message than the caller's read watermark (or no watermark). */
 	unread: boolean;
+	/** Display name of whoever opened the case (the first customer message's author). */
+	requester_name: string | null;
+	/** True when the caller opened this case — lets admins' list hide the requester on their own rows. */
+	is_mine: boolean;
 }
 
 /** Filters for {@link listCasesForOwner}. `status` buckets the lifecycle stages. */
@@ -87,6 +92,12 @@ export async function listCasesForOwner(
 			last_author_type: supportCases.last_author_type,
 			created_at: supportCases.created_at,
 			unread: sql<boolean>`(${supportCaseReads.last_read_at} is null or ${supportCases.last_message_at} > ${supportCaseReads.last_read_at})`,
+			// Requester = author of the case's first customer message (stays within the
+			// RLS-visible support tables, so no cross-user user/profiles join is needed).
+			requester_name: sql<
+				string | null
+			>`(select am.author_name from ${supportMessages} am where am.case_id = ${supportCases.id} and am.author_type = 'customer' order by am.created_at asc limit 1)`,
+			is_mine: sql<boolean>`(${supportCases.user_id} = ${ownerId})`,
 		})
 		.from(supportCases)
 		.leftJoin(

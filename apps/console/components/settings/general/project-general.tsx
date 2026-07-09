@@ -14,6 +14,7 @@ import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { deleteProject, updateProjectName } from "@/app/server/actions/projects";
+import { ClassificationControl } from "@/components/classification/classification-control";
 import {
 	SettingsCardFoot,
 	SettingsDangerRow,
@@ -120,6 +121,13 @@ export function ProjectGeneral({
 								<div className="flex h-[38px] items-center overflow-hidden rounded-sm border border-border-strong bg-surface-sunken px-3 font-mono text-[12px] text-text-tertiary">
 									/{orgSlug}/{slug ?? "—"}
 								</div>
+							</SettingsField>
+							{/* Classification (Workstream B) — chips + a picker for org editors. */}
+							<SettingsField
+								label="Classification"
+								hint="Pin this project's classification values (e.g. Environment, Team)."
+							>
+								<ClassificationControl kind="project" id={projectId} canEdit />
 							</SettingsField>
 						</div>
 						<SettingsCardFoot note="Applies across the console">

@@ -20,6 +20,7 @@ import {
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
+	projectAddons,
 	projectNetwork,
 	projectNosqlTables,
 	projectObservability,
@@ -30,6 +31,8 @@ import {
 	projectTopics,
 	projects,
 } from "@/lib/db/schema";
+import { resolveAddOnInstall } from "@/lib/addons/catalog";
+import type { AddOnInstallSpec } from "@/lib/addons/types";
 import {
 	type CloudProviderSlug,
 	type ConversionWarning,
@@ -599,6 +602,30 @@ async function buildConfigSnapshot(
 			.from(projectObservability)
 			.where(envScope(projectObservability, projectId, envId))
 			.limit(1);
+		// Marketplace add-ons enabled for this environment, resolved against the code catalog
+		// into runner-facing install specs (chart coords + merged Helm values). The runner
+		// renders one ArgoCD Application per spec on DEPLOY; a retired catalog id resolves to
+		// null and is skipped.
+		const addonRows = await tx
+			.select()
+			.from(projectAddons)
+			.where(
+				and(
+					envScope(projectAddons, projectId, envId),
+					eq(projectAddons.enabled, true),
+				),
+			);
+		const addons: AddOnInstallSpec[] = addonRows
+			.map((r) =>
+				resolveAddOnInstall({
+					addon_id: r.addon_id,
+					mode: r.mode,
+					version: r.version,
+					values: r.values,
+					values_yaml: r.values_yaml,
+				}),
+			)
+			.filter((s): s is AddOnInstallSpec => s !== null);
 
 		// ── Resolve per-resource placement ("versatile model") ───────────────
 		// Each component may carry its own cloud_identity_id/region; NULL inherits
@@ -725,6 +752,10 @@ async function buildConfigSnapshot(
 			cluster: {
 				...resolvePlacement(cluster),
 				cluster_version: cluster?.cluster_version,
+				// Provisioned cluster name/endpoint (set after the first deploy) — lets a
+				// day-2 drift job acquire kubeconfig to inspect add-on health + security.
+				cluster_name: cluster?.cluster_name ?? null,
+				cluster_endpoint: cluster?.cluster_endpoint ?? null,
 				instance_types: cluster?.instance_types ?? [],
 				node_min_size: cluster?.node_min_size ?? 2,
 				node_max_size: cluster?.node_max_size ?? 5,
@@ -769,6 +800,9 @@ async function buildConfigSnapshot(
 				...r,
 				...resolvePlacement(r),
 			})),
+			// Marketplace add-ons (resolved install specs) — the runner renders each as an
+			// ArgoCD Helm Application after the cluster + ArgoCD are up.
+			addons,
 			// Token is fetched at runtime by the runner via POST /api/jobs/[id]/git-token.
 			git_access_token: "",
 		};
@@ -1248,8 +1282,7 @@ export async function duplicateProjectForProvider(
 	converted.project.region = targetRegion;
 	converted.project.cloud_identity_id = targetCloudIdentityId;
 
-	const input = converted as unknown as CreateProjectInput;
-	const { project } = await createProject(input);
+	const { project } = await createProject(converted);
 	if (!project.slug) throw new Error("Duplicated project is missing a slug");
 
 	return {
@@ -1404,12 +1437,7 @@ export async function duplicateEnvironment(
 		if (!env) throw new Error("Failed to create environment");
 		// Copy the base env's components into the new env (fresh rows, status defaults to PENDING).
 		if (baseConfig)
-			await writeComponents(
-				tx,
-				projectId,
-				env.id,
-				baseConfig as unknown as CreateProjectInput,
-			);
+			await writeComponents(tx, projectId, env.id, baseConfig);
 		return { environment: env };
 	});
 }

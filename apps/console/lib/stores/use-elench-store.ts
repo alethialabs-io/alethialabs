@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import type { AgentMode } from "@/lib/ai/tools";
 import type { Mention } from "@/lib/ai/mentions";
+import { track } from "@/lib/analytics/track";
 import { AI_MODELS } from "@/lib/config/ai";
 
 /**
@@ -36,6 +37,11 @@ interface ElenchState {
 	mode: AgentMode;
 	/** Selected org model id (allowlisted in AI_MODELS). */
 	model: string;
+	/**
+	 * Per-message "deep reasoning" opt-in — rides the request as `deepReasoning`. Only meaningful
+	 * on the `ai_max` tier, where it swaps the planning advisor from Sonnet to Opus for that turn.
+	 */
+	deepReasoning: boolean;
 	/** Active org thread id; null = a fresh (not-yet-persisted) conversation. */
 	threadId: string | null;
 	/**
@@ -50,6 +56,12 @@ interface ElenchState {
 	seedPrompt: string | null;
 	/** Resources @-referenced in the latest sent message (ride with the request). */
 	pendingMentions: Mention[];
+	/**
+	 * Whether the modal's thread rail is expanded. Lives here (not in `ElenchModal`'s local
+	 * state) so it survives a minimize→maximize round-trip — the modal remounts on every view
+	 * flip, which would otherwise reset the rail to open.
+	 */
+	railOpen: boolean;
 
 	/** Open as a docked panel in the given context. */
 	openPanel: (ctx: ElenchCtx) => void;
@@ -66,9 +78,22 @@ interface ElenchState {
 
 	setMode: (mode: AgentMode) => void;
 	setModel: (model: string) => void;
-	/** Resume a persisted org thread. */
+	/** Toggle the per-message deep-reasoning (Opus) opt-in. */
+	setDeepReasoning: (deepReasoning: boolean) => void;
+	/** Expand/collapse the modal thread rail. */
+	setRailOpen: (open: boolean) => void;
+	/**
+	 * Resume a persisted thread: point at it AND bump `epoch` so the chat lineage token
+	 * changes, recreating the underlying chat with the resumed transcript (no chrome remount).
+	 */
 	selectThread: (id: string | null) => void;
-	/** Start a fresh conversation (org: unnamed thread; project: new ephemeral). */
+	/**
+	 * Attach a lazily-created thread id WITHOUT bumping `epoch` — used on the first send of an
+	 * ephemeral conversation so the new id rides subsequent requests while the in-flight chat
+	 * (and its just-sent message) survives intact.
+	 */
+	attachThread: (id: string) => void;
+	/** Start a fresh conversation (ephemeral — nothing is persisted until the first send). */
 	newChat: () => void;
 	/** Stage a prompt to auto-send once into the next conversation. */
 	setSeedPrompt: (prompt: string | null) => void;
@@ -89,16 +114,19 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	ctx: { kind: "org" },
 	mode: "ask",
 	model: AI_MODELS[0].id,
+	deepReasoning: false,
 	threadId: null,
 	epoch: 0,
 	seedPrompt: null,
 	pendingMentions: [],
+	railOpen: true,
 
 	openPanel: (ctx) => {
 		const cur = get();
 		// Switching context starts a fresh conversation (org tools must not bleed
 		// into a project conversation and vice-versa).
 		const fresh = !sameCtx(cur.ctx, ctx);
+		track("elench_chat_opened", { context: ctx.kind, view: "panel" });
 		set({
 			open: true,
 			view: "panel",
@@ -111,6 +139,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	openModal: (ctx) => {
 		const cur = get();
 		const fresh = !sameCtx(cur.ctx, ctx);
+		track("elench_chat_opened", { context: ctx.kind, view: "modal" });
 		set({
 			open: true,
 			view: "modal",
@@ -132,19 +161,23 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 
 	setMode: (mode) => set({ mode }),
 	setModel: (model) => set({ model }),
-	selectThread: (id) => set({ threadId: id }),
+	setDeepReasoning: (deepReasoning) => set({ deepReasoning }),
+	setRailOpen: (railOpen) => set({ railOpen }),
+	selectThread: (id) => set((s) => ({ threadId: id, epoch: s.epoch + 1 })),
+	attachThread: (id) => set({ threadId: id }),
 	newChat: () => set((s) => ({ threadId: null, epoch: s.epoch + 1 })),
 	setSeedPrompt: (seedPrompt) => set({ seedPrompt }),
 	setPendingMentions: (pendingMentions) => set({ pendingMentions }),
 }));
 
-/** Stable key for the conversation lineage — excludes `view` (so a modal↔panel
- * flip never remounts the chat) and includes ctx + thread + epoch. */
-export function elenchConversationKey(
-	ctx: ElenchCtx,
-	threadId: string | null,
-	epoch: number,
-): string {
+/**
+ * The chat lineage token — a stable id for the underlying `useChat` instance, derived from
+ * the context anchor + `epoch` (NOT the live `threadId`). It changes on new-chat / resume
+ * (both bump `epoch`), recreating the chat with fresh/loaded messages, but stays put on a
+ * lazy thread-attach and on a modal↔panel `view` flip — so an in-flight send survives and
+ * the chrome never remounts.
+ */
+export function elenchChatId(ctx: ElenchCtx, epoch: number): string {
 	const anchor = ctx.kind === "project" ? `project:${ctx.projectId}` : "org";
-	return `${anchor}:${threadId ?? "ephemeral"}:${epoch}`;
+	return `${anchor}:${epoch}`;
 }

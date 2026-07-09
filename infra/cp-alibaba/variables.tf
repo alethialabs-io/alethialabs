@@ -2,20 +2,20 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 variable "region" {
-  # Must offer Yitian 710 ARM (g8y/c8y/r8y) ECS — e.g. eu-central-1, ap-southeast-1, cn-hangzhou.
+  # Must offer the x86 g7 ECS family — e.g. eu-central-1, ap-southeast-1, cn-hangzhou.
   description = "Alibaba Cloud region."
   type        = string
   default     = "eu-central-1"
 }
 
 variable "zone_id" {
-  description = "Availability zone (must have the ARM instance family). Empty = let the provider pick."
+  description = "Availability zone (must have the x86 instance family). Empty = let the provider pick."
   type        = string
   default     = ""
 }
 
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token with DNS edit on the zone."
+  description = "Cloudflare API token with DNS edit + Cloudflare Tunnel (Zero Trust) perms."
   type        = string
   sensitive   = true
 }
@@ -25,22 +25,22 @@ variable "cloudflare_zone_id" {
   type        = string
 }
 
+variable "cloudflare_account_id" {
+  description = "Cloudflare account ID that owns the Zero Trust tunnel."
+  type        = string
+}
+
 variable "domain" {
   description = "Apex domain served by the control plane."
   type        = string
   default     = "alethialabs.io"
 }
 
-variable "ssh_public_key" {
-  description = "SSH public key authorized on the VM (CI deploy key)."
-  type        = string
-}
-
 variable "instance_type" {
-  # g8y = Yitian 710 ARM64 (matches the arm64 images). ecs.g8y.large = 2 vCPU / 8 GB.
-  description = "ECS instance type (must be ARM/Yitian, e.g. g8y/c8y/r8y)."
+  # g7 = x86 general-purpose (matches the linux/amd64 self-host images). ecs.g7.large = 2 vCPU / 8 GB.
+  description = "ECS instance type (x86 general-purpose, e.g. g7/c7/r7)."
   type        = string
-  default     = "ecs.g8y.large"
+  default     = "ecs.g7.large"
 }
 
 variable "system_disk_size" {
@@ -49,14 +49,18 @@ variable "system_disk_size" {
   default     = 40
 }
 
-variable "ssh_allowed_cidrs" {
-  description = "CIDRs allowed to reach SSH (22)."
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
-}
-
 variable "repo_url" {
   description = "Git repo cloned onto the box at /opt/alethia."
   type        = string
   default     = "https://github.com/alethialabs-io/alethialabs.git"
+}
+
+variable "environment" {
+  description = "Deployment environment tag (FinOps) — Dev, Stage, or Prod."
+  type        = string
+  default     = "Prod"
+  validation {
+    condition     = contains(["Dev", "Stage", "Prod"], var.environment)
+    error_message = "environment must be Dev, Stage, or Prod."
+  }
 }

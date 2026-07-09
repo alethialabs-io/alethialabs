@@ -7,8 +7,6 @@ variable "gcp_project" {
 }
 
 variable "gcp_region" {
-  # Must be a region with Tau T2A (ARM) availability (e.g. us-central1,
-  # europe-west4, asia-southeast1) — the images are arm64-only.
   description = "GCP region."
   type        = string
   default     = "europe-west4"
@@ -21,13 +19,18 @@ variable "gcp_zone" {
 }
 
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token with DNS edit on the zone."
+  description = "Cloudflare API token with DNS edit + Cloudflare Tunnel (Zero Trust) perms on the zone/account."
   type        = string
   sensitive   = true
 }
 
 variable "cloudflare_zone_id" {
   description = "Cloudflare zone ID for the domain."
+  type        = string
+}
+
+variable "cloudflare_account_id" {
+  description = "Cloudflare account ID that owns the Zero Trust tunnel."
   type        = string
 }
 
@@ -38,32 +41,38 @@ variable "domain" {
 }
 
 variable "ssh_public_key" {
-  description = "SSH public key authorized on the instance (CI deploy key)."
+  description = "SSH public key authorized on the instance (CI deploy key). Reached via IAP only."
   type        = string
 }
 
 variable "machine_type" {
-  # t2a = Ampere Altra ARM64 (matches the arm64 images); t2a-standard-2 =
-  # 2 vCPU / 8 GB, the cheapest tier with headroom for the bundle + a TF run.
-  description = "GCE machine type (must be ARM/T2A)."
+  # e2-standard-2 = 2 vCPU / 8 GB, x86 — GCP's cost-optimized family and the cheapest standard
+  # tier with headroom for the compose bundle plus an OpenTofu run. x86 matches the linux/amd64
+  # self-host images (as cp-hetzner now builds). Use an ARM t2a-standard-2 only if arm64 images
+  # are published (and pin an arm64 boot image accordingly).
+  description = "GCE machine type."
   type        = string
-  default     = "t2a-standard-2"
+  default     = "e2-standard-2"
 }
 
 variable "boot_disk_size" {
-  description = "Boot disk size (GB) — holds Docker data (Postgres + object store)."
+  description = "Boot disk size (GB) — holds Docker data (Postgres + object storage)."
   type        = number
   default     = 30
-}
-
-variable "ssh_allowed_cidrs" {
-  description = "CIDRs allowed to reach SSH (22)."
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
 }
 
 variable "repo_url" {
   description = "Git repo cloned onto the box at /opt/alethia."
   type        = string
   default     = "https://github.com/alethialabs-io/alethialabs.git"
+}
+
+variable "environment" {
+  description = "Deployment environment tag (FinOps) — Dev, Stage, or Prod (lowercased for the GCP label)."
+  type        = string
+  default     = "Prod"
+  validation {
+    condition     = contains(["Dev", "Stage", "Prod"], var.environment)
+    error_message = "environment must be Dev, Stage, or Prod."
+  }
 }

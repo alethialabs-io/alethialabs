@@ -84,7 +84,7 @@ export function HeaderBreadcrumbs() {
 						});
 					} else if (UUID_RE.test(s) && rest[j - 1] === "jobs") {
 						const job = jobs.find((v) => v.id === s);
-						const jt = job?.job_type as string | undefined;
+						const jt = job?.job_type;
 						out.push({
 							label:
 								jt && JOB_TYPES[jt as keyof typeof JOB_TYPES]
@@ -147,7 +147,7 @@ export function HeaderBreadcrumbs() {
 				const prev = raw[i - 1];
 				if (prev === "jobs") {
 					const job = jobs.find((j) => j.id === seg);
-					const jobType = job?.job_type as string | undefined;
+					const jobType = job?.job_type;
 					const label = jobType && JOB_TYPES[jobType as keyof typeof JOB_TYPES]
 						? JOB_TYPES[jobType as keyof typeof JOB_TYPES].label
 						: seg.slice(0, 8) + "…";

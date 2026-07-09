@@ -7,18 +7,30 @@ import {
 	streamText,
 	type UIMessage,
 } from "ai";
+import { z } from "zod";
 import { saveThreadMessages } from "@/app/server/actions/agent";
 import {
 	formatMentionsForPrompt,
 	type Mention,
 	mentionsSchema,
 } from "@/lib/ai/mentions";
+import {
+	advisorThinkingOptions,
+	cachedSystemMessage,
+} from "@/lib/ai/provider-options";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
+import { recordAgentTurnUsage } from "@/lib/billing/agent-metering";
 import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
-import { recordAiUsage } from "@/lib/billing/ai-quota";
-import { getAiModel, isAiConfigured } from "@/lib/config/ai";
+import { resolveAiTier } from "@/lib/billing/ai-plan";
+import {
+	getAdvisorModel,
+	getExecutorModel,
+	isAiConfigured,
+	isSelectableModel,
+	resolveModel,
+} from "@/lib/config/ai";
 
 interface AgentBody {
 	messages: UIMessage[];
@@ -26,11 +38,19 @@ interface AgentBody {
 	threadId?: string;
 	/** Ask = read-only; Act = may propose plan/deploy operations. */
 	mode?: AgentMode;
-	/** Selected gateway model id (validated against the allowlist). */
+	/** Selected model id (validated against the allowlist). */
 	model?: string;
 	/** Resources the user @-referenced in the latest message. */
 	mentions?: Mention[];
+	/**
+	 * Per-message opt-in to the Opus advisor ("deep reasoning"). Only effective on `ai_max`
+	 * (the advisor selection guards it); ignored on every other tier.
+	 */
+	deepReasoning?: boolean;
 }
+
+/** Parse the optional `deepReasoning` flag from a request body — defaults to false. */
+const deepReasoningSchema = z.boolean().catch(false);
 
 /** System prompt for the general Agent page (infra Q&A + project design + Act-mode ops). */
 function systemPrompt(mode: AgentMode): string {
@@ -86,18 +106,28 @@ export async function POST(req: Request) {
 	if (!owner) return new Response("Unauthorized", { status: 401 });
 	if (!isAiConfigured()) {
 		return new Response(
-			"AI is not configured. Set AI_GATEWAY_API_KEY to enable the agent.",
+			"AI is not configured. Set ANTHROPIC_API_KEY to enable the agent.",
 			{ status: 503 },
 		);
 	}
 
 	const actor = await currentActor();
-	const charge = await assertAiAllowed(actor.orgId, "agent").catch(
-		(e: unknown) => {
-			if (e instanceof AiBudgetError) return e;
-			throw e;
-		},
-	);
+	const {
+		messages,
+		threadId,
+		mode = "ask",
+		model,
+		mentions,
+		deepReasoning: deepReasoningRaw,
+	}: AgentBody = await req.json();
+	const deepReasoning = deepReasoningSchema.parse(deepReasoningRaw);
+
+	// Metered turn: gate on headroom (the real cost-of-serve is settled after it runs). The
+	// deep-reasoning flag no longer affects the charge — Opus just settles its own real cost.
+	const charge = await assertAiAllowed(actor.orgId, "agent", actor.userId).catch((e: unknown) => {
+		if (e instanceof AiBudgetError) return e;
+		throw e;
+	});
 	if (charge instanceof AiBudgetError) {
 		return new Response(
 			JSON.stringify({
@@ -110,14 +140,20 @@ export async function POST(req: Request) {
 		);
 	}
 
-	const {
-		messages,
-		threadId,
-		mode = "ask",
-		model,
-		mentions,
-	}: AgentBody = await req.json();
-	const modelId = getAiModel(model);
+	// Cost-optimized orchestration: a tier-derived ADVISOR plans step 0, then a cheap Haiku
+	// EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor). The advisor
+	// is Sonnet by default; on ai_max the per-message `deepReasoning` opt-in upgrades it to Opus.
+	// An explicit client model pick overrides orchestration with that single deliberate choice.
+	const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as const);
+	const executor = getExecutorModel();
+	const advisor = getAdvisorModel(tier, { deepReasoning });
+	const clientPick = isSelectableModel(model) ? model : null;
+	// The base run: the client's explicit pick, else the cheap executor. Step 0 upgrades to the
+	// advisor (via prepareStep) unless the user forced a pick.
+	const base = clientPick ? resolveModel(clientPick) : executor;
+	/** The canonical key metered for a given step (step 0 = advisor unless the user forced a pick). */
+	const modelForStep = (stepNumber: number): string =>
+		!clientPick && stepNumber === 0 ? advisor.key : base.key;
 
 	// Resolve @-mentions into a prompt block so the model knows what each ref points to.
 	const parsedMentions = mentionsSchema.safeParse(mentions);
@@ -129,24 +165,44 @@ export async function POST(req: Request) {
 		: systemPrompt(mode);
 
 	const result = streamText({
-		model: modelId,
-		system,
-		messages: await convertToModelMessages(messages),
+		model: base.model,
+		// Cache the (stable) system prompt so repeated turns read it from cache.
+		messages: [
+			cachedSystemMessage(system),
+			...(await convertToModelMessages(messages)),
+		],
+		// Our own system prompt (cached) is intentionally a system message; user turns are
+		// never system-role, so this is not a prompt-injection surface.
+		allowSystemInMessages: true,
 		tools: buildAgentTools({ mode }),
 		stopWhen: stepCountIs(8),
-		// Record once the run completes, with the real token usage for cost-of-serve.
-		onFinish: ({ usage }) => {
-			void recordAiUsage({
+		// Step 0 runs on the advisor (unless the user forced a model); the rest use the executor.
+		// A distinct Anthropic advisor also gets adaptive extended thinking for the planning step.
+		prepareStep: clientPick
+			? undefined
+			: ({ stepNumber }) =>
+					stepNumber === 0
+						? {
+								model: advisor.model,
+								providerOptions: advisorThinkingOptions(advisor, executor),
+							}
+						: {},
+		// Meter PER MODEL: advisor + executor tokens are ledgered separately (correct cost_micros).
+		onFinish: ({ steps }) => {
+			void recordAgentTurnUsage({
 				orgId: actor.orgId,
 				userId: actor.userId,
 				kind: "agent",
-				credits: charge.credits,
-				source: charge.source,
+				charge,
 				refId: threadId,
-				model: modelId,
-				inputTokens: usage.inputTokens,
-				outputTokens: usage.outputTokens,
-				cachedInputTokens: usage.cachedInputTokens,
+				steps: steps.map((s, i) => ({
+					model: modelForStep(i),
+					usage: {
+						inputTokens: s.usage.inputTokens,
+						outputTokens: s.usage.outputTokens,
+						cachedInputTokens: s.usage.cachedInputTokens,
+					},
+				})),
 			});
 		},
 	});

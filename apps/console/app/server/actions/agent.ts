@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { UIMessage } from "ai";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { requireOwner } from "@/lib/auth/owner";
 import { withOwnerScope } from "@/lib/db";
 import { type AgentThread, agentThreads } from "@/lib/db/schema";
@@ -15,23 +15,49 @@ function titleFrom(firstMessage?: string): string {
 	return t.length > 60 ? `${t.slice(0, 57)}…` : t;
 }
 
-/** Create a new owner-scoped agent chat thread. */
-export async function createThread(firstMessage?: string): Promise<AgentThread> {
+/**
+ * Create a new owner-scoped agent chat thread. `projectId` scopes it to a project
+ * (the project assistant); omitted → an org-level conversation (the general agent).
+ */
+export async function createThread(
+	firstMessage?: string,
+	projectId?: string,
+): Promise<AgentThread> {
 	const owner = await requireOwner();
 	return withOwnerScope(owner, async (tx) => {
 		const [thread] = await tx
 			.insert(agentThreads)
-			.values({ user_id: owner, org_id: owner, title: titleFrom(firstMessage) })
+			.values({
+				user_id: owner,
+				org_id: owner,
+				title: titleFrom(firstMessage),
+				...(projectId ? { project_id: projectId } : {}),
+			})
 			.returning();
 		return thread;
 	});
 }
 
-/** List the owner's threads, most-recently-updated first. RLS scopes the rows. */
-export async function listThreads(): Promise<AgentThread[]> {
+/**
+ * List the owner's threads, most-recently-updated first (RLS scopes the rows).
+ * `projectId` set → that project's conversations; omitted → org-level threads only
+ * (project_id IS NULL), so the org rail never mixes in project chats.
+ */
+export async function listThreads(projectId?: string): Promise<AgentThread[]> {
 	const owner = await requireOwner();
 	return withOwnerScope(owner, async (tx) =>
-		tx.select().from(agentThreads).orderBy(desc(agentThreads.updated_at)),
+		tx
+			.select()
+			.from(agentThreads)
+			.where(
+				and(
+					eq(agentThreads.kind, "agent"),
+					projectId
+						? eq(agentThreads.project_id, projectId)
+						: isNull(agentThreads.project_id),
+				),
+			)
+			.orderBy(desc(agentThreads.updated_at)),
 	);
 }
 

@@ -12,26 +12,33 @@ import { and, count, eq } from "drizzle-orm";
 import type Stripe from "stripe";
 import { RESERVED_SLUGS } from "@/lib/routing";
 import {
+	aiPaidTiersEnabled,
+	aiPriceIdForTier,
 	deploymentMode,
 	getStripeConfig,
 	isStripeConfigured,
 	isStripeTaxEnabled,
 	meterPriceIdForPlan,
+	type PaidAiTier,
 	type PaidPlan,
 	priceIdForPlan,
 } from "@/lib/billing/config";
 import { creditPack } from "@/lib/billing/ai-credits";
+import { type AiTier, aiTierSpec, resolveAiTier } from "@/lib/billing/ai-plan";
 import { canOrgInvite } from "@/lib/billing/collaboration";
 import { countBillableSeats } from "@/lib/billing/seats";
 import type { TaxIdType } from "@/lib/billing/tax-ids";
-import { planMeta } from "@repo/plan-catalog";
+import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
+import { currencyFromRequest } from "@/lib/billing/currency";
 import { resolvePlanEntitlements } from "@/lib/billing/plan";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { getOrgInvoice, listOrgInvoices } from "@/lib/billing/invoices";
 import { backupRankOf, setBackupOrder } from "@/lib/billing/payment-methods";
 import {
+	getAllAiPrices,
 	getAllPlanPrices,
 	getPlanPrice,
+	type LiveAiPriceMap,
 	type LivePlanPriceMap,
 } from "@/lib/billing/pricing";
 import { getStripe } from "@/lib/billing/stripe";
@@ -199,6 +206,13 @@ export async function getLivePlanPrices(): Promise<LivePlanPriceMap> {
 	return getAllPlanPrices();
 }
 
+/** Live prices for every standalone AI tier (Stripe-authoritative, catalog fallback) —
+ *  consumed client-side via useLiveAiPrice. Degrades to the placeholder catalog prices when
+ *  the AI Stripe prices aren't configured (pre-cutover). Any caller. */
+export async function getLiveAiPrices(): Promise<LiveAiPriceMap> {
+	return getAllAiPrices();
+}
+
 /** Managed-runner usage for the active org's current period (read-only; any member). */
 export interface UsageReport extends UsageSummary {
 	periodStart: string;
@@ -341,49 +355,86 @@ export async function getUsageOverTime(input: {
 	return { series, totals };
 }
 
-/** AI credit standing for the active org: this week's spend vs budget + purchased balance. */
+/**
+ * The active org's STANDALONE AI standing — daily + weekly included spend vs the AI tier's
+ * caps (the % denominators), on the SAME fixed epoch buckets the guard (ai-guard.ts)
+ * enforces, plus the remaining purchased top-up balance and the tier. Read-only; any
+ * member. The single canonical AI-usage action (drives the overview card, the Usage panel,
+ * and the billing AI section).
+ */
 export interface AiUsageSummary {
-	/** AI present on this plan (always true today; future-proofs a no-AI tier). */
+	/** AI enabled for this org's tier (always true today; future-proofs a disabled tier). */
 	enabled: boolean;
-	/** Included credits consumed in the trailing 7-day window. */
-	windowUsed: number;
-	/** The plan's weekly included-credit budget. */
+	/** The org's standalone AI tier (independent of the org plan). */
+	tier: AiTier;
+	/** Included credits used in the current fixed day. */
+	dailyUsed: number;
+	/** The tier's daily included-credit cap (the daily-% denominator). */
+	dailyBudget: number;
+	/** When the daily bucket resets (ISO). */
+	dailyResetAt: string;
+	/** Included credits used in the current fixed week. */
+	weeklyUsed: number;
+	/** The tier's weekly included-credit cap (the weekly-% denominator). */
 	weeklyBudget: number;
+	/** When the weekly bucket resets (ISO). */
+	weeklyResetAt: string;
 	/** Remaining purchased top-up credits (Σ grants − Σ purchased usage). */
 	purchasedBalance: number;
+	/**
+	 * Whether the paid AI tiers + credit packs are self-serve on this deployment (both
+	 * Stripe AI prices configured). Drives the upgrade UI's "Coming soon" gate — the only
+	 * config signal that crosses to the client (a plain boolean, never the price ids).
+	 */
+	paidTiersEnabled: boolean;
 }
 
-/**
- * The active org's AI credit standing — trailing-week included spend against the plan's
- * weekly budget, plus the remaining purchased top-up balance. AI is its own budget model
- * (separate from the seat/runner plan allowances). Read-only; any member.
- */
+const AI_DAY_MS = 24 * 60 * 60 * 1000;
+const AI_WEEK_MS = 7 * AI_DAY_MS;
+
 export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 	const actor = await currentActor();
-	const billing = await getOrgBilling(actor.orgId).catch(() => null);
-	const ai = resolvePlanEntitlements(
-		billing?.plan ?? "community",
-		billing?.status ?? "none",
-	).ai;
+	const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as AiTier);
+	const spec = aiTierSpec(tier);
+	const paidTiersEnabled = aiPaidTiersEnabled();
+
+	const now = Date.now();
+	const dayStart = new Date(Math.floor(now / AI_DAY_MS) * AI_DAY_MS);
+	const weekStart = new Date(Math.floor(now / AI_WEEK_MS) * AI_WEEK_MS);
+	const dailyResetAt = new Date(dayStart.getTime() + AI_DAY_MS).toISOString();
+	const weeklyResetAt = new Date(weekStart.getTime() + AI_WEEK_MS).toISOString();
+
 	if (actor.orgId === actor.userId) {
 		return {
-			enabled: ai.enabled,
-			windowUsed: 0,
-			weeklyBudget: ai.weeklyCredits,
+			enabled: spec.enabled,
+			tier,
+			dailyUsed: 0,
+			dailyBudget: spec.dailyCredits,
+			dailyResetAt,
+			weeklyUsed: 0,
+			weeklyBudget: spec.weeklyCredits,
+			weeklyResetAt,
 			purchasedBalance: 0,
+			paidTiersEnabled,
 		};
 	}
 
-	const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-	const [windowUsed, purchased] = await Promise.all([
-		sumCredits(actor.orgId, "included", weekAgo),
+	const [dailyUsed, weeklyUsed, purchased] = await Promise.all([
+		sumCredits(actor.orgId, "included", dayStart),
+		sumCredits(actor.orgId, "included", weekStart),
 		purchasedBalance(actor.orgId),
 	]);
 	return {
-		enabled: ai.enabled,
-		windowUsed,
-		weeklyBudget: ai.weeklyCredits,
+		enabled: spec.enabled,
+		tier,
+		dailyUsed,
+		dailyBudget: spec.dailyCredits,
+		dailyResetAt,
+		weeklyUsed,
+		weeklyBudget: spec.weeklyCredits,
+		weeklyResetAt,
 		purchasedBalance: purchased,
+		paidTiersEnabled,
 	};
 }
 
@@ -564,6 +615,8 @@ export async function createCheckoutSession(
 export interface SubscriptionIntent {
 	clientSecret: string;
 	subscriptionId: string;
+	/** The currency the subscription was created in (Stripe locks it) — drives the UI toggle. */
+	currency: SupportedCurrency;
 }
 
 /**
@@ -575,7 +628,7 @@ export interface SubscriptionIntent {
  */
 export async function createSubscriptionIntent(
 	plan: PaidPlan,
-	opts?: { billingEmail?: string },
+	opts?: { billingEmail?: string; currency?: SupportedCurrency },
 ): Promise<SubscriptionIntent> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
@@ -608,9 +661,14 @@ export async function createSubscriptionIntent(
 	// org that already has a team is billed for them at subscribe time. Enterprise is flat.
 	const quantity =
 		plan === "team" ? Math.max(1, await countBillableSeats(actor.orgId)) : 1;
+	// Resolve the billing currency BEFORE creating the subscription (Stripe locks it): an
+	// explicit checkout selection wins, else the request's geo (Cloudflare CF-IPCountry).
+	// The Price must carry this currency's option (scripts/stripe-setup.ts).
+	const currency = opts?.currency ?? (await currencyFromRequest());
 	const sub = await getStripe().subscriptions.create({
 		customer: customerId,
 		items: planCreateItems(plan, quantity),
+		currency,
 		payment_behavior: "default_incomplete",
 		payment_settings: { save_default_payment_method: "on_subscription" },
 		expand: ["latest_invoice.confirmation_secret"],
@@ -626,7 +684,70 @@ export async function createSubscriptionIntent(
 	if (!clientSecret) {
 		throw new Error("Stripe did not return a payment client secret.");
 	}
-	return { clientSecret, subscriptionId: sub.id };
+	return { clientSecret, subscriptionId: sub.id, currency };
+}
+
+/**
+ * Creates an incomplete STANDALONE AI subscription (ai_plus/ai_max) for the active org and
+ * returns the client secret for its first payment — the embedded Payment Element flow. This
+ * is a SEPARATE Stripe subscription from the org plan (its own price IDs), so an org can be
+ * e.g. community plan + AI Plus. The webhook (sync.ts → aiTierForPriceId) routes its events
+ * to the org's AI columns only. Owner-gated; org-scoped; refuses if a live AI subscription
+ * already exists. Mirrors createSubscriptionIntent.
+ */
+export async function createAiSubscriptionIntent(
+	tier: PaidAiTier,
+	opts?: { billingEmail?: string; currency?: SupportedCurrency },
+): Promise<SubscriptionIntent> {
+	const actor = await authorize("manage_billing", { type: "billing" });
+	requireHostedBilling();
+	if (actor.orgId === actor.userId) {
+		throw new Error("Create an organization before subscribing to an AI plan.");
+	}
+	const existing = await getOrgBilling(actor.orgId);
+	if (
+		existing?.aiStripeSubscriptionId &&
+		(existing.aiSubscriptionStatus === "active" ||
+			existing.aiSubscriptionStatus === "trialing")
+	) {
+		throw new Error(
+			"This organization already has an active AI subscription — change it instead.",
+		);
+	}
+	const customerId = await ensureCustomer(
+		actor.orgId,
+		actor.userId,
+		opts?.billingEmail,
+	);
+	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
+		? { automatic_tax: { enabled: true } }
+		: {};
+	// Resolve the billing currency before creating the sub (Stripe locks it): an explicit
+	// selection wins, else the request's geo. The AI Price must carry this currency's option
+	// (scripts/stripe-setup.ts provisions USD + EUR).
+	const currency = opts?.currency ?? (await currencyFromRequest());
+	const sub = await getStripe().subscriptions.create({
+		customer: customerId,
+		items: [{ price: aiPriceIdForTier(tier), quantity: 1 }],
+		currency,
+		payment_behavior: "default_incomplete",
+		payment_settings: { save_default_payment_method: "on_subscription" },
+		expand: ["latest_invoice.confirmation_secret"],
+		// product_type lets the webhook recognise an AI sub even before it inspects the
+		// price; organization_id resolves the tenant (same as the org-plan sub).
+		metadata: { organization_id: actor.orgId, product_type: "ai_subscription" },
+		...taxParam,
+	});
+
+	const invoice = sub.latest_invoice;
+	if (!invoice || typeof invoice === "string") {
+		throw new Error("Stripe did not return an invoice for the AI subscription.");
+	}
+	const clientSecret = invoice.confirmation_secret?.client_secret;
+	if (!clientSecret) {
+		throw new Error("Stripe did not return a payment client secret.");
+	}
+	return { clientSecret, subscriptionId: sub.id, currency };
 }
 
 /**
@@ -641,7 +762,9 @@ export async function createSubscriptionIntent(
  * live/trialing subscription already exists. No automatic_tax here — there's no
  * address/invoice yet; tax is computed when the customer later adds payment.
  */
-export async function startProTrial(): Promise<void> {
+export async function startProTrial(opts?: {
+	currency?: SupportedCurrency;
+}): Promise<void> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
 	if (actor.orgId === actor.userId) {
@@ -670,9 +793,13 @@ export async function startProTrial(): Promise<void> {
 	}
 
 	const customerId = await ensureCustomer(actor.orgId, actor.userId);
+	// Pin the currency now so the trial's eventual paid invoice bills correctly (Stripe
+	// locks it at creation); explicit selection wins, else the request geo.
+	const currency = opts?.currency ?? (await currencyFromRequest());
 	const sub = await getStripe().subscriptions.create({
 		customer: customerId,
 		items: planCreateItems("team", 1),
+		currency,
 		trial_period_days: 30,
 		trial_settings: { end_behavior: { missing_payment_method: "cancel" } },
 		metadata: { organization_id: actor.orgId },
@@ -790,6 +917,7 @@ export async function createNewOrgSubscriptionIntent(
 		orgName: string;
 		priorSubscriptionId?: string;
 		customerId?: string;
+		currency?: SupportedCurrency;
 	},
 ): Promise<NewOrgSubscriptionIntent> {
 	const actor = await currentActor();
@@ -837,11 +965,15 @@ export async function createNewOrgSubscriptionIntent(
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
 		: {};
+	// Resolve the billing currency before creating the sub (Stripe locks it): explicit
+	// selection wins, else the request geo.
+	const currency = opts.currency ?? (await currencyFromRequest());
 	// The org doesn't exist yet (owner only) — start at 1 seat; per-seat sync grows the
 	// quantity as invited members accept (lib/billing/seats syncOrgSeats via org hooks).
 	const sub = await getStripe().subscriptions.create({
 		customer: customerId,
 		items: planCreateItems(plan, 1),
+		currency,
 		payment_behavior: "default_incomplete",
 		payment_settings: { save_default_payment_method: "on_subscription" },
 		expand: ["latest_invoice.confirmation_secret"],
@@ -857,7 +989,7 @@ export async function createNewOrgSubscriptionIntent(
 	if (!clientSecret) {
 		throw new Error("Stripe did not return a payment client secret.");
 	}
-	return { clientSecret, subscriptionId: sub.id, customerId };
+	return { clientSecret, subscriptionId: sub.id, customerId, currency };
 }
 
 /**

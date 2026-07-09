@@ -20,6 +20,8 @@ import {
 import type { EnvReconcileState } from "@/app/server/actions/reconcile";
 import type { SwitcherEnv } from "@/app/server/actions/resolve";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ClassificationControl } from "@/components/classification/classification-control";
+import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { NewEnvironmentDialog } from "@/components/environments/new-environment-dialog";
 import { ProtectionRulesDialog } from "@/components/environments/protection-rules-dialog";
 import { PromoteDialog } from "@/components/environments/promote-dialog";
@@ -87,6 +89,11 @@ export function EnvironmentsView({
 	}));
 	const reconcileById = new Map(reconcile.map((r) => [r.environmentId, r]));
 	const envName = (id: string) => envs.find((e) => e.id === id)?.name ?? "—";
+	// One batched query hydrates every environment row's classification chips.
+	const { data: classMap = {} } = useAssignmentsForKind(
+		"project_environment",
+		envs.map((e) => e.id),
+	);
 
 	/** Delete a non-default environment, then re-fetch. */
 	const handleDelete = async (env: EnvRow) => {
@@ -152,6 +159,15 @@ export function EnvironmentsView({
 										Updated{" "}
 										{formatDistanceToNow(parseISO(env.updated_at), { addSuffix: true })}
 									</p>
+									{/* Classification (Workstream B) — chips + a picker for org editors. */}
+									<ClassificationControl
+										kind="project_environment"
+										id={env.id}
+										canEdit
+										initialAssignments={classMap[env.id]}
+										className="mt-1.5"
+										compact
+									/>
 								</div>
 
 								{/* Auto-heal toggle (dev/staging re-apply on drift; prod stays gated). */}

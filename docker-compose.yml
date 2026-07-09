@@ -228,6 +228,18 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
+      # Internal service URLs (like `app`): staff read the shared service DB cross-tenant
+      # (RLS-bypass) and presign attachment downloads from the same object store. The staff
+      # allowlist + NEXT_PUBLIC_CONSOLE_URL come from .env (env_file above).
+      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_STORAGE_ENDPOINT: "http://seaweedfs:8333"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # Runner (Go). Talks to the console over HTTP + S3 only; self-registers on

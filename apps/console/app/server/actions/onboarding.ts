@@ -102,10 +102,17 @@ export async function getGettingStartedState(): Promise<GettingStartedState> {
 	const orgId = actor.orgId;
 	const db = getServiceDb();
 	const [ci, sp, dep, mc] = await Promise.all([
+		// Only a *verified* cloud counts as "connected" — a pending/failed placeholder (initIdentity
+		// pre-creates one per provider just by viewing the connectors page) must not tick the step.
 		db
 			.select({ n: count() })
 			.from(cloudIdentities)
-			.where(eq(cloudIdentities.org_id, orgId)),
+			.where(
+				and(
+					eq(cloudIdentities.org_id, orgId),
+					eq(cloudIdentities.is_verified, true),
+				),
+			),
 		db.select({ n: count() }).from(projects).where(eq(projects.org_id, orgId)),
 		// Ever provisioned: a deploy job that reached SUCCESS (permanent record —
 		// still counts even if the environment was later destroyed).

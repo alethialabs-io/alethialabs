@@ -1,48 +1,38 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Live LLM exercise (opt-in): drives the supervisor + LLM sub-agent runner against
-// the REAL AI gateway, end-to-end. Gated behind ELENCH_LIVE=1 (and a configured key)
-// so it is SKIPPED in normal CI — it makes a non-deterministic, credit-spending
-// network call. Run explicitly: ELENCH_LIVE=1 AI_GATEWAY_API_KEY=… pnpm -F console \
+// Live LLM exercise (opt-in): drives the supervisor + LLM sub-agent runner against the
+// REAL model, end-to-end — through the SAME direct-to-provider path production uses
+// (lib/config/ai `getExecutorModel()` → `@ai-sdk/anthropic` → api.anthropic.com, no
+// Vercel AI Gateway). Gated behind ELENCH_LIVE=1 and a direct Anthropic key so it is
+// SKIPPED in normal CI (it makes a non-deterministic, credit-spending network call).
+// Run explicitly: ELENCH_LIVE=1 ANTHROPIC_API_KEY=sk-ant-… pnpm -F console \
 //   exec vitest run tests/lib/agent/llm-live.test.ts
 
+import { generateText } from "ai";
 import { describe, expect, it } from "vitest";
 import { createLlmSubAgentRunner } from "@/lib/agent/llm-subagent";
 import { runSupervisor } from "@/lib/agent/supervisor";
+import { cachedSystemMessage } from "@/lib/ai/provider-options";
+import { getExecutorModel, resolveModel } from "@/lib/config/ai";
 
-// Production routes call the model through the Vercel AI Gateway. For an offline
-// live EXERCISE we inject a raw Anthropic Messages-API call (the injection seam's
-// whole point) when a direct Anthropic key is present — proving the supervisor →
-// sub-agent runner → real model → parse → completion path runs end-to-end.
-const key =
-	process.env.ANTHROPIC_API_KEY || process.env.AI_GATEWAY_API_KEY || "";
+// A direct Anthropic key (sk-ant…) is required: this proves the gateway-free path works
+// with a native provider key — the whole point of the de-gateway refactor.
+const key = process.env.ANTHROPIC_API_KEY || "";
 const live = process.env.ELENCH_LIVE === "1" && key.startsWith("sk-ant");
 
-async function anthropicGenerate(prompt: string): Promise<string> {
-	const res = await fetch("https://api.anthropic.com/v1/messages", {
-		method: "POST",
-		headers: {
-			"content-type": "application/json",
-			"x-api-key": key,
-			"anthropic-version": "2023-06-01",
-		},
-		body: JSON.stringify({
-			model: "claude-sonnet-4-6",
-			max_tokens: 256,
-			messages: [{ role: "user", content: prompt }],
-		}),
-	});
-	if (!res.ok) throw new Error(`anthropic ${res.status}: ${await res.text()}`);
-	const data = (await res.json()) as { content?: { text?: string }[] };
-	return data.content?.[0]?.text ?? "";
+/** Generate via the production resolver — direct to the provider, no gateway. */
+async function generate(prompt: string): Promise<string> {
+	const { model } = getExecutorModel();
+	const { text } = await generateText({ model, prompt });
+	return text;
 }
 
-describe.runIf(live)("live LLM colony exercise", () => {
+describe.runIf(live)("live LLM colony exercise (direct provider)", () => {
 	it(
-		"runs the supervisor end-to-end against the real model",
+		"runs the supervisor end-to-end against the real model via the direct provider",
 		async () => {
-			const runner = createLlmSubAgentRunner(anthropicGenerate);
+			const runner = createLlmSubAgentRunner(generate);
 
 			const res = await runSupervisor(
 				[
@@ -66,5 +56,49 @@ describe.runIf(live)("live LLM colony exercise", () => {
 			);
 		},
 		60_000,
+	);
+
+	it(
+		"caches the stable system prompt (cachedInputTokens on a repeat) and streams with adaptive thinking",
+		async () => {
+			// A distinct advisor (Sonnet) with adaptive extended thinking, over a stable system
+			// prompt large enough to clear Anthropic's minimum cacheable size (~1024 tokens).
+			const { model } = resolveModel("anthropic/claude-sonnet-4-6");
+			const bigSystem = "You are a terse assistant. Reply with exactly OK. ".repeat(300);
+			const messages = [
+				cachedSystemMessage(bigSystem),
+				{ role: "user" as const, content: "Reply with OK." },
+			];
+			const providerOptions = {
+				anthropic: { thinking: { type: "adaptive" as const } },
+			};
+
+			// First call writes the cache; the identical second call should read it.
+			const first = await generateText({
+				model,
+				messages,
+				allowSystemInMessages: true,
+				maxOutputTokens: 2048,
+				providerOptions,
+			});
+			expect(first.text.length).toBeGreaterThan(0); // thinking didn't break the stream
+
+			const second = await generateText({
+				model,
+				messages,
+				allowSystemInMessages: true,
+				maxOutputTokens: 2048,
+				providerOptions,
+			});
+			console.log(
+				"LIVE cache tokens — first cache_read:",
+				first.usage.cachedInputTokens,
+				"second cache_read:",
+				second.usage.cachedInputTokens,
+			);
+			// The repeat reads the cached system prefix (cache-read tokens > 0).
+			expect(second.usage.cachedInputTokens ?? 0).toBeGreaterThan(0);
+		},
+		90_000,
 	);
 });

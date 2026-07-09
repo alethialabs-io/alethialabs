@@ -5,13 +5,14 @@
 // into the shared typed tables (same path as AWS). Verifiable in a hosted env with the WIF subject-token
 // source; a no-op (clean throw → caught by the dispatcher) without it.
 
-import { ExternalAccountClient } from "google-auth-library";
 import { getServiceDb } from "@/lib/db";
 import {
 	type CloudIdentity,
 	cloudNetworks,
 	cloudSubnets,
 } from "@/lib/db/schema";
+import { ensurePlatformAwsEnv } from "../session/aws-platform";
+import { externalAccountClientFromWif } from "../session/gcp";
 import { sealSensitive, softRemoveUnseen } from "./upsert";
 
 const TIMEOUT_MS = 15_000;
@@ -20,9 +21,9 @@ const TIMEOUT_MS = 15_000;
 async function gcpToken(identity: Pick<CloudIdentity, "credentials">): Promise<string> {
 	const wif = identity.credentials.wif_config;
 	if (!wif) throw new Error("No GCP WIF config");
-	const client = ExternalAccountClient.fromJSON(
-		wif as unknown as Parameters<typeof ExternalAccountClient.fromJSON>[0],
-	);
+	// GCP federates through the platform AWS identity — refresh the keyless AWS_* env before minting.
+	await ensurePlatformAwsEnv();
+	const client = externalAccountClientFromWif(wif);
 	if (!client) throw new Error("Invalid GCP WIF config");
 	const at = await client.getAccessToken();
 	if (!at.token) throw new Error("GCP token acquisition returned no token");

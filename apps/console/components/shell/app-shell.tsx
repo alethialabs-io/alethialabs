@@ -14,9 +14,9 @@ import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { ElenchSurface } from "@/components/agent/elench/elench-surface";
+import { AnalyticsIdentity } from "@/components/analytics/analytics-identity";
 import { SetupGuideCard } from "@/components/onboarding/setup-guide";
 import { AppSidebar } from "./app-sidebar";
-import { AskAiButton } from "./ask-ai-button";
 import { CommandPalette } from "./command-palette";
 import { JobToaster } from "./job-toaster";
 import { SidebarRail } from "./sidebar-rail";
@@ -27,10 +27,13 @@ import { Topbar } from "./topbar";
 export function AppShell({
 	children,
 	isHosted = false,
+	selfRunners = false,
 }: {
 	children: React.ReactNode;
 	/** Hosted control plane → enables the in-app feedback widget in the sidebar. */
 	isHosted?: boolean;
+	/** Org runs its own runners → surfaces the gated Runners nav item. */
+	selfRunners?: boolean;
 }) {
 	const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -58,7 +61,11 @@ export function AppShell({
 					collapsed ? "w-[56px]" : "w-[252px]",
 				)}
 			>
-				{collapsed ? <SidebarRail /> : <AppSidebar isHosted={isHosted} />}
+				{collapsed ? (
+					<SidebarRail selfRunners={selfRunners} />
+				) : (
+					<AppSidebar isHosted={isHosted} selfRunners={selfRunners} />
+				)}
 			</aside>
 
 			{/* Mobile sidebar */}
@@ -74,7 +81,7 @@ export function AppShell({
 					}}
 				>
 					<SheetTitle className="sr-only">Navigation</SheetTitle>
-					<AppSidebar isHosted={isHosted} />
+					<AppSidebar isHosted={isHosted} selfRunners={selfRunners} />
 				</SheetContent>
 			</Sheet>
 
@@ -94,19 +101,23 @@ export function AppShell({
 				</main>
 			</div>
 
+			{/* The global Elench assistant surface. In panel view it renders as an in-flow flex
+			    child here — its width animates from 0 and squeezes the main column (true seam
+			    border, like the canvas inspector). In modal view it portals out (Radix Dialog),
+			    leaving this slot empty. One surface per session. */}
+			<ElenchSurface />
+
 			{/* Global command palette (the sidebar "Find…" box + ⌘K / F). */}
-			<CommandPalette />
+			<CommandPalette selfRunners={selfRunners} />
 
 			{/* Single job-lifecycle toast driver (loading → success/failed in place). */}
 			<JobToaster />
 
-			{/* The global Elench assistant surface (modal / docked panel), one per session. */}
-			<ElenchSurface />
+			{/* Ties the analytics session to the person + active org (identify + group). Headless. */}
+			<AnalyticsIdentity />
 
 			{/* Single support-reply toast driver (staff/AI reply → "New reply on CASE-…"). */}
 			<SupportToaster />
-			{/* Global "Ask AI" launcher — floats bottom-right beside the setup guide. */}
-			<AskAiButton />
 
 			{/* First-run "Setup guide" — toggled from the topbar button, floats bottom-right. */}
 			<SetupGuideCard />

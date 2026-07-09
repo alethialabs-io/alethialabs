@@ -11,6 +11,10 @@ import {
 	finalizePromotionOnDeploy,
 } from "@/app/server/actions/promotions";
 import { maybeAutoHeal } from "@/app/server/actions/reconcile";
+import {
+	recordAddonHealth,
+	recordSecurityPosture,
+} from "@/lib/addons/inspection-persistence";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { reportJobUsageOnce } from "@/lib/billing/meter";
 import { getServiceDb } from "@/lib/db";
@@ -150,40 +154,66 @@ export async function PUT(
 				}
 			}
 
-				// DETECT_DRIFT: persist the runner's drift posture (posted in execution_metadata
-				// by the refresh-only plan → drift.Analyze) into the per-environment day-2 record.
-				if (
-					job?.job_type === "DETECT_DRIFT" &&
-					status === "SUCCESS" &&
-					job.project_id
-				) {
-					const posture = job.execution_metadata?.drift_posture;
-					if (posture) {
-						try {
-							await recordDriftPosture({
-								projectId: job.project_id,
-								environmentId: job.environment_id ?? null,
-								inSync: posture.in_sync,
-								drifted: posture.drifted,
-								details: (posture.details ?? []).map((d) => ({
-									address: d.address,
-									type: d.type,
-									kind: String(d.kind),
-								})),
-								scannedAt: posture.scanned_at ?? new Date().toISOString(),
-							});
-						} catch (err) {
-							console.error("Persist drift posture error:", err);
-						}
-						// Day-2 reconcile: if the env drifted, consider auto-healing it (opt-in;
-						// prod stays approval-gated; guarded by backoff + circuit breaker).
-						if (!posture.in_sync && job.environment_id) {
-							await maybeAutoHeal(job.project_id, job.environment_id).catch(
-								(err) => console.error("Auto-heal error:", err),
-							);
-						}
+			// DETECT_DRIFT: persist the runner's drift posture (posted in execution_metadata
+			// by the refresh-only plan → drift.Analyze) into the per-environment day-2 record.
+			if (
+				job?.job_type === "DETECT_DRIFT" &&
+				status === "SUCCESS" &&
+				job.project_id
+			) {
+				const posture = job.execution_metadata?.drift_posture;
+				if (posture) {
+					try {
+						await recordDriftPosture({
+							projectId: job.project_id,
+							environmentId: job.environment_id ?? null,
+							inSync: posture.in_sync,
+							drifted: posture.drifted,
+							details: (posture.details ?? []).map((d) => ({
+								address: d.address,
+								type: d.type,
+								kind: String(d.kind),
+							})),
+							scannedAt: posture.scanned_at ?? new Date().toISOString(),
+						});
+					} catch (err) {
+						console.error("Persist drift posture error:", err);
+					}
+					// Day-2 reconcile: if the env drifted, consider auto-healing it (opt-in;
+					// prod stays approval-gated; guarded by backoff + circuit breaker).
+					if (!posture.in_sync && job.environment_id) {
+						await maybeAutoHeal(job.project_id, job.environment_id).catch(
+							(err) => console.error("Auto-heal error:", err),
+						);
 					}
 				}
+				// Continuous day-2 refresh (Phase 4): the drift job also inspected the live
+				// cluster (ArgoCD add-on health + Trivy security), posted alongside the posture.
+				// Persist them so the Add-ons page + Evidence Security tab stay current between
+				// deploys. Best-effort — never fail the status update.
+				if (job.environment_id) {
+					const addonStatus = job.execution_metadata?.addon_status;
+					if (addonStatus) {
+						await recordAddonHealth(
+							job.project_id,
+							job.environment_id,
+							addonStatus,
+						).catch((err) =>
+							console.error("Persist add-on health (drift) error:", err),
+						);
+					}
+					const security = job.execution_metadata?.security_report;
+					if (security) {
+						await recordSecurityPosture(
+							job.project_id,
+							job.environment_id,
+							security,
+						).catch((err) =>
+							console.error("Persist security posture (drift) error:", err),
+						);
+					}
+				}
+			}
 
 		}
 

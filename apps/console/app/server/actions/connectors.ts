@@ -48,6 +48,34 @@ export type CloudAccount = {
 	label?: string;
 };
 
+/**
+ * Whether a cloud identity was ever actually configured (a credential was submitted), vs. a bare
+ * connect-sheet placeholder pre-created by initIdentity (empty credentials + an external_id at most).
+ * Role clouds need a role_arn, token clouds a token, GCP a project/SA, Azure a subscription/tenant.
+ * Used to keep never-configured placeholders from surfacing a phantom "Verification failed".
+ */
+function identityWasConfigured(
+	provider: string,
+	credentials: typeof cloudIdentities.$inferSelect["credentials"],
+): boolean {
+	const c = credentials ?? {};
+	switch (provider) {
+		case "aws":
+		case "alibaba":
+			return !!c.role_arn;
+		case "digitalocean":
+		case "hetzner":
+		case "civo":
+			return !!c.token || !!c.self_managed;
+		case "gcp":
+			return !!c.project_id || !!c.service_account_email;
+		case "azure":
+			return !!c.subscription_id || !!c.tenant_id;
+		default:
+			return false;
+	}
+}
+
 /** Maps a catalog category to its presentation group on the connectors page. */
 function groupForCategory(category: ConnectorCategory): ConnectorGroup {
 	switch (category) {
@@ -69,6 +97,9 @@ export type ConnectorWithConnection = Connector & {
 	token_health?: GitTokenHealth;
 	/** Visibility of the backing credential (cloud / api_key). Undefined for git. */
 	scope?: CredentialScope;
+	/** The connector_credential row id for a connected api_key connector — the
+	 *  classifiable `connector_credential` resource. Undefined for cloud/git. */
+	credential_id?: string;
 	/** The presentation group (clouds / secrets / registries / apps). */
 	group: ConnectorGroup;
 	/** Connected accounts for cloud connectors (a provider can hold several). */
@@ -143,6 +174,7 @@ export async function getConnectorsWithStatus(): Promise<
 						provider: cloudIdentities.provider,
 						status: cloudIdentities.status,
 						last_error: cloudIdentities.last_error,
+						credentials: cloudIdentities.credentials,
 					})
 					.from(cloudIdentities)
 					.where(eq(cloudIdentities.is_verified, false))
@@ -154,6 +186,13 @@ export async function getConnectorsWithStatus(): Promise<
 		{ status: string; last_error: string | null; identityId: string }
 	>();
 	for (const r of cloudHealthRows) {
+		// Skip never-configured placeholders. initIdentity pre-creates a `pending` identity per
+		// provider (with empty credentials) just so the connect sheet has an id to bind to. If the
+		// background sweep ever probed one it would fail and flip it to `disconnected` — a phantom
+		// "Verification failed" for a connection the user never attempted. Only an identity that was
+		// actually submitted (has real credentials) may surface a failed/testing health here; the
+		// rest read as "Not connected". This also self-heals any rows already poisoned in prod.
+		if (!identityWasConfigured(r.provider, r.credentials)) continue;
 		if (!cloudHealthByProvider.has(r.provider)) {
 			cloudHealthByProvider.set(r.provider, {
 				status: r.status,
@@ -170,6 +209,7 @@ export async function getConnectorsWithStatus(): Promise<
 		? await withScope({ ownerId: scope.userId, orgId: scope.orgId }, (tx) =>
 				tx
 					.select({
+						id: connectorCredentials.id,
 						slug: connectorsTable.slug,
 						is_verified: connectorCredentials.is_verified,
 						scope: connectorCredentials.scope,
@@ -184,7 +224,7 @@ export async function getConnectorsWithStatus(): Promise<
 	const credentialBySlug = new Map(
 		credentialRows.map((c) => [
 			c.slug,
-			{ verified: c.is_verified ?? false, scope: c.scope },
+			{ id: c.id, verified: c.is_verified ?? false, scope: c.scope },
 		]),
 	);
 
@@ -283,6 +323,7 @@ export async function getConnectorsWithStatus(): Promise<
 				group,
 				connected: true,
 				scope: cred?.scope,
+				credential_id: cred?.id,
 				connection_details: null,
 				token_health: cred?.verified ? "healthy" : "refresh_failed",
 			};

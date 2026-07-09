@@ -12,6 +12,7 @@
     "runners",
     "clusters",
     "alerts",
+    "classification",
     "api-reference"
   ]
 }

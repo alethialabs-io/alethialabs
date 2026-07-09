@@ -25,6 +25,11 @@ interface OpenReplayLike {
 interface PostHogLike {
 	capture: (event: string, props?: Record<string, unknown>) => void;
 	identify: (id: string, props?: Record<string, unknown>) => void;
+	group: (type: string, key: string, props?: Record<string, unknown>) => void;
+	captureException: (error: unknown, props?: Record<string, unknown>) => void;
+	isFeatureEnabled: (key: string) => boolean | undefined;
+	getFeatureFlag: (key: string) => boolean | string | undefined;
+	onFeatureFlags: (cb: (flags: string[]) => void) => () => void;
 	reset?: () => void;
 }
 
@@ -71,6 +76,44 @@ export function identify(userId: string, traits?: AnalyticsProps): void {
 	}
 	try {
 		window.__openreplay?.setUserID(userId);
+	} catch {
+		/* noop */
+	}
+}
+
+/**
+ * Associate subsequent events with an organization group so PostHog can segment funnels/retention by
+ * org (and plan). PostHog-only — Umami/OpenReplay have no group concept, so they no-op. Call after the
+ * active org is known (and again on org switch).
+ */
+export function group(orgId: string, props?: AnalyticsProps): void {
+	if (typeof window === "undefined") return;
+	try {
+		window.__posthog?.group("organization", orgId, props);
+	} catch {
+		/* noop */
+	}
+}
+
+/** Clear the identified person + group on sign-out so the next session starts anonymous. */
+export function reset(): void {
+	if (typeof window === "undefined") return;
+	try {
+		window.__posthog?.reset?.();
+	} catch {
+		/* noop */
+	}
+}
+
+/**
+ * Report a caught error to PostHog Error tracking (the current session replay is attached). PostHog
+ * auto-captures UNhandled errors via `capture_exceptions`; call this for errors you catch yourself —
+ * e.g. from a React error boundary. PostHog-only; no-ops with no provider.
+ */
+export function captureException(error: unknown, props?: AnalyticsProps): void {
+	if (typeof window === "undefined") return;
+	try {
+		window.__posthog?.captureException(error, props);
 	} catch {
 		/* noop */
 	}

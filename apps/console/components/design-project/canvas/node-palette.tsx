@@ -10,7 +10,9 @@ import {
 	type LucideIcon,
 } from "lucide-react";
 import { useState } from "react";
+import type { AddonMarketItem } from "@/app/server/actions/addons";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
+import { AddonIcon, AddonStatusBadge } from "@/components/addons/addon-visuals";
 import {
 	CommandDialog,
 	CommandEmpty,
@@ -28,6 +30,10 @@ interface NodePaletteProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	identities: CloudIdentityOption[];
+	/** Cluster add-ons for this environment (edit mode only) — surfaced as an "Add-ons" group.
+	 * Picking one opens its config sheet (add-ons live on the canvas, not as graph nodes). */
+	addonItems?: AddonMarketItem[];
+	onConfigureAddon?: (item: AddonMarketItem) => void;
 }
 
 /** One selectable service in the Add palette. `kind` is the canvas node; entries with
@@ -100,7 +106,13 @@ const SERVICE_GROUPS: { title: string; items: ServiceEntry[] }[] = [
  * variants (e.g. Database → engine) route through a second step first. Singletons already on
  * the canvas are disabled; roadmap items (no module yet) show "Soon".
  */
-export function NodePalette({ open, onOpenChange, identities }: NodePaletteProps) {
+export function NodePalette({
+	open,
+	onOpenChange,
+	identities,
+	addonItems,
+	onConfigureAddon,
+}: NodePaletteProps) {
 	const addNode = useCanvasStore((s) => s.addNode);
 	const addNodeWithConfig = useCanvasStore((s) => s.addNodeWithConfig);
 	const nodes = useCanvasStore((s) => s.nodes);
@@ -231,6 +243,42 @@ export function NodePalette({ open, onOpenChange, identities }: NodePaletteProps
 								})}
 							</CommandGroup>
 						))}
+						{onConfigureAddon && addonItems && addonItems.length > 0 && (
+							<CommandGroup heading="Add-ons">
+								{addonItems.map((a) => (
+									<CommandItem
+										key={a.id}
+										value={`add-on ${a.name} ${a.summary} ${a.category}`}
+										onSelect={() => {
+											onConfigureAddon(a);
+											handleOpenChange(false);
+										}}
+										className="gap-3"
+									>
+										<AddonIcon
+											icon={a.icon}
+											className="h-4 w-4 shrink-0 text-muted-foreground"
+										/>
+										<div className="min-w-0 flex-1">
+											<div className="text-sm font-medium">{a.name}</div>
+											<div className="truncate text-xs text-muted-foreground">
+												{a.summary}
+											</div>
+										</div>
+										{a.install ? (
+											<AddonStatusBadge
+												status={a.install.status}
+												health={a.install.health}
+											/>
+										) : (
+											<span className="font-mono text-[10px] uppercase text-muted-foreground">
+												Free
+											</span>
+										)}
+									</CommandItem>
+								))}
+							</CommandGroup>
+						)}
 					</CommandList>
 				</>
 			)}

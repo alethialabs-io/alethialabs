@@ -2,7 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Check, ChevronsRight, Pencil, SlidersHorizontal } from "lucide-react";
+import {
+	Check,
+	ChevronsRight,
+	Pencil,
+	SlidersHorizontal,
+	Sparkles,
+} from "lucide-react";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -10,9 +16,11 @@ import {
 	DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
 import { AI_MODELS } from "@/lib/config/ai";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { cn } from "@repo/ui/utils";
+import { useAiTier } from "./use-ai-tier";
 
 /**
  * The composer Ask-mode pill + popover. "Ask before editing" → `mode: "ask"`
@@ -89,6 +97,50 @@ export function ElenchAskMode() {
 				</button>
 			</PopoverContent>
 		</Popover>
+	);
+}
+
+/**
+ * The per-message "Deep reasoning (Opus)" toggle. Renders ONLY on the `ai_max` tier — Max
+ * runs the Sonnet advisor by default (like Plus) and opts into the pricier Opus advisor per
+ * message via this pill, whose state rides the request as `deepReasoning`. Hidden on every
+ * other tier (and while the tier is still resolving), so it's a Max-only affordance.
+ */
+export function ElenchDeepReasoning() {
+	const tier = useAiTier();
+	const deepReasoning = useElenchStore((s) => s.deepReasoning);
+	const setDeepReasoning = useElenchStore((s) => s.setDeepReasoning);
+
+	if (tier !== "ai_max") return null;
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					type="button"
+					aria-pressed={deepReasoning}
+					onClick={() => setDeepReasoning(!deepReasoning)}
+					className={cn(
+						"inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
+						deepReasoning
+							? "border-primary bg-primary text-primary-foreground"
+							: "border-border bg-background text-foreground hover:bg-muted",
+					)}
+				>
+					<Sparkles
+						className={cn(
+							"h-3.5 w-3.5",
+							deepReasoning ? "text-primary-foreground" : "text-muted-foreground",
+						)}
+					/>
+					Deep reasoning
+				</button>
+			</TooltipTrigger>
+			<TooltipContent side="top" className="max-w-[240px] text-xs">
+				Run this message on the Opus model — slower, deeper planning. A Max feature; off by
+				default (Max uses the Sonnet advisor).
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 

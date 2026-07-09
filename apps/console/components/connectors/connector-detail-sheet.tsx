@@ -4,6 +4,8 @@
 
 import { useState } from "react";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
+import { ClassificationControl } from "@/components/classification/classification-control";
+import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { Badge } from "@repo/ui/badge";
@@ -65,6 +67,13 @@ export function ConnectorDetailSheet({
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [draft, setDraft] = useState("");
 	const [savingId, setSavingId] = useState<string | null>(null);
+
+	// One batched query hydrates every connected account's classification chips.
+	const accountIds = (integration?.accounts ?? []).map((a) => a.identityId);
+	const { data: classMap = {} } = useAssignmentsForKind(
+		"cloud_identity",
+		accountIds,
+	);
 
 	if (!integration) return null;
 
@@ -213,6 +222,15 @@ export function ConnectorDetailSheet({
 															{acc.label}
 														</div>
 													)}
+													{/* Classification (Workstream B) — chips + a picker for managers. */}
+													<ClassificationControl
+														kind="cloud_identity"
+														id={acc.identityId}
+														canEdit={canManage}
+														initialAssignments={classMap[acc.identityId]}
+														className="mt-1.5"
+														compact
+													/>
 												</div>
 												{canManage && (
 													<>
@@ -274,6 +292,20 @@ export function ConnectorDetailSheet({
 									<ExternalLink className="ml-auto size-3" />
 								</a>
 							)}
+						</div>
+					)}
+
+					{/* Classification (Workstream B) — for a connected non-cloud credential. */}
+					{isConnected && !isCloud && integration.credential_id && (
+						<div className="space-y-2">
+							<h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+								Classification
+							</h3>
+							<ClassificationControl
+								kind="connector_credential"
+								id={integration.credential_id}
+								canEdit={canManage}
+							/>
 						</div>
 					)}
 

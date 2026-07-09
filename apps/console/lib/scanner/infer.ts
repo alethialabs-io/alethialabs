@@ -62,16 +62,16 @@ export interface InferStackResult {
  * plus the model + token usage so the caller can record real cost-of-serve.
  */
 export async function inferStack(digest: RepoDigest): Promise<InferStackResult> {
-	const model = getAiModel();
+	const resolved = getAiModel();
 	const { object, usage } = await generateObject({
-		model,
+		model: resolved.model,
 		schema: inferredStackSchema,
 		system: SYSTEM,
 		prompt: `<repo-digest>\n${digestToPrompt(digest)}\n</repo-digest>`,
 	});
 	return {
 		stack: object,
-		model,
+		model: resolved.key,
 		inputTokens: usage.inputTokens,
 		outputTokens: usage.outputTokens,
 		cachedInputTokens: usage.cachedInputTokens,

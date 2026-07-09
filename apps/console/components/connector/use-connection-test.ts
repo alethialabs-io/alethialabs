@@ -4,6 +4,8 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
+import type { AnalyticsProps } from "@/lib/analytics/track";
+import { track } from "@/lib/analytics/track";
 
 /** Phases a connect flow moves through. Verification is instant + server-side (no runner, no job). */
 export type ConnTestPhase = "idle" | "saving" | "success" | "failed";
@@ -38,9 +40,12 @@ export function useConnectionTest() {
 	const router = useRouter();
 	const [state, setState] = useState<ConnTestState>({ phase: "idle" });
 
-	/** Saves the credential (the provider-specific action) and shows the instant verify result. */
+	/**
+	 * Saves the credential (the provider-specific action) and shows the instant verify result.
+	 * `meta` (e.g. `{ provider }`) is attached to the `connector_connected` activation event.
+	 */
 	const run = useCallback(
-		async (save: () => Promise<VerifyOutcome>) => {
+		async (save: () => Promise<VerifyOutcome>, meta?: AnalyticsProps) => {
 			setState({ phase: "saving" });
 			try {
 				const r = await save();
@@ -50,6 +55,8 @@ export function useConnectionTest() {
 						status: r.status,
 						missingPermissions: r.missingPermissions,
 					});
+					// Activation milestone — completes the connect_started → connected pair.
+					track("connector_connected", { status: r.status, ...meta });
 					router.refresh();
 				} else {
 					setState({

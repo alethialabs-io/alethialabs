@@ -8,6 +8,7 @@ import type { CanvasContext } from "@/lib/ai/canvas-context";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { graphToForm } from "@/components/design-project/canvas/graph/graph-to-form";
+import { configName } from "@/components/design-project/canvas/graph/node-config";
 
 /**
  * Reads the live canvas (shared global store) at SEND time so the assistant reasons
@@ -24,9 +25,7 @@ export function snapshotCanvas(): CanvasContext | undefined {
 		nodes: store.nodes.map((n) => ({
 			id: n.id,
 			kind: n.data.kind,
-			name: (n.data.config.name ?? n.data.config.project_name) as
-				| string
-				| undefined,
+			name: configName(n.data),
 		})),
 	};
 }

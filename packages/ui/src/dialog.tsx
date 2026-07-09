@@ -4,11 +4,33 @@
 
 
 import * as React from "react"
+import { cva, type VariantProps } from "class-variance-authority"
 import { XIcon } from "lucide-react"
 import { Dialog as DialogPrimitive } from "radix-ui"
 
 import { cn } from "./utils"
 import { Button } from "./button"
+
+/**
+ * Dialog geometry. `size` selects the whole positioning/sizing block wholesale, so
+ * callers never re-derive it via `className` (which fights tailwind-merge — a base
+ * edit could then leak stray centering/`max-w` into a caller's override). `fullscreen`
+ * is a near-edge-to-edge panel (7px gutter) for immersive surfaces like the AI modal.
+ */
+const dialogContentVariants = cva(
+  "fixed z-50 bg-background shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
+  {
+    variants: {
+      size: {
+        default:
+          "top-[50%] left-[50%] grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 sm:max-w-lg",
+        fullscreen:
+          "top-[7px] left-[7px] flex h-[calc(100dvh-14px)] w-[calc(100vw-14px)] max-w-none translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-[13px] border border-border p-0",
+      },
+    },
+    defaultVariants: { size: "default" },
+  }
+)
 
 function Dialog({
   ...props
@@ -54,19 +76,18 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  size,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content> & {
-  showCloseButton?: boolean
-}) {
+}: React.ComponentProps<typeof DialogPrimitive.Content> &
+  VariantProps<typeof dialogContentVariants> & {
+    showCloseButton?: boolean
+  }) {
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
-        className={cn(
-          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
-          className
-        )}
+        className={cn(dialogContentVariants({ size }), className)}
         {...props}
       >
         {children}

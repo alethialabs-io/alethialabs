@@ -421,6 +421,55 @@
       "when": 1782892166443,
       "tag": "0059_support_cases",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1783369549592,
+      "tag": "0060_reset_unconfigured_cloud_identities",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1783369550592,
+      "tag": "0061_married_living_tribunal",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1783412174567,
+      "tag": "0062_tiresome_aaron_stack",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1783419515305,
+      "tag": "0063_funny_piledriver",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1783421073368,
+      "tag": "0064_blue_the_fury",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1783495823789,
+      "tag": "0065_illegal_skreet",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1783507164078,
+      "tag": "0066_mighty_dark_beast",
+      "breakpoints": true
     }
   ]
 }

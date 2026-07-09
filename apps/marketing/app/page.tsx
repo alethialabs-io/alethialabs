@@ -9,6 +9,7 @@ import { ZeroTrust } from "@/components/landing/home/zero-trust";
 import { ProjectDesigner } from "@/components/landing/home/project-designer";
 import { ProjectsJobs } from "@/components/landing/home/projects-jobs";
 import { FleetTeaser } from "@/components/landing/home/fleet-teaser";
+import { OpenSource } from "@/components/landing/home/open-source";
 import { AI } from "@/components/landing/home/ai";
 import { Alerts } from "@/components/landing/home/alerts";
 import { Enterprise } from "@/components/landing/home/enterprise";
@@ -39,6 +40,7 @@ export default async function HomePage() {
 				<Alerts />
 				<Enterprise />
 				<Cli />
+				<OpenSource />
 				<CTA />
 			</Reveal>
 			<Footer />

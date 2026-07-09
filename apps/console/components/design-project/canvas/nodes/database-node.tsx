@@ -7,18 +7,18 @@ import type { CanvasNode } from "../graph/types";
 import { BaseNode } from "./base-node";
 
 /** Managed database node. */
-export function DatabaseNode({ id, data, selected }: NodeProps<CanvasNode>) {
+export function DatabaseNode({ id, data, selected }: NodeProps<CanvasNode<"database">>) {
 	const c = data.config;
 	return (
 		<BaseNode
 			id={id}
-			title={(c.name as string) || "database"}
+			title={c.name || "database"}
 			selected={selected}
 			handles={{ target: true }}
 		>
 			<div className="font-mono text-[10px] text-muted-foreground">
-				{(c.engine as string) ?? "—"}
-				{c.engine_version ? ` ${c.engine_version as string}` : ""}
+				{c.engine ?? "—"}
+				{c.engine_version ? ` ${c.engine_version}` : ""}
 			</div>
 		</BaseNode>
 	);

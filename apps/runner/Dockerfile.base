@@ -1,0 +1,84 @@
+# syntax=docker/dockerfile:1
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Shared runner BASE image. Everything identical across the full runner (Dockerfile) and the three
+# per-cloud variants (Dockerfile.{aws,gcp,azure}) lives here: the Go build of `/runner`, the cloud-agnostic
+# CLIs (bash/curl/git/ssh/kubectl/helm), OpenTofu + infracost (SHA-verified), the runtime `runner` user, the
+# shared TF plugin-cache dir, and the cloud-agnostic templates (runner + argocd). Each downstream image
+# builds `FROM ghcr.io/alethialabs-io/runner-base:<sha>` and only adds its cloud CLI + that cloud's project
+# template + `tofu init` — so these expensive shared layers build ONCE and dedupe across all four via the
+# registry instead of being re-downloaded 4×.
+#
+# Built multi-arch by deploy-console.yml (amd64 for the box, arm64 for the fleet), natively per arch (no
+# QEMU — an emulated `tofu init` crashes lfstack.push). ENDS AS ROOT on purpose: each variant installs its
+# cloud CLI (apk/pip need root) and only then switches to `USER runner` before `tofu init`.
+
+FROM golang:1.25-alpine AS builder
+
+RUN apk add --no-cache git
+
+WORKDIR /app
+
+# Copy the workspace root files for multi-module builds
+COPY go.work go.work
+COPY packages/core/ packages/core/
+# Copy alethia module stubs so go.work can resolve all entries
+COPY apps/cli/go.mod apps/cli/go.sum apps/cli/
+# Copy runner module
+COPY apps/runner/go.mod apps/runner/go.sum apps/runner/
+RUN cd apps/runner && go mod download
+
+COPY apps/runner/ apps/runner/
+
+ARG VERSION=dev
+# TARGETARCH is provided by buildx (defaults to the build host's arch). Each arch is built natively.
+ARG TARGETARCH=arm64
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
+    -ldflags="-s -w -X github.com/alethialabs-io/alethialabs/apps/runner/internal/version.Version=${VERSION}" \
+    -o /runner ./apps/runner/cmd/runner
+
+FROM alpine:3.21
+
+# Cloud-agnostic tools shared by every runner image (kubectl/helm for ArgoCD; git/ssh for template fetch).
+# Cloud CLIs (aws-cli / gcloud / azure-cli) are added by the downstream per-cloud images.
+RUN apk add --no-cache \
+    bash \
+    curl \
+    unzip \
+    git \
+    openssh-client \
+    kubectl \
+    helm \
+    && rm -rf /var/cache/apk/*
+
+# OpenTofu (MPL-2.0) — the IaC engine. Baked in so the runner never downloads it at provision time.
+# SHA256-verified against the published SHA256SUMS.
+ARG TOFU_VERSION=1.9.0
+RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
+    ASSET="tofu_${TOFU_VERSION}_linux_${ARCH}.zip" && \
+    cd /tmp && \
+    curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/${ASSET}" -o "${ASSET}" && \
+    curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_SHA256SUMS" -o SHA256SUMS && \
+    grep " ${ASSET}\$" SHA256SUMS | sha256sum -c - && \
+    unzip "${ASSET}" -d /usr/local/bin tofu && \
+    rm -f "${ASSET}" SHA256SUMS && \
+    chmod +x /usr/local/bin/tofu
+
+RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
+    curl -fsSL "https://github.com/infracost/infracost/releases/download/v0.10.39/infracost-linux-${ARCH}.tar.gz" | \
+    tar -xz -C /usr/local/bin && \
+    mv /usr/local/bin/infracost-linux-${ARCH} /usr/local/bin/infracost && \
+    chmod +x /usr/local/bin/infracost
+
+COPY --from=builder /runner /usr/local/bin/runner
+
+# Runtime user + shared plugin-cache dir + the cloud-agnostic templates. The per-cloud PROJECT template and
+# `tofu init` (arch/cloud-specific provider+module cache) stay in each downstream image.
+RUN adduser -D -u 1000 runner
+ENV TF_PLUGIN_CACHE_DIR=/home/runner/.terraform.d/plugin-cache
+RUN mkdir -p "${TF_PLUGIN_CACHE_DIR}" && chown -R runner:runner /home/runner/.terraform.d
+COPY --chown=runner:runner infra/templates/runner/ /home/runner/runner-templates/
+COPY --chown=runner:runner infra/templates/argocd/ /home/runner/argocd-templates/
+WORKDIR /home/runner
+# Stays root — downstream images install their cloud CLI, then switch to USER runner before `tofu init`.

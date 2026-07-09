@@ -1,48 +1,87 @@
 ---
 title: Terraform (per-cloud)
-description: Provision the VM + DNS for the Alethia bundle with Terraform, on any supported cloud.
+description: Provision a hardened control-plane VM on any of five clouds — closed-origin behind a Cloudflare Tunnel — with OpenTofu.
 ---
 
 # Terraform modules
 
-The bundle runs on **any VM**, so the simplest path is: make a VM, point DNS at it, and run the
-[installer](../index). The Terraform modules here automate that "VM + firewall + DNS + Docker" step
-per cloud — each provisions an **ARM** host and runs the same bundle via cloud-init, then you point
-`DEPLOY_HOST` at its IP.
+The repeatable IaC path. Each cloud has a self-contained OpenTofu stack under `infra/cp-<cloud>/`
+that provisions **one** control-plane VM and fronts it with a **Cloudflare Tunnel**, so the box has
+**no public web ports**. It lands on the same [bundle](../index) as the [one-click](../one-click) VM
+and the [Helm](../helm) chart — pick this when you want version-controlled infrastructure with a
+plan/apply CI loop.
 
-> **ARM only.** The published images are built `linux/arm64`, so every module uses an ARM instance
-> (Hetzner CAX, AWS Graviton, GCP Tau T2A, …). Pick ARM-capable regions.
+> **Pick one.** The stacks all serve the **same domain/zone**, so they are alternatives — apply
+> **one instead of another**, never two at once (two would fight over the apex DNS + tunnel). The
+> hosted alethialabs.io runs on Hetzner.
 
 ## Status
 
-| Cloud | Module | Page |
-|---|---|---|
-| Hetzner | `infra/hetzner` | [Hetzner](./hetzner) ✅ |
-| AWS | `infra/aws-cp` | [AWS](./aws) ✅ |
-| GCP | `infra/gcp-cp` | [GCP](./gcp) ✅ |
-| Azure | `infra/azure-cp` | [Azure](./azure) ✅ |
-| Alibaba | `infra/alibaba-cp` | [Alibaba](./alibaba) ✅ |
+| Cloud | Module | Box (x86) | Cost/mo | Admin access (no open web port) | Page |
+|---|---|---|---|---|---|
+| Hetzner | `infra/cp-hetzner` | `cx33` | ≈ €14 | SSH, key-only (firewall SSH-only) | [Hetzner](./hetzner) |
+| AWS | `infra/cp-aws` | `t3.large` | ≈ $72 | SSM Session Manager | [AWS](./aws) |
+| GCP | `infra/cp-gcp` | `e2-standard-2` | ≈ $57 | IAP tunnel | [GCP](./gcp) |
+| Azure | `infra/cp-azure` | `Standard_D2s_v5` | ≈ $90 | `az vm run-command` + Serial Console | [Azure](./azure) |
+| Alibaba | `infra/cp-alibaba` | `ecs.g7.large` | ≈ $75–95 | ECS Session Manager | [Alibaba](./alibaba) |
+
+> **x86 boxes.** The published app-bundle images are `linux/amd64`, so every module provisions an x86
+> host (the per-cloud *runner* images are arm64, but they run on the managed fleet, not this box).
+
+> **Costs** are on-demand estimates at each module's default region. AWS/GCP/Azure are from
+> **Infracost**; Hetzner and Alibaba (which Infracost doesn't price) are **list prices**. See each
+> cloud's page for the breakdown; a monthly/subscription commitment is cheaper on most clouds.
+
+## The model — closed origin, zero standing inbound
+
+Every stack follows the same shape:
+
+- **Ingress is a Cloudflare Tunnel.** `cloudflared` (a service in the bundle) dials **out**; nothing
+  dials in. The firewall / security group exposes **no 80/443**. Apex and `www` are **proxied**
+  `CNAME`s onto `<tunnel_id>.cfargotunnel.com`, and TLS terminates at Cloudflare's edge.
+- **The connector token is an output.** The stack exports `tunnel_token` (sensitive); set it as
+  `TUNNEL_TOKEN` in the box's `.env` and the compose `cloudflared` connects with nothing else
+  (`config_src = "cloudflare"`, remotely-managed).
+- **The public IP is egress-only** (image pulls, `git`, dialing the tunnel out); inbound is closed.
+- **Hardened + asserted.** Each stack ships a `checks.tf` that fails the plan if the posture regresses
+  (no web ingress, disk encryption / verified boot, tunnel remotely-managed).
 
 ## Shared workflow
 
-Every module follows the same steps:
+Every module is the same three steps:
 
 ```bash
-cd infra/<cloud>
+cd infra/cp-<cloud>
 cp backend.hcl.example backend.hcl          # S3-compatible state backend (endpoint + creds)
-cp terraform.tfvars.example terraform.tfvars # cloud creds, domain, ssh public key
-terraform init -backend-config=backend.hcl
-terraform apply
-terraform output server_ipv4                # → set as the DEPLOY_HOST secret / DNS target
+cp terraform.tfvars.example terraform.tfvars # cloud creds, domain, cloudflare_* ids
+tofu init -backend-config=backend.hcl
+tofu plan && tofu apply
 ```
 
-State lives in an S3-compatible bucket (`TF_STATE_S3_*`), one key per module
-(`<cloud>/terraform.tfstate`). DNS records are created in **Cloudflare** (unproxied, so Caddy can
-get TLS). The **SSH public key** you pass is how the `deploy-app` workflow ships updates over SSH.
+Then wire the tunnel token into the bundle `.env`:
+
+```bash
+export TUNNEL_TOKEN="$(tofu output -raw tunnel_token)"
+```
+
+State lives in an S3-compatible bucket (`TF_STATE_S3_*`), one key per stack
+(`<cloud>-cp/terraform.tfstate`). DNS records are **proxied** CNAMEs onto the tunnel — there is no
+open origin. See each cloud's page for the exact GitHub secrets.
+
+## Prerequisites
+
+- A **Cloudflare account + zone** and an API token with **DNS edit** and **Zero Trust (Cloudflare
+  Tunnel)** permissions — you pass `cloudflare_account_id` and `cloudflare_zone_id`.
+- An **S3-compatible state backend** (`backend.hcl`).
+- The chosen cloud's own credentials.
 
 ## CI
 
-Each module has a workflow (`terraform-hetzner.yml`, `terraform-aws-cp.yml`, `terraform-gcp.yml`,
-`terraform-azure.yml`, `terraform-alibaba.yml`):
-**plan on PR**, **apply on `main`**. Apply only **one** control-plane module — they all manage the
-same DNS records. See each cloud's page for the exact GitHub secrets.
+Each stack has a workflow (`infra-cp-hetzner.yml`, `infra-cp-aws.yml`, `infra-cp-gcp.yml`,
+`infra-cp-azure.yml`, `infra-cp-alibaba.yml`): the PR **`plan`** job runs `tofu validate` + fmt/tflint/
+Trivy; the **`apply`** job is **gated off** behind `vars.INFRA_<CLOUD>_APPLY` (prod runs on Hetzner).
+
+## Not managed here
+
+Cloudflare **Email Routing** is zone-global and lives only in `cp-hetzner` (see [Email](../email)),
+so the stacks don't collide on the shared zone.

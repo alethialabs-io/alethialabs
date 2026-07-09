@@ -23,7 +23,7 @@ handle @authed_root {
 
 # Marketing-owned root paths + the mkt-assets asset prefix. Must appear BEFORE the
 # catch-all `handle { reverse_proxy app:3000 }` in the Caddyfile.
-@marketing path / /pricing /enterprise /contact /contact/* /terms /privacy /cookies /acceptable-use /mkt-assets/* /robots.txt /sitemap.xml
+@marketing path / /pricing /enterprise /open-source /contact /contact/* /terms /privacy /cookies /acceptable-use /mkt-assets/* /robots.txt /sitemap.xml
 handle @marketing {
 	reverse_proxy marketing:3000
 }

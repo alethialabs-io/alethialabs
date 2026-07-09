@@ -18,6 +18,10 @@ import {
 	projectSourceRepos,
 	projectTopics,
 } from "@/lib/db/schema";
+import {
+	recordAddonHealth,
+	recordSecurityPosture,
+} from "@/lib/addons/inspection-persistence";
 import { structuralHash } from "@/lib/promotions/diff";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 import type { ProviderOutputs } from "@/types/jsonb.types";
@@ -33,6 +37,26 @@ const deployMetaSchema = z.object({
 	argocd_url: z.string().optional().catch(undefined),
 	argocd_admin_password: z.string().optional().catch(undefined),
 	outputs: z.record(z.string(), z.unknown()).optional().catch(undefined),
+	// Managed marketplace add-on health, keyed by ArgoCD Application name ("addon-<id>").
+	addon_status: z
+		.record(
+			z.string(),
+			z.object({ health: z.string(), sync: z.string() }),
+		)
+		.optional()
+		.catch(undefined),
+	// Cluster Trivy-Operator vulnerability posture (L9).
+	security_report: z
+		.object({
+			critical: z.number(),
+			high: z.number(),
+			medium: z.number(),
+			low: z.number(),
+			report_count: z.number(),
+			scanned: z.boolean(),
+		})
+		.optional()
+		.catch(undefined),
 });
 
 /**
@@ -88,6 +112,15 @@ export async function finalizeDeployment(jobId: string) {
 	}
 
 	await db.update(projectCluster).set(clusterUpdate).where(inEnv(projectCluster));
+
+	// Marketplace add-on health + Trivy security posture — the runner read them back post-apply.
+	// Shared with the day-2 DETECT_DRIFT refresh path (lib/addons/inspection-persistence).
+	if (meta.addon_status) {
+		await recordAddonHealth(projectId, environmentId, meta.addon_status);
+	}
+	if (meta.security_report) {
+		await recordSecurityPosture(projectId, environmentId, meta.security_report);
+	}
 
 	if (outputs) {
 		const rdsEndpoint = extractOutputValue(outputs, "rds_cluster_endpoint");

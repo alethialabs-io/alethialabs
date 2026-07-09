@@ -1,11 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Gauge } from "lucide-react";
-import Link from "next/link";
+import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
+import {
+	getProjectAiUsage,
+	getProjectResourceCounts,
+	getProjectUsage,
+} from "@/app/server/actions/project-usage";
 import { resolveProjectId } from "@/app/server/actions/resolve";
-import { globalHref } from "@/lib/routing";
+import { ProjectUsagePanel } from "@/components/settings/usage/project-usage-panel";
+import { getQueryClient } from "@/lib/query/client";
+import { qk } from "@/lib/query/keys";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
 export const metadata = pageMetadata({
@@ -14,40 +20,45 @@ export const metadata = pageMetadata({
 });
 
 /**
- * `/{org}/{project}/usage` — placeholder until per-project usage rollups land. Usage is currently
- * aggregated at the org level, so this points at the org usage report for now. (Validates the
- * project slug so a bad URL still 404s rather than rendering a dangling page.)
+ * `/{org}/{project}/usage` — the project's real per-project usage report: jobs, managed runner
+ * job-minutes, clusters, estimated cloud cost, and AI credits (attributed via ref_id, best-
+ * effort). Org-wide meters (seats, plan limits, provisioned-runner hours) link out to the org
+ * usage page. Resolves + validates the slug (bad URL → 404), prefetches the period-fixed reads
+ * into the shared cache and hands the resolved project id to the client panel (which also drives
+ * the range-based over-time chart). `loading.tsx` covers the prefetch window.
  */
 export default async function ProjectUsageRoute({
 	params,
 }: {
 	params: Promise<{ org: string; project: string }>;
 }) {
-	const { org, project } = await params;
+	const { project } = await params;
+	let projectId: string;
 	try {
-		await resolveProjectId(project);
+		projectId = await resolveProjectId(project);
 	} catch {
 		notFound();
 	}
 
+	const queryClient = getQueryClient();
+	await Promise.all([
+		queryClient.prefetchQuery({
+			queryKey: [...qk.projectUsage(projectId), "report"] as const,
+			queryFn: () => getProjectUsage(projectId),
+		}),
+		queryClient.prefetchQuery({
+			queryKey: [...qk.projectUsage(projectId), "counts"] as const,
+			queryFn: () => getProjectResourceCounts(projectId),
+		}),
+		queryClient.prefetchQuery({
+			queryKey: [...qk.projectUsage(projectId), "ai"] as const,
+			queryFn: () => getProjectAiUsage(projectId),
+		}),
+	]);
+
 	return (
-		<div className="flex flex-col items-center justify-center py-20 text-center">
-			<div className="mb-4 rounded-full bg-muted/50 p-3">
-				<Gauge className="h-8 w-8 text-muted-foreground" />
-			</div>
-			<h1 className="mb-1 text-sm font-medium text-foreground">
-				Per-project usage is coming soon
-			</h1>
-			<p className="max-w-sm text-xs text-muted-foreground">
-				Usage is currently reported across the whole organization. Per-project breakdowns
-				will appear here once they land.
-			</p>
-			<Link
-				href={globalHref(org, "usage")}
-				className="mt-4 text-xs text-primary hover:underline"
-			>
-				View organization usage
-			</Link>
-		</div>
+		<HydrationBoundary state={dehydrate(queryClient)}>
+			<ProjectUsagePanel projectId={projectId} />
+		</HydrationBoundary>
 	);
 }

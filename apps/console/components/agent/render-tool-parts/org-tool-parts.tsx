@@ -13,8 +13,11 @@ import {
 	ToolView,
 } from "@/components/agent/agent-tool-views";
 import { ApprovalCard } from "@/components/agent/approval-card";
-import { operationProposalSchema } from "@/lib/ai/operation";
-import type { ArtifactTab } from "@/lib/stores/use-artifact-store";
+import { DashboardReadyCard } from "@/components/agent/render-tool-parts/dashboard-card";
+import { ToolPending } from "@/components/agent/render-tool-parts/tool-pending";
+import type { AddToolResult } from "@/components/agent/use-agent-chat";
+import { proposeOperationInputSchema } from "@/lib/ai/operation";
+import type { Artifact, ArtifactTab } from "@/lib/stores/use-artifact-store";
 import { Button } from "@repo/ui/button";
 
 const projectIdSchema = z.object({ projectId: z.string() });
@@ -22,11 +25,10 @@ const jobIdSchema = z.object({ jobId: z.string() });
 const scanResultSchema = z.object({ openInCanvasUrl: z.string().optional() });
 
 interface OrgToolPartsDeps {
-	/** Open the artifact panel (config/plan/logs) for a project/job. */
-	openArtifact: (
-		artifact: { projectId?: string; jobId?: string },
-		tab: ArtifactTab,
-	) => void;
+	/** Open the artifact panel (dashboard/config/plan/logs) for a project/job/spec. */
+	openArtifact: (artifact: Artifact, tab: ArtifactTab) => void;
+	/** Feed a HITL tool's outcome back to the model so it continues after approval. */
+	addToolResult: AddToolResult;
 }
 
 /**
@@ -37,14 +39,43 @@ interface OrgToolPartsDeps {
  */
 export function orgRenderToolPart({
 	openArtifact,
+	addToolResult,
 }: OrgToolPartsDeps): RenderToolPart {
 	// eslint-disable-next-line react/display-name
 	return function renderOrgToolPart(part: ToolUIPart) {
+		// HITL proposal (no execute): pending while its input streams, then the approval
+		// card — which feeds the outcome back via addToolResult so the model continues.
 		if (part.type === "tool-propose_operation") {
-			if (part.state !== "output-available") return null;
-			const parsed = operationProposalSchema.safeParse(part.output);
+			if (part.state === "input-streaming")
+				return <ToolPending label="Preparing operation" />;
+			const parsed = proposeOperationInputSchema.safeParse(part.input);
 			if (!parsed.success) return null;
-			return <ApprovalCard proposal={parsed.data} />;
+			return (
+				<ApprovalCard
+					proposal={{ id: part.toolCallId, ...parsed.data }}
+					onResolve={(output) =>
+						addToolResult({
+							tool: "propose_operation",
+							toolCallId: part.toolCallId,
+							output,
+						})
+					}
+				/>
+			);
+		}
+
+		// Generative dashboard ready → an "Open dashboard" card opening the split pane.
+		if (
+			part.type === "tool-build_dashboard" &&
+			part.state === "output-available"
+		) {
+			return (
+				<DashboardReadyCard
+					part={part}
+					openArtifact={openArtifact}
+					context="org"
+				/>
+			);
 		}
 
 		// Repo scan ready → an "Open in canvas" link to review the proposed project.

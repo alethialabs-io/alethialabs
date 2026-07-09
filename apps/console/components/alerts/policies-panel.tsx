@@ -24,6 +24,9 @@ import {
 	ChannelRouting,
 } from "@/components/alerts/channel-routing";
 import { ChannelIcon } from "@/components/alerts/channel-icon";
+import { ClassificationChips } from "@/components/classification/classification-chips";
+import { ClassificationControl } from "@/components/classification/classification-control";
+import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { EventMatrix } from "@/components/alerts/event-matrix";
 import {
@@ -100,6 +103,11 @@ export function PoliciesPanel({
 		policies.find((p) => p.id === selectedId) ?? policies[0] ?? null;
 	const filtered = policies.filter(
 		(p) => !query.trim() || p.name.toLowerCase().includes(query.toLowerCase()),
+	);
+	// One batched query hydrates every rail row's classification chips.
+	const { data: classMap = {} } = useAssignmentsForKind(
+		"alert_rule",
+		policies.map((p) => p.id),
 	);
 
 	const patch = (p: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...p } : d));
@@ -258,6 +266,12 @@ export function PoliciesPanel({
 												{p.event_patterns.length} events ·{" "}
 												{p.enabled ? "enabled" : "off"}
 											</span>
+											<ClassificationChips
+												kind="alert_rule"
+												id={p.id}
+												initialAssignments={classMap[p.id]}
+												className="mt-1 flex"
+											/>
 										</span>
 										<span className="flex gap-1">
 											{p.channelIds.slice(0, 4).map((cid) => {
@@ -471,6 +485,13 @@ function PolicyDetail({
 								</p>
 							)
 						)}
+						{/* Classification (Workstream B) — chips + a picker for managers. */}
+						<ClassificationControl
+							kind="alert_rule"
+							id={policy.id}
+							canEdit={canManage}
+							className="pt-1"
+						/>
 					</div>
 				</div>
 				<div className="flex flex-none items-center gap-2">

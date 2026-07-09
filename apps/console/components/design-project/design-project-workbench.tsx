@@ -15,6 +15,7 @@ import {
 } from "@/lib/validations/project-form.schema";
 import { DesignProjectCanvas } from "./canvas/design-project-canvas";
 import { formToGraph } from "./canvas/graph/form-to-graph";
+import { configName } from "./canvas/graph/node-config";
 import { ConnectorsProvider } from "./connectors-context";
 import { RepositoryProvider } from "./repository-context";
 import {
@@ -63,7 +64,7 @@ export function DesignProjectWorkbench({
 		store.setIdentities(cloudIdentities);
 		const project = store.nodes.find((n) => n.id === PROJECT_NODE_ID);
 		const pristine =
-			store.nodes.length <= 1 && !project?.data.config.project_name;
+			store.nodes.length <= 1 && !(project && configName(project.data));
 		if (sourceProject || pristine) {
 			store.setGraph(
 				formToGraph(buildDefaultFormValues(sourceProject), cloudIdentities),

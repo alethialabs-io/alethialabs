@@ -28,6 +28,36 @@ env:
   IMAGE_PREFIX: ghcr.io/alethialabs-io
 
 jobs:
+  # What changed in this push? Gates the expensive builds so a console-only deploy doesn't rebuild the
+  # 7-8min runner images (and vice-versa). Two coarse groups: the box Next images (`apps`) and the runner
+  # images (`runner`). Images whose group didn't change are re-tagged latest→sha by `retag-unchanged` so the
+  # deploy's `:${sha}` pull always resolves. `packages/**` is conservatively treated as affecting the apps;
+  # `packages/core` (Go, shared by the runner) additionally triggers the runner group.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      apps: ${{ steps.filter.outputs.apps }}
+      runner: ${{ steps.filter.outputs.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            apps:
+              - 'apps/console/**'
+              - 'apps/marketing/**'
+              - 'apps/admin/**'
+              - 'apps/docs/**'
+              - 'apps/blog/**'
+              - 'packages/**'
+              - 'docker-compose.yml'
+              - 'deploy/prod/**'
+            runner:
+              - 'apps/runner/**'
+              - 'packages/core/**'
+              - 'infra/templates/**'
+
   # Native per-arch builds — NO QEMU. The control-plane box is Hetzner CX (x86) so its
   # images are linux/amd64 (built natively on ubuntu-latest); the fleet VMs are Hetzner
   # CAX (arm64) so the per-cloud runner images are linux/arm64 (built natively on the arm
@@ -36,8 +66,10 @@ jobs:
   # builds keep the runner's build-time `tofu init` provider/module cache on EVERY arch
   # (emulated tofu crashed `lfstack.push`, which is why the old QEMU path had to skip it).
 
-  # amd64 box images (single-arch, tagged) — native x86.
+  # amd64 box images (single-arch, tagged) — native x86. Skipped when no app/package changed.
   build-amd64:
+    needs: changes
+    if: ${{ needs.changes.outputs.apps == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -87,9 +119,91 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
+  # Shared runner BASE — the Go binary + tofu + infracost + kubectl/helm + user + shared templates that all
+  # four runner images used to re-download 4×. Built once per arch (native, by digest) then stitched into a
+  # multi-arch tag the runner images build FROM. Gated on the runner group like the rest.
+  runner-base-amd64:
+    needs: changes
+    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build runner-base (amd64) by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/runner/Dockerfile.base
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ github.sha }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/runner-base,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=runner-base-amd64
+          cache-to: type=gha,mode=max,scope=runner-base-amd64
+
+  runner-base-arm64:
+    needs: changes
+    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build runner-base (arm64) by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/runner/Dockerfile.base
+          platforms: linux/arm64
+          build-args: |
+            VERSION=${{ github.sha }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/runner-base,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=runner-base-arm64
+          cache-to: type=gha,mode=max,scope=runner-base-arm64
+
+  # Stitch the runner-base digests into the multi-arch tag the runner images build FROM.
+  merge-runner-base:
+    needs: [changes, runner-base-amd64, runner-base-arm64]
+    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-arch runner-base manifest
+        run: |
+          docker buildx imagetools create \
+            -t "${IMAGE_PREFIX}/runner-base:${{ github.sha }}" \
+            -t "${IMAGE_PREFIX}/runner-base:latest" \
+            "${IMAGE_PREFIX}/runner-base@${{ needs.runner-base-amd64.outputs.digest }}" \
+            "${IMAGE_PREFIX}/runner-base@${{ needs.runner-base-arm64.outputs.digest }}"
+
   # arm64 fleet-only per-cloud runner images (single-arch, tagged) — native arm. Never
-  # pulled by the x86 box; lean per-cloud CLI + cache.
+  # pulled by the x86 box; lean per-cloud CLI + cache. Skipped when no runner source changed.
   build-arm64:
+    needs: [changes, merge-runner-base]
+    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04-arm
     strategy:
       matrix:
@@ -118,6 +232,7 @@ jobs:
           push: true
           build-args: |
             VERSION=${{ github.sha }}
+            RUNNER_BASE=${{ env.IMAGE_PREFIX }}/runner-base:${{ github.sha }}
           tags: |
             ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest
             ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ github.sha }}
@@ -126,6 +241,8 @@ jobs:
 
   # `runner` amd64 half — native x86, pushed BY DIGEST (no tag) for the manifest merge.
   runner-amd64:
+    needs: [changes, merge-runner-base]
+    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.build.outputs.digest }}
@@ -147,12 +264,15 @@ jobs:
           platforms: linux/amd64
           build-args: |
             VERSION=${{ github.sha }}
+            RUNNER_BASE=${{ env.IMAGE_PREFIX }}/runner-base:${{ github.sha }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/runner,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=runner-amd64
           cache-to: type=gha,mode=max,scope=runner-amd64
 
   # `runner` arm64 half — native arm, pushed BY DIGEST.
   runner-arm64:
+    needs: [changes, merge-runner-base]
+    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04-arm
     outputs:
       digest: ${{ steps.build.outputs.digest }}
@@ -174,13 +294,15 @@ jobs:
           platforms: linux/arm64
           build-args: |
             VERSION=${{ github.sha }}
+            RUNNER_BASE=${{ env.IMAGE_PREFIX }}/runner-base:${{ github.sha }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/runner,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=runner-arm64
           cache-to: type=gha,mode=max,scope=runner-arm64
 
   # Stitch the two runner digests into one multi-arch tag (amd64 for the box, arm64 for the fleet).
   merge-runner:
-    needs: [runner-amd64, runner-arm64]
+    needs: [changes, runner-amd64, runner-arm64]
+    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v3
@@ -199,8 +321,42 @@ jobs:
               "${IMAGE_PREFIX}/runner@${{ needs.runner-arm64.outputs.digest }}"
           done
 
+  # For each image group that did NOT rebuild this push, copy its current :latest to :${sha} so the deploy's
+  # `:${sha}` pull resolves for every service. Cheap manifest copies (no rebuild). Runs whenever at least one
+  # group was skipped; a no-op when both groups changed.
+  retag-unchanged:
+    needs: changes
+    if: ${{ github.event_name != 'workflow_dispatch' && (needs.changes.outputs.apps != 'true' || needs.changes.outputs.runner != 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Retag unchanged images latest → sha
+        env:
+          SHA: ${{ github.sha }}
+          APPS_CHANGED: ${{ needs.changes.outputs.apps }}
+          RUNNER_CHANGED: ${{ needs.changes.outputs.runner }}
+        run: |
+          set -euo pipefail
+          retag() { echo "retag $1: latest -> ${SHA}"; docker buildx imagetools create -t "${IMAGE_PREFIX}/$1:${SHA}" "${IMAGE_PREFIX}/$1:latest"; }
+          if [ "${APPS_CHANGED}" != "true" ]; then
+            for img in console console-migrate docs blog marketing admin; do retag "$img"; done
+          fi
+          if [ "${RUNNER_CHANGED}" != "true" ]; then
+            for img in runner runner-aws runner-gcp runner-azure; do retag "$img"; done
+          fi
+
   deploy:
-    needs: [build-amd64, build-arm64, merge-runner]
+    needs: [changes, build-amd64, build-arm64, merge-runner, retag-unchanged]
+    # Run when the build/retag jobs succeeded OR were skipped (a skipped group is retagged instead of built);
+    # only a real FAILURE (or cancel) blocks the deploy. Without this, a skipped `needs` job would auto-skip
+    # deploy.
+    if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -244,6 +400,10 @@ jobs:
             echo "BETTER_AUTH_URL=$APP_URL"
             echo "NEXT_PUBLIC_SITE_URL=$APP_URL"
             echo "NEXT_PUBLIC_LEGAL_URL=$APP_URL"
+            # This IS the hosted control plane. Without it deploymentMode() defaults to "self-managed"
+            # (lib/billing/config.ts), which hides the feedback widget and exposes self-managed runner /
+            # fleet UI to customers. Constant here — the box is always hosted.
+            echo "ALETHIA_DEPLOYMENT_MODE=hosted"
             emit BETTER_AUTH_SECRET
             emit CLI_JWT_SECRET
             emit ALETHIA_CRED_ENCRYPTION_KEY
@@ -273,6 +433,9 @@ jobs:
             emit ALETHIA_RUNNER_BOOTSTRAP_TOKEN
             emit ALETHIA_CRON_SECRET
             emit RELEASE_API_SECRET
+            # Workload-identity OIDC issuer signing key (lib/oidc/issuer.ts) — powers keyless Azure +
+            # Alibaba federation. Auto-generated by bootstrap-secrets.sh; served via /api/oidc JWKS.
+            emit ALETHIA_OIDC_SIGNING_KEY
             emit GITHUB_CLIENT_ID
             emit GITHUB_CLIENT_SECRET
             emit GOOGLE_CLIENT_ID
@@ -284,24 +447,61 @@ jobs:
             emit GITLAB_SECRET
             emit BITBUCKET_KEY
             emit BITBUCKET_SECRET
-            # Platform cloud creds for SERVER-SIDE connection health + inventory (the console
-            # assumes the customer's role / federates). Managed clouds only; token clouds
-            # (Hetzner/DO/Civo) need none. Empty when unset → the connectors board shows
-            # "not enabled on this instance".
-            emit ALETHIA_AWS_ACCESS_KEY_ID
-            emit ALETHIA_AWS_SECRET_ACCESS_KEY
-            emit ALETHIA_AZURE_TENANT_ID
+            # Platform AWS identity for SERVER-SIDE connection health + inventory — now KEYLESS. The
+            # console federates into the platform AWS account via the OIDC issuer (AssumeRoleWithWebIdentity)
+            # using ALETHIA_AWS_PLATFORM_ROLE_ARN; no static access key. This lights up AWS **and GCP**
+            # (GCP rides the same identity). The AWS_ACCESS_KEY_ID/SECRET/SESSION_TOKEN google-auth reads
+            # for the GCP subject token are written + refreshed at RUNTIME by the console (ensurePlatformAwsEnv),
+            # not baked here — temporary creds can't live in a static .env. Empty → tiles show "not enabled".
+            emit ALETHIA_AWS_PLATFORM_ROLE_ARN
+            echo "AWS_REGION=us-east-1"
+            # Platform AWS account id (the account every managed cloud federates through). The connect
+            # UI shows it in the customer setup templates. Configurable; defaults to the live account.
+            AWS_ACCT="$(val ALETHIA_AWS_ACCOUNT_ID)"; AWS_ACCT="${AWS_ACCT:-270587882865}"
+            echo "NEXT_PUBLIC_ALETHIA_AWS_ACCOUNT_ID=$AWS_ACCT"
+            # Azure is KEYLESS: the console + runner authenticate as ONE multi-tenant Entra app
+            # (ALETHIA_AZURE_CLIENT_ID) via a minted OIDC assertion — no tenant/secret. The client
+            # id is also surfaced to the browser (the connect UI bakes it into the customer setup
+            # command). No ALETHIA_AZURE_TENANT_ID/CLIENT_SECRET — the console auths against the
+            # customer's stored tenant.
             emit ALETHIA_AZURE_CLIENT_ID
-            emit ALETHIA_AZURE_CLIENT_SECRET
-            emit ALETHIA_ALIBABA_ACCESS_KEY_ID
-            emit ALETHIA_ALIBABA_ACCESS_KEY_SECRET
+            echo "NEXT_PUBLIC_ALETHIA_AZURE_CLIENT_ID=$(val ALETHIA_AZURE_CLIENT_ID)"
+            # Alibaba is KEYLESS + ACCOUNT-FREE: the console assumes the customer RAM role via
+            # AssumeRoleWithOIDC with a minted assertion (issuer above) — Alethia holds no Alibaba
+            # account / AccessKey, so nothing is emitted; availability tracks the OIDC issuer.
+            # GCP needs NO separate secret — it federates through the platform AWS identity above
+            # (customer WIF pool trusts AWS acct ALETHIA_AWS_ACCOUNT_ID; console mints the subject token
+            # from the AWS_* creds). Availability tracks the AWS creds (cloud-connect-setup.ts).
+            # AI: direct-to-provider (no Vercel AI Gateway). Once the vault has ANTHROPIC_API_KEY the
+            # agent/assistant/Ask-AI features run at the **Free tier** in prod (lib/config/ai.ts
+            # isAiConfigured). OPENAI_API_KEY is only used for openai/* model overrides (emit tolerates
+            # empty). The paid AI tiers (Plus/Max) stay dark until STRIPE_PRICE_AI_* below are set.
+            emit ANTHROPIC_API_KEY
+            emit OPENAI_API_KEY
             emit STRIPE_SECRET_KEY
             emit STRIPE_WEBHOOK_SECRET
             emit NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
             emit STRIPE_PRICE_TEAM
+            # Metered (usage-based) prices for managed-runner minutes — without these the usage is
+            # metered but never charged through Stripe (lib/billing/config.ts meterPriceIdForPlan).
+            emit STRIPE_PRICE_METER_TEAM
+            emit STRIPE_PRICE_METER_ENTERPRISE
+            # Standalone AI subscription prices — unset ⇒ AI Plus/Max stay dark (AI Free needs none).
+            emit STRIPE_PRICE_AI_PLUS
+            emit STRIPE_PRICE_AI_MAX
             emit ALETHIA_SES_REGION
             emit ALETHIA_SES_ACCESS_KEY_ID
             emit ALETHIA_SES_SECRET_ACCESS_KEY
+            # Support: staff Slack ping on a new case/reply (lib/support/slack-notify.ts). Unset → no-op.
+            emit SUPPORT_SLACK_WEBHOOK_URL
+            # Community card link on the support page (app/(private)/[org]/~/support). Unset → "coming soon".
+            emit NEXT_PUBLIC_COMMUNITY_URL
+            # Admin staff dashboard @ admin.alethialabs.io (apps/admin): the Cloudflare-Access allowlist
+            # (apps/admin/lib/auth/staff.ts) + the console URL its case deep-links target. COMPOSE_PROFILES
+            # activates the profiled `admin` service on the box (docker compose reads it from this .env).
+            emit SUPPORT_STAFF_EMAILS
+            echo "NEXT_PUBLIC_CONSOLE_URL=$APP_URL"
+            echo "COMPOSE_PROFILES=admin"
             echo "AUTH_EMAIL_FROM=Alethia <no-reply@auth.alethialabs.io>"
             echo "EMAIL_FROM=Alethia <hello@mail.alethialabs.io>"
             echo "ALETHIA_IMAGE_TAG=$IMAGE_TAG"

@@ -9,6 +9,7 @@ import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
 import { SetupGuideButton } from "@/components/onboarding/setup-guide";
 import { ProjectSwitcher } from "@/components/project-switcher";
 import { Button } from "@repo/ui/button";
+import { AskAiButton } from "./ask-ai-button";
 
 /**
  * The main-column topbar: project / env quick-switchers on the left, the route breadcrumb
@@ -39,6 +40,7 @@ export function Topbar({ onOpenSidebar }: { onOpenSidebar: () => void }) {
 			</div>
 
 			<div className="ml-auto flex items-center gap-1.5">
+				<AskAiButton />
 				<SetupGuideButton />
 				<DownloadCliButton />
 			</div>

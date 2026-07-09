@@ -7,13 +7,13 @@ import type { CanvasNode } from "../graph/types";
 import { BaseNode } from "./base-node";
 
 /** Pub/sub topic node. */
-export function TopicNode({ id, data, selected }: NodeProps<CanvasNode>) {
+export function TopicNode({ id, data, selected }: NodeProps<CanvasNode<"topic">>) {
 	const c = data.config;
-	const subs = (c.subscriptions as unknown[] | undefined)?.length ?? 0;
+	const subs = c.subscriptions?.length ?? 0;
 	return (
 		<BaseNode
 			id={id}
-			title={(c.name as string) || "topic"}
+			title={c.name || "topic"}
 			selected={selected}
 			handles={{ target: true }}
 		>

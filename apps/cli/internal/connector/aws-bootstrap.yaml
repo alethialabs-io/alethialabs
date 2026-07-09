@@ -24,7 +24,7 @@ Metadata:
 Parameters:
   AlethiaAwsAccountId:
     Type: String
-    Default: '787587782604'
+    Default: '270587882865'
     Description: 'The AWS Account ID of the Alethia Platform.'
 
   ExternalId:

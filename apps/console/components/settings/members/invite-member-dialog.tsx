@@ -38,6 +38,7 @@ import {
 	type InviteContext,
 } from "@/app/server/actions/members";
 import { authClient } from "@/lib/auth/client";
+import { track } from "@/lib/analytics/track";
 import { INVITE_ROLES } from "@/lib/members/roles";
 
 interface InviteFormData {
@@ -172,7 +173,10 @@ export function InviteMemberDialog({
 				role: toInviteRole(inv.role),
 			});
 			if (error) failed.push({ email, error: error.message ?? "Failed" });
-			else ok.push(email);
+			else {
+				ok.push(email);
+				track("member_invited", { role: inv.role });
+			}
 		}
 
 		if (ok.length > 0)

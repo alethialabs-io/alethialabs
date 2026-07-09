@@ -70,6 +70,13 @@ type PlanResult struct {
 	// plan hash + tool versions. Signed when a signing key is configured
 	// (Algorithm "ed25519"); otherwise attached unsigned (Algorithm "none").
 	VerifyReceipt *verify.SignedReceipt
+	// AddOnStatus is the post-apply ArgoCD health/sync per managed marketplace add-on
+	// (keyed by ArgoCD Application name). Empty when no add-ons were installed or the
+	// health read failed; the runner forwards it so the console can show real status.
+	AddOnStatus map[string]argocd.AddOnHealth
+	// SecurityPosture is the cluster's aggregated Trivy-Operator vulnerability posture
+	// (nil when the read wasn't attempted). `Scanned=false` when Trivy isn't installed.
+	SecurityPosture *argocd.SecurityPosture
 }
 
 // RunDeployV2 executes a deployment using the provider-agnostic ProjectConfig and CloudProvider interface.
@@ -407,6 +414,47 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		if genErr := generateAppManifests(vc, params.GitAccessToken, stdout, stderr); genErr != nil {
 			fmt.Fprintf(stderr, "Warning: app manifest generation skipped: %v\n", genErr)
 		}
+
+		// Marketplace add-ons — MANAGED mode: render the customer's enabled OSS charts as
+		// ArgoCD Helm Applications and apply them; GITOPS mode: seed the manifests into the
+		// customer's apps repo (they own + edit them). Then prune disabled managed add-ons and
+		// read health back for the console. Non-fatal (like app-manifest generation): a bad
+		// add-on must not fail an otherwise-healthy cluster; status surfaces on the add-ons page.
+		if len(vc.AddOns) > 0 {
+			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns)
+			if addonErr != nil {
+				fmt.Fprintf(stderr, "Warning: marketplace add-ons skipped: %v\n", addonErr)
+			} else {
+				defer os.RemoveAll(addonDir)
+				if applyErr := argocd.ApplyAddOns(addonDir, stdout, stderr); applyErr != nil {
+					fmt.Fprintf(stderr, "Warning: marketplace add-ons apply failed: %v\n", applyErr)
+				}
+			}
+			// GitOps-mode add-ons → seed/prune into the customer's apps repo.
+			if gitErr := writeAddOnGitOps(vc, params.GitAccessToken, stdout, stderr); gitErr != nil {
+				fmt.Fprintf(stderr, "Warning: GitOps add-on sync skipped: %v\n", gitErr)
+			}
+		}
+		// Prune managed add-ons the user disabled (removed from the desired set). Runs even
+		// when vc.AddOns is empty, so disabling the last add-on still cleans it up.
+		if pruneErr := argocd.PruneManagedAddOns(argocd.ManagedAddOnNames(vc.AddOns), stdout, stderr); pruneErr != nil {
+			fmt.Fprintf(stderr, "Warning: add-on prune failed: %v\n", pruneErr)
+		}
+		// Read ArgoCD health/sync for every enabled add-on (managed + gitops) so the console
+		// shows real status (best-effort — a read failure just leaves status Unknown).
+		if len(vc.AddOns) > 0 {
+			result.AddOnStatus = argocd.ReadAddOnHealth(
+				argocd.AllAddOnNames(vc.AddOns),
+				stdout,
+				stderr,
+			)
+		}
+		// Read the cluster's Trivy-Operator vulnerability posture (L9). Best-effort +
+		// unconditional: `Scanned=false` when Trivy isn't installed, so the Evidence Security
+		// tab shows an honest "not scanned" rather than a misleading all-clear. Refreshed on
+		// every deploy (Trivy scans asynchronously after it's installed).
+		sec := argocd.ReadSecurityPosture(stdout, stderr)
+		result.SecurityPosture = &sec
 	}
 
 	fmt.Fprintln(stdout, "Deployment completed successfully.")

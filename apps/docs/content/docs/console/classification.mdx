@@ -1,0 +1,118 @@
+---
+title: Classification
+description: Organize every resource with a governed taxonomy — named dimensions and their allowed values, assigned across projects, clusters, connectors, runners, members and more.
+---
+
+# Classification
+
+Classification is **governed, structured labeling** for everything in your organization — the
+opposite of free-form tags. Instead of anyone typing `env=prod`, `Environment=Production`, or
+`PROD` and drifting, an admin defines a fixed set of **axes** and their **allowed values** once, and
+every resource is labeled from that closed vocabulary. Find it under **Settings → Classification**.
+
+## The model
+
+Three concepts, in a strict hierarchy:
+
+```
+Dimension (an axis)  ──▶  Value (an allowed answer)  ──▶  Assignment (pinned to a resource)
+  "Environment"             dev · staging · prod             this project's Environment = prod
+  "Team"                    platform · payments · …          this cluster's Team = platform, payments
+```
+
+- **Dimension** — a named axis: one question you can ask about every resource (*Environment*,
+  *Team*, *Data classification*, *Cost center*). It has a label, an immutable `key` slug, an
+  optional description, and a **single/multi** mode.
+- **Value** — an allowed answer on that axis (`dev` / `staging` / `prod`). A closed set the admin
+  curates; each value has a label, a slug, and an optional color accent.
+- **Assignment** — a value pinned to one concrete resource. This is what you set on a project, a
+  cluster, a connector, and so on.
+
+Two mental models that make it click:
+
+- **Spreadsheet** — dimensions are the **columns**, values are a column's allowed **dropdown
+  entries**, and assignments are the **filled-in cells**.
+- **Governed cloud tags** — like AWS/GCP resource tags, except the keys *and* the permitted values
+  are curated, so there's no typo or casing drift and every resource speaks the same vocabulary.
+
+## Single vs multi
+
+Every dimension is either **single-valued** or **multi-valued**, and it's the most important choice
+you make when creating one:
+
+| Mode | Meaning | Example |
+| --- | --- | --- |
+| **Single** | A resource holds **at most one** value on this axis. Assigning a new value **replaces** the current one. | *Environment* — a thing is exactly one of dev / staging / prod. |
+| **Multi** | A resource may hold **several** values on this axis. | *Team* — a service can belong to platform *and* payments. |
+
+## Where you can apply it
+
+Classification is assignable across the main resource types. On each, you'll see the value **chips**
+and — if you can edit — a **picker** to change them:
+
+| Resource | Where in the console |
+| --- | --- |
+| Projects | Project → **Settings → General** |
+| Environments | A project's **Environments** |
+| Clusters | **Clusters** |
+| Connectors (cloud identities & credentials) | **Connectors** → a connector's detail |
+| Runners | **Runners** |
+| Members | **Settings → Members** |
+| Roles | **Settings → Roles** |
+| Alert policies | **Alerts → Policies** |
+| Alert channels | **Alerts → Channels** |
+| Support cases | A support case's detail |
+
+<Callout type="info">
+  A few internal record types (alert *deliveries* and runner *usage sessions*) aren't
+  classifiable — classification applies to the things you manage, not to the audit trail they
+  generate.
+</Callout>
+
+## What it's for today
+
+Once resources carry consistent labels, classification gives you:
+
+- **Organization** — a single, drift-free vocabulary across every resource type.
+- **Filter & group** — read the chips to slice your fleet ("show the `prod` resources", "everything
+  owned by the `payments` team").
+- **Usage insight** — the **Settings → Classification** page surfaces how the taxonomy is actually
+  used: an assignment count per value, a coverage figure per dimension, a per-resource-kind
+  breakdown, and which values are **unused** (safe to delete or repurpose).
+
+## What it is *not* — yet
+
+<Callout type="warn">
+  **Classification does not enforce anything.** No policy, permission check, provisioning step, or
+  the verification gate reads these labels to allow, deny, route, or require. Today classification is
+  **organizational metadata and a governance foundation** — it describes your resources, it does not
+  govern them. Rules built *on top of* classification (for example, "a `prod` resource must carry a
+  data-classification", or a policy scoped to a dimension) are a future step, not current behavior.
+</Callout>
+
+## Authoring the taxonomy
+
+Under **Settings → Classification** (requires the **Editor** role — `org:edit`; everyone else sees a
+read-only view):
+
+1. **Create a dimension.** Give it a label; the `key` slug auto-fills from it. Add a description and
+   choose **single** or **multi**. The `key` is **immutable** after creation (it's wire-stable), so
+   pick it deliberately — the label and everything else stay editable. Starting fresh? The empty
+   state offers **templates** (Environment, Data classification, Team, Cost center) you can drop in
+   and then adjust.
+2. **Add values.** Type a label and press Enter for a quick add, or open the editor to set the slug
+   and a **color accent** (a swatch, a custom color, or none).
+3. **Reorder** dimensions and values by dragging — the order is what the pickers show everywhere.
+4. **Drill into usage** — click a value's count to see which resource kinds carry it.
+
+<Callout type="warn">
+  Deleting a **dimension** removes its values *and every assignment of those values across all
+  resources*; deleting a **value** clears it from every resource it was on. Both are irreversible.
+</Callout>
+
+## Assigning values to resources
+
+On a supported resource, the classification control shows the current values as chips. The **picker**
+to change them appears only when you can edit **that** resource *and* you hold `org:edit` — so you'll
+never see a control you'd be denied on. For a single-valued dimension, picking a new value swaps out
+the old one; for a multi-valued dimension, you add and remove values freely.

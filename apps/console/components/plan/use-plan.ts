@@ -15,6 +15,7 @@ import {
 	type CostSummary,
 } from "@/lib/plan/parse-cost";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
+import type { ExecutionMetadata } from "@/types/jsonb.types";
 import {
 	type JobLogEntry,
 	useJobLogStream,
@@ -74,24 +75,13 @@ export function usePlan(projectId: string | null, onRefresh?: () => void): UsePl
 				const result = await getPlanResult(latestPlan.id);
 				if (cancelled) return;
 
-				const meta = result.execution_metadata as Record<
-					string,
-					unknown
-				> | null;
+				const meta = result.execution_metadata as ExecutionMetadata | null;
 
 				if (meta?.plan_result) {
-					setPlanResult(
-						parsePlanJSON(
-							meta.plan_result as Record<string, unknown>,
-						),
-					);
+					setPlanResult(parsePlanJSON(meta.plan_result));
 				}
 				if (meta?.cost_breakdown) {
-					setCostResult(
-						parseCostBreakdown(
-							meta.cost_breakdown as Record<string, unknown>,
-						),
-					);
+					setCostResult(parseCostBreakdown(meta.cost_breakdown));
 				}
 
 				if (meta?.plan_result || meta?.cost_breakdown) {
@@ -123,16 +113,12 @@ export function usePlan(projectId: string | null, onRefresh?: () => void): UsePl
 
 		if (job.status === "SUCCESS") {
 			getPlanResult(planJobId).then((result) => {
-				const meta = result.execution_metadata as Record<string, unknown>;
+				const meta = result.execution_metadata as ExecutionMetadata;
 				if (meta?.plan_result) {
-					setPlanResult(
-						parsePlanJSON(meta.plan_result as Record<string, unknown>),
-					);
+					setPlanResult(parsePlanJSON(meta.plan_result));
 				}
 				if (meta?.cost_breakdown) {
-					setCostResult(
-						parseCostBreakdown(meta.cost_breakdown as Record<string, unknown>),
-					);
+					setCostResult(parseCostBreakdown(meta.cost_breakdown));
 				}
 				setPhase("ready");
 				onRefresh?.();

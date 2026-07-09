@@ -47,14 +47,8 @@ const ALL_ENTITLEMENTS: Entitlements = {
 		includedRunnerMinutes: 20_000,
 		activityRetentionDays: 365,
 	},
-	// Enterprise "20×" AI tier (mirrors core's planEntitlements("enterprise").ai).
-	ai: {
-		enabled: true,
-		tier: "max",
-		windowCredits: 6_000,
-		windowHours: 5,
-		weeklyCredits: 60_000,
-	},
+	// NOTE: AI is no longer a plan entitlement — it's a standalone metered product with its
+	// own tier ladder (console lib/billing/ai-plan.ts, resolved per-org via resolveAiTier).
 };
 
 /**
