@@ -1,0 +1,34 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// Internal runner endpoint: mint a short-lived OIDC assertion for keyless Alibaba provisioning. A runner
+// executing a `tofu apply` against Alibaba authenticates KEYLESSLY — the alicloud provider does an
+// anonymous AssumeRoleWithOIDC using this assertion (audience sts.aliyuncs.com, subject alethia-connector)
+// via a token file, so there is NO AccessKey on the runner (the retired platform RAM key). The console is
+// the only holder of the issuer signing key.
+
+import { ALIBABA_TOKEN_AUDIENCE } from "@/lib/cloud-providers/session/alibaba";
+import { mintWorkloadToken, oidcIssuerConfigured } from "@/lib/oidc/issuer";
+import { verifyRunnerToken } from "@/lib/runners/auth";
+import { NextResponse } from "next/server";
+
+/** Mints an Alibaba AssumeRoleWithOIDC assertion for an authenticated runner. */
+export async function POST(req: Request) {
+	const { error: authError } = await verifyRunnerToken(req);
+	if (authError) return authError;
+
+	if (!oidcIssuerConfigured()) {
+		return NextResponse.json(
+			{ error: "The workload-identity issuer is not configured (ALETHIA_OIDC_SIGNING_KEY)." },
+			{ status: 501 },
+		);
+	}
+
+	try {
+		const token = await mintWorkloadToken({ audience: ALIBABA_TOKEN_AUDIENCE });
+		return NextResponse.json({ token });
+	} catch (err) {
+		console.error("Alibaba token mint error:", err);
+		return NextResponse.json({ error: "Failed to mint Alibaba token" }, { status: 500 });
+	}
+}

@@ -106,6 +106,10 @@ func (m *mockAPI) FetchAwsToken() (*AwsFederation, error) {
 	}, nil
 }
 
+func (m *mockAPI) FetchAlibabaToken() (string, error) {
+	return "test-alibaba-token", nil
+}
+
 func (m *mockAPI) UploadPlanArtifact(jobID, filePath string) error {
 	return nil
 }

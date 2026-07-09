@@ -111,6 +111,8 @@ export async function POST(req: Request) {
 					provider: identity.provider,
 					role_arn: c.role_arn ?? "",
 					external_id: c.external_id ?? "",
+					// Alibaba keyless: the RAM OIDC provider ARN the runner passes to AssumeRoleWithOIDC.
+					oidc_provider_arn: c.oidc_provider_arn ?? "",
 					account_id: c.account_id ?? "",
 					project_id: c.project_id ?? "",
 					service_account_email: c.service_account_email ?? "",

@@ -262,11 +262,12 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			}
 			defer cleanup()
 		case types.CloudProviderAlibaba:
-			fmt.Fprintf(stdoutLogger, "Assuming Alibaba RAM role %s...\n", claim.CloudIdentity.RoleArn)
-			sessionName := fmt.Sprintf("runner-%s", job.ID[:8])
-			cleanup, err := ActivateAlibabaRole(ctx, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID, sessionName)
+			// Keyless: the alicloud provider runs an anonymous AssumeRoleWithOIDC from a token file — no
+			// AccessKey on the runner (the retired platform RAM key).
+			fmt.Fprintf(stdoutLogger, "Activating keyless Alibaba OIDC for role %s...\n", claim.CloudIdentity.RoleArn)
+			cleanup, err := ActivateAlibabaOIDC(ctx, w.api, claim.CloudIdentity.RoleArn, claim.CloudIdentity.OidcProviderArn)
 			if err != nil {
-				errMsg := fmt.Sprintf("Failed to assume Alibaba RAM role: %v", err)
+				errMsg := fmt.Sprintf("Failed to activate Alibaba OIDC: %v", err)
 				fmt.Fprintln(stderrLogger, errMsg)
 				_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
 				return err
