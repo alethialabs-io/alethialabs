@@ -237,28 +237,41 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 				defer ClearAssumedCredentials()
 			}
 		case types.CloudProviderGcp:
-			// Managed runners have no ambient AWS identity, but the GCP WIF exchange signs its subject
-			// token with the platform AWS source credential — so establish that keylessly first. Self-hosted
+			// DIRECT-OIDC connections federate straight from the Alethia issuer (a minted JWT via a token
+			// file) — keyless and refreshing, no AWS hop. Legacy AWS-hub connections need the platform AWS
+			// source credential established first (managed runners have no ambient AWS identity). Self-hosted
 			// runners rely on their own ambient GCP credentials (ADC / metadata).
-			if w.config.Operator == "managed" {
-				srcCleanup, err := ActivateGcpPlatformSource(ctx, w.api)
+			if w.config.Operator == "managed" && isOidcWifJSON(claim.CloudIdentity.WifConfig) {
+				fmt.Fprintf(stdoutLogger, "Activating keyless GCP OIDC for project %s (SA: %s)...\n", claim.CloudIdentity.ProjectID, claim.CloudIdentity.ServiceAccountEmail)
+				cleanup, err := ActivateGcpOIDC(ctx, w.api, claim.CloudIdentity.WifConfig, claim.CloudIdentity.ProjectID)
 				if err != nil {
-					errMsg := fmt.Sprintf("Failed to activate GCP platform source credential: %v", err)
+					errMsg := fmt.Sprintf("Failed to activate GCP OIDC: %v", err)
 					fmt.Fprintln(stderrLogger, errMsg)
 					_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
 					return err
 				}
-				defer srcCleanup()
+				defer cleanup()
+			} else {
+				if w.config.Operator == "managed" {
+					srcCleanup, err := ActivateGcpPlatformSource(ctx, w.api)
+					if err != nil {
+						errMsg := fmt.Sprintf("Failed to activate GCP platform source credential: %v", err)
+						fmt.Fprintln(stderrLogger, errMsg)
+						_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+						return err
+					}
+					defer srcCleanup()
+				}
+				fmt.Fprintf(stdoutLogger, "Activating WIF for project %s (SA: %s)...\n", claim.CloudIdentity.ProjectID, claim.CloudIdentity.ServiceAccountEmail)
+				cleanup, err := ActivateGcpWIF(claim.CloudIdentity.WifConfig, claim.CloudIdentity.ProjectID)
+				if err != nil {
+					errMsg := fmt.Sprintf("Failed to activate GCP WIF: %v", err)
+					fmt.Fprintln(stderrLogger, errMsg)
+					_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+					return err
+				}
+				defer cleanup()
 			}
-			fmt.Fprintf(stdoutLogger, "Activating WIF for project %s (SA: %s)...\n", claim.CloudIdentity.ProjectID, claim.CloudIdentity.ServiceAccountEmail)
-			cleanup, err := ActivateGcpWIF(claim.CloudIdentity.WifConfig, claim.CloudIdentity.ProjectID)
-			if err != nil {
-				errMsg := fmt.Sprintf("Failed to activate GCP WIF: %v", err)
-				fmt.Fprintln(stderrLogger, errMsg)
-				_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
-				return err
-			}
-			defer cleanup()
 		case types.CloudProviderAzure:
 			fmt.Fprintf(stdoutLogger, "Activating Azure federated identity for tenant %s (subscription: %s)...\n", claim.CloudIdentity.TenantID, claim.CloudIdentity.SubscriptionID)
 			cleanup, err := ActivateAzureFederated(ctx, w.api, claim.CloudIdentity.TenantID, claim.CloudIdentity.ClientID, claim.CloudIdentity.SubscriptionID)

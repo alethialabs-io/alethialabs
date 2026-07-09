@@ -436,6 +436,38 @@ func (c *RunnerAPIClient) FetchAlibabaToken() (string, error) {
 	return result.Token, nil
 }
 
+// FetchGcpToken mints a short-lived OIDC assertion for keyless (DIRECT-OIDC) GCP provisioning. The runner
+// writes this token to a file the google WIF config's credential_source points at; google-auth re-reads it
+// to exchange for a GCP access token — no AWS hop, no service-account key.
+func (c *RunnerAPIClient) FetchGcpToken() (string, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/runners/gcp-token", nil)
+	if err != nil {
+		return "", err
+	}
+	c.setRunnerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch gcp token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch gcp token returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode gcp token response: %w", err)
+	}
+	if result.Token == "" {
+		return "", fmt.Errorf("gcp token response was empty")
+	}
+	return result.Token, nil
+}
+
 func (c *RunnerAPIClient) UpdateRunnerMetadata(runnerID string, metadata map[string]any) error {
 	body, err := json.Marshal(metadata)
 	if err != nil {
