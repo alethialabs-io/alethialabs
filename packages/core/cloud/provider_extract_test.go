@@ -17,7 +17,6 @@ func TestNewCloudProvider_ComingSoon(t *testing.T) {
 		wantErr      bool
 		wantContains string
 	}{
-		{"alibaba coming soon", "alibaba", true, "coming soon"},
 		{"digitalocean coming soon", "digitalocean", true, "coming soon"},
 		{"civo coming soon", "civo", true, "coming soon"},
 		{"empty unsupported", "", true, "unsupported cloud provider"},
@@ -59,6 +58,17 @@ func TestNewCloudProvider_Hetzner(t *testing.T) {
 	}
 	if p.Name() != "hetzner" {
 		t.Errorf("Name() = %q, want %q", p.Name(), "hetzner")
+	}
+}
+
+// TestNewCloudProvider_Alibaba covers the full managed Alibaba provider, now provisionable.
+func TestNewCloudProvider_Alibaba(t *testing.T) {
+	p, err := NewCloudProvider("alibaba")
+	if err != nil {
+		t.Fatalf("unexpected error for alibaba: %v", err)
+	}
+	if p == nil || p.Name() != "alibaba" {
+		t.Fatalf("expected alibaba provider, got %v", p)
 	}
 }
 
