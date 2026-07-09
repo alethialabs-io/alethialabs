@@ -16,6 +16,7 @@ type JobAPI interface {
 	GetJob(jobID string) (*Job, error)
 	FetchGitToken(jobID string) (string, error)
 	FetchAzureToken() (string, error)
+	FetchAwsToken() (*AwsFederation, error)
 	UploadPlanArtifact(jobID, filePath string) error
 	DownloadPlanArtifact(jobID, destPath string) error
 	UpdateRunnerMetadata(runnerID string, metadata map[string]any) error

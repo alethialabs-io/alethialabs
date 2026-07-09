@@ -363,6 +363,45 @@ func (c *RunnerAPIClient) FetchAzureToken() (string, error) {
 	return result.Token, nil
 }
 
+// FetchAwsToken mints a short-lived OIDC assertion for keyless AWS provisioning and returns it alongside
+// the platform role ARN. The managed runner has no ambient AWS identity, so it exchanges the assertion for
+// the platform identity via AssumeRoleWithWebIdentity (a web-identity token file the SDK re-reads), then
+// chains the customer's provisioner role off it — no access key on the runner.
+func (c *RunnerAPIClient) FetchAwsToken() (*AwsFederation, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/runners/aws-token", nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setRunnerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch aws token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch aws token returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Token           string `json:"token"`
+		PlatformRoleArn string `json:"platform_role_arn"`
+		Region          string `json:"region"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode aws token response: %w", err)
+	}
+	if result.Token == "" || result.PlatformRoleArn == "" {
+		return nil, fmt.Errorf("aws token response was incomplete")
+	}
+	return &AwsFederation{
+		Token:           result.Token,
+		PlatformRoleArn: result.PlatformRoleArn,
+		Region:          result.Region,
+	}, nil
+}
+
 func (c *RunnerAPIClient) UpdateRunnerMetadata(runnerID string, metadata map[string]any) error {
 	body, err := json.Marshal(metadata)
 	if err != nil {
