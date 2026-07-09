@@ -46,18 +46,32 @@ afterEach(() => {
 });
 
 describe("assumeAlibabaRole (AssumeRoleWithOIDC)", () => {
-	it("posts a bare AssumeRoleWithOIDC with a minted token and returns the account id", async () => {
+	it("posts a bare AssumeRoleWithOIDC with a minted token and returns the account id + STS creds", async () => {
 		let sentBody = "";
 		const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
 			sentBody = String((init as RequestInit).body);
-			return new Response(JSON.stringify({ Credentials: { AccessKeyId: "sts-ak" } }), {
-				status: 200,
-				headers: { "Content-Type": "application/json" },
-			});
+			return new Response(
+				JSON.stringify({
+					Credentials: {
+						AccessKeyId: "sts-ak",
+						AccessKeySecret: "sts-secret",
+						SecurityToken: "sts-token",
+						Expiration: "2099-01-01T00:00:00Z",
+					},
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
 		});
 
 		const session = await assumeAlibabaRole(identity, { purpose: "health" });
 		expect(session.accountId).toBe("1234567890123456");
+		// The temporary STS creds are surfaced (used by inventory/regional API calls).
+		expect(session.credentials).toEqual({
+			accessKeyId: "sts-ak",
+			accessKeySecret: "sts-secret",
+			securityToken: "sts-token",
+			expiration: "2099-01-01T00:00:00Z",
+		});
 
 		expect(fetchMock).toHaveBeenCalledOnce();
 		const params = new URLSearchParams(sentBody);
