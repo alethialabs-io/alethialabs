@@ -27,6 +27,9 @@ regexes = [
 ]
 paths = [
   '''(^|/).*_test\.go$''',
+  # TS/TSX unit tests hold synthetic fixtures (e.g. freshly-generated RSA keys assigned to
+  # process.env in the OIDC issuer tests), which generic-api-key flags. Same policy as Go tests.
+  '''(^|/).*\.test\.tsx?$''',
   '''(^|/)testdata/''',
   '''\.example$''',
   '''(^|/)\.env\.example$''',
