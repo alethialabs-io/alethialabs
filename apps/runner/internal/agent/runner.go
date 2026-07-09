@@ -17,6 +17,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
+	"github.com/alethialabs-io/alethialabs/packages/core/sandbox"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -36,16 +37,20 @@ type Config struct {
 type Runner struct {
 	config Config
 	api    JobAPI
+	// sandbox is the isolation boundary a job's untrusted work runs through. The
+	// default is a no-isolation Passthrough (today's behavior); an isolating backend
+	// is swapped in behind a flag once proven (see the E0 plan). Never nil.
+	sandbox sandbox.Sandbox
 }
 
 func New(cfg Config) *Runner {
 	client := NewRunnerAPIClient(cfg.AlethiaURL, cfg.RunnerID, cfg.RunnerToken)
 	client.providers = cfg.Providers
-	return &Runner{config: cfg, api: client}
+	return &Runner{config: cfg, api: client, sandbox: sandbox.Passthrough{Operator: cfg.Operator}}
 }
 
 func NewWithAPI(cfg Config, api JobAPI) *Runner {
-	return &Runner{config: cfg, api: api}
+	return &Runner{config: cfg, api: api, sandbox: sandbox.Passthrough{Operator: cfg.Operator}}
 }
 
 func (w *Runner) s3Backend() *cloud.S3BackendConfig {
@@ -445,8 +450,17 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		}
 	}
 
-	result, err := provisioner.RunDeployV2(ctx, params)
-	if err != nil {
+	// Run the (currently trusted) provisioning work through the isolation seam. The
+	// default Passthrough backend runs it in-process exactly as before.
+	var result *provisioner.PlanResult
+	if err := w.sandbox.Run(ctx, sandbox.Spec{
+		Kind: "deploy", JobID: job.ID, Provider: provider,
+		Warn: func(s string) { fmt.Fprintln(stdout, "[sandbox] "+s) },
+	}, func(ctx context.Context) error {
+		var e error
+		result, e = provisioner.RunDeployV2(ctx, params)
+		return e
+	}); err != nil {
 		return err
 	}
 
@@ -531,8 +545,17 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 		"phase": "tofu_plan", "progress": "Running OpenTofu plan...",
 	})
 
-	result, err := provisioner.RunDeployV2(ctx, params)
-	if err != nil {
+	// Run the (currently trusted) provisioning work through the isolation seam. The
+	// default Passthrough backend runs it in-process exactly as before.
+	var result *provisioner.PlanResult
+	if err := w.sandbox.Run(ctx, sandbox.Spec{
+		Kind: "plan", JobID: job.ID, Provider: provider,
+		Warn: func(s string) { fmt.Fprintln(stdout, "[sandbox] "+s) },
+	}, func(ctx context.Context) error {
+		var e error
+		result, e = provisioner.RunDeployV2(ctx, params)
+		return e
+	}); err != nil {
 		return err
 	}
 
