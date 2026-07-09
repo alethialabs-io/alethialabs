@@ -1,21 +1,15 @@
 #cloud-config
-# Prepares the box; it does NOT bring the stack up. The deploy-app workflow
-# writes /opt/alethia/.env from CI secrets and runs compose (images are public).
+# Prepares the box; it does NOT bring the stack up. The deploy step writes /opt/alethia/.env and
+# runs compose (images are public on GHCR). The Azure Linux agent (waagent, preinstalled) is what
+# `az vm run-command` and the Serial Console ride on — no install needed here.
 package_update: true
 package_upgrade: true
 
 runcmd:
-  # Docker + compose plugin
+  # Docker + compose plugin. The OS disk is durable + snapshottable, so Docker's default data-root
+  # already persists Postgres + object storage (no extra volume).
   - curl -fsSL https://get.docker.com | sh
   - systemctl enable --now docker
-  # If an extra data volume is attached (Hetzner auto-mounts at /mnt/HC_Volume_*),
-  # move Docker's data-root onto it. No-op on Azure (the OS disk is durable).
-  - |
-    vol=$(ls -d /mnt/HC_Volume_* 2>/dev/null | head -1)
-    if [ -n "$vol" ]; then
-      mkdir -p "$vol/docker" /etc/docker
-      printf '{ "data-root": "%s/docker" }\n' "$vol" > /etc/docker/daemon.json
-      systemctl restart docker
-    fi
+  # Repo for the compose files (public OSS). The CD step git-pulls + deploys.
   - git clone ${repo_url} /opt/alethia || true
   - test -f /opt/alethia/.env || cp /opt/alethia/.env.example /opt/alethia/.env

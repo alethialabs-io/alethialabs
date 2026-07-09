@@ -6,7 +6,7 @@
 // Cloudflare Access) is the wall, not RLS. Unlike the console's customer query builders
 // these include is_internal staff notes and span all orgs.
 
-import { and, asc, desc, eq, ilike, or, type SQL, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, lt, or, type SQL, sql } from "drizzle-orm";
 import {
 	type SupportCase,
 	type SupportCaseAttachment,
@@ -23,10 +23,13 @@ import type {
 	SupportCaseStatus,
 	SupportCaseType,
 } from "@repo/support/enums";
-import { organization, user } from "./db-schema";
+import { aiUsageLedger, organization, user } from "./db-schema";
 import type { getServiceDb } from "./db";
 
 type Db = ReturnType<typeof getServiceDb>;
+
+/** USD micros → USD (the ledger snapshots real cost-of-serve in 1e-6 USD). */
+const usd = sql<number>`coalesce(sum(${aiUsageLedger.cost_micros}), 0)::float8 / 1e6`;
 
 /** The denormalized fields shared by every case-list row (renders without a per-row join). */
 export interface CaseListItem {
@@ -193,5 +196,179 @@ export async function getCaseWithThreadForStaff(
 		assigned_staff_name: assignee?.name ?? null,
 		messages,
 		attachments,
+	};
+}
+
+// ── AI spend rollups (cross-tenant, read-only) ──────────────────────────────────────────
+// Staff FinOps view over the console-owned ai_usage_ledger: cost_micros (1e-6 USD) rolled up
+// per org / per user / per model, plus a daily trend. All run on getServiceDb (RLS-bypass);
+// the SUPPORT_STAFF_EMAILS allowlist behind Cloudflare Access is the wall.
+
+/** One org's AI spend over the window (USD from cost_micros) + its action count. */
+export interface OrgSpendRow {
+	org_id: string | null;
+	org_name: string | null;
+	org_slug: string | null;
+	usd: number;
+	actions: number;
+}
+
+/** One user's AI spend over the window (USD) + owning-org context + action count. */
+export interface UserSpendRow {
+	user_id: string;
+	user_name: string | null;
+	user_email: string | null;
+	org_id: string | null;
+	org_name: string | null;
+	usd: number;
+	actions: number;
+}
+
+/** One model's share of AI spend over the window (USD) + token totals + action count. */
+export interface ModelSpendRow {
+	model: string | null;
+	usd: number;
+	actions: number;
+}
+
+/** One calendar day's total AI spend (USD) — the trend line. */
+export interface SpendDayRow {
+	day: string;
+	usd: number;
+}
+
+/** The complete AI-spend dashboard payload for a window. */
+export interface AiSpendRollup {
+	from: string;
+	to: string;
+	totalUsd: number;
+	perOrg: OrgSpendRow[];
+	perUser: UserSpendRow[];
+	perModel: ModelSpendRow[];
+	daily: SpendDayRow[];
+}
+
+/** Per-ORG AI spend over [from, to), highest spend first (top `limit`). */
+export async function aiSpendPerOrg(
+	db: Db,
+	from: Date,
+	to: Date,
+	limit = 50,
+): Promise<OrgSpendRow[]> {
+	return db
+		.select({
+			org_id: aiUsageLedger.org_id,
+			org_name: organization.name,
+			org_slug: organization.slug,
+			usd,
+			actions: sql<number>`count(*)::int`,
+		})
+		.from(aiUsageLedger)
+		.leftJoin(organization, eq(organization.id, aiUsageLedger.org_id))
+		.where(
+			and(gte(aiUsageLedger.created_at, from), lt(aiUsageLedger.created_at, to)),
+		)
+		.groupBy(aiUsageLedger.org_id, organization.name, organization.slug)
+		.orderBy(desc(usd))
+		.limit(limit);
+}
+
+/** Per-USER AI spend over [from, to), highest spend first (top `limit`). */
+export async function aiSpendPerUser(
+	db: Db,
+	from: Date,
+	to: Date,
+	limit = 50,
+): Promise<UserSpendRow[]> {
+	return db
+		.select({
+			user_id: aiUsageLedger.user_id,
+			user_name: user.name,
+			user_email: user.email,
+			org_id: aiUsageLedger.org_id,
+			org_name: organization.name,
+			usd,
+			actions: sql<number>`count(*)::int`,
+		})
+		.from(aiUsageLedger)
+		.leftJoin(user, eq(user.id, aiUsageLedger.user_id))
+		.leftJoin(organization, eq(organization.id, aiUsageLedger.org_id))
+		.where(
+			and(gte(aiUsageLedger.created_at, from), lt(aiUsageLedger.created_at, to)),
+		)
+		.groupBy(
+			aiUsageLedger.user_id,
+			user.name,
+			user.email,
+			aiUsageLedger.org_id,
+			organization.name,
+		)
+		.orderBy(desc(usd))
+		.limit(limit);
+}
+
+/** Per-MODEL AI spend over [from, to), highest spend first. */
+export async function aiSpendPerModel(
+	db: Db,
+	from: Date,
+	to: Date,
+): Promise<ModelSpendRow[]> {
+	return db
+		.select({
+			model: aiUsageLedger.model,
+			usd,
+			actions: sql<number>`count(*)::int`,
+		})
+		.from(aiUsageLedger)
+		.where(
+			and(gte(aiUsageLedger.created_at, from), lt(aiUsageLedger.created_at, to)),
+		)
+		.groupBy(aiUsageLedger.model)
+		.orderBy(desc(usd));
+}
+
+/** Daily AI spend trend over [from, to) (only active days; the caller fills the axis). */
+export async function aiSpendDaily(
+	db: Db,
+	from: Date,
+	to: Date,
+): Promise<SpendDayRow[]> {
+	return db
+		.select({
+			day: sql<string>`to_char(date_trunc('day', ${aiUsageLedger.created_at}), 'YYYY-MM-DD')`,
+			usd,
+		})
+		.from(aiUsageLedger)
+		.where(
+			and(gte(aiUsageLedger.created_at, from), lt(aiUsageLedger.created_at, to)),
+		)
+		.groupBy(sql`1`)
+		.orderBy(asc(sql`1`));
+}
+
+/**
+ * The full AI-spend rollup for a window — per-org, per-user, per-model, a daily trend, and
+ * the window total — in one call (parallel queries). Read-only; cross-tenant.
+ */
+export async function aiSpendRollup(
+	db: Db,
+	from: Date,
+	to: Date,
+): Promise<AiSpendRollup> {
+	const [perOrg, perUser, perModel, daily] = await Promise.all([
+		aiSpendPerOrg(db, from, to),
+		aiSpendPerUser(db, from, to),
+		aiSpendPerModel(db, from, to),
+		aiSpendDaily(db, from, to),
+	]);
+	const totalUsd = perModel.reduce((acc, r) => acc + r.usd, 0);
+	return {
+		from: from.toISOString(),
+		to: to.toISOString(),
+		totalUsd,
+		perOrg,
+		perUser,
+		perModel,
+		daily,
 	};
 }

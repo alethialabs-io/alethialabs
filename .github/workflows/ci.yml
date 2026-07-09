@@ -35,6 +35,17 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      # Persist Turbo's local cache across runs. Before this, only the pnpm store was cached, so every run
+      # re-ran check-types/lint/test/build for EVERY package cold. Keyed per-sha with an os restore fallback,
+      # so a PR restores the previous run's cache and Turbo only re-executes the packages that actually
+      # changed (it replays cached logs for the rest). This is the single biggest CI-time win.
+      - name: Cache Turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
       # Turbo fans these out across EVERY workspace project that defines the script
       # (console, marketing, docs, blog, @alethia/ee, @repo/{ui,brand,plan-catalog}),

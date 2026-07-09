@@ -21,6 +21,8 @@ import {
 	setMemberSuspended,
 } from "@/app/server/actions/members";
 import { getCollaborationAccess } from "@/app/server/actions/billing";
+import { ClassificationControl } from "@/components/classification/classification-control";
+import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { DataTable } from "@/components/data-table";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
@@ -220,6 +222,13 @@ export function MembersTable() {
 		return [...memberRows, ...inviteRows];
 	}, [members, invites, myId]);
 
+	// One batched query hydrates every member row's classification chips (invites aren't
+	// classifiable). Keyed on the member row id (member.id).
+	const { data: classMap = {} } = useAssignmentsForKind(
+		"member",
+		rows.filter((r) => r.kind === "member").map((r) => r.refId),
+	);
+
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
 		return rows.filter((r) => {
@@ -377,6 +386,17 @@ export function MembersTable() {
 							<span className="font-mono text-[10.5px] text-muted-foreground">
 								{r.meta}
 							</span>
+							{/* Classification (Workstream B) — members only (not invites). */}
+							{r.kind === "member" && (
+								<ClassificationControl
+									kind="member"
+									id={r.refId}
+									canEdit={canManage}
+									initialAssignments={classMap[r.refId]}
+									className="mt-1"
+									compact
+								/>
+							)}
 						</div>
 					</div>
 				);

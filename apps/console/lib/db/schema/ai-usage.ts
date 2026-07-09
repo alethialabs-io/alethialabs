@@ -34,9 +34,9 @@ export const aiUsageLedger = pgTable(
 		source: text().default("included").notNull(),
 		// jobId (scan) / threadId (agent), for traceability.
 		ref_id: text(),
-		// Gateway model id that served the action (e.g. "anthropic/claude-sonnet-4.6").
+		// Canonical provider/native-id key that served the action (e.g. "anthropic/claude-sonnet-4-6").
 		model: text(),
-		// Token usage reported by the gateway for this action.
+		// Token usage reported by the provider for this action.
 		input_tokens: integer(),
 		output_tokens: integer(),
 		cached_input_tokens: integer(),

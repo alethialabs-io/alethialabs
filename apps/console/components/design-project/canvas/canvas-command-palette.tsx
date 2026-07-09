@@ -21,6 +21,7 @@ import {
 	NODE_REGISTRY,
 } from "./graph/node-registry";
 import type { NodeKind } from "./graph/types";
+import { configName } from "./graph/node-config";
 
 /** Maps a node kind to its provider-specific service-name field. */
 const SERVICE_FIELD: Partial<Record<NodeKind, keyof CloudProviderMeta>> = {
@@ -149,9 +150,7 @@ export function CanvasCommandPalette({
 							const def = NODE_REGISTRY[n.data.kind];
 							const Icon = def.icon;
 							const name =
-								(n.data.config.name as string) ||
-								(n.data.config.project_name as string) ||
-								def.label;
+								configName(n.data) || def.label;
 							return (
 								<CommandItem
 									key={n.id}

@@ -9,6 +9,12 @@
 			"outputs": [".next/**", "!.next/cache/**"],
 			"env": [
 				"DOCS_URL",
+				"ANTHROPIC_API_KEY",
+				"OPENAI_API_KEY",
+				"AI_MODEL",
+				"AI_EXECUTOR_MODEL",
+				"AI_ADVISOR_MODEL_PLUS",
+				"AI_ADVISOR_MODEL_MAX",
 				"ALETHIA_DATABASE_URL",
 				"ALETHIA_APP_DATABASE_URL",
 				"BETTER_AUTH_SECRET",
@@ -28,13 +34,16 @@
 			]
 		},
 		"lint": {
-			"dependsOn": ["^lint"]
+			"dependsOn": ["^lint"],
+			"inputs": ["$TURBO_DEFAULT$", "!**/*.md", "!**/*.mdx"]
 		},
 		"check-types": {
-			"dependsOn": ["^check-types"]
+			"dependsOn": ["^check-types"],
+			"inputs": ["$TURBO_DEFAULT$", "!**/*.md", "!**/*.mdx"]
 		},
 		"test": {
 			"dependsOn": ["^build"],
+			"inputs": ["$TURBO_DEFAULT$", "!**/*.md", "!**/*.mdx"],
 			"outputs": ["coverage/**"]
 		},
 		"dev": {

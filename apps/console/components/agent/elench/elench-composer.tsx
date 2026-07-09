@@ -27,7 +27,11 @@ import type {
 	MentionType,
 } from "@/lib/ai/mentions";
 import { cn } from "@repo/ui/utils";
-import { ElenchAskMode, ElenchModelButton } from "./elench-controls";
+import {
+	ElenchAskMode,
+	ElenchDeepReasoning,
+	ElenchModelButton,
+} from "./elench-controls";
 import {
 	detectMention,
 	type MentionAnchor,
@@ -54,12 +58,15 @@ const TYPE_ICON: Record<MentionType, LucideIcon> = {
  */
 export function ElenchComposer({
 	onSend,
+	onStop,
 	placeholder = "Ask Elench, or type @ to tag a resource",
 	showModel = false,
 	status,
 	autoFocus = false,
 }: {
 	onSend: (text: string, mentions: Mention[]) => void;
+	/** Abort the in-flight stream — wired to the Square button while generating. */
+	onStop?: () => void;
 	placeholder?: string;
 	/** Show the model picker (sliders) — org context only. */
 	showModel?: boolean;
@@ -214,17 +221,23 @@ export function ElenchComposer({
 					onClick={(e) =>
 						recompute(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)
 					}
-					className="field-sizing-content max-h-40 min-h-[44px] w-full resize-none bg-transparent px-3.5 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+					className="field-sizing-content max-h-56 min-h-[72px] w-full resize-none bg-transparent px-3.5 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
 				/>
 				<div className="flex items-center justify-between px-2.5 pb-2.5">
-					<ElenchAskMode />
+					<div className="flex items-center gap-1.5">
+						<ElenchAskMode />
+						{/* Max-only per-message Opus opt-in (org context); the control self-hides otherwise. */}
+						{showModel && <ElenchDeepReasoning />}
+					</div>
 					<div className="flex items-center gap-1">
 						{showModel && <ElenchModelButton />}
 						<button
 							type="button"
-							aria-label="Send"
-							onClick={submit}
-							disabled={pending || value.trim().length === 0}
+							aria-label={pending && onStop ? "Stop" : "Send"}
+							onClick={pending ? onStop : submit}
+							disabled={
+								pending ? !onStop : value.trim().length === 0
+							}
 							className="flex size-8 items-center justify-center bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
 						>
 							{pending ? (

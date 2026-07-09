@@ -331,6 +331,38 @@ func (c *RunnerAPIClient) FetchGitToken(jobID string) (string, error) {
 	return *result.Token, nil
 }
 
+// FetchAzureToken mints a short-lived OIDC assertion for keyless Azure provisioning. The console
+// holds the issuer signing key; the runner presents this token to OpenTofu's azurerm provider
+// (ARM_OIDC_TOKEN), which exchanges it for an ARM access token — no client secret on the runner.
+func (c *RunnerAPIClient) FetchAzureToken() (string, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/runners/azure-token", nil)
+	if err != nil {
+		return "", err
+	}
+	c.setRunnerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch azure token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch azure token returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode azure token response: %w", err)
+	}
+	if result.Token == "" {
+		return "", fmt.Errorf("azure token response was empty")
+	}
+	return result.Token, nil
+}
+
 func (c *RunnerAPIClient) UpdateRunnerMetadata(runnerID string, metadata map[string]any) error {
 	body, err := json.Marshal(metadata)
 	if err != nil {

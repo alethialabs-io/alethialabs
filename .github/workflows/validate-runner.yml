@@ -1,0 +1,69 @@
+name: Validate runner build
+
+# Actually BUILD the runner images on a PR that touches runner sources — the check that was missing
+# (deploy-console only builds them on a main push, and they can't be built on a laptop: the full image is
+# 16GB+). GitHub's hosted runners have the disk/RAM, so this proves the runner-base refactor (and any future
+# runner Dockerfile change) builds — installs every cloud CLI + runs `tofu init` for all templates — BEFORE
+# it can reach main. Build-only: nothing is pushed.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/runner/**'
+      - 'packages/core/**'
+      - 'go.work'
+  workflow_dispatch:
+
+jobs:
+  build-runner:
+    name: Build runner images (no push)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The full runner is 16GB+; reclaim the ~25-30GB of pre-installed toolchains we don't need so the
+      # build has headroom on the standard runner.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          large-packages: true
+          docker-images: false
+          swap-storage: false
+
+      - name: Build runner-base
+        run: |
+          docker build -f apps/runner/Dockerfile.base \
+            --build-arg VERSION="${{ github.sha }}" \
+            -t runner-base:pr .
+
+      # Full multi-cloud runner (the box image) — installs aws-cli + gcloud + azure-cli and runs `tofu init`
+      # for all three templates, so a green build proves the base + every cloud install + the FROM mechanism.
+      - name: Build full runner (FROM runner-base)
+        run: |
+          docker build -f apps/runner/Dockerfile \
+            --build-arg RUNNER_BASE=runner-base:pr \
+            --build-arg VERSION="${{ github.sha }}" \
+            -t runner:pr .
+          # Free the 16GB full image before building the lean variant.
+          docker image rm runner:pr
+
+      # A per-cloud (fleet) variant — validates the lean FROM-base path the fleet actually ships.
+      - name: Build runner-aws (FROM runner-base)
+        run: |
+          docker build -f apps/runner/Dockerfile.aws \
+            --build-arg RUNNER_BASE=runner-base:pr \
+            --build-arg VERSION="${{ github.sha }}" \
+            -t runner-aws:pr .
+
+      - name: Smoke-check the toolchain in the built image
+        run: |
+          docker run --rm --entrypoint sh runner-aws:pr -c '
+            set -e
+            tofu version
+            aws --version
+            kubectl version --client 2>/dev/null || kubectl version --client=true
+            helm version --short
+            infracost --version
+            test -x /usr/local/bin/runner && echo "runner binary present"
+          '

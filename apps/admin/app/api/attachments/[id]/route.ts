@@ -3,16 +3,21 @@
 
 // Staff attachment download. Cloudflare Access + the SUPPORT_STAFF_EMAILS allowlist gate the
 // subdomain; assertStaff() is the in-app backstop. Staff are cross-tenant (they answer every
-// org's cases), so there's no org filter — any real attachment id resolves. Rather than stream
-// the bytes through this app, we mint a short-lived presigned GET URL and 302 the browser
-// straight to storage (cheapest: zero app bandwidth, always a fresh URL, re-authorized per click).
+// org's cases), so there's no org filter — any real attachment id resolves. Fetches the object
+// server-side and streams it (the store is internal in prod — seaweedfs:8333 — so a presigned
+// URL wouldn't resolve from the browser; this is the same approach as the console customer route).
 
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { supportCaseAttachments } from "@repo/support/schema";
 import { assertStaff } from "@/lib/auth/staff";
 import { getServiceDb } from "@/lib/db";
-import { presignSupportAttachmentDownload } from "@/lib/storage";
+import { getSupportAttachment } from "@/lib/storage";
+
+/** Strips characters that would break the Content-Disposition filename. */
+function headerSafeName(name: string): string {
+	return name.replace(/["\r\n]+/g, "_");
+}
 
 export async function GET(
 	_req: Request,
@@ -38,10 +43,20 @@ export async function GET(
 		return NextResponse.json({ error: "Attachment not found" }, { status: 404 });
 	}
 
-	const url = await presignSupportAttachmentDownload(
-		att.storage_key,
-		att.file_name,
-		att.content_type,
-	);
-	return NextResponse.redirect(url, 302);
+	const data = await getSupportAttachment(att.storage_key);
+	if (!data) {
+		return NextResponse.json({ error: "Attachment not found" }, { status: 404 });
+	}
+
+	// Copy into a concrete ArrayBuffer-backed view so it satisfies BodyInit.
+	const out = new Uint8Array(data.byteLength);
+	out.set(data);
+
+	return new Response(out, {
+		status: 200,
+		headers: {
+			"Content-Type": att.content_type || "application/octet-stream",
+			"Content-Disposition": `attachment; filename="${headerSafeName(att.file_name)}"`,
+		},
+	});
 }

@@ -6,6 +6,7 @@ import { Check, ShieldCheck, X } from "lucide-react";
 import { useState } from "react";
 import { planProject, provisionProject } from "@/app/server/actions/projects";
 import { Button } from "@repo/ui/button";
+import { track } from "@/lib/analytics/track";
 import type { OperationProposal } from "@/lib/ai/operation";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { cn } from "@repo/ui/utils";
@@ -18,7 +19,14 @@ type Phase = "idle" | "running" | "done" | "rejected" | "denied";
  * the artifact Logs tab on the returned job; a denial (Forbidden / usage cap) shows
  * the "held back" note from the action's error message.
  */
-export function ApprovalCard({ proposal }: { proposal: OperationProposal }) {
+export function ApprovalCard({
+	proposal,
+	onResolve,
+}: {
+	proposal: OperationProposal;
+	/** Feed the outcome back to the model (closes the HITL loop → it continues). */
+	onResolve?: (output: unknown) => void;
+}) {
 	const open = useArtifactStore((s) => s.open);
 	const [phase, setPhase] = useState<Phase>("idle");
 	const [reason, setReason] = useState<string | null>(null);
@@ -26,6 +34,7 @@ export function ApprovalCard({ proposal }: { proposal: OperationProposal }) {
 	const isDeploy = proposal.operation.operation === "provision_project";
 
 	const approve = async () => {
+		track("elench_tool_approved", { tool: "propose_operation" });
 		setPhase("running");
 		setReason(null);
 		try {
@@ -36,10 +45,24 @@ export function ApprovalCard({ proposal }: { proposal: OperationProposal }) {
 					: await provisionProject(op.projectId, op.planJobId);
 			open({ projectId: op.projectId, jobId }, "logs");
 			setPhase("done");
+			onResolve?.({
+				status: "approved",
+				operation: op.operation,
+				projectId: op.projectId,
+				jobId,
+			});
 		} catch (err) {
+			const message = err instanceof Error ? err.message : "Operation failed.";
 			setPhase("denied");
-			setReason(err instanceof Error ? err.message : "Operation failed.");
+			setReason(message);
+			onResolve?.({ status: "denied", reason: message });
 		}
+	};
+
+	const reject = () => {
+		track("elench_tool_denied", { tool: "propose_operation" });
+		setPhase("rejected");
+		onResolve?.({ status: "rejected" });
 	};
 
 	return (
@@ -107,7 +130,7 @@ export function ApprovalCard({ proposal }: { proposal: OperationProposal }) {
 								size="sm"
 								className="h-8 rounded-none"
 								disabled={phase === "running"}
-								onClick={() => setPhase("rejected")}
+								onClick={reject}
 							>
 								Reject
 							</Button>

@@ -7,6 +7,7 @@
 // and a retry, keeping the app shell + project sidebar mounted instead of a full-page takeover.
 
 import { useEffect } from "react";
+import { captureException } from "@/lib/analytics/track";
 import { ErrorState } from "@/components/errors/error-state";
 import { Button } from "@repo/ui/button";
 
@@ -19,6 +20,7 @@ export default function ProjectError({
 }) {
 	useEffect(() => {
 		console.error("[project] error:", error.digest ?? error.message, error);
+		captureException(error, { boundary: "project", digest: error.digest });
 	}, [error]);
 
 	return (

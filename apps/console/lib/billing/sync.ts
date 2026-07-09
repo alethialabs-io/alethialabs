@@ -8,10 +8,15 @@
 // (app/api/webhooks/stripe/route.ts) and the new-org link action (server/actions/billing).
 
 import type Stripe from "stripe";
-import { planForPriceId } from "@/lib/billing/config";
+import { effectiveAiTier } from "@/lib/billing/ai-plan";
+import { aiTierForPriceId, planForPriceId } from "@/lib/billing/config";
 import { ensureIncludedCredit } from "@/lib/billing/credit-grants";
 import { isBillingActive } from "@/lib/billing/plan";
-import { claimPlanWelcome, upsertOrgBilling } from "@/lib/billing/queries";
+import {
+	claimPlanWelcome,
+	upsertOrgAiSubscription,
+	upsertOrgBilling,
+} from "@/lib/billing/queries";
 import { sendPlanWelcomeEmail } from "@/lib/email/billing-email";
 import type { BillingStatus } from "@/lib/db/schema/enums";
 
@@ -50,6 +55,15 @@ export async function syncSubscriptionToBilling(
 	}
 	const item = sub.items.data[0];
 	const priceId = item?.price.id;
+
+	// STANDALONE AI subscription (ai_plus/ai_max) — a SEPARATE Stripe product from the org
+	// plan. Route it to the AI columns only (never touch plan/seats), then return.
+	const aiTier = priceId ? aiTierForPriceId(priceId) : null;
+	if (aiTier) {
+		await syncAiSubscriptionToBilling(orgId, sub, aiTier);
+		return;
+	}
+
 	const plan = priceId ? planForPriceId(priceId) : null;
 	const status = mapStatus(sub.status);
 	// Only a LIVE subscription (active/trialing) grants a paid plan or shows a renewal
@@ -89,4 +103,24 @@ export async function syncSubscriptionToBilling(
 			}
 		}
 	}
+}
+
+/**
+ * Applies a standalone AI subscription's state to its org's AI columns only. A live
+ * (active/trialing) subscription keeps the paid `ai_tier`; anything else lapses the org
+ * back to `ai_free` (effectiveAiTier) while retaining the subscription id so the panel can
+ * show/clean up a pending sub. The org plan is untouched — AI is orthogonal.
+ */
+async function syncAiSubscriptionToBilling(
+	orgId: string,
+	sub: Stripe.Subscription,
+	tier: "ai_plus" | "ai_max",
+): Promise<void> {
+	const status = mapStatus(sub.status);
+	await upsertOrgAiSubscription({
+		organizationId: orgId,
+		aiTier: effectiveAiTier(tier, status),
+		aiSubscriptionStatus: status,
+		aiStripeSubscriptionId: sub.id,
+	});
 }

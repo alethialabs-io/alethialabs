@@ -40,6 +40,7 @@ import {
 } from "@/app/server/actions/billing";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { aiCreditsSeries, sumCredits, purchasedBalance } from "@/lib/billing/ai-quota";
+import { AI_TIERS } from "@/lib/billing/ai-plan";
 import { getOrgBilling } from "@/lib/billing/queries";
 import {
 	queryJobMinutesByOrg,
@@ -168,24 +169,37 @@ describe("getUsageOverTime", () => {
 });
 
 describe("getAiUsageSummary", () => {
-	it("short-circuits to budget-only for the personal scope", async () => {
+	it("short-circuits to budget-only for the personal scope (free AI tier)", async () => {
 		actor.mockResolvedValue({ orgId: "user-1", userId: "user-1" } as never);
 		orgBilling.mockResolvedValue(null);
 		const r = await getAiUsageSummary();
-		expect(r.windowUsed).toBe(0);
+		expect(r.tier).toBe("ai_free");
+		expect(r.dailyUsed).toBe(0);
+		expect(r.weeklyUsed).toBe(0);
 		expect(r.purchasedBalance).toBe(0);
-		expect(r.weeklyBudget).toBe(100); // community weekly credits
+		expect(r.dailyBudget).toBe(AI_TIERS.ai_free.dailyCredits);
+		expect(r.weeklyBudget).toBe(AI_TIERS.ai_free.weeklyCredits);
+		// Reset timestamps are valid ISO strings in the future.
+		expect(new Date(r.dailyResetAt).getTime()).toBeGreaterThan(Date.now());
+		expect(new Date(r.weeklyResetAt).getTime()).toBeGreaterThan(Date.now());
 		expect(sumCredits).not.toHaveBeenCalled();
 	});
 
-	it("reports the trailing-week spend + purchased balance for a team org", async () => {
-		orgBilling.mockResolvedValue(billing({ plan: "team", status: "active" }));
-		vi.mocked(sumCredits).mockResolvedValue(1240);
+	it("reports daily + weekly included spend against the AI tier's caps", async () => {
+		// The AI budget is the STANDALONE tier's daily/weekly grant, independent of the org plan.
+		orgBilling.mockResolvedValue(
+			billing({ aiTier: "ai_plus", aiSubscriptionStatus: "active" }),
+		);
+		// getAiUsageSummary sums daily first, then weekly, then purchased balance.
+		vi.mocked(sumCredits).mockResolvedValueOnce(40).mockResolvedValueOnce(1240);
 		vi.mocked(purchasedBalance).mockResolvedValue(800);
 
 		const r = await getAiUsageSummary();
-		expect(r.weeklyBudget).toBe(3000); // team weekly credits
-		expect(r.windowUsed).toBe(1240);
+		expect(r.tier).toBe("ai_plus");
+		expect(r.dailyBudget).toBe(AI_TIERS.ai_plus.dailyCredits);
+		expect(r.weeklyBudget).toBe(AI_TIERS.ai_plus.weeklyCredits);
+		expect(r.dailyUsed).toBe(40);
+		expect(r.weeklyUsed).toBe(1240);
 		expect(r.purchasedBalance).toBe(800);
 		expect(sumCredits).toHaveBeenCalledWith("org-1", "included", expect.any(Date));
 	});

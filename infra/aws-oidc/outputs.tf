@@ -16,6 +16,11 @@ output "deploy_reader_role_arn" {
   value       = aws_iam_role.deploy_reader.arn
 }
 
+output "connector_platform_deployer_role_arn" {
+  description = "Set as the repo Actions variable CONNECTOR_PLATFORM_DEPLOYER_ROLE_ARN (used by infra-connector-platform)."
+  value       = aws_iam_role.connector_platform_deployer.arn
+}
+
 output "prod_env_secret_arn" {
   description = "ARN of the alethia/prod/env Secrets Manager secret."
   value       = aws_secretsmanager_secret.prod_env.arn

@@ -1,42 +1,47 @@
 ---
 title: Alibaba
-description: Provision the Alethia control plane on an Alibaba Cloud Yitian 710 (ARM) ECS instance.
+description: Provision the Alethia control plane on an x86 ECS instance, closed-origin behind a Cloudflare Tunnel, admin via Session Manager.
 ---
 
-# Alibaba (`infra/alibaba-cp`)
+# Alibaba (`infra/cp-alibaba`)
 
-A single **Yitian 710** (ARM) ECS instance — `ecs.g8y.large` (2 vCPU / 8 GB) — with a public IP,
-behind Caddy. **≈ $45–60/mo** (`ecs.c8y.large`, 2 vCPU / 4 GB, ≈ $35 if it fits). The g8y/c8y
-families are region-limited, so pick a region that offers them.
+A single x86 **`ecs.g7.large`** (2 vCPU / 8 GB) ECS instance fronted by a Cloudflare Tunnel.
+**≈ $75–95/mo pay-as-you-go** (Alibaba list price, region-dependent; markedly cheaper on a monthly
+subscription — not priced by Infracost).
 
 ## What it creates
-- `alicloud_instance` (`ecs.g8y.large`, Ubuntu 24.04 ARM64) with a 40 GB `cloud_essd` system disk
-- `alicloud_vpc` + `alicloud_vswitch` (AZ auto-picked to one that has the ARM type)
-- `alicloud_security_group` + rules (22/80/443)
-- `alicloud_ecs_key_pair` (your SSH public key)
-- `cloudflare_record` A for the apex + `www`
+- `alicloud_instance` (`ecs.g7.large`, Ubuntu 24.04 x86_64) with a 40 GB **encrypted** `cloud_essd`
+  system disk
+- `alicloud_vpc` + `alicloud_vswitch` (AZ auto-picked to one that has the x86 type)
+- `alicloud_security_group` with **no ingress rules** — web is the tunnel, admin is Session Manager
+- `cloudflare_zero_trust_tunnel_cloudflared` (+ config) and **proxied** CNAMEs (apex + `www`)
 - cloud-init via `user_data` (installs Docker, clones the repo)
+
+## Access — Session Manager / Cloud Assistant (no open port)
+The Cloud Assistant agent (preinstalled on the Ubuntu image) dials out:
+- **Interactive:** ECS Session Manager (Alibaba console → ECS → the instance → *Connect*).
+- **Automation:** `aliyun ecs RunCommand`.
 
 ## Prerequisites
 - An Alibaba Cloud account with a **RAM access key** (ECS + VPC permissions).
-- Cloudflare API token + zone id; an SSH public key.
-- A region offering **Yitian 710** (e.g. `eu-central-1`, `ap-southeast-1`, `cn-hangzhou`).
+- A Cloudflare **API token** (DNS edit + Zero Trust), the **zone id**, and the **account id**.
 
 ## Apply
 ```bash
-cd infra/alibaba-cp
+cd infra/cp-alibaba
 cp backend.hcl.example backend.hcl
-cp terraform.tfvars.example terraform.tfvars  # region, cloudflare_*, ssh_public_key
+cp terraform.tfvars.example terraform.tfvars  # region, cloudflare_* (token/zone/account)
 export ALICLOUD_ACCESS_KEY=... ALICLOUD_SECRET_KEY=...
-terraform init -backend-config=backend.hcl
-terraform apply
-terraform output server_ipv4
+tofu init -backend-config=backend.hcl
+tofu plan && tofu apply
+export TUNNEL_TOKEN="$(tofu output -raw tunnel_token)"
 ```
 
-## CI secrets (`terraform-alibaba.yml`)
-`ALICLOUD_ACCESS_KEY`, `ALICLOUD_SECRET_KEY` (RAM key), `CLOUDFLARE_API_TOKEN`,
-`CLOUDFLARE_ZONE_ID`, `DEPLOY_SSH_PUBLIC_KEY`, and the `TF_STATE_S3_*` backend secrets.
+## CI secrets (`infra-cp-alibaba.yml`)
+`ALICLOUD_ACCESS_KEY`, `ALICLOUD_SECRET_KEY` (RAM key), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`,
+`CLOUDFLARE_ACCOUNT_ID`, and the `TF_STATE_S3_*` backend secrets. `apply` is gated behind
+`vars.INFRA_ALIBABA_APPLY`.
 
 ## Tuning
-`instance_type` (`ecs.g8y.large` default; `ecs.c8y.large` to save), `system_disk_size`, `region`
-(must have Yitian ARM), `zone_id` (leave empty to auto-pick), `ssh_allowed_cidrs`.
+`instance_type` (`ecs.g7.large` default — **must be x86**), `system_disk_size`, `region`, `zone_id`
+(leave empty to auto-pick). An auto-assigned public IP handles egress.

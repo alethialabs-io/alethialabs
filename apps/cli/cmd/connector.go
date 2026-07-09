@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -18,8 +19,20 @@ const (
 	connectorBaseURL   = "https://alethia-connector-assets.s3.eu-west-1.amazonaws.com"
 	gcpCloudShellURL   = "https://shell.cloud.google.com/cloudshell/open?shellonly=true&show=terminal"
 	azureCloudShellURL = "https://shell.azure.com"
-	alethiaAwsAccount  = "787587782604"
+	// defaultAlethiaAwsAccount is the live platform AWS account whose identity every managed cloud
+	// federates through (AWS AssumeRole, GCP `--aws` WIF, Azure sts.amazonaws.com federation).
+	defaultAlethiaAwsAccount = "270587882865"
 )
+
+// alethiaAwsAccount returns the platform AWS account id the customer trust policies must name.
+// Configurable via ALETHIA_AWS_ACCOUNT_ID so a self-hoster can point it at their own account;
+// defaults to Alethia's live account.
+func alethiaAwsAccount() string {
+	if v := os.Getenv("ALETHIA_AWS_ACCOUNT_ID"); v != "" {
+		return v
+	}
+	return defaultAlethiaAwsAccount
+}
 
 var connectorCmd = &cobra.Command{
 	Use:   "connector",

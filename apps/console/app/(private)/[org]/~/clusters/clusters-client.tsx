@@ -4,6 +4,7 @@
 
 import { ClusterCard } from "@/components/clusters/cluster-card";
 import { useClustersQuery } from "@/lib/query/use-clusters-query";
+import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { Server } from "lucide-react";
 import Link from "next/link";
 
@@ -18,6 +19,19 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 	const clusters = projectId
 		? allClusters.filter((c) => c.id === projectId)
 		: allClusters;
+	// One batched query hydrates every cluster card's classification chips (keyed on the
+	// project_cluster row id, the classifiable resource).
+	const clusterIds = clusters
+		.map((c) =>
+			Array.isArray(c.project_cluster)
+				? c.project_cluster[0]?.id
+				: c.project_cluster?.id,
+		)
+		.filter((id): id is string => Boolean(id));
+	const { data: classMap = {} } = useAssignmentsForKind(
+		"project_cluster",
+		clusterIds,
+	);
 
 	return (
 		<div className="space-y-6">
@@ -51,9 +65,18 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 				</div>
 			) : (
 				<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-					{clusters.map((cluster) => (
-						<ClusterCard key={cluster.id} data={cluster} />
-					))}
+					{clusters.map((cluster) => {
+						const pc = Array.isArray(cluster.project_cluster)
+							? cluster.project_cluster[0]
+							: cluster.project_cluster;
+						return (
+							<ClusterCard
+								key={cluster.id}
+								data={cluster}
+								initialAssignments={pc?.id ? classMap[pc.id] : undefined}
+							/>
+						);
+					})}
 				</div>
 			)}
 		</div>

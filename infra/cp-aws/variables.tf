@@ -8,7 +8,7 @@ variable "aws_region" {
 }
 
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token with DNS edit on the zone."
+  description = "Cloudflare API token with DNS edit + Cloudflare Tunnel (Zero Trust) perms."
   type        = string
   sensitive   = true
 }
@@ -18,22 +18,23 @@ variable "cloudflare_zone_id" {
   type        = string
 }
 
+variable "cloudflare_account_id" {
+  description = "Cloudflare account ID that owns the Zero Trust tunnel."
+  type        = string
+}
+
 variable "domain" {
   description = "Apex domain served by the control plane."
   type        = string
   default     = "alethialabs.io"
 }
 
-variable "ssh_public_key" {
-  description = "SSH public key authorized on the instance (CI deploy key)."
-  type        = string
-}
-
 variable "instance_type" {
-  # t4g = Graviton ARM64 — matches the arm64 images; cheapest ARM general-purpose.
-  description = "EC2 instance type."
+  # t3 = x86 burstable — matches the linux/amd64 self-host bundle images. t3.large = 2 vCPU / 8 GB,
+  # the cheapest general-purpose tier with headroom for the compose bundle plus a TF run.
+  description = "EC2 instance type (x86 — the app images are amd64)."
   type        = string
-  default     = "t4g.large"
+  default     = "t3.large"
 }
 
 variable "root_volume_size" {
@@ -42,14 +43,18 @@ variable "root_volume_size" {
   default     = 60
 }
 
-variable "ssh_allowed_cidrs" {
-  description = "CIDRs allowed to reach SSH (22)."
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
-}
-
 variable "repo_url" {
   description = "Git repo cloned onto the box at /opt/alethia."
   type        = string
   default     = "https://github.com/alethialabs-io/alethialabs.git"
+}
+
+variable "environment" {
+  description = "Deployment environment tag (FinOps) — Dev, Stage, or Prod."
+  type        = string
+  default     = "Prod"
+  validation {
+    condition     = contains(["Dev", "Stage", "Prod"], var.environment)
+    error_message = "environment must be Dev, Stage, or Prod."
+  }
 }

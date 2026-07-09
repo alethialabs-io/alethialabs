@@ -143,14 +143,22 @@ describeIfDb("authz registry seed (seedAuthz)", () => {
 		expect(operator.has("fleet:create")).toBe(false);
 		expect(operator.has("alert:manage_alerts")).toBe(false);
 
-		// Viewer = read-only: only `view` / `view_alerts`, nothing mutating.
+		// Viewer = read-only, EXCEPT opening/replying to their own support cases
+		// (support is a right; the tiered RLS keeps a viewer to their own cases).
 		expect(viewer.has("org:view")).toBe(true);
 		expect(viewer.has("alert:view_alerts")).toBe(true);
+		expect(viewer.has("support_case:create")).toBe(true);
+		expect(viewer.has("support_case:reply")).toBe(true);
 		expect(viewer.has("project:create")).toBe(false);
 		expect(viewer.has("project:deploy")).toBe(false);
 		expect(viewer.has("member:manage_members")).toBe(false);
 		for (const key of viewer) {
-			expect(["view", "view_alerts"]).toContain(key.split(":")[1]);
+			const [resource, action] = key.split(":");
+			const readOnly = action === "view" || action === "view_alerts";
+			const ownSupport =
+				resource === "support_case" &&
+				(action === "create" || action === "reply");
+			expect(readOnly || ownSupport).toBe(true);
 		}
 	});
 

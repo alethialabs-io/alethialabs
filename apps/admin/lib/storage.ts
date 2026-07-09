@@ -1,19 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Minimal S3-compatible storage client for the admin app — just enough to PRESIGN staff
-// attachment downloads. The app can't import the console's lib/storage (cross-app), so it
-// reproduces the same client setup (path-style for SeaweedFS/MinIO) against the same
-// ALETHIA_STORAGE_* env. Downloads are served as short-lived presigned GET URLs the browser
-// fetches DIRECTLY from storage — no bytes flow through this app.
+// Minimal S3-compatible storage client for the admin app — just enough to FETCH staff
+// attachment downloads server-side. The app can't import the console's lib/storage (cross-app),
+// so it reproduces the same client setup (path-style for SeaweedFS/MinIO) against the same
+// ALETHIA_STORAGE_* env. Downloads are streamed THROUGH this app (the object store is internal
+// in prod — seaweedfs:8333 — so a presigned URL wouldn't resolve from a staff browser; a
+// server-side fetch does, and this is a low-traffic staff surface).
 
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env } from "next-runtime-env";
 import { SUPPORT_ATTACHMENTS_BUCKET } from "@repo/support/storage";
-
-/** How long a presigned attachment URL stays valid — long enough to click, short enough to leak safely. */
-const PRESIGN_TTL_SECONDS = 300;
 
 let cachedClient: S3Client | undefined;
 
@@ -43,29 +40,33 @@ function s3Client(): S3Client {
 	return cachedClient;
 }
 
-/** Strips characters that would break the Content-Disposition filename. */
-function headerSafeName(name: string): string {
-	return name.replace(/["\r\n]+/g, "_");
+/** True when an S3 error means the key/bucket is absent (mirrors the console's isNotFound). */
+function isNotFound(err: unknown): boolean {
+	if (typeof err !== "object" || err === null) return false;
+	const name = (err as { name?: string }).name;
+	const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata
+		?.httpStatusCode;
+	return name === "NoSuchKey" || name === "NotFound" || status === 404;
 }
 
 /**
- * Returns a short-lived presigned GET URL for a support-case attachment. The response is
- * forced to download (Content-Disposition: attachment) with the original filename + type, so
- * the browser saves the file rather than rendering it inline.
+ * Fetches a support-case attachment's bytes from the object store, or null if the key is
+ * absent. Server-side read (the route streams the result to the staff browser).
  */
-export async function presignSupportAttachmentDownload(
+export async function getSupportAttachment(
 	storageKey: string,
-	fileName: string,
-	contentType?: string,
-): Promise<string> {
-	return getSignedUrl(
-		s3Client(),
-		new GetObjectCommand({
-			Bucket: SUPPORT_ATTACHMENTS_BUCKET,
-			Key: storageKey,
-			ResponseContentDisposition: `attachment; filename="${headerSafeName(fileName)}"`,
-			ResponseContentType: contentType || "application/octet-stream",
-		}),
-		{ expiresIn: PRESIGN_TTL_SECONDS },
-	);
+): Promise<Uint8Array | null> {
+	try {
+		const res = await s3Client().send(
+			new GetObjectCommand({
+				Bucket: SUPPORT_ATTACHMENTS_BUCKET,
+				Key: storageKey,
+			}),
+		);
+		if (!res.Body) return null;
+		return await res.Body.transformToByteArray();
+	} catch (err) {
+		if (isNotFound(err)) return null;
+		throw err;
+	}
 }

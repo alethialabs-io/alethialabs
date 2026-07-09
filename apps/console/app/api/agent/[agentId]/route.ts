@@ -9,7 +9,9 @@ import {
 	type UIMessage,
 } from "ai";
 import { eq } from "drizzle-orm";
+import { saveThreadMessages } from "@/app/server/actions/agent";
 import { buildAgentSystemPrompt, scopeToolsToAgent } from "@/lib/agent/executor";
+import { cachedSystemMessage } from "@/lib/ai/provider-options";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
@@ -26,6 +28,8 @@ export const maxDuration = 300;
 interface AgentChatBody {
 	messages: UIMessage[];
 	mode?: AgentMode;
+	/** When set, the full transcript is persisted to this thread on finish. */
+	threadId?: string;
 }
 
 /**
@@ -57,7 +61,7 @@ export async function POST(
 	if (!agent) return new Response("Agent not found", { status: 404 });
 
 	const actor = await currentActor();
-	const charge = await assertAiAllowed(actor.orgId, "agent").catch((e: unknown) => {
+	const charge = await assertAiAllowed(actor.orgId, "agent", actor.userId).catch((e: unknown) => {
 		if (e instanceof AiBudgetError) return e;
 		throw e;
 	});
@@ -68,17 +72,23 @@ export async function POST(
 		});
 	}
 
-	const { messages, mode = "ask" }: AgentChatBody = await req.json();
-	const modelId = getAiModel();
+	const { messages, mode = "ask", threadId }: AgentChatBody = await req.json();
+	const model = getAiModel();
 	const tools = scopeToolsToAgent(
 		buildAgentTools({ mode }),
 		agent.tool_scope,
 	) as ToolSet;
 
 	const result = streamText({
-		model: modelId,
-		system: buildAgentSystemPrompt(agent),
-		messages: await convertToModelMessages(messages),
+		model: model.model,
+		// Cache the (stable, per-agent) system prompt so repeated turns read it from cache.
+		messages: [
+			cachedSystemMessage(buildAgentSystemPrompt(agent)),
+			...(await convertToModelMessages(messages)),
+		],
+		// Our own system prompt (cached) is intentionally a system message; user turns are
+		// never system-role, so this is not a prompt-injection surface.
+		allowSystemInMessages: true,
 		tools,
 		stopWhen: stepCountIs(8),
 		onFinish: ({ usage }) => {
@@ -86,10 +96,10 @@ export async function POST(
 				orgId: actor.orgId,
 				userId: actor.userId,
 				kind: "agent",
-				credits: charge.credits,
+				// Metered → omit credits; settled from this row's real cost-of-serve.
 				source: charge.source,
-				refId: agentId,
-				model: modelId,
+				refId: threadId ?? agentId,
+				model: model.key,
 				inputTokens: usage.inputTokens,
 				outputTokens: usage.outputTokens,
 				cachedInputTokens: usage.cachedInputTokens,
@@ -97,5 +107,10 @@ export async function POST(
 		},
 	});
 
-	return result.toUIMessageStreamResponse({ originalMessages: messages });
+	return result.toUIMessageStreamResponse({
+		originalMessages: messages,
+		onFinish: ({ messages }) => {
+			if (threadId) void saveThreadMessages(threadId, messages);
+		},
+	});
 }

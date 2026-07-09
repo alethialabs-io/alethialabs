@@ -6,8 +6,9 @@ import { getOwner } from "@/lib/auth/owner";
 import { getActiveScope } from "@/lib/auth/scope";
 import { authorizeUserId } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { supportCases, supportMessages } from "@/lib/db/schema";
+import { supportMessages } from "@/lib/db/schema";
 import { getSupportMessageTransport } from "@/lib/realtime";
+import { isSupportCaseVisible } from "@/lib/support/scope";
 
 export const dynamic = "force-dynamic";
 
@@ -41,20 +42,16 @@ export async function GET(
 	});
 	if (denied) return denied;
 	const actor = await getActiveScope(owner);
-	const db = getServiceDb();
 
-	// Tenancy wall (org-scoped, like the jobs stream): support_case is an org-level PDP
-	// capability, so authorizeUserId above proves "can view support cases in the org" —
-	// this confirms the specific case belongs to the actor's org. Personal orgs backfill
-	// org_id = user_id (set_org_id trigger), so org_id is the correct boundary for both.
-	const [supportCase] = await db
-		.select({ org_id: supportCases.org_id })
-		.from(supportCases)
-		.where(eq(supportCases.id, caseId))
-		.limit(1);
-	if (!supportCase || supportCase.org_id !== actor.orgId) {
+	// Visibility wall (tiered): authorizeUserId above proves the org-level "can view support
+	// cases" capability; this confirms the caller may see THIS specific case under the
+	// support RLS — the requester sees their own, owners/admins (manage_support) see any case
+	// in the org. Probed on the RLS-enforced connection so the decision is the policy's, not
+	// an ad-hoc user_id compare. Only then do we stream the public thread via the service role.
+	if (!(await isSupportCaseVisible(actor, caseId))) {
 		return new Response("Not found", { status: 404 });
 	}
+	const db = getServiceDb();
 
 	const lastEventId =
 		req.headers.get("last-event-id") ??

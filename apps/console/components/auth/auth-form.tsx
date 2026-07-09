@@ -6,7 +6,9 @@ import type React from "react";
 
 import { authClient } from "@/lib/auth/client";
 import { requestEmailCode } from "@/app/server/actions/auth";
+import { track } from "@/lib/analytics/track";
 import { safeNext } from "@/lib/auth/safe-next";
+import { arrayIncludes } from "@/lib/type-guards";
 import { AuthCard } from "@/components/auth/auth-shell";
 import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
 import { Button } from "@repo/ui/button";
@@ -201,9 +203,9 @@ export function AuthForm({ mode }: AuthFormProps) {
 	useEffect(() => {
 		if (providerHintFired.current) return;
 		const hinted = searchParams.get("provider");
-		if (hinted && (oauthProviders as string[]).includes(hinted)) {
+		if (hinted && arrayIncludes(oauthProviders, hinted)) {
 			providerHintFired.current = true;
-			void handleOAuthLogin(hinted as AuthProvider);
+			void handleOAuthLogin(hinted);
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
@@ -231,6 +233,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 				return;
 			}
 			await sendCode();
+			track("signup_email_requested", { mode });
 			setCode("");
 			setStep("code");
 			setResendCount(0);
@@ -257,6 +260,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 			setLoadingProvider(null);
 			return;
 		}
+		track("login_succeeded", { method: "otp" });
 		// Resume the OAuth authorize flow with a full-page navigation (the user now
 		// has a session) so the redirect to the connector lands in the browser.
 		if (isOAuthResume) {
@@ -321,6 +325,9 @@ export function AuthForm({ mode }: AuthFormProps) {
 							pasted.replace(/\D/g, "").slice(0, 6)
 						}
 						disabled={isLoading}
+						// Never let session replay capture the login code (OTP digits render as text, not
+						// a masked <input>, so maskAllInputs alone wouldn't hide them).
+						data-ph-mask
 						containerClassName="w-full"
 						autoFocus
 					>

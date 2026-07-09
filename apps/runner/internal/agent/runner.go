@@ -227,7 +227,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			defer cleanup()
 		case types.CloudProviderAzure:
 			fmt.Fprintf(stdoutLogger, "Activating Azure federated identity for tenant %s (subscription: %s)...\n", claim.CloudIdentity.TenantID, claim.CloudIdentity.SubscriptionID)
-			cleanup, err := ActivateAzureFederated(claim.CloudIdentity.TenantID, claim.CloudIdentity.ClientID, claim.CloudIdentity.SubscriptionID)
+			cleanup, err := ActivateAzureFederated(w.api, claim.CloudIdentity.TenantID, claim.CloudIdentity.ClientID, claim.CloudIdentity.SubscriptionID)
 			if err != nil {
 				errMsg := fmt.Sprintf("Failed to activate Azure federated identity: %v", err)
 				fmt.Fprintln(stderrLogger, errMsg)
@@ -442,6 +442,12 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		}
 		if result.VerifyReceipt != nil {
 			metadata["verify_receipt"] = result.VerifyReceipt
+		}
+		if len(result.AddOnStatus) > 0 {
+			metadata["addon_status"] = result.AddOnStatus
+		}
+		if result.SecurityPosture != nil {
+			metadata["security_report"] = result.SecurityPosture
 		}
 		if len(metadata) > 0 {
 			_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)

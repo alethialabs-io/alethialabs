@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { z } from "zod";
+
 export interface PlanResource {
 	address: string;
 	type: string;
@@ -202,6 +204,35 @@ const RESOURCE_MAP: Record<string, ResourceMeta> = {
 	},
 };
 
+// The slice of the OpenTofu `plan -json` we render. Every level is lenient (`.catch`) so a
+// truncated or unexpected plan never throws — it degrades to "no changes". `after`/
+// `after_unknown` stay `unknown`-valued: OpenTofu nests arbitrary attribute shapes there,
+// and `extractProperties` reads them defensively (scalars only, truthy = computed).
+const planChangeSchema = z
+	.object({
+		actions: z.array(z.string()).catch([]),
+		after: z.record(z.string(), z.unknown()).catch({}),
+		after_unknown: z.record(z.string(), z.unknown()).catch({}),
+	})
+	.catch({ actions: [], after: {}, after_unknown: {} });
+
+type PlanChange = z.infer<typeof planChangeSchema>;
+
+const planJsonSchema = z
+	.object({
+		resource_changes: z
+			.array(
+				z.object({
+					type: z.string().catch(""),
+					name: z.string().catch(""),
+					address: z.string().catch(""),
+					change: planChangeSchema,
+				}),
+			)
+			.catch([]),
+	})
+	.catch({ resource_changes: [] });
+
 function resolveAction(
 	actions: string[],
 ): PlanResource["action"] {
@@ -214,12 +245,9 @@ function resolveAction(
 	return "no-op";
 }
 
-function extractProperties(
-	change: Record<string, unknown>,
-): PlanResource["properties"] {
-	const after = (change.after as Record<string, unknown>) || {};
-	const afterUnknown =
-		(change.after_unknown as Record<string, boolean>) || {};
+function extractProperties(change: PlanChange): PlanResource["properties"] {
+	const after = change.after;
+	const afterUnknown = change.after_unknown;
 	const props: PlanResource["properties"] = {};
 
 	const SKIP_KEYS = new Set([
@@ -246,20 +274,17 @@ function extractProperties(
 export function parsePlanJSON(
 	planResult: Record<string, unknown>,
 ): PlanSummary {
-	const resourceChanges =
-		(planResult.resource_changes as Record<string, unknown>[]) || [];
+	const { resource_changes } = planJsonSchema.parse(planResult);
 
 	const counts = { create: 0, update: 0, delete: 0, replace: 0 };
 	const resources: PlanResource[] = [];
 
-	for (const rc of resourceChanges) {
-		const change = (rc.change as Record<string, unknown>) || {};
-		const actions = (change.actions as string[]) || [];
-		const action = resolveAction(actions);
+	for (const rc of resource_changes) {
+		const action = resolveAction(rc.change.actions);
 
 		if (action === "no-op") continue;
 
-		const type = rc.type as string;
+		const type = rc.type;
 		const meta = RESOURCE_MAP[type] || {
 			category: "Other",
 			displayName: type.replace(/^aws_/, "").replaceAll("_", " "),
@@ -267,14 +292,14 @@ export function parsePlanJSON(
 		};
 
 		resources.push({
-			address: rc.address as string,
+			address: rc.address,
 			type,
-			name: rc.name as string,
+			name: rc.name,
 			action,
 			category: meta.category,
 			displayName: meta.displayName,
 			iconName: meta.iconName,
-			properties: extractProperties(change),
+			properties: extractProperties(rc.change),
 		});
 
 		counts[action]++;

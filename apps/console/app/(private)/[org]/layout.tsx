@@ -6,6 +6,7 @@ import { notFound, redirect } from "next/navigation";
 import { resolveOrgScope } from "@/app/server/actions/resolve";
 import { getOwner } from "@/lib/auth/owner";
 import { deploymentMode } from "@/lib/billing/config";
+import { orgHasSelfRunners } from "@/lib/queries/runner-capabilities";
 import { AppShell } from "@/components/shell/app-shell";
 import { UpgradeSheetProvider } from "@/components/org/upgrade-sheet-provider";
 
@@ -25,8 +26,9 @@ export default async function OrgLayout({
 	// No valid session (e.g. a stale/expired cookie the optimistic middleware let
 	// through, or a failed session lookup) → sign-in, not a dead-end 404.
 	if (!(await getOwner())) redirect("/login");
+	let orgId: string;
 	try {
-		await resolveOrgScope(org);
+		({ orgId } = await resolveOrgScope(org));
 	} catch (e) {
 		// A lost session mid-request → sign-in; an authenticated-but-unknown/forbidden org → 404.
 		if (e instanceof Error && e.message === "Unauthorized") redirect("/login");
@@ -35,9 +37,14 @@ export default async function OrgLayout({
 	// Feedback is a hosted-only feature (it emails Alethia Labs); the shell hides it
 	// off the hosted control plane. Resolved server-side and passed to the client shell.
 	const isHosted = deploymentMode() === "hosted";
+	// Runners is a self-operator surface only — gate the nav item on whether this org runs
+	// its own runners (managed warm pools are internal/support-admin). Resolved server-side.
+	const selfRunners = await orgHasSelfRunners(orgId);
 	return (
 		<UpgradeSheetProvider>
-			<AppShell isHosted={isHosted}>{children}</AppShell>
+			<AppShell isHosted={isHosted} selfRunners={selfRunners}>
+				{children}
+			</AppShell>
 		</UpgradeSheetProvider>
 	);
 }

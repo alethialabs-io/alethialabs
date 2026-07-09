@@ -16,6 +16,8 @@
 // stray Stripe object can never mutate the wrong tenant.
 
 import type Stripe from "stripe";
+import { captureServer, captureServerException } from "@/lib/analytics/server";
+import type { AnalyticsEvent } from "@/lib/analytics/events";
 import { grantAiCredits } from "@/lib/billing/ai-quota";
 import { getStripeConfig, isStripeConfigured } from "@/lib/billing/config";
 import { mirrorPaidInvoice, setInvoiceStatus } from "@/lib/billing/invoices";
@@ -66,6 +68,7 @@ async function handleEvent(event: Stripe.Event): Promise<void> {
 		case "customer.subscription.deleted": {
 			const sub = event.data.object;
 			await syncSubscriptionToBilling(sub);
+			await trackRevenue(sub, "subscription_canceled");
 			await safeEmail("subscription canceled", () =>
 				sendSubscriptionCanceledEmail(sub),
 			);
@@ -111,6 +114,12 @@ async function handleEvent(event: Stripe.Event): Promise<void> {
 				await syncSubscriptionToBilling(sub);
 				const orgId = sub.metadata?.organization_id;
 				if (orgId) await safeMirror(invoice, orgId);
+				// Revenue truth: the trial→paid / renewed moment, on the org group.
+				await trackRevenue(sub, "subscription_active", {
+					amount: invoice.amount_paid,
+					currency: invoice.currency,
+					billing_reason: invoice.billing_reason,
+				});
 				await safeEmail("receipt", () => sendReceiptEmail(sub, invoice));
 			}
 			break;
@@ -131,6 +140,10 @@ async function handleEvent(event: Stripe.Event): Promise<void> {
 						)
 					: null;
 				if (!paid) {
+					await trackRevenue(sub, "payment_failed", {
+						amount: invoice.amount_due,
+						currency: invoice.currency,
+					});
 					await safeEmail("payment failed", () =>
 						sendPaymentFailedEmail(sub, invoice),
 					);
@@ -151,6 +164,22 @@ async function handleEvent(event: Stripe.Event): Promise<void> {
 			// Unhandled event types are acknowledged (200) so Stripe stops retrying.
 			break;
 	}
+}
+
+/**
+ * Fires a revenue event to PostHog on the org group (best-effort). distinct_id = the person who set up
+ * billing (`created_by` on the sub/customer metadata) when known, else the org id so it still lands on
+ * the org group. Only fires for org-scoped subscriptions (ignores bare owner-only customers).
+ */
+async function trackRevenue(
+	sub: Stripe.Subscription,
+	event: AnalyticsEvent,
+	props?: Record<string, string | number | boolean | null | undefined>,
+): Promise<void> {
+	const orgId = sub.metadata?.organization_id;
+	if (!orgId) return;
+	const distinctId = sub.metadata?.created_by || orgId;
+	await captureServer(distinctId, event, orgId, props);
 }
 
 /** Runs an email send, swallowing (logging) failures so they never fail the webhook. */
@@ -209,6 +238,9 @@ export async function POST(req: Request): Promise<Response> {
 		const message = err instanceof Error ? err.message : String(err);
 		console.error(`[stripe] handler error for ${event.type}:`, err);
 		await markWebhookEventError(event.id, message);
+		await captureServerException(err, {
+			props: { source: "stripe_webhook", event_type: event.type },
+		});
 		return new Response("handler error", { status: 500 });
 	}
 

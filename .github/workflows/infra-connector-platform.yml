@@ -1,0 +1,79 @@
+name: Infra - Connector Platform
+
+# Applies infra/connector-platform/aws — the ONE platform assumer IAM user + AssumeRole policy that the
+# console/runner authenticate as to reach customer clouds (AWS assume, GCP/Azure federate from it). The
+# access key is minted + vaulted separately (scripts/bootstrap-secrets.sh), never by Terraform.
+
+on:
+  pull_request:
+    paths:
+      - 'infra/connector-platform/**'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/connector-platform/**'
+
+permissions:
+  contents: read
+
+env:
+  TF_DIR: infra/connector-platform/aws
+  TOFU_VERSION: "1.10.10"
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: OpenTofu Validate (no backend, no creds)
+        working-directory: ${{ env.TF_DIR }}
+        # PR plans are validate-only: no backend, no cloud/state creds reach a PR job.
+        run: |
+          tofu init -backend=false
+          tofu validate
+
+      - name: IaC checks (fmt + tflint + Trivy)
+        uses: ./.github/actions/iac-checks
+        with:
+          working-directory: ${{ env.TF_DIR }}
+
+  apply:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # assume the deploy role via GitHub OIDC — no stored AWS keys
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      # Least-privilege deploy role from infra/aws-oidc (its ARN is a non-secret Actions variable):
+      # manage ONLY the assumer IAM user + policy + the connector-platform state prefix.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.CONNECTOR_PLATFORM_DEPLOYER_ROLE_ARN }}
+          aws-region: eu-central-1
+
+      - name: OpenTofu Init
+        working-directory: ${{ env.TF_DIR }}
+        # AWS S3 backend in the same account — the assumed OIDC deploy role authenticates the
+        # backend too, so there are no static state keys.
+        run: |
+          tofu init -upgrade \
+            -backend-config="bucket=alethia-tofu-state-270587882865" \
+            -backend-config="key=connector-platform/aws/terraform.tfstate" \
+            -backend-config="region=eu-central-1" \
+            -backend-config="use_lockfile=true"
+
+      - name: OpenTofu Apply
+        working-directory: ${{ env.TF_DIR }}
+        run: tofu apply -auto-approve

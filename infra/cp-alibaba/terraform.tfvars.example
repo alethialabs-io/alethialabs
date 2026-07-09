@@ -1,15 +1,19 @@
 # Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in CI.
 # Alibaba provider auth comes from ALICLOUD_ACCESS_KEY / ALICLOUD_SECRET_KEY.
 
-region  = "eu-central-1" # must offer Yitian 710 ARM (g8y)
+region  = "eu-central-1" # must offer the x86 g7 family
 zone_id = ""             # empty = provider picks an AZ that has the instance type
 
-cloudflare_api_token = "YOUR_CLOUDFLARE_API_TOKEN"
-cloudflare_zone_id   = "YOUR_CLOUDFLARE_ZONE_ID"
-domain               = "alethialabs.io"
+cloudflare_api_token  = "YOUR_CLOUDFLARE_API_TOKEN" # DNS edit + Cloudflare Tunnel (Zero Trust) perms
+cloudflare_zone_id    = "YOUR_CLOUDFLARE_ZONE_ID"
+cloudflare_account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
+domain                = "alethialabs.io"
 
-# Public half of the CI deploy key (private half = GH secret DEPLOY_SSH_PRIVATE_KEY).
-ssh_public_key = "ssh-ed25519 AAAA... deploy@alethia"
+# There is no inbound SSH. Admin/deploy is via ECS Session Manager + Cloud Assistant RunCommand
+# (Alibaba console → ECS → the instance → Connect, or `aliyun ecs RunCommand`).
 
-instance_type    = "ecs.g8y.large" # Yitian 710 ARM64, 2 vCPU / 8 GB
+instance_type    = "ecs.g7.large" # x86 general-purpose, 2 vCPU / 8 GB
 system_disk_size = 40
+
+# Deployment environment tag (FinOps) — Dev, Stage, or Prod.
+# environment = "Prod"

@@ -20,6 +20,7 @@ import {
 } from "@/app/server/actions/billing";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
+import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
@@ -257,6 +258,9 @@ export function BillingPanel() {
 					</div>
 				</div>
 			</SettingsSection>
+
+			{/* AI plan & usage — the standalone metered AI product (tier + daily/weekly %). */}
+			<AiUsageSection />
 
 			{/* payment + billing details → Stripe Customer Portal (once a customer exists) */}
 			{summary.canManage && <PaymentMethodsCard />}

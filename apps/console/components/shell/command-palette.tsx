@@ -53,7 +53,7 @@ function isTypingTarget(t: EventTarget | null): boolean {
  * The global command palette. Reads nav + live resources, renders a searchable
  * dialog, and routes on select.
  */
-export function CommandPalette() {
+export function CommandPalette({ selfRunners = false }: { selfRunners?: boolean }) {
 	const router = useRouter();
 	const orgSlug = useActiveOrgSlug();
 	const open = useCommandPalette((s) => s.open);
@@ -95,7 +95,7 @@ export function CommandPalette() {
 			out.push({ label, href, icon });
 		};
 
-		const groups = buildSidebarNav(orgSlug);
+		const groups = buildSidebarNav(orgSlug, { selfRunners });
 		for (const item of [...groups.top, ...groups.connect, ...groups.pinned]) {
 			const href = item.href ?? item.anchor;
 			if (!item.disabled && href) push(item.label, href, item.icon);
@@ -117,7 +117,7 @@ export function CommandPalette() {
 		}
 
 		return out;
-	}, [orgSlug]);
+	}, [orgSlug, selfRunners]);
 
 	// Live projects (projects), flat under the org.
 	const projectEntries = useMemo<PaletteEntry[]>(() => {

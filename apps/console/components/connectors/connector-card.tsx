@@ -20,8 +20,9 @@ interface ConnectorCardProps {
 	/** Re-run the verification for a failed cloud connector (no credential re-entry). */
 	onReverify?: () => void;
 	/**
-	 * False when this instance lacks the platform credentials this cloud's server-side probe
-	 * needs (managed clouds only) — the tile then says so instead of offering a doomed connect.
+	 * False when this instance isn't configured to support this provider's connect flow — a managed
+	 * cloud missing platform creds, or a git provider with no registered OAuth app. The tile then
+	 * says "not enabled on this instance" instead of offering a doomed connect.
 	 */
 	platformConfigured?: boolean;
 	isConnecting?: boolean;
@@ -45,9 +46,10 @@ export function ConnectorCard({
 	const isConnected = integration.connected;
 	const isGit = integration.category === "git";
 	const isCloud = integration.category === "cloud";
-	// Managed cloud whose platform credentials aren't configured on this instance: a connect
-	// can only fail, so the tile is honest about it (self-hosters: see the docs to enable).
-	const platformUnavailable = isCloud && !platformConfigured && !isConnected;
+	// A managed cloud missing platform creds, or a git provider with no registered OAuth app: a
+	// connect can only fail, so the tile is honest about it (self-hosters: see the docs to enable).
+	const platformUnavailable =
+		(isCloud || isGit) && !platformConfigured && !isConnected;
 	const needsReconnection =
 		integration.token_health === "expired" ||
 		integration.token_health === "refresh_failed";
@@ -137,7 +139,11 @@ export function ConnectorCard({
 
 				{isComingSoon ? null : platformUnavailable ? (
 					<span
-						title="This cloud needs Alethia platform credentials, which aren't configured on this instance. See the docs to enable managed cloud connections."
+						title={
+							isGit
+								? "This git provider has no OAuth app configured on this instance. See the docs to enable it."
+								: "This cloud needs Alethia platform credentials, which aren't configured on this instance. See the docs to enable managed cloud connections."
+						}
 						className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
 					>
 						Unavailable

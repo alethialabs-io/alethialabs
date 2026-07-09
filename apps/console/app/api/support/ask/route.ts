@@ -8,6 +8,7 @@ import {
 	type UIMessage,
 } from "ai";
 import { saveThreadMessages } from "@/app/server/actions/agent";
+import { cachedSystemMessage } from "@/lib/ai/provider-options";
 import { supportSystemPrompt } from "@/lib/ai/support/prompt";
 import { buildSupportTools } from "@/lib/ai/tools/support";
 import { getOwner } from "@/lib/auth/owner";
@@ -20,7 +21,7 @@ interface SupportAskBody {
 	messages: UIMessage[];
 	/** When set, the full transcript is persisted to this (kind:"support") thread. */
 	threadId?: string;
-	/** Selected gateway model id (validated against the allowlist). */
+	/** Selected model id (validated against the allowlist). */
 	model?: string;
 }
 
@@ -36,13 +37,13 @@ export async function POST(req: Request) {
 	if (!owner) return new Response("Unauthorized", { status: 401 });
 	if (!isAiConfigured()) {
 		return new Response(
-			"AI is not configured. Set AI_GATEWAY_API_KEY to enable the assistant.",
+			"AI is not configured. Set ANTHROPIC_API_KEY to enable the assistant.",
 			{ status: 503 },
 		);
 	}
 
 	const actor = await currentActor();
-	const charge = await assertAiAllowed(actor.orgId, "support").catch(
+	const charge = await assertAiAllowed(actor.orgId, "support", actor.userId).catch(
 		(e: unknown) => {
 			if (e instanceof AiBudgetError) return e;
 			throw e;
@@ -61,12 +62,18 @@ export async function POST(req: Request) {
 	}
 
 	const { messages, threadId, model }: SupportAskBody = await req.json();
-	const modelId = getAiModel(model);
+	const resolved = getAiModel(model);
 
 	const result = streamText({
-		model: modelId,
-		system: supportSystemPrompt(),
-		messages: await convertToModelMessages(messages),
+		model: resolved.model,
+		// Cache the (stable) support persona so repeated turns read it from cache.
+		messages: [
+			cachedSystemMessage(supportSystemPrompt()),
+			...(await convertToModelMessages(messages)),
+		],
+		// Our own system prompt (cached) is intentionally a system message; user turns are
+		// never system-role, so this is not a prompt-injection surface.
+		allowSystemInMessages: true,
 		tools: buildSupportTools(),
 		stopWhen: stepCountIs(8),
 		// Record once the run completes, with the real token usage for cost-of-serve.
@@ -75,10 +82,10 @@ export async function POST(req: Request) {
 				orgId: actor.orgId,
 				userId: actor.userId,
 				kind: "support",
-				credits: charge.credits,
+				// Metered → omit credits; settled from this row's real cost-of-serve.
 				source: charge.source,
 				refId: threadId,
-				model: modelId,
+				model: resolved.key,
 				inputTokens: usage.inputTokens,
 				outputTokens: usage.outputTokens,
 				cachedInputTokens: usage.cachedInputTokens,

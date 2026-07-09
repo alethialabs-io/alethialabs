@@ -9,9 +9,9 @@ For teams already on Kubernetes, the chart deploys the same bundle as the
 [compose stack](./index) — console, docs, runner, and (optionally) bundled Postgres + object
 store — wired behind a single Ingress (console at `/`, docs at `/docs`).
 
-> **ARM only.** The published images are built `linux/arm64`, so every pod carries a
-> `nodeSelector` of `kubernetes.io/arch=arm64`. Use an ARM node pool (Graviton, Tau T2A, Ampere,
-> Axion …), or clear it with `--set nodeSelector=null` once you publish multi-arch images.
+> **x86 only.** The published app-bundle images are built `linux/amd64`, so every pod carries a
+> `nodeSelector` of `kubernetes.io/arch=amd64`. Use an x86 node pool, or clear it with
+> `--set nodeSelector=null` once you publish multi-arch images.
 
 ## What it deploys
 - **console** Deployment + Service. Two init containers run first: `wait-for-postgres`, then
@@ -26,7 +26,7 @@ store — wired behind a single Ingress (console at `/`, docs at `/docs`).
   `secrets.existingSecret`).
 
 ## Prerequisites
-- A Kubernetes cluster with an **ARM node pool**, an **Ingress controller** (e.g. ingress-nginx),
+- A Kubernetes cluster with an **x86 node pool**, an **Ingress controller** (e.g. ingress-nginx),
   and a **default StorageClass** (for the bundled Postgres/object-store PVCs).
 - **cert-manager** with a `ClusterIssuer` if you want automatic TLS.
 
@@ -83,7 +83,7 @@ The migrate init container re-runs on each rollout, so schema changes apply auto
 | Value | Default | Notes |
 |---|---|---|
 | `image.registry` / `image.tag` | `ghcr.io/alethialabs-io` / `latest` | Pinned across components |
-| `nodeSelector` | `kubernetes.io/arch=arm64` | `null` to disable |
+| `nodeSelector` | `kubernetes.io/arch=amd64` | `null` to disable |
 | `domain` | `alethialabs.io` | Ingress host |
 | `postgres.enabled` | `true` | `false` → set `postgres.host` |
 | `objectStore.enabled` | `true` | `false` → set `objectStore.endpoint` |

@@ -7,6 +7,40 @@ import type { AlertSeverity } from "@/lib/db/schema/enums";
 
 // ── Typed JSONB interfaces ─────────────────────────────────────────
 
+/**
+ * The `credential_source` block of a GCP Workload Identity Federation
+ * `external_account` credential — the union of the file/url/aws/executable
+ * source shapes Google's client library accepts. All fields optional: the
+ * concrete subset present depends on the federation type.
+ */
+export interface WifCredentialSource {
+	file?: string;
+	url?: string;
+	headers?: Record<string, string>;
+	environment_id?: string;
+	region_url?: string;
+	regional_cred_verification_url?: string;
+	executable?: { command: string; timeout_millis?: number; output_file?: string };
+	format?: { type?: string; subject_token_field_name?: string };
+}
+
+/**
+ * A GCP Workload Identity Federation credential config (the pasted
+ * `external_account` JSON). Fields are optional because the value is parsed
+ * from untrusted input and validated field-by-field in `parseWifConfig`.
+ */
+export interface WifCredentialConfig {
+	type?: string;
+	audience?: string;
+	subject_token_type?: string;
+	token_url?: string;
+	token_info_url?: string;
+	service_account_impersonation_url?: string;
+	service_account_impersonation?: { token_lifetime_seconds?: number };
+	credential_source?: WifCredentialSource;
+	universe_domain?: string;
+}
+
 export interface CloudCredentials {
 	// AWS
 	role_arn?: string | null;
@@ -16,14 +50,16 @@ export interface CloudCredentials {
 	project_id?: string | null;
 	project_number?: string | null;
 	service_account_email?: string | null;
-	wif_config?: Record<string, unknown> | null;
+	wif_config?: WifCredentialConfig | null;
 	// Azure (Federated Identity)
 	tenant_id?: string | null;
 	client_id?: string | null;
 	subscription_id?: string | null;
+	// Alibaba (RAM role via AssumeRoleWithOIDC) — keyless + account-free: the role_arn above plus the
+	// customer's RAM OIDC provider ARN. Zero stored credentials (the assertion is minted per-call).
+	oidc_provider_arn?: string | null;
 	// DigitalOcean / Hetzner / Civo — no role-federation exists for these clouds, so a
 	// scoped API token is stored ENCRYPTED at rest (decrypted only on the runner at claim).
-	// Alibaba uses role_arn/external_id above (RAM role = zero stored credentials).
 	token?: EncryptedSecret | null;
 	// Self-managed mode (token clouds only): no token is stored in Alethia at all — the
 	// customer's self-hosted runner supplies it from its own environment (HCLOUD_TOKEN,
@@ -208,6 +244,11 @@ export interface ObservabilityProviderConfig {
 	retention_days?: string;
 }
 
+// project_addons.values — the user's tuned knobs for a marketplace add-on. Validated + typed
+// per add-on by its Zod `configSchema` (lib/addons/catalog.ts); stored open here since the
+// shape varies by add-on. In gitops mode this may instead hold a raw Helm-values override.
+export type AddOnValues = Record<string, unknown>;
+
 // AES-256-GCM envelope for the secret fields of a connector credential
 // (lib/crypto/secrets.ts). The plaintext is a JSON map of {fieldKey: value}.
 export interface EncryptedSecret {
@@ -302,6 +343,32 @@ export interface ExecutionMetadata {
 	verify_receipt?: SignedReceipt;
 	// DETECT_DRIFT jobs: the per-environment drift posture (packages/core/drift).
 	drift_posture?: DriftPosture;
+	// DEPLOY jobs: post-apply ArgoCD health/sync per managed marketplace add-on, keyed by
+	// the ArgoCD Application name ("addon-<id>"). Written back to project_addons by the
+	// deploy finalizer. Mirrors the Go `argocd.AddOnHealth`.
+	addon_status?: Record<string, AddOnStatusEntry>;
+	// DEPLOY jobs: the cluster's aggregated Trivy-Operator vulnerability posture (L9), written
+	// back to environment_security by the deploy finalizer. Mirrors Go `argocd.SecurityPosture`.
+	security_report?: SecurityReport;
+}
+
+// One managed add-on's ArgoCD status (packages/core/argocd `AddOnHealth`). Health ∈
+// {Healthy, Progressing, Degraded, Suspended, Missing, Unknown}; sync ∈ {Synced, OutOfSync,
+// Unknown}.
+export interface AddOnStatusEntry {
+	health: string;
+	sync: string;
+}
+
+// The cluster's aggregated Trivy-Operator vulnerability posture (packages/core/argocd
+// `SecurityPosture`). `scanned=false` means Trivy-Operator isn't installed / no reports yet.
+export interface SecurityReport {
+	critical: number;
+	high: number;
+	medium: number;
+	low: number;
+	report_count: number;
+	scanned: boolean;
 }
 
 // Mirrors the Go `drift.Posture` (packages/core/drift). `unmanaged_known` is false
@@ -590,4 +657,51 @@ export interface GateEvaluation {
 	results: GateResult[];
 	/** RFC3339 timestamp of the evaluation. */
 	evaluated_at: string;
+}
+
+// ── Generative dashboard DSL (Elench "build_dashboard" tool) ─────────
+// A small, renderable block list the AI agent emits; the console interprets it with
+// grayscale primitives (no charting library). Kept intentionally minimal.
+
+/** A single headline metric (big number/value + optional caption). */
+export interface DashboardStatBlock {
+	kind: "stat";
+	title: string;
+	value: string | number;
+	sub?: string;
+}
+
+/** A categorical comparison rendered as vertical grayscale bars. */
+export interface DashboardBarBlock {
+	kind: "bar";
+	title: string;
+	data: Array<{ label: string; value: number }>;
+}
+
+/** A trend rendered as an ink-weight sparkline. */
+export interface DashboardLineBlock {
+	kind: "line";
+	title: string;
+	points: number[];
+	label?: string;
+}
+
+/** A compact key/value grid (a set of labelled cells). */
+export interface DashboardGridBlock {
+	kind: "grid";
+	title: string;
+	cells: Array<{ label: string; value: string | number }>;
+}
+
+/** One renderable dashboard block (discriminated by `kind`). */
+export type DashboardBlock =
+	| DashboardStatBlock
+	| DashboardBarBlock
+	| DashboardLineBlock
+	| DashboardGridBlock;
+
+/** A full generative dashboard: a title and an ordered list of blocks. */
+export interface DashboardSpec {
+	title: string;
+	blocks: DashboardBlock[];
 }

@@ -159,6 +159,13 @@ resource "github_actions_variable" "deploy_reader" {
   value         = var.deploy_reader_role_arn
 }
 
+resource "github_actions_variable" "connector_platform_deployer" {
+  count         = var.connector_platform_deployer_role_arn != "" ? 1 : 0
+  repository    = var.repository
+  variable_name = "CONNECTOR_PLATFORM_DEPLOYER_ROLE_ARN"
+  value         = var.connector_platform_deployer_role_arn
+}
+
 # Public origin (non-secret) consumed by deploy-console when assembling .env.
 resource "github_actions_variable" "public_app_url" {
   repository    = var.repository

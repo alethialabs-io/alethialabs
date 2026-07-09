@@ -29,6 +29,11 @@ type ProjectConfig struct {
 	ContainerRegistries []ProjectContainerRegistryConfig `json:"container_registries"`
 	StorageBuckets      []ProjectStorageBucketConfig     `json:"storage_buckets"`
 
+	// Marketplace add-ons — free OSS Helm charts (Grafana, Loki, …) resolved by the console
+	// into install specs. The runner renders one ArgoCD Application per entry after the
+	// cluster + ArgoCD are up. Empty for projects that enabled no add-ons.
+	AddOns []AddOnInstall `json:"addons,omitempty"`
+
 	GitAccessToken string `json:"git_access_token"`
 
 	// Populated at runtime from CloudIdentity, not from snapshot
@@ -89,6 +94,9 @@ type NodeSize struct {
 type ProjectClusterConfig struct {
 	Placement
 	ClusterVersion string `json:"cluster_version"`
+	// Provisioned cluster name (populated on the snapshot after the first deploy). Lets a
+	// day-2 job (drift inspection) acquire kubeconfig standalone via ConfigureKubeconfig.
+	ClusterName string `json:"cluster_name"`
 	// Concrete provider SKUs (legacy / explicit override). When empty, NodeSize resolves.
 	InstanceTypes []string `json:"instance_types"`
 	// Cloud-indifferent node capability (preferred); resolved to InstanceTypes per provider.

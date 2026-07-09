@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { z } from "zod";
 import { submitCase } from "@/app/server/actions/support";
+import { track } from "@/lib/analytics/track";
 import { uploadAttachment } from "@/components/support/attachments";
 import { StepCategory } from "@/components/support/submit/steps/step-category";
 import { StepContact } from "@/components/support/submit/steps/step-contact";
@@ -94,6 +95,7 @@ export function SubmitCaseForm({ orgSlug, defaultEmail }: SubmitCaseFormProps) {
 	const onSubmit = handleSubmit(async (values) => {
 		try {
 			const { id } = await submitCase(values);
+			track("support_case_opened", { category: values.category });
 			for (const file of files) {
 				try {
 					await uploadAttachment(id, file);

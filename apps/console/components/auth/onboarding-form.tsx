@@ -33,10 +33,11 @@ import {
 } from "@/components/billing/billing-checkout-form";
 import { OrgLogoUpload } from "@/components/org/org-logo-upload";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
+import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { safeNext } from "@/lib/auth/safe-next";
 import type { PrimaryOrg } from "@/lib/auth/onboarding";
 import { orgHost, slugify } from "@/lib/org-url";
-import { planMeta } from "@repo/plan-catalog";
+import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
@@ -67,7 +68,9 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 	const trialAvailable = offer.kind === "trial";
 	const trialDays = offer.trialDays ?? 30;
 	const meta = planMeta("team");
-	const teamPrice = useLivePlanPrice("team");
+	const [currency, setCurrency] = useState<SupportedCurrency>("usd");
+	const [switchingCurrency, setSwitchingCurrency] = useState(false);
+	const teamPrice = useLivePlanPrice("team", currency);
 
 	const [plan, setPlan] = useState<PlanChoice>("community");
 	const [name, setName] = useState(org.name);
@@ -103,13 +106,16 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 			// Pro with the trial still available → card-less trial.
 			if (trialAvailable) {
 				await startProTrial();
+				track("trial_started", { plan: "team" });
 				await markOnboardingComplete();
 				router.push(next ?? `/${res.slug}`);
 				return;
 			}
 			// Pro, trial used → reveal the shared checkout form (primary org already exists).
+			track("upgrade_started", { plan: "team", context: "onboarding" });
 			const intent = await createSubscriptionIntent("team");
 			setClientSecret(intent.clientSecret);
+			setCurrency(intent.currency);
 			setBusy(false);
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : "Couldn't create the organization";
@@ -135,6 +141,23 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 		}
 	}
 
+	// Switch the checkout currency by re-creating the intent (Stripe locks a sub's currency).
+	// Keep the current Elements mounted until the new secret arrives — no flash back to the
+	// plan chooser.
+	async function changeCurrency(next: SupportedCurrency) {
+		if (next === currency || switchingCurrency) return;
+		setSwitchingCurrency(true);
+		try {
+			const intent = await createSubscriptionIntent("team", { currency: next });
+			setClientSecret(intent.clientSecret);
+			setCurrency(intent.currency);
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Couldn't switch currency.");
+		} finally {
+			setSwitchingCurrency(false);
+		}
+	}
+
 	// Paid Pro checkout (trial used) — the shared billing form, same as the sheet.
 	if (clientSecret) {
 		return (
@@ -148,11 +171,20 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 						Unlock collaboration and improved performance.
 					</p>
 				</div>
+				<div className="mb-4 flex items-center justify-between">
+					<span className="text-[12px] text-text-secondary">Billing currency</span>
+					<CurrencyToggle
+						value={currency}
+						onChange={changeCurrency}
+						disabled={switchingCurrency}
+					/>
+				</div>
 				<StripeElementsProvider clientSecret={clientSecret}>
 					<BillingCheckoutForm
 						clientSecret={clientSecret}
 						meta={meta}
-						unitAmountUsd={teamPrice.unitAmountUsd}
+						unitAmount={teamPrice.unitAmount}
+						currency={currency}
 						submitLabel="Subscribe"
 						onPaid={onProPaid}
 					/>
@@ -185,7 +217,10 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 			<div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
 				<PlanTile
 					selected={plan === "community"}
-					onSelect={() => setPlan("community")}
+					onSelect={() => {
+						setPlan("community");
+						track("onboarding_plan_selected", { plan: "community" });
+					}}
 					icon={<User className="size-4" />}
 					useCase="Personal projects"
 					planName="Hobby"
@@ -194,7 +229,11 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 				/>
 				<PlanTile
 					selected={plan === "team"}
-					onSelect={() => proAvailable && setPlan("team")}
+					onSelect={() => {
+						if (!proAvailable) return;
+						setPlan("team");
+						track("onboarding_plan_selected", { plan: "team" });
+					}}
 					disabled={!proAvailable}
 					icon={<Building2 className="size-4" />}
 					useCase="Commercial projects"

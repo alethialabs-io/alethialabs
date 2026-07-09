@@ -19,7 +19,7 @@ const CERT_HOST = /^sns\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$/;
 const certCache = new Map<string, string>();
 
 /** Field order AWS signs over, per message type. Subject is included only when present. */
-function signedFields(msg: SnsMessage): string[] {
+function signedFields(msg: SnsMessage): (keyof SnsMessage)[] {
 	if (msg.Type === "Notification") {
 		return msg.Subject === undefined
 			? ["Message", "MessageId", "Timestamp", "TopicArn", "Type"]
@@ -39,10 +39,9 @@ function signedFields(msg: SnsMessage): string[] {
 
 /** The canonical "key\nvalue\n…" string-to-sign for a message. */
 function stringToSign(msg: SnsMessage): string {
-	const record = msg as unknown as Record<string, string | undefined>;
 	let out = "";
 	for (const key of signedFields(msg)) {
-		const value = record[key];
+		const value = msg[key];
 		if (value !== undefined) out += `${key}\n${value}\n`;
 	}
 	return out;

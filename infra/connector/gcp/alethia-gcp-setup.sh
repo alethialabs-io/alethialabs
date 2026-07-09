@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-ALETHIA_AWS_ACCOUNT_ID="787587782604"
+ALETHIA_AWS_ACCOUNT_ID="${ALETHIA_AWS_ACCOUNT_ID:-270587882865}"
 POOL_ID="alethia-pool"
 PROVIDER_ID="alethia-aws-provider"
 SA_NAME="alethia-provisioner"

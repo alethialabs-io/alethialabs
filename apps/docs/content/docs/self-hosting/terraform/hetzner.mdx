@@ -1,38 +1,45 @@
 ---
 title: Hetzner
-description: Provision the Alethia control plane on a Hetzner Cloud ARM VM.
+description: Provision the Alethia control plane on a Hetzner Cloud x86 VM, closed-origin behind a Cloudflare Tunnel.
 ---
 
-# Hetzner (`infra/hetzner`)
+# Hetzner (`infra/cp-hetzner`)
 
-The cheapest target: a Hetzner Cloud **CAX21** (Ampere ARM, 4 vCPU / 8 GB) with an attached data
-volume, behind Caddy. **≈ €10–11/mo.**
+The cheapest target, and the one the hosted alethialabs.io runs on: a Hetzner Cloud **CX33** (Intel
+x86, 4 vCPU / 8 GB) with an attached data volume, fronted by a Cloudflare Tunnel. **≈ €14/mo**
+(Hetzner list price: `cx33` €13.10 + 25 GB volume €1.19; not priced by Infracost).
 
 ## What it creates
-- `hcloud_server` (`cax21`) + `hcloud_volume` (25 GB, holds Postgres + object storage) + attachment
-- `hcloud_firewall` (22/80/443) + `hcloud_ssh_key`
-- `cloudflare_record` A/AAAA for the apex + `www`
+- `hcloud_server` (`cx33`) + `hcloud_volume` (25 GB, holds Postgres + object storage) + attachment
+- `hcloud_firewall` — **SSH only** (`22`); no 80/443 (ingress is the tunnel)
+- `cloudflare_zero_trust_tunnel_cloudflared` (+ config) and **proxied** `cloudflare_record` CNAMEs
+  (apex + `www`) onto `<tunnel_id>.cfargotunnel.com`
 - cloud-init: installs Docker, moves Docker's data-root onto the volume, clones the repo
 
 ## Prerequisites
 - A Hetzner Cloud **project + API token** (`HCLOUD_TOKEN`).
-- A Cloudflare **API token** (DNS edit) + **zone id** for your domain.
-- An SSH **public key** (the private half deploys updates).
+- A Cloudflare **API token** with **DNS edit + Zero Trust (Tunnel)** perms, the **zone id**, and the
+  **account id**.
+- An SSH **public key** (SSH is the admin channel on Hetzner).
 
 ## Apply
 ```bash
-cd infra/hetzner
+cd infra/cp-hetzner
 cp backend.hcl.example backend.hcl          # fill S3 endpoint + creds
-cp terraform.tfvars.example terraform.tfvars # hcloud_token, cloudflare_*, ssh_public_key, domain
-terraform init -backend-config=backend.hcl
-terraform apply
-terraform output server_ipv4
+cp terraform.tfvars.example terraform.tfvars # hcloud_token, cloudflare_* (token/zone/account), ssh_public_key, domain
+tofu init -backend-config=backend.hcl
+tofu plan && tofu apply
+export TUNNEL_TOKEN="$(tofu output -raw tunnel_token)"   # → the bundle's .env
 ```
 
-## CI secrets (`terraform-hetzner.yml`)
-`HCLOUD_TOKEN`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`, `DEPLOY_SSH_PUBLIC_KEY`,
-`TF_STATE_S3_ENDPOINT|REGION|ACCESS_KEY_ID|SECRET_ACCESS_KEY`.
+## CI secrets (`infra-cp-hetzner.yml`)
+`HCLOUD_TOKEN`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_ACCOUNT_ID`,
+`DEPLOY_SSH_PUBLIC_KEY`, `TF_STATE_S3_ENDPOINT|REGION|ACCESS_KEY_ID|SECRET_ACCESS_KEY`.
 
 ## Tuning
-`server_type` (`cax21` default; `cax31` if busy), `data_volume_size`, `location` (any EU region),
-`ssh_allowed_cidrs`.
+`server_type` (`cx33` default; `cx43` if busy), `data_volume_size`, `location` (any EU region),
+`ssh_allowed_cidrs` (SSH source restriction).
+
+## Also here — inbound email
+Hetzner owns the zone-global Cloudflare **Email Routing** for the apex addresses (support@, sales@,
+…) — see [Email](../email). It's gated off until you import the existing routing.

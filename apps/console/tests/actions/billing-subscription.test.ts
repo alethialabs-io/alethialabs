@@ -296,7 +296,7 @@ describe("createSubscriptionIntent", () => {
 
 		const r = await createSubscriptionIntent("team" as never);
 
-		expect(r).toEqual({ clientSecret: "cs_1", subscriptionId: "sub_1" });
+		expect(r).toEqual({ clientSecret: "cs_1", subscriptionId: "sub_1", currency: "usd" });
 		const args = stripe.subscriptions.create.mock.calls[0][0];
 		expect(args).toMatchObject({
 			customer: "cus_1",
@@ -513,6 +513,7 @@ describe("createNewOrgSubscriptionIntent", () => {
 			clientSecret: "cs_2",
 			subscriptionId: "sub_2",
 			customerId: "cus_new",
+			currency: "usd",
 		});
 		expect(stripe.customers.create).toHaveBeenCalledWith({
 			email: "owner@test.io",
@@ -796,7 +797,7 @@ describe("createCreditPackIntent", () => {
 			confirmation_secret: { client_secret: "ics_1" },
 		} as never);
 
-		const r = await createCreditPackIntent("m"); // 2000 credits / 2900 cents (real catalog)
+		const r = await createCreditPackIntent("m"); // 20,000 credits / 5900 cents (real catalog)
 
 		expect(r).toEqual({ clientSecret: "ics_1", invoiceId: "in_1" });
 		expect(stripe.invoices.create).toHaveBeenCalledWith({
@@ -804,25 +805,25 @@ describe("createCreditPackIntent", () => {
 			currency: "usd",
 			collection_method: "charge_automatically",
 			auto_advance: false,
-			description: "2,000 AI credits",
+			description: "20,000 AI credits",
 			metadata: {
 				organization_id: "org-1",
 				user_id: "user-1",
 				product_type: "ai_credits",
-				credits: "2000",
+				credits: "20000",
 			},
 		});
 		expect(stripe.invoiceItems.create).toHaveBeenCalledWith({
 			customer: "cus_1",
 			invoice: "in_1",
-			amount: 2900,
+			amount: 5900,
 			currency: "usd",
-			description: "2,000 AI credits",
+			description: "20,000 AI credits",
 			metadata: {
 				organization_id: "org-1",
 				user_id: "user-1",
 				product_type: "ai_credits",
-				credits: "2000",
+				credits: "20000",
 			},
 		});
 		expect(stripe.invoices.finalizeInvoice).toHaveBeenCalledWith("in_1", {

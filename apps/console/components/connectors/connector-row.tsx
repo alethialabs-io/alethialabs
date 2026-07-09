@@ -20,6 +20,11 @@ interface ConnectorRowProps {
 	onManage: () => void;
 	/** Re-run the verification for a failed cloud connector (no credential re-entry). */
 	onReverify?: () => void;
+	/**
+	 * False when this instance isn't configured to support this provider's connect flow — a managed
+	 * cloud missing platform creds, or a git provider with no registered OAuth app.
+	 */
+	platformConfigured?: boolean;
 	isConnecting?: boolean;
 }
 
@@ -34,12 +39,17 @@ export function ConnectorRow({
 	onConnect,
 	onManage,
 	onReverify,
+	platformConfigured = true,
 	isConnecting,
 }: ConnectorRowProps) {
 	const isComingSoon = integration.status === "coming_soon";
 	const isConnected = integration.connected;
 	const isGit = integration.category === "git";
 	const isCloud = integration.category === "cloud";
+	// A managed cloud missing platform creds, or a git provider with no registered OAuth app: a
+	// connect can only fail, so the row is honest about it instead of offering a doomed connect.
+	const platformUnavailable =
+		(isCloud || isGit) && !platformConfigured && !isConnected;
 	const needsReconnection =
 		integration.token_health === "expired" ||
 		integration.token_health === "refresh_failed";
@@ -85,7 +95,7 @@ export function ConnectorRow({
 							"size-2 shrink-0 rounded-full",
 							isConnected
 								? "bg-foreground ring-4 ring-muted/60"
-								: cloudFailed
+								: cloudFailed && !platformUnavailable
 									? "bg-destructive/70"
 									: "border-[1.5px] border-border",
 						)}
@@ -94,20 +104,22 @@ export function ConnectorRow({
 					<span
 						className={cn(
 							"text-xs text-muted-foreground",
-							cloudFailed && "text-destructive",
+							cloudFailed && !platformUnavailable && "text-destructive",
 						)}
 					>
 						{isComingSoon
 							? "Coming soon"
-							: needsReconnection
-								? "Needs reconnection"
-								: isConnected
-									? "Connected"
-									: cloudFailed
-										? "Verification failed"
-										: cloudTesting
-											? "Verifying…"
-											: "Not connected"}
+							: platformUnavailable
+								? "Not enabled on this instance"
+								: needsReconnection
+									? "Needs reconnection"
+									: isConnected
+										? "Connected"
+										: cloudFailed
+											? "Verification failed"
+											: cloudTesting
+												? "Verifying…"
+												: "Not connected"}
 					</span>
 				</div>
 			</TableCell>
@@ -127,7 +139,18 @@ export function ConnectorRow({
 			</TableCell>
 
 			<TableCell className="text-right">
-				{isComingSoon ? null : isConnected && needsReconnection && canManage ? (
+				{isComingSoon ? null : platformUnavailable ? (
+					<span
+						title={
+							isGit
+								? "This git provider has no OAuth app configured on this instance. See the docs to enable it."
+								: "This cloud needs Alethia platform credentials, which aren't configured on this instance. See the docs to enable managed cloud connections."
+						}
+						className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+					>
+						Unavailable
+					</span>
+				) : isConnected && needsReconnection && canManage ? (
 					<Button
 						size="sm"
 						className="h-7 px-2.5 text-xs"

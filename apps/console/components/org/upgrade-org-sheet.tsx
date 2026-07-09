@@ -32,10 +32,12 @@ import {
 	type SentInvite,
 } from "@/components/org/org-purchase-ui";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
+import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { authClient } from "@/lib/auth/client";
+import { track } from "@/lib/analytics/track";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
-import { planMeta } from "@repo/plan-catalog";
+import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
 import { Skeleton } from "@repo/ui/skeleton";
 import {
@@ -68,15 +70,20 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 	const [view, setView] = useState<View>("pay");
 	const [clientSecret, setClientSecret] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	// `selected` is the explicit currency override (undefined = let the server geo-decide);
+	// `currency` is what the created intent actually used (Stripe locks it) — drives display.
+	const [selected, setSelected] = useState<SupportedCurrency | undefined>(undefined);
+	const [currency, setCurrency] = useState<SupportedCurrency>("usd");
 
 	const [inviteEmail, setInviteEmail] = useState("");
 	const [inviteRole, setInviteRole] = useState<Role>("operator");
 	const [sent, setSent] = useState<SentInvite[]>([]);
 
 	const meta = planMeta("team");
-	const teamPrice = useLivePlanPrice("team");
+	const teamPrice = useLivePlanPrice("team", currency);
 
-	// Open a subscription intent for the active org the moment the sheet opens. If a live
+	// Open a subscription intent for the active org the moment the sheet opens (and re-open it
+	// when the currency toggle changes — Stripe locks a sub's currency at creation). If a live
 	// subscription already exists the action throws — surfaced inline rather than as a form.
 	useEffect(() => {
 		if (!open) return;
@@ -84,8 +91,13 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 		setView("pay");
 		setClientSecret(null);
 		setError(null);
-		createSubscriptionIntent("team")
-			.then((intent) => active && setClientSecret(intent.clientSecret))
+		track("upgrade_started", { plan: "team", context: "upgrade_sheet" });
+		createSubscriptionIntent("team", selected ? { currency: selected } : undefined)
+			.then((intent) => {
+				if (!active) return;
+				setClientSecret(intent.clientSecret);
+				setCurrency(intent.currency);
+			})
 			.catch(
 				(e) =>
 					active &&
@@ -96,12 +108,14 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 		return () => {
 			active = false;
 		};
-	}, [open]);
+	}, [open, selected]);
 
 	function reset() {
 		setView("pay");
 		setClientSecret(null);
 		setError(null);
+		setSelected(undefined);
+		setCurrency("usd");
 		setInviteEmail("");
 		setInviteRole("operator");
 		setSent([]);
@@ -189,6 +203,16 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 						subheading="Add a payment method to unlock collaboration and higher limits."
 						onClose={() => handleOpenChange(false)}
 					>
+						{!error && (
+							<div className="mb-3 flex items-center justify-between">
+								<span className="text-[12px] text-text-secondary">Billing currency</span>
+								<CurrencyToggle
+									value={currency}
+									onChange={setSelected}
+									disabled={!clientSecret}
+								/>
+							</div>
+						)}
 						{error ? (
 							<div className="space-y-3">
 								<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-[12.5px] text-text-secondary">
@@ -207,7 +231,8 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 								<BillingCheckoutForm
 									clientSecret={clientSecret}
 									meta={meta}
-									unitAmountUsd={teamPrice.unitAmountUsd}
+									unitAmount={teamPrice.unitAmount}
+									currency={currency}
 									ownerEmail={ownerEmail}
 									submitLabel="Upgrade"
 									scrollable

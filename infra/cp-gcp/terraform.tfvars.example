@@ -1,15 +1,22 @@
 # Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in CI.
 # GCP provider auth comes from GOOGLE_CREDENTIALS / GOOGLE_APPLICATION_CREDENTIALS.
 
-gcp_project          = "your-gcp-project-id"
-gcp_region           = "europe-west4" # must have Tau T2A (ARM)
-gcp_zone             = "europe-west4-a"
-cloudflare_api_token = "YOUR_CLOUDFLARE_API_TOKEN"
-cloudflare_zone_id   = "YOUR_CLOUDFLARE_ZONE_ID"
-domain               = "alethialabs.io"
+gcp_project = "your-gcp-project-id"
+gcp_region  = "europe-west4"
+gcp_zone    = "europe-west4-a"
+
+cloudflare_api_token  = "YOUR_CLOUDFLARE_API_TOKEN" # DNS edit + Cloudflare Tunnel (Zero Trust) perms
+cloudflare_zone_id    = "YOUR_CLOUDFLARE_ZONE_ID"
+cloudflare_account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
+domain                = "alethialabs.io"
 
 # Public half of the CI deploy key (private half = GH secret DEPLOY_SSH_PRIVATE_KEY).
+# The box is reachable over SSH only via IAP: `gcloud compute ssh alethia-cp --tunnel-through-iap`.
 ssh_public_key = "ssh-ed25519 AAAA... deploy@alethia"
 
-machine_type   = "t2a-standard-2" # Ampere ARM64
+# Cost/size knobs (defaults are the cheapest viable bundle host).
+machine_type   = "e2-standard-2" # x86, 2 vCPU / 8 GB (cost-optimized E2 family)
 boot_disk_size = 30
+
+# Deployment environment tag (FinOps) — Dev, Stage, or Prod.
+# environment = "Prod"

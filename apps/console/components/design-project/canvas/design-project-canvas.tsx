@@ -13,14 +13,16 @@ import { toast } from "sonner";
 import {
 	createProject,
 	provisionProject,
-	type CreateProjectInput,
 } from "@/app/server/actions/projects";
 import {
 	applyStagedChanges,
 	discardStagedChanges,
 } from "@/app/server/actions/staged-changes";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
+import type { AddonMarketItem } from "@/app/server/actions/addons";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
+import { AddonConfigSheet } from "@/components/addons/addon-config-sheet";
+import { useAddonsQuery } from "@/lib/query/use-addons-query";
 import { Button } from "@repo/ui/button";
 import {
 	Dialog,
@@ -76,6 +78,16 @@ function CanvasInner({
 	const { fitView } = useReactFlow();
 	const [paletteOpen, setPaletteOpen] = useState(false);
 	const [cmdOpen, setCmdOpen] = useState(false);
+	// Cluster add-ons for this environment (edit mode only) — browsed from the Add palette,
+	// configured in a sheet. Add-ons live on the canvas now (the standalone page was retired).
+	const addonsQuery = useAddonsQuery(projectId, environmentId);
+	const [configuringAddon, setConfiguringAddon] =
+		useState<AddonMarketItem | null>(null);
+	const [addonSheetOpen, setAddonSheetOpen] = useState(false);
+	const openConfigureAddon = useCallback((item: AddonMarketItem) => {
+		setConfiguringAddon(item);
+		setAddonSheetOpen(true);
+	}, []);
 	const openPanel = useElenchStore((s) => s.openPanel);
 	const [shortcutsOpen, setShortcutsOpen] = useState(false);
 	const [deploying, setDeploying] = useState(false);
@@ -122,7 +134,7 @@ function CanvasInner({
 		}
 		try {
 			const { project } = await createProject(
-				parsed.data as unknown as CreateProjectInput,
+				parsed.data,
 			);
 			toast.success("Project created!");
 			useCanvasStore.getState().reset();
@@ -158,7 +170,7 @@ function CanvasInner({
 			await applyStagedChanges(
 				projectId,
 				activeEnvId,
-				parsed.data as unknown as CreateProjectInput,
+				parsed.data,
 			);
 			await provisionProject(projectId, undefined, undefined, activeEnvId);
 			track("deploy_queued", { environmentId: activeEnvId });
@@ -300,7 +312,19 @@ function CanvasInner({
 				open={paletteOpen}
 				onOpenChange={setPaletteOpen}
 				identities={cloudIdentities}
+				addonItems={addonsQuery.data?.items}
+				onConfigureAddon={projectId ? openConfigureAddon : undefined}
 			/>
+			{projectId && (
+				<AddonConfigSheet
+					item={configuringAddon}
+					projectId={projectId}
+					environmentId={environmentId ?? null}
+					hasAppsRepo={addonsQuery.data?.hasAppsRepo ?? false}
+					open={addonSheetOpen}
+					onOpenChange={setAddonSheetOpen}
+				/>
+			)}
 			<CanvasCommandPalette
 				open={cmdOpen}
 				onOpenChange={setCmdOpen}

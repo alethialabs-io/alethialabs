@@ -48,6 +48,11 @@ export const componentStatus = pgEnum("component_status", [
 	"DESTROYED",
 ]);
 
+// How a marketplace add-on is delivered into the cluster: `managed` = Alethia renders +
+// applies the ArgoCD Application directly; `gitops` = the manifest is written into the
+// customer's apps repo for them to own + edit, and ArgoCD syncs it from there.
+export const addonMode = pgEnum("addon_mode", ["managed", "gitops"]);
+
 export const cacheEngine = pgEnum("cache_engine", ["redis", "valkey"]);
 
 export const nosqlTableType = pgEnum("nosql_table_type", ["standard", "global"]);
@@ -254,6 +259,27 @@ export const approvalStatus = pgEnum("approval_status", [
 	"rejected",
 ]);
 
+// Structured resource classification (Workstream B). The kind of resource an assignment
+// pins a classification value to. Each value maps to a table whose PK is a uuid, so a
+// single `resource_id uuid` addresses every kind. Adding a new classifiable surface is a
+// one-line edit here (+ a migration) — the assignment row is otherwise kind-agnostic.
+export const resourceKind = pgEnum("resource_kind", [
+	"cloud_identity",
+	"connector_credential",
+	"alert_rule",
+	"alert_channel",
+	"alert_delivery",
+	"member",
+	"project",
+	"project_environment",
+	"project_cluster",
+	"cloud_kubernetes_cluster",
+	"role",
+	"runner",
+	"runner_usage_session",
+	"support_case",
+]);
+
 // Support-case enums moved to @repo/support (shared with the admin app); re-export
 // so `@/lib/db/schema/enums` keeps surfacing them (supportCaseType/Status/Severity/… + their
 // TS unions).
@@ -272,6 +298,7 @@ export type RunnerProvisioning = (typeof runnerProvisioning.enumValues)[number];
 export type RunnerStatus = (typeof runnerStatus.enumValues)[number];
 export type ProjectStatus = (typeof projectStatus.enumValues)[number];
 export type ComponentStatus = (typeof componentStatus.enumValues)[number];
+export type AddonMode = (typeof addonMode.enumValues)[number];
 export type EnvironmentStage = (typeof environmentStage.enumValues)[number];
 export type PromotionStatus = (typeof promotionStatus.enumValues)[number];
 export type ApprovalStatus = (typeof approvalStatus.enumValues)[number];
@@ -291,5 +318,6 @@ export type ConnectorHealthStatus =
 	(typeof connectorHealthStatus.enumValues)[number];
 export type AlertDeliveryStatus =
 	(typeof alertDeliveryStatus.enumValues)[number];
+export type ResourceKind = (typeof resourceKind.enumValues)[number];
 // SupportCase* / SupportAuthorType / SupportAbuseCategory unions come via the
 // `export * from "@repo/support/enums"` re-export above.

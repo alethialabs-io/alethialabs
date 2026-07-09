@@ -94,6 +94,10 @@ func (m *mockAPI) FetchGitToken(jobID string) (string, error) {
 	return "", nil
 }
 
+func (m *mockAPI) FetchAzureToken() (string, error) {
+	return "test-azure-token", nil
+}
+
 func (m *mockAPI) UploadPlanArtifact(jobID, filePath string) error {
 	return nil
 }

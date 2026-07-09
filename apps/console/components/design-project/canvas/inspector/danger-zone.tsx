@@ -15,6 +15,7 @@ import { cn } from "@repo/ui/utils";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { NODE_REGISTRY } from "../graph/node-registry";
 import type { CanvasNode } from "../graph/types";
+import { configName } from "../graph/node-config";
 
 /**
  * Collapsed "Danger zone" section at the bottom of the config sheet: destructive / structural
@@ -31,7 +32,7 @@ export function DangerZone({ node }: { node: CanvasNode }) {
 	if (!isArray && !deletable) return null;
 
 	const label =
-		(node.data.config.name as string) || NODE_REGISTRY[node.data.kind].label;
+		configName(node.data) || NODE_REGISTRY[node.data.kind].label;
 
 	return (
 		<Collapsible

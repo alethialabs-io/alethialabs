@@ -175,7 +175,10 @@ if [[ "$MODE" == "docker" ]]; then
   fi
   if [[ "${REBUILD:-}" == "1" ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     echo "→ building $IMAGE (first build is slow — bakes OpenTofu + cloud CLIs)…"
-    docker build -f apps/runner/Dockerfile -t "$IMAGE" .
+    # The runner image builds FROM a shared runner-base (Go binary + tofu + infracost + shared tools);
+    # build it locally first so the FROM resolves without needing GHCR's published base.
+    docker build -f apps/runner/Dockerfile.base -t alethia-runner-base:local .
+    docker build -f apps/runner/Dockerfile --build-arg RUNNER_BASE=alethia-runner-base:local -t "$IMAGE" .
   fi
 fi
 

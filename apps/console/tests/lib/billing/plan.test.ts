@@ -17,7 +17,13 @@ describe("planEntitlements", () => {
 		expect(e.sso).toBe(false);
 		expect(e.quotas.maxConcurrentJobs).toBe(2);
 		expect(e.quotas.includedRunnerMinutes).toBe(200);
-		expect(e.ai.weeklyCredits).toBe(100);
+	});
+
+	it("does not carry AI budgets — AI is a standalone product now", () => {
+		// AI was decoupled from the org plan (lib/billing/ai-plan.ts); no plan grants it.
+		expect("ai" in planEntitlements("community")).toBe(false);
+		expect("ai" in planEntitlements("team")).toBe(false);
+		expect("ai" in planEntitlements("enterprise")).toBe(false);
 	});
 
 	it("team unlocks organizations + raises quotas", () => {
@@ -26,7 +32,6 @@ describe("planEntitlements", () => {
 		expect(e.teams).toBe(false); // teams is enterprise-only
 		expect(e.quotas.maxConcurrentJobs).toBe(8);
 		expect(e.quotas.includedRunnerMinutes).toBe(500);
-		expect(e.ai.weeklyCredits).toBe(3_000);
 	});
 
 	it("enterprise unlocks governance features + unlimited concurrency", () => {
@@ -38,7 +43,6 @@ describe("planEntitlements", () => {
 		expect(e.sso).toBe(true);
 		expect(e.quotas.maxConcurrentJobs).toBeNull(); // unlimited
 		expect(e.quotas.includedRunnerMinutes).toBe(20_000);
-		expect(e.ai.weeklyCredits).toBe(60_000);
 	});
 
 	it("entitlements grow monotonically up the ladder", () => {
@@ -47,7 +51,6 @@ describe("planEntitlements", () => {
 		expect(t.quotas.includedRunnerMinutes).toBeGreaterThan(
 			c.quotas.includedRunnerMinutes,
 		);
-		expect(t.ai.weeklyCredits).toBeGreaterThan(c.ai.weeklyCredits);
 	});
 });
 

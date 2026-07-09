@@ -28,8 +28,6 @@ export const COMMUNITY_ENTITLEMENTS: Entitlements = {
 		includedRunnerMinutes: 200,
 		activityRetentionDays: 7,
 	},
-	// Free trial: a taste of AI (illustrative credits; scan ~20, message ~1 — tune later).
-	ai: { enabled: true, tier: "trial", windowCredits: 30, windowHours: 5, weeklyCredits: 100 },
 };
 
 /**
@@ -54,8 +52,6 @@ export function planEntitlements(plan: BillingPlan): Entitlements {
 					includedRunnerMinutes: 500,
 					activityRetentionDays: 30,
 				},
-				// AI "Standard" (×1).
-				ai: { enabled: true, tier: "standard", windowCredits: 300, windowHours: 5, weeklyCredits: 3_000 },
 			};
 		case "enterprise":
 			return {
@@ -73,14 +69,6 @@ export function planEntitlements(plan: BillingPlan): Entitlements {
 					priorityLevel: 30,
 					includedRunnerMinutes: 20_000,
 					activityRetentionDays: 365,
-				},
-				// AI "20×".
-				ai: {
-					enabled: true,
-					tier: "max",
-					windowCredits: 6_000,
-					windowHours: 5,
-					weeklyCredits: 60_000,
 				},
 			};
 		default:

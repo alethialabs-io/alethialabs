@@ -81,7 +81,7 @@ export function CanvasFlow() {
 			fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
 			minZoom={0.3}
 			maxZoom={1.5}
-			proOptions={{ hideAttribution: false }}
+			proOptions={{ hideAttribution: true }}
 			className="bg-background"
 		>
 			<Background

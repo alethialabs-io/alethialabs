@@ -22,6 +22,10 @@ export const agentThreads = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		user_id: uuid().notNull(),
 		org_id: uuid(),
+		// NULL = an org-level conversation (the general agent). Set = a project-scoped
+		// conversation (the project assistant), so its threads list/resume separately
+		// from the org rail. Covered by the existing owner_all row policy (user/org).
+		project_id: uuid(),
 		title: text().notNull(),
 		status: text().default("active").notNull(),
 		// Thread flavour: 'agent' = the infra agent (elench), 'support' = the support
@@ -34,6 +38,7 @@ export const agentThreads = pgTable(
 	(t) => [
 		index("idx_agent_threads_user").on(t.user_id),
 		index("idx_agent_threads_org").on(t.org_id),
+		index("idx_agent_threads_project").on(t.project_id),
 	],
 );
 

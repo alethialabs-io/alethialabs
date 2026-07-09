@@ -12,17 +12,21 @@ import {
 	ThumbsDown,
 	ThumbsUp,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { Fragment, type ReactNode, useState } from "react";
 import { Action, Actions } from "@/components/ai-elements/actions";
+import { ChatError } from "@/components/agent/chat-error";
+import { MessageResponse } from "@/components/ai-elements/message";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import { Message, MessageContent } from "@/components/ui/message";
 import {
-	Conversation,
-	ConversationContent,
-} from "@/components/ai-elements/conversation";
-import {
-	Message,
-	MessageContent,
-	MessageResponse,
-} from "@/components/ai-elements/message";
+	MessageScroller,
+	MessageScrollerButton,
+	MessageScrollerContent,
+	MessageScrollerItem,
+	MessageScrollerProvider,
+	MessageScrollerViewport,
+} from "@/components/ui/message-scroller";
 import {
 	Reasoning,
 	ReasoningContent,
@@ -88,8 +92,12 @@ export interface AgentChatProps {
 	renderToolPart?: RenderToolPart;
 	/** Shown when `error` is set (defaults to a generic unavailable message). */
 	errorMessage?: ReactNode;
-	/** When provided, the last assistant message gets a Retry action that re-runs it. */
+	/** When provided, the last assistant message gets a Retry action that re-runs it.
+	 * Also drives the error state's always-present Retry. */
 	onRetry?: () => void;
+	/** Abort the in-flight stream. When set, the composer's submit becomes a Stop
+	 * control while generating. */
+	onStop?: () => void;
 	className?: string;
 	/** Rendered on the left of the composer footer (e.g. the Ask-mode pill). */
 	composerLeft?: ReactNode;
@@ -99,6 +107,9 @@ export interface AgentChatProps {
 	hideComposer?: boolean;
 	/** Replace the default composer (e.g. the Elench composer with @-mentions). */
 	renderComposer?: ReactNode;
+	/** Override the composer container's classes (default: a top-bordered bar). The modal
+	 * passes a padded, border-less variant so the composer floats as a card over the canvas. */
+	composerClassName?: string;
 	/** Per-message thumbs feedback (up/down). Shown on completed assistant turns. */
 	onFeedback?: (messageId: string, value: "up" | "down") => void;
 	/** When set, a "Support" action links here from each assistant turn. */
@@ -132,11 +143,13 @@ export function AgentChat({
 	renderToolPart,
 	errorMessage,
 	onRetry,
+	onStop,
 	className,
 	composerLeft,
 	composerRight,
 	hideComposer,
 	renderComposer,
+	composerClassName,
 	onFeedback,
 	supportHref,
 }: AgentChatProps) {
@@ -160,27 +173,31 @@ export function AgentChat({
 
 	return (
 		<div className={cn("flex min-h-0 flex-1 flex-col", className)}>
-			<Conversation className="flex-1">
-				<ConversationContent>
-					{messages.length === 0 &&
-						(emptyState ??
-							(suggestions && suggestions.length > 0 ? (
-								<div className="space-y-3">
-									<p className="text-sm text-muted-foreground">
-										Try one of these:
-									</p>
-									<Suggestions>
-										{suggestions.map((s) => (
-											<Suggestion key={s} suggestion={s} onClick={submit} />
-										))}
-									</Suggestions>
-								</div>
-							) : null))}
+			<MessageScrollerProvider autoScroll defaultScrollPosition="end">
+				<MessageScroller className="flex-1">
+					<MessageScrollerViewport>
+						<MessageScrollerContent className="p-4">
+							{messages.length === 0 &&
+								(emptyState ??
+									(suggestions && suggestions.length > 0 ? (
+										<div className="space-y-3">
+											<p className="text-sm text-muted-foreground">
+												Try one of these:
+											</p>
+											<Suggestions>
+												{suggestions.map((s) => (
+													<Suggestion key={s} suggestion={s} onClick={submit} />
+												))}
+											</Suggestions>
+										</div>
+									) : null))}
 
-					{messages.map((m) => (
-						<Message key={m.id} from={m.role}>
-							<MessageContent>
-								{m.parts.map((part, i) => {
+							{messages.map((m) => {
+								const isUser = m.role === "user";
+								// Per-part nodes — shared by both roles; the wrapper differs (user →
+								// bubble, assistant → bare text/tools). Text renders through Streamdown
+								// for the assistant (markdown) and as plain text for the user.
+								const partNodes = m.parts.map((part, i) => {
 									const key = `${m.id}-${i}`;
 
 									if (part.type === "reasoning" && part.text) {
@@ -199,10 +216,12 @@ export function AgentChat({
 									}
 
 									if (part.type === "text" && part.text) {
-										return m.role === "assistant" ? (
-											<MessageResponse key={key}>{part.text}</MessageResponse>
+										return isUser ? (
+											<span key={key} className="whitespace-pre-wrap">
+												{part.text}
+											</span>
 										) : (
-											<span key={key}>{part.text}</span>
+											<MessageResponse key={key}>{part.text}</MessageResponse>
 										);
 									}
 
@@ -220,109 +239,148 @@ export function AgentChat({
 									}
 
 									return null;
-								})}
-								{m.role === "assistant" &&
+								});
+
+								const caret = m.role === "assistant" &&
 									m.id === lastMessageId &&
 									status === "streaming" && (
 										<span
 											aria-hidden
 											className="ml-0.5 inline-block h-3.5 w-[7px] animate-pulse bg-foreground align-text-bottom"
 										/>
-									)}
-							</MessageContent>
+									);
 
-							{/* Copy / regenerate on completed assistant turns. */}
-							{m.role === "assistant" &&
-								!(m.id === lastMessageId && pending) &&
-								messageText(m) && (
-									<Actions className="mt-1 px-1">
-										{onFeedback && (
-											<>
-												<Action
-													tooltip="Good response"
-													label="Good response"
-													onClick={() => {
-														setFeedback((f) => ({ ...f, [m.id]: "up" }));
-														onFeedback(m.id, "up");
-													}}
-												>
-													<ThumbsUp
-														className={cn(
-															"size-3.5",
-															feedback[m.id] === "up" && "fill-current",
-														)}
-													/>
-												</Action>
-												<Action
-													tooltip="Bad response"
-													label="Bad response"
-													onClick={() => {
-														setFeedback((f) => ({ ...f, [m.id]: "down" }));
-														onFeedback(m.id, "down");
-													}}
-												>
-													<ThumbsDown
-														className={cn(
-															"size-3.5",
-															feedback[m.id] === "down" && "fill-current",
-														)}
-													/>
-												</Action>
-											</>
-										)}
-										<Action
-											tooltip={copiedId === m.id ? "Copied" : "Copy"}
-											label="Copy message"
-											onClick={() => copyMessage(m)}
+								return (
+									<MessageScrollerItem
+										key={m.id}
+										messageId={m.id}
+										scrollAnchor={isUser}
+									>
+										<motion.div
+											initial={{ opacity: 0, y: 4 }}
+											animate={{ opacity: 1, y: 0 }}
+											transition={{ duration: 0.18, ease: "easeOut" }}
 										>
-											{copiedId === m.id ? (
-												<Check className="size-3.5" />
-											) : (
-												<CopyIcon className="size-3.5" />
-											)}
-										</Action>
-										{onRetry && m.id === lastMessageId && (
-											<Action
-												tooltip="Retry"
-												label="Regenerate response"
-												onClick={onRetry}
-											>
-												<RefreshCcwIcon className="size-3.5" />
-											</Action>
-										)}
-										{supportHref && (
-											<Action
-												tooltip="Support"
-												label="Get support"
-												onClick={() => {
-													window.open(supportHref, "_blank", "noopener");
-												}}
-											>
-												<HelpCircle className="size-3.5" />
-											</Action>
-										)}
-									</Actions>
-								)}
-						</Message>
-					))}
+											<Message align={isUser ? "end" : "start"}>
+												<MessageContent>
+													{isUser ? (
+														<Bubble variant="secondary" align="end">
+															<BubbleContent className="rounded-none">
+																{partNodes}
+															</BubbleContent>
+														</Bubble>
+													) : (
+														<div className="flex min-w-0 flex-col gap-2">
+															{partNodes}
+															{caret}
+														</div>
+													)}
 
-					{status === "submitted" && (
-						<div className="flex items-center gap-2 text-xs text-muted-foreground">
-							<Loader2 className="h-3 w-3 animate-spin" />
-							Thinking…
-						</div>
-					)}
-					{error && (
-						<div className="border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
-							{errorMessage ??
-								"The assistant is unavailable. Confirm AI is configured (AI_GATEWAY_API_KEY) and try again."}
-						</div>
-					)}
-				</ConversationContent>
-			</Conversation>
+													{/* Copy / regenerate on completed assistant turns. */}
+													{m.role === "assistant" &&
+														!(m.id === lastMessageId && pending) &&
+														messageText(m) && (
+															<Actions className="px-1">
+																{onFeedback && (
+																	<>
+																		<Action
+																			tooltip="Good response"
+																			label="Good response"
+																			onClick={() => {
+																				setFeedback((f) => ({ ...f, [m.id]: "up" }));
+																				onFeedback(m.id, "up");
+																			}}
+																		>
+																			<ThumbsUp
+																				className={cn(
+																					"size-3.5",
+																					feedback[m.id] === "up" && "fill-current",
+																				)}
+																			/>
+																		</Action>
+																		<Action
+																			tooltip="Bad response"
+																			label="Bad response"
+																			onClick={() => {
+																				setFeedback((f) => ({ ...f, [m.id]: "down" }));
+																				onFeedback(m.id, "down");
+																			}}
+																		>
+																			<ThumbsDown
+																				className={cn(
+																					"size-3.5",
+																					feedback[m.id] === "down" && "fill-current",
+																				)}
+																			/>
+																		</Action>
+																	</>
+																)}
+																<Action
+																	tooltip={copiedId === m.id ? "Copied" : "Copy"}
+																	label="Copy message"
+																	onClick={() => copyMessage(m)}
+																>
+																	{copiedId === m.id ? (
+																		<Check className="size-3.5" />
+																	) : (
+																		<CopyIcon className="size-3.5" />
+																	)}
+																</Action>
+																{onRetry && m.id === lastMessageId && (
+																	<Action
+																		tooltip="Retry"
+																		label="Regenerate response"
+																		onClick={onRetry}
+																	>
+																		<RefreshCcwIcon className="size-3.5" />
+																	</Action>
+																)}
+																{supportHref && (
+																	<Action
+																		tooltip="Support"
+																		label="Get support"
+																		onClick={() => {
+																			window.open(supportHref, "_blank", "noopener");
+																		}}
+																	>
+																		<HelpCircle className="size-3.5" />
+																	</Action>
+																)}
+															</Actions>
+														)}
+												</MessageContent>
+											</Message>
+										</motion.div>
+									</MessageScrollerItem>
+								);
+							})}
+
+							{status === "submitted" && (
+								<motion.div
+									initial={{ opacity: 0 }}
+									animate={{ opacity: 1 }}
+									className="flex items-center gap-2 text-xs text-muted-foreground"
+								>
+									<Loader2 className="h-3 w-3 animate-spin" />
+									Thinking…
+								</motion.div>
+							)}
+							{error &&
+								(errorMessage ? (
+									<div className="border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
+										{errorMessage}
+									</div>
+								) : (
+									<ChatError error={error} onRetry={onRetry} />
+								))}
+						</MessageScrollerContent>
+					</MessageScrollerViewport>
+					<MessageScrollerButton />
+				</MessageScroller>
+			</MessageScrollerProvider>
 
 			{!hideComposer && (
-				<div className="border-t border-border p-3">
+				<div className={cn("border-t border-border p-3", composerClassName)}>
 					{renderComposer ?? (
 						<PromptInput
 							className="rounded-none"
@@ -339,7 +397,11 @@ export function AgentChat({
 								{composerLeft}
 								<div className="flex items-center gap-1">
 									{composerRight}
-									<PromptInputSubmit status={status} disabled={pending} />
+									<PromptInputSubmit
+										status={status}
+										onStop={onStop}
+										disabled={pending && !onStop}
+									/>
 								</div>
 							</PromptInputFooter>
 						</PromptInput>

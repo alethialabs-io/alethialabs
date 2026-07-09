@@ -6,13 +6,14 @@ by OpenTofu and deployed by a GitHub Action. Hosted alethialabs.io fronts that b
 a **Cloudflare Tunnel** (no public 80/443 — cloudflared dials out). The runner **fleet**
 is separate: ephemeral Hetzner Cloud VMs sized by the in-app scaler.
 
-Host-agnostic — the same compose + SSH deploy runs on **Hetzner** (`infra/cp-hetzner`,
-≈€11–18/mo) or **AWS EC2** (`infra/cp-aws`). Pick one; both target the same `DEPLOY_HOST`.
+Host-agnostic — the same compose bundle runs on **Hetzner** (`infra/cp-hetzner`, ≈€11–18/mo,
+SSH deploy to `DEPLOY_HOST`) or **AWS EC2** (`infra/cp-aws`, access via **SSM Session Manager** —
+no `DEPLOY_HOST` SSH). Pick one; both front the origin with a Cloudflare Tunnel.
 
 ## Pieces
-- **`infra/cp-hetzner/`** / **`infra/cp-aws/`** — OpenTofu for the VM + firewall + cloud-init
-  (installs Docker, clones the repo). `cp-hetzner` also creates the **Cloudflare Tunnel**
-  (+ proxied CNAMEs) and outputs `tunnel_token`. Apply **one**.
+- **`infra/cp-hetzner/`** / **`infra/cp-aws/`** — OpenTofu for the VM + cloud-init (installs
+  Docker, clones the repo). Each creates the **Cloudflare Tunnel** (+ proxied CNAMEs) and outputs
+  `tunnel_token`. Apply **one**.
 - **`.github/workflows/infra-cp-hetzner.yml`** / **`infra-cp-aws.yml`** — plan-on-PR /
   apply-on-`main`.
 - **`.github/workflows/deploy-console.yml`** — on `main`/manual: builds `console`,
@@ -49,6 +50,14 @@ Every real secret lives in **one AWS Secrets Manager secret `alethia/prod/env`**
 reads it via OIDC and the box never holds AWS creds. TF state is AWS-native S3 (the
 assumed role authenticates it). See `.env.production.example` for the vault-key catalog
 (`[auto] / [chain] / [ext] / [const]`) and `secrets.local.env.example` for the externals.
+
+> **The emit list is the real gate.** A vault key only reaches the app if the "Assemble .env"
+> step in `.github/workflows/deploy-console.yml` explicitly `emit`s/`echo`s it into the box `.env`
+> (the console reads it via `env_file: .env`). When you add a feature-gating env var, add it in
+> **all three** places — the emit list, `.env.production.example` (catalog), and
+> `secrets.local.env.example` (if operator-supplied) — or the feature silently stays off in prod
+> with no signal. (This is how AI/GCP/metered-billing/support-Slack were dark; AI is now dark **on
+> purpose** until it's monetized — see the note in the emit step.)
 
 **Root of trust — done once, LOCALLY (the only manual bits):**
 | What | Why / how |

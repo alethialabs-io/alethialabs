@@ -35,6 +35,18 @@ interface GaugeRow {
 	limit: number;
 	unit: string;
 	tip: string;
+	/** Overrides the right-side readout (used for AI rows — a reset time, not raw counts). */
+	readout?: string;
+}
+
+/** Humanize the time until an ISO reset ("2h", "1d", "5m", or "soon"). */
+function resetsIn(iso: string): string {
+	const ms = new Date(iso).getTime() - Date.now();
+	if (Number.isNaN(ms) || ms <= 0) return "soon";
+	const h = Math.floor(ms / 3_600_000);
+	if (h >= 24) return `${Math.floor(h / 24)}d`;
+	if (h >= 1) return `${h}h`;
+	return `${Math.max(1, Math.floor(ms / 60_000))}m`;
 }
 
 /** A plain count stat (uncapped on paid plans, so no gauge). */
@@ -87,12 +99,23 @@ export function UsageCard({
 					});
 				}
 				if (ai.enabled) {
+					// AI is a standalone metered product — show daily + weekly as PERCENTAGES
+					// (the ring + "% used"), with the reset time as the readout (never raw credits).
 					gauges.push({
-						label: "AI credits",
-						used: ai.windowUsed,
+						label: "AI · today",
+						used: ai.dailyUsed,
+						limit: ai.dailyBudget,
+						unit: "",
+						tip: "Included AI credits used today vs your AI tier's daily allowance.",
+						readout: `resets ${resetsIn(ai.dailyResetAt)}`,
+					});
+					gauges.push({
+						label: "AI · this week",
+						used: ai.weeklyUsed,
 						limit: ai.weeklyBudget,
 						unit: "",
-						tip: "Included AI credits used in the trailing 7 days vs your weekly budget.",
+						tip: "Included AI credits used this week vs your AI tier's weekly allowance.",
+						readout: `resets ${resetsIn(ai.weeklyResetAt)}`,
 					});
 				}
 
@@ -220,8 +243,8 @@ function UsageMeter({ row }: { row: GaugeRow }) {
 			<div
 				className={`font-mono text-xs ${near ? "font-semibold text-foreground" : "text-muted-foreground"}`}
 			>
-				{row.used.toLocaleString()} / {row.limit.toLocaleString()}
-				{row.unit ? ` ${row.unit}` : ""}
+				{row.readout ??
+					`${row.used.toLocaleString()} / ${row.limit.toLocaleString()}${row.unit ? ` ${row.unit}` : ""}`}
 			</div>
 		</div>
 	);

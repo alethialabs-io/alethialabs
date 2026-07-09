@@ -4,6 +4,11 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
+import {
+	getAiUsageSummary,
+	getBillingSummary,
+	getOrgUsage,
+} from "@/app/server/actions/billing";
 import { getCloudIdentityInventory } from "@/app/server/actions/cloud-resources";
 import { getClusters } from "@/app/server/actions/clusters";
 import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
@@ -268,6 +273,68 @@ export function readTools() {
 			inputSchema: z.object({ cloudIdentityId: z.string() }),
 			execute: async ({ cloudIdentityId }) =>
 				getCloudIdentityInventory(cloudIdentityId),
+		}),
+
+		get_org_usage: tool({
+			description:
+				"Get the active org's managed-runner usage this period: minutes used vs the plan's included allowance, overage minutes + estimated cost, running jobs, and the concurrency limit. Real numbers for a usage dashboard. PDP-gated read.",
+			inputSchema: z.object({}),
+			execute: async () => {
+				const u = await getOrgUsage();
+				return {
+					plan: u.plan,
+					used_minutes: u.usedMinutes,
+					included_minutes: u.includedMinutes,
+					overage_minutes: u.overageMinutes,
+					overage_cost_usd: u.overageCost,
+					pct: Number.isFinite(u.pct) ? u.pct : null,
+					running_jobs: u.runningJobs,
+					max_concurrent_jobs: u.maxConcurrentJobs,
+					period_start: u.periodStart,
+					period_end: u.periodEnd,
+				};
+			},
+		}),
+
+		get_ai_usage: tool({
+			description:
+				"Get the active org's standalone AI standing: the AI tier, included credits used today and this week vs that tier's daily/weekly caps (with reset times), plus the remaining purchased top-up balance. PDP-gated read.",
+			inputSchema: z.object({}),
+			execute: async () => {
+				const a = await getAiUsageSummary();
+				return {
+					enabled: a.enabled,
+					tier: a.tier,
+					daily_used: a.dailyUsed,
+					daily_budget: a.dailyBudget,
+					daily_reset_at: a.dailyResetAt,
+					weekly_used: a.weeklyUsed,
+					weekly_budget: a.weeklyBudget,
+					weekly_reset_at: a.weeklyResetAt,
+					purchased_balance: a.purchasedBalance,
+				};
+			},
+		}),
+
+		get_billing_summary: tool({
+			description:
+				"Get the active org's plan/billing state: plan, lifecycle status, seats vs members, per-seat monthly amount, and current period end. Secret-free (no Stripe ids or card data). PDP-gated read.",
+			inputSchema: z.object({}),
+			execute: async () => {
+				const b = await getBillingSummary();
+				return {
+					hosted: b.hosted,
+					has_org: b.hasOrg,
+					plan: b.plan,
+					status: b.status,
+					state: b.state,
+					seats: b.seats,
+					member_count: b.memberCount,
+					unit_amount_usd: b.unitAmountUsd,
+					cancel_at_period_end: b.cancelAtPeriodEnd,
+					current_period_end: b.currentPeriodEnd,
+				};
+			},
 		}),
 	};
 }

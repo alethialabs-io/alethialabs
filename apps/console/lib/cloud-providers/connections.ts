@@ -8,11 +8,12 @@ import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, projects } from "@/lib/db/schema";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { probeHealth, type HealthStatus } from "@/lib/cloud-providers/health";
+import { deriveOidcProviderArn } from "@/lib/cloud-providers/session/alibaba";
 import {
 	purgeCloudInventory,
 	syncCloudInventory,
 } from "@/lib/cloud-providers/inventory";
-import type { CloudCredentials } from "@/types/jsonb.types";
+import type { CloudCredentials, WifCredentialConfig } from "@/types/jsonb.types";
 
 /**
  * Cloud connection logic shared by the web console server actions and the CLI
@@ -397,7 +398,7 @@ export async function saveAwsIdentity(
 
 /** Validates a WIF credential config JSON and extracts its key fields. */
 export function parseWifConfig(wifConfigJson: string) {
-	let parsed: Record<string, unknown>;
+	let parsed: WifCredentialConfig;
 	try {
 		parsed = JSON.parse(wifConfigJson);
 	} catch {
@@ -573,11 +574,20 @@ export async function saveAlibabaIdentity(
 	const accountId = match[1];
 	const identity = await loadIdentity(scope, identityId);
 
+	// The OIDC provider ARN is derived from the account id + the fixed provider name the customer
+	// setup module creates (`infra/connector/alibaba`), so the connect form only needs the role ARN.
+	const oidcProviderArn = deriveOidcProviderArn(roleArn);
+
 	await getServiceDb()
 		.update(cloudIdentities)
 		.set({
 			name: `Alibaba Cloud (${accountId})`,
-			credentials: { ...identity.credentials, role_arn: roleArn, account_id: accountId },
+			credentials: {
+				...identity.credentials,
+				role_arn: roleArn,
+				account_id: accountId,
+				oidc_provider_arn: oidcProviderArn,
+			},
 			is_verified: false,
 			status: "testing",
 			last_error: null,

@@ -78,7 +78,7 @@ export function ThreadRail({
 	}, [threads, q]);
 
 	return (
-		<aside className="hidden w-[246px] flex-none flex-col border-r border-border bg-card lg:flex">
+		<aside className="hidden w-[284px] flex-none flex-col border-r border-border bg-card lg:flex">
 			<div className="p-3.5 pb-2.5">
 				<Button
 					variant="outline"
@@ -118,6 +118,7 @@ export function ThreadRail({
 								<button
 									key={t.id}
 									type="button"
+									data-testid="thread-rail-row"
 									onClick={() => onSelect(t.id)}
 									className={cn(
 										"group flex w-full flex-col gap-0.5 border-l-2 border-transparent px-2.5 py-2 text-left transition-colors hover:bg-muted",

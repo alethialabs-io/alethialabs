@@ -3,14 +3,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { ChatStatus } from "ai";
-import { PanelRight } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
 import type { Mention } from "@/lib/ai/mentions";
+import { track } from "@/lib/analytics/track";
 import type { AgentThread } from "@/lib/db/schema";
+import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
 import { ElenchComposer } from "./elench-composer";
 import type { ElenchSuggestion } from "./elench-suggestions";
+import { SuggestionCarousel } from "./suggestion-carousel";
+
+/** Which Elench context the landing is rendered for (drives analytics + the Try-now prompt). */
+export type ElenchContext = "org" | "project";
+
+/**
+ * A viz-forcing "Try now" prompt that always asks for a generative dashboard, tailored
+ * to the current context so the model fetches the right metrics before it builds.
+ */
+function tryNowPrompt(context: ElenchContext): string {
+	return context === "org"
+		? "Build a dashboard of my infrastructure — clusters, jobs, cost, and drift — as stat cards and charts."
+		: "Build a dashboard for this project — cost breakdown, plan/verify status, and cluster topology — as stat cards and charts.";
+}
 
 /** "9m", "3h", "2d" since a timestamp. */
 function relTime(d: Date): string {
@@ -40,35 +56,6 @@ function ElenchMark({ className }: { className?: string }) {
 	);
 }
 
-/** A faint grayscale sparkline — decorative demo content for the viz grid. */
-function DemoChart() {
-	return (
-		<svg
-			viewBox="0 0 300 150"
-			preserveAspectRatio="none"
-			className="block h-full w-full text-foreground"
-			aria-hidden
-		>
-			<title>Worker traffic</title>
-			<path
-				d="M0 122 L20 114 L40 120 L60 101 L80 109 L100 88 L120 96 L140 73 L160 83 L180 59 L200 69 L220 49 L240 43 L260 53 L280 33 L300 40 L300 150 L0 150 Z"
-				fill="currentColor"
-				fillOpacity="0.06"
-			/>
-			<path
-				d="M0 122 L20 114 L40 120 L60 101 L80 109 L100 88 L120 96 L140 73 L160 83 L180 59 L200 69 L220 49 L240 43 L260 53 L280 33 L300 40"
-				fill="none"
-				stroke="currentColor"
-				strokeOpacity="0.5"
-				strokeWidth="2"
-				strokeLinejoin="round"
-				strokeLinecap="round"
-				vectorEffect="non-scaling-stroke"
-			/>
-		</svg>
-	);
-}
-
 interface ModalLandingProps {
 	onSend: (text: string, mentions?: Mention[]) => void;
 	suggestions: ElenchSuggestion[];
@@ -77,15 +64,17 @@ interface ModalLandingProps {
 	onOpenThread: (id: string) => void;
 	/** Show the model picker in the hero composer (org only). */
 	showModel?: boolean;
-	/** The panel-right button in the chip row (docks the surface as a panel). */
-	onPanelRight?: () => void;
+	/** Org vs project — drives the Try-now prompt + analytics context. */
+	context: ElenchContext;
 	status?: ChatStatus;
 }
 
 /**
  * The modal empty landing — the hero (mark + "What should we do today?" + composer),
- * suggestion chips, "Ready to keep going?" recents, and the "Draw, describe, go!" viz
- * grid. Ported from the Elench design, rebranded to the grayscale system.
+ * a paged suggestion carousel (3 cards × 3 pages with dot indicators, cycled by the
+ * right-hand button — no scroll), "Ready to keep going?" recents, and the
+ * "Draw, describe, go!" viz section with a "Try now" generative-dashboard button.
+ * Ported from the Elench design, rebranded to the grayscale system.
  */
 export function ElenchModalLanding({
 	onSend,
@@ -93,13 +82,13 @@ export function ElenchModalLanding({
 	recents,
 	onOpenThread,
 	showModel,
-	onPanelRight,
+	context,
 	status,
 }: ModalLandingProps) {
 	return (
 		<div className="h-full overflow-y-auto">
 			<div className="mx-auto max-w-[830px] px-6 pb-16 pt-24">
-				<ElenchMark className="mb-6 h-16 w-auto" />
+				<ElenchMark className="mb-6 h-20 w-auto" />
 			<h1 className="mb-10 text-center text-4xl font-semibold tracking-tight">
 				What should we do today?
 			</h1>
@@ -111,37 +100,16 @@ export function ElenchModalLanding({
 				autoFocus
 			/>
 
-			{/* Suggestion chips + panel-right toggle. */}
-			<div className="mt-4 flex gap-2.5">
-				{suggestions.map((s) => (
-					<button
-						key={s.title}
-						type="button"
-						onClick={() => onSend(s.prompt)}
-						className="flex min-w-0 flex-1 items-center gap-3 border border-border bg-muted/40 px-3 py-2.5 text-left transition-colors hover:bg-muted"
-					>
-						<span className="flex size-8 flex-none items-center justify-center border border-border bg-background text-muted-foreground">
-							<s.icon className="h-4 w-4" />
-						</span>
-						<span className="min-w-0">
-							<span className="block truncate text-[13px] font-medium text-foreground">
-								{s.title}
-							</span>
-							<span className="block truncate text-xs text-muted-foreground">
-								{s.sub}
-							</span>
-						</span>
-					</button>
-				))}
-				<button
-					type="button"
-					aria-label="Dock as panel"
-					onClick={onPanelRight}
-					className="flex w-11 flex-none items-center justify-center border border-border bg-muted/40 text-muted-foreground transition-colors hover:bg-muted"
-				>
-					<PanelRight className="h-4 w-4" />
-				</button>
-			</div>
+{/* Paged suggestion carousel — 3 cards × 3 pages, cycled by its own button
+				    (no scroll). Selecting a card records analytics + sends its prompt. */}
+				<SuggestionCarousel
+					suggestions={suggestions}
+					onSelect={(prompt) => {
+						const s = suggestions.find((x) => x.prompt === prompt);
+						track("elench_suggestion_clicked", { title: s?.title, context });
+						onSend(prompt);
+					}}
+				/>
 
 			<DotDivider />
 
@@ -176,28 +144,32 @@ export function ElenchModalLanding({
 
 			<DotDivider />
 
-			{/* Draw, describe, go — the visualization grid (decorative demo). */}
-			<section className="border border-border bg-muted/40 p-5">
-				<div className="flex items-start justify-between gap-3">
-					<div>
-						<div className="text-base font-semibold">Draw, describe, go.</div>
-						<div className="mt-0.5 text-[13px] text-muted-foreground">
-							Generate different views of your data using the visualization grid.
-						</div>
+			{/* Draw, describe, go — a clean CTA that opens the split pane in a loading state and
+				    asks the agent for a full generative dashboard (which then fills the pane). */}
+			<section className="flex items-center justify-between gap-4 border border-border bg-muted/40 p-5">
+				<div>
+					<div className="text-base font-semibold">Draw, describe, go.</div>
+					<div className="mt-0.5 text-[13px] text-muted-foreground">
+						Build a live dashboard of your infrastructure — Elench gathers the data and
+						composes it into stat cards and charts in the side panel.
 					</div>
 				</div>
-				<div className="mt-4 grid grid-cols-3 gap-3.5">
-					<div className="flex h-[200px] flex-col overflow-hidden border border-border bg-background p-3">
-						<span className="text-xs text-muted-foreground">
-							Worker traffic · last 24h
-						</span>
-						<div className="mt-2 flex-1">
-							<DemoChart />
-						</div>
-					</div>
-					<div className="h-[200px] border border-border bg-muted" />
-					<div className="h-[200px] border border-dashed border-border" />
-				</div>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					className="flex-none gap-1.5 rounded-none"
+					onClick={() => {
+						track("elench_try_now_used", { context });
+						// Open the split pane immediately in the pending dashboard state; the model's
+						// build_dashboard result fills it via the DashboardReadyCard → openArtifact lane.
+						useArtifactStore.getState().open({ dashboard: null }, "dashboard");
+						onSend(tryNowPrompt(context));
+					}}
+				>
+					<Sparkles className="h-3.5 w-3.5" />
+					Try now
+				</Button>
 			</section>
 			</div>
 		</div>
@@ -249,7 +221,7 @@ export function ElenchPanelEmpty({
 			</div>
 
 			<div className="py-10 text-center">
-				<ElenchMark className="mb-4 h-12 w-auto" />
+				<ElenchMark className="mb-4 h-14 w-auto" />
 				<div className="text-lg font-semibold">{greeting()}</div>
 				<div className="mt-1 text-sm text-muted-foreground">
 					What are we doing today?

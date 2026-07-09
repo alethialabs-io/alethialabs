@@ -7,8 +7,8 @@
 // NOTE: requires platform Azure credentials to be configured — verifiable in a hosted/staging env, not
 // in local dev without them (it returns a clear DISCONNECTED reason rather than a 5-min timeout).
 
-import { ClientSecretCredential } from "@azure/identity";
 import type { CloudIdentity } from "@/lib/db/schema";
+import { assumeAzureIdentity } from "../session/azure";
 import { type HealthResult, errorMessage } from "./types";
 
 const TIMEOUT_MS = 12_000;
@@ -23,20 +23,17 @@ function disconnected(error: string): HealthResult {
 export async function probeAzureHealth(
 	identity: Pick<CloudIdentity, "credentials">,
 ): Promise<HealthResult> {
-	const tenantId = process.env.ALETHIA_AZURE_TENANT_ID;
-	const clientId = process.env.ALETHIA_AZURE_CLIENT_ID;
-	const clientSecret = process.env.ALETHIA_AZURE_CLIENT_SECRET;
-	if (!tenantId || !clientId || !clientSecret) {
-		return disconnected(
-			"Platform Azure credentials are not configured (ALETHIA_AZURE_TENANT_ID / CLIENT_ID / CLIENT_SECRET).",
-		);
-	}
 	const subscriptionId = identity.credentials.subscription_id;
 	if (!subscriptionId) return disconnected("This Azure connection has no subscription id.");
+	// Authenticate against the CUSTOMER tenant (stored on the identity) as the platform app, via a
+	// minted OIDC assertion — keyless. `assumeAzureIdentity` throws a clear reason if the platform app
+	// or issuer isn't configured on this instance.
+	const tenantId = identity.credentials.tenant_id;
+	if (!tenantId) return disconnected("This Azure connection has no tenant id.");
 
 	let token: string;
 	try {
-		const cred = new ClientSecretCredential(tenantId, clientId, clientSecret);
+		const cred = assumeAzureIdentity(tenantId);
 		const t = await cred.getToken("https://management.azure.com/.default");
 		if (!t?.token) return disconnected("Azure token acquisition returned no token.");
 		token = t.token;

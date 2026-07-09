@@ -2,9 +2,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AI_MODELS, getAiModel, isAiConfigured } from "@/lib/config/ai";
+import {
+	AI_MODELS,
+	getAdvisorModel,
+	getAiModel,
+	getExecutorModel,
+	isAiConfigured,
+	isSelectableModel,
+	resolveModel,
+} from "@/lib/config/ai";
 
-const KEYS = ["AI_MODEL", "AI_GATEWAY_API_KEY", "VERCEL_OIDC_TOKEN"];
+const KEYS = [
+	"AI_MODEL",
+	"AI_EXECUTOR_MODEL",
+	"AI_ADVISOR_MODEL_PLUS",
+	"AI_ADVISOR_MODEL_MAX",
+	"ANTHROPIC_API_KEY",
+	"OPENAI_API_KEY",
+	"AI_GATEWAY_API_KEY",
+	"VERCEL_OIDC_TOKEN",
+];
 const saved: Record<string, string | undefined> = {};
 beforeEach(() => {
 	for (const k of KEYS) {
@@ -19,32 +36,121 @@ afterEach(() => {
 	}
 });
 
+/** Read a resolved model's provider id (the SDK sets `.provider` on the model object). */
+function providerOf(model: ReturnType<typeof resolveModel>["model"]): string {
+	if (typeof model === "string") return model;
+	return model.provider;
+}
+
+describe("resolveModel", () => {
+	it("returns the SDK model + the canonical key, routed to the right provider", () => {
+		const anthropic = resolveModel("anthropic/claude-haiku-4-5");
+		expect(anthropic.key).toBe("anthropic/claude-haiku-4-5");
+		expect(providerOf(anthropic.model)).toContain("anthropic");
+
+		const openai = resolveModel("openai/gpt-5-mini");
+		expect(openai.key).toBe("openai/gpt-5-mini");
+		expect(providerOf(openai.model)).toContain("openai");
+	});
+});
+
 describe("getAiModel", () => {
 	it("honors an override only if it's in the allowlist", () => {
-		expect(getAiModel("anthropic/claude-opus-4.8")).toBe("anthropic/claude-opus-4.8");
+		expect(getAiModel("anthropic/claude-sonnet-4-6").key).toBe(
+			"anthropic/claude-sonnet-4-6",
+		);
 		// A non-allowlisted override is rejected (anti-injection) → falls through to the default.
-		expect(getAiModel("evil/jailbreak-model")).toBe(AI_MODELS[0].id);
+		// Opus is not in the allowlist, so it no longer passes through either.
+		expect(getAiModel("anthropic/claude-opus-4-8").key).toBe(AI_MODELS[0].id);
+		expect(getAiModel("evil/jailbreak-model").key).toBe(AI_MODELS[0].id);
 	});
 
-	it("falls back to env AI_MODEL, then the default (index 0)", () => {
-		process.env.AI_MODEL = "some/env-model";
-		expect(getAiModel()).toBe("some/env-model");
+	it("falls back to env AI_MODEL, then the default executor (index 0)", () => {
+		process.env.AI_MODEL = "anthropic/some-env-model";
+		expect(getAiModel().key).toBe("anthropic/some-env-model");
 		delete process.env.AI_MODEL;
-		expect(getAiModel()).toBe(AI_MODELS[0].id);
+		expect(getAiModel().key).toBe(AI_MODELS[0].id);
 	});
 
-	it("defaults to Claude Sonnet at index 0", () => {
-		expect(AI_MODELS[0].id).toBe("anthropic/claude-sonnet-4.6");
+	it("defaults to Claude Haiku 4.5 at index 0 (cheapest tool-capable model)", () => {
+		expect(AI_MODELS[0].id).toBe("anthropic/claude-haiku-4-5");
+	});
+});
+
+describe("isSelectableModel", () => {
+	it("is true only for allowlisted model ids", () => {
+		expect(isSelectableModel("anthropic/claude-sonnet-4-6")).toBe(true);
+		expect(isSelectableModel("anthropic/claude-haiku-4-5")).toBe(true);
+		expect(isSelectableModel("anthropic/claude-opus-4-8")).toBe(false); // not selectable
+		expect(isSelectableModel("evil/jailbreak")).toBe(false);
+		expect(isSelectableModel(undefined)).toBe(false);
+		expect(isSelectableModel(null)).toBe(false);
+	});
+});
+
+describe("getExecutorModel", () => {
+	it("is the cheap Haiku executor by default (matches MODEL_PRICES / AI_MODELS default)", () => {
+		expect(getExecutorModel().key).toBe("anthropic/claude-haiku-4-5");
+	});
+
+	it("is env-overridable via AI_EXECUTOR_MODEL (config flip, not a rebuild)", () => {
+		process.env.AI_EXECUTOR_MODEL = "openai/gpt-5-mini";
+		const executor = getExecutorModel();
+		expect(executor.key).toBe("openai/gpt-5-mini");
+		expect(providerOf(executor.model)).toContain("openai");
+	});
+});
+
+describe("getAdvisorModel", () => {
+	it("maps each AI tier to its DEFAULT advisor model (native keys)", () => {
+		// ai_free has no distinct advisor → the executor (Haiku).
+		expect(getAdvisorModel("ai_free").key).toBe(getExecutorModel().key);
+		expect(getAdvisorModel("ai_plus").key).toBe("anthropic/claude-sonnet-4-6");
+		// Max defaults to the Sonnet advisor (like Plus, just larger allowances) — NOT Opus.
+		expect(getAdvisorModel("ai_max").key).toBe("anthropic/claude-sonnet-4-6");
+	});
+
+	it("upgrades ai_max to the Opus advisor ONLY with deepReasoning", () => {
+		// The per-message opt-in swaps Max's advisor to Opus (a distinct, higher-cost ledger row).
+		expect(getAdvisorModel("ai_max", { deepReasoning: true }).key).toBe(
+			"anthropic/claude-opus-4-8",
+		);
+		// deepReasoning is a no-op on the lower tiers (the config guards it to ai_max).
+		expect(getAdvisorModel("ai_plus", { deepReasoning: true }).key).toBe(
+			"anthropic/claude-sonnet-4-6",
+		);
+		expect(getAdvisorModel("ai_free", { deepReasoning: true }).key).toBe(
+			getExecutorModel().key,
+		);
+	});
+
+	it("honors per-tier env overrides", () => {
+		// The Plus default also backs Max's default advisor now.
+		process.env.AI_ADVISOR_MODEL_PLUS = "openai/gpt-5-mini";
+		expect(getAdvisorModel("ai_plus").key).toBe("openai/gpt-5-mini");
+		expect(getAdvisorModel("ai_max").key).toBe("openai/gpt-5-mini");
+		// The Max override applies only on the deep-reasoning (Opus) path.
+		process.env.AI_ADVISOR_MODEL_MAX = "openai/gpt-5";
+		expect(getAdvisorModel("ai_max", { deepReasoning: true }).key).toBe("openai/gpt-5");
 	});
 });
 
 describe("isAiConfigured", () => {
-	it("is true with a gateway key or Vercel OIDC token, false otherwise", () => {
+	it("requires ANTHROPIC_API_KEY for the default (all-Anthropic) config", () => {
 		expect(isAiConfigured()).toBe(false);
-		process.env.AI_GATEWAY_API_KEY = "k";
+		// The retired gateway key no longer counts.
+		process.env.AI_GATEWAY_API_KEY = "gw";
+		process.env.VERCEL_OIDC_TOKEN = "oidc";
+		expect(isAiConfigured()).toBe(false);
+		process.env.ANTHROPIC_API_KEY = "sk-ant-x";
 		expect(isAiConfigured()).toBe(true);
-		delete process.env.AI_GATEWAY_API_KEY;
-		process.env.VERCEL_OIDC_TOKEN = "t";
+	});
+
+	it("also requires OPENAI_API_KEY when a role resolves to an openai/* model", () => {
+		process.env.ANTHROPIC_API_KEY = "sk-ant-x"; // advisors default to Anthropic
+		process.env.AI_EXECUTOR_MODEL = "openai/gpt-5-mini";
+		expect(isAiConfigured()).toBe(false); // OpenAI key missing
+		process.env.OPENAI_API_KEY = "sk-openai-x";
 		expect(isAiConfigured()).toBe(true);
 	});
 });

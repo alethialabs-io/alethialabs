@@ -1,0 +1,153 @@
+---
+title: Managed Cloud Connectors (operator setup)
+description: Provision the platform cloud identity so your instance can verify and provision into customer AWS/GCP/Azure accounts. The whole model hubs through one AWS identity.
+---
+
+# Managed cloud connectors — operator setup
+
+Your customers connect their cloud accounts from **Connectors** in the console. For that to work, your
+instance needs a **platform identity** the control plane authenticates as to assume/federate into the
+customer account. This page is the operator side; the per-cloud *customer* flows live under
+[Connectors](/console/connectors).
+
+Until you set it, managed cloud tiles read **"Not enabled on this instance."** Token clouds
+(Hetzner / DigitalOcean / Civo) need nothing here — they use the customer's own API token.
+
+## The model: everything hubs through one AWS identity
+
+There is a single root of trust — a **platform AWS identity** — and every managed cloud federates from
+it:
+
+| Cloud | How it uses the platform AWS identity |
+|---|---|
+| **AWS** | the console federates in via `AssumeRoleWithWebIdentity` (keyless, minted by the OIDC issuer), then `sts:AssumeRole` on the customer's `AlethiaProvisionerRole-<externalId>` (ExternalId-gated) |
+| **GCP** | the customer Workload-Identity pool trusts an **AWS provider** for your account; the console signs the WIF subject token with the platform AWS creds (google-auth's `--aws` source). **No separate GCP secret.** |
+| **Azure / Alibaba** | do **not** ride the AWS hub — they federate directly against Alethia's own [OIDC issuer](#azure-keyless-via-the-alethia-oidc-issuer) ([Azure](#azure-keyless-via-the-alethia-oidc-issuer) app, [Alibaba](#alibaba--keyless--account-free) RAM OIDC). |
+
+So **the platform AWS identity lights up AWS and GCP together** — and it too is now **keyless**: no static
+access key anywhere. The console federates into the platform AWS account with a minted assertion (the same
+issuer Azure/Alibaba use); the resulting temporary creds back the customer AssumeRole **and** are what
+google-auth reads (incl. the session token) to sign the GCP subject token.
+
+## AWS + GCP — set the platform AWS identity (keyless)
+
+### 1. Create the identity (IaC — one time)
+
+```bash
+cd infra/connector-platform/aws
+cp backend.hcl.example backend.hcl
+tofu init -backend-config=backend.hcl
+tofu apply        # creates an IAM OIDC provider (Alethia's issuer) + a least-priv role trusting it
+```
+
+The module registers `https://alethialabs.io/api/oidc` as an IAM OIDC provider and creates a role whose
+trust policy allows **only** `AssumeRoleWithWebIdentity` from that provider, pinned to the Alethia workload
+subject + audience (`sub = alethia-connector`, `aud = sts.amazonaws.com`). The role's permission policy is
+**only** `sts:AssumeRole` on `arn:aws:iam::*:role/AlethiaProvisionerRole-*`. **No access key is created —
+there is no secret to store or rotate.** `check` blocks refuse an apply in the wrong account or a trust
+policy that doesn't pin both `sub` and `aud`.
+
+### 2. Wire the role ARN
+
+Put the module's `assumer_role_arn` output in `deploy/prod/secrets.local.env`:
+
+```bash
+ALETHIA_AWS_PLATFORM_ROLE_ARN=<assumer_role_arn>
+# ALETHIA_AWS_ACCOUNT_ID defaults to 270587882865 — the account customers trust. Override only if you
+# run the platform in a different AWS account (it flows to the customer AWS/GCP setup templates).
+```
+
+Then push it to the vault and redeploy:
+
+```bash
+./scripts/bootstrap-secrets.sh
+gh workflow run deploy-console.yml
+```
+
+The console mints a fresh assertion per ~1h session and writes/refreshes the `AWS_*` env (incl. the
+session token) at runtime for google-auth — nothing is baked into the box `.env`.
+
+### 3. Verify
+
+In the console → **Connectors**, the **AWS** and **GCP** tiles now show **Connect**. Connect a test AWS
+account and a GCP project (customer side: [AWS](/console/connectors/aws) ·
+[GCP](/console/connectors/gcp)); both should verify to **Connected** (a server-side probe — no runner).
+GCP verifying is the real proof the session token threads correctly.
+
+Check each hop if a tile stays "Not enabled":
+
+```bash
+# vault has the role ARN?
+aws secretsmanager get-secret-value --secret-id alethia/prod/env --region eu-central-1 \
+  --query SecretString --output text | jq -r '.ALETHIA_AWS_PLATFORM_ROLE_ARN'
+# the issuer's JWKS is reachable (AWS validates the assertion against it)?
+curl -fsS https://alethialabs.io/api/oidc/jwks >/dev/null && echo OK
+```
+
+## The platform account id
+
+One account is the hub for **AWS + GCP**. It defaults to Alethia's live account **270587882865** and is
+**configurable** — set `ALETHIA_AWS_ACCOUNT_ID` (self-hosters running their own platform account). It
+flows to the console UI (`NEXT_PUBLIC_ALETHIA_AWS_ACCOUNT_ID`), the customer AWS CloudFormation trust, and
+the GCP WIF provider (`create-aws --account-id=…`) — so they must agree. **The platform assumer role must
+live in this account** (`ALETHIA_AWS_PLATFORM_ROLE_ARN`), or the customer GCP pools (which trust the
+account) reject it. Azure + Alibaba don't use the account id — they trust the OIDC issuer directly.
+
+## Azure — keyless via the Alethia OIDC issuer
+
+Azure is fully **keyless** — **no client secret** anywhere. Alethia's control plane is its own
+workload-identity OIDC issuer (`/api/oidc`, key `ALETHIA_OIDC_SIGNING_KEY`, auto-generated by
+`bootstrap-secrets.sh`). One-time operator setup — register **one multi-tenant Entra app** in Alethia's
+own tenant and give it a **federated-identity credential** that trusts the issuer (no client secret):
+
+```bash
+# 1. The multi-tenant app the console + runner authenticate as.
+APP_ID=$(az ad app create --display-name "Alethia Connector" \
+  --sign-in-audience AzureADMultipleOrgs --query appId -o tsv)
+az ad sp create --id "$APP_ID"                       # service principal in Alethia's home tenant
+
+# 2. Trust the Alethia OIDC issuer. issuer/subject/audience MUST match the code
+#    (lib/oidc/issuer.ts: ${APP_URL}/api/oidc + subject "alethia-connector";
+#     session/azure.ts: audience "api://AzureADTokenExchange"). NO client secret.
+az ad app federated-credential create --id "$APP_ID" --parameters '{
+  "name": "alethia-oidc",
+  "issuer": "https://alethialabs.io/api/oidc",
+  "subject": "alethia-connector",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
+
+# 3. Wire the app id → secrets.local.env, then bootstrap-secrets.sh + redeploy.
+echo "ALETHIA_AZURE_CLIENT_ID=$APP_ID"
+```
+
+Deploy also surfaces the id to the browser as `NEXT_PUBLIC_ALETHIA_AZURE_CLIENT_ID` (the connect UI bakes
+it into the customer's setup command). The issuer must be **publicly reachable** — Azure fetches
+`${APP_URL}/api/oidc/jwks` to validate the assertion, and that route 404s until `ALETHIA_OIDC_SIGNING_KEY`
+exists (auto-generated by `bootstrap-secrets.sh`, so run that before you expect Azure to verify).
+
+Then both halves authenticate as that app with a minted assertion — no secret, no per-customer app:
+- **Console verification / inventory** mint an assertion and present it to the customer's stored tenant.
+- **Runner provisioning** fetches an assertion from the console (`/api/runners/azure-token`, runner-authed)
+  and hands it to OpenTofu's azurerm provider via `ARM_OIDC_TOKEN` (exchanged for a ~1h ARM token at init).
+
+The customer runs the connect script, which only creates a **service principal for Alethia's app** in
+their tenant and grants it Contributor — they register no app and store nothing.
+
+## Alibaba — keyless + account-free
+
+Alibaba is **keyless and account-free**: the console assumes the customer RAM role via STS
+`AssumeRoleWithOIDC` with an assertion minted by the **same OIDC issuer** as Azure — Alethia holds **no
+Alibaba account** and no AccessKey. There is **nothing to set here** (no `ALETHIA_ALIBABA_*`); availability
+tracks the OIDC issuer key alone (`ALETHIA_OIDC_SIGNING_KEY`, auto-generated).
+
+**Customer side** (documented at [Connectors → Alibaba](/console/connectors/alibaba)): the customer applies
+a Terraform module that creates a **RAM OIDC provider** (fixed name `alethia`) trusting the Alethia issuer
++ a **RAM role**, then pastes the role ARN — Alethia derives the provider ARN from it. No operator action
+beyond having the issuer key.
+
+## Reference
+
+- Vault key catalog: `deploy/prod/.env.production.example`; operator inputs:
+  `deploy/prod/secrets.local.env.example`.
+- The emit list in `.github/workflows/deploy-console.yml` is the gate — a key only reaches the app if
+  it's emitted there.

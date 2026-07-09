@@ -8,10 +8,14 @@
 // Server-only — never import from a client component.
 
 import { z } from "zod";
+import type { AiTier } from "@/lib/billing/ai-plan";
 import type { BillingPlan } from "@/lib/db/schema/enums";
 
 /** Paid plans that map to a Stripe price. `community` is free (no price). */
 export type PaidPlan = Exclude<BillingPlan, "community">;
+
+/** Paid AI tiers that map to a Stripe subscription price (`ai_free` is free). */
+export type PaidAiTier = Exclude<AiTier, "ai_free">;
 
 const schema = z.object({
 	secretKey: z.string().min(1),
@@ -33,6 +37,17 @@ const schema = z.object({
 		.object({
 			team: z.string().optional(),
 			enterprise: z.string().optional(),
+		})
+		.optional(),
+	/**
+	 * Stripe Price IDs for the STANDALONE AI subscription tiers (separate product from the
+	 * org plan). Both OPTIONAL — an unset tier simply can't be self-serve subscribed (the
+	 * upgrade CTA errors clearly). `ai_free` needs no price (everyone's free allowance).
+	 */
+	aiPrices: z
+		.object({
+			plus: z.string().optional(),
+			max: z.string().optional(),
 		})
 		.optional(),
 	/** Absolute base URL for Checkout/Portal return links. */
@@ -90,6 +105,10 @@ export function getStripeConfig(): StripeConfig {
 			team: process.env.STRIPE_PRICE_METER_TEAM,
 			enterprise: process.env.STRIPE_PRICE_METER_ENTERPRISE,
 		},
+		aiPrices: {
+			plus: process.env.STRIPE_PRICE_AI_PLUS,
+			max: process.env.STRIPE_PRICE_AI_MAX,
+		},
 		appUrl: process.env.NEXT_PUBLIC_APP_URL ?? process.env.BETTER_AUTH_URL,
 	});
 	if (!parsed.success) {
@@ -126,4 +145,39 @@ export function planForPriceId(priceId: string): PaidPlan | null {
 		([, id]) => id === priceId,
 	);
 	return entry ? entry[0] : null;
+}
+
+/** The `ai_plus`/`ai_max` key → its Stripe subscription Price ID. Throws if unset. */
+export function aiPriceIdForTier(tier: PaidAiTier): string {
+	const key = tier === "ai_plus" ? "plus" : "max";
+	const id = getStripeConfig().aiPrices?.[key];
+	if (!id) {
+		throw new Error(
+			`No Stripe price configured for the ${tier} AI tier (set STRIPE_PRICE_AI_${key.toUpperCase()}).`,
+		);
+	}
+	return id;
+}
+
+/**
+ * Whether the STANDALONE AI paid tiers (Plus/Max) are self-serve subscribable — true only
+ * when BOTH Stripe AI prices are configured. When false the upgrade UI still ships, but
+ * renders the paid tiers + credit packs as disabled "Coming soon" (structure now, prices
+ * light it up automatically at go-live). Server-only; the value crosses to the client as a
+ * plain boolean via the AI usage summary — never the price ids themselves.
+ */
+export function aiPaidTiersEnabled(): boolean {
+	return (
+		Boolean(process.env.STRIPE_PRICE_AI_PLUS) &&
+		Boolean(process.env.STRIPE_PRICE_AI_MAX)
+	);
+}
+
+/** The AI tier a Stripe Price ID maps to (`ai_plus`/`ai_max`), or null if it isn't one. */
+export function aiTierForPriceId(priceId: string): PaidAiTier | null {
+	const ai = getStripeConfig().aiPrices;
+	if (!ai) return null;
+	if (priceId === ai.plus) return "ai_plus";
+	if (priceId === ai.max) return "ai_max";
+	return null;
 }

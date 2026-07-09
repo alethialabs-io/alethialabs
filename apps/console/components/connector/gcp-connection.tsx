@@ -32,6 +32,7 @@ import {
 import { CopyButton } from "@repo/ui/copy-button";
 import { FieldHelp } from "@repo/ui/field-help";
 import { connectorAssetUrl } from "@/components/connector/connector-assets";
+import type { WifCredentialConfig } from "@/types/jsonb.types";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
 	CheckCircle2,
@@ -46,7 +47,7 @@ import * as z from "zod";
 
 const wifConfigSchema = z.object({
 	wifConfig: z.string().superRefine((val, ctx) => {
-		let parsed: Record<string, unknown>;
+		let parsed: WifCredentialConfig;
 		try {
 			parsed = JSON.parse(val);
 		} catch {
@@ -67,7 +68,7 @@ const wifConfigSchema = z.object({
 			return;
 		}
 
-		const audience = parsed.audience as string | undefined;
+		const audience = parsed.audience;
 		if (!audience || !audience.includes("workloadIdentityPools")) {
 			ctx.addIssue({
 				code: "custom",

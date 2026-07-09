@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 variable "location" {
-  # Must offer Ampere ARM (Dpsv5) VMs — e.g. westeurope, northeurope, eastus.
   description = "Azure region."
   type        = string
   default     = "westeurope"
@@ -15,13 +14,18 @@ variable "resource_group_name" {
 }
 
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token with DNS edit on the zone."
+  description = "Cloudflare API token with DNS edit + Cloudflare Tunnel (Zero Trust) perms."
   type        = string
   sensitive   = true
 }
 
 variable "cloudflare_zone_id" {
   description = "Cloudflare zone ID for the domain."
+  type        = string
+}
+
+variable "cloudflare_account_id" {
+  description = "Cloudflare account ID that owns the Zero Trust tunnel."
   type        = string
 }
 
@@ -32,7 +36,7 @@ variable "domain" {
 }
 
 variable "ssh_public_key" {
-  description = "SSH public key authorized on the VM (CI deploy key)."
+  description = "SSH public key set on the VM (for Serial Console break-glass; never network-reachable)."
   type        = string
 }
 
@@ -43,10 +47,11 @@ variable "admin_username" {
 }
 
 variable "vm_size" {
-  # Dpsv5 = Ampere Altra ARM64 (matches the arm64 images). D2ps_v5 = 2 vCPU / 8 GB.
-  description = "Azure VM size (must be ARM/Dpsv5)."
+  # x86 Gen2 (Trusted-Launch capable), matches the amd64 self-host images. D2s_v5 = 2 vCPU / 8 GB,
+  # the cheapest general-purpose tier with headroom for the compose bundle plus a TF run.
+  description = "Azure VM size (x86 Gen2, Trusted-Launch capable)."
   type        = string
-  default     = "Standard_D2ps_v5"
+  default     = "Standard_D2s_v5"
 }
 
 variable "os_disk_size" {
@@ -55,14 +60,18 @@ variable "os_disk_size" {
   default     = 30
 }
 
-variable "ssh_allowed_cidrs" {
-  description = "CIDRs allowed to reach SSH (22)."
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
-}
-
 variable "repo_url" {
   description = "Git repo cloned onto the box at /opt/alethia."
   type        = string
   default     = "https://github.com/alethialabs-io/alethialabs.git"
+}
+
+variable "environment" {
+  description = "Deployment environment tag (FinOps) — Dev, Stage, or Prod."
+  type        = string
+  default     = "Prod"
+  validation {
+    condition     = contains(["Dev", "Stage", "Prod"], var.environment)
+    error_message = "environment must be Dev, Stage, or Prod."
+  }
 }
