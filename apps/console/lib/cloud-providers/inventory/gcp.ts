@@ -12,7 +12,7 @@ import {
 	cloudSubnets,
 } from "@/lib/db/schema";
 import { ensurePlatformAwsEnv } from "../session/aws-platform";
-import { externalAccountClientFromWif } from "../session/gcp";
+import { externalAccountClientFromWif, isOidcWif } from "../session/gcp";
 import { sealSensitive, softRemoveUnseen } from "./upsert";
 
 const TIMEOUT_MS = 15_000;
@@ -21,8 +21,9 @@ const TIMEOUT_MS = 15_000;
 async function gcpToken(identity: Pick<CloudIdentity, "credentials">): Promise<string> {
 	const wif = identity.credentials.wif_config;
 	if (!wif) throw new Error("No GCP WIF config");
-	// GCP federates through the platform AWS identity — refresh the keyless AWS_* env before minting.
-	await ensurePlatformAwsEnv();
+	// Only the LEGACY AWS-hub config needs the platform AWS creds in env; direct-OIDC configs mint their
+	// own subject token (no AWS hop).
+	if (!isOidcWif(wif)) await ensurePlatformAwsEnv();
 	const client = externalAccountClientFromWif(wif);
 	if (!client) throw new Error("Invalid GCP WIF config");
 	const at = await client.getAccessToken();
