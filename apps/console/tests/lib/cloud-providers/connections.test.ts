@@ -549,7 +549,7 @@ describe("reverifyConnection", () => {
 describe("disconnectIdentity", () => {
 	it("preserves the external id for a role cloud, orphans projects, and emits a revoked alert", async () => {
 		queue(
-			[{ credentials: { external_id: "ext-keep", role_arn: "arn:x" } }], // role-cloud select
+			[{ provider: "aws", credentials: { external_id: "ext-keep", role_arn: "arn:x" } }], // provider+cred select
 			[{ org_id: "org-1" }], // reset update returning
 			[], // projects update
 		);
@@ -572,10 +572,21 @@ describe("disconnectIdentity", () => {
 		);
 	});
 
-	it("resets a non-role cloud to empty credentials (no external id lookup)", async () => {
-		queue([{ org_id: "org-1" }], []); // no initial select for token clouds
+	it("resets a non-role cloud to empty credentials (no external id preserved)", async () => {
+		queue(
+			[{ provider: "digitalocean", credentials: {} }], // provider-assert select (always)
+			[{ org_id: "org-1" }], // reset update
+			[], // projects update
+		);
 		await disconnectIdentity(SCOPE, "ci-2", "digitalocean");
 		expect(db._sets[0].credentials).toEqual({});
 		expect(db._sets[0]).toMatchObject({ name: "DigitalOcean Connection (Pending)" });
+	});
+
+	it("throws on a provider mismatch instead of relabeling the wrong row", async () => {
+		queue([{ provider: "gcp", credentials: {} }]); // the row is actually gcp
+		await expect(disconnectIdentity(SCOPE, "ci-3", "aws")).rejects.toThrow(/provider mismatch/i);
+		// No reset was written.
+		expect(db._sets.length).toBe(0);
 	});
 });
