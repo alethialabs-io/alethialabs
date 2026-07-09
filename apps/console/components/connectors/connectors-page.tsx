@@ -68,7 +68,7 @@ import {
 	Unplug,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 interface ConnectorsPageProps {
@@ -242,6 +242,21 @@ export function ConnectorsPage({
 		// Cloud providers (aws/gcp/azure/extra) → the shared connect-sheet flow.
 		await cloudConnect.openConnect(integration);
 	};
+
+	// Deep-link: `?connect=<slug>` (e.g. from elench's connect action) auto-opens the connect sheet once,
+	// then clears the param so a refresh doesn't reopen it. handleConnect routes by category.
+	const connectHandledRef = useRef(false);
+	useEffect(() => {
+		if (connectHandledRef.current || !canManage) return;
+		const slug = searchParams.get("connect");
+		if (!slug) return;
+		connectHandledRef.current = true;
+		const integration = integrations.find((i) => i.slug === slug);
+		router.replace(`/${orgSlug}/~/connectors`, { scroll: false });
+		if (integration) void handleConnect(integration);
+		// handleConnect is intentionally excluded — the ref makes this run once.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [searchParams, integrations, canManage, orgSlug, router]);
 
 	const openManage = (integration: ConnectorWithConnection) => {
 		setSelectedSlug(integration.slug);
