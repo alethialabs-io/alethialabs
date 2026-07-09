@@ -5,7 +5,7 @@
  * Clouds with full provisioning templates today. The per-cloud provisioning-option
  * catalogs (instance types, regions, DB engines, …) are keyed by this set.
  */
-export type CloudProviderSlug = "aws" | "gcp" | "azure";
+export type CloudProviderSlug = "aws" | "gcp" | "azure" | "hetzner";
 
 /**
  * Every cloud a user can CONNECT (identity layer), including those whose OpenTofu
@@ -16,7 +16,6 @@ export type ConnectableCloudSlug =
 	| CloudProviderSlug
 	| "alibaba"
 	| "digitalocean"
-	| "hetzner"
 	| "civo";
 
 /** High-level metadata and service name mappings for a cloud provider. */

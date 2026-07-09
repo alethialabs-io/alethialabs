@@ -29,7 +29,10 @@ func NewCloudProvider(provider string) (CloudProvider, error) {
 		return &gcpProvider{}, nil
 	case types.CloudProviderAzure:
 		return &azureProvider{}, nil
-	case types.CloudProviderAlibaba, types.CloudProviderDigitalocean, types.CloudProviderHetzner, types.CloudProviderCivo:
+	case types.CloudProviderHetzner:
+		// Self-managed Talos Linux Kubernetes on cheap Hetzner Cloud VMs.
+		return &hetznerProvider{}, nil
+	case types.CloudProviderAlibaba, types.CloudProviderDigitalocean, types.CloudProviderCivo:
 		// Connectable today (identity + connection test); OpenTofu provisioning
 		// templates land in a later pass.
 		return nil, fmt.Errorf("provisioning for %s is coming soon (the account can be connected, but clusters can't be provisioned on it yet)", provider)
@@ -41,7 +44,7 @@ func NewCloudProvider(provider string) (CloudProvider, error) {
 // ExtractClusterName reads the K8s cluster name from OpenTofu outputs,
 // checking provider-specific output keys.
 func ExtractClusterName(outputs map[string]interface{}) string {
-	keys := []string{"eks_cluster_name", "gke_cluster_name", "aks_cluster_name"}
+	keys := []string{"eks_cluster_name", "gke_cluster_name", "aks_cluster_name", "talos_cluster_name"}
 	for _, key := range keys {
 		if val, ok := outputs[key]; ok {
 			if m, ok := val.(map[string]interface{}); ok {
@@ -59,7 +62,7 @@ func ExtractClusterName(outputs map[string]interface{}) string {
 
 // ExtractClusterEndpoint reads the K8s cluster endpoint from OpenTofu outputs.
 func ExtractClusterEndpoint(outputs map[string]interface{}) string {
-	keys := []string{"eks_cluster_endpoint", "gke_cluster_endpoint", "aks_cluster_endpoint"}
+	keys := []string{"eks_cluster_endpoint", "gke_cluster_endpoint", "aks_cluster_endpoint", "talos_cluster_endpoint"}
 	for _, key := range keys {
 		if val, ok := outputs[key]; ok {
 			if m, ok := val.(map[string]interface{}); ok {

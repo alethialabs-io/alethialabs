@@ -17,9 +17,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 import { Separator } from "@repo/ui/separator";
 import { Switch } from "@repo/ui/switch";
 import { cn } from "@repo/ui/utils";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import {
-	ADDABLE_KINDS,
+	addableKindsFor,
 	NODE_REGISTRY,
 } from "./graph/node-registry";
 
@@ -66,6 +66,9 @@ export function CanvasControls() {
 	const toggleConnections = useCanvasStore((s) => s.toggleConnections);
 	const repairOverlaps = useCanvasStore((s) => s.repairOverlaps);
 	const relayout = useCanvasStore((s) => s.relayout);
+	const coreProvider = useCanvasStore((s) =>
+		s.getEffectiveProvider(PROJECT_NODE_ID),
+	);
 	const hiddenKinds = useCanvasStore((s) => s.hiddenKinds);
 	const toggleKindVisibility = useCanvasStore((s) => s.toggleKindVisibility);
 
@@ -152,7 +155,7 @@ export function CanvasControls() {
 					<p className="px-2 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
 						Layers
 					</p>
-					{ADDABLE_KINDS.map((kind) => {
+					{addableKindsFor(coreProvider).map((kind) => {
 						const def = NODE_REGISTRY[kind];
 						const Icon = def.icon;
 						const visible = !hiddenKinds.includes(kind);

@@ -17,7 +17,7 @@ import {
 } from "@/lib/cloud-providers";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import {
-	ADDABLE_KINDS,
+	addableKindsFor,
 	NODE_REGISTRY,
 } from "./graph/node-registry";
 import type { NodeKind } from "./graph/types";
@@ -123,10 +123,11 @@ export function CanvasCommandPalette({
 		);
 	};
 
-	const coreKinds = ADDABLE_KINDS.filter(
+	const addableKinds = addableKindsFor(coreProvider);
+	const coreKinds = addableKinds.filter(
 		(k) => NODE_REGISTRY[k].classification === "core",
 	);
-	const peripheryKinds = ADDABLE_KINDS.filter(
+	const peripheryKinds = addableKinds.filter(
 		(k) => NODE_REGISTRY[k].classification === "periphery",
 	);
 	const placedNodes = nodes.filter((n) => n.id !== PROJECT_NODE_ID);

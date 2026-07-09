@@ -34,4 +34,11 @@ export const MESSAGING: Record<CloudProviderSlug, MessagingConfig> = {
 		fifoLabel: "Session-Based Ordering",
 		visibilityTimeoutLabel: "Lock Duration",
 	},
+	hetzner: {
+		queueLabel: "RabbitMQ Queue",
+		topicLabel: "RabbitMQ Exchange",
+		supportsFifo: false,
+		fifoLabel: "Ordered",
+		visibilityTimeoutLabel: "Visibility timeout (s)",
+	},
 };

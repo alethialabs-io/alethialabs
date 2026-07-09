@@ -92,7 +92,8 @@ export async function finalizeDeployment(jobId: string) {
 		table:
 			| typeof projectCluster
 			| typeof projectDatabases
-			| typeof projectCaches,
+			| typeof projectCaches
+			| typeof projectQueues,
 	) => and(eq(table.project_id, projectId), eq(table.environment_id, environmentId));
 	const meta = deployMetaSchema.parse(job.execution_metadata);
 	const outputs = meta.outputs;
@@ -117,6 +118,65 @@ export async function finalizeDeployment(jobId: string) {
 	// Shared with the day-2 DETECT_DRIFT refresh path (lib/addons/inspection-persistence).
 	if (meta.addon_status) {
 		await recordAddonHealth(projectId, environmentId, meta.addon_status);
+	}
+
+	// Hetzner in-cluster data services deploy as ArgoCD Applications (addon-db-* / addon-cache-* /
+	// addon-queue-*), not managed cloud resources — so their status comes from the Application
+	// health, not tofu outputs. Reflect it onto the matching component rows. Endpoint discovery is
+	// chart-specific and deferred. Safe on the managed clouds: those Application names don't exist,
+	// so nothing matches and the tofu-output writeback below stays authoritative.
+	if (meta.addon_status) {
+		const addonStatus = meta.addon_status;
+		const statusForApp = (
+			appName: string,
+		): "ACTIVE" | "CREATING" | "FAILED" | null => {
+			switch (addonStatus[appName]?.health) {
+				case "Healthy":
+					return "ACTIVE";
+				case "Progressing":
+					return "CREATING";
+				case "Degraded":
+					return "FAILED";
+				default:
+					return null;
+			}
+		};
+		const dbRows = await db
+			.select()
+			.from(projectDatabases)
+			.where(inEnv(projectDatabases));
+		for (const d of dbRows) {
+			const s = statusForApp(`addon-db-${d.name}`);
+			if (s)
+				await db
+					.update(projectDatabases)
+					.set({ status: s })
+					.where(eq(projectDatabases.id, d.id));
+		}
+		const cacheRows = await db
+			.select()
+			.from(projectCaches)
+			.where(inEnv(projectCaches));
+		for (const c of cacheRows) {
+			const s = statusForApp(`addon-cache-${c.name}`);
+			if (s)
+				await db
+					.update(projectCaches)
+					.set({ status: s })
+					.where(eq(projectCaches.id, c.id));
+		}
+		const queueRows = await db
+			.select()
+			.from(projectQueues)
+			.where(inEnv(projectQueues));
+		for (const q of queueRows) {
+			const s = statusForApp(`addon-queue-${q.name}`);
+			if (s)
+				await db
+					.update(projectQueues)
+					.set({ status: s })
+					.where(eq(projectQueues.id, q.id));
+		}
 	}
 	if (meta.security_report) {
 		await recordSecurityPosture(projectId, environmentId, meta.security_report);

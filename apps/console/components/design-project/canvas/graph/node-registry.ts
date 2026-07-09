@@ -296,6 +296,25 @@ export const ADDABLE_KINDS: NodeKind[] = [
 	"repositories",
 ];
 
+/**
+ * Node kinds a given cloud can't back. Compute-only Hetzner runs data services as in-cluster
+ * Helm charts (Postgres→CloudNativePG, cache→Valkey, queue→RabbitMQ); topic (SNS) and nosql
+ * (DynamoDB) have no clean single-chart OSS equal, so they're hidden on Hetzner for now
+ * (see lib/cloud-providers/hetzner-services.ts).
+ */
+const UNSUPPORTED_KINDS_BY_PROVIDER: Partial<
+	Record<CloudProviderSlug, readonly NodeKind[]>
+> = {
+	hetzner: ["topic", "nosql"],
+};
+
+/** ADDABLE_KINDS minus the kinds the effective provider can't back (null → all). */
+export function addableKindsFor(provider: CloudProviderSlug | null): NodeKind[] {
+	const blocked = provider ? UNSUPPORTED_KINDS_BY_PROVIDER[provider] : undefined;
+	if (!blocked || blocked.length === 0) return ADDABLE_KINDS;
+	return ADDABLE_KINDS.filter((k) => !blocked.includes(k));
+}
+
 /** Singleton kinds may exist at most once on the canvas. */
 export const SINGLETON_KINDS: NodeKind[] = [
 	"project",

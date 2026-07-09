@@ -43,6 +43,7 @@ export const WAF_OPTIONS: Record<CloudProviderSlug, WafOption[]> = {
 			cost: "~$13/mo",
 		},
 	],
+	hetzner: [],
 };
 
 interface CertOption {
@@ -67,5 +68,10 @@ export const CERT_OPTIONS: Record<CloudProviderSlug, CertOption> = {
 		providerConfigKey: "managed_certificate",
 		label: "App Service Certificate",
 		description: "Managed TLS certificate from Azure",
+	},
+	hetzner: {
+		providerConfigKey: "managed_certificate",
+		label: "cert-manager",
+		description: "TLS via in-cluster cert-manager",
 	},
 };

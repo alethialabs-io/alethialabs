@@ -58,4 +58,12 @@ export const NOSQL: Record<CloudProviderSlug, NosqlConfig> = {
 		portabilityNote:
 			"Cosmos DB partition keys cannot be changed after creation. Review the key strategy before provisioning.",
 	},
+	hetzner: {
+		serviceName: "—",
+		supportsRangeKey: false,
+		supportsGlobalTables: false,
+		billingModes: [],
+		keyTypes: [],
+		portabilityNote: "Not available on Hetzner",
+	},
 };

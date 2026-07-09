@@ -46,6 +46,13 @@ export const INSTANCE_TYPES: Record<CloudProviderSlug, InstanceTypeOption[]> = {
 		{ value: "Standard_E2s_v5", label: "E2s v5 (Memory)", vcpu: 2, memoryGb: 16, cost: "~$91/mo" },
 		{ value: "Standard_NC4as_T4_v3", label: "NC4as T4 v3 (GPU)", vcpu: 4, memoryGb: 28, cost: "~$384/mo" },
 	],
+	hetzner: [
+		{ value: "cax11", label: "CAX11 (Arm)", vcpu: 2, memoryGb: 4, cost: "~€4/mo" },
+		{ value: "cax21", label: "CAX21 (Arm)", vcpu: 4, memoryGb: 8, cost: "~€8/mo" },
+		{ value: "cax31", label: "CAX31 (Arm)", vcpu: 8, memoryGb: 16, cost: "~€21/mo" },
+		{ value: "cx23", label: "CX23 (x86)", vcpu: 2, memoryGb: 4, cost: "~€5/mo" },
+		{ value: "cx33", label: "CX33 (x86)", vcpu: 4, memoryGb: 8, cost: "~€8/mo" },
+	],
 };
 
 /** Supported Kubernetes versions per provider (latest first). */
@@ -53,6 +60,7 @@ export const K8S_VERSIONS: Record<CloudProviderSlug, string[]> = {
 	aws: ["1.32", "1.31", "1.30", "1.29"],
 	gcp: ["1.31", "1.30", "1.29", "1.28"],
 	azure: ["1.31", "1.30", "1.29", "1.28"],
+	hetzner: ["1.32", "1.31", "1.30"],
 };
 
 interface AutoscalerMeta {
@@ -78,6 +86,11 @@ export const AUTOSCALER: Record<CloudProviderSlug, AutoscalerMeta> = {
 		label: "Cluster Autoscaler",
 		description: "Automatic node pool scaling based on resource requests",
 	},
+	hetzner: {
+		providerConfigKey: "enable_cluster_autoscaler",
+		label: "Cluster Autoscaler",
+		description: "hcloud autoscaler adds/removes nodes based on pending pods",
+	},
 };
 
 /** Default instance type per provider (used for new project forms). */
@@ -85,6 +98,7 @@ export const DEFAULT_INSTANCE_TYPE: Record<CloudProviderSlug, string> = {
 	aws: "t3.medium",
 	gcp: "e2-medium",
 	azure: "Standard_D2s_v5",
+	hetzner: "cax11",
 };
 
 /** Default K8s version per provider. */
@@ -92,6 +106,7 @@ export const DEFAULT_K8S_VERSION: Record<CloudProviderSlug, string> = {
 	aws: "1.32",
 	gcp: "1.31",
 	azure: "1.31",
+	hetzner: "1.32",
 };
 
 /** Cross-provider instance type mapping for project conversion. */
@@ -123,6 +138,17 @@ export const INSTANCE_TYPE_MAP: Record<
 			"r5.large": "Standard_E2s_v5",
 			"g4dn.xlarge": "Standard_NC4as_T4_v3",
 		},
+		hetzner: {
+			"t3.medium": "cax11",
+			"t3.large": "cax21",
+			"t3.xlarge": "cax31",
+			"m5a.large": "cax11",
+			"m5a.xlarge": "cax11",
+			"c5.large": "cax11",
+			"c5.xlarge": "cax11",
+			"r5.large": "cax11",
+			"g4dn.xlarge": "cax11",
+		},
 	},
 	gcp: {
 		gcp: {},
@@ -144,6 +170,16 @@ export const INSTANCE_TYPE_MAP: Record<
 			"n2-standard-4": "Standard_D4as_v5",
 			"c2-standard-4": "Standard_F2s_v2",
 			"n2-highmem-2": "Standard_E2s_v5",
+		},
+		hetzner: {
+			"e2-medium": "cax11",
+			"e2-standard-2": "cax21",
+			"e2-standard-4": "cax31",
+			"n2-standard-2": "cax21",
+			"n2-standard-4": "cax31",
+			"c2-standard-4": "cax31",
+			"n2-highmem-2": "cax11",
+			"n1-standard-1": "cax11",
 		},
 	},
 	azure: {
@@ -167,6 +203,40 @@ export const INSTANCE_TYPE_MAP: Record<
 			"Standard_F2s_v2": "c2-standard-4",
 			"Standard_E2s_v5": "n2-highmem-2",
 			"Standard_NC4as_T4_v3": "a2-highgpu-1g",
+		},
+		hetzner: {
+			"Standard_D2s_v5": "cax11",
+			"Standard_D4s_v5": "cax21",
+			"Standard_D8s_v5": "cax31",
+			"Standard_D2as_v5": "cax11",
+			"Standard_D4as_v5": "cax21",
+			"Standard_F2s_v2": "cax11",
+			"Standard_E2s_v5": "cax11",
+			"Standard_NC4as_T4_v3": "cax11",
+		},
+	},
+	hetzner: {
+		hetzner: {},
+		aws: {
+			cax11: "t3.medium",
+			cax21: "t3.large",
+			cax31: "t3.xlarge",
+			cx23: "t3.medium",
+			cx33: "t3.large",
+		},
+		gcp: {
+			cax11: "e2-medium",
+			cax21: "e2-standard-2",
+			cax31: "e2-standard-4",
+			cx23: "e2-medium",
+			cx33: "e2-standard-2",
+		},
+		azure: {
+			cax11: "Standard_D2s_v5",
+			cax21: "Standard_D4s_v5",
+			cax31: "Standard_D8s_v5",
+			cx23: "Standard_D2s_v5",
+			cx33: "Standard_D4s_v5",
 		},
 	},
 };
