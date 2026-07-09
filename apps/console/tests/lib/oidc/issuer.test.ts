@@ -155,8 +155,8 @@ describe("OIDC issuer key rotation (overlap JWKS)", () => {
 	function installRotating(): { primary: { pem: string; b64: string }; previous: { pem: string; b64: string } } {
 		const primary = makeKey();
 		const previous = makeKey();
-		process.env.ALETHIA_OIDC_SIGNING_KEY = primary.b64;
-		process.env.ALETHIA_OIDC_SIGNING_KEY_PREVIOUS = previous.b64;
+		process.env.ALETHIA_OIDC_SIGNING_KEY = primary.b64; // gitleaks:allow — freshly generated in-test, not a secret
+		process.env.ALETHIA_OIDC_SIGNING_KEY_PREVIOUS = previous.b64; // gitleaks:allow — freshly generated in-test, not a secret
 		process.env.NEXT_PUBLIC_APP_URL = APP_URL;
 		__resetIssuerCache();
 		return { primary, previous };
