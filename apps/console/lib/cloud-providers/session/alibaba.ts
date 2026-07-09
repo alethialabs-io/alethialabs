@@ -29,10 +29,21 @@ export const ALIBABA_TOKEN_AUDIENCE = "sts.aliyuncs.com";
  */
 export const ALIBABA_OIDC_PROVIDER_NAME = "alethia";
 
+/** Temporary STS credentials returned by AssumeRoleWithOIDC (used to call regional APIs, e.g. inventory). */
+export interface AlibabaCredentials {
+	accessKeyId: string;
+	accessKeySecret: string;
+	securityToken: string;
+	/** ISO expiration; the creds are short-lived (~1h). */
+	expiration: string | null;
+}
+
 /** Result of assuming the customer RAM role. */
 export interface AlibabaSession {
 	/** The account id we authenticated into (from the role ARN). */
 	accountId: string | null;
+	/** The temporary STS credentials from the assume. Present on success; used for inventory/API calls. */
+	credentials: AlibabaCredentials | null;
 }
 
 /** acs:ram::<account>:role/Name → <account>. */
@@ -101,15 +112,29 @@ export async function assumeAlibabaRole(
 		const resBody = (await res.json().catch(() => ({}))) as {
 			Code?: string;
 			Message?: string;
-			Credentials?: { AccessKeyId?: string };
+			Credentials?: {
+				AccessKeyId?: string;
+				AccessKeySecret?: string;
+				SecurityToken?: string;
+				Expiration?: string;
+			};
 		};
 		if (!res.ok || resBody.Code) {
 			throw new Error(resBody.Message || resBody.Code || `Alibaba STS HTTP ${res.status}`);
 		}
-		if (!resBody.Credentials?.AccessKeyId) {
+		const c = resBody.Credentials;
+		if (!c?.AccessKeyId || !c.AccessKeySecret || !c.SecurityToken) {
 			throw new Error("Alibaba AssumeRoleWithOIDC returned no credentials.");
 		}
-		return { accountId: accountIdFromArn(roleArn) };
+		return {
+			accountId: accountIdFromArn(roleArn),
+			credentials: {
+				accessKeyId: c.AccessKeyId,
+				accessKeySecret: c.AccessKeySecret,
+				securityToken: c.SecurityToken,
+				expiration: c.Expiration ?? null,
+			},
+		};
 	} finally {
 		clearTimeout(timer);
 	}
