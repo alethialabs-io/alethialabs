@@ -2,15 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @vitest-environment node
 
-// externalAccountClientFromWif routes GCP auth by config kind: a DIRECT-OIDC config builds an
-// IdentityPoolClient whose subject-token supplier mints a fresh Alethia assertion (no AWS hop); the legacy
-// AWS-hub config falls to ExternalAccountClient.fromJSON (which reads the aws4_request credential_source).
+// externalAccountClientFromWif is direct-OIDC only: a DIRECT-OIDC config builds an IdentityPoolClient
+// whose subject-token supplier mints a fresh Alethia assertion (no AWS hop). A retired AWS-hub config
+// (aws4_request) is no longer supported → the function returns null so the caller reports "reconnect".
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { identityPoolCtor, fromJSON, mintFn } = vi.hoisted(() => ({
+const { identityPoolCtor, mintFn } = vi.hoisted(() => ({
 	identityPoolCtor: vi.fn(),
-	fromJSON: vi.fn(() => ({ tag: "external-account" })),
 	mintFn: vi.fn(async () => "minted.jwt"),
 }));
 
@@ -20,7 +19,6 @@ vi.mock("google-auth-library", () => ({
 			identityPoolCtor(opts);
 		}
 	},
-	ExternalAccountClient: { fromJSON },
 }));
 vi.mock("@/lib/oidc/issuer", () => ({ mintWorkloadToken: mintFn }));
 
@@ -50,7 +48,6 @@ const legacyWif: WifCredentialConfig = {
 
 beforeEach(() => {
 	identityPoolCtor.mockReset();
-	fromJSON.mockClear();
 	mintFn.mockClear();
 });
 
@@ -58,7 +55,6 @@ describe("externalAccountClientFromWif", () => {
 	it("builds an IdentityPoolClient with a minting supplier for a direct-OIDC config", async () => {
 		externalAccountClientFromWif(oidcWif);
 		expect(identityPoolCtor).toHaveBeenCalledOnce();
-		expect(fromJSON).not.toHaveBeenCalled();
 
 		const opts = identityPoolCtor.mock.calls[0][0] as {
 			audience: string;
@@ -76,9 +72,9 @@ describe("externalAccountClientFromWif", () => {
 		expect(mintFn).toHaveBeenCalledWith({ audience: GCP_TOKEN_AUDIENCE });
 	});
 
-	it("uses ExternalAccountClient.fromJSON for a legacy AWS-hub config", () => {
-		externalAccountClientFromWif(legacyWif);
-		expect(fromJSON).toHaveBeenCalledOnce();
+	it("returns null for a retired legacy AWS-hub config (no client built)", () => {
+		expect(externalAccountClientFromWif(legacyWif)).toBeNull();
 		expect(identityPoolCtor).not.toHaveBeenCalled();
+		expect(mintFn).not.toHaveBeenCalled();
 	});
 });

@@ -8,8 +8,7 @@
 // a 5-min timeout.
 
 import type { CloudIdentity } from "@/lib/db/schema";
-import { ensurePlatformAwsEnv } from "../session/aws-platform";
-import { externalAccountClientFromWif, isOidcWif } from "../session/gcp";
+import { externalAccountClientFromWif } from "../session/gcp";
 import { type HealthResult, errorMessage } from "./types";
 
 const TIMEOUT_MS = 12_000;
@@ -30,12 +29,13 @@ export async function probeGcpHealth(
 
 	let token: string;
 	try {
-		// DIRECT-OIDC configs mint the subject token themselves (no AWS). Only the LEGACY AWS-hub config
-		// needs the platform AWS creds in env (google-auth's `--aws` source reads AWS_*), so refresh them
-		// only then — keyless, minted via the OIDC issuer incl. the session token.
-		if (!isOidcWif(wif)) await ensurePlatformAwsEnv();
+		// Direct-OIDC: the client mints its own subject token (no AWS). A retired AWS-hub config yields no
+		// client — it must be re-connected.
 		const client = externalAccountClientFromWif(wif);
-		if (!client) return disconnected("The stored GCP WIF config is not a valid external account.");
+		if (!client)
+			return disconnected(
+				"This GCP connection uses the retired AWS-hub setup. Reconnect it (Connectors → GCP) to migrate to direct-OIDC.",
+			);
 		const at = await client.getAccessToken();
 		if (!at.token) return disconnected("GCP token acquisition returned no token.");
 		token = at.token;

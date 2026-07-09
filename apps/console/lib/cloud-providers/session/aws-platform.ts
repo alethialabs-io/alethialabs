@@ -4,10 +4,8 @@
 // Platform AWS identity — KEYLESS. The control plane runs off-AWS (a Hetzner box), so instead of a
 // long-lived IAM access key it federates INTO the platform AWS account via STS AssumeRoleWithWebIdentity,
 // presenting a short-lived assertion minted by Alethia's own OIDC issuer (lib/oidc/issuer.ts) — the same
-// issuer Azure + Alibaba use. The result is temporary creds that back BOTH:
-//   • the customer AssumeRole in session/aws.ts (AWS connectors), and
-//   • the GCP Workload-Identity subject token — google-auth's `--aws` source reads AWS_* from the
-//     environment, so ensurePlatformAwsEnv() writes/refreshes those vars (incl. the session token).
+// issuer Azure + Alibaba use. The result is temporary creds that back the customer AssumeRole in
+// session/aws.ts (AWS connectors). (GCP no longer rides these — it federates directly from the OIDC issuer.)
 // No secret is stored anywhere; the only long-lived material is the auto-managed issuer signing key.
 
 import {
@@ -91,19 +89,6 @@ export async function getPlatformAwsCredentials(): Promise<PlatformAwsCredential
  */
 export function platformCredentialProvider(): () => Promise<PlatformAwsCredentials> {
 	return async () => getPlatformAwsCredentials();
-}
-
-/**
- * Ensures `process.env.AWS_ACCESS_KEY_ID/SECRET_ACCESS_KEY/SESSION_TOKEN` (+ AWS_REGION) hold fresh
- * platform creds — this is what google-auth-library's AWS subject-token source reads to federate GCP.
- * Call before minting a GCP WIF token. No-op-safe to call repeatedly (creds are cached).
- */
-export async function ensurePlatformAwsEnv(): Promise<void> {
-	const c = await getPlatformAwsCredentials();
-	process.env.AWS_ACCESS_KEY_ID = c.accessKeyId;
-	process.env.AWS_SECRET_ACCESS_KEY = c.secretAccessKey;
-	if (c.sessionToken) process.env.AWS_SESSION_TOKEN = c.sessionToken;
-	process.env.AWS_REGION ??= STS_REGION;
 }
 
 /** Test seam: clear the cached credentials. */

@@ -4,8 +4,7 @@
 
 // Keyless platform AWS: the console federates into the platform AWS account via STS
 // AssumeRoleWithWebIdentity with a minted assertion — no static key. These tests pin the contract:
-// mint → assume → cache/refresh, and (critically for GCP) that ensurePlatformAwsEnv writes ALL THREE
-// AWS_* env names incl. the session token that a static key never carried.
+// mint → assume → cache/refresh, and that the config is gated on the issuer + role ARN.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -27,7 +26,6 @@ vi.mock("@/lib/oidc/issuer", () => ({
 import {
 	__resetPlatformAwsCache,
 	awsPlatformConfigured,
-	ensurePlatformAwsEnv,
 	getPlatformAwsCredentials,
 } from "@/lib/cloud-providers/session/aws-platform";
 
@@ -72,14 +70,6 @@ describe("aws-platform (keyless AssumeRoleWithWebIdentity)", () => {
 		await getPlatformAwsCredentials();
 		await getPlatformAwsCredentials();
 		expect(mintMock).toHaveBeenCalledTimes(2);
-	});
-
-	it("ensurePlatformAwsEnv writes all three AWS_* names incl. the session token", async () => {
-		sendMock.mockResolvedValue(stsResponse(3_600_000));
-		await ensurePlatformAwsEnv();
-		expect(process.env.AWS_ACCESS_KEY_ID).toBe("AKIA_TMP");
-		expect(process.env.AWS_SECRET_ACCESS_KEY).toBe("tmp-secret");
-		expect(process.env.AWS_SESSION_TOKEN).toBe("tmp-session-token");
 	});
 
 	it("awsPlatformConfigured tracks the issuer + role ARN", () => {
