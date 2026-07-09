@@ -11,6 +11,7 @@ import {
 	getAddOn,
 	parseValuesYaml,
 	resolveAddOnInstall,
+	resolveByoChartInstall,
 } from "@/lib/addons/catalog";
 
 describe("deepMerge", () => {
@@ -107,6 +108,63 @@ describe("resolveAddOnInstall", () => {
 			values_yaml: ":\n  - not valid yaml: [",
 		});
 		expect(spec).not.toBeNull();
+	});
+});
+
+describe("resolveByoChartInstall", () => {
+	it("resolves a git-source spec (path + ref + repo) from a byo row", () => {
+		const spec = resolveByoChartInstall({
+			addon_id: "payments",
+			mode: "managed",
+			chart_repo: "https://github.com/acme/payments-helm",
+			chart_path: "charts/payments",
+			version: "main",
+			namespace: "payments",
+			values: { replicas: 2 },
+		});
+		expect(spec).not.toBeNull();
+		expect(spec).toMatchObject({
+			id: "payments",
+			source: "git",
+			chartRepo: "https://github.com/acme/payments-helm",
+			path: "charts/payments",
+			chart: "",
+			version: "main",
+			namespace: "payments",
+			values: { replicas: 2 },
+		});
+	});
+
+	it("defaults ref to HEAD and namespace to default", () => {
+		const spec = resolveByoChartInstall({
+			addon_id: "svc",
+			mode: "managed",
+			chart_repo: "https://github.com/acme/svc",
+			chart_path: "chart",
+		});
+		expect(spec?.version).toBe("HEAD");
+		expect(spec?.namespace).toBe("default");
+	});
+
+	it("deep-merges a raw values_yaml override on top of stored values", () => {
+		const spec = resolveByoChartInstall({
+			addon_id: "svc",
+			mode: "managed",
+			chart_repo: "https://github.com/acme/svc",
+			chart_path: "chart",
+			values: { image: { tag: "1.0" }, replicas: 1 },
+			values_yaml: "image:\n  tag: v2",
+		});
+		expect(spec?.values).toEqual({ image: { tag: "v2" }, replicas: 1 });
+	});
+
+	it("returns null when the git coordinates are missing", () => {
+		expect(
+			resolveByoChartInstall({ addon_id: "x", mode: "managed", chart_path: "chart" }),
+		).toBeNull();
+		expect(
+			resolveByoChartInstall({ addon_id: "x", mode: "managed", chart_repo: "https://x" }),
+		).toBeNull();
 	});
 });
 
