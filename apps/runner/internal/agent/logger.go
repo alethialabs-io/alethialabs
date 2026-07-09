@@ -23,6 +23,7 @@ type JobLogger struct {
 	mu         sync.Mutex
 	notify     chan struct{}
 	done       chan struct{}
+	finished   chan struct{}
 	closeOnce  sync.Once
 }
 
@@ -33,6 +34,7 @@ func NewJobLogger(client LogSender, jobID, streamType string) *JobLogger {
 		streamType: streamType,
 		notify:     make(chan struct{}, 1),
 		done:       make(chan struct{}),
+		finished:   make(chan struct{}),
 	}
 	go l.flushLoop()
 	return l
@@ -78,6 +80,10 @@ func (l *JobLogger) Flush() {
 }
 
 func (l *JobLogger) flushLoop() {
+	// Signal Close() that the loop has fully drained + exited, so Close never returns while a
+	// notify/ticker-driven Flush → SendLog is still in flight (which would let a reader race a chunk).
+	defer close(l.finished)
+
 	// Backstop only — most flushes are notify-driven (sub-100ms after a write). The
 	// ticker catches anything that slipped past a coalesced wake.
 	ticker := time.NewTicker(1 * time.Second)
@@ -99,6 +105,9 @@ func (l *JobLogger) flushLoop() {
 func (l *JobLogger) Close() {
 	l.closeOnce.Do(func() {
 		close(l.done)
-		l.Flush()
+		// Wait for flushLoop to drain and exit. Because the loop is single-threaded, any in-flight
+		// Flush completes before it processes `done` + does its final Flush — so once this returns,
+		// every buffered chunk has been sent (no SendLog can still be landing).
+		<-l.finished
 	})
 }
