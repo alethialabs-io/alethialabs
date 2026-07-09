@@ -120,10 +120,9 @@ export async function POST(
 	}: ProjectAssistantBody = await req.json();
 	const deepReasoning = deepReasoningSchema.parse(deepReasoningRaw);
 
-	// Book the up-front budget check at the deep-reasoning-aware cost (Opus turn = 2 credits).
-	const charge = await assertAiAllowed(actor.orgId, "agent", actor.userId, {
-		deepReasoning,
-	}).catch((e: unknown) => {
+	// Metered turn: gate on headroom (the real cost-of-serve is settled after it runs). The
+	// deep-reasoning flag no longer affects the charge — Opus just settles its own real cost.
+	const charge = await assertAiAllowed(actor.orgId, "agent", actor.userId).catch((e: unknown) => {
 		if (e instanceof AiBudgetError) return e;
 		throw e;
 	});

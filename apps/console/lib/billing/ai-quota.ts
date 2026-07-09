@@ -6,6 +6,7 @@ import { and, eq, gte, sql, sum } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { aiCreditGrant, aiUsageLedger } from "@/lib/db/schema";
 import { aiCostMicros } from "@/lib/billing/model-costs";
+import { costToCredits } from "@/lib/billing/ai-credits";
 import { captureAiGeneration } from "@/lib/analytics/server";
 import { checkAiSpendThreshold } from "@/lib/billing/ai-spend-alert";
 
@@ -180,18 +181,22 @@ export async function grantAiCredits(input: {
 }
 
 /**
- * Append one metered AI action to the ledger. Records the user-facing `credits` and,
- * when token usage is supplied, the real cost-of-serve (model + tokens + snapshotted
- * USD micros via `aiCostMicros`). No-ops only when there is nothing to record — a
- * 0-credit call with no model (e.g. a legacy/self-host call before token capture).
- * A 0-credit call WITH a model is still recorded (cost row) so self-hosters and the
- * FinOps rollup get real cost visibility without affecting the credit budget.
+ * Append one metered AI action to the ledger. When `credits` is supplied it's booked
+ * verbatim (the FIXED path — e.g. a scan's nominal charge, or an explicit 0-credit
+ * cost-only row). When `credits` is OMITTED (the metered settle path), the row's
+ * cost-weighted credits are DERIVED from its real cost-of-serve — `costToCredits(cost_micros)`
+ * — so each model row is priced by its own tokens. Always records the model + tokens +
+ * snapshotted USD micros (via `aiCostMicros`) when a model is present. No-ops only when
+ * there is nothing to record — 0 credits AND no model (e.g. a legacy/self-host call before
+ * token capture). A 0-credit call WITH a model is still recorded (cost row) so self-hosters
+ * and the FinOps rollup get real cost visibility without affecting the credit budget.
  */
 export async function recordAiUsage(input: {
 	orgId: string;
 	userId: string;
 	kind: AiUsageKind;
-	credits: number;
+	/** Credits to book. Omit on a metered (settle) turn — derived from `cost_micros`. */
+	credits?: number;
 	source: CreditSource;
 	refId?: string;
 	model?: string;
@@ -199,7 +204,6 @@ export async function recordAiUsage(input: {
 	outputTokens?: number;
 	cachedInputTokens?: number;
 }): Promise<void> {
-	if (input.credits <= 0 && !input.model) return;
 	const costMicros = input.model
 		? aiCostMicros({
 				model: input.model,
@@ -208,13 +212,17 @@ export async function recordAiUsage(input: {
 				cachedInputTokens: input.cachedInputTokens,
 			})
 		: null;
+	// Settle path: no explicit credits → cost-weighted from the row's real cost-of-serve.
+	const credits =
+		input.credits ?? (costMicros != null ? costToCredits(costMicros) : 0);
+	if (credits <= 0 && !input.model) return;
 	await getServiceDb()
 		.insert(aiUsageLedger)
 		.values({
 			org_id: input.orgId,
 			user_id: input.userId,
 			kind: input.kind,
-			credits: input.credits,
+			credits,
 			source: input.source,
 			ref_id: input.refId ?? null,
 			model: input.model ?? null,
@@ -245,7 +253,7 @@ export async function recordAiUsage(input: {
 	// Spend-threshold alert (deliverable 3): from the same chokepoint, check whether this
 	// included spend pushed the org across a % of its weekly allowance and, if so, enqueue a
 	// `system.cost.budget_threshold` alert. Fire-and-forget — must never slow/fail the AI call.
-	if (input.credits > 0 && input.source === "included") {
+	if (credits > 0 && input.source === "included") {
 		void checkAiSpendThreshold(input.orgId).catch(() => {
 			/* alerting must never break an AI call */
 		});

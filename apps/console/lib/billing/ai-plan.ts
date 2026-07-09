@@ -7,10 +7,12 @@
 // are their own Stripe subscription (separate price IDs) that raise the caps + upgrade the
 // advisor model. Credit packs (lib/billing/ai-credits.ts) stack on top of ANY tier.
 //
-// All AI spends **AI credits** from one budget (a scan is heavy, a message is light —
-// see ai-credits.ts). Two FIXED epoch buckets scaled by the tier: a **daily** cap and a
-// **weekly** cap. Burn freely until empty, then wait for the reset, upgrade, or buy
-// top-up credits (NO silent overage). These allowances are final (maintainer-approved) —
+// All AI spends **AI credits** from one budget. A credit is a slice of real cost-of-serve
+// ($0.001 each — see ai-credits.ts), NOT a message: a metered chat turn settles its actual
+// token cost, so the caps are a true $ ceiling, not a message count. Two FIXED epoch buckets
+// scaled by the tier: a **weekly** cap (the real governor) and a **daily** cap (≈45% of
+// weekly — a loose burst rail). Burn freely until empty, then wait for the reset, upgrade, or
+// buy top-up credits (NO silent overage). These allowances are final (maintainer-approved) —
 // tune here.
 //
 // Pure data + a thin DB read (resolveAiTier). NOT marked `server-only` so the schema can
@@ -49,12 +51,16 @@ export interface AiTierSpec {
 }
 
 /**
- * The AI-tier ladder (final maintainer-approved allowances; credits: message=1,
- * deep-reasoning message=2, scan=20):
+ * The AI-tier ladder (final maintainer-approved allowances). Credits are cost-of-serve
+ * slices ($0.001 each — see ai-credits.ts), NOT messages. The **weekly** cap is the real
+ * ceiling; the **daily** cap (≈45% of weekly) is a loose burst rail. Each cap is annotated
+ * with its dollar value.
  *  - ai_free → everyone: a usable daily/weekly allowance, Haiku executor only (no advisor).
  *  - ai_plus → paid AI subscription: bigger caps + a Sonnet advisor.
  *  - ai_max  → top AI subscription: the largest caps + a Sonnet advisor (Opus on demand,
  *    per-message via the deep-reasoning opt-in — see lib/config/ai.ts `getAdvisorModel`).
+ *    Deep reasoning routes Opus but carries NO credit multiplier — Opus simply settles its
+ *    own (higher) real cost.
  *
  * The `perUser*` sub-caps bound any single seat to a fraction of the org cap so one member
  * can't exhaust the whole workspace's included allowance.
@@ -63,29 +69,29 @@ export const AI_TIERS: Record<AiTier, AiTierSpec> = {
 	ai_free: {
 		enabled: true,
 		advisor: "none",
-		dailyCredits: 5,
-		weeklyCredits: 15,
+		dailyCredits: 230, // ≈$0.23/day burst rail
+		weeklyCredits: 510, // ≈$0.51/week — the governor
 		// Per-seat sub-cap = the full org cap (free orgs are usually a single seat).
-		perUserDailyCredits: 5,
-		perUserWeeklyCredits: 15,
+		perUserDailyCredits: 230, // ≈$0.23/day
+		perUserWeeklyCredits: 510, // ≈$0.51/week
 	},
 	ai_plus: {
 		enabled: true,
 		advisor: "sonnet",
-		dailyCredits: 40,
-		weeklyCredits: 180,
+		dailyCredits: 6_750, // ≈$6.75/day burst rail
+		weeklyCredits: 15_000, // ≈$15/week — the governor
 		// Per-seat sub-cap (paid orgs have several seats sharing the pool).
-		perUserDailyCredits: 25,
-		perUserWeeklyCredits: 110,
+		perUserDailyCredits: 4_140, // ≈$4.14/day
+		perUserWeeklyCredits: 9_200, // ≈$9.20/week
 	},
 	ai_max: {
 		enabled: true,
 		advisor: "sonnet",
-		dailyCredits: 200,
-		weeklyCredits: 900,
+		dailyCredits: 33_750, // ≈$33.75/day burst rail
+		weeklyCredits: 75_000, // ≈$75/week — the governor
 		// Per-seat sub-cap (larger teams share the pool).
-		perUserDailyCredits: 130,
-		perUserWeeklyCredits: 550,
+		perUserDailyCredits: 20_700, // ≈$20.70/day
+		perUserWeeklyCredits: 46_000, // ≈$46/week
 	},
 };
 

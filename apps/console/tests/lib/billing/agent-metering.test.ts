@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Per-model agent metering (lib/billing/agent-metering.ts). Asserts the pure step→model
-// aggregation and that recordAgentTurnUsage books the credit charge exactly once (first
-// model) while recording every other model as a cost-only row — so advisor + executor cost
-// is visible without double-charging the credit budget.
+// aggregation and that recordAgentTurnUsage:
+//  - SETTLE charge (metered, the norm): omits `credits` on EVERY model row (each row's
+//    cost-weighted credits are derived from its own cost_micros) and threads the source.
+//  - FIXED charge (reservation): books the credit charge once on the first model row and
+//    records the rest as cost-only rows — no double-charge.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -50,13 +52,13 @@ describe("aggregateUsageByModel", () => {
 	});
 });
 
-describe("recordAgentTurnUsage", () => {
-	it("charges credits once (first model) and records the rest as cost-only rows", async () => {
+describe("recordAgentTurnUsage — settle (metered) charge", () => {
+	it("omits credits on EVERY model row (each derives its own cost) and threads the source", async () => {
 		await recordAgentTurnUsage({
 			orgId: "org-1",
 			userId: "user-1",
 			kind: "agent",
-			charge: { source: "included", credits: 1 },
+			charge: { source: "included", settle: true },
 			refId: "thread-1",
 			steps: [
 				{ model: SONNET, usage: { inputTokens: 100, outputTokens: 40 } }, // advisor (step 0)
@@ -66,12 +68,12 @@ describe("recordAgentTurnUsage", () => {
 		});
 
 		expect(recordAiUsage).toHaveBeenCalledTimes(2); // one row per distinct model
-		// First model (advisor) carries the single credit charge.
+		// Advisor row: credits omitted (settled from cost), summed tokens, source threaded.
 		expect(recordAiUsage).toHaveBeenNthCalledWith(1, {
 			orgId: "org-1",
 			userId: "user-1",
 			kind: "agent",
-			credits: 1,
+			credits: undefined,
 			source: "included",
 			refId: "thread-1",
 			model: SONNET,
@@ -79,12 +81,12 @@ describe("recordAgentTurnUsage", () => {
 			outputTokens: 40,
 			cachedInputTokens: 0,
 		});
-		// Executor is a cost-only row (credits 0) with summed tokens.
+		// Executor row: ALSO omits credits (its own cost), summed tokens.
 		expect(recordAiUsage).toHaveBeenNthCalledWith(2, {
 			orgId: "org-1",
 			userId: "user-1",
 			kind: "agent",
-			credits: 0,
+			credits: undefined,
 			source: "included",
 			refId: "thread-1",
 			model: HAIKU,
@@ -92,43 +94,49 @@ describe("recordAgentTurnUsage", () => {
 			outputTokens: 110,
 			cachedInputTokens: 0,
 		});
+		// Belt-and-braces: no row carries an explicit credit number (toEqual ignores undefined).
+		for (const [arg] of vi.mocked(recordAiUsage).mock.calls) {
+			expect(arg.credits).toBeUndefined();
+		}
 	});
 
-	it("records the deep-reasoning 2-credit charge on the first (advisor) row", async () => {
-		// A deep-reasoning turn passes a 2-credit charge; it's booked once, on the advisor row.
+	it("threads a purchased settle source onto each row", async () => {
 		await recordAgentTurnUsage({
 			orgId: "org-1",
 			userId: "user-1",
 			kind: "agent",
-			charge: { source: "included", credits: 2 },
+			charge: { source: "purchased", settle: true },
+			steps: [{ model: HAIKU, usage: { inputTokens: 10, outputTokens: 5 } }],
+		});
+		expect(recordAiUsage).toHaveBeenCalledTimes(1);
+		expect(recordAiUsage).toHaveBeenCalledWith(
+			expect.objectContaining({ model: HAIKU, source: "purchased" }),
+		);
+		expect(vi.mocked(recordAiUsage).mock.calls[0][0].credits).toBeUndefined();
+	});
+});
+
+describe("recordAgentTurnUsage — fixed (reservation) charge", () => {
+	it("charges credits once (first model) and records the rest as cost-only rows", async () => {
+		await recordAgentTurnUsage({
+			orgId: "org-1",
+			userId: "user-1",
+			kind: "agent",
+			charge: { source: "included", credits: 200 },
 			refId: "thread-1",
 			steps: [
-				{ model: SONNET, usage: { inputTokens: 100, outputTokens: 40 } }, // advisor (step 0)
-				{ model: HAIKU, usage: { inputTokens: 300, outputTokens: 80 } }, // executor
+				{ model: SONNET, usage: { inputTokens: 100, outputTokens: 40 } },
+				{ model: HAIKU, usage: { inputTokens: 300, outputTokens: 80 } },
 			],
 		});
 		expect(recordAiUsage).toHaveBeenCalledTimes(2);
 		expect(recordAiUsage).toHaveBeenNthCalledWith(
 			1,
-			expect.objectContaining({ model: SONNET, credits: 2 }),
+			expect.objectContaining({ model: SONNET, credits: 200 }),
 		);
 		expect(recordAiUsage).toHaveBeenNthCalledWith(
 			2,
 			expect.objectContaining({ model: HAIKU, credits: 0 }),
-		);
-	});
-
-	it("books the full charge on the single row for a one-model turn", async () => {
-		await recordAgentTurnUsage({
-			orgId: "org-1",
-			userId: "user-1",
-			kind: "agent",
-			charge: { source: "purchased", credits: 1 },
-			steps: [{ model: HAIKU, usage: { inputTokens: 10, outputTokens: 5 } }],
-		});
-		expect(recordAiUsage).toHaveBeenCalledTimes(1);
-		expect(recordAiUsage).toHaveBeenCalledWith(
-			expect.objectContaining({ model: HAIKU, credits: 1, source: "purchased" }),
 		);
 	});
 });

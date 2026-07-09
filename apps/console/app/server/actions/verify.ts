@@ -59,7 +59,7 @@ export async function explainJobFindings(jobId: string) {
 		orgId: actor.orgId,
 		userId: actor.userId,
 		kind: "agent",
-		credits: charge.credits,
+		// Metered → omit credits; settled from the explanation's real cost-of-serve.
 		source: charge.source,
 		refId: jobId,
 		model: resolved.key,

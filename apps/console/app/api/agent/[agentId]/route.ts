@@ -96,7 +96,7 @@ export async function POST(
 				orgId: actor.orgId,
 				userId: actor.userId,
 				kind: "agent",
-				credits: charge.credits,
+				// Metered → omit credits; settled from this row's real cost-of-serve.
 				source: charge.source,
 				refId: threadId ?? agentId,
 				model: model.key,

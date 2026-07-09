@@ -4,38 +4,44 @@
 import { describe, expect, it } from "vitest";
 import {
 	AI_CREDIT_PACKS,
+	CREDIT_UNIT_MICROS,
+	costToCredits,
 	creditPack,
 	creditsFor,
-	DEEP_REASONING_CREDITS,
-	MESSAGE_CREDITS,
 	SCAN_CREDITS,
 } from "@/lib/billing/ai-credits";
 
+describe("costToCredits", () => {
+	it("converts real cost (USD micros) to cost-weighted credits, rounding up", () => {
+		// 1 credit = $0.001 = 1000 micros.
+		expect(CREDIT_UNIT_MICROS).toBe(1000);
+		// A ~$0.084 Sonnet turn ≈ 84 credits; a ~$0.117 Opus turn ≈ 117.
+		expect(costToCredits(84_000)).toBe(84);
+		expect(costToCredits(117_000)).toBe(117);
+		// A zero-cost row is zero credits.
+		expect(costToCredits(0)).toBe(0);
+	});
+
+	it("rounds a fractional-unit cost up (never undercharges)", () => {
+		expect(costToCredits(1)).toBe(1); // $0.000001 → 1 credit
+		expect(costToCredits(1500)).toBe(2); // 1.5 units → 2 credits
+	});
+});
+
 describe("creditsFor", () => {
-	it("charges a scan more than a message", () => {
+	it("charges the fixed nominal cost for a scan and nothing for metered turns", () => {
+		// Scan is the only fixed-cost kind; its real cost is on the runner job.
 		expect(creditsFor("scan")).toBe(SCAN_CREDITS);
-		expect(creditsFor("agent")).toBe(MESSAGE_CREDITS);
-		expect(SCAN_CREDITS).toBeGreaterThan(MESSAGE_CREDITS);
-	});
-
-	it("pins the flat costs: scan=20, message=1, deep-reasoning message=2", () => {
-		expect(creditsFor("scan")).toBe(20);
-		expect(creditsFor("agent")).toBe(1);
-		expect(creditsFor("agent", { deepReasoning: true })).toBe(2);
-		expect(DEEP_REASONING_CREDITS).toBe(2);
-	});
-
-	it("charges double for a deep-reasoning turn, but a scan stays flat", () => {
-		expect(creditsFor("agent", { deepReasoning: false })).toBe(MESSAGE_CREDITS);
-		expect(creditsFor("agent", { deepReasoning: true })).toBe(DEEP_REASONING_CREDITS);
-		// Deep reasoning never changes the scan cost (heavy flat rate).
-		expect(creditsFor("scan", { deepReasoning: true })).toBe(SCAN_CREDITS);
+		expect(SCAN_CREDITS).toBe(200);
+		// Metered turns settle their real cost — no fixed per-message charge.
+		expect(creditsFor("agent")).toBe(0);
+		expect(creditsFor("support")).toBe(0);
 	});
 });
 
 describe("creditPack", () => {
 	it("looks up a known pack", () => {
-		expect(creditPack("s")).toEqual({ id: "s", credits: 100, amountCents: 2500 });
+		expect(creditPack("s")).toEqual({ id: "s", credits: 5_000, amountCents: 1_900 });
 	});
 
 	it("returns undefined for an unknown id", () => {
@@ -50,6 +56,14 @@ describe("AI_CREDIT_PACKS invariants", () => {
 		for (const p of AI_CREDIT_PACKS) {
 			expect(p.credits).toBeGreaterThan(0);
 			expect(p.amountCents).toBeGreaterThan(0);
+		}
+	});
+
+	it("prices every pack comfortably above the $0.001 cost-of-serve", () => {
+		// $/credit must exceed the cost-of-serve unit ($0.001) so packs carry margin.
+		for (const p of AI_CREDIT_PACKS) {
+			const usdPerCredit = p.amountCents / 100 / p.credits;
+			expect(usdPerCredit).toBeGreaterThan(0.001);
 		}
 	});
 

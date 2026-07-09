@@ -9,8 +9,9 @@ import { type AiUsageKind, recordAiUsage } from "@/lib/billing/ai-quota";
 // a single turn spans MULTIPLE models — a Sonnet/Opus advisor plans step 0, then a Haiku executor
 // runs the tool loop. To keep cost-of-serve honest (and the advisor-vs-executor margin visible),
 // the ledger records ONE row PER MODEL with that model's own tokens, so cost_micros is priced
-// correctly per model (lib/billing/model-costs.ts). The single up-front credit charge
-// (assertAiAllowed) is booked once — the remaining models are cost-only rows.
+// correctly per model (lib/billing/model-costs.ts). With cost-weighted credits (the settle path),
+// EACH model row books its own cost-derived credits — the whole turn is summed from real cost, no
+// "first row only" special-case. A FIXED charge (if ever used here) is booked once, on row 0.
 
 /** One step's model + token usage (from streamText's onFinish `steps`). */
 export interface AgentStep {
@@ -53,10 +54,13 @@ export function aggregateUsageByModel(steps: AgentStep[]): ModelUsageRecord[] {
 }
 
 /**
- * Record an agent turn's usage PER MODEL (advisor vs executor visible in the ledger). The
- * single up-front credit charge (assertAiAllowed) is booked on the FIRST model row; every
- * other model is recorded as a cost-only row (credits 0) so cost_micros is correct per model
- * without double-charging the credit budget. No-ops on an empty turn.
+ * Record an agent turn's usage PER MODEL (advisor vs executor visible in the ledger).
+ *  - **settle** charge (metered, the norm): each model row books its OWN cost-derived credits
+ *    — `credits` is omitted so `recordAiUsage` derives it from that row's `cost_micros`. The
+ *    turn's total is the sum of the per-row real cost — correctly priced, no double-charge.
+ *  - **fixed** charge (reservation, if ever used here): the credit charge is booked once on the
+ *    FIRST model row; the rest are cost-only rows (credits 0).
+ * No-ops on an empty turn.
  */
 export async function recordAgentTurnUsage(input: {
 	orgId: string;
@@ -67,15 +71,16 @@ export async function recordAgentTurnUsage(input: {
 	steps: AgentStep[];
 }): Promise<void> {
 	const records = aggregateUsageByModel(input.steps);
+	const charge = input.charge;
 	await Promise.all(
 		records.map((rec, i) =>
 			recordAiUsage({
 				orgId: input.orgId,
 				userId: input.userId,
 				kind: input.kind,
-				// Charge the credits once (first model); the rest are cost-only rows.
-				credits: i === 0 ? input.charge.credits : 0,
-				source: input.charge.source,
+				// Settle → derive per row from cost_micros (omit); fixed → book once on row 0.
+				credits: charge.settle ? undefined : i === 0 ? charge.credits : 0,
+				source: charge.source,
 				refId: input.refId,
 				model: rec.model,
 				inputTokens: rec.inputTokens,

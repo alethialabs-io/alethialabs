@@ -68,7 +68,7 @@ export async function runColonyTasks(
 		orgId: actor.orgId,
 		userId: actor.userId,
 		kind: "agent",
-		credits: charge.credits,
+		// Metered → omit credits; settled from the colony's accumulated real cost-of-serve.
 		source: charge.source,
 		model: resolved.key,
 		inputTokens,

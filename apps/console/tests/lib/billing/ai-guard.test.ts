@@ -3,8 +3,10 @@
 
 // AI budget guard (lib/billing/ai-guard.ts). Mocked boundary: stub Stripe-configured, the
 // resolved AI tier (INDEPENDENT of the org plan), credit-ledger sums + purchased balance,
-// and per-kind cost; assert the self-host bypass, the not-enabled gate, the free-tier
-// allowance, the included→purchased fallback, and the daily-vs-weekly exhaustion + resetAt.
+// and the fixed per-kind cost; assert the self-host bypass, the not-enabled gate, and BOTH
+// charge models: the FIXED (scan) reserve-up-front path (used+cost<=cap) and the METERED
+// (agent/support) headroom→settle path (used<cap → { settle: true }), plus the per-seat
+// sub-cap, the included→purchased fallback, and daily-vs-weekly exhaustion + resetAt.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -124,29 +126,51 @@ describe("assertAiAllowed", () => {
 		expect(sumCreditsForUser).not.toHaveBeenCalled();
 	});
 
-	describe("deep reasoning", () => {
-		it("threads the deepReasoning flag into creditsFor so the booked charge reflects it", async () => {
-			// A deep-reasoning agent turn costs 2 credits vs 1 for a normal message.
-			vi.mocked(creditsFor).mockImplementation((_kind, opts) =>
-				opts?.deepReasoning ? 2 : 1,
-			);
-			vi.mocked(sumCredits).mockResolvedValue(0);
-
-			const charge = await assertAiAllowed("org-1", "agent", "user-1", {
-				deepReasoning: true,
-			});
-			expect(creditsFor).toHaveBeenCalledWith("agent", { deepReasoning: true });
-			expect(charge).toEqual({ source: "included", credits: 2 });
+	describe("metered (agent/support) headroom → settle", () => {
+		it("returns an included settle charge when the org + seat have any headroom", async () => {
+			vi.mocked(sumCredits).mockResolvedValue(0); // org empty
+			vi.mocked(sumCreditsForUser).mockResolvedValue(0); // seat empty
+			const charge = await assertAiAllowed("org-1", "agent", "user-1");
+			expect(charge).toEqual({ source: "included", settle: true });
+			// A metered turn never reserves the fixed per-kind cost up front.
+			expect(creditsFor).not.toHaveBeenCalled();
 		});
 
-		it("books the normal 1-credit charge when deepReasoning is unset (back-compat)", async () => {
-			vi.mocked(creditsFor).mockImplementation((_kind, opts) =>
-				opts?.deepReasoning ? 2 : 1,
-			);
-			vi.mocked(sumCredits).mockResolvedValue(0);
+		it("still allows a turn when the bucket is nearly full (gate is headroom, not used+cost)", async () => {
+			// day 29 < 30, week 99 < 100 — one turn may overshoot by ≤1 turn; it's allowed.
+			vi.mocked(sumCredits).mockResolvedValueOnce(29).mockResolvedValueOnce(99);
+			const charge = await assertAiAllowed("org-1", "agent");
+			expect(charge).toEqual({ source: "included", settle: true });
+		});
 
-			const charge = await assertAiAllowed("org-1", "agent", "user-1");
-			expect(charge).toEqual({ source: "included", credits: 1 });
+		it("402s the NEXT turn once the daily bucket is full (no headroom left)", async () => {
+			// day exactly at the cap → no headroom; week still open; no packs.
+			vi.mocked(sumCredits).mockResolvedValueOnce(30).mockResolvedValueOnce(50);
+			vi.mocked(purchasedBalance).mockResolvedValue(0);
+			const err = await assertAiAllowed("org-1", "agent").catch((e) => e);
+			expect(err).toBeInstanceOf(AiBudgetError);
+			expect(err.reason).toBe("daily");
+			expect(err.upgradable).toBe(true);
+		});
+
+		it("settles against purchased packs when the org included headroom is gone (balance > 0)", async () => {
+			vi.mocked(sumCredits).mockResolvedValueOnce(30).mockResolvedValueOnce(50); // day full
+			vi.mocked(purchasedBalance).mockResolvedValue(1); // any positive balance suffices
+			const charge = await assertAiAllowed("org-1", "agent");
+			expect(charge).toEqual({ source: "purchased", settle: true });
+		});
+
+		it("blocks a seat at its personal cap while the org still has room (no purchased divert)", async () => {
+			vi.mocked(sumCredits).mockResolvedValue(0); // org wide open
+			vi.mocked(sumCreditsForUser)
+				.mockResolvedValueOnce(10) // user day at cap (not < 10)
+				.mockResolvedValueOnce(10); // user week ok
+			vi.mocked(purchasedBalance).mockResolvedValue(100); // packs available — must NOT be used
+			const err = await assertAiAllowed("org-1", "agent", "user-1").catch((e) => e);
+			expect(err).toBeInstanceOf(AiBudgetError);
+			expect(err.reason).toBe("daily");
+			expect(err.upgradable).toBe(false);
+			expect(purchasedBalance).not.toHaveBeenCalled();
 		});
 	});
 

@@ -34,25 +34,33 @@ describe("AI_TIERS ladder", () => {
 		expect(AI_TIERS.ai_max.advisor).toBe("sonnet");
 	});
 
-	it("pins the final maintainer-approved allowances", () => {
+	it("pins the recalibrated cost-of-serve allowances (weekly = the governor)", () => {
 		expect(AI_TIERS.ai_free).toMatchObject({
-			dailyCredits: 5,
-			weeklyCredits: 15,
-			perUserDailyCredits: 5,
-			perUserWeeklyCredits: 15,
+			dailyCredits: 230,
+			weeklyCredits: 510,
+			perUserDailyCredits: 230,
+			perUserWeeklyCredits: 510,
 		});
 		expect(AI_TIERS.ai_plus).toMatchObject({
-			dailyCredits: 40,
-			weeklyCredits: 180,
-			perUserDailyCredits: 25,
-			perUserWeeklyCredits: 110,
+			dailyCredits: 6_750,
+			weeklyCredits: 15_000,
+			perUserDailyCredits: 4_140,
+			perUserWeeklyCredits: 9_200,
 		});
 		expect(AI_TIERS.ai_max).toMatchObject({
-			dailyCredits: 200,
-			weeklyCredits: 900,
-			perUserDailyCredits: 130,
-			perUserWeeklyCredits: 550,
+			dailyCredits: 33_750,
+			weeklyCredits: 75_000,
+			perUserDailyCredits: 20_700,
+			perUserWeeklyCredits: 46_000,
 		});
+	});
+
+	it("keeps daily as a burst rail at ≈45% of the weekly governor", () => {
+		for (const tier of ["ai_free", "ai_plus", "ai_max"] as const) {
+			const { dailyCredits, weeklyCredits } = AI_TIERS[tier];
+			expect(dailyCredits / weeklyCredits).toBeGreaterThan(0.4);
+			expect(dailyCredits / weeklyCredits).toBeLessThan(0.5);
+		}
 	});
 });
 

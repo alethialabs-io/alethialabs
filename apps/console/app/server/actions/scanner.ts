@@ -62,7 +62,8 @@ export async function scanRepo(repoUrl: string, opts?: { ref?: string }) {
 		orgId: actor.orgId,
 		userId: actor.userId,
 		kind: "scan",
-		credits: charge.credits,
+		// Scan is the FIXED path — book the reserved nominal charge (SCAN_CREDITS).
+		credits: charge.settle ? undefined : charge.credits,
 		source: charge.source,
 		refId: jobId,
 	});
