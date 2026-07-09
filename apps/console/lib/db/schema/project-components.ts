@@ -223,8 +223,24 @@ export const projectAddons = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
 		environment_id: envRef(),
-		// Catalog id (lib/addons/catalog.ts) — e.g. "kube-prometheus-stack". Not a DB enum.
+		// Catalog id (lib/addons/catalog.ts) — e.g. "kube-prometheus-stack" — for source='catalog'.
+		// For source='byo' it's a per-env slug for the user's chart (e.g. its release name). Not a
+		// DB enum. UNIQUE per env either way.
 		addon_id: text().notNull(),
+		// 'catalog' = a marketplace OSS chart (chart coords come from the code catalog); 'byo' = the
+		// customer's OWN Helm chart pulled from a connected git repo (chart_repo=git URL, chart_path
+		// = the chart dir within it, version = git ref). Governs which resolver builds the install spec.
+		source: text().default("catalog").notNull(),
+		// The chart directory within the git repo for source='byo' (e.g. "charts/payments"). NULL for
+		// catalog add-ons (their chart lives in a Helm registry).
+		chart_path: text(),
+		// For source='byo': the git repo URL that holds the chart (ArgoCD clones it). NULL for catalog.
+		chart_repo: text(),
+		// For source='byo': the projectGitCredentials row (purpose='applications') used to clone the
+		// chart repo. NULL = public repo / owner-OAuth fallback.
+		git_credential_id: uuid().references(() => projectGitCredentials.id, {
+			onDelete: "set null",
+		}),
 		enabled: boolean().default(true).notNull(),
 		mode: addonMode().default("managed").notNull(),
 		// Chart version override; NULL = the catalog's pinned default.
