@@ -34,6 +34,8 @@ external agent (read-only at launch). `assertAudienceCoverage` (tested in
   dropped — never feed secrets to the model.**
 - ✅ `list_cloud_identities` — `getVerifiedCloudIdentities()`. ✅ `list_connectors` — `getConnectorsWithStatus()`.
 - ✅ `get_cached_resources(id)` — NEW `getCloudIdentityResources()` · `view cloud_identity` — existing VPCs/subnets.
+- ✅ `search_docs(query)` — `docs.ts` · lexical TF-IDF over the committed docs index (`gen:docs-index` from
+  apps/docs). No PDP gate (public docs). Grounds connector / keyless-auth / how-to / architecture answers.
 - ▢ `billing_summary` / `usage_report` — `getBillingSummary()` / `getUsageReport()` — plan + metering (later).
 
 ## PROPOSE — HITL, client-applied (no server write)
