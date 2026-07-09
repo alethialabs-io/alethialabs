@@ -145,6 +145,29 @@ a Terraform module that creates a **RAM OIDC provider** (fixed name `alethia`) t
 + a **RAM role**, then pastes the role ARN — Alethia derives the provider ARN from it. No operator action
 beyond having the issuer key.
 
+## Rotating the issuer signing key
+
+The issuer's signing key (`ALETHIA_OIDC_SIGNING_KEY`) is the trust root for **all four** managed clouds, so
+treat it like a CA key. It rotates with **zero downtime** via a two-key overlap — the JWKS publishes the old
+and new key at once, and each assertion's `kid` header selects the right one, so in-flight assertions keep
+verifying while new ones are signed by the new key. `scripts/rotate-oidc-key.sh` drives it against the vault:
+
+```bash
+# 1. Mint a new primary; park the outgoing key in ALETHIA_OIDC_SIGNING_KEY_PREVIOUS (published, not signing).
+./scripts/rotate-oidc-key.sh
+gh workflow run deploy-console.yml          # publish both keys; start signing with the new one
+
+# 2. Wait >= 24h — long enough for every cloud's cached JWKS to refresh and all <=10-min assertions to expire.
+
+# 3. Retire the old key.
+./scripts/rotate-oidc-key.sh --finalize
+gh workflow run deploy-console.yml          # redeploy without the previous key
+```
+
+`./scripts/rotate-oidc-key.sh --status` shows what's currently in the vault (key fingerprints, never private
+material). The script refuses to start a second rotation while one is unfinalized. No cloud-side change is
+needed — Azure/Alibaba/AWS/GCP all re-fetch the JWKS and validate against whichever key signed the assertion.
+
 ## Reference
 
 - Vault key catalog: `deploy/prod/.env.production.example`; operator inputs:
