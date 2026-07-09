@@ -29,3 +29,11 @@ var AzureSetupScript string
 //
 //go:embed aws-bootstrap.yaml
 var AwsBootstrapTemplate string
+
+// AlibabaConnectorModule is the OpenTofu/Terraform module that registers, in the user's
+// Alibaba account, a RAM OIDC provider trusting the Alethia issuer + a RAM role. Applied
+// with `terraform apply` (auth via the user's aliyun creds); outputs role_arn. Keyless +
+// account-free — Alethia never receives Alibaba credentials.
+//
+//go:embed alibaba-connector.tf
+var AlibabaConnectorModule string

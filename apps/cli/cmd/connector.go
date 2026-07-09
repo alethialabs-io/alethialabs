@@ -36,12 +36,13 @@ func alethiaAwsAccount() string {
 
 var connectorCmd = &cobra.Command{
 	Use:   "connector",
-	Short: "Connect cloud provider accounts (AWS, GCP, Azure)",
+	Short: "Connect cloud provider accounts (AWS, GCP, Azure, Alibaba)",
 	Long: `Manage cloud provider connections.
 
 Connecting a cloud account lets Alethia provision infrastructure into it using
 short-lived, keyless credentials: AWS cross-account roles, GCP Workload Identity
-Federation, and Azure federated identity. No long-lived secrets are stored.`,
+Federation, Azure federated identity, and Alibaba RAM AssumeRoleWithOIDC. No
+long-lived secrets are stored.`,
 }
 
 func init() {
