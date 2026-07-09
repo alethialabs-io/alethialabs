@@ -232,6 +232,19 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 				defer ClearAssumedCredentials()
 			}
 		case types.CloudProviderGcp:
+			// Managed runners have no ambient AWS identity, but the GCP WIF exchange signs its subject
+			// token with the platform AWS source credential — so establish that keylessly first. Self-hosted
+			// runners rely on their own ambient GCP credentials (ADC / metadata).
+			if w.config.Operator == "managed" {
+				srcCleanup, err := ActivateGcpPlatformSource(ctx, w.api)
+				if err != nil {
+					errMsg := fmt.Sprintf("Failed to activate GCP platform source credential: %v", err)
+					fmt.Fprintln(stderrLogger, errMsg)
+					_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+					return err
+				}
+				defer srcCleanup()
+			}
 			fmt.Fprintf(stdoutLogger, "Activating WIF for project %s (SA: %s)...\n", claim.CloudIdentity.ProjectID, claim.CloudIdentity.ServiceAccountEmail)
 			cleanup, err := ActivateGcpWIF(claim.CloudIdentity.WifConfig, claim.CloudIdentity.ProjectID)
 			if err != nil {
