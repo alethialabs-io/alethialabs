@@ -47,6 +47,30 @@ const SERVICE_FIELD: Partial<Record<NodeKind, keyof CloudProviderMeta>> = {
 	secret: "secretsService",
 };
 
+/** The clouds a project can be provisioned on today — the AI reasons across all of them. */
+const PROVISIONABLE_CLOUDS: CloudProviderSlug[] = [
+	"aws",
+	"gcp",
+	"azure",
+	"alibaba",
+	"hetzner",
+];
+
+/**
+ * Where a component actually runs on a given cloud. The big managed clouds (aws/gcp/azure/alibaba)
+ * back each component with a **managed service**; compute-only **Hetzner** provisions only the
+ * cluster + network natively and runs data/registry/dns as **in-cluster OSS Helm charts** (via
+ * ArgoCD) — so the agent must reason about what will actually be deployed, not just a service name.
+ */
+function deploymentKind(
+	kind: NodeKind,
+	provider: CloudProviderSlug,
+): "managed" | "in-cluster-helm" | "native" {
+	if (provider !== "hetzner") return "managed";
+	if (kind === "cluster" || kind === "network") return "native";
+	return "in-cluster-helm";
+}
+
 type Loose = Record<string, unknown>;
 
 /**
@@ -58,7 +82,7 @@ export function catalogTools() {
 	return {
 		list_services: tool({
 			description:
-				"List the infrastructure services that can be added to the canvas, with each cloud's concrete service name.",
+				"List the infrastructure services that can be added to the canvas. For each, gives every cloud's concrete service name (aws/gcp/azure/alibaba/hetzner) AND how it is deployed there — 'managed' (a managed cloud service), 'native' (cluster/network), or 'in-cluster-helm' (Hetzner runs data/registry/dns as OSS Helm charts via ArgoCD, e.g. CloudNativePG/Valkey/RabbitMQ). Use this to reason about what actually gets provisioned on each cloud.",
 			inputSchema: z.object({}),
 			execute: async () => ({
 				services: ADDABLE_KINDS.map((kind) => {
@@ -68,11 +92,14 @@ export function catalogTools() {
 						label: NODE_REGISTRY[kind].label,
 						classification: NODE_REGISTRY[kind].classification,
 						serviceNames: field
-							? {
-									aws: PROVIDERS.aws[field],
-									gcp: PROVIDERS.gcp[field],
-									azure: PROVIDERS.azure[field],
-								}
+							? Object.fromEntries(
+									PROVISIONABLE_CLOUDS.map((p) => [p, PROVIDERS[p][field]]),
+								)
+							: null,
+						deployment: field
+							? Object.fromEntries(
+									PROVISIONABLE_CLOUDS.map((p) => [p, deploymentKind(kind, p)]),
+								)
 							: null,
 					};
 				}),
@@ -82,7 +109,9 @@ export function catalogTools() {
 		list_service_options: tool({
 			description:
 				"Per-provider catalog of valid values: instance types, k8s versions, db engines + capacity model, cache node types, regions, nosql, messaging, autoscaler key, WAF/cert. Use this to map a request like 'size X' onto valid node configs/enums.",
-			inputSchema: z.object({ provider: z.enum(["aws", "gcp", "azure"]) }),
+			inputSchema: z.object({
+				provider: z.enum(["aws", "gcp", "azure", "alibaba", "hetzner"]),
+			}),
 			execute: async ({ provider }) => {
 				const p: CloudProviderSlug = provider;
 				return {

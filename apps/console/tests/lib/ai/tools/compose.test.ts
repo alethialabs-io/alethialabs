@@ -46,7 +46,13 @@ describe("catalogTools.list_services", () => {
 			services: Array<{ kind: string; serviceNames: Record<string, string> | null }>;
 		};
 		const db = out.services.find((s) => s.kind === "database");
-		expect(db?.serviceNames).toEqual({ aws: "Aurora", gcp: expect.any(String), azure: expect.any(String) });
+		expect(db?.serviceNames).toEqual({
+			aws: "Aurora",
+			gcp: expect.any(String),
+			azure: expect.any(String),
+			alibaba: expect.any(String),
+			hetzner: expect.any(String),
+		});
 	});
 
 	it("emits null serviceNames for a kind with no provider service field (repositories)", async () => {
