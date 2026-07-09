@@ -628,3 +628,48 @@ export function resolveAddOnInstall(row: {
 		syncWave: def.syncWave,
 	};
 }
+
+/** The sync-wave BYO charts install on — after core infra add-ons (0) so a chart depending on,
+ * say, an ingress controller finds it present. */
+const BYO_CHART_SYNC_WAVE = 5;
+
+/**
+ * Resolves a bring-your-own (source='byo') project_addons row into a git-source install spec the
+ * runner renders as an ArgoCD Application inside the project's hardened "byo-<slug>" AppProject.
+ * The chart comes from the customer's git repo (chart_repo + chart_path + version=ref), NOT the
+ * OSS catalog — so there is no schema to validate against; the stored `values` ride through as-is,
+ * with a raw Helm-values YAML override deep-merged on top (same precedence as catalog add-ons).
+ * Returns null when required git coordinates are missing (a mis-built row is skipped, never
+ * mis-provisioned).
+ */
+export function resolveByoChartInstall(row: {
+	addon_id: string;
+	mode: AddOnMode;
+	version?: string | null;
+	chart_repo?: string | null;
+	chart_path?: string | null;
+	namespace?: string | null;
+	values?: Record<string, unknown> | null;
+	values_yaml?: string | null;
+}): AddOnInstallSpec | null {
+	if (!row.chart_repo || !row.chart_path) return null;
+	let values: Record<string, unknown> = { ...(row.values ?? {}) };
+	const rawOverride = parseValuesYaml(row.values_yaml);
+	if (rawOverride) values = deepMerge(values, rawOverride);
+	return {
+		id: row.addon_id,
+		mode: row.mode,
+		source: "git",
+		chartRepo: row.chart_repo,
+		// The chart directory within the repo (rendered as ArgoCD `source.path`).
+		path: row.chart_path,
+		// Unused for git source, but the spec requires the field; keep it empty.
+		chart: "",
+		// The git ref (branch/tag/sha); default to HEAD so an unset ref still resolves.
+		version: row.version ?? "HEAD",
+		namespace: row.namespace ?? "default",
+		values,
+		syncWave: BYO_CHART_SYNC_WAVE,
+		// project is set by the runner (byo-<slug>); leave undefined here.
+	};
+}

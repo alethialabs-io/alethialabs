@@ -421,6 +421,11 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		// read health back for the console. Non-fatal (like app-manifest generation): a bad
 		// add-on must not fail an otherwise-healthy cluster; status surfaces on the add-ons page.
 		if len(vc.AddOns) > 0 {
+			// Bring-your-own (git-source) charts: pin them to a hardened per-project AppProject
+			// and register their per-repo credentials BEFORE rendering the Applications, so the
+			// renderer places them in "byo-<slug>" (not the wide-open "infra" project).
+			prepareByoCharts(vc, params.GitAccessToken, stdout, stderr)
+
 			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns)
 			if addonErr != nil {
 				fmt.Fprintf(stderr, "Warning: marketplace add-ons skipped: %v\n", addonErr)
