@@ -51,9 +51,11 @@ type Job struct {
 }
 
 type CloudIdentity struct {
-	Provider            string `json:"provider"`
-	RoleArn             string `json:"role_arn"`
-	ExternalID          string `json:"external_id"`
+	Provider   string `json:"provider"`
+	RoleArn    string `json:"role_arn"`
+	ExternalID string `json:"external_id"`
+	// Alibaba keyless: the RAM OIDC provider ARN passed to AssumeRoleWithOIDC.
+	OidcProviderArn     string `json:"oidc_provider_arn"`
 	AccountID           string `json:"account_id"`
 	ProjectID           string `json:"project_id"`
 	ServiceAccountEmail string `json:"service_account_email"`
@@ -400,6 +402,38 @@ func (c *RunnerAPIClient) FetchAwsToken() (*AwsFederation, error) {
 		PlatformRoleArn: result.PlatformRoleArn,
 		Region:          result.Region,
 	}, nil
+}
+
+// FetchAlibabaToken mints a short-lived OIDC assertion for keyless Alibaba provisioning. The console holds
+// the issuer signing key; the runner writes this token to a file the alicloud provider reads to run an
+// anonymous AssumeRoleWithOIDC — no AccessKey on the runner.
+func (c *RunnerAPIClient) FetchAlibabaToken() (string, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/runners/alibaba-token", nil)
+	if err != nil {
+		return "", err
+	}
+	c.setRunnerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch alibaba token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch alibaba token returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode alibaba token response: %w", err)
+	}
+	if result.Token == "" {
+		return "", fmt.Errorf("alibaba token response was empty")
+	}
+	return result.Token, nil
 }
 
 func (c *RunnerAPIClient) UpdateRunnerMetadata(runnerID string, metadata map[string]any) error {
