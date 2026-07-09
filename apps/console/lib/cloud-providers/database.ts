@@ -26,6 +26,10 @@ export const DB_ENGINES: Record<CloudProviderSlug, DbEngineOption[]> = {
 	hetzner: [
 		{ value: "postgres", label: "PostgreSQL (CloudNativePG)", defaultVersion: "16" },
 	],
+	alibaba: [
+		{ value: "postgres", label: "ApsaraDB RDS PostgreSQL", defaultVersion: "16.0" },
+		{ value: "mysql", label: "ApsaraDB RDS MySQL", defaultVersion: "8.0" },
+	],
 };
 
 interface CapacityModel {
@@ -43,6 +47,7 @@ export const DB_CAPACITY: Record<CloudProviderSlug, CapacityModel> = {
 	gcp: { unit: "vCPU", min: 1, max: 96, step: 1, defaultMin: 1, defaultMax: 4 },
 	azure: { unit: "vCores", min: 1, max: 64, step: 1, defaultMin: 2, defaultMax: 4 },
 	hetzner: { unit: "GiB", min: 5, max: 500, step: 5, defaultMin: 10, defaultMax: 10 },
+	alibaba: { unit: "vCPU", min: 1, max: 64, step: 1, defaultMin: 2, defaultMax: 4 },
 };
 
 /** Cross-provider database engine mapping for project conversion. */
@@ -63,6 +68,10 @@ export const ENGINE_MAP: Record<
 		hetzner: {
 			"aurora-postgresql": "postgres",
 		},
+		alibaba: {
+			"aurora-postgresql": "postgres",
+			"aurora-mysql": "mysql",
+		},
 	},
 	gcp: {
 		gcp: {},
@@ -76,6 +85,10 @@ export const ENGINE_MAP: Record<
 		},
 		hetzner: {
 			"cloudsql-postgresql": "postgres",
+		},
+		alibaba: {
+			"cloudsql-postgresql": "postgres",
+			"cloudsql-mysql": "mysql",
 		},
 	},
 	azure: {
@@ -91,11 +104,32 @@ export const ENGINE_MAP: Record<
 		hetzner: {
 			"azure-postgresql": "postgres",
 		},
+		alibaba: {
+			"azure-postgresql": "postgres",
+			"azure-mysql": "mysql",
+		},
 	},
 	hetzner: {
 		hetzner: {},
 		aws: { postgres: "aurora-postgresql" },
 		gcp: { postgres: "cloudsql-postgresql" },
 		azure: { postgres: "azure-postgresql" },
+		alibaba: { postgres: "postgres" },
+	},
+	alibaba: {
+		alibaba: {},
+		aws: {
+			postgres: "aurora-postgresql",
+			mysql: "aurora-mysql",
+		},
+		gcp: {
+			postgres: "cloudsql-postgresql",
+			mysql: "cloudsql-mysql",
+		},
+		azure: {
+			postgres: "azure-postgresql",
+			mysql: "azure-mysql",
+		},
+		hetzner: { postgres: "postgres" },
 	},
 };

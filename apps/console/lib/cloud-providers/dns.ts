@@ -44,6 +44,7 @@ export const WAF_OPTIONS: Record<CloudProviderSlug, WafOption[]> = {
 		},
 	],
 	hetzner: [],
+	alibaba: [],
 };
 
 interface CertOption {
@@ -73,5 +74,10 @@ export const CERT_OPTIONS: Record<CloudProviderSlug, CertOption> = {
 		providerConfigKey: "managed_certificate",
 		label: "cert-manager",
 		description: "TLS via in-cluster cert-manager",
+	},
+	alibaba: {
+		providerConfigKey: "managed_certificate",
+		label: "SSL Certificate",
+		description: "Managed TLS certificate from Alibaba Cloud SSL Certificates Service",
 	},
 };

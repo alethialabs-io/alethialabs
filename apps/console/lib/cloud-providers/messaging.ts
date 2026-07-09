@@ -41,4 +41,11 @@ export const MESSAGING: Record<CloudProviderSlug, MessagingConfig> = {
 		fifoLabel: "Ordered",
 		visibilityTimeoutLabel: "Visibility timeout (s)",
 	},
+	alibaba: {
+		queueLabel: "MNS Queues",
+		topicLabel: "MNS Topics",
+		supportsFifo: false,
+		fifoLabel: "Ordered Delivery",
+		visibilityTimeoutLabel: "Visibility Timeout",
+	},
 };

@@ -66,4 +66,20 @@ export const NOSQL: Record<CloudProviderSlug, NosqlConfig> = {
 		keyTypes: [],
 		portabilityNote: "Not available on Hetzner",
 	},
+	alibaba: {
+		serviceName: "Tablestore",
+		supportsRangeKey: true,
+		supportsGlobalTables: false,
+		billingModes: [
+			{ value: "on_demand", label: "Pay-As-You-Go" },
+			{ value: "provisioned", label: "Reserved Throughput" },
+		],
+		keyTypes: [
+			{ value: "S", label: "String" },
+			{ value: "N", label: "Integer" },
+			{ value: "B", label: "Binary" },
+		],
+		portabilityNote:
+			"Tablestore primary keys are fixed at table creation. Review the key strategy before provisioning.",
+	},
 };
