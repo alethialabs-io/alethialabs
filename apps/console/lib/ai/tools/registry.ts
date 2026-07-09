@@ -47,6 +47,8 @@ export const TOOL_AUDIENCE: Record<string, ToolAudience> = {
 	list_connectors: "both",
 	list_cloud_identities: "both",
 	get_cached_resources: "both",
+	// Docs retrieval — read-only, stateless: usable everywhere (incl. MCP).
+	search_docs: "both",
 	// Metrics reads — usage/billing standing for dashboards (secret-free, PDP-gated).
 	get_org_usage: "both",
 	get_ai_usage: "both",
