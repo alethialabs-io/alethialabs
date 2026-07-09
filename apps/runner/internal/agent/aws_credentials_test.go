@@ -30,12 +30,6 @@ func (s *stubAwsFetcher) FetchAwsToken() (*AwsFederation, error) {
 	return s.fed, nil
 }
 
-func (s *stubAwsFetcher) setToken(tok string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.fed = &AwsFederation{Token: tok, PlatformRoleArn: s.fed.PlatformRoleArn, Region: s.fed.Region}
-}
-
 func (s *stubAwsFetcher) callCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
