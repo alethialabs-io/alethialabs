@@ -98,6 +98,14 @@ func (m *mockAPI) FetchAzureToken() (string, error) {
 	return "test-azure-token", nil
 }
 
+func (m *mockAPI) FetchAwsToken() (*AwsFederation, error) {
+	return &AwsFederation{
+		Token:           "test-aws-token",
+		PlatformRoleArn: "arn:aws:iam::270587882865:role/alethia-connector-assumer",
+		Region:          "eu-central-1",
+	}, nil
+}
+
 func (m *mockAPI) UploadPlanArtifact(jobID, filePath string) error {
 	return nil
 }

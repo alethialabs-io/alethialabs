@@ -206,15 +206,31 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	if claim.CloudIdentity != nil {
 		switch types.CloudProvider(claim.CloudIdentity.Provider) {
 		case types.CloudProviderAws:
-			fmt.Fprintf(stdoutLogger, "Assuming role %s into account %s...\n", claim.CloudIdentity.RoleArn, claim.CloudIdentity.AccountID)
-			sessionName := fmt.Sprintf("runner-%s", job.ID[:8])
-			if err := AssumeRole(ctx, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID, sessionName); err != nil {
-				errMsg := fmt.Sprintf("Failed to assume role: %v", err)
-				fmt.Fprintln(stderrLogger, errMsg)
-				_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
-				return err
+			// Managed runners have NO ambient AWS identity (the Hetzner fleet injects no keys), so they
+			// federate in KEYLESSLY: assume the platform role via web identity, then chain the customer
+			// role off it (auto-refreshing). Self-hosted runners run in the customer's cloud with their
+			// own creds, so they keep the direct AssumeRole path.
+			if w.config.Operator == "managed" {
+				fmt.Fprintf(stdoutLogger, "Activating keyless AWS federation, then assuming %s (account %s)...\n", claim.CloudIdentity.RoleArn, claim.CloudIdentity.AccountID)
+				cleanup, err := ActivateAwsFederated(ctx, w.api, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID)
+				if err != nil {
+					errMsg := fmt.Sprintf("Failed to activate AWS federation: %v", err)
+					fmt.Fprintln(stderrLogger, errMsg)
+					_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+					return err
+				}
+				defer cleanup()
+			} else {
+				fmt.Fprintf(stdoutLogger, "Assuming role %s into account %s...\n", claim.CloudIdentity.RoleArn, claim.CloudIdentity.AccountID)
+				sessionName := fmt.Sprintf("runner-%s", job.ID[:8])
+				if err := AssumeRole(ctx, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID, sessionName); err != nil {
+					errMsg := fmt.Sprintf("Failed to assume role: %v", err)
+					fmt.Fprintln(stderrLogger, errMsg)
+					_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+					return err
+				}
+				defer ClearAssumedCredentials()
 			}
-			defer ClearAssumedCredentials()
 		case types.CloudProviderGcp:
 			fmt.Fprintf(stdoutLogger, "Activating WIF for project %s (SA: %s)...\n", claim.CloudIdentity.ProjectID, claim.CloudIdentity.ServiceAccountEmail)
 			cleanup, err := ActivateGcpWIF(claim.CloudIdentity.WifConfig, claim.CloudIdentity.ProjectID)
