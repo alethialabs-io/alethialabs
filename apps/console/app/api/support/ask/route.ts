@@ -82,7 +82,7 @@ export async function POST(req: Request) {
 				orgId: actor.orgId,
 				userId: actor.userId,
 				kind: "support",
-				credits: charge.credits,
+				// Metered → omit credits; settled from this row's real cost-of-serve.
 				source: charge.source,
 				refId: threadId,
 				model: resolved.key,
