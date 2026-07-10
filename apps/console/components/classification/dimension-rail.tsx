@@ -25,17 +25,18 @@ export function DimensionRail({
 	dims,
 	selectedId,
 	onSelect,
-	canEdit,
+	reorderable: reorderableProp,
 	onReorder,
 }: {
 	dims: DimensionDTO[];
 	selectedId: string | null;
 	onSelect: (id: string) => void;
-	canEdit: boolean;
+	/** Drag-reorder is enabled only when editable and not filtering by search. */
+	reorderable: boolean;
 	onReorder: (ids: string[]) => void;
 }) {
 	const dragId = useRef<string | null>(null);
-	const reorderable = canEdit && dims.length > 1;
+	const reorderable = reorderableProp && dims.length > 1;
 
 	return (
 		<div className="rounded-lg border bg-surface p-1.5 shadow-sm">

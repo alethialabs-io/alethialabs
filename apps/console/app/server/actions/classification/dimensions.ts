@@ -82,13 +82,17 @@ function toDimensionDTO(
 
 const CLASSIFICATION_PATH = "/dashboard/settings/classification";
 
-/** Lists every classification dimension in the org with its values + usage counts nested. */
-export async function listDimensions(): Promise<DimensionDTO[]> {
+/**
+ * Lists the org's classification dimensions with values + usage counts nested. When `search`
+ * is provided the dimension list is filtered server-side (label/key or a matching value);
+ * the usage counts are org-wide and merged by id, so a filtered list still shows real numbers.
+ */
+export async function listDimensions(search?: string): Promise<DimensionDTO[]> {
 	const actor = await authorize("view", { type: "org" });
 	const { dims, byValue, byDimension } = await withScope(
 		{ ownerId: actor.userId, orgId: actor.orgId },
 		async (tx) => ({
-			dims: await listDimensionsWithValues(tx),
+			dims: await listDimensionsWithValues(tx, search),
 			byValue: await countAssignmentsByValue(tx),
 			byDimension: await countResourcesByDimension(tx),
 		}),

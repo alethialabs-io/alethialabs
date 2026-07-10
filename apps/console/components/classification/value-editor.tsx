@@ -19,6 +19,7 @@ import { Input } from "@repo/ui/input";
 import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
 import { Ban, Check, Pipette } from "lucide-react";
+import { Spinner } from "./classification-ui";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -211,7 +212,7 @@ export function ValueEditor({
 							Cancel
 						</Button>
 						<Button type="submit" disabled={form.formState.isSubmitting || !label}>
-							<Check className="size-3.5" />
+							{form.formState.isSubmitting ? <Spinner /> : <Check className="size-3.5" />}
 							Save value
 						</Button>
 					</DialogFooter>
