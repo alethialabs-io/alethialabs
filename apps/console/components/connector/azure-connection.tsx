@@ -2,15 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
 import { Button } from "@repo/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@repo/ui/card";
 import {
 	Form,
 	FormControl,
@@ -22,9 +14,11 @@ import {
 import { Input } from "@repo/ui/input";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-	ConnectionTestStatus,
-	InfoNote,
-	StatusCallout,
+	ConnectSheetShell,
+	MethodTabs,
+	Step,
+	StoredNote,
+	VerifySection,
 } from "@/components/connector/connection-ui";
 import {
 	type VerifyOutcome,
@@ -36,13 +30,7 @@ import {
 } from "@/components/connector/connector-assets";
 import { CopyButton } from "@repo/ui/copy-button";
 import { FieldHelp } from "@repo/ui/field-help";
-import {
-	ClipboardPaste,
-	Download,
-	ExternalLink,
-	ShieldCheck,
-	Terminal,
-} from "lucide-react";
+import { ClipboardPaste, Download, ExternalLink, Terminal } from "lucide-react";
 import { type ClipboardEvent, useState } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -97,15 +85,11 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 	const cloudShellCmd = ALETHIA_AZURE_CLIENT_ID
 		? `curl -sO ${scriptUrl} && ALETHIA_AZURE_CLIENT_ID=${ALETHIA_AZURE_CLIENT_ID} bash alethia-azure-setup.sh YOUR_SUBSCRIPTION_ID`
 		: `curl -sO ${scriptUrl} && bash alethia-azure-setup.sh YOUR_SUBSCRIPTION_ID`;
-	const cloudShellUrl =
-		"https://shell.azure.com";
+	const cloudShellUrl = "https://shell.azure.com";
 
 	const form = useForm<AzureFormValues>({
 		resolver: zodResolver(azureSchema),
-		defaultValues: {
-			tenantId: "",
-			subscriptionId: "",
-		},
+		defaultValues: { tenantId: "", subscriptionId: "" },
 		mode: "onChange",
 	});
 
@@ -164,389 +148,250 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 	};
 
 	return (
-		<div className="max-w-[800px] mx-auto space-y-6 w-full">
-			<div className="flex flex-col gap-4">
-				{/* Method Selection */}
-				<div className="flex gap-3">
-					<button
-						onClick={() => setMethod("cli")}
-						className={`flex-1 p-3 rounded-lg border text-left transition-all duration-200 ${
-							method === "cli"
-								? "border-foreground bg-muted/20"
-								: "border-border/50 bg-background hover:border-border/80 hover:bg-muted/10"
-						}`}
-						type="button"
-					>
-						<div className="flex items-center gap-2.5">
-							<div
-								className={`p-1.5 rounded-md border ${method === "cli" ? "bg-foreground text-background border-foreground" : "bg-background text-muted-foreground border-border/50"}`}
-							>
-								<Terminal className="w-3.5 h-3.5" />
-							</div>
-							<div>
-								<div className="font-medium text-sm text-foreground">
-									Azure CLI
-								</div>
-								<div className="text-[11px] text-muted-foreground">
-									Quick setup via Cloud Shell
-								</div>
-							</div>
-						</div>
-					</button>
+		<ConnectSheetShell
+			title="Connect Azure"
+			intro="You grant Alethia's multi-tenant app a role in your own Azure subscription; it trusts Alethia's issuer via a federated credential. Alethia signs in with a short-lived, minted token — no client secret is ever created, shared, or stored."
+			howItWorks={
+				<>
+					<p>
+						1. Run the setup script (or apply the Terraform module) — it creates a service
+						principal for Alethia&apos;s app in your tenant and grants it Contributor.
+					</p>
+					<p>
+						2. Alethia authenticates as that app with a signed token its issuer mints (≤10
+						min); Entra ID verifies it and returns a ~1-hour credential — no secret.
+					</p>
+					<p>
+						3. The only thing stored is your tenant + subscription id (public). Remove the
+						app&apos;s role assignment to revoke access.
+					</p>
+				</>
+			}
+		>
+			<MethodTabs
+				value={method}
+				onChange={(id) => setMethod(id as "cli" | "terraform")}
+				help={
+					<>
+						<b className="text-foreground">Azure CLI</b> runs a script in Azure Cloud Shell —
+						nothing to install, works from the browser.{" "}
+						<b className="text-foreground">Terraform</b> is for teams that manage
+						infrastructure as code: download the module and <code>apply</code> it. Both do the
+						same thing.
+					</>
+				}
+				tabs={[
+					{
+						id: "cli",
+						label: "Azure CLI",
+						sub: "Quick setup via Cloud Shell",
+						icon: <Terminal className="h-3.5 w-3.5" />,
+					},
+					{
+						id: "terraform",
+						label: "Terraform / IaC",
+						sub: "Infrastructure as Code",
+						icon: <Terminal className="h-3.5 w-3.5" />,
+					},
+				]}
+			/>
 
-					<button
-						onClick={() => setMethod("terraform")}
-						className={`flex-1 p-3 rounded-lg border text-left transition-all duration-200 ${
-							method === "terraform"
-								? "border-foreground bg-muted/20"
-								: "border-border/50 bg-background hover:border-border/80 hover:bg-muted/10"
-						}`}
-						type="button"
-					>
-						<div className="flex items-center gap-2.5">
-							<div
-								className={`p-1.5 rounded-md border ${method === "terraform" ? "bg-foreground text-background border-foreground" : "bg-background text-muted-foreground border-border/50"}`}
+			{method === "cli" ? (
+				<div className="space-y-8">
+					<Step n={1} title="Open Azure Cloud Shell">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Click below to open Azure Cloud Shell in your browser. No local tooling
+							required.
+						</p>
+						<div className="flex gap-3">
+							<Button
+								onClick={() => window.open(cloudShellUrl, "_blank")}
+								size="sm"
+								className="h-8 font-medium text-xs"
+								type="button"
 							>
-								<Terminal className="w-3.5 h-3.5" />
-							</div>
-							<div>
-								<div className="font-medium text-sm text-foreground">
-									Terraform / IaC
-								</div>
-								<div className="text-[11px] text-muted-foreground">
-									Infrastructure as Code
-								</div>
-							</div>
+								<ExternalLink className="mr-1.5 h-3.5 w-3.5 opacity-70" />
+								Open Cloud Shell
+							</Button>
+							<Button
+								onClick={handleDownload}
+								variant="outline"
+								size="sm"
+								className="h-8 border-border/50 font-medium text-xs"
+								type="button"
+							>
+								<Download className="mr-1.5 h-3.5 w-3.5 opacity-70" />
+								Download Script
+							</Button>
 						</div>
-					</button>
+					</Step>
+					<Step n={2} title="Run Setup Command">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Paste this command in Cloud Shell. Replace{" "}
+							<b className="font-medium text-foreground">YOUR_SUBSCRIPTION_ID</b> with your
+							Azure subscription ID.
+						</p>
+						<div className="flex items-start gap-2 rounded-md border border-border/40 bg-muted/30 p-3 font-mono text-[11px] text-foreground">
+							<span className="min-w-0 break-all">{cloudShellCmd}</span>
+							<CopyButton
+								text={cloudShellCmd}
+								className="mt-0.5 shrink-0 rounded p-1 hover:bg-muted"
+							/>
+						</div>
+					</Step>
+					<Step n={3} title="Enter Connection Details">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Copy the <b className="font-medium text-foreground">Tenant ID</b> and{" "}
+							<b className="font-medium text-foreground">Subscription ID</b> from the script
+							output and paste them below.
+						</p>
+					</Step>
 				</div>
-
-				{/* Instructions */}
-				<Card className="border-border/40 shadow-sm bg-background">
-					<CardHeader className="border-b border-border/40 pb-4 bg-muted/5">
-						<CardTitle className="text-base font-medium flex items-center gap-2">
-							<ShieldCheck className="w-4.5 h-4.5 text-muted-foreground" />
-							Setup Instructions
-						</CardTitle>
-						<CardDescription className="text-xs">
-							Follow these steps to authorize Alethia in your Azure
-							subscription using federated identity credentials.
-						</CardDescription>
-					</CardHeader>
-					<CardContent className="space-y-6 pt-6">
-						{method === "cli" ? (
-							<div className="space-y-8">
-								<div className="flex gap-4">
-									<div className="shrink-0 w-7 h-7 rounded-full bg-muted border border-border/50 text-foreground flex items-center justify-center font-medium text-xs">
-										1
-									</div>
-									<div className="space-y-3">
-										<div>
-											<div className="font-medium text-sm text-foreground">
-												Open Azure Cloud Shell
-											</div>
-											<p className="text-xs text-muted-foreground mt-1 mb-3 max-w-sm">
-												Click below to open Azure Cloud
-												Shell in your browser. No local
-												tooling required.
-											</p>
-										</div>
-										<div className="flex gap-3">
-											<Button
-												onClick={() =>
-													window.open(
-														cloudShellUrl,
-														"_blank",
-													)
-												}
-												size="sm"
-												className="h-8 text-xs font-medium"
-												type="button"
-											>
-												<ExternalLink className="w-3.5 h-3.5 mr-1.5 opacity-70" />
-												Open Cloud Shell
-											</Button>
-											<Button
-												onClick={handleDownload}
-												variant="outline"
-												size="sm"
-												className="h-8 text-xs font-medium border-border/50"
-												type="button"
-											>
-												<Download className="w-3.5 h-3.5 mr-1.5 opacity-70" />
-												Download Script
-											</Button>
-										</div>
-									</div>
-								</div>
-
-								<div className="flex gap-4">
-									<div className="shrink-0 w-7 h-7 rounded-full bg-muted border border-border/50 text-foreground flex items-center justify-center font-medium text-xs">
-										2
-									</div>
-									<div className="space-y-3">
-										<div className="font-medium text-sm text-foreground">
-											Run Setup Command
-										</div>
-										<p className="text-xs text-muted-foreground mt-1 max-w-sm">
-											Paste this command in Cloud Shell.
-											Replace{" "}
-											<b className="text-foreground font-medium">
-												YOUR_SUBSCRIPTION_ID
-											</b>{" "}
-											with your Azure subscription ID.
-										</p>
-										<div className="flex items-start gap-2 p-3 bg-muted/30 border border-border/40 rounded-md font-mono text-[11px] text-foreground">
-											<span className="break-all min-w-0">
-												{cloudShellCmd}
-											</span>
-											<CopyButton
-												text={cloudShellCmd}
-												className="mt-0.5 shrink-0 rounded p-1 hover:bg-muted"
-											/>
-										</div>
-									</div>
-								</div>
-
-								<div className="flex gap-4">
-									<div className="shrink-0 w-7 h-7 rounded-full bg-muted border border-border/50 text-foreground flex items-center justify-center font-medium text-xs">
-										3
-									</div>
-									<div className="flex-1">
-										<div className="font-medium text-sm text-foreground">
-											Enter Connection Details
-										</div>
-										<p className="text-xs text-muted-foreground mt-1 max-w-sm">
-											Copy the{" "}
-											<b className="text-foreground font-medium">
-												Tenant ID
-											</b>{" "}
-											and{" "}
-											<b className="text-foreground font-medium">
-												Subscription ID
-											</b>{" "}
-											from the script output and paste them
-											below.
-										</p>
-									</div>
-								</div>
+			) : (
+				<div className="space-y-8">
+					<Step n={1} title="Apply Terraform Module">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Set your subscription ID and the Alethia app id in the Terraform variables and
+							apply:
+						</p>
+						<div className="mt-1 space-y-1 overflow-x-auto rounded-md border border-border/40 bg-muted/30 p-3 font-mono text-[11px] text-foreground">
+							<div>terraform init && terraform apply \</div>
+							<div className="pl-4">-var &quot;subscription_id=YOUR_SUBSCRIPTION_ID&quot; \</div>
+							<div className="pl-4">
+								-var &quot;alethia_client_id={ALETHIA_AZURE_CLIENT_ID || "ALETHIA_APP_ID"}
+								&quot;
 							</div>
-						) : (
-							<div className="space-y-8">
-								<div className="flex gap-4">
-									<div className="shrink-0 w-7 h-7 rounded-full bg-muted border border-border/50 text-foreground flex items-center justify-center font-medium text-xs">
-										1
-									</div>
-									<div className="flex-1 min-w-0">
-										<div className="font-medium text-sm text-foreground">
-											Apply Terraform Module
-										</div>
-										<p className="text-xs text-muted-foreground mt-1 max-w-sm">
-											Set your subscription ID and the Alethia
-											app id in the Terraform variables and
-											apply:
-										</p>
-										<div className="mt-3 p-3 bg-muted/30 border border-border/40 rounded-md font-mono text-[11px] text-foreground space-y-1 overflow-x-auto">
-											<div>
-												terraform init && terraform
-												apply \
-											</div>
-											<div className="pl-4">
-												-var
-												&quot;subscription_id=YOUR_SUBSCRIPTION_ID&quot;
-												\
-											</div>
-											<div className="pl-4">
-												-var
-												&quot;alethia_client_id=
-												{ALETHIA_AZURE_CLIENT_ID ||
-													"ALETHIA_APP_ID"}
-												&quot;
-											</div>
-										</div>
-										<div className="mt-3 flex flex-wrap items-center gap-3">
-											<Button
-												type="button"
-												size="sm"
-												className="h-8 text-xs font-medium"
-												onClick={() => {
-													const a = document.createElement("a");
-													a.href = "/connector-terraform/azure.tf";
-													a.download = "alethia-azure.tf";
-													document.body.appendChild(a);
-													a.click();
-													document.body.removeChild(a);
-												}}
-											>
-												<Download className="w-3.5 h-3.5 mr-1.5 opacity-70" />
-												Download module
-											</Button>
-											<a
-												href="/docs/console/connectors/azure"
-												target="_blank"
-												rel="noopener noreferrer"
-												className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-											>
-												Full guide
-												<ExternalLink className="w-3 h-3" />
-											</a>
-										</div>
-									</div>
-								</div>
-
-								<div className="flex gap-4">
-									<div className="shrink-0 w-7 h-7 rounded-full bg-muted border border-border/50 text-foreground flex items-center justify-center font-medium text-xs">
-										2
-									</div>
-									<div className="flex-1">
-										<div className="font-medium text-sm text-foreground">
-											Copy Output Values
-										</div>
-										<p className="text-xs text-muted-foreground mt-1 max-w-sm">
-											Run{" "}
-											<code className="bg-muted px-1 py-0.5 border border-border/50 rounded text-foreground">
-												terraform output
-											</code>{" "}
-											and paste the tenant_id and
-											subscription_id below.
-										</p>
-									</div>
-								</div>
-							</div>
-						)}
-
-						<div className="pt-6 border-t border-border/40">
-							{verifyState.phase === "success" ||
-							verifyState.phase === "saving" ? (
-								<ConnectionTestStatus
-									phase={verifyState.phase}
-									status={verifyState.status}
-									missingPermissions={verifyState.missingPermissions}
-									successText="Alethia can authenticate into your Azure subscription via federated identity. You're ready to provision infrastructure."
-									verifyingText="Testing federated identity authentication into your Azure subscription."
-									onCancel={cancel}
-								/>
-							) : (
-								<>
-									<Form {...form}>
-										<form
-											onSubmit={form.handleSubmit(
-												onSubmit,
-											)}
-											className="space-y-4"
-										>
-											<div className="flex items-center justify-between gap-2">
-												<p className="text-[11px] text-muted-foreground">
-													{pasteMissed
-														? "No IDs found on the clipboard — paste the script output, or fill the fields manually."
-														: "Paste both at once — we'll split them across the fields."}
-												</p>
-												<Button
-													type="button"
-													variant="outline"
-													size="sm"
-													className="h-7 text-xs"
-													onClick={handlePasteAll}
-												>
-													<ClipboardPaste className="w-3.5 h-3.5 mr-1.5 opacity-70" />
-													Paste all
-												</Button>
-											</div>
-											<FormField
-												control={form.control}
-												name="tenantId"
-												render={({ field }) => (
-													<FormItem>
-														<div className="flex items-center gap-1.5">
-															<FormLabel className="text-xs font-medium">
-																Tenant ID
-															</FormLabel>
-															<FieldHelp title="Tenant ID">
-																Your Microsoft Entra ID{" "}
-																<b className="text-foreground">
-																	directory (tenant) ID
-																</b>{" "}
-																— the first value the setup script prints
-																(Azure Portal → Microsoft Entra ID → Overview).
-															</FieldHelp>
-														</div>
-														<FormControl>
-															<Input
-																placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-																className="h-9 text-sm font-mono border-border/50"
-																{...field}
-																onPaste={handleFieldPaste}
-															/>
-														</FormControl>
-														<FormMessage className="text-xs" />
-													</FormItem>
-												)}
-											/>
-											<FormField
-												control={form.control}
-												name="subscriptionId"
-												render={({ field }) => (
-													<FormItem>
-														<div className="flex items-center gap-1.5">
-															<FormLabel className="text-xs font-medium">
-																Subscription ID
-															</FormLabel>
-															<FieldHelp title="Subscription ID">
-																The Azure{" "}
-																<b className="text-foreground">subscription</b>{" "}
-																Alethia provisions into — the second value the
-																script prints (the ID you passed to it).
-															</FieldHelp>
-														</div>
-														<FormControl>
-															<Input
-																placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-																className="h-9 text-sm font-mono border-border/50"
-																{...field}
-																onPaste={handleFieldPaste}
-															/>
-														</FormControl>
-														<FormMessage className="text-xs" />
-													</FormItem>
-												)}
-											/>
-											{verifyState.phase === "failed" && (
-												<StatusCallout
-													variant="error"
-													title="Verification failed"
-												>
-													{verifyState.error}
-												</StatusCallout>
-											)}
-											<Button
-												disabled={
-													!form.formState.isValid
-												}
-												type="submit"
-												className="w-full h-9 text-xs font-medium"
-											>
-												{verifyState.phase ===
-												"failed"
-													? "Retry"
-													: "Connect"}
-											</Button>
-										</form>
-									</Form>
-
-									<div className="mt-5">
-										<InfoNote>
-											Alethia uses Azure federated identity credentials for
-											keyless authentication. No client secrets are stored —
-											only the trust configuration between Alethia&apos;s
-											infrastructure and your Azure tenant.
-										</InfoNote>
-									</div>
-								</>
-							)}
 						</div>
-					</CardContent>
-				</Card>
-			</div>
-		</div>
+						<div className="mt-2 flex flex-wrap items-center gap-3">
+							<Button
+								type="button"
+								size="sm"
+								className="h-8 font-medium text-xs"
+								onClick={() => {
+									const a = document.createElement("a");
+									a.href = "/connector-terraform/azure.tf";
+									a.download = "alethia-azure.tf";
+									document.body.appendChild(a);
+									a.click();
+									document.body.removeChild(a);
+								}}
+							>
+								<Download className="mr-1.5 h-3.5 w-3.5 opacity-70" />
+								Download module
+							</Button>
+							<a
+								href="/docs/console/connectors/azure"
+								target="_blank"
+								rel="noopener noreferrer"
+								className="inline-flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground"
+							>
+								Full guide
+								<ExternalLink className="h-3 w-3" />
+							</a>
+						</div>
+					</Step>
+					<Step n={2} title="Copy Output Values">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Run{" "}
+							<code className="rounded border border-border/50 bg-muted px-1 py-0.5 text-foreground">
+								terraform output
+							</code>{" "}
+							and paste the tenant_id and subscription_id below.
+						</p>
+					</Step>
+				</div>
+			)}
+
+			<VerifySection
+				state={verifyState}
+				onCancel={cancel}
+				successText="Alethia can authenticate into your Azure subscription via federated identity. You're ready to provision infrastructure."
+				verifyingText="Testing federated identity authentication into your Azure subscription."
+			>
+				<Form {...form}>
+					<form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+						<div className="flex items-center justify-between gap-2">
+							<p className="text-[11px] text-muted-foreground">
+								{pasteMissed
+									? "No IDs found on the clipboard — paste the script output, or fill the fields manually."
+									: "Paste both at once — we'll split them across the fields."}
+							</p>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								className="h-7 text-xs"
+								onClick={handlePasteAll}
+							>
+								<ClipboardPaste className="mr-1.5 h-3.5 w-3.5 opacity-70" />
+								Paste all
+							</Button>
+						</div>
+						<FormField
+							control={form.control}
+							name="tenantId"
+							render={({ field }) => (
+								<FormItem>
+									<div className="flex items-center gap-1.5">
+										<FormLabel className="font-medium text-xs">Tenant ID</FormLabel>
+										<FieldHelp title="Tenant ID">
+											Your Microsoft Entra ID{" "}
+											<b className="text-foreground">directory (tenant) ID</b> — the
+											first value the setup script prints (Azure Portal → Microsoft
+											Entra ID → Overview).
+										</FieldHelp>
+									</div>
+									<FormControl>
+										<Input
+											placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+											className="h-9 border-border/50 font-mono text-sm"
+											{...field}
+											onPaste={handleFieldPaste}
+										/>
+									</FormControl>
+									<FormMessage className="text-xs" />
+								</FormItem>
+							)}
+						/>
+						<FormField
+							control={form.control}
+							name="subscriptionId"
+							render={({ field }) => (
+								<FormItem>
+									<div className="flex items-center gap-1.5">
+										<FormLabel className="font-medium text-xs">Subscription ID</FormLabel>
+										<FieldHelp title="Subscription ID">
+											The Azure <b className="text-foreground">subscription</b> Alethia
+											provisions into — the second value the script prints (the ID you
+											passed to it).
+										</FieldHelp>
+									</div>
+									<FormControl>
+										<Input
+											placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+											className="h-9 border-border/50 font-mono text-sm"
+											{...field}
+											onPaste={handleFieldPaste}
+										/>
+									</FormControl>
+									<FormMessage className="text-xs" />
+								</FormItem>
+							)}
+						/>
+						<Button
+							disabled={!form.formState.isValid}
+							type="submit"
+							className="h-9 w-full font-medium text-xs"
+						>
+							{verifyState.phase === "failed" ? "Retry" : "Connect"}
+						</Button>
+					</form>
+				</Form>
+				<StoredNote
+					stored="only your tenant + subscription id (public identifiers) — no client secret."
+					revoke="remove Alethia's app role assignment (or its service principal) to cut access."
+				/>
+			</VerifySection>
+		</ConnectSheetShell>
 	);
 }

@@ -14,7 +14,7 @@ import {
 } from "@repo/ui/form";
 import { Input } from "@repo/ui/input";
 import { FieldHelp } from "@repo/ui/field-help";
-import { InfoNote, StatusCallout } from "@/components/connector/connection-ui";
+import { StatusCallout, StoredNote } from "@/components/connector/connection-ui";
 import type { ConnectorProviderMeta } from "@/lib/connectors/registry.generated";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -175,10 +175,10 @@ export function ApiKeyConnection({
 				</form>
 			</Form>
 
-			<InfoNote>
-				Secrets are encrypted at rest and only decrypted on the runner at
-				provision time — never stored in a Project snapshot.
-			</InfoNote>
+			<StoredNote
+				stored={`your ${provider.name} credential, encrypted at rest (AES-GCM) — decrypted only on the runner at provision time, never in a Project snapshot.`}
+				revoke={`rotate or revoke the credential in ${provider.name} at any time to cut access.`}
+			/>
 		</div>
 	);
 }

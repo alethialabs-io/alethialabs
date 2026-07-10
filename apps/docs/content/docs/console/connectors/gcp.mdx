@@ -9,6 +9,13 @@ GCP integration uses **Workload Identity Federation (WIF)** with **direct OIDC**
 trusts Alethia's issuer directly (no AWS hop), and Alethia federates in with a short-lived minted JWT. No
 service account JSON keys are created or stored. See [Security Architecture](/concepts/security).
 
+<Callout type="info">
+**Is this safe?** You create the trust entirely in **your own** GCP project — no service account key is
+ever generated. Alethia signs in with a short-lived token (≤10 min) that GCP verifies and swaps for a
+~1-hour access token. The only thing stored is the **WIF trust configuration** (no secret). **Revoke
+anytime** by deleting the pool or unbinding the service account.
+</Callout>
+
 The connect sheet gives you two one-shot paths that create everything for you and print a **credential
 configuration JSON** — you don't hand-build the WIF resources. Both pin the same values the console mints:
 issuer `https://alethialabs.io/api/oidc`, audience `alethia-gcp-wif`, subject `alethia-connector`.
