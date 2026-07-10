@@ -2,11 +2,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "server-only";
-import { aiTierSpec, resolveAiPlan, resolveAiTier } from "@/lib/billing/ai-plan";
+import {
+	AI_SESSION_WINDOW_MS,
+	aiTierSpec,
+	resolveAiPlan,
+	resolveAiTier,
+} from "@/lib/billing/ai-plan";
 import { creditsFor } from "@/lib/billing/ai-credits";
 import {
 	type AiUsageKind,
 	type CreditSource,
+	oldestUsageForUserSince,
+	oldestUsageSince,
 	purchasedBalance,
 	sumCredits,
 	sumCreditsForUser,
@@ -17,8 +24,8 @@ import { isStripeConfigured } from "@/lib/billing/config";
 export class AiBudgetError extends Error {
 	constructor(
 		message: string,
-		readonly reason: "not_enabled" | "daily" | "weekly" | "out",
-		/** ISO time the blocking bucket resets (null when only buying credits helps). */
+		readonly reason: "not_enabled" | "session" | "weekly" | "out",
+		/** ISO time the blocking window clears (null when only buying credits helps). */
 		readonly resetAt: string | null,
 		/** Whether upgrading the AI plan would lift the block. */
 		readonly upgradable: boolean,
@@ -43,42 +50,58 @@ const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 const WEEK_MS = 7 * DAY_MS;
 
-/** Fixed day/week buckets (epoch-aligned) → clean reset times + simple sums. */
+/** Fixed week bucket (epoch-aligned) → a clean shared weekly reset + simple sums. */
 function bucketStart(now: number, sizeMs: number): Date {
 	return new Date(Math.floor(now / sizeMs) * sizeMs);
 }
 
 /**
- * Throw the **per-seat** (personal) budget error — this seat has exhausted its personal
- * daily/weekly sub-cap while the ORG still has included room. Not upgradable (buying org
- * credits / upgrading doesn't lift a personal cap; it clears on the bucket reset).
+ * When a blocked ROLLING session fully clears: the oldest included usage inside the
+ * trailing 5-hour window + the window size (capacity actually frees gradually as usage
+ * ages out; this is the conservative "all clear" moment). Per-seat when `userId` is
+ * given. Null-defensive — a blocked caller has usage in the window by definition, but a
+ * racing window edge must not turn the budget error into a crash.
  */
-function throwPersonalCap(weeklyHit: boolean, dayStart: Date, weekStart: Date): never {
+async function sessionResetIso(
+	orgId: string,
+	userId?: string,
+): Promise<string | null> {
+	const since = new Date(Date.now() - AI_SESSION_WINDOW_MS);
+	const oldest = userId
+		? await oldestUsageForUserSince(orgId, userId, "included", since)
+		: await oldestUsageSince(orgId, "included", since);
+	return oldest
+		? new Date(oldest.getTime() + AI_SESSION_WINDOW_MS).toISOString()
+		: null;
+}
+
+/**
+ * Throw the **per-seat** (personal) budget error — this seat has exhausted its personal
+ * session/weekly sub-cap while the ORG still has included room. Not upgradable (buying
+ * org credits / upgrading doesn't lift a personal cap; it clears as the window rolls).
+ */
+function throwPersonalCap(weeklyHit: boolean, resetAt: string | null): never {
 	throw new AiBudgetError(
 		weeklyHit
 			? "You've reached your personal AI usage limit for this week. It resets soon — an admin can raise the per-seat limit."
-			: "You've reached your personal AI usage limit for today. It resets soon — an admin can raise the per-seat limit.",
-		weeklyHit ? "weekly" : "daily",
-		new Date(
-			weeklyHit ? weekStart.getTime() + WEEK_MS : dayStart.getTime() + DAY_MS,
-		).toISOString(),
+			: "You've reached your personal AI usage limit for this session. It frees up as usage rolls out of the 5-hour window — an admin can raise the per-seat limit.",
+		weeklyHit ? "weekly" : "session",
+		resetAt,
 		false,
 	);
 }
 
 /**
- * Throw the **org-level** budget error — the org's included allowance for this bucket is
- * spent (and no purchased top-up covers it). Upgradable: buying credits / upgrading lifts it.
+ * Throw the **org-level** budget error — the org's included allowance for this window is
+ * spent (and no purchased top-up covers it). Upgradable: a higher tier lifts it.
  */
-function throwOrgCap(weeklyHit: boolean, dayStart: Date, weekStart: Date): never {
+function throwOrgCap(weeklyHit: boolean, resetAt: string | null): never {
 	throw new AiBudgetError(
 		weeklyHit
-			? "You're out of AI usage for this week. Buy credits or upgrade your AI plan."
-			: "You're out of AI usage for today. It resets soon — or buy credits / upgrade.",
-		weeklyHit ? "weekly" : "daily",
-		new Date(
-			weeklyHit ? weekStart.getTime() + WEEK_MS : dayStart.getTime() + DAY_MS,
-		).toISOString(),
+			? "You're out of included AI usage for this week. Upgrade your AI plan or wait for the weekly reset."
+			: "You're out of included AI usage for this session. It frees up as usage rolls out of the 5-hour window.",
+		weeklyHit ? "weekly" : "session",
+		resetAt,
 		true,
 	);
 }
@@ -98,26 +121,28 @@ export async function isAiSurfaceEnabled(orgId: string): Promise<boolean> {
 }
 
 /**
- * Gate a metered AI action against the org's AI-tier budget — a fixed **daily** cap + a
- * **weekly** cap (both from the org's standalone AI tier, INDEPENDENT of the org plan),
- * spending **included** credits first, then **purchased** top-ups. Returns how to charge
- * it (caller records via `recordAiUsage`); throws `AiBudgetError` when out.
+ * Gate a metered AI action against the org's AI-tier budget — a rolling **5-hour session**
+ * cap + a fixed **weekly** cap (both from the org's standalone AI tier, INDEPENDENT of the
+ * org plan), spending **included** credits first, then **purchased** top-ups. The two
+ * windows are independent, Anthropic-style: sessions roll continuously, so a heavy day can
+ * legitimately exhaust the whole week. Returns how to charge it (caller records via
+ * `recordAiUsage`); throws `AiBudgetError` when out.
  *
  * Two charge models by kind:
  *  - **Fixed (`scan`)** — a nominal cost (`creditsFor`) is *reserved* up front: allowed only
  *    if `used + cost <= cap`. The returned charge carries that `credits` figure.
  *  - **Metered (`agent`/`support`)** — the real cost-of-serve is only known AFTER the turn, so
- *    the gate checks **headroom** instead: allowed if the bucket still has ANY room
+ *    the gate checks **headroom** instead: allowed if the window still has ANY room
  *    (`used < cap`). The returned charge is `{ settle: true }`; the caller settles the actual
  *    cost (derived from `cost_micros`) when the turn finishes. A turn that starts with headroom
- *    may overshoot its bucket by ≤1 turn — standard/accepted; the NEXT turn blocks.
+ *    may overshoot its window by ≤1 turn — standard/accepted; the NEXT turn blocks.
  *
- * When `userId` is supplied, an additional **per-seat** daily + weekly sub-cap is enforced on
+ * When `userId` is supplied, an additional **per-seat** session + weekly sub-cap is enforced on
  * top of the org caps (a fraction of the org allowance — see `AiTierSpec.perUser*`), so one
  * member can't drain the whole workspace's included budget. A seat that has exhausted its
  * personal share while the org still has room is blocked (buying org credits doesn't lift a
- * per-seat cap; it clears on the bucket reset). Omitting `userId` preserves the org-only
- * behaviour (back-compat).
+ * per-seat cap; it clears as usage rolls out of the window). Omitting `userId` preserves the
+ * org-only behaviour (back-compat).
  *
  * Respects the org's **AI-spend hard cap** (`organization_billing.usageHardCap`, shared with
  * the runner-minutes guard): when on, the guard pauses at the included allowance instead of
@@ -145,61 +170,77 @@ export async function assertAiAllowed(
 	}
 
 	const now = Date.now();
-	const dayStart = bucketStart(now, DAY_MS);
+	const sessionSince = new Date(now - AI_SESSION_WINDOW_MS);
 	const weekStart = bucketStart(now, WEEK_MS);
+	const weekResetIso = new Date(weekStart.getTime() + WEEK_MS).toISOString();
 
-	const [dayUsed, weekUsed, userDayUsed, userWeekUsed] = await Promise.all([
-		sumCredits(orgId, "included", dayStart),
-		sumCredits(orgId, "included", weekStart),
-		userId
-			? sumCreditsForUser(orgId, userId, "included", dayStart)
-			: Promise.resolve(0),
-		userId
-			? sumCreditsForUser(orgId, userId, "included", weekStart)
-			: Promise.resolve(0),
-	]);
+	const [sessionUsed, weekUsed, userSessionUsed, userWeekUsed] =
+		await Promise.all([
+			sumCredits(orgId, "included", sessionSince),
+			sumCredits(orgId, "included", weekStart),
+			userId
+				? sumCreditsForUser(orgId, userId, "included", sessionSince)
+				: Promise.resolve(0),
+			userId
+				? sumCreditsForUser(orgId, userId, "included", weekStart)
+				: Promise.resolve(0),
+		]);
 
 	// FIXED-cost kinds (scan): reserve the nominal cost up front — allowed only if it fits.
 	if (kind === "scan") {
 		const cost = creditsFor(kind);
-		const orgDayOk = dayUsed + cost <= spec.dailyCredits;
+		const orgSessionOk = sessionUsed + cost <= spec.sessionCredits;
 		const orgWeekOk = weekUsed + cost <= spec.weeklyCredits;
-		const userDayOk = !userId || userDayUsed + cost <= spec.perUserDailyCredits;
-		const userWeekOk = !userId || userWeekUsed + cost <= spec.perUserWeeklyCredits;
+		const userSessionOk =
+			!userId || userSessionUsed + cost <= spec.perUserSessionCredits;
+		const userWeekOk =
+			!userId || userWeekUsed + cost <= spec.perUserWeeklyCredits;
 
-		if (orgDayOk && orgWeekOk && userDayOk && userWeekOk) {
+		if (orgSessionOk && orgWeekOk && userSessionOk && userWeekOk) {
 			return { source: "included", credits: cost };
 		}
 		// Per-seat fairness cap is the binding limit while the ORG still has included room.
-		if (orgDayOk && orgWeekOk && (!userDayOk || !userWeekOk)) {
-			throwPersonalCap(!userWeekOk, dayStart, weekStart);
+		if (orgSessionOk && orgWeekOk && (!userSessionOk || !userWeekOk)) {
+			throwPersonalCap(
+				!userWeekOk,
+				!userWeekOk ? weekResetIso : await sessionResetIso(orgId, userId),
+			);
 		}
 		// Org included budget exhausted — spend purchased top-ups unless the hard cap says pause.
 		if (!hardCap && (await purchasedBalance(orgId)) >= cost) {
 			return { source: "purchased", credits: cost };
 		}
-		throwOrgCap(!orgWeekOk, dayStart, weekStart);
+		throwOrgCap(
+			!orgWeekOk,
+			!orgWeekOk ? weekResetIso : await sessionResetIso(orgId),
+		);
 	}
 
 	// METERED kinds (agent/support): the real cost isn't known yet → gate on HEADROOM. The
 	// turn settles its actual cost-of-serve afterward; overshoot by ≤1 turn is fine.
-	const orgDayOk = dayUsed < spec.dailyCredits;
+	const orgSessionOk = sessionUsed < spec.sessionCredits;
 	const orgWeekOk = weekUsed < spec.weeklyCredits;
-	const userDayOk = !userId || userDayUsed < spec.perUserDailyCredits;
+	const userSessionOk = !userId || userSessionUsed < spec.perUserSessionCredits;
 	const userWeekOk = !userId || userWeekUsed < spec.perUserWeeklyCredits;
 
-	if (orgDayOk && orgWeekOk && userDayOk && userWeekOk) {
+	if (orgSessionOk && orgWeekOk && userSessionOk && userWeekOk) {
 		return { source: "included", settle: true };
 	}
 	// Per-seat fairness cap is the binding limit while the ORG still has included headroom:
 	// block THIS seat (don't silently divert to purchased packs). Fail-closed.
-	if (orgDayOk && orgWeekOk && (!userDayOk || !userWeekOk)) {
-		throwPersonalCap(!userWeekOk, dayStart, weekStart);
+	if (orgSessionOk && orgWeekOk && (!userSessionOk || !userWeekOk)) {
+		throwPersonalCap(
+			!userWeekOk,
+			!userWeekOk ? weekResetIso : await sessionResetIso(orgId, userId),
+		);
 	}
-	// Org included headroom is gone for this bucket — settle against purchased top-ups if any,
+	// Org included headroom is gone for this window — settle against purchased top-ups if any,
 	// unless the org's hard-cap policy says to pause at the included allowance instead.
 	if (!hardCap && (await purchasedBalance(orgId)) > 0) {
 		return { source: "purchased", settle: true };
 	}
-	throwOrgCap(!orgWeekOk, dayStart, weekStart);
+	throwOrgCap(
+		!orgWeekOk,
+		!orgWeekOk ? weekResetIso : await sessionResetIso(orgId),
+	);
 }

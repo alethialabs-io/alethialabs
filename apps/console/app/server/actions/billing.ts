@@ -24,7 +24,12 @@ import {
 	priceIdForPlan,
 } from "@/lib/billing/config";
 import { creditPack } from "@/lib/billing/ai-credits";
-import { type AiTier, aiTierSpec, resolveAiTier } from "@/lib/billing/ai-plan";
+import {
+	AI_SESSION_WINDOW_MS,
+	type AiTier,
+	aiTierSpec,
+	resolveAiTier,
+} from "@/lib/billing/ai-plan";
 import { canOrgInvite } from "@/lib/billing/collaboration";
 import { countBillableSeats } from "@/lib/billing/seats";
 import type { TaxIdType } from "@/lib/billing/tax-ids";
@@ -50,6 +55,7 @@ import {
 } from "@/lib/queries/runner-usage";
 import {
 	aiCreditsSeries,
+	oldestUsageSince,
 	purchasedBalance,
 	sumCredits,
 } from "@/lib/billing/ai-quota";
@@ -356,23 +362,27 @@ export async function getUsageOverTime(input: {
 }
 
 /**
- * The active org's STANDALONE AI standing — daily + weekly included spend vs the AI tier's
- * caps (the % denominators), on the SAME fixed epoch buckets the guard (ai-guard.ts)
- * enforces, plus the remaining purchased top-up balance and the tier. Read-only; any
- * member. The single canonical AI-usage action (drives the overview card, the Usage panel,
- * and the billing AI section).
+ * The active org's STANDALONE AI standing — rolling 5-hour session + fixed weekly included
+ * spend vs the AI tier's caps (the % denominators), on the SAME windows the guard
+ * (ai-guard.ts) enforces, plus the remaining purchased top-up balance and the tier.
+ * Read-only; any member. The single canonical AI-usage action (drives the overview card,
+ * the Usage panel, and the billing AI section).
  */
 export interface AiUsageSummary {
 	/** AI enabled for this org's tier (always true today; future-proofs a disabled tier). */
 	enabled: boolean;
 	/** The org's standalone AI tier (independent of the org plan). */
 	tier: AiTier;
-	/** Included credits used in the current fixed day. */
-	dailyUsed: number;
-	/** The tier's daily included-credit cap (the daily-% denominator). */
-	dailyBudget: number;
-	/** When the daily bucket resets (ISO). */
-	dailyResetAt: string;
+	/** Included credits used inside the rolling 5-hour session window. */
+	sessionUsed: number;
+	/** The tier's session included-credit cap (the session-% denominator). */
+	sessionBudget: number;
+	/**
+	 * When the current session fully clears: oldest in-window usage + 5h (ISO). `null`
+	 * when there is no usage in the window — no active session (the UI shows an idle
+	 * state instead of a countdown).
+	 */
+	sessionResetAt: string | null;
 	/** Included credits used in the current fixed week. */
 	weeklyUsed: number;
 	/** The tier's weekly included-credit cap (the weekly-% denominator). */
@@ -389,8 +399,7 @@ export interface AiUsageSummary {
 	paidTiersEnabled: boolean;
 }
 
-const AI_DAY_MS = 24 * 60 * 60 * 1000;
-const AI_WEEK_MS = 7 * AI_DAY_MS;
+const AI_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 	const actor = await currentActor();
@@ -399,18 +408,17 @@ export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 	const paidTiersEnabled = aiPaidTiersEnabled();
 
 	const now = Date.now();
-	const dayStart = new Date(Math.floor(now / AI_DAY_MS) * AI_DAY_MS);
+	const sessionSince = new Date(now - AI_SESSION_WINDOW_MS);
 	const weekStart = new Date(Math.floor(now / AI_WEEK_MS) * AI_WEEK_MS);
-	const dailyResetAt = new Date(dayStart.getTime() + AI_DAY_MS).toISOString();
 	const weeklyResetAt = new Date(weekStart.getTime() + AI_WEEK_MS).toISOString();
 
 	if (actor.orgId === actor.userId) {
 		return {
 			enabled: spec.enabled,
 			tier,
-			dailyUsed: 0,
-			dailyBudget: spec.dailyCredits,
-			dailyResetAt,
+			sessionUsed: 0,
+			sessionBudget: spec.sessionCredits,
+			sessionResetAt: null,
 			weeklyUsed: 0,
 			weeklyBudget: spec.weeklyCredits,
 			weeklyResetAt,
@@ -419,17 +427,21 @@ export async function getAiUsageSummary(): Promise<AiUsageSummary> {
 		};
 	}
 
-	const [dailyUsed, weeklyUsed, purchased] = await Promise.all([
-		sumCredits(actor.orgId, "included", dayStart),
-		sumCredits(actor.orgId, "included", weekStart),
-		purchasedBalance(actor.orgId),
-	]);
+	const [sessionUsed, weeklyUsed, purchased, oldestInWindow] =
+		await Promise.all([
+			sumCredits(actor.orgId, "included", sessionSince),
+			sumCredits(actor.orgId, "included", weekStart),
+			purchasedBalance(actor.orgId),
+			oldestUsageSince(actor.orgId, "included", sessionSince),
+		]);
 	return {
 		enabled: spec.enabled,
 		tier,
-		dailyUsed,
-		dailyBudget: spec.dailyCredits,
-		dailyResetAt,
+		sessionUsed,
+		sessionBudget: spec.sessionCredits,
+		sessionResetAt: oldestInWindow
+			? new Date(oldestInWindow.getTime() + AI_SESSION_WINDOW_MS).toISOString()
+			: null,
 		weeklyUsed,
 		weeklyBudget: spec.weeklyCredits,
 		weeklyResetAt,
@@ -1124,7 +1136,9 @@ export interface CreditPackIntent {
  * PaymentIntent client secret. The embedded <PaymentForm mode="payment"> confirms it
  * inline (unchanged — confirmPayment works the same for an invoice's PI); the webhook's
  * `invoice.payment_succeeded` branch grants the credits (idempotent on the invoice id)
- * and emails the receipt with the PDF attached. Owner-gated; org-scoped; hosted only.
+ * and emails the receipt with the PDF attached. Owner-gated; org-scoped; hosted only;
+ * PAID-tier only — packs top up a plan, they don't replace one (the free tier upgrades
+ * instead; mirrors the client's upgrade-first panel).
  */
 export async function createCreditPackIntent(
 	packId: string,
@@ -1133,6 +1147,12 @@ export async function createCreditPackIntent(
 	requireHostedBilling();
 	if (actor.orgId === actor.userId) {
 		throw new Error("Create an organization before buying AI credits.");
+	}
+	const tier = await resolveAiTier(actor.orgId);
+	if (tier === "ai_free") {
+		throw new Error(
+			"Credit packs are available on paid AI plans — upgrade to AI Plus or AI Max first.",
+		);
 	}
 	const pack = creditPack(packId);
 	if (!pack) throw new Error("Unknown credit pack.");
