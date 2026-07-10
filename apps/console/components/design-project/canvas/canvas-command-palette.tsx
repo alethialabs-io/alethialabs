@@ -10,6 +10,7 @@ import {
 	CommandItem,
 	CommandList,
 } from "@repo/ui/command";
+import { ArrowRight, GitBranch } from "lucide-react";
 import {
 	PROVIDERS,
 	getProvider,
@@ -75,6 +76,8 @@ interface CanvasCommandPaletteProps {
 	onToggleView?: () => void;
 	onFitView: () => void;
 	onAskAi: () => void;
+	/** Opens the "bring your own Helm chart" flow. Omitted when the feature is off / no project. */
+	onAttachChart?: () => void;
 }
 
 /** ⌘K command menu: search services by name, jump to nodes, run actions. */
@@ -85,6 +88,7 @@ export function CanvasCommandPalette({
 	onToggleView,
 	onFitView,
 	onAskAi,
+	onAttachChart,
 }: CanvasCommandPaletteProps) {
 	const addNode = useCanvasStore((s) => s.addNode);
 	const openInspector = useCanvasStore((s) => s.openInspector);
@@ -137,6 +141,23 @@ export function CanvasCommandPalette({
 			<CommandInput placeholder="Search services and actions…" />
 			<CommandList>
 				<CommandEmpty>No results.</CommandEmpty>
+
+				{onAttachChart && (
+					<CommandGroup heading="Sources">
+						<CommandItem
+							value="attach-helm-chart"
+							keywords={["helm", "chart", "byo", "bring your own", "gitops", "argocd", "repo"]}
+							onSelect={() => run(onAttachChart)}
+						>
+							<GitBranch className="h-4 w-4" />
+							<span>Bring your own Helm chart</span>
+							<span className="ml-auto font-mono text-[11px] text-muted-foreground">
+								Helm · GitOps
+							</span>
+							<ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+						</CommandItem>
+					</CommandGroup>
+				)}
 
 				<CommandGroup heading="Core services">
 					{coreKinds.map(serviceItem)}

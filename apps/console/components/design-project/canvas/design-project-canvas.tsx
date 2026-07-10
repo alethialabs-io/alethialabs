@@ -22,6 +22,7 @@ import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { AddonConfigSheet } from "@/components/addons/addon-config-sheet";
+import { ByoChartDialog } from "@/components/design-project/byo/byo-chart-dialog";
 import { useAddonsQuery } from "@/lib/query/use-addons-query";
 import { Button } from "@repo/ui/button";
 import {
@@ -55,6 +56,9 @@ interface DesignProjectCanvasProps {
 	/** When true the docked panel (inspector + assistant) is owned by the project shell, so the
 	 * board renders alone. When false (the standalone create flow) the board renders its own dock. */
 	dockInShell?: boolean;
+	/** Whether bring-your-own Helm charts are enabled on this instance (server flag). Gates the
+	 * ⌘K "Sources" entry. Server actions enforce the real gate regardless. */
+	byoHelmEnabled?: boolean;
 }
 
 /** The canvas editor surface (inside its own ReactFlowProvider). */
@@ -72,6 +76,7 @@ function CanvasInner({
 	projectId,
 	environmentId,
 	dockInShell,
+	byoHelmEnabled,
 }: DesignProjectCanvasProps) {
 	const router = useRouter();
 	const orgSlug = useActiveOrgSlug();
@@ -84,6 +89,7 @@ function CanvasInner({
 	const [configuringAddon, setConfiguringAddon] =
 		useState<AddonMarketItem | null>(null);
 	const [addonSheetOpen, setAddonSheetOpen] = useState(false);
+	const [byoDialogOpen, setByoDialogOpen] = useState(false);
 	const openConfigureAddon = useCallback((item: AddonMarketItem) => {
 		setConfiguringAddon(item);
 		setAddonSheetOpen(true);
@@ -332,7 +338,19 @@ function CanvasInner({
 				onToggleView={onToggleForm}
 				onFitView={() => fitView({ padding: 0.3 })}
 				onAskAi={openAssistantExclusive}
+					onAttachChart={
+						byoHelmEnabled && projectId ? () => setByoDialogOpen(true) : undefined
+					}
 			/>
+			{projectId && byoHelmEnabled && (
+				<ByoChartDialog
+					open={byoDialogOpen}
+					onOpenChange={setByoDialogOpen}
+					projectId={projectId}
+					environmentId={environmentId ?? null}
+					onAttached={() => router.refresh()}
+				/>
+			)}
 
 			<Dialog open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
 				<DialogContent className="sm:max-w-sm">
