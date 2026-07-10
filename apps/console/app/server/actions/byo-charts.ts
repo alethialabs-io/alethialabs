@@ -14,12 +14,13 @@
 
 import { and, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
-import { withOwnerScope } from "@/lib/db";
-import { type ComponentStatus, projectAddons } from "@/lib/db/schema";
+import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { type ComponentStatus, jobs, projectAddons } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { parseValuesYaml } from "@/lib/addons/catalog";
 import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
-import type { AddOnValues } from "@/types/jsonb.types";
+import { notifyScaler } from "@/lib/scaler";
+import type { AddOnValues, VerifyReport } from "@/types/jsonb.types";
 
 /** Throws if the feature is disabled — every mutating BYO action calls this first. */
 function assertByoHelmEnabled(): void {
@@ -43,6 +44,11 @@ export interface ByoChartState {
 	health: string | null;
 	sync: string | null;
 	lastSyncedAt: string | null;
+	/** Chart-safety scan lifecycle: unscanned | scanning | done | failed. */
+	scanStatus: string;
+	/** The elench verify.Report over the chart's rendered manifests (null until the first scan). */
+	scanReport: VerifyReport | null;
+	scannedAt: string | null;
 }
 
 /** RFC1123-ish slug for the addon_id of a BYO chart (unique per env), derived from a display name. */
@@ -137,6 +143,14 @@ export async function attachByoChart(input: {
 				},
 			});
 	});
+
+	// Auto-queue a safety scan so the user sees any issues right after attaching (best-effort — a
+	// scan-queue failure must never fail the attach itself).
+	try {
+		await scanByoChart({ projectId: input.projectId, environmentId: envId, id });
+	} catch {
+		/* ignore — the chart is attached; the user can re-run the scan from the node */
+	}
 	return { ok: true, id };
 }
 
@@ -195,6 +209,115 @@ export async function getProjectByoCharts(
 		health: r.health,
 		sync: r.sync_status,
 		lastSyncedAt: r.last_synced_at?.toISOString() ?? null,
+		scanStatus: r.scan_status,
+		scanReport: r.scan_report ?? null,
+		scannedAt: r.scanned_at?.toISOString() ?? null,
 	}));
 	return { environmentId: envId, charts };
+}
+
+/**
+ * Queues a CHART_SCAN job for an attached BYO chart: the runner clones the repo, `helm template`s
+ * it, and runs verify.EvaluateManifests over the rendered manifests, posting a verify.Report that
+ * finalizeChartScan writes back onto the row. Marks the row `scanning` immediately so the UI can
+ * show progress. The job's config_snapshot carries the chart coords (repo_url so the runner's
+ * git-token route resolves a token) + the row identity so the result maps back.
+ */
+export async function scanByoChart(input: {
+	projectId: string;
+	environmentId?: string | null;
+	id: string;
+}): Promise<{ ok: true; jobId: string }> {
+	assertByoHelmEnabled();
+	const actor = await authorize("edit", { type: "project", id: input.projectId });
+	const envId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
+	const id = chartSlug(input.id);
+
+	const jobId = await withOwnerScope(actor.userId, async (tx) => {
+		const [row] = await tx
+			.select()
+			.from(projectAddons)
+			.where(
+				and(
+					eq(projectAddons.project_id, input.projectId),
+					eq(projectAddons.environment_id, envId),
+					eq(projectAddons.addon_id, id),
+					eq(projectAddons.source, "byo"),
+				),
+			)
+			.limit(1);
+		if (!row || !row.chart_repo || !row.chart_path) {
+			throw new Error("Chart not found (attach it before scanning).");
+		}
+		const [job] = await tx
+			.insert(jobs)
+			.values({
+				user_id: actor.userId,
+				org_id: actor.orgId,
+				job_type: "CHART_SCAN",
+				status: "QUEUED",
+				config_snapshot: {
+					// repo_url (not chart_repo) so the runner's FetchGitToken route resolves a token.
+					repo_url: row.chart_repo,
+					chart_path: row.chart_path,
+					ref: row.version ?? "HEAD",
+					values: row.values ?? {},
+					// Row identity for finalizeChartScan → the result maps back to this chart.
+					project_id: input.projectId,
+					environment_id: envId,
+					addon_id: id,
+				},
+			})
+			.returning({ id: jobs.id });
+		await tx
+			.update(projectAddons)
+			.set({ scan_status: "scanning", updated_at: new Date() })
+			.where(
+				and(
+					eq(projectAddons.project_id, input.projectId),
+					eq(projectAddons.environment_id, envId),
+					eq(projectAddons.addon_id, id),
+				),
+			);
+		return job.id;
+	});
+	notifyScaler();
+	return { ok: true, jobId };
+}
+
+/**
+ * Writes a finished CHART_SCAN job's verify.Report back onto its chart row (called from the job
+ * status route on SUCCESS/FAILED). Uses the service DB (the runner-facing status route has no user
+ * session) and maps back via the row identity stashed in config_snapshot.
+ */
+export async function finalizeChartScan(jobId: string): Promise<void> {
+	const db = getServiceDb();
+	const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
+	if (!job || job.job_type !== "CHART_SCAN") return;
+	const snap = (job.config_snapshot ?? {}) as Record<string, unknown>;
+	const projectId = typeof snap.project_id === "string" ? snap.project_id : null;
+	const environmentId = typeof snap.environment_id === "string" ? snap.environment_id : null;
+	const addonId = typeof snap.addon_id === "string" ? snap.addon_id : null;
+	if (!projectId || !environmentId || !addonId) return;
+
+	const meta = (job.execution_metadata ?? {}) as { verify_result?: VerifyReport };
+	const report = meta.verify_result ?? null;
+	const done = job.status === "SUCCESS" && report !== null;
+
+	await db
+		.update(projectAddons)
+		.set({
+			scan_status: done ? "done" : "failed",
+			scan_report: report,
+			scanned_at: new Date(),
+			updated_at: new Date(),
+		})
+		.where(
+			and(
+				eq(projectAddons.project_id, projectId),
+				eq(projectAddons.environment_id, environmentId),
+				eq(projectAddons.addon_id, addonId),
+				eq(projectAddons.source, "byo"),
+			),
+		);
 }

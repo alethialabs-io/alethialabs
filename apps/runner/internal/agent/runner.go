@@ -329,6 +329,8 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 		execErr = w.executeDriftDetection(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	case types.JobTypeAudit:
 		execErr = w.executeAudit(ctx, job, stdoutLogger, stderrLogger)
+	case types.JobTypeChartScan:
+		execErr = w.executeChartScan(ctx, job, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}

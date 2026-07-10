@@ -4,6 +4,7 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
+import type { VerifyReport } from "@/types/jsonb.types";
 
 /**
  * Node kinds in the Milestone-2a canvas slice. "project" is the fixed root that
@@ -43,6 +44,10 @@ export type ByoChartNodeConfig = {
 	health?: string | null;
 	/** ArgoCD sync state (Synced/OutOfSync/Unknown). */
 	sync?: string | null;
+	/** Chart-safety scan lifecycle (unscanned/scanning/done/failed). */
+	scanStatus?: string;
+	/** The elench verify.Report over the chart's rendered manifests (null until scanned). */
+	scanReport?: VerifyReport | null;
 };
 
 /**

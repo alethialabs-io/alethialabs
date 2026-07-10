@@ -39,6 +39,7 @@ import type {
 	StagedChangePayload,
 	StorageProviderConfig,
 	TopicSubscription,
+	VerifyReport,
 } from "@/types/jsonb.types";
 import {
 	addonMode,
@@ -260,6 +261,11 @@ export const projectAddons = pgTable(
 		// ArgoCD sync state: Synced | OutOfSync | Unknown.
 		sync_status: text(),
 		last_synced_at: timestamp({ withTimezone: true }),
+		// BYO chart-safety scan (source='byo'): the elench verify.Report over the chart's rendered
+		// manifests (helm template → EvaluateManifests), its lifecycle, and when it last ran.
+		scan_status: text().default("unscanned").notNull(), // unscanned | scanning | done | failed
+		scan_report: jsonb().$type<VerifyReport>(),
+		scanned_at: timestamp({ withTimezone: true }),
 		created_at: ts(),
 		updated_at: ts(),
 	},
