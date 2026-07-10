@@ -113,6 +113,8 @@ export const provisionJobType = pgEnum("provision_job_type", [
 	"ANALYZE_REPO",
 	"DETECT_DRIFT",
 	"AUDIT",
+	// Bring-your-own Helm chart safety scan: clone → helm template → verify.EvaluateManifests.
+	"CHART_SCAN",
 ]);
 
 export const runnerMode = pgEnum("runner_mode", ["self-hosted", "cloud-hosted"]);
