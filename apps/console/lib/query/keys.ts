@@ -28,7 +28,10 @@ export const qk = {
 	supportCases: (filter: "all" | "active" | "resolved" = "all") =>
 		["support", "cases", filter] as const,
 	supportCase: (id: string) => ["support", "case", id] as const,
-	classificationDimensions: () => ["classification", "dimensions"] as const,
+	classificationDimensions: (search?: string) =>
+		search
+			? (["classification", "dimensions", search] as const)
+			: (["classification", "dimensions"] as const),
 	classificationAssignments: (kind: string, id: string) =>
 		["classification", "assignments", kind, id] as const,
 	classificationAssignmentsForKind: (kind: string, ids: string[]) =>
