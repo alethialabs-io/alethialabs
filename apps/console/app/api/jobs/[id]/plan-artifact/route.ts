@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { verifyRunnerToken } from "@/lib/runners/auth";
+import { verifyRunnerOwnsJob, verifyRunnerToken } from "@/lib/runners/auth";
 import { storage } from "@/lib/storage";
 import {
 	MAX_PLAN_ARTIFACT_BYTES,
@@ -15,10 +15,13 @@ export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const { error: authError } = await verifyRunnerToken(req);
+	const { runnerId, error: authError } = await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	const { id: jobId } = await params;
+
+	const ownershipError = await verifyRunnerOwnsJob(runnerId, jobId);
+	if (ownershipError) return ownershipError;
 
 	try {
 		const body = await req.arrayBuffer();
@@ -66,10 +69,13 @@ export async function GET(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const { error: authError } = await verifyRunnerToken(req);
+	const { runnerId, error: authError } = await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	const { id: jobId } = await params;
+
+	const ownershipError = await verifyRunnerOwnsJob(runnerId, jobId);
+	if (ownershipError) return ownershipError;
 
 	try {
 		const path = planArtifactKey(jobId);
