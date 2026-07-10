@@ -62,6 +62,22 @@ func (w *Runner) s3Backend() *cloud.S3BackendConfig {
 	)
 }
 
+// stateBackend mints a per-job tofu-state token and returns the console http
+// state-backend config for project provisioning. The token authorizes state I/O
+// for this job only and reaches tofu via TF_HTTP_PASSWORD (never a workdir file),
+// so no storage master credential touches the untrusted project path.
+func (w *Runner) stateBackend(jobID string) (*cloud.HTTPBackendConfig, error) {
+	token, err := w.api.FetchStateToken(jobID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch tofu state token: %w", err)
+	}
+	return &cloud.HTTPBackendConfig{
+		ConsoleURL: w.config.AlethiaURL,
+		JobID:      jobID,
+		Token:      token,
+	}, nil
+}
+
 func (w *Runner) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -318,7 +334,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	case types.JobTypeDeploy:
 		execErr = w.executeDeploy(ctx, job, provider, claim.CloudIdentity, claim.ConnectorCredentials, stdoutLogger, stderrLogger)
 	case types.JobTypeDestroy:
-		execErr = w.executeDestroy(ctx, job, stdoutLogger, stderrLogger)
+		execErr = w.executeDestroy(ctx, job, provider, claim.CloudIdentity, claim.ConnectorCredentials, stdoutLogger, stderrLogger)
 	case types.JobTypeDeployRunner, types.JobTypeUpdateRunner:
 		execErr = w.executeDeployRunner(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	case types.JobTypeDestroyRunner:
@@ -437,13 +453,18 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		}
 	}
 
+	stateBackend, err := w.stateBackend(job.ID)
+	if err != nil {
+		return err
+	}
+
 	params := provisioner.DeployParams{
 		ProjectConfig:  vc,
 		Provider:       provider,
 		TemplatesDir:   filepath.Join(resolveProjectTemplatesDir(), provider),
 		CategoriesDir:  resolveCategoriesTemplatesDir(),
 		GitAccessToken: gitToken,
-		S3Backend:      w.s3Backend(),
+		StateBackend:   stateBackend,
 		Stdout:         stdout,
 		Stderr:         stderr,
 		// Honour an authorized verification waiver recorded on the job (if any).
@@ -539,6 +560,11 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 		}
 	}
 
+	stateBackend, err := w.stateBackend(job.ID)
+	if err != nil {
+		return err
+	}
+
 	params := provisioner.DeployParams{
 		ProjectConfig:  vc,
 		Provider:       provider,
@@ -547,7 +573,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 		CategoriesDir:  resolveCategoriesTemplatesDir(),
 		InfracostToken: infracostKey,
 		GitAccessToken: planGitToken,
-		S3Backend:      w.s3Backend(),
+		StateBackend:   stateBackend,
 		Stdout:         stdout,
 		Stderr:         stderr,
 	}
@@ -614,21 +640,53 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 	return nil
 }
 
-func (w *Runner) executeDestroy(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
-	snapshot := job.ConfigSnapshot
+func (w *Runner) executeDestroy(ctx context.Context, job *Job, provider string, identity *CloudIdentity, connectorCreds []ConnectorCredential, stdout, stderr *JobLogger) error {
+	vc, err := snapshotToProjectConfig(job.ConfigSnapshot)
+	if err != nil {
+		return fmt.Errorf("failed to parse config snapshot: %w", err)
+	}
+	if provider == "" {
+		provider = vc.Provider
+	}
+	if provider == "" {
+		provider = "aws"
+	}
+	if identity != nil {
+		vc.CloudAccountID = resolveAccountID(identity)
+	}
+	vc.ConnectorCredentials = toCoreConnectorCreds(connectorCreds)
 
-	region := getSnapshotString(snapshot, "region")
-
-	params := provisioner.DestroyParams{
-		ProjectName:      getSnapshotString(snapshot, "project_name"),
-		Environment:      getSnapshotString(snapshot, "environment_stage"),
-		Region:           region,
-		CleanupWorkspace: true,
-		Stdout:           stdout,
-		Stderr:           stderr,
+	stateBackend, err := w.stateBackend(job.ID)
+	if err != nil {
+		return err
 	}
 
-	return provisioner.RunDestroy(ctx, params)
+	params := provisioner.DestroyParams{
+		ProjectConfig: vc,
+		Provider:      provider,
+		TemplatesDir:  filepath.Join(resolveProjectTemplatesDir(), provider),
+		CategoriesDir: resolveCategoriesTemplatesDir(),
+		StateBackend:  stateBackend,
+		Stdout:        stdout,
+		Stderr:        stderr,
+	}
+
+	// Run the (untrusted-class, for BYO) teardown through the isolation seam, like
+	// deploy/plan — the default Passthrough runs it in-process exactly as before.
+	if err := w.sandbox.Run(ctx, sandbox.Spec{
+		Kind: "destroy", JobID: job.ID, Provider: provider,
+		Warn: func(s string) { fmt.Fprintln(stdout, "[sandbox] "+s) },
+	}, func(ctx context.Context) error {
+		return provisioner.RunDestroy(ctx, params)
+	}); err != nil {
+		return err
+	}
+
+	// Best-effort: purge the now-empty state object (tofu's http backend leaves it behind).
+	if err := w.api.PurgeProjectState(job.ID, stateBackend.Token); err != nil {
+		fmt.Fprintf(stderr, "Warning: failed to purge tofu state: %v\n", err)
+	}
+	return nil
 }
 
 func getSnapshotString(snapshot map[string]any, key string) string {

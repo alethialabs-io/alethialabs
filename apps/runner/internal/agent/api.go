@@ -333,6 +333,62 @@ func (c *RunnerAPIClient) FetchGitToken(jobID string) (string, error) {
 	return *result.Token, nil
 }
 
+// FetchStateToken mints a per-job tofu-state token from the console. The runner presents it
+// to OpenTofu's http state backend as the HTTP Basic password (TF_HTTP_PASSWORD); the console
+// derives the state object key server-side from the job and authorizes on the signed sub=jobID.
+func (c *RunnerAPIClient) FetchStateToken(jobID string) (string, error) {
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/jobs/%s/state-token", c.baseURL, jobID), nil)
+	if err != nil {
+		return "", err
+	}
+	c.setRunnerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch state token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch state token returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Token *string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode state token response: %w", err)
+	}
+	if result.Token == nil {
+		return "", fmt.Errorf("state token response was empty")
+	}
+	return *result.Token, nil
+}
+
+// PurgeProjectState deletes the project's tofu state object after a successful destroy.
+// The state proxy authorizes with the per-job state token (HTTP Basic password), not the
+// runner headers — tofu's http backend leaves an empty state object behind on destroy, so
+// this is best-effort cleanup.
+func (c *RunnerAPIClient) PurgeProjectState(jobID, stateToken string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/jobs/%s/state", c.baseURL, jobID), nil)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth("alethia", stateToken)
+	req.Header.Set("User-Agent", fmt.Sprintf("runner/%s", version.Version))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("purge state request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("purge state returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // jobIDBody encodes the { job_id } payload the cloud-token mint routes require to bind the
 // mint to the job being provisioned (the console verifies the runner owns that job).
 func jobIDBody(jobID string) *bytes.Buffer {
