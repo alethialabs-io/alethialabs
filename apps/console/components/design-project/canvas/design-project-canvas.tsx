@@ -7,7 +7,7 @@ import { motion } from "motion/react";
 import { Plus, Settings } from "lucide-react";
 import { cn } from "@repo/ui/utils";
 import { track } from "@/lib/analytics/track";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -81,6 +81,7 @@ function CanvasInner({
 	byoHelmEnabled,
 }: DesignProjectCanvasProps) {
 	const router = useRouter();
+	const searchParams = useSearchParams();
 	const orgSlug = useActiveOrgSlug();
 	const { fitView } = useReactFlow();
 	const [paletteOpen, setPaletteOpen] = useState(false);
@@ -123,6 +124,19 @@ function CanvasInner({
 	useEffect(() => {
 		refreshCharts();
 	}, [refreshCharts]);
+
+	// Repo-first on-ramp: the new-project "Bring your own Helm chart" path lands here with
+	// ?attachChart=1 → auto-open the attach flow, then strip the param so a refresh doesn't re-open.
+	useEffect(() => {
+		if (
+			projectId &&
+			byoHelmEnabled &&
+			searchParams.get("attachChart") === "1"
+		) {
+			setByoDialogOpen(true);
+			router.replace(window.location.pathname);
+		}
+	}, [projectId, byoHelmEnabled, searchParams, router]);
 
 	/** Open the Elench assistant as a docked panel for this project (or org pre-creation). */
 	const openAssistantExclusive = useCallback(() => {
