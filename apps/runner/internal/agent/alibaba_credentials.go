@@ -13,7 +13,7 @@ import (
 // alibabaTokenFetcher mints a keyless Alibaba OIDC assertion. Satisfied by *RunnerAPIClient
 // (FetchAlibabaToken); an interface so the activation is unit-testable with a stub.
 type alibabaTokenFetcher interface {
-	FetchAlibabaToken() (string, error)
+	FetchAlibabaToken(jobID string) (string, error)
 }
 
 // alibabaRefreshInterval mirrors AWS/Azure: re-mint the ≤10-min assertion into the token file every 5 min
@@ -27,7 +27,7 @@ const alibabaRefreshInterval = 5 * time.Minute
 // sets the env the provider reads — no AccessKey anywhere. Because the provider re-reads the file, a
 // background refresher re-mints the assertion every few minutes so applies past the 1h session survive
 // (parity with AWS/Azure). cleanup stops the refresher, unsets the vars, and removes the temp file.
-func ActivateAlibabaOIDC(ctx context.Context, fetcher alibabaTokenFetcher, roleArn, oidcProviderArn string) (func(), error) {
+func ActivateAlibabaOIDC(ctx context.Context, fetcher alibabaTokenFetcher, roleArn, oidcProviderArn, jobID string) (func(), error) {
 	if roleArn == "" || oidcProviderArn == "" {
 		return nil, fmt.Errorf("missing Alibaba role_arn or oidc_provider_arn")
 	}
@@ -35,7 +35,7 @@ func ActivateAlibabaOIDC(ctx context.Context, fetcher alibabaTokenFetcher, roleA
 		return nil, fmt.Errorf("no token fetcher for Alibaba federation")
 	}
 
-	token, err := fetcher.FetchAlibabaToken()
+	token, err := fetcher.FetchAlibabaToken(jobID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to mint Alibaba OIDC token: %w", err)
 	}
@@ -63,7 +63,7 @@ func ActivateAlibabaOIDC(ctx context.Context, fetcher alibabaTokenFetcher, roleA
 	os.Unsetenv("ALICLOUD_SECURITY_TOKEN")
 
 	refreshCtx, cancel := context.WithCancel(ctx)
-	go refreshAlibabaToken(refreshCtx, fetcher, tokenPath, alibabaRefreshInterval)
+	go refreshAlibabaToken(refreshCtx, fetcher, tokenPath, alibabaRefreshInterval, jobID)
 
 	cleanup := func() {
 		cancel()
@@ -81,7 +81,7 @@ func ActivateAlibabaOIDC(ctx context.Context, fetcher alibabaTokenFetcher, roleA
 // refreshAlibabaToken re-mints the OIDC assertion into tokenPath every interval until ctx is cancelled. A
 // transient mint failure is left to the next tick — the provider only re-reads the file when it re-assumes
 // (roughly hourly) — so a good token is never clobbered by an error.
-func refreshAlibabaToken(ctx context.Context, fetcher alibabaTokenFetcher, tokenPath string, interval time.Duration) {
+func refreshAlibabaToken(ctx context.Context, fetcher alibabaTokenFetcher, tokenPath string, interval time.Duration, jobID string) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -89,7 +89,7 @@ func refreshAlibabaToken(ctx context.Context, fetcher alibabaTokenFetcher, token
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			token, err := fetcher.FetchAlibabaToken()
+			token, err := fetcher.FetchAlibabaToken(jobID)
 			if err != nil || token == "" {
 				continue
 			}

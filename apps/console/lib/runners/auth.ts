@@ -10,6 +10,8 @@ import { NextResponse } from "next/server";
 export type RunnerAuthResult = {
 	runnerId: string;
 	tokenHash: string;
+	/** "managed" | "self" — lets callers require per-job binding for managed runners. */
+	operator: string;
 	error: NextResponse | null;
 };
 
@@ -34,6 +36,7 @@ export async function verifyRunnerToken(
 		return {
 			runnerId: "",
 			tokenHash: "",
+			operator: "",
 			error: NextResponse.json(
 				{ error: "Missing X-Runner-ID or X-Runner-Token" },
 				{ status: 401 },
@@ -45,7 +48,11 @@ export async function verifyRunnerToken(
 
 	const db = getServiceDb();
 	const [runner] = await db
-		.select({ id: runners.id, token_hash: runners.token_hash })
+		.select({
+			id: runners.id,
+			token_hash: runners.token_hash,
+			operator: runners.operator,
+		})
 		.from(runners)
 		.where(eq(runners.id, runnerId))
 		.limit(1);
@@ -54,6 +61,7 @@ export async function verifyRunnerToken(
 		return {
 			runnerId: "",
 			tokenHash: "",
+			operator: "",
 			error: NextResponse.json(
 				{ error: "Invalid runner ID or token" },
 				{ status: 401 },
@@ -61,7 +69,7 @@ export async function verifyRunnerToken(
 		};
 	}
 
-	return { runnerId, tokenHash, error: null };
+	return { runnerId, tokenHash, operator: runner.operator, error: null };
 }
 
 /**

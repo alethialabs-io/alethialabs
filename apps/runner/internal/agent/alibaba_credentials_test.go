@@ -19,7 +19,7 @@ type stubAlibabaFetcher struct {
 	calls int
 }
 
-func (s *stubAlibabaFetcher) FetchAlibabaToken() (string, error) {
+func (s *stubAlibabaFetcher) FetchAlibabaToken(jobID string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
@@ -44,7 +44,7 @@ func TestActivateAlibabaOIDC_SetsEnvFileAndCleansUp(t *testing.T) {
 	os.Setenv("ALICLOUD_ACCESS_KEY", "stale")
 	defer os.Unsetenv("ALICLOUD_ACCESS_KEY")
 
-	cleanup, err := ActivateAlibabaOIDC(context.Background(), fetcher, "acs:ram::111122223333:role/AlethiaProvisioner", "acs:ram::111122223333:oidc-provider/alethia")
+	cleanup, err := ActivateAlibabaOIDC(context.Background(), fetcher, "acs:ram::111122223333:role/AlethiaProvisioner", "acs:ram::111122223333:oidc-provider/alethia", "job-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestActivateAlibabaOIDC_SetsEnvFileAndCleansUp(t *testing.T) {
 func TestActivateAlibabaOIDC_Errors(t *testing.T) {
 	fetcher := &stubAlibabaFetcher{token: "x"}
 	// Missing oidc_provider_arn.
-	if _, err := ActivateAlibabaOIDC(context.Background(), fetcher, "acs:ram::1:role/r", ""); err == nil {
+	if _, err := ActivateAlibabaOIDC(context.Background(), fetcher, "acs:ram::1:role/r", "", "job-1"); err == nil {
 		t.Error("expected an error when the oidc_provider_arn is missing")
 	}
 	if fetcher.callCount() != 0 {
@@ -97,7 +97,7 @@ func TestActivateAlibabaOIDC_Errors(t *testing.T) {
 	}
 	// Mint failure.
 	failing := &stubAlibabaFetcher{err: fmt.Errorf("issuer down")}
-	if _, err := ActivateAlibabaOIDC(context.Background(), failing, "acs:ram::1:role/r", "acs:ram::1:oidc-provider/alethia"); err == nil {
+	if _, err := ActivateAlibabaOIDC(context.Background(), failing, "acs:ram::1:role/r", "acs:ram::1:oidc-provider/alethia", "job-1"); err == nil {
 		t.Error("expected an error when the token mint fails")
 	}
 }
@@ -113,7 +113,7 @@ func TestRefreshAlibabaToken_RewritesFileAndStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		refreshAlibabaToken(ctx, fetcher, tokenPath, 5*time.Millisecond)
+		refreshAlibabaToken(ctx, fetcher, tokenPath, 5*time.Millisecond, "job-1")
 		close(done)
 	}()
 

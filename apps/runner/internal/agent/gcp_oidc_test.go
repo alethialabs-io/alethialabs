@@ -19,7 +19,7 @@ type stubGcpFetcher struct {
 	err   error
 }
 
-func (s *stubGcpFetcher) FetchGcpToken() (string, error) {
+func (s *stubGcpFetcher) FetchGcpToken(jobID string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.token, s.err
@@ -71,7 +71,7 @@ func TestInjectGcpTokenFile(t *testing.T) {
 
 func TestActivateGcpOIDC_WritesTokenAndWifAndCleansUp(t *testing.T) {
 	fetcher := &stubGcpFetcher{token: "minted.gcp.jwt"}
-	cleanup, err := ActivateGcpOIDC(context.Background(), fetcher, oidcWifJSON, "my-proj")
+	cleanup, err := ActivateGcpOIDC(context.Background(), fetcher, oidcWifJSON, "my-proj", "job-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestActivateGcpOIDC_WritesTokenAndWifAndCleansUp(t *testing.T) {
 }
 
 func TestActivateGcpOIDC_MintError(t *testing.T) {
-	if _, err := ActivateGcpOIDC(context.Background(), &stubGcpFetcher{err: fmt.Errorf("issuer down")}, oidcWifJSON, "p"); err == nil {
+	if _, err := ActivateGcpOIDC(context.Background(), &stubGcpFetcher{err: fmt.Errorf("issuer down")}, oidcWifJSON, "p", "job-1"); err == nil {
 		t.Error("expected an error when the token mint fails")
 	}
 }
@@ -124,7 +124,7 @@ func TestRefreshGcpToken_RewritesAndStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		refreshGcpToken(ctx, fetcher, tokenPath, 5*time.Millisecond)
+		refreshGcpToken(ctx, fetcher, tokenPath, 5*time.Millisecond, "job-1")
 		close(done)
 	}()
 
