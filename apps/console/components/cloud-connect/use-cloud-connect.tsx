@@ -26,6 +26,7 @@ import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { AwsConnection } from "@/components/connector/aws-connection";
 import { AzureConnection } from "@/components/connector/azure-connection";
 import { GcpConnection } from "@/components/connector/gcp-connection";
+import { HetznerConnection } from "@/components/connector/hetzner-connection";
 import {
 	AlibabaConnection,
 	TokenCloudConnection,
@@ -44,12 +45,20 @@ import { toast } from "sonner";
 
 /**
  * The connectors-docs page for a connector — the Alethia connect guide (mirrors the
- * board's per-category docs links). Cloud-native big three + git get a dedicated page;
- * pluggable api_key providers share the pluggable guide; extra clouds fall to the index.
+ * board's per-category docs links). Cloud-native clouds with a dedicated guide get their own
+ * page; pluggable api_key providers share the pluggable guide; the rest fall to the index.
  */
 function connectorDocsHref(integration: ConnectorWithConnection): string {
 	const { slug } = integration;
-	if (slug === "aws" || slug === "gcp" || slug === "azure") {
+	// Clouds with a dedicated connect guide. Hetzner is api_key-authed, so it must be matched
+	// here before the generic api_key → /pluggable fallback below.
+	if (
+		slug === "aws" ||
+		slug === "gcp" ||
+		slug === "azure" ||
+		slug === "alibaba" ||
+		slug === "hetzner"
+	) {
 		return `${CONNECTOR_DOCS_BASE}/${slug}`;
 	}
 	if (integration.category === "git") return `${CONNECTOR_DOCS_BASE}/git-providers`;
@@ -342,6 +351,19 @@ export function useCloudConnect({
 							<div className="px-6 py-6">
 								{extraSetup?.alibaba && (
 									<AlibabaConnection onSave={handleAlibabaConnect} />
+								)}
+							</div>
+						</>
+					) : extraCloudSlug === "hetzner" ? (
+						<>
+							<ConnectSheetHeader
+								integration={bySlug("hetzner")}
+								title="Connect Hetzner Cloud"
+								description="Connect with a scoped API token (encrypted at rest) to provision a Talos Kubernetes cluster."
+							/>
+							<div className="px-6 py-6">
+								{extraSetup?.hetzner && (
+									<HetznerConnection onSave={handleTokenCloudConnect("hetzner")} />
 								)}
 							</div>
 						</>

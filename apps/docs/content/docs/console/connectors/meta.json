@@ -6,6 +6,7 @@
     "gcp",
     "azure",
     "alibaba",
+    "hetzner",
     "health-and-inventory",
     "git-providers",
     "pluggable"
