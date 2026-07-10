@@ -3,18 +3,16 @@
 // @vitest-environment node
 
 // The internal AWS-token route makes managed AWS provisioning keyless: an authenticated runner (which has
-// no ambient AWS identity) gets a freshly-minted OIDC assertion + the platform role ARN, exchanges the
-// assertion for the platform identity via AssumeRoleWithWebIdentity, then chains the customer role off it.
-// These tests pin the contract — a real minted token that verifies against the JWKS (audience
-// sts.amazonaws.com) plus the platform role ARN, 501 when the issuer or platform role ARN is missing, and
-// 401 when the runner isn't authenticated.
+// no ambient AWS identity) gets a freshly-minted OIDC assertion and exchanges it DIRECTLY for the customer's
+// role via AssumeRoleWithWebIdentity — the customer's IAM role trusts the Alethia issuer, so there is no
+// platform AWS account in the path. These tests pin the contract — a real minted token that verifies against
+// the JWKS (audience sts.amazonaws.com), 501 when the issuer is missing, and 401 when unauthenticated.
 
 import { generateKeyPairSync } from "node:crypto";
 import * as jose from "jose";
 import { NextResponse } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetIssuerCache, getPublicJwks } from "@/lib/oidc/issuer";
-import { __resetPlatformAwsCache } from "@/lib/cloud-providers/session/aws-platform";
 
 const verifyRunnerToken = vi.fn();
 vi.mock("@/lib/runners/auth", () => ({
@@ -22,10 +20,8 @@ vi.mock("@/lib/runners/auth", () => ({
 }));
 
 const APP_URL = "https://alethialabs.io";
-const PLATFORM_ROLE = "arn:aws:iam::270587882865:role/alethia-connector-assumer";
 const ENV_KEYS = [
 	"ALETHIA_OIDC_SIGNING_KEY",
-	"ALETHIA_AWS_PLATFORM_ROLE_ARN",
 	"AWS_REGION",
 	"NEXT_PUBLIC_APP_URL",
 	"BETTER_AUTH_URL",
@@ -36,11 +32,9 @@ function installConfigured() {
 	const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 	const pem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
 	process.env.ALETHIA_OIDC_SIGNING_KEY = Buffer.from(pem, "utf8").toString("base64");
-	process.env.ALETHIA_AWS_PLATFORM_ROLE_ARN = PLATFORM_ROLE;
 	process.env.AWS_REGION = "eu-central-1";
 	process.env.NEXT_PUBLIC_APP_URL = APP_URL;
 	__resetIssuerCache();
-	__resetPlatformAwsCache();
 }
 
 beforeEach(() => {
@@ -54,7 +48,6 @@ afterEach(() => {
 		else process.env[k] = saved[k];
 	}
 	__resetIssuerCache();
-	__resetPlatformAwsCache();
 });
 
 async function post() {
@@ -63,13 +56,14 @@ async function post() {
 }
 
 describe("POST /api/runners/aws-token", () => {
-	it("mints an AWS assertion that verifies against the JWKS, with the platform role ARN", async () => {
+	it("mints an AWS assertion that verifies against the JWKS", async () => {
 		installConfigured();
 		const res = await post();
 		expect(res.status).toBe(200);
-		const body = (await res.json()) as { token: string; platform_role_arn: string; region: string };
-		expect(body.platform_role_arn).toBe(PLATFORM_ROLE);
+		const body = (await res.json()) as { token: string; region: string };
 		expect(body.region).toBe("eu-central-1");
+		// No platform role ARN in the path any more — the runner assumes the customer role directly.
+		expect((body as Record<string, unknown>).platform_role_arn).toBeUndefined();
 
 		const jwks = jose.createLocalJWKSet((await getPublicJwks()) as unknown as jose.JSONWebKeySet);
 		const { payload } = await jose.jwtVerify(body.token, jwks, {
@@ -83,12 +77,6 @@ describe("POST /api/runners/aws-token", () => {
 		installConfigured();
 		delete process.env.ALETHIA_OIDC_SIGNING_KEY;
 		__resetIssuerCache();
-		expect((await post()).status).toBe(501);
-	});
-
-	it("is 501 when the platform role ARN is not set", async () => {
-		installConfigured();
-		delete process.env.ALETHIA_AWS_PLATFORM_ROLE_ARN;
 		expect((await post()).status).toBe(501);
 	});
 

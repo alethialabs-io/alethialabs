@@ -23,12 +23,14 @@ export function connectorAssetUrl(file: string): string {
 }
 
 /**
- * Alethia's platform AWS account id — the cross-account trust principal (AWS/Alibaba)
- * and the Azure federated-credential subject. Overridable for a self-host platform
- * account via `NEXT_PUBLIC_ALETHIA_AWS_ACCOUNT_ID`.
+ * The Alethia OIDC issuer URL the customer's cloud trusts (every managed cloud federates off it). Derived
+ * from the public app origin — `${NEXT_PUBLIC_APP_URL}/api/oidc` — so a self-hosted console points its
+ * customers at its OWN issuer. Fed into the AWS CloudFormation quick-create as `param_IssuerUrl`. Keep in
+ * lockstep with `issuerUrl()` (lib/oidc/issuer.ts, the server-side minter).
  */
-export const ALETHIA_AWS_ACCOUNT_ID =
-	process.env.NEXT_PUBLIC_ALETHIA_AWS_ACCOUNT_ID ?? "270587882865";
+export const ALETHIA_ISSUER_URL = `${(
+	process.env.NEXT_PUBLIC_APP_URL ?? "https://alethialabs.io"
+).replace(/\/+$/, "")}/api/oidc`;
 
 /**
  * The Application (client) ID of Alethia's ONE multi-tenant Entra app — the identity the

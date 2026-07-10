@@ -1,11 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The managed-cloud model hubs through ONE platform AWS identity: AWS assumes customer roles, and GCP
-// federates through the SAME identity (its customer WIF pool trusts an AWS provider). That identity is
-// now KEYLESS — the console federates in via the OIDC issuer (AssumeRoleWithWebIdentity), so availability
-// tracks the issuer + the platform role ARN, not a static key. These tests pin that contract, and that
-// GCP still rides the same identity (no separate GCP secret).
+// Every managed cloud now federates KEYLESSLY off the Alethia OIDC issuer — no platform AWS account. So
+// aws / gcp / alibaba availability tracks the issuer alone; azure additionally needs its platform app id.
+// These tests pin that contract (and that token clouds are always available — customer's own token).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -23,39 +21,39 @@ vi.mock("@/lib/oidc/issuer", () => ({
 
 import { computePlatformConfigured } from "@/lib/connectors/cloud-connect-setup";
 
-const ROLE_ARN = "arn:aws:iam::270587882865:role/alethia-connector-assumer";
-
-describe("computePlatformConfigured — keyless AWS hub (GCP rides it)", () => {
-	const saved: string | undefined = process.env.ALETHIA_AWS_PLATFORM_ROLE_ARN;
+describe("computePlatformConfigured — issuer-direct keyless clouds", () => {
+	const savedAzure: string | undefined = process.env.ALETHIA_AZURE_CLIENT_ID;
 	beforeEach(() => {
 		issuerState.on = false;
-		delete process.env.ALETHIA_AWS_PLATFORM_ROLE_ARN;
+		delete process.env.ALETHIA_AZURE_CLIENT_ID;
 	});
 	afterEach(() => {
-		if (saved === undefined) delete process.env.ALETHIA_AWS_PLATFORM_ROLE_ARN;
-		else process.env.ALETHIA_AWS_PLATFORM_ROLE_ARN = saved;
+		if (savedAzure === undefined) delete process.env.ALETHIA_AZURE_CLIENT_ID;
+		else process.env.ALETHIA_AZURE_CLIENT_ID = savedAzure;
 	});
 
-	it("aws and gcp are BOTH false without the platform identity", () => {
+	it("aws / gcp / alibaba are all false without the issuer", () => {
 		const c = computePlatformConfigured();
 		expect(c.aws).toBe(false);
 		expect(c.gcp).toBe(false);
+		expect(c.alibaba).toBe(false);
 	});
 
-	it("the keyless platform identity (issuer + role ARN) enables BOTH aws and gcp", () => {
+	it("the issuer alone enables aws, gcp, and alibaba", () => {
 		issuerState.on = true;
-		process.env.ALETHIA_AWS_PLATFORM_ROLE_ARN = ROLE_ARN;
 		const c = computePlatformConfigured();
 		expect(c.aws).toBe(true);
 		expect(c.gcp).toBe(true);
+		expect(c.alibaba).toBe(true);
 	});
 
-	it("a role ARN without a configured issuer is not enough (both false)", () => {
-		process.env.ALETHIA_AWS_PLATFORM_ROLE_ARN = ROLE_ARN;
-		issuerState.on = false;
-		const c = computePlatformConfigured();
-		expect(c.aws).toBe(false);
-		expect(c.gcp).toBe(false);
+	it("azure additionally needs the platform app id", () => {
+		issuerState.on = true;
+		let c = computePlatformConfigured();
+		expect(c.azure).toBe(false);
+		process.env.ALETHIA_AZURE_CLIENT_ID = "00000000-0000-0000-0000-000000000000";
+		c = computePlatformConfigured();
+		expect(c.azure).toBe(true);
 	});
 
 	it("token clouds are always available (customer's own token)", () => {

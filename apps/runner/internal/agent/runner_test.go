@@ -100,9 +100,8 @@ func (m *mockAPI) FetchAzureToken() (string, error) {
 
 func (m *mockAPI) FetchAwsToken() (*AwsFederation, error) {
 	return &AwsFederation{
-		Token:           "test-aws-token",
-		PlatformRoleArn: "arn:aws:iam::270587882865:role/alethia-connector-assumer",
-		Region:          "eu-central-1",
+		Token:  "test-aws-token",
+		Region: "eu-central-1",
 	}, nil
 }
 

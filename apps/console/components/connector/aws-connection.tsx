@@ -29,10 +29,9 @@ import {
 	type VerifyOutcome,
 	useConnectionTest,
 } from "@/components/connector/use-connection-test";
-import { CopyButton } from "@repo/ui/copy-button";
 import { FieldHelp } from "@repo/ui/field-help";
 import {
-	ALETHIA_AWS_ACCOUNT_ID,
+	ALETHIA_ISSUER_URL,
 	connectorAssetUrl,
 } from "@/components/connector/connector-assets";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -73,20 +72,19 @@ const awsRoleSchema = z.object({
 type AwsRoleFormValues = z.infer<typeof awsRoleSchema>;
 
 interface AwsConnectionProps {
-	onComplete: (
-		roleArn: string,
-	) => Promise<VerifyOutcome>;
-	externalId: string;
+	onComplete: (roleArn: string) => Promise<VerifyOutcome>;
 }
 
-export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
+export function AwsConnection({ onComplete }: AwsConnectionProps) {
 	const [method, setMethod] = useState<"cloudformation" | "terraform">(
 		"cloudformation",
 	);
 	const { state: verifyState, run, cancel } = useConnectionTest();
 
 	const templateUrl = connectorAssetUrl("alethia-bootstrap.yaml");
-	const launchStackUrl = `https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateURL=${encodeURIComponent(templateUrl)}&stackName=AlethiaConnect&param_ExternalId=${encodeURIComponent(externalId)}&param_AlethiaAwsAccountId=${ALETHIA_AWS_ACCOUNT_ID}`;
+	// Pre-fill the issuer so a self-hosted console points the customer's trust at its OWN issuer. No
+	// ExternalId / platform-account params — the customer's role trusts the Alethia issuer directly.
+	const launchStackUrl = `https://console.aws.amazon.com/cloudformation/home#/stacks/quickcreate?templateURL=${encodeURIComponent(templateUrl)}&stackName=AlethiaConnect&param_IssuerUrl=${encodeURIComponent(ALETHIA_ISSUER_URL)}`;
 
 	const form = useForm<AwsRoleFormValues>({
 		resolver: zodResolver(awsRoleSchema),
@@ -175,8 +173,8 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 							Setup Instructions
 						</CardTitle>
 						<CardDescription className="text-xs">
-							Follow these steps to authorize Alethia in your AWS
-							account.
+							Create a keyless IAM role that trusts the Alethia
+							issuer — no access keys, no external id.
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-6 pt-6">
@@ -192,9 +190,11 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 												Launch Stack
 											</div>
 											<p className="text-xs text-muted-foreground mt-1 mb-3 max-w-sm">
-												Click below to open AWS
-												CloudFormation with the template
-												and parameters pre-filled.
+												Opens AWS CloudFormation with the
+												template pre-filled. It creates an
+												IAM OIDC provider that trusts the
+												Alethia issuer and a role Alethia
+												assumes via web identity.
 												Acknowledge the IAM capabilities
 												and create the stack.
 											</p>
@@ -224,15 +224,6 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 												<CloudIcon className="w-3.5 h-3.5 mr-1.5 opacity-70" />
 												Download Template
 											</Button>
-										</div>
-										<div className="mt-4 p-3 bg-muted/30 border border-border/40 rounded-md text-[11px] text-muted-foreground flex items-center gap-2">
-											<strong className="text-foreground">
-												External ID:
-											</strong>
-											<code className="bg-background px-1.5 py-0.5 border border-border/50 rounded text-foreground">
-												{externalId}
-											</code>
-											<CopyButton text={externalId} className="ml-1" />
 										</div>
 									</div>
 								</div>
@@ -267,21 +258,14 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 									</div>
 									<div className="flex-1 min-w-0">
 										<div className="font-medium text-sm text-foreground">
-											Apply Terraform Template
+											Apply Terraform Module
 										</div>
 										<p className="text-xs text-muted-foreground mt-1 max-w-sm">
-											Use the following External ID in
-											your Terraform variables:
+											Creates the IAM OIDC provider + role
+											that trust the Alethia issuer. No
+											variables are required — the defaults
+											pin the issuer, audience, and subject.
 										</p>
-										<div className="mt-3 flex items-center gap-2 p-3 bg-muted/30 border border-border/40 rounded-md text-foreground font-mono text-[11px] overflow-hidden">
-											<span className="truncate">
-												{externalId}
-											</span>
-											<CopyButton
-												text={externalId}
-												className="ml-auto rounded p-1 hover:bg-muted"
-											/>
-										</div>
 										<div className="mt-3 flex flex-wrap items-center gap-3">
 											<Button
 												type="button"
@@ -434,9 +418,11 @@ export function AwsConnection({ onComplete, externalId }: AwsConnectionProps) {
 
 									<div className="mt-5">
 										<InfoNote>
-											Alethia will verify it can assume this role using the
-											unique External ID. This prevents unauthorized
-											cross-account access.
+											Alethia assumes this role via
+											AssumeRoleWithWebIdentity, presenting a
+											short-lived token signed by the Alethia
+											issuer — no access keys and no shared
+											secret ever leave your account.
 										</InfoNote>
 									</div>
 								</>

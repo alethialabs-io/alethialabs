@@ -75,7 +75,7 @@ interface ConnectorsPageProps {
 	orgSlug: string;
 	canManage: boolean;
 	integrations: ConnectorWithConnection[];
-	awsSetup: { externalId: string; identityId: string } | null;
+	awsSetup: { identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
 	azureSetup: { identityId: string } | null;
 	extraSetup?: Record<string, { identityId: string; externalId?: string }>;

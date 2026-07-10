@@ -24,8 +24,9 @@ var GcpSetupScript string
 //go:embed azure-setup.sh
 var AzureSetupScript string
 
-// AwsBootstrapTemplate is the CloudFormation template that creates the
-// cross-account IAM role. Deployed with an ExternalId parameter; outputs RoleArn.
+// AwsBootstrapTemplate is the CloudFormation template that creates, in the user's AWS account, an IAM OIDC
+// provider trusting the Alethia issuer + a role Alethia assumes via AssumeRoleWithWebIdentity. Deployed with
+// an IssuerUrl parameter (keyless, no external id); outputs RoleArn.
 //
 //go:embed aws-bootstrap.yaml
 var AwsBootstrapTemplate string

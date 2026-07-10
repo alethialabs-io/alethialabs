@@ -36,17 +36,16 @@ func (s *stubAwsFetcher) callCount() int {
 	return s.calls
 }
 
-func TestActivateAwsFederated_WritesChainedProfileAndCleansUp(t *testing.T) {
+func TestActivateAwsFederated_WritesWebIdentityProfileAndCleansUp(t *testing.T) {
 	fetcher := &stubAwsFetcher{fed: &AwsFederation{
-		Token:           "web.identity.jwt",
-		PlatformRoleArn: "arn:aws:iam::270587882865:role/alethia-connector-assumer",
-		Region:          "eu-central-1",
+		Token:  "web.identity.jwt",
+		Region: "eu-central-1",
 	}}
-	// A stale static key must be cleared so the profile chain is authoritative.
+	// A stale static key must be cleared so the profile is authoritative.
 	os.Setenv("AWS_ACCESS_KEY_ID", "stale")
 	defer os.Unsetenv("AWS_ACCESS_KEY_ID")
 
-	cleanup, err := ActivateAwsFederated(context.Background(), fetcher, "arn:aws:iam::111122223333:role/AlethiaProvisionerRole-abc", "ext-123")
+	cleanup, err := ActivateAwsFederated(context.Background(), fetcher, "arn:aws:iam::111122223333:role/AlethiaProvisionerRole")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -55,7 +54,7 @@ func TestActivateAwsFederated_WritesChainedProfileAndCleansUp(t *testing.T) {
 		t.Errorf("AWS_PROFILE = %q, want %q", os.Getenv("AWS_PROFILE"), awsCustomerProfile)
 	}
 	if os.Getenv("AWS_ACCESS_KEY_ID") != "" {
-		t.Error("a stale AWS_ACCESS_KEY_ID should be cleared so the profile chain wins")
+		t.Error("a stale AWS_ACCESS_KEY_ID should be cleared so the profile wins")
 	}
 	if os.Getenv("AWS_REGION") != "eu-central-1" {
 		t.Errorf("AWS_REGION = %q, want eu-central-1", os.Getenv("AWS_REGION"))
@@ -71,16 +70,18 @@ func TestActivateAwsFederated_WritesChainedProfileAndCleansUp(t *testing.T) {
 	}
 	cfg := string(data)
 	for _, want := range []string{
-		"[profile " + awsPlatformProfile + "]",
-		"web_identity_token_file = ",
-		"role_arn = arn:aws:iam::270587882865:role/alethia-connector-assumer",
 		"[profile " + awsCustomerProfile + "]",
-		"source_profile = " + awsPlatformProfile,
-		"role_arn = arn:aws:iam::111122223333:role/AlethiaProvisionerRole-abc",
-		"external_id = ext-123",
+		"web_identity_token_file = ",
+		"role_arn = arn:aws:iam::111122223333:role/AlethiaProvisionerRole",
 	} {
 		if !strings.Contains(cfg, want) {
 			t.Errorf("config file missing %q\n---\n%s", want, cfg)
+		}
+	}
+	// Direct OIDC: no platform-account chaining, no external id.
+	for _, unwanted := range []string{"source_profile", "external_id"} {
+		if strings.Contains(cfg, unwanted) {
+			t.Errorf("config file should not contain %q (direct-OIDC, single profile)\n---\n%s", unwanted, cfg)
 		}
 	}
 
@@ -93,31 +94,18 @@ func TestActivateAwsFederated_WritesChainedProfileAndCleansUp(t *testing.T) {
 	}
 }
 
-func TestActivateAwsFederated_OmitsExternalIdWhenEmpty(t *testing.T) {
-	fetcher := &stubAwsFetcher{fed: &AwsFederation{Token: "t", PlatformRoleArn: "arn:aws:iam::270587882865:role/p"}}
-	cleanup, err := ActivateAwsFederated(context.Background(), fetcher, "arn:aws:iam::111122223333:role/c", "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer cleanup()
-	data, _ := os.ReadFile(os.Getenv("AWS_CONFIG_FILE"))
-	if strings.Contains(string(data), "external_id") {
-		t.Error("external_id should be omitted when the identity has none")
-	}
-}
-
 func TestActivateAwsFederated_Errors(t *testing.T) {
 	// Missing role_arn.
-	if _, err := ActivateAwsFederated(context.Background(), &stubAwsFetcher{fed: &AwsFederation{}}, "", "x"); err == nil {
+	if _, err := ActivateAwsFederated(context.Background(), &stubAwsFetcher{fed: &AwsFederation{Token: "t"}}, ""); err == nil {
 		t.Error("expected an error when role_arn is missing")
 	}
 	// Mint failure.
-	if _, err := ActivateAwsFederated(context.Background(), &stubAwsFetcher{err: fmt.Errorf("issuer down")}, "arn:role", "x"); err == nil {
+	if _, err := ActivateAwsFederated(context.Background(), &stubAwsFetcher{err: fmt.Errorf("issuer down")}, "arn:role"); err == nil {
 		t.Error("expected an error when the token mint fails")
 	}
-	// No platform role in the response.
-	if _, err := ActivateAwsFederated(context.Background(), &stubAwsFetcher{fed: &AwsFederation{Token: "t"}}, "arn:role", "x"); err == nil {
-		t.Error("expected an error when the platform role ARN is absent")
+	// No fetcher.
+	if _, err := ActivateAwsFederated(context.Background(), nil, "arn:role"); err == nil {
+		t.Error("expected an error when there is no token fetcher")
 	}
 }
 
@@ -127,7 +115,7 @@ func TestRefreshAwsToken_RewritesFileAndStopsOnCancel(t *testing.T) {
 	if err := os.WriteFile(tokenPath, []byte("first"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	fetcher := &stubAwsFetcher{fed: &AwsFederation{Token: "second", PlatformRoleArn: "arn:aws:iam::270587882865:role/p"}}
+	fetcher := &stubAwsFetcher{fed: &AwsFederation{Token: "second"}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import {
-	getAwsExternalId,
+	initAwsIdentity,
 	saveAwsIdentity,
 } from "@/app/(private)/dashboard/providers/actions";
 import {
@@ -139,7 +139,7 @@ export function ConnectSheetHeader({
 
 interface UseCloudConnectArgs {
 	integrations: ConnectorWithConnection[];
-	awsSetup: { externalId: string; identityId: string } | null;
+	awsSetup: { identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
 	azureSetup: { identityId: string } | null;
 	extraSetup?: Record<string, { identityId: string; externalId?: string }>;
@@ -195,7 +195,7 @@ export function useCloudConnect({
 			if (slug === "aws") {
 				if (!awsSetup || addingAnother) {
 					setConnectingSlug(slug);
-					setAwsSetup(await getAwsExternalId());
+					setAwsSetup(await initAwsIdentity());
 				}
 				setAwsSheetOpen(true);
 			} else if (slug === "gcp") {
@@ -273,15 +273,10 @@ export function useCloudConnect({
 					<ConnectSheetHeader
 						integration={bySlug("aws")}
 						title="Connect AWS Account"
-						description="Set up a cross-account IAM role to allow Alethia to provision infrastructure in your AWS account."
+						description="Create a keyless IAM role that trusts the Alethia issuer, so Alethia can provision infrastructure in your AWS account."
 					/>
 					<div className="px-6 py-6">
-						{awsSetup && (
-							<AwsConnection
-								externalId={awsSetup.externalId}
-								onComplete={handleAwsConnect}
-							/>
-						)}
+						{awsSetup && <AwsConnection onComplete={handleAwsConnect} />}
 					</div>
 				</SheetContent>
 			</Sheet>

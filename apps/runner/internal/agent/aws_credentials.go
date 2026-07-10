@@ -11,12 +11,12 @@ import (
 	"time"
 )
 
-// AwsFederation is what the console's /api/runners/aws-token returns: a short-lived OIDC assertion plus the
-// platform role ARN the runner assumes via web identity (and the region for the SDK).
+// AwsFederation is what the console's /api/runners/aws-token returns: a short-lived OIDC assertion the
+// runner exchanges DIRECTLY for the customer's role via AssumeRoleWithWebIdentity (and the region for the
+// SDK). There is no platform AWS account in the path — the customer's role trusts the Alethia issuer.
 type AwsFederation struct {
-	Token           string
-	PlatformRoleArn string
-	Region          string
+	Token  string
+	Region string
 }
 
 // awsTokenFetcher mints a keyless AWS federation assertion. Satisfied by *RunnerAPIClient (FetchAwsToken);
@@ -26,29 +26,25 @@ type awsTokenFetcher interface {
 }
 
 // awsRefreshInterval mirrors Azure: re-mint the ≤10-min web-identity assertion into the token file every
-// 5 min so the AWS SDK always re-reads a live token when it refreshes the ~1h assumed-role sessions.
+// 5 min so the AWS SDK always re-reads a live token when it refreshes the ~1h assumed-role session.
 const awsRefreshInterval = 5 * time.Minute
 
-// AWS shared-config profile names the runner writes. The customer profile chains OFF the platform profile.
-const (
-	awsPlatformProfile = "alethia-platform"
-	awsCustomerProfile = "alethia-customer"
-)
+// The AWS shared-config profile the runner writes (a single web-identity profile — no chaining).
+const awsCustomerProfile = "alethia-customer"
 
 // ActivateAwsFederated authenticates a MANAGED runner to AWS KEYLESSLY for a `tofu apply`. The runner has
 // no ambient AWS identity, so it:
 //  1. mints a web-identity assertion (audience sts.amazonaws.com) from the console and writes it to a file;
-//  2. writes an AWS shared-config file with two chained profiles —
-//     [profile alethia-platform]  web_identity_token_file → role_arn = <platform role>   (AssumeRoleWithWebIdentity)
-//     [profile alethia-customer]  source_profile = alethia-platform, role_arn = <customer role>, external_id = <X>
+//  2. writes an AWS shared-config file with ONE profile that federates straight into the customer role —
+//     [profile alethia-customer]  web_identity_token_file → role_arn = <customer role>   (AssumeRoleWithWebIdentity)
 //  3. points the AWS SDK / OpenTofu's aws provider at it (AWS_CONFIG_FILE + AWS_PROFILE=alethia-customer).
 //
-// Because the whole chain resolves from a *file* the SDK re-reads, both hops auto-refresh: a background
-// refresher re-mints the assertion every few minutes and the SDK re-assumes on session expiry — so an
-// apply longer than the 1h session survives. The customer ExternalId stays on the customer hop (it can't
-// be expressed on AssumeRoleWithWebIdentity). No access key is ever present. cleanup stops the refresher,
-// unsets the vars, and removes the temp files.
-func ActivateAwsFederated(ctx context.Context, fetcher awsTokenFetcher, customerRoleArn, externalID string) (func(), error) {
+// The customer role trusts the Alethia issuer directly (an IAM OIDC provider), so there is no platform AWS
+// account and no ExternalId. Because the profile resolves from a *file* the SDK re-reads, it auto-refreshes:
+// a background refresher re-mints the assertion every few minutes and the SDK re-assumes on session expiry —
+// so an apply longer than the 1h session survives. No access key is ever present. cleanup stops the
+// refresher, unsets the vars, and removes the temp files.
+func ActivateAwsFederated(ctx context.Context, fetcher awsTokenFetcher, customerRoleArn string) (func(), error) {
 	if customerRoleArn == "" {
 		return nil, fmt.Errorf("missing AWS role_arn")
 	}
@@ -59,9 +55,6 @@ func ActivateAwsFederated(ctx context.Context, fetcher awsTokenFetcher, customer
 	fed, err := fetcher.FetchAwsToken()
 	if err != nil {
 		return nil, fmt.Errorf("failed to mint AWS federation token: %w", err)
-	}
-	if fed.PlatformRoleArn == "" {
-		return nil, fmt.Errorf("AWS federation response had no platform role ARN")
 	}
 
 	dir, err := os.MkdirTemp("", "alethia-aws-*")
@@ -75,12 +68,12 @@ func ActivateAwsFederated(ctx context.Context, fetcher awsTokenFetcher, customer
 		os.RemoveAll(dir)
 		return nil, fmt.Errorf("failed to write AWS token file: %w", err)
 	}
-	if err := os.WriteFile(configPath, []byte(awsConfigFile(tokenPath, fed.PlatformRoleArn, customerRoleArn, externalID)), 0o600); err != nil {
+	if err := os.WriteFile(configPath, []byte(awsConfigFile(tokenPath, customerRoleArn)), 0o600); err != nil {
 		os.RemoveAll(dir)
 		return nil, fmt.Errorf("failed to write AWS config file: %w", err)
 	}
 
-	// Point the SDK / aws provider at the chained profile. Clear any static creds so the profile chain
+	// Point the SDK / aws provider at the web-identity profile. Clear any static creds so the profile
 	// (not a stale key) is authoritative, and enable shared-config resolution.
 	os.Setenv("AWS_CONFIG_FILE", configPath)
 	os.Setenv("AWS_PROFILE", awsCustomerProfile)
@@ -107,23 +100,14 @@ func ActivateAwsFederated(ctx context.Context, fetcher awsTokenFetcher, customer
 	return cleanup, nil
 }
 
-// awsConfigFile renders the two-profile shared-config that chains the customer role off the web-identity
-// platform role. Rendered verbatim into AWS_CONFIG_FILE.
-func awsConfigFile(tokenPath, platformRoleArn, customerRoleArn, externalID string) string {
-	cfg := fmt.Sprintf(`[profile %s]
+// awsConfigFile renders the single web-identity profile that federates straight into the customer role.
+// Rendered verbatim into AWS_CONFIG_FILE.
+func awsConfigFile(tokenPath, customerRoleArn string) string {
+	return fmt.Sprintf(`[profile %s]
 web_identity_token_file = %s
 role_arn = %s
-role_session_name = alethia-platform
-
-[profile %s]
-source_profile = %s
-role_arn = %s
 role_session_name = alethia-runner
-`, awsPlatformProfile, tokenPath, platformRoleArn, awsCustomerProfile, awsPlatformProfile, customerRoleArn)
-	if externalID != "" {
-		cfg += fmt.Sprintf("external_id = %s\n", externalID)
-	}
-	return cfg
+`, awsCustomerProfile, tokenPath, customerRoleArn)
 }
 
 // refreshAwsToken re-mints the web-identity assertion into tokenPath every interval until ctx is cancelled.

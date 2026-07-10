@@ -1,16 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// AWS session — the server-side equivalent of the runner's `credentials.go`. The console assumes the
-// customer's cross-account role (zero customer secrets stored; the role + external id are metadata). The
-// platform identity it assumes FROM is KEYLESS — federated into the platform AWS account via the OIDC
-// issuer (session/aws-platform.ts), not a static key. The resulting short-lived session backs the health
-// probe + the asset inventory sync, so a connection test no longer needs a runner. Every connection is
-// platform-managed (hosted = Alethia's account; OSS = the operator's).
+// AWS session — KEYLESS and issuer-direct (the server-side equivalent of the runner's `aws_credentials.go`).
+// The customer's IAM role trusts Alethia's OIDC issuer directly (an IAM OIDC provider), so the console
+// federates straight into it via STS `AssumeRoleWithWebIdentity`, presenting a short-lived assertion minted
+// by the issuer (lib/oidc/issuer.ts) — no platform AWS account, no ExternalId, no stored customer secret
+// (the role ARN is metadata). The resulting short-lived session backs the health probe + the asset
+// inventory sync, so a connection test needs no runner. Every managed cloud now federates the same way.
 
-import { STSClient } from "@aws-sdk/client-sts";
-import { AssumeRoleCommand } from "@aws-sdk/client-sts";
-import { platformCredentialProvider } from "@/lib/cloud-providers/session/aws-platform";
+import { STSClient, AssumeRoleWithWebIdentityCommand } from "@aws-sdk/client-sts";
+import { mintWorkloadToken, oidcIssuerConfigured } from "@/lib/oidc/issuer";
 import type { CloudIdentity } from "@/lib/db/schema";
 
 /** Short-lived AWS credentials + the region they were minted for. */
@@ -31,6 +30,18 @@ const TIMEOUT_MS = 12_000;
 /** The default region for control-plane calls (STS/regions enumeration is global-ish). */
 export const DEFAULT_AWS_REGION = "us-east-1";
 
+/**
+ * The audience the customer's IAM OIDC provider pins as its allowed client id — scoping the minted
+ * assertion to AWS (mirrors GCP_TOKEN_AUDIENCE / AZURE_TOKEN_AUDIENCE / ALIBABA_TOKEN_AUDIENCE). MUST match
+ * the `IssuerAudience` in the connector setup (alethia-bootstrap.yaml / aws.tf) or the exchange is rejected.
+ */
+export const AWS_TOKEN_AUDIENCE = "sts.amazonaws.com";
+
+/** Whether this instance can federate to AWS at all (the workload-identity issuer is configured). */
+export function awsConfigured(): boolean {
+	return oidcIssuerConfigured();
+}
+
 /** Extracts the 12-digit account id from a role ARN (arn:aws:iam::<account>:role/...). */
 function accountIdFromArn(roleArn: string | null | undefined): string | null {
 	if (!roleArn) return null;
@@ -39,9 +50,10 @@ function accountIdFromArn(roleArn: string | null | undefined): string | null {
 }
 
 /**
- * Assumes the customer's cross-account role for one cloud identity and returns a short-lived session.
- * Throws on missing platform creds, a missing role ARN, or an AssumeRole failure (revoked trust /
- * wrong external id) — the caller maps that to DISCONNECTED.
+ * Assumes the customer's role for one cloud identity via `AssumeRoleWithWebIdentity` and returns a
+ * short-lived session. `AssumeRoleWithWebIdentity` is an unauthenticated STS action — the minted assertion
+ * authenticates it, so the client needs no credentials. Throws on a missing role ARN, an unconfigured
+ * issuer, or an assume failure (revoked trust / wrong sub/aud) — the caller maps that to DISCONNECTED.
  */
 export async function assumeAwsRole(
 	identity: Pick<CloudIdentity, "credentials">,
@@ -50,24 +62,27 @@ export async function assumeAwsRole(
 	const region = opts?.region ?? DEFAULT_AWS_REGION;
 	const roleArn = identity.credentials.role_arn ?? null;
 	if (!roleArn) throw new Error("This AWS connection has no role ARN.");
+	if (!oidcIssuerConfigured()) {
+		throw new Error("The workload-identity issuer is not configured (ALETHIA_OIDC_SIGNING_KEY).");
+	}
 
+	const token = await mintWorkloadToken({ audience: AWS_TOKEN_AUDIENCE });
 	const sts = new STSClient({
 		region,
-		credentials: platformCredentialProvider(),
 		requestHandler: { requestTimeout: TIMEOUT_MS },
 		maxAttempts: 2,
 	});
 	const res = await sts.send(
-		new AssumeRoleCommand({
+		new AssumeRoleWithWebIdentityCommand({
 			RoleArn: roleArn,
-			ExternalId: identity.credentials.external_id ?? undefined,
+			WebIdentityToken: token,
 			RoleSessionName: `alethia-${(opts?.purpose ?? "probe").slice(0, 24)}`,
 			DurationSeconds: 3600,
 		}),
 	);
 	const c = res.Credentials;
 	if (!c?.AccessKeyId || !c.SecretAccessKey || !c.SessionToken) {
-		throw new Error("AssumeRole returned no credentials.");
+		throw new Error("AssumeRoleWithWebIdentity returned no credentials.");
 	}
 	return {
 		credentials: {
