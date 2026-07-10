@@ -68,6 +68,18 @@ const wifConfigSchema = z.object({
 			return;
 		}
 
+		// Alethia federates GCP via DIRECT OIDC — the config's subject token must be a minted JWT. A legacy
+		// AWS-hub config (subject_token_type "…aws4_request") is no longer supported: reject it up-front with a
+		// clear message instead of failing server-side. Reconnect with the current setup script / module.
+		if (parsed.subject_token_type !== "urn:ietf:params:oauth:token-type:jwt") {
+			ctx.addIssue({
+				code: "custom",
+				message:
+					"This looks like a retired AWS-hub WIF config. Re-run the current GCP setup script or Terraform module — it produces a direct-OIDC config Alethia can use.",
+			});
+			return;
+		}
+
 		const audience = parsed.audience;
 		if (!audience || !audience.includes("workloadIdentityPools")) {
 			ctx.addIssue({

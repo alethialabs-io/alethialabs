@@ -342,8 +342,9 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 											Apply Terraform Module
 										</div>
 										<p className="text-xs text-muted-foreground mt-1 max-w-sm">
-											Set your subscription ID in the
-											Terraform variables and apply:
+											Set your subscription ID and the Alethia
+											app id in the Terraform variables and
+											apply:
 										</p>
 										<div className="mt-3 p-3 bg-muted/30 border border-border/40 rounded-md font-mono text-[11px] text-foreground space-y-1 overflow-x-auto">
 											<div>
@@ -353,6 +354,14 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 											<div className="pl-4">
 												-var
 												&quot;subscription_id=YOUR_SUBSCRIPTION_ID&quot;
+												\
+											</div>
+											<div className="pl-4">
+												-var
+												&quot;alethia_client_id=
+												{ALETHIA_AZURE_CLIENT_ID ||
+													"ALETHIA_APP_ID"}
+												&quot;
 											</div>
 										</div>
 										<div className="mt-3 flex flex-wrap items-center gap-3">
@@ -398,8 +407,8 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 											<code className="bg-muted px-1 py-0.5 border border-border/50 rounded text-foreground">
 												terraform output
 											</code>{" "}
-											and paste the tenant_id, client_id,
-											and subscription_id below.
+											and paste the tenant_id and
+											subscription_id below.
 										</p>
 									</div>
 								</div>
