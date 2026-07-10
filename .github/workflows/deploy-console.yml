@@ -450,18 +450,12 @@ jobs:
             emit GITLAB_SECRET
             emit BITBUCKET_KEY
             emit BITBUCKET_SECRET
-            # Platform AWS identity for SERVER-SIDE connection health + inventory — now KEYLESS. The
-            # console federates into the platform AWS account via the OIDC issuer (AssumeRoleWithWebIdentity)
-            # using ALETHIA_AWS_PLATFORM_ROLE_ARN; no static access key. This lights up AWS **and GCP**
-            # (GCP rides the same identity). The AWS_ACCESS_KEY_ID/SECRET/SESSION_TOKEN google-auth reads
-            # for the GCP subject token are written + refreshed at RUNTIME by the console (ensurePlatformAwsEnv),
-            # not baked here — temporary creds can't live in a static .env. Empty → tiles show "not enabled".
-            emit ALETHIA_AWS_PLATFORM_ROLE_ARN
+            # AWS is KEYLESS and issuer-direct (like GCP/Azure/Alibaba): the customer's IAM role trusts the
+            # Alethia OIDC issuer (an IAM OIDC provider), so the console + runner federate straight in via
+            # AssumeRoleWithWebIdentity with a minted assertion — no platform AWS account, no static key,
+            # nothing to emit. Availability tracks the OIDC issuer (cloud-connect-setup.ts). Only AWS_REGION
+            # is set (the SDK wants a default region for the global STS call).
             echo "AWS_REGION=us-east-1"
-            # Platform AWS account id (the account every managed cloud federates through). The connect
-            # UI shows it in the customer setup templates. Configurable; defaults to the live account.
-            AWS_ACCT="$(val ALETHIA_AWS_ACCOUNT_ID)"; AWS_ACCT="${AWS_ACCT:-270587882865}"
-            echo "NEXT_PUBLIC_ALETHIA_AWS_ACCOUNT_ID=$AWS_ACCT"
             # Azure is KEYLESS: the console + runner authenticate as ONE multi-tenant Entra app
             # (ALETHIA_AZURE_CLIENT_ID) via a minted OIDC assertion — no tenant/secret. The client
             # id is also surfaced to the browser (the connect UI bakes it into the customer setup
@@ -472,9 +466,9 @@ jobs:
             # Alibaba is KEYLESS + ACCOUNT-FREE: the console assumes the customer RAM role via
             # AssumeRoleWithOIDC with a minted assertion (issuer above) — Alethia holds no Alibaba
             # account / AccessKey, so nothing is emitted; availability tracks the OIDC issuer.
-            # GCP needs NO separate secret — it federates through the platform AWS identity above
-            # (customer WIF pool trusts AWS acct ALETHIA_AWS_ACCOUNT_ID; console mints the subject token
-            # from the AWS_* creds). Availability tracks the AWS creds (cloud-connect-setup.ts).
+            # GCP needs NO separate secret either — the customer WIF pool trusts the Alethia issuer
+            # directly, so the console/runner mint a subject token (audience alethia-gcp-wif). Availability
+            # tracks the OIDC issuer (cloud-connect-setup.ts).
             # AI: direct-to-provider (no Vercel AI Gateway). Once the vault has ANTHROPIC_API_KEY the
             # agent/assistant/Ask-AI features run at the **Free tier** in prod (lib/config/ai.ts
             # isAiConfigured). OPENAI_API_KEY is only used for openai/* model overrides (emit tolerates

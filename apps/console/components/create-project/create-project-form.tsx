@@ -80,7 +80,7 @@ interface CreateProjectFormProps {
 	/** Whether the org can invite collaborators (Pro). Drives the Collaborate pill. */
 	canCollaborate: boolean;
 	integrations: ConnectorWithConnection[];
-	awsSetup: { externalId: string; identityId: string } | null;
+	awsSetup: { identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
 	azureSetup: { identityId: string } | null;
 	extraSetup?: Record<string, { identityId: string; externalId?: string }>;

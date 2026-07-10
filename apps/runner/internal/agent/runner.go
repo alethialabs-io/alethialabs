@@ -212,12 +212,13 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 		switch types.CloudProvider(claim.CloudIdentity.Provider) {
 		case types.CloudProviderAws:
 			// Managed runners have NO ambient AWS identity (the Hetzner fleet injects no keys), so they
-			// federate in KEYLESSLY: assume the platform role via web identity, then chain the customer
-			// role off it (auto-refreshing). Self-hosted runners run in the customer's cloud with their
-			// own creds, so they keep the direct AssumeRole path.
+			// federate in KEYLESSLY via DIRECT OIDC: AssumeRoleWithWebIdentity straight into the customer
+			// role (which trusts the Alethia issuer), auto-refreshing — no platform AWS account, no
+			// ExternalId. Self-hosted runners run in the customer's cloud with their own creds, so they keep
+			// the direct AssumeRole path.
 			if w.config.Operator == "managed" {
-				fmt.Fprintf(stdoutLogger, "Activating keyless AWS federation, then assuming %s (account %s)...\n", claim.CloudIdentity.RoleArn, claim.CloudIdentity.AccountID)
-				cleanup, err := ActivateAwsFederated(ctx, w.api, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID)
+				fmt.Fprintf(stdoutLogger, "Activating keyless AWS federation into %s (account %s)...\n", claim.CloudIdentity.RoleArn, claim.CloudIdentity.AccountID)
+				cleanup, err := ActivateAwsFederated(ctx, w.api, claim.CloudIdentity.RoleArn)
 				if err != nil {
 					errMsg := fmt.Sprintf("Failed to activate AWS federation: %v", err)
 					fmt.Fprintln(stderrLogger, errMsg)
