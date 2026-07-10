@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The standalone AI plan/usage surface — shared by the Usage page and the Billing page's
-// AI section. Shows the org's current AI tier and its usage as PERCENTAGES (daily +
-// weekly, on the same fixed buckets the guard enforces) with reset times and a hard-limit
-// indicator — never raw credit counts. CTAs: Buy credits (top-up packs) + Upgrade AI plan
-// (raise the caps). AI is metered independently of the org plan (lib/billing/ai-plan.ts).
+// AI section. Shows the org's current AI plan and its usage as PERCENTAGES (the rolling
+// 5-hour session + the fixed weekly limit, on the same windows the guard enforces) with
+// reset times and a hard-limit indicator — never raw credit counts. CTAs: Upgrade AI plan
+// (raise the limits) always; Buy credits (top-up packs) only on a PAID tier at/near a
+// limit — free orgs can't top up, they upgrade. AI is metered independently of the org
+// plan (lib/billing/ai-plan.ts).
 
 import { ArrowUpRight, Zap } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -17,29 +19,25 @@ import {
 import { CreditPackDialog } from "@/components/billing/credit-pack-dialog";
 import { UpgradeAiSheet } from "@/components/billing/upgrade-ai-sheet";
 import { SettingsSection } from "@/components/settings/settings-ui";
+import {
+	isNearAiLimit,
+	pctOf,
+	sessionResetLabel,
+	weeklyResetLabel,
+} from "@/lib/billing/ai-usage-format";
 import { useLiveAiPrice } from "@/lib/billing/use-live-plan-price";
 import { aiPlanMeta } from "@repo/plan-catalog";
 import { Skeleton } from "@repo/ui/skeleton";
-
-/** Humanize the time until an ISO reset ("2h", "1d", "5m", or "soon"). */
-function resetsIn(iso: string): string {
-	const ms = new Date(iso).getTime() - Date.now();
-	if (Number.isNaN(ms) || ms <= 0) return "soon";
-	const h = Math.floor(ms / 3_600_000);
-	if (h >= 24) return `${Math.floor(h / 24)}d`;
-	if (h >= 1) return `${h}h`;
-	return `${Math.max(1, Math.floor(ms / 60_000))}m`;
-}
 
 /** A percent meter (bar + % value + reset sub). Shows proportions only, never raw counts. */
 function PctMeter({
 	label,
 	pct,
-	resetAt,
+	sub,
 }: {
 	label: string;
 	pct: number;
-	resetAt: string;
+	sub: string;
 }) {
 	const atLimit = pct >= 100;
 	return (
@@ -61,19 +59,17 @@ function PctMeter({
 				/>
 			</div>
 			<div className="mt-2 font-mono text-[10px] text-text-tertiary">
-				{atLimit ? "at limit · " : ""}resets in {resetsIn(resetAt)}
+				{atLimit ? "At limit · " : ""}
+				{sub}
 			</div>
 		</div>
 	);
 }
 
-const pctOf = (used: number, budget: number) =>
-	budget > 0 ? Math.min(100, Math.round((used / budget) * 100)) : 0;
-
 /**
- * The AI plan & usage card. Self-fetches the canonical AI summary and renders the tier +
- * daily/weekly % + purchased balance + Buy-credits / Upgrade-AI-plan CTAs. Rendered on both
- * the Usage and Billing settings pages (one source of truth — no twin panel).
+ * The AI plan & usage card. Self-fetches the canonical AI summary and renders the plan +
+ * session/weekly % + purchased balance + the plan-aware CTAs. Rendered on both the Usage
+ * and Billing settings pages (one source of truth — no twin panel).
  */
 export function AiUsageSection() {
 	const [ai, setAi] = useState<AiUsageSummary | null>(null);
@@ -102,11 +98,17 @@ export function AiUsageSection() {
 	const aiPrice = useLiveAiPrice(ai?.tier ?? "ai_free");
 	// Free/Plus can still upgrade the AI tier; Max is the top.
 	const canUpgrade = ai ? ai.tier !== "ai_max" : false;
+	const paid = ai ? ai.tier !== "ai_free" : false;
+	// Top-up packs only make sense on a paid plan, and only once a limit is actually near —
+	// below that, the plan's included allowance is the whole story.
+	const showBuyCredits = ai !== null && paid && isNearAiLimit(ai);
+	// The balance strip is noise for a free org that never bought packs.
+	const showBalance = ai !== null && (paid || ai.purchasedBalance > 0);
 
 	return (
 		<SettingsSection title="AI plan & usage">
 			<div className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
-				{/* tier header */}
+				{/* plan header */}
 				<div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
 					<div className="flex flex-col gap-0.5">
 						<div className="flex items-baseline gap-2">
@@ -120,20 +122,22 @@ export function AiUsageSection() {
 							)}
 						</div>
 						{meta && (
-							<span className="font-mono text-[10.5px] text-text-tertiary">
-								{meta.advisor}
+							<span className="text-[11.5px] text-text-tertiary">
+								{meta.tagline}
 							</span>
 						)}
 					</div>
 					<div className="flex items-center gap-2">
-						<button
-							type="button"
-							onClick={() => setCreditsOpen(true)}
-							className="inline-flex items-center gap-1 text-[12.5px] text-text-secondary transition-colors hover:text-text-primary"
-						>
-							Buy credits
-							<ArrowUpRight size={13} />
-						</button>
+						{showBuyCredits && (
+							<button
+								type="button"
+								onClick={() => setCreditsOpen(true)}
+								className="inline-flex items-center gap-1 text-[12.5px] text-text-secondary transition-colors hover:text-text-primary"
+							>
+								Buy credits
+								<ArrowUpRight size={13} />
+							</button>
+						)}
 						{canUpgrade && (
 							<button
 								type="button"
@@ -147,19 +151,19 @@ export function AiUsageSection() {
 					</div>
 				</div>
 
-				{/* daily + weekly % meters */}
+				{/* session + weekly % meters */}
 				<div className="grid grid-cols-1 sm:grid-cols-2">
 					{ai ? (
 						<>
 							<PctMeter
-								label="Today"
-								pct={pctOf(ai.dailyUsed, ai.dailyBudget)}
-								resetAt={ai.dailyResetAt}
+								label="Current session"
+								pct={pctOf(ai.sessionUsed, ai.sessionBudget)}
+								sub={sessionResetLabel(ai.sessionResetAt)}
 							/>
 							<PctMeter
-								label="This week"
+								label="Weekly limit"
 								pct={pctOf(ai.weeklyUsed, ai.weeklyBudget)}
-								resetAt={ai.weeklyResetAt}
+								sub={weeklyResetLabel(ai.weeklyResetAt)}
 							/>
 						</>
 					) : (
@@ -169,13 +173,15 @@ export function AiUsageSection() {
 					)}
 				</div>
 
-				{/* purchased top-up balance */}
-				<div className="flex items-center justify-between border-t border-border bg-surface-sunken px-6 py-3 text-[12px] text-text-tertiary">
-					<span>Top-up credits stack on any tier and never expire.</span>
-					<span className="font-mono text-text-secondary">
-						{ai ? `${ai.purchasedBalance.toLocaleString()} credits` : "—"}
-					</span>
-				</div>
+				{/* purchased top-up balance — paid tiers (or a leftover balance) only */}
+				{showBalance && (
+					<div className="flex items-center justify-between border-t border-border bg-surface-sunken px-6 py-3 text-[12px] text-text-tertiary">
+						<span>Top-up credits never expire and stack on your plan.</span>
+						<span className="font-mono text-text-secondary">
+							{ai.purchasedBalance.toLocaleString()} credits
+						</span>
+					</div>
+				)}
 			</div>
 
 			<UpgradeAiSheet
@@ -187,6 +193,7 @@ export function AiUsageSection() {
 				open={creditsOpen}
 				onOpenChange={setCreditsOpen}
 				onPurchased={refetch}
+				onUpgradeInstead={() => setUpgradeOpen(true)}
 			/>
 		</SettingsSection>
 	);

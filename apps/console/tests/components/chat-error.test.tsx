@@ -3,15 +3,19 @@
 
 // Component test for ChatError: it classifies a useChat error into missing-key / budget /
 // network (generic falls to network) and renders the matching title plus an always-present
-// Retry that invokes the callback. The analytics track() call in the mount effect is mocked.
+// Retry that invokes the callback. On a budget error the CTA is tier-aware (packs are
+// paid-only), so the summary fetch is mocked per test. The analytics track() call in the
+// mount effect is mocked.
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { track } from "@/lib/analytics/track";
 import { ChatError } from "@/components/agent/chat-error";
 
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
+// ChatError fetches the AI summary to pick the tier-aware budget CTA.
+vi.mock("@/app/server/actions/billing", () => ({ getAiUsageSummary: vi.fn() }));
 // The CTAs open the shared purchase surfaces (Stripe + server actions) — stubbed here;
 // they're covered by their own tests. This keeps ChatError focused on classify + CTA.
 vi.mock("@/components/billing/upgrade-ai-sheet", () => ({
@@ -20,6 +24,18 @@ vi.mock("@/components/billing/upgrade-ai-sheet", () => ({
 vi.mock("@/components/billing/credit-pack-dialog", () => ({
 	CreditPackDialog: () => null,
 }));
+
+import { getAiUsageSummary } from "@/app/server/actions/billing";
+
+/** Mock the summary fetch to resolve the given tier (the only field ChatError reads). */
+function mockTier(tier: "ai_free" | "ai_plus" | "ai_max") {
+	vi.mocked(getAiUsageSummary).mockResolvedValue({ tier } as never);
+}
+
+beforeEach(() => {
+	vi.clearAllMocks();
+	mockTier("ai_free");
+});
 
 describe("ChatError", () => {
 	it("classifies a 503 'not configured' body as missing-key", () => {
@@ -40,14 +56,15 @@ describe("ChatError", () => {
 		expect(screen.getByText("AI limit reached")).toBeInTheDocument();
 	});
 
-	it("renders the parsed 402 message + reset time and a Buy credits CTA for a weekly cap", () => {
+	it("renders the parsed 402 message + reset time, with Buy credits on a PAID tier", async () => {
+		mockTier("ai_plus");
 		const resetAt = new Date(Date.now() + 2 * 3_600_000).toISOString();
 		render(
 			<ChatError
 				error={
 					new Error(
 						JSON.stringify({
-							error: "You're out of AI usage for this week.",
+							error: "You're out of included AI usage for this week.",
 							reason: "weekly",
 							resetAt,
 							upgradable: true,
@@ -57,12 +74,31 @@ describe("ChatError", () => {
 			/>,
 		);
 		expect(
-			screen.getByText(/out of AI usage for this week.*Resets in/i),
+			screen.getByText(/out of included AI usage for this week.*Resets in/i),
 		).toBeInTheDocument();
-		// The credit-limit reasons open the Buy-credits dialog (a button, not a link).
+		// Paid tiers may top up — the limit CTA opens the Buy-credits dialog.
 		expect(
-			screen.getByRole("button", { name: /buy credits/i }),
+			await screen.findByRole("button", { name: /buy credits/i }),
 		).toBeInTheDocument();
+	});
+
+	it("offers Upgrade (never Buy credits) to a FREE tier at its limit", async () => {
+		mockTier("ai_free");
+		render(
+			<ChatError
+				error={
+					new Error(
+						'{"error":"out of usage","reason":"session","resetAt":null,"upgradable":true}',
+					)
+				}
+			/>,
+		);
+		expect(
+			await screen.findByRole("button", { name: /upgrade ai plan/i }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /buy credits/i }),
+		).not.toBeInTheDocument();
 	});
 
 	it("shows an Upgrade AI plan CTA when the reason is not_enabled (subscribe)", () => {
@@ -88,7 +124,8 @@ describe("ChatError", () => {
 		).not.toBeInTheDocument();
 	});
 
-	it("keeps Retry alongside the budget CTA", () => {
+	it("keeps Retry alongside the budget CTA (legacy 'daily' reason still parses)", async () => {
+		mockTier("ai_max");
 		const onRetry = vi.fn();
 		render(
 			<ChatError
@@ -98,7 +135,7 @@ describe("ChatError", () => {
 				onRetry={onRetry}
 			/>,
 		);
-		expect(screen.getByRole("button", { name: /buy credits/i })).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: /buy credits/i })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
 	});
 

@@ -5,16 +5,19 @@
 import { AlertTriangle, KeyRound, RefreshCcw, WifiOff } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { getAiUsageSummary } from "@/app/server/actions/billing";
 import { CreditPackDialog } from "@/components/billing/credit-pack-dialog";
 import { UpgradeAiSheet } from "@/components/billing/upgrade-ai-sheet";
+import { formatCountdown } from "@/lib/billing/ai-usage-format";
 import { track } from "@/lib/analytics/track";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 
 type ChatErrorKind = "missing-key" | "budget" | "network";
 
-/** The AI budget reasons the 402 body carries (mirrors AiBudgetError.reason). */
-type BudgetReason = "not_enabled" | "daily" | "weekly" | "out";
+/** The AI budget reasons the 402 body carries (mirrors AiBudgetError.reason; "daily" is
+ *  the pre-session-window legacy alias, accepted from in-flight old responses). */
+type BudgetReason = "not_enabled" | "session" | "daily" | "weekly" | "out";
 
 /** The parsed shape of the streaming route's 402 body ({error,reason,resetAt,upgradable}). */
 interface ParsedBudget {
@@ -26,6 +29,7 @@ interface ParsedBudget {
 
 const BUDGET_REASONS: readonly BudgetReason[] = [
 	"not_enabled",
+	"session",
 	"daily",
 	"weekly",
 	"out",
@@ -70,15 +74,13 @@ function classify(error: Error): ChatErrorKind {
 	return "network";
 }
 
-/** Humanize the time until an ISO reset ("2h", "1d", "5m", or "soon"). */
+/** Humanize the time until an ISO reset ("Resets in 4 hr 48 min."), or null when unknown. */
 function resetsIn(iso: string | null): string | null {
 	if (!iso) return null;
 	const ms = new Date(iso).getTime() - Date.now();
-	if (Number.isNaN(ms) || ms <= 0) return "soon";
-	const h = Math.floor(ms / 3_600_000);
-	if (h >= 24) return `${Math.floor(h / 24)}d`;
-	if (h >= 1) return `${h}h`;
-	return `${Math.max(1, Math.floor(ms / 60_000))}m`;
+	if (Number.isNaN(ms)) return null;
+	if (ms <= 0) return "soon";
+	return `in ${formatCountdown(ms)}`;
 }
 
 const COPY: Record<
@@ -95,7 +97,7 @@ const COPY: Record<
 		icon: AlertTriangle,
 		title: "AI limit reached",
 		description:
-			"You've reached your AI usage limit. It resets on a fixed schedule, or buy credits / upgrade your AI plan to keep going.",
+			"You've reached your AI usage limit. It frees up as the window rolls, or upgrade your AI plan to keep going.",
 	},
 	network: {
 		icon: WifiOff,
@@ -109,8 +111,9 @@ const COPY: Record<
  * The transcript's error affordance. Kind-aware (missing-key / budget / network) so a
  * missing gateway key reads as setup rather than failure, and ALWAYS offers a Retry that
  * re-runs the last turn (`regenerate`). For the AI-budget (402) case it parses the real
- * reason + reset time from the response body and shows the correct CTA — "Upgrade AI plan"
- * when a subscription is needed (`not_enabled`), else "Buy credits" (daily/weekly/out).
+ * reason + reset time from the response body and shows the tier-aware CTA: top-up packs
+ * are PAID-plan-only, so a hit limit offers "Buy credits" only once a best-effort summary
+ * fetch confirms a paid tier — free (or unknown) tiers get "Upgrade AI plan".
  */
 export function ChatError({
 	error,
@@ -123,9 +126,24 @@ export function ChatError({
 	const budget = kind === "budget" ? parseBudget(error) : null;
 	const [upgradeOpen, setUpgradeOpen] = useState(false);
 	const [creditsOpen, setCreditsOpen] = useState(false);
+	// A budget error means a limit is hit — whether "Buy credits" applies depends on the
+	// tier (packs are paid-only). Best-effort: default to the upgrade CTA until known.
+	const [paidTier, setPaidTier] = useState(false);
 	// Report the surfaced error (kind only — never the raw message) once per occurrence.
 	useEffect(() => {
 		track("elench_error", { kind });
+	}, [kind]);
+	useEffect(() => {
+		if (kind !== "budget") return;
+		let alive = true;
+		getAiUsageSummary()
+			.then((s) => alive && setPaidTier(s.tier !== "ai_free"))
+			.catch(() => {
+				/* best-effort — unknown tier keeps the upgrade CTA */
+			});
+		return () => {
+			alive = false;
+		};
 	}, [kind]);
 
 	const base = COPY[kind];
@@ -133,11 +151,11 @@ export function ChatError({
 	// When we parsed a real budget body, use the server's human message + reset time.
 	const reset = budget ? resetsIn(budget.resetAt) : null;
 	const description = budget
-		? `${budget.message}${reset ? ` Resets in ${reset}.` : ""}`
+		? `${budget.message}${reset ? ` Resets ${reset}.` : ""}`
 		: base.description;
-	// `not_enabled` means "subscribe to an AI plan" (open the tier sheet); the credit-limit
-	// reasons mean "wait or buy credits" (open the credit-pack dialog).
-	const subscribe = budget?.reason === "not_enabled";
+	// `not_enabled` always means "subscribe to an AI plan"; a hit limit offers packs only
+	// on a paid tier (free orgs can't top up — the upgrade IS their next step).
+	const buyCredits = budget !== null && budget.reason !== "not_enabled" && paidTier;
 
 	return (
 		<Alert className="rounded-none">
@@ -153,10 +171,10 @@ export function ChatError({
 							size="sm"
 							className="rounded-none"
 							onClick={() =>
-								subscribe ? setUpgradeOpen(true) : setCreditsOpen(true)
+								buyCredits ? setCreditsOpen(true) : setUpgradeOpen(true)
 							}
 						>
-							{subscribe ? "Upgrade AI plan" : "Buy credits"}
+							{buyCredits ? "Buy credits" : "Upgrade AI plan"}
 						</Button>
 					)}
 					{onRetry && (
@@ -174,7 +192,11 @@ export function ChatError({
 				</div>
 			</AlertDescription>
 			<UpgradeAiSheet open={upgradeOpen} onOpenChange={setUpgradeOpen} />
-			<CreditPackDialog open={creditsOpen} onOpenChange={setCreditsOpen} />
+			<CreditPackDialog
+				open={creditsOpen}
+				onOpenChange={setCreditsOpen}
+				onUpgradeInstead={() => setUpgradeOpen(true)}
+			/>
 		</Alert>
 	);
 }

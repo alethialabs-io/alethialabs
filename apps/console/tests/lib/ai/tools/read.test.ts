@@ -495,13 +495,13 @@ describe("get_org_usage", () => {
 });
 
 describe("get_ai_usage", () => {
-	it("maps the AI standing to the trimmed shape (tier + daily/weekly, no secret fields)", async () => {
+	it("maps the AI standing to the trimmed shape (tier + session/weekly, no secret fields)", async () => {
 		vi.mocked(getAiUsageSummary).mockResolvedValue({
 			enabled: true,
 			tier: "ai_plus",
-			dailyUsed: 12,
-			dailyBudget: 200,
-			dailyResetAt: "2100-01-01T00:00:00.000Z",
+			sessionUsed: 12,
+			sessionBudget: 200,
+			sessionResetAt: "2100-01-01T00:00:00.000Z",
 			weeklyUsed: 42,
 			weeklyBudget: 1500,
 			weeklyResetAt: "2100-01-02T00:00:00.000Z",
@@ -511,14 +511,30 @@ describe("get_ai_usage", () => {
 		expect(out).toEqual({
 			enabled: true,
 			tier: "ai_plus",
-			daily_used: 12,
-			daily_budget: 200,
-			daily_reset_at: "2100-01-01T00:00:00.000Z",
+			session_used: 12,
+			session_budget: 200,
+			session_reset_at: "2100-01-01T00:00:00.000Z",
 			weekly_used: 42,
 			weekly_budget: 1500,
 			weekly_reset_at: "2100-01-02T00:00:00.000Z",
 			purchased_balance: 250,
 		});
+	});
+
+	it("passes a null session reset through (no active session)", async () => {
+		vi.mocked(getAiUsageSummary).mockResolvedValue({
+			enabled: true,
+			tier: "ai_free",
+			sessionUsed: 0,
+			sessionBudget: 130,
+			sessionResetAt: null,
+			weeklyUsed: 0,
+			weeklyBudget: 510,
+			weeklyResetAt: "2100-01-02T00:00:00.000Z",
+			purchasedBalance: 0,
+		} as never);
+		const out = (await run(readTools().get_ai_usage, {})) as Record<string, unknown>;
+		expect(out.session_reset_at).toBeNull();
 	});
 });
 

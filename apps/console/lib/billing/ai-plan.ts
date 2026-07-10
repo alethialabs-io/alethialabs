@@ -3,16 +3,17 @@
 
 // The AI-tier ladder — the source of truth for the STANDALONE AI product (repo-scanner
 // + agent + Ask AI). AI is metered SEPARATELY from the org plan (Hobby/Pro/Enterprise):
-// every org gets a usable free daily/weekly allowance (`ai_free`), and `ai_plus`/`ai_max`
+// every org gets a usable free session/weekly allowance (`ai_free`), and `ai_plus`/`ai_max`
 // are their own Stripe subscription (separate price IDs) that raise the caps + upgrade the
-// advisor model. Credit packs (lib/billing/ai-credits.ts) stack on top of ANY tier.
+// advisor model. Credit packs (lib/billing/ai-credits.ts) stack on top of paid tiers.
 //
 // All AI spends **AI credits** from one budget. A credit is a slice of real cost-of-serve
 // ($0.001 each — see ai-credits.ts), NOT a message: a metered chat turn settles its actual
-// token cost, so the caps are a true $ ceiling, not a message count. Two FIXED epoch buckets
-// scaled by the tier: a **weekly** cap (the real governor) and a **daily** cap (≈45% of
-// weekly — a loose burst rail). Burn freely until empty, then wait for the reset, upgrade, or
-// buy top-up credits (NO silent overage). These allowances are final (maintainer-approved) —
+// token cost, so the caps are a true $ ceiling, not a message count. Two INDEPENDENT windows
+// scaled by the tier, Anthropic-style: a rolling **5-hour session** cap (weekly ÷ 4, so a
+// saturated day can legitimately exhaust the week) and a fixed epoch-aligned **weekly** cap
+// (the real governor). Burn freely until empty, then wait for the window, upgrade, or buy
+// top-up credits (NO silent overage). These allowances are final (maintainer-approved) —
 // tune here.
 //
 // Pure data + a thin DB read (resolveAiTier). NOT marked `server-only` so the schema can
@@ -29,6 +30,18 @@ export type AiTier = "ai_free" | "ai_plus" | "ai_max";
 /** Which advisor (planning/review) model a tier unlocks. `none` = executor-only. */
 export type AiAdvisor = "none" | "sonnet" | "opus";
 
+/**
+ * The rolling session window (Anthropic-style): the session cap governs usage in the
+ * trailing 5 hours; there is no shared reset — capacity frees as usage ages out.
+ */
+export const AI_SESSION_WINDOW_MS = 5 * 3_600_000;
+
+/**
+ * Session cap as a fraction of the weekly cap. ÷4 means ~4.8 fully-burnt sessions fit in
+ * 24 hours — a saturated day CAN exhaust the week (deliberate; weekly is the governor).
+ */
+export const SESSION_FRACTION_OF_WEEK = 1 / 4;
+
 /** What one AI tier grants: whether AI is on, its advisor model, and its credit caps. */
 export interface AiTierSpec {
 	/** AI usable at all on this tier (always true today; future-proofs a disabled tier). */
@@ -36,16 +49,20 @@ export interface AiTierSpec {
 	/** Advisor (planning) model — `none` on free (executor-only), Sonnet on Plus and Max
 	 *  (Max upgrades to Opus per-message via the deep-reasoning opt-in). */
 	advisor: AiAdvisor;
-	/** Included AI credits per fixed calendar day (the daily-% denominator). */
-	dailyCredits: number;
+	/**
+	 * Included AI credits per rolling 5-hour session (the session-% denominator) —
+	 * `weeklyCredits × SESSION_FRACTION_OF_WEEK`, rounded.
+	 */
+	sessionCredits: number;
 	/** Included AI credits per fixed 7-day week (the weekly-% denominator). */
 	weeklyCredits: number;
 	/**
-	 * Per-USER daily sub-cap — the most included credits ONE seat may burn in a fixed day,
-	 * so a single member can't drain the shared org allowance. A fraction of `dailyCredits`.
-	 * The guard enforces this on top of the org cap when a `userId` is supplied.
+	 * Per-USER session sub-cap — the most included credits ONE seat may burn inside the
+	 * rolling window, so a single member can't drain the shared org allowance. A fraction
+	 * of `sessionCredits`. The guard enforces this on top of the org cap when a `userId`
+	 * is supplied.
 	 */
-	perUserDailyCredits: number;
+	perUserSessionCredits: number;
 	/** Per-USER weekly sub-cap — the same fairness bound over the fixed 7-day week. */
 	perUserWeeklyCredits: number;
 }
@@ -53,9 +70,10 @@ export interface AiTierSpec {
 /**
  * The AI-tier ladder (final maintainer-approved allowances). Credits are cost-of-serve
  * slices ($0.001 each — see ai-credits.ts), NOT messages. The **weekly** cap is the real
- * ceiling; the **daily** cap (≈45% of weekly) is a loose burst rail. Each cap is annotated
- * with its dollar value.
- *  - ai_free → everyone: a usable daily/weekly allowance, Haiku executor only (no advisor).
+ * ceiling; the **session** cap (weekly × SESSION_FRACTION_OF_WEEK over the rolling 5-hour
+ * window) bounds bursts without stopping a heavy day from spending the whole week. Each
+ * cap is annotated with its dollar value.
+ *  - ai_free → everyone: a usable session/weekly allowance, Haiku executor only (no advisor).
  *  - ai_plus → paid AI subscription: bigger caps + a Sonnet advisor.
  *  - ai_max  → top AI subscription: the largest caps + a Sonnet advisor (Opus on demand,
  *    per-message via the deep-reasoning opt-in — see lib/config/ai.ts `getAdvisorModel`).
@@ -69,28 +87,28 @@ export const AI_TIERS: Record<AiTier, AiTierSpec> = {
 	ai_free: {
 		enabled: true,
 		advisor: "none",
-		dailyCredits: 230, // ≈$0.23/day burst rail
+		sessionCredits: 130, // ≈$0.13/session (510/4, rounded up)
 		weeklyCredits: 510, // ≈$0.51/week — the governor
 		// Per-seat sub-cap = the full org cap (free orgs are usually a single seat).
-		perUserDailyCredits: 230, // ≈$0.23/day
+		perUserSessionCredits: 130, // ≈$0.13/session
 		perUserWeeklyCredits: 510, // ≈$0.51/week
 	},
 	ai_plus: {
 		enabled: true,
 		advisor: "sonnet",
-		dailyCredits: 6_750, // ≈$6.75/day burst rail
+		sessionCredits: 3_750, // ≈$3.75/session (15,000/4)
 		weeklyCredits: 15_000, // ≈$15/week — the governor
 		// Per-seat sub-cap (paid orgs have several seats sharing the pool).
-		perUserDailyCredits: 4_140, // ≈$4.14/day
+		perUserSessionCredits: 2_300, // ≈$2.30/session (9,200/4)
 		perUserWeeklyCredits: 9_200, // ≈$9.20/week
 	},
 	ai_max: {
 		enabled: true,
 		advisor: "sonnet",
-		dailyCredits: 33_750, // ≈$33.75/day burst rail
+		sessionCredits: 18_750, // ≈$18.75/session (75,000/4)
 		weeklyCredits: 75_000, // ≈$75/week — the governor
 		// Per-seat sub-cap (larger teams share the pool).
-		perUserDailyCredits: 20_700, // ≈$20.70/day
+		perUserSessionCredits: 11_500, // ≈$11.50/session (46,000/4)
 		perUserWeeklyCredits: 46_000, // ≈$46/week
 	},
 };
