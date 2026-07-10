@@ -1,0 +1,86 @@
+---
+title: Hetzner Connector
+description: Scoped, project-scoped API token — encrypted at rest, decrypted only on the runner. Provisions a self-managed Talos Linux Kubernetes cluster on cheap Hetzner VMs.
+---
+
+# Hetzner Connector
+
+Hetzner Cloud integration is **token-based**. Unlike AWS, GCP, Azure, and Alibaba — which are
+**keyless** (Alethia federates into a role you grant via short-lived, minted OIDC assertions) —
+Hetzner Cloud offers **no OIDC or workload-identity federation**. Its only auth primitive is a
+**project-scoped API token**. So Alethia connects with a token you create, **encrypted at rest
+(AES-GCM)** and **decrypted only on the runner** at provision time — never written into a project
+snapshot. This is the best-available model for a cloud without federation. See
+[Security Architecture](/concepts/security) for the full model.
+
+<Callout type="info">
+**Is this safe?** The token is stored **encrypted** (AES-256-GCM) and is only ever decrypted on the
+runner during a provisioning job — it never appears in a job's config snapshot. A Hetzner token is
+scoped to a **single Hetzner project** (the tightest boundary Hetzner offers). **Revoke anytime** by
+deleting the token in the Hetzner Cloud Console — that instantly cuts Alethia's access.
+</Callout>
+
+## What Hetzner provisions
+
+Hetzner Cloud has no managed Kubernetes or managed data services. Instead, Alethia provisions a
+**self-managed [Talos Linux](https://www.talos.dev/) Kubernetes cluster** on Hetzner's inexpensive
+VMs (ARM `CAX` or x86 `CX`/`CPX`/`CCX`), with Cilium networking and the Hetzner CSI driver for block
+storage. Data services (Postgres, cache, queue) that would be managed cloud resources on a
+hyperscaler run **in-cluster via Helm** — CloudNativePG (Postgres), Valkey (cache), and RabbitMQ
+(queue) — deployed through ArgoCD. See
+[Health &amp; Inventory](/console/connectors/health-and-inventory) for how connections are probed.
+
+## Setup
+
+<Tabs items={["Managed (Alethia stores the token)", "Self-hosted runner (store nothing)"]}>
+  <Tab value="Managed (Alethia stores the token)">
+    <Steps>
+
+    ### Create a project-scoped API token
+    In the [Hetzner Cloud Console](https://console.hetzner.cloud/), open your project, then
+    **Security → API Tokens → Generate API token**. Give it **Read &amp; Write** permission —
+    provisioning creates servers, networks, and volumes. The token is scoped to just that one
+    project.
+
+    ### Paste into Alethia
+    Paste the token into the Alethia connect sheet and click **Connect**. Alethia encrypts it at rest
+    (AES-GCM) and verifies it immediately against the Hetzner Cloud API.
+
+    </Steps>
+  </Tab>
+  <Tab value="Self-hosted runner (store nothing)">
+    <Steps>
+
+    ### Run a self-hosted runner
+    If you operate your own runner, set **`HCLOUD_TOKEN`** in the runner's own environment. Alethia
+    then stores **no token at all** — the runner supplies it directly at provision time. This is the
+    zero-storage path for federation-less clouds.
+
+    ### Connect
+    Mark the connection self-managed; provisioning jobs claimed by your runner use its environment's
+    `HCLOUD_TOKEN` and Alethia never persists a credential.
+
+    </Steps>
+  </Tab>
+</Tabs>
+
+## Verification
+
+After you submit, Alethia verifies the connection **instantly, server-side** (no runner): it decrypts
+the stored token and calls a cheap authenticated Hetzner Cloud API endpoint
+(`GET https://api.hetzner.cloud/v1/datacenters`).
+
+- `200` → the connection is **Connected**
+- `401` / `403` → the token was rejected (bad or revoked) → **Disconnected**
+
+On success, Alethia also syncs the project's **regions** (used for placement) into the asset
+[inventory](/console/connectors/health-and-inventory). If verification fails, the error explains what
+went wrong.
+
+## What's Stored
+
+- **Managed:** only your **encrypted API token** (AES-256-GCM), decrypted solely on the runner at
+  provision time — never in a project snapshot.
+- **Self-hosted runner:** **nothing** — the runner carries `HCLOUD_TOKEN` in its own environment.
+
+Rotate or revoke the token in the Hetzner Cloud Console at any time to cut access.
