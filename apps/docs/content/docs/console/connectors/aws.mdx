@@ -10,6 +10,13 @@ Alethia's OIDC issuer, plus an IAM role Alethia assumes via **`AssumeRoleWithWeb
 external id, and no trust in an Alethia AWS account. This is the same model GCP, Azure, and Alibaba use. See
 [Security Architecture](/concepts/security) for the full model.
 
+<Callout type="info">
+**Is this safe?** You create the trust entirely in **your own** AWS account — Alethia never sees a key.
+It signs in with a short-lived token (≤10 min) that AWS verifies and swaps for a ~1-hour credential. The
+only thing Alethia stores is the **role ARN** (a public identifier). **Revoke anytime** by deleting the
+stack or the role.
+</Callout>
+
 ## Setup Methods
 
 <Tabs items={["CloudFormation (Recommended)", "Terraform"]}>

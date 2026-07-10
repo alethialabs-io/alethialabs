@@ -2,15 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-
 import { Button } from "@repo/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@repo/ui/card";
 import {
 	Form,
 	FormControl,
@@ -21,9 +13,11 @@ import {
 } from "@repo/ui/form";
 import { Input } from "@repo/ui/input";
 import {
-	ConnectionTestStatus,
-	InfoNote,
-	StatusCallout,
+	ConnectSheetShell,
+	MethodTabs,
+	Step,
+	StoredNote,
+	VerifySection,
 } from "@/components/connector/connection-ui";
 import {
 	type VerifyOutcome,
@@ -40,12 +34,12 @@ import {
 	CloudIcon,
 	Download,
 	ExternalLink,
-	ShieldCheck,
 	Terminal,
 } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
+
 // Zod schema for Role ARN validation
 const awsRoleSchema = z.object({
 	roleArn: z.string().superRefine((val, ctx) => {
@@ -88,9 +82,7 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 
 	const form = useForm<AwsRoleFormValues>({
 		resolver: zodResolver(awsRoleSchema),
-		defaultValues: {
-			roleArn: "",
-		},
+		defaultValues: { roleArn: "" },
 		mode: "onChange",
 	});
 
@@ -108,329 +100,204 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 	};
 
 	return (
-		<div className="max-w-200 mx-auto space-y-6 w-full">
-			<div className="flex flex-col gap-4">
-				{/* Method Selection */}
-				<div className="flex gap-3">
-					<button
-						onClick={() => setMethod("cloudformation")}
-						className={`flex-1 p-3 rounded-lg border text-left transition-all duration-200 ${
-							method === "cloudformation"
-								? "border-foreground bg-muted/20"
-								: "border-border/50 bg-background hover:border-border/80 hover:bg-muted/10"
-						}`}
-						type="button"
-					>
-						<div className="flex items-center gap-2.5">
-							<div
-								className={`p-1.5 rounded-md border ${method === "cloudformation" ? "bg-foreground text-background border-foreground" : "bg-background text-muted-foreground border-border/50"}`}
-							>
-								<CloudIcon className="w-3.5 h-3.5" />
-							</div>
-							<div>
-								<div className="font-medium text-sm text-foreground">
-									CloudFormation
-								</div>
-								<div className="text-[11px] text-muted-foreground">
-									Quick setup via AWS Console
-								</div>
-							</div>
-						</div>
-					</button>
+		<ConnectSheetShell
+			title="Connect AWS"
+			intro="You create an IAM role in your own AWS account that trusts Alethia's issuer. Alethia signs in with a short-lived, minted token — no access keys and no external id are ever shared or stored."
+			howItWorks={
+				<>
+					<p>
+						1. Launch the CloudFormation stack (or apply the Terraform module) — it creates
+						an IAM OIDC provider trusting Alethia&apos;s issuer and a role that trusts it.
+					</p>
+					<p>
+						2. Alethia authenticates with a signed token its issuer mints (≤10 min); AWS STS
+						verifies it via <code>AssumeRoleWithWebIdentity</code> and returns a ~1-hour
+						credential — no key on either side.
+					</p>
+					<p>
+						3. The only thing stored is the role ARN (a public identifier). Delete the stack
+						or role to revoke access.
+					</p>
+				</>
+			}
+		>
+			<MethodTabs
+				value={method}
+				onChange={(id) => setMethod(id as "cloudformation" | "terraform")}
+				help={
+					<>
+						<b className="text-foreground">CloudFormation</b> is one click — it opens the AWS
+						console with everything pre-filled; nothing to install.{" "}
+						<b className="text-foreground">Terraform</b> is for teams that manage
+						infrastructure as code: download the module and <code>apply</code> it. Both create
+						the same role.
+					</>
+				}
+				tabs={[
+					{
+						id: "cloudformation",
+						label: "CloudFormation",
+						sub: "Quick setup via AWS Console",
+						icon: <CloudIcon className="h-3.5 w-3.5" />,
+					},
+					{
+						id: "terraform",
+						label: "Terraform / IaC",
+						sub: "Infrastructure as Code",
+						icon: <Terminal className="h-3.5 w-3.5" />,
+					},
+				]}
+			/>
 
-					<button
-						onClick={() => setMethod("terraform")}
-						className={`flex-1 p-3 rounded-lg border text-left transition-all duration-200 ${
-							method === "terraform"
-								? "border-foreground bg-muted/20"
-								: "border-border/50 bg-background hover:border-border/80 hover:bg-muted/10"
-						}`}
-						type="button"
-					>
-						<div className="flex items-center gap-2.5">
-							<div
-								className={`p-1.5 rounded-md border ${method === "terraform" ? "bg-foreground text-background border-foreground" : "bg-background text-muted-foreground border-border/50"}`}
+			{method === "cloudformation" ? (
+				<div className="space-y-8">
+					<Step n={1} title="Launch Stack">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Opens AWS CloudFormation with the template pre-filled. It creates an IAM OIDC
+							provider that trusts the Alethia issuer and a role Alethia assumes via web
+							identity. Acknowledge the IAM capabilities and create the stack.
+						</p>
+						<div className="flex gap-3">
+							<Button
+								onClick={() => window.open(launchStackUrl, "_blank")}
+								size="sm"
+								className="h-8 font-medium text-xs"
+								type="button"
 							>
-								<Terminal className="w-3.5 h-3.5" />
-							</div>
-							<div>
-								<div className="font-medium text-sm text-foreground">
-									Terraform / IaC
-								</div>
-								<div className="text-[11px] text-muted-foreground">
-									Infrastructure as Code
-								</div>
-							</div>
+								<ExternalLink className="mr-1.5 h-3.5 w-3.5 opacity-70" />
+								Launch Stack in AWS
+							</Button>
+							<Button
+								onClick={handleDownload}
+								variant="outline"
+								size="sm"
+								className="h-8 border-border/50 font-medium text-xs"
+								type="button"
+							>
+								<CloudIcon className="mr-1.5 h-3.5 w-3.5 opacity-70" />
+								Download Template
+							</Button>
 						</div>
-					</button>
+					</Step>
+					<Step n={2} title="Copy Role ARN">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Once the stack is created, go to the{" "}
+							<b className="font-medium text-foreground">Outputs</b> tab and copy the{" "}
+							<b className="font-medium text-foreground">RoleArn</b>.
+						</p>
+					</Step>
 				</div>
-
-				{/* Instructions */}
-				<Card className="border-border/40 shadow-sm bg-background">
-					<CardHeader className="border-b border-border/40 pb-4 bg-muted/5">
-						<CardTitle className="text-base font-medium flex items-center gap-2">
-							<ShieldCheck className="w-4.5 h-4.5 text-muted-foreground" />
-							Setup Instructions
-						</CardTitle>
-						<CardDescription className="text-xs">
-							Create a keyless IAM role that trusts the Alethia
-							issuer — no access keys, no external id.
-						</CardDescription>
-					</CardHeader>
-					<CardContent className="space-y-6 pt-6">
-						{method === "cloudformation" ? (
-							<div className="space-y-8">
-								<div className="flex gap-4">
-									<div className="shrink-0 w-7 h-7 rounded-full bg-muted border border-border/50 text-foreground flex items-center justify-center font-medium text-xs">
-										1
-									</div>
-									<div className="space-y-3">
-										<div>
-											<div className="font-medium text-sm text-foreground">
-												Launch Stack
-											</div>
-											<p className="text-xs text-muted-foreground mt-1 mb-3 max-w-sm">
-												Opens AWS CloudFormation with the
-												template pre-filled. It creates an
-												IAM OIDC provider that trusts the
-												Alethia issuer and a role Alethia
-												assumes via web identity.
-												Acknowledge the IAM capabilities
-												and create the stack.
-											</p>
-										</div>
-										<div className="flex gap-3">
-											<Button
-												onClick={() =>
-													window.open(
-														launchStackUrl,
-														"_blank",
-													)
-												}
-												size="sm"
-												className="h-8 text-xs font-medium"
-												type="button"
-											>
-												<ExternalLink className="w-3.5 h-3.5 mr-1.5 opacity-70" />
-												Launch Stack in AWS
-											</Button>
-											<Button
-												onClick={handleDownload}
-												variant="outline"
-												size="sm"
-												className="h-8 text-xs font-medium border-border/50"
-												type="button"
-											>
-												<CloudIcon className="w-3.5 h-3.5 mr-1.5 opacity-70" />
-												Download Template
-											</Button>
-										</div>
-									</div>
-								</div>
-
-								<div className="flex gap-4">
-									<div className="shrink-0 w-7 h-7 rounded-full bg-muted border border-border/50 text-foreground flex items-center justify-center font-medium text-xs">
-										2
-									</div>
-									<div className="flex-1">
-										<div className="font-medium text-sm text-foreground">
-											Copy Role ARN
-										</div>
-										<p className="text-xs text-muted-foreground mt-1 max-w-sm">
-											Once the stack is created, go to the{" "}
-											<b className="text-foreground font-medium">
-												Outputs
-											</b>{" "}
-											tab and copy the{" "}
-											<b className="text-foreground font-medium">
-												RoleArn
-											</b>
-											.
-										</p>
-									</div>
-								</div>
-							</div>
-						) : (
-							<div className="space-y-8">
-								<div className="flex gap-4">
-									<div className="shrink-0 w-7 h-7 rounded-full bg-muted border border-border/50 text-foreground flex items-center justify-center font-medium text-xs">
-										1
-									</div>
-									<div className="flex-1 min-w-0">
-										<div className="font-medium text-sm text-foreground">
-											Apply Terraform Module
-										</div>
-										<p className="text-xs text-muted-foreground mt-1 max-w-sm">
-											Creates the IAM OIDC provider + role
-											that trust the Alethia issuer. No
-											variables are required — the defaults
-											pin the issuer, audience, and subject.
-										</p>
-										<div className="mt-3 flex flex-wrap items-center gap-3">
-											<Button
-												type="button"
-												size="sm"
-												className="h-8 text-xs font-medium"
-												onClick={() => {
-													const a = document.createElement("a");
-													a.href = "/connector-terraform/aws.tf";
-													a.download = "alethia-aws.tf";
-													document.body.appendChild(a);
-													a.click();
-													document.body.removeChild(a);
-												}}
-											>
-												<Download className="w-3.5 h-3.5 mr-1.5 opacity-70" />
-												Download module
-											</Button>
-											<a
-												href="/docs/console/connectors/aws"
-												target="_blank"
-												rel="noopener noreferrer"
-												className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-											>
-												Full guide
-												<ExternalLink className="w-3 h-3" />
-											</a>
-										</div>
-									</div>
-								</div>
-
-								<div className="flex gap-4">
-									<div className="shrink-0 w-7 h-7 rounded-full bg-muted border border-border/50 text-foreground flex items-center justify-center font-medium text-xs">
-										2
-									</div>
-									<div className="flex-1">
-										<div className="font-medium text-sm text-foreground">
-											Deploy & Extract ARN
-										</div>
-										<p className="text-xs text-muted-foreground mt-1 max-w-sm">
-											Run{" "}
-											<code className="bg-muted px-1 py-0.5 border border-border/50 rounded text-foreground">
-												terraform apply
-											</code>{" "}
-											and copy the output{" "}
-											<b className="text-foreground font-medium">
-												role_arn
-											</b>
-											.
-										</p>
-									</div>
-								</div>
-							</div>
-						)}
-
-						<div className="pt-6 border-t border-border/40">
-							{verifyState.phase === "success" ||
-							verifyState.phase === "saving" ? (
-								<ConnectionTestStatus
-									phase={verifyState.phase}
-									status={verifyState.status}
-									missingPermissions={verifyState.missingPermissions}
-									successText="Alethia can assume the IAM role in your account. You're ready to provision infrastructure."
-									verifyingText="Testing role assumption into your AWS account."
-									onCancel={cancel}
-								/>
-							) : (
-								<>
-									<Form {...form}>
-										<form
-											onSubmit={form.handleSubmit(
-												onSubmit,
-											)}
-											className="space-y-4"
-										>
-											<FormField
-												control={form.control}
-												name="roleArn"
-												render={({ field }) => (
-													<FormItem>
-														<div className="mb-2 flex items-center gap-1.5">
-															<FormLabel className="text-xs font-medium text-foreground">
-																IAM Role ARN
-															</FormLabel>
-															<FieldHelp title="IAM Role ARN">
-																The ARN of the role the setup created. Copy it
-																from the CloudFormation{" "}
-																<b className="text-foreground">Outputs</b> tab
-																(<code className="text-foreground">RoleArn</code>),
-																or from{" "}
-																<code className="text-foreground">
-																	terraform output role_arn
-																</code>
-																. Looks like{" "}
-																<code className="text-foreground">
-																	arn:aws:iam::123456789012:role/AlethiaProvisionerRole
-																</code>
-																.
-															</FieldHelp>
-														</div>
-														<div className="flex gap-2 items-start">
-															<div className="relative flex-1">
-																<FormControl>
-																	<Input
-																		placeholder="arn:aws:iam::123456789012:role/AlethiaProvisionerRole"
-																		className="h-9 text-sm border-border/50"
-																		{...field}
-																	/>
-																</FormControl>
-																{!form.formState
-																	.errors
-																	.roleArn &&
-																	field.value &&
-																	field.value.startsWith(
-																		"arn:aws:iam::",
-																	) && (
-																		<CheckCircle2 className="absolute right-3 top-2 h-5 w-5 text-foreground" />
-																	)}
-															</div>
-															<Button
-																disabled={
-																	!form
-																		.formState
-																		.isValid
-																}
-																type="submit"
-																className="min-w-25 h-9 text-xs font-medium"
-															>
-																{verifyState.phase ===
-																"failed"
-																	? "Retry"
-																	: "Connect"}
-															</Button>
-														</div>
-														<FormMessage className="text-xs" />
-														{verifyState.phase === "failed" && (
-															<div className="mt-3">
-																<StatusCallout
-																	variant="error"
-																	title="Verification failed"
-																>
-																	{verifyState.error}
-																</StatusCallout>
-															</div>
-														)}
-													</FormItem>
-												)}
-											/>
-										</form>
-									</Form>
-
-									<div className="mt-5">
-										<InfoNote>
-											Alethia assumes this role via
-											AssumeRoleWithWebIdentity, presenting a
-											short-lived token signed by the Alethia
-											issuer — no access keys and no shared
-											secret ever leave your account.
-										</InfoNote>
-									</div>
-								</>
-							)}
+			) : (
+				<div className="space-y-8">
+					<Step n={1} title="Apply Terraform Module">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Creates the IAM OIDC provider + role that trust the Alethia issuer. No
+							variables are required — the defaults pin the issuer, audience, and subject.
+						</p>
+						<div className="mt-2 flex flex-wrap items-center gap-3">
+							<Button
+								type="button"
+								size="sm"
+								className="h-8 font-medium text-xs"
+								onClick={() => {
+									const a = document.createElement("a");
+									a.href = "/connector-terraform/aws.tf";
+									a.download = "alethia-aws.tf";
+									document.body.appendChild(a);
+									a.click();
+									document.body.removeChild(a);
+								}}
+							>
+								<Download className="mr-1.5 h-3.5 w-3.5 opacity-70" />
+								Download module
+							</Button>
+							<a
+								href="/docs/console/connectors/aws"
+								target="_blank"
+								rel="noopener noreferrer"
+								className="inline-flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground"
+							>
+								Full guide
+								<ExternalLink className="h-3 w-3" />
+							</a>
 						</div>
-					</CardContent>
-				</Card>
-			</div>
-		</div>
+					</Step>
+					<Step n={2} title="Deploy & Extract ARN">
+						<p className="max-w-sm text-muted-foreground text-xs">
+							Run{" "}
+							<code className="rounded border border-border/50 bg-muted px-1 py-0.5 text-foreground">
+								terraform apply
+							</code>{" "}
+							and copy the output{" "}
+							<b className="font-medium text-foreground">role_arn</b>.
+						</p>
+					</Step>
+				</div>
+			)}
+
+			<VerifySection
+				state={verifyState}
+				onCancel={cancel}
+				successText="Alethia can assume the IAM role in your account. You're ready to provision infrastructure."
+				verifyingText="Testing role assumption into your AWS account."
+			>
+				<Form {...form}>
+					<form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+						<FormField
+							control={form.control}
+							name="roleArn"
+							render={({ field }) => (
+								<FormItem>
+									<div className="mb-2 flex items-center gap-1.5">
+										<FormLabel className="font-medium text-foreground text-xs">
+											IAM Role ARN
+										</FormLabel>
+										<FieldHelp title="IAM Role ARN">
+											The ARN of the role the setup created. Copy it from the
+											CloudFormation <b className="text-foreground">Outputs</b> tab (
+											<code className="text-foreground">RoleArn</code>), or from{" "}
+											<code className="text-foreground">terraform output role_arn</code>
+											. Looks like{" "}
+											<code className="text-foreground">
+												arn:aws:iam::123456789012:role/AlethiaProvisionerRole
+											</code>
+											.
+										</FieldHelp>
+									</div>
+									<div className="flex items-start gap-2">
+										<div className="relative flex-1">
+											<FormControl>
+												<Input
+													placeholder="arn:aws:iam::123456789012:role/AlethiaProvisionerRole"
+													className="h-9 border-border/50 text-sm"
+													{...field}
+												/>
+											</FormControl>
+											{!form.formState.errors.roleArn &&
+												field.value &&
+												field.value.startsWith("arn:aws:iam::") && (
+													<CheckCircle2 className="absolute top-2 right-3 h-5 w-5 text-foreground" />
+												)}
+										</div>
+										<Button
+											disabled={!form.formState.isValid}
+											type="submit"
+											className="h-9 min-w-25 font-medium text-xs"
+										>
+											{verifyState.phase === "failed" ? "Retry" : "Connect"}
+										</Button>
+									</div>
+									<FormMessage className="text-xs" />
+								</FormItem>
+							)}
+						/>
+					</form>
+				</Form>
+				<StoredNote
+					stored="only the IAM role ARN (a public identifier) — no access keys, secrets, or external id."
+					revoke="delete the CloudFormation stack (or the role) to cut Alethia's access."
+				/>
+			</VerifySection>
+		</ConnectSheetShell>
 	);
 }
