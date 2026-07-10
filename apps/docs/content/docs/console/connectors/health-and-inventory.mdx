@@ -10,9 +10,10 @@ Once a cloud account is connected, Alethia does two things **entirely server-sid
 resources.
 
 <Callout type="info">
-  Every connection is **platform-managed**: on the hosted service, the Alethia platform account holds
-  the short-lived credentials; on a self-hosted (OSS) console, your own console does. There is no
-  "bring the token to a self-hosted runner" path.
+  Every connection is **platform-managed**: the control plane (the hosted service, or your own console when
+  self-hosted) mints the short-lived credentials on demand — it federates off the Alethia OIDC issuer, so it
+  holds no standing cloud credential (Alibaba is even account-free). There is no "bring the token to a
+  self-hosted runner" path.
 </Callout>
 
 ## Connection health
