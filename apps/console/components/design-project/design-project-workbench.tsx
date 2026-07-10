@@ -34,6 +34,8 @@ interface DesignProjectWorkbenchProps {
 	/** True on the project Architecture route — the docked panel is owned by the project shell, so
 	 * the canvas renders the board alone. Omitted in the standalone create flow. */
 	dockInShell?: boolean;
+	/** Whether bring-your-own Helm charts are enabled (server flag) — gates the ⌘K "Sources" entry. */
+	byoHelmEnabled?: boolean;
 }
 
 /**
@@ -49,6 +51,7 @@ export function DesignProjectWorkbench({
 	projectId,
 	environmentId,
 	dockInShell,
+	byoHelmEnabled,
 }: DesignProjectWorkbenchProps) {
 	const form = useForm<ProjectFormInput, unknown, ProjectFormData>({
 		resolver: zodResolver(projectFormSchema),
@@ -81,6 +84,7 @@ export function DesignProjectWorkbench({
 						projectId={projectId}
 						environmentId={environmentId}
 						dockInShell={dockInShell}
+						byoHelmEnabled={byoHelmEnabled}
 					/>
 				</FormProvider>
 			</RepositoryProvider>

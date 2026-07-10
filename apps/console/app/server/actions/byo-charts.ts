@@ -18,13 +18,8 @@ import { withOwnerScope } from "@/lib/db";
 import { type ComponentStatus, projectAddons } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { parseValuesYaml } from "@/lib/addons/catalog";
+import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 import type { AddOnValues } from "@/types/jsonb.types";
-
-/** Whether the BYO-Helm feature is enabled on this deployment (trusted-only MVP gate). Off unless
- * the operator explicitly opts in via ALETHIA_BYO_HELM_ENABLED=true. */
-export function isByoHelmEnabled(): boolean {
-	return process.env.ALETHIA_BYO_HELM_ENABLED === "true";
-}
 
 /** Throws if the feature is disabled — every mutating BYO action calls this first. */
 function assertByoHelmEnabled(): void {
