@@ -401,6 +401,8 @@ export const useCanvasStore = create<CanvasStore>()(
 							status: c.status,
 							health: c.health,
 							sync: c.sync,
+							scanStatus: c.scanStatus,
+							scanReport: c.scanReport,
 						},
 						cloud_identity_id: null,
 						provider: null,

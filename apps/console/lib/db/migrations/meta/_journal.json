@@ -477,6 +477,13 @@
       "when": 1783621984770,
       "tag": "0067_overjoyed_iceman",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1783667608005,
+      "tag": "0068_aromatic_scarlet_spider",
+      "breakpoints": true
     }
   ]
 }
