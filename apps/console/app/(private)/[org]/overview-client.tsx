@@ -2,157 +2,178 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The org root — an organization overview. A search/filter toolbar over the projects grid
-// (right), alongside Usage / Alerts / Recent-jobs cards (left). Projects come from the
-// shared `useProjectsQuery` cache; favorites are persisted in `useProjectsStore`.
+// The org root — an organization overview. A search/filter toolbar over the projects list (right,
+// card or table), alongside Usage / Alerts / Recent-jobs cards (left). Projects are searched,
+// filtered and sorted SERVER-SIDE (state lives in the URL); favorites float to the top client-side
+// (they're persisted per-browser in `useProjectsStore`).
 
 import { Boxes, Plus } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useCallback, useMemo, useTransition } from "react";
 import { Button } from "@repo/ui/button";
-import { Skeleton } from "@repo/ui/skeleton";
-import { AlertsCard } from "@/components/overview/alerts-card";
 import {
-	type OverviewFilters,
-	type OverviewSort,
-	OverviewToolbar,
-} from "@/components/overview/overview-toolbar";
+	Table,
+	TableBody,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@repo/ui/table";
+import type { ViewMode } from "@repo/ui/view-toggle";
+import type {
+	ProjectListItem,
+	ProjectListResult,
+} from "@/app/server/actions/projects";
+import { AlertsCard } from "@/components/overview/alerts-card";
+import { OverviewToolbar } from "@/components/overview/overview-toolbar";
 import { ProjectCard } from "@/components/overview/project-card";
+import { ProjectRow } from "@/components/overview/project-row";
 import { RecentJobsCard } from "@/components/overview/recent-jobs-card";
 import { UsageCard } from "@/components/overview/usage-card";
 import { globalHref } from "@/lib/routing";
-import { useProjectsQuery } from "@/lib/query/use-projects-query";
 import { useProjectsStore } from "@/lib/stores/use-projects-store";
-import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 
-export function OverviewClient() {
-	const orgSlug = useActiveOrgSlug();
-	const { data: projects = [], isPending: isLoading } = useProjectsQuery();
+/** The grid's search/filter/sort/view state — mirrored 1:1 into the URL search params. */
+export interface OverviewState {
+	q: string;
+	clouds: string[];
+	repos: string[];
+	sort: "activity" | "name";
+	view: ViewMode;
+}
+
+export function OverviewClient({
+	orgSlug,
+	projects,
+	facets,
+	state,
+	totalCount,
+}: {
+	orgSlug: string;
+	projects: ProjectListItem[];
+	facets: ProjectListResult["facets"];
+	state: OverviewState;
+	totalCount: number;
+}) {
+	const router = useRouter();
+	const pathname = usePathname();
+	const [isPending, startTransition] = useTransition();
+
+	// Merge a partial state change into the URL; the server re-resolves the filtered grid. Only
+	// non-default values are written so a pristine view keeps a clean `/{org}` URL.
+	const onChange = useCallback(
+		(next: Partial<OverviewState>) => {
+			const merged = { ...state, ...next };
+			const params = new URLSearchParams();
+			if (merged.q) params.set("q", merged.q);
+			if (merged.clouds.length) params.set("cloud", merged.clouds.join(","));
+			if (merged.repos.length) params.set("repo", merged.repos.join(","));
+			if (merged.sort !== "activity") params.set("sort", merged.sort);
+			if (merged.view !== "card") params.set("view", merged.view);
+			const qs = params.toString();
+			startTransition(() =>
+				router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false }),
+			);
+		},
+		[state, pathname, router],
+	);
+
 	const { favoriteProjectIds, toggleFavorite } = useProjectsStore();
 
-	const [query, setQuery] = useState("");
-	const [filters, setFilters] = useState<OverviewFilters>({
-		clouds: [],
-		regions: [],
-	});
-	const [sort, setSort] = useState<OverviewSort>("activity");
+	// Float favorited projects to the top of the (already server-sorted) list — a stable,
+	// presentation-only reorder that keeps the server's activity/name order within each group.
+	const ordered = useMemo(() => {
+		const favs: ProjectListItem[] = [];
+		const rest: ProjectListItem[] = [];
+		for (const p of projects) {
+			(favoriteProjectIds.includes(p.id) ? favs : rest).push(p);
+		}
+		return [...favs, ...rest];
+	}, [projects, favoriteProjectIds]);
 
-	// Decorate each project with its favorite state once, for filter + sort + render.
-	const decorated = useMemo(
-		() =>
-			projects.map((project) => ({
-				project,
-				isFavorite: favoriteProjectIds.includes(project.id),
-			})),
-		[projects, favoriteProjectIds],
-	);
-
-	const availableClouds = useMemo(
-		() =>
-			Array.from(
-				new Set(
-					projects
-						.map((p) => p.cloud_provider)
-						.filter((p): p is string => p != null),
-				),
-			).sort(),
-		[projects],
-	);
-	const availableRegions = useMemo(
-		() =>
-			Array.from(new Set(projects.map((p) => p.region).filter(Boolean))).sort(),
-		[projects],
-	);
-	const projectCount = projects.length;
-
-	const visible = useMemo(() => {
-		const q = query.trim().toLowerCase();
-		const list = decorated.filter(({ project }) => {
-			if (
-				q &&
-				!project.project_name.toLowerCase().includes(q) &&
-				!project.region?.toLowerCase().includes(q)
-			)
-				return false;
-			if (
-				filters.clouds.length &&
-				!(project.cloud_provider && filters.clouds.includes(project.cloud_provider))
-			)
-				return false;
-			if (filters.regions.length && !filters.regions.includes(project.region))
-				return false;
-			return true;
-		});
-		return list.sort((a, b) => {
-			if (a.isFavorite !== b.isFavorite) return a.isFavorite ? -1 : 1;
-			if (sort === "name")
-				return a.project.project_name.localeCompare(b.project.project_name);
-			// activity — newest update first
-			return (
-				new Date(b.project.updated_at).getTime() -
-				new Date(a.project.updated_at).getTime()
-			);
-		});
-	}, [decorated, query, filters, sort]);
+	const filtered =
+		Boolean(state.q) || state.clouds.length > 0 || state.repos.length > 0;
 
 	return (
 		<div className="mx-auto w-full max-w-[1360px] space-y-5">
 			<OverviewToolbar
 				orgSlug={orgSlug}
-				query={query}
-				onQueryChange={setQuery}
-				filters={filters}
-				onFiltersChange={setFilters}
-				sort={sort}
-				onSortChange={setSort}
-				availableClouds={availableClouds}
-				availableRegions={availableRegions}
+				state={state}
+				facets={facets}
+				onChange={onChange}
 			/>
 
 			<div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(312px,0.35fr)_minmax(0,0.65fr)]">
 				{/* Left column — usage, alerts, recent jobs. */}
 				<div className="flex flex-col gap-4">
-					<UsageCard orgSlug={orgSlug} projectCount={projectCount} />
+					<UsageCard orgSlug={orgSlug} projectCount={totalCount} />
 					<AlertsCard orgSlug={orgSlug} />
 					<RecentJobsCard orgSlug={orgSlug} />
 				</div>
 
-				{/* Right column — projects grid. */}
+				{/* Right column — projects list. */}
 				<div>
 					<div className="mb-3 flex items-center gap-2.5">
 						<span className="font-display text-[15px] font-semibold tracking-tight">
 							Projects
 						</span>
 						<span className="rounded-full border px-2 py-0.5 font-mono text-[10.5px] text-muted-foreground">
-							{visible.length}
+							{ordered.length}
 						</span>
 					</div>
 
-					{isLoading && projects.length === 0 ? (
-						<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(238px,1fr))]">
-							{[1, 2, 3].map((i) => (
-								<Skeleton key={i} className="h-32 w-full rounded-lg" />
-							))}
-						</div>
-					) : projects.length === 0 ? (
-						<EmptyState orgSlug={orgSlug} />
-					) : visible.length === 0 ? (
-						<p className="py-10 text-center text-sm text-muted-foreground">
-							No projects match your filters.
-						</p>
-					) : (
-						<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(238px,1fr))]">
-							{visible.map(({ project, isFavorite }) => (
-								<ProjectCard
-									key={project.id}
-									project={project}
-									orgSlug={orgSlug}
-									isFavorite={isFavorite}
-									onToggleFavorite={() => toggleFavorite(project.id)}
-								/>
-							))}
-						</div>
-					)}
+					<div
+						className={
+							isPending ? "opacity-60 transition-opacity" : "transition-opacity"
+						}
+					>
+						{totalCount === 0 ? (
+							<EmptyState orgSlug={orgSlug} />
+						) : ordered.length === 0 ? (
+							<p className="py-10 text-center text-sm text-muted-foreground">
+								{filtered
+									? "No projects match your filters."
+									: "No projects yet."}
+							</p>
+						) : state.view === "table" ? (
+							<div className="overflow-x-auto rounded-xl border border-border/60">
+								<Table>
+									<TableHeader>
+										<TableRow className="hover:bg-transparent">
+											<TableHead>Project</TableHead>
+											<TableHead>Cloud</TableHead>
+											<TableHead>Region</TableHead>
+											<TableHead>Status</TableHead>
+											<TableHead className="text-right">Cost</TableHead>
+											<TableHead className="text-right">Updated</TableHead>
+										</TableRow>
+									</TableHeader>
+									<TableBody>
+										{ordered.map((project) => (
+											<ProjectRow
+												key={project.id}
+												project={project}
+												orgSlug={orgSlug}
+												isFavorite={favoriteProjectIds.includes(project.id)}
+											/>
+										))}
+									</TableBody>
+								</Table>
+							</div>
+						) : (
+							<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(238px,1fr))]">
+								{ordered.map((project) => (
+									<ProjectCard
+										key={project.id}
+										project={project}
+										orgSlug={orgSlug}
+										isFavorite={favoriteProjectIds.includes(project.id)}
+										onToggleFavorite={() => toggleFavorite(project.id)}
+									/>
+								))}
+							</div>
+						)}
+					</div>
 				</div>
 			</div>
 		</div>
