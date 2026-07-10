@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { getServiceDb } from "@/lib/db";
-import { runners } from "@/lib/db/schema";
+import { jobs, runners } from "@/lib/db/schema";
 import { createHash, randomBytes } from "crypto";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -62,4 +62,35 @@ export async function verifyRunnerToken(
 	}
 
 	return { runnerId, tokenHash, error: null };
+}
+
+/**
+ * Confirms the authenticated runner owns the given job. Runner-facing job routes
+ * that read job-scoped data (logs, plan artifacts, the job row) MUST call this after
+ * verifyRunnerToken — otherwise any valid runner token can read/write another org's
+ * job. Returns a 404/403 NextResponse to return as-is, or null when the runner owns it.
+ * (The DB functions update_job_status/insert_job_log already enforce the same scope in
+ * SQL; this matches that guard at the HTTP layer for the direct-query routes.)
+ */
+export async function verifyRunnerOwnsJob(
+	runnerId: string,
+	jobId: string,
+): Promise<NextResponse | null> {
+	const db = getServiceDb();
+	const [job] = await db
+		.select({ runner_id: jobs.runner_id })
+		.from(jobs)
+		.where(eq(jobs.id, jobId))
+		.limit(1);
+
+	if (!job) {
+		return NextResponse.json({ error: "Job not found" }, { status: 404 });
+	}
+	if (job.runner_id !== runnerId) {
+		return NextResponse.json(
+			{ error: "Runner does not own this job" },
+			{ status: 403 },
+		);
+	}
+	return null;
 }
