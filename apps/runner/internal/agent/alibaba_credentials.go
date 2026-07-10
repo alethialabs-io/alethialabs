@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -40,17 +41,17 @@ func ActivateAlibabaOIDC(ctx context.Context, fetcher alibabaTokenFetcher, roleA
 		return nil, fmt.Errorf("failed to mint Alibaba OIDC token: %w", err)
 	}
 
-	tokenFile, err := os.CreateTemp("", "alethia-alibaba-oidc-*.jwt")
+	// Per-job DIRECTORY (not a bare /tmp file) so the container sandbox can RO-bind-mount
+	// the directory and see the atomic-rename refresh.
+	tokenDir, err := os.MkdirTemp("", "alethia-alibaba-*")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Alibaba token file: %w", err)
+		return nil, fmt.Errorf("failed to create Alibaba cred dir: %w", err)
 	}
-	tokenPath := tokenFile.Name()
-	if _, err := tokenFile.WriteString(token); err != nil {
-		tokenFile.Close()
-		os.Remove(tokenPath)
+	tokenPath := filepath.Join(tokenDir, "oidc-token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		os.RemoveAll(tokenDir)
 		return nil, fmt.Errorf("failed to write Alibaba token file: %w", err)
 	}
-	tokenFile.Close()
 
 	// The alicloud provider / aliyun CLI resolve AssumeRoleWithOIDC from these (the darabonba default
 	// credential chain). No ALICLOUD_ACCESS_KEY — clear any stale AK so the OIDC chain is authoritative.
@@ -73,7 +74,7 @@ func ActivateAlibabaOIDC(ctx context.Context, fetcher alibabaTokenFetcher, roleA
 		} {
 			os.Unsetenv(k)
 		}
-		os.Remove(tokenPath)
+		os.RemoveAll(filepath.Dir(tokenPath))
 	}
 	return cleanup, nil
 }
