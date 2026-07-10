@@ -15,10 +15,12 @@ type JobAPI interface {
 	Heartbeat() error
 	GetJob(jobID string) (*Job, error)
 	FetchGitToken(jobID string) (string, error)
-	FetchAzureToken() (string, error)
-	FetchAwsToken() (*AwsFederation, error)
-	FetchAlibabaToken() (string, error)
-	FetchGcpToken() (string, error)
+	// The cloud-token mints are bound to the job they provision for (the console
+	// authorizes ownership + live + provider), so each carries the jobID.
+	FetchAzureToken(jobID string) (string, error)
+	FetchAwsToken(jobID string) (*AwsFederation, error)
+	FetchAlibabaToken(jobID string) (string, error)
+	FetchGcpToken(jobID string) (string, error)
 	UploadPlanArtifact(jobID, filePath string) error
 	DownloadPlanArtifact(jobID, destPath string) error
 	UpdateRunnerMetadata(runnerID string, metadata map[string]any) error

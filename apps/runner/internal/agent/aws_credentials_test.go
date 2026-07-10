@@ -20,7 +20,7 @@ type stubAwsFetcher struct {
 	calls int
 }
 
-func (s *stubAwsFetcher) FetchAwsToken() (*AwsFederation, error) {
+func (s *stubAwsFetcher) FetchAwsToken(jobID string) (*AwsFederation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
@@ -45,7 +45,7 @@ func TestActivateAwsFederated_WritesWebIdentityProfileAndCleansUp(t *testing.T) 
 	os.Setenv("AWS_ACCESS_KEY_ID", "stale")
 	defer os.Unsetenv("AWS_ACCESS_KEY_ID")
 
-	cleanup, err := ActivateAwsFederated(context.Background(), fetcher, "arn:aws:iam::111122223333:role/AlethiaProvisionerRole")
+	cleanup, err := ActivateAwsFederated(context.Background(), fetcher, "arn:aws:iam::111122223333:role/AlethiaProvisionerRole", "job-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,15 +96,15 @@ func TestActivateAwsFederated_WritesWebIdentityProfileAndCleansUp(t *testing.T) 
 
 func TestActivateAwsFederated_Errors(t *testing.T) {
 	// Missing role_arn.
-	if _, err := ActivateAwsFederated(context.Background(), &stubAwsFetcher{fed: &AwsFederation{Token: "t"}}, ""); err == nil {
+	if _, err := ActivateAwsFederated(context.Background(), &stubAwsFetcher{fed: &AwsFederation{Token: "t"}}, "", "job-1"); err == nil {
 		t.Error("expected an error when role_arn is missing")
 	}
 	// Mint failure.
-	if _, err := ActivateAwsFederated(context.Background(), &stubAwsFetcher{err: fmt.Errorf("issuer down")}, "arn:role"); err == nil {
+	if _, err := ActivateAwsFederated(context.Background(), &stubAwsFetcher{err: fmt.Errorf("issuer down")}, "arn:role", "job-1"); err == nil {
 		t.Error("expected an error when the token mint fails")
 	}
 	// No fetcher.
-	if _, err := ActivateAwsFederated(context.Background(), nil, "arn:role"); err == nil {
+	if _, err := ActivateAwsFederated(context.Background(), nil, "arn:role", "job-1"); err == nil {
 		t.Error("expected an error when there is no token fetcher")
 	}
 }
@@ -120,7 +120,7 @@ func TestRefreshAwsToken_RewritesFileAndStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		refreshAwsToken(ctx, fetcher, tokenPath, 5*time.Millisecond)
+		refreshAwsToken(ctx, fetcher, tokenPath, 5*time.Millisecond, "job-1")
 		close(done)
 	}()
 

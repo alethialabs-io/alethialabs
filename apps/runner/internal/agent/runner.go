@@ -218,7 +218,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			// the direct AssumeRole path.
 			if w.config.Operator == "managed" {
 				fmt.Fprintf(stdoutLogger, "Activating keyless AWS federation into %s (account %s)...\n", claim.CloudIdentity.RoleArn, claim.CloudIdentity.AccountID)
-				cleanup, err := ActivateAwsFederated(ctx, w.api, claim.CloudIdentity.RoleArn)
+				cleanup, err := ActivateAwsFederated(ctx, w.api, claim.CloudIdentity.RoleArn, job.ID)
 				if err != nil {
 					errMsg := fmt.Sprintf("Failed to activate AWS federation: %v", err)
 					fmt.Fprintln(stderrLogger, errMsg)
@@ -249,7 +249,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 					return fmt.Errorf("%s", errMsg)
 				}
 				fmt.Fprintf(stdoutLogger, "Activating keyless GCP OIDC for project %s (SA: %s)...\n", claim.CloudIdentity.ProjectID, claim.CloudIdentity.ServiceAccountEmail)
-				cleanup, err := ActivateGcpOIDC(ctx, w.api, claim.CloudIdentity.WifConfig, claim.CloudIdentity.ProjectID)
+				cleanup, err := ActivateGcpOIDC(ctx, w.api, claim.CloudIdentity.WifConfig, claim.CloudIdentity.ProjectID, job.ID)
 				if err != nil {
 					errMsg := fmt.Sprintf("Failed to activate GCP OIDC: %v", err)
 					fmt.Fprintln(stderrLogger, errMsg)
@@ -270,7 +270,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			}
 		case types.CloudProviderAzure:
 			fmt.Fprintf(stdoutLogger, "Activating Azure federated identity for tenant %s (subscription: %s)...\n", claim.CloudIdentity.TenantID, claim.CloudIdentity.SubscriptionID)
-			cleanup, err := ActivateAzureFederated(ctx, w.api, claim.CloudIdentity.TenantID, claim.CloudIdentity.ClientID, claim.CloudIdentity.SubscriptionID)
+			cleanup, err := ActivateAzureFederated(ctx, w.api, claim.CloudIdentity.TenantID, claim.CloudIdentity.ClientID, claim.CloudIdentity.SubscriptionID, job.ID)
 			if err != nil {
 				errMsg := fmt.Sprintf("Failed to activate Azure federated identity: %v", err)
 				fmt.Fprintln(stderrLogger, errMsg)
@@ -292,7 +292,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 			// Keyless: the alicloud provider runs an anonymous AssumeRoleWithOIDC from a token file — no
 			// AccessKey on the runner (the retired platform RAM key).
 			fmt.Fprintf(stdoutLogger, "Activating keyless Alibaba OIDC for role %s...\n", claim.CloudIdentity.RoleArn)
-			cleanup, err := ActivateAlibabaOIDC(ctx, w.api, claim.CloudIdentity.RoleArn, claim.CloudIdentity.OidcProviderArn)
+			cleanup, err := ActivateAlibabaOIDC(ctx, w.api, claim.CloudIdentity.RoleArn, claim.CloudIdentity.OidcProviderArn, job.ID)
 			if err != nil {
 				errMsg := fmt.Sprintf("Failed to activate Alibaba OIDC: %v", err)
 				fmt.Fprintln(stderrLogger, errMsg)

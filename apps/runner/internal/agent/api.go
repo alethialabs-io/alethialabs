@@ -333,11 +333,18 @@ func (c *RunnerAPIClient) FetchGitToken(jobID string) (string, error) {
 	return *result.Token, nil
 }
 
+// jobIDBody encodes the { job_id } payload the cloud-token mint routes require to bind the
+// mint to the job being provisioned (the console verifies the runner owns that job).
+func jobIDBody(jobID string) *bytes.Buffer {
+	b, _ := json.Marshal(map[string]string{"job_id": jobID})
+	return bytes.NewBuffer(b)
+}
+
 // FetchAzureToken mints a short-lived OIDC assertion for keyless Azure provisioning. The console
 // holds the issuer signing key; the runner presents this token to OpenTofu's azurerm provider
 // (ARM_OIDC_TOKEN), which exchanges it for an ARM access token — no client secret on the runner.
-func (c *RunnerAPIClient) FetchAzureToken() (string, error) {
-	req, err := http.NewRequest("POST", c.baseURL+"/runners/azure-token", nil)
+func (c *RunnerAPIClient) FetchAzureToken(jobID string) (string, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/runners/azure-token", jobIDBody(jobID))
 	if err != nil {
 		return "", err
 	}
@@ -369,8 +376,8 @@ func (c *RunnerAPIClient) FetchAzureToken() (string, error) {
 // ambient AWS identity, so it exchanges the assertion DIRECTLY for the customer's provisioner role via
 // AssumeRoleWithWebIdentity (a web-identity token file the SDK re-reads) — the customer role trusts the
 // Alethia issuer, so there is no platform AWS account in the path and no access key on the runner.
-func (c *RunnerAPIClient) FetchAwsToken() (*AwsFederation, error) {
-	req, err := http.NewRequest("POST", c.baseURL+"/runners/aws-token", nil)
+func (c *RunnerAPIClient) FetchAwsToken(jobID string) (*AwsFederation, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/runners/aws-token", jobIDBody(jobID))
 	if err != nil {
 		return nil, err
 	}
@@ -405,8 +412,8 @@ func (c *RunnerAPIClient) FetchAwsToken() (*AwsFederation, error) {
 // FetchAlibabaToken mints a short-lived OIDC assertion for keyless Alibaba provisioning. The console holds
 // the issuer signing key; the runner writes this token to a file the alicloud provider reads to run an
 // anonymous AssumeRoleWithOIDC — no AccessKey on the runner.
-func (c *RunnerAPIClient) FetchAlibabaToken() (string, error) {
-	req, err := http.NewRequest("POST", c.baseURL+"/runners/alibaba-token", nil)
+func (c *RunnerAPIClient) FetchAlibabaToken(jobID string) (string, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/runners/alibaba-token", jobIDBody(jobID))
 	if err != nil {
 		return "", err
 	}
@@ -437,8 +444,8 @@ func (c *RunnerAPIClient) FetchAlibabaToken() (string, error) {
 // FetchGcpToken mints a short-lived OIDC assertion for keyless (DIRECT-OIDC) GCP provisioning. The runner
 // writes this token to a file the google WIF config's credential_source points at; google-auth re-reads it
 // to exchange for a GCP access token — no AWS hop, no service-account key.
-func (c *RunnerAPIClient) FetchGcpToken() (string, error) {
-	req, err := http.NewRequest("POST", c.baseURL+"/runners/gcp-token", nil)
+func (c *RunnerAPIClient) FetchGcpToken(jobID string) (string, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/runners/gcp-token", jobIDBody(jobID))
 	if err != nil {
 		return "", err
 	}

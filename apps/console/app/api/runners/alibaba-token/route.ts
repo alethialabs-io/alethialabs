@@ -9,12 +9,12 @@
 
 import { ALIBABA_TOKEN_AUDIENCE } from "@/lib/cloud-providers/session/alibaba";
 import { mintWorkloadToken, oidcIssuerConfigured } from "@/lib/oidc/issuer";
-import { verifyRunnerToken } from "@/lib/runners/auth";
+import { authorizeTokenMint } from "@/lib/runners/token-mint-auth";
 import { NextResponse } from "next/server";
 
-/** Mints an Alibaba AssumeRoleWithOIDC assertion for an authenticated runner. */
+/** Mints an Alibaba AssumeRoleWithOIDC assertion for a runner, bound to a job it owns. */
 export async function POST(req: Request) {
-	const { error: authError } = await verifyRunnerToken(req);
+	const { error: authError } = await authorizeTokenMint(req, "alibaba");
 	if (authError) return authError;
 
 	if (!oidcIssuerConfigured()) {

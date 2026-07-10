@@ -21,7 +21,7 @@ const gcpTokenRefreshInterval = 5 * time.Minute
 
 // gcpTokenFetcher mints a keyless GCP OIDC assertion. Satisfied by *RunnerAPIClient (FetchGcpToken).
 type gcpTokenFetcher interface {
-	FetchGcpToken() (string, error)
+	FetchGcpToken(jobID string) (string, error)
 }
 
 // isOidcWifJSON reports whether a stored WIF config federates DIRECTLY from the Alethia issuer (a minted
@@ -41,7 +41,7 @@ func isOidcWifJSON(wifConfigJSON string) bool {
 // credential_source at that file, and hands the config to OpenTofu's google provider. google-auth re-reads
 // the file to re-exchange for a fresh GCP token, so a background refresher re-minting every few minutes
 // keeps a long apply alive (parity with Azure/Alibaba). cleanup stops the refresher and removes the files.
-func ActivateGcpOIDC(ctx context.Context, fetcher gcpTokenFetcher, wifConfigJSON, projectID string) (func(), error) {
+func ActivateGcpOIDC(ctx context.Context, fetcher gcpTokenFetcher, wifConfigJSON, projectID, jobID string) (func(), error) {
 	if fetcher == nil {
 		return nil, fmt.Errorf("no token fetcher for GCP OIDC federation")
 	}
@@ -49,7 +49,7 @@ func ActivateGcpOIDC(ctx context.Context, fetcher gcpTokenFetcher, wifConfigJSON
 		return nil, fmt.Errorf("empty WIF config")
 	}
 
-	token, err := fetcher.FetchGcpToken()
+	token, err := fetcher.FetchGcpToken(jobID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to mint GCP token: %w", err)
 	}
@@ -78,7 +78,7 @@ func ActivateGcpOIDC(ctx context.Context, fetcher gcpTokenFetcher, wifConfigJSON
 	}
 
 	refreshCtx, cancel := context.WithCancel(ctx)
-	go refreshGcpToken(refreshCtx, fetcher, tokenPath, gcpTokenRefreshInterval)
+	go refreshGcpToken(refreshCtx, fetcher, tokenPath, gcpTokenRefreshInterval, jobID)
 
 	cleanup := func() {
 		cancel()
@@ -112,7 +112,7 @@ func injectGcpTokenFile(wifConfigJSON, tokenPath string) (string, error) {
 
 // refreshGcpToken re-mints the OIDC assertion into tokenPath every interval until ctx is cancelled. A
 // transient mint failure is left to the next tick — the existing file stays valid until then.
-func refreshGcpToken(ctx context.Context, fetcher gcpTokenFetcher, tokenPath string, interval time.Duration) {
+func refreshGcpToken(ctx context.Context, fetcher gcpTokenFetcher, tokenPath string, interval time.Duration, jobID string) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -120,7 +120,7 @@ func refreshGcpToken(ctx context.Context, fetcher gcpTokenFetcher, tokenPath str
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			token, err := fetcher.FetchGcpToken()
+			token, err := fetcher.FetchGcpToken(jobID)
 			if err != nil || token == "" {
 				continue
 			}

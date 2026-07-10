@@ -19,7 +19,7 @@ type stubAzureFetcher struct {
 	calls int
 }
 
-func (s *stubAzureFetcher) FetchAzureToken() (string, error) {
+func (s *stubAzureFetcher) FetchAzureToken(jobID string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
@@ -40,7 +40,7 @@ func (s *stubAzureFetcher) callCount() int {
 
 func TestActivateAzureFederated_SetsEnvAndCleansUp(t *testing.T) {
 	fetcher := &stubAzureFetcher{token: "minted.jwt.token"}
-	cleanup, err := ActivateAzureFederated(context.Background(), fetcher, "tenant-1", "client-1", "sub-1")
+	cleanup, err := ActivateAzureFederated(context.Background(), fetcher, "tenant-1", "client-1", "sub-1", "job-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -94,14 +94,14 @@ func TestActivateAzureFederated_SetsEnvAndCleansUp(t *testing.T) {
 
 func TestActivateAzureFederated_FetchError(t *testing.T) {
 	fetcher := &stubAzureFetcher{err: fmt.Errorf("issuer down")}
-	if _, err := ActivateAzureFederated(context.Background(), fetcher, "tenant-1", "client-1", "sub-1"); err == nil {
+	if _, err := ActivateAzureFederated(context.Background(), fetcher, "tenant-1", "client-1", "sub-1", "job-1"); err == nil {
 		t.Error("expected an error when the token mint fails")
 	}
 }
 
 func TestActivateAzureFederated_MissingIdentity(t *testing.T) {
 	fetcher := &stubAzureFetcher{token: "x"}
-	if _, err := ActivateAzureFederated(context.Background(), fetcher, "", "client-1", "sub-1"); err == nil {
+	if _, err := ActivateAzureFederated(context.Background(), fetcher, "", "client-1", "sub-1", "job-1"); err == nil {
 		t.Error("expected an error when tenant_id is missing")
 	}
 	if fetcher.callCount() != 0 {
@@ -122,7 +122,7 @@ func TestRefreshAzureToken_RewritesFileAndStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		refreshAzureToken(ctx, fetcher, tokenPath, 5*time.Millisecond)
+		refreshAzureToken(ctx, fetcher, tokenPath, 5*time.Millisecond, "job-1")
 		close(done)
 	}()
 

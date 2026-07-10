@@ -22,7 +22,7 @@ type AwsFederation struct {
 // awsTokenFetcher mints a keyless AWS federation assertion. Satisfied by *RunnerAPIClient (FetchAwsToken);
 // an interface so the activation is unit-testable with a stub.
 type awsTokenFetcher interface {
-	FetchAwsToken() (*AwsFederation, error)
+	FetchAwsToken(jobID string) (*AwsFederation, error)
 }
 
 // awsRefreshInterval mirrors Azure: re-mint the ≤10-min web-identity assertion into the token file every
@@ -44,7 +44,7 @@ const awsCustomerProfile = "alethia-customer"
 // a background refresher re-mints the assertion every few minutes and the SDK re-assumes on session expiry —
 // so an apply longer than the 1h session survives. No access key is ever present. cleanup stops the
 // refresher, unsets the vars, and removes the temp files.
-func ActivateAwsFederated(ctx context.Context, fetcher awsTokenFetcher, customerRoleArn string) (func(), error) {
+func ActivateAwsFederated(ctx context.Context, fetcher awsTokenFetcher, customerRoleArn, jobID string) (func(), error) {
 	if customerRoleArn == "" {
 		return nil, fmt.Errorf("missing AWS role_arn")
 	}
@@ -52,7 +52,7 @@ func ActivateAwsFederated(ctx context.Context, fetcher awsTokenFetcher, customer
 		return nil, fmt.Errorf("no token fetcher for AWS federation")
 	}
 
-	fed, err := fetcher.FetchAwsToken()
+	fed, err := fetcher.FetchAwsToken(jobID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to mint AWS federation token: %w", err)
 	}
@@ -86,7 +86,7 @@ func ActivateAwsFederated(ctx context.Context, fetcher awsTokenFetcher, customer
 	os.Unsetenv("AWS_SESSION_TOKEN")
 
 	refreshCtx, cancel := context.WithCancel(ctx)
-	go refreshAwsToken(refreshCtx, fetcher, tokenPath, awsRefreshInterval)
+	go refreshAwsToken(refreshCtx, fetcher, tokenPath, awsRefreshInterval, jobID)
 
 	cleanup := func() {
 		cancel()
@@ -113,7 +113,7 @@ role_session_name = alethia-runner
 // refreshAwsToken re-mints the web-identity assertion into tokenPath every interval until ctx is cancelled.
 // A transient mint failure is left to the next tick — the SDK only re-reads the file when it re-assumes
 // (roughly hourly) — so a good token is never clobbered by an error.
-func refreshAwsToken(ctx context.Context, fetcher awsTokenFetcher, tokenPath string, interval time.Duration) {
+func refreshAwsToken(ctx context.Context, fetcher awsTokenFetcher, tokenPath string, interval time.Duration, jobID string) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -121,7 +121,7 @@ func refreshAwsToken(ctx context.Context, fetcher awsTokenFetcher, tokenPath str
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			fed, err := fetcher.FetchAwsToken()
+			fed, err := fetcher.FetchAwsToken(jobID)
 			if err != nil || fed == nil || fed.Token == "" {
 				continue
 			}
