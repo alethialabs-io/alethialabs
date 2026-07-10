@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -138,19 +139,28 @@ func ActivateGcpWIF(wifConfigJSON string, projectID string) (func(), error) {
 		return nil, fmt.Errorf("empty WIF config")
 	}
 
-	tmpFile, err := os.CreateTemp("", "alethia-wif-*.json")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	// Write the WIF config NEXT TO its credential_source token file (managed path) so ONE
+	// RO bind-mount of that directory covers both wif.json and the oidc-token in the
+	// container sandbox; fall back to a fresh per-call dir (self-hosted ambient) otherwise.
+	wifDir, needDir := gcpCredDirFromWIF(wifConfigJSON)
+	createdDir := false
+	if needDir {
+		d, err := os.MkdirTemp("", "alethia-gcp-wif-*")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create WIF dir: %w", err)
+		}
+		wifDir = d
+		createdDir = true
 	}
-
-	if _, err := tmpFile.Write([]byte(wifConfigJSON)); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
+	wifPath := filepath.Join(wifDir, "wif.json")
+	if err := os.WriteFile(wifPath, []byte(wifConfigJSON), 0o600); err != nil {
+		if createdDir {
+			os.RemoveAll(wifDir)
+		}
 		return nil, fmt.Errorf("failed to write WIF config: %w", err)
 	}
-	tmpFile.Close()
 
-	os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", tmpFile.Name())
+	os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", wifPath)
 	if projectID != "" {
 		os.Setenv("GOOGLE_PROJECT", projectID)
 		os.Setenv("GCLOUD_PROJECT", projectID)
@@ -162,8 +172,30 @@ func ActivateGcpWIF(wifConfigJSON string, projectID string) (func(), error) {
 		os.Unsetenv("GOOGLE_PROJECT")
 		os.Unsetenv("GCLOUD_PROJECT")
 		os.Unsetenv("CLOUDSDK_CORE_PROJECT")
-		os.Remove(tmpFile.Name())
+		if createdDir {
+			os.RemoveAll(wifDir)
+		} else {
+			// Managed path: ActivateGcpOIDC's cleanup RemoveAll(dir) owns the shared dir.
+			os.Remove(wifPath)
+		}
 	}
 
 	return cleanup, nil
+}
+
+// gcpCredDirFromWIF returns the directory of the WIF config's credential_source.file — so
+// the WIF json can sit beside the oidc-token for a single bind mount — and false. If the
+// config has no credential_source.file (self-hosted ambient), it returns ("", true) to
+// signal that a fresh directory must be created.
+func gcpCredDirFromWIF(cfg string) (string, bool) {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(cfg), &m); err != nil {
+		return "", true
+	}
+	cs, _ := m["credential_source"].(map[string]any)
+	f, _ := cs["file"].(string)
+	if f == "" {
+		return "", true
+	}
+	return filepath.Dir(f), false
 }

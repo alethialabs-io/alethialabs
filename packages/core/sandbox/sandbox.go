@@ -15,13 +15,41 @@
 // interface and are swapped in behind a flag once proven — see the E0 plan.
 package sandbox
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"io"
+)
 
 // Job is the untrusted unit of work to run inside the sandbox. The Passthrough
 // backend calls it in-process; isolating backends run the equivalent work in an
 // isolated subprocess/container (re-execing the runner binary), so the closure is
 // the in-process degenerate case and Spec carries the isolation intent for both.
 type Job func(ctx context.Context) error
+
+// StageKind labels the serialized work a container backend reconstructs in the
+// re-exec'd child. It mirrors Spec.Kind but is the typed contract both the parent
+// (which marshals the payload) and the child (which dispatches on it) share.
+type StageKind string
+
+const (
+	StageDeploy    StageKind = "deploy"
+	StagePlan      StageKind = "plan"
+	StageDestroy   StageKind = "destroy"
+	StageChartScan StageKind = "chart_scan"
+)
+
+// Stage is the serialized, self-contained description of the untrusted work. The
+// Passthrough backend IGNORES it (it runs the in-process closure); the Container
+// backend IGNORES the closure and reconstructs the work from Stage in a re-exec'd
+// child. The single call site builds BOTH from the same params, so the two backends
+// converge on identical work. Payload is the JSON of a per-kind struct owned by the
+// runner (agent) package — this package keeps it opaque so it stays dependency-light.
+// Payload carries NO secrets (git/state tokens cross via the child's allowlisted env).
+type Stage struct {
+	Kind    StageKind       `json:"kind"`
+	Payload json.RawMessage `json:"payload"`
+}
 
 // Spec describes one sandboxed execution. It starts intentionally minimal — env
 // allowlist, network policy, and resource limits are added to Spec as the isolating
@@ -36,6 +64,21 @@ type Spec struct {
 	// Warn is an optional per-job sink for a single human-readable warning (wire it
 	// to the job's log stream). Backends use it to surface, e.g., "isolation disabled".
 	Warn func(string)
+	// Stage is the serialized work for isolating backends (nil for a closure-only
+	// call — Passthrough never needs it). The container backend requires it.
+	Stage *Stage
+	// WorkDir is the per-job directory the caller created: the container backend
+	// writes stage.json into it and RW-mounts it, and the child writes result.json
+	// back into it for the parent to read. Required by the container backend.
+	WorkDir string
+	// Stdout/Stderr receive the child's streamed output (container backend pipes the
+	// re-exec'd process here). Optional; nil discards.
+	Stdout io.Writer
+	Stderr io.Writer
+	// NoEgress requests deny-all networking for this stage (e.g. chart_scan renders a
+	// local chart and needs no network). Backends that can't enforce it must fail closed
+	// rather than silently allow egress.
+	NoEgress bool
 }
 
 // Sandbox runs one untrusted Job within an isolation context. An implementation MUST

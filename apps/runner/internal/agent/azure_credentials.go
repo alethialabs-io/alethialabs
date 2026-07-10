@@ -46,17 +46,18 @@ func ActivateAzureFederated(ctx context.Context, fetcher azureTokenFetcher, tena
 		return nil, fmt.Errorf("failed to mint Azure federation token: %w", err)
 	}
 
-	tokenFile, err := os.CreateTemp("", "alethia-azure-oidc-*.jwt")
+	// Write the assertion into a per-job DIRECTORY (not a bare /tmp file) so the container
+	// sandbox can RO-bind-mount the directory and see the atomic-rename refresh (a per-file
+	// bind mount would pin the stale inode and auth would die mid-apply).
+	tokenDir, err := os.MkdirTemp("", "alethia-azure-*")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Azure token file: %w", err)
+		return nil, fmt.Errorf("failed to create Azure cred dir: %w", err)
 	}
-	tokenPath := tokenFile.Name()
-	if _, err := tokenFile.WriteString(token); err != nil {
-		tokenFile.Close()
-		os.Remove(tokenPath)
+	tokenPath := filepath.Join(tokenDir, "oidc-token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		os.RemoveAll(tokenDir)
 		return nil, fmt.Errorf("failed to write Azure token file: %w", err)
 	}
-	tokenFile.Close()
 
 	// azurerm / azuread (OpenTofu) read ARM_*; the Azure SDK + kubelogin read the AZURE_* ones. We set the
 	// FILE path, not the literal ARM_OIDC_TOKEN, so the providers re-read the (refreshed) assertion.
@@ -83,7 +84,7 @@ func ActivateAzureFederated(ctx context.Context, fetcher azureTokenFetcher, tena
 		} {
 			os.Unsetenv(k)
 		}
-		os.Remove(tokenPath)
+		os.RemoveAll(filepath.Dir(tokenPath))
 	}
 
 	return cleanup, nil

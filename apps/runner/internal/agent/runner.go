@@ -16,7 +16,6 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
-	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 	"github.com/alethialabs-io/alethialabs/packages/core/sandbox"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -46,11 +45,32 @@ type Runner struct {
 func New(cfg Config) *Runner {
 	client := NewRunnerAPIClient(cfg.AlethiaURL, cfg.RunnerID, cfg.RunnerToken)
 	client.providers = cfg.Providers
-	return &Runner{config: cfg, api: client, sandbox: sandbox.Passthrough{Operator: cfg.Operator}}
+	return &Runner{config: cfg, api: client, sandbox: selectSandbox(cfg)}
 }
 
 func NewWithAPI(cfg Config, api JobAPI) *Runner {
-	return &Runner{config: cfg, api: api, sandbox: sandbox.Passthrough{Operator: cfg.Operator}}
+	return &Runner{config: cfg, api: api, sandbox: selectSandbox(cfg)}
+}
+
+// selectSandbox picks the isolation backend from ALETHIA_SANDBOX_BACKEND. Default is the
+// no-isolation Passthrough (today's behavior). "container" selects the per-job container
+// backend; if it can't initialize on an operator=managed runner it is **fail-closed** — a
+// Passthrough with EnforceManaged=true that REFUSES every job — rather than silently
+// running untrusted work unsandboxed.
+func selectSandbox(cfg Config) sandbox.Sandbox {
+	if os.Getenv("ALETHIA_SANDBOX_BACKEND") != "container" {
+		return sandbox.Passthrough{Operator: cfg.Operator}
+	}
+	c, err := sandbox.NewContainerFromEnv(cfg.Operator)
+	if err == nil {
+		return c
+	}
+	if cfg.Operator == "managed" {
+		fmt.Fprintf(os.Stderr, "sandbox: container backend required but unavailable on managed runner: %v — refusing jobs (fail-closed)\n", err)
+		return sandbox.Passthrough{Operator: cfg.Operator, EnforceManaged: true}
+	}
+	fmt.Fprintf(os.Stderr, "sandbox: container backend unavailable (%v); using Passthrough (operator=%s)\n", err, cfg.Operator)
+	return sandbox.Passthrough{Operator: cfg.Operator}
 }
 
 func (w *Runner) s3Backend() *cloud.S3BackendConfig {
@@ -458,44 +478,50 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		return err
 	}
 
-	params := provisioner.DeployParams{
-		ProjectConfig:  vc,
-		Provider:       provider,
-		TemplatesDir:   filepath.Join(resolveProjectTemplatesDir(), provider),
-		CategoriesDir:  resolveCategoriesTemplatesDir(),
-		GitAccessToken: gitToken,
-		StateBackend:   stateBackend,
-		Stdout:         stdout,
-		Stderr:         stderr,
-		// Honour an authorized verification waiver recorded on the job (if any).
-		VerifyOverride: buildVerifyOverride(job.VerifyOverride),
+	workDir, err := newJobWorkDir(job.ID)
+	if err != nil {
+		return fmt.Errorf("create workdir: %w", err)
 	}
+	defer os.RemoveAll(workDir)
 
+	// Download the pre-approved plan into the workdir (mounted into the sandbox) so the
+	// child can read it.
+	planFile := ""
 	if job.PlanJobID != nil && *job.PlanJobID != "" {
-		planFileDest := filepath.Join(os.TempDir(), fmt.Sprintf("plan-apply-%s.out", job.ID))
+		planFileDest := filepath.Join(workDir, "plan-apply.out")
 		if dlErr := w.api.DownloadPlanArtifact(*job.PlanJobID, planFileDest); dlErr != nil {
 			fmt.Fprintf(stdout, "Warning: could not download plan artifact: %v (will re-plan)\n", dlErr)
 		} else {
 			fmt.Fprintln(stdout, "Using saved plan artifact from plan job.")
-			params.PlanFile = planFileDest
-			defer os.Remove(planFileDest)
+			planFile = planFileDest
 		}
 	}
 
-	// Run the (currently trusted) provisioning work through the isolation seam. The
-	// default Passthrough backend runs it in-process exactly as before.
-	var result *provisioner.PlanResult
+	payload := buildDeployPayload(vc, provider, false, planFile,
+		filepath.Join(resolveProjectTemplatesDir(), provider), resolveCategoriesTemplatesDir(),
+		"", buildVerifyOverride(job.VerifyOverride), w.config.AlethiaURL, job.ID)
+	stage, err := newStage(sandbox.StageDeploy, payload)
+	if err != nil {
+		return err
+	}
+	sec := stageSecrets{GitToken: gitToken, StateToken: stateBackend.Token}
+
+	// Run the untrusted provisioning work through the isolation seam. Passthrough runs
+	// runDeployStage in-process; the container backend re-execs it in a per-job container.
 	if err := w.sandbox.Run(ctx, sandbox.Spec{
-		Kind: "deploy", JobID: job.ID, Provider: provider,
+		Kind: "deploy", JobID: job.ID, Provider: provider, WorkDir: workDir, Stage: stage,
+		Stdout: stdout, Stderr: stderr,
 		Warn: func(s string) { fmt.Fprintln(stdout, "[sandbox] "+s) },
 	}, func(ctx context.Context) error {
-		var e error
-		result, e = provisioner.RunDeployV2(ctx, params)
-		return e
+		return runDeployStage(ctx, payload, sec, workDir, stdout, stderr)
 	}); err != nil {
 		return err
 	}
 
+	result, err := readPlanResult(workDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "Warning: could not read stage result: %v\n", err)
+	}
 	if result != nil {
 		metadata := map[string]any{}
 		if result.ClusterName != "" {
@@ -565,35 +591,39 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 		return err
 	}
 
-	params := provisioner.DeployParams{
-		ProjectConfig:  vc,
-		Provider:       provider,
-		DryRun:         true,
-		TemplatesDir:   filepath.Join(resolveProjectTemplatesDir(), provider),
-		CategoriesDir:  resolveCategoriesTemplatesDir(),
-		InfracostToken: infracostKey,
-		GitAccessToken: planGitToken,
-		StateBackend:   stateBackend,
-		Stdout:         stdout,
-		Stderr:         stderr,
+	workDir, err := newJobWorkDir(job.ID)
+	if err != nil {
+		return fmt.Errorf("create workdir: %w", err)
 	}
+	defer os.RemoveAll(workDir)
+
+	payload := buildDeployPayload(vc, provider, true, "",
+		filepath.Join(resolveProjectTemplatesDir(), provider), resolveCategoriesTemplatesDir(),
+		infracostKey, nil, w.config.AlethiaURL, job.ID)
+	stage, err := newStage(sandbox.StagePlan, payload)
+	if err != nil {
+		return err
+	}
+	sec := stageSecrets{GitToken: planGitToken, StateToken: stateBackend.Token}
 
 	_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
 		"phase": "tofu_plan", "progress": "Running OpenTofu plan...",
 	})
 
-	// Run the (currently trusted) provisioning work through the isolation seam. The
-	// default Passthrough backend runs it in-process exactly as before.
-	var result *provisioner.PlanResult
+	// Run the untrusted plan through the isolation seam (Passthrough in-process / container re-exec).
 	if err := w.sandbox.Run(ctx, sandbox.Spec{
-		Kind: "plan", JobID: job.ID, Provider: provider,
+		Kind: "plan", JobID: job.ID, Provider: provider, WorkDir: workDir, Stage: stage,
+		Stdout: stdout, Stderr: stderr,
 		Warn: func(s string) { fmt.Fprintln(stdout, "[sandbox] "+s) },
 	}, func(ctx context.Context) error {
-		var e error
-		result, e = provisioner.RunDeployV2(ctx, params)
-		return e
+		return runDeployStage(ctx, payload, sec, workDir, stdout, stderr)
 	}); err != nil {
 		return err
+	}
+
+	result, err := readPlanResult(workDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "Warning: could not read stage result: %v\n", err)
 	}
 
 	metadata := map[string]any{"plan_completed": true}
@@ -661,23 +691,29 @@ func (w *Runner) executeDestroy(ctx context.Context, job *Job, provider string, 
 		return err
 	}
 
-	params := provisioner.DestroyParams{
-		ProjectConfig: vc,
-		Provider:      provider,
-		TemplatesDir:  filepath.Join(resolveProjectTemplatesDir(), provider),
-		CategoriesDir: resolveCategoriesTemplatesDir(),
-		StateBackend:  stateBackend,
-		Stdout:        stdout,
-		Stderr:        stderr,
+	workDir, err := newJobWorkDir(job.ID)
+	if err != nil {
+		return fmt.Errorf("create workdir: %w", err)
 	}
+	defer os.RemoveAll(workDir)
+
+	payload := buildDestroyPayload(vc, provider,
+		filepath.Join(resolveProjectTemplatesDir(), provider), resolveCategoriesTemplatesDir(),
+		w.config.AlethiaURL, job.ID)
+	stage, err := newStage(sandbox.StageDestroy, payload)
+	if err != nil {
+		return err
+	}
+	sec := stageSecrets{StateToken: stateBackend.Token}
 
 	// Run the (untrusted-class, for BYO) teardown through the isolation seam, like
-	// deploy/plan — the default Passthrough runs it in-process exactly as before.
+	// deploy/plan — Passthrough runs it in-process; the container backend re-execs it.
 	if err := w.sandbox.Run(ctx, sandbox.Spec{
-		Kind: "destroy", JobID: job.ID, Provider: provider,
+		Kind: "destroy", JobID: job.ID, Provider: provider, WorkDir: workDir, Stage: stage,
+		Stdout: stdout, Stderr: stderr,
 		Warn: func(s string) { fmt.Fprintln(stdout, "[sandbox] "+s) },
 	}, func(ctx context.Context) error {
-		return provisioner.RunDestroy(ctx, params)
+		return runDestroyStage(ctx, payload, sec, workDir, stdout, stderr)
 	}); err != nil {
 		return err
 	}
