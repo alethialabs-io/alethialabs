@@ -37,7 +37,10 @@ export type SchemaKey =
 	| "queues"
 	| "topics"
 	| "nosql_tables"
-	| "secrets";
+	| "secrets"
+	// Chart nodes are out-of-band (project_addons), never written into ProjectFormData — this key
+	// exists only to satisfy the exhaustive registry; the graph⇄form mappers never read it.
+	| "charts";
 
 export interface NodeKindDef<K extends NodeKind = NodeKind> {
 	kind: K;
@@ -278,6 +281,26 @@ export const NODE_REGISTRY: NodeRegistry = {
 		icon: GitBranch,
 		defaultData: () => ({
 			apps_destination_repo: "",
+		}),
+	},
+	// Bring-your-own Helm chart — added via the ⌘K "Sources" flow (not the palette), persisted
+	// out-of-band in project_addons, loaded from getProjectByoCharts. defaultData is a placeholder
+	// (real config always comes from the attach flow / DB).
+	chart: {
+		kind: "chart",
+		schemaKey: "charts",
+		cardinality: "array",
+		classification: "periphery",
+		cloudScoped: false,
+		eyebrow: "Helm chart",
+		label: "Helm chart",
+		icon: GitBranch,
+		defaultData: () => ({
+			id: "chart",
+			repoUrl: "",
+			chartPath: "",
+			ref: "HEAD",
+			namespace: "default",
 		}),
 	},
 };

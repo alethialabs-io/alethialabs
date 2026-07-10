@@ -21,7 +21,29 @@ export type NodeKind =
 	| "topic"
 	| "nosql"
 	| "secret"
-	| "repositories";
+	| "repositories"
+	| "chart";
+
+/**
+ * A bring-your-own Helm chart node's config. Unlike every other kind, this is NOT a
+ * `ProjectFormData` fragment — chart nodes are persisted out-of-band in `project_addons`
+ * (via `attachByoChart`) and loaded from `getProjectByoCharts`, so they never round-trip
+ * through the form graph (`graphToForm` ignores them; the Pending Changes diff skips them).
+ */
+export type ByoChartNodeConfig = {
+	/** The chart id / slug (also the `addon_id`); its display name on the node. */
+	id: string;
+	repoUrl: string;
+	chartPath: string;
+	ref: string;
+	namespace: string;
+	/** Persisted component status (PENDING/CREATING/ACTIVE/FAILED). */
+	status?: string;
+	/** ArgoCD health read back after deploy (Healthy/Progressing/Degraded/Missing/Unknown). */
+	health?: string | null;
+	/** ArgoCD sync state (Synced/OutOfSync/Unknown). */
+	sync?: string | null;
+};
 
 /**
  * The typed `config` shape carried by each node kind — every one is exactly its
@@ -45,6 +67,8 @@ export type NodeConfigMap = {
 	topic: ProjectFormData["topics"][number];
 	nosql: ProjectFormData["nosql_tables"][number];
 	secret: ProjectFormData["secrets"][number];
+	// Out-of-band (not a ProjectFormData fragment) — see ByoChartNodeConfig.
+	chart: ByoChartNodeConfig;
 };
 
 /** The config type for a single node kind (or the union across all kinds). */
