@@ -887,3 +887,52 @@ BEGIN
                 WHERE org_id = current_setting(''app.current_org'', true)::uuid))', tbl);
   END LOOP;
 END $$;
+
+-- ============================================================================
+-- E0 tofu-state HTTP-backend locking
+-- ----------------------------------------------------------------------------
+-- Advisory locks for the console tofu-state proxy (see lib/db/schema/tofu-state.ts).
+-- acquire steals only an EXPIRED lock; a steal rotates lock_id + bumps generation, so a
+-- slow writer's stale ?ID= is rejected by validate_tofu_state_lock (fencing) → no lost update.
+-- SECURITY DEFINER: the service role calls these from runner-authed routes; no direct client access.
+
+CREATE OR REPLACE FUNCTION public.acquire_tofu_state_lock(
+    p_state_key TEXT, p_lock_id TEXT, p_job_id UUID, p_info JSONB, p_ttl_seconds INT
+) RETURNS TABLE(acquired BOOLEAN, holder JSONB)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+    INSERT INTO public.tofu_state_locks (state_key, lock_id, generation, job_id, info, locked_at, expires_at)
+    VALUES (p_state_key, p_lock_id, 1, p_job_id, p_info, now(), now() + make_interval(secs => p_ttl_seconds))
+    ON CONFLICT (state_key) DO UPDATE
+        SET lock_id = EXCLUDED.lock_id,
+            generation = public.tofu_state_locks.generation + 1,
+            job_id = EXCLUDED.job_id,
+            info = EXCLUDED.info,
+            locked_at = now(),
+            expires_at = EXCLUDED.expires_at
+        WHERE public.tofu_state_locks.expires_at < now();
+    IF FOUND THEN
+        acquired := TRUE; holder := NULL; RETURN NEXT; RETURN;
+    END IF;
+    -- Upsert affected no row → a live lock is held by someone else; report the current holder.
+    SELECT FALSE, l.info INTO acquired, holder FROM public.tofu_state_locks l WHERE l.state_key = p_state_key;
+    IF NOT FOUND THEN acquired := FALSE; holder := NULL; END IF;
+    RETURN NEXT;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.release_tofu_state_lock(p_state_key TEXT, p_lock_id TEXT)
+RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+    DELETE FROM public.tofu_state_locks WHERE state_key = p_state_key AND lock_id = p_lock_id;
+    RETURN FOUND;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.validate_tofu_state_lock(p_state_key TEXT, p_lock_id TEXT)
+RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.tofu_state_locks
+        WHERE state_key = p_state_key AND lock_id = p_lock_id AND expires_at > now()
+    );
+$$;
