@@ -15,6 +15,10 @@ type JobAPI interface {
 	Heartbeat() error
 	GetJob(jobID string) (*Job, error)
 	FetchGitToken(jobID string) (string, error)
+	// FetchStateToken mints the per-job tofu-state token for the http state backend;
+	// PurgeProjectState removes the state object after a successful destroy.
+	FetchStateToken(jobID string) (string, error)
+	PurgeProjectState(jobID, stateToken string) error
 	// The cloud-token mints are bound to the job they provision for (the console
 	// authorizes ownership + live + provider), so each carries the jobID.
 	FetchAzureToken(jobID string) (string, error)

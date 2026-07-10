@@ -4,9 +4,10 @@
 terraform {
   required_version = ">= 1.6"
 
-  # Partial S3 backend — the runner supplies bucket/key/region/endpoint at
-  # `tofu init -backend-config=...`. Do NOT add attributes here.
-  backend "s3" {}
+  # Console HTTP state proxy — the runner supplies address/lock/unlock at
+  # `tofu init -backend-config=...` (per-job token via TF_HTTP_PASSWORD). Do NOT
+  # add attributes here.
+  backend "http" {}
 
   required_providers {
     hcloud = {

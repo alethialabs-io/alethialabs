@@ -41,11 +41,13 @@ type DeployParams struct {
 	// (infra/templates/categories). When set, pluggable providers selected on the
 	// Project resources are composed into the plan; native resources are guarded off via tfvars.
 	CategoriesDir string
-	S3Backend     *cloud.S3BackendConfig
-	Stdout        io.Writer
-	Stderr        io.Writer
-	ApiClient     *api.Client
-	DeploymentID  string
+	// StateBackend points project tofu state at the console's per-job http proxy
+	// (no storage master key in the workdir). Required for RunDeployV2.
+	StateBackend *cloud.HTTPBackendConfig
+	Stdout       io.Writer
+	Stderr       io.Writer
+	ApiClient    *api.Client
+	DeploymentID string
 	// VerifyOverride, when set, waives specific failing verification controls so
 	// a fail-closed apply can proceed deliberately. Nil means no waiver (the
 	// default — any hard control failure blocks apply).
@@ -192,17 +194,19 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		}
 	}
 
-	if params.S3Backend == nil {
-		return nil, fmt.Errorf("S3Backend config is required for state storage")
+	if params.StateBackend == nil {
+		return nil, fmt.Errorf("StateBackend config is required for state storage")
 	}
-	if err := params.S3Backend.EnsureBucket(ctx); err != nil {
-		return nil, fmt.Errorf("failed to ensure state bucket: %w", err)
-	}
-	backendFile, err := params.S3Backend.WriteBackendHCL(tfDir, vc.ProjectName, vc.EnvironmentStage, vc.Region)
+	backendFile, err := params.StateBackend.WriteBackendHCL(tfDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write backend config: %w", err)
 	}
-	fmt.Fprintf(stdout, "State backend: S3 (bucket=%s)\n", params.S3Backend.Bucket)
+	// Publish the per-job state token to the child tofu via TF_HTTP_PASSWORD for
+	// the whole run (init reads/locks, plan reads, apply reads+locks+writes) —
+	// never into a workdir file. Restored on return.
+	restoreStateAuth := params.StateBackend.SetAuthEnv()
+	defer restoreStateAuth()
+	fmt.Fprintln(stdout, "State backend: console HTTP proxy (per-job token)")
 
 	fmt.Fprintf(stdout, "DEBUG provider=%s, project=%v, region=%v, provision_network=%v, network_id=%q, cidr=%q\n",
 		provider.Name(), tfvars["project_name"], vc.Region, vc.Network.ProvisionNetwork, vc.Network.NetworkID, vc.Network.CIDRBlock)
@@ -227,14 +231,11 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		return nil, err
 	}
 
-	// Suspend AWS env creds during init so the S3 backend uses inline creds from backend.hcl
-	// (ECS task role always sets AWS env vars, which would override the S3 endpoint)
-	savedCreds := suspendAWSEnvCreds()
+	// The http backend authenticates via TF_HTTP_PASSWORD (set above) — no cloud
+	// creds are involved in state I/O, so the old s3 suspend/restore dance is gone.
 	if err := tf.InitWithBackendFile(ctx, backendFile, false); err != nil {
-		restoreAWSEnvCreds(savedCreds)
 		return nil, fmt.Errorf("tofu init failed: %w", err)
 	}
-	restoreAWSEnvCreds(savedCreds)
 
 	if params.PlanFile != "" {
 		fmt.Fprintf(stdout, "Using pre-approved plan file (skipping re-plan)\n")
@@ -624,22 +625,4 @@ func copyDir(src, dst string) error {
 		}
 		return os.WriteFile(target, data, info.Mode())
 	})
-}
-
-func suspendAWSEnvCreds() map[string]string {
-	keys := []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
-	saved := make(map[string]string, len(keys))
-	for _, k := range keys {
-		if v := os.Getenv(k); v != "" {
-			saved[k] = v
-			os.Unsetenv(k)
-		}
-	}
-	return saved
-}
-
-func restoreAWSEnvCreds(saved map[string]string) {
-	for k, v := range saved {
-		os.Setenv(k, v)
-	}
 }

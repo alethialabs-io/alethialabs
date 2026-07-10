@@ -24,9 +24,11 @@ type DriftParams struct {
 	Provider      string
 	TemplatesDir  string
 	CategoriesDir string
-	S3Backend     *cloud.S3BackendConfig
-	Stdout        io.Writer
-	Stderr        io.Writer
+	// StateBackend reads project tofu state from the console's per-job http proxy
+	// (same backend RunDeployV2 writes). Required.
+	StateBackend *cloud.HTTPBackendConfig
+	Stdout       io.Writer
+	Stderr       io.Writer
 }
 
 // RunDriftDetection reconciles an environment's recorded state with the live cloud
@@ -38,8 +40,8 @@ func RunDriftDetection(ctx context.Context, params DriftParams) (*drift.Posture,
 	if vc == nil {
 		return nil, fmt.Errorf("ProjectConfig is required for RunDriftDetection")
 	}
-	if params.S3Backend == nil {
-		return nil, fmt.Errorf("S3Backend config is required for state access")
+	if params.StateBackend == nil {
+		return nil, fmt.Errorf("StateBackend config is required for state access")
 	}
 	if params.TemplatesDir == "" {
 		return nil, fmt.Errorf("TemplatesDir is required")
@@ -84,20 +86,16 @@ func RunDriftDetection(ctx context.Context, params DriftParams) (*drift.Posture,
 		return nil, fmt.Errorf("failed to write tfvars: %w", err)
 	}
 
-	if err := params.S3Backend.EnsureBucket(ctx); err != nil {
-		return nil, fmt.Errorf("failed to ensure state bucket: %w", err)
-	}
-	backendFile, err := params.S3Backend.WriteBackendHCL(tfDir, vc.ProjectName, vc.EnvironmentStage, vc.Region)
+	backendFile, err := params.StateBackend.WriteBackendHCL(tfDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write backend config: %w", err)
 	}
 
-	saved := suspendAWSEnvCreds()
+	restoreStateAuth := params.StateBackend.SetAuthEnv()
+	defer restoreStateAuth()
 	if err := tf.InitWithBackendFile(ctx, backendFile, false); err != nil {
-		restoreAWSEnvCreds(saved)
 		return nil, fmt.Errorf("tofu init failed: %w", err)
 	}
-	restoreAWSEnvCreds(saved)
 
 	planFile := filepath.Join(tfDir, "drift.plan.out")
 	if _, err := tf.PlanRefreshOnly(ctx, varFile, planFile); err != nil {

@@ -94,6 +94,14 @@ func (m *mockAPI) FetchGitToken(jobID string) (string, error) {
 	return "", nil
 }
 
+func (m *mockAPI) FetchStateToken(jobID string) (string, error) {
+	return "test-state-token", nil
+}
+
+func (m *mockAPI) PurgeProjectState(jobID, stateToken string) error {
+	return nil
+}
+
 func (m *mockAPI) FetchAzureToken(jobID string) (string, error) {
 	return "test-azure-token", nil
 }

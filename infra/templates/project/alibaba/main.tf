@@ -3,7 +3,7 @@
 
 terraform {
   required_version = ">= 1.6"
-  backend "s3" {}
+  backend "http" {}
 
   required_providers {
     alicloud = {
