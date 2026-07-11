@@ -20,6 +20,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	alethiaAws "github.com/alethialabs-io/alethialabs/packages/core/cloud/aws"
 	"github.com/alethialabs-io/alethialabs/packages/core/infracost"
+	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
 	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
@@ -56,12 +57,16 @@ type DeployParams struct {
 
 // PlanResult holds structured output from a deployment (dry-run or full apply).
 type PlanResult struct {
-	PlanJSON            map[string]interface{}
-	CostBreakdown       *infracost.CostBreakdown
-	PlanFileBytes       []byte
-	Outputs             map[string]interface{}
-	ClusterName         string
-	ClusterEndpoint     string
+	PlanJSON        map[string]interface{}
+	CostBreakdown   *infracost.CostBreakdown
+	PlanFileBytes   []byte
+	Outputs         map[string]interface{}
+	ClusterName     string
+	ClusterEndpoint string
+	// ClusterReady reports that after a real apply the cluster's API server answered and
+	// its nodes reached Ready within the probe timeout. A deploy that can't reach the
+	// cluster is FAILED (not SUCCESS) — "tofu apply exited 0" is not a working cluster.
+	ClusterReady        bool
 	ArgocdURL           string
 	ArgocdAdminPassword string
 	// VerifyReport is the deterministic verification gate's result for this plan
@@ -79,6 +84,28 @@ type PlanResult struct {
 	// SecurityPosture is the cluster's aggregated Trivy-Operator vulnerability posture
 	// (nil when the read wasn't attempted). `Scanned=false` when Trivy isn't installed.
 	SecurityPosture *argocd.SecurityPosture
+}
+
+// clusterReadyTimeout is how long the reachability gate waits for the cluster (default 15m;
+// override ALETHIA_CLUSTER_READY_TIMEOUT with a Go duration, e.g. "20m", for slow node joins).
+func clusterReadyTimeout() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("ALETHIA_CLUSTER_READY_TIMEOUT")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 15 * time.Minute
+}
+
+// clusterReadyRequireNode controls whether the gate waits for >=1 Ready node. Default true
+// (node-group clusters); set ALETHIA_CLUSTER_READY_REQUIRE_NODE=false for on-demand-node
+// clusters (e.g. Karpenter-only), where API-reachability alone is the bar.
+func clusterReadyRequireNode() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ALETHIA_CLUSTER_READY_REQUIRE_NODE"))) {
+	case "0", "false", "no", "off":
+		return false
+	}
+	return true
 }
 
 // RunDeployV2 executes a deployment using the provider-agnostic ProjectConfig and CloudProvider interface.
@@ -364,8 +391,18 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	result.ClusterEndpoint = cloud.ExtractClusterEndpoint(outputs)
 
 	if result.ClusterName != "" {
+		// Kubeconfig is mandatory: without it the cluster is unreachable, ArgoCD can't
+		// install, and "SUCCESS" would be a lie. Fail the deploy loudly.
 		if err := provider.ConfigureKubeconfig(ctx, vc, outputs, stdout); err != nil {
-			fmt.Fprintf(stdout, "Warning: kubeconfig configuration failed: %v\n", err)
+			return nil, fmt.Errorf("kubeconfig configuration failed — the cluster was provisioned but is unreachable: %w", err)
+		}
+		// Reachability gate: prove the API server answers and nodes reach Ready before we
+		// call this a working cluster (was: SUCCESS meant only that `tofu apply` exited 0).
+		if !params.DryRun {
+			if err := k8s.WaitClusterReady(ctx, clusterReadyTimeout(), clusterReadyRequireNode(), stdout); err != nil {
+				return nil, fmt.Errorf("cluster provisioned but not reachable: %w", err)
+			}
+			result.ClusterReady = true
 		}
 	}
 

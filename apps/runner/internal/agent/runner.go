@@ -526,6 +526,11 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		if result.ClusterEndpoint != "" {
 			metadata["cluster_endpoint"] = result.ClusterEndpoint
 		}
+		if result.ClusterReady {
+			// The reachability gate confirmed the API server answered + nodes are Ready —
+			// "SUCCESS" means a working cluster, not just that `tofu apply` exited 0.
+			metadata["cluster_ready"] = true
+		}
 		if result.ArgocdURL != "" {
 			metadata["argocd_url"] = result.ArgocdURL
 		}

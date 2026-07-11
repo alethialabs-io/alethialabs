@@ -322,6 +322,9 @@ export interface RunnerMetadata {
 export interface ExecutionMetadata {
 	cluster_name?: string;
 	cluster_endpoint?: string;
+	/** The post-apply reachability gate confirmed the API server answered + nodes are Ready
+	 *  (a working cluster, not just "tofu apply exited 0"). Set by the runner on a real deploy. */
+	cluster_ready?: boolean;
 	argocd_url?: string;
 	argocd_admin_password?: string;
 	outputs?: Record<string, unknown>;
