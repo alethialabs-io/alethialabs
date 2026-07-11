@@ -9,15 +9,18 @@
 // program during plan, and `local-exec`/`remote-exec` provisioners run
 // commands at apply. This package therefore PARSES configuration only — it
 // never evaluates expressions (no hcl.EvalContext is ever supplied), never
-// runs `tofu`, and never follows remote (git/registry) module sources. It
-// walks the syntax tree of the root module and every LOCAL child module it
-// references, staying inside the scan root, and reports policy findings.
+// runs `tofu`, and never fetches remote module sources. It walks the syntax
+// tree of the root module and every LOCAL child module it references, staying
+// inside the scan root, and reports policy findings.
 //
-// Non-local module sources are recorded but not fetched or scanned: the
-// provider allowlist still protects execution, because any provider a remote
-// child module needs must either be declared in a scanned required_providers
-// block or resolve to an implied hashicorp/<name> address, both of which are
-// checked against the allowlist before anything is executed.
+// Module sources that are not local ./ or ../ paths — registry, git, http,
+// s3/gcs, mercurial, absolute paths, ~ paths, bare "." / ".." — are recorded
+// for the report and REJECTED with an error: `tofu init` fetches and runs
+// code the gate never saw (a remote child module can carry its own
+// provisioners AND declare its own required_providers, i.e. pull an arbitrary
+// provider binary), so nothing unfetched can be vouched for. The container
+// sandbox is the runtime backstop, but this gate blocks non-local module
+// sources outright.
 package iacsafety
 
 import (
@@ -44,7 +47,10 @@ const (
 	// allowlist (or could not be statically resolved, which fails closed).
 	RuleProviderNotAllowlisted = "provider-not-allowlisted"
 	// RuleProviderImplied — a resource/data source implies a provider that has
-	// no required_providers entry and is not derivable from the allowlist.
+	// no required_providers entry and whose implied hashicorp/<name> address is
+	// not in the allowlist. This is an ERROR: `tofu init` would download and
+	// execute the unvetted provider binary, so the allowlist must gate the
+	// implied path exactly like the explicit one.
 	RuleProviderImplied = "provider-implied"
 	// RuleProvisionerBlock — any provisioner block/attribute anywhere: code execution.
 	RuleProvisionerBlock = "provisioner-block"
@@ -52,6 +58,14 @@ const (
 	RuleExternalDataSource = "external-data-source"
 	// RuleHTTPDataSource — data "http": network access at plan time (warning).
 	RuleHTTPDataSource = "http-data-source"
+	// RuleRemoteStateDataSource — data "terraform_remote_state": reads
+	// arbitrary remote state at plan time (SSRF / credential exposure).
+	// Warning, not error: it is sometimes legitimate, but always surfaced.
+	RuleRemoteStateDataSource = "remote-state-data-source"
+	// RuleRemoteModuleSource — a module source that is not a local ./ or ../
+	// path (registry, git, http, s3/gcs, absolute path, ...). The gate cannot
+	// scan code it does not fetch, so non-local sources are rejected outright.
+	RuleRemoteModuleSource = "remote-module-source"
 	// RuleBackendDeclared — terraform backend/cloud block; the platform
 	// overrides the backend, so the user's declaration is ignored (warning).
 	RuleBackendDeclared = "backend-declared"
@@ -61,8 +75,8 @@ const (
 	RuleModuleNotFound = "module-not-found"
 	// RuleModuleSourceUnresolvable — a module source is not a static string literal.
 	RuleModuleSourceUnresolvable = "module-source-unresolvable"
-	// RuleParseError — a .tf/.tf.json file failed to parse. Fail closed: what
-	// we cannot read, we cannot vouch for.
+	// RuleParseError — a config file (.tf/.tofu/.tf.json/.tofu.json) failed to
+	// parse. Fail closed: what we cannot read, we cannot vouch for.
 	RuleParseError = "parse-error"
 )
 
@@ -112,9 +126,9 @@ type scanner struct {
 }
 
 // Scan walks dir (the customer root module and any LOCAL child modules it
-// references, recursively, staying inside dir — never following git/registry
-// module sources) and applies the policy. allowlist overrides the default
-// provider allowlist when non-nil. Expressions are never evaluated.
+// references, recursively, staying inside dir — non-local module sources are
+// rejected, never fetched) and applies the policy. allowlist overrides the
+// default provider allowlist when non-nil. Expressions are never evaluated.
 func Scan(dir string, allowlist []string) (*Report, error) {
 	rootAbs, err := filepath.Abs(dir)
 	if err != nil {
@@ -207,9 +221,29 @@ func (s *scanner) relPath(abs string) string {
 	return filepath.ToSlash(rel)
 }
 
-// scanModuleDir scans every .tf / .tf.json file directly inside one module
-// directory (Terraform module semantics: a module is a single directory,
-// never a recursive file walk).
+// configSuffixes is the EXHAUSTIVE list of file suffixes OpenTofu loads as
+// module configuration. OpenTofu 1.8+ reads .tofu/.tofu.json as first-class
+// config (taking precedence over a same-named .tf), so skipping them would be
+// a total gate bypass. Order matters: the JSON suffixes must precede their
+// native prefixes (".tf.json" before ".tf", ".tofu.json" before ".tofu") —
+// scanModuleDir uses the first match. If OpenTofu ever grows a new config
+// extension it MUST be added here; TestConfigSuffixesCoverOpenTofu pins the
+// expected set so a drift is caught in review, not in production.
+var configSuffixes = []struct {
+	suffix string
+	json   bool
+}{
+	{".tf.json", true},
+	{".tofu.json", true},
+	{".tf", false},
+	{".tofu", false},
+}
+
+// scanModuleDir scans every OpenTofu config file (.tf / .tofu / .tf.json /
+// .tofu.json — see configSuffixes) directly inside one module directory
+// (Terraform module semantics: a module is a single directory, never a
+// recursive file walk). Non-config extensions are inert to OpenTofu and are
+// skipped.
 func (s *scanner) scanModuleDir(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -225,24 +259,33 @@ func (s *scanner) scanModuleDir(dir string) error {
 	sort.Strings(names) // deterministic finding order
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		switch {
-		case strings.HasSuffix(name, ".tf.json"):
-			s.scanJSONFile(path, dir)
-		case strings.HasSuffix(name, ".tf"):
-			s.scanNativeFile(path, dir)
+		for _, cs := range configSuffixes {
+			if !strings.HasSuffix(name, cs.suffix) {
+				continue
+			}
+			if cs.json {
+				s.scanJSONFile(path, dir)
+			} else {
+				s.scanNativeFile(path, dir)
+			}
+			break
 		}
 	}
 	return nil
 }
 
-// recordModuleSource records a module source and, when it is a local path,
-// resolves it inside the scan root and enqueues it for scanning. Local paths
-// are exactly those Terraform treats as local: "./" or "../" prefixed.
+// recordModuleSource records a module source and, when it is a local "./" or
+// "../" path, resolves it inside the scan root and enqueues it for scanning.
+// ANY other source — registry, git, http, mercurial, s3/gcs, absolute paths,
+// ~ paths, bare "." / ".." — is rejected with an error: OpenTofu would fetch
+// (or, for absolute paths, directly load) and execute code this gate never
+// scanned, including provider binaries the unfetched module declares in its
+// own required_providers. See the package comment.
 func (s *scanner) recordModuleSource(source, file string, line int, moduleDir string) {
 	s.modules[source] = true
 	if !strings.HasPrefix(source, "./") && !strings.HasPrefix(source, "../") {
-		// Remote (registry/git/http/s3/...) source: recorded only, never
-		// fetched. See the package comment for why this stays safe.
+		s.addFinding(SeverityError, RuleRemoteModuleSource, file, line,
+			fmt.Sprintf("module source %q is not a local ./ or ../ path; remote and absolute module sources cannot be statically vetted and are rejected", source))
 		return
 	}
 	target := filepath.Clean(filepath.Join(moduleDir, filepath.FromSlash(source)))
@@ -338,22 +381,24 @@ func (s *scanner) recordImpliedUse(typeName, file string, line int) {
 
 // checkImpliedProviders runs after all modules are scanned: any implied
 // provider with no required_providers entry anywhere in the tree AND whose
-// implied address hashicorp/<name> is not in the allowlist gets a warning.
-// (Implied providers default to hashicorp/<name>, so when that address is
-// allowlisted the rule-1 check already covers execution safety.)
+// implied address hashicorp/<name> is not in the allowlist is an ERROR —
+// `tofu init` resolves the implied hashicorp/<name> address and downloads +
+// executes that binary, so the implied path must be gated exactly like an
+// explicit required_providers source. (Declared entries are already checked
+// by the rule-1 allowlist pass; allowlisted implied addresses are fine.)
 func (s *scanner) checkImpliedProviders() {
-	warned := map[string]bool{}
+	reported := map[string]bool{}
 	for _, u := range s.implied {
 		if s.declared[u.name] || s.allowed["hashicorp/"+u.name] {
 			continue
 		}
 		key := u.name + "\x00" + u.file
-		if warned[key] {
-			continue // one warning per provider per file is enough signal
+		if reported[key] {
+			continue // one finding per provider per file is enough signal
 		}
-		warned[key] = true
-		s.addFinding(SeverityWarning, RuleProviderImplied, u.file, u.line,
-			fmt.Sprintf("provider %q is implied by a resource/data type but has no required_providers entry and hashicorp/%s is not allowlisted", u.name, u.name))
+		reported[key] = true
+		s.addFinding(SeverityError, RuleProviderImplied, u.file, u.line,
+			fmt.Sprintf("provider %q is implied by a resource/data type but has no required_providers entry and hashicorp/%s is not allowlisted; init would download an unvetted provider binary", u.name, u.name))
 	}
 }
 

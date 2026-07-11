@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -114,9 +115,14 @@ func TestScanFixtures(t *testing.T) {
 			wantModules:   []string{"../", "../../../outside"},
 		},
 		{
-			name:          "sources",
-			wantOK:        true,
-			wantFindings:  []string{},
+			// Registry and git module sources: never fetched, so never vetted —
+			// rejected outright.
+			name:   "sources",
+			wantOK: false,
+			wantFindings: []string{
+				"error:remote-module-source",
+				"error:remote-module-source",
+			},
 			wantProviders: []string{},
 			wantModules: []string{
 				"git::https://github.com/example/mod.git?ref=v1.0.0",
@@ -124,23 +130,116 @@ func TestScanFixtures(t *testing.T) {
 			},
 		},
 		{
+			// Absolute, ~, and bare ".." module sources: OpenTofu installs and
+			// runs all of them, so they count as non-local and are rejected.
+			name:   "absmodule",
+			wantOK: false,
+			wantFindings: []string{
+				"error:remote-module-source",
+				"error:remote-module-source",
+				"error:remote-module-source",
+			},
+			wantProviders: []string{},
+			wantModules:   []string{"..", "/opt/evil-module", "~/evil-module"},
+		},
+		{
 			name:   "json",
 			wantOK: false,
 			wantFindings: []string{
 				"error:external-data-source",
 				"error:module-source-unresolvable",
+				"error:provider-implied",
 				"error:provider-not-allowlisted",
 				"error:provisioner-block",
+				"error:remote-module-source",
 				"warning:backend-declared",
-				"warning:provider-implied",
 			},
 			wantProviders: []string{"evilcorp/backdoor"},
 			wantModules:   []string{"terraform-aws-modules/vpc/aws"},
 		},
 		{
 			name:          "implied",
+			wantOK:        false,
+			wantFindings:  []string{"error:provider-implied"},
+			wantProviders: []string{},
+			wantModules:   []string{},
+		},
+		{
+			// An implied provider that is NOT allowlisted (vault_generic_secret →
+			// hashicorp/vault) is an error: init would download the binary.
+			name:          "impliedvault",
+			wantOK:        false,
+			wantFindings:  []string{"error:provider-implied"},
+			wantProviders: []string{},
+			wantModules:   []string{},
+		},
+		{
+			// .tofu files are first-class OpenTofu config and must be scanned
+			// exactly like .tf — evil provider, provisioner, and data "external"
+			// all caught.
+			name:   "tofu",
+			wantOK: false,
+			wantFindings: []string{
+				"error:external-data-source",
+				"error:provider-implied",
+				"error:provider-not-allowlisted",
+				"error:provisioner-block",
+			},
+			wantProviders: []string{"evilcorp/backdoor"},
+			wantModules:   []string{},
+		},
+		{
+			// .tofu.json files likewise.
+			name:   "tofujson",
+			wantOK: false,
+			wantFindings: []string{
+				"error:external-data-source",
+				"error:provider-implied",
+				"error:provider-not-allowlisted",
+				"error:provisioner-block",
+			},
+			wantProviders: []string{"evilcorp/backdoor"},
+			wantModules:   []string{},
+		},
+		{
+			// data "external" scoped inside a check block executes during plan
+			// exactly like a top-level one and must be caught (native HCL).
+			name:   "checkdata",
+			wantOK: false,
+			wantFindings: []string{
+				"error:external-data-source",
+				"error:provider-implied",
+			},
+			wantProviders: []string{},
+			wantModules:   []string{},
+		},
+		{
+			// Same check-block bypass in JSON syntax.
+			name:   "checkdatajson",
+			wantOK: false,
+			wantFindings: []string{
+				"error:external-data-source",
+				"error:provider-implied",
+			},
+			wantProviders: []string{},
+			wantModules:   []string{},
+		},
+		{
+			// data "http" in a check block draws the http warning; with
+			// hashicorp/http allowlisted there is nothing else to flag.
+			name:          "checkhttp",
+			allowlist:     []string{"hashicorp/http"},
 			wantOK:        true,
-			wantFindings:  []string{"warning:provider-implied"},
+			wantFindings:  []string{"warning:http-data-source"},
+			wantProviders: []string{},
+			wantModules:   []string{},
+		},
+		{
+			// data "terraform_remote_state" reads arbitrary remote state at
+			// plan time: surfaced as a warning (sometimes legitimate).
+			name:          "remotestate",
+			wantOK:        true,
+			wantFindings:  []string{"warning:remote-state-data-source"},
 			wantProviders: []string{},
 			wantModules:   []string{},
 		},
@@ -167,10 +266,10 @@ func TestScanFixtures(t *testing.T) {
 		},
 		{
 			name:   "httpdata",
-			wantOK: true,
+			wantOK: false,
 			wantFindings: []string{
+				"error:provider-implied",
 				"warning:http-data-source",
-				"warning:provider-implied",
 			},
 			wantProviders: []string{},
 			wantModules:   []string{},
@@ -204,9 +303,9 @@ func TestScanFixtures(t *testing.T) {
 			wantOK: false,
 			wantFindings: []string{
 				"error:module-source-unresolvable",
+				"error:provider-implied",
 				"warning:backend-declared",
 				"warning:http-data-source",
-				"warning:provider-implied",
 			},
 			wantProviders: []string{},
 			wantModules:   []string{"./child"},
@@ -461,35 +560,84 @@ func TestEnvOverrideEndToEnd(t *testing.T) {
 	}
 }
 
-// TestJSONKeyLines unit-tests the raw JSON key sweep.
-func TestJSONKeyLines(t *testing.T) {
+// TestJSONDangerousKeys unit-tests the raw JSON dangerous-key sweep.
+func TestJSONDangerousKeys(t *testing.T) {
 	src := []byte(`{
   "a": {
     "provisioner": {"x": 1},
     "b": ["provisioner", {"provisioner": true}],
     "c": "provisioner"
-  }
+  },
+  "data": [{"external": {"p": {}}}],
+  "nested": {"data": {"http": {"q": {}}, "terraform_remote_state": {"r": {}}, "safe": {}}},
+  "external": {"not-under-data": true},
+  "alsodata": {"external": "scalar values still match keys, not values"}
 }`)
-	lines, err := jsonKeyLines(src, "provisioner")
+	hits, err := jsonDangerousKeys(src)
 	if err != nil {
-		t.Fatalf("jsonKeyLines error: %v", err)
+		t.Fatalf("jsonDangerousKeys error: %v", err)
 	}
-	// Key on line 3 and the object-in-array key on line 4; the two string
-	// VALUES "provisioner" (lines 4 and 5) must not match.
-	if !reflect.DeepEqual(lines, []int{3, 4}) {
-		t.Errorf("lines = %v, want [3 4]", lines)
+	// provisioner keys on lines 3 and 4 (the two string VALUES "provisioner"
+	// on lines 4 and 5 must not match); "external" under the repeated-block
+	// data array (line 7); "http" and "terraform_remote_state" under a nested
+	// "data" key (line 8, "safe" must not match); a root-level "external"
+	// (line 9) and an "external" under a non-"data" key (line 10) must not
+	// match.
+	want := []jsonKeyHit{
+		{key: "provisioner", line: 3},
+		{key: "provisioner", line: 4},
+		{key: "external", line: 7},
+		{key: "http", line: 8},
+		{key: "terraform_remote_state", line: 8},
+	}
+	if !reflect.DeepEqual(hits, want) {
+		t.Errorf("hits = %+v, want %+v", hits, want)
 	}
 
-	if _, err := jsonKeyLines([]byte(`{"a": `), "provisioner"); err == nil {
+	if _, err := jsonDangerousKeys([]byte(`{"a": `)); err == nil {
 		t.Error("truncated JSON: err = nil, want error")
 	}
 
-	lines, err = jsonKeyLines([]byte(`[1, "provisioner", null]`), "provisioner")
-	if err != nil || len(lines) != 0 {
-		t.Errorf("array-only doc: lines=%v err=%v, want none", lines, err)
+	hits, err = jsonDangerousKeys([]byte(`[1, "provisioner", null]`))
+	if err != nil || len(hits) != 0 {
+		t.Errorf("array-only doc: hits=%v err=%v, want none", hits, err)
 	}
 
 	if got := lineAtOffset([]byte("a\nb"), 99); got != 2 {
 		t.Errorf("lineAtOffset out-of-range clamp = %d, want 2", got)
+	}
+}
+
+// TestConfigSuffixesCoverOpenTofu pins the exhaustive set of file suffixes
+// OpenTofu loads as module configuration. If OpenTofu grows a new config
+// extension, this test forces the dispatch list (and this policy) to be
+// updated deliberately — silently skipping a config file is a total gate
+// bypass (that is exactly how .tofu files slipped through before).
+func TestConfigSuffixesCoverOpenTofu(t *testing.T) {
+	want := map[string]bool{ // suffix -> parsed as JSON
+		".tf":        false,
+		".tf.json":   true,
+		".tofu":      false,
+		".tofu.json": true,
+	}
+	if len(configSuffixes) != len(want) {
+		t.Fatalf("configSuffixes has %d entries, want %d: %+v", len(configSuffixes), len(want), configSuffixes)
+	}
+	for i, cs := range configSuffixes {
+		isJSON, ok := want[cs.suffix]
+		if !ok {
+			t.Errorf("unexpected config suffix %q", cs.suffix)
+			continue
+		}
+		if cs.json != isJSON {
+			t.Errorf("suffix %q: json = %v, want %v", cs.suffix, cs.json, isJSON)
+		}
+		// Ordering invariant: no earlier entry may shadow a later, more
+		// specific one (first match wins in scanModuleDir).
+		for j := 0; j < i; j++ {
+			if strings.HasSuffix(cs.suffix, configSuffixes[j].suffix) {
+				t.Errorf("suffix %q is shadowed by earlier entry %q", cs.suffix, configSuffixes[j].suffix)
+			}
+		}
 	}
 }

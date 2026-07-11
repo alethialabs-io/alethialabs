@@ -14,17 +14,27 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-// JSON (.tf.json) handling.
+// JSON (.tf.json / .tofu.json) handling.
 //
 // JSON bodies cannot be walked as a raw syntax tree the way *hclsyntax.Body
-// can, so the structured rules (required_providers, backend/cloud, data
-// sources, module sources) use hcl's generic schema-based body API, which
-// preserves source ranges. The provisioner catch-all (rule 2) instead does a
-// raw JSON token sweep for ANY object key named "provisioner" at ANY depth —
-// strictly broader than what the schema API could see, so .tf.json gets full
-// detection fidelity and no "json-partial-scan" warning is needed. Known
-// trade-off (fail-closed by design): a user-data map that coincidentally has
-// a "provisioner" key is flagged too.
+// can, so the structured rules (required_providers, backend/cloud, module
+// sources, implied-provider recording for data blocks at top level and inside
+// check blocks) use hcl's generic schema-based body API, which preserves
+// source ranges. The dangerous-key catch-alls instead do a raw JSON token
+// sweep at ANY depth — strictly broader than what the schema API could see,
+// so .tf.json gets full detection fidelity and no "json-partial-scan" warning
+// is needed:
+//
+//   - ANY object key named "provisioner" is an error;
+//   - the keys "external" / "http" / "terraform_remote_state" directly under
+//     a "data" key (a data-source type position — top level, inside a check
+//     block, or anywhere else) draw the same findings as the native path.
+//
+// The raw sweep is the ONLY emitter of those findings for JSON (the schema
+// walk only records implied providers), so structural and raw detection never
+// double-report. Known trade-off (fail-closed by design): a user-data map
+// that coincidentally has a "provisioner" key, or a "data" map with an
+// "external"/"http"/"terraform_remote_state" key, is flagged too.
 
 var jsonTopSchema = &hcl.BodySchema{
 	Blocks: []hcl.BlockHeaderSchema{
@@ -33,6 +43,13 @@ var jsonTopSchema = &hcl.BodySchema{
 		{Type: "data", LabelNames: []string{"type", "name"}},
 		{Type: "module", LabelNames: []string{"name"}},
 		{Type: "provider", LabelNames: []string{"name"}},
+		{Type: "check", LabelNames: []string{"name"}},
+	},
+}
+
+var jsonCheckSchema = &hcl.BodySchema{
+	Blocks: []hcl.BlockHeaderSchema{
+		{Type: "data", LabelNames: []string{"type", "name"}},
 	},
 }
 
@@ -48,8 +65,8 @@ var jsonModuleSchema = &hcl.BodySchema{
 	Attributes: []hcl.AttributeSchema{{Name: "source"}},
 }
 
-// scanJSONFile parses one .tf.json file and applies the policy via the
-// generic hcl body API plus the raw provisioner key sweep.
+// scanJSONFile parses one .tf.json / .tofu.json file and applies the policy
+// via the generic hcl body API plus the raw dangerous-key sweep.
 func (s *scanner) scanJSONFile(path, moduleDir string) {
 	rel := s.relPath(path)
 	file, diags := s.parser.ParseJSONFile(path)
@@ -74,18 +91,44 @@ func (s *scanner) scanJSONFile(path, moduleDir string) {
 					s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange.Start.Line)
 				}
 			case "data":
-				s.checkDataBlock(blk.Labels, rel, blk.DefRange.Start.Line)
+				// Implied-provider recording only: the external/http/
+				// terraform_remote_state findings come from the raw sweep,
+				// which covers every depth (see the file comment).
+				if len(blk.Labels) > 0 {
+					s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange.Start.Line)
+				}
 			case "module":
 				s.walkJSONModuleBlock(blk, rel, moduleDir)
 			case "provider":
 				if len(blk.Labels) > 0 {
 					s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange.Start.Line)
 				}
+			case "check":
+				s.walkJSONCheckBlock(blk, rel)
 			}
 		}
 	}
 
-	s.sweepJSONProvisioners(path, rel)
+	s.sweepJSONDangerousKeys(path, rel)
+}
+
+// walkJSONCheckBlock records the implied provider of every data block scoped
+// inside a check{} block — those data sources resolve during plan exactly
+// like top-level ones. The dangerous-type findings themselves come from the
+// raw sweep.
+func (s *scanner) walkJSONCheckBlock(blk *hcl.Block, rel string) {
+	content, _, diags := blk.Body.PartialContent(jsonCheckSchema)
+	if diags.HasErrors() {
+		s.addParseFindings(rel, diags)
+	}
+	if content == nil {
+		return
+	}
+	for _, inner := range content.Blocks {
+		if inner.Type == "data" && len(inner.Labels) > 0 {
+			s.recordImpliedUse(inner.Labels[0], rel, inner.DefRange.Start.Line)
+		}
+	}
 }
 
 // walkJSONTerraformBlock handles a terraform{} block from a .tf.json file.
@@ -138,35 +181,68 @@ func (s *scanner) walkJSONModuleBlock(blk *hcl.Block, rel, moduleDir string) {
 	s.recordModuleSource(v.AsString(), rel, attr.Range.Start.Line, moduleDir)
 }
 
-// sweepJSONProvisioners re-reads the raw JSON and flags every object key
-// named "provisioner" at any depth, with a real line number.
-func (s *scanner) sweepJSONProvisioners(path, rel string) {
+// sweepJSONDangerousKeys re-reads the raw JSON and flags, at any depth and
+// with a real line number: every object key named "provisioner", and every
+// data-source-type key ("external" / "http" / "terraform_remote_state")
+// directly under a "data" key.
+func (s *scanner) sweepJSONDangerousKeys(path, rel string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		s.addFinding(SeverityError, RuleParseError, rel, 0, "re-reading file for provisioner sweep: "+err.Error())
+		s.addFinding(SeverityError, RuleParseError, rel, 0, "re-reading file for dangerous-key sweep: "+err.Error())
 		return
 	}
-	lines, err := jsonKeyLines(data, "provisioner")
+	hits, err := jsonDangerousKeys(data)
 	if err != nil {
-		s.addFinding(SeverityError, RuleParseError, rel, 0, "provisioner sweep: "+err.Error())
+		s.addFinding(SeverityError, RuleParseError, rel, 0, "dangerous-key sweep: "+err.Error())
 		return
 	}
-	for _, line := range lines {
-		s.addFinding(SeverityError, RuleProvisionerBlock, rel, line,
-			`"provisioner" key: provisioners execute arbitrary commands`)
+	for _, hit := range hits {
+		switch hit.key {
+		case "provisioner":
+			s.addFinding(SeverityError, RuleProvisionerBlock, rel, hit.line,
+				`"provisioner" key: provisioners execute arbitrary commands`)
+		case "external":
+			s.addFinding(SeverityError, RuleExternalDataSource, rel, hit.line,
+				`data "external" executes an arbitrary program during plan`)
+		case "http":
+			s.addFinding(SeverityWarning, RuleHTTPDataSource, rel, hit.line,
+				`data "http" performs network requests during plan`)
+		case "terraform_remote_state":
+			s.addFinding(SeverityWarning, RuleRemoteStateDataSource, rel, hit.line,
+				`data "terraform_remote_state" reads arbitrary remote state during plan`)
+		}
 	}
 }
 
-// jsonKeyLines streams JSON tokens and returns the 1-based line number of
-// every object key equal to key, at any nesting depth.
-func jsonKeyLines(data []byte, key string) ([]int, error) {
+// jsonKeyHit is one dangerous object key found by the raw JSON sweep.
+type jsonKeyHit struct {
+	key  string // the matched object key
+	line int    // 1-based line of the key
+}
+
+// jsonDataSourceKeys are the data-source types the policy flags when they
+// appear directly under a "data" key in JSON config.
+var jsonDataSourceKeys = map[string]bool{
+	"external":               true,
+	"http":                   true,
+	"terraform_remote_state": true,
+}
+
+// jsonDangerousKeys streams JSON tokens and returns every dangerous object
+// key at any nesting depth: "provisioner" anywhere, and any key in
+// jsonDataSourceKeys whose enclosing container is the value of a "data" key.
+// Arrays propagate their key downward (hcl JSON treats an array of objects as
+// repeated blocks, so `"data": [{"external": …}]` must match too).
+func jsonDangerousKeys(data []byte) ([]jsonKeyHit, error) {
 	type frame struct {
-		isObject bool
-		keyNext  bool
+		isObject     bool
+		keyNext      bool
+		containerKey string // the object key whose value this container is ("" at root)
+		pendingKey   string // last key read in this object, awaiting its value
 	}
 	var (
 		stack []frame
-		out   []int
+		out   []jsonKeyHit
 	)
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
@@ -185,10 +261,18 @@ func jsonKeyLines(data []byte, key string) ([]int, error) {
 		}
 		if d, ok := tok.(json.Delim); ok {
 			switch d {
-			case '{':
-				stack = append(stack, frame{isObject: true, keyNext: true})
-			case '[':
-				stack = append(stack, frame{isObject: false})
+			case '{', '[':
+				containerKey := ""
+				if len(stack) > 0 {
+					if parent := stack[len(stack)-1]; parent.isObject {
+						containerKey = parent.pendingKey
+					} else {
+						// Array element: inherit the array's own key so
+						// repeated-block syntax keeps the "data" context.
+						containerKey = parent.containerKey
+					}
+				}
+				stack = append(stack, frame{isObject: d == '{', keyNext: d == '{', containerKey: containerKey})
 			case '}', ']':
 				stack = stack[:len(stack)-1]
 				if len(stack) > 0 && stack[len(stack)-1].isObject {
@@ -203,8 +287,11 @@ func jsonKeyLines(data []byte, key string) ([]int, error) {
 		}
 		top := &stack[len(stack)-1]
 		if top.keyNext {
-			if s, ok := tok.(string); ok && s == key {
-				out = append(out, lineAtOffset(data, dec.InputOffset()))
+			if k, ok := tok.(string); ok {
+				if k == "provisioner" || (top.containerKey == "data" && jsonDataSourceKeys[k]) {
+					out = append(out, jsonKeyHit{key: k, line: lineAtOffset(data, dec.InputOffset())})
+				}
+				top.pendingKey = k
 			}
 			top.keyNext = false
 		} else {
