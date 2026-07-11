@@ -527,6 +527,15 @@ jobs:
           { "identities": [ { "name": "alethia", "credentials": [ { "accessKey": "${AK}", "secretKey": "${SK}" } ], "actions": ["Admin", "Read", "Write", "List", "Tagging"] } ] }
           JSON
           cf="-f docker-compose.yml -f deploy/prod/docker-compose.prod.yml -f deploy/prod/docker-compose.tunnel.yml"
+          # Reclaim disk BEFORE pulling: the box accumulates one sha-tagged image set per
+          # deploy, and the old `docker image prune -f` (dangling-only, post-pull) never freed
+          # them → the disk fills and `compose pull` dies with "no space left on device".
+          # `-af` drops ALL unused images; images backing running containers are protected, so
+          # this is safe (rollback re-pulls from GHCR). Build cache too (the box never builds).
+          echo "disk before prune:"; df -h / 2>/dev/null || true
+          docker image prune -af || true
+          docker builder prune -af || true
+          echo "disk after prune:"; df -h / 2>/dev/null || true
           docker compose $cf pull
           docker compose $cf up -d --remove-orphans
           docker image prune -f
