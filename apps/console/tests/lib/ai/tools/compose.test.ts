@@ -72,12 +72,14 @@ describe("catalogTools.list_services", () => {
 		};
 		const svc = (kind: string) => out.services.find((s) => s.kind === kind);
 		// Every hidden Hetzner kind (UNSUPPORTED_KINDS_BY_PROVIDER) is listed on Hetzner —
-		// including registry/bucket, which have no per-cloud service field.
-		for (const kind of ["topic", "nosql", "registry", "bucket"]) {
+		// including registry, which has no per-cloud service field. bucket is NATIVE on
+		// Hetzner (Object Storage), so it is NOT flagged.
+		for (const kind of ["topic", "nosql", "registry"]) {
 			expect(svc(kind)?.unsupportedOn).toContain("hetzner");
 			// …and on no managed cloud (they're all supported there).
 			expect(svc(kind)?.unsupportedOn).not.toContain("aws");
 		}
+		expect(svc("bucket")?.unsupportedOn).not.toContain("hetzner");
 		// Fielded unsupported kinds also report 'unsupported' as their Hetzner deployment mode…
 		expect(svc("topic")?.deployment?.hetzner).toBe("unsupported");
 		expect(svc("nosql")?.deployment?.aws).toBe("managed");
