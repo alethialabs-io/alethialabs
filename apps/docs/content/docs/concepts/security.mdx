@@ -164,6 +164,40 @@ overlap: the JWKS can publish two keys at once, and each assertion's `kid` heade
 
 See the [rotation runbook](/self-hosting/managed-cloud-connectors#rotating-the-issuer-signing-key).
 
+## Execution isolation (managed untrusted BYO)
+
+Keyless auth controls *who* can touch a cloud; **execution isolation** controls what the *provisioning code
+itself* can do. In **managed** mode Alethia runs the provisioning fleet, so the trust question is: whose code
+runs on it?
+
+- **Trusted templates** — Alethia's own project templates (EKS/GKE/AKS/ACK/Talos + supporting services) run
+  in-process on the runner. They are reviewed platform code, so this is safe.
+- **Untrusted bring-your-own** — customer Terraform / Helm (a provider, an `external` data source, a chart
+  hook) is arbitrary code. It runs inside a **per-job container sandbox**: a fresh container per job with its
+  own PID namespace, an **allowlisted environment** (no runner token, no storage key, no signing key — only
+  the short-lived, job-scoped cloud credentials it needs), read-only credential mounts, and a **default-deny,
+  domain-allowlisted network**. A fail-closed guard refuses to start the container if any platform secret
+  would leak into it.
+
+Three properties keep the blast radius of a single job to that one job:
+
+- **No storage master key on the runner.** Terraform state goes through a console **state proxy**
+  (`backend "http"` → `/api/jobs/[id]/state`) authenticated by a **per-job, key-scoped** token; the state
+  object key is derived server-side from the job. The runner never holds the object-storage credential, and
+  one job's token can only touch its own state (fenced locking prevents lost updates).
+- **Per-job, per-VM credentials.** Cloud tokens are minted per job and bound to it (a stolen runner token
+  can't mint another cloud's credentials); each fleet VM self-registers with its own short-TTL, instance-bound
+  bootstrap token rather than a shared fleet secret.
+- **Metadata + egress locked down.** The untrusted child has no network route of its own — it reaches only a
+  domain-allowlist forward proxy, so the cloud metadata service (and arbitrary exfiltration endpoints) are
+  unreachable by construction; only the registries, Git hosts, and the target cloud's API can be reached.
+
+The container boundary is what actually contains a hostile provider (env-scrubbing alone doesn't — a child
+sharing the worker's PID namespace can read the parent's `/proc`). Until it is enabled and verified on the
+fleet, managed **untrusted** BYO stays gated off; trusted provisioning is unaffected. Operators turn it on per
+the [managed provisioning runbook](/self-hosting/managed-provisioning#untrusted-byo-container-sandbox-3b); the
+engineering detail lives in the `packages/core/sandbox` package README.
+
 ## CLI Authentication (RFC 8628)
 
 The alethia CLI uses the **Device Authorization Grant** flow (RFC 8628), the same pattern used by GitHub CLI, Azure CLI, and AWS SSO:
