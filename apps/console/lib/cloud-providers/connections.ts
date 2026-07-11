@@ -14,6 +14,7 @@ import {
 	syncCloudInventory,
 } from "@/lib/cloud-providers/inventory";
 import type { CloudCredentials, WifCredentialConfig } from "@/types/jsonb.types";
+import { buildWifConfig, GCP_PROJECT_ID_REGEX } from "./gcp-wif";
 
 /**
  * Cloud connection logic shared by the web console server actions and the CLI
@@ -503,6 +504,30 @@ export async function saveGcpIdentity(
 
 	// GCP verifies server-side (WIF token + a Compute read) — no runner.
 	return verifyConnectionInline(scope, identityId);
+}
+
+/**
+ * Builds the WIF config from a project id + number (the two values the setup prints) and saves +
+ * verifies it — the primary connect path. Reuses saveGcpIdentity's persist + verify by handing it the
+ * assembled JSON, so both paths behave identically.
+ */
+export async function saveGcpIdentityFromIds(
+	scope: ConnScope,
+	identityId: string,
+	projectId: string,
+	projectNumber: string,
+): Promise<ConnectionResult> {
+	const pid = projectId.trim();
+	const num = projectNumber.trim();
+	if (!GCP_PROJECT_ID_REGEX.test(pid)) {
+		throw new Error(
+			"Invalid GCP project ID (6–30 chars: lowercase letters, digits, hyphens; starts with a letter).",
+		);
+	}
+	if (!/^\d{1,20}$/.test(num)) {
+		throw new Error("Project number must be digits only.");
+	}
+	return saveGcpIdentity(scope, identityId, JSON.stringify(buildWifConfig(pid, num)));
 }
 
 // --- Azure ---

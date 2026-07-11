@@ -12,6 +12,7 @@ import {
 } from "@/app/(private)/dashboard/providers/azure-actions";
 import {
 	initGcpIdentity,
+	saveGcpFromIds,
 	saveGcpIdentity,
 } from "@/app/(private)/dashboard/providers/gcp-actions";
 import {
@@ -249,6 +250,10 @@ export function useCloudConnect({
 		if (!gcpSetup) throw new Error("GCP setup not initialized");
 		return saveGcpIdentity(gcpSetup.identityId, wifConfigJson);
 	};
+	const handleGcpFromIds = async (projectId: string, projectNumber: string) => {
+		if (!gcpSetup) throw new Error("GCP setup not initialized");
+		return saveGcpFromIds(gcpSetup.identityId, projectId, projectNumber);
+	};
 	const handleAzureConnect = async (
 		tenantId: string,
 		clientId: string,
@@ -305,7 +310,12 @@ export function useCloudConnect({
 						description="Set up Workload Identity Federation to allow Alethia to provision infrastructure in your GCP project."
 					/>
 					<div className="px-6 py-6">
-						{gcpSetup && <GcpConnection onComplete={handleGcpConnect} />}
+						{gcpSetup && (
+							<GcpConnection
+								onCompleteFromIds={handleGcpFromIds}
+								onComplete={handleGcpConnect}
+							/>
+						)}
 					</div>
 				</SheetContent>
 			</Sheet>
