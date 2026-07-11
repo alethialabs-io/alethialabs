@@ -17,9 +17,11 @@ type InfraFacts struct {
 	ProjectName     string
 	Environment     string
 	Region          string
-	Provider        string // aws | gcp | azure
+	Provider        string // aws | gcp | azure | alibaba | hetzner
 	DomainName      string
 	DNSZoneID       string
+	DNSEnabled      bool   // vc.DNS.Enabled — templates must not render DNS-dependent apps without it
+	DNSConnector    string // vc.DNS.Provider — ""/"native" = cloud-native; "cloudflare" = the DNS connector
 	EnableKarpenter bool
 
 	ClusterName     string
@@ -50,21 +52,47 @@ type InfraFacts struct {
 	AzureIngressClient     string // managed-identity client id for the AGIC
 }
 
-// DNSProvider maps the cloud to the external-dns `provider` value.
+// DNSProvider maps the cloud (and DNS connector) to the external-dns `provider` value.
+// An empty return means "no working external-dns backend for this configuration" — the
+// template's render gate skips the app entirely rather than deploying a broken one
+// (the pre-parity behavior was to fall back to "aws" on every unknown cloud, which shipped
+// external-dns with a malformed IRSA annotation on alibaba/hetzner).
 func (f *InfraFacts) DNSProvider() string {
+	// A non-native DNS connector overrides the cloud-native backend. Cloudflare rendering
+	// lands with the connector-aware branch (A3); until then it skips honestly.
+	if f.DNSConnector != "" && f.DNSConnector != "native" {
+		return ""
+	}
 	switch f.Provider {
+	case "aws":
+		return "aws"
 	case "gcp":
+		// Same honesty rule: without the Workload Identity GSA output the controller
+		// would ship with an empty identity annotation and crash-loop.
+		if f.GCPExternalDNSSA == "" {
+			return ""
+		}
 		return "google"
 	case "azure":
+		if f.AzureExternalDNSClient == "" {
+			return ""
+		}
 		return "azure"
+	case "alibaba":
+		// "alibabacloud" once RRSA identity is provisioned (A5); no identity → honest skip.
+		return ""
+	case "hetzner":
+		// Hetzner has no native external-dns provider; the official webhook lands in A4.
+		return ""
 	default:
-		return "aws"
+		return ""
 	}
 }
 
 // BuildFromOutputs assembles InfraFacts from the tofu outputs for the config's cloud.
 // Common facts come from the ProjectConfig; the cloud-specific cluster + workload-identity
-// outputs are extracted per provider so GCP/Azure no longer fall through the AWS-only path.
+// outputs are extracted per provider. Every cloud gets an explicit case — an unknown
+// provider yields common facts only, never another cloud's output keys.
 func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *InfraFacts {
 	enableKarpenter := false
 	if v, ok := vc.Cluster.ProviderConfig["enable_karpenter"]; ok {
@@ -80,6 +108,8 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		Provider:            vc.Provider,
 		DomainName:          vc.DNS.DomainName,
 		DNSZoneID:           vc.DNS.ZoneID,
+		DNSEnabled:          vc.DNS.Enabled,
+		DNSConnector:        vc.DNS.Provider,
 		EnableKarpenter:     enableKarpenter,
 		AppsDestinationRepo: vc.Repositories.AppsDestinationRepo,
 	}
@@ -98,7 +128,17 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.AzureTenantID = firstNonEmpty(ExtractOutput(outputs, "azure_tenant_id"), vc.CloudAccountID)
 		f.AzureExternalDNSClient = ExtractOutput(outputs, "external_dns_client_id")
 		f.AzureIngressClient = ExtractOutput(outputs, "ingress_client_id")
-	default: // aws
+	case "alibaba":
+		f.ClusterName = ExtractOutput(outputs, "ack_cluster_name")
+		f.ClusterEndpoint = ExtractOutput(outputs, "ack_cluster_endpoint")
+		f.VPCID = ExtractOutput(outputs, "vpc_id")
+		// Workload-identity (RRSA) facts land with the alibaba external-dns work; until
+		// then no identity block exists and DNS-dependent apps skip via DNSProvider().
+	case "hetzner":
+		f.ClusterName = ExtractOutput(outputs, "talos_cluster_name")
+		f.ClusterEndpoint = ExtractOutput(outputs, "talos_cluster_endpoint")
+		// No cloud IAM on Hetzner — no identity block by design.
+	case "aws":
 		f.ClusterName = ExtractOutput(outputs, "eks_cluster_name")
 		f.ClusterEndpoint = ExtractOutput(outputs, "eks_cluster_endpoint")
 		f.ClusterArn = ExtractOutput(outputs, "eks_cluster_arn")
@@ -110,6 +150,9 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.NodeIAMRoleName = ExtractOutput(outputs, "node_iam_role_name")
 		f.NodeSecurityGroup = ExtractOutput(outputs, "node_security_group")
 		f.KarpenterQueueName = ExtractOutput(outputs, "karpenter_queue_name")
+	default:
+		// Unknown/connect-only clouds (digitalocean, civo): common facts only — never
+		// fall through to another cloud's output keys.
 	}
 
 	return f

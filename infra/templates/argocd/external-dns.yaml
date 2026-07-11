@@ -1,3 +1,7 @@
+{{- /* external-dns only renders when DNS is enabled, a domain exists, AND the cloud (or
+       DNS connector) has a working external-dns backend — DNSProvider() returns "" otherwise
+       and the whole app is skipped instead of deploying a broken controller. */ -}}
+{{- if and .DNSEnabled .DomainName .DNSProvider }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -48,3 +52,4 @@ spec:
     syncOptions:
       - CreateNamespace=true
   revisionHistoryLimit: 3
+{{- end }}

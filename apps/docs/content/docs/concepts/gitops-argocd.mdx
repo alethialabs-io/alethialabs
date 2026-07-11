@@ -103,7 +103,7 @@ Templates are stored in `infra/templates/argocd/` and staged into the Runner Doc
 | Template | What It Deploys |
 |----------|----------------|
 | `aws-load-balancer-controller.yaml` | ALB/NLB ingress controller |
-| `external-dns.yaml` | Route53/Cloud DNS/Azure DNS sync |
+| `external-dns.yaml` | Route53/Cloud DNS/Azure DNS sync (renders only when DNS is enabled with a domain and the cloud has a supported backend + workload identity) |
 | `external-secrets-operator.yaml` | Secrets Manager → K8s Secrets |
 | `karpenter.yaml` | Node auto-provisioning |
 | `metrics-server.yaml` | CPU/memory metrics for HPA |

@@ -104,7 +104,11 @@ export async function finalizeDeployment(jobId: string) {
 	if (meta.cluster_name) clusterUpdate.cluster_name = meta.cluster_name;
 	if (meta.cluster_endpoint)
 		clusterUpdate.cluster_endpoint = meta.cluster_endpoint;
-	if (meta.argocd_url) clusterUpdate.argocd_url = meta.argocd_url;
+	// argocd_url reflects THIS deploy: the runner reports it only when an ingress was
+	// actually configured, so an absent key on a successful deploy means "no reachable
+	// URL" and must CLEAR any previously persisted one (older deploys wrote a bogus
+	// https://argocd.<domain> on clouds where no ingress exists).
+	clusterUpdate.argocd_url = meta.argocd_url ?? null;
 	if (meta.argocd_admin_password)
 		clusterUpdate.argocd_admin_password = meta.argocd_admin_password;
 	if (outputs) {
