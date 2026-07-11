@@ -437,6 +437,7 @@ describe("updateRunner", () => {
 		mock.queue.push(
 			[runnerRow], // runner lookup
 			[{ provider: "aws" }], // identity lookup
+			[], // no active lifecycle job for this runner
 			[{ version: "3.4.5" }], // latest release
 			[{ id: "job-up" }], // job insert
 		);
@@ -453,6 +454,15 @@ describe("updateRunner", () => {
 		});
 		expect(jobValues.config_snapshot.image_tag).toBe("3.4.5");
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
+	});
+
+	it("refuses when another lifecycle job is already active for the runner", async () => {
+		mock.queue.push(
+			[runnerRow], // runner lookup
+			[{ provider: "aws" }], // identity lookup
+			[{ id: "active", config_snapshot: { runner_id: "r-up" } }], // active DEPLOY/UPDATE/DESTROY
+		);
+		await expect(updateRunner("r-up")).rejects.toThrow(/already in progress/);
 	});
 
 	it("refuses when the deploy config has no runner token", async () => {
@@ -474,6 +484,7 @@ describe("updateRunner", () => {
 		mock.queue.push(
 			[runnerRow],
 			[{ provider: "aws" }],
+			[], // no active lifecycle job for this runner
 			[], // no releases
 		);
 		await expect(updateRunner("r-up")).rejects.toThrow(/No runner releases/);
