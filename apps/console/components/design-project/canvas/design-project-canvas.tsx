@@ -106,6 +106,10 @@ function CanvasInner({
 	const redo = useCanvasStore((s) => s.redo);
 	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
 	const setChartNodes = useCanvasStore((s) => s.setChartNodes);
+	// The project's effective cloud provider — drives the add-on sheet's requirement hints.
+	const effectiveProvider = useCanvasStore((s) =>
+		s.getEffectiveProvider(PROJECT_NODE_ID),
+	);
 
 	// The standalone (create-flow) dock — the project shell owns it otherwise (`dockInShell`).
 	const dock = useDockState(true);
@@ -359,6 +363,7 @@ function CanvasInner({
 					projectId={projectId}
 					environmentId={environmentId ?? null}
 					hasAppsRepo={addonsQuery.data?.hasAppsRepo ?? false}
+					provider={effectiveProvider}
 					open={addonSheetOpen}
 					onOpenChange={setAddonSheetOpen}
 				/>
