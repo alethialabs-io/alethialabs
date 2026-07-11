@@ -9,6 +9,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+	buildEgressAllowlist,
 	getHcloudFleetProvider,
 	hcloudConfigFromEnv,
 	renderCloudInit,
@@ -28,6 +29,11 @@ const HCLOUD_ENV_KEYS = [
 	"HCLOUD_SSH_KEYS",
 	"FLEET_RUNNER_IMAGE_TAG",
 	"FLEET_RUNNER_SLOTS",
+	"FLEET_SANDBOX_CONTAINER",
+	"FLEET_SANDBOX_EGRESS_ENFORCED",
+	"FLEET_SANDBOX_ENFORCE_MANAGED",
+	"FLEET_EGRESS_EXTRA_DOMAINS",
+	"FLEET_EGRESS_PROXY_IMAGE",
 ] as const;
 
 const savedEnv: Record<string, string | undefined> = {};
@@ -51,6 +57,11 @@ function baseCfg(over: Partial<HcloudConfig> = {}): HcloudConfig {
 		defaultImageTag: "latest",
 		webOrigin: "https://app.test",
 		slots: 2,
+		sandboxContainer: false,
+		sandboxEgressEnforced: false,
+		sandboxEnforceManaged: false,
+		egressExtraDomains: [],
+		egressProxyImage: "ubuntu/squid:latest",
 		...over,
 	};
 }
@@ -142,6 +153,37 @@ describe("hcloudConfigFromEnv", () => {
 		process.env.FLEET_RUNNER_SLOTS = "not-a-number";
 		expect(hcloudConfigFromEnv().slots).toBe(1);
 	});
+
+	it("defaults the 3b sandbox flags OFF and reads them when set (config-gated turn-on)", () => {
+		process.env.HCLOUD_TOKEN = "tok";
+		process.env.ALETHIA_WEB_ORIGIN = "https://app.test";
+		process.env.ALETHIA_RUNNER_BOOTSTRAP_TOKEN = "boot";
+		delete process.env.FLEET_SANDBOX_CONTAINER;
+		delete process.env.FLEET_SANDBOX_EGRESS_ENFORCED;
+		delete process.env.FLEET_SANDBOX_ENFORCE_MANAGED;
+		delete process.env.FLEET_EGRESS_EXTRA_DOMAINS;
+		delete process.env.FLEET_EGRESS_PROXY_IMAGE;
+
+		const off = hcloudConfigFromEnv();
+		expect(off.sandboxContainer).toBe(false);
+		expect(off.sandboxEgressEnforced).toBe(false);
+		expect(off.sandboxEnforceManaged).toBe(false);
+		expect(off.egressExtraDomains).toEqual([]);
+		expect(off.egressProxyImage).toBe("ubuntu/squid:latest");
+
+		process.env.FLEET_SANDBOX_CONTAINER = "true";
+		process.env.FLEET_SANDBOX_EGRESS_ENFORCED = "1";
+		process.env.FLEET_SANDBOX_ENFORCE_MANAGED = "yes";
+		process.env.FLEET_EGRESS_EXTRA_DOMAINS = " charts.example.com , , foo.test ";
+		process.env.FLEET_EGRESS_PROXY_IMAGE = "ubuntu/squid@sha256:abc";
+
+		const on = hcloudConfigFromEnv();
+		expect(on.sandboxContainer).toBe(true);
+		expect(on.sandboxEgressEnforced).toBe(true);
+		expect(on.sandboxEnforceManaged).toBe(true);
+		expect(on.egressExtraDomains).toEqual(["charts.example.com", "foo.test"]);
+		expect(on.egressProxyImage).toBe("ubuntu/squid@sha256:abc");
+	});
 });
 
 describe("renderCloudInit", () => {
@@ -167,6 +209,108 @@ describe("renderCloudInit", () => {
 		// The runner still gets what it needs to self-register + reach the console.
 		expect(out).toContain('-e ALETHIA_WEB_ORIGIN="https://app.test"');
 		expect(out).toContain('-e ALETHIA_RUNNER_BOOTSTRAP_TOKEN="vm-boot-tok"');
+	});
+
+	it("with sandboxContainer OFF renders NO 3b machinery (trusted path unchanged)", () => {
+		const out = renderCloudInit(baseCfg({ sandboxContainer: false }), "aws", null, "vm-boot-tok");
+		expect(out).not.toContain("alethia-egress");
+		expect(out).not.toContain("squid");
+		expect(out).not.toContain("/dev/fuse");
+		expect(out).not.toContain("ALETHIA_SANDBOX_");
+		expect(out).not.toContain("HTTP_PROXY");
+		// A single docker run, exactly as before.
+		expect(out).toContain("docker run -d --init --restart=always --name alethia-runner");
+	});
+});
+
+describe("renderCloudInit — E0 3b (sandboxContainer ON)", () => {
+	const cfg3b = (over: Partial<HcloudConfig> = {}) => baseCfg({ sandboxContainer: true, ...over });
+
+	it("stands up the default-deny egress net + domain-allowlist proxy + container-backend runner", () => {
+		const out = renderCloudInit(cfg3b(), "aws", null, "vm-boot-tok");
+		// default-deny egress net + bridged forward proxy
+		expect(out).toContain("docker network create --internal alethia-egress");
+		expect(out).toContain("--name alethia-egress-proxy --network alethia-egress");
+		expect(out).toContain("ubuntu/squid:latest");
+		expect(out).toContain("docker network connect bridge alethia-egress-proxy");
+		// runner: nested-podman flags + on the IMDS-less net
+		expect(out).toContain("--network alethia-egress --device /dev/fuse");
+		expect(out).toContain("--security-opt seccomp=unconfined");
+		expect(out).toContain("--security-opt apparmor=unconfined");
+		expect(out).toContain("--security-opt systempaths=unconfined");
+		// sandbox + proxy env
+		expect(out).toContain('-e ALETHIA_SANDBOX_BACKEND="container"');
+		expect(out).toContain('-e ALETHIA_SANDBOX_RUNTIME="podman"');
+		expect(out).toContain('-e ALETHIA_SANDBOX_IMAGE="ghcr.io/alethialabs-io/runner-aws:latest"');
+		expect(out).toContain('-e ALETHIA_SANDBOX_NETWORK="host"');
+		expect(out).toContain('-e HTTP_PROXY="http://alethia-egress-proxy:3128"');
+		expect(out).toContain('-e HTTPS_PROXY="http://alethia-egress-proxy:3128"');
+		// instance-id passed from the host (runner needs no metadata egress); IMDS belt
+		expect(out).toContain('-e ALETHIA_RUNNER_INSTANCE_ID="$INSTANCE_ID"');
+		expect(out).toContain("iptables -I DOCKER-USER -d 169.254.169.254 -j DROP");
+		// still no storage creds
+		expect(out).not.toContain("ALETHIA_STORAGE_");
+	});
+
+	it("keeps NO_PROXY minimal — never the metadata IP / link-local / wildcard", () => {
+		const out = renderCloudInit(cfg3b(), "gcp", null, "vm-boot-tok");
+		expect(out).toContain('-e NO_PROXY="localhost,127.0.0.1"');
+		expect(out).not.toMatch(/NO_PROXY="[^"]*169\.254/);
+		expect(out).not.toMatch(/NO_PROXY="[^"]*\*/);
+	});
+
+	it("gates EGRESS_ENFORCED + ENFORCE_MANAGED behind their own flags (fail-closed until proven)", () => {
+		const plain = renderCloudInit(cfg3b(), "aws", null, "t");
+		expect(plain).not.toContain("ALETHIA_SANDBOX_EGRESS_ENFORCED");
+		expect(plain).not.toContain("ALETHIA_SANDBOX_ENFORCE_MANAGED");
+
+		const enforced = renderCloudInit(
+			cfg3b({ sandboxEgressEnforced: true, sandboxEnforceManaged: true }),
+			"aws",
+			null,
+			"t",
+		);
+		expect(enforced).toContain('-e ALETHIA_SANDBOX_EGRESS_ENFORCED="1"');
+		expect(enforced).toContain('-e ALETHIA_SANDBOX_ENFORCE_MANAGED="1"');
+	});
+
+	it("renders the squid allowlist with the console origin + per-cloud + extra domains", () => {
+		const out = renderCloudInit(
+			cfg3b({ egressExtraDomains: ["charts.example.com"] }),
+			"alibaba",
+			null,
+			"t",
+		);
+		expect(out).toContain("acl allowed dstdomain app.test");
+		expect(out).toContain("acl allowed dstdomain .aliyuncs.com");
+		expect(out).toContain("acl allowed dstdomain registry.opentofu.org");
+		expect(out).toContain("acl allowed dstdomain ghcr.io");
+		expect(out).toContain("acl allowed dstdomain charts.example.com");
+		expect(out).toContain("http_access deny all");
+	});
+});
+
+describe("buildEgressAllowlist", () => {
+	it("includes console host + base + per-cloud + extras, deduped, no metadata IP", () => {
+		const list = buildEgressAllowlist(
+			baseCfg({ egressExtraDomains: ["a.test", "a.test"] }),
+			"azure",
+		);
+		expect(list).toContain("app.test"); // console origin host
+		expect(list).toContain(".azure.com");
+		expect(list).toContain(".microsoftonline.com");
+		expect(list).toContain("registry.opentofu.org");
+		expect(list).toContain("a.test");
+		// deduped
+		expect(list.filter((d) => d === "a.test")).toHaveLength(1);
+		// the metadata IP is never a domain in the allowlist
+		expect(list).not.toContain("169.254.169.254");
+	});
+
+	it("returns only base + extras for an unknown provider", () => {
+		const list = buildEgressAllowlist(baseCfg(), "digitalocean");
+		expect(list).toContain("registry.opentofu.org");
+		expect(list).not.toContain(".amazonaws.com");
 	});
 });
 
