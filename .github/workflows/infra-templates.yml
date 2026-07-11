@@ -12,9 +12,10 @@ on:
     paths:
       - 'infra/templates/**'
 
-# The customer project templates (infra/templates/project/{aws,gcp,azure}) are applied at
-# provision time by the runner, NOT by this repo's CI. So this workflow only gates them with
-# credential-free static checks: fmt + validate + tflint + Trivy misconfig. No apply.
+# The customer project templates (infra/templates/project/{aws,gcp,azure,hetzner,alibaba}) are
+# applied at provision time by the runner, NOT by this repo's CI. So this workflow gates them with
+# credential-free static checks: fmt + validate + tflint + Trivy misconfig + the plan-out-safety
+# guard (below). No apply.
 
 permissions:
   contents: read
@@ -23,12 +24,24 @@ env:
   TOFU_VERSION: "1.10.10"
 
 jobs:
+  # The runner deploys via `tofu plan -out` → apply that saved plan. A provider configured from
+  # a cluster's own known-after-apply kubeconfig can't resolve at plan, so the runner can never
+  # deploy such a template — this shipped undetected on Hetzner (#295) because CI only ran
+  # `tofu validate` (which never evaluates provider configs). This guard makes that bug class
+  # non-regressable, credential-free.
+  plan-out-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Project templates must be plan-out-safe (no in-tofu k8s-apply resources)
+        run: bash scripts/check-templates-plan-safe.sh
+
   check:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        cloud: [aws, gcp, azure]
+        cloud: [aws, gcp, azure, hetzner, alibaba]
     steps:
       - uses: actions/checkout@v4
       - uses: opentofu/setup-opentofu@v1
