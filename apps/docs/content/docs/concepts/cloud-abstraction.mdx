@@ -35,6 +35,22 @@ The registry (`lib/cloud-providers/registry.ts`) maps each capability to the pro
 | WAF | AWS WAFv2 | Cloud Armor | Azure WAF | Alibaba WAF | — |
 | Certificate / CDN | ACM + CloudFront | Managed Certificate | App Service Certificate | Managed Certificate | — |
 
+## Infra services (post-apply)
+
+After `tofu apply`, the Runner wires a set of **in-cluster infra services** over ArgoCD (external-dns, the external-secrets store, ingress, the default storage class, the ArgoCD URL). Not every service maps cleanly to every cloud — some are cloud-inherent gaps, not bugs. Rather than silently omit a service (or ship it broken), the pipeline records a **machine-readable per-service decision** with an honest reason — the same `not_evaluable`/"honest N/A" discipline the [verify gate](/concepts/security) applies to the plan.
+
+The decisions come from `argocd.InfraServiceDecisions` (`packages/core/argocd/decisions.go`), computed from the **same gates** the templates render against (`InfraFacts.DNSProvider()`, the per-cloud ClusterSecretStore conditions), so a recorded decision can never drift from what actually shipped. The Runner forwards them on `execution_metadata["infra_services"]` (status + reason only — non-sensitive), and the console renders them alongside the add-on status.
+
+| Infra service | AWS | GCP | Azure | Alibaba | Hetzner |
+|---------------|-----|-----|-------|---------|---------|
+| external-dns | installed (Route 53, IRSA) | installed when Workload Identity SA present | installed when managed-identity present | **N/A** — alibabacloud provider has no RRSA support upstream ([external-dns#5019](https://github.com/kubernetes-sigs/external-dns/issues/5019)); manage AliDNS outside the cluster | installed (Hetzner webhook) when a Cloud API token is connected |
+| external-secrets store | installed (Secrets Manager, IRSA) | installed (Secret Manager, WI) | installed (Key Vault, WI) | installed (KMS Secrets Manager, RRSA) | **N/A** — no cloud secret store; use the [Vault connector](/concepts/connectors) |
+| ingress | installed (ALB controller) | skipped — cloud LB available; install the ingress-nginx add-on | skipped — install the ingress-nginx add-on | skipped — install the ingress-nginx add-on | skipped — install the ingress-nginx add-on |
+| storage class | installed (gp3, default) | built-in default (standard-rwo) | built-in default (managed-csi) | verify a default-annotated alicloud-disk class | installed (hcloud-volumes, default) |
+| ArgoCD URL | installed (ALB ingress, ACM cert) | skipped — no managed ingress yet; port-forward + admin password | skipped — port-forward + admin password | skipped — port-forward + admin password | skipped — port-forward + admin password |
+
+Each cell above is exactly what the pipeline records per deploy: an `installed`/`skipped` status plus a human-readable reason. A skip always states **why** and the **alternative** — so an operator never has to guess whether a missing service is a gap or a deliberate cloud-inherent N/A.
+
 ## Region Mapping
 
 Regions are mapped across providers for cross-cloud Project duplication:

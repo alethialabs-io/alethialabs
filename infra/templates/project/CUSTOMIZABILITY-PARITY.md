@@ -58,6 +58,33 @@ parity is delivered at the cluster layer:
 
 So there is no observability template gap to close — it runs on every cluster regardless of cloud.
 
+## Cloud-inherent skips (not gaps)
+
+Some per-cloud differences are **not** parity gaps to close — the cloud simply has no analogue, so
+the honest thing is to record the skip (and its alternative), not paper over it. These are surfaced
+as machine-readable per-service decisions (`packages/core/argocd/decisions.go`, forwarded on
+`execution_metadata["infra_services"]`) and in the [cloud-abstraction docs](../../../apps/docs/content/docs/concepts/cloud-abstraction.mdx#infra-services-post-apply):
+
+- **Alibaba Database `IamAuth`** — ApsaraDB RDS has no IAM-database-authentication analogue, so the
+  shared `iam_auth` toggle is a no-op on Alibaba (AWS Aurora / GCP Cloud SQL / Azure DB support it).
+- **Aurora-only `rds_scaling_config`** — serverless-v2 min/max ACU capacity is an Aurora concept; GCP
+  Cloud SQL / Azure Database use fixed vCPU/vCore tiers, so the scaling-config block is AWS-only.
+- **`ClusterAdmins` on gcp / alibaba / hetzner** — cluster-admin binding is granted **outside** the
+  template on these clouds (GKE via IAM, ACK via RAM, Talos via the emitted `talosconfig`/kubeconfig),
+  so there is no in-template `cluster_admins` knob to wire there.
+- **external-dns on Alibaba** — the alibabacloud external-dns provider has **no RRSA support upstream**
+  ([external-dns#5019](https://github.com/kubernetes-sigs/external-dns/issues/5019)); external-dns is
+  skipped on Alibaba until that lands. Manage AliDNS records outside the cluster meanwhile.
+- **External secrets store on Hetzner** — Hetzner has no cloud secret manager; there is no
+  ClusterSecretStore to install. Source secrets via the **Vault connector** instead.
+
+### One real backlog item (a genuine analogue worth adding)
+
+- **Azure `ClusterAdmins` → `admin_group_object_ids`** — unlike gcp/alibaba/hetzner above, AKS **does**
+  have a native in-template analogue: AAD RBAC via `azurerm_kubernetes_cluster.azure_active_directory_role_based_access_control.admin_group_object_ids`.
+  Wiring the shared `cluster_admins` list to it would give Azure genuine cluster-admin parity. Backlog
+  (Phase A.2), not a cloud-inherent skip.
+
 ## Status
 
 - **checks.tf** invariants: added to aws/gcp/azure (done, this phase).
