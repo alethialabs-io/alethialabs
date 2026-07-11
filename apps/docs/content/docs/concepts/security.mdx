@@ -195,8 +195,9 @@ Three properties keep the blast radius of a single job to that one job:
 The container boundary is what actually contains a hostile provider (env-scrubbing alone doesn't — a child
 sharing the worker's PID namespace can read the parent's `/proc`). Until it is enabled and verified on the
 fleet, managed **untrusted** BYO stays gated off; trusted provisioning is unaffected. Operators turn it on per
-the [managed provisioning runbook](/self-hosting/managed-provisioning#untrusted-byo-container-sandbox-3b); the
-engineering detail lives in the `packages/core/sandbox` package README.
+the [managed provisioning runbook](/self-hosting/managed-provisioning#untrusted-byo-container-sandbox-3b). See
+[Isolated Execution](/isolated-execution) for the full picture; the engineering detail lives in the
+`packages/core/sandbox` package README.
 
 ## CLI Authentication (RFC 8628)
 

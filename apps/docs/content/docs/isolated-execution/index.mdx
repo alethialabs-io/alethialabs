@@ -1,0 +1,79 @@
+---
+title: Isolated Execution
+description: When Alethia runs your bring-your-own Terraform or Helm on the managed fleet, each job runs in a per-job sealed sandbox — no shared secrets, no cloud metadata, default-deny domain-allowlisted egress.
+---
+
+# Isolated Execution
+
+Zero-credential connections control **who** can touch a cloud. Isolated execution controls what the
+**provisioning code itself** can do once it runs. When Alethia runs *your* code — bring-your-own Terraform
+providers, `external` data sources, Helm charts and their hooks — on the **managed fleet**, that code is
+arbitrary. Isolated execution is the boundary that runs it **sealed off** from the platform.
+
+<Callout type="info">
+  **What this is — and isn't.** This is the isolation boundary that makes *managed bring-your-own execution*
+  safe: a per-job sandbox with an allowlisted environment and a locked-down network. It is **not** a
+  general-purpose "spin up a sandbox and run anything" service, and there is no customer-invokable sandbox API
+  today — a customer-facing sandbox/preview surface is on the roadmap. What ships now is the **guarantee**
+  underneath managed BYO: your code can't reach the platform's secrets, the cloud metadata service, or the
+  open internet.
+</Callout>
+
+## The trust model
+
+Alethia runs two kinds of code, and treats them differently:
+
+- **Trusted templates** — Alethia's own project templates (EKS / GKE / AKS / ACK / Talos + supporting
+  services). Reviewed platform code, so it runs in-process on the runner. This is every managed provision
+  today.
+- **Untrusted bring-your-own** — your Terraform / Helm. Arbitrary code, so on the managed fleet it runs in a
+  **per-job container sandbox**: a fresh container per job, its own PID namespace, an allowlisted environment
+  (no runner token, no storage key, no signing key — only the short-lived, job-scoped cloud credentials the
+  job actually needs), read-only credential mounts, and a **default-deny, domain-allowlisted** network.
+
+The container is what actually contains a hostile provider. Scrubbing environment variables at the last
+moment does **not** — a child process sharing the worker's PID namespace can just read the parent's
+`/proc/1/environ`. Only a real uid / pid / net namespace boundary contains it.
+
+## The guarantees
+
+For an untrusted job on the managed fleet:
+
+| Guarantee | How |
+| --- | --- |
+| **No platform secrets** | The child gets an allowlist-only environment; a fail-closed guard refuses to start the container if any platform secret (runner token, storage key, signing key) would leak in. |
+| **No cross-job state** | Terraform state goes through a console **state proxy** with a per-job, key-scoped token — one job's token can only touch its own state. The runner holds no object-storage credential. |
+| **No cloud metadata** | The child has no network route of its own; it reaches only a domain-allowlist forward proxy, so `169.254.169.254` (which serves the VM's boot config) is unreachable by construction. |
+| **No open egress** | Only the registries, Git hosts, and the target cloud's API are reachable — everything else is default-denied. |
+| **No host reach** | Its own PID namespace, dropped capabilities, no-new-privileges, read-only root, resource limits. |
+
+## Why it matters
+
+Alethia sits in the gap between IaC orchestrators (which run *your IaC* on shared workers) and BYOC PaaSes
+(which run *your apps*). Running **bring-your-own infrastructure code in a per-job sealed sandbox** is the
+execution-trust complement to the [zero-credential](/concepts/security) connection model — and the safety
+floor under the "proof, not just generation" story ([Elench](/elench) verifies *what* the change does; this
+contains *how* it runs).
+
+## Availability
+
+Isolated execution applies to the **managed fleet**. Bring-your-own Helm/IaC is gated by
+`ALETHIA_BYO_HELM_ENABLED` and, until the container backend is enabled and verified on the fleet, stays
+trusted-templates-only. Operators turn it on per the
+[managed provisioning runbook](/self-hosting/managed-provisioning#untrusted-byo-container-sandbox-3b).
+
+## Where to go next
+
+<Cards>
+  <Card title="Architecture" href="/isolated-execution/architecture">
+    The mechanism: the per-job container, the environment allowlist + fail-closed guard, PID/network
+    isolation, read-only credential mounts, the state-proxy source-drop, per-job / per-VM tokens, and the
+    default-deny domain-allowlist egress.
+  </Card>
+  <Card title="Security Architecture" href="/concepts/security#execution-isolation-managed-untrusted-byo">
+    Where isolated execution sits in the overall zero-credential / OIDC security model.
+  </Card>
+  <Card title="Managed provisioning runbook" href="/self-hosting/managed-provisioning">
+    The operator guide to the managed fleet + the 3b turn-on sequence for the container sandbox.
+  </Card>
+</Cards>
