@@ -22,3 +22,9 @@ output "talosconfig" {
   value       = data.talos_client_configuration.this.talos_config
   sensitive   = true
 }
+
+output "bootstrap_manifests" {
+  description = "CNI + cloud-integration manifests (hcloud Secret -> Cilium -> hcloud-CCM -> hcloud-CSI), rendered offline. The runner applies these post-apply (kubectl apply) before the reachability gate: Talos is CNI=none, so nodes stay NotReady until this is applied. Emitted as an output (not applied in-tofu) to keep 'tofu plan -out' resolvable and stay under Hetzner's 32 KiB cloud-init user_data limit."
+  value       = local.bootstrap_manifests
+  sensitive   = true
+}

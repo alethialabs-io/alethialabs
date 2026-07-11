@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 # ---------------------------------------------------------------------------
-# CNI + cloud integration — rendered offline, applied by Talos.
+# CNI + cloud integration — rendered offline, applied post-apply by the runner.
 #
 #   * Cilium in kube-proxy-replacement / native-routing mode (Talos disables
 #     the built-in CNI + kube-proxy, so Cilium owns pod networking).
@@ -10,14 +10,16 @@
 #     routing (Pod CIDR routes on the Hetzner network).
 #
 # Both are rendered to plain manifests with the `helm_template` DATA source
-# (offline — no cluster connection, resolves at plan time) and delivered via
-# Talos `cluster.inlineManifests` (see talos.tf). There is deliberately NO
-# in-tofu `kubectl`/`helm` PROVIDER wired from the cluster's own (known-after-
-# apply) kubeconfig: that made the provider unresolvable under `tofu plan -out`
-# — the runner's path (tofu.go `Plan(tfexec.Out(...))`) — so the runner could
-# never deploy this template. Talos applying the manifests from its machine
-# config during bootstrap also means CNI is up before the API is used (no race
-# with the reachability probe / ArgoCD) and nothing pushes CNI over the network.
+# (offline — no cluster connection, resolves at plan time) and exported via the
+# `bootstrap_manifests` OUTPUT (see talos.tf / outputs.tf). The runner applies
+# them with `kubectl` AFTER apply, before the reachability gate. There is
+# deliberately NO in-tofu `kubectl`/`helm` PROVIDER wired from the cluster's own
+# (known-after-apply) kubeconfig: that made the provider unresolvable under
+# `tofu plan -out` — the runner's path (tofu.go `Plan(tfexec.Out(...))`) — so the
+# runner could never deploy this template. (These are large — Cilium alone busts
+# Hetzner's 32 KiB cloud-init user_data limit — so they can't ride in the Talos
+# machine config as inlineManifests; post-apply also matches how the managed
+# clouds do their post-cluster work.)
 # ---------------------------------------------------------------------------
 
 locals {

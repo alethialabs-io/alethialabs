@@ -63,40 +63,33 @@ locals {
     }
   }
 
-  # The `hcloud` Secret (token + private-network id) that the CCM + CSI read.
+  control_plane_patches = [yamlencode(local.common_machine_patch), yamlencode(local.cluster_patch)]
+  worker_patches        = [yamlencode(local.common_machine_patch), yamlencode(local.cluster_patch)]
+
+  # Bootstrap manifests (CNI + cloud integration), rendered OFFLINE by the `helm_template`
+  # data sources (cilium.tf / csi.tf) and applied POST-APPLY by the runner (`kubectl apply`),
+  # NOT embedded in the Talos machine config. Two reasons this beats Talos inlineManifests
+  # here: (1) the machine config ships as Hetzner cloud-init `user_data`, capped at 32 KiB —
+  # Cilium's rendered manifest alone blows that; (2) it keeps the runner's post-cluster path
+  # consistent with the managed clouds (which apply ArgoCD/add-ons post-apply). It still
+  # avoids the in-tofu `kubectl` provider (the `plan -out` bug), because these are OUTPUTS
+  # (offline data sources), never applied in-tofu. Order: Secret → Cilium (CNI) → CCM → CSI.
   hcloud_secret_manifest = yamlencode({
     apiVersion = "v1"
     kind       = "Secret"
-    metadata = {
-      name      = "hcloud"
-      namespace = "kube-system"
-    }
-    type = "Opaque"
+    metadata   = { name = "hcloud", namespace = "kube-system" }
+    type       = "Opaque"
     data = {
       token   = base64encode(var.hcloud_token)
       network = base64encode(tostring(hcloud_network.this.id))
     }
   })
-
-  # Control-plane cluster patch = base + Talos `inlineManifests`. Talos applies these
-  # during bootstrap (before it reports the cluster up), so CNI + cloud integration come
-  # up with no in-tofu kubectl provider wired from the cluster's own kubeconfig — which is
-  # what let `tofu plan -out` (the runner's path) fail before. The manifests are rendered
-  # offline by the `helm_template` data sources (cilium.tf / csi.tf); order matters: the
-  # Secret first, then Cilium (CNI), then the CCM + CSI which consume it.
-  cluster_patch_cp = {
-    cluster = merge(local.cluster_patch.cluster, {
-      inlineManifests = [
-        { name = "hcloud-secret", contents = local.hcloud_secret_manifest },
-        { name = "cilium", contents = data.helm_template.cilium.manifest },
-        { name = "hcloud-ccm", contents = data.helm_template.hcloud_ccm.manifest },
-        { name = "hcloud-csi", contents = data.helm_template.hcloud_csi.manifest },
-      ]
-    })
-  }
-
-  control_plane_patches = [yamlencode(local.common_machine_patch), yamlencode(local.cluster_patch_cp)]
-  worker_patches        = [yamlencode(local.common_machine_patch), yamlencode(local.cluster_patch)]
+  bootstrap_manifests = join("\n---\n", [
+    local.hcloud_secret_manifest,
+    data.helm_template.cilium.manifest,
+    data.helm_template.hcloud_ccm.manifest,
+    data.helm_template.hcloud_csi.manifest,
+  ])
 }
 
 data "talos_machine_configuration" "control_plane" {
