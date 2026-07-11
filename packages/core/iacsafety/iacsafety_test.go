@@ -174,6 +174,59 @@ func TestScanFixtures(t *testing.T) {
 			wantModules:   []string{},
 		},
 		{
+			// ephemeral (tofu 1.10+) instantiates a provider at plan like data/
+			// resource — a non-allowlisted implied provider must still be gated.
+			name:          "ephemeralvault",
+			wantOK:        false,
+			wantFindings:  []string{"error:provider-implied"},
+			wantProviders: []string{},
+			wantModules:   []string{},
+		},
+		{
+			// ephemeral in .tf.json is gated identically.
+			name:          "ephemeraljson",
+			wantOK:        false,
+			wantFindings:  []string{"error:provider-implied"},
+			wantProviders: []string{},
+			wantModules:   []string{},
+		},
+		{
+			// import (tofu 1.5+) pulls the provider of its `to` address at init —
+			// gate the implied provider from the `to` resource type.
+			name:          "importvault",
+			wantOK:        false,
+			wantFindings:  []string{"error:provider-implied"},
+			wantProviders: []string{},
+			wantModules:   []string{},
+		},
+		{
+			// import in .tf.json is gated identically.
+			name:          "importjson",
+			wantOK:        false,
+			wantFindings:  []string{"error:provider-implied"},
+			wantProviders: []string{},
+			wantModules:   []string{},
+		},
+		{
+			// A module-nested `to` address (module.storage.aws_s3_bucket.assets)
+			// resolves to the aws resource type, which IS allowlisted → passes,
+			// proving the module-address parsing finds the real type.
+			name:          "importmodule",
+			wantOK:        true,
+			wantFindings:  []string{},
+			wantProviders: []string{},
+			wantModules:   []string{},
+		},
+		{
+			// An ephemeral resource whose provider IS allowlisted (random) passes,
+			// proving the gate doesn't false-positive on legitimate ephemerals.
+			name:          "ephemeralclean",
+			wantOK:        true,
+			wantFindings:  []string{},
+			wantProviders: []string{"hashicorp/random"},
+			wantModules:   []string{},
+		},
+		{
 			// .tofu files are first-class OpenTofu config and must be scanned
 			// exactly like .tf — evil provider, provisioner, and data "external"
 			// all caught.

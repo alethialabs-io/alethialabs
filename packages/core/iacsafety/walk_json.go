@@ -40,11 +40,17 @@ var jsonTopSchema = &hcl.BodySchema{
 	Blocks: []hcl.BlockHeaderSchema{
 		{Type: "terraform"},
 		{Type: "resource", LabelNames: []string{"type", "name"}},
+		{Type: "ephemeral", LabelNames: []string{"type", "name"}},
 		{Type: "data", LabelNames: []string{"type", "name"}},
 		{Type: "module", LabelNames: []string{"name"}},
 		{Type: "provider", LabelNames: []string{"name"}},
 		{Type: "check", LabelNames: []string{"name"}},
+		{Type: "import"},
 	},
+}
+
+var jsonImportSchema = &hcl.BodySchema{
+	Attributes: []hcl.AttributeSchema{{Name: "to"}},
 }
 
 var jsonCheckSchema = &hcl.BodySchema{
@@ -86,10 +92,14 @@ func (s *scanner) scanJSONFile(path, moduleDir string) {
 			switch blk.Type {
 			case "terraform":
 				s.walkJSONTerraformBlock(blk, rel)
-			case "resource":
+			case "resource", "ephemeral":
+				// `ephemeral` (tofu 1.10+) instantiates a provider at plan like
+				// resource/data — gate its implied provider too.
 				if len(blk.Labels) > 0 {
 					s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange.Start.Line)
 				}
+			case "import":
+				s.walkJSONImportBlock(blk, rel)
 			case "data":
 				// Implied-provider recording only: the external/http/
 				// terraform_remote_state findings come from the raw sweep,
@@ -129,6 +139,48 @@ func (s *scanner) walkJSONCheckBlock(blk *hcl.Block, rel string) {
 			s.recordImpliedUse(inner.Labels[0], rel, inner.DefRange.Start.Line)
 		}
 	}
+}
+
+// walkJSONImportBlock resolves the provider implied by a JSON import block's
+// `to` address (a string like "vault_kv_secret_v2.x") and gates it.
+func (s *scanner) walkJSONImportBlock(blk *hcl.Block, rel string) {
+	content, _, diags := blk.Body.PartialContent(jsonImportSchema)
+	if diags.HasErrors() || content == nil {
+		return
+	}
+	attr, ok := content.Attributes["to"]
+	if !ok {
+		return
+	}
+	line := attr.Range.Start.Line
+	// In JSON the `to` traversal is expressed as a string address; the resource
+	// type is the second-to-last dotted segment (address ends in TYPE.NAME).
+	if v, d := attr.Expr.Value(nil); !d.HasErrors() && v.Type().Equals(cty.String) && !v.IsNull() {
+		if t := resourceTypeFromSegments(splitDots(v.AsString())); t != "" {
+			s.recordImpliedUse(t, rel, line)
+		}
+		return
+	}
+	// Non-literal `to` (a traversal expression in JSON): use the same segment rule.
+	for _, v := range attr.Expr.Variables() {
+		if t := resourceTypeFromSegments(traversalNames(v)); t != "" {
+			s.recordImpliedUse(t, rel, line)
+			return
+		}
+	}
+}
+
+// splitDots splits a dotted address into its segments.
+func splitDots(s string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '.' {
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	return append(out, s[start:])
 }
 
 // walkJSONTerraformBlock handles a terraform{} block from a .tf.json file.

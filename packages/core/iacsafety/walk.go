@@ -33,7 +33,9 @@ func (s *scanner) scanNativeFile(path, moduleDir string) {
 		switch blk.Type {
 		case "terraform":
 			s.walkTerraformBlock(blk, rel)
-		case "resource":
+		case "resource", "ephemeral":
+			// `ephemeral` (tofu 1.10+) instantiates a provider at plan time exactly
+			// like `resource`/`data`, so its implied provider must be gated too.
 			if len(blk.Labels) > 0 {
 				s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange().Start.Line)
 			}
@@ -43,6 +45,10 @@ func (s *scanner) scanNativeFile(path, moduleDir string) {
 			if len(blk.Labels) > 0 {
 				s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange().Start.Line)
 			}
+		case "import":
+			// `import` (tofu 1.5+) pulls in the provider of the `to` address's
+			// resource type at init/plan, so gate the implied provider from it.
+			s.checkImportBlock(blk, rel)
 		}
 	}
 
@@ -102,6 +108,53 @@ func (s *scanner) checkDataBlock(labels []string, rel string, line int) {
 			`data "terraform_remote_state" reads arbitrary remote state during plan`)
 	}
 	s.recordImpliedUse(labels[0], rel, line)
+}
+
+// checkImportBlock resolves the provider implied by an import block's `to`
+// address (e.g. `to = vault_kv_secret_v2.x` implies the vault provider) and
+// gates it. The `to` expression is a resource traversal, not a literal, so we
+// read the root type name from its variable traversal rather than evaluating it.
+func (s *scanner) checkImportBlock(blk *hclsyntax.Block, rel string) {
+	attr, ok := blk.Body.Attributes["to"]
+	if !ok {
+		return
+	}
+	line := attr.SrcRange.Start.Line
+	// A resource address (`vault_kv_secret_v2.x`, `module.m.aws_s3_bucket.b`,
+	// `module.a.module.b.aws_s3_bucket.b`) parses as a scope traversal. A resource
+	// address always ends in `TYPE.NAME`, so the resource type is the second-to-last
+	// segment regardless of how many module hops precede it.
+	for _, v := range attr.Expr.Variables() {
+		segs := traversalNames(v)
+		if t := resourceTypeFromSegments(segs); t != "" {
+			s.recordImpliedUse(t, rel, line)
+			return
+		}
+	}
+}
+
+// traversalNames flattens a traversal into its root + attribute name segments.
+func traversalNames(v hcl.Traversal) []string {
+	var out []string
+	for _, step := range v {
+		switch t := step.(type) {
+		case hcl.TraverseRoot:
+			out = append(out, t.Name)
+		case hcl.TraverseAttr:
+			out = append(out, t.Name)
+		}
+	}
+	return out
+}
+
+// resourceTypeFromSegments returns the resource type from a dotted address's
+// name segments. A resource address ends in TYPE.NAME, so the type is the
+// second-to-last segment; "" when the address is too short to be a resource.
+func resourceTypeFromSegments(segs []string) string {
+	if len(segs) < 2 {
+		return ""
+	}
+	return segs[len(segs)-2]
 }
 
 // walkModuleBlock extracts a module block's source, records it, and enqueues
