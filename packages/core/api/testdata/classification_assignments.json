@@ -1,0 +1,10 @@
+{
+	"assignments": [
+		{
+			"dimension_key": "string",
+			"dimension_label": "string",
+			"value": "string",
+			"value_label": "string"
+		}
+	]
+}

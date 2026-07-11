@@ -36,6 +36,10 @@ type apiClient interface {
 	ListRoles() ([]api.Role, error)
 	CreateRole(name string, permissionKeys []string) (*api.Role, error)
 	DeleteRole(roleID string) error
+	ListClassificationDimensions() ([]api.ClassificationDimension, error)
+	GetResourceClassifications(kind, id string) ([]api.ClassificationAssignment, error)
+	AssignClassification(kind, id, dimensionKey, valueSlug string) ([]api.ClassificationAssignment, error)
+	UnassignClassification(kind, id, valueSlug string) error
 	ListGrants() ([]api.Grant, error)
 	AddGrant(params api.AddGrantParams) (*api.Grant, error)
 	RemoveGrant(grantID string) error
