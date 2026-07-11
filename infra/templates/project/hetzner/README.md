@@ -33,10 +33,15 @@ The runner copies this template verbatim, feeds it a `.tfvars.json`, then runs
    [hcloud cloud-controller-manager](https://github.com/hetznercloud/hcloud-cloud-controller-manager),
    and the [hcloud CSI driver](https://github.com/hetznercloud/csi-driver) — all
    rendered offline from their Helm charts (`helm_template` data sources) and
-   delivered to the cluster via Talos `cluster.inlineManifests` (applied by Talos
-   during bootstrap). There is deliberately **no in-tofu `kubectl` provider** wired
-   from the cluster's own (known-after-apply) kubeconfig — that made `tofu plan -out`
-   (the runner's path) unresolvable, so the runner could never deploy this template.
+   exported via the `bootstrap_manifests` output — the runner applies them with
+   `kubectl` **after** apply (Talos ships CNI=none, so nodes stay NotReady until
+   then). They are deliberately NOT embedded as Talos `cluster.inlineManifests`:
+   the machine config rides in Hetzner cloud-init `user_data` (32 KiB cap) and
+   Cilium's rendered manifest alone busts it; post-apply also matches how the
+   managed clouds do their post-cluster work. There is deliberately **no in-tofu
+   `kubectl` provider** wired from the cluster's own (known-after-apply) kubeconfig
+   — that made `tofu plan -out` (the runner's path) unresolvable, so the runner
+   could never deploy this template.
 
 ## Verification
 

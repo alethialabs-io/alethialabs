@@ -8,9 +8,9 @@
 # services (CloudNativePG, Redis, ...). The `hcloud-volumes` StorageClass is
 # made the cluster DEFAULT. Reuses the same `hcloud` Secret (token) as the CCM.
 #
-# Rendered offline via `helm_template` and delivered to the cluster through
-# Talos `cluster.inlineManifests` (see talos.tf) — consistent with Cilium/CCM,
-# and with no in-tofu kubectl provider (so `tofu plan -out` stays resolvable).
+# Rendered offline via `helm_template` and exported via the `bootstrap_manifests` output (talos.tf) and applied post-apply by
+# the runner with kubectl — consistent with Cilium/CCM, no in-tofu kubectl provider (so
+# `tofu plan -out` stays resolvable).
 # ---------------------------------------------------------------------------
 
 locals {

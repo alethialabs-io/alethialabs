@@ -86,6 +86,45 @@ type PlanResult struct {
 	SecurityPosture *argocd.SecurityPosture
 }
 
+// applyBootstrapManifests applies a self-managed cluster's CNI + cloud-integration
+// manifests — the `bootstrap_manifests` tofu output (Talos/Hetzner emits it; managed
+// EKS/GKE/AKS don't, so this is a no-op there). Talos ships CNI=none, so nodes stay
+// NotReady until these are applied. The template renders them offline and emits them as
+// an output (rather than applying them in-tofu via a cluster-wired kubectl provider), so
+// `tofu plan -out` stays resolvable and the machine config stays under Hetzner's 32 KiB
+// user_data limit. Retries a few times for CRD-before-CR ordering / API warm-up.
+func applyBootstrapManifests(ctx context.Context, outputs map[string]interface{}, stdout, stderr io.Writer) error {
+	raw, _ := outputs["bootstrap_manifests"].(string)
+	if strings.TrimSpace(raw) == "" {
+		return nil // managed cluster — CNI comes from the cloud
+	}
+	dir, err := os.MkdirTemp("", "alethia-bootstrap-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "bootstrap.yaml")
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "Bootstrapping cluster CNI + cloud integration (self-managed)...")
+	// Server-side apply handles CRDs + their CRs in one pass more gracefully than a plain apply.
+	cmd := fmt.Sprintf("kubectl apply --server-side --force-conflicts -f %s", path)
+	var lastErr error
+	for attempt := 1; attempt <= 4; attempt++ {
+		if lastErr = utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); lastErr == nil {
+			return nil
+		}
+		fmt.Fprintf(stderr, "CNI bootstrap attempt %d/4 failed (API/CRD not ready yet): %v\n", attempt, lastErr)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(15 * time.Second):
+		}
+	}
+	return fmt.Errorf("kubectl apply of bootstrap manifests failed after retries: %w", lastErr)
+}
+
 // clusterReadyTimeout is how long the reachability gate waits for the cluster (default 15m;
 // override ALETHIA_CLUSTER_READY_TIMEOUT with a Go duration, e.g. "20m", for slow node joins).
 func clusterReadyTimeout() time.Duration {
@@ -396,9 +435,19 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		if err := provider.ConfigureKubeconfig(ctx, vc, outputs, stdout); err != nil {
 			return nil, fmt.Errorf("kubeconfig configuration failed — the cluster was provisioned but is unreachable: %w", err)
 		}
-		// Reachability gate: prove the API server answers and nodes reach Ready before we
-		// call this a working cluster (was: SUCCESS meant only that `tofu apply` exited 0).
 		if !params.DryRun {
+			// Bootstrap CNI + cloud integration for SELF-MANAGED clusters (Talos ships
+			// CNI=none, so nodes stay NotReady until this is applied). The template emits
+			// these as the `bootstrap_manifests` output — rendered offline, applied here via
+			// kubectl rather than in-tofu, which keeps `tofu plan -out` resolvable (no
+			// cluster-wired provider) AND stays under Hetzner's 32 KiB cloud-init user_data
+			// limit (Cilium alone busts it as a Talos inlineManifest). No-op for managed
+			// clusters, which get CNI from the cloud and emit no such output.
+			if err := applyBootstrapManifests(ctx, outputs, stdout, stderr); err != nil {
+				return nil, fmt.Errorf("failed to bootstrap cluster CNI/cloud integration: %w", err)
+			}
+			// Reachability gate: prove the API server answers and nodes reach Ready before we
+			// call this a working cluster (was: SUCCESS meant only that `tofu apply` exited 0).
 			if err := k8s.WaitClusterReady(ctx, clusterReadyTimeout(), clusterReadyRequireNode(), stdout); err != nil {
 				return nil, fmt.Errorf("cluster provisioned but not reachable: %w", err)
 			}
