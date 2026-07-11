@@ -92,12 +92,13 @@ Logs + Kinesis Firehose (log delivery), EventBridge (Karpenter interruption), Ap
 the IAM roles for the in-cluster controllers (external-dns, the AWS Load Balancer Controller, EBS CSI,
 Karpenter, …).
 
-<Callout type="warn">
-**Current default is broad; least-privilege is in progress.** Today the setup attaches `AdministratorAccess`.
-We are replacing it with an **enumerated, per-service policy plus a permissions boundary** that caps every
-IAM role/user the templates create — so the connector role can provision exactly the services above and
-**cannot escalate** (it can't mint a role more powerful than the boundary). You can already attach a tighter
-policy in place of `AdministratorAccess`; the trust relationship is unaffected. Track the scoped policy in the
+<Callout type="info">
+**Least-privilege by default — no account admin.** The setup attaches **four scoped policies** instead of
+`AdministratorAccess`: Compute / Data / Edge (each limited to exactly the services above) and an
+action-enumerated IAM policy that lets the templates create the roles they need but **explicitly denies**
+attaching admin-grade managed policies (`AdministratorAccess`/`PowerUserAccess`/`IAMFullAccess`), scopes
+`PassRole` to the provisioned services, and denies `organizations:*`/`account:*` — so the connector **cannot
+escalate to admin**. A permissions boundary on the created roles is the next hardening increment. See the
 [AWS connector guide](/console/connectors/aws).
 </Callout>
 

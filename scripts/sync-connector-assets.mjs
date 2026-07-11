@@ -22,6 +22,10 @@ const PAIRS = [
 		"infra/connector/aws/alethia-bootstrap.yaml",
 		"apps/console/public/alethia-bootstrap.yaml",
 	],
+	[
+		"infra/connector/aws/alethia-bootstrap.tf",
+		"apps/console/public/connector-terraform/aws.tf",
+	],
 ];
 
 let synced = 0;

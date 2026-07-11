@@ -89,13 +89,14 @@ Manager, DynamoDB, SQS/SNS, ECR, S3, KMS envelope keys, CloudWatch Logs + Kinesi
 (Karpenter), Application Auto Scaling, and the in-cluster controller IAM roles (external-dns, AWS Load
 Balancer Controller, EBS CSI, Karpenter).
 
-<Callout type="warn">
-**Current default is broad; least-privilege is in progress.** Today the CloudFormation/Terraform attaches the
-AWS-managed `AdministratorAccess` policy. We are replacing it with an **enumerated, per-service policy plus a
-permissions boundary** that caps every IAM role/user the templates create, so the role can provision exactly
-the services above and **cannot escalate to admin**. You can already attach a tighter policy in place of
-`AdministratorAccess` — the OIDC trust is unaffected. See the [Security Architecture](/concepts/security) for
-the full model.
+<Callout type="info">
+**Least-privilege by default — no account admin.** The setup attaches **four scoped policies** instead of
+`AdministratorAccess`: `…-Compute`, `…-Data`, `…-Edge` (each limited to exactly the services above), and an
+action-enumerated `…-IAM` policy. The IAM policy lets the templates create the EKS/IRSA roles they need but
+**explicitly denies** attaching `AdministratorAccess`/`PowerUserAccess`/`IAMFullAccess` to anything, scopes
+`PassRole` to the provisioned services, and denies all `organizations:*`/`account:*` — so the role **cannot
+escalate to admin**. A defence-in-depth **permissions boundary** on the created roles is the next hardening
+increment. The OIDC trust is independent of all this.
 </Callout>
 
 ## What's Stored

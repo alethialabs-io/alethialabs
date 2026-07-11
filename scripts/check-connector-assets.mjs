@@ -26,6 +26,10 @@ const PAIRS = [
 		"infra/connector/aws/alethia-bootstrap.yaml",
 		"apps/console/public/alethia-bootstrap.yaml",
 	],
+	[
+		"infra/connector/aws/alethia-bootstrap.tf",
+		"apps/console/public/connector-terraform/aws.tf",
+	],
 ];
 
 /** sha256 of a file, or null if it doesn't exist. */

@@ -87,8 +87,118 @@ Resources:
           }
         - ProviderArn: !Ref AlethiaOidcProvider
           IssuerHost: !Select [1, !Split ['https://', !Ref IssuerUrl]]
-      ManagedPolicyArns:
-        - 'arn:aws:iam::aws:policy/AdministratorAccess'
+      # Least-privilege provisioning policy (replaces AdministratorAccess). Scoped to exactly the
+      # services Alethia's project templates create; the IAM block is action-enumerated and DENIES
+      # attaching admin-grade managed policies to anything it creates (closes IAM escalation), plus
+      # any organizations/account control. See infra/connector/aws/alethia-bootstrap.tf for the
+      # canonical source; keep the two in sync (pnpm sync:connector-assets).
+      Policies:
+        - PolicyName: AlethiaProvisioner-Compute
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ComputeClusterNetworkScaling
+                Effect: Allow
+                Action: ['ec2:*', 'eks:*', 'autoscaling:*', 'application-autoscaling:*', 'elasticloadbalancing:*', 'events:*', 'cloudwatch:*', 'pricing:GetProducts', 'tag:GetResources', 'tag:GetTagKeys', 'tag:GetTagValues']
+                Resource: '*'
+        - PolicyName: AlethiaProvisioner-Data
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: DataSecretsMessagingRegistry
+                Effect: Allow
+                Action: ['rds:*', 'elasticache:*', 'dynamodb:*', 's3:*', 'ecr:*', 'secretsmanager:*', 'kms:*', 'sqs:*', 'sns:*', 'ssm:*']
+                Resource: '*'
+        - PolicyName: AlethiaProvisioner-Edge
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: DnsCertsWafLogs
+                Effect: Allow
+                Action: ['route53:*', 'route53domains:ListDomains', 'acm:*', 'wafv2:*', 'logs:*', 'firehose:*']
+                Resource: '*'
+        - PolicyName: AlethiaProvisioner-IAM
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: IamManageProvisionedPrincipals
+                Effect: Allow
+                Action:
+                  - 'iam:CreateRole'
+                  - 'iam:DeleteRole'
+                  - 'iam:GetRole'
+                  - 'iam:UpdateRole'
+                  - 'iam:TagRole'
+                  - 'iam:UntagRole'
+                  - 'iam:UpdateAssumeRolePolicy'
+                  - 'iam:PutRolePolicy'
+                  - 'iam:DeleteRolePolicy'
+                  - 'iam:GetRolePolicy'
+                  - 'iam:AttachRolePolicy'
+                  - 'iam:DetachRolePolicy'
+                  - 'iam:ListRolePolicies'
+                  - 'iam:ListAttachedRolePolicies'
+                  - 'iam:ListRoleTags'
+                  - 'iam:ListInstanceProfilesForRole'
+                  - 'iam:CreatePolicy'
+                  - 'iam:DeletePolicy'
+                  - 'iam:GetPolicy'
+                  - 'iam:CreatePolicyVersion'
+                  - 'iam:DeletePolicyVersion'
+                  - 'iam:GetPolicyVersion'
+                  - 'iam:ListPolicyVersions'
+                  - 'iam:ListPolicies'
+                  - 'iam:CreateInstanceProfile'
+                  - 'iam:DeleteInstanceProfile'
+                  - 'iam:GetInstanceProfile'
+                  - 'iam:AddRoleToInstanceProfile'
+                  - 'iam:RemoveRoleFromInstanceProfile'
+                  - 'iam:TagInstanceProfile'
+                  - 'iam:CreateOpenIDConnectProvider'
+                  - 'iam:DeleteOpenIDConnectProvider'
+                  - 'iam:GetOpenIDConnectProvider'
+                  - 'iam:TagOpenIDConnectProvider'
+                  - 'iam:UpdateOpenIDConnectProviderThumbprint'
+                  - 'iam:AddClientIDToOpenIDConnectProvider'
+                  - 'iam:CreateUser'
+                  - 'iam:DeleteUser'
+                  - 'iam:GetUser'
+                  - 'iam:TagUser'
+                  - 'iam:PutUserPolicy'
+                  - 'iam:DeleteUserPolicy'
+                  - 'iam:GetUserPolicy'
+                  - 'iam:ListUserPolicies'
+                  - 'iam:AttachUserPolicy'
+                  - 'iam:DetachUserPolicy'
+                  - 'iam:CreateAccessKey'
+                  - 'iam:DeleteAccessKey'
+                  - 'iam:ListAccessKeys'
+                Resource: '*'
+              - Sid: PassRoleToProvisionedServices
+                Effect: Allow
+                Action: 'iam:PassRole'
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ['eks.amazonaws.com', 'ec2.amazonaws.com', 'rds.amazonaws.com', 'monitoring.rds.amazonaws.com', 'elasticache.amazonaws.com', 'firehose.amazonaws.com', 'application-autoscaling.amazonaws.com']
+              - Sid: CreateServiceLinkedRolesForProvisionedServices
+                Effect: Allow
+                Action: 'iam:CreateServiceLinkedRole'
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    iam:AWSServiceName: ['eks.amazonaws.com', 'eks-nodegroup.amazonaws.com', 'spot.amazonaws.com', 'elasticache.amazonaws.com', 'rds.amazonaws.com', 'elasticloadbalancing.amazonaws.com']
+              - Sid: DenyAttachAdminGradePolicies
+                Effect: Deny
+                Action: ['iam:AttachRolePolicy', 'iam:AttachUserPolicy', 'iam:PutRolePolicy', 'iam:PutUserPolicy']
+                Resource: '*'
+                Condition:
+                  ArnEquals:
+                    iam:PolicyARN: ['arn:aws:iam::aws:policy/AdministratorAccess', 'arn:aws:iam::aws:policy/IAMFullAccess', 'arn:aws:iam::aws:policy/PowerUserAccess']
+              - Sid: DenyOrgAndAccountControl
+                Effect: Deny
+                Action: ['organizations:*', 'account:*', 'iam:CreateAccountAlias', 'iam:DeleteAccountAlias']
+                Resource: '*'
 
 Outputs:
   RoleArn:
