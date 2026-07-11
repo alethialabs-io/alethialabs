@@ -532,8 +532,12 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		if result.ArgocdAdminPassword != "" {
 			metadata["argocd_admin_password"] = result.ArgocdAdminPassword
 		}
-		if len(result.Outputs) > 0 {
-			metadata["outputs"] = result.Outputs
+		// Persist outputs to the console, but scrub credential-bearing outputs (full
+		// kubeconfigs / client keys — e.g. Alibaba/Hetzner emit a cluster-admin `kubeconfig`)
+		// so they never land in execution_metadata (console Postgres). The pipeline already
+		// consumed the full outputs in-process above.
+		if scrubbed := scrubSensitiveOutputs(result.Outputs); len(scrubbed) > 0 {
+			metadata["outputs"] = scrubbed
 		}
 		if result.VerifyReport != nil {
 			metadata["verify_result"] = result.VerifyReport
