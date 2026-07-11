@@ -675,6 +675,10 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 					" --set 'server.ingress.hosts[0]=%s'",
 				certArn, argoHost)
 			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s\n", argoHost)
+			// The URL is only real when the ingress above is actually configured (AWS
+			// ALB+ACM today). Setting it from DomainName alone reported a URL that
+			// resolves nowhere on every other cloud.
+			result.ArgocdURL = fmt.Sprintf("https://%s", argoHost)
 		}
 	}
 
@@ -692,11 +696,11 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		result.ArgocdAdminPassword = strings.TrimSpace(password)
 	}
 
-	if vc.DNS.DomainName != "" {
-		result.ArgocdURL = fmt.Sprintf("https://argocd.%s", vc.DNS.DomainName)
+	if result.ArgocdURL != "" {
+		fmt.Fprintf(stdout, "ArgoCD ready. URL: %s\n", result.ArgocdURL)
+	} else {
+		fmt.Fprintln(stdout, "ArgoCD ready (no ingress on this cloud yet — access via port-forward or the admin password).")
 	}
-
-	fmt.Fprintf(stdout, "ArgoCD ready. URL: %s\n", result.ArgocdURL)
 	return nil
 }
 

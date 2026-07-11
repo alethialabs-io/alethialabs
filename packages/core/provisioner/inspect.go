@@ -14,13 +14,17 @@ import (
 )
 
 // clusterNameOutputKey is the tofu-output key each cloud's ConfigureKubeconfig reads the
-// cluster name from (ExtractClusterName checks all three).
+// cluster name from (ExtractClusterName checks all five).
 func clusterNameOutputKey(providerSlug string) string {
 	switch providerSlug {
 	case "gcp":
 		return "gke_cluster_name"
 	case "azure":
 		return "aks_cluster_name"
+	case "alibaba":
+		return "ack_cluster_name"
+	case "hetzner":
+		return "talos_cluster_name"
 	default:
 		return "eks_cluster_name"
 	}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -32,11 +33,26 @@ func TestClusterNameOutputKey(t *testing.T) {
 		"aws":     "eks_cluster_name",
 		"gcp":     "gke_cluster_name",
 		"azure":   "aks_cluster_name",
+		"alibaba": "ack_cluster_name",
+		"hetzner": "talos_cluster_name",
 		"unknown": "eks_cluster_name", // default
 	}
 	for provider, want := range cases {
 		if got := clusterNameOutputKey(provider); got != want {
 			t.Errorf("clusterNameOutputKey(%q) = %q, want %q", provider, got, want)
+		}
+	}
+}
+
+// The synthesized single-key outputs map InspectCluster builds must round-trip through
+// cloud.ExtractClusterName for every provisionable cloud — a key drift here silently
+// kills the day-2 addon-health/security refresh (the #312-style parity guard).
+func TestClusterNameOutputKeyRoundTripsExtract(t *testing.T) {
+	for _, provider := range []string{"aws", "gcp", "azure", "alibaba", "hetzner"} {
+		outputs := map[string]interface{}{clusterNameOutputKey(provider): "cluster-x"}
+		if got := cloud.ExtractClusterName(outputs); got != "cluster-x" {
+			t.Errorf("provider %q: ExtractClusterName over %q = %q, want cluster-x",
+				provider, clusterNameOutputKey(provider), got)
 		}
 	}
 }
