@@ -78,6 +78,14 @@ const (
 	// RuleParseError — a config file (.tf/.tofu/.tf.json/.tofu.json) failed to
 	// parse. Fail closed: what we cannot read, we cannot vouch for.
 	RuleParseError = "parse-error"
+	// RuleOverrideFile — a customer-committed OpenTofu override file (`override.tf`
+	// or `*_override.tf`, plus the `.tofu`/`.tf.json`/`.tofu.json` variants).
+	// OpenTofu merges override files LAST and lets a block in them REPLACE the
+	// original, and a same-basename `.tofu` override outranks a `.tf` one — so an
+	// override file can shadow the platform backend override and drop state to the
+	// local backend on disk. A legitimate BYO root module has no need for override
+	// files, so any is rejected outright (flagged by NAME, regardless of content).
+	RuleOverrideFile = "override-file"
 )
 
 // Finding is one policy violation or observation.
@@ -259,6 +267,16 @@ func (s *scanner) scanModuleDir(dir string) error {
 	sort.Strings(names) // deterministic finding order
 	for _, name := range names {
 		path := filepath.Join(dir, name)
+		// Reject customer override files by NAME (regardless of content) before
+		// parsing: an `override.tf` / `*_override.tf` (or its `.tofu`/`.json`
+		// variants) merges LAST and can REPLACE the platform backend override,
+		// escaping state to the local backend on disk. No legitimate BYO root
+		// module needs one.
+		if isOverrideFile(name) {
+			s.addFinding(SeverityError, RuleOverrideFile, s.relPath(path), 0,
+				fmt.Sprintf("override file %q is not allowed: it can shadow the platform backend override and escape state to local disk", name))
+			continue
+		}
 		for _, cs := range configSuffixes {
 			if !strings.HasSuffix(name, cs.suffix) {
 				continue
@@ -272,6 +290,22 @@ func (s *scanner) scanModuleDir(dir string) error {
 		}
 	}
 	return nil
+}
+
+// isOverrideFile reports whether name is an OpenTofu override file. OpenTofu
+// treats a config file as an override when its basename (minus a recognized
+// config extension — .tf/.tofu/.tf.json/.tofu.json) is exactly "override" or ends
+// in "_override". Override files merge last and their blocks replace the originals,
+// so a customer one can shadow the platform backend override.
+func isOverrideFile(name string) bool {
+	for _, cs := range configSuffixes {
+		if !strings.HasSuffix(name, cs.suffix) {
+			continue
+		}
+		stem := strings.TrimSuffix(name, cs.suffix)
+		return stem == "override" || strings.HasSuffix(stem, "_override")
+	}
+	return false
 }
 
 // recordModuleSource records a module source and, when it is a local "./" or

@@ -63,6 +63,8 @@ const evilModuleTF = `resource "null_resource" "x" {
 // TestPrepareByoIacWorkdir_ValidModule asserts a clean provider-less module clones,
 // passes the inline gate, and yields the module dir + backend override + coerced tfvars.
 func TestPrepareByoIacWorkdir_ValidModule(t *testing.T) {
+	allowInsecureRepoURLForTest = true
+	defer func() { allowInsecureRepoURLForTest = false }()
 	repo, branch, sha := gitInitModuleRepo(t, validModuleTF)
 
 	vc := &types.ProjectConfig{
@@ -76,10 +78,11 @@ func TestPrepareByoIacWorkdir_ValidModule(t *testing.T) {
 			CommitSHA: sha,
 			Path:      "module",
 			VarValues: map[string]any{
-				"instance_count": float64(3),
-				"name":           "web",
-				"enabled":        true,
-				"tags":           map[string]any{"team": "x"}, // rejected (object)
+				"instance_count":     float64(3),
+				"name":               "web",
+				"enabled":            true,
+				"tags":               map[string]any{"team": "x"}, // rejected (object)
+				"alethia_project_id": "spoofed",                   // rejected (reserved namespace)
 			},
 		},
 	}
@@ -100,9 +103,12 @@ func TestPrepareByoIacWorkdir_ValidModule(t *testing.T) {
 		t.Fatalf("module main.tf missing in workdir: %v", statErr)
 	}
 
-	// Backend override written.
-	if _, statErr := os.Stat(filepath.Join(tfDir, byoBackendOverrideFile)); statErr != nil {
-		t.Fatalf("backend override not written: %v", statErr)
+	// Backend override written under BOTH extensions (.tf + .tofu) so a customer
+	// `*.tofu` override cannot outrank + shadow the platform `.tf` override.
+	for _, name := range []string{byoBackendOverrideFile, byoBackendOverrideFileTofu} {
+		if _, statErr := os.Stat(filepath.Join(tfDir, name)); statErr != nil {
+			t.Fatalf("backend override %s not written: %v", name, statErr)
+		}
 	}
 
 	// Scalar var_values pass; object is dropped.
@@ -111,6 +117,11 @@ func TestPrepareByoIacWorkdir_ValidModule(t *testing.T) {
 	}
 	if _, ok := tfvars["tags"]; ok {
 		t.Fatalf("object var_value should have been rejected, got: %#v", tfvars["tags"])
+	}
+	// The reserved alethia_ key must never reach the tfvars (it would override the
+	// frozen TF_VAR_alethia_* platform context via -var-file precedence).
+	if _, ok := tfvars["alethia_project_id"]; ok {
+		t.Fatalf("reserved alethia_ var_value reached tfvars: %#v", tfvars["alethia_project_id"])
 	}
 
 	// Frozen TF_VAR contract is published.
@@ -136,6 +147,8 @@ func TestPrepareByoIacWorkdir_ValidModule(t *testing.T) {
 // TestPrepareByoIacWorkdir_EvilModuleBlocks asserts the inline gate fails closed on
 // a module with a provisioner (code execution) BEFORE any workdir is returned.
 func TestPrepareByoIacWorkdir_EvilModuleBlocks(t *testing.T) {
+	allowInsecureRepoURLForTest = true
+	defer func() { allowInsecureRepoURLForTest = false }()
 	repo, branch, sha := gitInitModuleRepo(t, evilModuleTF)
 	vc := &types.ProjectConfig{
 		ProjectName: "acme", EnvironmentStage: "prod", Region: "eu",
@@ -163,6 +176,8 @@ func TestPrepareByoIacWorkdir_EvilModuleBlocks(t *testing.T) {
 
 // TestPrepareByoIacWorkdir_RequiresCommitSHA asserts a ref-only source is rejected.
 func TestPrepareByoIacWorkdir_RequiresCommitSHA(t *testing.T) {
+	allowInsecureRepoURLForTest = true
+	defer func() { allowInsecureRepoURLForTest = false }()
 	vc := &types.ProjectConfig{
 		IacSource: &types.ProjectIacSourceConfig{RepoURL: "file:///x", Ref: "main"},
 	}
@@ -172,19 +187,54 @@ func TestPrepareByoIacWorkdir_RequiresCommitSHA(t *testing.T) {
 	}
 }
 
-// TestResolveByoModuleDir covers path resolution + traversal containment.
+// TestPrepareByoIacWorkdir_RejectsFileURLInProd asserts that WITHOUT the test
+// escape (i.e. production), a file:// RepoURL is rejected before any clone — the
+// untrusted path must never clone an on-box repository.
+func TestPrepareByoIacWorkdir_RejectsFileURLInProd(t *testing.T) {
+	// allowInsecureRepoURLForTest defaults to false (production posture).
+	vc := &types.ProjectConfig{
+		IacSource: &types.ProjectIacSourceConfig{
+			RepoURL:   "file:///etc/on-box-repo",
+			Ref:       "main",
+			CommitSHA: strings.Repeat("a", 40),
+			Path:      "module",
+		},
+	}
+	_, _, _, err := prepareByoIacWorkdir(vc, "", t.TempDir(), &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "https or ssh") {
+		t.Fatalf("expected a file:// RepoURL to be rejected in production, got: %v", err)
+	}
+	// https / ssh / scp-like transports pass validation.
+	for _, ok := range []string{"https://github.com/o/r.git", "ssh://git@github.com/o/r.git", "git@github.com:o/r.git"} {
+		if verr := validateByoRepoURL(ok); verr != nil {
+			t.Fatalf("validateByoRepoURL(%q) = %v, want nil", ok, verr)
+		}
+	}
+	if verr := validateByoRepoURL("file:///x"); verr == nil {
+		t.Fatal("validateByoRepoURL(file://) should fail in production mode")
+	}
+}
+
+// TestResolveByoModuleDir covers path resolution + traversal containment. The
+// returned path is symlink-resolved, so expectations are compared against the
+// EvalSymlinks form of the clone (t.TempDir on macOS lives under a /var → /private
+// symlink).
 func TestResolveByoModuleDir(t *testing.T) {
 	clone := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(clone, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	realClone, err := filepath.EvalSymlinks(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	// Root path resolves to the clone.
-	if got, err := resolveByoModuleDir(clone, ""); err != nil || got != clone {
-		t.Fatalf("root path: got %q err %v, want %q", got, err, clone)
+	// Root path resolves to the (symlink-resolved) clone.
+	if got, err := resolveByoModuleDir(clone, ""); err != nil || got != realClone {
+		t.Fatalf("root path: got %q err %v, want %q", got, err, realClone)
 	}
 	// Subdir resolves.
-	if got, err := resolveByoModuleDir(clone, "sub"); err != nil || got != filepath.Join(clone, "sub") {
+	if got, err := resolveByoModuleDir(clone, "sub"); err != nil || got != filepath.Join(realClone, "sub") {
 		t.Fatalf("subdir: got %q err %v", got, err)
 	}
 	// `..` escape is clamped by Clean("/"+path) and lands as a missing dir under the clone.
@@ -197,16 +247,44 @@ func TestResolveByoModuleDir(t *testing.T) {
 	}
 }
 
+// TestResolveByoModuleDir_SymlinkEscape asserts a repo-committed symlink that
+// points OUTSIDE the clone is rejected — the lexical check passes (the link name
+// is inside the clone) but the symlink-resolved containment check catches it.
+func TestResolveByoModuleDir_SymlinkEscape(t *testing.T) {
+	base := t.TempDir()
+	clone := filepath.Join(base, "clone")
+	outside := filepath.Join(base, "outside")
+	if err := os.MkdirAll(clone, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// `clone/evil -> ../outside` — lexically inside the clone, really outside it.
+	if err := os.Symlink(outside, filepath.Join(clone, "evil")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	got, err := resolveByoModuleDir(clone, "evil")
+	if err == nil {
+		t.Fatalf("expected symlink escape to be rejected, got moduleDir %q", got)
+	}
+	if !strings.Contains(err.Error(), "outside the repository clone") {
+		t.Fatalf("error should name the containment escape, got: %v", err)
+	}
+}
+
 // TestCoerceByoVarValues covers the scalar allow / structured reject rules.
 func TestCoerceByoVarValues(t *testing.T) {
 	in := map[string]any{
-		"s":    "str",
-		"n":    float64(2),
-		"i":    7,
-		"b":    false,
-		"nul":  nil,
-		"obj":  map[string]any{"a": 1},
-		"list": []any{"a", "b"},
+		"s":                  "str",
+		"n":                  float64(2),
+		"i":                  7,
+		"b":                  false,
+		"nul":                nil,
+		"obj":                map[string]any{"a": 1},
+		"list":               []any{"a", "b"},
+		"alethia_project_id": "spoofed", // reserved namespace (even though scalar)
+		"alethia_region":     "spoofed",
 	}
 	out := coerceByoVarValues(in, &bytes.Buffer{}, &bytes.Buffer{})
 	for _, k := range []string{"s", "n", "i", "b"} {
@@ -217,6 +295,13 @@ func TestCoerceByoVarValues(t *testing.T) {
 	for _, k := range []string{"nul", "obj", "list"} {
 		if _, ok := out[k]; ok {
 			t.Fatalf("non-scalar %q should have been rejected", k)
+		}
+	}
+	// Reserved alethia_ keys are dropped even though they are scalars — they must
+	// never win the -var-file vs TF_VAR_alethia_* precedence race.
+	for _, k := range []string{"alethia_project_id", "alethia_region"} {
+		if _, ok := out[k]; ok {
+			t.Fatalf("reserved %q should have been dropped", k)
 		}
 	}
 }

@@ -26,6 +26,16 @@ import (
 // scan so the gate always inspects the pristine module.
 const byoBackendOverrideFile = "zzz_alethia_backend_override.tf"
 
+// byoBackendOverrideFileTofu is the `.tofu`-extension twin of byoBackendOverrideFile.
+// OpenTofu 1.8+ makes a same-basename `.tofu` file take PRECEDENCE over its `.tf`
+// sibling, so a customer who commits `zzz_alethia_backend_override.tofu` would
+// otherwise shadow the platform `.tf` override — leaving no backend block, which
+// silently falls back to the LOCAL backend and puts state on the runner disk. We
+// therefore write the identical override under BOTH extensions (os.WriteFile
+// overwrites any customer file at these exact paths); the iacsafety gate also
+// rejects any customer-committed `*_override.*` file as defense in depth.
+const byoBackendOverrideFileTofu = "zzz_alethia_backend_override.tofu"
+
 // byoBackendOverrideHCL is the override content: an empty http backend block that
 // the platform's -backend-config file (WriteBackendHCL) fills in at init time.
 const byoBackendOverrideHCL = `# Managed by Alethia — overrides any customer backend/cloud block with the
@@ -59,6 +69,13 @@ func prepareByoIacWorkdir(vc *types.ProjectConfig, gitToken, cloneDir string, st
 	}
 	if strings.TrimSpace(src.RepoURL) == "" {
 		return "", nil, nil, fmt.Errorf("BYO IaC source is missing repo_url")
+	}
+	// Untrusted RepoURL: only remote git transports (https / ssh / scp-like) are
+	// allowed. A file:// (or other local) transport would make the runner clone an
+	// on-box repository — the git.go transforms accept file:// for local-fixture
+	// tests, so reject it here at the untrusted entry point.
+	if err := validateByoRepoURL(src.RepoURL); err != nil {
+		return "", nil, nil, err
 	}
 	if strings.TrimSpace(src.CommitSHA) == "" {
 		return "", nil, nil, fmt.Errorf("BYO IaC source is missing commit_sha (a pinned commit is required — a ref alone is TOCTOU-unsafe)")
@@ -106,6 +123,33 @@ func prepareByoIacWorkdir(vc *types.ProjectConfig, gitToken, cloneDir string, st
 	return moduleDir, tfvars, restore, nil
 }
 
+// allowInsecureRepoURLForTest, when true, lets validateByoRepoURL accept a file://
+// RepoURL. It exists ONLY so the byo_iac tests can clone local fixture repos;
+// production leaves it false, so an untrusted BYO RepoURL can never point the runner
+// at an on-box path.
+var allowInsecureRepoURLForTest bool
+
+// validateByoRepoURL rejects any RepoURL whose transport is not a remote git
+// transport — https, ssh (ssh:// or scp-like git@host:path). Everything else,
+// notably file:// and http://, is refused on the untrusted BYO path (a file://
+// clone would read an on-box repo). The allowInsecureRepoURLForTest escape re-admits
+// file:// for the local-fixture tests only.
+func validateByoRepoURL(repoURL string) error {
+	u := strings.TrimSpace(repoURL)
+	// scp-like SSH shorthand: git@host:owner/repo(.git).
+	if strings.HasPrefix(u, "git@") {
+		return nil
+	}
+	lower := strings.ToLower(u)
+	if strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "ssh://") {
+		return nil
+	}
+	if allowInsecureRepoURLForTest && strings.HasPrefix(lower, "file://") {
+		return nil
+	}
+	return fmt.Errorf("BYO IaC repo_url %q must use an https or ssh git transport (insecure/local schemes such as file:// are rejected on the untrusted path)", repoURL)
+}
+
 // resolveByoModuleDir resolves the customer's module path inside the clone and
 // verifies it stays within the clone (no `..` / symlink escape), returning the
 // absolute module directory.
@@ -132,7 +176,27 @@ func resolveByoModuleDir(cloneDir, path string) (string, error) {
 	if !info.IsDir() {
 		return "", fmt.Errorf("BYO IaC module path %q is not a directory", path)
 	}
-	return moduleDir, nil
+
+	// Symlink-resolved containment. The lexical check above is purely textual, but
+	// os.Stat FOLLOWS symlinks — so a repo-committed symlink (`evil -> /outside`,
+	// Path="evil") passes the lexical check yet points OUTSIDE the clone, which would
+	// land tfDir + the backend-override write outside the containment boundary.
+	// Resolve both real paths and re-verify containment (mirrors what iacsafety does
+	// for module sources); return the RESOLVED module dir so all downstream writes
+	// stay inside the resolved clone.
+	realClone, err := filepath.EvalSymlinks(cloneAbs)
+	if err != nil {
+		return "", fmt.Errorf("resolving clone dir symlinks: %w", err)
+	}
+	realModule, err := filepath.EvalSymlinks(moduleDir)
+	if err != nil {
+		return "", fmt.Errorf("resolving BYO IaC module path %q: %w", path, err)
+	}
+	relReal, err := filepath.Rel(realClone, realModule)
+	if err != nil || relReal == ".." || strings.HasPrefix(relReal, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("BYO IaC path %q resolves outside the repository clone (via symlink)", path)
+	}
+	return realModule, nil
 }
 
 // scanByoIacFailClosed re-runs the iacsafety static gate over the cloned module
@@ -163,11 +227,18 @@ func scanByoIacFailClosed(moduleDir string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-// writeByoBackendOverride writes byoBackendOverrideFile into the module dir.
+// writeByoBackendOverride writes the platform backend override into the module dir
+// under BOTH the `.tf` and `.tofu` extensions. Writing both closes the OpenTofu 1.8+
+// precedence gap: a `.tofu` override outranks a `.tf` one, so a customer-committed
+// `zzz_alethia_backend_override.tofu` would otherwise shadow a `.tf`-only platform
+// override and drop the http backend (state escapes to the local backend on disk).
+// os.WriteFile overwrites any customer file already at these exact paths.
 func writeByoBackendOverride(moduleDir string) error {
-	path := filepath.Join(moduleDir, byoBackendOverrideFile)
-	if err := os.WriteFile(path, []byte(byoBackendOverrideHCL), 0o600); err != nil {
-		return fmt.Errorf("failed to write backend override: %w", err)
+	for _, name := range []string{byoBackendOverrideFile, byoBackendOverrideFileTofu} {
+		path := filepath.Join(moduleDir, name)
+		if err := os.WriteFile(path, []byte(byoBackendOverrideHCL), 0o600); err != nil {
+			return fmt.Errorf("failed to write backend override %s: %w", name, err)
+		}
 	}
 	return nil
 }
@@ -218,14 +289,27 @@ func setByoAlethiaTFVars(vc *types.ProjectConfig) func() {
 	}
 }
 
+// byoReservedVarPrefix is the reserved platform variable namespace. The frozen
+// Alethia context is published as TF_VAR_alethia_* env vars (setByoAlethiaTFVars);
+// a customer var_values entry named alethia_* would be written to the -var-file,
+// which is HIGHER precedence than TF_VAR_* env vars — so it would SHADOW the frozen
+// platform context (e.g. spoof alethia_project_id). Such keys are dropped.
+const byoReservedVarPrefix = "alethia_"
+
 // coerceByoVarValues converts the customer's arbitrary var_values into a scalar
 // tfvars map. Only string / number / bool pass; nested objects, arrays, and other
 // shapes are REJECTED (skipped with a warning) so nothing structured or injectable
 // reaches the tfvars file. nil values are skipped so the module's own default
-// applies.
+// applies. Any key in the reserved alethia_ namespace is dropped (a var-file entry
+// there would override the frozen TF_VAR_alethia_* platform context — see
+// byoReservedVarPrefix).
 func coerceByoVarValues(in map[string]any, stdout, stderr io.Writer) map[string]interface{} {
 	out := make(map[string]interface{}, len(in))
 	for k, v := range in {
+		if strings.HasPrefix(k, byoReservedVarPrefix) {
+			fmt.Fprintf(stderr, "Warning: BYO var %q uses the reserved %q platform namespace; dropping (it cannot override the frozen Alethia context)\n", k, byoReservedVarPrefix)
+			continue
+		}
 		switch v.(type) {
 		case string, bool, float64, float32, int, int32, int64, json.Number:
 			out[k] = v

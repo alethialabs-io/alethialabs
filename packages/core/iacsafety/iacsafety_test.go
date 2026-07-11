@@ -352,6 +352,15 @@ func TestScanFixtures(t *testing.T) {
 			wantModules:   []string{"./nope", "./notdir.txt"},
 		},
 		{
+			// A customer-committed `*_override.tf` file is rejected by NAME: it
+			// merges last and can shadow the platform backend override.
+			name:          "overridefile",
+			wantOK:        false,
+			wantFindings:  []string{"error:override-file"},
+			wantProviders: []string{"hashicorp/aws"},
+			wantModules:   []string{},
+		},
+		{
 			name:   "json2",
 			wantOK: false,
 			wantFindings: []string{
@@ -526,6 +535,29 @@ func TestSymlinkEscape(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("no module-escapes-root finding; findings: %+v", report.Findings)
+	}
+}
+
+// TestIsOverrideFile pins the OpenTofu override-file name detection across the
+// `override.*` / `*_override.*` forms and every config extension.
+func TestIsOverrideFile(t *testing.T) {
+	overrides := []string{
+		"override.tf", "override.tofu", "override.tf.json", "override.tofu.json",
+		"x_override.tf", "backend_override.tofu", "a_b_override.tf.json", "z_override.tofu.json",
+	}
+	for _, n := range overrides {
+		if !isOverrideFile(n) {
+			t.Errorf("isOverrideFile(%q) = false, want true", n)
+		}
+	}
+	nonOverrides := []string{
+		"main.tf", "overrides.tf", "override.txt", "myoverride.tf", // "myoverride" stem, not "_override"
+		"override", "overridefile.tofu", "readme.md",
+	}
+	for _, n := range nonOverrides {
+		if isOverrideFile(n) {
+			t.Errorf("isOverrideFile(%q) = true, want false", n)
+		}
 	}
 }
 
