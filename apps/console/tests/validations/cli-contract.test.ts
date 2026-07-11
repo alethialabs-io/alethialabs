@@ -15,6 +15,7 @@ import {
 	cliRepositoriesResponse,
 	cliLatestReleaseWire,
 	cliRunnersResponse,
+	cliUsageResponse,
 	connectIdentityWire,
 	deployRunnerWire,
 	initIdentityWire,
@@ -51,6 +52,7 @@ const cases: ReadonlyArray<[string, z.ZodType]> = [
 	["job_response.json", cliJobResponse],
 	["init_identity.json", initIdentityWire],
 	["connect_identity.json", connectIdentityWire],
+	["usage.json", cliUsageResponse],
 ];
 
 describe("CLI wire contract ↔ fixtures", () => {

@@ -789,7 +789,12 @@ describe("setCustomerBillingAddress", () => {
 // ── createCreditPackIntent ───────────────────────────────────────────────────
 describe("createCreditPackIntent", () => {
 	it("creates an invoiced credit pack for the pack's real price + credits", async () => {
-		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		// Packs are paid-tier-only, so the org carries a live AI subscription.
+		orgBilling.mockResolvedValue({
+			stripeCustomerId: "cus_1",
+			aiTier: "ai_plus",
+			aiSubscriptionStatus: "active",
+		} as never);
 		stripe.invoices.create.mockResolvedValue({ id: "in_1" } as never);
 		stripe.invoiceItems.create.mockResolvedValue({} as never);
 		stripe.invoices.finalizeInvoice.mockResolvedValue({
@@ -832,6 +837,10 @@ describe("createCreditPackIntent", () => {
 	});
 
 	it("rejects an unknown pack id", async () => {
+		orgBilling.mockResolvedValue({
+			aiTier: "ai_plus",
+			aiSubscriptionStatus: "active",
+		} as never);
 		await expect(createCreditPackIntent("xxl")).rejects.toThrow(
 			/Unknown credit pack/,
 		);
@@ -845,8 +854,18 @@ describe("createCreditPackIntent", () => {
 		);
 	});
 
+	it("refuses the free AI tier (packs top up a paid plan)", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never); // no AI sub → ai_free
+		await expect(createCreditPackIntent("m")).rejects.toThrow(/paid AI plans/);
+		expect(stripe.invoices.create).not.toHaveBeenCalled();
+	});
+
 	it("throws when Stripe returns no client secret", async () => {
-		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		orgBilling.mockResolvedValue({
+			stripeCustomerId: "cus_1",
+			aiTier: "ai_max",
+			aiSubscriptionStatus: "active",
+		} as never);
 		stripe.invoices.create.mockResolvedValue({ id: "in_1" } as never);
 		stripe.invoiceItems.create.mockResolvedValue({} as never);
 		stripe.invoices.finalizeInvoice.mockResolvedValue({

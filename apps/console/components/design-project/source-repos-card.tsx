@@ -6,6 +6,7 @@ import { ChevronDown, GitBranch, Package } from "lucide-react";
 import { useMemo, useState } from "react";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import type { DetectedService } from "@/types/jsonb.types";
+import { repoLabel } from "@/lib/repos/repo-label";
 import { cn } from "@repo/ui/utils";
 
 interface SourceRepoRow {
@@ -13,11 +14,6 @@ interface SourceRepoRow {
 	ref?: string | null;
 	scan_path?: string;
 	services?: DetectedService[];
-}
-
-/** Short display name for a repo URL (last path segment, .git stripped). */
-function repoLabel(url: string): string {
-	return url.replace(/\.git$/, "").split("/").filter(Boolean).slice(-2).join("/") || url;
 }
 
 /**

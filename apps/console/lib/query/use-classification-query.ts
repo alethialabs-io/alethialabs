@@ -3,6 +3,7 @@
 "use client";
 
 import {
+	keepPreviousData,
 	useMutation,
 	useQuery,
 	useQueryClient,
@@ -23,12 +24,19 @@ import { qk } from "./keys";
 
 /**
  * The org's classification taxonomy (dimensions + values). Shared by the settings manager
- * and every picker; org-scoped server-side so the key isn't org-slugged.
+ * and every picker; org-scoped server-side so the key isn't org-slugged. Pass `search` to
+ * filter server-side (the settings manager) — previous results are kept while the next query
+ * loads so the list doesn't flash, and `isFetching` drives the in-flight indicator. With no
+ * `search` the key is the shared base every picker reuses.
  */
-export function useDimensionsQuery(): UseQueryResult<DimensionDTO[]> {
+export function useDimensionsQuery(
+	search?: string,
+): UseQueryResult<DimensionDTO[]> {
+	const q = search?.trim() || undefined;
 	return useQuery({
-		queryKey: qk.classificationDimensions(),
-		queryFn: () => listDimensions(),
+		queryKey: qk.classificationDimensions(q),
+		queryFn: () => listDimensions(q),
+		placeholderData: keepPreviousData,
 	});
 }
 

@@ -27,6 +27,7 @@ import {
 	cloudSubnets,
 	cloudTopics,
 } from "@/lib/db/schema";
+import { syncAlibabaInventory } from "./alibaba";
 import { syncAwsInventory } from "./aws";
 import { syncAzureInventory } from "./azure";
 import { syncGcpInventory } from "./gcp";
@@ -60,6 +61,7 @@ export function hasServerSideInventory(provider: string): boolean {
 		provider === "aws" ||
 		provider === "azure" ||
 		provider === "gcp" ||
+		provider === "alibaba" ||
 		TOKEN_CLOUDS.has(provider)
 	);
 }
@@ -75,6 +77,8 @@ export async function syncCloudInventory(
 			await syncAzureInventory(identity);
 		} else if (identity.provider === "gcp") {
 			await syncGcpInventory(identity);
+		} else if (identity.provider === "alibaba") {
+			await syncAlibabaInventory(identity);
 		} else if (TOKEN_CLOUDS.has(identity.provider)) {
 			await syncTokenCloudInventory(identity);
 		} else {

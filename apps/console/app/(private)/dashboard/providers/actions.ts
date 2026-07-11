@@ -28,16 +28,16 @@ export async function listAwsIdentities(): Promise<conn.ConnectionStatus[]> {
 }
 
 /**
- * Gets or creates a pending AWS identity and returns its external id (manage-gated,
- * not activity-logged — this only seeds the connect sheet).
+ * Gets or creates a pending AWS identity and returns its id (manage-gated, not activity-logged — this only
+ * seeds the connect sheet). AWS is now keyless via DIRECT OIDC: the customer's role trusts the Alethia
+ * issuer, so no ExternalId is needed — only a pending identity to bind the role ARN to.
  */
-export async function getAwsExternalId() {
+export async function initAwsIdentity() {
 	const actor = await authorizeQuiet("manage_identities", {
 		type: "cloud_identity",
 	});
-	const { identityId, externalId } = await conn.initIdentity(actor, "aws");
-	if (!externalId) throw new Error("Failed to initialize AWS external ID");
-	return { externalId, identityId };
+	const { identityId } = await conn.initIdentity(actor, "aws");
+	return { identityId };
 }
 
 /**

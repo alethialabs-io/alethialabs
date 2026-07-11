@@ -25,10 +25,10 @@ func EnsureAz() error {
 	return nil
 }
 
-// RunAwsBootstrap writes the CloudFormation template to a temp file, deploys it
-// with the supplied external id, and returns the created role ARN from the
+// RunAwsBootstrap writes the CloudFormation template to a temp file, deploys it so the customer's role
+// trusts the given Alethia issuer (keyless, no external id), and returns the created role ARN from the
 // stack outputs. Uses the user's locally configured aws credentials.
-func RunAwsBootstrap(template, externalID, region, roleName, stackName string) (string, error) {
+func RunAwsBootstrap(template, issuerURL, region, roleName, stackName string) (string, error) {
 	path, cleanup, err := writeTemp("alethia-bootstrap-*.yaml", template)
 	if err != nil {
 		return "", err
@@ -41,7 +41,7 @@ func RunAwsBootstrap(template, externalID, region, roleName, stackName string) (
 		"--stack-name", stackName,
 		"--capabilities", "CAPABILITY_NAMED_IAM",
 		"--parameter-overrides",
-		fmt.Sprintf("ExternalId=%s", externalID),
+		fmt.Sprintf("IssuerUrl=%s", issuerURL),
 		fmt.Sprintf("RoleName=%s", roleName),
 	}
 	if region != "" {

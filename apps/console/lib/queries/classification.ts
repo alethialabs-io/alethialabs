@@ -5,7 +5,7 @@
 // withScope/withOwnerScope (RLS is the tenancy wall — org-scoped dimensions + parent-scoped
 // values/assignments); these are the shaping/hydration helpers on top.
 
-import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, eq, exists, ilike, inArray, or, sql } from "drizzle-orm";
 import type { getServiceDb } from "@/lib/db";
 import {
 	type ClassificationDimension,
@@ -40,14 +40,44 @@ export interface AssignedValue {
 
 /**
  * Lists every dimension in scope with its allowed values nested, both ordered by
- * (position, created_at) so the settings UI and the picker render deterministically.
+ * (position, created_at) so the settings UI and the picker render deterministically. When
+ * `search` is given, filters (in SQL) to dimensions whose label/key matches OR that own a
+ * matching value — a matched dimension still returns all of its values.
  */
 export async function listDimensionsWithValues(
 	tx: Tx,
+	search?: string,
 ): Promise<DimensionWithValues[]> {
+	const q = search?.trim();
+	const like = q ? `%${q}%` : null;
+	const where = like
+		? or(
+				ilike(classificationDimension.label, like),
+				ilike(classificationDimension.key, like),
+				exists(
+					tx
+						.select({ one: sql`1` })
+						.from(classificationValue)
+						.where(
+							and(
+								eq(
+									classificationValue.dimension_id,
+									classificationDimension.id,
+								),
+								or(
+									ilike(classificationValue.label, like),
+									ilike(classificationValue.value, like),
+								),
+							),
+						),
+				),
+			)
+		: undefined;
+
 	const dims = await tx
 		.select()
 		.from(classificationDimension)
+		.where(where)
 		.orderBy(
 			asc(classificationDimension.position),
 			asc(classificationDimension.created_at),

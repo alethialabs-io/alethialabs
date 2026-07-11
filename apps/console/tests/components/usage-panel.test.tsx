@@ -84,9 +84,9 @@ const overTime: UsageOverTime = {
 const ai: AiUsageSummary = {
 	enabled: true,
 	tier: "ai_plus",
-	dailyUsed: 40,
-	dailyBudget: 200,
-	dailyResetAt: "2100-01-01T00:00:00.000Z",
+	sessionUsed: 40,
+	sessionBudget: 200,
+	sessionResetAt: "2100-01-01T00:00:00.000Z",
 	weeklyUsed: 1200,
 	weeklyBudget: 1500,
 	weeklyResetAt: "2100-01-01T00:00:00.000Z",
@@ -163,5 +163,61 @@ describe("UsagePanel", () => {
 		vi.mocked(getBillingSummary).mockResolvedValue(summary({ hosted: false }));
 		render(<UsagePanel />);
 		expect(await screen.findByText(/self-managed deployment/i)).toBeInTheDocument();
+	});
+
+	describe("AI plan & usage card", () => {
+		it("labels the meters as the rolling session + weekly limit", async () => {
+			vi.mocked(getBillingSummary).mockResolvedValue(summary());
+			render(<UsagePanel />);
+			expect(await screen.findByText("Current session")).toBeInTheDocument();
+			expect(screen.getByText("Weekly limit")).toBeInTheDocument();
+		});
+
+		it("shows the idle session state when there is no usage in the window", async () => {
+			vi.mocked(getBillingSummary).mockResolvedValue(summary());
+			vi.mocked(getAiUsageSummary).mockResolvedValue({
+				...ai,
+				sessionUsed: 0,
+				sessionResetAt: null,
+			});
+			render(<UsagePanel />);
+			expect(await screen.findByText("Starts on first use")).toBeInTheDocument();
+		});
+
+		it("offers Buy credits on a paid tier at/near a limit", async () => {
+			vi.mocked(getBillingSummary).mockResolvedValue(summary());
+			// weekly 1200/1500 = 80% → at the upsell threshold on a paid tier.
+			render(<UsagePanel />);
+			expect(
+				await screen.findByRole("button", { name: /buy credits/i }),
+			).toBeInTheDocument();
+		});
+
+		it("hides Buy credits below the limit threshold", async () => {
+			vi.mocked(getBillingSummary).mockResolvedValue(summary());
+			vi.mocked(getAiUsageSummary).mockResolvedValue({
+				...ai,
+				sessionUsed: 10,
+				weeklyUsed: 100, // well under 80% on both windows
+			});
+			render(<UsagePanel />);
+			await screen.findByText("Current session");
+			expect(screen.queryByRole("button", { name: /buy credits/i })).toBeNull();
+		});
+
+		it("hides Buy credits and the balance strip on the free tier", async () => {
+			vi.mocked(getBillingSummary).mockResolvedValue(summary());
+			vi.mocked(getAiUsageSummary).mockResolvedValue({
+				...ai,
+				tier: "ai_free",
+				sessionUsed: 200, // even at limit, free never sees the top-up CTA
+				weeklyUsed: 1500,
+				purchasedBalance: 0,
+			});
+			render(<UsagePanel />);
+			await screen.findByText("Current session");
+			expect(screen.queryByRole("button", { name: /buy credits/i })).toBeNull();
+			expect(screen.queryByText(/top-up credits never expire/i)).toBeNull();
+		});
 	});
 });

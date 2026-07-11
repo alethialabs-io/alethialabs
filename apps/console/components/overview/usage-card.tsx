@@ -24,6 +24,10 @@ import {
 	getBillingSummary,
 	getOrgUsage,
 } from "@/app/server/actions/billing";
+import {
+	sessionResetLabel,
+	weeklyResetLabel,
+} from "@/lib/billing/ai-usage-format";
 import { globalHref } from "@/lib/routing";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { UsageRing } from "./usage-ring";
@@ -39,14 +43,9 @@ interface GaugeRow {
 	readout?: string;
 }
 
-/** Humanize the time until an ISO reset ("2h", "1d", "5m", or "soon"). */
-function resetsIn(iso: string): string {
-	const ms = new Date(iso).getTime() - Date.now();
-	if (Number.isNaN(ms) || ms <= 0) return "soon";
-	const h = Math.floor(ms / 3_600_000);
-	if (h >= 24) return `${Math.floor(h / 24)}d`;
-	if (h >= 1) return `${h}h`;
-	return `${Math.max(1, Math.floor(ms / 60_000))}m`;
+/** Lowercase a reset label's first word so it fits the mono readout style. */
+function asReadout(label: string): string {
+	return label.charAt(0).toLowerCase() + label.slice(1);
 }
 
 /** A plain count stat (uncapped on paid plans, so no gauge). */
@@ -99,23 +98,24 @@ export function UsageCard({
 					});
 				}
 				if (ai.enabled) {
-					// AI is a standalone metered product — show daily + weekly as PERCENTAGES
-					// (the ring + "% used"), with the reset time as the readout (never raw credits).
+					// AI is a standalone metered product — show the rolling session + the weekly
+					// limit as PERCENTAGES (the ring + "% used"), with the reset time as the
+					// readout (never raw credits).
 					gauges.push({
-						label: "AI · today",
-						used: ai.dailyUsed,
-						limit: ai.dailyBudget,
+						label: "AI · current session",
+						used: ai.sessionUsed,
+						limit: ai.sessionBudget,
 						unit: "",
-						tip: "Included AI credits used today vs your AI tier's daily allowance.",
-						readout: `resets ${resetsIn(ai.dailyResetAt)}`,
+						tip: "Included AI usage in the trailing 5-hour window vs your plan's session allowance.",
+						readout: asReadout(sessionResetLabel(ai.sessionResetAt)),
 					});
 					gauges.push({
-						label: "AI · this week",
+						label: "AI · weekly limit",
 						used: ai.weeklyUsed,
 						limit: ai.weeklyBudget,
 						unit: "",
-						tip: "Included AI credits used this week vs your AI tier's weekly allowance.",
-						readout: `resets ${resetsIn(ai.weeklyResetAt)}`,
+						tip: "Included AI usage this week vs your plan's fixed weekly allowance.",
+						readout: asReadout(weeklyResetLabel(ai.weeklyResetAt)),
 					});
 				}
 

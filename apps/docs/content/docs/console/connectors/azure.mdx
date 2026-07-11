@@ -11,6 +11,13 @@ Identity Credential trusts the Alethia OIDC issuer. Both the console (verificati
 it and issues an ARM access token. **You register no app and store no client secret** — you only grant
 Alethia's app a role in your tenant. See [Security Architecture](/concepts/security).
 
+<Callout type="info">
+**Is this safe?** You never create an app or a secret — you only grant Alethia's app a role in **your own**
+subscription. Alethia signs in with a short-lived token (≤10 min) that Entra ID verifies and swaps for a
+~1-hour credential. The only thing stored is your **tenant + subscription id** (public). **Revoke anytime**
+by removing the app's role assignment.
+</Callout>
+
 ## Setup
 
 The connect dialog gives you a one-line `az` command (or a Terraform module). It does two things in your

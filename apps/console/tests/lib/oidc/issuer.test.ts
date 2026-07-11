@@ -7,7 +7,7 @@
 // right iss/sub/aud, the JWKS never leaks private key material, expiry is enforced, and audience scoping
 // prevents cross-cloud replay.
 
-import { generateKeyPairSync } from "node:crypto";
+import { createPublicKey, generateKeyPairSync } from "node:crypto";
 import * as jose from "jose";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -23,22 +23,52 @@ import {
 const APP_URL = "https://alethialabs.io";
 const saved: Record<string, string | undefined> = {};
 
-/** Generates an RSA-2048 keypair and installs its base64(PKCS8 PEM) as the signing key env. */
-function installKey() {
+/** Generates an RSA-2048 keypair; returns the PKCS8 PEM + its base64 (the env-var encoding). */
+function makeKey(): { pem: string; b64: string } {
 	const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 	const pem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
-	process.env.ALETHIA_OIDC_SIGNING_KEY = Buffer.from(pem, "utf8").toString("base64");
+	return { pem, b64: Buffer.from(pem, "utf8").toString("base64") };
+}
+
+/** Generates an RSA-2048 keypair and installs its base64(PKCS8 PEM) as the signing key env. */
+function installKey() {
+	process.env.ALETHIA_OIDC_SIGNING_KEY = makeKey().b64;
 	process.env.NEXT_PUBLIC_APP_URL = APP_URL;
 	__resetIssuerCache();
 }
 
+/** Signs a minimal assertion directly with a raw PEM — simulates a token minted by another key (kid set). */
+async function signWith(pem: string, audience: string): Promise<string> {
+	const key = await jose.importPKCS8(pem, "RS256");
+	const publicJwk = await jose.exportJWK(createPublicKey(pem));
+	const kid = await jose.calculateJwkThumbprint(publicJwk);
+	return new jose.SignJWT({})
+		.setProtectedHeader({ alg: "RS256", kid, typ: "JWT" })
+		.setIssuer(`${APP_URL}/api/oidc`)
+		.setSubject(WORKLOAD_SUBJECT)
+		.setAudience(audience)
+		.setIssuedAt()
+		.setExpirationTime("5m")
+		.sign(key);
+}
+
 beforeEach(() => {
-	for (const k of ["ALETHIA_OIDC_SIGNING_KEY", "NEXT_PUBLIC_APP_URL", "BETTER_AUTH_URL"]) {
+	for (const k of [
+		"ALETHIA_OIDC_SIGNING_KEY",
+		"ALETHIA_OIDC_SIGNING_KEY_PREVIOUS",
+		"NEXT_PUBLIC_APP_URL",
+		"BETTER_AUTH_URL",
+	]) {
 		saved[k] = process.env[k];
 	}
 });
 afterEach(() => {
-	for (const k of ["ALETHIA_OIDC_SIGNING_KEY", "NEXT_PUBLIC_APP_URL", "BETTER_AUTH_URL"]) {
+	for (const k of [
+		"ALETHIA_OIDC_SIGNING_KEY",
+		"ALETHIA_OIDC_SIGNING_KEY_PREVIOUS",
+		"NEXT_PUBLIC_APP_URL",
+		"BETTER_AUTH_URL",
+	]) {
 		if (saved[k] === undefined) delete process.env[k];
 		else process.env[k] = saved[k];
 	}
@@ -117,5 +147,65 @@ describe("OIDC workload-identity issuer", () => {
 		expect(doc.jwks_uri).toBe(`${APP_URL}/api/oidc/jwks`);
 		expect(doc.id_token_signing_alg_values_supported).toContain("RS256");
 		expect(issuerUrl()).toBe(`${APP_URL}/api/oidc`);
+	});
+});
+
+describe("OIDC issuer key rotation (overlap JWKS)", () => {
+	/** Installs a primary (signing) key + a published-only previous key — the mid-rotation state. */
+	function installRotating(): { primary: { pem: string; b64: string }; previous: { pem: string; b64: string } } {
+		const primary = makeKey();
+		const previous = makeKey();
+		process.env.ALETHIA_OIDC_SIGNING_KEY = primary.b64; // gitleaks:allow — freshly generated in-test, not a secret
+		process.env.ALETHIA_OIDC_SIGNING_KEY_PREVIOUS = previous.b64; // gitleaks:allow — freshly generated in-test, not a secret
+		process.env.NEXT_PUBLIC_APP_URL = APP_URL;
+		__resetIssuerCache();
+		return { primary, previous };
+	}
+
+	it("publishes BOTH keys but signs new assertions with the primary", async () => {
+		const { primary } = installRotating();
+		const { keys } = await getPublicJwks();
+		expect(keys).toHaveLength(2);
+
+		const token = await mintWorkloadToken({ audience: "api://AzureADTokenExchange" });
+		const primaryKid = await jose.calculateJwkThumbprint(
+			await jose.exportJWK(createPublicKey(primary.pem)),
+		);
+		// The minted token is signed by (and carries the kid of) the primary key, never the previous one.
+		expect(jose.decodeProtectedHeader(token).kid).toBe(primaryKid);
+
+		// And it verifies against the published (2-key) JWKS.
+		const jwks = jose.createLocalJWKSet((await getPublicJwks()) as unknown as jose.JSONWebKeySet);
+		await expect(
+			jose.jwtVerify(token, jwks, {
+				issuer: `${APP_URL}/api/oidc`,
+				audience: "api://AzureADTokenExchange",
+			}),
+		).resolves.toBeTruthy();
+	});
+
+	it("still verifies an in-flight assertion signed by the OUTGOING (previous) key", async () => {
+		const { previous } = installRotating();
+		// A token minted before the roll — signed by the old key — must keep verifying through the overlap.
+		const oldToken = await signWith(previous.pem, "sts.aliyuncs.com");
+		const jwks = jose.createLocalJWKSet((await getPublicJwks()) as unknown as jose.JSONWebKeySet);
+		const { payload } = await jose.jwtVerify(oldToken, jwks, {
+			issuer: `${APP_URL}/api/oidc`,
+			audience: "sts.aliyuncs.com",
+		});
+		expect(payload.sub).toBe(WORKLOAD_SUBJECT);
+	});
+
+	it("dedupes when the previous slot is blank or equals the primary (half-applied roll)", async () => {
+		installKey();
+		const primaryB64 = process.env.ALETHIA_OIDC_SIGNING_KEY;
+		// Blank previous → one key.
+		process.env.ALETHIA_OIDC_SIGNING_KEY_PREVIOUS = "";
+		__resetIssuerCache();
+		expect((await getPublicJwks()).keys).toHaveLength(1);
+		// Previous identical to primary → still one key (no duplicate kid published).
+		process.env.ALETHIA_OIDC_SIGNING_KEY_PREVIOUS = primaryB64;
+		__resetIssuerCache();
+		expect((await getPublicJwks()).keys).toHaveLength(1);
 	});
 });

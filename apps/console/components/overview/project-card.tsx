@@ -6,7 +6,7 @@
 // provider icon, region, status, an estimated monthly cost, and a favorite star. Projects
 // are the top-level unit under the org.
 
-import { Box, Copy, MoreVertical, Star } from "lucide-react";
+import { Box, Copy, GitBranch, MoreVertical, Star } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { ProviderIcon } from "@repo/ui/provider-icon";
@@ -17,19 +17,19 @@ import {
 	DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
 import { StatusBadge } from "@repo/ui/status-badge";
-import type { ProjectWithProvider } from "@/app/server/actions/projects";
+import type { ProjectListItem } from "@/app/server/actions/projects";
 import { ClassificationChips } from "@/components/classification/classification-chips";
 import { DuplicateProjectDialog } from "@/components/projects/duplicate-project-dialog";
 import { orgHref, projectHref } from "@/lib/routing";
 
-/** A single project (project) tile. */
+/** A single project tile. */
 export function ProjectCard({
 	project,
 	orgSlug,
 	isFavorite,
 	onToggleFavorite,
 }: {
-	project: ProjectWithProvider;
+	project: ProjectListItem;
 	orgSlug: string;
 	isFavorite: boolean;
 	onToggleFavorite: () => void;
@@ -38,10 +38,11 @@ export function ProjectCard({
 		? projectHref(orgSlug, project.slug)
 		: orgHref(orgSlug);
 	const provider = project.cloud_provider;
+	const repo = project.repositories[0];
 	const [duplicateOpen, setDuplicateOpen] = useState(false);
 
 	return (
-		<div className="group/project relative rounded-lg border bg-card p-3.5 shadow-sm transition-all hover:-translate-y-px hover:border-foreground/20 hover:shadow-md">
+		<div className="group/project relative rounded-lg border bg-card p-3.5 transition-colors hover:border-foreground/20 hover:bg-muted/30">
 			{/* Full-card click target (behind content + the star button). */}
 			<Link
 				href={href}
@@ -76,6 +77,21 @@ export function ProjectCard({
 						</div>
 					</div>
 				</div>
+
+				{repo && (
+					<div className="mt-2.5 flex items-center gap-1.5 text-muted-foreground">
+						<GitBranch className="h-3 w-3 shrink-0" />
+						<span className="truncate font-mono text-[10px]">
+							{repo.label}
+							{project.repositories.length > 1 && (
+								<span className="text-muted-foreground/60">
+									{" "}
+									+{project.repositories.length - 1}
+								</span>
+							)}
+						</span>
+					</div>
+				)}
 
 				<div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2.5">
 					<StatusBadge status={project.status} />

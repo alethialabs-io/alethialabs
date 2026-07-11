@@ -31,6 +31,15 @@ const MAX_TTL_SECONDS = 600;
 /** Env var holding the base64-encoded PKCS8 PEM private key (single line; auto-generated in the vault). */
 const SIGNING_KEY_ENV = "ALETHIA_OIDC_SIGNING_KEY";
 
+/**
+ * Optional SECOND signing key, published-but-not-signing, used ONLY during a key rotation. Zero-downtime
+ * rollover: a cloud caches our JWKS (Azure for ~24h), so a new key must be PUBLISHED and trusted before we
+ * sign with it, and the old key must keep verifying in-flight assertions after we stop signing with it.
+ * The rotate flow (`scripts/rotate-oidc-key.sh`) parks the outgoing key here while the incoming key becomes
+ * the primary; after the overlap window it's cleared. See lib/oidc — `getPublicJwks` publishes both.
+ */
+const PREVIOUS_KEY_ENV = "ALETHIA_OIDC_SIGNING_KEY_PREVIOUS";
+
 interface LoadedKey {
 	privateKey: CryptoKey;
 	/** The public JWK published in the JWKS (kid/alg/use set; no private fields). */
@@ -38,7 +47,15 @@ interface LoadedKey {
 	kid: string;
 }
 
-let cached: LoadedKey | null = null;
+/** The issuer keyring: the one key we sign with, plus every key we publish for verification. */
+interface Keyring {
+	/** The primary key — the ONLY key `mintWorkloadToken` signs with. */
+	signing: LoadedKey;
+	/** All configured keys (primary first), published in the JWKS so both old + new assertions verify. */
+	all: LoadedKey[];
+}
+
+let cached: Keyring | null = null;
 
 /** Whether the issuer is configured on this instance (drives connector availability for Azure/Alibaba). */
 export function oidcIssuerConfigured(): boolean {
@@ -55,18 +72,13 @@ export function issuerUrl(): string {
 	return `${base}${ISSUER_PATH}`;
 }
 
-/** Decodes + imports the signing key and derives the public JWK (memoized). Throws if unconfigured. */
-async function load(): Promise<LoadedKey> {
-	if (cached) return cached;
-	const b64 = process.env[SIGNING_KEY_ENV];
-	if (!b64) {
-		throw new Error(`OIDC issuer not configured (${SIGNING_KEY_ENV}).`);
-	}
+/** Decodes + imports one base64(PKCS8 PEM) key and derives its public JWK (kid = JWK thumbprint). */
+async function importKey(b64: string, envName: string): Promise<LoadedKey> {
 	let pem: string;
 	try {
 		pem = Buffer.from(b64, "base64").toString("utf8");
 	} catch {
-		throw new Error(`${SIGNING_KEY_ENV} is not valid base64.`);
+		throw new Error(`${envName} is not valid base64.`);
 	}
 	const privateKey = await jose.importPKCS8(pem, ALG, { extractable: false });
 	// Derive the public JWK from the private PEM (never expose private fields in the JWKS).
@@ -75,19 +87,44 @@ async function load(): Promise<LoadedKey> {
 	publicJwk.kid = kid;
 	publicJwk.alg = ALG;
 	publicJwk.use = "sig";
-	cached = { privateKey, publicJwk, kid };
+	return { privateKey, publicJwk, kid };
+}
+
+/** Loads the keyring — the primary (signing) key plus any published-only rotation key (memoized). */
+async function load(): Promise<Keyring> {
+	if (cached) return cached;
+	const primaryB64 = process.env[SIGNING_KEY_ENV];
+	if (!primaryB64) {
+		throw new Error(`OIDC issuer not configured (${SIGNING_KEY_ENV}).`);
+	}
+	const signing = await importKey(primaryB64, SIGNING_KEY_ENV);
+	const all: LoadedKey[] = [signing];
+
+	// A second key is published (never used to sign) only during a rotation overlap. Ignore it if it's
+	// blank or accidentally identical to the primary (a half-applied roll) so the JWKS stays deduped.
+	const previousB64 = process.env[PREVIOUS_KEY_ENV];
+	if (previousB64 && previousB64 !== primaryB64) {
+		const previous = await importKey(previousB64, PREVIOUS_KEY_ENV);
+		if (previous.kid !== signing.kid) all.push(previous);
+	}
+
+	cached = { signing, all };
 	return cached;
 }
 
-/** Resets the memoized key — for tests that swap the env between cases. */
+/** Resets the memoized keyring — for tests that swap the env between cases. */
 export function __resetIssuerCache(): void {
 	cached = null;
 }
 
-/** The public JWKS (`{ keys: [...] }`) served at `${issuer}/jwks` for clouds to verify assertions. */
+/**
+ * The public JWKS (`{ keys: [...] }`) served at `${issuer}/jwks` for clouds to verify assertions. During a
+ * rotation this carries BOTH the new and the outgoing key; each assertion's `kid` header selects the right
+ * one, so old and new tokens both verify through the overlap.
+ */
 export async function getPublicJwks(): Promise<{ keys: jose.JWK[] }> {
-	const { publicJwk } = await load();
-	return { keys: [publicJwk] };
+	const { all } = await load();
+	return { keys: all.map((k) => k.publicJwk) };
 }
 
 /** The OIDC discovery document served at `${issuer}/.well-known/openid-configuration`. */
@@ -116,7 +153,8 @@ export async function mintWorkloadToken(opts: {
 	subject?: string;
 	ttlSeconds?: number;
 }): Promise<string> {
-	const { privateKey, kid } = await load();
+	const { signing } = await load();
+	const { privateKey, kid } = signing;
 	const now = Math.floor(Date.now() / 1000);
 	const ttl = Math.min(Math.max(opts.ttlSeconds ?? MAX_TTL_SECONDS, 60), MAX_TTL_SECONDS);
 	return await new jose.SignJWT({})

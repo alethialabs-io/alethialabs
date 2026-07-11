@@ -20,6 +20,7 @@ export * from "./security";
 export * from "./runners";
 export * from "./fleet";
 export * from "./jobs";
+export * from "./tofu-state";
 export * from "./cli";
 export * from "./connectors";
 export * from "./accounts";

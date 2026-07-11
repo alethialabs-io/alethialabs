@@ -3,7 +3,7 @@
 
 import { getServiceDb } from "@/lib/db";
 import { jobLogs } from "@/lib/db/schema";
-import { verifyRunnerToken } from "@/lib/runners/auth";
+import { verifyRunnerOwnsJob, verifyRunnerToken } from "@/lib/runners/auth";
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
@@ -43,10 +43,14 @@ export async function GET(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const { error: authError } = await verifyRunnerToken(req);
+	const { runnerId, error: authError } = await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	const { id: jobId } = await params;
+
+	const ownershipError = await verifyRunnerOwnsJob(runnerId, jobId);
+	if (ownershipError) return ownershipError;
+
 	const { searchParams } = new URL(req.url);
 	const after = searchParams.get("after");
 

@@ -17,6 +17,18 @@ type AddOnInstall struct {
 	ChartRepo string `json:"chartRepo"`
 	Chart     string `json:"chart"`
 	Version   string `json:"version"`
+	// Source selects how ArgoCD pulls the chart. "" / "helm" = a chart from a Helm registry
+	// (ChartRepo is the registry URL, Chart is the chart name, Version is the chart version).
+	// "git" = a chart directory inside a git repo — a bring-your-own (BYO) chart: ChartRepo is
+	// the git URL, Path is the chart directory, Version is the git ref. BYO charts render into a
+	// hardened per-project AppProject (Project) with manual sync.
+	Source string `json:"source,omitempty"`
+	// Path is the chart directory within a git-source repo (Source=="git"). Empty for Helm charts.
+	Path string `json:"path,omitempty"`
+	// Project is the ArgoCD AppProject the Application is placed in. Empty = "infra" (the
+	// marketplace default). BYO charts are pinned to a hardened "byo-<slug>" project the runner
+	// sets at deploy time.
+	Project string `json:"project,omitempty"`
 	// Namespace the chart installs into (CreateNamespace on sync).
 	Namespace string `json:"namespace"`
 	// Fully-merged Helm values (catalog defaults + user knobs).
@@ -24,3 +36,7 @@ type AddOnInstall struct {
 	// ArgoCD sync-wave ordering (lower installs first).
 	SyncWave int `json:"syncWave"`
 }
+
+// IsGitSource reports whether this install pulls a chart from a git repo (a BYO chart) rather
+// than a Helm registry.
+func (a AddOnInstall) IsGitSource() bool { return a.Source == "git" }

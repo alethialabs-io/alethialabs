@@ -19,11 +19,15 @@ const GPU_INSTANCE: Record<CloudProviderSlug, string> = {
 	aws: "g4dn.xlarge",
 	gcp: "a2-highgpu-1g",
 	azure: "Standard_NC4as_T4_v3",
+	// Hetzner has no GPU instances — the AI template falls back to the default node type.
+	hetzner: "",
+	alibaba: "ecs.gn6i-c4g1.xlarge",
 };
 
 /** Picks the node instance type for a template + provider (GPU for AI, default otherwise). */
 function instanceTypeFor(template: TemplateId, provider: CloudProviderSlug): string {
-	if (template === "ai") return GPU_INSTANCE[provider] ?? DEFAULT_INSTANCE_TYPE[provider];
+	// A falsy GPU entry (e.g. providers without GPU nodes) falls back to the default type.
+	if (template === "ai") return GPU_INSTANCE[provider] || DEFAULT_INSTANCE_TYPE[provider];
 	return DEFAULT_INSTANCE_TYPE[provider];
 }
 

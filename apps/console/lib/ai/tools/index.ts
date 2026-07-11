@@ -3,6 +3,8 @@
 
 import type { CanvasContext } from "../canvas-context";
 import { catalogTools, composeTools } from "./compose";
+import { connectTools } from "./connect";
+import { docsTools } from "./docs";
 import { operationTools } from "./operations";
 import { readTools } from "./read";
 import { externalToolsOnly } from "./registry";
@@ -24,6 +26,8 @@ export function buildProjectAgentTools(ctx: CanvasContext | undefined) {
 	return {
 		...catalogTools(),
 		...readTools(),
+		...docsTools(),
+		...connectTools(),
 		...scannerTools(),
 		...composeTools(ctx),
 		...operationTools(),
@@ -41,6 +45,8 @@ export function buildAgentTools(opts?: { mode?: AgentMode }) {
 	return {
 		...catalogTools(),
 		...readTools(),
+		...docsTools(),
+		...connectTools(),
 		...scannerTools(),
 		...(opts?.mode === "act" ? operationTools() : {}),
 		...visualizeTools(),

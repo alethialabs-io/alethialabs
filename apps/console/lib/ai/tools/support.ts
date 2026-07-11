@@ -3,6 +3,7 @@
 
 import { tool } from "ai";
 import { createSupportCaseInputSchema } from "../support/case";
+import { docsTools } from "./docs";
 import { readTools } from "./read";
 
 /**
@@ -15,6 +16,7 @@ import { readTools } from "./read";
 export function buildSupportTools() {
 	return {
 		...readTools(),
+		...docsTools(),
 
 		create_support_case: tool({
 			description:

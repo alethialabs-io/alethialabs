@@ -58,4 +58,28 @@ export const NOSQL: Record<CloudProviderSlug, NosqlConfig> = {
 		portabilityNote:
 			"Cosmos DB partition keys cannot be changed after creation. Review the key strategy before provisioning.",
 	},
+	hetzner: {
+		serviceName: "—",
+		supportsRangeKey: false,
+		supportsGlobalTables: false,
+		billingModes: [],
+		keyTypes: [],
+		portabilityNote: "Not available on Hetzner",
+	},
+	alibaba: {
+		serviceName: "Tablestore",
+		supportsRangeKey: true,
+		supportsGlobalTables: false,
+		billingModes: [
+			{ value: "on_demand", label: "Pay-As-You-Go" },
+			{ value: "provisioned", label: "Reserved Throughput" },
+		],
+		keyTypes: [
+			{ value: "S", label: "String" },
+			{ value: "N", label: "Integer" },
+			{ value: "B", label: "Binary" },
+		],
+		portabilityNote:
+			"Tablestore primary keys are fixed at table creation. Review the key strategy before provisioning.",
+	},
 };

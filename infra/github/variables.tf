@@ -71,12 +71,6 @@ variable "deploy_reader_role_arn" {
   default     = ""
 }
 
-variable "connector_platform_deployer_role_arn" {
-  description = "alethia-connector-platform-deployer role ARN → Actions var CONNECTOR_PLATFORM_DEPLOYER_ROLE_ARN (infra-connector-platform applies the platform assumer IAM)."
-  type        = string
-  default     = ""
-}
-
 variable "public_app_url" {
   description = "Public origin → Actions var PUBLIC_APP_URL (drives NEXT_PUBLIC_APP_URL etc. in deploy-console)."
   type        = string

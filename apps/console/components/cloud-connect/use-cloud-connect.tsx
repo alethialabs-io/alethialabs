@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import {
-	getAwsExternalId,
+	initAwsIdentity,
 	saveAwsIdentity,
 } from "@/app/(private)/dashboard/providers/actions";
 import {
@@ -26,6 +26,7 @@ import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { AwsConnection } from "@/components/connector/aws-connection";
 import { AzureConnection } from "@/components/connector/azure-connection";
 import { GcpConnection } from "@/components/connector/gcp-connection";
+import { HetznerConnection } from "@/components/connector/hetzner-connection";
 import {
 	AlibabaConnection,
 	TokenCloudConnection,
@@ -44,12 +45,20 @@ import { toast } from "sonner";
 
 /**
  * The connectors-docs page for a connector — the Alethia connect guide (mirrors the
- * board's per-category docs links). Cloud-native big three + git get a dedicated page;
- * pluggable api_key providers share the pluggable guide; extra clouds fall to the index.
+ * board's per-category docs links). Cloud-native clouds with a dedicated guide get their own
+ * page; pluggable api_key providers share the pluggable guide; the rest fall to the index.
  */
 function connectorDocsHref(integration: ConnectorWithConnection): string {
 	const { slug } = integration;
-	if (slug === "aws" || slug === "gcp" || slug === "azure") {
+	// Clouds with a dedicated connect guide. Hetzner is api_key-authed, so it must be matched
+	// here before the generic api_key → /pluggable fallback below.
+	if (
+		slug === "aws" ||
+		slug === "gcp" ||
+		slug === "azure" ||
+		slug === "alibaba" ||
+		slug === "hetzner"
+	) {
 		return `${CONNECTOR_DOCS_BASE}/${slug}`;
 	}
 	if (integration.category === "git") return `${CONNECTOR_DOCS_BASE}/git-providers`;
@@ -139,7 +148,7 @@ export function ConnectSheetHeader({
 
 interface UseCloudConnectArgs {
 	integrations: ConnectorWithConnection[];
-	awsSetup: { externalId: string; identityId: string } | null;
+	awsSetup: { identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
 	azureSetup: { identityId: string } | null;
 	extraSetup?: Record<string, { identityId: string; externalId?: string }>;
@@ -195,7 +204,7 @@ export function useCloudConnect({
 			if (slug === "aws") {
 				if (!awsSetup || addingAnother) {
 					setConnectingSlug(slug);
-					setAwsSetup(await getAwsExternalId());
+					setAwsSetup(await initAwsIdentity());
 				}
 				setAwsSheetOpen(true);
 			} else if (slug === "gcp") {
@@ -273,15 +282,10 @@ export function useCloudConnect({
 					<ConnectSheetHeader
 						integration={bySlug("aws")}
 						title="Connect AWS Account"
-						description="Set up a cross-account IAM role to allow Alethia to provision infrastructure in your AWS account."
+						description="Create a keyless IAM role that trusts the Alethia issuer, so Alethia can provision infrastructure in your AWS account."
 					/>
 					<div className="px-6 py-6">
-						{awsSetup && (
-							<AwsConnection
-								externalId={awsSetup.externalId}
-								onComplete={handleAwsConnect}
-							/>
-						)}
+						{awsSetup && <AwsConnection onComplete={handleAwsConnect} />}
 					</div>
 				</SheetContent>
 			</Sheet>
@@ -347,6 +351,19 @@ export function useCloudConnect({
 							<div className="px-6 py-6">
 								{extraSetup?.alibaba && (
 									<AlibabaConnection onSave={handleAlibabaConnect} />
+								)}
+							</div>
+						</>
+					) : extraCloudSlug === "hetzner" ? (
+						<>
+							<ConnectSheetHeader
+								integration={bySlug("hetzner")}
+								title="Connect Hetzner Cloud"
+								description="Connect with a scoped API token (encrypted at rest) to provision a Talos Kubernetes cluster."
+							/>
+							<div className="px-6 py-6">
+								{extraSetup?.hetzner && (
+									<HetznerConnection onSave={handleTokenCloudConnect("hetzner")} />
 								)}
 							</div>
 						</>

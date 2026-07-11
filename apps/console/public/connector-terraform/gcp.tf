@@ -1,12 +1,24 @@
+# Alethia GCP connector — keyless, DIRECT OIDC federation from the Alethia issuer (no AWS hop).
+# Registers a Workload Identity Pool with an OIDC provider that trusts Alethia's control-plane issuer,
+# pinned to the fixed workload subject + audience the console mints, and a provisioner service account.
+# Alethia authenticates with a short-lived minted JWT written to a token file that google-auth re-reads —
+# no service-account key, no static credential. Paste the `credential_config` output into the connect sheet.
+
 variable "project_id" {
   description = "GCP project ID where Alethia will provision resources"
   type        = string
 }
 
-variable "alethia_aws_account_id" {
-  description = "Alethia platform AWS account ID"
+variable "alethia_issuer_url" {
+  description = "The Alethia control-plane OIDC issuer URL (the trust root)."
   type        = string
-  default     = "787587782604"
+  default     = "https://alethialabs.io/api/oidc"
+}
+
+variable "gcp_audience" {
+  description = "The audience the OIDC provider pins — must equal GCP_TOKEN_AUDIENCE (session/gcp.ts)."
+  type        = string
+  default     = "alethia-gcp-wif"
 }
 
 variable "pool_id" {
@@ -18,7 +30,7 @@ variable "pool_id" {
 variable "provider_id" {
   description = "Workload Identity Provider ID"
   type        = string
-  default     = "alethia-aws-provider"
+  default     = "alethia-oidc-provider"
 }
 
 variable "service_account_name" {
@@ -41,10 +53,6 @@ provider "google" {
 }
 
 data "google_project" "current" {}
-
-locals {
-  sa_email = "${var.service_account_name}@${var.project_id}.iam.gserviceaccount.com"
-}
 
 resource "google_project_service" "apis" {
   for_each = toset([
@@ -78,41 +86,48 @@ resource "google_project_iam_member" "alethia_editor" {
 resource "google_iam_workload_identity_pool" "alethia" {
   workload_identity_pool_id = var.pool_id
   display_name              = "Alethia Identity Pool"
-  description               = "Allows Alethia runners to authenticate from AWS"
+  description               = "Trusts the Alethia OIDC issuer for keyless federation"
 
   depends_on = [google_project_service.apis]
 }
 
-resource "google_iam_workload_identity_pool_provider" "alethia_aws" {
+resource "google_iam_workload_identity_pool_provider" "alethia_oidc" {
   workload_identity_pool_id          = google_iam_workload_identity_pool.alethia.workload_identity_pool_id
   workload_identity_pool_provider_id = var.provider_id
-  display_name                       = "Alethia AWS Provider"
+  display_name                       = "Alethia OIDC Provider"
 
-  aws {
-    account_id = var.alethia_aws_account_id
+  # Map the minted JWT's `sub` to the GCP subject — the SA binding below pins it to "alethia-connector".
+  attribute_mapping = {
+    "google.subject" = "assertion.sub"
+  }
+
+  oidc {
+    issuer_uri        = var.alethia_issuer_url
+    allowed_audiences = [var.gcp_audience]
   }
 }
 
+# Bind ONLY the fixed workload subject (not the whole pool) to the provisioner SA.
 resource "google_service_account_iam_member" "wif_binding" {
   service_account_id = google_service_account.alethia.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.alethia.name}/*"
+  member             = "principal://iam.googleapis.com/${google_iam_workload_identity_pool.alethia.name}/subject/alethia-connector"
 }
 
 output "credential_config" {
-  description = "WIF credential configuration JSON — paste this into the Alethia dashboard"
+  description = "WIF credential configuration JSON — paste this into the Alethia connect sheet"
   sensitive   = false
   value = jsonencode({
     type                              = "external_account"
-    audience                          = "//iam.googleapis.com/${google_iam_workload_identity_pool_provider.alethia_aws.name}"
-    subject_token_type                = "urn:ietf:params:aws:token-type:aws4_request"
+    audience                          = "//iam.googleapis.com/${google_iam_workload_identity_pool_provider.alethia_oidc.name}"
+    subject_token_type                = "urn:ietf:params:oauth:token-type:jwt"
     token_url                         = "https://sts.googleapis.com/v1/token"
     service_account_impersonation_url = "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${google_service_account.alethia.email}:generateAccessToken"
+    # Alethia's runner overrides `file` with its own temp path at provision time; the console supplies
+    # the token programmatically. The placeholder just makes the config a valid external_account.
     credential_source = {
-      environment_id                = "aws1"
-      region_url                    = "http://169.254.169.254/latest/meta-data/placement/availability-zone"
-      url                           = "http://169.254.169.254/latest/meta-data/iam/security-credentials"
-      regional_cred_verification_url = "https://sts.{region}.amazonaws.com?Action=GetCallerIdentity&Version=2011-06-15"
+      file   = "/var/run/alethia/gcp-oidc-token"
+      format = { type = "text" }
     }
   })
 }

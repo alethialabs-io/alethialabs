@@ -17,7 +17,7 @@
 #   * interactive runners        (interactive.go: RunSpinner / AuthRequiredPrompt)
 #   * logout / banner / version wiring
 #   * cloud-account + provisioning command adapters that are pure network/TTY glue
-#     (connector{,_aws,_gcp,_azure,_remove}.go, runner_{deploy,destroy,remove}.go,
+#     (connector{,_aws,_gcp,_azure,_alibaba,_remove}.go, runner_{deploy,destroy,remove}.go,
 #      project_{plan,apply,destroy,get}.go, jobs_{logs,cancel}.go, job_wait.go)
 #   * system exec (internal/cloudshell) and embedded assets (internal/connector)
 #
@@ -33,7 +33,7 @@ trap 'rm -f "$PROFILE" "$FILTERED"' EXIT
 go test ./... -coverprofile="$PROFILE" -covermode=set >/dev/null
 
 # Files whose bodies are predominantly interactive/IO glue (see header).
-EXCLUDE_FILES='/(table|stepper|config_printer|selectors|helpers|jobs_table|interactive|init|login|logout|root|main|version|job_wait|jobs_logs|jobs_cancel|connector|connector_aws|connector_gcp|connector_azure|connector_remove|runner_deploy|runner_destroy|runner_remove|project_plan|project_apply|project_destroy|project_get)\.go:'
+EXCLUDE_FILES='/(table|stepper|config_printer|selectors|helpers|jobs_table|interactive|init|login|logout|root|main|version|job_wait|jobs_logs|jobs_cancel|connector|connector_aws|connector_gcp|connector_azure|connector_alibaba|connector_remove|runner_deploy|runner_destroy|runner_remove|project_plan|project_apply|project_destroy|project_get)\.go:'
 EXCLUDE_DIRS='/(internal/cloudshell|internal/connector|internal/version)/'
 
 head -1 "$PROFILE" >"$FILTERED"

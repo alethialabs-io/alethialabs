@@ -3,6 +3,7 @@
 
 import {
 	CreateBucketCommand,
+	DeleteObjectCommand,
 	GetObjectCommand,
 	HeadBucketCommand,
 	PutObjectCommand,
@@ -20,6 +21,8 @@ export interface StorageBackend {
 	put(bucket: string, key: string, body: Uint8Array, contentType: string): Promise<void>;
 	/** Downloads an object as raw bytes, or null if it does not exist. */
 	get(bucket: string, key: string): Promise<Uint8Array | null>;
+	/** Deletes an object; a no-op (not an error) if it does not exist. */
+	del(bucket: string, key: string): Promise<void>;
 }
 
 let cachedClient: S3Client | undefined;
@@ -118,6 +121,18 @@ export const storage: StorageBackend = {
 			return await res.Body.transformToByteArray();
 		} catch (err) {
 			if (isNotFound(err)) return null;
+			throw err;
+		}
+	},
+
+	async del(bucket, key) {
+		try {
+			await s3Client().send(
+				new DeleteObjectCommand({ Bucket: bucket, Key: key }),
+			);
+		} catch (err) {
+			// A missing object is already the desired end state (tofu destroy on no-state).
+			if (isNotFound(err)) return;
 			throw err;
 		}
 	},

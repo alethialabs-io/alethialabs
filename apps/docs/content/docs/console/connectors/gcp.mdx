@@ -5,34 +5,55 @@ description: Workload Identity Federation setup with OIDC token exchange.
 
 # GCP Connector
 
-GCP integration uses **Workload Identity Federation (WIF)** to exchange OIDC tokens for temporary GCP credentials. No service account JSON keys are created or stored. See [Security Architecture](/concepts/security).
+GCP integration uses **Workload Identity Federation (WIF)** with **direct OIDC** — your project's WIF pool
+trusts Alethia's issuer directly (no AWS hop), and Alethia federates in with a short-lived minted JWT. No
+service account JSON keys are created or stored. See [Security Architecture](/concepts/security).
 
-## Setup
+<Callout type="info">
+**Is this safe?** You create the trust entirely in **your own** GCP project — no service account key is
+ever generated. Alethia signs in with a short-lived token (≤10 min) that GCP verifies and swaps for a
+~1-hour access token. The only thing stored is the **WIF trust configuration** (no secret). **Revoke
+anytime** by deleting the pool or unbinding the service account.
+</Callout>
 
-<Steps>
+The connect sheet gives you two one-shot paths that create everything for you and print a **credential
+configuration JSON** — you don't hand-build the WIF resources. Both pin the same values the console mints:
+issuer `https://alethialabs.io/api/oidc`, audience `alethia-gcp-wif`, subject `alethia-connector`.
 
-### Create Workload Identity Pool
-In your GCP project, create a Workload Identity Pool to group external identities.
+<Tabs items={["Setup script (Cloud Shell)", "Terraform"]}>
+  <Tab value="Setup script (Cloud Shell)">
+    <Steps>
 
-### Add OIDC Provider
-Add an OIDC Provider to the pool with:
-- **Issuer URL** — the Alethia platform's OIDC issuer
-- **Audience** — the platform's audience identifier
-- **Attribute mapping** — maps OIDC claims to Google attributes
+    ### Run the setup script
+    From the connect sheet, open **Google Cloud Shell** (or run locally with `gcloud`) and run the provided
+    `alethia-gcp-setup.sh <PROJECT_ID>`. It enables the required APIs, creates the provisioner service
+    account, a **Workload Identity Pool + OIDC provider** trusting the Alethia issuer, and binds the fixed
+    subject `alethia-connector` to the service account.
 
-### Create Service Account
-Create a GCP service account with the required roles for infrastructure provisioning (Kubernetes Engine Admin, Cloud SQL Admin, etc.).
+    ### Copy the credential config
+    The script prints the WIF credential configuration between `--- START CONFIG ---` and `--- END CONFIG ---`.
 
-### Bind Service Account
-Grant the Workload Identity Pool the `roles/iam.workloadIdentityUser` role on the service account. This allows OIDC-authenticated requests to impersonate the service account.
+    ### Paste into Alethia
+    Paste that block into the connect sheet and click "Connect."
 
-### Export WIF Configuration
-Export the WIF configuration JSON from the Google Cloud Console.
+    </Steps>
+  </Tab>
+  <Tab value="Terraform">
+    <Steps>
 
-### Paste into Alethia
-Paste the WIF configuration JSON and click "Complete."
+    ### Apply the module
+    Download the module ("Download module" in the connect sheet) and run `terraform apply` (auth via your
+    `gcloud` login). It creates the same pool + OIDC provider + service account + binding.
 
-</Steps>
+    ### Copy the output
+    Copy the `credential_config` output (`terraform output credential_config`).
+
+    ### Paste into Alethia
+    Paste it into the connect sheet and click "Connect."
+
+    </Steps>
+  </Tab>
+</Tabs>
 
 ## Verification
 
@@ -48,7 +69,8 @@ Existing resources (VPC networks, subnets, DNS zones) are discovered separately 
 ## What's Stored
 
 - **GCP Project ID**
-- **Service account email**
-- **WIF configuration** (pool ID, provider ID, issuer details)
+- **WIF configuration** — the credential config JSON you paste (pool + provider audience, the service
+  account impersonation URL, and the token-file credential source). The provisioner service account is
+  referenced by that impersonation URL; there's no separate key field.
 
 No service account JSON keys. Access is revoked by deleting the WIF pool or unbinding the service account.

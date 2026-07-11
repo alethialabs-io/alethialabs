@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowRight, Check, Loader2, Sparkles, Users } from "lucide-react";
+import { ArrowRight, Check, GitBranch, Loader2, Sparkles, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -80,10 +80,12 @@ interface CreateProjectFormProps {
 	/** Whether the org can invite collaborators (Pro). Drives the Collaborate pill. */
 	canCollaborate: boolean;
 	integrations: ConnectorWithConnection[];
-	awsSetup: { externalId: string; identityId: string } | null;
+	awsSetup: { identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
 	azureSetup: { identityId: string } | null;
 	extraSetup?: Record<string, { identityId: string; externalId?: string }>;
+	/** Whether bring-your-own Helm charts are enabled (server flag) — shows the "start from a chart" path. */
+	byoHelmEnabled?: boolean;
 }
 
 /**
@@ -102,11 +104,13 @@ export function CreateProjectForm({
 	gcpSetup,
 	azureSetup,
 	extraSetup,
+	byoHelmEnabled,
 }: CreateProjectFormProps) {
 	const router = useRouter();
 	const { openUpgrade } = useUpgradeSheet();
 	const [creating, setCreating] = useState(false);
 	const [creatingEmpty, setCreatingEmpty] = useState(false);
+	const [creatingFromChart, setCreatingFromChart] = useState(false);
 	const [launching, setLaunching] = useState(false);
 
 	const cloudConnect: CloudConnectResult = useCloudConnect({
@@ -217,8 +221,34 @@ export function CreateProjectForm({
 		}
 	};
 
+	/** Creates a blank project, then lands on its canvas with the "attach a Helm chart" flow open —
+	 * the repo-first on-ramp (seed a project from a chart). The chart coords are collected on the
+	 * canvas via the shared ByoChartDialog (which the ?attachChart param auto-opens). */
+	const onCreateFromChart = async () => {
+		if (!(await form.trigger("project_name"))) {
+			form.setFocus("project_name");
+			return;
+		}
+		const projectName = form.getValues("project_name");
+		const region = DEFAULT_REGION.aws;
+		setCreatingFromChart(true);
+		try {
+			const { project } = await createProject(
+				buildEmptyCreateInput({
+					projectName,
+					defaultEnvironment: { name: "production", stage: "production", region },
+				}),
+			);
+			await addEnvironment(project.id, { name: "preview", stage: "development", region });
+			router.push(`${projectHref(orgSlug, project.slug ?? "")}?attachChart=1`);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Failed to create project.");
+			setCreatingFromChart(false);
+		}
+	};
+
 	const slugPreview = slugify(name) || "project";
-	const busy = creating || creatingEmpty;
+	const busy = creating || creatingEmpty || creatingFromChart;
 
 	return (
 		<div className="mx-auto w-full max-w-3xl space-y-8 pb-20">
@@ -301,6 +331,36 @@ export function CreateProjectForm({
 					))}
 				</div>
 			</section>
+
+			{/* ===== start from a Helm chart (repo-first on-ramp) ===== */}
+			{byoHelmEnabled && (
+				<button
+					type="button"
+					onClick={() => void onCreateFromChart()}
+					disabled={busy}
+					className="group flex w-full items-center gap-4 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-ring disabled:opacity-60"
+				>
+					<span className="grid size-9 shrink-0 place-items-center rounded-md border border-border text-muted-foreground">
+						{creatingFromChart ? (
+							<Loader2 className="size-4 animate-spin" />
+						) : (
+							<GitBranch className="size-4" />
+						)}
+					</span>
+					<span className="min-w-0 flex-1">
+						<span className="flex items-center gap-2 text-[14px] font-medium text-foreground">
+							Bring your own Helm chart
+							<span className="rounded-full border border-border px-1.5 py-0.5 font-mono text-[8.5px] uppercase tracking-wider text-muted-foreground">
+								New
+							</span>
+						</span>
+						<span className="mt-0.5 block text-[12.5px] text-muted-foreground">
+							Start from a git repo — Alethia deploys and governs it on your cluster via ArgoCD.
+						</span>
+					</span>
+					<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+				</button>
+			)}
 
 			{/* ===== divider ===== */}
 			<div className="flex items-center gap-4 py-2">

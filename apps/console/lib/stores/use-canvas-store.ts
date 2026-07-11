@@ -5,6 +5,7 @@ import { applyNodeChanges, type NodeChange } from "@xyflow/react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
+import type { ByoChartState } from "@/app/server/actions/byo-charts";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import {
 	NODE_REGISTRY,
@@ -214,7 +215,9 @@ export function diffNodes(baseline: CanvasNode[], nodes: CanvasNode[]): PendingC
 	const cur = new Map(nodes.map((n) => [n.id, n]));
 	const changes: PendingChange[] = [];
 	for (const n of nodes) {
-		if (n.id === PROJECT_NODE_ID) continue;
+		// The project root isn't a provisionable add; chart nodes are persisted out-of-band
+		// (project_addons) so they never belong in the Deploy diff.
+		if (n.id === PROJECT_NODE_ID || n.data.kind === "chart") continue;
 		const prev = base.get(n.id);
 		if (!prev) {
 			changes.push({ id: n.id, op: "new", kind: n.data.kind, name: nodeName(n) });
@@ -226,7 +229,7 @@ export function diffNodes(baseline: CanvasNode[], nodes: CanvasNode[]): PendingC
 		}
 	}
 	for (const n of baseline) {
-		if (n.id === PROJECT_NODE_ID) continue;
+		if (n.id === PROJECT_NODE_ID || n.data.kind === "chart") continue;
 		if (!cur.has(n.id)) {
 			changes.push({ id: n.id, op: "removed", kind: n.data.kind, name: nodeName(n) });
 		}
@@ -264,6 +267,8 @@ interface CanvasStore {
 
 	onNodesChange: (changes: NodeChange<CanvasNode>[]) => void;
 	setGraph: (graph: { nodes: CanvasNode[] }) => void;
+	/** Replace all BYO chart nodes from getProjectByoCharts (out-of-band; not a staged change). */
+	setChartNodes: (charts: ByoChartState[]) => void;
 	addNode: (kind: NodeKind, position?: { x: number; y: number }) => void;
 	/** Add a node with an explicit config + placement (used by Ask AI proposals). */
 	addNodeWithConfig: (
@@ -354,9 +359,14 @@ export const useCanvasStore = create<CanvasStore>()(
 			},
 
 			setGraph: ({ nodes }) => {
-				const withRoot = nodes.some((n) => n.id === PROJECT_NODE_ID)
+				// Preserve any already-loaded BYO chart nodes across a form reseed — they're
+				// out-of-band (loaded from getProjectByoCharts), not part of the form graph, so the
+				// incoming form-derived `nodes` never contain them and would otherwise wipe them.
+				const charts = get().nodes.filter((n) => n.data.kind === "chart");
+				const base = nodes.some((n) => n.id === PROJECT_NODE_ID)
 					? nodes
 					: [makeProjectNode(), ...nodes];
+				const withRoot = [...base, ...charts];
 				set({
 					nodes: withRoot,
 					edges: deriveEdges(withRoot),
@@ -365,9 +375,41 @@ export const useCanvasStore = create<CanvasStore>()(
 					dirty: false,
 					past: [],
 					future: [],
-					// The loaded graph is the saved state → it becomes the diff baseline.
+					// The loaded graph is the saved state → it becomes the diff baseline. (Chart
+					// nodes ride along but diffNodes skips them, so they never show as changes.)
 					baseline: structuredClone(withRoot),
 				});
+			},
+
+			setChartNodes: (charts) => {
+				const nonChart = get().nodes.filter((n) => n.data.kind !== "chart");
+				const chartNodes: CanvasNode[] = charts.map((c, i) => ({
+					id: `chart-${c.id}`,
+					type: "chart",
+					// Non-deletable: detaching is out-of-band (detachByoChart) via the node's own
+					// action, so a stray keyboard-delete can't orphan a project_addons row.
+					deletable: false,
+					position: { x: 900, y: 160 + i * 150 },
+					data: {
+						kind: "chart",
+						config: {
+							id: c.id,
+							repoUrl: c.repoUrl,
+							chartPath: c.chartPath,
+							ref: c.ref,
+							namespace: c.namespace,
+							status: c.status,
+							health: c.health,
+							sync: c.sync,
+							scanStatus: c.scanStatus,
+							scanReport: c.scanReport,
+						},
+						cloud_identity_id: null,
+						provider: null,
+					},
+				}));
+				const next = [...nonChart, ...chartNodes];
+				set({ nodes: next, edges: deriveEdges(next) });
 			},
 
 			commit: () =>

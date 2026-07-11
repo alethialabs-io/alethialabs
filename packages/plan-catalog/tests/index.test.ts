@@ -6,8 +6,10 @@
 
 import { describe, expect, it } from "vitest";
 import {
+	AI_PLAN_CATALOG,
 	aiPlanMeta,
 	aiPlanUnitAmountCents,
+	PAID_AI_PLANS,
 	PAID_PLANS,
 	PLAN_CATALOG,
 	planMeta,
@@ -81,18 +83,37 @@ describe("AI plan catalog (final pricing)", () => {
 		expect(plus.priceMonthlyEur).toBe(18);
 	});
 
-	it("prices AI Max at $100 / mo (€90) with Sonnet + Opus-on-demand advisor copy", () => {
+	it("prices AI Max at $100 / mo (€90)", () => {
 		const max = aiPlanMeta("ai_max");
 		expect(max.priceLabel).toBe("$100 / mo");
 		expect(max.priceMonthlyUsd).toBe(100);
 		expect(max.priceMonthlyEur).toBe(90);
-		expect(max.advisor).toBe("Sonnet advisor · Opus on demand");
 	});
 
 	it("keeps AI Free free", () => {
 		const free = aiPlanMeta("ai_free");
 		expect(free.paid).toBe(false);
 		expect(free.priceMonthlyUsd).toBe(0);
+	});
+
+	it("never leaks model names into user-facing copy", () => {
+		// Tiers are described by what Elench does, not by which model serves it.
+		for (const entry of AI_PLAN_CATALOG) {
+			const strings = [entry.name, entry.tagline, entry.advisor, ...entry.highlights];
+			for (const s of strings) {
+				expect(s).not.toMatch(/sonnet|opus|haiku|executor/i);
+			}
+		}
+	});
+
+	it("recommends exactly one paid tier (AI Plus) to the upgrade UI", () => {
+		const recommended = AI_PLAN_CATALOG.filter((p) => p.recommended);
+		expect(recommended.map((p) => p.id)).toEqual(["ai_plus"]);
+	});
+
+	it("PAID_AI_PLANS excludes the free tier (the upgrade chooser never shows it)", () => {
+		expect(PAID_AI_PLANS.every((p) => p.paid)).toBe(true);
+		expect(PAID_AI_PLANS.map((p) => p.id)).toEqual(["ai_plus", "ai_max"]);
 	});
 });
 

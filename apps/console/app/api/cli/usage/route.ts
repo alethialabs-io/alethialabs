@@ -16,7 +16,7 @@ import { cliUsageResponse } from "@/lib/validations/cli-contract";
 /**
  * Reports the active org's current usage: billable seats used vs the purchased cap,
  * managed-runner minutes consumed this period, the project count, and AI credits used in
- * the trailing week vs the plan's weekly grant. A read-only roll-up of the same primitives
+ * the current fixed week vs the plan's weekly grant. A read-only roll-up of the same primitives
  * the console Usage page renders (lib/billing). Gated on `view` of `org` (any member);
  * org-scoped — the personal scope reports zeroes against the community grant.
  */
@@ -42,7 +42,10 @@ export async function GET(req: Request) {
 		const from =
 			billing?.currentPeriodStart ??
 			new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-		const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+		// The SAME fixed epoch week bucket the guard + console meters use — so the CLI's
+		// weekly credits figure matches the console instead of a trailing-7-day drift.
+		const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+		const weekStart = new Date(Math.floor(Date.now() / WEEK_MS) * WEEK_MS);
 
 		const [seatsUsed, minuteRows, counts, creditsUsed] = await Promise.all([
 			hasOrg ? countBillableSeats(actor.orgId) : Promise.resolve(0),
@@ -50,7 +53,9 @@ export async function GET(req: Request) {
 			hasOrg
 				? queryResourceCounts(actor.orgId)
 				: Promise.resolve({ projects: 0, clusters: 0, spendUnderManagement: 0 }),
-			hasOrg ? sumCredits(actor.orgId, "included", weekAgo) : Promise.resolve(0),
+			hasOrg
+				? sumCredits(actor.orgId, "included", weekStart)
+				: Promise.resolve(0),
 		]);
 
 		return cliJson(cliUsageResponse, {

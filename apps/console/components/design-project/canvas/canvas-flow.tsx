@@ -13,6 +13,7 @@ import "@xyflow/react/dist/style.css";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import type { CanvasNode } from "./graph/types";
 import { CacheNode } from "./nodes/cache-node";
+import { ChartNode } from "./nodes/chart-node";
 import { ClusterNode } from "./nodes/cluster-node";
 import { DatabaseNode } from "./nodes/database-node";
 import { DnsNode } from "./nodes/dns-node";
@@ -39,6 +40,7 @@ const nodeTypes: NodeTypes = {
 	dns: DnsNode,
 	secret: SecretNode,
 	repositories: RepositoriesNode,
+	chart: ChartNode,
 };
 
 const edgeTypes: EdgeTypes = {

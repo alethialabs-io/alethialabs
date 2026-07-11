@@ -12,10 +12,19 @@ export async function DELETE(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const { error: authError } = await verifyRunnerToken(req);
+	const { runnerId: authRunnerId, error: authError } =
+		await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	const { id: runnerId } = await params;
+
+	// A runner may only delete itself — the path id must be the caller.
+	if (runnerId !== authRunnerId) {
+		return NextResponse.json(
+			{ error: "Runner may only modify itself" },
+			{ status: 403 },
+		);
+	}
 
 	try {
 		const db = getServiceDb();

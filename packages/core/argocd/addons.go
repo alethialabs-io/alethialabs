@@ -22,6 +22,14 @@ import (
 // hardcoded platform templates (e.g. external-secrets-operator.yaml). Automated + self-heal
 // so the cluster converges to the declared chart; CreateNamespace so the target namespace is
 // made on first sync. The sync-wave orders installs (lower first).
+// applicationTmpl renders an add-on as an ArgoCD Application. Two shapes share the template:
+//   - a marketplace chart (Source=="", the default) — a Helm-registry chart (repoURL+chart),
+//     placed in the "infra" project, automated + self-heal so the cluster converges.
+//   - a bring-your-own chart (Source=="git") — a chart directory inside the customer's git repo
+//     (repoURL+path+ref), pinned to its hardened "byo-<slug>" project (Project), with MANUAL sync
+//     (no automated block, no prune, no self-heal) so an untrusted chart never auto-applies.
+//
+// CreateNamespace makes the target namespace on first sync; the sync-wave orders installs.
 var applicationTmpl = template.Must(template.New("addon-app").Parse(`apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -33,13 +41,18 @@ metadata:
     alethia.io/managed-by: addon-marketplace
     alethia.io/addon-id: {{ .ID }}
     alethia.io/addon-mode: {{ .Mode }}
+    alethia.io/addon-source: {{ .Source }}
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  project: infra
+  project: {{ .Project }}
   source:
     repoURL: {{ .ChartRepo }}
+    {{- if eq .Source "git" }}
+    path: {{ .Path }}
+    {{- else }}
     chart: {{ .Chart }}
+    {{- end }}
     targetRevision: "{{ .Version }}"
     helm:
       values: |
@@ -47,12 +60,18 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ .Namespace }}
+  {{- if eq .Source "git" }}
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+  {{- else }}
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+  {{- end }}
   revisionHistoryLimit: 3
 `))
 
@@ -61,7 +80,10 @@ type addonTmplData struct {
 	Name           string
 	ID             string
 	Mode           string
+	Source         string
+	Project        string
 	Chart          string
+	Path           string
 	ChartRepo      string
 	Version        string
 	Namespace      string
@@ -115,11 +137,22 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 	if mode == "" {
 		mode = "managed"
 	}
+	source := a.Source
+	if source == "" {
+		source = "helm"
+	}
+	project := a.Project
+	if project == "" {
+		project = "infra"
+	}
 	data := addonTmplData{
 		Name:           AddOnAppName(a.ID),
 		ID:             a.ID,
 		Mode:           mode,
+		Source:         source,
+		Project:        project,
 		Chart:          a.Chart,
+		Path:           a.Path,
 		ChartRepo:      a.ChartRepo,
 		Version:        a.Version,
 		Namespace:      a.Namespace,

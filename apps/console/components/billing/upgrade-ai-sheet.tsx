@@ -2,16 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The standalone AI-tier upgrade sheet. AI is a SEPARATE metered product from the org plan
+// The standalone AI-plan upgrade sheet. AI is a SEPARATE metered product from the org plan
 // (tiers ai_free → ai_plus → ai_max), so this is a lean chooser (no invite/seat step, unlike
 // the org sheet): pick a paid tier → open its subscription intent (createAiSubscriptionIntent)
 // → pay through the SHARED checkout stack (StripeElementsProvider + BillingCheckoutForm +
-// CurrencyToggle) → refresh the AI tier. Owner-gated server-side; a non-owner (or a personal
+// CurrencyToggle) → refresh the AI tier. Only the PAID tiers render — the free tier is where
+// you already are, not an option to pick. Owner-gated server-side; a non-owner (or a personal
 // workspace) surfaces a friendly inline error. When the deployment hasn't minted the Stripe AI
 // prices yet (`paidTiersEnabled` false) the paid tiers render disabled with a "Coming soon"
 // badge — the UI ships now and lights up automatically at go-live.
 
-import { Check, Sparkles, Zap } from "lucide-react";
+import { Check } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -33,9 +34,9 @@ import { authClient } from "@/lib/auth/client";
 import { track } from "@/lib/analytics/track";
 import type { PaidAiTier } from "@/lib/billing/config";
 import {
-	AI_PLAN_CATALOG,
 	type AiPlanCatalogEntry,
 	aiPlanMeta,
+	PAID_AI_PLANS,
 	type SupportedCurrency,
 } from "@repo/plan-catalog";
 import { Badge } from "@repo/ui/badge";
@@ -182,8 +183,8 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 					</SheetTitle>
 					<SheetDescription>
 						{view === "pay"
-							? "Add a payment method to raise your AI limits and advisor model."
-							: "AI is billed separately from your workspace plan. Pick a tier — credit packs stack on top of any tier."}
+							? "Add a payment method to raise your session and weekly limits."
+							: "AI is billed separately from your workspace plan. A paid plan raises your session and weekly limits and deepens what Elench can do."}
 					</SheetDescription>
 				</SheetHeader>
 
@@ -219,8 +220,9 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 	);
 }
 
-/** The tier chooser — a card per AI tier, with the current tier marked and paid tiers
- *  gated behind `paidTiersEnabled` ("Coming soon" when the Stripe prices aren't minted). */
+/** The plan chooser — one card per PAID tier (the free tier is where you already are, so
+ *  it never renders), gated behind `paidTiersEnabled` ("Coming soon" until the Stripe
+ *  prices are minted). Exactly one primary button: the recommended selectable tier. */
 function ChooserView({
 	summary,
 	currentTier,
@@ -235,20 +237,26 @@ function ChooserView({
 	if (!summary) {
 		return (
 			<div className="space-y-3">
-				{[0, 1, 2].map((i) => (
-					<Skeleton key={i} className="h-28 w-full" />
+				{[0, 1].map((i) => (
+					<Skeleton key={i} className="h-40 w-full" />
 				))}
 			</div>
 		);
 	}
+	const selectableIds = PAID_AI_PLANS.filter(
+		(entry) => entry.id !== currentTier && paidTiersEnabled,
+	).map((entry) => entry.id);
+	// One primary CTA per view: the recommended selectable tier (else the first selectable).
+	const primaryId =
+		selectableIds.find(
+			(id) => PAID_AI_PLANS.find((entry) => entry.id === id)?.recommended,
+		) ?? selectableIds[0];
 	return (
 		<div className="space-y-3">
-			{AI_PLAN_CATALOG.map((entry) => {
+			{PAID_AI_PLANS.map((entry) => {
 				const paid = paidTierOf(entry);
 				const isCurrent = entry.id === currentTier;
-				// A paid tier is choosable only when it's not the current tier and the deployment
-				// has the Stripe AI prices (else it's a "Coming soon" preview).
-				const comingSoon = paid !== null && !paidTiersEnabled;
+				const comingSoon = !paidTiersEnabled;
 				const selectable = paid !== null && !isCurrent && paidTiersEnabled;
 				return (
 					<TierCard
@@ -257,50 +265,60 @@ function ChooserView({
 						isCurrent={isCurrent}
 						comingSoon={comingSoon}
 						selectable={selectable}
+						primary={entry.id === primaryId}
 						onChoose={() => paid && onChoose(paid)}
 					/>
 				);
 			})}
 			<p className="px-1 text-[11px] text-text-tertiary">
-				Prices are billed monthly and can be canceled any time. Included AI usage resets on a
-				fixed schedule; top-up credit packs never expire.
+				Billed monthly, cancel any time. Included usage refills on a rolling 5-hour
+				session and a weekly cycle; top-up credit packs never expire.
 			</p>
 		</div>
 	);
 }
 
-/** One AI tier as a selectable card (grayscale/squared). */
+/** One paid AI plan as a selectable card — price-forward, grayscale, hairline borders. */
 function TierCard({
 	entry,
 	isCurrent,
 	comingSoon,
 	selectable,
+	primary,
 	onChoose,
 }: {
 	entry: AiPlanCatalogEntry;
 	isCurrent: boolean;
 	comingSoon: boolean;
 	selectable: boolean;
+	/** Whether this card carries the view's single primary CTA (the recommended tier). */
+	primary: boolean;
 	onChoose: () => void;
 }) {
-	const Icon = entry.id === "ai_max" ? Sparkles : Zap;
+	// "$20 / mo" → a prominent amount + a quiet cadence ("$20" + "/ mo").
+	const [amount, cadence] = entry.priceLabel.split(" / ");
 	return (
 		<div
 			className={cn(
-				"rounded-lg border border-border bg-surface p-4 transition-colors",
+				"rounded-lg border bg-surface p-5 transition-colors",
+				entry.recommended ? "border-border-strong" : "border-border",
 				selectable && "hover:border-border-strong",
 			)}
 		>
 			<div className="flex items-start justify-between gap-3">
-				<div className="flex flex-col gap-0.5">
-					<div className="flex items-center gap-2">
-						{entry.paid && <Icon size={14} className="text-text-secondary" />}
-						<span className="font-display text-[14px] font-semibold text-text-primary">
+				<div className="flex min-w-0 flex-col gap-1">
+					<div className="flex flex-wrap items-center gap-2">
+						<span className="font-display text-[15px] font-semibold text-text-primary">
 							{entry.name}
 						</span>
 						{isCurrent && (
 							<Badge variant="secondary" className="font-mono text-[9px] uppercase">
 								Current
+							</Badge>
+						)}
+						{!isCurrent && entry.recommended && !comingSoon && (
+							<Badge variant="secondary" className="font-mono text-[9px] uppercase">
+								Recommended
 							</Badge>
 						)}
 						{comingSoon && (
@@ -309,38 +327,43 @@ function TierCard({
 							</Badge>
 						)}
 					</div>
-					<span className="font-mono text-[10.5px] text-text-tertiary">{entry.advisor}</span>
+					<span className="text-[12px] leading-snug text-text-secondary">
+						{entry.tagline}
+					</span>
 				</div>
-				<span className="shrink-0 font-mono text-[12px] text-text-secondary">
-					{entry.priceLabel}
-				</span>
+				<div className="flex shrink-0 items-baseline gap-1">
+					<span className="font-display text-[20px] font-semibold tracking-tight text-text-primary">
+						{amount}
+					</span>
+					{cadence && (
+						<span className="font-mono text-[11px] text-text-tertiary">/ {cadence}</span>
+					)}
+				</div>
 			</div>
 
-			<ul className="mt-3 space-y-1.5">
+			<ul className="mt-4 space-y-2 border-t border-border pt-4">
 				{entry.highlights.map((h) => (
-					<li key={h} className="flex gap-2 text-[12px] text-text-secondary">
+					<li key={h} className="flex gap-2 text-[12.5px] text-text-secondary">
 						<Check size={13} className="mt-0.5 shrink-0 text-text-tertiary" />
 						{h}
 					</li>
 				))}
 			</ul>
 
-			{entry.paid && (
-				<Button
-					type="button"
-					size="sm"
-					variant={selectable ? "default" : "outline"}
-					className="mt-3 w-full"
-					disabled={!selectable}
-					onClick={onChoose}
-				>
-					{isCurrent
-						? "Your current plan"
-						: comingSoon
-							? "Coming soon"
-							: `Upgrade to ${entry.name}`}
-				</Button>
-			)}
+			<Button
+				type="button"
+				size="sm"
+				variant={selectable && primary ? "default" : "outline"}
+				className="mt-4 w-full"
+				disabled={!selectable}
+				onClick={onChoose}
+			>
+				{isCurrent
+					? "Your current plan"
+					: comingSoon
+						? "Coming soon"
+						: `Upgrade to ${entry.name}`}
+			</Button>
 		</div>
 	);
 }

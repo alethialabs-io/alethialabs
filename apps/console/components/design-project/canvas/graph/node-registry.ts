@@ -37,7 +37,10 @@ export type SchemaKey =
 	| "queues"
 	| "topics"
 	| "nosql_tables"
-	| "secrets";
+	| "secrets"
+	// Chart nodes are out-of-band (project_addons), never written into ProjectFormData — this key
+	// exists only to satisfy the exhaustive registry; the graph⇄form mappers never read it.
+	| "charts";
 
 export interface NodeKindDef<K extends NodeKind = NodeKind> {
 	kind: K;
@@ -280,6 +283,26 @@ export const NODE_REGISTRY: NodeRegistry = {
 			apps_destination_repo: "",
 		}),
 	},
+	// Bring-your-own Helm chart — added via the ⌘K "Sources" flow (not the palette), persisted
+	// out-of-band in project_addons, loaded from getProjectByoCharts. defaultData is a placeholder
+	// (real config always comes from the attach flow / DB).
+	chart: {
+		kind: "chart",
+		schemaKey: "charts",
+		cardinality: "array",
+		classification: "periphery",
+		cloudScoped: false,
+		eyebrow: "Helm chart",
+		label: "Helm chart",
+		icon: GitBranch,
+		defaultData: () => ({
+			id: "chart",
+			repoUrl: "",
+			chartPath: "",
+			ref: "HEAD",
+			namespace: "default",
+		}),
+	},
 };
 
 /** Kinds offered in the palette (everything except the fixed project root). */
@@ -295,6 +318,25 @@ export const ADDABLE_KINDS: NodeKind[] = [
 	"secret",
 	"repositories",
 ];
+
+/**
+ * Node kinds a given cloud can't back. Compute-only Hetzner runs data services as in-cluster
+ * Helm charts (Postgres→CloudNativePG, cache→Valkey, queue→RabbitMQ); topic (SNS) and nosql
+ * (DynamoDB) have no clean single-chart OSS equal, so they're hidden on Hetzner for now
+ * (see lib/cloud-providers/hetzner-services.ts).
+ */
+const UNSUPPORTED_KINDS_BY_PROVIDER: Partial<
+	Record<CloudProviderSlug, readonly NodeKind[]>
+> = {
+	hetzner: ["topic", "nosql"],
+};
+
+/** ADDABLE_KINDS minus the kinds the effective provider can't back (null → all). */
+export function addableKindsFor(provider: CloudProviderSlug | null): NodeKind[] {
+	const blocked = provider ? UNSUPPORTED_KINDS_BY_PROVIDER[provider] : undefined;
+	if (!blocked || blocked.length === 0) return ADDABLE_KINDS;
+	return ADDABLE_KINDS.filter((k) => !blocked.includes(k));
+}
 
 /** Singleton kinds may exist at most once on the canvas. */
 export const SINGLETON_KINDS: NodeKind[] = [

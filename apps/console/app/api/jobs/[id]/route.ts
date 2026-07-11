@@ -11,7 +11,7 @@ export async function GET(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
 ) {
-	const { error: authError } = await verifyRunnerToken(req);
+	const { runnerId, error: authError } = await verifyRunnerToken(req);
 	if (authError) return authError;
 
 	const { id: jobId } = await params;
@@ -26,6 +26,15 @@ export async function GET(
 
 		if (!job) {
 			return NextResponse.json({ error: "Job not found" }, { status: 404 });
+		}
+
+		// A runner may only read jobs it owns — otherwise any valid runner token
+		// could enumerate every org's job rows.
+		if (job.runner_id !== runnerId) {
+			return NextResponse.json(
+				{ error: "Runner does not own this job" },
+				{ status: 403 },
+			);
 		}
 
 		return NextResponse.json(job);

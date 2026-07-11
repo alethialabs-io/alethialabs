@@ -11,6 +11,13 @@ assumes the role by presenting a short-lived minted assertion (STS `AssumeRoleWi
 no Alibaba account, generates no AccessKey, and stores nothing but the role ARN. See
 [Security Architecture](/concepts/security).
 
+<Callout type="info">
+**Is this safe?** You create the trust entirely in **your own** Alibaba account — Alethia holds no Alibaba
+account and generates no AccessKey. It signs in with a short-lived token (≤10 min) that Alibaba STS verifies
+and swaps for a ~1-hour credential. The only thing stored is the **RAM role ARN** (a public identifier).
+**Revoke anytime** by deleting the role.
+</Callout>
+
 ## Setup
 
 Apply the Terraform module (Download it from the connect dialog). It creates everything in **your**

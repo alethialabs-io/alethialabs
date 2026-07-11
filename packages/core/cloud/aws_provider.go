@@ -72,8 +72,11 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"eks_cluster_admins":  ensureSlice(config.Cluster.ClusterAdmins),
 
 		// DNS / WAF
-		"dns_hosted_zone":               config.DNS.ZoneID,
-		"dns_main_domain":               config.DNS.DomainName,
+		"dns_hosted_zone": config.DNS.ZoneID,
+		"dns_main_domain": config.DNS.DomainName,
+		// Create the Route 53 zone in-template (parity with GCP/Azure) only when DNS is
+		// enabled AND the caller did not bring an existing zone id.
+		"cloud_dns_enabled":             config.DNS.Enabled && config.DNS.ZoneID == "",
 		"acm_certificate_enable":        acmCert,
 		"cloudfront_waf_enabled":        cloudfrontWaf,
 		"application_waf_enabled":       appWaf,

@@ -31,8 +31,9 @@ import {
 	projectTopics,
 	projects,
 } from "@/lib/db/schema";
-import { resolveAddOnInstall } from "@/lib/addons/catalog";
+import { resolveAddOnInstall, resolveByoChartInstall } from "@/lib/addons/catalog";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
+import { hetznerDataServicesToAddOns } from "@/lib/cloud-providers/hetzner-services";
 import {
 	type CloudProviderSlug,
 	type ConversionWarning,
@@ -43,6 +44,7 @@ import { notifyScaler } from "@/lib/scaler";
 import { designInventory } from "@/lib/promotions/diff";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 import { pickFreeSlug, RESERVED_PROJECT_CHILD_SLUGS, slugify } from "@/lib/routing";
+import { repoLabel } from "@/lib/repos/repo-label";
 import { type AnyColumn, and, desc, eq, inArray } from "drizzle-orm";
 
 /**
@@ -617,15 +619,39 @@ async function buildConfigSnapshot(
 			);
 		const addons: AddOnInstallSpec[] = addonRows
 			.map((r) =>
-				resolveAddOnInstall({
-					addon_id: r.addon_id,
-					mode: r.mode,
-					version: r.version,
-					values: r.values,
-					values_yaml: r.values_yaml,
-				}),
+				// A bring-your-own chart (source='byo') resolves to a git-source spec (chart from the
+				// customer's repo); a catalog add-on resolves against the code catalog.
+				r.source === "byo"
+					? resolveByoChartInstall({
+							addon_id: r.addon_id,
+							mode: r.mode,
+							version: r.version,
+							chart_repo: r.chart_repo,
+							chart_path: r.chart_path,
+							namespace: r.namespace,
+							values: r.values,
+							values_yaml: r.values_yaml,
+						})
+					: resolveAddOnInstall({
+							addon_id: r.addon_id,
+							mode: r.mode,
+							version: r.version,
+							values: r.values,
+							values_yaml: r.values_yaml,
+						}),
 			)
 			.filter((s): s is AddOnInstallSpec => s !== null);
+
+		// Hetzner is compute-only: canvas database/cache/queue nodes have no managed cloud
+		// service, so they deploy as in-cluster Helm charts (CloudNativePG / Valkey / RabbitMQ).
+		// Map them to install specs and append — the runner renders each as an ArgoCD
+		// Application via the same generic add-on path (packages/core/argocd). The data-component
+		// rows still ride the snapshot for the UI; the Hetzner tofu template ignores them.
+		if (identity.provider === "hetzner") {
+			addons.push(
+				...hetznerDataServicesToAddOns({ databases, caches, queues }),
+			);
+		}
 
 		// ── Resolve per-resource placement ("versatile model") ───────────────
 		// Each component may carry its own cloud_identity_id/region; NULL inherits
@@ -1667,5 +1693,124 @@ export async function getProjects(): Promise<ProjectWithProvider[]> {
 			)
 			.orderBy(desc(projects.created_at));
 		return rows.map(toProject);
+	});
+}
+
+// ============================================================
+// Faceted project list — server-side search / filter / sort for the org overview grid.
+// ============================================================
+
+/** A source repo attached to a project, with a short `owner/repo` display label. */
+export interface ProjectRepoRef {
+	url: string;
+	label: string;
+}
+
+/** A project list row enriched with its distinct source repositories (for the repo facet). */
+export type ProjectListItem = ProjectWithProvider & {
+	repositories: ProjectRepoRef[];
+};
+
+/** Server-side query for the overview grid. All fields optional; empty = no filter. */
+export interface ProjectListQuery {
+	/** Case-insensitive substring match on the project name. */
+	q?: string;
+	/** Keep projects whose cloud provider is in this set (OR). */
+	clouds?: string[];
+	/** Keep projects that use any of these source-repo URLs (OR). */
+	repos?: string[];
+	/** `activity` = default-env `updated_at` desc (default); `name` = A→Z. */
+	sort?: "activity" | "name";
+}
+
+/** The filtered/sorted grid rows plus the full (unfiltered) facet universe for the popover. */
+export interface ProjectListResult {
+	projects: ProjectListItem[];
+	facets: { clouds: string[]; repos: ProjectRepoRef[] };
+}
+
+/**
+ * The org's projects for the overview grid, searched/filtered/sorted server-side. Returns the
+ * matching rows plus `facets` (every cloud + repository across the org, regardless of the active
+ * filter) so the filter popover always lists the full set of options. Favorites-first ordering is
+ * applied client-side (favorites live in the browser), so this only sorts by activity or name.
+ */
+export async function queryProjects(
+	query: ProjectListQuery = {},
+): Promise<ProjectListResult> {
+	const actor = await authorize("view", { type: "project" });
+	return withOwnerScope(actor.userId, async (tx) => {
+		const rows = await tx
+			.select(projectSelect())
+			.from(projects)
+			.leftJoin(cloudIdentities, eq(projects.cloud_identity_id, cloudIdentities.id))
+			.leftJoin(
+				projectEnvironments,
+				and(
+					eq(projectEnvironments.project_id, projects.id),
+					eq(projectEnvironments.is_default, true),
+				),
+			)
+			.orderBy(desc(projects.created_at));
+		const base = rows.map(toProject);
+
+		// Attach each project's distinct source repos (a project may aggregate several, and the
+		// same repo can recur across environments / scan paths — dedupe by URL).
+		const ids = base.map((p) => p.id);
+		const repoRows = ids.length
+			? await tx
+					.selectDistinct({
+						project_id: projectSourceRepos.project_id,
+						repo_url: projectSourceRepos.repo_url,
+					})
+					.from(projectSourceRepos)
+					.where(inArray(projectSourceRepos.project_id, ids))
+			: [];
+		const repoMap = new Map<string, ProjectRepoRef[]>();
+		for (const r of repoRows) {
+			if (!r.project_id) continue;
+			const list = repoMap.get(r.project_id) ?? [];
+			list.push({ url: r.repo_url, label: repoLabel(r.repo_url) });
+			repoMap.set(r.project_id, list);
+		}
+		const items: ProjectListItem[] = base.map((p) => ({
+			...p,
+			repositories: repoMap.get(p.id) ?? [],
+		}));
+
+		// Facets: the full universe of clouds + repos across the org (never narrowed by filters).
+		const cloudSet = new Set<string>();
+		const repoFacet = new Map<string, ProjectRepoRef>();
+		for (const p of items) {
+			if (p.cloud_provider) cloudSet.add(p.cloud_provider);
+			for (const r of p.repositories) repoFacet.set(r.url, r);
+		}
+		const facets = {
+			clouds: [...cloudSet].sort(),
+			repos: [...repoFacet.values()].sort((a, b) =>
+				a.label.localeCompare(b.label),
+			),
+		};
+
+		// Filter.
+		const q = query.q?.trim().toLowerCase();
+		const clouds = query.clouds?.length ? new Set(query.clouds) : null;
+		const repos = query.repos?.length ? new Set(query.repos) : null;
+		const filtered = items.filter((p) => {
+			if (q && !p.project_name.toLowerCase().includes(q)) return false;
+			if (clouds && !(p.cloud_provider && clouds.has(p.cloud_provider)))
+				return false;
+			if (repos && !p.repositories.some((r) => repos.has(r.url))) return false;
+			return true;
+		});
+
+		// Sort (favorites float client-side atop this order).
+		filtered.sort((a, b) =>
+			query.sort === "name"
+				? a.project_name.localeCompare(b.project_name)
+				: new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+		);
+
+		return { projects: filtered, facets };
 	});
 }

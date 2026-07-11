@@ -471,6 +471,96 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		fields: [],
 		syncWave: 2,
 	}),
+	// ── OSS parity add-ons: S3/registry/DNS equivalents so a compute-only cloud (Hetzner)
+	//    reaches AWS-level breadth without managed services. Cloud-agnostic — run on any cluster.
+	defineAddOn({
+		id: "minio",
+		name: "MinIO",
+		category: "data",
+		icon: "Boxes",
+		summary:
+			"S3-compatible object storage in your cluster — buckets, versioning, and an S3 API for apps and backups (a self-hosted S3).",
+		docsUrl: "https://min.io/docs/minio/kubernetes/upstream/",
+		license: "AGPL-3.0",
+		chartRepo: "https://charts.min.io/",
+		chart: "minio",
+		version: "5.2.0",
+		namespace: "minio",
+		defaultValues: { mode: "standalone" },
+		configSchema: z.object({
+			/** Persistent volume size for MinIO (GiB). */
+			storageGb: z.coerce.number().int().min(5).max(2000).default(50),
+			/** standalone (single node) or distributed (HA, ≥4 drives). */
+			mode: z.enum(["standalone", "distributed"]).default("standalone"),
+		}),
+		toValues: (c) => ({
+			mode: c.mode,
+			persistence: { size: `${c.storageGb}Gi` },
+		}),
+		fields: [
+			{ key: "storageGb", label: "Storage (GiB)", type: "number", default: 50, min: 5, max: 2000 },
+			{ key: "mode", label: "Mode (standalone / distributed)", type: "string", default: "standalone" },
+		],
+		syncWave: 2,
+		requires: ["storage"],
+	}),
+	defineAddOn({
+		id: "harbor",
+		name: "Harbor",
+		category: "platform",
+		icon: "Boxes",
+		summary:
+			"Private OCI container registry with vulnerability scanning, RBAC, and image signing — a self-hosted ECR/GCR/ACR.",
+		docsUrl: "https://goharbor.io/docs/",
+		license: "Apache-2.0",
+		chartRepo: "https://helm.goharbor.io",
+		chart: "harbor",
+		version: "1.15.1",
+		namespace: "harbor",
+		configSchema: z.object({
+			/** Persistent volume size for the registry store (GiB). */
+			storageGb: z.coerce.number().int().min(10).max(2000).default(50),
+		}),
+		toValues: (c) => ({
+			persistence: {
+				persistentVolumeClaim: { registry: { size: `${c.storageGb}Gi` } },
+			},
+		}),
+		fields: [
+			{ key: "storageGb", label: "Registry storage (GiB)", type: "number", default: 50, min: 10, max: 2000 },
+		],
+		syncWave: 2,
+		requires: ["storage"],
+	}),
+	defineAddOn({
+		id: "external-dns",
+		name: "ExternalDNS",
+		category: "networking",
+		icon: "Network",
+		summary:
+			"Automatically manages DNS records for your Services and Ingresses in an external DNS provider (Hetzner, Cloudflare, …).",
+		docsUrl: "https://kubernetes-sigs.github.io/external-dns/latest/",
+		license: "Apache-2.0",
+		chartRepo: "https://kubernetes-sigs.github.io/external-dns/",
+		chart: "external-dns",
+		version: "1.15.0",
+		namespace: "external-dns",
+		configSchema: z.object({
+			/** DNS provider the controller writes records to (e.g. hetzner, cloudflare). */
+			provider: z.string().default("cloudflare"),
+			/** Restrict record management to this domain (optional). */
+			domainFilter: z.string().default(""),
+		}),
+		toValues: (c) => ({
+			provider: { name: c.provider },
+			...(c.domainFilter ? { domainFilters: [c.domainFilter] } : {}),
+		}),
+		fields: [
+			{ key: "provider", label: "DNS provider", type: "string", default: "cloudflare" },
+			{ key: "domainFilter", label: "Domain filter (optional)", type: "string", default: "" },
+		],
+		syncWave: 2,
+	}),
 ];
 
 /** A catalog add-on id (the `project_addons.addon_id`). */
@@ -536,5 +626,50 @@ export function resolveAddOnInstall(row: {
 		namespace: def.namespace,
 		values,
 		syncWave: def.syncWave,
+	};
+}
+
+/** The sync-wave BYO charts install on — after core infra add-ons (0) so a chart depending on,
+ * say, an ingress controller finds it present. */
+const BYO_CHART_SYNC_WAVE = 5;
+
+/**
+ * Resolves a bring-your-own (source='byo') project_addons row into a git-source install spec the
+ * runner renders as an ArgoCD Application inside the project's hardened "byo-<slug>" AppProject.
+ * The chart comes from the customer's git repo (chart_repo + chart_path + version=ref), NOT the
+ * OSS catalog — so there is no schema to validate against; the stored `values` ride through as-is,
+ * with a raw Helm-values YAML override deep-merged on top (same precedence as catalog add-ons).
+ * Returns null when required git coordinates are missing (a mis-built row is skipped, never
+ * mis-provisioned).
+ */
+export function resolveByoChartInstall(row: {
+	addon_id: string;
+	mode: AddOnMode;
+	version?: string | null;
+	chart_repo?: string | null;
+	chart_path?: string | null;
+	namespace?: string | null;
+	values?: Record<string, unknown> | null;
+	values_yaml?: string | null;
+}): AddOnInstallSpec | null {
+	if (!row.chart_repo || !row.chart_path) return null;
+	let values: Record<string, unknown> = { ...(row.values ?? {}) };
+	const rawOverride = parseValuesYaml(row.values_yaml);
+	if (rawOverride) values = deepMerge(values, rawOverride);
+	return {
+		id: row.addon_id,
+		mode: row.mode,
+		source: "git",
+		chartRepo: row.chart_repo,
+		// The chart directory within the repo (rendered as ArgoCD `source.path`).
+		path: row.chart_path,
+		// Unused for git source, but the spec requires the field; keep it empty.
+		chart: "",
+		// The git ref (branch/tag/sha); default to HEAD so an unset ref still resolves.
+		version: row.version ?? "HEAD",
+		namespace: row.namespace ?? "default",
+		values,
+		syncWave: BYO_CHART_SYNC_WAVE,
+		// project is set by the runner (byo-<slug>); leave undefined here.
 	};
 }

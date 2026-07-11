@@ -470,6 +470,27 @@
       "when": 1783507164078,
       "tag": "0066_mighty_dark_beast",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1783621984770,
+      "tag": "0067_overjoyed_iceman",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1783667608005,
+      "tag": "0068_aromatic_scarlet_spider",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1783702819731,
+      "tag": "0069_groovy_bloodaxe",
+      "breakpoints": true
     }
   ]
 }
