@@ -32,16 +32,20 @@ func clusterNameOutputKey(providerSlug string) string {
 
 // InspectCluster reads the current ArgoCD add-on health + Trivy security posture from an
 // already-provisioned cluster WITHOUT a deploy — the day-2 "keep proving it" refresh. It
-// acquires kubeconfig standalone from the persisted cluster name (via the cloud provider),
-// then runs the same probes the deploy path uses (argocd.ReadAddOnHealth +
-// argocd.ReadSecurityPosture). Best-effort by design: no cluster name, an unknown provider,
-// or a kubeconfig failure returns (nil, nil) — a day-2 job (drift) must never fail because
-// the cluster is briefly unreachable. Cloud creds are assumed already activated by the caller
-// (the job runtime activates them before the handler runs).
+// acquires kubeconfig via the cloud provider from the given tofu outputs (the drift run's
+// workspace outputs — alibaba/hetzner need the sensitive `kubeconfig` output, which cannot
+// be synthesized), falling back to a synthesized cluster-name entry so aws/gcp/azure work
+// with nil outputs. Then it runs the same probes the deploy path uses
+// (argocd.ReadAddOnHealth + argocd.ReadSecurityPosture). Best-effort by design: no cluster
+// name, an unknown provider, or a kubeconfig failure returns (nil, nil) — a day-2 job
+// (drift) must never fail because the cluster is briefly unreachable. Cloud creds are
+// assumed already activated by the caller. Outputs must never be persisted by callers —
+// they can contain sensitive values.
 func InspectCluster(
 	ctx context.Context,
 	vc *types.ProjectConfig,
 	providerSlug string,
+	outputs map[string]interface{},
 	stdout, stderr io.Writer,
 ) (map[string]argocd.AddOnHealth, *argocd.SecurityPosture) {
 	if vc == nil || vc.Cluster.ClusterName == "" {
@@ -52,10 +56,14 @@ func InspectCluster(
 		fmt.Fprintf(stderr, "Cluster inspection skipped: %v\n", err)
 		return nil, nil
 	}
-	outputs := map[string]interface{}{
-		clusterNameOutputKey(providerSlug): vc.Cluster.ClusterName,
+	merged := map[string]interface{}{}
+	for k, v := range outputs {
+		merged[k] = v
 	}
-	if err := provider.ConfigureKubeconfig(ctx, vc, outputs, stdout); err != nil {
+	if _, ok := merged[clusterNameOutputKey(providerSlug)]; !ok {
+		merged[clusterNameOutputKey(providerSlug)] = vc.Cluster.ClusterName
+	}
+	if err := provider.ConfigureKubeconfig(ctx, vc, merged, stdout); err != nil {
 		fmt.Fprintf(stderr, "Cluster inspection skipped (kubeconfig): %v\n", err)
 		return nil, nil
 	}
