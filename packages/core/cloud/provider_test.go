@@ -44,14 +44,15 @@ func TestNewCloudProvider(t *testing.T) {
 func TestAWSProvider_RequiredCLIs(t *testing.T) {
 	p := &awsProvider{}
 	clis := p.RequiredCLIs()
-	expected := map[string]bool{"aws-iam-authenticator": true, "kubectl": true, "helm": true}
+	// CLI-free: EKS auth is minted in-process by `runner kube-token` — no aws-iam-authenticator.
+	expected := map[string]bool{"kubectl": true, "helm": true}
 	for _, cli := range clis {
 		if !expected[cli] {
 			t.Errorf("unexpected CLI: %s", cli)
 		}
 	}
-	if len(clis) != 3 {
-		t.Errorf("expected 3 CLIs, got %d", len(clis))
+	if len(clis) != 2 {
+		t.Errorf("expected 2 CLIs, got %d", len(clis))
 	}
 }
 

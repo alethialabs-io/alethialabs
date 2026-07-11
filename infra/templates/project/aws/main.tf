@@ -40,29 +40,20 @@ provider "aws" {
   }
 }
 
+# The kubernetes/helm providers are declared for completeness but define no resources
+# (ArgoCD + add-ons are installed post-apply by the runner via kubectl/helm). The former
+# `exec { command = "aws" eks get-token }` auth block was removed as part of the CLI-free
+# runner: no aws CLI is present in the image. If in-template k8s/helm resources are ever
+# added, authenticate with `data.aws_eks_cluster_auth` (a token, no CLI) rather than exec.
 provider "kubernetes" {
   host                   = module.eks[0].eks_cluster_endpoint
   cluster_ca_certificate = base64decode(module.eks[0].eks_cluster_certificate_authority_data)
-
-  exec {
-    api_version = "client.authentication.k8s.io/v1beta1"
-    command     = "aws"
-    # This requires the awscli to be installed locally where Terraform is executed
-    args = ["eks", "get-token", "--cluster-name", module.eks[0].eks_cluster_id]
-  }
 }
 
 provider "helm" {
   kubernetes {
     host                   = module.eks[0].eks_cluster_endpoint
     cluster_ca_certificate = base64decode(module.eks[0].eks_cluster_certificate_authority_data)
-
-    exec {
-      api_version = "client.authentication.k8s.io/v1beta1"
-      command     = "aws"
-      # This requires the awscli to be installed locally where Terraform is executed
-      args = ["eks", "get-token", "--cluster-name", module.eks[0].eks_cluster_id]
-    }
   }
 }
 

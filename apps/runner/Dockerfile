@@ -4,34 +4,14 @@
 #
 # Full multi-cloud runner image — `runner` (co-located on the control-plane box + the fleet). Builds FROM
 # the shared runner-base (Go binary + tofu + infracost + kubectl/helm + user + shared templates) and adds
-# the three CLI-backed clouds' CLIs (aws/gcp/azure) + ALL five project templates + init (alibaba/hetzner
-# need no CLI — keyless/static kubeconfig). Built multi-arch (amd64 box, arm64 fleet) by deploy-console.yml.
-# No ALETHIA_RUNNER_PROVIDERS → claims jobs for every cloud.
+# ALL five project templates + init. CLI-free: every cloud's cluster auth is minted in-process by the
+# runner (`runner kube-token --provider <cloud>`) — no aws-cli / gcloud SDK / azure-cli. Built multi-arch
+# (amd64 box, arm64 fleet) by deploy-console.yml. No ALETHIA_RUNNER_PROVIDERS → claims jobs for every cloud.
 
 ARG RUNNER_BASE=ghcr.io/alethialabs-io/runner-base:latest
 FROM ${RUNNER_BASE}
 
-# All three clouds' CLIs (root). aws-cli pulls python3; gcloud needs python3; azure-cli via pip.
-RUN apk add --no-cache aws-cli python3 py3-pip && rm -rf /var/cache/apk/*
-
-# AWS — EKS auth plugin.
-RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
-    curl -fsSL "https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v0.7.17/aws-iam-authenticator_0.7.17_linux_${ARCH}" \
-      -o /usr/local/bin/aws-iam-authenticator && \
-    chmod +x /usr/local/bin/aws-iam-authenticator
-
-# GCP — Google Cloud SDK + GKE auth plugin.
-RUN ARCH=$(uname -m | sed 's/x86_64/x86_64/' | sed 's/aarch64/arm/') && \
-    curl -fsSL "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-${ARCH}.tar.gz" | \
-    tar -xz -C /opt && \
-    /opt/google-cloud-sdk/install.sh --quiet --path-update=true && \
-    /opt/google-cloud-sdk/bin/gcloud components install gke-gcloud-auth-plugin --quiet
-ENV PATH="/opt/google-cloud-sdk/bin:${PATH}"
-
-# Azure — Azure CLI via pip.
-RUN pip3 install --break-system-packages azure-cli
-
-# All three project templates (the shared runner + argocd templates come from the base).
+# All five project templates (the shared runner + argocd templates come from the base).
 COPY --chown=runner:runner infra/templates/project/ /home/runner/project-templates/
 
 USER runner
