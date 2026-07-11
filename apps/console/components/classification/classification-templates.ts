@@ -2,22 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Starter taxonomy templates for the empty state — a one-click way to seed a common axis.
-// Everything stays editable after; these just save the blank-page moment. Colors come from
-// the shared muted swatch palette.
+// Everything stays editable after; these just save the blank-page moment. Grayscale: values
+// carry no color.
 
 import type { SeedValue } from "@/app/server/actions/classification/dimensions";
-
-/** The muted accent palette offered in the value editor + used by the templates. */
-export const SWATCHES = [
-	"#c05a52",
-	"#c08a3e",
-	"#4f9d8c",
-	"#5a7fb5",
-	"#8a6bb0",
-	"#6d8a4f",
-	"#b56a94",
-	"#5c6b7a",
-] as const;
 
 /** A ready-made dimension + values the user can drop in from the empty state. */
 export interface ClassificationTemplate {
@@ -35,9 +23,9 @@ export const CLASSIFICATION_TEMPLATES: ClassificationTemplate[] = [
 		description: "Lifecycle stage a resource belongs to.",
 		multi: false,
 		values: [
-			{ value: "dev", label: "Development", color: "#4f9d8c" },
-			{ value: "staging", label: "Staging", color: "#c08a3e" },
-			{ value: "prod", label: "Production", color: "#c05a52" },
+			{ value: "dev", label: "Development" },
+			{ value: "staging", label: "Staging" },
+			{ value: "prod", label: "Production" },
 		],
 	},
 	{
@@ -46,10 +34,10 @@ export const CLASSIFICATION_TEMPLATES: ClassificationTemplate[] = [
 		description: "Sensitivity tier for the data a resource stores or processes.",
 		multi: false,
 		values: [
-			{ value: "public", label: "Public", color: null },
-			{ value: "internal", label: "Internal", color: "#5a7fb5" },
-			{ value: "confidential", label: "Confidential", color: "#8a6bb0" },
-			{ value: "restricted", label: "Restricted", color: "#c05a52" },
+			{ value: "public", label: "Public" },
+			{ value: "internal", label: "Internal" },
+			{ value: "confidential", label: "Confidential" },
+			{ value: "restricted", label: "Restricted" },
 		],
 	},
 	{
@@ -58,10 +46,10 @@ export const CLASSIFICATION_TEMPLATES: ClassificationTemplate[] = [
 		description: "Owning team. A resource may belong to several.",
 		multi: true,
 		values: [
-			{ value: "platform", label: "Platform", color: "#4f9d8c" },
-			{ value: "payments", label: "Payments", color: "#c08a3e" },
-			{ value: "growth", label: "Growth", color: "#5a7fb5" },
-			{ value: "data-eng", label: "Data Eng", color: "#8a6bb0" },
+			{ value: "platform", label: "Platform" },
+			{ value: "payments", label: "Payments" },
+			{ value: "growth", label: "Growth" },
+			{ value: "data-eng", label: "Data Eng" },
 		],
 	},
 	{
@@ -70,10 +58,10 @@ export const CLASSIFICATION_TEMPLATES: ClassificationTemplate[] = [
 		description: "Billing allocation code for chargeback.",
 		multi: true,
 		values: [
-			{ value: "cc-2200", label: "Infrastructure", color: null },
-			{ value: "cc-1001", label: "R&D", color: null },
-			{ value: "cc-3050", label: "Growth", color: null },
-			{ value: "unallocated", label: "Unallocated", color: null },
+			{ value: "cc-2200", label: "Infrastructure" },
+			{ value: "cc-1001", label: "R&D" },
+			{ value: "cc-3050", label: "Growth" },
+			{ value: "unallocated", label: "Unallocated" },
 		],
 	},
 ];

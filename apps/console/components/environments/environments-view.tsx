@@ -159,14 +159,13 @@ export function EnvironmentsView({
 										Updated{" "}
 										{formatDistanceToNow(parseISO(env.updated_at), { addSuffix: true })}
 									</p>
-									{/* Classification (Workstream B) — chips + a picker for org editors. */}
+									{/* Classification (Workstream B) — chips + a "Classify" picker for org editors. */}
 									<ClassificationControl
 										kind="project_environment"
 										id={env.id}
 										canEdit
 										initialAssignments={classMap[env.id]}
 										className="mt-1.5"
-										compact
 									/>
 								</div>
 

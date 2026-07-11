@@ -135,7 +135,7 @@ export function DimensionEditorSheet({
 			setAddLabel("");
 			return;
 		}
-		setStaged((s) => [...s, { value, label, color: null }]);
+		setStaged((s) => [...s, { value, label }]);
 		setAddLabel("");
 	};
 
@@ -285,12 +285,6 @@ export function DimensionEditorSheet({
 												key={v.value}
 												className="inline-flex items-center gap-1.5 rounded-[2px] border bg-surface-sunken px-2 py-1 text-[12px]"
 											>
-												{v.color && (
-													<span
-														className="size-2 rounded-full"
-														style={{ background: v.color }}
-													/>
-												)}
 												{v.label}
 												<button
 													type="button"
@@ -332,7 +326,7 @@ export function DimensionEditorSheet({
 									</Button>
 								</div>
 								<p className="mt-2 text-[11px] text-text-tertiary">
-									You can add, edit colors, and reorder values after creating.
+									You can edit and reorder values after creating.
 								</p>
 							</div>
 						)}
