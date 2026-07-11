@@ -24,7 +24,8 @@ type Inventory = Awaited<ReturnType<typeof getCloudIdentityInventory>>;
 
 /** Adapts the normalized inventory (cloud_networks/subnets/regions, kept fresh server-side) into the
  * legacy per-provider `*CachedResources` shape the canvas reads — so the existing-VPC UI uses LIVE
- * inventory with no consumer change. Replaces the retired `cached_resources` JSONB. */
+ * inventory with no consumer change. Replaces the retired `cached_resources` JSONB. Serves both AWS
+ * and Alibaba (whose VPC/VSwitch inventory is upserted in the same AWS shape). */
 function inventoryToAwsCached(inv: Inventory): CachedResources {
 	const nativeByRow = new Map(inv.networks.map((n) => [n.id, n.native_id]));
 	const vpcs: Record<string, VpcInfo[]> = {};
@@ -139,22 +140,28 @@ export const useCloudProviderStore = create<CloudProviderStore>()(
 			set({ identityId, provider, isLoading: true, error: null });
 
 			try {
-				// AWS/GCP/Azure read the LIVE normalized inventory (kept fresh by the server-side
-				// sweep), adapted to the legacy per-provider shape. Token clouds (no VPCs) keep the
-				// old reader.
+				// AWS/GCP/Azure/Alibaba read the LIVE normalized inventory (kept fresh by the
+				// server-side sweep), adapted to the legacy per-provider shape. Alibaba's VPC/VSwitch
+				// inventory is upserted AWS-shaped (see lib/cloud-providers/inventory/alibaba.ts), so
+				// it maps through the AWS adapter. Token clouds (no VPCs) keep the old reader.
 				let resources: AnyCachedResources | null;
 				let cachedAt: string | null;
-				if (provider === "aws" || provider === "gcp" || provider === "azure") {
+				if (
+					provider === "aws" ||
+					provider === "gcp" ||
+					provider === "azure" ||
+					provider === "alibaba"
+				) {
 					const inv = await getCloudIdentityInventory(identityId);
 					resources =
-						provider === "aws"
-							? inventoryToAwsCached(inv)
-							: provider === "gcp"
-								? inventoryToGcpCached(inv)
-								: inventoryToAzureCached(inv);
+						provider === "gcp"
+							? inventoryToGcpCached(inv)
+							: provider === "azure"
+								? inventoryToAzureCached(inv)
+								: inventoryToAwsCached(inv);
 					cachedAt = new Date().toISOString();
 				} else {
-					// Token clouds (DigitalOcean/Hetzner/Civo) have no VPCs to reuse.
+					// Token clouds (Hetzner; future DigitalOcean/Civo) have no VPCs to reuse.
 					resources = null;
 					cachedAt = null;
 				}

@@ -90,6 +90,11 @@ export const REGION_LABELS: Record<
 		"ap-southeast-1": { label: "Singapore", group: "Asia Pacific" },
 		"ap-northeast-1": { label: "Tokyo", group: "Asia Pacific" },
 		"ap-south-1": { label: "Mumbai", group: "Asia Pacific" },
+		"cn-hangzhou": { label: "Hangzhou", group: "China" },
+		"cn-shanghai": { label: "Shanghai", group: "China" },
+		"cn-beijing": { label: "Beijing", group: "China" },
+		"cn-shenzhen": { label: "Shenzhen", group: "China" },
+		"cn-hongkong": { label: "Hong Kong", group: "China" },
 	},
 };
 
