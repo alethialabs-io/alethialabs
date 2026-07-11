@@ -78,6 +78,41 @@ COPY --from=builder /runner /usr/local/bin/runner
 RUN adduser -D -u 1000 runner
 ENV TF_PLUGIN_CACHE_DIR=/home/runner/.terraform.d/plugin-cache
 RUN mkdir -p "${TF_PLUGIN_CACHE_DIR}" && chown -R runner:runner /home/runner/.terraform.d
+
+# --- Per-job container sandbox runtime (E0 Step 3b) — INERT until the fleet sets
+# ALETHIA_SANDBOX_BACKEND=container. Nested ROOTLESS podman (run as user `runner`) executes each
+# untrusted BYO job stage in a fresh per-job container for a real uid/pid/net boundary; trusted
+# provisioning (the Passthrough backend) never invokes it, so this is dead weight until turned on.
+# fuse-overlayfs (NOT vfs) so per-job container-create doesn't full-copy the multi-hundred-MB image;
+# crun + cgroupfs because the outer container has no systemd. The nested-podman behavior (userns +
+# /dev/fuse + IMDS-egress isolation) is verifiable ONLY on a real fleet VM — see the managed-
+# provisioning runbook's 3b canary; a green base build here only proves the toolchain installs.
+RUN apk add --no-cache podman fuse-overlayfs crun shadow-uidmap slirp4netns fuse3 iptables ip6tables \
+    && rm -rf /var/cache/apk/*
+# Subordinate uid/gid ranges for rootless podman — Alpine `adduser -D` omits these, the #1 nested-
+# rootless failure ("there might not be enough IDs available in the namespace").
+RUN echo 'runner:100000:65536' > /etc/subuid && echo 'runner:100000:65536' > /etc/subgid
+# Rootless containers config: fuse-overlayfs storage under the runner HOME, crun runtime, cgroupfs
+# manager + file events logger (no systemd in the outer container), permissive signature policy for
+# the local runner image. The sandbox always passes an explicit --network, so no default is set.
+RUN mkdir -p /etc/containers /home/runner/.local/share/containers && \
+    printf '%s\n' \
+      '[storage]' \
+      'driver = "overlay"' \
+      'runroot = "/home/runner/.local/share/containers/runroot"' \
+      'graphroot = "/home/runner/.local/share/containers/storage"' \
+      '[storage.options.overlay]' \
+      'mount_program = "/usr/bin/fuse-overlayfs"' \
+      > /etc/containers/storage.conf && \
+    printf '%s\n' \
+      '[engine]' \
+      'runtime = "crun"' \
+      'cgroup_manager = "cgroupfs"' \
+      'events_logger = "file"' \
+      > /etc/containers/containers.conf && \
+    printf '%s\n' '{ "default": [ { "type": "insecureAcceptAnything" } ] }' > /etc/containers/policy.json && \
+    chown -R runner:runner /home/runner/.local
+
 COPY --chown=runner:runner infra/templates/runner/ /home/runner/runner-templates/
 COPY --chown=runner:runner infra/templates/argocd/ /home/runner/argocd-templates/
 WORKDIR /home/runner

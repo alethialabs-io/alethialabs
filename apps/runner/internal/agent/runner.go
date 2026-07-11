@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -52,9 +53,18 @@ func NewWithAPI(cfg Config, api JobAPI) *Runner {
 // backend; if it can't initialize on an operator=managed runner it is **fail-closed** — a
 // Passthrough with EnforceManaged=true that REFUSES every job — rather than silently
 // running untrusted work unsandboxed.
+//
+// ALETHIA_SANDBOX_ENFORCE_MANAGED is the config-driven kill-switch for the DEFAULT
+// (no-container) path: once the container backend is proven on the fleet (Step 3b), the
+// maintainer sets it fleet-wide so any managed pool that LACKS the container backend
+// refuses jobs rather than silently running unsandboxed — no code redeploy to flip. Left
+// false today so existing trusted managed provisioning is unaffected.
 func selectSandbox(cfg Config) sandbox.Sandbox {
 	if os.Getenv("ALETHIA_SANDBOX_BACKEND") != "container" {
-		return sandbox.Passthrough{Operator: cfg.Operator}
+		return sandbox.Passthrough{
+			Operator:       cfg.Operator,
+			EnforceManaged: envTrue("ALETHIA_SANDBOX_ENFORCE_MANAGED"),
+		}
 	}
 	c, err := sandbox.NewContainerFromEnv(cfg.Operator)
 	if err == nil {
@@ -750,4 +760,13 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 	case <-ctx.Done():
 	case <-time.After(d):
 	}
+}
+
+// envTrue reports whether an env var is set to a truthy value (1/true/yes/on).
+func envTrue(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
