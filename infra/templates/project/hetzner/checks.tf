@@ -93,6 +93,20 @@ check "csi_storageclass_present" {
   }
 }
 
+check "bucket_names_non_empty" {
+  # Every requested bucket must carry a non-empty name (it becomes part of the S3 bucket
+  # name), and S3 credentials must be present when buckets are requested.
+  assert {
+    condition     = alltrue([for b in var.buckets : length(trimspace(b.name)) > 0])
+    error_message = "Every Object Storage bucket must have a non-empty name."
+  }
+
+  assert {
+    condition     = length(var.buckets) == 0 || (trimspace(var.hetzner_s3_access_key) != "" && trimspace(var.hetzner_s3_secret_key) != "")
+    error_message = "Provisioning Hetzner Object Storage buckets requires hetzner_s3_access_key and hetzner_s3_secret_key (generate them in the Hetzner Console — there is no API to mint them)."
+  }
+}
+
 check "arch_matches_server_type" {
   # cax* server types are arm64; cx*/ccx* are amd64. Catch obvious mismatches.
   assert {

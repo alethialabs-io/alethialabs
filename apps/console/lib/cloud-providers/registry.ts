@@ -146,8 +146,9 @@ export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = {
 		topicService: "—",
 		registryService: "Harbor (in-cluster)",
 		secretsService: "Vault (in-cluster)",
-		// No native object storage wired yet (MinIO covers it as a marketplace add-on).
-		storageService: "—",
+		// Native S3-compatible Object Storage (aminueza/minio provider against the Hetzner
+		// S3 endpoint) — see infra/templates/project/hetzner/buckets.tf.
+		storageService: "Object Storage",
 	},
 	civo: {
 		slug: "civo",

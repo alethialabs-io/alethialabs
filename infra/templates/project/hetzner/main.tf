@@ -30,6 +30,13 @@ terraform {
       source  = "hashicorp/helm"
       version = ">= 2.12, < 3.0"
     }
+    # Hetzner-docs-endorsed provider for Object Storage (S3-compatible) buckets. The
+    # provider + resources live in buckets.tf; it is only exercised when var.buckets is
+    # non-empty. Reads the S3 endpoint/keys from vars (TF_VAR_hetzner_s3_*), never HCLOUD_TOKEN.
+    minio = {
+      source  = "aminueza/minio"
+      version = "~> 3.3"
+    }
   }
 }
 

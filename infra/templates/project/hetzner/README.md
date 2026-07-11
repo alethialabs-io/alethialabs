@@ -69,6 +69,34 @@ variable). Agents must never run `tofu plan` / `tofu apply`.
 | `pod_cidr` | `10.244.0.0/16` | Cilium pod CIDR (must not overlap the others). |
 | `service_cidr` | `10.96.0.0/12` | Service CIDR (must not overlap the others). |
 | `hcloud_token` | `""` | Optional; **only** for the in-cluster hcloud CCM secret. The providers use `HCLOUD_TOKEN` from the env. May be supplied via `TF_VAR_hcloud_token`. |
+| `buckets` | `[]` | Object Storage buckets (see below). Empty → the minio provider is never exercised. |
+| `hetzner_s3_endpoint` | `fsn1.your-objectstorage.com` | S3 endpoint **host** (no scheme). Only used when `buckets` is non-empty. |
+| `hetzner_s3_region` | `fsn1` | Object Storage location (`fsn1`/`nbg1`/`hel1`). |
+| `hetzner_s3_access_key` (sensitive) | `""` | S3 access key (see Object Storage note). |
+| `hetzner_s3_secret_key` (sensitive) | `""` | S3 secret key. |
+
+## Object Storage (S3-compatible buckets) — `buckets.tf`
+
+Hetzner Object Storage is a **separate product** from the Hetzner Cloud API: it speaks the
+S3 API at `https://<location>.your-objectstorage.com` and authenticates with an S3
+access-key/secret-key pair — **not** the Cloud API token. There is **no API to mint** those
+keys; the customer generates them by hand in the Hetzner Console (Object Storage → your
+bucket location → S3 credentials). Alethia stores them encrypted and exports them to the
+runner as `HETZNER_S3_ACCESS_KEY` / `HETZNER_S3_SECRET_KEY` (→ `TF_VAR_hetzner_s3_*`).
+
+Buckets are provisioned with the Hetzner-docs-endorsed [`aminueza/minio`](https://registry.terraform.io/providers/aminueza/minio)
+provider (`~> 3.3`) in `s3_compat_mode`. Each `buckets` entry:
+
+| Field | Effect on Hetzner |
+| --- | --- |
+| `name` | Bucket name (namespaced `project-environment-<name>`). |
+| `versioning` | Enabled via `minio_s3_bucket_versioning` when `true`. |
+| `public_access` | `true` → `public-read` ACL, else `private`. |
+| `encryption_enabled` | **Informational** — Hetzner encrypts at rest automatically; no per-bucket toggle. |
+| `cors_origins` | **Ignored** — the provider does not apply CORS to a non-MinIO backend (`s3_compat_mode` skips it). |
+
+Object Storage exists only in `fsn1`/`nbg1`/`hel1`; a cluster in a compute-only region
+(ash/hil/sin) falls back to `fsn1` for buckets.
 
 ## Outputs
 
@@ -78,6 +106,8 @@ variable). Agents must never run `tofu plan` / `tofu apply`.
 | `talos_cluster_endpoint` | `https://<control-plane-ip>:6443`. |
 | `kubeconfig` (sensitive) | Raw kubeconfig. |
 | `talosconfig` (sensitive) | Talos client configuration. |
+| `bucket_names` | Provisioned Object Storage bucket names (empty when none). |
+| `bucket_endpoints` | Per-bucket S3 URLs (`https://<endpoint>/<bucket>`). |
 
 ## Notes / limits
 

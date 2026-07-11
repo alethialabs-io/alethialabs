@@ -65,6 +65,11 @@ type CloudIdentity struct {
 	SubscriptionID      string `json:"subscription_id"`
 	// DigitalOcean / Hetzner / Civo — scoped API token (decrypted at claim time).
 	APIToken string `json:"api_token"`
+	// Hetzner Object Storage (S3-compatible) access/secret key pair — DISTINCT from the
+	// Cloud API token, decrypted at claim. Exported as HETZNER_S3_ACCESS_KEY /
+	// HETZNER_S3_SECRET_KEY for the aminueza/minio provider. Empty when unused.
+	S3AccessKey string `json:"s3_access_key"`
+	S3SecretKey string `json:"s3_secret_key"`
 	// Self-managed: no token was stored in Alethia; this (self-hosted) runner supplies
 	// it from its own environment (HCLOUD_TOKEN / CIVO_TOKEN / DIGITALOCEAN_ACCESS_TOKEN).
 	SelfManaged bool `json:"self_managed"`

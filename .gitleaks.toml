@@ -24,6 +24,10 @@ regexes = [
   # secret value — it's public config in the deploy/infra workflows. generic-api-key
   # flags the `ASM_SECRET_ID: alethia/prod/env` assignment; allowlist the marker.
   '''ASM_SECRET_ID''',
+  # An OpenTofu variable reference (`var.<name>`) is a reference, never a literal
+  # secret. generic-api-key flags idioms like `minio_password = var.hetzner_s3_secret_key`
+  # in the templates; a `var.` value is safe by construction.
+  '''var\.[A-Za-z0-9_]+''',
 ]
 paths = [
   '''(^|/).*_test\.go$''',

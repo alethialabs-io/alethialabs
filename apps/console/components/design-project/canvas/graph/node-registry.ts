@@ -416,14 +416,15 @@ export const ADDABLE_KINDS: NodeKind[] = [
  * Node kinds a given cloud can't back. Compute-only Hetzner runs data services as in-cluster
  * Helm charts (Postgres→CloudNativePG, cache→Valkey, queue→RabbitMQ); topic (SNS) and nosql
  * (DynamoDB) have no clean single-chart OSS equal, so they're hidden on Hetzner for now
- * (see lib/cloud-providers/hetzner-services.ts). bucket/registry: Hetzner has no native
- * object storage / registry tofu wiring yet — the MinIO / Harbor marketplace add-ons cover
- * those in-cluster until a native path lands.
+ * (see lib/cloud-providers/hetzner-services.ts). bucket: NATIVE on Hetzner via Object Storage
+ * (the aminueza/minio provider against the S3 endpoint — see infra/templates/project/hetzner
+ * /buckets.tf). registry: Hetzner has no native container registry — the Harbor marketplace
+ * add-on covers it in-cluster until a native path lands.
  */
 const UNSUPPORTED_KINDS_BY_PROVIDER: Partial<
 	Record<CloudProviderSlug, readonly NodeKind[]>
 > = {
-	hetzner: ["topic", "nosql", "bucket", "registry"],
+	hetzner: ["topic", "nosql", "registry"],
 };
 
 /** ADDABLE_KINDS minus the kinds the effective provider can't back (null → all). */
