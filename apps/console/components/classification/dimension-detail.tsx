@@ -289,7 +289,18 @@ export function DimensionDetail({
 						<h2 className="m-0 font-display text-[17px] font-semibold tracking-tight">
 							{dim.label}
 						</h2>
-						<div className="mt-1 font-mono text-[11px] text-text-tertiary">{dim.key}</div>
+						<div className="mt-1 flex flex-wrap items-center gap-x-2 font-mono text-[11px] text-text-tertiary">
+							<span>{dim.key}</span>
+							<span className="text-text-disabled">·</span>
+							<span>
+								Applies to{" "}
+								{dim.appliesTo.length === 0
+									? "all resources"
+									: dim.appliesTo.length <= 3
+										? dim.appliesTo.map(kindLabel).join(", ")
+										: `${dim.appliesTo.length} resource kinds`}
+							</span>
+						</div>
 						{dim.description && (
 							<p className="m-0 mt-2 max-w-[60ch] text-[12.5px] leading-relaxed text-text-secondary">
 								{dim.description}

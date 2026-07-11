@@ -14,13 +14,14 @@ import {
 	index,
 	boolean,
 	integer,
+	jsonb,
 	pgTable,
 	text,
 	timestamp,
 	unique,
 	uuid,
 } from "drizzle-orm/pg-core";
-import { resourceKind } from "./enums";
+import { resourceKind, type ResourceKind } from "./enums";
 
 // A named classification axis (e.g. "Environment", "Team", "Data classification").
 // `key` is a stable slug unique within the org; `multi` decides whether a resource may
@@ -38,6 +39,10 @@ export const classificationDimension = pgTable(
 		description: text(),
 		// false → at most one value per resource; true → many.
 		multi: boolean().default(false).notNull(),
+		// Which resource kinds this dimension may be applied to. Empty ⇒ ALL kinds (the
+		// default, so existing dimensions keep applying everywhere). The picker filters by this;
+		// the settings manager edits it. See resourceKind enum for the full set.
+		applies_to: jsonb().$type<ResourceKind[]>().default([]).notNull(),
 		// Display order in the picker + settings list.
 		position: integer().default(0).notNull(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
