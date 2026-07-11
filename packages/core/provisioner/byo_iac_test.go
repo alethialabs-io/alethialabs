@@ -1,0 +1,222 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package provisioner
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
+)
+
+// gitInitModuleRepo builds a git repo containing a module directory `module/`
+// whose main.tf is `mainTF`, and returns (repoDir, branch, commitSHA).
+func gitInitModuleRepo(t *testing.T, mainTF string) (string, string, string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	repo := t.TempDir()
+	run := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e.com",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e.com",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run("init", "-q")
+	if err := os.MkdirAll(filepath.Join(repo, "module"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "module", "main.tf"), []byte(mainTF), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-q", "-m", "module")
+	sha := run("rev-parse", "HEAD")
+	branch := run("rev-parse", "--abbrev-ref", "HEAD")
+	return repo, branch, sha
+}
+
+const validModuleTF = `resource "null_resource" "x" {}
+`
+
+// local-exec provisioner → iacsafety RuleProvisionerBlock (error) → gate blocks.
+const evilModuleTF = `resource "null_resource" "x" {
+  provisioner "local-exec" {
+    command = "echo pwned > /tmp/pwned"
+  }
+}
+`
+
+// TestPrepareByoIacWorkdir_ValidModule asserts a clean provider-less module clones,
+// passes the inline gate, and yields the module dir + backend override + coerced tfvars.
+func TestPrepareByoIacWorkdir_ValidModule(t *testing.T) {
+	repo, branch, sha := gitInitModuleRepo(t, validModuleTF)
+
+	vc := &types.ProjectConfig{
+		ID:               "cfg-123",
+		ProjectName:      "acme",
+		EnvironmentStage: "prod",
+		Region:           "eu-central-1",
+		IacSource: &types.ProjectIacSourceConfig{
+			RepoURL:   "file://" + repo,
+			Ref:       branch,
+			CommitSHA: sha,
+			Path:      "module",
+			VarValues: map[string]any{
+				"instance_count": float64(3),
+				"name":           "web",
+				"enabled":        true,
+				"tags":           map[string]any{"team": "x"}, // rejected (object)
+			},
+		},
+	}
+
+	var out, errBuf bytes.Buffer
+	cloneDir := filepath.Join(t.TempDir(), "clone")
+	tfDir, tfvars, restore, err := prepareByoIacWorkdir(vc, "", cloneDir, &out, &errBuf)
+	if err != nil {
+		t.Fatalf("prepareByoIacWorkdir: %v\nstderr:%s", err, errBuf.String())
+	}
+	defer restore()
+
+	// tfDir is the module dir inside the clone.
+	if filepath.Base(tfDir) != "module" {
+		t.Fatalf("tfDir = %q, want .../module", tfDir)
+	}
+	if _, statErr := os.Stat(filepath.Join(tfDir, "main.tf")); statErr != nil {
+		t.Fatalf("module main.tf missing in workdir: %v", statErr)
+	}
+
+	// Backend override written.
+	if _, statErr := os.Stat(filepath.Join(tfDir, byoBackendOverrideFile)); statErr != nil {
+		t.Fatalf("backend override not written: %v", statErr)
+	}
+
+	// Scalar var_values pass; object is dropped.
+	if tfvars["instance_count"] != float64(3) || tfvars["name"] != "web" || tfvars["enabled"] != true {
+		t.Fatalf("scalar var_values not coerced through: %#v", tfvars)
+	}
+	if _, ok := tfvars["tags"]; ok {
+		t.Fatalf("object var_value should have been rejected, got: %#v", tfvars["tags"])
+	}
+
+	// Frozen TF_VAR contract is published.
+	for k, want := range map[string]string{
+		"TF_VAR_alethia_project":        "acme",
+		"TF_VAR_alethia_environment":    "prod",
+		"TF_VAR_alethia_region":         "eu-central-1",
+		"TF_VAR_alethia_project_id":     "cfg-123",
+		"TF_VAR_alethia_environment_id": "cfg-123",
+	} {
+		if got := os.Getenv(k); got != want {
+			t.Fatalf("%s = %q, want %q", k, got, want)
+		}
+	}
+
+	// restore() unsets them.
+	restore()
+	if v, ok := os.LookupEnv("TF_VAR_alethia_project"); ok {
+		t.Fatalf("restore did not unset TF_VAR_alethia_project (=%q)", v)
+	}
+}
+
+// TestPrepareByoIacWorkdir_EvilModuleBlocks asserts the inline gate fails closed on
+// a module with a provisioner (code execution) BEFORE any workdir is returned.
+func TestPrepareByoIacWorkdir_EvilModuleBlocks(t *testing.T) {
+	repo, branch, sha := gitInitModuleRepo(t, evilModuleTF)
+	vc := &types.ProjectConfig{
+		ProjectName: "acme", EnvironmentStage: "prod", Region: "eu",
+		IacSource: &types.ProjectIacSourceConfig{
+			RepoURL: "file://" + repo, Ref: branch, CommitSHA: sha, Path: "module",
+		},
+	}
+	var out, errBuf bytes.Buffer
+	cloneDir := filepath.Join(t.TempDir(), "clone")
+	_, _, restore, err := prepareByoIacWorkdir(vc, "", cloneDir, &out, &errBuf)
+	if err == nil {
+		if restore != nil {
+			restore()
+		}
+		t.Fatal("expected the inline iacsafety gate to BLOCK a provisioner module, got nil error")
+	}
+	if !strings.Contains(err.Error(), "static gate BLOCKED") {
+		t.Fatalf("error should name the fail-closed gate, got: %v", err)
+	}
+	// The gate must fire before the TF_VAR contract is published.
+	if _, ok := os.LookupEnv("TF_VAR_alethia_project"); ok {
+		t.Fatal("TF_VAR_alethia_project leaked despite a blocked module")
+	}
+}
+
+// TestPrepareByoIacWorkdir_RequiresCommitSHA asserts a ref-only source is rejected.
+func TestPrepareByoIacWorkdir_RequiresCommitSHA(t *testing.T) {
+	vc := &types.ProjectConfig{
+		IacSource: &types.ProjectIacSourceConfig{RepoURL: "file:///x", Ref: "main"},
+	}
+	_, _, _, err := prepareByoIacWorkdir(vc, "", t.TempDir(), &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "commit_sha") {
+		t.Fatalf("expected a missing commit_sha error, got: %v", err)
+	}
+}
+
+// TestResolveByoModuleDir covers path resolution + traversal containment.
+func TestResolveByoModuleDir(t *testing.T) {
+	clone := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(clone, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Root path resolves to the clone.
+	if got, err := resolveByoModuleDir(clone, ""); err != nil || got != clone {
+		t.Fatalf("root path: got %q err %v, want %q", got, err, clone)
+	}
+	// Subdir resolves.
+	if got, err := resolveByoModuleDir(clone, "sub"); err != nil || got != filepath.Join(clone, "sub") {
+		t.Fatalf("subdir: got %q err %v", got, err)
+	}
+	// `..` escape is clamped by Clean("/"+path) and lands as a missing dir under the clone.
+	if _, err := resolveByoModuleDir(clone, "../../etc"); err == nil {
+		t.Fatal("expected an escape/not-found error for a `..` path")
+	}
+	// A non-existent subdir is rejected.
+	if _, err := resolveByoModuleDir(clone, "nope"); err == nil {
+		t.Fatal("expected not-found for a missing module path")
+	}
+}
+
+// TestCoerceByoVarValues covers the scalar allow / structured reject rules.
+func TestCoerceByoVarValues(t *testing.T) {
+	in := map[string]any{
+		"s":    "str",
+		"n":    float64(2),
+		"i":    7,
+		"b":    false,
+		"nul":  nil,
+		"obj":  map[string]any{"a": 1},
+		"list": []any{"a", "b"},
+	}
+	out := coerceByoVarValues(in, &bytes.Buffer{}, &bytes.Buffer{})
+	for _, k := range []string{"s", "n", "i", "b"} {
+		if _, ok := out[k]; !ok {
+			t.Fatalf("scalar %q was dropped", k)
+		}
+	}
+	for _, k := range []string{"nul", "obj", "list"} {
+		if _, ok := out[k]; ok {
+			t.Fatalf("non-scalar %q should have been rejected", k)
+		}
+	}
+}
