@@ -91,11 +91,10 @@ jobs:
                 echo "ERROR: $cli present in CLI-free runner image" >&2; exit 1
               fi
             done
-            # kube-token is wired: unsupported provider is our error (proves dispatch, not "unknown command").
-            if runner kube-token --provider bogus 2>&1 | grep -q "unsupported provider"; then
-              echo "kube-token subcommand wired"
-            else
-              echo "ERROR: kube-token subcommand not dispatched" >&2; exit 1
-            fi
+            # kube-token is wired: unsupported provider is our error (proves dispatch, not the normal boot).
+            kt_out=$(/usr/local/bin/runner kube-token --provider bogus 2>&1 || true)
+            echo "kube-token check output: [$kt_out]"
+            echo "$kt_out" | grep -q "unsupported provider" || { echo "ERROR: kube-token subcommand not dispatched" >&2; exit 1; }
+            echo "kube-token subcommand wired"
             echo "toolchain OK (CLI-free)"
           '
