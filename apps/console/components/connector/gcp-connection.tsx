@@ -19,7 +19,7 @@ import {
 	useConnectionTest,
 } from "@/components/connector/use-connection-test";
 import { connectorAssetUrl } from "@/components/connector/connector-assets";
-import { buildWifConfig, GCP_PROJECT_ID_REGEX } from "@/lib/cloud-providers/gcp-wif";
+import { GCP_PROJECT_ID_REGEX } from "@/lib/cloud-providers/gcp-wif";
 import { Download, ExternalLink, Terminal } from "lucide-react";
 import { useState } from "react";
 
@@ -47,11 +47,6 @@ export function GcpConnection({
 	const pid = projectId.trim();
 	const num = projectNumber.trim();
 	const idsValid = GCP_PROJECT_ID_REGEX.test(pid) && /^\d{1,20}$/.test(num);
-	const preview = JSON.stringify(
-		buildWifConfig(pid || "YOUR_PROJECT_ID", num || "PROJECT_NUMBER"),
-		null,
-		2,
-	);
 	const rawValid = (() => {
 		try {
 			return JSON.parse(raw).type === "external_account";
@@ -239,7 +234,7 @@ export function GcpConnection({
 						/>
 					</div>
 				) : (
-					<div className="space-y-4">
+					<div className="space-y-3">
 						<div className="grid grid-cols-2 gap-3">
 							<div className="space-y-1.5">
 								<label htmlFor="gcp-project-id" className="font-medium text-foreground text-xs">
@@ -272,31 +267,10 @@ export function GcpConnection({
 								/>
 							</div>
 						</div>
-
-						{/* The config is assembled for you as you type — no JSON to copy/paste. */}
-						<div className="space-y-1.5">
-							<div className="flex items-center justify-between">
-								<span className="font-semibold text-[11px] text-muted-foreground uppercase tracking-wider">
-									Assembled credential config
-								</span>
-								<CopyButton
-									text={preview}
-									className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-								/>
-							</div>
-							<pre
-								className={
-									"max-h-52 overflow-auto rounded-md border border-border/50 bg-muted/20 p-3 font-mono text-[11px] leading-relaxed " +
-									(idsValid ? "text-foreground/90" : "text-muted-foreground")
-								}
-							>
-								{preview}
-							</pre>
-							<p className="text-[11px] text-muted-foreground">
-								Alethia builds this from the fixed pool / provider / service-account names —
-								no JSON to copy. It stores only this trust config; no secret.
-							</p>
-						</div>
+						<p className="text-[11px] text-muted-foreground">
+							Alethia builds the Workload Identity Federation config from these — no JSON to
+							paste. It stores only the trust config; no secret.
+						</p>
 					</div>
 				)}
 
