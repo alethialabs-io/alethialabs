@@ -70,8 +70,11 @@ func selectSandbox(cfg Config) sandbox.Sandbox {
 	if err == nil {
 		return c
 	}
-	if cfg.Operator == "managed" {
-		fmt.Fprintf(os.Stderr, "sandbox: container backend required but unavailable on managed runner: %v — refusing jobs (fail-closed)\n", err)
+	// Fail-closed for anything that is not an EXPLICIT self operator: an empty/unknown
+	// operator string must NOT downgrade to a lenient Passthrough when the container backend
+	// was requested but is unavailable — only "self" (customer's own cloud) is lenient.
+	if cfg.Operator != "self" {
+		fmt.Fprintf(os.Stderr, "sandbox: container backend required but unavailable on non-self runner (operator=%q): %v — refusing jobs (fail-closed)\n", cfg.Operator, err)
 		return sandbox.Passthrough{Operator: cfg.Operator, EnforceManaged: true}
 	}
 	fmt.Fprintf(os.Stderr, "sandbox: container backend unavailable (%v); using Passthrough (operator=%s)\n", err, cfg.Operator)
@@ -811,13 +814,11 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 // run outside an egress-enforced container sandbox — otherwise it reaches 169.254.169.254
 // and recovers the fleet's storage master key + bootstrap token (the metadata firehose).
 //
-// It is FAIL-CLOSED (default REFUSE). A BYO job on a managed runner is allowed ONLY when all
-// of the following hold — the maintainer flips them fleet-wide AFTER the real-VM 3b canary
-// (see memory e0-isolation-runtime); this code makes the gate correct:
-//  1. the active sandbox backend is the Container backend (ALETHIA_SANDBOX_BACKEND=container),
-//  2. that backend confirms egress enforcement (EgressEnforced, from
-//     ALETHIA_SANDBOX_EGRESS_ENFORCED=1 — default-deny net + IMDS block + squid allowlist), AND
-//  3. ALETHIA_SANDBOX_ENFORCE_MANAGED=1 (the post-canary managed-enforcement flip).
+// The gate has two separable halves:
+//   - the "is this untrusted BYO?" decision (a non-nil IacSource) lives HERE, and
+//   - the "managed requires an egress-enforced container" enforcement lives in
+//     requireManagedContainerSandbox, so the SAME enforcement can be applied by callers
+//     whose job is untrusted-BYO by definition and carries no ProjectConfig (IAC_SCAN).
 //
 // SELF operators run BYO IaC in the customer's OWN cloud with their own creds — their risk
 // boundary — so they are always allowed. A nil IacSource (trusted Alethia templates) is
@@ -828,7 +829,28 @@ func (w *Runner) byoManagedGate(vc *types.ProjectConfig, kind string) error {
 	if vc == nil || vc.IacSource == nil {
 		return nil // trusted (non-BYO) template path — unaffected
 	}
-	if w.config.Operator != "managed" {
+	return w.requireManagedContainerSandbox(kind)
+}
+
+// requireManagedContainerSandbox is the enforcement half of the E0 boundary: it refuses to
+// run untrusted BYO work unless the runner is an explicit SELF operator OR the egress-enforced
+// container sandbox is active with managed-enforcement on. It presumes the caller has already
+// established the work is untrusted BYO — byoManagedGate calls it only when IacSource != nil,
+// and executeIacScan calls it UNCONDITIONALLY (an IAC_SCAN is untrusted BYO by definition).
+//
+// It is FAIL-CLOSED. Work is allowed ONLY when either:
+//   - w.config.Operator == "self" — the customer's OWN cloud + creds are their risk boundary; OR
+//   - all of: the active backend is the Container backend (ALETHIA_SANDBOX_BACKEND=container),
+//     that backend confirms egress enforcement (EgressEnforced, from
+//     ALETHIA_SANDBOX_EGRESS_ENFORCED=1 — default-deny net + IMDS block + squid allowlist), AND
+//     ALETHIA_SANDBOX_ENFORCE_MANAGED=1 (the post-canary managed-enforcement flip, which the
+//     maintainer sets fleet-wide AFTER the real-VM 3b canary; see memory e0-isolation-runtime).
+//
+// Crucially only an EXPLICIT "self" operator takes the allow path — an empty/miscased/unknown
+// operator string ("", "Managed", typo) is treated as managed-strict and MUST pass through the
+// container requirement, so a mis-set operator can never fail OPEN into unsandboxed execution.
+func (w *Runner) requireManagedContainerSandbox(kind string) error {
+	if w.config.Operator == "self" {
 		return nil // self operator: customer's own cloud + creds = their risk boundary
 	}
 	c, ok := w.sandbox.(sandbox.Container)

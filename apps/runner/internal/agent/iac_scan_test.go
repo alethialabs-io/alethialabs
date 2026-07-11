@@ -230,6 +230,9 @@ func TestByoManagedGate(t *testing.T) {
 		{"managed + BYO + container + egress + enforce → allow", "managed", containerEgress, true, byo, false},
 		{"managed + BYO + container + egress but enforce OFF → refuse", "managed", containerEgress, false, byo, true},
 		{"managed + BYO + container no-egress + enforce → refuse", "managed", containerNoEgress, true, byo, true},
+		// Fail-closed: an empty/unknown operator is NOT the explicit "self", so BYO must refuse.
+		{"empty-operator + BYO + passthrough + enforce → refuse (fail-closed)", "", sandbox.Passthrough{Operator: ""}, true, byo, true},
+		{"empty-operator + non-BYO (trusted template) → allow", "", sandbox.Passthrough{Operator: ""}, false, nonByo, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -247,6 +250,129 @@ func TestByoManagedGate(t *testing.T) {
 				t.Fatalf("expected the gate to ALLOW, got: %v", err)
 			}
 		})
+	}
+}
+
+// TestRequireManagedContainerSandbox is the enforcement-half matrix (independent of any
+// ProjectConfig): the E0 managed-strict requirement over (operator, sandbox, egress, enforce).
+// It is exercised directly by executeIacScan (untrusted BYO by definition, no ProjectConfig)
+// and via byoManagedGate for deploy/plan/destroy/drift. Only an EXPLICIT "self" operator is
+// lenient — "" / unknown fail closed.
+func TestRequireManagedContainerSandbox(t *testing.T) {
+	containerEgress := sandbox.Container{Operator: "managed", EgressEnforced: true}
+	containerNoEgress := sandbox.Container{Operator: "managed", EgressEnforced: false}
+
+	cases := []struct {
+		name       string
+		operator   string
+		sb         sandbox.Sandbox
+		enforce    bool
+		wantRefuse bool
+	}{
+		{"self + passthrough → allow (customer risk boundary)", "self", sandbox.Passthrough{Operator: "self"}, false, false},
+		{"self + container-no-egress → allow", "self", containerNoEgress, false, false},
+		{"managed + passthrough + enforce → refuse", "managed", sandbox.Passthrough{Operator: "managed"}, true, true},
+		{"managed + container + egress + enforce → allow", "managed", containerEgress, true, false},
+		{"managed + container + egress but enforce OFF → refuse", "managed", containerEgress, false, true},
+		{"managed + container no-egress + enforce → refuse", "managed", containerNoEgress, true, true},
+		// Fail-closed: empty/unknown operator is NOT "self" → treated as managed-strict.
+		{"empty-operator + passthrough + enforce → refuse (fail-closed)", "", sandbox.Passthrough{Operator: ""}, true, true},
+		{"unknown-operator (Managed) + passthrough + enforce → refuse (fail-closed)", "Managed", sandbox.Passthrough{Operator: "Managed"}, true, true},
+		{"empty-operator + container + egress + enforce → allow", "", sandbox.Container{Operator: "", EgressEnforced: true}, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.enforce {
+				t.Setenv("ALETHIA_SANDBOX_ENFORCE_MANAGED", "1")
+			} else {
+				t.Setenv("ALETHIA_SANDBOX_ENFORCE_MANAGED", "")
+			}
+			w := &Runner{config: Config{Operator: tc.operator}, sandbox: tc.sb}
+			err := w.requireManagedContainerSandbox("IAC_SCAN")
+			if tc.wantRefuse && err == nil {
+				t.Fatal("expected REFUSE, got nil")
+			}
+			if !tc.wantRefuse && err != nil {
+				t.Fatalf("expected ALLOW, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestExecuteIacScan_ManagedPassthroughRefuses proves an IAC_SCAN (untrusted BYO by
+// definition — its config_snapshot is flat, no ProjectConfig) is refused on a managed runner
+// with the default Passthrough BEFORE any clone / git-token fetch, matching deploy/plan/
+// destroy/drift. Otherwise `tofu init`+`validate` would run provider-plugin code in-process
+// with the host env + IMDS reachable.
+func TestExecuteIacScan_ManagedPassthroughRefuses(t *testing.T) {
+	t.Setenv("ALETHIA_SANDBOX_BACKEND", "")         // default Passthrough
+	t.Setenv("ALETHIA_SANDBOX_ENFORCE_MANAGED", "") // even unset, the gate refuses managed BYO
+	api := &mockAPI{}
+	w := NewWithAPI(Config{Operator: "managed", AlethiaURL: "https://console.test"}, api)
+
+	job := &Job{
+		ID:      "job-managed-scan",
+		JobType: "IAC_SCAN",
+		ConfigSnapshot: map[string]any{
+			"repo_url": "file:///nonexistent/repo", // never reached — the gate refuses first
+			"ref":      "main",
+			"path":     "good",
+		},
+	}
+	stdout := NewJobLogger(api, job.ID, "STDOUT")
+	stderr := NewJobLogger(api, job.ID, "STDERR")
+	err := w.executeIacScan(context.Background(), job, stdout, stderr)
+	stdout.Close()
+	stderr.Close()
+	if err == nil {
+		t.Fatal("expected executeIacScan to REFUSE on a managed passthrough runner")
+	}
+	// The refusal must be the E0 gate (before clone), not a clone/parse failure.
+	if !strings.Contains(err.Error(), "bring-your-own IaC IAC_SCAN") {
+		t.Fatalf("expected the E0 gate refusal, got: %v", err)
+	}
+	// Nothing must have been posted (no scan ran).
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	for _, u := range api.statusUpdates {
+		if _, ok := u.metadata["iac_scan_result"]; ok {
+			t.Fatal("no iac_scan_result must be posted when the gate refuses")
+		}
+	}
+}
+
+// TestExecuteIacScan_ManagedContainerEgressEnforceAllowsGate proves the gate PASSES for a
+// managed runner when the egress-enforced container sandbox is active + enforcement is on, so
+// executeIacScan proceeds past the E0 gate (it then fails later trying to run the container
+// runtime, which is unavailable in unit tests — but crucially NOT with the gate refusal).
+func TestExecuteIacScan_ManagedContainerEgressEnforceAllowsGate(t *testing.T) {
+	repo, branch := gitInitScanRepo(t)
+	t.Setenv("ALETHIA_SANDBOX_ENFORCE_MANAGED", "1")
+	api := &mockAPI{}
+	w := &Runner{
+		config:  Config{Operator: "managed", AlethiaURL: "https://console.test"},
+		api:     api,
+		sandbox: sandbox.Container{Runtime: "definitely-not-a-real-runtime", Image: "x", Operator: "managed", EgressEnforced: true},
+	}
+	job := &Job{
+		ID:      "job-managed-container-scan",
+		JobType: "IAC_SCAN",
+		ConfigSnapshot: map[string]any{
+			"repo_url": "file://" + repo,
+			"ref":      branch,
+			"path":     "good",
+		},
+	}
+	stdout := NewJobLogger(api, job.ID, "STDOUT")
+	stderr := NewJobLogger(api, job.ID, "STDERR")
+	err := w.executeIacScan(context.Background(), job, stdout, stderr)
+	stdout.Close()
+	stderr.Close()
+	if err == nil {
+		return // gate passed and the (fake-runtime) container somehow no-op'd — still not a gate refusal
+	}
+	if strings.Contains(err.Error(), "bring-your-own IaC IAC_SCAN") {
+		t.Fatalf("gate must PASS for managed+container+egress+enforce; got a gate refusal: %v", err)
 	}
 }
 

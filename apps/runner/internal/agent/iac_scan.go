@@ -28,6 +28,16 @@ import (
 // net (the container backend's own gate); on the default Passthrough it runs in-process
 // exactly like chart_scan (loud warning; refuses under ALETHIA_SANDBOX_ENFORCE_MANAGED).
 func (w *Runner) executeIacScan(ctx context.Context, job *Job, stdout, stderr *JobLogger) error {
+	// E0 boundary: an IAC_SCAN is untrusted BYO BY DEFINITION — its config_snapshot is the flat
+	// {repo_url, ref, path, …}, NOT a ProjectConfig, so byoManagedGate's IacSource check can't
+	// fire here. `tofu init -backend=false` + `tofu validate` still execute provider-plugin code,
+	// so on a managed runner (or any non-self operator) this must be refused unless the egress-
+	// enforced container sandbox is active — matching deploy/plan/destroy/drift. Fail-closed,
+	// before the clone / FetchGitToken so no git token or host env is ever exposed to the scan.
+	if err := w.requireManagedContainerSandbox("IAC_SCAN"); err != nil {
+		return err
+	}
+
 	repoURL, _ := job.ConfigSnapshot["repo_url"].(string)
 	if repoURL == "" {
 		return fmt.Errorf("config_snapshot missing repo_url")
