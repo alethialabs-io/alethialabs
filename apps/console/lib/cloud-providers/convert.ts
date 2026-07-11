@@ -13,7 +13,15 @@ import {
 } from "./compute";
 import { ENGINE_MAP, DB_CAPACITY } from "./database";
 import { CACHE_NODE_MAP, DEFAULT_CACHE_NODE } from "./cache";
+import {
+	HETZNER_CACHE_ENGINES,
+	HETZNER_DB_ENGINES,
+} from "./hetzner-services";
 import { NOSQL } from "./nosql";
+
+/** Engine families / cache engines Hetzner's in-cluster charts can back. */
+const HETZNER_DB_ENGINE_SET = new Set<string>(HETZNER_DB_ENGINES);
+const HETZNER_CACHE_ENGINE_SET = new Set<string>(HETZNER_CACHE_ENGINES);
 
 export type ConversionSeverity = "info" | "warning" | "error";
 
@@ -106,6 +114,20 @@ export function convertProjectConfig(
 					});
 				}
 			}
+			// Hetzner runs databases in-cluster via CloudNativePG (PostgreSQL-only). Any other
+			// engine_family would be silently skipped by the chart mapper — remap fail-closed.
+			if (
+				targetProvider === "hetzner" &&
+				db.engine_family &&
+				!HETZNER_DB_ENGINE_SET.has(db.engine_family)
+			) {
+				warnings.push({
+					severity: "warning",
+					component: "Databases",
+					message: `Database "${db.name}" used ${db.engine_family} — ${target.shortName} runs databases in-cluster via CloudNativePG, which is PostgreSQL-only. Engine switched to PostgreSQL.`,
+				});
+				db.engine_family = "postgres";
+			}
 			if (db.min_capacity != null) {
 				db.min_capacity = Math.max(targetCapacity.min, db.min_capacity);
 			}
@@ -124,6 +146,19 @@ export function convertProjectConfig(
 	if (data.caches && data.caches.length > 0) {
 		const nodeMap = CACHE_NODE_MAP[sourceProvider]?.[targetProvider] ?? {};
 		for (const cache of data.caches) {
+			// Hetzner's in-cluster cache chart is Valkey — keep the stored engine honest.
+			if (
+				targetProvider === "hetzner" &&
+				cache.engine &&
+				!HETZNER_CACHE_ENGINE_SET.has(cache.engine)
+			) {
+				warnings.push({
+					severity: "info",
+					component: "Caches",
+					message: `Caches on ${target.shortName} run in-cluster as Valkey (Redis-compatible). Cache "${cache.name}" switched to Valkey.`,
+				});
+				cache.engine = "valkey";
+			}
 			if (cache.node_type) {
 				const mapped = nodeMap[cache.node_type];
 				if (mapped) {

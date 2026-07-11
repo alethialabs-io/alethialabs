@@ -7,6 +7,7 @@
 // so their rows must be absent; on AWS the full catalog (plus the "Soon" roadmap rows) renders.
 
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NodePalette } from "@/components/design-project/canvas/node-palette";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
@@ -96,5 +97,39 @@ describe("NodePalette — per-provider kind filtering", () => {
 
 		expect(screen.getByText("Topic")).toBeInTheDocument();
 		expect(screen.getByText("NoSQL table")).toBeInTheDocument();
+	});
+});
+
+describe("NodePalette — per-provider variant filtering", () => {
+	it("offers only the PostgreSQL database variant on a Hetzner project", async () => {
+		seedCanvas("hetzner");
+		renderPalette();
+
+		await userEvent.click(screen.getByText("Database"));
+
+		// The variant step is provider-filtered: CloudNativePG is PostgreSQL-only, so
+		// MySQL must not be offered (picking it would silently deploy no database).
+		expect(screen.getByText("PostgreSQL")).toBeInTheDocument();
+		expect(screen.queryByText("MySQL")).not.toBeInTheDocument();
+	});
+
+	it("offers only the Valkey cache variant on a Hetzner project", async () => {
+		seedCanvas("hetzner");
+		renderPalette();
+
+		await userEvent.click(screen.getByText("Cache"));
+
+		// The in-cluster chart is Valkey; offering "Redis" would deploy Valkey anyway.
+		expect(screen.getByText("Valkey")).toBeInTheDocument();
+		expect(screen.queryByText("Redis")).not.toBeInTheDocument();
+	});
+
+	it("keeps the full variant lists on an AWS project", async () => {
+		seedCanvas("aws");
+		renderPalette();
+
+		await userEvent.click(screen.getByText("Database"));
+		expect(screen.getByText("PostgreSQL")).toBeInTheDocument();
+		expect(screen.getByText("MySQL")).toBeInTheDocument();
 	});
 });

@@ -239,6 +239,62 @@ describe("convertProjectConfig — databases", () => {
 		);
 		expect(byComponent(warnings, "Databases")).toEqual([]);
 	});
+
+	it("remaps a non-postgres engine_family to postgres when converting to hetzner", () => {
+		const { data, warnings } = convertProjectConfig(
+			makeConfig({
+				databases: [
+					{ name: "orders", engine: "aurora-mysql", engine_family: "mysql" },
+				],
+			}),
+			"aws",
+			"hetzner",
+		);
+		// Without this remap the Hetzner chart mapper (CloudNativePG = postgres-only)
+		// would silently drop the database from the deploy.
+		expect(data.databases[0].engine_family).toBe("postgres");
+		const warn = byComponent(warnings, "Databases").find((w) =>
+			w.message.includes("CloudNativePG"),
+		);
+		expect(warn?.severity).toBe("warning");
+		expect(warn?.message).toContain("orders");
+		expect(warn?.message).toContain("PostgreSQL");
+	});
+
+	it("leaves a postgres engine_family untouched when converting to hetzner", () => {
+		const { data, warnings } = convertProjectConfig(
+			makeConfig({
+				databases: [
+					{
+						name: "primary",
+						engine: "aurora-postgresql",
+						engine_family: "postgres",
+					},
+				],
+			}),
+			"aws",
+			"hetzner",
+		);
+		expect(data.databases[0].engine_family).toBe("postgres");
+		expect(
+			byComponent(warnings, "Databases").some((w) =>
+				w.message.includes("CloudNativePG"),
+			),
+		).toBe(false);
+	});
+
+	it("does not remap engine_family for managed-cloud targets", () => {
+		const { data } = convertProjectConfig(
+			makeConfig({
+				databases: [
+					{ name: "orders", engine: "aurora-mysql", engine_family: "mysql" },
+				],
+			}),
+			"aws",
+			"gcp",
+		);
+		expect(data.databases[0].engine_family).toBe("mysql");
+	});
 });
 
 describe("convertProjectConfig — caches", () => {
@@ -260,6 +316,32 @@ describe("convertProjectConfig — caches", () => {
 		);
 		expect(data.caches[0].node_type).toBe("M1"); // DEFAULT_CACHE_NODE.gcp
 		expect(byComponent(warnings, "Caches")[0].message).toContain("cache.giant");
+	});
+
+	it("switches the cache engine to valkey when converting to hetzner", () => {
+		const { data, warnings } = convertProjectConfig(
+			makeConfig({ caches: [{ name: "sessions", engine: "redis" }] }),
+			"aws",
+			"hetzner",
+		);
+		// The in-cluster chart is Valkey — keeping engine:"redis" would be dishonest.
+		expect(data.caches[0].engine).toBe("valkey");
+		const info = byComponent(warnings, "Caches").find(
+			(w) => w.severity === "info",
+		);
+		expect(info?.message).toContain("Valkey");
+	});
+
+	it("leaves a valkey cache engine alone when converting to hetzner", () => {
+		const { data, warnings } = convertProjectConfig(
+			makeConfig({ caches: [{ name: "sessions", engine: "valkey" }] }),
+			"aws",
+			"hetzner",
+		);
+		expect(data.caches[0].engine).toBe("valkey");
+		expect(
+			byComponent(warnings, "Caches").some((w) => w.severity === "info"),
+		).toBe(false);
 	});
 });
 

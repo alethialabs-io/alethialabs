@@ -15,7 +15,7 @@ import {
 	NOSQL,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
-import { HETZNER_DB_ENGINES } from "@/lib/cloud-providers/hetzner-services";
+import { variantOptionsFor } from "../graph/node-registry";
 import type { NodeConfigMap, NodeKind } from "../graph/types";
 
 /**
@@ -67,6 +67,10 @@ export interface FieldDef<C = AnyConfig> {
 	step?: Resolvable<number, C>;
 	/** Parse numeric input as float (default: int unless a fractional step is set). */
 	float?: boolean;
+	/** Number field backed by a NULLABLE column: clearing the input patches `null`
+	 * ("use the default") instead of 0 — required for `min(1)`-bounded optional sizing
+	 * fields, where 0 would block the save with no way back to the default. */
+	optional?: boolean;
 	/** Field needs an effective cloud provider; renders a notice when none is set. */
 	requiresProvider?: boolean;
 	/** Span the full section width (radio-card/region/repository/switch already do). */
@@ -111,35 +115,6 @@ const nameField = <C = AnyConfig>(
 	mono: true,
 	transform: transform ?? ((v) => v.toLowerCase()),
 });
-
-/** Engine families available on Hetzner (in-cluster CloudNativePG → postgres only). */
-const HETZNER_ENGINE_SET = new Set<string>(HETZNER_DB_ENGINES);
-
-const ENGINE_FAMILY: FieldOption[] = [
-	{
-		value: "postgres",
-		label: "PostgreSQL",
-		description: "Broad extension support — the default relational choice.",
-	},
-	{
-		value: "mysql",
-		label: "MySQL",
-		description: "Familiar, with wide tooling and driver compatibility.",
-	},
-];
-
-const CACHE_ENGINE: FieldOption[] = [
-	{
-		value: "redis",
-		label: "Redis",
-		description: "In-memory data store for caching, sessions, and queues.",
-	},
-	{
-		value: "valkey",
-		label: "Valkey",
-		description: "Open-source Redis fork, drop-in compatible.",
-	},
-];
 
 const CAPACITY_MODE_DESC: Record<string, string> = {
 	on_demand: "Pay per request; scales automatically to traffic.",
@@ -330,11 +305,9 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "engine_family",
 						type: "radio-card",
 						label: "Engine",
-						// Hetzner runs databases in-cluster via CloudNativePG → postgres only.
-						options: ({ provider }) =>
-							provider === "hetzner"
-								? ENGINE_FAMILY.filter((o) => HETZNER_ENGINE_SET.has(o.value))
-								: ENGINE_FAMILY,
+						// Provider-filtered via the registry's shared variant gate (Hetzner runs
+						// databases in-cluster via CloudNativePG → postgres only).
+						options: ({ provider }) => variantOptionsFor("database", provider),
 					},
 					{
 						key: "port",
@@ -390,6 +363,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						unit: "GiB",
 						min: 1,
 						max: 1024,
+						optional: true,
 						placeholder: "10",
 						description: "Persistent volume per Postgres instance (CloudNativePG).",
 						visibleWhen: (_c, { provider }) => provider === "hetzner",
@@ -400,6 +374,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Instances",
 						min: 1,
 						max: 5,
+						optional: true,
 						placeholder: "1",
 						description: "Postgres instances in the cluster (1 primary + replicas).",
 						visibleWhen: (_c, { provider }) => provider === "hetzner",
@@ -435,7 +410,14 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				defaultOpen: true,
 				fields: [
 					nameField(),
-					{ key: "engine", type: "radio-card", label: "Engine", options: CACHE_ENGINE },
+					{
+						key: "engine",
+						type: "radio-card",
+						label: "Engine",
+						// Provider-filtered via the registry's shared variant gate (Hetzner's
+						// in-cluster cache chart is Valkey — offering Redis would deploy Valkey).
+						options: ({ provider }) => variantOptionsFor("cache", provider),
+					},
 					{
 						key: "node_type",
 						type: "select",
@@ -467,6 +449,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						unit: "GiB",
 						min: 1,
 						max: 512,
+						optional: true,
 						placeholder: ({ config }) => String(config.memory_gb ?? 8),
 						description: "Persistent volume per Valkey node; defaults to the memory size.",
 						visibleWhen: (_c, { provider }) => provider === "hetzner",
@@ -483,9 +466,8 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 		],
 		summary: (c, provider) =>
 			provider === "hetzner"
-				? `${c.engine === "valkey" ? "Valkey" : "Redis"} · ${
-						c.storage_gb ?? c.memory_gb ?? 8
-					} GiB × ${c.num_cache_nodes ?? 1}`
+				? // The in-cluster chart is always Valkey, whatever engine the config carries.
+					`Valkey · ${c.storage_gb ?? c.memory_gb ?? 8} GiB × ${c.num_cache_nodes ?? 1}`
 				: `${c.engine === "valkey" ? "Valkey" : "Redis"} · ${
 						c.node_type ?? "—"
 					}`,
@@ -522,6 +504,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						unit: "GiB",
 						min: 1,
 						max: 256,
+						optional: true,
 						placeholder: "8",
 						description: "Persistent volume for the RabbitMQ node.",
 						visibleWhen: (_c, { provider }) => provider === "hetzner",
