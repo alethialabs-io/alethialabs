@@ -4,12 +4,20 @@
 import { createHash } from "crypto";
 import { type SQL, and, count, desc, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import {
+	destroyProject,
+	planProject,
+	provisionProject,
+} from "@/app/server/actions/projects";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
+import { getActiveScope } from "@/lib/auth/scope";
+import { runWithActor } from "@/lib/authz/actor-context";
+import { ensureCliOrgAccess } from "@/lib/authz/guard";
+import { ForbiddenError } from "@/lib/authz/types";
 import { verifyCliToken } from "@/lib/cli/auth";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
-import { jobs, runners, projectEnvironments, projects } from "@/lib/db/schema";
-import { queryProjectFull } from "@/lib/queries/project-full";
+import { jobs, runners, projects } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import { cliJobResponse, cliJobsPageResponse } from "@/lib/validations/cli-contract";
 
@@ -30,7 +38,16 @@ function parseJobType(v: unknown): CreatableJobType | null {
 	}
 }
 
-/** Queues a provisioning job for the CLI user, snapshotting the project config. */
+/**
+ * Queues a provisioning job for the CLI user, snapshotting the project config.
+ *
+ * PLAN/DEPLOY/DESTROY delegate to the same server actions the console uses
+ * (planProject/provisionProject/destroyProject) under the caller's actor
+ * (runWithActor — the MCP seam), so a CLI-queued job freezes the SAME nested
+ * `buildConfigSnapshot` shape (provider, environment_stage, cluster, dns,
+ * addons, placement-resolved components) the Go runner deserializes into
+ * ProjectConfig — never the flat project_full view row.
+ */
 export async function POST(req: Request) {
 	const { payload, error: authError } = await verifyCliToken(req);
 	if (authError) return authError;
@@ -84,83 +101,88 @@ export async function POST(req: Request) {
 
 		const db = getServiceDb();
 
-		let snapshot: Record<string, unknown> = config_snapshot || {};
-		let configHash: string | null = null;
-		let resolvedCloudIdentityId: string | null = cloud_identity_id || null;
-		// M1: the CLI job targets the project's default environment (status + identity).
-		let resolvedEnvironmentId: string | null = null;
+		if (jobType === "DESTROY_RUNNER") {
+			// Runner teardown has no project config to snapshot — the client sends the
+			// runner descriptor as the snapshot. Unchanged legacy path.
+			const [job] = await db
+				.insert(jobs)
+				.values({
+					user_id: userId,
+					environment_id: null,
+					cloud_identity_id: cloud_identity_id || null,
+					job_type: jobType,
+					project_id: null,
+					config_snapshot: config_snapshot || {},
+					configuration_hash: null,
+					status: "QUEUED",
+					assigned_runner_id: assigned_runner_id || null,
+					plan_job_id: plan_job_id || null,
+				})
+				.returning();
 
-		if (
-			(jobType === "DEPLOY" || jobType === "PLAN" || jobType === "DESTROY") &&
-			configuration_id
-		) {
-			const [config] = await queryProjectFull(db, {
-				id: configuration_id,
-				user_id: userId,
+			notifyScaler();
+			return cliJson(cliJobResponse, { job }, { status: 201 });
+		}
+
+		// PLAN / DEPLOY / DESTROY: run the console's own server actions under the CLI
+		// caller's actor. The actions authorize via the PDP, freeze the nested
+		// buildConfigSnapshot, insert the job, flip the env status, audit, and notify
+		// the scaler — identical to a console-queued job.
+		const headerOrg = req.headers.get("X-Alethia-Org")?.trim();
+		const actor = await getActiveScope(userId, headerOrg || undefined);
+		if (headerOrg) {
+			const denied = await ensureCliOrgAccess(actor, userId, headerOrg);
+			if (denied) return denied;
+		}
+
+		let jobId: string;
+		try {
+			const result = await runWithActor(actor, async () => {
+				switch (jobType) {
+					case "PLAN":
+						return planProject(configuration_id, assigned_runner_id || null);
+					case "DEPLOY":
+						return provisionProject(
+							configuration_id,
+							plan_job_id || undefined,
+							assigned_runner_id || null,
+						);
+					case "DESTROY":
+						return destroyProject(configuration_id, null, assigned_runner_id || null);
+				}
 			});
-
-			if (!config) {
+			jobId = result.jobId;
+		} catch (e: unknown) {
+			// The PDP denies both "not yours" and "does not exist" — keep the CLI's
+			// historical 404 contract for that case.
+			if (e instanceof ForbiddenError) {
 				return NextResponse.json(
 					{ error: "Configuration not found or unauthorized" },
 					{ status: 404 },
 				);
 			}
-
-			snapshot = config;
-			configHash = createHash("sha256")
-				.update(JSON.stringify(snapshot))
-				.digest("hex");
-
-			if (!resolvedCloudIdentityId && config.cloud_identity_id) {
-				resolvedCloudIdentityId = config.cloud_identity_id;
-			}
-
-			const [defEnv] = await db
-				.select({ id: projectEnvironments.id })
-				.from(projectEnvironments)
-				.where(
-					and(
-						eq(projectEnvironments.project_id, configuration_id),
-						eq(projectEnvironments.is_default, true),
-					),
-				)
-				.limit(1);
-			resolvedEnvironmentId = defEnv?.id ?? null;
+			throw e;
 		}
 
+		const [inserted] = await db
+			.select()
+			.from(jobs)
+			.where(eq(jobs.id, jobId))
+			.limit(1);
+		if (!inserted) {
+			return NextResponse.json({ error: "Job not found after queue" }, { status: 500 });
+		}
+
+		// Preserve the CLI plan→apply drift guard: the runner compares the PLAN job's
+		// configuration_hash against the DEPLOY job's before applying.
+		const configHash = createHash("sha256")
+			.update(JSON.stringify(inserted.config_snapshot))
+			.digest("hex");
 		const [job] = await db
-			.insert(jobs)
-			.values({
-				user_id: userId,
-				environment_id: resolvedEnvironmentId,
-				cloud_identity_id: resolvedCloudIdentityId,
-				job_type: jobType,
-				project_id: configuration_id || null,
-				config_snapshot: snapshot,
-				configuration_hash: configHash,
-				status: "QUEUED",
-				assigned_runner_id: assigned_runner_id || null,
-				plan_job_id: plan_job_id || null,
-			})
+			.update(jobs)
+			.set({ configuration_hash: configHash })
+			.where(eq(jobs.id, jobId))
 			.returning();
-
-		// M1: provisioning status lives on the targeted environment.
-		if (
-			(jobType === "DEPLOY" || jobType === "PLAN") &&
-			resolvedEnvironmentId
-		) {
-			await db
-				.update(projectEnvironments)
-				.set({ status: "QUEUED" })
-				.where(eq(projectEnvironments.id, resolvedEnvironmentId));
-		}
-
-		if (jobType === "DESTROY" && resolvedEnvironmentId) {
-			await db
-				.update(projectEnvironments)
-				.set({ status: "DESTROYING" })
-				.where(eq(projectEnvironments.id, resolvedEnvironmentId));
-		}
 
 		// Ops alert (free): a teardown was requested. org_id is trigger-populated on insert.
 		if (jobType === "DESTROY" && job.org_id) {
@@ -173,7 +195,6 @@ export async function POST(req: Request) {
 			});
 		}
 
-		notifyScaler();
 		return cliJson(cliJobResponse, { job }, { status: 201 });
 	} catch (err: unknown) {
 		const message =
