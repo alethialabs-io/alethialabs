@@ -22,7 +22,7 @@ export function Alerts() {
 	return (
 		<section style={{ padding: "84px 0", borderTop: "1px solid var(--border)", background: "var(--surface-sunken)" }}>
 			<Wrap>
-				<SecMark n="06" label="Alerts & channels" />
+				<SecMark n="07" label="Alerts & channels" />
 				<div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 24, flexWrap: "wrap", marginBottom: 40 }}>
 					<h2 style={{ ...disp, fontSize: 38, fontWeight: 600, letterSpacing: "-0.035em", margin: 0, maxWidth: 520, color: "var(--text-primary)" }}>What fires, where it goes, what happened.</h2>
 					<p style={{ fontSize: 15, color: "var(--text-tertiary)", maxWidth: 380, margin: 0, lineHeight: 1.6 }}>Policies match events. Channels deliver them. Activity is the record — all in one place.</p>
