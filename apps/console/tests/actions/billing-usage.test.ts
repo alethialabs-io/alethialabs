@@ -26,11 +26,13 @@ vi.mock("@/lib/queries/usage-counts", () => ({
 }));
 vi.mock("@/lib/billing/ai-quota", () => ({
 	sumCredits: vi.fn(),
+	oldestUsageSince: vi.fn(),
 	purchasedBalance: vi.fn(),
 	aiCreditsSeries: vi.fn(),
 }));
 
 import {
+	createCreditPackIntent,
 	createSubscriptionIntent,
 	getAiUsageSummary,
 	getOrgUsage,
@@ -39,8 +41,13 @@ import {
 	startProTrial,
 } from "@/app/server/actions/billing";
 import { authorize, currentActor } from "@/lib/authz/guard";
-import { aiCreditsSeries, sumCredits, purchasedBalance } from "@/lib/billing/ai-quota";
-import { AI_TIERS } from "@/lib/billing/ai-plan";
+import {
+	aiCreditsSeries,
+	oldestUsageSince,
+	sumCredits,
+	purchasedBalance,
+} from "@/lib/billing/ai-quota";
+import { AI_SESSION_WINDOW_MS, AI_TIERS } from "@/lib/billing/ai-plan";
 import { getOrgBilling } from "@/lib/billing/queries";
 import {
 	queryJobMinutesByOrg,
@@ -174,34 +181,51 @@ describe("getAiUsageSummary", () => {
 		orgBilling.mockResolvedValue(null);
 		const r = await getAiUsageSummary();
 		expect(r.tier).toBe("ai_free");
-		expect(r.dailyUsed).toBe(0);
+		expect(r.sessionUsed).toBe(0);
 		expect(r.weeklyUsed).toBe(0);
 		expect(r.purchasedBalance).toBe(0);
-		expect(r.dailyBudget).toBe(AI_TIERS.ai_free.dailyCredits);
+		expect(r.sessionBudget).toBe(AI_TIERS.ai_free.sessionCredits);
 		expect(r.weeklyBudget).toBe(AI_TIERS.ai_free.weeklyCredits);
-		// Reset timestamps are valid ISO strings in the future.
-		expect(new Date(r.dailyResetAt).getTime()).toBeGreaterThan(Date.now());
+		// No usage → no active session; the weekly reset is a valid future ISO.
+		expect(r.sessionResetAt).toBeNull();
 		expect(new Date(r.weeklyResetAt).getTime()).toBeGreaterThan(Date.now());
 		expect(sumCredits).not.toHaveBeenCalled();
 	});
 
-	it("reports daily + weekly included spend against the AI tier's caps", async () => {
-		// The AI budget is the STANDALONE tier's daily/weekly grant, independent of the org plan.
+	it("reports session + weekly included spend against the AI tier's caps", async () => {
+		// The AI budget is the STANDALONE tier's session/weekly grant, independent of the org plan.
 		orgBilling.mockResolvedValue(
 			billing({ aiTier: "ai_plus", aiSubscriptionStatus: "active" }),
 		);
-		// getAiUsageSummary sums daily first, then weekly, then purchased balance.
+		// getAiUsageSummary sums the rolling session first, then the fixed week.
 		vi.mocked(sumCredits).mockResolvedValueOnce(40).mockResolvedValueOnce(1240);
 		vi.mocked(purchasedBalance).mockResolvedValue(800);
+		const oldest = new Date(Date.now() - 3_600_000); // oldest in-window usage: 1h ago
+		vi.mocked(oldestUsageSince).mockResolvedValue(oldest);
 
 		const r = await getAiUsageSummary();
 		expect(r.tier).toBe("ai_plus");
-		expect(r.dailyBudget).toBe(AI_TIERS.ai_plus.dailyCredits);
+		expect(r.sessionBudget).toBe(AI_TIERS.ai_plus.sessionCredits);
 		expect(r.weeklyBudget).toBe(AI_TIERS.ai_plus.weeklyCredits);
-		expect(r.dailyUsed).toBe(40);
+		expect(r.sessionUsed).toBe(40);
 		expect(r.weeklyUsed).toBe(1240);
 		expect(r.purchasedBalance).toBe(800);
+		// Session reset = oldest in-window usage + the 5-hour window.
+		expect(r.sessionResetAt).toBe(
+			new Date(oldest.getTime() + AI_SESSION_WINDOW_MS).toISOString(),
+		);
 		expect(sumCredits).toHaveBeenCalledWith("org-1", "included", expect.any(Date));
+	});
+
+	it("reports no active session when the rolling window is empty", async () => {
+		orgBilling.mockResolvedValue(null); // free tier
+		vi.mocked(sumCredits).mockResolvedValue(0);
+		vi.mocked(purchasedBalance).mockResolvedValue(0);
+		vi.mocked(oldestUsageSince).mockResolvedValue(null);
+
+		const r = await getAiUsageSummary();
+		expect(r.sessionUsed).toBe(0);
+		expect(r.sessionResetAt).toBeNull();
 	});
 });
 
@@ -238,5 +262,13 @@ describe("subscription guards", () => {
 	it("startProTrial refuses the personal scope", async () => {
 		authz.mockResolvedValue({ orgId: "user-1", userId: "user-1" } as never);
 		await expect(startProTrial()).rejects.toThrow(/Create an organization/);
+	});
+
+	it("createCreditPackIntent refuses the free AI tier (packs top up a paid plan)", async () => {
+		authz.mockResolvedValue({ orgId: "org-1", userId: "user-1" } as never);
+		orgBilling.mockResolvedValue(null); // no billing row → ai_free
+		await expect(createCreditPackIntent("s")).rejects.toThrow(
+			/paid AI plans/,
+		);
 	});
 });

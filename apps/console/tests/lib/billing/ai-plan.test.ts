@@ -10,22 +10,32 @@ import type { OrganizationBilling } from "@/lib/db/schema";
 
 vi.mock("@/lib/billing/queries", () => ({ getOrgBilling: vi.fn() }));
 
-import { AI_TIERS, effectiveAiTier, resolveAiTier } from "@/lib/billing/ai-plan";
+import {
+	AI_SESSION_WINDOW_MS,
+	AI_TIERS,
+	effectiveAiTier,
+	resolveAiTier,
+	SESSION_FRACTION_OF_WEEK,
+} from "@/lib/billing/ai-plan";
 import { getOrgBilling } from "@/lib/billing/queries";
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("AI_TIERS ladder", () => {
-	it("gives the free tier a usable daily + weekly allowance", () => {
+	it("gives the free tier a usable session + weekly allowance", () => {
 		expect(AI_TIERS.ai_free.enabled).toBe(true);
-		expect(AI_TIERS.ai_free.dailyCredits).toBeGreaterThan(0);
+		expect(AI_TIERS.ai_free.sessionCredits).toBeGreaterThan(0);
 		expect(AI_TIERS.ai_free.weeklyCredits).toBeGreaterThan(0);
 		expect(AI_TIERS.ai_free.advisor).toBe("none");
 	});
 
 	it("raises the caps up the ladder with a Sonnet advisor on the paid tiers", () => {
-		expect(AI_TIERS.ai_plus.dailyCredits).toBeGreaterThan(AI_TIERS.ai_free.dailyCredits);
-		expect(AI_TIERS.ai_max.dailyCredits).toBeGreaterThan(AI_TIERS.ai_plus.dailyCredits);
+		expect(AI_TIERS.ai_plus.sessionCredits).toBeGreaterThan(
+			AI_TIERS.ai_free.sessionCredits,
+		);
+		expect(AI_TIERS.ai_max.sessionCredits).toBeGreaterThan(
+			AI_TIERS.ai_plus.sessionCredits,
+		);
 		expect(AI_TIERS.ai_plus.weeklyCredits).toBeGreaterThan(AI_TIERS.ai_free.weeklyCredits);
 		expect(AI_TIERS.ai_max.weeklyCredits).toBeGreaterThan(AI_TIERS.ai_plus.weeklyCredits);
 		// Both paid tiers default to the Sonnet advisor; Max upgrades to Opus on demand
@@ -36,30 +46,38 @@ describe("AI_TIERS ladder", () => {
 
 	it("pins the recalibrated cost-of-serve allowances (weekly = the governor)", () => {
 		expect(AI_TIERS.ai_free).toMatchObject({
-			dailyCredits: 230,
+			sessionCredits: 130,
 			weeklyCredits: 510,
-			perUserDailyCredits: 230,
+			perUserSessionCredits: 130,
 			perUserWeeklyCredits: 510,
 		});
 		expect(AI_TIERS.ai_plus).toMatchObject({
-			dailyCredits: 6_750,
+			sessionCredits: 3_750,
 			weeklyCredits: 15_000,
-			perUserDailyCredits: 4_140,
+			perUserSessionCredits: 2_300,
 			perUserWeeklyCredits: 9_200,
 		});
 		expect(AI_TIERS.ai_max).toMatchObject({
-			dailyCredits: 33_750,
+			sessionCredits: 18_750,
 			weeklyCredits: 75_000,
-			perUserDailyCredits: 20_700,
+			perUserSessionCredits: 11_500,
 			perUserWeeklyCredits: 46_000,
 		});
 	});
 
-	it("keeps daily as a burst rail at ≈45% of the weekly governor", () => {
+	it("pins the 5-hour window and keeps the session cap at weekly ÷ 4 (rounded up)", () => {
+		expect(AI_SESSION_WINDOW_MS).toBe(5 * 3_600_000);
+		expect(SESSION_FRACTION_OF_WEEK).toBe(1 / 4);
 		for (const tier of ["ai_free", "ai_plus", "ai_max"] as const) {
-			const { dailyCredits, weeklyCredits } = AI_TIERS[tier];
-			expect(dailyCredits / weeklyCredits).toBeGreaterThan(0.4);
-			expect(dailyCredits / weeklyCredits).toBeLessThan(0.5);
+			const { sessionCredits, weeklyCredits } = AI_TIERS[tier];
+			// weekly ÷ 4, rounded up to a clean figure (free: 127.5 → 130) — a saturated
+			// day (~4.8 sessions) can exhaust the whole week; weekly stays the governor.
+			expect(sessionCredits).toBeGreaterThanOrEqual(
+				weeklyCredits * SESSION_FRACTION_OF_WEEK,
+			);
+			expect(sessionCredits).toBeLessThanOrEqual(
+				Math.ceil(weeklyCredits * SESSION_FRACTION_OF_WEEK / 10) * 10,
+			);
 		}
 	});
 });

@@ -17,9 +17,7 @@ func TestNewCloudProvider_ComingSoon(t *testing.T) {
 		wantErr      bool
 		wantContains string
 	}{
-		{"alibaba coming soon", "alibaba", true, "coming soon"},
 		{"digitalocean coming soon", "digitalocean", true, "coming soon"},
-		{"hetzner coming soon", "hetzner", true, "coming soon"},
 		{"civo coming soon", "civo", true, "coming soon"},
 		{"empty unsupported", "", true, "unsupported cloud provider"},
 		{"garbage unsupported", "not-a-cloud", true, "unsupported cloud provider"},
@@ -45,6 +43,32 @@ func TestNewCloudProvider_ComingSoon(t *testing.T) {
 				t.Errorf("error %q does not contain %q", err.Error(), tt.wantContains)
 			}
 		})
+	}
+}
+
+// TestNewCloudProvider_Hetzner covers the self-managed Talos-on-Hetzner provider,
+// which is now provisionable (no longer "coming soon").
+func TestNewCloudProvider_Hetzner(t *testing.T) {
+	p, err := NewCloudProvider("hetzner")
+	if err != nil {
+		t.Fatalf("unexpected error for hetzner: %v", err)
+	}
+	if p == nil {
+		t.Fatal("expected a provider for hetzner, got nil")
+	}
+	if p.Name() != "hetzner" {
+		t.Errorf("Name() = %q, want %q", p.Name(), "hetzner")
+	}
+}
+
+// TestNewCloudProvider_Alibaba covers the full managed Alibaba provider, now provisionable.
+func TestNewCloudProvider_Alibaba(t *testing.T) {
+	p, err := NewCloudProvider("alibaba")
+	if err != nil {
+		t.Fatalf("unexpected error for alibaba: %v", err)
+	}
+	if p == nil || p.Name() != "alibaba" {
+		t.Fatalf("expected alibaba provider, got %v", p)
 	}
 }
 

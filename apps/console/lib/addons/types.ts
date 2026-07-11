@@ -103,6 +103,15 @@ export interface AddOnInstallSpec {
 	chartRepo: string;
 	chart: string;
 	version: string;
+	/** How ArgoCD pulls the chart. Omitted / "helm" = a Helm-registry chart (chartRepo+chart);
+	 * "git" = a bring-your-own chart directory inside a git repo (chartRepo=git URL, path=chart
+	 * dir, version=git ref). Mirrors the Go `AddOnInstall.Source`. */
+	source?: "helm" | "git";
+	/** Chart directory within a git-source repo (source==="git"). Omitted for Helm charts. */
+	path?: string;
+	/** ArgoCD AppProject the Application is placed in. Omitted = "infra" (marketplace default);
+	 * BYO charts are pinned to their hardened "byo-<slug>" project by the runner. */
+	project?: string;
 	namespace: string;
 	/** Fully-merged Helm values (defaults + user knobs, or a raw override in gitops mode). */
 	values: Record<string, unknown>;

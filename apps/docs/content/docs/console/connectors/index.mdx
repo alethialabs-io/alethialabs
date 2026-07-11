@@ -5,7 +5,7 @@ description: Connect cloud providers and Git accounts to enable infrastructure p
 
 # Connectors
 
-The Connectors page manages connections to cloud providers (AWS, GCP, Azure), Git providers (GitHub, GitLab, Bitbucket), and **pluggable per-category providers** (DNS, secrets, registry, observability). Cloud and Git connections must be established before provisioning; pluggable connectors are optional — they let a Project use a tool you already run instead of the cloud-native default.
+The Connectors page manages connections to cloud providers — the **federated clouds** (AWS, GCP, Azure, Alibaba) and the **token clouds** (Hetzner, DigitalOcean, Civo) — plus Git providers (GitHub, GitLab, Bitbucket) and **pluggable per-category providers** (DNS, secrets, registry, observability). Cloud and Git connections must be established before provisioning; pluggable connectors are optional — they let a Project use a tool you already run instead of the cloud-native default.
 
 ## How It Works
 
@@ -13,7 +13,8 @@ Connectors are displayed as cards organized by category:
 
 | Category | Providers | Auth |
 |----------|-----------|------|
-| **Cloud Providers** | AWS, GCP, Azure | cloud federation (no stored keys) |
+| **Cloud Providers** | AWS, GCP, Azure, Alibaba | keyless federation off the Alethia OIDC issuer (no stored keys) |
+| **Token Clouds** | Hetzner, DigitalOcean, Civo | the customer's own API token (encrypted at rest) |
 | **Git Providers** | GitHub, GitLab, Bitbucket | OAuth |
 | **DNS** | Cloudflare | API key |
 | **Secrets** | HashiCorp Vault | API key |
@@ -37,13 +38,20 @@ Each card shows:
 
 ## Cloud Provider Connections
 
-Cloud connections use the platform's [zero-credential model](/concepts/security) — no static keys are stored. Each provider uses a federation mechanism:
+The four **federated clouds** use the platform's [zero-credential model](/concepts/security) — the customer's
+role/pool/provider trusts the Alethia OIDC issuer directly, and Alethia federates in with a short-lived minted
+assertion. **No static keys are stored.**
 
 <Cards>
-  <Card title="AWS" href="/console/connectors/aws">Cross-Account IAM Role with External ID</Card>
+  <Card title="AWS" href="/console/connectors/aws">Keyless IAM role via an IAM OIDC provider</Card>
   <Card title="GCP" href="/console/connectors/gcp">Workload Identity Federation with OIDC</Card>
   <Card title="Azure" href="/console/connectors/azure">Federated Identity via Entra ID</Card>
+  <Card title="Alibaba" href="/console/connectors/alibaba">RAM AssumeRoleWithOIDC (account-free)</Card>
 </Cards>
+
+The **token clouds** (Hetzner, DigitalOcean, Civo) instead use the customer's own API token — there is no
+account to federate into. The token is encrypted at rest (`ALETHIA_CRED_ENCRYPTION_KEY`) and only decrypted
+on the runner at provision time.
 
 After connecting, Alethia verifies the credentials **instantly, server-side** (an auth + provisioning-permission probe — no runner, no job) and marks the connection `Connected`, `Degraded`, or `Disconnected`. Existing resources (VPCs, subnets, DNS zones) are discovered + kept fresh by the server-side, event-driven asset inventory. See [Connection health & inventory](/console/connectors/health-and-inventory).
 

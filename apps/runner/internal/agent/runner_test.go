@@ -94,8 +94,31 @@ func (m *mockAPI) FetchGitToken(jobID string) (string, error) {
 	return "", nil
 }
 
-func (m *mockAPI) FetchAzureToken() (string, error) {
+func (m *mockAPI) FetchStateToken(jobID string) (string, error) {
+	return "test-state-token", nil
+}
+
+func (m *mockAPI) PurgeProjectState(jobID, stateToken string) error {
+	return nil
+}
+
+func (m *mockAPI) FetchAzureToken(jobID string) (string, error) {
 	return "test-azure-token", nil
+}
+
+func (m *mockAPI) FetchAwsToken(jobID string) (*AwsFederation, error) {
+	return &AwsFederation{
+		Token:  "test-aws-token",
+		Region: "eu-central-1",
+	}, nil
+}
+
+func (m *mockAPI) FetchAlibabaToken(jobID string) (string, error) {
+	return "test-alibaba-token", nil
+}
+
+func (m *mockAPI) FetchGcpToken(jobID string) (string, error) {
+	return "test-gcp-token", nil
 }
 
 func (m *mockAPI) UploadPlanArtifact(jobID, filePath string) error {

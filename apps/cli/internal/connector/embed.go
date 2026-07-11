@@ -24,8 +24,17 @@ var GcpSetupScript string
 //go:embed azure-setup.sh
 var AzureSetupScript string
 
-// AwsBootstrapTemplate is the CloudFormation template that creates the
-// cross-account IAM role. Deployed with an ExternalId parameter; outputs RoleArn.
+// AwsBootstrapTemplate is the CloudFormation template that creates, in the user's AWS account, an IAM OIDC
+// provider trusting the Alethia issuer + a role Alethia assumes via AssumeRoleWithWebIdentity. Deployed with
+// an IssuerUrl parameter (keyless, no external id); outputs RoleArn.
 //
 //go:embed aws-bootstrap.yaml
 var AwsBootstrapTemplate string
+
+// AlibabaConnectorModule is the OpenTofu/Terraform module that registers, in the user's
+// Alibaba account, a RAM OIDC provider trusting the Alethia issuer + a RAM role. Applied
+// with `terraform apply` (auth via the user's aliyun creds); outputs role_arn. Keyless +
+// account-free — Alethia never receives Alibaba credentials.
+//
+//go:embed alibaba-connector.tf
+var AlibabaConnectorModule string

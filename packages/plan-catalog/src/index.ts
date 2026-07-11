@@ -258,10 +258,13 @@ export function resolveCurrency(country?: string | null): SupportedCurrency {
 // ── Standalone AI product catalog ──────────────────────────────────────────────────
 // AI is a SEPARATE metered product from the org plan (Hobby/Pro/Enterprise): everyone
 // gets a usable free allowance (AI Free), and AI Plus / AI Max are their own subscription
-// that raises the daily/weekly caps + upgrades the advisor model. Display copy only — the
-// authoritative allowances live in the console (lib/billing/ai-plan.ts `AI_TIERS`) and the
-// charge amount in Stripe (STRIPE_PRICE_AI_*). Kept structurally identical to the console's
-// `AiTier` union so it stays a zero-dependency package.
+// that raises the session/weekly limits + deepens what Elench can do. Display copy only —
+// the authoritative allowances live in the console (lib/billing/ai-plan.ts `AI_TIERS`) and
+// the charge amount in Stripe (STRIPE_PRICE_AI_*). Kept structurally identical to the
+// console's `AiTier` union so it stays a zero-dependency package.
+//
+// Copy rule: NO model names (Sonnet/Opus/executor) — tiers are described by what Elench
+// does for the user, never by which model serves it (guarded by the package tests).
 //
 // Prices below (USD + EUR) are the FINAL maintainer-approved customer amounts (AI Plus
 // $20/€18, AI Max $100/€90). They drive display + Stripe provisioning; the cost-of-serve
@@ -283,10 +286,12 @@ export interface AiPlanCatalogEntry {
 	tagline: string;
 	/** Whether this tier is a paid AI subscription (has a Stripe price). */
 	paid: boolean;
-	/** The advisor (planning) model this tier unlocks, in human copy. */
+	/** What this tier's Elench does for you, in one line (no model names). */
 	advisor: string;
 	/** Short punchy highlights for the AI upgrade UI. */
 	highlights: string[];
+	/** The tier the upgrade UI should visually recommend (at most one). */
+	recommended?: boolean;
 }
 
 export const AI_PLAN_CATALOG: AiPlanCatalogEntry[] = [
@@ -296,13 +301,13 @@ export const AI_PLAN_CATALOG: AiPlanCatalogEntry[] = [
 		priceLabel: "Free",
 		priceMonthlyUsd: 0,
 		priceMonthlyEur: 0,
-		tagline: "A usable daily allowance for everyone.",
+		tagline: "Included with every workspace.",
 		paid: false,
-		advisor: "Fast executor model",
+		advisor: "Everyday help from Elench",
 		highlights: [
-			"Daily + weekly AI allowance",
+			"Session + weekly AI allowance",
 			"Repo scans, agent & Ask AI",
-			"Buy credit packs any time",
+			"Upgrade any time for higher limits",
 		],
 	},
 	{
@@ -311,13 +316,14 @@ export const AI_PLAN_CATALOG: AiPlanCatalogEntry[] = [
 		priceLabel: "$20 / mo",
 		priceMonthlyUsd: 20,
 		priceMonthlyEur: 18,
-		tagline: "More AI, with a smarter advisor.",
+		tagline: "For teams that work with Elench every day.",
 		paid: true,
-		advisor: "Sonnet advisor + fast executor",
+		advisor: "Deeper planning and review",
+		recommended: true,
 		highlights: [
-			"Much higher daily & weekly caps",
-			"Smarter planning (Sonnet advisor)",
-			"Credit packs stack on top",
+			"Much higher session and weekly limits",
+			"Deeper planning and review on every request",
+			"Top-up credit packs when you need more",
 		],
 	},
 	{
@@ -326,13 +332,13 @@ export const AI_PLAN_CATALOG: AiPlanCatalogEntry[] = [
 		priceLabel: "$100 / mo",
 		priceMonthlyUsd: 100,
 		priceMonthlyEur: 90,
-		tagline: "The most AI, with the best advisor.",
+		tagline: "Our most capable Elench, with the most room to work.",
 		paid: true,
-		advisor: "Sonnet advisor · Opus on demand",
+		advisor: "Deep reasoning on demand",
 		highlights: [
-			"The largest daily & weekly caps",
-			"Best-in-class planning (Opus advisor)",
-			"Credit packs stack on top",
+			"5× the limits of AI Plus",
+			"Deep reasoning on demand for the hardest changes",
+			"Top-up credit packs when you need more",
 		],
 	},
 ];

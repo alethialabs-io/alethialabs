@@ -1,11 +1,21 @@
 ---
 title: AWS Connector
-description: Cross-Account IAM Role setup with CloudFormation or Terraform.
+description: Keyless, issuer-direct IAM role — an IAM OIDC provider trusting the Alethia issuer, set up with CloudFormation or Terraform.
 ---
 
 # AWS Connector
 
-AWS integration uses a **Cross-Account IAM Role** with an External ID. The Runner assumes this role at runtime to access your AWS account — no access keys are stored. See [Security Architecture](/concepts/security) for the full security model.
+AWS integration is **keyless and issuer-direct**: your account registers an **IAM OIDC provider** that trusts
+Alethia's OIDC issuer, plus an IAM role Alethia assumes via **`AssumeRoleWithWebIdentity`** — no access keys, no
+external id, and no trust in an Alethia AWS account. This is the same model GCP, Azure, and Alibaba use. See
+[Security Architecture](/concepts/security) for the full model.
+
+<Callout type="info">
+**Is this safe?** You create the trust entirely in **your own** AWS account — Alethia never sees a key.
+It signs in with a short-lived token (≤10 min) that AWS verifies and swaps for a ~1-hour credential. The
+only thing Alethia stores is the **role ARN** (a public identifier). **Revoke anytime** by deleting the
+stack or the role.
+</Callout>
 
 ## Setup Methods
 
@@ -13,14 +23,12 @@ AWS integration uses a **Cross-Account IAM Role** with an External ID. The Runne
   <Tab value="CloudFormation (Recommended)">
     <Steps>
 
-    ### Copy External ID
-    Alethia generates a unique External ID and displays it. This ID is shared between your IAM role and the platform to prevent confused deputy attacks.
-
     ### Launch CloudFormation Stack
-    Click "Launch Stack in AWS" — this opens the AWS Console with a pre-filled CloudFormation template that creates:
-    - `AlethiaProvisionerRole` — IAM role with permissions for all supported resource types
-    - Trust policy restricting who can assume the role to the platform's AWS account
-    - External ID condition in the trust policy
+    Click "Launch Stack in AWS" — this opens the AWS Console with a pre-filled CloudFormation template
+    (the issuer URL is filled in for you) that creates:
+    - An **IAM OIDC provider** for the Alethia issuer (`https://alethialabs.io/api/oidc`)
+    - `AlethiaProvisionerRole` — an IAM role whose trust policy allows **only** `sts:AssumeRoleWithWebIdentity`
+      from that provider, pinned to the fixed audience (`sts.amazonaws.com`) and subject (`alethia-connector`)
 
     ### Acknowledge and Create
     In the AWS Console, acknowledge that CloudFormation will create IAM resources, then click "Create stack."
@@ -29,34 +37,39 @@ AWS integration uses a **Cross-Account IAM Role** with an External ID. The Runne
     After the stack completes (~1 minute), go to the Outputs tab and copy the Role ARN.
 
     ### Paste into Alethia
-    Paste the Role ARN into the Alethia form and click "Complete."
+    Paste the Role ARN into the Alethia form and click "Connect."
 
     </Steps>
   </Tab>
   <Tab value="Terraform">
     <Steps>
 
-    ### Copy External ID
-    Same as CloudFormation — Alethia provides the External ID.
-
-    ### Apply Terraform
-    Use the provided Terraform snippet to create the IAM role with the External ID in your AWS account.
+    ### Apply the Terraform module
+    Download the module ("Download module" in the connect sheet) and run `terraform apply`. It creates the
+    IAM OIDC provider + role that trust the Alethia issuer. **No variables are required** — the defaults pin
+    the issuer, audience (`sts.amazonaws.com`), and subject (`alethia-connector`). Self-hosters override
+    `issuer_url` to point at their own console.
 
     ### Copy Role ARN
     Copy the `role_arn` output from Terraform.
 
     ### Paste into Alethia
-    Paste into the form and click "Complete."
+    Paste into the form and click "Connect."
 
     </Steps>
   </Tab>
 </Tabs>
 
+<Callout type="info">
+One IAM OIDC provider per issuer URL is allowed per AWS account, so connect an account **once**. To reconnect
+after deleting the stack, remove the existing provider first (or reuse the stack).
+</Callout>
+
 ## Verification
 
 After submitting, Alethia verifies the connection **instantly, server-side** (no runner):
 
-1. The console assumes the role via `STS AssumeRole` with the External ID (using Alethia's platform creds)
+1. The console mints a short-lived assertion and calls `sts:AssumeRoleWithWebIdentity` on your role
 2. Calls `sts:GetCallerIdentity` to confirm the assumed identity (proof of access)
 3. Runs a small capability probe (representative reads) → the connection is `Connected`, or `Degraded`
    when provisioning permissions are missing, or `Disconnected` when auth fails
@@ -67,32 +80,13 @@ server-side [asset inventory](/console/connectors/health-and-inventory), not dur
 
 ## IAM Role Permissions
 
-The role has permissions for all Terraform-managed resource types:
-
-| Service | Permissions |
-|---------|------------|
-| EC2 | VPC, subnets, NAT gateways, security groups, Elastic IPs |
-| EKS | Clusters, node groups, OIDC providers, access entries |
-| RDS | Aurora clusters, instances, subnet groups, parameter groups |
-| ElastiCache | Replication groups, subnet groups |
-| Route 53 | Hosted zones, record sets |
-| Secrets Manager | Secrets, resource policies |
-| DynamoDB | Tables, backups |
-| SQS / SNS | Queues, topics, subscriptions |
-| ECR | Repositories, lifecycle policies |
-| S3 | Buckets, policies |
-| IAM | Roles (for IRSA), policies, instance profiles |
-| ACM | Certificates |
-| WAF | Web ACLs, rules |
-
-<Callout type="info">
-The role is NOT an admin role. It has exactly the permissions needed for the supported Terraform resources, scoped with conditions where possible.
-</Callout>
+The role is created with the AWS-managed `AdministratorAccess` policy so it can provision every
+Terraform-managed resource type (EC2/VPC, EKS, RDS, ElastiCache, Route 53, Secrets Manager, DynamoDB, SQS/SNS,
+ECR, S3, IAM for IRSA, ACM, WAF). You can attach a tighter policy instead — the trust relationship (who may
+assume the role) is independent of what the role is allowed to do.
 
 ## What's Stored
 
-Only two values are stored in the database:
-- **Role ARN** — `arn:aws:iam::123456789012:role/AlethiaProvisionerRole`
-- **External ID** — UUID generated by Alethia
-
-No access keys, secret keys, or session tokens are ever persisted.
+Only the **Role ARN** (`arn:aws:iam::123456789012:role/AlethiaProvisionerRole`) is stored. No access keys,
+secret keys, session tokens, or external id are ever persisted — every credential is a short-lived assertion
+minted at call time.

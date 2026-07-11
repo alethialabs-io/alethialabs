@@ -29,10 +29,9 @@ Go to **Connectors** in the sidebar. Connect your cloud account:
 <Tabs items={["AWS", "GCP", "Azure"]}>
   <Tab value="AWS">
     1. Click **Connect** on the AWS card
-    2. Copy the **External ID** shown
-    3. Deploy the provided **CloudFormation template** in your AWS account
-    4. Paste the resulting **Role ARN** back into Alethia
-    5. Alethia verifies the connection by assuming the role
+    2. Deploy the provided **CloudFormation template** in your AWS account (it creates an IAM OIDC provider trusting the Alethia issuer + a role — no external id)
+    3. Paste the resulting **Role ARN** back into Alethia
+    4. Alethia verifies the connection by assuming the role via web identity
   </Tab>
   <Tab value="GCP">
     1. Click **Connect** on the GCP card

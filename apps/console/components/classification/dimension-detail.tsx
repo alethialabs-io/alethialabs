@@ -2,19 +2,21 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The selected dimension's detail pane — header (label / immutable key / description / edit /
-// delete), the single-vs-multi switch, the values list (drag-to-reorder, color accent, usage
-// bar + a drill into the resources carrying each value, edit / delete), an inline add-value
-// input, and the "coverage by resource kind" panel (loaded lazily for the selected dimension).
+// The selected dimension's detail pane — header (label, subtle immutable key, description, edit /
+// delete), the single-vs-multi switch (with an explainer), the values list (drag-reorder, color
+// accent, usage bar + a drill into the resources carrying each value, edit / delete), an inline
+// add-value input, and the "coverage by resource kind" panel (loaded lazily for the dimension).
 
 import { Input } from "@repo/ui/input";
+import { Skeleton } from "@repo/ui/skeleton";
 import { Switch } from "@repo/ui/switch";
 import { cn } from "@repo/ui/utils";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, GripVertical, Lock, Pencil, Plus, Trash2, X } from "lucide-react";
+import { ChevronRight, GripVertical, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useRef, useState } from "react";
 import type { DimensionDTO, ValueDTO } from "@/app/server/actions/classification/dimensions";
 import { getDimensionResourceBreakdown } from "@/app/server/actions/classification/assignments";
+import { InfoHint, Spinner } from "./classification-ui";
 import { kindLabel } from "./resource-kind-labels";
 
 /** Reorders `ids` by moving `dragId` to `targetId`'s slot. */
@@ -87,7 +89,7 @@ function ValueRow({
 					type="button"
 					onClick={onDrill}
 					className="inline-flex items-center gap-1.5 rounded-[2px] border border-transparent px-1.5 py-1 text-text-secondary transition-colors hover:border-border-strong hover:text-text-primary"
-					title="Which resources carry this value"
+					title="Resources carrying this value — click to see the breakdown"
 				>
 					<span className="font-mono text-[11px]">{value.assignmentCount}</span>
 					<span className="text-[10.5px] text-text-tertiary">
@@ -122,7 +124,7 @@ function ValueRow({
 
 /** The "coverage by resource kind" panel for the selected dimension (lazy). */
 function CoverageByKind({ dim }: { dim: DimensionDTO }) {
-	const { data } = useQuery({
+	const { data, isPending } = useQuery({
 		queryKey: ["classification", "dimension-breakdown", dim.id],
 		queryFn: () => getDimensionResourceBreakdown(dim.id),
 	});
@@ -135,12 +137,21 @@ function CoverageByKind({ dim }: { dim: DimensionDTO }) {
 				<span className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-text-tertiary">
 					Coverage by resource kind
 				</span>
+				<InfoHint>
+					Distinct resources of each kind that carry any value of this dimension. Shows
+					where the axis is adopted — and where it isn{"'"}t.
+				</InfoHint>
 				<div className="h-px flex-1 bg-border" />
 				<span className="font-mono text-[10.5px] text-text-secondary">
 					{dim.resourceCount} resources
 				</span>
 			</div>
-			{rows.length === 0 ? (
+			{isPending ? (
+				<div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+					<Skeleton className="h-4 w-full" />
+					<Skeleton className="h-4 w-full" />
+				</div>
+			) : rows.length === 0 ? (
 				<div className="font-mono text-[11px] text-text-tertiary">
 					Not yet assigned to any resource.
 				</div>
@@ -168,10 +179,83 @@ function CoverageByKind({ dim }: { dim: DimensionDTO }) {
 	);
 }
 
+/** The inline add-value row with its own pending state. */
+function AddValue({ onAdd }: { onAdd: (label: string) => Promise<void> }) {
+	const [label, setLabel] = useState("");
+	const [pending, setPending] = useState(false);
+
+	const submit = async () => {
+		const v = label.trim();
+		if (!v || pending) return;
+		setPending(true);
+		try {
+			await onAdd(v);
+			setLabel("");
+		} finally {
+			setPending(false);
+		}
+	};
+
+	return (
+		<div className="flex items-center gap-2 px-3 pb-3 pt-2">
+			<span className="size-[9px] shrink-0 rounded-full border-[1.5px] border-dashed border-border-strong" />
+			<Input
+				value={label}
+				onChange={(e) => setLabel(e.target.value)}
+				onKeyDown={(e) => {
+					if (e.key === "Enter") {
+						e.preventDefault();
+						submit();
+					}
+				}}
+				disabled={pending}
+				placeholder="Add a value — type a label, press Enter"
+				className="h-8 flex-1 border-border-strong bg-surface-sunken text-[12.5px]"
+			/>
+			<button
+				type="button"
+				onClick={submit}
+				disabled={pending || !label.trim()}
+				className="inline-flex h-8 items-center gap-1.5 rounded-[2px] border border-border-strong bg-surface px-[11px] text-[12px] font-medium text-text-primary transition-colors hover:bg-surface-muted disabled:opacity-50"
+			>
+				{pending ? <Spinner size={13} /> : <Plus className="size-3" />}
+				Add
+			</button>
+		</div>
+	);
+}
+
+/** The single/multi switch with its own pending state. */
+function MultiSwitch({
+	multi,
+	onToggle,
+}: {
+	multi: boolean;
+	onToggle: () => Promise<void>;
+}) {
+	const [pending, setPending] = useState(false);
+	return (
+		<Switch
+			checked={multi}
+			disabled={pending}
+			onCheckedChange={async () => {
+				setPending(true);
+				try {
+					await onToggle();
+				} finally {
+					setPending(false);
+				}
+			}}
+			aria-label="Allow multiple values"
+		/>
+	);
+}
+
 /** The selected dimension's detail pane. */
 export function DimensionDetail({
 	dim,
 	canEdit,
+	reorderable,
 	onEditDimension,
 	onDeleteDimension,
 	onToggleMulti,
@@ -183,26 +267,20 @@ export function DimensionDetail({
 }: {
 	dim: DimensionDTO;
 	canEdit: boolean;
+	/** Values are only drag-reorderable when not filtering by search. */
+	reorderable: boolean;
 	onEditDimension: () => void;
 	onDeleteDimension: () => void;
-	onToggleMulti: () => void;
+	onToggleMulti: () => Promise<void>;
 	onReorderValues: (ids: string[]) => void;
-	onAddValue: (label: string) => void;
+	onAddValue: (label: string) => Promise<void>;
 	onEditValue: (value: ValueDTO) => void;
 	onDeleteValue: (value: ValueDTO) => void;
 	onDrill: (value: ValueDTO) => void;
 }) {
-	const [addValue, setAddValue] = useState("");
 	const dragId = useRef<string | null>(null);
-	const reorderable = canEdit && dim.values.length > 1;
+	const canReorder = canEdit && reorderable && dim.values.length > 1;
 	const maxUsage = dim.values.reduce((n, v) => Math.max(n, v.assignmentCount), 0);
-
-	const submitAdd = () => {
-		const label = addValue.trim();
-		if (!label) return;
-		onAddValue(label);
-		setAddValue("");
-	};
 
 	return (
 		<div className="overflow-hidden rounded-lg border bg-surface shadow-sm">
@@ -210,15 +288,10 @@ export function DimensionDetail({
 			<div className="border-b px-5 pb-4 pt-[17px]">
 				<div className="flex items-start justify-between gap-4">
 					<div className="min-w-0">
-						<div className="flex flex-wrap items-center gap-2.5">
-							<h2 className="m-0 font-display text-[17px] font-semibold tracking-tight">
-								{dim.label}
-							</h2>
-							<span className="inline-flex items-center gap-1.5 rounded-[2px] border bg-surface-sunken px-[7px] py-0.5 font-mono text-[10.5px] text-text-secondary">
-								{dim.key}
-								<Lock className="size-2.5 text-text-tertiary" aria-label="Key is immutable" />
-							</span>
-						</div>
+						<h2 className="m-0 font-display text-[17px] font-semibold tracking-tight">
+							{dim.label}
+						</h2>
+						<div className="mt-1 font-mono text-[11px] text-text-tertiary">{dim.key}</div>
 						{dim.description && (
 							<p className="m-0 mt-2 max-w-[60ch] text-[12.5px] leading-relaxed text-text-secondary">
 								{dim.description}
@@ -249,17 +322,20 @@ export function DimensionDetail({
 
 				{/* multi switch */}
 				<div className="mt-3.5 flex items-center gap-2.5 border-t border-border-faint pt-3.5">
-					{canEdit && (
-						<Switch checked={dim.multi} onCheckedChange={onToggleMulti} aria-label="Allow multiple values" />
-					)}
+					{canEdit && <MultiSwitch multi={dim.multi} onToggle={onToggleMulti} />}
 					<div>
-						<div className="text-[12.5px] font-medium text-text-primary">
+						<div className="flex items-center gap-1.5 text-[12.5px] font-medium text-text-primary">
 							{dim.multi ? "Multiple values per resource" : "One value per resource"}
+							<InfoHint>
+								{dim.multi
+									? "A resource may carry several values on this axis."
+									: "A resource holds at most one value — assigning a new one replaces the current."}
+							</InfoHint>
 						</div>
 						<div className="mt-px text-[11px] text-text-tertiary">
 							{dim.multi
-								? "A resource may carry several values on this axis."
-								: "Assigning a new value replaces the current one."}
+								? "e.g. a service owned by two teams."
+								: "e.g. an environment is exactly one of dev / staging / prod."}
 						</div>
 					</div>
 				</div>
@@ -275,7 +351,9 @@ export function DimensionDetail({
 						{dim.values.length}
 					</span>
 					<div className="flex-1" />
-					<span className="text-[11px] text-text-tertiary">sorted by position</span>
+					{canReorder && (
+						<span className="text-[11px] text-text-tertiary">drag to reorder</span>
+					)}
 				</div>
 
 				{dim.values.length === 0 ? (
@@ -289,7 +367,7 @@ export function DimensionDetail({
 							value={v}
 							maxUsage={maxUsage}
 							canEdit={canEdit}
-							reorderable={reorderable}
+							reorderable={canReorder}
 							onDragStart={() => {
 								dragId.current = v.id;
 							}}
@@ -308,31 +386,7 @@ export function DimensionDetail({
 					))
 				)}
 
-				{canEdit && (
-					<div className="flex items-center gap-2 px-3 pb-3 pt-2">
-						<span className="size-[9px] shrink-0 rounded-full border-[1.5px] border-dashed border-border-strong" />
-						<Input
-							value={addValue}
-							onChange={(e) => setAddValue(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === "Enter") {
-									e.preventDefault();
-									submitAdd();
-								}
-							}}
-							placeholder="Add a value — type a label, press Enter"
-							className="h-8 flex-1 border-border-strong bg-surface-sunken text-[12.5px]"
-						/>
-						<button
-							type="button"
-							onClick={submitAdd}
-							className="inline-flex h-8 items-center gap-1.5 rounded-[2px] border border-border-strong bg-surface px-[11px] text-[12px] font-medium text-text-primary transition-colors hover:bg-surface-muted"
-						>
-							<Plus className="size-3" />
-							Add
-						</button>
-					</div>
-				)}
+				{canEdit && <AddValue onAdd={onAddValue} />}
 			</div>
 
 			<CoverageByKind dim={dim} />

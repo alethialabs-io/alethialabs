@@ -7,62 +7,94 @@ import (
 	"context"
 	"fmt"
 	"os"
-
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/sts"
+	"path/filepath"
+	"time"
 )
 
-// ActivateAlibabaRole assumes the customer's RAM role via Alibaba STS, using
-// Alethia's PLATFORM Alibaba credentials (a single platform secret — never the
-// customer's, which are never stored). It exports the short-lived credentials to the
-// env vars the Terraform alicloud provider + aliyun CLI read. This is the genuine
-// zero-trust path: the customer stores zero credentials in Alethia, exactly like AWS.
-//
-// Platform credentials come from ALETHIA_ALIBABA_ACCESS_KEY_ID / _ACCESS_KEY_SECRET
-// (and an optional ALETHIA_ALIBABA_REGION for the STS endpoint). The customer's RAM
-// role trust policy trusts Alethia's account with the ExternalId condition.
-func ActivateAlibabaRole(_ context.Context, roleArn, externalID, sessionName string) (func(), error) {
-	accessKeyID := os.Getenv("ALETHIA_ALIBABA_ACCESS_KEY_ID")
-	accessKeySecret := os.Getenv("ALETHIA_ALIBABA_ACCESS_KEY_SECRET")
-	if accessKeyID == "" || accessKeySecret == "" {
-		return nil, fmt.Errorf(
-			"platform Alibaba credentials not configured (set ALETHIA_ALIBABA_ACCESS_KEY_ID and ALETHIA_ALIBABA_ACCESS_KEY_SECRET on the runner)",
-		)
+// alibabaTokenFetcher mints a keyless Alibaba OIDC assertion. Satisfied by *RunnerAPIClient
+// (FetchAlibabaToken); an interface so the activation is unit-testable with a stub.
+type alibabaTokenFetcher interface {
+	FetchAlibabaToken(jobID string) (string, error)
+}
+
+// alibabaRefreshInterval mirrors AWS/Azure: re-mint the ≤10-min assertion into the token file every 5 min
+// so the alicloud provider always re-reads a live token when it re-runs AssumeRoleWithOIDC.
+const alibabaRefreshInterval = 5 * time.Minute
+
+// ActivateAlibabaOIDC authenticates the runner to Alibaba KEYLESSLY for a `tofu apply`. Alibaba retired the
+// platform RAM AccessKey: the alicloud provider does an anonymous **AssumeRoleWithOIDC** itself, reading a
+// short-lived assertion from a FILE (ALIBABA_CLOUD_OIDC_TOKEN_FILE) plus the role + OIDC-provider ARNs.
+// The runner fetches the assertion from the console (the issuer key holder), writes it to the file, and
+// sets the env the provider reads — no AccessKey anywhere. Because the provider re-reads the file, a
+// background refresher re-mints the assertion every few minutes so applies past the 1h session survive
+// (parity with AWS/Azure). cleanup stops the refresher, unsets the vars, and removes the temp file.
+func ActivateAlibabaOIDC(ctx context.Context, fetcher alibabaTokenFetcher, roleArn, oidcProviderArn, jobID string) (func(), error) {
+	if roleArn == "" || oidcProviderArn == "" {
+		return nil, fmt.Errorf("missing Alibaba role_arn or oidc_provider_arn")
+	}
+	if fetcher == nil {
+		return nil, fmt.Errorf("no token fetcher for Alibaba federation")
 	}
 
-	region := os.Getenv("ALETHIA_ALIBABA_REGION")
-	if region == "" {
-		region = "cn-hangzhou"
-	}
-
-	client, err := sts.NewClientWithAccessKey(region, accessKeyID, accessKeySecret)
+	token, err := fetcher.FetchAlibabaToken(jobID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Alibaba STS client: %w", err)
+		return nil, fmt.Errorf("failed to mint Alibaba OIDC token: %w", err)
 	}
 
-	request := sts.CreateAssumeRoleRequest()
-	request.Scheme = "https"
-	request.RoleArn = roleArn
-	request.RoleSessionName = sessionName
-	request.DurationSeconds = requests.NewInteger(3600)
-	if externalID != "" {
-		request.ExternalId = externalID
-	}
-
-	response, err := client.AssumeRole(request)
+	// Per-job DIRECTORY (not a bare /tmp file) so the container sandbox can RO-bind-mount
+	// the directory and see the atomic-rename refresh.
+	tokenDir, err := os.MkdirTemp("", "alethia-alibaba-*")
 	if err != nil {
-		return nil, fmt.Errorf("failed to assume Alibaba RAM role %s: %w", roleArn, err)
+		return nil, fmt.Errorf("failed to create Alibaba cred dir: %w", err)
+	}
+	tokenPath := filepath.Join(tokenDir, "oidc-token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		os.RemoveAll(tokenDir)
+		return nil, fmt.Errorf("failed to write Alibaba token file: %w", err)
 	}
 
-	creds := response.Credentials
-	_ = os.Setenv("ALICLOUD_ACCESS_KEY", creds.AccessKeyId)
-	_ = os.Setenv("ALICLOUD_SECRET_KEY", creds.AccessKeySecret)
-	_ = os.Setenv("ALICLOUD_SECURITY_TOKEN", creds.SecurityToken)
+	// The alicloud provider / aliyun CLI resolve AssumeRoleWithOIDC from these (the darabonba default
+	// credential chain). No ALICLOUD_ACCESS_KEY — clear any stale AK so the OIDC chain is authoritative.
+	os.Setenv("ALIBABA_CLOUD_ROLE_ARN", roleArn)
+	os.Setenv("ALIBABA_CLOUD_OIDC_PROVIDER_ARN", oidcProviderArn)
+	os.Setenv("ALIBABA_CLOUD_OIDC_TOKEN_FILE", tokenPath)
+	os.Setenv("ALIBABA_CLOUD_ROLE_SESSION_NAME", "alethia-runner")
+	os.Unsetenv("ALICLOUD_ACCESS_KEY")
+	os.Unsetenv("ALICLOUD_SECRET_KEY")
+	os.Unsetenv("ALICLOUD_SECURITY_TOKEN")
+
+	refreshCtx, cancel := context.WithCancel(ctx)
+	go refreshAlibabaToken(refreshCtx, fetcher, tokenPath, alibabaRefreshInterval, jobID)
 
 	cleanup := func() {
-		_ = os.Unsetenv("ALICLOUD_ACCESS_KEY")
-		_ = os.Unsetenv("ALICLOUD_SECRET_KEY")
-		_ = os.Unsetenv("ALICLOUD_SECURITY_TOKEN")
+		cancel()
+		for _, k := range []string{
+			"ALIBABA_CLOUD_ROLE_ARN", "ALIBABA_CLOUD_OIDC_PROVIDER_ARN",
+			"ALIBABA_CLOUD_OIDC_TOKEN_FILE", "ALIBABA_CLOUD_ROLE_SESSION_NAME",
+		} {
+			os.Unsetenv(k)
+		}
+		os.RemoveAll(filepath.Dir(tokenPath))
 	}
 	return cleanup, nil
+}
+
+// refreshAlibabaToken re-mints the OIDC assertion into tokenPath every interval until ctx is cancelled. A
+// transient mint failure is left to the next tick — the provider only re-reads the file when it re-assumes
+// (roughly hourly) — so a good token is never clobbered by an error.
+func refreshAlibabaToken(ctx context.Context, fetcher alibabaTokenFetcher, tokenPath string, interval time.Duration, jobID string) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			token, err := fetcher.FetchAlibabaToken(jobID)
+			if err != nil || token == "" {
+				continue
+			}
+			_ = writeTokenFileAtomic(tokenPath, token)
+		}
+	}
 }

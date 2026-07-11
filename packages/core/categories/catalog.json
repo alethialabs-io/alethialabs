@@ -65,7 +65,7 @@
       "category": "cloud",
       "slug": "hetzner",
       "name": "Hetzner Cloud",
-      "description": "Connect Hetzner Cloud with a scoped API token to provision self-managed Kubernetes (Talos/k3s). Provisioning templates coming soon.",
+      "description": "Connect Hetzner Cloud with a scoped API token to provision a self-managed Talos Linux Kubernetes cluster on cheap VMs, with in-cluster data services via Helm.",
       "organization": "Hetzner Online GmbH",
       "auth_method": "api_key",
       "icon_url": "/hetzner/favicon_64x64.png",

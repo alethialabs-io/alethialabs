@@ -47,4 +47,19 @@ export async function onRequestError(
 	console.error(
 		`[onRequestError] ${request.method ?? "?"} ${request.path ?? context.routePath ?? "?"} (${context.routeType ?? "?"}) digest=${e?.digest ?? "-"}\n${e?.stack ?? e?.message ?? String(error)}`,
 	);
+	// Also forward to PostHog Error Tracking so server-side throws (Route Handlers, Server Actions,
+	// Server Components) are visible in prod — not just stdout. Node-only (posthog-node); best-effort:
+	// captureServerException no-ops without the PostHog key and never throws. Fire-and-forget so it
+	// never blocks or masks the original error path.
+	if (process.env.NEXT_RUNTIME === "nodejs") {
+		const { captureServerException } = await import("@/lib/analytics/server");
+		void captureServerException(error, {
+			props: {
+				path: request.path ?? context.routePath ?? "unknown",
+				method: request.method ?? "unknown",
+				routeType: context.routeType ?? "unknown",
+				digest: e?.digest ?? "",
+			},
+		});
+	}
 }

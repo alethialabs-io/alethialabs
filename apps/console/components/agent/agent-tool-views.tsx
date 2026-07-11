@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { ToolUIPart } from "ai";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import { z } from "zod";
 import {
 	Table,
@@ -25,6 +27,7 @@ export const TOOL_VIEW_TYPES = new Set<string>([
 	"tool-cidr_for_hosts",
 	"tool-list_services",
 	"tool-list_service_options",
+	"tool-connect_cloud",
 ]);
 
 const str = z.string().nullish();
@@ -49,6 +52,53 @@ const connectorsOut = z.object({
 	),
 });
 const cidrOut = z.object({ cidr: z.string(), totalAddresses: z.number().nullish() });
+const connectOut = z.object({
+	provider: z.string(),
+	alreadyConnected: z.boolean(),
+	connectedAccounts: z.array(z.string()).nullish(),
+});
+
+const PROVIDER_LABEL: Record<string, string> = {
+	aws: "AWS",
+	gcp: "GCP",
+	azure: "Azure",
+	alibaba: "Alibaba",
+};
+
+/**
+ * The generative "connect a cloud" action — renders an inline button that opens the Connectors page with
+ * the connect sheet for the provider (?connect=<provider>), or a "manage" link when it's already connected.
+ */
+function ConnectAction({
+	provider,
+	alreadyConnected,
+}: {
+	provider: string;
+	alreadyConnected: boolean;
+}) {
+	const params = useParams();
+	const org = typeof params.org === "string" ? params.org : "";
+	const label = PROVIDER_LABEL[provider] ?? provider;
+	if (alreadyConnected) {
+		return (
+			<div className="flex w-fit items-center gap-2 border border-border px-3 py-1.5 text-[12px] text-muted-foreground">
+				<span className="h-1.5 w-1.5 flex-none rounded-full bg-foreground" />
+				{label} is already connected.
+				<Link href={`/${org}/~/connectors`} className="text-foreground underline underline-offset-2">
+					Manage
+				</Link>
+			</div>
+		);
+	}
+	return (
+		<Link
+			href={`/${org}/~/connectors?connect=${provider}`}
+			className="flex w-fit items-center gap-2 border border-foreground bg-foreground px-3 py-1.5 text-[12px] font-medium text-background transition-opacity hover:opacity-90"
+		>
+			Connect {label} →
+		</Link>
+	);
+}
 
 /** Compact one-line tool result. */
 function ToolChip({ label, value }: { label: string; value: string }) {
@@ -103,6 +153,15 @@ export function ToolView({ part }: { part: ToolUIPart }) {
 			return <ToolChip label="list_services" value="catalog loaded" />;
 		case "tool-list_service_options":
 			return <ToolChip label="list_service_options" value="options loaded" />;
+
+		case "tool-connect_cloud": {
+			const p = connectOut.safeParse(part.output);
+			return p.success ? (
+				<ConnectAction provider={p.data.provider} alreadyConnected={p.data.alreadyConnected} />
+			) : (
+				<AgentToolCard part={part} />
+			);
+		}
 
 		case "tool-list_projects": {
 			const p = projectsOut.safeParse(part.output);

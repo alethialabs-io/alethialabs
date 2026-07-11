@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "server-only";
-import { and, eq, gte, sql, sum } from "drizzle-orm";
+import { and, eq, gte, min, sql, sum } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { aiCreditGrant, aiUsageLedger } from "@/lib/db/schema";
 import { aiCostMicros } from "@/lib/billing/model-costs";
@@ -55,6 +55,54 @@ export async function sumCreditsForUser(
 			),
 		);
 	return Number(row?.s ?? 0);
+}
+
+/**
+ * Oldest usage timestamp an org has from a budget source since a cutoff — `null` when the
+ * window is empty. Drives the rolling 5-hour session's reset display: the session fully
+ * clears at `oldest + window` (same WHERE shape as {@link sumCredits}, index-served).
+ */
+export async function oldestUsageSince(
+	orgId: string,
+	source: CreditSource,
+	since: Date,
+): Promise<Date | null> {
+	const [row] = await getServiceDb()
+		.select({ m: min(aiUsageLedger.created_at) })
+		.from(aiUsageLedger)
+		.where(
+			and(
+				eq(aiUsageLedger.org_id, orgId),
+				eq(aiUsageLedger.source, source),
+				gte(aiUsageLedger.created_at, since),
+			),
+		);
+	// Aggregates can decode as raw strings depending on the driver — normalize to Date.
+	return row?.m ? new Date(row.m) : null;
+}
+
+/**
+ * Per-seat variant of {@link oldestUsageSince} — the oldest usage ONE user has in the
+ * window (served by `idx_ai_usage_user`). Drives the per-seat session-cap reset display.
+ */
+export async function oldestUsageForUserSince(
+	orgId: string,
+	userId: string,
+	source: CreditSource,
+	since: Date,
+): Promise<Date | null> {
+	const [row] = await getServiceDb()
+		.select({ m: min(aiUsageLedger.created_at) })
+		.from(aiUsageLedger)
+		.where(
+			and(
+				eq(aiUsageLedger.org_id, orgId),
+				eq(aiUsageLedger.user_id, userId),
+				eq(aiUsageLedger.source, source),
+				gte(aiUsageLedger.created_at, since),
+			),
+		);
+	return row?.m ? new Date(row.m) : null;
 }
 
 /** A day's AI-credit consumption for an org (both budget sources combined). */

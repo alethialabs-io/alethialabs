@@ -4,13 +4,6 @@
 
 import { Button } from "@repo/ui/button";
 import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@repo/ui/card";
-import {
 	Form,
 	FormControl,
 	FormField,
@@ -22,83 +15,21 @@ import { Input } from "@repo/ui/input";
 import { FieldHelp } from "@repo/ui/field-help";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-	ConnectionTestStatus,
-	InfoNote,
-	StatusCallout,
+	ConnectSheetShell,
+	Step,
+	StoredNote,
+	VerifySection,
 } from "@/components/connector/connection-ui";
 import {
-	type ConnTestState,
 	type VerifyOutcome,
 	useConnectionTest,
 } from "@/components/connector/use-connection-test";
-import { Download, ExternalLink, ShieldCheck } from "lucide-react";
-import { type ReactNode } from "react";
+import { Download, ExternalLink } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 
 /** A save action's instant server-side verify outcome (drives the connect flow). */
 type SaveResult = VerifyOutcome;
-
-/** Numbered step, identical to the aws/gcp/azure sheets. */
-function Step({ n, title, children }: { n: number; title: string; children?: ReactNode }) {
-	return (
-		<div className="flex gap-4">
-			<div className="shrink-0 w-7 h-7 rounded-full bg-muted border border-border/50 text-foreground flex items-center justify-center font-medium text-xs">
-				{n}
-			</div>
-			<div className="space-y-3 flex-1 min-w-0">
-				<div className="font-medium text-sm text-foreground">{title}</div>
-				{children}
-			</div>
-		</div>
-	);
-}
-
-/**
- * Verify section + form. While the instant server-side verify is in flight it shows the shared
- * verifying/success status (with Cancel); on idle/failure it shows the provider-specific form
- * (`children`). Mirrors the aws/gcp/azure sheets.
- */
-function VerifySection({
-	state,
-	successText,
-	verifyingText,
-	onCancel,
-	children,
-}: {
-	state: ConnTestState;
-	successText: string;
-	verifyingText: string;
-	onCancel: () => void;
-	children: ReactNode;
-}) {
-	const inFlight = state.phase === "success" || state.phase === "saving";
-	return (
-		<div className="pt-6 border-t border-border/40">
-			{inFlight ? (
-				<ConnectionTestStatus
-					phase={state.phase}
-					status={state.status}
-					missingPermissions={state.missingPermissions}
-					successText={successText}
-					verifyingText={verifyingText}
-					onCancel={onCancel}
-				/>
-			) : (
-				<>
-					{state.phase === "failed" && (
-						<div className="mb-4">
-							<StatusCallout variant="error" title="Verification failed">
-								{state.error}
-							</StatusCallout>
-						</div>
-					)}
-					{children}
-				</>
-			)}
-		</div>
-	);
-}
 
 // --- Token clouds: DigitalOcean / Hetzner / Civo ---
 
@@ -125,94 +56,100 @@ export function TokenCloudConnection({
 	const retry = state.phase === "failed";
 
 	return (
-		<div className="max-w-[800px] mx-auto space-y-6 w-full">
-			<Card className="border-border/40 shadow-sm bg-background">
-				<CardHeader className="border-b border-border/40 pb-4 bg-muted/5">
-					<CardTitle className="text-base font-medium flex items-center gap-2">
-						<ShieldCheck className="w-4.5 h-4.5 text-muted-foreground" />
-						Setup Instructions
-					</CardTitle>
-					<CardDescription className="text-xs">
-						{`${providerName} has no role federation, so Alethia connects with a scoped API token. Grant it only the permissions provisioning needs.`}
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-6 pt-6">
-					<div className="space-y-8">
-						<Step n={1} title={`Create an API token in ${providerName}`}>
-							<p className="text-xs text-muted-foreground max-w-sm">{tokenHelp}</p>
-							{docsUrl && (
-								<Button
-									onClick={() => window.open(docsUrl, "_blank")}
-									size="sm"
-									className="h-8 text-xs font-medium"
-									type="button"
-								>
-									<ExternalLink className="w-3.5 h-3.5 mr-1.5 opacity-70" />
-									Open {providerName} token settings
-								</Button>
-							)}
-						</Step>
-						<Step n={2} title="Paste the token below">
-							<p className="text-xs text-muted-foreground max-w-sm">
-								Alethia verifies it immediately and stores it encrypted (AES-GCM) — it is
-								only decrypted on the runner at provision time, never in a project snapshot.
-							</p>
-						</Step>
-					</div>
+		<ConnectSheetShell
+			title={`Connect ${providerName}`}
+			badgeLabel="Encrypted"
+			intro={`${providerName} has no role federation, so Alethia connects with a scoped API token you create. It's encrypted at rest and only decrypted on the runner at provision time — never in a project snapshot.`}
+			howItWorks={
+				<>
+					<p>
+						1. Create an API token in {providerName}, scoped to just what provisioning
+						needs.
+					</p>
+					<p>
+						2. Paste it here. Alethia verifies it against the {providerName} API and
+						stores it encrypted (AES-GCM).
+					</p>
+					<p>
+						3. Revoke the token in {providerName} at any time to instantly cut
+						Alethia&apos;s access.
+					</p>
+				</>
+			}
+		>
+			<div className="space-y-8">
+				<Step n={1} title={`Create an API token in ${providerName}`}>
+					<p className="max-w-sm text-muted-foreground text-xs">{tokenHelp}</p>
+					{docsUrl && (
+						<Button
+							onClick={() => window.open(docsUrl, "_blank")}
+							size="sm"
+							className="h-8 font-medium text-xs"
+							type="button"
+						>
+							<ExternalLink className="mr-1.5 h-3.5 w-3.5 opacity-70" />
+							Open {providerName} token settings
+						</Button>
+					)}
+				</Step>
+				<Step n={2} title="Paste the token below">
+					<p className="max-w-sm text-muted-foreground text-xs">
+						Alethia verifies it immediately and stores it encrypted — it is only decrypted
+						on the runner at provision time.
+					</p>
+				</Step>
+			</div>
 
-					<VerifySection
-						state={state}
-						onCancel={cancel}
-						successText={`Alethia can authenticate into ${providerName} with your token. You're ready to provision infrastructure.`}
-						verifyingText={`Testing your ${providerName} token against the ${providerName} API.`}
+			<VerifySection
+				state={state}
+				onCancel={cancel}
+				successText={`Alethia can authenticate into ${providerName} with your token. You're ready to provision infrastructure.`}
+				verifyingText={`Testing your ${providerName} token against the ${providerName} API.`}
+			>
+				<Form {...form}>
+					<form
+						onSubmit={form.handleSubmit((d) => run(() => onSave(d.token)))}
+						className="space-y-4"
 					>
-						<Form {...form}>
-							<form
-								onSubmit={form.handleSubmit((d) => run(() => onSave(d.token)))}
-								className="space-y-4"
-							>
-								<FormField
-									control={form.control}
-									name="token"
-									render={({ field }) => (
-										<FormItem>
-											<div className="flex items-center gap-1.5">
-												<FormLabel className="text-xs font-medium">API Token</FormLabel>
-												<FieldHelp title={`${providerName} API token`}>
-													{tokenHelp} Alethia encrypts it at rest and only decrypts it
-													on the runner at provision time.
-												</FieldHelp>
-											</div>
-											<FormControl>
-												<Input
-													type="password"
-													placeholder="Paste your scoped API token"
-													className="h-9 text-sm font-mono border-border/50"
-													{...field}
-												/>
-											</FormControl>
-											<FormMessage className="text-xs" />
-										</FormItem>
-									)}
-								/>
-								<Button
-									disabled={!form.formState.isValid}
-									type="submit"
-									className="w-full h-9 text-xs font-medium"
-								>
-									{retry ? "Retry" : "Connect"}
-								</Button>
-							</form>
-						</Form>
-						<div className="mt-5">
-							<InfoNote>
-								Revoke the token in {providerName} at any time to cut Alethia&apos;s access.
-							</InfoNote>
-						</div>
-					</VerifySection>
-				</CardContent>
-			</Card>
-		</div>
+						<FormField
+							control={form.control}
+							name="token"
+							render={({ field }) => (
+								<FormItem>
+									<div className="flex items-center gap-1.5">
+										<FormLabel className="font-medium text-xs">API Token</FormLabel>
+										<FieldHelp title={`${providerName} API token`}>
+											{tokenHelp} Alethia encrypts it at rest and only decrypts it
+											on the runner at provision time.
+										</FieldHelp>
+									</div>
+									<FormControl>
+										<Input
+											type="password"
+											placeholder="Paste your scoped API token"
+											className="h-9 border-border/50 font-mono text-sm"
+											{...field}
+										/>
+									</FormControl>
+									<FormMessage className="text-xs" />
+								</FormItem>
+							)}
+						/>
+						<Button
+							disabled={!form.formState.isValid}
+							type="submit"
+							className="h-9 w-full font-medium text-xs"
+						>
+							{retry ? "Retry" : "Connect"}
+						</Button>
+					</form>
+				</Form>
+				<StoredNote
+					stored={`your ${providerName} API token, encrypted at rest (AES-GCM) — decrypted only on the runner at provision time.`}
+					revoke={`delete the token in ${providerName} at any time to cut Alethia's access.`}
+				/>
+			</VerifySection>
+		</ConnectSheetShell>
 	);
 }
 
@@ -249,115 +186,119 @@ export function AlibabaConnection({
 	};
 
 	return (
-		<div className="max-w-[800px] mx-auto space-y-6 w-full">
-			<Card className="border-border/40 shadow-sm bg-background">
-				<CardHeader className="border-b border-border/40 pb-4 bg-muted/5">
-					<CardTitle className="text-base font-medium flex items-center gap-2">
-						<ShieldCheck className="w-4.5 h-4.5 text-muted-foreground" />
-						Setup Instructions
-					</CardTitle>
-					<CardDescription className="text-xs">
-						Keyless: you create a RAM OIDC provider trusting Alethia&apos;s issuer + a RAM
-						role. Alethia assumes it with a short-lived minted token — no Alibaba credentials
-						are stored. Create the resources, then paste the role ARN.
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-6 pt-6">
-					<div className="space-y-8">
-						<Step n={1} title="Create the RAM OIDC provider + role">
-							<p className="text-xs text-muted-foreground max-w-sm">
-								Apply the Terraform module below. It registers a RAM OIDC provider that
-								trusts Alethia&apos;s issuer and a role that trusts that provider (scoped
-								to Alethia&apos;s workload identity), then attaches provisioning
-								permissions.
-							</p>
-							<div className="mt-2 flex flex-wrap items-center gap-3">
-								<Button
-									type="button"
-									size="sm"
-									className="h-8 text-xs font-medium"
-									onClick={downloadModule}
-								>
-									<Download className="w-3.5 h-3.5 mr-1.5 opacity-70" />
-									Download module
-								</Button>
-								<a
-									href="/docs/console/connectors/alibaba"
-									target="_blank"
-									rel="noopener noreferrer"
-									className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-								>
-									Full guide
-									<ExternalLink className="w-3 h-3" />
-								</a>
-							</div>
-						</Step>
-
-						<Step n={2} title="Paste the role ARN below">
-							<p className="text-xs text-muted-foreground max-w-sm">
-								Run{" "}
-								<code className="bg-muted px-1 py-0.5 border border-border/50 rounded">terraform output</code>{" "}
-								and copy <code className="bg-muted px-1 py-0.5 border border-border/50 rounded">role_arn</code> — it
-								looks like{" "}
-								<code className="bg-muted px-1 py-0.5 border border-border/50 rounded">acs:ram::&lt;account&gt;:role/&lt;name&gt;</code>.
-								(Alethia derives the OIDC-provider ARN from it.)
-							</p>
-						</Step>
+		<ConnectSheetShell
+			title="Connect Alibaba Cloud"
+			intro="You create a RAM OIDC provider + role in your own Alibaba account that trusts Alethia. Alethia signs in with a short-lived, minted token — no Alibaba credentials are ever shared or stored."
+			howItWorks={
+				<>
+					<p>
+						1. Apply the Terraform module — it creates a RAM OIDC provider trusting
+						Alethia&apos;s issuer and a role that trusts it.
+					</p>
+					<p>
+						2. Alethia authenticates with a signed token its issuer mints (≤10 min);
+						Alibaba STS verifies it and returns a ~1-hour credential — no AccessKey.
+					</p>
+					<p>
+						3. The only thing stored is the role ARN (a public identifier). Delete the role
+						to revoke access.
+					</p>
+				</>
+			}
+		>
+			<div className="space-y-8">
+				<Step n={1} title="Create the RAM OIDC provider + role">
+					<p className="max-w-sm text-muted-foreground text-xs">
+						Apply the Terraform module below. It registers a RAM OIDC provider that trusts
+						Alethia&apos;s issuer and a role that trusts that provider (scoped to
+						Alethia&apos;s workload identity), then attaches provisioning permissions.
+					</p>
+					<div className="mt-2 flex flex-wrap items-center gap-3">
+						<Button
+							type="button"
+							size="sm"
+							className="h-8 font-medium text-xs"
+							onClick={downloadModule}
+						>
+							<Download className="mr-1.5 h-3.5 w-3.5 opacity-70" />
+							Download module
+						</Button>
+						<a
+							href="/docs/console/connectors/alibaba"
+							target="_blank"
+							rel="noopener noreferrer"
+							className="inline-flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground"
+						>
+							Full guide
+							<ExternalLink className="h-3 w-3" />
+						</a>
 					</div>
+				</Step>
 
-					<VerifySection
-						state={state}
-						onCancel={cancel}
-						successText="Alethia recorded your RAM role and verified it with a real STS AssumeRoleWithOIDC — zero stored credentials."
-						verifyingText="Assuming the RAM role via Alibaba STS (AssumeRoleWithOIDC)."
+				<Step n={2} title="Paste the role ARN below">
+					<p className="max-w-sm text-muted-foreground text-xs">
+						Run{" "}
+						<code className="rounded border border-border/50 bg-muted px-1 py-0.5">terraform output</code>{" "}
+						and copy <code className="rounded border border-border/50 bg-muted px-1 py-0.5">role_arn</code> — it
+						looks like{" "}
+						<code className="rounded border border-border/50 bg-muted px-1 py-0.5">acs:ram::&lt;account&gt;:role/&lt;name&gt;</code>.
+						(Alethia derives the OIDC-provider ARN from it.)
+					</p>
+				</Step>
+			</div>
+
+			<VerifySection
+				state={state}
+				onCancel={cancel}
+				successText="Alethia recorded your RAM role and verified it with a real STS AssumeRoleWithOIDC — zero stored credentials."
+				verifyingText="Assuming the RAM role via Alibaba STS (AssumeRoleWithOIDC)."
+			>
+				<Form {...form}>
+					<form
+						onSubmit={form.handleSubmit((d) => run(() => onSave(d.roleArn)))}
+						className="space-y-4"
 					>
-						<Form {...form}>
-							<form
-								onSubmit={form.handleSubmit((d) => run(() => onSave(d.roleArn)))}
-								className="space-y-4"
-							>
-								<FormField
-									control={form.control}
-									name="roleArn"
-									render={({ field }) => (
-										<FormItem>
-											<div className="flex items-center gap-1.5">
-												<FormLabel className="text-xs font-medium">
-													RAM Role ARN
-												</FormLabel>
-												<FieldHelp title="RAM Role ARN">
-													The ARN of the RAM role you created that trusts
-													Alethia — looks like{" "}
-													<code className="text-foreground">
-														acs:ram::&lt;account&gt;:role/&lt;name&gt;
-													</code>
-													. Alethia assumes it via STS; no Alibaba
-													credentials are stored.
-												</FieldHelp>
-											</div>
-											<FormControl>
-												<Input
-													placeholder="acs:ram::5123456789012345:role/AlethiaProvisioner"
-													className="h-9 text-sm font-mono border-border/50"
-													{...field}
-												/>
-											</FormControl>
-											<FormMessage className="text-xs" />
-										</FormItem>
-									)}
-								/>
-								<Button
-									disabled={!form.formState.isValid}
-									type="submit"
-									className="w-full h-9 text-xs font-medium"
-								>
-									{retry ? "Retry" : "Connect"}
-								</Button>
-							</form>
-						</Form>
-					</VerifySection>
-				</CardContent>
-			</Card>
-		</div>
+						<FormField
+							control={form.control}
+							name="roleArn"
+							render={({ field }) => (
+								<FormItem>
+									<div className="flex items-center gap-1.5">
+										<FormLabel className="font-medium text-xs">RAM Role ARN</FormLabel>
+										<FieldHelp title="RAM Role ARN">
+											The ARN of the RAM role you created that trusts Alethia — looks
+											like{" "}
+											<code className="text-foreground">
+												acs:ram::&lt;account&gt;:role/&lt;name&gt;
+											</code>
+											. Alethia assumes it via STS; no Alibaba credentials are stored.
+										</FieldHelp>
+									</div>
+									<FormControl>
+										<Input
+											placeholder="acs:ram::5123456789012345:role/AlethiaProvisioner"
+											className="h-9 border-border/50 font-mono text-sm"
+											{...field}
+										/>
+									</FormControl>
+									<FormMessage className="text-xs" />
+								</FormItem>
+							)}
+						/>
+						<Button
+							disabled={!form.formState.isValid}
+							type="submit"
+							className="h-9 w-full font-medium text-xs"
+						>
+							{retry ? "Retry" : "Connect"}
+						</Button>
+					</form>
+				</Form>
+				<StoredNote
+					stored="only the RAM role ARN (a public identifier) — no Alibaba account or AccessKey."
+					revoke="delete the RAM role (or its OIDC-provider trust) to cut Alethia's access."
+				/>
+			</VerifySection>
+		</ConnectSheetShell>
 	);
 }

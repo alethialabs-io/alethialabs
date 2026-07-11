@@ -8,7 +8,7 @@ import {
 import { getValidProviderToken } from "@/app/server/actions/identities";
 import {
 	getAwsConnectionStatus,
-	getAwsExternalId,
+	initAwsIdentity,
 } from "@/app/(private)/dashboard/providers/actions";
 import {
 	getGcpConnectionStatus,
@@ -26,21 +26,20 @@ import { currentActor } from "@/lib/authz/guard";
 import { getPdp } from "@/lib/authz";
 import { getAuthConfig } from "@/lib/config/auth";
 import { oidcIssuerConfigured } from "@/lib/oidc/issuer";
-import { awsPlatformConfigured } from "@/lib/cloud-providers/session/aws-platform";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 
 /** The connect-flow setup bundle shared by the connectors board and the create-project form. */
 export interface CloudConnectSetup {
 	canManage: boolean;
 	integrations: ConnectorWithConnection[];
-	awsSetup: { externalId: string; identityId: string } | null;
+	awsSetup: { identityId: string } | null;
 	gcpSetup: { identityId: string } | null;
 	azureSetup: { identityId: string } | null;
 	extraSetup: Record<string, { identityId: string; externalId?: string }>;
 	/**
 	 * Whether THIS instance is configured to support a provider's connect flow (keyed by connector
-	 * slug). Managed clouds (aws/gcp/azure/alibaba) assume the customer's role using Alethia's
-	 * platform identity — without those creds a connect can only ever fail. Git providers
+	 * slug). Managed clouds (aws/gcp/azure/alibaba) federate into the customer's role off Alethia's OIDC
+	 * issuer — without the issuer (and, for Azure, its app id) a connect can only ever fail. Git providers
 	 * (github/gitlab/bitbucket) need an OAuth app registered in Better Auth — without its
 	 * client id/secret `linkSocial` rejects. In both cases the UI says "not enabled on this
 	 * instance" up-front instead of offering a doomed Connect. Token clouds
@@ -57,11 +56,11 @@ export interface CloudConnectSetup {
 export function computePlatformConfigured(): Record<string, boolean> {
 	const has = (...keys: string[]) => keys.every((k) => !!process.env[k]);
 	const gitProviders = getAuthConfig().providers;
-	// AWS is now KEYLESS too: the console federates into the platform AWS account via the OIDC issuer
-	// (AssumeRoleWithWebIdentity) — no static key. Available when the issuer + platform role ARN are set.
-	const awsPlatform = awsPlatformConfigured();
 	return {
-		aws: awsPlatform,
+		// AWS is keyless via DIRECT OIDC: the customer's IAM role trusts the Alethia issuer (an IAM OIDC
+		// provider), so the console/runner federate straight in via AssumeRoleWithWebIdentity — no platform
+		// AWS account, no ExternalId. Available whenever the issuer is configured.
+		aws: oidcIssuerConfigured(),
 		// Azure is keyless: the platform app (ALETHIA_AZURE_CLIENT_ID) authenticates via a minted OIDC
 		// assertion from the issuer — no client secret. Available when the app id + issuer are configured.
 		azure: has("ALETHIA_AZURE_CLIENT_ID") && oidcIssuerConfigured(),
@@ -69,12 +68,10 @@ export function computePlatformConfigured(): Record<string, boolean> {
 		// AssumeRoleWithOIDC with a minted assertion — no Alibaba account / platform AccessKey.
 		// Available whenever the issuer is configured.
 		alibaba: oidcIssuerConfigured(),
-		// GCP federates THROUGH the platform AWS identity: the customer's Workload Identity pool
-		// trusts an AWS provider (`create-aws --account-id=<platform aws acct>`), so the console
-		// mints the GCP subject token from the platform AWS creds (google-auth's `--aws` source
-		// reads AWS_ACCESS_KEY_ID/SECRET/SESSION_TOKEN, refreshed at runtime by ensurePlatformAwsEnv).
-		// No separate GCP secret — availability tracks the same keyless AWS platform identity.
-		gcp: awsPlatform,
+		// GCP is keyless via DIRECT OIDC: the customer's Workload Identity pool trusts the Alethia issuer
+		// directly (an OIDC provider), so the console/runner federate with a minted assertion — no AWS hop.
+		// Available whenever the issuer is configured. (The legacy AWS-hub GCP path is retired.)
+		gcp: oidcIssuerConfigured(),
 		// Token clouds need no platform credentials — the customer's own API token is used.
 		hetzner: true,
 		digitalocean: true,
@@ -134,7 +131,7 @@ export async function getCloudConnectSetup(): Promise<CloudConnectSetup> {
 
 	// Pending-identity init is a manage action — only do it for members who can add connections.
 	// Viewers get a read-only board (the setup is null for them).
-	let awsSetup: { externalId: string; identityId: string } | null = null;
+	let awsSetup: { identityId: string } | null = null;
 	let gcpSetup: { identityId: string } | null = null;
 	let azureSetup: { identityId: string } | null = null;
 	const extraSetup: Record<string, { identityId: string; externalId?: string }> = {};
@@ -142,7 +139,7 @@ export async function getCloudConnectSetup(): Promise<CloudConnectSetup> {
 	if (canManage) {
 		if (!awsStatus.connected) {
 			try {
-				awsSetup = await getAwsExternalId();
+				awsSetup = await initAwsIdentity();
 			} catch {}
 		}
 		if (!gcpStatus.connected) {

@@ -15,6 +15,18 @@ import (
 )
 
 func main() {
+	// Container-sandbox child mode: this process was re-exec'd INSIDE a per-job sandbox
+	// container to run one untrusted stage. It has an allowlisted env only (no runner
+	// token / storage keys / bootstrap token), so it must run the stage and exit BEFORE
+	// the normal boot (which would try to bootstrap-register). See sandbox.Container.
+	if os.Getenv("ALETHIA_RUNNER_EXEC_STAGE") == "1" {
+		if err := agent.RunExecStage(context.Background()); err != nil {
+			fmt.Fprintf(os.Stderr, "exec-stage error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	cfg := agent.Config{
 		Operator:    runnerOperator(),
 		Providers:   runnerProviders(),

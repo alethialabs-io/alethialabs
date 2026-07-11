@@ -4,6 +4,7 @@
 import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { finalizeDeployment } from "@/app/server/actions/deployments";
+import { finalizeChartScan } from "@/app/server/actions/byo-charts";
 import { recordDriftPosture } from "@/app/server/actions/drift";
 import {
 	advancePromotionOnPlan,
@@ -213,6 +214,13 @@ export async function PUT(
 						);
 					}
 				}
+			}
+
+			// CHART_SCAN: write the chart-safety verify.Report back onto the chart row (done/failed).
+			if (job?.job_type === "CHART_SCAN" && (status === "SUCCESS" || status === "FAILED")) {
+				await finalizeChartScan(jobId).catch((err) =>
+					console.error("Finalize chart scan error:", err),
+				);
 			}
 
 		}

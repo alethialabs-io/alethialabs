@@ -51,9 +51,11 @@ type Job struct {
 }
 
 type CloudIdentity struct {
-	Provider            string `json:"provider"`
-	RoleArn             string `json:"role_arn"`
-	ExternalID          string `json:"external_id"`
+	Provider   string `json:"provider"`
+	RoleArn    string `json:"role_arn"`
+	ExternalID string `json:"external_id"`
+	// Alibaba keyless: the RAM OIDC provider ARN passed to AssumeRoleWithOIDC.
+	OidcProviderArn     string `json:"oidc_provider_arn"`
 	AccountID           string `json:"account_id"`
 	ProjectID           string `json:"project_id"`
 	ServiceAccountEmail string `json:"service_account_email"`
@@ -331,11 +333,74 @@ func (c *RunnerAPIClient) FetchGitToken(jobID string) (string, error) {
 	return *result.Token, nil
 }
 
+// FetchStateToken mints a per-job tofu-state token from the console. The runner presents it
+// to OpenTofu's http state backend as the HTTP Basic password (TF_HTTP_PASSWORD); the console
+// derives the state object key server-side from the job and authorizes on the signed sub=jobID.
+func (c *RunnerAPIClient) FetchStateToken(jobID string) (string, error) {
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/jobs/%s/state-token", c.baseURL, jobID), nil)
+	if err != nil {
+		return "", err
+	}
+	c.setRunnerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch state token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch state token returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Token *string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode state token response: %w", err)
+	}
+	if result.Token == nil {
+		return "", fmt.Errorf("state token response was empty")
+	}
+	return *result.Token, nil
+}
+
+// PurgeProjectState deletes the project's tofu state object after a successful destroy.
+// The state proxy authorizes with the per-job state token (HTTP Basic password), not the
+// runner headers — tofu's http backend leaves an empty state object behind on destroy, so
+// this is best-effort cleanup.
+func (c *RunnerAPIClient) PurgeProjectState(jobID, stateToken string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/jobs/%s/state", c.baseURL, jobID), nil)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth("alethia", stateToken)
+	req.Header.Set("User-Agent", fmt.Sprintf("runner/%s", version.Version))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("purge state request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("purge state returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// jobIDBody encodes the { job_id } payload the cloud-token mint routes require to bind the
+// mint to the job being provisioned (the console verifies the runner owns that job).
+func jobIDBody(jobID string) *bytes.Buffer {
+	b, _ := json.Marshal(map[string]string{"job_id": jobID})
+	return bytes.NewBuffer(b)
+}
+
 // FetchAzureToken mints a short-lived OIDC assertion for keyless Azure provisioning. The console
 // holds the issuer signing key; the runner presents this token to OpenTofu's azurerm provider
 // (ARM_OIDC_TOKEN), which exchanges it for an ARM access token — no client secret on the runner.
-func (c *RunnerAPIClient) FetchAzureToken() (string, error) {
-	req, err := http.NewRequest("POST", c.baseURL+"/runners/azure-token", nil)
+func (c *RunnerAPIClient) FetchAzureToken(jobID string) (string, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/runners/azure-token", jobIDBody(jobID))
 	if err != nil {
 		return "", err
 	}
@@ -359,6 +424,107 @@ func (c *RunnerAPIClient) FetchAzureToken() (string, error) {
 	}
 	if result.Token == "" {
 		return "", fmt.Errorf("azure token response was empty")
+	}
+	return result.Token, nil
+}
+
+// FetchAwsToken mints a short-lived OIDC assertion for keyless AWS provisioning. The managed runner has no
+// ambient AWS identity, so it exchanges the assertion DIRECTLY for the customer's provisioner role via
+// AssumeRoleWithWebIdentity (a web-identity token file the SDK re-reads) — the customer role trusts the
+// Alethia issuer, so there is no platform AWS account in the path and no access key on the runner.
+func (c *RunnerAPIClient) FetchAwsToken(jobID string) (*AwsFederation, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/runners/aws-token", jobIDBody(jobID))
+	if err != nil {
+		return nil, err
+	}
+	c.setRunnerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch aws token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch aws token returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Token  string `json:"token"`
+		Region string `json:"region"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode aws token response: %w", err)
+	}
+	if result.Token == "" {
+		return nil, fmt.Errorf("aws token response was incomplete")
+	}
+	return &AwsFederation{
+		Token:  result.Token,
+		Region: result.Region,
+	}, nil
+}
+
+// FetchAlibabaToken mints a short-lived OIDC assertion for keyless Alibaba provisioning. The console holds
+// the issuer signing key; the runner writes this token to a file the alicloud provider reads to run an
+// anonymous AssumeRoleWithOIDC — no AccessKey on the runner.
+func (c *RunnerAPIClient) FetchAlibabaToken(jobID string) (string, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/runners/alibaba-token", jobIDBody(jobID))
+	if err != nil {
+		return "", err
+	}
+	c.setRunnerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch alibaba token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch alibaba token returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode alibaba token response: %w", err)
+	}
+	if result.Token == "" {
+		return "", fmt.Errorf("alibaba token response was empty")
+	}
+	return result.Token, nil
+}
+
+// FetchGcpToken mints a short-lived OIDC assertion for keyless (DIRECT-OIDC) GCP provisioning. The runner
+// writes this token to a file the google WIF config's credential_source points at; google-auth re-reads it
+// to exchange for a GCP access token — no AWS hop, no service-account key.
+func (c *RunnerAPIClient) FetchGcpToken(jobID string) (string, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/runners/gcp-token", jobIDBody(jobID))
+	if err != nil {
+		return "", err
+	}
+	c.setRunnerHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch gcp token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch gcp token returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode gcp token response: %w", err)
+	}
+	if result.Token == "" {
+		return "", fmt.Errorf("gcp token response was empty")
 	}
 	return result.Token, nil
 }

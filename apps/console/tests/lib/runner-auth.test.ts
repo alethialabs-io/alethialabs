@@ -14,6 +14,7 @@ vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 import {
 	generateRunnerToken,
 	hashRunnerToken,
+	verifyRunnerOwnsJob,
 	verifyRunnerToken,
 } from "@/lib/runners/auth";
 import { getServiceDb } from "@/lib/db";
@@ -95,5 +96,31 @@ describe("verifyRunnerToken", () => {
 		expect(res.error).toBeNull();
 		expect(res.runnerId).toBe("runner-1");
 		expect(res.tokenHash).toBe(hashRunnerToken(token));
+	});
+});
+
+describe("verifyRunnerOwnsJob", () => {
+	it("404s when the job doesn't exist", async () => {
+		mockDb([]);
+		const res = await verifyRunnerOwnsJob("runner-1", "missing-job");
+		expect(res?.status).toBe(404);
+	});
+
+	it("403s when another runner owns the job (cross-tenant guard)", async () => {
+		mockDb([{ runner_id: "runner-2" }]);
+		const res = await verifyRunnerOwnsJob("runner-1", "job-1");
+		expect(res?.status).toBe(403);
+	});
+
+	it("403s when the job is unclaimed (runner_id null)", async () => {
+		mockDb([{ runner_id: null }]);
+		const res = await verifyRunnerOwnsJob("runner-1", "job-1");
+		expect(res?.status).toBe(403);
+	});
+
+	it("returns null when the calling runner owns the job", async () => {
+		mockDb([{ runner_id: "runner-1" }]);
+		const res = await verifyRunnerOwnsJob("runner-1", "job-1");
+		expect(res).toBeNull();
 	});
 });

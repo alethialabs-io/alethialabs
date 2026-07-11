@@ -1,9 +1,0 @@
-# Copy to terraform.tfvars (or pass -var). All have sensible defaults — override only if you run the
-# platform in a different AWS account or renamed the customer provisioner role.
-# aws_region                = "eu-central-1"
-# platform_account_id       = "270587882865"
-# role_name                 = "alethia-connector-assumer"
-# oidc_issuer_url           = "https://alethialabs.io/api/oidc"
-# oidc_audience             = "sts.amazonaws.com"
-# workload_subject          = "alethia-connector"
-# customer_role_name_prefix = "AlethiaProvisionerRole-"

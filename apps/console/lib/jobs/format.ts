@@ -13,6 +13,7 @@ import {
 	GitBranch,
 	RefreshCw,
 	Rocket,
+	ShieldCheck,
 	Trash2,
 	Upload,
 } from "lucide-react";
@@ -67,6 +68,11 @@ export const JOB_TYPES: Record<
 		label: "Audit",
 		icon: FileSearch,
 		description: "Audit bring-your-own IaC (terraform plan or k8s manifests) with elench",
+	},
+	CHART_SCAN: {
+		label: "Chart Scan",
+		icon: ShieldCheck,
+		description: "Scan a bring-your-own Helm chart for security issues (elench verify)",
 	},
 };
 

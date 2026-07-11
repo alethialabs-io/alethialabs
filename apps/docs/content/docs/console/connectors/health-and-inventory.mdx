@@ -10,9 +10,10 @@ Once a cloud account is connected, Alethia does two things **entirely server-sid
 resources.
 
 <Callout type="info">
-  Every connection is **platform-managed**: on the hosted service, the Alethia platform account holds
-  the short-lived credentials; on a self-hosted (OSS) console, your own console does. There is no
-  "bring the token to a self-hosted runner" path.
+  Every connection is **platform-managed**: the control plane (the hosted service, or your own console when
+  self-hosted) mints the short-lived credentials on demand — it federates off the Alethia OIDC issuer, so it
+  holds no standing cloud credential (Alibaba is even account-free). There is no "bring the token to a
+  self-hosted runner" path.
 </Callout>
 
 ## Connection health
@@ -30,7 +31,7 @@ The result is one of three statuses, surfaced on the connector card:
 |--------|---------|
 | **Connected** | Authenticated and the capability probe passed. Ready to provision. |
 | **Degraded** | Authenticated, but some provisioning permissions look missing — provisioning may fail until the role/policy is widened. The missing permissions are listed. |
-| **Disconnected** | Authentication failed (revoked trust, wrong external id, expired/invalid token). |
+| **Disconnected** | Authentication failed (revoked trust, a trust policy that no longer pins the Alethia issuer, expired/invalid token). |
 
 Health is re-checked on a schedule and can be re-run on demand with **Re-verify**. Because it's a direct
 API call, it resolves in well under a second — there is no queue and no job to wait on.

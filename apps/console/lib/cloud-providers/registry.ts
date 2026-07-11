@@ -5,18 +5,16 @@
  * Clouds with full provisioning templates today. The per-cloud provisioning-option
  * catalogs (instance types, regions, DB engines, …) are keyed by this set.
  */
-export type CloudProviderSlug = "aws" | "gcp" | "azure";
+export type CloudProviderSlug = "aws" | "gcp" | "azure" | "hetzner" | "alibaba";
 
 /**
  * Every cloud a user can CONNECT (identity layer), including those whose OpenTofu
- * provisioning templates are still "coming soon" (alibaba/digitalocean/hetzner/civo).
+ * provisioning templates are still "coming soon" (digitalocean/civo).
  * The capability map (`PROVIDERS`) advertises service names for all of these.
  */
 export type ConnectableCloudSlug =
 	| CloudProviderSlug
-	| "alibaba"
 	| "digitalocean"
-	| "hetzner"
 	| "civo";
 
 /** High-level metadata and service name mappings for a cloud provider. */
@@ -130,17 +128,18 @@ export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = {
 		name: "Hetzner Cloud",
 		shortName: "Hetzner",
 		icon: "/hetzner/favicon_64x64.png",
-		clusterService: "Talos / k3s (self-managed)",
-		networkName: "Network",
-		dnsService: "Hetzner DNS",
+		clusterService: "Talos Kubernetes",
+		networkName: "Hetzner Network",
+		// Compute-only cloud: data services run as in-cluster OSS Helm charts, not managed services.
+		dnsService: "ExternalDNS",
 		certService: "Let's Encrypt",
-		dbService: "—",
-		cacheService: "—",
+		dbService: "CloudNativePG (in-cluster)",
+		cacheService: "Valkey (in-cluster)",
 		nosqlService: "—",
-		queueService: "—",
+		queueService: "RabbitMQ (in-cluster)",
 		topicService: "—",
-		registryService: "—",
-		secretsService: "—",
+		registryService: "Harbor (in-cluster)",
+		secretsService: "Vault (in-cluster)",
 	},
 	civo: {
 		slug: "civo",

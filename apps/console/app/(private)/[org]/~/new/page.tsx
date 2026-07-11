@@ -7,6 +7,7 @@ import { getScanProposal } from "@/app/server/actions/scanner";
 import { getCloudConnectSetup } from "@/lib/connectors/cloud-connect-setup";
 import { getCollaborationAccess } from "@/app/server/actions/billing";
 import { CreateProjectForm } from "@/components/create-project/create-project-form";
+import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 import { DesignProjectWorkbench } from "@/components/design-project/design-project-workbench";
 import { ScanReviewNotice } from "@/components/create-project/scan-review-notice";
 import { pageMetadata } from "@/lib/seo/page-metadata";
@@ -80,6 +81,7 @@ export default async function NewProjectPage({
 			gcpSetup={gcpSetup}
 			azureSetup={azureSetup}
 			extraSetup={extraSetup}
+			byoHelmEnabled={isByoHelmEnabled()}
 		/>
 	);
 }

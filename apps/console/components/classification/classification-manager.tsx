@@ -4,9 +4,10 @@
 
 // Settings · Classification — author the org's classification taxonomy (dimensions = axes ×
 // their allowed values) and see how it is actually used. A master/detail: the dimension rail
-// selects, the detail edits values (drag-reorder, color, usage drill), and a stat strip +
-// coverage panels surface adoption. Read-only without `org:edit`. Reads/writes through the
-// classification server actions via TanStack Query (shared cache with every picker).
+// selects, the detail edits values (drag-reorder, color, usage drill). Search is server-side.
+// Read-only without `org:edit`. The section title lives in the settings sidebar, so this page
+// leads straight into a toolbar (no in-page header). Reads/writes via the classification server
+// actions through TanStack Query (shared cache with every picker).
 
 import {
 	AlertDialog,
@@ -20,17 +21,16 @@ import {
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
 import { Skeleton } from "@repo/ui/skeleton";
-import { cn } from "@repo/ui/utils";
+import { TooltipProvider } from "@repo/ui/tooltip";
 import { useQueryClient } from "@tanstack/react-query";
-import { Lock, Plus, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { BookOpen, Plus } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import type {
 	DimensionDTO,
 	ValueDTO,
 } from "@/app/server/actions/classification/dimensions";
 import {
-	createDimensionWithValues,
 	createValue,
 	deleteDimension,
 	deleteValue,
@@ -38,6 +38,7 @@ import {
 	reorderValues,
 	updateDimension,
 } from "@/app/server/actions/classification/dimensions";
+import { SettingsSearch } from "@/components/settings/settings-ui";
 import { qk } from "@/lib/query/keys";
 import {
 	useCanEditClassification,
@@ -47,8 +48,9 @@ import {
 	CLASSIFICATION_TEMPLATES,
 	type ClassificationTemplate,
 } from "./classification-templates";
+import { Spinner } from "./classification-ui";
 import { DimensionDetail } from "./dimension-detail";
-import { DimensionDialog } from "./dimension-dialog";
+import { DimensionEditorSheet } from "./dimension-editor-sheet";
 import { DimensionRail } from "./dimension-rail";
 import { ValueDrillDrawer } from "./value-drill-drawer";
 import { ValueEditor } from "./value-editor";
@@ -63,8 +65,18 @@ function slugify(input: string): string {
 		.slice(0, 64);
 }
 
-type DimDialog =
-	| { mode: "create" }
+/** A debounced mirror of `value`, updated after `delay` ms of quiet. */
+function useDebounced<T>(value: T, delay = 250): T {
+	const [debounced, setDebounced] = useState(value);
+	useEffect(() => {
+		const t = setTimeout(() => setDebounced(value), delay);
+		return () => clearTimeout(t);
+	}, [value, delay]);
+	return debounced;
+}
+
+type Sheet =
+	| { mode: "create"; templateKey?: string }
 	| { mode: "edit"; dimension: DimensionDTO }
 	| null;
 type DeleteTarget =
@@ -74,12 +86,15 @@ type DeleteTarget =
 /** The Settings · Classification page body. */
 export function ClassificationManager() {
 	const qc = useQueryClient();
-	const { data: dimensions, isPending } = useDimensionsQuery();
+	const [searchInput, setSearchInput] = useState("");
+	const search = useDebounced(searchInput.trim());
+	const searching = search.length > 0;
+
+	const { data: dimensions, isPending, isFetching } = useDimensionsQuery(search);
 	const { data: canEdit = false } = useCanEditClassification();
 
 	const [selectedId, setSelectedId] = useState<string | null>(null);
-	const [search, setSearch] = useState("");
-	const [dimDialog, setDimDialog] = useState<DimDialog>(null);
+	const [sheet, setSheet] = useState<Sheet>(null);
 	const [valueEditor, setValueEditor] = useState<{
 		dimensionId: string;
 		dimensionLabel: string;
@@ -90,41 +105,15 @@ export function ClassificationManager() {
 		dimensionLabel: string;
 	} | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
+	const [deleting, setDeleting] = useState(false);
 
+	/** Invalidate every dimensions query (base + any search-keyed) after a mutation. */
 	const refresh = () =>
-		qc.invalidateQueries({ queryKey: qk.classificationDimensions() });
+		qc.invalidateQueries({ queryKey: ["classification", "dimensions"] });
 
-	const dims = useMemo(() => dimensions ?? [], [dimensions]);
-
-	const filtered = useMemo(() => {
-		const q = search.trim().toLowerCase();
-		if (!q) return dims;
-		return dims.filter(
-			(d) =>
-				d.label.toLowerCase().includes(q) ||
-				d.key.toLowerCase().includes(q) ||
-				d.values.some(
-					(v) =>
-						v.label.toLowerCase().includes(q) ||
-						v.value.toLowerCase().includes(q),
-				),
-		);
-	}, [dims, search]);
-
-	const selectedDim =
-		filtered.find((d) => d.id === selectedId) ?? filtered[0] ?? null;
-
-	const stats = useMemo(() => {
-		const values = dims.flatMap((d) => d.values);
-		const used = values.filter((v) => v.assignmentCount > 0).length;
-		return {
-			dims: dims.length,
-			values: values.length,
-			assignments: values.reduce((n, v) => n + v.assignmentCount, 0),
-			unused: values.length - used,
-			coverage: values.length > 0 ? Math.round((used / values.length) * 100) : 0,
-		};
-	}, [dims]);
+	const dims = dimensions ?? [];
+	const selectedDim = dims.find((d) => d.id === selectedId) ?? dims[0] ?? null;
+	const reorderable = canEdit && !searching;
 
 	/** Optimistically reorder cached dimensions, then persist. */
 	const onReorderDims = (ids: string[]) => {
@@ -161,56 +150,41 @@ export function ClassificationManager() {
 			});
 	};
 
-	/** Quick-add a value to a dimension from the inline input. */
-	const onAddValue = (dim: DimensionDTO, label: string) => {
-		createValue(dim.id, {
-			value: slugify(label),
-			label,
-			color: undefined,
-			position: dim.values.length,
-		})
-			.then(refresh)
-			.catch((e) =>
-				toast.error(e instanceof Error ? e.message : "Couldn't add value."),
-			);
+	/** Quick-add a value to a dimension (awaited so the row can show pending). */
+	const onAddValue = async (dim: DimensionDTO, label: string) => {
+		try {
+			await createValue(dim.id, {
+				value: slugify(label),
+				label,
+				color: undefined,
+				position: dim.values.length,
+			});
+			refresh();
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Couldn't add value.");
+		}
 	};
 
-	/** Flip a dimension's single/multi mode. */
-	const onToggleMulti = (dim: DimensionDTO) => {
-		updateDimension(dim.id, {
-			key: dim.key,
-			label: dim.label,
-			description: dim.description ?? undefined,
-			multi: !dim.multi,
-			position: dim.position,
-		})
-			.then(refresh)
-			.catch((e) =>
-				toast.error(e instanceof Error ? e.message : "Couldn't update."),
-			);
+	/** Flip a dimension's single/multi mode (awaited so the switch can show pending). */
+	const onToggleMulti = async (dim: DimensionDTO) => {
+		try {
+			await updateDimension(dim.id, {
+				key: dim.key,
+				label: dim.label,
+				description: dim.description ?? undefined,
+				multi: !dim.multi,
+				position: dim.position,
+			});
+			refresh();
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Couldn't update.");
+		}
 	};
 
-	/** Seed a dimension + values from a starter template. */
-	const applyTemplate = (t: ClassificationTemplate) => {
-		createDimensionWithValues(
-			{ key: t.key, label: t.label, description: t.description, multi: t.multi },
-			t.values,
-		)
-			.then(({ id }) => {
-				setSelectedId(id);
-				refresh();
-				toast.success(`Added “${t.label}”.`);
-			})
-			.catch((e) =>
-				toast.error(
-					e instanceof Error ? e.message : `Couldn't add “${t.label}”.`,
-				),
-			);
-	};
-
-	/** Confirm-and-delete the pending dimension or value. */
+	/** Confirm-and-delete the pending dimension or value, with a pending state. */
 	const confirmDelete = async () => {
-		if (!deleteTarget) return;
+		if (!deleteTarget || deleting) return;
+		setDeleting(true);
 		try {
 			if (deleteTarget.kind === "dimension") {
 				await deleteDimension(deleteTarget.id);
@@ -222,156 +196,129 @@ export function ClassificationManager() {
 			refresh();
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Couldn't delete.");
+		} finally {
+			setDeleting(false);
 		}
 	};
 
 	return (
-		<div>
-			{/* page header */}
-			<header className="mb-5">
-				<div className="mb-2 font-mono text-[10px] uppercase tracking-[0.16em] text-text-tertiary">
-					Governance · Taxonomy
-				</div>
-				<h1 className="m-0 font-display text-[26px] font-semibold tracking-tight text-text-primary">
-					Classification
-				</h1>
-				<p className="m-0 mt-2 max-w-[64ch] text-[13.5px] leading-relaxed text-text-secondary">
-					Define the axes and allowed values every resource is classified by.
-					Authored once here — consumed across connectors, projects, clusters,
-					runners, members and more.
-				</p>
-			</header>
-
-			{!canEdit && (
-				<div className="mb-[18px] flex items-center gap-3 rounded-[3px] border border-border-strong bg-surface-sunken px-3.5 py-3">
-					<Lock className="size-[15px] shrink-0 text-text-tertiary" />
-					<span className="text-[12.5px] text-text-secondary">
-						Read-only. You need the{" "}
-						<b className="font-semibold text-text-primary">Editor</b> role (
-						<span className="font-mono text-[11.5px]">org:edit</span>) to change the
-						taxonomy.
+		<TooltipProvider delayDuration={200}>
+			{/* toolbar */}
+			<div className="mb-4 flex items-center gap-2.5">
+				<SettingsSearch
+					value={searchInput}
+					onChange={setSearchInput}
+					placeholder="Search dimensions & values"
+					className="w-[240px]"
+				/>
+				{searching && isFetching ? (
+					<span className="text-text-tertiary">
+						<Spinner size={13} />
 					</span>
-				</div>
-			)}
+				) : (
+					<span className="font-mono text-[11px] text-text-tertiary">
+						{searching
+							? `${dims.length} match${dims.length === 1 ? "" : "es"}`
+							: `${dims.length} dimension${dims.length === 1 ? "" : "s"}`}
+					</span>
+				)}
+				<div className="flex-1" />
+				<a
+					href="/docs/console/classification"
+					target="_blank"
+					rel="noopener noreferrer"
+					title="What is classification?"
+					className="grid size-9 shrink-0 place-items-center rounded-sm border border-border-strong bg-surface-sunken text-text-tertiary transition-colors hover:text-text-primary"
+				>
+					<BookOpen className="size-4" />
+					<span className="sr-only">What is classification?</span>
+				</a>
+				{canEdit && (
+					<Button
+						size="sm"
+						className="gap-1.5"
+						onClick={() => setSheet({ mode: "create" })}
+					>
+						<Plus className="size-3.5" />
+						New dimension
+					</Button>
+				)}
+			</div>
 
 			{isPending ? (
-				<div className="space-y-3">
-					<Skeleton className="h-16 w-full rounded-lg" />
-					<Skeleton className="h-72 w-full rounded-lg" />
+				<div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[296px_1fr]">
+					<Skeleton className="h-64 w-full rounded-lg" />
+					<Skeleton className="h-80 w-full rounded-lg" />
 				</div>
-			) : dims.length === 0 ? (
+			) : dims.length === 0 && !searching ? (
 				<EmptyState
 					canEdit={canEdit}
-					onTemplate={applyTemplate}
-					onCreate={() => setDimDialog({ mode: "create" })}
+					onTemplate={(t) => setSheet({ mode: "create", templateKey: t.key })}
+					onCreate={() => setSheet({ mode: "create" })}
 				/>
+			) : dims.length === 0 ? (
+				<div className="rounded-lg border border-dashed p-12 text-center font-mono text-[12px] text-text-tertiary">
+					No dimensions or values match “{search}”.
+				</div>
 			) : (
-				<div>
-					{/* stat strip */}
-					<div className="mb-[18px] flex overflow-hidden rounded-lg border bg-surface shadow-sm">
-						<Stat label="Dimensions" value={stats.dims} unit="axes" />
-						<Stat label="Values" value={stats.values} unit="allowed" />
-						<Stat label="Assignments" value={stats.assignments} unit="pinned" />
-						<Stat
-							label="Coverage"
-							value={`${stats.coverage}%`}
-							unit="of values used"
-							bar={stats.coverage}
-						/>
-						<Stat label="Unused" value={stats.unused} unit="values" last />
-					</div>
-
-					{/* toolbar */}
-					<div className="mb-3.5 flex items-center gap-3">
-						<div className="flex h-[34px] w-[250px] items-center gap-2 rounded-[2px] border border-border-strong bg-surface-sunken px-[11px]">
-							<Search className="size-[15px] shrink-0 text-text-tertiary" />
-							<input
-								value={search}
-								onChange={(e) => setSearch(e.target.value)}
-								placeholder="Search dimensions & values"
-								className="w-full border-none bg-transparent text-[13px] text-text-primary outline-none"
-							/>
-						</div>
-						<span className="font-mono text-[11px] text-text-tertiary">
-							{filtered.length === dims.length
-								? `${dims.length} dimension${dims.length === 1 ? "" : "s"}`
-								: `${filtered.length} of ${dims.length}`}
-						</span>
-						<div className="flex-1" />
-						{canEdit && (
-							<Button
-								size="sm"
-								className="gap-1.5"
-								onClick={() => setDimDialog({ mode: "create" })}
-							>
-								<Plus className="size-3.5" />
-								New dimension
-							</Button>
-						)}
-					</div>
-
-					{/* master-detail */}
-					<div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[296px_1fr]">
-						<DimensionRail
-							dims={filtered}
-							selectedId={selectedDim?.id ?? null}
-							onSelect={setSelectedId}
+				<div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[296px_1fr]">
+					<DimensionRail
+						dims={dims}
+						selectedId={selectedDim?.id ?? null}
+						onSelect={setSelectedId}
+						reorderable={reorderable}
+						onReorder={onReorderDims}
+					/>
+					{selectedDim && (
+						<DimensionDetail
+							dim={selectedDim}
 							canEdit={canEdit}
-							onReorder={onReorderDims}
+							reorderable={reorderable}
+							onEditDimension={() =>
+								setSheet({ mode: "edit", dimension: selectedDim })
+							}
+							onDeleteDimension={() =>
+								setDeleteTarget({
+									kind: "dimension",
+									id: selectedDim.id,
+									title: `Delete “${selectedDim.label}”?`,
+									message:
+										"This removes the dimension, its values, and every assignment of those values across all resources. This cannot be undone.",
+								})
+							}
+							onToggleMulti={() => onToggleMulti(selectedDim)}
+							onReorderValues={(ids) => onReorderVals(selectedDim.id, ids)}
+							onAddValue={(label) => onAddValue(selectedDim, label)}
+							onEditValue={(value) =>
+								setValueEditor({
+									dimensionId: selectedDim.id,
+									dimensionLabel: selectedDim.label,
+									value,
+								})
+							}
+							onDeleteValue={(value) =>
+								setDeleteTarget({
+									kind: "value",
+									id: value.id,
+									title: `Delete “${value.label}”?`,
+									message:
+										"This removes the value and clears it from every resource it was assigned to.",
+								})
+							}
+							onDrill={(value) =>
+								setDrill({ value, dimensionLabel: selectedDim.label })
+							}
 						/>
-						{selectedDim ? (
-							<DimensionDetail
-								dim={selectedDim}
-								canEdit={canEdit}
-								onEditDimension={() =>
-									setDimDialog({ mode: "edit", dimension: selectedDim })
-								}
-								onDeleteDimension={() =>
-									setDeleteTarget({
-										kind: "dimension",
-										id: selectedDim.id,
-										title: `Delete “${selectedDim.label}”?`,
-										message:
-											"This removes the dimension, its values, and every assignment of those values across all resources. This cannot be undone.",
-									})
-								}
-								onToggleMulti={() => onToggleMulti(selectedDim)}
-								onReorderValues={(ids) => onReorderVals(selectedDim.id, ids)}
-								onAddValue={(label) => onAddValue(selectedDim, label)}
-								onEditValue={(value) =>
-									setValueEditor({
-										dimensionId: selectedDim.id,
-										dimensionLabel: selectedDim.label,
-										value,
-									})
-								}
-								onDeleteValue={(value) =>
-									setDeleteTarget({
-										kind: "value",
-										id: value.id,
-										title: `Delete “${value.label}”?`,
-										message:
-											"This removes the value and clears it from every resource it was assigned to.",
-									})
-								}
-								onDrill={(value) =>
-									setDrill({ value, dimensionLabel: selectedDim.label })
-								}
-							/>
-						) : (
-							<div className="rounded-lg border border-dashed p-10 text-center font-mono text-[12px] text-text-tertiary">
-								No dimensions match “{search}”.
-							</div>
-						)}
-					</div>
+					)}
 				</div>
 			)}
 
 			{/* overlays */}
-			<DimensionDialog
-				open={Boolean(dimDialog)}
-				onOpenChange={(o) => !o && setDimDialog(null)}
-				dimension={dimDialog?.mode === "edit" ? dimDialog.dimension : undefined}
+			<DimensionEditorSheet
+				open={Boolean(sheet)}
+				onOpenChange={(o) => !o && setSheet(null)}
+				dimension={sheet?.mode === "edit" ? sheet.dimension : undefined}
+				initialTemplateKey={sheet?.mode === "create" ? sheet.templateKey : undefined}
 				onSaved={refresh}
 			/>
 			{valueEditor && (
@@ -391,7 +338,7 @@ export function ClassificationManager() {
 			/>
 			<AlertDialog
 				open={Boolean(deleteTarget)}
-				onOpenChange={(o) => !o && setDeleteTarget(null)}
+				onOpenChange={(o) => !o && !deleting && setDeleteTarget(null)}
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
@@ -401,53 +348,25 @@ export function ClassificationManager() {
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
-						<AlertDialogCancel>Cancel</AlertDialogCancel>
-						<AlertDialogAction onClick={confirmDelete}>Delete</AlertDialogAction>
+						<AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={(e) => {
+								e.preventDefault();
+								confirmDelete();
+							}}
+							disabled={deleting}
+						>
+							{deleting && <Spinner />}
+							Delete
+						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
 			</AlertDialog>
-		</div>
+		</TooltipProvider>
 	);
 }
 
-/** One cell of the stat strip. */
-function Stat({
-	label,
-	value,
-	unit,
-	bar,
-	last,
-}: {
-	label: string;
-	value: number | string;
-	unit: string;
-	bar?: number;
-	last?: boolean;
-}) {
-	return (
-		<div className={cn("flex-1 px-[18px] py-3.5", !last && "border-r")}>
-			<div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-text-tertiary">
-				{label}
-			</div>
-			<div className="mt-[7px] font-display text-[22px] font-semibold tracking-tight">
-				{value}
-				<span className="ml-[7px] font-mono text-[11px] font-normal text-text-tertiary">
-					{unit}
-				</span>
-			</div>
-			{typeof bar === "number" && (
-				<div className="mt-2.5 h-1 overflow-hidden rounded-full border bg-surface-sunken">
-					<div
-						className="h-full rounded-full bg-text-tertiary"
-						style={{ width: `${bar}%` }}
-					/>
-				</div>
-			)}
-		</div>
-	);
-}
-
-/** The blank-slate: starter templates + create-from-scratch. */
+/** The blank-slate: starter templates (open the editor pre-filled) + create-from-scratch. */
 function EmptyState({
 	canEdit,
 	onTemplate,
@@ -460,16 +379,13 @@ function EmptyState({
 	return (
 		<div className="rounded-md border border-dashed border-border-strong bg-surface px-[30px] py-[34px]">
 			<div className="max-w-[60ch]">
-				<div className="mb-2 font-mono text-[10px] uppercase tracking-[0.16em] text-text-tertiary">
-					No dimensions yet
-				</div>
 				<h2 className="m-0 mb-[7px] font-display text-[19px] font-semibold tracking-tight">
 					Start your taxonomy
 				</h2>
 				<p className="m-0 mb-[22px] text-[13px] leading-relaxed text-text-secondary">
 					A classification is a set of named axes (dimensions) and their allowed
-					values. Begin from a common template — everything stays editable — or
-					author one from scratch.
+					values. Begin from a common template — you can adjust everything before
+					creating — or author one from scratch.
 				</p>
 			</div>
 			{canEdit && (
@@ -495,11 +411,7 @@ function EmptyState({
 									<span className="font-mono text-[10.5px] text-text-tertiary">
 										{t.values.map((v) => v.label).join(" · ")}
 									</span>
-									<Button
-										size="sm"
-										variant="outline"
-										onClick={() => onTemplate(t)}
-									>
+									<Button size="sm" variant="outline" onClick={() => onTemplate(t)}>
 										Use template
 									</Button>
 								</div>

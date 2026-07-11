@@ -20,6 +20,8 @@ export function configName(data: CanvasNodeData): string | undefined {
 		case "nosql":
 		case "secret":
 			return data.config.name;
+		case "chart":
+			return data.config.id;
 		default:
 			return undefined;
 	}

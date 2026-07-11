@@ -7,7 +7,7 @@ import { motion } from "motion/react";
 import { Plus, Settings } from "lucide-react";
 import { cn } from "@repo/ui/utils";
 import { track } from "@/lib/analytics/track";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -22,6 +22,9 @@ import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { AddonConfigSheet } from "@/components/addons/addon-config-sheet";
+import { ByoChartDialog } from "@/components/design-project/byo/byo-chart-dialog";
+import { ByoChartCanvasProvider } from "@/components/design-project/byo/byo-chart-canvas-context";
+import { getProjectByoCharts } from "@/app/server/actions/byo-charts";
 import { useAddonsQuery } from "@/lib/query/use-addons-query";
 import { Button } from "@repo/ui/button";
 import {
@@ -55,6 +58,9 @@ interface DesignProjectCanvasProps {
 	/** When true the docked panel (inspector + assistant) is owned by the project shell, so the
 	 * board renders alone. When false (the standalone create flow) the board renders its own dock. */
 	dockInShell?: boolean;
+	/** Whether bring-your-own Helm charts are enabled on this instance (server flag). Gates the
+	 * ⌘K "Sources" entry. Server actions enforce the real gate regardless. */
+	byoHelmEnabled?: boolean;
 }
 
 /** The canvas editor surface (inside its own ReactFlowProvider). */
@@ -72,8 +78,10 @@ function CanvasInner({
 	projectId,
 	environmentId,
 	dockInShell,
+	byoHelmEnabled,
 }: DesignProjectCanvasProps) {
 	const router = useRouter();
+	const searchParams = useSearchParams();
 	const orgSlug = useActiveOrgSlug();
 	const { fitView } = useReactFlow();
 	const [paletteOpen, setPaletteOpen] = useState(false);
@@ -84,6 +92,7 @@ function CanvasInner({
 	const [configuringAddon, setConfiguringAddon] =
 		useState<AddonMarketItem | null>(null);
 	const [addonSheetOpen, setAddonSheetOpen] = useState(false);
+	const [byoDialogOpen, setByoDialogOpen] = useState(false);
 	const openConfigureAddon = useCallback((item: AddonMarketItem) => {
 		setConfiguringAddon(item);
 		setAddonSheetOpen(true);
@@ -96,9 +105,38 @@ function CanvasInner({
 	const undo = useCanvasStore((s) => s.undo);
 	const redo = useCanvasStore((s) => s.redo);
 	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
+	const setChartNodes = useCanvasStore((s) => s.setChartNodes);
 
 	// The standalone (create-flow) dock — the project shell owns it otherwise (`dockInShell`).
 	const dock = useDockState(true);
+
+	// BYO chart nodes are out-of-band: load them from getProjectByoCharts into the canvas on mount
+	// (and after attach/detach). Only in edit mode with the feature on.
+	const refreshCharts = useCallback(() => {
+		if (!projectId || !byoHelmEnabled) return;
+		void getProjectByoCharts(projectId, environmentId ?? null)
+			.then((res) => setChartNodes(res.charts))
+			.catch(() => {
+				/* best-effort — a fetch failure just leaves the canvas without chart nodes */
+			});
+	}, [projectId, environmentId, byoHelmEnabled, setChartNodes]);
+
+	useEffect(() => {
+		refreshCharts();
+	}, [refreshCharts]);
+
+	// Repo-first on-ramp: the new-project "Bring your own Helm chart" path lands here with
+	// ?attachChart=1 → auto-open the attach flow, then strip the param so a refresh doesn't re-open.
+	useEffect(() => {
+		if (
+			projectId &&
+			byoHelmEnabled &&
+			searchParams.get("attachChart") === "1"
+		) {
+			setByoDialogOpen(true);
+			router.replace(window.location.pathname);
+		}
+	}, [projectId, byoHelmEnabled, searchParams, router]);
 
 	/** Open the Elench assistant as a docked panel for this project (or org pre-creation). */
 	const openAssistantExclusive = useCallback(() => {
@@ -332,7 +370,19 @@ function CanvasInner({
 				onToggleView={onToggleForm}
 				onFitView={() => fitView({ padding: 0.3 })}
 				onAskAi={openAssistantExclusive}
+					onAttachChart={
+						byoHelmEnabled && projectId ? () => setByoDialogOpen(true) : undefined
+					}
 			/>
+			{projectId && byoHelmEnabled && (
+				<ByoChartDialog
+					open={byoDialogOpen}
+					onOpenChange={setByoDialogOpen}
+					projectId={projectId}
+					environmentId={environmentId ?? null}
+					onAttached={refreshCharts}
+				/>
+			)}
 
 			<Dialog open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
 				<DialogContent className="sm:max-w-sm">
@@ -357,14 +407,26 @@ function CanvasInner({
 		</>
 	);
 
+	// Chart nodes (rendered by React Flow, propless) reach the project/env + a refresh via context.
+	const withByoContext = (content: React.ReactNode) =>
+		projectId ? (
+			<ByoChartCanvasProvider
+				value={{ projectId, environmentId: environmentId ?? null, refresh: refreshCharts }}
+			>
+				{content}
+			</ByoChartCanvasProvider>
+		) : (
+			content
+		);
+
 	// In the project shell the dock (inspector + persistent assistant) is rendered one level up, so
 	// the board renders alone. The standalone create flow renders its own dock beside the board.
 	if (dockInShell)
-		return (
-			<div className="relative h-full min-h-[480px] w-full">{boardContent}</div>
+		return withByoContext(
+			<div className="relative h-full min-h-[480px] w-full">{boardContent}</div>,
 		);
 
-	return (
+	return withByoContext(
 		<div className="flex h-full min-h-[480px] w-full">
 			<div
 				className={cn(
@@ -379,7 +441,7 @@ function CanvasInner({
 				projectId={projectId}
 				identities={cloudIdentities}
 			/>
-		</div>
+		</div>,
 	);
 }
 

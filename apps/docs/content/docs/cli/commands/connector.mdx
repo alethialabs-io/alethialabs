@@ -32,11 +32,10 @@ Each `connector` subcommand runs the same pipeline:
 <Steps>
 
 ### Initialize
-The CLI creates (or reuses) a pending cloud identity for the provider and, for AWS, generates a
-unique **External ID**.
+The CLI creates (or reuses) a pending cloud identity for the provider.
 
 ### Run provider setup
-The CLI drives the provider's own tooling to create the resources Alethia needs (a cross-account
+The CLI drives the provider's own tooling to create the resources Alethia needs (an IAM OIDC provider +
 role, a workload identity pool, or an app registration) and captures the resulting credential
 material.
 
@@ -152,7 +151,8 @@ alethia connector gcp --project my-gcp-project --manual
 
 ## `alethia connector aws`
 
-Connect an AWS account using a cross-account IAM role with an External ID.
+Connect an AWS account using a keyless, issuer-direct IAM role (an IAM OIDC provider trusting the Alethia
+issuer — no access keys, no external id).
 
 ```bash
 alethia connector aws
@@ -161,7 +161,7 @@ alethia connector aws
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--region` | No | AWS region for the CloudFormation stack. |
-| `--role-name` | No | Name for the cross-account IAM role. Defaults to `AlethiaProvisionerRole`. |
+| `--role-name` | No | Name for the IAM role. Defaults to `AlethiaProvisionerRole`. |
 | `--manual` | No | Deploy from the AWS console and paste the role ARN instead of using local `aws`. |
 
 <Tabs items={["Local aws CLI (default)", "Manual (console)"]}>
@@ -173,11 +173,12 @@ the created role ARN from the stack outputs and submits it automatically.
 <Steps>
 
 ### Initialize
-Alethia generates a unique External ID for this connection.
+Alethia creates a pending cloud identity for the connection.
 
 ### Create the IAM role
-The CLI runs `aws cloudformation deploy` (stack `AlethiaConnect`), creating a role that trusts the
-Alethia platform account, scoped by the External ID.
+The CLI runs `aws cloudformation deploy` (stack `AlethiaConnect`), creating an IAM OIDC provider for the
+Alethia issuer + a role that trusts it via `AssumeRoleWithWebIdentity` (pinned to the fixed audience and
+subject).
 
 ### Connection test
 The role ARN is submitted, the connection is verified instantly server-side, and the identity is marked Connected (or Degraded/Disconnected).
@@ -191,18 +192,18 @@ alethia connector aws --region eu-west-1
   </Tab>
   <Tab value="Manual (console)">
 
-With `--manual`, the CLI prints a CloudFormation **quick-create** link pre-filled with your
-External ID and prompts for the resulting role ARN:
+With `--manual`, the CLI prints a CloudFormation **quick-create** link pre-filled with the Alethia issuer
+URL and prompts for the resulting role ARN:
 
 ```bash
 alethia connector aws --manual
 ```
 
-1. Open the printed quick-create link (it pre-fills the template and External ID).
+1. Open the printed quick-create link (it pre-fills the template and issuer URL).
 2. Acknowledge the IAM capabilities checkbox and create the stack.
 3. Copy the `RoleArn` from the stack **Outputs** tab and paste it at the prompt:
    ```
-   ? Role ARN: arn:aws:iam::123456789012:role/AlethiaProvisionerRole-<external-id>
+   ? Role ARN: arn:aws:iam::123456789012:role/AlethiaProvisionerRole
    ```
 
   </Tab>
@@ -312,5 +313,5 @@ reconnect the same provider later.
 | `aws CLI not found on PATH` / `az CLI not found on PATH` | Install the provider CLI, or use `--manual` to set the connection up from the browser. |
 | `could not find WIF config in installer output` | The Cloud Shell installer did not finish. Re-run, or use `--manual` and paste the config yourself. |
 | `Captured WIF config is not valid JSON` | The pasted block was truncated. Copy everything between `--- START CONFIG ---` and `--- END CONFIG ---`. |
-| Connection test reaches `FAILED` | Alethia could not assume the credentials. Confirm the role trust policy / External ID (AWS), the workload identity binding (GCP), or the federated credential + Contributor role (Azure). Inspect with `alethia jobs logs <job-id>`. |
+| Connection test reaches `FAILED` | Alethia could not assume the credentials. Confirm the role trust policy pins the Alethia issuer + sub/aud (AWS), the workload identity binding (GCP), or the federated credential + Contributor role (Azure). Inspect with `alethia jobs logs <job-id>`. |
 | `Invalid format. Expected: arn:aws:iam::…` | The pasted role ARN is malformed — copy the exact `RoleArn` from the stack Outputs. |

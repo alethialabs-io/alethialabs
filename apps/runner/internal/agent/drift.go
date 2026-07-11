@@ -34,12 +34,17 @@ func (w *Runner) executeDriftDetection(ctx context.Context, job *Job, provider s
 		"phase": "drift_refresh", "progress": "Running refresh-only plan...",
 	})
 
+	stateBackend, err := w.stateBackend(job.ID)
+	if err != nil {
+		return err
+	}
+
 	posture, err := provisioner.RunDriftDetection(ctx, provisioner.DriftParams{
 		ProjectConfig: vc,
 		Provider:      provider,
 		TemplatesDir:  filepath.Join(resolveProjectTemplatesDir(), provider),
 		CategoriesDir: resolveCategoriesTemplatesDir(),
-		S3Backend:     w.s3Backend(),
+		StateBackend:  stateBackend,
 		Stdout:        stdout,
 		Stderr:        stderr,
 	})

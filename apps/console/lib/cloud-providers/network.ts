@@ -42,4 +42,22 @@ export const NETWORK: Record<CloudProviderSlug, NetworkConfig> = {
 		natSingleLabel: "Single (cost-effective)",
 		natMultiLabel: "Per-Subnet (high availability)",
 	},
+	hetzner: {
+		networkLabel: "Hetzner Network",
+		createLabel: "Create a new private network",
+		existingLabel: "Use an existing network",
+		cidrLabel: "Network CIDR",
+		natLabel: "NAT",
+		natSingleLabel: "Single NAT",
+		natMultiLabel: "NAT per zone",
+	},
+	alibaba: {
+		networkLabel: "Alibaba VPC",
+		createLabel: "Create New VPC",
+		existingLabel: "Use Existing VPC",
+		cidrLabel: "VPC CIDR Block",
+		natLabel: "NAT Gateway",
+		natSingleLabel: "Single (cost-effective)",
+		natMultiLabel: "Per-Zone (high availability)",
+	},
 };

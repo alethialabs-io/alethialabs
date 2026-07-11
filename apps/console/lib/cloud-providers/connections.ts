@@ -678,18 +678,31 @@ export async function disconnectIdentity(
 ): Promise<{ success: true }> {
 	const db = getServiceDb();
 
+	// Load the row (by id + org) and assert its provider matches the caller's arg. The update below
+	// filters by id + org only (id is the PK), so a mismatched `provider` would relabel the row with the
+	// wrong PENDING_NAME and mishandle the role-cloud external_id preservation. Fail loudly on a mismatch;
+	// a missing row keeps the old no-op behavior (the update simply affects nothing).
+	const [identity] = await db
+		.select({
+			provider: cloudIdentities.provider,
+			credentials: cloudIdentities.credentials,
+		})
+		.from(cloudIdentities)
+		.where(
+			and(
+				eq(cloudIdentities.id, identityId),
+				eq(cloudIdentities.org_id, scope.orgId),
+			),
+		)
+		.limit(1);
+	if (identity && identity.provider !== provider) {
+		throw new Error(
+			`Provider mismatch: cloud identity ${identityId} is ${identity.provider}, not ${provider}.`,
+		);
+	}
+
 	let credentials: CloudCredentials = {};
 	if (ROLE_CLOUDS.has(provider)) {
-		const [identity] = await db
-			.select({ credentials: cloudIdentities.credentials })
-			.from(cloudIdentities)
-			.where(
-				and(
-					eq(cloudIdentities.id, identityId),
-					eq(cloudIdentities.org_id, scope.orgId),
-				),
-			)
-			.limit(1);
 		credentials = { external_id: identity?.credentials?.external_id };
 	}
 
