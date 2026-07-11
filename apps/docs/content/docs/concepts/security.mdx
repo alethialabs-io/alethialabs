@@ -130,12 +130,16 @@ rules, Cloud Armor), GKE (cluster + node pools), Cloud SQL, Memorystore (Redis),
 Registry, Secret Manager, Cloud Storage, Firestore, Pub/Sub, and the workload-identity service accounts +
 bindings for in-cluster controllers.
 
-<Callout type="warn">
-**Current default is broad; least-privilege is in progress.** Today the service account is granted
-`roles/editor`. We are replacing it with the **minimal set of predefined `*.admin` roles** for exactly the
-services above, and refactoring the templates so the connector never needs project-level `setIamPolicy`
-(resource-scoped IAM bindings instead) — closing the owner-equivalent escalation path. Track it in the
-[GCP connector guide](/console/connectors/gcp).
+<Callout type="info">
+**Least-privilege by default — no `roles/editor`.** The service account is granted the **minimal set of
+predefined `*.admin` roles** for exactly the services above (container / compute.network / compute.security /
+servicenetworking / cloudsql / redis / dns / artifactregistry / secretmanager / storage / datastore /
+pubsub, plus `iam.serviceAccountAdmin`+`User` for the add-on identities). The templates were **refactored to
+resource-scoped IAM** — external-dns gets `dns.admin` on the project's managed zone (not project-wide), and a
+legacy project-level workload-identity binding was removed — so the provisioner needs **no project
+`setIamPolicy`**, closing the owner-equivalent escalation path. The one remaining residual,
+`iam.serviceAccountAdmin`, is escalation-adjacent (setIamPolicy on SAs) and is a candidate for a
+resource-conditioned custom role later.
 </Callout>
 
 ## Azure: Federated Identity
