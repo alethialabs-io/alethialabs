@@ -26,11 +26,6 @@ type Config struct {
 	AlethiaURL  string
 	RunnerID    string
 	RunnerToken string
-
-	S3Endpoint  string
-	S3Region    string
-	S3AccessKey string
-	S3SecretKey string
 }
 
 type Runner struct {
@@ -71,15 +66,6 @@ func selectSandbox(cfg Config) sandbox.Sandbox {
 	}
 	fmt.Fprintf(os.Stderr, "sandbox: container backend unavailable (%v); using Passthrough (operator=%s)\n", err, cfg.Operator)
 	return sandbox.Passthrough{Operator: cfg.Operator}
-}
-
-func (w *Runner) s3Backend() *cloud.S3BackendConfig {
-	return cloud.S3BackendFromConfig(
-		w.config.S3Endpoint,
-		w.config.S3Region,
-		w.config.S3AccessKey,
-		w.config.S3SecretKey,
-	)
 }
 
 // stateBackend mints a per-job tofu-state token and returns the console http

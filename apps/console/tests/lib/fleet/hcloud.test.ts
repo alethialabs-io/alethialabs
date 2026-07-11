@@ -28,10 +28,6 @@ const HCLOUD_ENV_KEYS = [
 	"HCLOUD_SSH_KEYS",
 	"FLEET_RUNNER_IMAGE_TAG",
 	"FLEET_RUNNER_SLOTS",
-	"ALETHIA_STORAGE_ENDPOINT",
-	"ALETHIA_STORAGE_REGION",
-	"ALETHIA_STORAGE_ACCESS_KEY_ID",
-	"ALETHIA_STORAGE_SECRET_ACCESS_KEY",
 ] as const;
 
 const savedEnv: Record<string, string | undefined> = {};
@@ -56,7 +52,6 @@ function baseCfg(over: Partial<HcloudConfig> = {}): HcloudConfig {
 		webOrigin: "https://app.test",
 		bootstrapToken: "boot-xyz",
 		slots: 2,
-		storage: { endpoint: "https://s3.test", region: "eu", accessKey: "AK", secretKey: "SK" },
 		...over,
 	};
 }
@@ -158,7 +153,6 @@ describe("renderCloudInit", () => {
 		expect(out).toContain('-e ALETHIA_WEB_ORIGIN="https://app.test"');
 		expect(out).toContain('-e ALETHIA_RUNNER_BOOTSTRAP_TOKEN="boot-xyz"');
 		expect(out).toContain('-e ALETHIA_RUNNER_SLOTS="2"');
-		expect(out).toContain('-e ALETHIA_STORAGE_ENDPOINT="https://s3.test"');
 		expect(out).toContain("#cloud-config");
 	});
 
@@ -167,16 +161,12 @@ describe("renderCloudInit", () => {
 		expect(out).toContain("ghcr.io/alethialabs-io/runner-aws:stable");
 	});
 
-	it("omits storage env flags that are empty", () => {
-		const out = renderCloudInit(
-			baseCfg({ storage: { endpoint: "", region: "", accessKey: "", secretKey: "" } }),
-			"azure",
-			null,
-		);
-		expect(out).not.toContain("ALETHIA_STORAGE_ENDPOINT");
-		expect(out).not.toContain("ALETHIA_STORAGE_REGION");
-		// Non-storage flags are still present.
+	it("never injects storage master credentials into the fleet (proxy-only state)", () => {
+		const out = renderCloudInit(baseCfg(), "azure", null);
+		expect(out).not.toContain("ALETHIA_STORAGE_");
+		// The runner still gets what it needs to self-register + reach the console.
 		expect(out).toContain('-e ALETHIA_WEB_ORIGIN="https://app.test"');
+		expect(out).toContain('-e ALETHIA_RUNNER_BOOTSTRAP_TOKEN="boot-xyz"');
 	});
 });
 

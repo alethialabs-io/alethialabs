@@ -33,11 +33,6 @@ func main() {
 		AlethiaURL:  os.Getenv("ALETHIA_WEB_ORIGIN"),
 		RunnerID:    os.Getenv("ALETHIA_RUNNER_ID"),
 		RunnerToken: os.Getenv("ALETHIA_RUNNER_TOKEN"),
-
-		S3Endpoint:  envOrDefault("ALETHIA_STORAGE_ENDPOINT", ""),
-		S3Region:    envOrDefault("ALETHIA_STORAGE_REGION", ""),
-		S3AccessKey: os.Getenv("ALETHIA_STORAGE_ACCESS_KEY_ID"),
-		S3SecretKey: os.Getenv("ALETHIA_STORAGE_SECRET_ACCESS_KEY"),
 	}
 
 	fmt.Printf("runner %s\n", version.Version)
@@ -98,13 +93,6 @@ func runnerSlots() int {
 		return n
 	}
 	return 1
-}
-
-func envOrDefault(key, defaultVal string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return defaultVal
 }
 
 // runnerOperator resolves who operates this runner ("managed" | "self"), defaulting

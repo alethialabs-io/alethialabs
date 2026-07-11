@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 )
 
@@ -63,15 +64,19 @@ func (w *Runner) executeDestroyRunner(ctx context.Context, job *Job, provider st
 		return fmt.Errorf("failed to write tfvars: %w", err)
 	}
 
-	backend := w.s3Backend()
-	if err := backend.EnsureBucket(ctx); err != nil {
-		return fmt.Errorf("failed to ensure state bucket: %w", err)
+	// Runner-lifecycle state on the console http proxy (no storage master creds on the fleet).
+	stateToken, err := w.api.FetchStateToken(job.ID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch state token: %w", err)
 	}
-	backendFile, err := backend.WriteRunnerBackendHCL(workDir, cfg.RunnerID[:8])
+	stateBackend := &cloud.HTTPBackendConfig{ConsoleURL: w.config.AlethiaURL, JobID: job.ID, Token: stateToken}
+	backendFile, err := stateBackend.WriteBackendHCL(workDir)
 	if err != nil {
 		return fmt.Errorf("failed to write backend config: %w", err)
 	}
-	fmt.Fprintf(stdout, "State backend: S3 (runners/%s)\n", cfg.RunnerID[:8])
+	restoreStateAuth := stateBackend.SetAuthEnv()
+	defer restoreStateAuth()
+	fmt.Fprintln(stdout, "State backend: console HTTP proxy (per-job token)")
 
 	tfVersion := "1.15.5"
 	tf, err := tofu.NewTofuCLI(ctx, tfVersion, workDir, stdout, stderr)
@@ -87,6 +92,11 @@ func (w *Runner) executeDestroyRunner(ctx context.Context, job *Job, provider st
 	fmt.Fprintln(stdout, "Running tofu destroy...")
 	if err := tf.Destroy(ctx, varFile); err != nil {
 		return fmt.Errorf("tofu destroy failed: %w", err)
+	}
+
+	// Best-effort: purge the now-empty state object (tofu's http backend leaves it behind).
+	if err := w.api.PurgeProjectState(job.ID, stateToken); err != nil {
+		fmt.Fprintf(stderr, "Warning: failed to purge tofu state: %v\n", err)
 	}
 
 	fmt.Fprintln(stdout, "Deleting runner record...")

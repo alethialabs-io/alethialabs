@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 )
 
@@ -87,15 +88,21 @@ func (w *Runner) executeDeployRunner(ctx context.Context, job *Job, provider str
 		return fmt.Errorf("failed to write tfvars: %w", err)
 	}
 
-	backend := w.s3Backend()
-	if err := backend.EnsureBucket(ctx); err != nil {
-		return fmt.Errorf("failed to ensure state bucket: %w", err)
+	// Runner-lifecycle state lives on the console http proxy (keyed server-side by the target
+	// runner id), so the fleet needs no storage master credentials. The per-job token authorizes
+	// state I/O and reaches tofu via TF_HTTP_PASSWORD (never a workdir file).
+	stateToken, err := w.api.FetchStateToken(job.ID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch state token: %w", err)
 	}
-	backendFile, err := backend.WriteRunnerBackendHCL(workDir, cfg.RunnerID[:8])
+	stateBackend := &cloud.HTTPBackendConfig{ConsoleURL: w.config.AlethiaURL, JobID: job.ID, Token: stateToken}
+	backendFile, err := stateBackend.WriteBackendHCL(workDir)
 	if err != nil {
 		return fmt.Errorf("failed to write backend config: %w", err)
 	}
-	fmt.Fprintf(stdout, "State backend: S3 (runners/%s)\n", cfg.RunnerID[:8])
+	restoreStateAuth := stateBackend.SetAuthEnv()
+	defer restoreStateAuth()
+	fmt.Fprintln(stdout, "State backend: console HTTP proxy (per-job token)")
 
 	tf, err := tofu.NewTofuCLI(ctx, tofu.DefaultIaCVersion, workDir, stdout, stderr)
 	if err != nil {
