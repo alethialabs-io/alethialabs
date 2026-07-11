@@ -47,18 +47,30 @@ variable "role_name" {
   description = "Name of the RAM role Alethia assumes to provision infrastructure."
 }
 
-# The system RAM policies granted to the provisioning role. Defaults cover the services Alethia
-# Projects create (ACK, VPC, ECS, SLB, EIP); tighten or extend to match your Projects.
+# The system RAM policies granted to the provisioning role — one per Alibaba service Alethia's
+# project templates create (never account admin / AliyunRAMFullAccess). A given Project uses a
+# subset; the role is the union. If you only run a narrower set of Projects, trim this list.
 variable "provisioning_policies" {
   type = list(string)
   default = [
-    "AliyunCSFullAccess",
-    "AliyunVPCFullAccess",
-    "AliyunECSFullAccess",
-    "AliyunSLBFullAccess",
-    "AliyunEIPFullAccess",
+    # Core ACK + networking path.
+    "AliyunCSFullAccess",  # ACK managed clusters + node pools
+    "AliyunVPCFullAccess", # VPC, vSwitch, NAT, SNAT
+    "AliyunECSFullAccess", # ECS (consumed transitively by ACK node pools)
+    "AliyunSLBFullAccess", # SLB (ACK API-server LB + LoadBalancer Services)
+    "AliyunEIPFullAccess", # Elastic IP
+    # Optional modules — each attached so the corresponding Project feature can provision.
+    "AliyunRDSFullAccess",               # RDS
+    "AliyunContainerRegistryFullAccess", # CR Enterprise Edition
+    "AliyunKvstoreFullAccess",           # KVStore (Redis)
+    "AliyunDNSFullAccess",               # AliDNS
+    "AliyunKMSFullAccess",               # KMS
+    "AliyunMNSFullAccess",               # Message Service (MNS)
+    "AliyunOSSFullAccess",               # OSS
+    "AliyunOTSFullAccess",               # Tablestore (OTS)
+    "AliyunYundunWAFFullAccess",         # WAF v3
   ]
-  description = "System RAM policy names attached to the provisioning role."
+  description = "System RAM policy names attached to the provisioning role (one per provisioned service)."
 }
 
 # The issuer's TLS cert chain — Alibaba requires the issuer cert fingerprints on the OIDC provider.
@@ -106,6 +118,37 @@ resource "alicloud_ram_role_policy_attachment" "provision" {
   role_name   = alicloud_ram_role.alethia.id
   policy_name = each.value
   policy_type = "System"
+}
+
+# ACK (and NAT) require the caller to create service-linked roles on first use in an account.
+# Grant ONLY ram:CreateServiceLinkedRole (+ delete for teardown) — NOT AliyunRAMFullAccess, which
+# would let the role attach arbitrary policies to any principal (full escalation). Service-linked
+# roles are cloud-managed with fixed, per-service permissions, so this grant is non-escalating.
+resource "alicloud_ram_policy" "service_linked_roles" {
+  policy_name     = "${var.role_name}-ServiceLinkedRoles"
+  policy_document = <<-JSON
+    {
+      "Version": "1",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "ram:CreateServiceLinkedRole",
+            "ram:DeleteServiceLinkedRole",
+            "ram:GetServiceLinkedRoleDeletionStatus"
+          ],
+          "Resource": "*"
+        }
+      ]
+    }
+  JSON
+  description     = "Narrow: only service-linked-role creation for ACK/NAT — no policy-attach escalation."
+}
+
+resource "alicloud_ram_role_policy_attachment" "service_linked_roles" {
+  role_name   = alicloud_ram_role.alethia.id
+  policy_name = alicloud_ram_policy.service_linked_roles.policy_name
+  policy_type = "Custom"
 }
 
 output "role_arn" {

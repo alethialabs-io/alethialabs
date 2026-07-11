@@ -38,6 +38,10 @@ const PAIRS = [
 		"infra/connector/azure/main.tf",
 		"apps/console/public/connector-terraform/azure.tf",
 	],
+	[
+		"infra/connector/alibaba/main.tf",
+		"apps/console/public/connector-terraform/alibaba.tf",
+	],
 ];
 
 /** sha256 of a file, or null if it doesn't exist. */
