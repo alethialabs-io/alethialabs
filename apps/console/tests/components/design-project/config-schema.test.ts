@@ -9,8 +9,11 @@ import { describe, expect, it } from "vitest";
 import {
 	CONFIG_SCHEMA,
 	getKindConfig,
+	type FieldCtx,
+	type FieldOption,
 } from "@/components/design-project/canvas/inspector/config-schema";
 import { ADDABLE_KINDS } from "@/components/design-project/canvas/graph/node-registry";
+import type { CloudProviderSlug } from "@/lib/cloud-providers";
 
 describe("getKindConfig", () => {
 	it("resolves a schema for every addable kind", () => {
@@ -47,6 +50,89 @@ describe("kind summaries", () => {
 		expect(summary("network", { provision_network: false, network_id: "vpc-1" })).toBe(
 			"vpc-1",
 		);
+	});
+
+	it("renders in-cluster sizing summaries on hetzner (defaults + explicit)", () => {
+		const hetzner = (kind: Parameters<typeof getKindConfig>[0], config: object) =>
+			getKindConfig(kind)?.summary(config as Record<string, unknown>, "hetzner");
+		expect(hetzner("database", { engine_family: "postgres" })).toBe(
+			"PostgreSQL · 10 GiB × 1",
+		);
+		expect(
+			hetzner("database", { engine_family: "postgres", storage_gb: 50, replicas: 3 }),
+		).toBe("PostgreSQL · 50 GiB × 3");
+		expect(hetzner("cache", { engine: "valkey", memory_gb: 4 })).toBe(
+			"Valkey · 4 GiB × 1",
+		);
+		expect(
+			hetzner("cache", {
+				engine: "valkey",
+				memory_gb: 4,
+				storage_gb: 32,
+				num_cache_nodes: 2,
+			}),
+		).toBe("Valkey · 32 GiB × 2");
+		expect(hetzner("queue", {})).toBe("RabbitMQ · 8 GiB");
+		expect(hetzner("queue", { storage_gb: 64 })).toBe("RabbitMQ · 64 GiB");
+	});
+});
+
+describe("provider-gated field visibility (hetzner in-cluster sizing)", () => {
+	/** Effective visibility of `key` on `kind` for a provider (default: visible). */
+	const visible = (
+		kind: Parameters<typeof getKindConfig>[0],
+		key: string,
+		provider: CloudProviderSlug | null,
+		config: Record<string, unknown> = {},
+	) => {
+		const field = getKindConfig(kind)
+			?.sections.flatMap((s) => s.fields)
+			.find((f) => f.key === key);
+		expect(field).toBeDefined();
+		const ctx: FieldCtx = { provider, config };
+		return !field?.visibleWhen || field.visibleWhen(config, ctx);
+	};
+
+	it("shows storage_gb/replicas only on hetzner", () => {
+		expect(visible("database", "storage_gb", "hetzner")).toBe(true);
+		expect(visible("database", "replicas", "hetzner")).toBe(true);
+		expect(visible("cache", "storage_gb", "hetzner")).toBe(true);
+		expect(visible("queue", "storage_gb", "hetzner")).toBe(true);
+		expect(visible("database", "storage_gb", "aws")).toBe(false);
+		expect(visible("database", "replicas", "aws")).toBe(false);
+		expect(visible("cache", "storage_gb", "gcp")).toBe(false);
+		expect(visible("queue", "storage_gb", null)).toBe(false);
+	});
+
+	it("hides the managed-cloud knobs on hetzner", () => {
+		// ACU-style serverless capacity is meaningless for CloudNativePG.
+		expect(visible("database", "min_capacity", "hetzner")).toBe(false);
+		expect(visible("database", "max_capacity", "hetzner")).toBe(false);
+		expect(visible("database", "min_capacity", "aws")).toBe(true);
+		// Cache SKUs / Multi-AZ and SQS-isms have no in-cluster equivalent.
+		expect(visible("cache", "node_type", "hetzner")).toBe(false);
+		expect(visible("cache", "multi_az", "hetzner")).toBe(false);
+		expect(visible("cache", "node_type", "aws")).toBe(true);
+		expect(visible("queue", "visibility_timeout", "hetzner")).toBe(false);
+		expect(visible("queue", "ordered", "hetzner")).toBe(false);
+		expect(visible("queue", "visibility_timeout", "azure")).toBe(true);
+	});
+
+	it("filters the database engine options to postgres on hetzner", () => {
+		const field = getKindConfig("database")
+			?.sections.flatMap((s) => s.fields)
+			.find((f) => f.key === "engine_family");
+		const resolveOptions = (provider: CloudProviderSlug): FieldOption[] => {
+			const options = field?.options;
+			return typeof options === "function"
+				? options({ provider, config: {} })
+				: (options ?? []);
+		};
+		expect(resolveOptions("hetzner").map((o) => o.value)).toEqual(["postgres"]);
+		expect(resolveOptions("aws").map((o) => o.value)).toEqual([
+			"postgres",
+			"mysql",
+		]);
 	});
 });
 

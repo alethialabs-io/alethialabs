@@ -519,6 +519,13 @@
       "when": 1783796701518,
       "tag": "0073_black_the_executioner",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1783800032569,
+      "tag": "0074_minor_human_fly",
+      "breakpoints": true
     }
   ]
 }
