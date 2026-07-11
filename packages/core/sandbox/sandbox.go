@@ -36,7 +36,9 @@ const (
 	StageDeploy    StageKind = "deploy"
 	StagePlan      StageKind = "plan"
 	StageDestroy   StageKind = "destroy"
+	StageDrift     StageKind = "drift"
 	StageChartScan StageKind = "chart_scan"
+	StageIacScan   StageKind = "iac_scan"
 )
 
 // Stage is the serialized, self-contained description of the untrusted work. The

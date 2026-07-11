@@ -84,21 +84,41 @@ func transformURLToSSH(rawURL string) string {
 	return sshURL
 }
 
-// transformURLToHTTPS converts an SSH or other URL to HTTPS format.
+// transformURLToHTTPS converts an SSH or scp-like URL to HTTPS format so token (HTTP
+// BasicAuth) clones work. It must NEVER re-prefix a URL that already carries a scheme —
+// the old bug turned a full `ssh://…` URL into `https://ssh://…`, breaking token clones
+// of ssh:// BYO repos (which validateByoRepoURL accepts).
 func transformURLToHTTPS(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
 	// file:// is a real git transport (local-fixture tests / on-box mirrors); keep it.
 	if strings.HasPrefix(rawURL, "file://") {
 		return rawURL
 	}
 	if strings.HasPrefix(rawURL, "git@") {
-		// git@github.com:owner/repo.git -> https://github.com/owner/repo.git
+		// scp-like shorthand: git@github.com:owner/repo.git -> https://github.com/owner/repo.git
 		rawURL = strings.TrimPrefix(rawURL, "git@")
 		rawURL = strings.Replace(rawURL, ":", "/", 1)
 		return "https://" + rawURL
 	}
+	// A full ssh:// URL (e.g. ssh://git@github.com/owner/repo.git, optionally with a
+	// :port) already has a scheme. Rewrite it to https — keeping host + path, dropping any
+	// user@ and :port — so token BasicAuth authenticates. NEVER fall through to the
+	// "https://" + rawURL branch, which would produce "https://ssh://…".
+	if strings.HasPrefix(rawURL, "ssh://") {
+		if u, err := url.Parse(rawURL); err == nil && u.Host != "" {
+			return "https://" + u.Hostname() + u.Path
+		}
+		return rawURL // unparseable ssh:// — leave untouched rather than mangle it
+	}
 	if strings.HasPrefix(rawURL, "https://") || strings.HasPrefix(rawURL, "http://") {
 		return rawURL
 	}
+	// Any other explicit scheme (git://, https+git://, …): return untouched — never
+	// re-prefix a URL that already has a "scheme://".
+	if strings.Contains(rawURL, "://") {
+		return rawURL
+	}
+	// Bare host/path (github.com/owner/repo): assume https.
 	return "https://" + rawURL
 }
 
@@ -301,6 +321,20 @@ func (g *GIT) Checkout(sha string) error {
 	}
 	fmt.Printf("Checked out pinned commit %s (detached HEAD).\n", trimmed)
 	return nil
+}
+
+// HeadSHA returns the full 40-character commit SHA at the clone's current HEAD. The BYO
+// IaC scan calls it immediately after cloning a ref to PIN the exact commit it scanned,
+// so the later deploy checks out those precise bytes (TOCTOU-safe).
+func (g *GIT) HeadSHA() (string, error) {
+	if g.Repo == nil {
+		return "", fmt.Errorf("repository not initialized")
+	}
+	ref, err := g.Repo.Head()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve HEAD for %s: %w", g.RepoURL, err)
+	}
+	return ref.Hash().String(), nil
 }
 
 // isCorrectRepo checks if the local path contains the correct repository.

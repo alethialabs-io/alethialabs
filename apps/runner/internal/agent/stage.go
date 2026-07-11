@@ -10,10 +10,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
+	"github.com/alethialabs-io/alethialabs/packages/core/drift"
+	"github.com/alethialabs-io/alethialabs/packages/core/iacsafety"
 	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 	"github.com/alethialabs-io/alethialabs/packages/core/sandbox"
+	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/verify"
 )
@@ -65,6 +69,31 @@ type stageChartScanPayload struct {
 	JobID    string         `json:"job_id"`
 }
 
+// stageIacScanPayload reconstructs a bring-your-own IaC safety scan. The module is
+// already cloned + pinned by the PARENT into the workdir (which needs the git token +
+// egress); the stage runs the parse-only iacsafety gate + `tofu init -backend=false` +
+// `tofu validate` on the local module dir. It carries ZERO secrets (no git token, no
+// state token, no cloud creds) but DOES need egress (tofu init fetches provider plugins).
+type stageIacScanPayload struct {
+	ModuleDir  string `json:"module_dir"` // absolute path inside the (mounted) workdir
+	CommitSHA  string `json:"commit_sha"` // the pinned commit the scan runs over
+	IacVersion string `json:"iac_version,omitempty"`
+	JobID      string `json:"job_id"`
+}
+
+// stageDriftPayload reconstructs a refresh-only drift run for a BYO IaC module. Like
+// deploy/plan/destroy the untrusted customer tofu runs through the sandbox seam; the
+// git/state tokens cross via the child's allowlisted env (stageSecrets), not the payload.
+type stageDriftPayload struct {
+	ProjectConfig   *types.ProjectConfig `json:"project_config"`
+	CloudAccountID  string               `json:"cloud_account_id"`
+	Provider        string               `json:"provider"`
+	TemplatesDir    string               `json:"templates_dir,omitempty"`
+	CategoriesDir   string               `json:"categories_dir,omitempty"`
+	StateConsoleURL string               `json:"state_console_url"`
+	JobID           string               `json:"job_id"`
+}
+
 // stageSecrets are per-job secrets sourced by the caller: the parent fills them from its
 // scope (Passthrough); the child fills them from its allowlisted env (container).
 type stageSecrets struct {
@@ -84,6 +113,8 @@ func stageSecretsFromEnv() stageSecrets {
 type stageResult struct {
 	PlanResult   json.RawMessage `json:"plan_result,omitempty"`
 	VerifyReport json.RawMessage `json:"verify_report,omitempty"`
+	IacReport    json.RawMessage `json:"iac_report,omitempty"`
+	DriftPosture json.RawMessage `json:"drift_posture,omitempty"`
 	Error        string          `json:"error,omitempty"`
 }
 
@@ -182,6 +213,154 @@ func runDestroyStage(ctx context.Context, p stageDestroyPayload, sec stageSecret
 	return writeStageResult(workDir, stageResult{}, err)
 }
 
+// buildDriftPayload projects a BYO drift run into a serializable payload (the git/state
+// tokens cross via the child env, not here).
+func buildDriftPayload(vc *types.ProjectConfig, provider, templatesDir, categoriesDir,
+	stateConsoleURL, jobID string) stageDriftPayload {
+	cfg := *vc // shallow copy — don't mutate the caller's config
+	cfg.GitAccessToken = ""
+	return stageDriftPayload{
+		ProjectConfig:   &cfg,
+		CloudAccountID:  vc.CloudAccountID,
+		Provider:        provider,
+		TemplatesDir:    templatesDir,
+		CategoriesDir:   categoriesDir,
+		StateConsoleURL: stateConsoleURL,
+		JobID:           jobID,
+	}
+}
+
+// runIacScanStage runs the bring-your-own IaC safety scan over the (already cloned +
+// pinned) local module dir and writes an IacScanReport to result.json. Shared by the
+// Passthrough closure and the container child — it holds NO secrets. It runs the
+// parse-only iacsafety gate first (never evaluates HCL); only if that gate passes does it
+// run `tofu init -backend=false` + `tofu validate` (which executes provider plugins) — a
+// module the static gate rejected (remote sources / provisioners / unallowlisted provider)
+// is NEVER handed to `tofu init`.
+func runIacScanStage(ctx context.Context, p stageIacScanPayload, workDir string, stdout, stderr io.Writer) error {
+	fmt.Fprintf(stdout, "Running BYO IaC static gate over %s\n", p.ModuleDir)
+	rep, err := iacsafety.Scan(p.ModuleDir, iacsafety.AllowlistFromEnv())
+	if err != nil {
+		// A scan-setup failure is a stage error (the report couldn't be produced).
+		return writeStageResult(workDir, stageResult{}, fmt.Errorf("BYO IaC static scan failed: %w", err))
+	}
+
+	report := types.IacScanReport{
+		OK:        rep.OK,
+		Validated: false,
+		Findings:  toIacFindings(rep.Findings),
+		Providers: nonNilStrings(rep.Providers),
+		Modules:   nonNilStrings(rep.Modules),
+		CommitSHA: p.CommitSHA,
+	}
+	fmt.Fprintf(stdout, "Static gate: ok=%v (providers=%v, %d module(s), %d finding(s))\n",
+		rep.OK, report.Providers, len(report.Modules), len(report.Findings))
+
+	// Only run tofu (which executes provider plugins) on a module the static gate cleared.
+	if rep.OK {
+		if verr := runIacTofuValidate(ctx, p, stdout, stderr); verr != nil {
+			// `tofu validate` failing is a finding (bad config), not a stage error — the
+			// scan still produced a report. It flips OK=false so provisioning stays blocked.
+			report.Validated = false
+			report.OK = false
+			report.Findings = append(report.Findings, types.IacScanFinding{
+				Severity: iacsafety.SeverityError,
+				Rule:     "tofu-validate",
+				File:     ".",
+				Detail:   verr.Error(),
+			})
+			fmt.Fprintf(stderr, "tofu validate reported errors: %v\n", verr)
+		} else {
+			report.Validated = true
+			fmt.Fprintln(stdout, "tofu validate: OK")
+		}
+	}
+
+	rb, mErr := json.Marshal(report)
+	if mErr != nil {
+		return writeStageResult(workDir, stageResult{}, fmt.Errorf("marshal iac scan report: %w", mErr))
+	}
+	return writeStageResult(workDir, stageResult{IacReport: rb}, nil)
+}
+
+// runIacTofuValidate runs `tofu init -backend=false` + `tofu validate` in the module dir.
+// It carries no state backend and no cloud creds — it only resolves provider schemas to
+// validate the configuration. Returns an error describing the first validate failure.
+func runIacTofuValidate(ctx context.Context, p stageIacScanPayload, stdout, stderr io.Writer) error {
+	tf, err := tofu.NewTofuCLI(ctx, p.IacVersion, p.ModuleDir, stdout, stderr)
+	if err != nil {
+		return fmt.Errorf("tofu setup: %w", err)
+	}
+	if err := tf.InitNoBackend(ctx); err != nil {
+		return fmt.Errorf("tofu init -backend=false: %w", err)
+	}
+	out, err := tf.Validate(ctx)
+	if err != nil {
+		return fmt.Errorf("tofu validate: %w", err)
+	}
+	if out != nil && !out.Valid {
+		var b strings.Builder
+		for _, d := range out.Diagnostics {
+			if b.Len() > 0 {
+				b.WriteString("; ")
+			}
+			fmt.Fprintf(&b, "%s: %s", d.Severity, d.Summary)
+		}
+		return fmt.Errorf("%s", b.String())
+	}
+	return nil
+}
+
+// runDriftStage runs a refresh-only BYO drift detection and writes the drift Posture to
+// result.json. Shared by the Passthrough closure and the container child. It returns ONLY
+// the posture — the sensitive tofu outputs stay inside the sandbox and are discarded (a
+// customer's own module has no Alethia-managed ArgoCD/add-on surface to inspect).
+func runDriftStage(ctx context.Context, p stageDriftPayload, sec stageSecrets, workDir string, stdout, stderr io.Writer) error {
+	vc := p.ProjectConfig
+	vc.CloudAccountID = p.CloudAccountID
+	vc.GitAccessToken = sec.GitToken
+
+	posture, _, err := provisioner.RunDriftDetection(ctx, provisioner.DriftParams{
+		ProjectConfig:  vc,
+		Provider:       p.Provider,
+		TemplatesDir:   p.TemplatesDir,
+		CategoriesDir:  p.CategoriesDir,
+		StateBackend:   &cloud.HTTPBackendConfig{ConsoleURL: p.StateConsoleURL, JobID: p.JobID, Token: sec.StateToken},
+		GitAccessToken: sec.GitToken,
+		Stdout:         stdout,
+		Stderr:         stderr,
+	})
+	res := stageResult{}
+	if posture != nil {
+		res.DriftPosture, _ = json.Marshal(posture)
+	}
+	return writeStageResult(workDir, res, err)
+}
+
+// toIacFindings converts iacsafety findings to the console-contract IacScanFinding shape.
+// Always returns a non-nil slice so the report's `findings` serializes as [] not null.
+func toIacFindings(in []iacsafety.Finding) []types.IacScanFinding {
+	out := make([]types.IacScanFinding, 0, len(in))
+	for _, f := range in {
+		out = append(out, types.IacScanFinding{
+			Severity: f.Severity,
+			Rule:     f.Rule,
+			File:     f.File,
+			Line:     f.Line,
+			Detail:   f.Detail,
+		})
+	}
+	return out
+}
+
+// nonNilStrings returns s, or an empty (non-nil) slice, so JSON serializes [] not null.
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
 // writeStageResult writes result.json (with Error set on failure) and returns stageErr so
 // both the closure and the child signal failure consistently.
 func writeStageResult(workDir string, res stageResult, stageErr error) error {
@@ -237,4 +416,44 @@ func readVerifyReport(workDir string) (*verify.Report, error) {
 		return nil, err
 	}
 	return &rep, nil
+}
+
+// readIacScanReport decodes result.json's IacReport (BYO IaC scan).
+func readIacScanReport(workDir string) (*types.IacScanReport, error) {
+	b, err := os.ReadFile(filepath.Join(workDir, "result.json"))
+	if err != nil {
+		return nil, err
+	}
+	var r stageResult
+	if err := json.Unmarshal(b, &r); err != nil {
+		return nil, err
+	}
+	if len(r.IacReport) == 0 {
+		return nil, nil
+	}
+	var rep types.IacScanReport
+	if err := json.Unmarshal(r.IacReport, &rep); err != nil {
+		return nil, err
+	}
+	return &rep, nil
+}
+
+// readDriftPosture decodes result.json's DriftPosture (BYO drift).
+func readDriftPosture(workDir string) (*drift.Posture, error) {
+	b, err := os.ReadFile(filepath.Join(workDir, "result.json"))
+	if err != nil {
+		return nil, err
+	}
+	var r stageResult
+	if err := json.Unmarshal(b, &r); err != nil {
+		return nil, err
+	}
+	if len(r.DriftPosture) == 0 {
+		return nil, nil
+	}
+	var p drift.Posture
+	if err := json.Unmarshal(r.DriftPosture, &p); err != nil {
+		return nil, err
+	}
+	return &p, nil
 }

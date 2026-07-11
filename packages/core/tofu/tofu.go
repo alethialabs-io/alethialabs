@@ -76,6 +76,24 @@ func (t *TofuCLI) Init(ctx context.Context, backendConfig map[string]string, upg
 	return t.tf.Init(ctx, opts...)
 }
 
+// InitNoBackend runs `tofu init -backend=false`: it installs the module's required
+// providers and any LOCAL child modules WITHOUT configuring or authenticating to a state
+// backend. Used by the bring-your-own-IaC scan so `tofu validate` can resolve provider
+// schemas without touching remote state. It still fetches provider plugins, so it needs
+// network egress (unlike a purely local render).
+func (t *TofuCLI) InitNoBackend(ctx context.Context) error {
+	fmt.Println("Initializing OpenTofu (no backend)...")
+	return t.tf.Init(ctx, tfexec.Reconfigure(true), tfexec.Backend(false))
+}
+
+// Validate runs `tofu validate` over the initialized module and returns the structured
+// result (Valid + Diagnostics). It checks configuration consistency (types, references,
+// provider schema) and mutates nothing.
+func (t *TofuCLI) Validate(ctx context.Context) (*tfjson.ValidateOutput, error) {
+	fmt.Println("Validating OpenTofu configuration...")
+	return t.tf.Validate(ctx)
+}
+
 // InitWithBackendFile runs tofu init using a backend config file (e.g. backend.hcl).
 func (t *TofuCLI) InitWithBackendFile(ctx context.Context, backendFile string, upgrade bool) error {
 	fmt.Println("Initializing OpenTofu...")
