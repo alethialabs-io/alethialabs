@@ -34,6 +34,10 @@ const PAIRS = [
 		"infra/connector/gcp/main.tf",
 		"apps/console/public/connector-terraform/gcp.tf",
 	],
+	[
+		"infra/connector/azure/main.tf",
+		"apps/console/public/connector-terraform/azure.tf",
+	],
 ];
 
 /** sha256 of a file, or null if it doesn't exist. */

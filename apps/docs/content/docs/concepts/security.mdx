@@ -179,12 +179,14 @@ gateway, public IPs), PostgreSQL Flexible Server (+ private DNS zone), Redis Cac
 Registry, Key Vault (+ secrets), Storage, Service Bus, Cosmos DB, WAF policy, and the managed identities +
 role assignments for in-cluster workload identity.
 
-<Callout type="warn">
-**Current default is broad; least-privilege is in progress.** Today the app's service principal is granted
-subscription **`Contributor`**. We are replacing it with a **single custom role definition** enumerating only
-the actions above (plus the AKS credential-list and per-resource-provider registration Contributor omits),
-with the one escalation-grade permission it genuinely needs — role-assignment write — **constrained to a
-single role** (DNS Zone Contributor) via an ABAC condition. Track it in the
+<Callout type="info">
+**Least-privilege by default — a custom role, not `Contributor`.** The app's service principal is granted a
+**custom role definition** ("Alethia Provisioner") enumerating only the actions the services above need —
+including the AKS credential-list and per-resource-provider registration that `Contributor` omits (so this
+also *fixes* a gap: pure `Contributor` cannot create the external-dns role assignment the templates require).
+The one escalation-grade permission it needs — `roleAssignments/write` — is **constrained by an ABAC
+condition** to a single built-in role (*DNS Zone Contributor*), so the connector can grant that to the
+external-dns identity and **nothing else** (no path to Owner). See the
 [Azure connector guide](/console/connectors/azure).
 </Callout>
 
