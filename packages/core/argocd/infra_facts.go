@@ -4,6 +4,8 @@
 package argocd
 
 import (
+	"os"
+
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -14,15 +16,19 @@ import (
 // `{{ if eq .Provider "…" }}` guards. Adding a cloud = a new BuildFromOutputs case +
 // a per-cloud block here + the template branches (see packages/core/cloud/README.md).
 type InfraFacts struct {
-	ProjectName     string
-	Environment     string
-	Region          string
-	Provider        string // aws | gcp | azure | alibaba | hetzner
-	DomainName      string
-	DNSZoneID       string
-	DNSEnabled      bool   // vc.DNS.Enabled — templates must not render DNS-dependent apps without it
-	DNSConnector    string // vc.DNS.Provider — ""/"native" = cloud-native; "cloudflare" = the DNS connector
-	EnableKarpenter bool
+	ProjectName  string
+	Environment  string
+	Region       string
+	Provider     string // aws | gcp | azure | alibaba | hetzner
+	DomainName   string
+	DNSZoneID    string
+	DNSEnabled   bool   // vc.DNS.Enabled — templates must not render DNS-dependent apps without it
+	DNSConnector string // vc.DNS.Provider — ""/"native" = cloud-native; "cloudflare" = the DNS connector
+	// DNSCredentialPresent is true when the token the selected DNS backend needs is
+	// actually available (cloudflare connector credential / hetzner HCLOUD_TOKEN).
+	// The token itself NEVER lives on the facts — facts are rendered into templates.
+	DNSCredentialPresent bool
+	EnableKarpenter      bool
 
 	ClusterName     string
 	ClusterEndpoint string
@@ -58,9 +64,13 @@ type InfraFacts struct {
 // (the pre-parity behavior was to fall back to "aws" on every unknown cloud, which shipped
 // external-dns with a malformed IRSA annotation on alibaba/hetzner).
 func (f *InfraFacts) DNSProvider() string {
-	// A non-native DNS connector overrides the cloud-native backend. Cloudflare rendering
-	// lands with the connector-aware branch (A3); until then it skips honestly.
+	// A non-native DNS connector overrides the cloud-native backend on every cloud.
+	// Cloudflare is the only pluggable DNS connector today; it renders only when its
+	// api_token credential actually reached the job (fail-closed, not crash-loop).
 	if f.DNSConnector != "" && f.DNSConnector != "native" {
+		if f.DNSConnector == "cloudflare" && f.DNSCredentialPresent {
+			return "cloudflare"
+		}
 		return ""
 	}
 	switch f.Provider {
@@ -82,8 +92,12 @@ func (f *InfraFacts) DNSProvider() string {
 		// "alibabacloud" once RRSA identity is provisioned (A5); no identity → honest skip.
 		return ""
 	case "hetzner":
-		// Hetzner has no native external-dns provider; the official webhook lands in A4.
-		return ""
+		// Hetzner Cloud DNS via the official external-dns webhook sidecar, driven by the
+		// same Cloud API token the connector already holds.
+		if !f.DNSCredentialPresent {
+			return ""
+		}
+		return "webhook"
 	default:
 		return ""
 	}
@@ -102,16 +116,17 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 	}
 
 	f := &InfraFacts{
-		ProjectName:         vc.ProjectName,
-		Environment:         vc.EnvironmentStage,
-		Region:              vc.Region,
-		Provider:            vc.Provider,
-		DomainName:          vc.DNS.DomainName,
-		DNSZoneID:           vc.DNS.ZoneID,
-		DNSEnabled:          vc.DNS.Enabled,
-		DNSConnector:        vc.DNS.Provider,
-		EnableKarpenter:     enableKarpenter,
-		AppsDestinationRepo: vc.Repositories.AppsDestinationRepo,
+		ProjectName:          vc.ProjectName,
+		Environment:          vc.EnvironmentStage,
+		Region:               vc.Region,
+		Provider:             vc.Provider,
+		DomainName:           vc.DNS.DomainName,
+		DNSZoneID:            vc.DNS.ZoneID,
+		DNSEnabled:           vc.DNS.Enabled,
+		DNSConnector:         vc.DNS.Provider,
+		DNSCredentialPresent: dnsCredentialPresent(vc),
+		EnableKarpenter:      enableKarpenter,
+		AppsDestinationRepo:  vc.Repositories.AppsDestinationRepo,
 	}
 
 	switch vc.Provider {
@@ -156,6 +171,22 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 	}
 
 	return f
+}
+
+// dnsCredentialPresent reports whether the token the config's DNS backend needs is
+// available in this process. Cloudflare's api_token arrives on the job at claim time
+// (ConnectorCredentials); Hetzner's Cloud API token is the runner's activated
+// HCLOUD_TOKEN. Cloud-native backends (aws/gcp/azure) authenticate via workload
+// identity, not a token — they report true and are gated on their identity outputs
+// in DNSProvider() instead.
+func dnsCredentialPresent(vc *types.ProjectConfig) bool {
+	if vc.DNS.Provider == "cloudflare" {
+		return vc.ConnectorCredentialFor("dns", "cloudflare")["api_token"] != ""
+	}
+	if vc.Provider == "hetzner" {
+		return os.Getenv("HCLOUD_TOKEN") != ""
+	}
+	return true
 }
 
 // firstNonEmpty returns the first non-empty string.

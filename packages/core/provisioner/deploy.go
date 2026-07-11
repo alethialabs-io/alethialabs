@@ -498,6 +498,19 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 			return nil, fmt.Errorf("ArgoCD application templates not found (looked in /home/runner/argocd-templates, argocd-templates, ../../infra/templates/argocd) — the runner image is missing its baked templates")
 		}
 		facts := argocd.BuildFromOutputs(result.Outputs, vc)
+		// Connector-backed external-dns providers read a token Secret that must exist
+		// before the Application's first sync (mirrors ensureArgoRedisSecret's pre-seed).
+		switch facts.DNSProvider() {
+		case "cloudflare":
+			token := vc.ConnectorCredentialFor("dns", "cloudflare")["api_token"]
+			if err := argocd.EnsureExternalDNSSecret("external-dns-cloudflare", "apiToken", token, stdout, stderr); err != nil {
+				return nil, fmt.Errorf("failed to seed the cloudflare external-dns secret: %w", err)
+			}
+		case "webhook":
+			if err := argocd.EnsureExternalDNSSecret("external-dns-hetzner", "token", os.Getenv("HCLOUD_TOKEN"), stdout, stderr); err != nil {
+				return nil, fmt.Errorf("failed to seed the hetzner external-dns secret: %w", err)
+			}
+		}
 		renderedDir, renderErr := argocd.RenderApplications(argoTemplatesDir, facts)
 		if renderErr != nil {
 			return nil, fmt.Errorf("failed to render ArgoCD applications: %w", renderErr)
