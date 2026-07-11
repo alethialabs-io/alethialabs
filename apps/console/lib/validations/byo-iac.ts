@@ -46,3 +46,77 @@ export const iacSourceAttachSchema = createInsertSchema(projectIacSources, {
 });
 
 export type IacSourceAttachInput = z.input<typeof iacSourceAttachSchema>;
+
+/** The scalar tfvar kinds a BYO IaC variable can hold (secrets are NOT allowed here). */
+export const IAC_VAR_KINDS = ["string", "number", "bool"] as const;
+export type IacVarKind = (typeof IAC_VAR_KINDS)[number];
+
+/**
+ * One row in the attach dialog's variable editor (react-hook-form `useFieldArray`). Kept as a flat
+ * `{ key, kind, value }` string triple so the field array is trivial to render; the value is parsed
+ * to its scalar kind (and validated) on submit, then folded into an `IacVarValues` record.
+ */
+export const iacVarRowSchema = z
+	.object({
+		key: z
+			.string()
+			.trim()
+			.min(1, "Variable name is required.")
+			.regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Use a valid tfvar name (letters, digits, underscore)."),
+		kind: z.enum(IAC_VAR_KINDS),
+		// Raw text as typed; refined per-kind below so a `number`/`bool` can't hold garbage.
+		value: z.string(),
+	})
+	.superRefine((row, ctx) => {
+		if (row.kind === "number" && row.value.trim() !== "" && Number.isNaN(Number(row.value))) {
+			ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["value"], message: "Enter a number." });
+		}
+		if (row.kind === "bool" && !["true", "false"].includes(row.value.trim().toLowerCase())) {
+			ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["value"], message: "Use true or false." });
+		}
+	});
+export type IacVarRow = z.infer<typeof iacVarRowSchema>;
+
+/**
+ * The attach-dialog form schema (react-hook-form). Repo/path/ref reuse the same rules as
+ * `iacSourceAttachSchema`; variables are the editable rows above (uniqueness enforced across the
+ * array). `toIacVarValues` folds validated rows into the `IacVarValues` record the action wants.
+ */
+export const iacSourceFormSchema = z.object({
+	repo_url: z
+		.string()
+		.trim()
+		.refine(isPlausibleRepoUrl, "Enter a valid git repository URL (https:// or git@…)."),
+	path: z.string().trim().optional(),
+	ref: z.string().trim().optional(),
+	variables: z
+		.array(iacVarRowSchema)
+		.superRefine((rows, ctx) => {
+			const seen = new Set<string>();
+			rows.forEach((row, i) => {
+				const key = row.key.trim();
+				if (key && seen.has(key)) {
+					ctx.addIssue({
+						code: z.ZodIssueCode.custom,
+						path: [i, "key"],
+						message: "Duplicate variable name.",
+					});
+				}
+				seen.add(key);
+			});
+		}),
+});
+export type IacSourceFormValues = z.infer<typeof iacSourceFormSchema>;
+
+/** Folds validated variable rows into the scalar `IacVarValues` record the server action stores. */
+export function toIacVarValues(rows: IacVarRow[]): IacVarValues {
+	const out: IacVarValues = {};
+	for (const row of rows) {
+		const key = row.key.trim();
+		if (!key) continue;
+		if (row.kind === "number") out[key] = Number(row.value);
+		else if (row.kind === "bool") out[key] = row.value.trim().toLowerCase() === "true";
+		else out[key] = row.value;
+	}
+	return out;
+}
