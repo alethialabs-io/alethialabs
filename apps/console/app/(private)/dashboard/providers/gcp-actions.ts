@@ -42,6 +42,22 @@ export async function saveGcpIdentity(identityId: string, wifConfigJson: string)
 	return conn.saveGcpIdentity(actor, identityId, wifConfigJson);
 }
 
+/**
+ * Builds the WIF config from a project id + number (the two values the setup prints), then persists +
+ * verifies — the primary connect path (no raw-JSON paste). Same persist/verify as saveGcpIdentity.
+ */
+export async function saveGcpFromIds(
+	identityId: string,
+	projectId: string,
+	projectNumber: string,
+) {
+	const actor = await authorize("manage_identities", {
+		type: "cloud_identity",
+		id: identityId,
+	});
+	return conn.saveGcpIdentityFromIds(actor, identityId, projectId, projectNumber);
+}
+
 /** Resets the GCP identity to its pending state. */
 export async function disconnectGcpIdentity(identityId: string) {
 	const actor = await authorize("manage_identities", {
