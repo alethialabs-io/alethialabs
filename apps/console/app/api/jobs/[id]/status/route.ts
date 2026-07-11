@@ -5,6 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { finalizeDeployment } from "@/app/server/actions/deployments";
 import { finalizeChartScan } from "@/app/server/actions/byo-charts";
+import { finalizeIacScan } from "@/app/server/actions/byo-iac";
 import { recordDriftPosture } from "@/app/server/actions/drift";
 import {
 	advancePromotionOnPlan,
@@ -139,6 +140,15 @@ export async function PUT(
 							console.error("Finalize promotion error:", err),
 						);
 					}
+				} else if (job.job_type === "DESTROY") {
+					// A successful DESTROY tore down the env's infra — clear the BYO-IaC
+					// deployed-commit pin so the source can be detached again (finalizeDeployment
+					// no-ops for template envs). Best-effort: never fail the status update.
+					if (status === "SUCCESS") {
+						await finalizeDeployment(jobId).catch((err) =>
+							console.error("Finalize destroy error:", err),
+						);
+					}
 				} else if (job.job_type === "PLAN") {
 					if (status === "FAILED") {
 						await setEnvStatus("FAILED");
@@ -220,6 +230,14 @@ export async function PUT(
 			if (job?.job_type === "CHART_SCAN" && (status === "SUCCESS" || status === "FAILED")) {
 				await finalizeChartScan(jobId).catch((err) =>
 					console.error("Finalize chart scan error:", err),
+				);
+			}
+
+			// IAC_SCAN: write the BYO-IaC scan report back onto its project_iac_sources row and
+			// pin the scanned commit (done/failed).
+			if (job?.job_type === "IAC_SCAN" && (status === "SUCCESS" || status === "FAILED")) {
+				await finalizeIacScan(jobId).catch((err) =>
+					console.error("Finalize IaC scan error:", err),
 				);
 			}
 

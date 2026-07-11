@@ -29,6 +29,8 @@ import type {
 	ClusterProviderConfig,
 	DetectedService,
 	DnsProviderConfig,
+	IacScanReport,
+	IacVarValues,
 	NodeSize,
 	NosqlProviderConfig,
 	ObservabilityProviderConfig,
@@ -323,6 +325,59 @@ export const projectSourceRepos = pgTable(
 		unique(
 			"project_source_repos_project_env_repo_path_key",
 		).on(t.project_id, t.environment_id, t.repo_url, t.scan_path),
+	],
+);
+
+// Bring-your-own IaC (E3): a git repo holding an OpenTofu ROOT MODULE attached to a project
+// environment. When an enabled row exists (and the flag is on), that environment's
+// PLAN/DEPLOY/DESTROY/DETECT_DRIFT jobs run the customer's module instead of the built-in
+// per-cloud template (v1 = REPLACE mode). Patterned on projectSourceRepos (repo coords) +
+// the BYO columns of projectAddons (git credential + scan lifecycle). Singleton per env for
+// v1 (UNIQUE(project_id, environment_id)); `name` exists so multi-stack can relax that later.
+export const projectIacSources = pgTable(
+	"project_iac_sources",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		project_id: projectRef(),
+		environment_id: envRef(),
+		// Stack name — reserved for future multi-stack support; v1 always 'default'.
+		name: text().default("default").notNull(),
+		repo_url: text().notNull(),
+		// Branch/tag to scan; NULL = the repo's default branch.
+		ref: text(),
+		// Root-module directory within the repo; "" = repo root.
+		path: text().default("").notNull(),
+		// The commit pinned by the last successful IAC_SCAN — provisioning checks out THIS
+		// sha (never the moving ref), so what was scanned is exactly what applies (TOCTOU
+		// protection). NULL until the first successful scan; provisioning is gated on it.
+		commit_sha: text(),
+		// The commit a successful DEPLOY actually applied (the module that created live
+		// state). Set by finalizeDeployment on DEPLOY success, cleared on DESTROY success.
+		// DESTROY tears down THIS commit's module (not a newer unpinned re-scan), and detach
+		// is blocked while it is set (the env holds live BYO infra).
+		deployed_commit_sha: text(),
+		// The projectGitCredentials row (purpose='infrastructure') used to clone the repo.
+		// NULL = public repo / owner-OAuth fallback (the runner's git-token route).
+		git_credential_id: uuid().references(() => projectGitCredentials.id, {
+			onDelete: "set null",
+		}),
+		// Customer-supplied NON-SECRET tfvars for the root module (scalars only).
+		var_values: jsonb().$type<IacVarValues>().default({}),
+		enabled: boolean().default(true).notNull(),
+		// IaC-safety scan lifecycle: unscanned | scanning | done | failed (projectAddons pattern).
+		scan_status: text().default("unscanned").notNull(),
+		scan_report: jsonb().$type<IacScanReport>(),
+		scanned_at: timestamp({ withTimezone: true }),
+		status: componentStatus().default("PENDING").notNull(),
+		status_message: text(),
+		created_at: ts(),
+		updated_at: ts(),
+	},
+	(t) => [
+		unique("project_iac_sources_project_id_environment_id_key").on(
+			t.project_id,
+			t.environment_id,
+		),
 	],
 );
 

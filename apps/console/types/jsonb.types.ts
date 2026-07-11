@@ -249,6 +249,37 @@ export interface ObservabilityProviderConfig {
 // shape varies by add-on. In gitops mode this may instead hold a raw Helm-values override.
 export type AddOnValues = Record<string, unknown>;
 
+// project_iac_sources.var_values — the customer's NON-SECRET tfvars for a bring-your-own IaC
+// root module (scalar values only; secrets belong in the cloud's secret store / the module's
+// own data sources, never here). Written verbatim into the job's tfvars at provision time.
+export type IacVarValues = Record<string, string | number | boolean>;
+
+// One issue raised by an IAC_SCAN over a BYO IaC module (static checks + `tofu validate`).
+export interface IacScanFinding {
+	severity: string;
+	rule: string;
+	file: string;
+	line?: number;
+	detail: string;
+}
+
+// project_iac_sources.scan_report / execution_metadata.iac_scan_result — the result of an
+// IAC_SCAN job: the runner clones the repo, pins the commit it checked out, inventories the
+// module (providers + module sources) and validates it. `ok=false` blocks provisioning.
+export interface IacScanReport {
+	ok: boolean;
+	/** Whether `tofu validate` ran clean on the root module. */
+	validated: boolean;
+	findings: IacScanFinding[];
+	/** Provider sources the module requires (e.g. "registry.opentofu.org/hashicorp/aws"). */
+	providers: string[];
+	/** Module sources referenced by the root module (registry / git / local paths). */
+	modules: string[];
+	/** The commit the scan actually checked out — finalizeIacScan pins it onto the row's
+	 *  commit_sha so deploys apply exactly what was scanned (TOCTOU protection). */
+	commit_sha?: string;
+}
+
 // AES-256-GCM envelope for the secret fields of a connector credential
 // (lib/crypto/secrets.ts). The plaintext is a JSON map of {fieldKey: value}.
 export interface EncryptedSecret {
@@ -353,6 +384,9 @@ export interface ExecutionMetadata {
 	// DEPLOY jobs: the cluster's aggregated Trivy-Operator vulnerability posture (L9), written
 	// back to environment_security by the deploy finalizer. Mirrors Go `argocd.SecurityPosture`.
 	security_report?: SecurityReport;
+	// IAC_SCAN jobs: the BYO IaC module scan result — finalizeIacScan writes it back onto the
+	// project_iac_sources row (scan_report + pinned commit_sha).
+	iac_scan_result?: IacScanReport;
 }
 
 // One managed add-on's ArgoCD status (packages/core/argocd `AddOnHealth`). Health ∈
