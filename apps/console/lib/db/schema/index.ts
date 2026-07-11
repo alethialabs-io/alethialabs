@@ -18,6 +18,7 @@ export * from "./promotions";
 export * from "./drift";
 export * from "./security";
 export * from "./runners";
+export * from "./runner-bootstrap-tokens";
 export * from "./fleet";
 export * from "./jobs";
 export * from "./tofu-state";

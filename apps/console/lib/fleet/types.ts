@@ -82,6 +82,11 @@ export type FleetAction =
  */
 export interface FleetProvider {
 	list(project: FleetTarget): Promise<ProviderInstance[]>;
-	create(project: FleetTarget, opts: { location: string; version: string | null }): Promise<void>;
+	/** `bootstrapToken` is the per-VM E0-0b token the controller minted for this VM (injected into
+	 *  its cloud-init). Required by cloud providers that provision a VM; ignored by the manual no-op. */
+	create(
+		project: FleetTarget,
+		opts: { location: string; version: string | null; bootstrapToken?: string },
+	): Promise<void>;
 	destroy(instanceId: string): Promise<void>;
 }

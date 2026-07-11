@@ -8,7 +8,7 @@ vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 import { getServiceDb } from "@/lib/db";
 import { resolveStateRequest } from "@/lib/runners/state-auth";
 import { mintStateToken } from "@/lib/runners/state-token";
-import { projectStateKey } from "@/lib/storage/tofu-state";
+import { projectStateKey, runnerStateKey } from "@/lib/storage/tofu-state";
 
 function mockJob(rows: unknown[]) {
 	const db: Record<string, unknown> = {};
@@ -98,5 +98,44 @@ describe("resolveStateRequest", () => {
 		const tok = await mintStateToken({ jobId: "job-1", stateKey: KEY });
 		const r = await resolve(activeJob, tok);
 		expect(r).toEqual({ stateKey: KEY });
+	});
+
+	it("resolves a runner-lifecycle job to the target-runner state key", async () => {
+		const runnerId = "a1b2c3d4-e5f6-4890-abcd-ef1234567890";
+		const runnerKey = runnerStateKey(runnerId);
+		const tok = await mintStateToken({ jobId: "job-1", stateKey: runnerKey });
+		const r = await resolve(
+			[
+				{
+					job_type: "DEPLOY_RUNNER",
+					project_id: null,
+					environment_id: null,
+					config_snapshot: { runner_id: runnerId },
+					status: "PROCESSING",
+				},
+			],
+			tok,
+		);
+		expect(r).toEqual({ stateKey: runnerKey });
+	});
+
+	it("400s a runner-lifecycle job whose config_snapshot.runner_id is not a UUID", async () => {
+		const tok = await mintStateToken({
+			jobId: "job-1",
+			stateKey: runnerStateKey("whatever"),
+		});
+		const r = await resolve(
+			[
+				{
+					job_type: "DESTROY_RUNNER",
+					project_id: null,
+					environment_id: null,
+					config_snapshot: { runner_id: "../projects/victim/env/tofu.tfstate" },
+					status: "PROCESSING",
+				},
+			],
+			tok,
+		);
+		expect("error" in r && r.error.status).toBe(400);
 	});
 });

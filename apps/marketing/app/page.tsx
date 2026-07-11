@@ -8,6 +8,7 @@ import { RunsOn } from "@/components/landing/home/runs-on";
 import { ZeroTrust } from "@/components/landing/home/zero-trust";
 import { ProjectDesigner } from "@/components/landing/home/project-designer";
 import { ProjectsJobs } from "@/components/landing/home/projects-jobs";
+import { IsolatedExecution } from "@/components/landing/home/isolated-execution";
 import { FleetTeaser } from "@/components/landing/home/fleet-teaser";
 import { OpenSource } from "@/components/landing/home/open-source";
 import { AI } from "@/components/landing/home/ai";
@@ -35,6 +36,7 @@ export default async function HomePage() {
 				<ZeroTrust />
 				<ProjectDesigner />
 				<ProjectsJobs />
+				<IsolatedExecution />
 				<FleetTeaser />
 				<AI />
 				<Alerts />

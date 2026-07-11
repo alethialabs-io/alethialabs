@@ -3,18 +3,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Lean AWS-only runner image (per-cloud routing) — `runner-aws`. Builds FROM the shared runner-base (Go
-# binary + tofu + infracost + kubectl/helm + user + shared templates) and adds only the AWS CLI + EKS auth
-# plugin + the AWS project template. Declares ALETHIA_RUNNER_PROVIDERS=aws so it only claims AWS jobs.
+# binary + tofu + infracost + kubectl/helm + user + shared templates) and adds only the AWS project
+# template. CLI-free: EKS cluster auth is minted in-process by the runner (`runner kube-token --provider
+# aws`), so no aws-cli / aws-iam-authenticator is installed. ALETHIA_RUNNER_PROVIDERS=aws → AWS jobs only.
 
 ARG RUNNER_BASE=ghcr.io/alethialabs-io/runner-base:latest
 FROM ${RUNNER_BASE}
-
-# AWS-only tooling (root). aws-cli pulls python3.
-RUN apk add --no-cache aws-cli && rm -rf /var/cache/apk/*
-RUN ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/') && \
-    curl -fsSL "https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v0.7.17/aws-iam-authenticator_0.7.17_linux_${ARCH}" \
-      -o /usr/local/bin/aws-iam-authenticator && \
-    chmod +x /usr/local/bin/aws-iam-authenticator
 
 COPY --chown=runner:runner infra/templates/project/aws/ /home/runner/project-templates/aws/
 

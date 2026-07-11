@@ -20,19 +20,34 @@ export interface HcloudConfig {
 	sshKeys: string[];
 	defaultImageTag: string;
 	webOrigin: string;
-	bootstrapToken: string;
 	slots: number;
-	storage: { endpoint: string; region: string; accessKey: string; secretKey: string };
+	/**
+	 * E0 Step 3b — the per-job container sandbox (untrusted BYO). When false (default) the
+	 * cloud-init is byte-identical to trusted provisioning today. When true, the VM boots a
+	 * default-deny egress net + domain-allowlist forward proxy and starts the runner with the
+	 * container backend so each untrusted job runs in a nested rootless-podman container.
+	 * Requires a real-VM canary (see managed-provisioning runbook) before it is safe to enable.
+	 */
+	sandboxContainer: boolean;
+	/** Adds ALETHIA_SANDBOX_EGRESS_ENFORCED=1 — set ONLY after the real-VM egress proof; until
+	 *  then the container backend fail-closes on managed (proving the runtime without trusting egress). */
+	sandboxEgressEnforced: boolean;
+	/** Adds ALETHIA_SANDBOX_ENFORCE_MANAGED=1 — the fleet-wide kill-switch so a managed pool that
+	 *  LACKS the container backend refuses jobs rather than silently running unsandboxed. */
+	sandboxEnforceManaged: boolean;
+	/** Extra domains appended to the egress allowlist (FLEET_EGRESS_EXTRA_DOMAINS, comma-separated). */
+	egressExtraDomains: string[];
+	/** The forward-proxy image (pin a digest in prod). */
+	egressProxyImage: string;
 }
 
 /** Reads the provider config from env. Throws if the essentials are missing. */
 export function hcloudConfigFromEnv(): HcloudConfig {
 	const token = process.env.HCLOUD_TOKEN;
 	const webOrigin = process.env.ALETHIA_WEB_ORIGIN ?? process.env.NEXT_PUBLIC_APP_URL;
-	const bootstrapToken = process.env.ALETHIA_RUNNER_BOOTSTRAP_TOKEN;
-	if (!token || !webOrigin || !bootstrapToken) {
+	if (!token || !webOrigin) {
 		throw new Error(
-			"hcloud fleet provider requires HCLOUD_TOKEN, ALETHIA_WEB_ORIGIN, and ALETHIA_RUNNER_BOOTSTRAP_TOKEN",
+			"hcloud fleet provider requires HCLOUD_TOKEN and ALETHIA_WEB_ORIGIN",
 		);
 	}
 	return {
@@ -42,40 +57,187 @@ export function hcloudConfigFromEnv(): HcloudConfig {
 		sshKeys: (process.env.HCLOUD_SSH_KEYS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
 		defaultImageTag: process.env.FLEET_RUNNER_IMAGE_TAG ?? "latest",
 		webOrigin,
-		bootstrapToken,
 		slots: Number.parseInt(process.env.FLEET_RUNNER_SLOTS ?? "1", 10) || 1,
-		storage: {
-			endpoint: process.env.ALETHIA_STORAGE_ENDPOINT ?? "",
-			region: process.env.ALETHIA_STORAGE_REGION ?? "",
-			accessKey: process.env.ALETHIA_STORAGE_ACCESS_KEY_ID ?? "",
-			secretKey: process.env.ALETHIA_STORAGE_SECRET_ACCESS_KEY ?? "",
-		},
+		sandboxContainer: envTrue(process.env.FLEET_SANDBOX_CONTAINER),
+		sandboxEgressEnforced: envTrue(process.env.FLEET_SANDBOX_EGRESS_ENFORCED),
+		sandboxEnforceManaged: envTrue(process.env.FLEET_SANDBOX_ENFORCE_MANAGED),
+		egressExtraDomains: (process.env.FLEET_EGRESS_EXTRA_DOMAINS ?? "")
+			.split(",")
+			.map((s) => s.trim())
+			.filter(Boolean),
+		egressProxyImage: process.env.FLEET_EGRESS_PROXY_IMAGE ?? "ubuntu/squid:latest",
 	};
 }
 
-/** Pure: cloud-init that boots a per-cloud runner (at `version`) which self-registers. */
-export function renderCloudInit(cfg: HcloudConfig, provider: string, version: string | null): string {
+/** Truthy-env helper (1/true/yes/on). */
+function envTrue(v: string | undefined): boolean {
+	return ["1", "true", "yes", "on"].includes((v ?? "").trim().toLowerCase());
+}
+
+/** The forward-proxy service name + port the runner (and its nested child) point HTTP(S)_PROXY at. */
+const EGRESS_PROXY_URL = "http://alethia-egress-proxy:3128";
+
+/** Domains the untrusted child legitimately reaches regardless of cloud: provider/module
+ *  registries + release hosts, Git + Helm-on-Pages, and GHCR (the fleet warms the nested-podman
+ *  image store by pulling the runner image). Everything else is default-denied. */
+const EGRESS_BASE_DOMAINS = [
+	"registry.opentofu.org",
+	"registry.terraform.io",
+	"releases.hashicorp.com",
+	"github.com",
+	".githubusercontent.com",
+	".github.io",
+	"ghcr.io",
+	"pkg-containers.githubusercontent.com",
+];
+
+/** Per-cloud API domains the provider's tofu/CLI calls reach (a pool is single-provider). */
+const EGRESS_PROVIDER_DOMAINS: Record<string, string[]> = {
+	aws: [".amazonaws.com"],
+	gcp: [".googleapis.com", ".pkg.dev"],
+	azure: [".azure.com", ".microsoftonline.com", ".azmk8s.io", ".azurecr.io"],
+	alibaba: [".aliyuncs.com"],
+	hetzner: ["api.hetzner.cloud", "api.hetznercloud.com"],
+};
+
+/** Pure: the domain allowlist for a provider's fleet VM (console origin + base + per-cloud +
+ *  operator extras). The 169.254.169.254 metadata service is deliberately NOT a domain here, so
+ *  it can never match the forward proxy — IMDS is unreachable by construction. */
+export function buildEgressAllowlist(cfg: HcloudConfig, provider: string): string[] {
+	let consoleHost = "";
+	try {
+		consoleHost = new URL(cfg.webOrigin).hostname;
+	} catch {
+		consoleHost = "";
+	}
+	const domains = [
+		...(consoleHost ? [consoleHost] : []),
+		...EGRESS_BASE_DOMAINS,
+		...(EGRESS_PROVIDER_DOMAINS[provider] ?? []),
+		...cfg.egressExtraDomains,
+	];
+	return Array.from(new Set(domains));
+}
+
+/** Pure: a minimal squid.conf that permits CONNECT/GET only to the allowlisted domains and
+ *  default-denies everything else (squid matches HTTPS CONNECT by target host — no TLS interception). */
+function renderSquidConf(domains: string[]): string {
+	const acl = domains.map((d) => `acl allowed dstdomain ${d}`).join("\n");
+	return `http_port 3128
+acl SSL_ports port 443
+acl Safe_ports port 80
+acl Safe_ports port 443
+acl CONNECT method CONNECT
+${acl}
+http_access deny CONNECT !SSL_ports
+http_access deny !Safe_ports
+http_access allow allowed
+http_access deny all
+cache deny all
+`;
+}
+
+/** Serializes an env map to `-e KEY="value"` docker-run flags (JSON-quoted, shell-safe). */
+function toEnvFlags(env: Record<string, string>): string {
+	return Object.entries(env)
+		.filter(([, v]) => v !== "")
+		.map(([k, v]) => `-e ${k}=${JSON.stringify(v)}`)
+		.join(" ");
+}
+
+/** Pure: cloud-init that boots a per-cloud runner (at `version`) which self-registers with its
+ *  PER-VM bootstrap token (E0 0b — minted by the scaler, short-TTL, instance-bound).
+ *
+ *  Two modes, selected by `cfg.sandboxContainer` (FLEET_SANDBOX_CONTAINER):
+ *  - OFF (default): the trusted-provisioning cloud-init — a single `docker run` of the runner. This
+ *    output is byte-identical to before 3b; today's managed provisioning is unaffected.
+ *  - ON (E0 Step 3b, untrusted BYO): additionally stands up a **default-deny egress net**
+ *    (`docker network --internal`, no route off the VM) + a **domain-allowlist squid forward proxy**,
+ *    and runs the runner ON that net with the container sandbox backend + proxy env. The nested
+ *    per-job podman child inherits the runner's IMDS-less netns (ALETHIA_SANDBOX_NETWORK=host), so
+ *    169.254.169.254 (which serves the VM userdata) is unreachable and only allowlisted domains
+ *    egress. The runner reads its instance-id from an env var (the HOST fetches it from IMDS during
+ *    cloud-init) so the runner container itself needs no metadata egress.
+ *
+ *  The ON path is verifiable only on a real fleet VM (nested rootless podman + /dev/fuse + IMDS
+ *  egress can't be reproduced in CI) — see the managed-provisioning runbook's 3b canary. */
+export function renderCloudInit(
+	cfg: HcloudConfig,
+	provider: string,
+	version: string | null,
+	bootstrapToken: string,
+): string {
 	const tag = version ?? cfg.defaultImageTag;
 	const image = `ghcr.io/alethialabs-io/runner-${provider}:${tag}`;
 	const env: Record<string, string> = {
 		ALETHIA_WEB_ORIGIN: cfg.webOrigin,
 		ALETHIA_RUNNER_OPERATOR: "managed",
-		ALETHIA_RUNNER_BOOTSTRAP_TOKEN: cfg.bootstrapToken,
+		ALETHIA_RUNNER_BOOTSTRAP_TOKEN: bootstrapToken,
 		ALETHIA_RUNNER_SLOTS: String(cfg.slots),
-		ALETHIA_STORAGE_ENDPOINT: cfg.storage.endpoint,
-		ALETHIA_STORAGE_REGION: cfg.storage.region,
-		ALETHIA_STORAGE_ACCESS_KEY_ID: cfg.storage.accessKey,
-		ALETHIA_STORAGE_SECRET_ACCESS_KEY: cfg.storage.secretKey,
+		// No ALETHIA_STORAGE_*: runner-lifecycle + project tofu state both go via the console
+		// http state proxy, so the fleet holds no storage master credentials (the metadata
+		// userdata no longer leaks them).
 	};
-	const envFlags = Object.entries(env)
-		.filter(([, v]) => v !== "")
-		.map(([k, v]) => `-e ${k}=${JSON.stringify(v)}`)
-		.join(" ");
-	return `#cloud-config
+
+	if (!cfg.sandboxContainer) {
+		const envFlags = toEnvFlags(env);
+		return `#cloud-config
 runcmd:
   - curl -fsSL https://get.docker.com | sh
   - systemctl enable --now docker
   - docker run -d --init --restart=always --name alethia-runner ${envFlags} ${image}
+`;
+	}
+
+	// --- E0 Step 3b: default-deny egress net + domain-allowlist proxy + container sandbox ---
+	const sandboxEnv: Record<string, string> = {
+		...env,
+		ALETHIA_SANDBOX_BACKEND: "container",
+		ALETHIA_SANDBOX_RUNTIME: "podman",
+		ALETHIA_SANDBOX_IMAGE: image,
+		// Child shares the runner container's (IMDS-less, proxy-only) netns.
+		ALETHIA_SANDBOX_NETWORK: "host",
+		HTTP_PROXY: EGRESS_PROXY_URL,
+		HTTPS_PROXY: EGRESS_PROXY_URL,
+		// Minimal — NEVER the metadata IP/link-local/wildcard, so nothing bypasses the proxy.
+		NO_PROXY: "localhost,127.0.0.1",
+	};
+	// Set ONLY after the real-VM egress proof; until then the container backend fail-closes on managed.
+	if (cfg.sandboxEgressEnforced) sandboxEnv.ALETHIA_SANDBOX_EGRESS_ENFORCED = "1";
+	// Fleet-wide kill-switch: a managed pool without the container backend refuses jobs.
+	if (cfg.sandboxEnforceManaged) sandboxEnv.ALETHIA_SANDBOX_ENFORCE_MANAGED = "1";
+
+	const envFlags = toEnvFlags(sandboxEnv);
+	const runFlags =
+		"--network alethia-egress --device /dev/fuse " +
+		"--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined";
+	const squid = renderSquidConf(buildEgressAllowlist(cfg, provider))
+		.split("\n")
+		.map((l) => (l.length ? `      ${l}` : ""))
+		.join("\n");
+
+	return `#cloud-config
+write_files:
+  - path: /etc/alethia/squid.conf
+    permissions: "0644"
+    content: |
+${squid}
+runcmd:
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable --now docker
+  # Instance-id for the per-VM bootstrap-token binding (0b): the HOST reaches IMDS here; it is
+  # passed to the runner container so the container itself never needs metadata egress.
+  - INSTANCE_ID=$(curl -fsS --max-time 3 http://169.254.169.254/hetzner/v1/metadata/instance-id || hostname)
+  # Belt: drop the metadata IP from all container traffic regardless of network config.
+  - iptables -I DOCKER-USER -d 169.254.169.254 -j DROP || true
+  # Default-deny egress net (no route off the VM) + the domain-allowlist forward proxy (bridged out).
+  - docker network create --internal alethia-egress || true
+  - docker run -d --restart=always --name alethia-egress-proxy --network alethia-egress -v /etc/alethia/squid.conf:/etc/squid/squid.conf:ro ${cfg.egressProxyImage}
+  - docker network connect bridge alethia-egress-proxy || true
+  # Runner on the IMDS-less net + proxy env → its own egress is domain-restricted; the nested child inherits this netns.
+  - docker run -d --init --restart=always --name alethia-runner ${runFlags} -e ALETHIA_RUNNER_INSTANCE_ID="$INSTANCE_ID" ${envFlags} ${image}
+  # Warm the nested-podman image store (one-time, multi-GB via the proxy — ghcr.io is allowlisted).
+  - docker exec alethia-runner podman pull ${image} || true
 `;
 }
 
@@ -83,7 +245,7 @@ runcmd:
 export function serverCreatePayload(
 	cfg: HcloudConfig,
 	project: FleetTarget,
-	opts: { name: string; location: string; version: string | null },
+	opts: { name: string; location: string; version: string | null; bootstrapToken: string },
 ): Record<string, unknown> {
 	const labels: Record<string, string> = {
 		"alethia-managed": "true",
@@ -98,7 +260,7 @@ export function serverCreatePayload(
 		ssh_keys: cfg.sshKeys,
 		start_after_create: true,
 		labels,
-		user_data: renderCloudInit(cfg, project.provider, opts.version),
+		user_data: renderCloudInit(cfg, project.provider, opts.version, opts.bootstrapToken),
 	};
 }
 
@@ -127,9 +289,24 @@ class HcloudFleetProvider implements FleetProvider {
 		}));
 	}
 
-	async create(project: FleetTarget, opts: { location: string; version: string | null }): Promise<void> {
+	async create(
+		project: FleetTarget,
+		opts: { location: string; version: string | null; bootstrapToken?: string },
+	): Promise<void> {
+		if (!opts.bootstrapToken) {
+			throw new Error("hcloud create requires a per-VM bootstrapToken (E0 0b)");
+		}
 		const name = `fleet-${project.provider}-${randomUUID().slice(0, 8)}`;
-		await this.api("POST", "/servers", serverCreatePayload(this.cfg, project, { name, ...opts }));
+		await this.api(
+			"POST",
+			"/servers",
+			serverCreatePayload(this.cfg, project, {
+				name,
+				location: opts.location,
+				version: opts.version,
+				bootstrapToken: opts.bootstrapToken,
+			}),
+		);
 	}
 
 	async destroy(instanceId: string): Promise<void> {

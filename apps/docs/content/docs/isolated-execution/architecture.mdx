@@ -1,0 +1,92 @@
+---
+title: Architecture
+description: How isolated execution works — the per-job container, the environment allowlist, PID and network isolation, the state-proxy source-drop, per-job and per-VM tokens, and default-deny domain-allowlist egress.
+---
+
+# Architecture
+
+Isolated execution is a **seam** in the runner (`packages/core/sandbox`): the runner calls `Sandbox.Run`
+instead of invoking the provisioner directly, and a backend decides how much isolation the work gets. Trusted
+templates use the in-process `Passthrough` backend; untrusted bring-your-own on the managed fleet uses the
+`Container` backend described here.
+
+<Callout type="info">
+  This page is the customer/operator view. The full engineering reference — types, the re-exec contract, the
+  allowlist tables, and the shipped dependency chain — lives in the
+  [`packages/core/sandbox` README](https://github.com/alethialabs-io/alethialabs/blob/main/packages/core/sandbox/README.md).
+</Callout>
+
+## The per-job container
+
+A container can't run a Go closure, so the runner **serializes** the work and **re-execs itself** inside a
+fresh per-job container. The child reconstructs the exact work from a serialized stage
+(`deploy` / `plan` / `destroy` / `chart_scan`), runs it, and writes its result back into the per-job working
+directory for the parent to read. One job, one container, torn down after — the fleet VM itself is disposable
+(one job per VM).
+
+Hardening on the container: dropped Linux capabilities, no-new-privileges, its own PID namespace (so it
+cannot read the parent runner's `/proc`), a read-only root with a writable per-job workdir, and pid/memory
+limits.
+
+## The environment allowlist (and a fail-closed guard)
+
+The child gets **only** an allowlisted set of environment variables:
+
+- the cloud-auth vars the credential activators set — file paths and non-secret ids (`AWS_CONFIG_FILE` /
+  `AWS_PROFILE`, `GOOGLE_APPLICATION_CREDENTIALS`, `ARM_*` / `AZURE_*`, `ALIBABA_CLOUD_*`),
+- the token-cloud tokens the provider needs (e.g. `HCLOUD_TOKEN`),
+- the state-proxy auth and the egress-proxy vars,
+- a minimal toolchain (`PATH`, locale).
+
+Everything else — the runner token, the storage master key, the receipt-signing key, static cloud keys — is
+**dropped**. A **fail-closed guard** runs on the final child environment and refuses to start the container
+if any denylisted secret survived, so a mistake that widens the allowlist is caught *before* untrusted code
+runs. Credentials that are files are mounted **read-only** at their original paths (as directories, so the
+runner's ~5-minute token refresh stays visible to a long `apply`).
+
+## Removing secrets at the source
+
+The container can only contain what it isn't handed. Three source-drops keep the allowlist short and the
+fleet's boot configuration secret-free:
+
+- **Terraform state via a console proxy, not storage keys.** Project templates use an `http` backend pointed
+  at the console; auth is a **per-job, key-scoped** token, and the state object key is derived server-side
+  from the job. The runner never holds an object-storage credential, and one job's token can only reach its
+  own state.
+- **Per-job cloud tokens.** Cloud credentials are minted per job and bound to it — a stolen runner token
+  can't mint another cloud's credentials.
+- **Per-VM bootstrap tokens.** Each fleet VM self-registers with its own short-TTL, instance-bound token
+  rather than a shared fleet secret.
+
+Together these mean a managed VM's boot configuration carries no long-lived secret — so the network control
+below closes the *last* read rather than being the only line of defense.
+
+## Network: default-deny + domain allowlist
+
+The untrusted child has **no network route of its own**. On the managed fleet:
+
+- the VM runs an internal-only network (no gateway → no route off the box) plus a **forward proxy** that
+  allowlists egress **by domain** (registries, Git hosts, the target cloud's API);
+- the runner — and the child, which inherits the runner's network namespace — reach the internet *only*
+  through that proxy;
+- so the cloud metadata service (`169.254.169.254`) and arbitrary exfiltration endpoints are **unreachable by
+  construction**, not merely blocked by a rule.
+
+A `chart_scan` stage needs no network at all and runs fully **deny-all** (`--network none`) with zero secrets.
+
+The backend is **fail-closed on managed**: it refuses to run untrusted work unless egress enforcement is
+confirmed on the fleet — it never silently falls back to running unsandboxed.
+
+## Where to go next
+
+<Cards>
+  <Card title="Isolated Execution — overview" href="/isolated-execution">
+    The trust model, the guarantees, and availability.
+  </Card>
+  <Card title="Runner architecture" href="/runner/architecture">
+    Where the sandbox seam sits in the runner's poll loop and job dispatch.
+  </Card>
+  <Card title="Managed provisioning runbook" href="/self-hosting/managed-provisioning">
+    Enabling the container sandbox on the fleet (the 3b turn-on sequence + the real-VM canary).
+  </Card>
+</Cards>

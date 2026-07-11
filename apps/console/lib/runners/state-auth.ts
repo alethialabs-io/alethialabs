@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 import { getServiceDb } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { verifyStateToken } from "@/lib/runners/state-token";
-import { projectStateKey } from "@/lib/storage/tofu-state";
+import { stateKeyForJob } from "@/lib/storage/tofu-state";
 
 /** The tofu http backend authenticates with HTTP Basic; the state bearer is the password half. */
 function basicAuthPassword(req: Request): string | null {
@@ -29,9 +29,9 @@ export type StateContext = { stateKey: string };
 /**
  * Authorizes a tofu-state request for `pathJobId`. Every method of the state + lock routes calls
  * this. It (1) verifies the per-job state bearer, (2) binds it to the path job id, (3) requires the
- * job to be actively provisioning, and (4) re-derives the state key SERVER-SIDE from the job's
- * project/environment UUIDs — cross-checking (not trusting) the token's `key` claim. Returns the key
- * or a NextResponse to return as-is.
+ * job to be actively provisioning, and (4) re-derives the state key SERVER-SIDE from the job (project/
+ * environment UUIDs, or the target runner id for runner-lifecycle jobs) — cross-checking (not trusting)
+ * the token's `key` claim. Returns the key or a NextResponse to return as-is.
  *
  * Auth is on the signed `sub = jobId`, NOT the job's `runner_id` (which is `onDelete: set null`, so a
  * mid-apply runner detach must not 403 the in-flight state calls).
@@ -56,8 +56,10 @@ export async function resolveStateRequest(
 	const db = getServiceDb();
 	const [job] = await db
 		.select({
+			job_type: jobs.job_type,
 			project_id: jobs.project_id,
 			environment_id: jobs.environment_id,
+			config_snapshot: jobs.config_snapshot,
 			status: jobs.status,
 		})
 		.from(jobs)
@@ -77,16 +79,15 @@ export async function resolveStateRequest(
 			),
 		};
 	}
-	if (!job.project_id || !job.environment_id) {
+
+	// Shared with the mint route so the token `key` claim can never drift from what we re-derive here.
+	const key = stateKeyForJob(job);
+	if ("error" in key) {
 		return {
-			error: NextResponse.json(
-				{ error: "Job has no project environment" },
-				{ status: 400 },
-			),
+			error: NextResponse.json({ error: key.error }, { status: key.status }),
 		};
 	}
-
-	const stateKey = projectStateKey(job.project_id, job.environment_id);
+	const stateKey = key.key;
 	// Defense in depth: the token was minted for this exact key. A mismatch means a stale/forged token.
 	if (claims.key !== stateKey) {
 		return {

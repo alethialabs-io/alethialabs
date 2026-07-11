@@ -20,6 +20,7 @@ with zero stored credentials, and hands you standard EKS + ArgoCD + OpenTofu you
 |---|---|---|---|
 | Self-host the control plane | **Yes** (~4 containers, AGPL) | Top tier only | No |
 | Stores your cloud credentials | **No** (role assumed at run time) | N/A (you run IaC) | Usually yes / privileged |
+| Runs your bring-your-own code | **Per-job [sealed sandbox](/isolated-execution)** (no shared secrets, no cloud metadata, allowlisted egress) | Shared workers / your own runners | Their hosted pipeline |
 | App delivery | **Real ArgoCD, GitOps, portable** | CI apply on push | Proprietary pipeline |
 | What you own when you leave | Cluster + OpenTofu + GitOps | Your IaC | The cluster (not the pipeline) |
 | Open source | **AGPL core** | Worker only | No |

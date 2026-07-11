@@ -135,6 +135,7 @@ function mkDeps(over: Partial<ControllerDeps> = {}): ControllerDeps {
 		retire: vi.fn(async () => {}),
 		persistObserved: vi.fn(async () => {}),
 		bootGraceSeconds: 120,
+		mintBootstrapToken: vi.fn(async () => "boot-tok"),
 		...over,
 	};
 }
@@ -189,7 +190,11 @@ describe("reconcilePool — correlation, apply + hysteresis edges (mutation hard
 		const deps = mkDeps({ resolveChannel: vi.fn(async () => "v9") });
 		await reconcilePool(solo({ targetVersion: null, channel: "stable", warmMin: 1 }), prov, deps, new Map());
 		expect(deps.resolveChannel).toHaveBeenCalledWith("stable");
-		expect(prov.create).toHaveBeenCalledWith(expect.anything(), { location: "fsn1", version: "v9" });
+		expect(prov.create).toHaveBeenCalledWith(expect.anything(), {
+			location: "fsn1",
+			version: "v9",
+			bootstrapToken: "boot-tok",
+		});
 	});
 
 	it("accrues surplus ticks while over target and resets when not", async () => {

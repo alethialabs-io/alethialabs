@@ -77,12 +77,16 @@ func (k *K8sCLI) GetContext(clusterName string, logger *utils.Logger) error {
 			map[string]interface{}{
 				"name": *cluster.Arn,
 				"user": map[string]interface{}{
+					// CLI-free: authenticate via the runner's own kube-token exec-plugin (in-process
+					// presigned STS token), not the aws-iam-authenticator binary (no longer in the image).
 					"exec": map[string]interface{}{
 						"apiVersion": "client.authentication.k8s.io/v1beta1",
-						"command":    "aws-iam-authenticator",
+						"command":    execSelfPath(),
 						"args": []string{
-							"token",
-							"-i",
+							"kube-token",
+							"--provider",
+							"aws",
+							"--cluster",
 							clusterName,
 							"--region",
 							k.Region,
@@ -108,6 +112,16 @@ func (k *K8sCLI) GetContext(clusterName string, logger *utils.Logger) error {
 
 	logger.Info(fmt.Sprintf("Kubeconfig written to %s", kubeconfigPath), "k8s")
 	return nil
+}
+
+// execSelfPath resolves the running binary's absolute path for use as a Kubernetes
+// exec-credential-plugin command (the runner mints tokens in-process). Falls back to
+// "runner" (PATH lookup) if the path can't be determined.
+func execSelfPath() string {
+	if self, err := os.Executable(); err == nil && self != "" {
+		return self
+	}
+	return "runner"
 }
 
 func (k *K8sCLI) Apply(namespace, manifest string, env map[string]string, logger *utils.Logger) error {

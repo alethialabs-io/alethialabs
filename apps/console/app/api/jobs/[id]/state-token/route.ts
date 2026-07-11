@@ -11,7 +11,7 @@ import { getServiceDb } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { verifyRunnerOwnsJob, verifyRunnerToken } from "@/lib/runners/auth";
 import { mintStateToken } from "@/lib/runners/state-token";
-import { projectStateKey } from "@/lib/storage/tofu-state";
+import { stateKeyForJob } from "@/lib/storage/tofu-state";
 
 export const runtime = "nodejs";
 
@@ -29,23 +29,23 @@ export async function POST(
 	const db = getServiceDb();
 	const [job] = await db
 		.select({
+			job_type: jobs.job_type,
 			project_id: jobs.project_id,
 			environment_id: jobs.environment_id,
+			config_snapshot: jobs.config_snapshot,
 		})
 		.from(jobs)
 		.where(eq(jobs.id, jobId))
 		.limit(1);
 
-	if (!job?.project_id || !job.environment_id) {
-		return NextResponse.json(
-			{ error: "Job has no project environment" },
-			{ status: 400 },
-		);
+	if (!job) {
+		return NextResponse.json({ error: "Job not found" }, { status: 404 });
+	}
+	const key = stateKeyForJob(job);
+	if ("error" in key) {
+		return NextResponse.json({ error: key.error }, { status: key.status });
 	}
 
-	const token = await mintStateToken({
-		jobId,
-		stateKey: projectStateKey(job.project_id, job.environment_id),
-	});
+	const token = await mintStateToken({ jobId, stateKey: key.key });
 	return NextResponse.json({ token });
 }

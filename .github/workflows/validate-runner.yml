@@ -37,8 +37,9 @@ jobs:
             --build-arg VERSION="${{ github.sha }}" \
             -t runner-base:pr .
 
-      # Full multi-cloud runner (the box image) — installs aws-cli + gcloud + azure-cli and runs `tofu init`
-      # for all three templates, so a green build proves the base + every cloud install + the FROM mechanism.
+      # Full multi-cloud runner (the box image) — CLI-free (cluster auth is minted in-process by the runner
+      # `kube-token` exec-plugin); runs `tofu init` for all five templates, so a green build proves the base
+      # + every template's provider resolution + the FROM mechanism.
       - name: Build full runner (FROM runner-base)
         run: |
           docker build -f apps/runner/Dockerfile \
@@ -56,14 +57,40 @@ jobs:
             --build-arg VERSION="${{ github.sha }}" \
             -t runner-aws:pr .
 
+      # The two CLI-less lean variants — no cloud CLI to install, but a green build proves their template
+      # `tofu init` resolves every provider (incl. the third-party hcloud-talos/imager + alekc/kubectl).
+      - name: Build runner-alibaba (FROM runner-base)
+        run: |
+          docker build -f apps/runner/Dockerfile.alibaba \
+            --build-arg RUNNER_BASE=runner-base:pr \
+            --build-arg VERSION="${{ github.sha }}" \
+            -t runner-alibaba:pr .
+          docker image rm runner-alibaba:pr
+
+      - name: Build runner-hetzner (FROM runner-base)
+        run: |
+          docker build -f apps/runner/Dockerfile.hetzner \
+            --build-arg RUNNER_BASE=runner-base:pr \
+            --build-arg VERSION="${{ github.sha }}" \
+            -t runner-hetzner:pr .
+          docker image rm runner-hetzner:pr
+
       - name: Smoke-check the toolchain in the built image
         run: |
           docker run --rm --entrypoint sh runner-aws:pr -c '
             set -e
             tofu version
-            aws --version
             kubectl version --client 2>/dev/null || kubectl version --client=true
             helm version --short
             infracost --version
             test -x /usr/local/bin/runner && echo "runner binary present"
+            # CLI-free invariant: the cloud CLIs must be ABSENT — cluster auth is minted in-process
+            # by the runner kube-token exec-plugin (unit-tested in packages; exercised end-to-end by
+            # the real-VM canary). Fail loudly if any CLI crept back into the image.
+            for cli in aws aws-iam-authenticator gcloud gke-gcloud-auth-plugin az kubelogin; do
+              if command -v "$cli" >/dev/null 2>&1; then
+                echo "ERROR: $cli present in CLI-free runner image" >&2; exit 1
+              fi
+            done
+            echo "toolchain OK (CLI-free)"
           '

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -26,11 +27,6 @@ type Config struct {
 	AlethiaURL  string
 	RunnerID    string
 	RunnerToken string
-
-	S3Endpoint  string
-	S3Region    string
-	S3AccessKey string
-	S3SecretKey string
 }
 
 type Runner struct {
@@ -57,9 +53,18 @@ func NewWithAPI(cfg Config, api JobAPI) *Runner {
 // backend; if it can't initialize on an operator=managed runner it is **fail-closed** — a
 // Passthrough with EnforceManaged=true that REFUSES every job — rather than silently
 // running untrusted work unsandboxed.
+//
+// ALETHIA_SANDBOX_ENFORCE_MANAGED is the config-driven kill-switch for the DEFAULT
+// (no-container) path: once the container backend is proven on the fleet (Step 3b), the
+// maintainer sets it fleet-wide so any managed pool that LACKS the container backend
+// refuses jobs rather than silently running unsandboxed — no code redeploy to flip. Left
+// false today so existing trusted managed provisioning is unaffected.
 func selectSandbox(cfg Config) sandbox.Sandbox {
 	if os.Getenv("ALETHIA_SANDBOX_BACKEND") != "container" {
-		return sandbox.Passthrough{Operator: cfg.Operator}
+		return sandbox.Passthrough{
+			Operator:       cfg.Operator,
+			EnforceManaged: envTrue("ALETHIA_SANDBOX_ENFORCE_MANAGED"),
+		}
 	}
 	c, err := sandbox.NewContainerFromEnv(cfg.Operator)
 	if err == nil {
@@ -71,15 +76,6 @@ func selectSandbox(cfg Config) sandbox.Sandbox {
 	}
 	fmt.Fprintf(os.Stderr, "sandbox: container backend unavailable (%v); using Passthrough (operator=%s)\n", err, cfg.Operator)
 	return sandbox.Passthrough{Operator: cfg.Operator}
-}
-
-func (w *Runner) s3Backend() *cloud.S3BackendConfig {
-	return cloud.S3BackendFromConfig(
-		w.config.S3Endpoint,
-		w.config.S3Region,
-		w.config.S3AccessKey,
-		w.config.S3SecretKey,
-	)
 }
 
 // stateBackend mints a per-job tofu-state token and returns the console http
@@ -530,14 +526,23 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		if result.ClusterEndpoint != "" {
 			metadata["cluster_endpoint"] = result.ClusterEndpoint
 		}
+		if result.ClusterReady {
+			// The reachability gate confirmed the API server answered + nodes are Ready —
+			// "SUCCESS" means a working cluster, not just that `tofu apply` exited 0.
+			metadata["cluster_ready"] = true
+		}
 		if result.ArgocdURL != "" {
 			metadata["argocd_url"] = result.ArgocdURL
 		}
 		if result.ArgocdAdminPassword != "" {
 			metadata["argocd_admin_password"] = result.ArgocdAdminPassword
 		}
-		if len(result.Outputs) > 0 {
-			metadata["outputs"] = result.Outputs
+		// Persist outputs to the console, but scrub credential-bearing outputs (full
+		// kubeconfigs / client keys — e.g. Alibaba/Hetzner emit a cluster-admin `kubeconfig`)
+		// so they never land in execution_metadata (console Postgres). The pipeline already
+		// consumed the full outputs in-process above.
+		if scrubbed := scrubSensitiveOutputs(result.Outputs); len(scrubbed) > 0 {
+			metadata["outputs"] = scrubbed
 		}
 		if result.VerifyReport != nil {
 			metadata["verify_result"] = result.VerifyReport
@@ -764,4 +769,13 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 	case <-ctx.Done():
 	case <-time.After(d):
 	}
+}
+
+// envTrue reports whether an env var is set to a truthy value (1/true/yes/on).
+func envTrue(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }

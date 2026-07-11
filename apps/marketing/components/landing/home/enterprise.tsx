@@ -17,7 +17,7 @@ export function Enterprise() {
 	return (
 		<section style={{ padding: "84px 0", borderTop: "1px solid var(--border)" }}>
 			<Wrap>
-				<SecMark n="07" label="Enterprise" />
+				<SecMark n="08" label="Enterprise" />
 				<div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 24, flexWrap: "wrap", marginBottom: 36 }}>
 					<h2 style={{ ...disp, fontSize: 38, fontWeight: 600, letterSpacing: "-0.035em", margin: 0, maxWidth: 560, color: "var(--text-primary)" }}>Built for teams that answer for production.</h2>
 					<p style={{ fontSize: 15, color: "var(--text-tertiary)", maxWidth: 400, margin: 0, lineHeight: 1.6 }}>Organizations, single sign-on, fine-grained authorization, and a complete audit trail — so access maps to who actually needs it, and every decision is on the record.</p>

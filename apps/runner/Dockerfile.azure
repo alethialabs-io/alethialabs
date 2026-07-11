@@ -3,15 +3,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Lean Azure-only runner image (per-cloud routing) — `runner-azure`. Builds FROM the shared runner-base and
-# adds only the Azure CLI + the Azure project template. Declares ALETHIA_RUNNER_PROVIDERS=azure so it only
-# claims Azure jobs.
+# adds only the Azure project template. CLI-free: AKS cluster auth is minted in-process by the runner
+# (`runner kube-token --provider azure`, workload-identity AAD token), so no azure-cli / kubelogin is
+# installed. ALETHIA_RUNNER_PROVIDERS=azure → Azure jobs only.
 
 ARG RUNNER_BASE=ghcr.io/alethialabs-io/runner-base:latest
 FROM ${RUNNER_BASE}
-
-# Azure-only tooling (root). Azure CLI via pip.
-RUN apk add --no-cache py3-pip && rm -rf /var/cache/apk/*
-RUN pip3 install --break-system-packages azure-cli
 
 COPY --chown=runner:runner infra/templates/project/azure/ /home/runner/project-templates/azure/
 

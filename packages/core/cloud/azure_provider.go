@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os/exec"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -17,7 +16,9 @@ type azureProvider struct{}
 func (p *azureProvider) Name() string { return "azure" }
 
 func (p *azureProvider) RequiredCLIs() []string {
-	return []string{"az", "kubectl", "helm"}
+	// CLI-free: the runner mints the AKS AAD token in-process (kube-token exec-plugin,
+	// workload-identity federated assertion), replacing `az aks get-credentials` + kubelogin.
+	return []string{"kubectl", "helm"}
 }
 
 func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
@@ -165,26 +166,24 @@ func (p *azureProvider) ConfigureKubeconfig(ctx context.Context, config *types.P
 		return fmt.Errorf("no AKS cluster name in outputs")
 	}
 
-	rgName := extractOutputString(outputs, "resource_group_name")
-	if rgName == "" {
-		rgName = fmt.Sprintf("rg-%s-%s", config.ProjectName, config.EnvironmentStage)
+	// CLI-free: write a kubeconfig that authenticates via the runner's own `kube-token`
+	// exec-plugin (in-process AKS AAD token from the workload-identity federated assertion)
+	// instead of shelling `az aks get-credentials`. A short-lived AAD token (not a
+	// long-lived admin cert) survives AKS local-account hardening and leaks nothing durable.
+	// Endpoint + CA come from the tofu outputs (non-secret; the admin cert is never surfaced).
+	endpoint := extractOutputString(outputs, "aks_cluster_endpoint")
+	ca := extractOutputString(outputs, "aks_cluster_ca_certificate")
+	if endpoint == "" || ca == "" {
+		return fmt.Errorf("missing AKS endpoint/CA in tofu outputs (aks_cluster_endpoint/aks_cluster_ca_certificate)")
 	}
-
-	fmt.Fprintf(stdout, "Configuring kubeconfig for AKS cluster %s (rg: %s)...\n", clusterName, rgName)
-
-	cmd := exec.CommandContext(ctx, "az", "aks", "get-credentials",
-		"--resource-group", rgName,
-		"--name", clusterName,
-		"--overwrite-existing",
+	fmt.Fprintf(stdout, "Configuring kubeconfig for AKS cluster %s...\n", clusterName)
+	return writeExecKubeconfig(
+		clusterName,
+		endpoint,
+		ca,
+		[]string{"kube-token", "--provider", "azure"},
+		stdout,
 	)
-	cmd.Stdout = stdout
-	cmd.Stderr = stdout
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("az aks get-credentials failed: %w", err)
-	}
-
-	fmt.Fprintf(stdout, "Kubeconfig configured for AKS cluster %s\n", clusterName)
-	return nil
 }
 
 func extractOutputString(outputs map[string]interface{}, key string) string {

@@ -34,7 +34,7 @@ export function AI() {
 	return (
 		<section style={{ padding: "84px 0", borderTop: "1px solid var(--border)" }}>
 			<Wrap>
-				<SecMark n="05" label="AI" />
+				<SecMark n="06" label="AI" />
 				<div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 24, flexWrap: "wrap", marginBottom: 36 }}>
 					<h2 style={{ ...disp, fontSize: 38, fontWeight: 600, letterSpacing: "-0.035em", margin: 0, maxWidth: 580, color: "var(--text-primary)" }}>An agent that understands your infrastructure.</h2>
 					<p style={{ fontSize: 15, color: "var(--text-tertiary)", maxWidth: 400, margin: 0, lineHeight: 1.6 }}>It reads your projects, jobs, clusters, and costs through the same tools the console uses. Ask in read-only mode; in act mode it proposes operations you approve — it never provisions on its own.</p>

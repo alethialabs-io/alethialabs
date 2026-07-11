@@ -52,7 +52,10 @@ export class FakeFleet implements FleetProvider {
 			ageSeconds: i.ageSeconds,
 		}));
 	}
-	async create(_project: FleetTarget, opts: { location: string; version: string | null }): Promise<void> {
+	async create(
+		_project: FleetTarget,
+		opts: { location: string; version: string | null; bootstrapToken?: string },
+	): Promise<void> {
 		const id = `f${this.idc++}`;
 		this.instances.set(id, {
 			instanceId: id,
@@ -98,6 +101,7 @@ export class FakeFleet implements FleetProvider {
 				this.persisted.set(runnerId, patch);
 			},
 			bootGraceSeconds: this.bootGraceSeconds,
+			mintBootstrapToken: async () => `fake-boot-${this.idc}`,
 		};
 	}
 

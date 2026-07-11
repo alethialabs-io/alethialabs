@@ -12,6 +12,12 @@ output "aks_cluster_endpoint" {
   value       = var.provision_aks ? module.aks[0].cluster_endpoint : null
 }
 
+output "aks_cluster_ca_certificate" {
+  description = "Base64-encoded CA certificate of the AKS cluster (public; consumed by the runner to build a CLI-free kubeconfig)"
+  value       = var.provision_aks ? module.aks[0].cluster_ca_certificate : null
+  sensitive   = true
+}
+
 #########################################################################
 ##                     Resource Group Outputs                          ##
 #########################################################################

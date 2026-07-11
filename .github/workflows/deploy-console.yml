@@ -214,6 +214,10 @@ jobs:
             file: apps/runner/Dockerfile.gcp
           - image: runner-azure
             file: apps/runner/Dockerfile.azure
+          - image: runner-alibaba
+            file: apps/runner/Dockerfile.alibaba
+          - image: runner-hetzner
+            file: apps/runner/Dockerfile.hetzner
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -348,7 +352,7 @@ jobs:
             for img in console console-migrate docs blog marketing admin; do retag "$img"; done
           fi
           if [ "${RUNNER_CHANGED}" != "true" ]; then
-            for img in runner runner-aws runner-gcp runner-azure; do retag "$img"; done
+            for img in runner runner-aws runner-gcp runner-azure runner-alibaba runner-hetzner; do retag "$img"; done
           fi
 
   deploy:
