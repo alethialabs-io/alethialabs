@@ -19,6 +19,7 @@ import {
 	member,
 	projectEnvironments,
 	promotionApprovals,
+	user,
 } from "@/lib/db/schema";
 import type { EnvironmentStage } from "@/lib/db/schema/enums";
 import type { Actor } from "@/lib/authz/types";
@@ -34,7 +35,11 @@ import {
 	type GateContext,
 	type PromotionRules,
 } from "@/lib/promotions/gates";
-import type { ApproverSpec, PromotionDiff } from "@/types/jsonb.types";
+import type {
+	ApproverSpec,
+	GateResult,
+	PromotionDiff,
+} from "@/types/jsonb.types";
 import {
 	getProjectAsFormData,
 	planProject,
@@ -346,6 +351,123 @@ export async function getPromotion(promotionId: string) {
 		.from(promotionApprovals)
 		.where(eq(promotionApprovals.promotion_id, promotionId));
 	return { promotion, approvals };
+}
+
+/** One approval slot, enriched with the approver's display name for the UI. */
+export interface PromotionApprovalSlot {
+	id: string;
+	status: "pending" | "approved" | "rejected";
+	/** Approver display name; null while the slot is still pending. */
+	name: string | null;
+	initials: string | null;
+	requiredRole: string | null;
+	comment: string | null;
+	decidedAt: string | null;
+}
+
+/** A promotion hydrated for the redesigned panel + detail overlay. */
+export interface PromotionDetail {
+	id: string;
+	status: string;
+	sourceName: string;
+	targetName: string;
+	/** Per-gate results from the stored evaluation ([] until the plan has run). */
+	gates: GateResult[];
+	overall: string | null;
+	approvals: PromotionApprovalSlot[];
+	approved: number;
+	required: number;
+	diff: PromotionDiff | null;
+	initiator: string | null;
+	createdAt: string;
+}
+
+/** Two-letter initials from a display name (e.g. "Ivo Karadzhov" → "IK"). */
+function initialsOf(name: string): string {
+	const parts = name.trim().split(/\s+/).filter(Boolean);
+	if (parts.length === 0) return "?";
+	if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+	return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/**
+ * A promotion hydrated for the UI — gate results (from the stored evaluation), approval slots with
+ * the approver's name, the source/target env names, the diff, and the initiator. Gates on project
+ * `view`. Used by the active-promotion panel and the detail overlay.
+ */
+export async function getPromotionDetail(
+	promotionId: string,
+): Promise<PromotionDetail> {
+	const db = getServiceDb();
+	const [promotion] = await db
+		.select()
+		.from(environmentPromotions)
+		.where(eq(environmentPromotions.id, promotionId))
+		.limit(1);
+	if (!promotion) throw new Error("Promotion not found");
+	await authorize("view", { type: "project", id: promotion.project_id });
+
+	const [envs, approvalRows] = await Promise.all([
+		db
+			.select({ id: projectEnvironments.id, name: projectEnvironments.name })
+			.from(projectEnvironments)
+			.where(
+				inArray(projectEnvironments.id, [
+					promotion.source_environment_id,
+					promotion.target_environment_id,
+				]),
+			),
+		db
+			.select({
+				id: promotionApprovals.id,
+				status: promotionApprovals.status,
+				required_role: promotionApprovals.required_role,
+				comment: promotionApprovals.comment,
+				decided_at: promotionApprovals.decided_at,
+				approver_name: user.name,
+				approver_email: user.email,
+			})
+			.from(promotionApprovals)
+			.leftJoin(user, eq(user.id, promotionApprovals.decided_by))
+			.where(eq(promotionApprovals.promotion_id, promotionId)),
+	]);
+	const nameOf = (id: string) => envs.find((e) => e.id === id)?.name ?? "—";
+
+	const [initiator] = promotion.user_id
+		? await db
+				.select({ name: user.name, email: user.email })
+				.from(user)
+				.where(eq(user.id, promotion.user_id))
+				.limit(1)
+		: [];
+
+	const approvals: PromotionApprovalSlot[] = approvalRows.map((a) => {
+		const display = a.approver_name || a.approver_email || null;
+		return {
+			id: a.id,
+			status: a.status,
+			name: display,
+			initials: display ? initialsOf(display) : null,
+			requiredRole: a.required_role,
+			comment: a.comment,
+			decidedAt: a.decided_at ? a.decided_at.toISOString() : null,
+		};
+	});
+
+	return {
+		id: promotion.id,
+		status: promotion.status,
+		sourceName: nameOf(promotion.source_environment_id),
+		targetName: nameOf(promotion.target_environment_id),
+		gates: promotion.gate_evaluations?.results ?? [],
+		overall: promotion.gate_evaluations?.overall ?? null,
+		approvals,
+		approved: approvals.filter((a) => a.status === "approved").length,
+		required: approvals.length,
+		diff: promotion.diff_summary ?? null,
+		initiator: initiator?.name || initiator?.email || null,
+		createdAt: promotion.created_at.toISOString(),
+	};
 }
 
 // --- internals ------------------------------------------------------------------------------------
