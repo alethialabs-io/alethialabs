@@ -33,10 +33,12 @@ work **once** as both a closure and a serializable `Stage`, so the two backends 
 | `Passthrough` | `passthrough.go` | none — runs the closure in-process with the full host env | default; **trusted** templates only (today's managed provisioning + self-hosted) |
 | `Container` | `container.go` | fresh per-job container: allowlisted env, own PID ns, RO cred mounts, egress gate | **untrusted** BYO on the managed fleet, once enabled (E0 3b) |
 
-`Passthrough` is fail-**open** (it runs), so it is deliberately loud and can be made to **refuse** on a
-managed runner via `EnforceManaged` (wired to `ALETHIA_SANDBOX_ENFORCE_MANAGED`) — the config-driven
-kill-switch so a mis-configured managed pool never silently downgrades to no isolation. Selection is off
-`ALETHIA_SANDBOX_BACKEND`; a container backend that fails to initialize on a managed runner is
+`Passthrough` is fail-**open** (it runs), so it is deliberately loud and can be made to **refuse** on any
+non-`self` runner via `EnforceManaged` (wired to `ALETHIA_SANDBOX_ENFORCE_MANAGED`) — the config-driven
+kill-switch so a mis-configured pool never silently downgrades to no isolation. The refusal is
+fail-**closed** against the operator string: only an explicit `operator=self` is lenient, so an
+empty/miscased/unknown operator refuses rather than running untrusted tofu in-process. Selection is off
+`ALETHIA_SANDBOX_BACKEND`; a container backend that fails to initialize on any non-`self` runner is
 **fail-closed** (a refusing `Passthrough`), never a silent fallback.
 
 ## The Container backend

@@ -70,8 +70,11 @@ func selectSandbox(cfg Config) sandbox.Sandbox {
 	if err == nil {
 		return c
 	}
-	if cfg.Operator == "managed" {
-		fmt.Fprintf(os.Stderr, "sandbox: container backend required but unavailable on managed runner: %v — refusing jobs (fail-closed)\n", err)
+	// Fail-closed for anything that is not an EXPLICIT self operator: an empty/unknown
+	// operator string must NOT downgrade to a lenient Passthrough when the container backend
+	// was requested but is unavailable — only "self" (customer's own cloud) is lenient.
+	if cfg.Operator != "self" {
+		fmt.Fprintf(os.Stderr, "sandbox: container backend required but unavailable on non-self runner (operator=%q): %v — refusing jobs (fail-closed)\n", cfg.Operator, err)
 		return sandbox.Passthrough{Operator: cfg.Operator, EnforceManaged: true}
 	}
 	fmt.Fprintf(os.Stderr, "sandbox: container backend unavailable (%v); using Passthrough (operator=%s)\n", err, cfg.Operator)
@@ -371,10 +374,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 	case types.JobTypeChartScan:
 		execErr = w.executeChartScan(ctx, job, stdoutLogger, stderrLogger)
 	case types.JobTypeIacScan:
-		// BYO IaC (E3): the scan executor (clone → pin commit → inventory → tofu validate)
-		// lands with the runner half of the feature. Fail loudly until then — the console
-		// only queues IAC_SCAN behind ALETHIA_BYO_IAC_ENABLED.
-		execErr = fmt.Errorf("IAC_SCAN is not implemented by this runner version — upgrade the runner to use bring-your-own IaC")
+		execErr = w.executeIacScan(ctx, job, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}
@@ -453,6 +453,12 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		vc.CloudAccountID = resolveAccountID(identity)
 	}
 	vc.ConnectorCredentials = toCoreConnectorCreds(connectorCreds)
+
+	// E0 boundary: BYO IaC executes untrusted customer tofu — refuse on a managed runner
+	// unless the egress-enforced container sandbox is active. Fail-closed, before any work.
+	if err := w.byoManagedGate(vc, "DEPLOY"); err != nil {
+		return err
+	}
 
 	if job.PlanJobID != nil && *job.PlanJobID != "" {
 		fmt.Fprintf(stdout, "Validating against plan job %s...\n", *job.PlanJobID)
@@ -597,6 +603,12 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 	}
 	vc.ConnectorCredentials = toCoreConnectorCreds(connectorCreds)
 
+	// E0 boundary: BYO IaC executes untrusted customer tofu — refuse on a managed runner
+	// unless the egress-enforced container sandbox is active. Fail-closed, before any work.
+	if err := w.byoManagedGate(vc, "PLAN"); err != nil {
+		return err
+	}
+
 	infracostKey := os.Getenv("INFRACOST_API_KEY")
 
 	planGitToken := vc.GitAccessToken
@@ -708,6 +720,12 @@ func (w *Runner) executeDestroy(ctx context.Context, job *Job, provider string, 
 	}
 	vc.ConnectorCredentials = toCoreConnectorCreds(connectorCreds)
 
+	// E0 boundary: BYO IaC executes untrusted customer tofu — refuse on a managed runner
+	// unless the egress-enforced container sandbox is active. Fail-closed, before any work.
+	if err := w.byoManagedGate(vc, "DESTROY"); err != nil {
+		return err
+	}
+
 	stateBackend, err := w.stateBackend(job.ID)
 	if err != nil {
 		return err
@@ -786,6 +804,65 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 	case <-ctx.Done():
 	case <-time.After(d):
 	}
+}
+
+// byoManagedGate is the E0 isolation boundary for bring-your-own IaC on a MANAGED-operator
+// runner. BYO PLAN/DEPLOY/DESTROY/DETECT_DRIFT execute UNTRUSTED customer OpenTofu — an RCE
+// surface: provider plugins run at init/validate/plan, and `local-exec`/`remote-exec`
+// provisioners + `external` data sources run arbitrary commands. A managed runner federates
+// into customer clouds AND sits in the platform account, so that untrusted code must NEVER
+// run outside an egress-enforced container sandbox — otherwise it reaches 169.254.169.254
+// and recovers the fleet's storage master key + bootstrap token (the metadata firehose).
+//
+// The gate has two separable halves:
+//   - the "is this untrusted BYO?" decision (a non-nil IacSource) lives HERE, and
+//   - the "managed requires an egress-enforced container" enforcement lives in
+//     requireManagedContainerSandbox, so the SAME enforcement can be applied by callers
+//     whose job is untrusted-BYO by definition and carries no ProjectConfig (IAC_SCAN).
+//
+// SELF operators run BYO IaC in the customer's OWN cloud with their own creds — their risk
+// boundary — so they are always allowed. A nil IacSource (trusted Alethia templates) is
+// unaffected. When the gate PASSES, the untrusted work still runs THROUGH the container
+// sandbox (the deploy/plan/destroy/drift paths all call w.sandbox.Run) — the gate guarantees
+// that backend is the active one, so managed BYO IaC can never execute outside the container.
+func (w *Runner) byoManagedGate(vc *types.ProjectConfig, kind string) error {
+	if vc == nil || vc.IacSource == nil {
+		return nil // trusted (non-BYO) template path — unaffected
+	}
+	return w.requireManagedContainerSandbox(kind)
+}
+
+// requireManagedContainerSandbox is the enforcement half of the E0 boundary: it refuses to
+// run untrusted BYO work unless the runner is an explicit SELF operator OR the egress-enforced
+// container sandbox is active with managed-enforcement on. It presumes the caller has already
+// established the work is untrusted BYO — byoManagedGate calls it only when IacSource != nil,
+// and executeIacScan calls it UNCONDITIONALLY (an IAC_SCAN is untrusted BYO by definition).
+//
+// It is FAIL-CLOSED. Work is allowed ONLY when either:
+//   - w.config.Operator == "self" — the customer's OWN cloud + creds are their risk boundary; OR
+//   - all of: the active backend is the Container backend (ALETHIA_SANDBOX_BACKEND=container),
+//     that backend confirms egress enforcement (EgressEnforced, from
+//     ALETHIA_SANDBOX_EGRESS_ENFORCED=1 — default-deny net + IMDS block + squid allowlist), AND
+//     ALETHIA_SANDBOX_ENFORCE_MANAGED=1 (the post-canary managed-enforcement flip, which the
+//     maintainer sets fleet-wide AFTER the real-VM 3b canary; see memory e0-isolation-runtime).
+//
+// Crucially only an EXPLICIT "self" operator takes the allow path — an empty/miscased/unknown
+// operator string ("", "Managed", typo) is treated as managed-strict and MUST pass through the
+// container requirement, so a mis-set operator can never fail OPEN into unsandboxed execution.
+func (w *Runner) requireManagedContainerSandbox(kind string) error {
+	if w.config.Operator == "self" {
+		return nil // self operator: customer's own cloud + creds = their risk boundary
+	}
+	c, ok := w.sandbox.(sandbox.Container)
+	if ok && c.EgressEnforced && envTrue("ALETHIA_SANDBOX_ENFORCE_MANAGED") {
+		return nil // egress-enforced container sandbox is active + managed-enforcement on
+	}
+	return fmt.Errorf(
+		"refusing to run bring-your-own IaC %s on a managed runner without the egress-enforced container sandbox: "+
+			"this executes untrusted customer OpenTofu (provider plugins + provisioners run arbitrary code) and is only "+
+			"permitted inside the E0 isolation boundary — set ALETHIA_SANDBOX_BACKEND=container, "+
+			"ALETHIA_SANDBOX_EGRESS_ENFORCED=1 and ALETHIA_SANDBOX_ENFORCE_MANAGED=1 on the managed fleet (post 3b canary)",
+		kind)
 }
 
 // envTrue reports whether an env var is set to a truthy value (1/true/yes/on).

@@ -51,12 +51,24 @@ func RunExecStage(ctx context.Context) error {
 			return fmt.Errorf("parse destroy payload: %w", err)
 		}
 		return runDestroyStage(ctx, p, sec, workDir, os.Stdout, os.Stderr)
+	case sandbox.StageDrift:
+		var p stageDriftPayload
+		if err := json.Unmarshal(st.Payload, &p); err != nil {
+			return fmt.Errorf("parse drift payload: %w", err)
+		}
+		return runDriftStage(ctx, p, sec, workDir, os.Stdout, os.Stderr)
 	case sandbox.StageChartScan:
 		var p stageChartScanPayload
 		if err := json.Unmarshal(st.Payload, &p); err != nil {
 			return fmt.Errorf("parse chart-scan payload: %w", err)
 		}
 		return runChartScanStage(ctx, p, workDir, os.Stdout, os.Stderr)
+	case sandbox.StageIacScan:
+		var p stageIacScanPayload
+		if err := json.Unmarshal(st.Payload, &p); err != nil {
+			return fmt.Errorf("parse iac-scan payload: %w", err)
+		}
+		return runIacScanStage(ctx, p, workDir, os.Stdout, os.Stderr)
 	default:
 		return fmt.Errorf("unknown stage kind %q", st.Kind)
 	}
