@@ -10,6 +10,7 @@ output "aks_cluster_name" {
 output "aks_cluster_endpoint" {
   description = "Endpoint of the AKS cluster"
   value       = var.provision_aks ? module.aks[0].cluster_endpoint : null
+  sensitive   = true
 }
 
 output "aks_cluster_ca_certificate" {
