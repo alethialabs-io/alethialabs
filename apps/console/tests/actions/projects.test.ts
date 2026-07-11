@@ -50,9 +50,12 @@ import {
 	projectEnvironments,
 	projectIacSources,
 	projectNetwork,
+	projectNosqlTables,
+	projectQueues,
 	projectRepositories,
 	projectSecrets,
 	projectStorageBuckets,
+	projectTopics,
 	projects,
 	resourceHierarchy,
 } from "@/lib/db/schema";
@@ -568,6 +571,91 @@ describe("planProject", () => {
 			),
 		});
 		await expect(planProject("p1")).rejects.toThrow(/no VPC selected/);
+	});
+
+	// ── Fail-closed unsupported-KIND gate (buildConfigSnapshot) ─────────────
+	it("fails closed on a Hetzner topic (kind the template can't provision, no silent drop)", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+					[projectTopics, [{ name: "events", cloud_identity_id: null }]],
+				]),
+			),
+		});
+		await expect(planProject("p1")).rejects.toThrow(
+			/Component "events" \(topic\) can't be provisioned on Hetzner/,
+		);
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("fails closed on a Hetzner nosql table", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+					[projectNosqlTables, [{ name: "sessions", cloud_identity_id: null }]],
+				]),
+			),
+		});
+		await expect(planProject("p1")).rejects.toThrow(
+			/Component "sessions" \(nosql\) can't be provisioned on Hetzner/,
+		);
+	});
+
+	it("fails closed on a Hetzner container registry, naming the Harbor alternative", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+					[projectContainerRegistries, [{ name: "apps", cloud_identity_id: null }]],
+				]),
+			),
+		});
+		await expect(planProject("p1")).rejects.toThrow(
+			/Component "apps" \(registry\).*Harbor/,
+		);
+	});
+
+	it("queues a Hetzner job when only supported kinds are present (cluster/network/db-pg/cache/queue/secret/dns)", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+					[projectNetwork, [{ provision_network: true, cloud_identity_id: null }]],
+					[projectCluster, [{ cloud_identity_id: null }]],
+					[projectDns, [{ enabled: true, domain_name: "example.com" }]],
+					[
+						projectDatabases,
+						[{ name: "pg", engine_family: "postgres", cloud_identity_id: null }],
+					],
+					[projectCaches, [{ name: "cache", cloud_identity_id: null }]],
+					[projectQueues, [{ name: "queue", cloud_identity_id: null }]],
+					[projectSecrets, [{ name: "secret", cloud_identity_id: null }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		const r = await planProject("p1");
+		expect(r).toEqual({ jobId: "job-1" });
+	});
+
+	it("passes a managed cloud (aws) with topic/nosql/registry — supported there", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					// aws is the default identity in snapshotSelect
+					[projectTopics, [{ name: "events", cloud_identity_id: null }]],
+					[projectNosqlTables, [{ name: "sessions", cloud_identity_id: null }]],
+					[projectContainerRegistries, [{ name: "apps", cloud_identity_id: null }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		const r = await planProject("p1");
+		expect(r).toEqual({ jobId: "job-1" });
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		expect(snapshot.provider).toBe("aws");
 	});
 
 	it("targets an explicit environment, rejecting when it does not belong to the project", async () => {

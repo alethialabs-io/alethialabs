@@ -40,11 +40,14 @@ import {
 	HETZNER_DB_ENGINES,
 	hetznerDataServicesToAddOns,
 } from "@/lib/cloud-providers/hetzner-services";
+import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
 import {
 	type CloudProviderSlug,
 	type ConversionWarning,
 	convertProjectConfig,
+	getProvider,
 } from "@/lib/cloud-providers";
+import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { notifyScaler } from "@/lib/scaler";
 import { designInventory } from "@/lib/promotions/diff";
@@ -81,6 +84,36 @@ function hetznerDbEngineGateError(name: string, engineFamily: string): Error {
 		`Database "${name}": ${label} databases can't be provisioned on Hetzner — the in-cluster ` +
 			"CloudNativePG operator supports PostgreSQL only. Switch the database engine to PostgreSQL " +
 			"or move the stack to a cloud with a managed service for this engine.",
+	);
+}
+
+/**
+ * Deploy-time honesty gate (fail-closed), same shape/placement as hetznerDbEngineGateError:
+ * reject a component whose KIND the target cloud's built-in template can't provision. The palette
+ * hides these kinds per provider (UNSUPPORTED_KINDS_BY_PROVIDER, node-registry.ts), but a
+ * cloud-switch or an AI-composed graph can still carry one — and without this gate the snapshot
+ * mapper silently drops it, so the deploy reports SUCCESS without the component. The blocked set is
+ * derived from the SAME single source the palette uses, so un-hiding a kind there disarms the gate.
+ */
+function unsupportedKindGateError(
+	kind: NodeKind,
+	provider: string,
+	name: string,
+): Error {
+	const cloud = getProvider(provider).name;
+	const hint: Partial<Record<NodeKind, string>> = {
+		registry:
+			"container registries have no native path — deploy the Harbor marketplace add-on for an in-cluster registry, or move the stack to a cloud with a managed registry",
+		bucket:
+			"object storage has no native path — deploy the MinIO marketplace add-on for in-cluster S3-compatible storage, or move the stack to a cloud with managed object storage",
+		topic:
+			"there is no managed pub/sub service — move the stack to a cloud with managed messaging (e.g. AWS SNS)",
+		nosql:
+			"there is no managed NoSQL service — move the stack to a cloud with one (e.g. AWS DynamoDB)",
+	};
+	const detail = hint[kind] ?? `"${kind}" components have no provisioning path here`;
+	return new Error(
+		`Component "${name}" (${kind}) can't be provisioned on ${cloud}: ${detail}.`,
 	);
 }
 
@@ -717,6 +750,42 @@ async function buildConfigSnapshot(
 				),
 			)
 			.limit(1);
+
+		// Fail-closed KIND gate: reject any present component whose KIND the target cloud's
+		// built-in template can't provision (Hetzner: topic/nosql/bucket/registry). Derived from
+		// the SAME UNSUPPORTED_KINDS_BY_PROVIDER set the Add-palette hides — a cloud-switch or an
+		// AI-composed graph can smuggle a hidden kind past the palette, and the snapshot mapper
+		// would then silently drop it (SUCCESS without the component). Skipped in BYO-IaC replace
+		// mode (like the placement/network gates below): the customer's module, not the component
+		// graph, decides what gets provisioned.
+		if (!iacSource) {
+			const blocked = new Set<NodeKind>(unsupportedKindsFor(identity.provider));
+			if (blocked.size > 0) {
+				const present: Array<{ kind: NodeKind; name: string }> = [
+					...(network ? [{ kind: "network" as const, name: "network" }] : []),
+					...(cluster ? [{ kind: "cluster" as const, name: "cluster" }] : []),
+					...(dns?.enabled
+						? [{ kind: "dns" as const, name: dns.domain_name ?? "dns" }]
+						: []),
+					...databases.map((d) => ({ kind: "database" as const, name: d.name })),
+					...caches.map((c) => ({ kind: "cache" as const, name: c.name })),
+					...queues.map((q) => ({ kind: "queue" as const, name: q.name })),
+					...topics.map((t) => ({ kind: "topic" as const, name: t.name })),
+					...nosqlTables.map((n) => ({ kind: "nosql" as const, name: n.name })),
+					...secrets.map((s) => ({ kind: "secret" as const, name: s.name })),
+					...storageBuckets.map((b) => ({ kind: "bucket" as const, name: b.name })),
+					...containerRegistries.map((r) => ({
+						kind: "registry" as const,
+						name: r.name,
+					})),
+				];
+				for (const c of present) {
+					if (blocked.has(c.kind)) {
+						throw unsupportedKindGateError(c.kind, identity.provider, c.name);
+					}
+				}
+			}
+		}
 
 		// Hetzner is compute-only: canvas database/cache/queue nodes have no managed cloud
 		// service, so they deploy as in-cluster Helm charts (CloudNativePG / Valkey / RabbitMQ).
