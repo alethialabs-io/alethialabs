@@ -1,0 +1,289 @@
+---
+title: Bring Your Own IaC
+description: Attach a git repo holding your own OpenTofu root module to a project environment — Alethia provisions from your module instead of its built-in template, behind a fail-closed static safety gate, a frozen variable contract, and the same verify gate as template provisioning.
+---
+
+# Bring Your Own IaC
+
+Alethia normally provisions from its own per-cloud project templates (EKS / GKE / AKS / ACK / Talos +
+supporting services). **Bring-your-own IaC (BYO IaC, "E3")** lets you point a project **environment** at
+a git repository holding your **own OpenTofu root module** — Alethia then provisions that environment
+from *your* module instead of the built-in template.
+
+Because a customer's OpenTofu is arbitrary code, running it is a trust decision. This page describes the
+contract Alethia gives your module, the static safety gate that vets it, who is allowed to run it, and
+the lifecycle that keeps the whole thing TOCTOU-safe.
+
+<Callout type="info">
+  **v1 is REPLACE mode.** A BYO source attached to an environment provisions *instead of* the built-in
+  template — not alongside it. There is at most **one** source per environment. Attaching is rejected if
+  the environment already has deployed (or in-flight) template state; destroy it first. Composing your
+  module *with* an Alethia template is not a v1 capability.
+</Callout>
+
+<Callout type="warn">
+  **Flagged off by default.** BYO IaC is gated by `ALETHIA_BYO_IAC_ENABLED` (unset / not `true` = the
+  whole feature is unavailable — attach, scan, and provisioning all refuse). On the **managed fleet** it
+  is additionally gated by the container sandbox — see [Operator model](#operator-model--who-can-run-byo-iac).
+</Callout>
+
+## Why a gate at all
+
+Running `tofu plan` on arbitrary HCL is **remote code execution**. Providers are arbitrary binaries
+fetched at `init` time; an `external` data source executes a program during `plan`; `local-exec` /
+`remote-exec` provisioners run commands at `apply`. So BYO IaC is protected by two independent controls:
+
+1. A **fail-closed static safety gate** (`iacsafety`) that *parses* the module — never evaluates
+   expressions, never runs `tofu`, never fetches remote modules — and blocks anything dangerous before a
+   single `tofu` command runs.
+2. The **execution sandbox** (on the managed fleet) that contains a hostile provider even if it slips the
+   gate. See [Isolated Execution](/isolated-execution).
+
+The gate is the first line; the sandbox is the backstop. Neither is trusted alone.
+
+## The Alethia variable contract
+
+When Alethia runs your module it injects **platform context** as OpenTofu variables via `TF_VAR_*`
+environment variables. This set is a **frozen public contract** — author your module's `variable` blocks
+against these exact names:
+
+| Variable | Meaning |
+| --- | --- |
+| `alethia_project` | The project name |
+| `alethia_environment` | The environment stage (e.g. `production`, `staging`) |
+| `alethia_region` | The primary region |
+| `alethia_project_id` | The Alethia project/config id |
+| `alethia_environment_id` | The Alethia environment id |
+
+Declare the ones you want in your root module:
+
+```hcl
+variable "alethia_project"     { type = string }
+variable "alethia_environment" { type = string }
+variable "alethia_region"      { type = string }
+```
+
+<Callout type="info">
+  **Frozen means additive-only.** These names never rename or disappear — new keys may only be *added*.
+  A module that declares **none** of them is unaffected (OpenTofu silently ignores undeclared
+  `TF_VAR_*`); a module that declares one receives its value.
+</Callout>
+
+### The `alethia_` namespace is reserved
+
+Your own variable values (`var_values`) are passed to `tofu` as a var-file, which is **higher precedence**
+than `TF_VAR_*` env vars. To stop a customer value from *shadowing* the platform context (e.g. spoofing
+`alethia_project_id`), any `var_values` key starting with **`alethia_`** is **dropped** with a warning.
+Name your own variables anything outside that prefix.
+
+Customer variable values are also **coerced to scalars** at the write step: only `string` / number /
+`bool` pass through. Nested objects, arrays, and other shapes are rejected (skipped with a warning) so
+nothing structured or injectable reaches the tfvars file; a `null` is skipped so your module's own default
+applies.
+
+## The static safety gate
+
+Before any `tofu` runs, `iacsafety.Scan` walks the root module and every **local** child module it
+references (staying inside the clone), parsing configuration only. It produces `error`- and
+`warning`-severity findings; **any error-severity finding fails the deploy closed** — the provisioner
+never reaches `tofu`. The gate runs at **attach/scan time** *and* is **re-run inline on every
+plan/deploy/destroy** (defense in depth — the recorded scan result is never trusted on its own).
+
+What the gate enforces:
+
+| Rule | Severity | Why |
+| --- | --- | --- |
+| **Provider not on the allowlist** | error | `tofu init` downloads and executes provider binaries; only vetted providers are allowed. Covers both explicit `required_providers` sources and providers *implied* by a resource/data type. |
+| **`provisioner` blocks** | error | `local-exec` / `remote-exec` run arbitrary commands at apply. |
+| **`data "external"`** | error | Executes a program during `plan`. |
+| **Remote / absolute module sources** | error | A non-local (`./` or `../`) module source — registry, git, http, s3/gcs, absolute or `~` path — cannot be statically vetted (`tofu init` would fetch and run code the gate never saw, including provider binaries the unfetched module declares). Rejected outright. |
+| **Module escapes the scan root** | error | A local module source (or symlink) resolving outside the clone. |
+| **Override files** (`override.tf`, `*_override.{tf,tofu,tf.json,tofu.json}`) | error | Override files merge *last* and their blocks *replace* the originals — a customer one could shadow the platform backend override and escape state to local disk. Rejected by name, regardless of content. |
+| **Parse error** in any `.tf` / `.tofu` / `.tf.json` / `.tofu.json` | error | Fail closed: what the gate cannot read, it cannot vouch for. |
+| **`data "http"`** | warning | Network access at plan time (SSRF); surfaced, not blocked. |
+| **`data "terraform_remote_state"`** | warning | Reads arbitrary remote state at plan time; sometimes legitimate, always surfaced. |
+| **`backend` / `cloud` block declared** | warning | Ignored — Alethia overrides the backend (see below). |
+
+### Provider allowlist
+
+The default allowed provider set:
+
+```
+hashicorp/aws          hashicorp/google      hashicorp/google-beta
+hashicorp/azurerm      hashicorp/azuread     hashicorp/alicloud
+hashicorp/kubernetes   hashicorp/helm        hashicorp/tls
+hashicorp/random       hashicorp/time        hashicorp/cloudinit
+hashicorp/dns          hashicorp/local       hashicorp/null
+hashicorp/template     aliyun/alicloud       hetznercloud/hcloud
+```
+
+Registry-host prefixes are normalized away, so `registry.opentofu.org/hashicorp/aws` and
+`registry.terraform.io/hashicorp/aws` both match `hashicorp/aws`; a provider on **any other** registry
+host keeps its host and therefore never matches — **unknown registries fail closed**. An operator can
+override the set with `ALETHIA_BYO_IAC_PROVIDER_ALLOWLIST` (comma-separated provider source addresses);
+an unset or empty value falls back to the default.
+
+## State is Alethia's, not yours
+
+Your module may declare a `backend` / `cloud` block, but Alethia **overrides it**: an empty `http`
+backend override is written into the cloned module (under both `.tf` and `.tofu` extensions, to close the
+OpenTofu 1.8+ precedence gap), and its `-backend-config` binds to Alethia's per-job **console HTTP state
+proxy**. So:
+
+- Your backend block is **ignored** (and flagged as a warning; a customer-committed *override file* is
+  rejected outright as a footgun).
+- State lives behind Alethia's **per-job state proxy**, keyed per environment. The runner holds no
+  authoritative state and no object-storage credential — one job's token can only touch its own state.
+
+See [Terraform State Management](/concepts/terraform-state) for the state model, and
+[Isolated Execution](/isolated-execution) for how the state-proxy source-drop is part of the sandbox.
+
+## Cluster wiring is opportunistic
+
+Alethia's post-apply steps — the reachability gate, kubeconfig capture, ArgoCD install, infra-services —
+key off the module's OpenTofu **outputs**:
+
+- A module that outputs **`cluster_name`** (and `cluster_endpoint`) opportunistically gets the
+  reachability gate and ArgoCD/GitOps wiring, exactly like a template-provisioned cluster.
+- A module that outputs **neither degrades gracefully**: Alethia provisions it, captures its outputs, and
+  stops there — no kubeconfig probe, no ArgoCD. Perfectly valid for a module that provisions something
+  other than a cluster.
+
+## Verification: the same gate as templates
+
+A BYO plan flows through the **same fail-closed [elench](/elench) verify gate** as template
+provisioning — the deterministic controls (keyless / least-privilege / OIDC-sub, with honest
+`not_evaluable` for what the plan can't show) run between `tofu plan` and `tofu apply`, and a hard
+control failure blocks the apply unless an authorized override waives it. Every plan/apply also produces
+an **ed25519-signed evidence receipt** sealing the report to the exact plan (`plan_sha256`).
+
+<Callout type="info">
+  The receipt seals the *plan* (`plan_sha256`) + control catalog + verdict. The **git provenance** of a
+  BYO deploy — which commit actually ran — is pinned separately on the environment's source record
+  (the scanned `commit_sha`, and the `deployed_commit_sha` of the last successful deploy), not embedded
+  in the receipt itself.
+</Callout>
+
+## Lifecycle
+
+<img src="/docs/diagrams/concepts/provisioning-pipeline.svg" alt="Provisioning pipeline" />
+
+1. **Attach** (console, per environment) — you attach a repo + ref + module path (+ optional variable
+   values and a git credential). Rejected if the environment already has a source, or has deployed /
+   in-flight **template** state (replace mode would orphan it — destroy first).
+2. **`IAC_SCAN`** — a scan job clones the repo, **pins the exact commit SHA it checked out**, inventories
+   the module (providers + module sources), runs the static safety gate + `tofu validate`, and writes the
+   report back. Provisioning stays **locked** until a clean scan pins a `commit_sha`; a failed / not-ok
+   scan clears the pin.
+3. **Plan / Deploy** — run the **pinned commit** (never the moving ref). The gate is re-run inline
+   (fail-closed), the backend is overridden to the state proxy, the frozen `TF_VAR_alethia_*` context is
+   published, and the plan flows through the verify gate. A successful deploy records its
+   `deployed_commit_sha`.
+4. **Detect drift** — the pinned commit is refreshed against real state, producing a drift posture like
+   any environment.
+5. **Destroy** — runs the **last-deployed** commit (`deployed_commit_sha`), then purges the state. A
+   source that never deployed is freely detachable; one holding live BYO infra must be destroyed before
+   detaching.
+
+<Callout type="info">
+  **TOCTOU-safe by construction.** The gate vets a commit; deploy provisions **that exact commit**, not
+  whatever the branch points at now. A ref that moved after the scan cannot smuggle unvetted bytes into
+  an apply — a pinned `commit_sha` is required (a ref alone is refused).
+</Callout>
+
+## Operator model — who can run BYO IaC
+
+This is the honest availability boundary. BYO IaC runs **untrusted customer code**, so *where* it runs
+determines whether it is available:
+
+- **Self-hosted runners (`operator=self`)** run BYO IaC at the **customer's own risk boundary** — the
+  runner is in the customer's own cloud with native permissions. This is the **generally-available** path
+  under the `ALETHIA_BYO_IAC_ENABLED` flag.
+- **Managed runners** are **fail-closed blocked** from executing untrusted BYO IaC **unless** the
+  per-job container sandbox with egress enforcement is active — i.e. `ALETHIA_SANDBOX_BACKEND=container`
+  **and** `ALETHIA_SANDBOX_EGRESS_ENFORCED` **and** `ALETHIA_SANDBOX_ENFORCE_MANAGED`. That sandbox
+  itself stays disabled until the **real-VM isolation canary** is proven on the fleet (nested podman,
+  `/proc` isolation, IMDS unreachable, domain-allowlist egress).
+
+<Callout type="warn">
+  **Managed BYO IaC is trusted-only / gated until the isolation canary passes.** Do not assume managed
+  availability. The container sandbox and its turn-on sequence are documented in
+  [Isolated Execution → Architecture](/isolated-execution/architecture) and the
+  [Managed provisioning runbook](/self-hosting/managed-provisioning#untrusted-byo-container-sandbox-3b).
+  Self-hosted BYO IaC is available today under the flag.
+</Callout>
+
+## Getting started
+
+### 1. A minimal BYO module
+
+The smallest valid BYO module needs no cluster and no cloud — a `random`/`null` module exercises the
+whole path (attach → scan → plan → deploy → destroy) with zero spend. Put this in a repo directory (e.g.
+`envs/dev/`):
+
+```hcl
+# main.tf — a minimal BYO IaC module
+terraform {
+  required_providers {
+    random = { source = "hashicorp/random" } # on the default allowlist
+  }
+  # No backend block needed — Alethia overrides it with its state proxy.
+}
+
+# Platform context from the frozen Alethia contract (declare only what you use).
+variable "alethia_project"     { type = string }
+variable "alethia_environment" { type = string }
+
+# Your own variables (any name NOT starting with alethia_).
+variable "greeting" {
+  type    = string
+  default = "hello"
+}
+
+resource "random_pet" "name" {
+  prefix = "${var.alethia_project}-${var.alethia_environment}"
+}
+
+output "pet"      { value = random_pet.name.id }
+output "greeting" { value = var.greeting }
+```
+
+To provision a real cluster instead, output `cluster_name` / `cluster_endpoint` and Alethia
+opportunistically wires the reachability gate + ArgoCD (see [above](#cluster-wiring-is-opportunistic)).
+
+### 2. Enable the feature
+
+Set on the console env (self-hosted):
+
+```bash
+ALETHIA_BYO_IAC_ENABLED=true
+```
+
+For the **managed fleet**, additionally satisfy the sandbox gate — see the
+[operator model](#operator-model--who-can-run-byo-iac) above.
+
+### 3. Attach it to an environment
+
+In the console, open the project's **Architecture** surface for the target environment and attach the
+source: **repo URL** (https or ssh — `file://` and other local schemes are rejected on the untrusted
+path), **ref** (branch/tag), **module path** (e.g. `envs/dev`, `""` = repo root), an optional **git
+credential** (for a private repo), and optional **variable values** (e.g. `greeting = "hi"`). Attaching
+auto-queues the `IAC_SCAN`; once it lands `done`, the commit is pinned and Plan/Deploy unlock.
+
+## Where to go next
+
+<Cards>
+  <Card title="Isolated Execution" href="/isolated-execution">
+    The per-job container sandbox that contains untrusted BYO code on the managed fleet — the runtime
+    backstop behind the static gate.
+  </Card>
+  <Card title="Elench (verification)" href="/elench">
+    The fail-closed verify gate and signed evidence receipt every plan/apply flows through.
+  </Card>
+  <Card title="Terraform State" href="/concepts/terraform-state">
+    How state is stored — and why Alethia overrides your backend with its per-job state proxy.
+  </Card>
+  <Card title="Provisioning Pipeline" href="/concepts/provisioning-pipeline">
+    Config snapshot → ProjectConfig → tfvars → infrastructure, shared by template and BYO paths.
+  </Card>
+</Cards>

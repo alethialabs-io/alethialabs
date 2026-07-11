@@ -18,6 +18,26 @@ dedicated Go field. So **full customizability already exists for any variable th
 passthrough can't reach an undeclared knob. So the real parity gap is *declared-variable coverage*, not
 the plumbing.
 
+## Full escape hatch — Bring Your Own IaC (E3)
+
+Declared-variable coverage is the parity story for the **built-in templates**. When a customer needs a
+knob no template declares — or an entirely different resource graph — the full escape hatch is
+**bring-your-own IaC**: attach a git repo holding your **own OpenTofu root module** to a project
+environment and Alethia provisions from *your* module instead of the built-in template (v1 = **replace**
+mode). This is the ultimate customizability ceiling — arbitrary OpenTofu, subject only to the fail-closed
+`iacsafety` static gate (provider allowlist, no `provisioner`/`external`, no remote module sources, no
+override files) and the sandbox/verify controls.
+
+- Contract: platform context is injected as frozen `TF_VAR_alethia_*` variables (`alethia_project`,
+  `_environment`, `_region`, `_project_id`, `_environment_id`); the `alethia_` var namespace is reserved.
+- State: the customer backend block is overridden to Alethia's per-job console HTTP state proxy.
+- Cluster wiring: a module that outputs `cluster_name` / `cluster_endpoint` opportunistically gets the
+  reachability gate + ArgoCD; one that doesn't degrades gracefully.
+- Availability: flag-gated (`ALETHIA_BYO_IAC_ENABLED`), GA on **self** runners; **managed** stays
+  trusted-only until the container-sandbox isolation canary passes.
+
+Full detail: [Bring Your Own IaC](../../../apps/docs/content/docs/concepts/bring-your-own-iac.mdx).
+
 ## Current declared-variable coverage
 
 | Template | root variables |
