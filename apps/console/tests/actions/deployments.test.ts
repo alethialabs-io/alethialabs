@@ -218,8 +218,8 @@ describe("finalizeDeployment — success path", () => {
 
 	it("clears a stale argocd_url when the deploy reports no ingress", async () => {
 		const job = fullJob();
-		delete job.execution_metadata.argocd_url;
-		const { writeFor } = mockDb([job]);
+		const { argocd_url: _omitted, ...withoutUrl } = job.execution_metadata;
+		const { writeFor } = mockDb([{ ...job, execution_metadata: withoutUrl }]);
 		await finalizeDeployment("job-1");
 
 		expect(writeFor(projectCluster)?.set).toMatchObject({ argocd_url: null });
