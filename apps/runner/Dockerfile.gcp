@@ -3,20 +3,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Lean GCP-only runner image (per-cloud routing) — `runner-gcp`. Builds FROM the shared runner-base and adds
-# only the Google Cloud SDK + GKE auth plugin + the GCP project template. Declares
-# ALETHIA_RUNNER_PROVIDERS=gcp so it only claims GCP jobs.
+# only the GCP project template. CLI-free: GKE cluster auth is minted in-process by the runner (`runner
+# kube-token --provider gcp`), so no gcloud SDK / gke-gcloud-auth-plugin is installed.
+# ALETHIA_RUNNER_PROVIDERS=gcp → GCP jobs only.
 
 ARG RUNNER_BASE=ghcr.io/alethialabs-io/runner-base:latest
 FROM ${RUNNER_BASE}
-
-# GCP-only tooling (root). Google Cloud SDK + GKE auth plugin; gcloud needs python3.
-RUN apk add --no-cache python3 && rm -rf /var/cache/apk/*
-RUN ARCH=$(uname -m | sed 's/x86_64/x86_64/' | sed 's/aarch64/arm/') && \
-    curl -fsSL "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-${ARCH}.tar.gz" | \
-    tar -xz -C /opt && \
-    /opt/google-cloud-sdk/install.sh --quiet --path-update=true && \
-    /opt/google-cloud-sdk/bin/gcloud components install gke-gcloud-auth-plugin --quiet
-ENV PATH="/opt/google-cloud-sdk/bin:${PATH}"
 
 COPY --chown=runner:runner infra/templates/project/gcp/ /home/runner/project-templates/gcp/
 

@@ -15,6 +15,19 @@ import (
 )
 
 func main() {
+	// Kubernetes exec-credential-plugin mode: kubectl/helm invoke `<runner> kube-token …`
+	// (from the kubeconfig the runner writes) to mint a short-lived cluster token in-process,
+	// CLI-free. This MUST be checked before the ALETHIA_RUNNER_EXEC_STAGE branch below —
+	// inside the sandbox child that env var is set, and re-entering the stage runner here
+	// would recurse. One-shot: mint, print the ExecCredential, exit.
+	if len(os.Args) > 1 && os.Args[1] == "kube-token" {
+		if err := agent.RunKubeToken(context.Background(), os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "kube-token error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Container-sandbox child mode: this process was re-exec'd INSIDE a per-job sandbox
 	// container to run one untrusted stage. It has an allowlisted env only (no runner
 	// token / storage keys / bootstrap token), so it must run the stage and exit BEFORE

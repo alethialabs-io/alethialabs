@@ -17,7 +17,8 @@ func boolPtr(b bool) *bool { return &b }
 func TestGCPProvider_RequiredCLIs(t *testing.T) {
 	p := &gcpProvider{}
 	got := p.RequiredCLIs()
-	want := []string{"gcloud", "kubectl", "helm"}
+	// CLI-free: GKE auth is minted in-process by `runner kube-token` — no gcloud.
+	want := []string{"kubectl", "helm"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("RequiredCLIs() = %v, want %v", got, want)
 	}

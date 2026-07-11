@@ -7,8 +7,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -20,7 +18,9 @@ type awsProvider struct{}
 func (p *awsProvider) Name() string { return "aws" }
 
 func (p *awsProvider) RequiredCLIs() []string {
-	return []string{"aws-iam-authenticator", "kubectl", "helm"}
+	// CLI-free: the runner mints the EKS token in-process (kube-token exec-plugin), so
+	// aws-iam-authenticator is no longer required. Only cluster tooling remains.
+	return []string{"kubectl", "helm"}
 }
 
 func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
@@ -330,48 +330,16 @@ func (p *awsProvider) ConfigureKubeconfig(ctx context.Context, config *types.Pro
 	}
 
 	cluster := resp.Cluster
-	// Write under an absolute, HOME-based path (not the cwd-relative "temp/") so that
-	// concurrent worker subprocesses — which share a cwd but each have a private HOME —
-	// never read each other's kubeconfig. See dataroom/spec/mvp/21 §5 (concurrent slots).
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		home = os.TempDir()
-	}
-	kubeDir := filepath.Join(home, ".alethia")
-	kubeconfigPath := filepath.Join(kubeDir, "kubeconfig")
-	kubeconfig := fmt.Sprintf(`apiVersion: v1
-kind: Config
-clusters:
-- cluster:
-    server: %s
-    certificate-authority-data: %s
-  name: %s
-contexts:
-- context:
-    cluster: %s
-    user: %s
-  name: %s
-current-context: %s
-users:
-- name: %s
-  user:
-    exec:
-      apiVersion: client.authentication.k8s.io/v1beta1
-      command: aws-iam-authenticator
-      args: ["token", "-i", "%s", "--region", "%s"]
-`, *cluster.Endpoint, *cluster.CertificateAuthority.Data,
-		*cluster.Arn, *cluster.Arn, *cluster.Arn, *cluster.Arn, *cluster.Arn, *cluster.Arn,
-		clusterName, config.Region)
-
-	if err := os.MkdirAll(kubeDir, 0700); err != nil {
-		return err
-	}
-	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfig), 0600); err != nil {
-		return err
-	}
-	os.Setenv("KUBECONFIG", kubeconfigPath)
-	fmt.Fprintf(stdout, "Kubeconfig written to %s\n", kubeconfigPath)
-	return nil
+	// CLI-free: the kubeconfig authenticates via the runner's own `kube-token` exec-plugin
+	// (in-process presigned STS token, x-k8s-aws-id bound to this cluster) instead of the
+	// aws-iam-authenticator binary. Endpoint + CA come from DescribeCluster.
+	return writeExecKubeconfig(
+		*cluster.Arn,
+		*cluster.Endpoint,
+		*cluster.CertificateAuthority.Data,
+		[]string{"kube-token", "--provider", "aws", "--cluster", clusterName, "--region", config.Region},
+		stdout,
+	)
 }
 
 func buildSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
