@@ -161,11 +161,17 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		return nil, fmt.Errorf("ProjectConfig is required for RunDeployV2")
 	}
 
+	byoIac := vc.IacSource != nil
+
 	// Enforce placement discipline before anything else: a CORE resource on a
 	// foreign cloud is a hot cross-cloud edge we can't provision yet. Fires on
-	// dry-run (plan) too, so the user never reaches apply.
-	if err := ValidatePlacement(vc); err != nil {
-		return nil, err
+	// dry-run (plan) too, so the user never reaches apply. SKIPPED for BYO IaC —
+	// placement is a template/catalog-model concept; a customer's own module owns
+	// its resource graph.
+	if !byoIac {
+		if err := ValidatePlacement(vc); err != nil {
+			return nil, err
+		}
 	}
 
 	provider, err := cloud.NewCloudProvider(params.Provider)
@@ -201,15 +207,31 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	defer os.RemoveAll(tmpRoot)
 
 	var tfDir string
-	if params.TemplatesDir != "" {
+	// byoTfvars holds the customer's coerced var_values on the BYO path (nil otherwise).
+	var byoTfvars map[string]interface{}
+	switch {
+	case byoIac:
+		// BRING-YOUR-OWN IaC: clone the customer's module at its pinned commit, run
+		// the fail-closed static gate inline, write the backend override, and publish
+		// the frozen TF_VAR_alethia_* context. No bundled template, no provider
+		// tfvars, no brownfield injection, no connector composition — the module is
+		// self-contained.
+		cloneDir := filepath.Join(tmpRoot, "clone")
+		var restore func()
+		tfDir, byoTfvars, restore, err = prepareByoIacWorkdir(vc, params.GitAccessToken, cloneDir, stdout, stderr)
+		if err != nil {
+			return nil, err
+		}
+		defer restore()
+	case params.TemplatesDir != "":
 		fmt.Fprintf(stdout, "Using bundled templates from %s\n", params.TemplatesDir)
 		workDir := filepath.Join(tmpRoot, "work")
 		if err := copyDir(params.TemplatesDir, workDir); err != nil {
 			return nil, fmt.Errorf("failed to copy templates: %w", err)
 		}
 		tfDir = workDir
-	} else {
-		return nil, fmt.Errorf("git-based deployment not yet supported in V2; use TemplatesDir")
+	default:
+		return nil, fmt.Errorf("no IaC source: set ProjectConfig.IacSource (BYO) or DeployParams.TemplatesDir")
 	}
 
 	tf, err := tofu.NewTofuCLI(ctx, vc.IacVersion, tfDir, stdout, stderr)
@@ -217,53 +239,60 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		return nil, fmt.Errorf("tofu init failed: %w", err)
 	}
 
-	tfvars := provider.ProviderTfvars(vc)
+	var tfvars map[string]interface{}
+	if byoIac {
+		// Only the customer's coerced var_values — the platform context rides on
+		// TF_VAR_alethia_* env (set by prepareByoIacWorkdir).
+		tfvars = byoTfvars
+	} else {
+		tfvars = provider.ProviderTfvars(vc)
 
-	// Brownfield: attach to an EXISTING network instead of creating one. AWS resolves the VPC's subnets
-	// here (EC2 API); GCP/Azure pass the network id and the tofu template data-sources the network + a
-	// subnet in-region (keeps the per-cloud subnet nuance in HCL). See infra/templates/project/*.
-	if !vc.Network.ProvisionNetwork && vc.Network.NetworkID != "" {
-		switch provider.Name() {
-		case "aws":
-			tfvars["vpc_id"] = vc.Network.NetworkID
-			fmt.Fprintf(stdout, "Using existing VPC %s — looking up subnets...\n", vc.Network.NetworkID)
-			ec2Client, ec2Err := alethiaAws.NewEC2Client(ctx, alethiaAws.AWSOptions{Region: vc.Region})
-			if ec2Err != nil {
-				fmt.Fprintf(stderr, "Warning: failed to create EC2 client for subnet lookup: %v\n", ec2Err)
-			} else {
-				subnets, subErr := ec2Client.ListSubnets(ctx, vc.Network.NetworkID)
-				if subErr != nil {
-					fmt.Fprintf(stderr, "Warning: failed to list subnets: %v\n", subErr)
+		// Brownfield: attach to an EXISTING network instead of creating one. AWS resolves the VPC's subnets
+		// here (EC2 API); GCP/Azure pass the network id and the tofu template data-sources the network + a
+		// subnet in-region (keeps the per-cloud subnet nuance in HCL). See infra/templates/project/*.
+		if !vc.Network.ProvisionNetwork && vc.Network.NetworkID != "" {
+			switch provider.Name() {
+			case "aws":
+				tfvars["vpc_id"] = vc.Network.NetworkID
+				fmt.Fprintf(stdout, "Using existing VPC %s — looking up subnets...\n", vc.Network.NetworkID)
+				ec2Client, ec2Err := alethiaAws.NewEC2Client(ctx, alethiaAws.AWSOptions{Region: vc.Region})
+				if ec2Err != nil {
+					fmt.Fprintf(stderr, "Warning: failed to create EC2 client for subnet lookup: %v\n", ec2Err)
 				} else {
-					privateIDs := make([]string, 0)
-					publicIDs := make([]string, 0)
-					for _, s := range subnets {
-						if s.MapPublicIpOnLaunch {
-							publicIDs = append(publicIDs, s.ID)
-						} else {
-							privateIDs = append(privateIDs, s.ID)
+					subnets, subErr := ec2Client.ListSubnets(ctx, vc.Network.NetworkID)
+					if subErr != nil {
+						fmt.Fprintf(stderr, "Warning: failed to list subnets: %v\n", subErr)
+					} else {
+						privateIDs := make([]string, 0)
+						publicIDs := make([]string, 0)
+						for _, s := range subnets {
+							if s.MapPublicIpOnLaunch {
+								publicIDs = append(publicIDs, s.ID)
+							} else {
+								privateIDs = append(privateIDs, s.ID)
+							}
 						}
+						if len(publicIDs) == 0 {
+							publicIDs = privateIDs
+						}
+						if len(privateIDs) == 0 {
+							privateIDs = publicIDs
+						}
+						tfvars["vpc_private_subnet_ids"] = privateIDs
+						tfvars["vpc_public_subnet_ids"] = publicIDs
+						fmt.Fprintf(stdout, "Found %d private and %d public subnets\n", len(privateIDs), len(publicIDs))
 					}
-					if len(publicIDs) == 0 {
-						publicIDs = privateIDs
-					}
-					if len(privateIDs) == 0 {
-						privateIDs = publicIDs
-					}
-					tfvars["vpc_private_subnet_ids"] = privateIDs
-					tfvars["vpc_public_subnet_ids"] = publicIDs
-					fmt.Fprintf(stdout, "Found %d private and %d public subnets\n", len(privateIDs), len(publicIDs))
 				}
+			case "gcp":
+				// Self-link (projects/…/global/networks/…). The template data-sources the network + a
+				// subnetwork in var.region (with its pod/service secondary ranges).
+				tfvars["network_id"] = vc.Network.NetworkID
+				fmt.Fprintf(stdout, "Using existing VPC network %s — the template resolves a subnet in %s.\n", vc.Network.NetworkID, vc.Region)
+			case "azure":
+				// VNet resource id. The template data-sources the VNet + a subnet for AKS.
+				tfvars["vnet_id"] = vc.Network.NetworkID
+				fmt.Fprintf(stdout, "Using existing VNet %s — the template resolves an AKS subnet.\n", vc.Network.NetworkID)
 			}
-		case "gcp":
-			// Self-link (projects/…/global/networks/…). The template data-sources the network + a
-			// subnetwork in var.region (with its pod/service secondary ranges).
-			tfvars["network_id"] = vc.Network.NetworkID
-			fmt.Fprintf(stdout, "Using existing VPC network %s — the template resolves a subnet in %s.\n", vc.Network.NetworkID, vc.Region)
-		case "azure":
-			// VNet resource id. The template data-sources the VNet + a subnet for AKS.
-			tfvars["vnet_id"] = vc.Network.NetworkID
-			fmt.Fprintf(stdout, "Using existing VNet %s — the template resolves an AKS subnet.\n", vc.Network.NetworkID)
 		}
 	}
 
@@ -288,10 +317,14 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 	// Docker Hub, observability). This merges their tfvars (including decrypted
 	// secrets resolved at claim time), copies the modules into the work dir, and
 	// sets the native-guard vars so the cluster cloud skips its native resource.
-	if composed, composeErr := categories.Compose(tfDir, params.CategoriesDir, vc, tfvars, stdout); composeErr != nil {
-		return nil, fmt.Errorf("connector composition failed: %w", composeErr)
-	} else if composed > 0 {
-		fmt.Fprintf(stdout, "Composed %d pluggable connector module(s).\n", composed)
+	// SKIPPED for BYO IaC — a customer's own module owns its full resource graph;
+	// the platform composes nothing into it.
+	if !byoIac {
+		if composed, composeErr := categories.Compose(tfDir, params.CategoriesDir, vc, tfvars, stdout); composeErr != nil {
+			return nil, fmt.Errorf("connector composition failed: %w", composeErr)
+		} else if composed > 0 {
+			fmt.Fprintf(stdout, "Composed %d pluggable connector module(s).\n", composed)
+		}
 	}
 
 	varFile, err := tofu.OverrideTfvarsFromMap(tfDir, tfvars)

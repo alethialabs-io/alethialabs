@@ -34,6 +34,14 @@ type ProjectConfig struct {
 	// cluster + ArgoCD are up. Empty for projects that enabled no add-ons.
 	AddOns []AddOnInstall `json:"addons,omitempty"`
 
+	// IacSource, when set, marks this project as BRING-YOUR-OWN IaC: the runner
+	// provisions the customer's own OpenTofu root module (cloned at a pinned commit
+	// from git) instead of a bundled Alethia template. It is the fail-closed
+	// execution path for UNTRUSTED customer OpenTofu — the provisioner re-runs the
+	// static iacsafety gate inline before any plan/apply. Nil for template-based
+	// (canvas / catalog-composed) projects.
+	IacSource *ProjectIacSourceConfig `json:"iac_source,omitempty"`
+
 	GitAccessToken string `json:"git_access_token"`
 
 	// Populated at runtime from CloudIdentity, not from snapshot
@@ -42,6 +50,30 @@ type ProjectConfig struct {
 	// Populated at runtime from the claim response (decrypted), not from snapshot.
 	// Keyed lookups happen via ConnectorCredentialFor.
 	ConnectorCredentials []ConnectorCredential `json:"-"`
+}
+
+// ProjectIacSourceConfig pins the customer's own OpenTofu root module for a
+// bring-your-own IaC deploy. The console emits it on the config snapshot (C1); the
+// runner clones RepoURL at the EXACT CommitSHA (not just Ref — a ref can move after
+// the safety scan, TOCTOU), resolves Path inside the clone (traversal-guarded), and
+// provisions that directory. VarValues are the customer's own tfvars, constrained to
+// scalar string/number/bool at the write step (no nested objects/injection).
+type ProjectIacSourceConfig struct {
+	// RepoURL is the git repository holding the module (https or ssh form).
+	RepoURL string `json:"repo_url"`
+	// Ref is the branch or tag the customer selected (used for the clone; the
+	// CommitSHA below is what is actually checked out).
+	Ref string `json:"ref"`
+	// Path is the module directory relative to the repo root ("" / "." = root).
+	Path string `json:"path"`
+	// CommitSHA is the pinned full commit that was scanned and approved. The deploy
+	// MUST check this out (never the moving Ref) so plan/apply run the exact bytes
+	// the safety gate vetted.
+	CommitSHA string `json:"commit_sha"`
+	// VarValues are the customer-supplied tofu variable values. Genuinely arbitrary
+	// customer JSON, so map[string]any is acceptable here — but each value is coerced
+	// to string/number/bool at the tfvar-write step; anything else is rejected.
+	VarValues map[string]any `json:"var_values"`
 }
 
 // ConnectorCredential carries a decrypted api_key credential for a pluggable

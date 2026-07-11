@@ -29,6 +29,9 @@ type DriftParams struct {
 	StateBackend *cloud.HTTPBackendConfig
 	Stdout       io.Writer
 	Stderr       io.Writer
+	// GitAccessToken authorizes the BYO IaC clone (only used when ProjectConfig
+	// carries an IacSource; falls back to ProjectConfig.GitAccessToken when empty).
+	GitAccessToken string
 }
 
 // RunDriftDetection reconciles an environment's recorded state with the live cloud
@@ -50,7 +53,8 @@ func RunDriftDetection(ctx context.Context, params DriftParams) (*drift.Posture,
 	if params.StateBackend == nil {
 		return nil, nil, fmt.Errorf("StateBackend config is required for state access")
 	}
-	if params.TemplatesDir == "" {
+	byoIac := vc.IacSource != nil
+	if !byoIac && params.TemplatesDir == "" {
 		return nil, nil, fmt.Errorf("TemplatesDir is required")
 	}
 
@@ -74,9 +78,32 @@ func RunDriftDetection(ctx context.Context, params DriftParams) (*drift.Posture,
 	}
 	defer os.RemoveAll(tmpRoot)
 
-	tfDir := filepath.Join(tmpRoot, "work")
-	if err := copyDir(params.TemplatesDir, tfDir); err != nil {
-		return nil, nil, fmt.Errorf("failed to copy templates: %w", err)
+	var tfDir string
+	var tfvars map[string]interface{}
+	if byoIac {
+		// BYO IaC: refresh-only drift MUST run the customer's module at the SAME
+		// pinned commit. Clone-at-pinned-SHA + inline fail-closed gate + backend
+		// override, exactly like the deploy.
+		token := params.GitAccessToken
+		if token == "" {
+			token = vc.GitAccessToken
+		}
+		cloneDir := filepath.Join(tmpRoot, "clone")
+		var restore func()
+		tfDir, tfvars, restore, err = prepareByoIacWorkdir(vc, token, cloneDir, stdout, stderr)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer restore()
+	} else {
+		tfDir = filepath.Join(tmpRoot, "work")
+		if err := copyDir(params.TemplatesDir, tfDir); err != nil {
+			return nil, nil, fmt.Errorf("failed to copy templates: %w", err)
+		}
+		tfvars = provider.ProviderTfvars(vc)
+		if _, composeErr := categories.Compose(tfDir, params.CategoriesDir, vc, tfvars, stdout); composeErr != nil {
+			return nil, nil, fmt.Errorf("connector composition failed: %w", composeErr)
+		}
 	}
 
 	tf, err := tofu.NewTofuCLI(ctx, vc.IacVersion, tfDir, stdout, stderr)
@@ -84,10 +111,6 @@ func RunDriftDetection(ctx context.Context, params DriftParams) (*drift.Posture,
 		return nil, nil, fmt.Errorf("tofu init failed: %w", err)
 	}
 
-	tfvars := provider.ProviderTfvars(vc)
-	if _, composeErr := categories.Compose(tfDir, params.CategoriesDir, vc, tfvars, stdout); composeErr != nil {
-		return nil, nil, fmt.Errorf("connector composition failed: %w", composeErr)
-	}
 	varFile, err := tofu.OverrideTfvarsFromMap(tfDir, tfvars)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to write tfvars: %w", err)
