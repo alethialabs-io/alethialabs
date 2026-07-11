@@ -139,7 +139,10 @@ function FieldControl({
 						const n = isFloat
 							? Number.parseFloat(e.target.value)
 							: Number.parseInt(e.target.value, 10);
-						patch(Number.isNaN(n) ? 0 : n);
+						// Clearing an OPTIONAL number field means "use the default" → patch null
+						// (the columns are nullable; 0 would trip min(1) validation with no way
+						// back). Required numbers keep the legacy 0 so they never go null.
+						patch(Number.isNaN(n) ? (field.optional ? null : 0) : n);
 					}}
 				/>
 			);

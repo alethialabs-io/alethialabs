@@ -134,6 +134,53 @@ describe("provider-gated field visibility (hetzner in-cluster sizing)", () => {
 			"mysql",
 		]);
 	});
+
+	it("filters the cache engine options to valkey on hetzner (the chart always deploys Valkey)", () => {
+		const field = getKindConfig("cache")
+			?.sections.flatMap((s) => s.fields)
+			.find((f) => f.key === "engine");
+		const resolveOptions = (provider: CloudProviderSlug): FieldOption[] => {
+			const options = field?.options;
+			return typeof options === "function"
+				? options({ provider, config: {} })
+				: (options ?? []);
+		};
+		expect(resolveOptions("hetzner").map((o) => o.value)).toEqual(["valkey"]);
+		expect(resolveOptions("aws").map((o) => o.value)).toEqual([
+			"redis",
+			"valkey",
+		]);
+	});
+
+	it("says Valkey in the hetzner cache summary even for a legacy engine:'redis' config", () => {
+		expect(
+			getKindConfig("cache")?.summary(
+				{ engine: "redis", storage_gb: 16, num_cache_nodes: 2 },
+				"hetzner",
+			),
+		).toBe("Valkey · 16 GiB × 2");
+		// Managed clouds keep the honest Redis label.
+		expect(
+			getKindConfig("cache")?.summary(
+				{ engine: "redis", node_type: "cache.t3.micro" },
+				"aws",
+			),
+		).toBe("Redis · cache.t3.micro");
+	});
+
+	it("marks the nullable in-cluster sizing fields optional (clear → null, not 0)", () => {
+		const optionalOf = (kind: "database" | "cache" | "queue", key: string) =>
+			getKindConfig(kind)
+				?.sections.flatMap((s) => s.fields)
+				.find((f) => f.key === key)?.optional;
+		expect(optionalOf("database", "storage_gb")).toBe(true);
+		expect(optionalOf("database", "replicas")).toBe(true);
+		expect(optionalOf("cache", "storage_gb")).toBe(true);
+		expect(optionalOf("queue", "storage_gb")).toBe(true);
+		// Required numbers keep the legacy clear→0 behavior.
+		expect(optionalOf("database", "port")).toBeUndefined();
+		expect(optionalOf("cache", "num_cache_nodes")).toBeUndefined();
+	});
 });
 
 describe("field get/set escape hatches", () => {

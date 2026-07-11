@@ -461,6 +461,52 @@ describe("planProject", () => {
 		await expect(planProject("p1")).rejects.toThrow(/Cross-cloud database "db1"/);
 	});
 
+	it("fails closed on a non-postgres database on hetzner (no silent chart drop)", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+					[
+						projectDatabases,
+						[{ name: "orders", engine_family: "mysql", cloud_identity_id: null }],
+					],
+				]),
+			),
+		});
+		await expect(planProject("p1")).rejects.toThrow(
+			/MySQL databases can't be provisioned on Hetzner/,
+		);
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("queues a hetzner job when databases are postgres (or legacy NULL family)", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+					[
+						projectDatabases,
+						[
+							{ name: "pg", engine_family: "postgres", cloud_identity_id: null },
+							{ name: "legacy", engine_family: null, cloud_identity_id: null },
+						],
+					],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		const r = await planProject("p1");
+		expect(r).toEqual({ jobId: "job-1" });
+		// Both databases ride the snapshot as in-cluster CNPG addons (operator + 2 clusters).
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as {
+			addons: { id: string }[];
+		};
+		const addonIds = snapshot.addons.map((a) => a.id);
+		expect(addonIds).toEqual(
+			expect.arrayContaining(["cnpg-operator", "db-pg", "db-legacy"]),
+		);
+	});
+
 	it("rejects when network provisioning is off but no existing network is selected", async () => {
 		setupDb({
 			select: snapshotSelect(

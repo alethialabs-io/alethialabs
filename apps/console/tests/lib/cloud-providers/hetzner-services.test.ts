@@ -80,6 +80,32 @@ describe("hetznerDataServicesToAddOns — caches (Valkey)", () => {
 		expect(primary.persistence).toMatchObject({ size: "32Gi" });
 	});
 
+	it("uses the Bitnami `persistence.storageClass` key (NOT storageClassName) on primary and replica", () => {
+		const specs = hetznerDataServicesToAddOns({
+			caches: [{ name: "primary", storage_gb: 32, num_cache_nodes: 3 }],
+		});
+		const v = values(specs.find((s) => s.id === "cache-primary"));
+		const primaryPersistence = v.primary.persistence as Record<string, unknown>;
+		const replica = v.replica as Record<string, unknown>;
+		const replicaPersistence = replica.persistence as Record<string, unknown>;
+
+		expect(primaryPersistence.storageClass).toBe("hcloud-volumes");
+		expect(primaryPersistence).not.toHaveProperty("storageClassName");
+		expect(replicaPersistence.storageClass).toBe("hcloud-volumes");
+		expect(replicaPersistence).not.toHaveProperty("storageClassName");
+	});
+
+	it("sizes replica volumes the same as the primary so 'per node' holds", () => {
+		const specs = hetznerDataServicesToAddOns({
+			caches: [{ name: "primary", storage_gb: 32, num_cache_nodes: 3 }],
+		});
+		const v = values(specs.find((s) => s.id === "cache-primary"));
+		expect(v.primary.persistence).toMatchObject({ size: "32Gi" });
+		const replica = v.replica as Record<string, unknown>;
+		expect(replica.replicaCount).toBe(2);
+		expect(replica.persistence).toMatchObject({ size: "32Gi" });
+	});
+
 	it("falls back to memory_gb, then the 8Gi default", () => {
 		const specs = hetznerDataServicesToAddOns({
 			caches: [
@@ -103,5 +129,28 @@ describe("hetznerDataServicesToAddOns — queues (RabbitMQ)", () => {
 			.toMatchObject({ size: "8Gi" });
 		expect(values(specs.find((s) => s.id === "queue-big")).persistence)
 			.toMatchObject({ size: "64Gi" });
+	});
+
+	it("uses the Bitnami `persistence.storageClass` key (NOT storageClassName)", () => {
+		const specs = hetznerDataServicesToAddOns({ queues: [{ name: "jobs" }] });
+		const persistence = values(specs.find((s) => s.id === "queue-jobs")).persistence;
+		expect(persistence.storageClass).toBe("hcloud-volumes");
+		expect(persistence).not.toHaveProperty("storageClassName");
+	});
+});
+
+describe("hetznerDataServicesToAddOns — engine filtering (databases)", () => {
+	it("charts only postgres-family databases (NULL family defaults to postgres)", () => {
+		const specs = hetznerDataServicesToAddOns({
+			databases: [
+				{ name: "pg", engine_family: "postgres" },
+				{ name: "legacy", engine_family: null },
+				{ name: "my", engine_family: "mysql" },
+			],
+		});
+		expect(specs.some((s) => s.id === "db-pg")).toBe(true);
+		expect(specs.some((s) => s.id === "db-legacy")).toBe(true);
+		// The mapper drops it — buildConfigSnapshot's fail-closed gate must throw first.
+		expect(specs.some((s) => s.id === "db-my")).toBe(false);
 	});
 });

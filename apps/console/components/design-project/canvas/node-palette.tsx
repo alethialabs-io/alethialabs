@@ -22,6 +22,7 @@ import {
 	NODE_REGISTRY,
 	PALETTE_GROUP_ORDER,
 	ROADMAP_ITEMS,
+	variantOptionsFor,
 } from "./graph/node-registry";
 import type { NodeKind } from "./graph/types";
 
@@ -159,7 +160,9 @@ export function NodePalette({
 						</CommandGroup>
 						<CommandSeparator />
 						<CommandGroup heading={`${variantDef.label} type`}>
-							{variantDef.variants?.options.map((opt) => {
+							{/* Variant options are provider-filtered (e.g. Hetzner's in-cluster charts
+							    back PostgreSQL/Valkey only) — same gate as the inspector's engine radio. */}
+							{variantOptionsFor(variantKind, coreProvider).map((opt) => {
 								const Icon = variantDef.icon;
 								return (
 									<CommandItem

@@ -33,7 +33,10 @@ import {
 } from "@/lib/db/schema";
 import { resolveAddOnInstall, resolveByoChartInstall } from "@/lib/addons/catalog";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
-import { hetznerDataServicesToAddOns } from "@/lib/cloud-providers/hetzner-services";
+import {
+	HETZNER_DB_ENGINES,
+	hetznerDataServicesToAddOns,
+} from "@/lib/cloud-providers/hetzner-services";
 import {
 	type CloudProviderSlug,
 	type ConversionWarning,
@@ -59,6 +62,22 @@ function placementGateError(resourceType: string, name: string): Error {
 			"Hot cross-cloud data-plane edges (compute reaching a primary datastore in another cloud) are on " +
 			"the roadmap and require cross-cloud networking that isn't available yet — move this resource onto " +
 			"the stack's primary cloud, or model it as an independent per-cloud stack.",
+	);
+}
+
+/**
+ * Deploy-time honesty gate (fail-closed), mirroring placementGateError's fail-fast shape:
+ * Hetzner runs databases in-cluster via CloudNativePG, which is PostgreSQL-only. The palette,
+ * inspector, and cross-cloud converter all filter the engine choice, but imported / AI-authored
+ * / legacy configs can still carry another family — and without this gate the chart mapper
+ * silently skips the database, so the deploy reports SUCCESS without it.
+ */
+function hetznerDbEngineGateError(name: string, engineFamily: string): Error {
+	const label = engineFamily === "mysql" ? "MySQL" : `"${engineFamily}"`;
+	return new Error(
+		`Database "${name}": ${label} databases can't be provisioned on Hetzner — the in-cluster ` +
+			"CloudNativePG operator supports PostgreSQL only. Switch the database engine to PostgreSQL " +
+			"or move the stack to a cloud with a managed service for this engine.",
 	);
 }
 
@@ -648,6 +667,16 @@ async function buildConfigSnapshot(
 		// Application via the same generic add-on path (packages/core/argocd). The data-component
 		// rows still ride the snapshot for the UI; the Hetzner tofu template ignores them.
 		if (identity.provider === "hetzner") {
+			// Fail-closed engine gate: the mapper only charts what it supports (a NULL
+			// engine_family defaults to postgres), so anything else must throw here rather
+			// than be dropped from the deploy silently. Caches/queues need no gate — the
+			// mapper charts every row (Valkey/RabbitMQ), whatever engine the row carries.
+			const supported = new Set<string>(HETZNER_DB_ENGINES);
+			for (const db of databases) {
+				if (db.engine_family && !supported.has(db.engine_family)) {
+					throw hetznerDbEngineGateError(db.name, db.engine_family);
+				}
+			}
 			addons.push(
 				...hetznerDataServicesToAddOns({ databases, caches, queues }),
 			);

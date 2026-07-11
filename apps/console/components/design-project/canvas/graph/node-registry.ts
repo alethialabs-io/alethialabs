@@ -26,6 +26,10 @@ import {
 	DEFAULT_K8S_VERSION,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
+import {
+	HETZNER_CACHE_ENGINES,
+	HETZNER_DB_ENGINES,
+} from "@/lib/cloud-providers/hetzner-services";
 import type { NodeConfigMap, NodeKind } from "./types";
 
 /** Where a node's config lands in ProjectFormData. */
@@ -405,6 +409,32 @@ export function addableKindsFor(provider: CloudProviderSlug | null): NodeKind[] 
 	const blocked = provider ? UNSUPPORTED_KINDS_BY_PROVIDER[provider] : undefined;
 	if (!blocked || blocked.length === 0) return ADDABLE_KINDS;
 	return ADDABLE_KINDS.filter((k) => !blocked.includes(k));
+}
+
+/**
+ * Variant values a compute-only Hetzner project can actually back — the in-cluster charts
+ * are engine-fixed (databases → CloudNativePG = PostgreSQL-only, caches → Valkey). Kinds
+ * absent here keep their full variant list.
+ */
+const HETZNER_VARIANT_VALUES: Partial<Record<NodeKind, ReadonlySet<string>>> = {
+	database: new Set<string>(HETZNER_DB_ENGINES),
+	cache: new Set<string>(HETZNER_CACHE_ENGINES),
+};
+
+/**
+ * A kind's variant options filtered to what the effective provider can back. The single
+ * engine gate shared by the Add palette's variant step and the inspector's engine radios,
+ * so a Hetzner project can never pick an engine its in-cluster charts won't deploy
+ * (e.g. Database → MySQL, which the chart mapper would otherwise silently skip).
+ */
+export function variantOptionsFor(
+	kind: NodeKind,
+	provider: CloudProviderSlug | null,
+): { value: string; label: string; description: string }[] {
+	const options = NODE_REGISTRY[kind].variants?.options ?? [];
+	if (provider !== "hetzner") return options;
+	const allowed = HETZNER_VARIANT_VALUES[kind];
+	return allowed ? options.filter((o) => allowed.has(o.value)) : options;
 }
 
 /** Singleton kinds may exist at most once on the canvas. */
