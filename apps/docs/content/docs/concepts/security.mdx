@@ -44,6 +44,12 @@ job — it re-mints into a token **file** (or self-refreshing recipe) that the p
 `tofu apply` longer than the ~1 hour session keeps authenticating without any static key. Key material is
 rotatable with zero downtime — see [Key rotation](#key-rotation).
 
+**This one model powers all four managed clouds.** The sections below are per-cloud deep dives — they differ
+only in the federation primitive each cloud exposes (AWS `AssumeRoleWithWebIdentity`, GCP Workload Identity
+Federation, Azure federated identity, Alibaba `AssumeRoleWithOIDC`) and in what the customer creates to trust
+the issuer. Each ends with a **Permissions scope** — exactly what Alethia provisions in that cloud, and how
+tightly the role is (being) scoped.
+
 ## AWS: Keyless, issuer-direct IAM role
 
 ### Setup
@@ -73,12 +79,27 @@ AWS profile (`AWS_CONFIG_FILE`/`AWS_PROFILE`); the SDK re-reads the file and re-
 past the ~1 hour session survives. (Self-hosted runners run in the customer's own cloud with their own
 credentials and assume the customer role directly.)
 
-### Permissions Scope
+### Permissions scope
 
-The role is created with `AdministratorAccess` so it can provision every Terraform-managed resource type
-(VPCs, EKS clusters, RDS instances, ElastiCache, DynamoDB, ECR, S3, SQS/SNS, Route53, Secrets Manager, WAF,
-ACM, and IAM roles for IRSA). The customer can attach a tighter policy instead — what the role is *allowed to
-do* is independent of *who may assume it* (the OIDC trust above).
+The OIDC trust above controls *who* may assume the role. This section is *what* the role is allowed to do —
+a separate, independent axis.
+
+**Exactly what Alethia provisions in AWS** (every service the project templates can touch — feature-gated,
+so a given Project uses a subset): EC2/VPC (subnets, NAT, route tables, security groups, VPC endpoints),
+EKS (cluster, managed node groups, add-ons, IRSA OIDC provider + roles), RDS (Aurora), ElastiCache
+(Redis/Valkey), Route 53, ACM, Secrets Manager, DynamoDB, SQS/SNS, ECR, S3, KMS (envelope keys), CloudWatch
+Logs + Kinesis Firehose (log delivery), EventBridge (Karpenter interruption), Application Auto Scaling, and
+the IAM roles for the in-cluster controllers (external-dns, the AWS Load Balancer Controller, EBS CSI,
+Karpenter, …).
+
+<Callout type="warn">
+**Current default is broad; least-privilege is in progress.** Today the setup attaches `AdministratorAccess`.
+We are replacing it with an **enumerated, per-service policy plus a permissions boundary** that caps every
+IAM role/user the templates create — so the connector role can provision exactly the services above and
+**cannot escalate** (it can't mint a role more powerful than the boundary). You can already attach a tighter
+policy in place of `AdministratorAccess`; the trust relationship is unaffected. Track the scoped policy in the
+[AWS connector guide](/console/connectors/aws).
+</Callout>
 
 ## GCP: Workload Identity Federation
 
@@ -100,6 +121,21 @@ GCP STS ──► Validate token against registered issuer/subject
 ```
 
 No service account JSON key files are created or stored. The OIDC token exchange happens at runtime for each job.
+
+### Permissions scope
+
+**Exactly what Alethia provisions in GCP:** Compute/VPC (networks, subnets, Cloud Router + NAT, firewall
+rules, Cloud Armor), GKE (cluster + node pools), Cloud SQL, Memorystore (Redis), Cloud DNS, Artifact
+Registry, Secret Manager, Cloud Storage, Firestore, Pub/Sub, and the workload-identity service accounts +
+bindings for in-cluster controllers.
+
+<Callout type="warn">
+**Current default is broad; least-privilege is in progress.** Today the service account is granted
+`roles/editor`. We are replacing it with the **minimal set of predefined `*.admin` roles** for exactly the
+services above, and refactoring the templates so the connector never needs project-level `setIamPolicy`
+(resource-scoped IAM bindings instead) — closing the owner-equivalent escalation path. Track it in the
+[GCP connector guide](/console/connectors/gcp).
+</Callout>
 
 ## Azure: Federated Identity
 
@@ -131,6 +167,22 @@ Azure          ──► Validate against the issuer's JWKS (subject/audience)
 No client secret is ever generated or stored. Access revocation is instant by deleting the service
 principal in the customer tenant.
 
+### Permissions scope
+
+**Exactly what Alethia provisions in Azure:** Resource Group, AKS (+ node pools), VNet (subnets, NSGs, NAT
+gateway, public IPs), PostgreSQL Flexible Server (+ private DNS zone), Redis Cache, DNS zones, Container
+Registry, Key Vault (+ secrets), Storage, Service Bus, Cosmos DB, WAF policy, and the managed identities +
+role assignments for in-cluster workload identity.
+
+<Callout type="warn">
+**Current default is broad; least-privilege is in progress.** Today the app's service principal is granted
+subscription **`Contributor`**. We are replacing it with a **single custom role definition** enumerating only
+the actions above (plus the AKS credential-list and per-resource-provider registration Contributor omits),
+with the one escalation-grade permission it genuinely needs — role-assignment write — **constrained to a
+single role** (DNS Zone Contributor) via an ABAC condition. Track it in the
+[Azure connector guide](/console/connectors/azure).
+</Callout>
+
 ## Alibaba: RAM Role via OIDC (account-free)
 
 Alibaba is keyless **and account-free** — Alethia holds no Alibaba account and no AccessKey. The customer
@@ -149,6 +201,20 @@ Alibaba        ──► Validate the token against the RAM OIDC provider (issue
 `AssumeRoleWithOIDC` is an anonymous STS action — the OIDC token itself authenticates the call, so there is
 no AccessKey and no request signature. On the runner, the `alicloud` provider performs the exchange itself
 from `ALIBABA_CLOUD_OIDC_TOKEN_FILE` (re-read on refresh). Revocation is instant by deleting the RAM role.
+
+### Permissions scope
+
+**Exactly what Alethia provisions in Alibaba Cloud:** ACK (managed cluster + node pool), VPC (vSwitches, NAT,
+SNAT), EIP, RDS, Container Registry EE, KVStore (Redis), AliDNS, KMS, Message Service (MNS), OSS, Tablestore
+(OTS), and WAF.
+
+<Callout type="warn">
+**Least-privilege by attached policy.** Unlike the other clouds' account-wide defaults, the Alibaba RAM role
+attaches **per-service system policies** (`AliyunCS/VPC/ECS/SLB/EIP FullAccess`) — never account admin. We are
+tightening this further: attaching each service's policy **only when that module is enabled**, and granting a
+**narrow `ram:CreateServiceLinkedRole`** (never `AliyunRAMFullAccess`) for the service-linked roles ACK needs.
+Track it in the [Alibaba connector guide](/console/connectors/alibaba).
+</Callout>
 
 ## Key rotation
 
