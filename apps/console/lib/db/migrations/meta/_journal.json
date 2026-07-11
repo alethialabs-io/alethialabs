@@ -498,6 +498,13 @@
       "when": 1783755957584,
       "tag": "0070_sudden_maggott",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1783769043334,
+      "tag": "0071_strange_leech",
+      "breakpoints": true
     }
   ]
 }

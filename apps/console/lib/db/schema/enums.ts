@@ -38,6 +38,14 @@ export const projectStatus = pgEnum("project_status", [
 	"DESTROYED",
 ]);
 
+// An environment is either long-lived (`persistent` — dev/staging/prod) or time-bounded
+// (`ephemeral` — a disposable, TTL'd environment; the product "Sandbox" surface). Inert for
+// now: the column exists so the reaper + UI can build on it, but nothing reads it yet.
+export const environmentLifecycle = pgEnum("environment_lifecycle", [
+	"persistent",
+	"ephemeral",
+]);
+
 export const componentStatus = pgEnum("component_status", [
 	"PENDING",
 	"CREATING",
