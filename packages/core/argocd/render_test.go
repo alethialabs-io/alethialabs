@@ -308,10 +308,14 @@ func TestRender_Hetzner(t *testing.T) {
 }
 
 func TestRender_Alibaba(t *testing.T) {
+	// RRSA identity is now provisioned, but external-dns's alibabacloud provider does
+	// not support RRSA upstream (external-dns#5019) → external-dns still skips honestly.
 	files := renderAll(t, BuildFromOutputs(map[string]interface{}{
-		"ack_cluster_name": "ack-demo",
+		"ack_cluster_name":       "ack-demo",
+		"rrsa_oidc_issuer_url":   "https://oidc.ack.example/issuer",
+		"rrsa_oidc_provider_arn": "acs:ram::123:oidc-provider/ack-rrsa",
 	}, cfg("alibaba")))
-	assertNoExternalDNS(t, files, "no RRSA identity for external-dns yet")
+	assertNoExternalDNS(t, files, "external-dns alibabacloud has no RRSA support upstream")
 	for _, awsOnly := range []string{"aws-load-balancer-controller.yaml", "storage-class-gp3.yaml", "karpenter.yaml"} {
 		if _, ok := files[awsOnly]; ok {
 			t.Errorf("%s must NOT render on Alibaba", awsOnly)

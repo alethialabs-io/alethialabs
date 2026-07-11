@@ -21,6 +21,16 @@ output "kubeconfig" {
   sensitive   = true
 }
 
+output "rrsa_oidc_issuer_url" {
+  description = "OIDC issuer URL of the cluster's RRSA identity (workload identity for in-cluster components)"
+  value       = var.provision_ack ? module.cluster[0].rrsa_oidc_issuer_url : ""
+}
+
+output "rrsa_oidc_provider_arn" {
+  description = "RAM OIDC provider ARN that RRSA workload-identity roles trust"
+  value       = var.provision_ack ? module.cluster[0].rrsa_oidc_provider_arn : ""
+}
+
 #########################################################################
 ##                     Networking Outputs                              ##
 #########################################################################

@@ -56,6 +56,10 @@ type InfraFacts struct {
 	AzureTenantID          string
 	AzureExternalDNSClient string // managed-identity client id for external-dns
 	AzureIngressClient     string // managed-identity client id for the AGIC
+
+	// ── Alibaba (RRSA — RAM Roles for Service Accounts) ─────────
+	AlibabaOIDCIssuerURL   string // ACK cluster OIDC issuer
+	AlibabaOIDCProviderArn string // RAM OIDC provider ARN that RRSA roles trust
 }
 
 // DNSProvider maps the cloud (and DNS connector) to the external-dns `provider` value.
@@ -147,8 +151,12 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.ClusterName = ExtractOutput(outputs, "ack_cluster_name")
 		f.ClusterEndpoint = ExtractOutput(outputs, "ack_cluster_endpoint")
 		f.VPCID = ExtractOutput(outputs, "vpc_id")
-		// Workload-identity (RRSA) facts land with the alibaba external-dns work; until
-		// then no identity block exists and DNS-dependent apps skip via DNSProvider().
+		f.AlibabaOIDCIssuerURL = ExtractOutput(outputs, "rrsa_oidc_issuer_url")
+		f.AlibabaOIDCProviderArn = ExtractOutput(outputs, "rrsa_oidc_provider_arn")
+		// The RRSA facts feed workload-identity for in-cluster components (e.g. the
+		// external-secrets operator, A6). external-dns's alibabacloud provider does NOT
+		// support RRSA upstream (kubernetes-sigs/external-dns#5019), so DNSProvider()
+		// still skips external-dns on alibaba — an honest gap, recorded in the docs.
 	case "hetzner":
 		f.ClusterName = ExtractOutput(outputs, "talos_cluster_name")
 		f.ClusterEndpoint = ExtractOutput(outputs, "talos_cluster_endpoint")
