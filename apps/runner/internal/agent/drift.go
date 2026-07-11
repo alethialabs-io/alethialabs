@@ -39,7 +39,7 @@ func (w *Runner) executeDriftDetection(ctx context.Context, job *Job, provider s
 		return err
 	}
 
-	posture, err := provisioner.RunDriftDetection(ctx, provisioner.DriftParams{
+	posture, outputs, err := provisioner.RunDriftDetection(ctx, provisioner.DriftParams{
 		ProjectConfig: vc,
 		Provider:      provider,
 		TemplatesDir:  filepath.Join(resolveProjectTemplatesDir(), provider),
@@ -56,8 +56,10 @@ func (w *Runner) executeDriftDetection(ctx context.Context, job *Job, provider s
 	// live ArgoCD add-on health + Trivy security posture so the console's Add-ons page and
 	// Evidence Security tab stay current between deploys. Posted alongside drift_posture in one
 	// update so it rides the same persistence path (the status route reads all three on SUCCESS).
+	// The drift run's workspace outputs feed kubeconfig acquisition (alibaba/hetzner read the
+	// sensitive `kubeconfig` output) and stay strictly in-process — never posted to the console.
 	metadata := map[string]any{"drift_posture": posture}
-	addonStatus, security := provisioner.InspectCluster(ctx, vc, provider, stdout, stderr)
+	addonStatus, security := provisioner.InspectCluster(ctx, vc, provider, outputs, stdout, stderr)
 	if len(addonStatus) > 0 {
 		metadata["addon_status"] = addonStatus
 	}
