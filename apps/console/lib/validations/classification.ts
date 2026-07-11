@@ -37,12 +37,15 @@ export const dimensionInputSchema = createInsertSchema(classificationDimension, 
 	// Kept `.optional()` (not `.default()`) so the schema's input and output types match —
 	// react-hook-form's resolver needs that. The server actions apply the defaults.
 	multi: z.boolean().optional(),
+	// Resource kinds this dimension applies to; empty/omitted ⇒ all kinds.
+	applies_to: z.array(resourceKindSchema).optional(),
 	position: z.number().int().min(0).optional(),
 }).pick({
 	key: true,
 	label: true,
 	description: true,
 	multi: true,
+	applies_to: true,
 	position: true,
 });
 

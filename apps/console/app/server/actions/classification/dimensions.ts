@@ -15,6 +15,7 @@ import {
 	classificationDimension,
 	classificationValue,
 } from "@/lib/db/schema";
+import type { ResourceKind } from "@/lib/db/schema/enums";
 import {
 	type DimensionInput,
 	dimensionInputSchema,
@@ -49,6 +50,8 @@ export interface DimensionDTO {
 	description: string | null;
 	multi: boolean;
 	position: number;
+	/** Resource kinds this dimension applies to; empty ⇒ all kinds. */
+	appliesTo: ResourceKind[];
 	/** Distinct resources carrying any value of this dimension (0 → unused axis). */
 	resourceCount: number;
 	values: ValueDTO[];
@@ -67,6 +70,7 @@ function toDimensionDTO(
 		description: d.description,
 		multi: d.multi,
 		position: d.position,
+		appliesTo: d.applies_to ?? [],
 		resourceCount: byDimension.get(d.id) ?? 0,
 		values: d.values.map((v) => ({
 			id: v.id,
@@ -118,6 +122,7 @@ export async function createDimension(
 					label: data.label,
 					description: data.description ?? null,
 					multi: data.multi ?? false,
+					applies_to: data.applies_to ?? [],
 					position: data.position ?? 0,
 				})
 				.returning({ id: classificationDimension.id });
@@ -128,7 +133,7 @@ export async function createDimension(
 	return { id };
 }
 
-/** Updates a dimension's presentation + single/multi mode. */
+/** Updates a dimension's presentation, single/multi mode, and resource-kind scope. */
 export async function updateDimension(
 	id: string,
 	input: DimensionInput,
@@ -143,6 +148,7 @@ export async function updateDimension(
 				label: data.label,
 				description: data.description ?? null,
 				multi: data.multi ?? false,
+				applies_to: data.applies_to ?? [],
 				position: data.position ?? 0,
 			})
 			.where(eq(classificationDimension.id, id)),
@@ -261,6 +267,7 @@ export async function createDimensionWithValues(
 					label: data.label,
 					description: data.description ?? null,
 					multi: data.multi ?? false,
+					applies_to: data.applies_to ?? [],
 					position: data.position ?? 0,
 				})
 				.returning({ id: classificationDimension.id });

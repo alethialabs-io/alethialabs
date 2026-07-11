@@ -76,7 +76,11 @@ export function ClassificationPicker({
 	const { org } = useParams<{ org: string }>();
 	const dimensionsQuery = useDimensionsQuery();
 	const assignmentsQuery = useAssignmentsQuery(kind, id, initialAssignments);
-	const dimensions = dimensionsQuery.data ?? [];
+	const allDimensions = dimensionsQuery.data ?? [];
+	// Only dimensions scoped to this resource kind (empty applies_to ⇒ all kinds).
+	const dimensions = allDimensions.filter(
+		(d) => d.appliesTo.length === 0 || d.appliesTo.includes(kind),
+	);
 	const { assign, unassign } = useAssignmentMutations(kind, id, dimensions);
 
 	const selectedValueIds = new Set(
@@ -107,13 +111,17 @@ export function ClassificationPicker({
 					{dimensions.length === 0 ? (
 						<div className="px-3 py-4">
 							<p className="mb-2 text-sm text-muted-foreground">
-								No classification dimensions yet.
+								{allDimensions.length === 0
+									? "No classification dimensions yet."
+									: "No dimensions apply to this resource."}
 							</p>
 							<Link
 								href={`/${org}/~/settings/classification`}
 								className="inline-flex items-center gap-1 text-sm font-medium text-foreground underline-offset-4 hover:underline"
 							>
-								Create dimensions
+								{allDimensions.length === 0
+									? "Create dimensions"
+									: "Manage classification"}
 								<ArrowRight className="size-3.5" />
 							</Link>
 						</div>

@@ -1,0 +1,1 @@
+ALTER TABLE "classification_dimension" ADD COLUMN "applies_to" jsonb DEFAULT '[]'::jsonb NOT NULL;
