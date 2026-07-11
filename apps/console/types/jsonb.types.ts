@@ -604,6 +604,25 @@ export interface CloudSensitiveAttrs {
 }
 
 // ============================================================
+// Classification enforcement. Stored on `classification_value.enforcement` (nullable).
+// ============================================================
+
+/**
+ * The promotion-gate policy a classification value imposes on any environment carrying it.
+ * When an env is tagged with a value that has this config, promotions INTO that env inherit
+ * these gates on top of the env's own protection rules — the label drives the policy. Null on
+ * the column ⇒ the value is inert (the default). See lib/promotions/gates.ts.
+ */
+export interface ClassificationEnforcement {
+	/** Force manual approval on promotions into an env carrying this value. */
+	require_approval: boolean;
+	/** Force the elench verify gate on those promotions. */
+	require_verify_pass: boolean;
+	/** Minimum distinct approvals when approval is required (≥ 1). */
+	min_approvals: number;
+}
+
+// ============================================================
 // Environment promotion (Phase 2). Stored on environment_promotions / _protection_rules.
 // ============================================================
 

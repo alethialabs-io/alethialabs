@@ -31,10 +31,12 @@ import {
 	structuralHash,
 } from "@/lib/promotions/diff";
 import {
+	applyClassificationEnforcement,
 	evaluateGates,
 	type GateContext,
 	type PromotionRules,
 } from "@/lib/promotions/gates";
+import { getEnforcingValuesFor } from "@/lib/queries/classification";
 import type {
 	ApproverSpec,
 	GateResult,
@@ -70,6 +72,36 @@ const OPEN_RULES: PromotionRules = {
 	soak_minutes: null,
 	cost_delta_threshold: null,
 };
+
+/** Projects a protection-rule row onto the toggleable rule subset the gate engine reads. */
+function toRules(rulesRow: ProtectionRow): PromotionRules {
+	return {
+		require_predecessor: rulesRow.require_predecessor,
+		require_verify_pass: rulesRow.require_verify_pass,
+		require_approval: rulesRow.require_approval,
+		soak_minutes: rulesRow.soak_minutes,
+		cost_delta_threshold: rulesRow.cost_delta_threshold,
+	};
+}
+
+/**
+ * The effective number of approval slots for a promotion into `envId` = the strictest of the env's
+ * own `min_count` and every enforcing classification value's `min_approvals`. Shared by the gate
+ * context and slot materialization so a classification-forced approval creates the right slot count.
+ */
+async function effectiveMinApprovals(
+	db: ServiceDb,
+	envId: string,
+	rulesRow: ProtectionRow | null,
+): Promise<number> {
+	const enforcing = await getEnforcingValuesFor(db, "project_environment", envId);
+	const { minApprovals } = applyClassificationEnforcement(
+		rulesRow ? toRules(rulesRow) : OPEN_RULES,
+		rulesRow?.approvers ?? null,
+		enforcing,
+	);
+	return Math.max(1, minApprovals);
+}
 
 /**
  * Promotes `sourceEnvId`'s structural design onto `targetEnvId`: writes the merged candidate into the
@@ -521,15 +553,20 @@ async function buildGateContext(
 		.from(environmentProtectionRules)
 		.where(eq(environmentProtectionRules.environment_id, promotion.target_environment_id))
 		.limit(1);
-	const rules: PromotionRules = rulesRow
-		? {
-				require_predecessor: rulesRow.require_predecessor,
-				require_verify_pass: rulesRow.require_verify_pass,
-				require_approval: rulesRow.require_approval,
-				soak_minutes: rulesRow.soak_minutes,
-				cost_delta_threshold: rulesRow.cost_delta_threshold,
-			}
-		: OPEN_RULES;
+	const rawRules: PromotionRules = rulesRow ? toRules(rulesRow) : OPEN_RULES;
+
+	// Fold in classification-driven gates: a value tagged on the TARGET env (e.g. Environment=
+	// production) can force approval/verify on top of the env's own rules — the label is the policy.
+	const enforcing = await getEnforcingValuesFor(
+		db,
+		"project_environment",
+		promotion.target_environment_id,
+	);
+	const {
+		rules,
+		minApprovals,
+		reasons: enforcedReasons,
+	} = applyClassificationEnforcement(rawRules, rulesRow?.approvers ?? null, enforcing);
 
 	// Predecessor = the source env this promotion came from.
 	const [src] = await db
@@ -566,8 +603,8 @@ async function buildGateContext(
 		.from(promotionApprovals)
 		.where(eq(promotionApprovals.promotion_id, promotion.id));
 	const approved = approvalRows.filter((a) => a.status === "approved").length;
-	const min = rulesRow?.approvers?.min_count ?? 1;
-	const required = rules.require_approval ? min : 0;
+	// Effective count already accounts for require_approval (0 when off) + enforcing values' min.
+	const required = minApprovals;
 
 	const ctx: GateContext = {
 		rules,
@@ -578,6 +615,7 @@ async function buildGateContext(
 		// prior cost is available; the rule remains toggleable and wires in once cost data flows.
 		costDelta: null,
 		approvals: { approved, required },
+		enforcedReasons,
 		nowMs: Date.now(),
 	};
 	return { ctx, rulesRow: rulesRow ?? null };
@@ -621,21 +659,29 @@ async function applyGateDecision(
 	}
 
 	if (evaluation.overall === "pending_approval") {
-		// Materialize approval slots the first time a manual-approval gate parks the promotion.
-		if (rulesRow?.require_approval) {
+		// Materialize approval slots the first time a manual-approval gate parks the promotion. The
+		// requirement may come from the env's own rule OR a classification value that forced it, so
+		// key off the evaluated gate (not just rulesRow.require_approval, which misses classification).
+		const approvalPending = evaluation.results.some(
+			(r) => r.type === "manual_approval" && r.status === "pending",
+		);
+		if (approvalPending) {
 			const existing = await db
 				.select({ id: promotionApprovals.id })
 				.from(promotionApprovals)
 				.where(eq(promotionApprovals.promotion_id, promotion.id));
 			if (existing.length === 0) {
-				const spec = rulesRow.approvers;
-				const count = Math.max(1, spec?.min_count ?? 1);
+				const count = await effectiveMinApprovals(
+					db,
+					promotion.target_environment_id,
+					rulesRow,
+				);
 				await db.insert(promotionApprovals).values(
 					Array.from({ length: count }, () => ({
 						promotion_id: promotion.id,
 						project_id: promotion.project_id,
 						org_id: promotion.org_id ?? undefined,
-						required_role: spec?.role ?? null,
+						required_role: rulesRow?.approvers?.role ?? null,
 					})),
 				);
 			}

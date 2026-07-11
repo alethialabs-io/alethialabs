@@ -5,7 +5,18 @@
 // withScope/withOwnerScope (RLS is the tenancy wall — org-scoped dimensions + parent-scoped
 // values/assignments); these are the shaping/hydration helpers on top.
 
-import { and, asc, count, eq, exists, ilike, inArray, or, sql } from "drizzle-orm";
+import {
+	and,
+	asc,
+	count,
+	eq,
+	exists,
+	ilike,
+	inArray,
+	isNotNull,
+	or,
+	sql,
+} from "drizzle-orm";
 import type { getServiceDb } from "@/lib/db";
 import {
 	type ClassificationDimension,
@@ -15,6 +26,8 @@ import {
 	classificationValue,
 } from "@/lib/db/schema";
 import type { ResourceKind } from "@/lib/db/schema/enums";
+import type { EnforcingValue } from "@/lib/promotions/gates";
+import type { ClassificationEnforcement } from "@/types/jsonb.types";
 
 type Db = ReturnType<typeof getServiceDb>;
 /** The scoped transaction handed to a withScope/withOwnerScope callback. */
@@ -36,6 +49,8 @@ export interface AssignedValue {
 	value: string;
 	value_label: string;
 	color: string | null;
+	/** Promotion-gate policy this value imposes (drives inherited gate chips); null ⇒ inert. */
+	enforcement: ClassificationEnforcement | null;
 }
 
 /**
@@ -118,6 +133,7 @@ const assignedValueColumns = {
 	value: classificationValue.value,
 	value_label: classificationValue.label,
 	color: classificationValue.color,
+	enforcement: classificationValue.enforcement,
 } as const;
 
 /**
@@ -274,6 +290,52 @@ export async function countAssignmentsByKindForValue(
 		resource_kind: r.resource_kind,
 		count: Number(r.n),
 	}));
+}
+
+/**
+ * The assigned values on a resource that carry a non-null `enforcement` policy — the classification
+ * values that impose promotion gates on the resource (label drives policy). Feeds
+ * `applyClassificationEnforcement` in the gate engine. Non-enforcing values are filtered out in SQL.
+ */
+export async function getEnforcingValuesFor(
+	tx: Db | Tx,
+	kind: ResourceKind,
+	resourceId: string,
+): Promise<EnforcingValue[]> {
+	const rows = await tx
+		.select({
+			value_label: classificationValue.label,
+			dimension_label: classificationDimension.label,
+			enforcement: classificationValue.enforcement,
+		})
+		.from(classificationAssignment)
+		.innerJoin(
+			classificationValue,
+			eq(classificationValue.id, classificationAssignment.value_id),
+		)
+		.innerJoin(
+			classificationDimension,
+			eq(classificationDimension.id, classificationAssignment.dimension_id),
+		)
+		.where(
+			and(
+				eq(classificationAssignment.resource_kind, kind),
+				eq(classificationAssignment.resource_id, resourceId),
+				isNotNull(classificationValue.enforcement),
+			),
+		);
+	// The isNotNull filter guarantees non-null; narrow for the type.
+	return rows.flatMap((r) =>
+		r.enforcement
+			? [
+					{
+						value_label: r.value_label,
+						dimension_label: r.dimension_label,
+						enforcement: r.enforcement,
+					},
+				]
+			: [],
+	);
 }
 
 /**

@@ -16,6 +16,7 @@ import {
 	classificationValue,
 } from "@/lib/db/schema";
 import type { ResourceKind } from "@/lib/db/schema/enums";
+import type { ClassificationEnforcement } from "@/types/jsonb.types";
 import {
 	type DimensionInput,
 	dimensionInputSchema,
@@ -36,6 +37,8 @@ export interface ValueDTO {
 	value: string;
 	label: string;
 	color: string | null;
+	/** Promotion-gate policy this value imposes on envs carrying it; null ⇒ inert. */
+	enforcement: ClassificationEnforcement | null;
 	position: number;
 	/** How many resources currently carry this value (0 → unused). */
 	assignmentCount: number;
@@ -78,6 +81,7 @@ function toDimensionDTO(
 			value: v.value,
 			label: v.label,
 			color: v.color,
+			enforcement: v.enforcement,
 			position: v.position,
 			assignmentCount: byValue.get(v.id) ?? 0,
 		})),
@@ -193,6 +197,7 @@ export async function createValue(
 					value: data.value,
 					label: data.label,
 					color: data.color ?? null,
+					enforcement: data.enforcement ?? null,
 					position: data.position ?? 0,
 				})
 				.returning({ id: classificationValue.id });
@@ -217,6 +222,7 @@ export async function updateValue(
 				value: data.value,
 				label: data.label,
 				color: data.color ?? null,
+				enforcement: data.enforcement ?? null,
 				position: data.position ?? 0,
 			})
 			.where(eq(classificationValue.id, id)),

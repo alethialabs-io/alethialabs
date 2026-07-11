@@ -1,0 +1,1 @@
+ALTER TABLE "classification_value" ADD COLUMN "enforcement" jsonb;
