@@ -5,6 +5,8 @@ package provisioner
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -451,6 +453,16 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 			if err := k8s.WaitClusterReady(ctx, clusterReadyTimeout(), clusterReadyRequireNode(), stdout); err != nil {
 				return nil, fmt.Errorf("cluster provisioned but not reachable: %w", err)
 			}
+			// Datapath gate: WaitClusterReady probes the API from the RUNNER (node public IP) and
+			// counts Ready nodes — it cannot see whether an ordinary POD can reach the apiserver
+			// across the cluster network. A broken pod datapath (e.g. cross-node pod->apiserver)
+			// passes the checks above yet breaks every real workload. Only meaningful with a node
+			// to schedule on (skip Karpenter-only / node-less clusters).
+			if clusterReadyRequireNode() {
+				if err := k8s.WaitPodToAPIServer(ctx, clusterReadyTimeout(), stdout); err != nil {
+					return nil, fmt.Errorf("cluster provisioned but its pod network is broken: %w", err)
+				}
+			}
 			result.ClusterReady = true
 		}
 	}
@@ -635,6 +647,17 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		return fmt.Errorf("failed to add ArgoCD helm repo: %w", err)
 	}
 
+	// Pre-seed the argocd-redis secret BEFORE the chart's pre-install `redis-secret-init` hook
+	// runs. That hook (`argocd admin redis-initial-password`) crash-looped with exit 20 on Talos —
+	// argocd's generic-error exit on the first K8s API call from the hook pod (RBAC/hook-ordering
+	// race, or the hook pod on a node whose datapath wasn't ready) — which blocks the WHOLE chart
+	// install so `helm --wait` hangs then fails. Seeding the secret first makes the hook's Create a
+	// no-op (AlreadyExists) and its Get succeed. Redis keeps a strong random auth. Idempotent: we
+	// never overwrite an existing secret (that would desync running redis from its clients).
+	if err := ensureArgoRedisSecret(stdout, stderr); err != nil {
+		return fmt.Errorf("failed to pre-seed the argocd-redis secret: %w", err)
+	}
+
 	installCmd := "helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version 7.1.3 --wait --timeout 5m"
 
 	if vc.DNS.Enabled && vc.DNS.DomainName != "" {
@@ -674,6 +697,65 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 	}
 
 	fmt.Fprintf(stdout, "ArgoCD ready. URL: %s\n", result.ArgocdURL)
+	return nil
+}
+
+// ensureArgoRedisSecret creates the `argocd-redis` Secret (key `auth`) with a strong random
+// password BEFORE the argo-cd helm install, but ONLY if it does not already exist. The chart's
+// pre-install `redis-secret-init` hook otherwise races/fails on Talos (E1 finding, exit 20),
+// blocking the whole install. Idempotent by design — never overwrite an existing auth, or a
+// running redis desyncs from its clients. The secret carries Helm ownership metadata so the chart
+// ADOPTS it (without these, Helm errors "invalid ownership metadata").
+func ensureArgoRedisSecret(stdout, stderr io.Writer) error {
+	// Ensure the namespace exists (the helm install also uses --create-namespace, but we seed first).
+	nsCmd := "kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -"
+	if err := utils.ExecuteCommand(nsCmd, ".", nil, stdout, stderr); err != nil {
+		return fmt.Errorf("ensure argocd namespace: %w", err)
+	}
+
+	// Idempotency guard: never regenerate an existing password.
+	if out, err := utils.ExecuteCommandWithOutput(
+		"kubectl get secret argocd-redis -n argocd -o jsonpath={.data.auth}", ".", nil); err == nil && strings.TrimSpace(out) != "" {
+		fmt.Fprintln(stdout, "argocd-redis secret already present; leaving its auth untouched.")
+		return nil
+	}
+
+	buf := make([]byte, 32) // 256-bit password
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Errorf("generate redis password: %w", err)
+	}
+	auth := hex.EncodeToString(buf)
+
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-redis
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-redis
+    app.kubernetes.io/part-of: argocd
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    meta.helm.sh/release-name: argo-cd
+    meta.helm.sh/release-namespace: argocd
+type: Opaque
+stringData:
+  auth: %s
+`, auth)
+
+	dir, err := os.MkdirTemp("", "alethia-argocd-redis-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "argocd-redis.yaml")
+	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+		return err
+	}
+	if err := utils.ExecuteCommand("kubectl apply -f "+path, ".", nil, stdout, stderr); err != nil {
+		return fmt.Errorf("apply argocd-redis secret: %w", err)
+	}
+	fmt.Fprintln(stdout, "Pre-seeded argocd-redis secret (avoids the chart's flaky redis-secret-init hook).")
 	return nil
 }
 
