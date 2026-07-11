@@ -646,6 +646,9 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "switch",
 						label: "Encryption at rest",
 						description: "Server-side encryption with the cloud's managed keys.",
+						// Hetzner Object Storage encrypts at rest automatically — there is no
+						// per-bucket toggle in the minio provider, so hide it (always-on).
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 					},
 				],
 			},
@@ -667,6 +670,9 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						mono: true,
 						placeholder: "https://app.example.com, https://example.com",
 						description: "Comma-separated origins allowed to read from the browser.",
+						// The aminueza/minio provider does not apply CORS to Hetzner's S3 backend
+						// (s3_compat_mode skips it), so hide the field rather than imply it works.
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 						get: (c) => (c.cors_origins ?? []).join(", "),
 						set: (v) => ({
 							cors_origins: String(v)

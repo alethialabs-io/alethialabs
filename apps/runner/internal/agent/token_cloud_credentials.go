@@ -62,3 +62,36 @@ func ActivateTokenCloud(provider, token string, selfManaged bool) (func(), error
 		}
 	}, nil
 }
+
+// hetznerS3EnvVars are the env vars the aminueza/minio provider reads (via the
+// hetzner OpenTofu template's TF_VAR_hetzner_s3_* passthrough) for Object Storage.
+var hetznerS3EnvVars = []string{"HETZNER_S3_ACCESS_KEY", "HETZNER_S3_SECRET_KEY"}
+
+// ActivateHetznerS3 exports the Hetzner Object Storage S3 key pair (distinct from the
+// Cloud API token) so the Hetzner provider's ProviderTfvars can read them for the minio
+// provider. Both keys must be present; empty keys are a no-op (token-only Hetzner
+// connections that provision no buckets) and return a no-op cleanup. Never overwrites a
+// key already set in a self-hosted runner's own environment.
+func ActivateHetznerS3(accessKey, secretKey string) func() {
+	if accessKey == "" || secretKey == "" {
+		return func() {}
+	}
+	set := map[string]string{
+		"HETZNER_S3_ACCESS_KEY": accessKey,
+		"HETZNER_S3_SECRET_KEY": secretKey,
+	}
+	restore := make(map[string]string, len(hetznerS3EnvVars))
+	for _, e := range hetznerS3EnvVars {
+		if existing := os.Getenv(e); existing != "" {
+			// Respect a self-managed runner's own S3 credentials.
+			continue
+		}
+		restore[e] = ""
+		_ = os.Setenv(e, set[e])
+	}
+	return func() {
+		for e := range restore {
+			_ = os.Unsetenv(e)
+		}
+	}
+}

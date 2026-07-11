@@ -56,9 +56,11 @@ describe("NodePalette — per-provider kind filtering", () => {
 
 		expect(screen.queryByText("Topic")).not.toBeInTheDocument();
 		expect(screen.queryByText("NoSQL table")).not.toBeInTheDocument();
-		// bucket/registry have no native Hetzner tofu wiring yet — hidden, not "Soon".
-		expect(screen.queryByText("Bucket")).not.toBeInTheDocument();
+		// registry has no native Hetzner tofu wiring yet — hidden, not "Soon".
 		expect(screen.queryByText("Container registry")).not.toBeInTheDocument();
+
+		// Bucket is NATIVE on Hetzner now (Object Storage via the minio provider) — addable.
+		expect(screen.getByText("Bucket")).toBeInTheDocument();
 
 		// The supported catalog still renders.
 		expect(screen.getByText("Database")).toBeInTheDocument();

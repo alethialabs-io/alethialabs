@@ -23,6 +23,16 @@ output "talosconfig" {
   sensitive   = true
 }
 
+output "bucket_names" {
+  description = "Provisioned Object Storage bucket names (namespaced by cluster). Empty when no buckets were requested."
+  value       = [for b in minio_s3_bucket.bucket : b.bucket]
+}
+
+output "bucket_endpoints" {
+  description = "Per-bucket S3 endpoint URLs (https://<endpoint>/<bucket>)."
+  value       = { for name, b in minio_s3_bucket.bucket : name => "https://${var.hetzner_s3_endpoint}/${b.bucket}" }
+}
+
 output "bootstrap_manifests" {
   description = "CNI + cloud-integration manifests (hcloud Secret -> Cilium -> hcloud-CCM -> hcloud-CSI), rendered offline. The runner applies these post-apply (kubectl apply) before the reachability gate: Talos is CNI=none, so nodes stay NotReady until this is applied. Emitted as an output (not applied in-tofu) to keep 'tofu plan -out' resolvable and stay under Hetzner's 32 KiB cloud-init user_data limit."
   value       = local.bootstrap_manifests

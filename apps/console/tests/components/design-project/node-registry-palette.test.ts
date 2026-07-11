@@ -44,10 +44,10 @@ describe("NODE_REGISTRY palette metadata", () => {
 		const hetzner = addableKindsFor("hetzner");
 		expect(hetzner).not.toContain("topic");
 		expect(hetzner).not.toContain("nosql");
-		// No native object storage / registry tofu wiring on Hetzner yet (MinIO/Harbor
-		// marketplace add-ons cover those in-cluster).
-		expect(hetzner).not.toContain("bucket");
+		// No native container registry on Hetzner yet (Harbor add-on covers it in-cluster).
 		expect(hetzner).not.toContain("registry");
+		// Bucket is NATIVE on Hetzner (Object Storage via the aminueza/minio provider).
+		expect(hetzner).toContain("bucket");
 		expect(hetzner).toContain("database");
 		expect(hetzner).toContain("queue");
 

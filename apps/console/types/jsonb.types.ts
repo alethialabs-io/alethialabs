@@ -61,6 +61,15 @@ export interface CloudCredentials {
 	// DigitalOcean / Hetzner / Civo — no role-federation exists for these clouds, so a
 	// scoped API token is stored ENCRYPTED at rest (decrypted only on the runner at claim).
 	token?: EncryptedSecret | null;
+	// Hetzner Object Storage (S3-compatible) — an access-key/secret-key pair, DISTINCT from the
+	// Cloud API `token` above. Hetzner has NO API to mint these, so the customer generates them
+	// by hand in the Hetzner Console (Object Storage → S3 credentials) and pastes them into the
+	// connector. Stored ENCRYPTED at rest (AES-GCM) exactly like `token`, decrypted only on the
+	// runner at claim to provision buckets via the aminueza/minio provider against the Hetzner S3
+	// endpoint. Optional (both-or-neither): token-only Hetzner connections that use no buckets
+	// leave them null, so those connections keep working unchanged.
+	s3_access_key?: EncryptedSecret | null;
+	s3_secret_key?: EncryptedSecret | null;
 	// Self-managed mode (token clouds only): no token is stored in Alethia at all — the
 	// customer's self-hosted runner supplies it from its own environment (HCLOUD_TOKEN,
 	// CIVO_TOKEN, DIGITALOCEAN_ACCESS_TOKEN). The honest zero-trust path for clouds with

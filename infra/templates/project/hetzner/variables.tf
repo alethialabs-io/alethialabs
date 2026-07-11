@@ -114,3 +114,48 @@ variable "hcloud_token" {
   default     = ""
   sensitive   = true
 }
+
+# ── Object Storage (S3-compatible) — see buckets.tf ────────────────────────────────
+
+variable "buckets" {
+  description = <<-EOT
+    Object Storage buckets to provision via the aminueza/minio provider. Empty = none
+    (the minio provider is then never exercised). `cors_origins` is IGNORED on Hetzner
+    (the provider does not apply CORS to a non-MinIO backend); `encryption_enabled` is
+    informational (Hetzner encrypts at rest automatically, no per-bucket toggle).
+  EOT
+  type = list(object({
+    name               = string
+    versioning         = optional(bool, false)
+    encryption_enabled = optional(bool, true)
+    public_access      = optional(bool, false)
+    cors_origins       = optional(list(string), [])
+  }))
+  default = []
+}
+
+variable "hetzner_s3_endpoint" {
+  description = "Hetzner Object Storage S3 endpoint HOST, no scheme (e.g. fsn1.your-objectstorage.com). Only used when var.buckets is non-empty."
+  type        = string
+  default     = "fsn1.your-objectstorage.com"
+}
+
+variable "hetzner_s3_region" {
+  description = "Hetzner Object Storage location/region (fsn1, nbg1, hel1)."
+  type        = string
+  default     = "fsn1"
+}
+
+variable "hetzner_s3_access_key" {
+  description = "Hetzner Object Storage S3 access key (distinct from the Cloud API token; manually generated in the Hetzner Console). Empty when no buckets are provisioned."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "hetzner_s3_secret_key" {
+  description = "Hetzner Object Storage S3 secret key. Empty when no buckets are provisioned."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

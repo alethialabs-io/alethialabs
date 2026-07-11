@@ -320,6 +320,13 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) error {
 				return err
 			}
 			defer cleanup()
+			// Hetzner Object Storage: export the (optional) S3 key pair for the minio provider.
+			if types.CloudProvider(claim.CloudIdentity.Provider) == types.CloudProviderHetzner &&
+				claim.CloudIdentity.S3AccessKey != "" && claim.CloudIdentity.S3SecretKey != "" {
+				fmt.Fprintln(stdoutLogger, "Activating Hetzner Object Storage S3 credentials...")
+				s3Cleanup := ActivateHetznerS3(claim.CloudIdentity.S3AccessKey, claim.CloudIdentity.S3SecretKey)
+				defer s3Cleanup()
+			}
 		case types.CloudProviderAlibaba:
 			// Keyless: the alicloud provider runs an anonymous AssumeRoleWithOIDC from a token file — no
 			// AccessKey on the runner (the retired platform RAM key).
