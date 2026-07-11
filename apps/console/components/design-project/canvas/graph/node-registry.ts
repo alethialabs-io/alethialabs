@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import {
+	Archive,
 	Box,
 	Database,
 	GitBranch,
 	Globe,
+	HardDrive,
 	KeyRound,
 	ListOrdered,
 	Megaphone,
 	Network,
+	Package,
 	Server,
 	Table2,
 	Zap,
@@ -42,6 +45,59 @@ export type SchemaKey =
 	// exists only to satisfy the exhaustive registry; the graph⇄form mappers never read it.
 	| "charts";
 
+/** Display order of the Add-palette groups (mirrors the provisionable service types). */
+export const PALETTE_GROUP_ORDER = [
+	"Data",
+	"Storage",
+	"Messaging",
+	"Security",
+	"Networking",
+	"Compute",
+	"DevOps",
+] as const;
+
+/** One of the Add-palette group headings. */
+export type PaletteGroup = (typeof PALETTE_GROUP_ORDER)[number];
+
+/** A roadmap ("Soon") row in the Add palette — a service with no Terraform module yet,
+ * surfaced disabled in its group so the catalog reads complete. */
+export interface RoadmapItem {
+	id: string;
+	label: string;
+	subtitle: string;
+	group: PaletteGroup;
+	icon: LucideIcon;
+	comingSoon: true;
+}
+
+/** Roadmap entries appended to their palette group after the addable kinds. */
+export const ROADMAP_ITEMS: RoadmapItem[] = [
+	{
+		id: "bucket",
+		label: "Bucket",
+		subtitle: "Object storage for files and assets",
+		group: "Storage",
+		icon: Archive,
+		comingSoon: true,
+	},
+	{
+		id: "volume",
+		label: "Volume",
+		subtitle: "Persistent block storage for containers",
+		group: "Storage",
+		icon: HardDrive,
+		comingSoon: true,
+	},
+	{
+		id: "registry",
+		label: "Container registry",
+		subtitle: "Private container images",
+		group: "DevOps",
+		icon: Package,
+		comingSoon: true,
+	},
+];
+
 export interface NodeKindDef<K extends NodeKind = NodeKind> {
 	kind: K;
 	schemaKey: SchemaKey;
@@ -53,6 +109,9 @@ export interface NodeKindDef<K extends NodeKind = NodeKind> {
 	eyebrow: string;
 	label: string;
 	icon: LucideIcon;
+	/** Add-palette presentation (group + cloud-indifferent subtitle). Present on every
+	 * ADDABLE kind; absent only for the fixed project root and out-of-band chart nodes. */
+	palette?: { group: PaletteGroup; subtitle: string };
 	/** Default config for a freshly-added node, given the effective provider. Typed to the
 	 * kind's ProjectFormData fragment (the schema's optional/defaulted columns may be omitted). */
 	defaultData: (provider: CloudProviderSlug) => NodeConfigMap[K];
@@ -97,6 +156,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Network",
 		label: "Network",
 		icon: Network,
+		palette: { group: "Networking", subtitle: "VPC / VNet & subnets" },
 		defaultData: () => ({
 			provision_network: true,
 			cidr_block: "10.0.0.0/16",
@@ -112,6 +172,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Cluster",
 		label: "Cluster",
 		icon: Server,
+		palette: { group: "Compute", subtitle: "Managed Kubernetes (EKS · GKE · AKS)" },
 		defaultData: (provider) => ({
 			cluster_version: DEFAULT_K8S_VERSION[provider],
 			instance_types: [DEFAULT_INSTANCE_TYPE[provider]],
@@ -130,6 +191,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Database",
 		label: "Database",
 		icon: Database,
+		palette: { group: "Data", subtitle: "PostgreSQL · MySQL" },
 		defaultData: (provider) => {
 			const capacity = DB_CAPACITY[provider];
 			return {
@@ -167,6 +229,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Cache",
 		label: "Cache",
 		icon: Zap,
+		palette: { group: "Data", subtitle: "Redis · Valkey" },
 		defaultData: (provider) => ({
 			name: "primary",
 			engine: "redis",
@@ -199,6 +262,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Queue",
 		label: "Queue",
 		icon: ListOrdered,
+		palette: { group: "Messaging", subtitle: "SQS · Pub/Sub · Service Bus" },
 		defaultData: () => ({
 			name: "queue",
 			ordered: false,
@@ -215,6 +279,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Topic",
 		label: "Topic",
 		icon: Megaphone,
+		palette: { group: "Messaging", subtitle: "Pub/Sub topics & subscriptions" },
 		defaultData: () => ({
 			name: "topic",
 			subscriptions: [],
@@ -229,6 +294,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "NoSQL",
 		label: "NoSQL table",
 		icon: Table2,
+		palette: { group: "Data", subtitle: "DynamoDB · Firestore · Cosmos DB" },
 		defaultData: () => ({
 			name: "table",
 			partition_key: "id",
@@ -247,6 +313,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "DNS",
 		label: "DNS",
 		icon: Globe,
+		palette: { group: "Networking", subtitle: "DNS records, certificates & WAF" },
 		defaultData: () => ({
 			enabled: true,
 			managed_certificate: false,
@@ -263,6 +330,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "Secret",
 		label: "Secret",
 		icon: KeyRound,
+		palette: { group: "Security", subtitle: "Managed secrets & credentials" },
 		defaultData: () => ({
 			name: "secret",
 			generate: true,
@@ -279,6 +347,7 @@ export const NODE_REGISTRY: NodeRegistry = {
 		eyebrow: "GitOps",
 		label: "Repository",
 		icon: GitBranch,
+		palette: { group: "DevOps", subtitle: "GitOps app deployment repo" },
 		defaultData: () => ({
 			apps_destination_repo: "",
 		}),

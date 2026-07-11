@@ -2,13 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import {
-	Archive,
-	ArrowLeft,
-	HardDrive,
-	Package,
-	type LucideIcon,
-} from "lucide-react";
+import { ArrowLeft, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
@@ -22,8 +16,13 @@ import {
 	CommandList,
 	CommandSeparator,
 } from "@repo/ui/command";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
-import { NODE_REGISTRY } from "./graph/node-registry";
+import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import {
+	addableKindsFor,
+	NODE_REGISTRY,
+	PALETTE_GROUP_ORDER,
+	ROADMAP_ITEMS,
+} from "./graph/node-registry";
 import type { NodeKind } from "./graph/types";
 
 interface NodePaletteProps {
@@ -47,58 +46,40 @@ interface ServiceEntry {
 	comingSoon?: boolean;
 }
 
-/** Grouped catalog backing the Add palette — mirrors the provisionable service types
- * (DATA / STORAGE / MESSAGING / …). Subtitles name the cloud-indifferent options. */
-const SERVICE_GROUPS: { title: string; items: ServiceEntry[] }[] = [
-	{
-		title: "Data",
+/** Builds the grouped Add-palette catalog from the node registry for the given addable
+ * kinds: each kind's `palette` metadata places it in a `PALETTE_GROUP_ORDER` group, and
+ * the `ROADMAP_ITEMS` ("Soon" rows) are appended to their group. Groups left empty by
+ * per-provider filtering are dropped. */
+function serviceGroupsFor(
+	kinds: NodeKind[],
+): { title: string; items: ServiceEntry[] }[] {
+	return PALETTE_GROUP_ORDER.map((title) => ({
+		title,
 		items: [
-			{ id: "database", label: "Database", subtitle: "PostgreSQL · MySQL", kind: "database", icon: NODE_REGISTRY.database.icon },
-			{ id: "cache", label: "Cache", subtitle: "Redis · Valkey", kind: "cache", icon: NODE_REGISTRY.cache.icon },
-			{ id: "nosql", label: "NoSQL table", subtitle: "DynamoDB · Firestore · Cosmos DB", kind: "nosql", icon: NODE_REGISTRY.nosql.icon },
+			...kinds
+				.filter((kind) => NODE_REGISTRY[kind].palette?.group === title)
+				.map((kind): ServiceEntry => {
+					const def = NODE_REGISTRY[kind];
+					return {
+						id: kind,
+						label: def.label,
+						subtitle: def.palette?.subtitle ?? "",
+						icon: def.icon,
+						kind,
+					};
+				}),
+			...ROADMAP_ITEMS.filter((item) => item.group === title).map(
+				(item): ServiceEntry => ({
+					id: item.id,
+					label: item.label,
+					subtitle: item.subtitle,
+					icon: item.icon,
+					comingSoon: true,
+				}),
+			),
 		],
-	},
-	{
-		title: "Storage",
-		items: [
-			{ id: "bucket", label: "Bucket", subtitle: "Object storage for files and assets", icon: Archive, comingSoon: true },
-			{ id: "volume", label: "Volume", subtitle: "Persistent block storage for containers", icon: HardDrive, comingSoon: true },
-		],
-	},
-	{
-		title: "Messaging",
-		items: [
-			{ id: "queue", label: "Queue", subtitle: "SQS · Pub/Sub · Service Bus", kind: "queue", icon: NODE_REGISTRY.queue.icon },
-			{ id: "topic", label: "Topic", subtitle: "Pub/Sub topics & subscriptions", kind: "topic", icon: NODE_REGISTRY.topic.icon },
-		],
-	},
-	{
-		title: "Security",
-		items: [
-			{ id: "secret", label: "Secret", subtitle: "Managed secrets & credentials", kind: "secret", icon: NODE_REGISTRY.secret.icon },
-		],
-	},
-	{
-		title: "Networking",
-		items: [
-			{ id: "network", label: "Network", subtitle: "VPC / VNet & subnets", kind: "network", icon: NODE_REGISTRY.network.icon },
-			{ id: "dns", label: "DNS", subtitle: "DNS records, certificates & WAF", kind: "dns", icon: NODE_REGISTRY.dns.icon },
-		],
-	},
-	{
-		title: "Compute",
-		items: [
-			{ id: "cluster", label: "Cluster", subtitle: "Managed Kubernetes (EKS · GKE · AKS)", kind: "cluster", icon: NODE_REGISTRY.cluster.icon },
-		],
-	},
-	{
-		title: "DevOps",
-		items: [
-			{ id: "repositories", label: "Repository", subtitle: "GitOps app deployment repo", kind: "repositories", icon: NODE_REGISTRY.repositories.icon },
-			{ id: "registry", label: "Container registry", subtitle: "Private container images", icon: Package, comingSoon: true },
-		],
-	},
-];
+	})).filter((group) => group.items.length > 0);
+}
 
 /**
  * The Add-service command palette: a searchable, grouped menu over every provisionable
@@ -116,6 +97,11 @@ export function NodePalette({
 	const addNode = useCanvasStore((s) => s.addNode);
 	const addNodeWithConfig = useCanvasStore((s) => s.addNodeWithConfig);
 	const nodes = useCanvasStore((s) => s.nodes);
+	// The project root's effective provider gates which kinds are addable (e.g. Hetzner
+	// has no topic/nosql) — same filter as the ⌘K menu and the canvas controls.
+	const coreProvider = useCanvasStore((s) =>
+		s.getEffectiveProvider(PROJECT_NODE_ID),
+	);
 	// When set, the palette shows the variant step for this kind (e.g. pick a DB engine).
 	const [variantKind, setVariantKind] = useState<NodeKind | null>(null);
 
@@ -144,6 +130,7 @@ export function NodePalette({
 
 	const noCloud = identities.length === 0;
 	const variantDef = variantKind ? NODE_REGISTRY[variantKind] : null;
+	const serviceGroups = serviceGroupsFor(addableKindsFor(coreProvider));
 
 	return (
 		<CommandDialog
@@ -205,7 +192,7 @@ export function NodePalette({
 								design now.
 							</p>
 						)}
-						{SERVICE_GROUPS.map((group) => (
+						{serviceGroups.map((group) => (
 							<CommandGroup key={group.title} heading={group.title}>
 								{group.items.map((entry) => {
 									const Icon = entry.icon;
