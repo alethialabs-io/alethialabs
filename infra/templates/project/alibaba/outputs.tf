@@ -31,6 +31,11 @@ output "rrsa_oidc_provider_arn" {
   value       = var.provision_ack ? module.cluster[0].rrsa_oidc_provider_arn : ""
 }
 
+output "external_secrets_ram_role_arn" {
+  description = "RRSA RAM role ARN for the external-secrets operator (gates the alibaba ClusterSecretStore render)"
+  value       = local.eso_rrsa_enabled ? alicloud_ram_role.external_secrets[0].arn : ""
+}
+
 #########################################################################
 ##                     Networking Outputs                              ##
 #########################################################################

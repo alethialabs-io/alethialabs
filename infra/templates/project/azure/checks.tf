@@ -75,3 +75,12 @@ check "azure_dns_fields_present_when_enabled" {
     error_message = "azure_dns_enabled is true but azure_dns_zone_name or azure_dns_domain is empty."
   }
 }
+
+# The external-secrets workload identity + the vault URI must exist whenever AKS is provisioned —
+# without them the azurekv ClusterSecretStore is (correctly) not rendered and can never sync.
+check "external_secrets_identity_present" {
+  assert {
+    condition     = !var.provision_aks || (length(trimspace(try(azurerm_user_assigned_identity.external_secrets[0].client_id, ""))) > 0 && startswith(module.key_vault.vault_uri, "https://"))
+    error_message = "provision_aks is true but the external-secrets managed identity or Key Vault URI is missing — the ESO ClusterSecretStore cannot authenticate."
+  }
+}

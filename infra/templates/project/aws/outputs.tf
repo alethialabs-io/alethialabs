@@ -36,6 +36,11 @@ output "eks_irsa_alb_controller_arn" {
   value = module.eks[0].eks_irsa_alb_controller_arn
 }
 
+output "eks_irsa_external_secrets_arn" {
+  description = "IRSA role ARN for the external-secrets operator (gates the AWS ClusterSecretStore render)"
+  value       = module.eks[0].eks_irsa_external_secrets_arn
+}
+
 output "rds_iam_auth_irsa_arn" {
   value = length(module.rds_iam_auth) > 0 ? module.rds_iam_auth[0].iam_role_arn : null
 }
