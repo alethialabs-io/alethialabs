@@ -39,6 +39,7 @@ export function summarizeCanvas(ctx: CanvasContext | undefined): string {
 		`Caches: [${named("caches")}]`,
 		`Queues: [${named("queues")}]  Topics: [${named("topics")}]`,
 		`NoSQL: [${named("nosql_tables")}]  Secrets: [${named("secrets")}]`,
+		`Buckets: [${named("storage_buckets")}]  Registries: [${named("container_registries")}]`,
 	];
 
 	if (ctx.nodes?.length) {

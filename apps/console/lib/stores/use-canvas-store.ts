@@ -75,6 +75,8 @@ function deriveEdges(nodes: CanvasNode[]): CanvasEdge[] {
 			"nosql",
 			"dns",
 			"secret",
+			"bucket",
+			"registry",
 			"repositories",
 		];
 		for (const kind of leafKinds) {
@@ -95,7 +97,16 @@ const NODE_H = 130;
  */
 function layoutByKind(nodes: CanvasNode[]): CanvasNode[] {
 	const singletonRow: NodeKind[] = ["network", "cluster", "dns", "repositories"];
-	const arrayRows: NodeKind[] = ["database", "cache", "queue", "topic", "nosql", "secret"];
+	const arrayRows: NodeKind[] = [
+		"database",
+		"cache",
+		"queue",
+		"topic",
+		"nosql",
+		"secret",
+		"bucket",
+		"registry",
+	];
 	const counts = new Map<NodeKind, number>();
 	return nodes.map((n) => {
 		const kind = n.data.kind;

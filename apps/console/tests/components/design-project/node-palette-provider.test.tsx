@@ -56,6 +56,9 @@ describe("NodePalette — per-provider kind filtering", () => {
 
 		expect(screen.queryByText("Topic")).not.toBeInTheDocument();
 		expect(screen.queryByText("NoSQL table")).not.toBeInTheDocument();
+		// bucket/registry have no native Hetzner tofu wiring yet — hidden, not "Soon".
+		expect(screen.queryByText("Bucket")).not.toBeInTheDocument();
+		expect(screen.queryByText("Container registry")).not.toBeInTheDocument();
 
 		// The supported catalog still renders.
 		expect(screen.getByText("Database")).toBeInTheDocument();
@@ -84,11 +87,12 @@ describe("NodePalette — per-provider kind filtering", () => {
 			expect(screen.getByText(heading)).toBeInTheDocument();
 		}
 
-		// Roadmap ("Soon") rows are still present and disabled.
+		// Bucket + Container registry are now real addable kinds (not roadmap rows).
 		expect(screen.getByText("Bucket")).toBeInTheDocument();
-		expect(screen.getByText("Volume")).toBeInTheDocument();
 		expect(screen.getByText("Container registry")).toBeInTheDocument();
-		expect(screen.getAllByText("Soon")).toHaveLength(3);
+		// Volume is the only remaining roadmap ("Soon") row.
+		expect(screen.getByText("Volume")).toBeInTheDocument();
+		expect(screen.getAllByText("Soon")).toHaveLength(1);
 	});
 
 	it("shows the full catalog when no provider is picked yet (null → unfiltered)", () => {

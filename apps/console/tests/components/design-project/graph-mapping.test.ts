@@ -49,6 +49,18 @@ function sampleForm(): ProjectFormData {
 			},
 		],
 		secrets: [{ name: "api-key", generate: true, length: 32, special_chars: true }],
+		storage_buckets: [
+			{
+				name: "assets",
+				versioning: true,
+				encryption_enabled: true,
+				public_access: false,
+				cors_origins: ["https://app.example.com"],
+			},
+		],
+		container_registries: [
+			{ name: "apps", provider_config: { immutable_tags: true } },
+		],
 	};
 }
 
@@ -69,6 +81,8 @@ describe("configName", () => {
 		expect(configName(byKind("database").data)).toBe("primary");
 		expect(configName(byKind("cache").data)).toBe("sessions");
 		expect(configName(byKind("secret").data)).toBe("api-key");
+		expect(configName(byKind("bucket").data)).toBe("assets");
+		expect(configName(byKind("registry").data)).toBe("apps");
 		// Kinds with no name field.
 		expect(configName(byKind("network").data)).toBeUndefined();
 		expect(configName(byKind("cluster").data)).toBeUndefined();
@@ -87,5 +101,17 @@ describe("formToGraph / graphToForm round-trip", () => {
 		expect(parsed.data.databases[0].name).toBe("primary");
 		expect(parsed.data.caches[0].name).toBe("sessions");
 		expect(parsed.data.secrets[0].name).toBe("api-key");
+		// bucket/registry array kinds survive the round-trip with their config intact.
+		expect(parsed.data.storage_buckets).toHaveLength(1);
+		expect(parsed.data.storage_buckets[0]).toMatchObject({
+			name: "assets",
+			versioning: true,
+			cors_origins: ["https://app.example.com"],
+		});
+		expect(parsed.data.container_registries).toHaveLength(1);
+		expect(parsed.data.container_registries[0]).toMatchObject({
+			name: "apps",
+			provider_config: { immutable_tags: true },
+		});
 	});
 });

@@ -12,6 +12,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import type { CanvasNode } from "./graph/types";
+import { BucketNode } from "./nodes/bucket-node";
 import { CacheNode } from "./nodes/cache-node";
 import { ChartNode } from "./nodes/chart-node";
 import { ClusterNode } from "./nodes/cluster-node";
@@ -21,6 +22,7 @@ import { NetworkNode } from "./nodes/network-node";
 import { NosqlNode } from "./nodes/nosql-node";
 import { ProjectNode } from "./nodes/project-node";
 import { QueueNode } from "./nodes/queue-node";
+import { RegistryNode } from "./nodes/registry-node";
 import { RepositoriesNode } from "./nodes/repositories-node";
 import { SecretNode } from "./nodes/secret-node";
 import { TopicNode } from "./nodes/topic-node";
@@ -39,6 +41,8 @@ const nodeTypes: NodeTypes = {
 	nosql: NosqlNode,
 	dns: DnsNode,
 	secret: SecretNode,
+	bucket: BucketNode,
+	registry: RegistryNode,
 	repositories: RepositoriesNode,
 	chart: ChartNode,
 };

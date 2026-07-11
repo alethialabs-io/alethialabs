@@ -35,6 +35,8 @@ const SERVICE_FIELD: Partial<Record<NodeKind, keyof CloudProviderMeta>> = {
 	nosql: "nosqlService",
 	dns: "dnsService",
 	secret: "secretsService",
+	bucket: "storageService",
+	registry: "registryService",
 };
 
 /** Hand-curated search synonyms so real service names / tech terms match. */
@@ -47,6 +49,8 @@ const SYNONYMS: Partial<Record<NodeKind, string[]>> = {
 	topic: ["pubsub", "events", "fan-out"],
 	nosql: ["dynamodb", "firestore", "cosmos", "document", "key-value"],
 	secret: ["secrets", "credentials", "vault", "password"],
+	bucket: ["s3", "object storage", "storage", "files", "assets", "blob"],
+	registry: ["docker", "ecr", "container images", "oci", "harbor", "images"],
 	network: ["vpc", "vnet", "subnet", "cidr"],
 	repositories: ["repo", "git", "gitops", "argocd", "deploy"],
 };

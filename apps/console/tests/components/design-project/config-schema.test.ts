@@ -52,6 +52,28 @@ describe("kind summaries", () => {
 		);
 	});
 
+	it("renders the bucket summary from its traits", () => {
+		expect(
+			summary("bucket", { versioning: true, encryption_enabled: true, public_access: false }),
+		).toBe("versioned · encrypted · private");
+		expect(
+			summary("bucket", { versioning: false, encryption_enabled: false, public_access: true }),
+		).toBe("public");
+	});
+
+	it("renders the registry summary as the provider's registry service name", () => {
+		const registrySummary = (provider: CloudProviderSlug | null, config: object = {}) =>
+			getKindConfig("registry")?.summary(
+				config as Record<string, unknown>,
+				provider,
+			);
+		expect(registrySummary("aws")).toBe("ECR");
+		expect(registrySummary("gcp")).toBe("Artifact Registry");
+		expect(registrySummary("azure")).toBe("ACR");
+		// No provider yet → fall back to the name.
+		expect(registrySummary(null, { name: "apps" })).toBe("apps");
+	});
+
 	it("renders in-cluster sizing summaries on hetzner (defaults + explicit)", () => {
 		const hetzner = (kind: Parameters<typeof getKindConfig>[0], config: object) =>
 			getKindConfig(kind)?.summary(config as Record<string, unknown>, "hetzner");
@@ -190,5 +212,37 @@ describe("field get/set escape hatches", () => {
 			.find((f) => f.key === "instance_types");
 		expect(field?.get?.({ instance_types: ["m5.large"] })).toBe("m5.large");
 		expect(field?.set?.("m5.xlarge", {})).toEqual({ instance_types: ["m5.xlarge"] });
+	});
+
+	it("normalizes the bucket name to S3-safe characters via the transform", () => {
+		const field = getKindConfig("bucket")
+			?.sections.flatMap((s) => s.fields)
+			.find((f) => f.key === "name");
+		expect(field?.transform?.("My Assets_2")).toBe("myassets2");
+		expect(field?.transform?.("static-files")).toBe("static-files");
+	});
+
+	it("round-trips bucket CORS origins through the comma-separated text field", () => {
+		const field = getKindConfig("bucket")
+			?.sections.flatMap((s) => s.fields)
+			.find((f) => f.key === "cors_origins");
+		expect(field?.get?.({ cors_origins: ["https://a.com", "https://b.com"] })).toBe(
+			"https://a.com, https://b.com",
+		);
+		expect(field?.set?.("https://a.com, https://b.com,", {})).toEqual({
+			cors_origins: ["https://a.com", "https://b.com"],
+		});
+	});
+
+	it("writes registry knobs into provider_config without clobbering siblings", () => {
+		const field = getKindConfig("registry")
+			?.sections.flatMap((s) => s.fields)
+			.find((f) => f.key === "immutable_tags");
+		expect(field?.get?.({ provider_config: { immutable_tags: true } })).toBe(true);
+		expect(
+			field?.set?.(true, { name: "apps", provider_config: { vulnerability_scanning: true } }),
+		).toEqual({
+			provider_config: { vulnerability_scanning: true, immutable_tags: true },
+		});
 	});
 });

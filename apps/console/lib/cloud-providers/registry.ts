@@ -34,6 +34,7 @@ export interface CloudProviderMeta {
 	topicService: string;
 	registryService: string;
 	secretsService: string;
+	storageService: string;
 }
 
 /** Provider metadata keyed by slug. */
@@ -54,6 +55,7 @@ export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = {
 		topicService: "SNS",
 		registryService: "ECR",
 		secretsService: "Secrets Manager",
+		storageService: "S3",
 	},
 	gcp: {
 		slug: "gcp",
@@ -71,6 +73,7 @@ export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = {
 		topicService: "Pub/Sub",
 		registryService: "Artifact Registry",
 		secretsService: "Secret Manager",
+		storageService: "Cloud Storage",
 	},
 	azure: {
 		slug: "azure",
@@ -88,6 +91,7 @@ export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = {
 		topicService: "Service Bus",
 		registryService: "ACR",
 		secretsService: "Key Vault",
+		storageService: "Blob Storage",
 	},
 	alibaba: {
 		slug: "alibaba",
@@ -105,6 +109,7 @@ export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = {
 		topicService: "MNS",
 		registryService: "Container Registry (ACR)",
 		secretsService: "KMS",
+		storageService: "OSS",
 	},
 	digitalocean: {
 		slug: "digitalocean",
@@ -122,6 +127,7 @@ export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = {
 		topicService: "—",
 		registryService: "Container Registry",
 		secretsService: "—",
+		storageService: "Spaces",
 	},
 	hetzner: {
 		slug: "hetzner",
@@ -140,6 +146,8 @@ export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = {
 		topicService: "—",
 		registryService: "Harbor (in-cluster)",
 		secretsService: "Vault (in-cluster)",
+		// No native object storage wired yet (MinIO covers it as a marketplace add-on).
+		storageService: "—",
 	},
 	civo: {
 		slug: "civo",
@@ -157,6 +165,7 @@ export const PROVIDERS: Record<ConnectableCloudSlug, CloudProviderMeta> = {
 		topicService: "—",
 		registryService: "—",
 		secretsService: "—",
+		storageService: "Object Store",
 	},
 };
 

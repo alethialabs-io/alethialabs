@@ -7,6 +7,7 @@ import { slugify } from "@/lib/slug";
 import {
 	projectCaches,
 	projectCluster,
+	projectContainerRegistries,
 	projectDatabases,
 	projectDns,
 	projectNetwork,
@@ -15,6 +16,7 @@ import {
 	projectRepositories,
 	projectSecrets,
 	projectSourceRepos,
+	projectStorageBuckets,
 	projectTopics,
 	projects,
 } from "@/lib/db/schema";
@@ -25,6 +27,8 @@ import type {
 	DnsProviderConfig,
 	NodeSize,
 	NosqlProviderConfig,
+	RegistryProviderConfig,
+	StorageProviderConfig,
 	TopicSubscription,
 } from "@/types/jsonb.types";
 
@@ -65,6 +69,12 @@ const nosqlInsert = createInsertSchema(projectNosqlTables, {
 	provider_config: z.custom<NosqlProviderConfig>().optional(),
 });
 const secretsInsert = createInsertSchema(projectSecrets);
+const bucketsInsert = createInsertSchema(projectStorageBuckets, {
+	provider_config: z.custom<StorageProviderConfig>().optional(),
+});
+const registriesInsert = createInsertSchema(projectContainerRegistries, {
+	provider_config: z.custom<RegistryProviderConfig>().optional(),
+});
 
 const autoFields = { id: true, created_at: true, updated_at: true } as const;
 const componentAutoFields = {
@@ -163,6 +173,33 @@ const secretItemSchema = secretsInsert.omit({
 	status_message: true,
 }).extend({ name: z.string().min(1, "Secret name is required") });
 
+// S3-safe bucket naming (the strictest cloud rules, so one name works everywhere):
+// 3–63 chars, lowercase letters / digits / hyphens, no leading or trailing hyphen.
+const S3_SAFE_NAME = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/;
+
+const bucketItemSchema = bucketsInsert
+	.omit(componentAutoFields)
+	.extend({
+		name: z
+			.string()
+			.min(1, "Bucket name is required")
+			.refine(
+				(v) => S3_SAFE_NAME.test(v),
+				"3–63 lowercase letters, digits, or hyphens; must start and end with a letter or digit",
+			),
+	});
+
+const registryItemSchema = registriesInsert
+	.omit({
+		...autoFields,
+		project_id: true,
+		status: true,
+		status_message: true,
+		// Output column (set after the first deploy), never designed by the user.
+		repository_url: true,
+	})
+	.extend({ name: z.string().min(1, "Registry name is required") });
+
 export const projectFormSchema = z.object({
 	project: projectSchema,
 	network: networkSchema,
@@ -176,6 +213,8 @@ export const projectFormSchema = z.object({
 	topics: z.array(topicItemSchema).default([]),
 	nosql_tables: z.array(nosqlItemSchema).default([]),
 	secrets: z.array(secretItemSchema).default([]),
+	storage_buckets: z.array(bucketItemSchema).default([]),
+	container_registries: z.array(registryItemSchema).default([]),
 });
 
 export type ProjectFormData = z.infer<typeof projectFormSchema>;
@@ -188,6 +227,8 @@ export {
 	topicItemSchema,
 	nosqlItemSchema,
 	secretItemSchema,
+	bucketItemSchema,
+	registryItemSchema,
 	sourceRepoItemSchema,
 	// Singleton sub-schemas — consumed by the canvas for per-node validation.
 	projectSchema,
