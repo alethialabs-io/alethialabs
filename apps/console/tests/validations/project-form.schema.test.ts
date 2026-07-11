@@ -121,6 +121,51 @@ describe("projectFormSchema", () => {
 		});
 	});
 
+	// In-cluster sizing (compute-only clouds, e.g. Hetzner): the columns are nullable —
+	// NULL/omitted means the mapper defaults apply — and clamped to the inspector's bounds.
+	describe("in-cluster sizing fields (storage_gb / replicas)", () => {
+		it("accepts explicit sizing on databases, caches, and queues", () => {
+			const data = {
+				...validProject,
+				databases: [{ name: "primary", engine_family: "postgres", storage_gb: 50, replicas: 3 }],
+				caches: [{ name: "primary", engine: "valkey", storage_gb: 32 }],
+				queues: [{ name: "jobs", storage_gb: 16 }],
+			};
+			expect(projectFormSchema.safeParse(data).success).toBe(true);
+		});
+
+		it("accepts null / omitted sizing (mapper defaults stay authoritative)", () => {
+			const data = {
+				...validProject,
+				databases: [{ name: "primary", storage_gb: null, replicas: null }],
+				caches: [{ name: "primary" }],
+				queues: [{ name: "jobs", storage_gb: null }],
+			};
+			expect(projectFormSchema.safeParse(data).success).toBe(true);
+		});
+
+		it("rejects negative, zero, fractional, and out-of-bounds sizing", () => {
+			const bad = [
+				{ databases: [{ name: "d", storage_gb: -5 }] },
+				{ databases: [{ name: "d", replicas: 0 }] },
+				{ databases: [{ name: "d", replicas: 6 }] },
+				{ databases: [{ name: "d", storage_gb: 2048 }] },
+				{ databases: [{ name: "d", storage_gb: 10.5 }] },
+				{ caches: [{ name: "c", storage_gb: 0 }] },
+				{ caches: [{ name: "c", storage_gb: 1024 }] },
+				{ queues: [{ name: "q", storage_gb: -1 }] },
+				{ queues: [{ name: "q", storage_gb: 512 }] },
+			];
+			const failures = bad
+				.filter(
+					(overrides) =>
+						projectFormSchema.safeParse({ ...validProject, ...overrides }).success,
+				)
+				.map((overrides) => JSON.stringify(overrides));
+			expect(failures).toEqual([]);
+		});
+	});
+
 	describe("nosql_tables array", () => {
 		it("accepts empty array", () => {
 			const result = projectFormSchema.safeParse({ ...validProject, nosql_tables: [] });

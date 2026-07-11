@@ -15,6 +15,7 @@ import {
 	NOSQL,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
+import { HETZNER_DB_ENGINES } from "@/lib/cloud-providers/hetzner-services";
 import type { NodeConfigMap, NodeKind } from "../graph/types";
 
 /**
@@ -58,7 +59,7 @@ export interface FieldDef<C = AnyConfig> {
 	description?: string;
 	/** Monospace text input (names, CIDR, ids). */
 	mono?: boolean;
-	placeholder?: string;
+	placeholder?: Resolvable<string, C>;
 	unit?: Resolvable<string, C>;
 	options?: Resolvable<FieldOption[], C>;
 	min?: Resolvable<number, C>;
@@ -70,8 +71,9 @@ export interface FieldDef<C = AnyConfig> {
 	requiresProvider?: boolean;
 	/** Span the full section width (radio-card/region/repository/switch already do). */
 	full?: boolean;
-	/** Hide the field unless the predicate holds (e.g. only when a toggle is on). */
-	visibleWhen?: (config: C) => boolean;
+	/** Hide the field unless the predicate holds (e.g. only when a toggle is on, or only
+	 * for a given provider via the context). One-arg closures keep working unchanged. */
+	visibleWhen?: (config: C, ctx: FieldCtx<C>) => boolean;
 	/** Normalize raw text input (e.g. lowercasing a name). */
 	transform?: (raw: string) => string;
 	/** Nested read escape hatch (e.g. `instance_types[0]`). */
@@ -109,6 +111,9 @@ const nameField = <C = AnyConfig>(
 	mono: true,
 	transform: transform ?? ((v) => v.toLowerCase()),
 });
+
+/** Engine families available on Hetzner (in-cluster CloudNativePG → postgres only). */
+const HETZNER_ENGINE_SET = new Set<string>(HETZNER_DB_ENGINES);
 
 const ENGINE_FAMILY: FieldOption[] = [
 	{
@@ -325,7 +330,11 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "engine_family",
 						type: "radio-card",
 						label: "Engine",
-						options: ENGINE_FAMILY,
+						// Hetzner runs databases in-cluster via CloudNativePG → postgres only.
+						options: ({ provider }) =>
+							provider === "hetzner"
+								? ENGINE_FAMILY.filter((o) => HETZNER_ENGINE_SET.has(o.value))
+								: ENGINE_FAMILY,
 					},
 					{
 						key: "port",
@@ -347,6 +356,9 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Min capacity",
 						float: true,
 						requiresProvider: true,
+						// Serverless capacity units (ACU/vCPU) are meaningless for the in-cluster
+						// CloudNativePG path — Hetzner sizes via the In-cluster sizing section.
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 						unit: ({ provider }) => (provider ? DB_CAPACITY[provider].unit : ""),
 						min: ({ provider }) => (provider ? DB_CAPACITY[provider].min : 0),
 						max: ({ provider }) => (provider ? DB_CAPACITY[provider].max : 0),
@@ -358,10 +370,39 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Max capacity",
 						float: true,
 						requiresProvider: true,
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 						unit: ({ provider }) => (provider ? DB_CAPACITY[provider].unit : ""),
 						min: ({ provider }) => (provider ? DB_CAPACITY[provider].min : 0),
 						max: ({ provider }) => (provider ? DB_CAPACITY[provider].max : 0),
 						step: ({ provider }) => (provider ? DB_CAPACITY[provider].step : 1),
+					},
+				],
+			},
+			{
+				id: "in-cluster-sizing",
+				title: "In-cluster sizing",
+				defaultOpen: true,
+				fields: [
+					{
+						key: "storage_gb",
+						type: "number",
+						label: "Storage",
+						unit: "GiB",
+						min: 1,
+						max: 1024,
+						placeholder: "10",
+						description: "Persistent volume per Postgres instance (CloudNativePG).",
+						visibleWhen: (_c, { provider }) => provider === "hetzner",
+					},
+					{
+						key: "replicas",
+						type: "number",
+						label: "Instances",
+						min: 1,
+						max: 5,
+						placeholder: "1",
+						description: "Postgres instances in the cluster (1 primary + replicas).",
+						visibleWhen: (_c, { provider }) => provider === "hetzner",
 					},
 				],
 			},
@@ -378,10 +419,12 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				],
 			},
 		],
-		summary: (c) =>
-			`${engineLabel(c)} · ${c.min_capacity ?? "?"}–${
-				c.max_capacity ?? "?"
-			}`,
+		summary: (c, provider) =>
+			provider === "hetzner"
+				? `${engineLabel(c)} · ${c.storage_gb ?? 10} GiB × ${c.replicas ?? 1}`
+				: `${engineLabel(c)} · ${c.min_capacity ?? "?"}–${
+						c.max_capacity ?? "?"
+					}`,
 	},
 
 	cache: {
@@ -398,6 +441,9 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "select",
 						label: "Node type",
 						requiresProvider: true,
+						// No managed cache SKUs on Hetzner — the in-cluster Valkey chart sizes
+						// via storage_gb below.
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 						options: ({ provider }) =>
 							provider
 								? CACHE_NODE_TYPES[provider].map((n) => ({
@@ -415,18 +461,34 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				fields: [
 					{ key: "num_cache_nodes", type: "number", label: "Nodes", min: 1, max: 6 },
 					{
+						key: "storage_gb",
+						type: "number",
+						label: "Storage",
+						unit: "GiB",
+						min: 1,
+						max: 512,
+						placeholder: ({ config }) => String(config.memory_gb ?? 8),
+						description: "Persistent volume per Valkey node; defaults to the memory size.",
+						visibleWhen: (_c, { provider }) => provider === "hetzner",
+					},
+					{
 						key: "multi_az",
 						type: "switch",
 						label: "Multi-AZ",
 						description: "Replicate across availability zones for failover.",
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 					},
 				],
 			},
 		],
-		summary: (c) =>
-			`${c.engine === "valkey" ? "Valkey" : "Redis"} · ${
-				c.node_type ?? "—"
-			}`,
+		summary: (c, provider) =>
+			provider === "hetzner"
+				? `${c.engine === "valkey" ? "Valkey" : "Redis"} · ${
+						c.storage_gb ?? c.memory_gb ?? 8
+					} GiB × ${c.num_cache_nodes ?? 1}`
+				: `${c.engine === "valkey" ? "Valkey" : "Redis"} · ${
+						c.node_type ?? "—"
+					}`,
 	},
 
 	queue: {
@@ -443,18 +505,34 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Visibility timeout (s)",
 						min: 0,
 						max: 43200,
+						// SQS-ism — the in-cluster RabbitMQ path has no visibility timeout.
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 					},
 					{
 						key: "ordered",
 						type: "switch",
 						label: "Ordered (FIFO) delivery",
 						description: "Guarantee message order at the cost of throughput.",
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
+					},
+					{
+						key: "storage_gb",
+						type: "number",
+						label: "Storage",
+						unit: "GiB",
+						min: 1,
+						max: 256,
+						placeholder: "8",
+						description: "Persistent volume for the RabbitMQ node.",
+						visibleWhen: (_c, { provider }) => provider === "hetzner",
 					},
 				],
 			},
 		],
-		summary: (c) =>
-			`${c.ordered ? "FIFO" : "Standard"} · ${c.visibility_timeout ?? 30}s`,
+		summary: (c, provider) =>
+			provider === "hetzner"
+				? `RabbitMQ · ${c.storage_gb ?? 8} GiB`
+				: `${c.ordered ? "FIFO" : "Standard"} · ${c.visibility_timeout ?? 30}s`,
 	},
 
 	topic: {

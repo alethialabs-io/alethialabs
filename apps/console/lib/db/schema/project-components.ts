@@ -350,6 +350,12 @@ export const projectDatabases = pgTable(
 		instance_class: text(),
 		min_capacity: numeric({ precision: 6, scale: 2, mode: "number" }).default(0.5),
 		max_capacity: numeric({ precision: 6, scale: 2, mode: "number" }).default(4),
+		// Cloud-indifferent in-cluster sizing; used by compute-only clouds (e.g. Hetzner,
+		// where a database node deploys as a CloudNativePG cluster instead of a managed
+		// service): persistent-volume size in GiB and instance count. NULL → the in-cluster
+		// mapper's defaults stay authoritative (10Gi / 1 instance).
+		storage_gb: integer(),
+		replicas: integer(),
 		port: integer().default(5432),
 		backup_retention_days: integer().default(7),
 		iam_auth: boolean().default(false),
@@ -391,6 +397,10 @@ export const projectCaches = pgTable(
 		// Cloud-indifferent size in GB; the Go resolver maps it to the nearest provider cache
 		// SKU. Legacy concrete node_type below is the resolver's fallback.
 		memory_gb: numeric({ precision: 8, scale: 2, mode: "number" }),
+		// Cloud-indifferent in-cluster sizing; used by compute-only clouds (e.g. Hetzner,
+		// where a cache node deploys as a Valkey chart): persistent-volume size in GiB.
+		// NULL → the in-cluster mapper falls back to memory_gb, then its default (8Gi).
+		storage_gb: integer(),
 		node_type: text(),
 		num_cache_nodes: integer().default(1),
 		multi_az: boolean().default(false),
@@ -426,6 +436,10 @@ export const projectQueues = pgTable(
 		cloud_identity_id: ownerRef(),
 		region: text(),
 		ordered: boolean().default(false),
+		// Cloud-indifferent in-cluster sizing; used by compute-only clouds (e.g. Hetzner,
+		// where a queue node deploys as a RabbitMQ chart): persistent-volume size in GiB.
+		// NULL → the in-cluster mapper's default stays authoritative (8Gi).
+		storage_gb: integer(),
 		// Cross-cloud: SQS visibility ≈ Azure lock_duration ≈ Pub/Sub ack deadline.
 		visibility_timeout: integer().default(30),
 		message_retention: integer().default(345600),

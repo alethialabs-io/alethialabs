@@ -68,9 +68,10 @@ export const HETZNER_SUPPORTED_DATA_KINDS = ["database", "cache", "queue"] as co
 /** Database engines available on Hetzner (Postgres only in v1 — via CloudNativePG). */
 export const HETZNER_DB_ENGINES = ["postgres"] as const;
 
-/** Minimal, forward-compatible views of the component rows the mapper needs. `storage_gb`
- *  and `replicas` are optional: they become user-tunable inspector fields in a later pass and
- *  default here until then. */
+/** Minimal views of the component rows the mapper needs. `storage_gb` and `replicas` are
+ *  the user-tunable in-cluster sizing columns (Hetzner-gated inspector fields); NULL means
+ *  the defaults here stay authoritative. A cache's explicit `storage_gb` wins over the
+ *  `memory_gb` fallback. */
 interface DatabaseInput {
 	name: string;
 	engine_family?: string | null;

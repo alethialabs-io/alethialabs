@@ -46,9 +46,18 @@ const repositoriesInsert = createInsertSchema(projectRepositories);
 const sourceReposInsert = createInsertSchema(projectSourceRepos, {
 	services: z.custom<DetectedService[]>().optional(),
 });
-const databasesInsert = createInsertSchema(projectDatabases);
-const cachesInsert = createInsertSchema(projectCaches);
-const queuesInsert = createInsertSchema(projectQueues);
+// In-cluster sizing columns (compute-only clouds, e.g. Hetzner) — clamp to the
+// inspector's bounds; NULL/omitted means the in-cluster mapper's defaults apply.
+const databasesInsert = createInsertSchema(projectDatabases, {
+	storage_gb: z.number().int().min(1).max(1024).nullable().optional(),
+	replicas: z.number().int().min(1).max(5).nullable().optional(),
+});
+const cachesInsert = createInsertSchema(projectCaches, {
+	storage_gb: z.number().int().min(1).max(512).nullable().optional(),
+});
+const queuesInsert = createInsertSchema(projectQueues, {
+	storage_gb: z.number().int().min(1).max(256).nullable().optional(),
+});
 const topicsInsert = createInsertSchema(projectTopics, {
 	subscriptions: z.custom<TopicSubscription[]>().optional(),
 });

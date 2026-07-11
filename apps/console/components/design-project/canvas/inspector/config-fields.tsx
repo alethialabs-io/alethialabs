@@ -111,7 +111,7 @@ function FieldControl({
 			return (
 				<Input
 					value={(raw as string) ?? ""}
-					placeholder={field.placeholder}
+					placeholder={resolve(field.placeholder, ctx)}
 					className={cn("h-9 text-sm", field.mono && "font-mono")}
 					onChange={(e) =>
 						patch(
@@ -132,6 +132,7 @@ function FieldControl({
 					min={resolve(field.min, ctx)}
 					max={resolve(field.max, ctx)}
 					step={step}
+					placeholder={resolve(field.placeholder, ctx)}
 					value={(raw as number) ?? ""}
 					className="h-9 text-sm"
 					onChange={(e) => {
@@ -152,7 +153,7 @@ function FieldControl({
 					onValueChange={patch}
 				>
 					<SelectTrigger className="h-9 text-sm">
-						<SelectValue placeholder={field.placeholder} />
+						<SelectValue placeholder={resolve(field.placeholder, ctx)} />
 					</SelectTrigger>
 					<SelectContent>
 						{options.map((o) => (
@@ -259,7 +260,7 @@ function sectionSummary(section: SectionDef, ctx: FieldCtx): string {
 	for (const field of section.fields) {
 		if (chips.length >= 2) break;
 		if (field.type === "switch") continue;
-		if (field.visibleWhen && !field.visibleWhen(ctx.config)) continue;
+		if (field.visibleWhen && !field.visibleWhen(ctx.config, ctx)) continue;
 		const raw = field.get ? field.get(ctx.config) : ctx.config[field.key];
 		if (raw == null || raw === "") continue;
 		if (field.type === "select" || field.type === "radio-card") {
@@ -290,8 +291,11 @@ function Section({
 	const [open, setOpen] = useState(section.defaultOpen ?? false);
 	const summary = sectionSummary(section, ctx);
 	const fields = section.fields.filter(
-		(f) => !f.visibleWhen || f.visibleWhen(ctx.config),
+		(f) => !f.visibleWhen || f.visibleWhen(ctx.config, ctx),
 	);
+
+	// A section whose every field is hidden (e.g. provider-gated sizing) renders nothing.
+	if (fields.length === 0) return null;
 
 	return (
 		<Collapsible
