@@ -41,7 +41,9 @@ import {
 import { Switch } from "@repo/ui/switch";
 import { Textarea } from "@repo/ui/textarea";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
+import { REQUIREMENT_HINTS } from "@/lib/addons/requirements";
 import type { AddOnMode } from "@/lib/addons/types";
+import type { CloudProviderSlug } from "@/lib/cloud-providers/registry";
 import {
 	useDisableAddon,
 	useEnableAddon,
@@ -75,6 +77,7 @@ export function AddonConfigSheet({
 	projectId,
 	environmentId,
 	hasAppsRepo,
+	provider,
 	open,
 	onOpenChange,
 }: {
@@ -82,6 +85,8 @@ export function AddonConfigSheet({
 	projectId: string;
 	environmentId: string | null;
 	hasAppsRepo: boolean;
+	/** The project's effective cloud provider — drives the requirement hints (null = unset). */
+	provider: CloudProviderSlug | null;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }) {
@@ -164,6 +169,29 @@ export function AddonConfigSheet({
 						{item.summary} Installs the <code>{item.chart}</code> chart into{" "}
 						<code>{item.namespace}</code>. Reconciles on your next Deploy.
 					</SheetDescription>
+					{item.requires.length > 0 && (
+						<div className="space-y-1.5 pt-2">
+							<p className="text-xs font-medium text-muted-foreground">
+								Requirements
+							</p>
+							{item.requires.map((req) => {
+								const h = REQUIREMENT_HINTS[req](provider);
+								return (
+									<div key={req} className="flex items-start gap-2">
+										<Badge
+											variant="outline"
+											className="shrink-0 text-[10px] uppercase"
+										>
+											{h.label}
+										</Badge>
+										<span className="text-xs text-muted-foreground">
+											{h.hint}
+										</span>
+									</div>
+								);
+							})}
+						</div>
+					)}
 				</SheetHeader>
 
 				<form
