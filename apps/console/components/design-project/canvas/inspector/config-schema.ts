@@ -10,6 +10,7 @@
 import {
 	CACHE_NODE_TYPES,
 	DB_CAPACITY,
+	getProvider,
 	INSTANCE_TYPES,
 	K8S_VERSIONS,
 	NOSQL,
@@ -640,6 +641,107 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 		],
 		summary: (c) =>
 			c.generate === false ? "manual value" : `generated · ${c.length ?? 32} chars`,
+	},
+
+	bucket: {
+		sections: [
+			{
+				id: "general",
+				title: "General",
+				defaultOpen: true,
+				fields: [
+					// S3-safe: lowercase letters / digits / hyphens only (validated 3–63 on save).
+					nameField((v) => v.toLowerCase().replace(/[^a-z0-9-]/g, "")),
+					{
+						key: "versioning",
+						type: "switch",
+						label: "Versioning",
+						description: "Keep every version of an object; restore or roll back at any time.",
+					},
+					{
+						key: "encryption_enabled",
+						type: "switch",
+						label: "Encryption at rest",
+						description: "Server-side encryption with the cloud's managed keys.",
+					},
+				],
+			},
+			{
+				id: "access",
+				title: "Access",
+				defaultOpen: true,
+				fields: [
+					{
+						key: "public_access",
+						type: "switch",
+						label: "Public access",
+						description: "Allow unauthenticated reads (static assets). Off keeps the bucket private.",
+					},
+					{
+						key: "cors_origins",
+						type: "text",
+						label: "CORS origins",
+						mono: true,
+						placeholder: "https://app.example.com, https://example.com",
+						description: "Comma-separated origins allowed to read from the browser.",
+						get: (c) => (c.cors_origins ?? []).join(", "),
+						set: (v) => ({
+							cors_origins: String(v)
+								.split(",")
+								.map((s) => s.trim())
+								.filter(Boolean),
+						}),
+					},
+				],
+			},
+		],
+		summary: (c) =>
+			[
+				c.versioning ? "versioned" : null,
+				c.encryption_enabled !== false ? "encrypted" : null,
+				c.public_access ? "public" : "private",
+			]
+				.filter(Boolean)
+				.join(" · "),
+	},
+
+	registry: {
+		sections: [
+			{
+				id: "general",
+				title: "General",
+				defaultOpen: true,
+				fields: [
+					nameField((v) => v.toLowerCase().replace(/[^a-z0-9-]/g, "")),
+					{
+						key: "immutable_tags",
+						type: "switch",
+						label: "Immutable tags",
+						description: "Prevent pushed image tags from being overwritten.",
+						get: (c) => c.provider_config?.immutable_tags ?? false,
+						set: (v, c) => ({
+							provider_config: { ...c.provider_config, immutable_tags: Boolean(v) },
+						}),
+					},
+					{
+						key: "vulnerability_scanning",
+						type: "switch",
+						label: "Vulnerability scanning",
+						description: "Scan pushed images for known CVEs.",
+						get: (c) => c.provider_config?.vulnerability_scanning ?? false,
+						set: (v, c) => ({
+							provider_config: {
+								...c.provider_config,
+								vulnerability_scanning: Boolean(v),
+							},
+						}),
+					},
+				],
+			},
+		],
+		// The provider's registry service name (ECR / Artifact Registry / ACR / …).
+		summary: (c, provider) =>
+			provider ? getProvider(provider).registryService : c.name || "registry",
 	},
 
 	dns: {

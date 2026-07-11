@@ -28,6 +28,7 @@ import {
 	projectRepositories,
 	projectSourceRepos,
 	projectSecrets,
+	projectStorageBuckets,
 	projectTopics,
 	projects,
 } from "@/lib/db/schema";
@@ -113,6 +114,11 @@ export interface CreateProjectInput {
 	topics?: ComponentInsert<typeof projectTopics.$inferInsert>[];
 	nosql_tables?: ComponentInsert<typeof projectNosqlTables.$inferInsert>[];
 	secrets?: ComponentInsert<typeof projectSecrets.$inferInsert>[];
+	storage_buckets?: ComponentInsert<typeof projectStorageBuckets.$inferInsert>[];
+	container_registries?: Omit<
+		ComponentInsert<typeof projectContainerRegistries.$inferInsert>,
+		"repository_url"
+	>[];
 }
 
 // ============================================================
@@ -177,6 +183,14 @@ async function writeComponents(
 		await tx
 			.insert(projectSecrets)
 			.values(data.secrets.map((s) => ({ ...base, ...s })));
+	if (data.storage_buckets?.length)
+		await tx
+			.insert(projectStorageBuckets)
+			.values(data.storage_buckets.map((b) => ({ ...base, ...b })));
+	if (data.container_registries?.length)
+		await tx
+			.insert(projectContainerRegistries)
+			.values(data.container_registries.map((r) => ({ ...base, ...r })));
 }
 
 /** Deletes every component row for one (project, environment) — the delete half of the canvas
@@ -205,6 +219,12 @@ async function clearComponents(
 		.delete(projectNosqlTables)
 		.where(envScope(projectNosqlTables, projectId, environmentId));
 	await tx.delete(projectSecrets).where(envScope(projectSecrets, projectId, environmentId));
+	await tx
+		.delete(projectStorageBuckets)
+		.where(envScope(projectStorageBuckets, projectId, environmentId));
+	await tx
+		.delete(projectContainerRegistries)
+		.where(envScope(projectContainerRegistries, projectId, environmentId));
 }
 
 export async function createProject(data: CreateProjectInput) {
@@ -282,7 +302,7 @@ export async function createProject(data: CreateProjectInput) {
 /**
  * Reconcile an existing project's components to the desired canvas config (the
  * `graphToForm` output). Config is treated as desired-state: each singleton is rewritten
- * and array components (databases/caches/queues/topics/nosql/secrets) are replaced to
+ * and array components (databases/caches/queues/topics/nosql/secrets/buckets/registries) are replaced to
  * match `data`, all in one tx. Provisioned outputs/status repopulate on the next deploy
  * via finalizeDeployment. The canvas persists through this (via applyStagedChanges) so an
  * existing project is *edited* rather than re-created.
@@ -429,6 +449,14 @@ export async function getProject(
 				.select()
 				.from(projectSecrets)
 				.where(envScope(projectSecrets, projectId, envId));
+			const storageBuckets = await tx
+				.select()
+				.from(projectStorageBuckets)
+				.where(envScope(projectStorageBuckets, projectId, envId));
+			const containerRegistries = await tx
+				.select()
+				.from(projectContainerRegistries)
+				.where(envScope(projectContainerRegistries, projectId, envId));
 			return {
 				network: network ?? null,
 				cluster: cluster ?? null,
@@ -441,6 +469,8 @@ export async function getProject(
 				topics,
 				nosql_tables: nosqlTables,
 				secrets,
+				storage_buckets: storageBuckets,
+				container_registries: containerRegistries,
 			};
 		}
 
@@ -458,6 +488,8 @@ export async function getProject(
 					topics: [],
 					nosql_tables: [],
 					secrets: [],
+					storage_buckets: [],
+					container_registries: [],
 				};
 
 		let cloudProvider = "aws";
@@ -599,6 +631,10 @@ async function buildConfigSnapshot(
 			.select()
 			.from(projectContainerRegistries)
 			.where(envScope(projectContainerRegistries, projectId, envId));
+		const storageBuckets = await tx
+			.select()
+			.from(projectStorageBuckets)
+			.where(envScope(projectStorageBuckets, projectId, envId));
 		const [observability] = await tx
 			.select()
 			.from(projectObservability)
@@ -679,6 +715,7 @@ async function buildConfigSnapshot(
 					...nosqlTables.map((n) => n.cloud_identity_id),
 					...secrets.map((s) => s.cloud_identity_id),
 					...containerRegistries.map((r) => r.cloud_identity_id),
+					...storageBuckets.map((b) => b.cloud_identity_id),
 				].filter(
 					(id): id is string => typeof id === "string" && id !== identity.id,
 				),
@@ -825,6 +862,10 @@ async function buildConfigSnapshot(
 			container_registries: containerRegistries.map((r) => ({
 				...r,
 				...resolvePlacement(r),
+			})),
+			storage_buckets: storageBuckets.map((b) => ({
+				...b,
+				...resolvePlacement(b),
 			})),
 			// Marketplace add-ons (resolved install specs) — the runner renders each as an
 			// ArgoCD Helm Application after the cluster + ArgoCD are up.
@@ -1263,6 +1304,20 @@ export async function getProjectAsFormData(
 			generate: s.generate ?? undefined,
 			length: s.length ?? undefined,
 			special_chars: s.special_chars ?? undefined,
+		})),
+		storage_buckets: source.components.storage_buckets.map((b) => ({
+			name: b.name,
+			versioning: b.versioning ?? undefined,
+			encryption_enabled: b.encryption_enabled ?? undefined,
+			public_access: b.public_access ?? undefined,
+			cors_origins: b.cors_origins ?? undefined,
+			provider_config: b.provider_config ?? undefined,
+		})),
+		// Output columns (repository_url) are provisioned state, not design — stripped here.
+		container_registries: source.components.container_registries.map((r) => ({
+			name: r.name,
+			provider: r.provider ?? undefined,
+			provider_config: r.provider_config ?? undefined,
 		})),
 	} as ProjectFormData;
 

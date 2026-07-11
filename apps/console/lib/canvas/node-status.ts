@@ -67,6 +67,8 @@ const ARRAY_SCHEMA_KIND: Record<string, NodeKind> = {
 	topics: "topic",
 	nosql_tables: "nosql",
 	secrets: "secret",
+	storage_buckets: "bucket",
+	container_registries: "registry",
 };
 
 /**

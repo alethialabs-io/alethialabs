@@ -41,6 +41,8 @@ export type SchemaKey =
 	| "topics"
 	| "nosql_tables"
 	| "secrets"
+	| "storage_buckets"
+	| "container_registries"
 	// Chart nodes are out-of-band (project_addons), never written into ProjectFormData — this key
 	// exists only to satisfy the exhaustive registry; the graph⇄form mappers never read it.
 	| "charts";
@@ -73,27 +75,11 @@ export interface RoadmapItem {
 /** Roadmap entries appended to their palette group after the addable kinds. */
 export const ROADMAP_ITEMS: RoadmapItem[] = [
 	{
-		id: "bucket",
-		label: "Bucket",
-		subtitle: "Object storage for files and assets",
-		group: "Storage",
-		icon: Archive,
-		comingSoon: true,
-	},
-	{
 		id: "volume",
 		label: "Volume",
 		subtitle: "Persistent block storage for containers",
 		group: "Storage",
 		icon: HardDrive,
-		comingSoon: true,
-	},
-	{
-		id: "registry",
-		label: "Container registry",
-		subtitle: "Private container images",
-		group: "DevOps",
-		icon: Package,
 		comingSoon: true,
 	},
 ];
@@ -338,6 +324,38 @@ export const NODE_REGISTRY: NodeRegistry = {
 			special_chars: true,
 		}),
 	},
+	bucket: {
+		kind: "bucket",
+		schemaKey: "storage_buckets",
+		cardinality: "array",
+		classification: "periphery",
+		cloudScoped: true,
+		eyebrow: "Bucket",
+		label: "Bucket",
+		icon: Archive,
+		palette: { group: "Storage", subtitle: "Object storage for files and assets" },
+		defaultData: () => ({
+			name: "assets",
+			versioning: false,
+			encryption_enabled: true,
+			public_access: false,
+		}),
+	},
+	registry: {
+		kind: "registry",
+		schemaKey: "container_registries",
+		cardinality: "array",
+		classification: "periphery",
+		cloudScoped: true,
+		eyebrow: "Registry",
+		label: "Container registry",
+		icon: Package,
+		palette: { group: "DevOps", subtitle: "Private container images" },
+		defaultData: () => ({
+			name: "apps",
+			provider_config: {},
+		}),
+	},
 	repositories: {
 		kind: "repositories",
 		schemaKey: "repositories",
@@ -385,6 +403,8 @@ export const ADDABLE_KINDS: NodeKind[] = [
 	"nosql",
 	"dns",
 	"secret",
+	"bucket",
+	"registry",
 	"repositories",
 ];
 
@@ -392,12 +412,14 @@ export const ADDABLE_KINDS: NodeKind[] = [
  * Node kinds a given cloud can't back. Compute-only Hetzner runs data services as in-cluster
  * Helm charts (Postgres→CloudNativePG, cache→Valkey, queue→RabbitMQ); topic (SNS) and nosql
  * (DynamoDB) have no clean single-chart OSS equal, so they're hidden on Hetzner for now
- * (see lib/cloud-providers/hetzner-services.ts).
+ * (see lib/cloud-providers/hetzner-services.ts). bucket/registry: Hetzner has no native
+ * object storage / registry tofu wiring yet — the MinIO / Harbor marketplace add-ons cover
+ * those in-cluster until a native path lands.
  */
 const UNSUPPORTED_KINDS_BY_PROVIDER: Partial<
 	Record<CloudProviderSlug, readonly NodeKind[]>
 > = {
-	hetzner: ["topic", "nosql"],
+	hetzner: ["topic", "nosql", "bucket", "registry"],
 };
 
 /** ADDABLE_KINDS minus the kinds the effective provider can't back (null → all). */

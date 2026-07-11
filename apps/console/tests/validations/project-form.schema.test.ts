@@ -211,6 +211,92 @@ describe("projectFormSchema", () => {
 		});
 	});
 
+	describe("storage_buckets array (S3-safe naming)", () => {
+		it("accepts a valid bucket", () => {
+			const data = {
+				...validProject,
+				storage_buckets: [
+					{
+						name: "my-assets-1",
+						versioning: true,
+						encryption_enabled: true,
+						public_access: false,
+						cors_origins: ["https://app.example.com"],
+					},
+				],
+			};
+			expect(projectFormSchema.safeParse(data).success).toBe(true);
+		});
+
+		it("accepts a minimal 3-char name and a 63-char name", () => {
+			for (const name of ["abc", `a${"b".repeat(61)}c`]) {
+				const data = { ...validProject, storage_buckets: [{ name }] };
+				expect(projectFormSchema.safeParse(data).success).toBe(true);
+			}
+		});
+
+		it("rejects uppercase, too-short, too-long, and hyphen-edged names", () => {
+			const bad = [
+				"MyBucket", // uppercase
+				"ab", // 2 chars
+				"a".repeat(64), // 64 chars
+				"-assets", // leading hyphen
+				"assets-", // trailing hyphen
+				"my_bucket", // underscore
+				"", // empty
+			];
+			const passed = bad.filter(
+				(name) =>
+					projectFormSchema.safeParse({ ...validProject, storage_buckets: [{ name }] })
+						.success,
+			);
+			expect(passed).toEqual([]);
+		});
+
+		it("defaults to [] when omitted", () => {
+			const result = projectFormSchema.safeParse(validProject);
+			expect(result.success).toBe(true);
+			if (result.success) {
+				expect(result.data.storage_buckets).toEqual([]);
+				expect(result.data.container_registries).toEqual([]);
+			}
+		});
+	});
+
+	describe("container_registries array", () => {
+		it("accepts a valid registry with provider knobs", () => {
+			const data = {
+				...validProject,
+				container_registries: [
+					{
+						name: "apps",
+						provider_config: { immutable_tags: true, vulnerability_scanning: true },
+					},
+				],
+			};
+			expect(projectFormSchema.safeParse(data).success).toBe(true);
+		});
+
+		it("rejects a registry with an empty name", () => {
+			const data = { ...validProject, container_registries: [{ name: "" }] };
+			expect(projectFormSchema.safeParse(data).success).toBe(false);
+		});
+
+		it("strips the repository_url output column", () => {
+			const data = {
+				...validProject,
+				container_registries: [
+					{ name: "apps", repository_url: "123.dkr.ecr.amazonaws.com/apps" },
+				],
+			};
+			const result = projectFormSchema.safeParse(data);
+			expect(result.success).toBe(true);
+			if (result.success) {
+				expect(result.data.container_registries[0]).not.toHaveProperty("repository_url");
+			}
+		});
+	});
+
 	describe("queues and topics", () => {
 		it("accepts valid queue", () => {
 			const data = {

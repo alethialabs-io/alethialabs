@@ -353,6 +353,9 @@ async function deployedStructuralHash(
 			length: s.length ?? undefined,
 			special_chars: s.special_chars ?? undefined,
 		})),
+		// Not structural inputs to the hash — inert, present only to satisfy the shape.
+		storage_buckets: [],
+		container_registries: [],
 	};
 	return structuralHash(design);
 }

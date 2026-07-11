@@ -43,12 +43,14 @@ import {
 	jobs,
 	projectCaches,
 	projectCluster,
+	projectContainerRegistries,
 	projectDatabases,
 	projectDns,
 	projectEnvironments,
 	projectNetwork,
 	projectRepositories,
 	projectSecrets,
+	projectStorageBuckets,
 	projects,
 	resourceHierarchy,
 } from "@/lib/db/schema";
@@ -433,6 +435,56 @@ describe("planProject", () => {
 		expect(setSpy).toHaveBeenCalledWith(projectEnvironments, { status: "QUEUED" });
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 		expect(r).toEqual({ jobId: "job-1" });
+	});
+
+	it("emits storage_buckets and container_registries in the snapshot with resolved placement", async () => {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectStorageBuckets,
+						[
+							{
+								name: "assets",
+								versioning: true,
+								encryption_enabled: true,
+								public_access: false,
+								cloud_identity_id: null,
+								region: null,
+							},
+						],
+					],
+					[
+						projectContainerRegistries,
+						[{ name: "apps", provider: null, cloud_identity_id: null, region: null }],
+					],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+
+		await planProject("p1");
+
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		// Buckets ride the snapshot (they were previously never selected — the known gap).
+		expect(snapshot.storage_buckets).toEqual([
+			expect.objectContaining({
+				name: "assets",
+				versioning: true,
+				cloud_provider: "aws",
+				cloud_identity_id: "ci-1",
+				region: "us-east-1",
+			}),
+		]);
+		// Registries keep being emitted alongside.
+		expect(snapshot.container_registries).toEqual([
+			expect.objectContaining({
+				name: "apps",
+				cloud_provider: "aws",
+				cloud_identity_id: "ci-1",
+				region: "us-east-1",
+			}),
+		]);
 	});
 
 	it("rejects (no job, no scaler) when the project has no linked cloud identity", async () => {

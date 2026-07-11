@@ -35,6 +35,8 @@ const DEFAULT_VALUES: ProjectFormData = {
 	topics: [],
 	nosql_tables: [],
 	secrets: [],
+	storage_buckets: [],
+	container_registries: [],
 } as ProjectFormData;
 
 function FormWrapper({

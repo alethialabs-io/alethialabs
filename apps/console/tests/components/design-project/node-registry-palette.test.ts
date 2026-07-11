@@ -44,10 +44,20 @@ describe("NODE_REGISTRY palette metadata", () => {
 		const hetzner = addableKindsFor("hetzner");
 		expect(hetzner).not.toContain("topic");
 		expect(hetzner).not.toContain("nosql");
+		// No native object storage / registry tofu wiring on Hetzner yet (MinIO/Harbor
+		// marketplace add-ons cover those in-cluster).
+		expect(hetzner).not.toContain("bucket");
+		expect(hetzner).not.toContain("registry");
 		expect(hetzner).toContain("database");
 		expect(hetzner).toContain("queue");
 
 		expect(addableKindsFor("aws")).toEqual(ADDABLE_KINDS);
 		expect(addableKindsFor(null)).toEqual(ADDABLE_KINDS);
+	});
+
+	it("bucket and registry are addable kinds; volume stays the only roadmap row", () => {
+		expect(ADDABLE_KINDS).toContain("bucket");
+		expect(ADDABLE_KINDS).toContain("registry");
+		expect(ROADMAP_ITEMS.map((i) => i.id)).toEqual(["volume"]);
 	});
 });
