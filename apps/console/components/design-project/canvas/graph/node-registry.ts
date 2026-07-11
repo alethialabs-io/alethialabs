@@ -30,6 +30,7 @@ import {
 	HETZNER_CACHE_ENGINES,
 	HETZNER_DB_ENGINES,
 } from "@/lib/cloud-providers/hetzner-services";
+import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
 import type { NodeConfigMap, NodeKind } from "./types";
 
 /** Where a node's config lands in ProjectFormData. */
@@ -413,24 +414,20 @@ export const ADDABLE_KINDS: NodeKind[] = [
 ];
 
 /**
- * Node kinds a given cloud can't back. Compute-only Hetzner runs data services as in-cluster
- * Helm charts (Postgres→CloudNativePG, cache→Valkey, queue→RabbitMQ); topic (SNS) and nosql
- * (DynamoDB) have no clean single-chart OSS equal, so they're hidden on Hetzner for now
- * (see lib/cloud-providers/hetzner-services.ts). bucket: NATIVE on Hetzner via Object Storage
- * (the aminueza/minio provider against the S3 endpoint — see infra/templates/project/hetzner
- * /buckets.tf). registry: Hetzner has no native container registry — the Harbor marketplace
- * add-on covers it in-cluster until a native path lands.
+ * The kinds a given cloud's template can't provision live in the single server-safe source of
+ * truth `lib/cloud-providers/unsupported-kinds.ts` (re-exported here for palette callers), so the
+ * deploy-time fail-closed gate in `buildConfigSnapshot` derives from the exact same set the palette
+ * hides — un-hide a kind there and BOTH the palette and the gate follow automatically. Compute-only
+ * Hetzner runs data services as in-cluster Helm charts and provisions buckets natively via Object
+ * Storage; only topic/nosql (no clean single-chart OSS equal) and registry (Harbor add-on covers it)
+ * stay hidden there.
  */
-const UNSUPPORTED_KINDS_BY_PROVIDER: Partial<
-	Record<CloudProviderSlug, readonly NodeKind[]>
-> = {
-	hetzner: ["topic", "nosql", "registry"],
-};
+export { UNSUPPORTED_KINDS_BY_PROVIDER } from "@/lib/cloud-providers/unsupported-kinds";
 
 /** ADDABLE_KINDS minus the kinds the effective provider can't back (null → all). */
 export function addableKindsFor(provider: CloudProviderSlug | null): NodeKind[] {
-	const blocked = provider ? UNSUPPORTED_KINDS_BY_PROVIDER[provider] : undefined;
-	if (!blocked || blocked.length === 0) return ADDABLE_KINDS;
+	const blocked = unsupportedKindsFor(provider);
+	if (blocked.length === 0) return ADDABLE_KINDS;
 	return ADDABLE_KINDS.filter((k) => !blocked.includes(k));
 }
 

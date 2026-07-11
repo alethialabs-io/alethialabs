@@ -13,7 +13,12 @@ import {
 	NODE_REGISTRY,
 	PALETTE_GROUP_ORDER,
 	ROADMAP_ITEMS,
+	UNSUPPORTED_KINDS_BY_PROVIDER,
 } from "@/components/design-project/canvas/graph/node-registry";
+import {
+	UNSUPPORTED_KINDS_BY_PROVIDER as SERVER_UNSUPPORTED_KINDS_BY_PROVIDER,
+	unsupportedKindsFor,
+} from "@/lib/cloud-providers/unsupported-kinds";
 
 describe("NODE_REGISTRY palette metadata", () => {
 	it("every addable kind has palette metadata in a known group with a subtitle", () => {
@@ -59,5 +64,21 @@ describe("NODE_REGISTRY palette metadata", () => {
 		expect(ADDABLE_KINDS).toContain("bucket");
 		expect(ADDABLE_KINDS).toContain("registry");
 		expect(ROADMAP_ITEMS.map((i) => i.id)).toEqual(["volume"]);
+	});
+
+	it("re-exports the SAME UNSUPPORTED_KINDS_BY_PROVIDER as the server-safe source (one SSOT)", () => {
+		// node-registry re-exports the extracted server-safe module, so the palette and the
+		// deploy-time guard (buildConfigSnapshot) can never diverge on what a cloud can't back.
+		expect(UNSUPPORTED_KINDS_BY_PROVIDER).toBe(SERVER_UNSUPPORTED_KINDS_BY_PROVIDER);
+		expect(unsupportedKindsFor("hetzner")).toEqual([
+			"topic",
+			"nosql",
+			"bucket",
+			"registry",
+		]);
+		// A cloud with no blocked kinds (and an unknown/out-of-design slug) → empty.
+		expect(unsupportedKindsFor("aws")).toEqual([]);
+		expect(unsupportedKindsFor("digitalocean")).toEqual([]);
+		expect(unsupportedKindsFor(null)).toEqual([]);
 	});
 });
