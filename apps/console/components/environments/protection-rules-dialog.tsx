@@ -2,26 +2,19 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Per-environment protection rules editor. Each gate is individually toggleable; evaluated when a
-// promotion into this environment is planned (lib/promotions/gates.ts).
+// Per-environment protection rules editor, as a right-side drawer. Each gate is individually
+// toggleable; evaluated when a promotion into this environment is planned (lib/promotions/gates.ts).
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Loader2 } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { useEffect } from "react";
 import { type Control, Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { getProtectionRules, setProtectionRules } from "@/app/server/actions/protection";
 import { Button } from "@repo/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@repo/ui/dialog";
 import { Input } from "@repo/ui/input";
+import { Sheet, SheetContent } from "@repo/ui/sheet";
 import { Switch } from "@repo/ui/switch";
 
 const rulesSchema = z.object({
@@ -43,7 +36,7 @@ const DEFAULTS: RulesForm = {
 	cost_delta_threshold: null,
 };
 
-/** Editor dialog for one environment's promotion protection rules. */
+/** Drawer editor for one environment's promotion protection rules. */
 export function ProtectionRulesDialog({
 	open,
 	onOpenChange,
@@ -62,7 +55,7 @@ export function ProtectionRulesDialog({
 		defaultValues: DEFAULTS,
 	});
 
-	// Load current rules when the dialog opens.
+	// Load current rules when the drawer opens.
 	useEffect(() => {
 		if (!open) return;
 		let cancelled = false;
@@ -108,86 +101,106 @@ export function ProtectionRulesDialog({
 	});
 
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="sm:max-w-md">
-				<DialogHeader>
-					<DialogTitle>Protection rules · {envName}</DialogTitle>
-					<DialogDescription>
-						Gates a promotion must clear before it deploys into this environment.
-					</DialogDescription>
-				</DialogHeader>
-
-				<form onSubmit={onSubmit} className="space-y-3">
-					<ToggleRow
-						control={control}
-						name="require_predecessor"
-						title="Require predecessor"
-						desc="A lower environment must have deployed this design and be in sync."
-					/>
-					<ToggleRow
-						control={control}
-						name="require_verify_pass"
-						title="Require verify pass"
-						desc="The plan's elench report must have no unwaived hard failures."
-					/>
-					<ToggleRow
-						control={control}
-						name="require_approval"
-						title="Require approval"
-						desc="A reviewer must approve before the deploy runs."
-					/>
-					{requireApproval && (
-						<div className="flex items-center justify-between pl-3">
-							<label className="text-xs text-muted-foreground">Approvals required</label>
-							<Controller
-								control={control}
-								name="min_count"
-								render={({ field }) => (
-									<Input
-										type="number"
-										min={1}
-										max={10}
-										className="h-8 w-20 text-sm"
-										value={field.value}
-										onChange={(e) =>
-											field.onChange(e.target.value === "" ? 1 : Number(e.target.value))
-										}
-									/>
-								)}
-							/>
+		<Sheet open={open} onOpenChange={onOpenChange}>
+			<SheetContent
+				side="right"
+				showCloseButton={false}
+				className="w-[min(420px,92vw)] gap-0 p-0 sm:max-w-none"
+			>
+				<form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
+					{/* header */}
+					<div className="flex items-start justify-between gap-3 border-b px-[22px] py-5">
+						<div>
+							<div className="font-mono text-[10px] uppercase tracking-[0.16em] text-text-tertiary">
+								Protection rules
+							</div>
+							<div className="mt-1.5 font-mono text-[16px] text-text-primary">
+								{envName}
+							</div>
+							<p className="mt-2 max-w-[40ch] text-[12.5px] text-text-tertiary">
+								Gates a promotion must clear before it deploys into this environment.
+							</p>
 						</div>
-					)}
+						<button
+							type="button"
+							onClick={() => onOpenChange(false)}
+							aria-label="Close"
+							className="grid size-8 shrink-0 place-items-center rounded-sm text-text-tertiary transition-colors hover:bg-surface-muted hover:text-text-primary"
+						>
+							<X className="size-4" />
+						</button>
+					</div>
 
-					<NumberRow
-						control={control}
-						name="soak_minutes"
-						title="Soak timer (min)"
-						desc="Wait this long after the predecessor deploy. Blank = off."
-					/>
-					<NumberRow
-						control={control}
-						name="cost_delta_threshold"
-						title="Cost threshold ($/mo)"
-						desc="Cost increases above this need approval. Blank = off."
-					/>
+					{/* rules */}
+					<div className="flex flex-1 flex-col gap-3 overflow-y-auto px-[22px] py-[18px]">
+						<ToggleRow
+							control={control}
+							name="require_predecessor"
+							title="Require predecessor"
+							desc="The lower environment must have deployed this design and be in sync."
+						/>
+						<ToggleRow
+							control={control}
+							name="require_verify_pass"
+							title="Require verify pass"
+							desc="The plan's elench report must have no unwaived hard failures."
+						/>
+						<ToggleRow
+							control={control}
+							name="require_approval"
+							title="Require approval"
+							desc="A reviewer must approve before the deploy runs."
+						/>
+						{requireApproval && (
+							<div className="flex items-center justify-between gap-3 pl-[26px] pr-3.5">
+								<span className="text-[12.5px] text-text-secondary">
+									Approvals required
+								</span>
+								<Controller
+									control={control}
+									name="min_count"
+									render={({ field }) => (
+										<Input
+											type="number"
+											min={1}
+											max={10}
+											className="h-[34px] w-[84px] text-sm"
+											value={field.value}
+											onChange={(e) =>
+												field.onChange(e.target.value === "" ? 1 : Number(e.target.value))
+											}
+										/>
+									)}
+								/>
+							</div>
+						)}
+						<NumberRow
+							control={control}
+							name="soak_minutes"
+							title="Soak timer (min)"
+							desc="Minutes to wait after the predecessor deploy. Blank = off."
+						/>
+						<NumberRow
+							control={control}
+							name="cost_delta_threshold"
+							title="Cost threshold ($/mo)"
+							desc="Cost increases above this force approval. Blank = off."
+						/>
+					</div>
 
-					<DialogFooter>
-						<Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-							Cancel
+					{/* footer */}
+					<div className="flex justify-end gap-2 border-t px-[22px] py-4">
+						<Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+							Close
 						</Button>
-						<Button type="submit" disabled={formState.isSubmitting}>
-							{formState.isSubmitting ? (
-								<>
-									<Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…
-								</>
-							) : (
-								"Save"
-							)}
+						<Button type="submit" size="sm" disabled={formState.isSubmitting}>
+							{formState.isSubmitting && <Loader2 className="size-3.5 animate-spin" />}
+							Save rules
 						</Button>
-					</DialogFooter>
+					</div>
 				</form>
-			</DialogContent>
-		</Dialog>
+			</SheetContent>
+		</Sheet>
 	);
 }
 
@@ -204,10 +217,10 @@ function ToggleRow({
 	desc: string;
 }) {
 	return (
-		<label className="flex items-center justify-between gap-3 rounded-md border border-border p-2.5">
-			<span className="min-w-0 text-sm">
-				{title}
-				<span className="block text-[11px] text-muted-foreground">{desc}</span>
+		<label className="flex items-center justify-between gap-3 rounded-lg border px-3.5 py-3">
+			<span className="min-w-0">
+				<span className="text-[13px] font-medium text-text-primary">{title}</span>
+				<span className="mt-0.5 block text-[11.5px] text-text-tertiary">{desc}</span>
 			</span>
 			<Controller
 				control={control}
@@ -233,10 +246,10 @@ function NumberRow({
 	desc: string;
 }) {
 	return (
-		<div className="flex items-center justify-between gap-3 rounded-md border border-border p-2.5">
-			<span className="min-w-0 text-sm">
-				{title}
-				<span className="block text-[11px] text-muted-foreground">{desc}</span>
+		<div className="flex items-center justify-between gap-3 rounded-lg border px-3.5 py-3">
+			<span className="min-w-0">
+				<span className="text-[13px] font-medium text-text-primary">{title}</span>
+				<span className="mt-0.5 block text-[11.5px] text-text-tertiary">{desc}</span>
 			</span>
 			<Controller
 				control={control}
@@ -246,7 +259,7 @@ function NumberRow({
 						type="number"
 						min={0}
 						placeholder="off"
-						className="h-8 w-24 text-sm"
+						className="h-[34px] w-[92px] font-mono text-sm"
 						value={field.value ?? ""}
 						onChange={(e) =>
 							field.onChange(e.target.value === "" ? null : Number(e.target.value))
