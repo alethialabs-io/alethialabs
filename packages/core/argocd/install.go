@@ -22,6 +22,29 @@ func ApplyApplications(renderedDir string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// CleanupSkippedInfraServices removes infra-service objects that earlier deploys applied but
+// the current facts no longer render. Infra services are plain `kubectl apply` (no label/prune
+// scheme yet), so an app that stops rendering would otherwise be ORPHANED on the cluster —
+// notably the pre-parity external-dns that shipped with `provider: aws` on alibaba/hetzner
+// (crash-looping) and the unguarded AWS ClusterSecretStore applied on every cloud. Deletes are
+// best-effort + idempotent (--ignore-not-found); deleting the Application cascades removal of
+// the controller through its resources-finalizer.
+func CleanupSkippedInfraServices(facts *InfraFacts, stdout, stderr io.Writer) {
+	if !facts.DNSEnabled || facts.DomainName == "" || facts.DNSProvider() == "" {
+		cmd := "kubectl delete application external-dns -n argocd --ignore-not-found --timeout=60s"
+		fmt.Fprintln(stdout, "external-dns is not rendered for this configuration — removing any stale install...")
+		if err := utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "Warning: could not remove stale external-dns application: %v\n", err)
+		}
+	}
+	if facts.Provider != "aws" {
+		cmd := "kubectl delete clustersecretstore secretstore-aws --ignore-not-found --timeout=60s"
+		if err := utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "Warning: could not remove stale AWS ClusterSecretStore: %v\n", err)
+		}
+	}
+}
+
 // ApplyManifest kubectl-applies a single in-memory manifest (e.g. a hardened BYO AppProject) via
 // a temp file, so callers with a rendered string don't need to stage a directory.
 func ApplyManifest(manifest string, stdout, stderr io.Writer) error {

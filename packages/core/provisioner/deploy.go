@@ -506,6 +506,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (*PlanResult, error) 
 		if applyErr := argocd.ApplyApplications(renderedDir, stdout, stderr); applyErr != nil {
 			return nil, fmt.Errorf("failed to apply ArgoCD infrastructure applications: %w", applyErr)
 		}
+		// Remove infra-service objects earlier deploys applied but this render skipped
+		// (pre-parity clusters carry a broken external-dns / a foreign-cloud secret store).
+		argocd.CleanupSkippedInfraServices(facts, stdout, stderr)
 
 		// Generate app manifests for detected services into an EMPTY apps repo (never
 		// clobbers a bring-your-own repo). Non-fatal: a git edge case must not fail an

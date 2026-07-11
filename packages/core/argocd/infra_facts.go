@@ -67,8 +67,16 @@ func (f *InfraFacts) DNSProvider() string {
 	case "aws":
 		return "aws"
 	case "gcp":
+		// Same honesty rule: without the Workload Identity GSA output the controller
+		// would ship with an empty identity annotation and crash-loop.
+		if f.GCPExternalDNSSA == "" {
+			return ""
+		}
 		return "google"
 	case "azure":
+		if f.AzureExternalDNSClient == "" {
+			return ""
+		}
 		return "azure"
 	case "alibaba":
 		// "alibabacloud" once RRSA identity is provisioned (A5); no identity → honest skip.

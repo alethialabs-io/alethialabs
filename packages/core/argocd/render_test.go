@@ -273,6 +273,20 @@ func TestRender_Alibaba(t *testing.T) {
 	}
 }
 
+// GCP/Azure follow the same honesty rule: no workload-identity output → external-dns
+// would ship with an empty identity annotation and crash-loop, so it must skip.
+func TestRender_MissingIdentitySkipsExternalDNS(t *testing.T) {
+	gcp := renderAll(t, BuildFromOutputs(map[string]interface{}{
+		"gke_cluster_name": "gke-demo", // no external_dns_service_account output
+	}, cfg("gcp")))
+	assertNoExternalDNS(t, gcp, "gcp without a Workload Identity GSA")
+
+	az := renderAll(t, BuildFromOutputs(map[string]interface{}{
+		"aks_cluster_name": "aks-demo", // no external_dns_client_id output
+	}, cfg("azure")))
+	assertNoExternalDNS(t, az, "azure without a workload-identity client id")
+}
+
 // The AWS store keeps rendering on AWS — and only there (GCP/Azure were silently
 // receiving it before the guard).
 func TestRender_ESOStoreAWSOnly(t *testing.T) {

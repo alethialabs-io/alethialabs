@@ -209,9 +209,20 @@ describe("finalizeDeployment — success path", () => {
 		const cluster = writeFor(projectCluster)?.set;
 		expect(cluster).toMatchObject({ status: "ACTIVE" });
 		expect(cluster).not.toHaveProperty("cluster_name");
-		expect(cluster).not.toHaveProperty("argocd_url");
+		// argocd_url is a full mirror of the deploy result: a dropped/absent value CLEARS
+		// the column (the runner only reports it when an ingress actually exists).
+		expect(cluster).toMatchObject({ argocd_url: null });
 		// the valid string field still flows through
 		expect(cluster).toMatchObject({ cluster_endpoint: "https://eks.example" });
+	});
+
+	it("clears a stale argocd_url when the deploy reports no ingress", async () => {
+		const job = fullJob();
+		delete job.execution_metadata.argocd_url;
+		const { writeFor } = mockDb([job]);
+		await finalizeDeployment("job-1");
+
+		expect(writeFor(projectCluster)?.set).toMatchObject({ argocd_url: null });
 	});
 
 	it("omits the redis reader endpoint when only the primary is present", async () => {

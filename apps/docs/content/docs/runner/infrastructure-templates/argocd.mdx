@@ -12,8 +12,8 @@ After cluster provisioning, Runner installs ArgoCD and deploys a set of supporti
 | Template | Component | Purpose |
 |----------|-----------|---------|
 | `aws-load-balancer-controller.yaml` | AWS Load Balancer Controller | Provisions ALB/NLB for Kubernetes Ingress and Service resources |
-| `external-dns.yaml` | External DNS | Syncs Route53/Cloud DNS/Azure DNS records from Kubernetes Ingress annotations |
-| `external-secrets-operator.yaml` | External Secrets Operator | Pulls secrets from Secrets Manager/Secret Manager/Key Vault into Kubernetes Secrets |
+| `external-dns.yaml` | External DNS | Syncs Route53/Cloud DNS/Azure DNS records from Kubernetes Ingress annotations. Renders only when DNS is enabled with a domain **and** the cloud has a working backend + workload identity (AWS/GCP/Azure today) — otherwise it is skipped rather than deployed broken |
+| `external-secrets-operator.yaml` | External Secrets Operator | Pulls secrets from Secrets Manager/Secret Manager/Key Vault into Kubernetes Secrets. The AWS SecretsManager `ClusterSecretStore` renders on AWS only; the operator itself ships on every cloud |
 | `karpenter.yaml` | Karpenter | Just-in-time node provisioning based on pod resource requests (AWS) |
 | `metrics-server.yaml` | Metrics Server | Provides CPU/memory metrics for Horizontal Pod Autoscaler |
 | `storage-class-gp3.yaml` | Storage Class | GP3 EBS / Persistent Disk / Managed Disk storage provisioner |
