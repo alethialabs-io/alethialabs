@@ -29,10 +29,14 @@ The runner copies this template verbatim, feeds it a `.tfvars.json`, then runs
    set the pod/service CIDRs + install disk) → `talos_machine_configuration_apply`
    per node → `talos_machine_bootstrap` → `talos_cluster_kubeconfig`.
 4. **CNI + cloud integration:** [Cilium](https://cilium.io/) in
-   kube-proxy-replacement / native-routing mode and the
+   kube-proxy-replacement / native-routing mode, the
    [hcloud cloud-controller-manager](https://github.com/hetznercloud/hcloud-cloud-controller-manager),
-   both rendered from their Helm charts (`helm_template`) and applied with
-   `kubectl_manifest`.
+   and the [hcloud CSI driver](https://github.com/hetznercloud/csi-driver) — all
+   rendered offline from their Helm charts (`helm_template` data sources) and
+   delivered to the cluster via Talos `cluster.inlineManifests` (applied by Talos
+   during bootstrap). There is deliberately **no in-tofu `kubectl` provider** wired
+   from the cluster's own (known-after-apply) kubeconfig — that made `tofu plan -out`
+   (the runner's path) unresolvable, so the runner could never deploy this template.
 
 ## Verification
 

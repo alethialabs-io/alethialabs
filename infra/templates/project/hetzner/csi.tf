@@ -6,10 +6,11 @@
 #
 # Provides persistent volumes (Hetzner block storage) for in-cluster stateful
 # services (CloudNativePG, Redis, ...). The `hcloud-volumes` StorageClass is
-# made the cluster DEFAULT. Uses the same `hcloud` secret (token) as the CCM.
+# made the cluster DEFAULT. Reuses the same `hcloud` Secret (token) as the CCM.
 #
-# Rendered from the Helm chart via `helm_template` and applied with
-# `kubectl_manifest`, consistent with Cilium / CCM above.
+# Rendered offline via `helm_template` and delivered to the cluster through
+# Talos `cluster.inlineManifests` (see talos.tf) — consistent with Cilium/CCM,
+# and with no in-tofu kubectl provider (so `tofu plan -out` stays resolvable).
 # ---------------------------------------------------------------------------
 
 locals {
@@ -17,13 +18,14 @@ locals {
 }
 
 data "helm_template" "hcloud_csi" {
-  name       = "hcloud-csi"
-  namespace  = "kube-system"
-  repository = "https://charts.hetzner.cloud"
-  chart      = "hcloud-csi"
-  version    = local.hcloud_csi_version
+  name         = "hcloud-csi"
+  namespace    = "kube-system"
+  repository   = "https://charts.hetzner.cloud"
+  chart        = "hcloud-csi"
+  version      = local.hcloud_csi_version
+  kube_version = local.render_kube_version
 
-  # Reuse the existing `hcloud` secret (created by kubectl_manifest.hcloud_secret).
+  # Reuse the existing `hcloud` secret (delivered as an inline manifest).
   set {
     name  = "controller.hcloudToken.existingSecret.name"
     value = "hcloud"
@@ -46,21 +48,6 @@ data "helm_template" "hcloud_csi" {
     name  = "storageClasses[0].reclaimPolicy"
     value = "Delete"
   }
-}
-
-data "kubectl_file_documents" "hcloud_csi" {
-  content = data.helm_template.hcloud_csi.manifest
-}
-
-resource "kubectl_manifest" "hcloud_csi" {
-  for_each   = data.kubectl_file_documents.hcloud_csi.manifests
-  yaml_body  = each.value
-  apply_only = true
-
-  depends_on = [
-    kubectl_manifest.hcloud_secret,
-    kubectl_manifest.cilium,
-  ]
 }
 
 locals {

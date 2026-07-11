@@ -2,67 +2,42 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 # ---------------------------------------------------------------------------
-# CNI + cloud integration.
+# CNI + cloud integration — rendered offline, applied by Talos.
 #
 #   * Cilium in kube-proxy-replacement / native-routing mode (Talos disables
 #     the built-in CNI + kube-proxy, so Cilium owns pod networking).
 #   * hcloud-cloud-controller-manager for node lifecycle + private-network
 #     routing (Pod CIDR routes on the Hetzner network).
 #
-# Both charts are rendered to plain manifests with the `helm_template` data
-# source and applied with `kubectl_manifest`, so no in-cluster Helm/tiller is
-# needed and everything is visible in the plan. The kubectl/helm providers are
-# wired from the Talos-issued kubeconfig.
+# Both are rendered to plain manifests with the `helm_template` DATA source
+# (offline — no cluster connection, resolves at plan time) and delivered via
+# Talos `cluster.inlineManifests` (see talos.tf). There is deliberately NO
+# in-tofu `kubectl`/`helm` PROVIDER wired from the cluster's own (known-after-
+# apply) kubeconfig: that made the provider unresolvable under `tofu plan -out`
+# — the runner's path (tofu.go `Plan(tfexec.Out(...))`) — so the runner could
+# never deploy this template. Talos applying the manifests from its machine
+# config during bootstrap also means CNI is up before the API is used (no race
+# with the reachability probe / ArgoCD) and nothing pushes CNI over the network.
 # ---------------------------------------------------------------------------
 
 locals {
   cilium_version     = "1.16.5"
   hcloud_ccm_version = "1.24.0"
 
-  # Parsed kubeconfig for the kubectl provider.
-  kubeconfig = try(yamldecode(talos_cluster_kubeconfig.this.kubeconfig_raw), null)
-
-  kube_host = try(local.kubeconfig.clusters[0].cluster.server, "")
-  kube_ca   = try(base64decode(local.kubeconfig.clusters[0].cluster["certificate-authority-data"]), "")
-  kube_cert = try(base64decode(local.kubeconfig.users[0].user["client-certificate-data"]), "")
-  kube_key  = try(base64decode(local.kubeconfig.users[0].user["client-key-data"]), "")
-}
-
-provider "kubectl" {
-  host                   = local.kube_host
-  cluster_ca_certificate = local.kube_ca
-  client_certificate     = local.kube_cert
-  client_key             = local.kube_key
-  load_config_file       = false
-  apply_retry_count      = 5
-}
-
-# --- hcloud CCM secret (token + private network id) ------------------------
-resource "kubectl_manifest" "hcloud_secret" {
-  yaml_body = yamlencode({
-    apiVersion = "v1"
-    kind       = "Secret"
-    metadata = {
-      name      = "hcloud"
-      namespace = "kube-system"
-    }
-    type = "Opaque"
-    data = {
-      token   = base64encode(var.hcloud_token)
-      network = base64encode(tostring(hcloud_network.this.id))
-    }
-  })
-
-  depends_on = [talos_cluster_kubeconfig.this]
+  # kube_version for the offline helm renders. The Cilium chart requires k8s
+  # >= 1.21; the helm provider otherwise defaults to 1.20 and the render fails.
+  # Pin from the requested Kubernetes version, else a safe recent default.
+  render_kube_version = var.kubernetes_version == "" ? "1.31.0" : var.kubernetes_version
 }
 
 # --- Cilium ----------------------------------------------------------------
 data "helm_template" "cilium" {
-  name       = "cilium"
-  namespace  = "kube-system"
-  repository = "https://helm.cilium.io"
-  chart      = "cilium"
-  version    = local.cilium_version
+  name         = "cilium"
+  namespace    = "kube-system"
+  repository   = "https://helm.cilium.io"
+  chart        = "cilium"
+  version      = local.cilium_version
+  kube_version = local.render_kube_version
 
   set {
     name  = "ipam.mode"
@@ -118,25 +93,14 @@ data "helm_template" "cilium" {
   }
 }
 
-data "kubectl_file_documents" "cilium" {
-  content = data.helm_template.cilium.manifest
-}
-
-resource "kubectl_manifest" "cilium" {
-  for_each   = data.kubectl_file_documents.cilium.manifests
-  yaml_body  = each.value
-  apply_only = true
-
-  depends_on = [talos_cluster_kubeconfig.this]
-}
-
 # --- hcloud cloud-controller-manager ---------------------------------------
 data "helm_template" "hcloud_ccm" {
-  name       = "hcloud-cloud-controller-manager"
-  namespace  = "kube-system"
-  repository = "https://charts.hetzner.cloud"
-  chart      = "hcloud-cloud-controller-manager"
-  version    = local.hcloud_ccm_version
+  name         = "hcloud-cloud-controller-manager"
+  namespace    = "kube-system"
+  repository   = "https://charts.hetzner.cloud"
+  chart        = "hcloud-cloud-controller-manager"
+  version      = local.hcloud_ccm_version
+  kube_version = local.render_kube_version
 
   set {
     name  = "networking.enabled"
@@ -146,19 +110,4 @@ data "helm_template" "hcloud_ccm" {
     name  = "networking.clusterCIDR"
     value = var.pod_cidr
   }
-}
-
-data "kubectl_file_documents" "hcloud_ccm" {
-  content = data.helm_template.hcloud_ccm.manifest
-}
-
-resource "kubectl_manifest" "hcloud_ccm" {
-  for_each   = data.kubectl_file_documents.hcloud_ccm.manifests
-  yaml_body  = each.value
-  apply_only = true
-
-  depends_on = [
-    kubectl_manifest.hcloud_secret,
-    kubectl_manifest.cilium,
-  ]
 }
