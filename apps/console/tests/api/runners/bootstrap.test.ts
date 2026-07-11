@@ -9,10 +9,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const redeemBootstrapToken = vi.fn();
-const linkBootstrapToken = vi.fn(async () => {});
+const linkBootstrapToken = vi.fn();
 vi.mock("@/lib/runners/bootstrap-token", () => ({
-	redeemBootstrapToken: (...a: unknown[]) => redeemBootstrapToken(...a),
-	linkBootstrapToken: (...a: unknown[]) => linkBootstrapToken(...a),
+	redeemBootstrapToken: (hash: string, instanceId: string | null) =>
+		redeemBootstrapToken(hash, instanceId),
+	linkBootstrapToken: (hash: string, runnerId: string) =>
+		linkBootstrapToken(hash, runnerId),
 }));
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
