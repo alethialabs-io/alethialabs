@@ -56,6 +56,24 @@ jobs:
             --build-arg VERSION="${{ github.sha }}" \
             -t runner-aws:pr .
 
+      # The two CLI-less lean variants — no cloud CLI to install, but a green build proves their template
+      # `tofu init` resolves every provider (incl. the third-party hcloud-talos/imager + alekc/kubectl).
+      - name: Build runner-alibaba (FROM runner-base)
+        run: |
+          docker build -f apps/runner/Dockerfile.alibaba \
+            --build-arg RUNNER_BASE=runner-base:pr \
+            --build-arg VERSION="${{ github.sha }}" \
+            -t runner-alibaba:pr .
+          docker image rm runner-alibaba:pr
+
+      - name: Build runner-hetzner (FROM runner-base)
+        run: |
+          docker build -f apps/runner/Dockerfile.hetzner \
+            --build-arg RUNNER_BASE=runner-base:pr \
+            --build-arg VERSION="${{ github.sha }}" \
+            -t runner-hetzner:pr .
+          docker image rm runner-hetzner:pr
+
       - name: Smoke-check the toolchain in the built image
         run: |
           docker run --rm --entrypoint sh runner-aws:pr -c '
