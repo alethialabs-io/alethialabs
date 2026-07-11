@@ -41,6 +41,8 @@ export interface ControllerDeps {
 	persistObserved(runnerId: string, patch: { location: string; version: string | null }): Promise<void>;
 	/** A registration-less instance younger than this is "booting", not dead. */
 	bootGraceSeconds: number;
+	/** Mints + records a per-VM bootstrap token (E0 0b); returns the plaintext for the VM cloud-init. */
+	mintBootstrapToken(): Promise<string>;
 }
 
 /** Per-provider hysteresis carried across ticks (surplus-over-target counter). */
@@ -110,7 +112,14 @@ export async function reconcilePool(
 	const byInstance = new Map(observedInstances.map((i) => [i.instanceId, i]));
 	for (const a of actions) {
 		if (a.type === "create") {
-			await provider.create(resolved, { location: a.location, version: a.version });
+			// Mint + record this VM's own short-TTL bootstrap token, then inject it into its
+			// cloud-init (never a shared secret) — so a metadata-leaked token is bounded to this VM.
+			const bootstrapToken = await deps.mintBootstrapToken();
+			await provider.create(resolved, {
+				location: a.location,
+				version: a.version,
+				bootstrapToken,
+			});
 		} else if (a.type === "drain") {
 			await deps.drain(a.runnerId);
 		} else {

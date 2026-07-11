@@ -20,7 +20,6 @@ export interface HcloudConfig {
 	sshKeys: string[];
 	defaultImageTag: string;
 	webOrigin: string;
-	bootstrapToken: string;
 	slots: number;
 }
 
@@ -28,10 +27,9 @@ export interface HcloudConfig {
 export function hcloudConfigFromEnv(): HcloudConfig {
 	const token = process.env.HCLOUD_TOKEN;
 	const webOrigin = process.env.ALETHIA_WEB_ORIGIN ?? process.env.NEXT_PUBLIC_APP_URL;
-	const bootstrapToken = process.env.ALETHIA_RUNNER_BOOTSTRAP_TOKEN;
-	if (!token || !webOrigin || !bootstrapToken) {
+	if (!token || !webOrigin) {
 		throw new Error(
-			"hcloud fleet provider requires HCLOUD_TOKEN, ALETHIA_WEB_ORIGIN, and ALETHIA_RUNNER_BOOTSTRAP_TOKEN",
+			"hcloud fleet provider requires HCLOUD_TOKEN and ALETHIA_WEB_ORIGIN",
 		);
 	}
 	return {
@@ -41,19 +39,24 @@ export function hcloudConfigFromEnv(): HcloudConfig {
 		sshKeys: (process.env.HCLOUD_SSH_KEYS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
 		defaultImageTag: process.env.FLEET_RUNNER_IMAGE_TAG ?? "latest",
 		webOrigin,
-		bootstrapToken,
 		slots: Number.parseInt(process.env.FLEET_RUNNER_SLOTS ?? "1", 10) || 1,
 	};
 }
 
-/** Pure: cloud-init that boots a per-cloud runner (at `version`) which self-registers. */
-export function renderCloudInit(cfg: HcloudConfig, provider: string, version: string | null): string {
+/** Pure: cloud-init that boots a per-cloud runner (at `version`) which self-registers with its
+ *  PER-VM bootstrap token (E0 0b — minted by the scaler, short-TTL, instance-bound). */
+export function renderCloudInit(
+	cfg: HcloudConfig,
+	provider: string,
+	version: string | null,
+	bootstrapToken: string,
+): string {
 	const tag = version ?? cfg.defaultImageTag;
 	const image = `ghcr.io/alethialabs-io/runner-${provider}:${tag}`;
 	const env: Record<string, string> = {
 		ALETHIA_WEB_ORIGIN: cfg.webOrigin,
 		ALETHIA_RUNNER_OPERATOR: "managed",
-		ALETHIA_RUNNER_BOOTSTRAP_TOKEN: cfg.bootstrapToken,
+		ALETHIA_RUNNER_BOOTSTRAP_TOKEN: bootstrapToken,
 		ALETHIA_RUNNER_SLOTS: String(cfg.slots),
 		// No ALETHIA_STORAGE_*: runner-lifecycle + project tofu state both go via the console
 		// http state proxy, so the fleet holds no storage master credentials (the metadata
@@ -75,7 +78,7 @@ runcmd:
 export function serverCreatePayload(
 	cfg: HcloudConfig,
 	project: FleetTarget,
-	opts: { name: string; location: string; version: string | null },
+	opts: { name: string; location: string; version: string | null; bootstrapToken: string },
 ): Record<string, unknown> {
 	const labels: Record<string, string> = {
 		"alethia-managed": "true",
@@ -90,7 +93,7 @@ export function serverCreatePayload(
 		ssh_keys: cfg.sshKeys,
 		start_after_create: true,
 		labels,
-		user_data: renderCloudInit(cfg, project.provider, opts.version),
+		user_data: renderCloudInit(cfg, project.provider, opts.version, opts.bootstrapToken),
 	};
 }
 
@@ -119,9 +122,24 @@ class HcloudFleetProvider implements FleetProvider {
 		}));
 	}
 
-	async create(project: FleetTarget, opts: { location: string; version: string | null }): Promise<void> {
+	async create(
+		project: FleetTarget,
+		opts: { location: string; version: string | null; bootstrapToken?: string },
+	): Promise<void> {
+		if (!opts.bootstrapToken) {
+			throw new Error("hcloud create requires a per-VM bootstrapToken (E0 0b)");
+		}
 		const name = `fleet-${project.provider}-${randomUUID().slice(0, 8)}`;
-		await this.api("POST", "/servers", serverCreatePayload(this.cfg, project, { name, ...opts }));
+		await this.api(
+			"POST",
+			"/servers",
+			serverCreatePayload(this.cfg, project, {
+				name,
+				location: opts.location,
+				version: opts.version,
+				bootstrapToken: opts.bootstrapToken,
+			}),
+		);
 	}
 
 	async destroy(instanceId: string): Promise<void> {

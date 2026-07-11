@@ -936,3 +936,23 @@ RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
         WHERE state_key = p_state_key AND lock_id = p_lock_id AND expires_at > now()
     );
 $$;
+
+-- Per-VM fleet bootstrap token redemption (E0 0b). Atomic + instance-bound + reusable-within-TTL:
+-- the first redeem binds instance_id; the SAME instance may re-redeem (restart / lost-response
+-- retry), a DIFFERENT instance or an expired token is rejected (ok=false). Returns the currently
+-- linked runner_id (NULL on first use). SECURITY DEFINER: called from the runner-facing bootstrap
+-- route; the token is a shared secret only for the one VM it was minted for.
+CREATE OR REPLACE FUNCTION public.redeem_bootstrap_token(p_token_hash TEXT, p_instance_id TEXT)
+RETURNS TABLE(ok BOOLEAN, runner_id UUID)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+    UPDATE public.runner_bootstrap_tokens t
+       SET instance_id = p_instance_id
+     WHERE t.token_hash = p_token_hash
+       AND t.expires_at > now()
+       AND (t.instance_id IS NULL OR t.instance_id IS NOT DISTINCT FROM p_instance_id)
+    RETURNING t.runner_id INTO runner_id;
+    ok := FOUND;
+    RETURN NEXT;
+END;
+$$;
