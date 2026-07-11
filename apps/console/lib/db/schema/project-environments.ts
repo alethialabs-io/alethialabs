@@ -14,6 +14,7 @@ import {
 	boolean,
 	index,
 	integer,
+	numeric,
 	pgTable,
 	text,
 	timestamp,
@@ -21,7 +22,7 @@ import {
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
-import { environmentStage, projectStatus } from "./enums";
+import { environmentLifecycle, environmentStage, projectStatus } from "./enums";
 import { projects } from "./projects";
 
 export const projectEnvironments = pgTable(
@@ -44,6 +45,14 @@ export const projectEnvironments = pgTable(
 		is_default: boolean().default(false).notNull(),
 		// NULL inherits projects.region.
 		region: text(),
+		// --- Lifecycle: persistent env vs ephemeral "sandbox" (inert seam, no reaper yet) --------
+		// `persistent` = a normal long-lived environment; `ephemeral` = a disposable, TTL'd one.
+		// The reaper (a drift-style reconciler) + UI build on these later; nothing reads them yet.
+		lifecycle: environmentLifecycle().default("persistent").notNull(),
+		// When an ephemeral environment should be auto-torn-down. NULL for persistent (and until set).
+		expires_at: timestamp({ withTimezone: true }),
+		// Optional projected-cost ceiling for an ephemeral environment (halt/alert when exceeded).
+		cost_cap: numeric({ precision: 12, scale: 2 }),
 		// --- Day-2 governance (Phase 2) ---------------------------------------------------------
 		// Opt-in: on detected cloud drift, auto-queue a DEPLOY of the last-deployed design to restore
 		// state. Production is always approval-gated regardless of this flag (see maybeAutoHeal).
